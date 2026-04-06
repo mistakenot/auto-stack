@@ -5,6 +5,7 @@ bin/
 .bv/
 .tmp/
 **/.tmp/
+**/testdata/
 
 # Credentials and secrets
 *.env
