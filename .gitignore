@@ -1,5 +1,6 @@
 .ntm/
 bin/
+dist/
 
 # bv (beads viewer) local config and caches
 .bv/
