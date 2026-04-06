@@ -1,5 +1,5 @@
 .PHONY: build build-etl build-doc build-watch build-search clean test vet fmt lint \
-       install install-hooks gen-stats check dist
+       install install-hooks gen-stats check dist test-install
 
 BUILD_DIR := bin
 DIST_DIR  := dist
@@ -120,6 +120,9 @@ install: build
 	cp $(BUILD_DIR)/autowatch $(INSTALL_DIR)/
 	cp $(BUILD_DIR)/autosearch $(INSTALL_DIR)/
 	@echo "Installed to $(INSTALL_DIR)/"
+
+test-install:
+	./e2e/test-install.sh
 
 clean:
 	rm -rf $(BUILD_DIR) $(DIST_DIR)
