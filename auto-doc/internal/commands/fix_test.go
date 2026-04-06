@@ -25,8 +25,8 @@ hash: "7ad7f070"
 	ws.InitGitRepo()
 
 	var buf bytes.Buffer
-	if err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil); err != nil {
-		t.Fatalf("Fix: %v", err)
+	if err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil); err == nil {
+		t.Fatal("expected error for doc issues")
 	}
 
 	data, err := os.ReadFile(path)
@@ -53,8 +53,8 @@ hash: "7ad7f070"
 	ws.InitGitRepo()
 
 	var buf bytes.Buffer
-	if err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil); err != nil {
-		t.Fatalf("Fix: %v", err)
+	if err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil); err == nil {
+		t.Fatal("expected error for doc issues")
 	}
 
 	data, err := os.ReadFile(path)
@@ -85,8 +85,8 @@ func read() {
 
 	var buf bytes.Buffer
 	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
-	if err != nil {
-		t.Fatalf("Fix: %v", err)
+	if err == nil {
+		t.Fatal("expected error for scope hash mismatch")
 	}
 
 	out := buf.String()
@@ -117,8 +117,8 @@ func read() {
 
 	var buf bytes.Buffer
 	err = Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
-	if err != nil {
-		t.Fatalf("Fix: %v", err)
+	if err == nil {
+		t.Fatal("expected error for doc hash mismatch")
 	}
 
 	out := buf.String()
@@ -144,8 +144,8 @@ func read() {
 
 	var buf bytes.Buffer
 	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
-	if err != nil {
-		t.Fatalf("Fix: %v", err)
+	if err == nil {
+		t.Fatal("expected error for both mismatch")
 	}
 
 	out := buf.String()
@@ -170,8 +170,8 @@ func read() {
 
 	var buf bytes.Buffer
 	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
-	if err != nil {
-		t.Fatalf("Fix: %v", err)
+	if err == nil {
+		t.Fatal("expected error for orphaned tag")
 	}
 
 	out := buf.String()
@@ -215,8 +215,8 @@ func TestFixGroupsDocIssues(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
-	if err != nil {
-		t.Fatalf("Fix: %v", err)
+	if err == nil {
+		t.Fatal("expected error for doc issues")
 	}
 
 	out := buf.String()
@@ -247,8 +247,8 @@ func read() {
 
 	var buf bytes.Buffer
 	err = Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
-	if err != nil {
-		t.Fatalf("Fix: %v", err)
+	if err == nil {
+		t.Fatal("expected error for link issues")
 	}
 
 	out := buf.String()

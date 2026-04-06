@@ -39,9 +39,9 @@ func TestE2ERecursiveDiscoveryAcrossCommands(t *testing.T) {
 		}
 	}
 
-	fixOut, stderr, exit := runCLI(t, workspace, "fix")
-	if exit != 0 {
-		t.Fatalf("autodoc fix failed: exit=%d stderr=%s", exit, stderr)
+	fixOut, _, exit := runCLI(t, workspace, "fix")
+	if exit == 0 {
+		t.Fatalf("expected non-zero exit for doc issues, got exit=%d", exit)
 	}
 	for _, needle := range []string{"`docs/root.md`", "`auto-doc/docs/subdoc.md`", "`auto-etl-2/docs/etl2.md`"} {
 		if !strings.Contains(fixOut, needle) {

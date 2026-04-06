@@ -20,10 +20,9 @@ func TestE2ETwoWayFreshnessLifecycle(t *testing.T) {
 		t.Fatalf("autodoc init failed: exit=%d stderr=%s", exit, stderr)
 	}
 
-	_, stderr, exit = runCLI(t, workspace, "fix")
-	if exit != 0 {
-		t.Fatalf("autodoc fix (id assignment) failed: exit=%d stderr=%s", exit, stderr)
-	}
+	_, _, exit = runCLI(t, workspace, "fix")
+	// fix assigns missing IDs but reports doc issues (stale hash), so non-zero is expected
+	_ = exit
 
 	docPath := filepath.Join(workspace, "docs", "caching.md")
 	doc := readDoc(t, docPath)
@@ -40,9 +39,9 @@ func TestE2ETwoWayFreshnessLifecycle(t *testing.T) {
 	codePath := filepath.Join(workspace, "pkg", "cache", "lru.go")
 	rewriteAutodocTag(t, codePath, doc.Id, "00000000", "00000000")
 
-	out, stderr, exit := runCLI(t, workspace, "fix")
-	if exit != 0 {
-		t.Fatalf("autodoc fix (both mismatch) failed: exit=%d stderr=%s", exit, stderr)
+	out, _, exit := runCLI(t, workspace, "fix")
+	if exit == 0 {
+		t.Fatalf("expected non-zero exit for both mismatch, got exit=%d", exit)
 	}
 	if !strings.Contains(out, "LINK STALE: both code and doc changed since last sync") {
 		t.Fatalf("expected both-mismatch output, got:\n%s", out)
@@ -59,9 +58,9 @@ func TestE2ETwoWayFreshnessLifecycle(t *testing.T) {
 	}
 
 	rewriteText(t, codePath, "value := 1", "value := 2")
-	out, stderr, exit = runCLI(t, workspace, "fix")
-	if exit != 0 {
-		t.Fatalf("autodoc fix (scope mismatch) failed: exit=%d stderr=%s", exit, stderr)
+	out, _, exit = runCLI(t, workspace, "fix")
+	if exit == 0 {
+		t.Fatalf("expected non-zero exit for scope mismatch, got exit=%d", exit)
 	}
 	if !strings.Contains(out, "LINK STALE: code changed, doc may need updating") {
 		t.Fatalf("expected scope-mismatch output, got:\n%s", out)
@@ -83,9 +82,9 @@ func TestE2ETwoWayFreshnessLifecycle(t *testing.T) {
 		t.Fatalf("autodoc fixed after doc edit failed: exit=%d stderr=%s", exit, stderr)
 	}
 
-	out, stderr, exit = runCLI(t, workspace, "fix")
-	if exit != 0 {
-		t.Fatalf("autodoc fix (doc mismatch) failed: exit=%d stderr=%s", exit, stderr)
+	out, _, exit = runCLI(t, workspace, "fix")
+	if exit == 0 {
+		t.Fatalf("expected non-zero exit for doc mismatch, got exit=%d", exit)
 	}
 	if !strings.Contains(out, "LINK STALE: doc updated, code tag needs refresh") {
 		t.Fatalf("expected doc-mismatch output, got:\n%s", out)
@@ -94,9 +93,9 @@ func TestE2ETwoWayFreshnessLifecycle(t *testing.T) {
 	if err := os.Remove(docPath); err != nil {
 		t.Fatalf("remove doc: %v", err)
 	}
-	out, stderr, exit = runCLI(t, workspace, "fix")
-	if exit != 0 {
-		t.Fatalf("autodoc fix (orphaned) failed: exit=%d stderr=%s", exit, stderr)
+	out, _, exit = runCLI(t, workspace, "fix")
+	if exit == 0 {
+		t.Fatalf("expected non-zero exit for orphaned tag, got exit=%d", exit)
 	}
 	if !strings.Contains(out, "LINK ORPHANED: doc not found") {
 		t.Fatalf("expected orphaned output, got:\n%s", out)
@@ -146,9 +145,9 @@ func TestE2EOneDocReferencedByManyFiles(t *testing.T) {
 	rewriteAutodocTag(t, fileB, fixedDoc.Id, "00000000", scopeB)
 
 	initGitRepo(t, workspace)
-	out, stderr, exit := runCLI(t, workspace, "fix")
-	if exit != 0 {
-		t.Fatalf("autodoc fix failed: exit=%d stderr=%s", exit, stderr)
+	out, _, exit := runCLI(t, workspace, "fix")
+	if exit == 0 {
+		t.Fatalf("expected non-zero exit for link issues, got exit=%d", exit)
 	}
 
 	if strings.Count(out, "LINK STALE: doc updated, code tag needs refresh") != 2 {
@@ -221,9 +220,9 @@ func second() {
 	}
 
 	rewriteText(t, codePath, "a := 1", "a := 99")
-	out, stderr, exit = runCLI(t, workspace, "fix")
-	if exit != 0 {
-		t.Fatalf("autodoc fix (after first scope edit) failed: exit=%d stderr=%s", exit, stderr)
+	out, _, exit = runCLI(t, workspace, "fix")
+	if exit == 0 {
+		t.Fatalf("expected non-zero exit for scope edit, got exit=%d", exit)
 	}
 	if strings.Count(out, "LINK STALE: code changed, doc may need updating") != 1 {
 		t.Fatalf("expected one scope-mismatch block, got:\n%s", out)

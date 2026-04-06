@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, 805b7cbb)]
+// [autodoc(e8d3cf9c@34e92e15, 1dafaa78)]
 package commands
 
 import (
@@ -92,11 +92,17 @@ func Fix(w io.Writer, rootDir string, docsDir string, parallelism int, agentFile
 		writeLinkFreshness(w, rootDir, result.LinkIssues)
 	}
 
-	if result.MalformedCnt > 0 {
-		return fmt.Errorf("found %d malformed autodoc tag(s)", result.MalformedCnt)
+	parts := make([]string, 0, 3)
+	if len(result.DocIssues) > 0 {
+		parts = append(parts, fmt.Sprintf("%d doc(s) need attention", len(result.DocIssues)))
 	}
-
-	return nil
+	if len(result.LinkIssues) > 0 {
+		parts = append(parts, fmt.Sprintf("%d link issue(s)", len(result.LinkIssues)))
+	}
+	if result.MalformedCnt > 0 {
+		parts = append(parts, fmt.Sprintf("%d malformed tag(s)", result.MalformedCnt))
+	}
+	return fmt.Errorf("found issues: %s", strings.Join(parts, ", "))
 }
 
 type docIssue struct {
