@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project:
+          - { dir: auto-doc, binary: autodoc, entry: ./cmd/autodoc }
+          - { dir: auto-etl, binary: autoetl, entry: ./cmd/auto-etl }
+          - { dir: auto-etl-2, binary: autoetl2, entry: . }
+        platform:
+          - { goos: linux, goarch: amd64, suffix: linux-amd64 }
+          - { goos: darwin, goarch: arm64, suffix: darwin-arm64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: ${{ matrix.project.dir }}/go.sum
+
+      - name: Build
+        run: |
+          cd ${{ matrix.project.dir }}
+          CGO_ENABLED=0 GOOS=${{ matrix.platform.goos }} GOARCH=${{ matrix.platform.goarch }} \
+            go build -ldflags="-s -w" -o ../dist/${{ matrix.project.binary }}-${{ matrix.platform.suffix }} ${{ matrix.project.entry }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.project.binary }}-${{ matrix.platform.suffix }}
+          path: dist/${{ matrix.project.binary }}-${{ matrix.platform.suffix }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          chmod +x dist/*
+          gh release create "${{ github.ref_name }}" dist/* \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes

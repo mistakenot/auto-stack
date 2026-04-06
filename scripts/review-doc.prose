@@ -1,0 +1,596 @@
+# Documentation Review Workflow
+#
+# NOTE (Codex/OpenAI runtime mapping):
+# If this program is executed by Codex/OpenAI runtimes instead of Claude,
+# replace model names as follows:
+# - model: sonnet -> model: gpt-5.2  (high-throughput reading/editing tasks)
+# - model: opus   -> model: gpt-5.4  (higher-judgment routing/triage tasks)
+#
+# Multi-step review flow for project docs:
+# -1) Ensure repo state is committed before review begins
+# 0) Build baseline context and assign reviewer identity by doc type
+# 1) Fan out stage-agnostic discovery + gap analysis with identity-isolated reviewers
+# 2) Discover project maturity, filter now-stage issues, and write future concerns
+# 3) Add markdown comments for now-stage concerns
+# 4) Commit documentation review outputs
+
+input doc_scope: "Documentation scope (default: CLAUDE.md, README.md, docs/**/*.md)"
+input stage_hint: "Optional stage hint (prototype/demo/production). Filter still infers stage from evidence."
+input max_concerns: "Maximum number of now-stage concerns to annotate (default: 12)"
+input commit_message: "Commit message (default: docs(review): annotate documentation concerns)"
+input preflight_commit_message: "Preflight commit message (default: chore: checkpoint before documentation review)"
+input classification_overrides: """
+Optional JSON mapping for manual unmatched classification.
+Format:
+{
+  "path/to/doc-a.md": "requirements",
+  "path/to/doc-b.md": "solution",
+  "path/to/doc-c.md": "plan"
+}
+"""
+input identity_policy: """
+Doc type identity policy:
+- requirements => Product Manager exploring feature use case
+- solution => Systems Architect deciding how it should be built
+- plan => Engineer implementing it and responsible for QA
+"""
+
+agent context_reader:
+  model: sonnet
+  prompt: """
+You read project docs and extract execution-critical context.
+
+Focus on:
+- Product/project status by sub-project
+- Required workflows and commands
+- Configuration/setup contracts
+- Any conflicting guidance across files
+"""
+
+agent identity_router:
+  model: opus
+  prompt: """
+You classify documentation files by type and assign reviewer identity.
+
+Type-to-identity mapping:
+- requirements: Product Manager exploring feature use cases and user value
+- solution: Systems Architect deciding implementation approach and trade-offs
+- plan: Engineer implementing the plan and responsible for QA completeness
+
+Return grouped file partitions for downstream isolated review.
+"""
+
+agent pm_reviewer:
+  model: sonnet
+  prompt: """
+You are a Product Manager reviewing requirements docs only.
+Focus on user value, use-case clarity, success criteria, and missing scenarios.
+Run explicit gap analysis for each finding: what is missing and likely needed soon.
+"""
+
+agent architect_reviewer:
+  model: sonnet
+  prompt: """
+You are a Systems Architect reviewing solution docs only.
+Focus on architecture soundness, trade-offs, interfaces, and failure modes.
+Run explicit gap analysis for each finding: what is missing and likely needed soon.
+Evaluate workflow clarity explicitly:
+- Check whether the author has clearly explained all core loops and workflows.
+- Require a numbered execution list for each core workflow/loop so step order and
+  decision points are explicit.
+- For any non-trivial loop/workflow (multiple steps and multiple decision points),
+  require BOTH:
+  1) a numbered execution list
+  2) a Mermaid or ASCII diagram showing how parts fit together.
+- If flow clarity or diagrams are missing, emit a finding with a concrete diagram fix.
+Evaluate testing and verification clarity explicitly:
+- Check whether the full testing + verification strategy is clear end-to-end.
+- Require acceptance criteria that can be mapped straightforwardly to either:
+  1) automated test code
+  2) agent-driven probe sessions.
+- If the strategy or acceptance-criteria mapping is weak/missing, emit a finding
+  with a concrete verification matrix fix.
+Evaluate external dependency test strategy explicitly:
+- Check whether third-party EXTERNAL runtime dependencies are identified.
+  Scope: network APIs/hosted services and external CLI tools invoked out-of-process.
+  Exclude: in-process libraries/packages installed as normal dependencies.
+- Require a unit-test plan to stub/mock those external runtime dependencies.
+- Require an E2E plan that avoids API hammering, runaway costs, and messy resource
+  sprawl (for example rate limits, test accounts/sandboxes, capped runs, and cleanup).
+- Require the E2E plan to define the full lifecycle explicitly:
+  1) clean isolated environment setup
+  2) test execution steps
+  3) result assertions
+  4) post-run cleanup/teardown.
+- If missing, emit a finding with a concrete dependency-isolation and safe-E2E plan.
+"""
+
+agent engineer_reviewer:
+  model: sonnet
+  prompt: """
+You are an Engineer reviewing implementation plans only.
+Focus on execution detail, QA readiness, testability, rollout safety, and
+operational verification gaps.
+Run explicit gap analysis for each finding: what is missing and likely needed soon.
+"""
+
+agent triager:
+  model: opus
+  prompt: """
+You perform high-judgment triage:
+- de-duplicate and normalize findings
+- infer current project maturity stage
+- select now-stage issues vs future-stage concerns
+"""
+
+agent doc_commenter:
+  model: sonnet
+  prompt: """
+You edit markdown files carefully and minimally.
+"""
+  permissions:
+    read: ["**/*.md"]
+    write: ["**/*.md"]
+    bash: deny
+
+agent repo_guard:
+  model: sonnet
+  prompt: """
+You enforce git preflight hygiene before workflow execution.
+"""
+  permissions:
+    read: ["**/*"]
+    write: ["**/*"]
+    bash: allow
+
+agent committer:
+  model: sonnet
+  prompt: """
+You create the final focused commit for this workflow.
+"""
+  permissions:
+    read: ["**/*"]
+    write: ["**/*"]
+    bash: allow
+
+# ============================================================================
+# Step -1: Git preflight checkpoint
+# ============================================================================
+
+let git_preflight = session: repo_guard
+  prompt: """
+Ensure all current changes are committed before documentation review starts.
+
+Process:
+1. Detect current branch.
+2. Run git status --short.
+3. Determine "task-related docs" as:
+   - Files matching doc_scope
+   - README.md
+   - CLAUDE.md
+   - docs/**/*.md
+4. If there are dirty files OUTSIDE task-related docs:
+   - Do not commit
+   - Return blocking_unrelated_files and status "blocked"
+5. If dirty files are only task-related docs:
+   - Stage only those doc files (no git add -A)
+   - Commit on current branch with message:
+     {preflight_commit_message}
+6. If clean, return clean status and continue.
+7. Return:
+   - branch
+   - status ("clean" | "committed" | "blocked")
+   - was_dirty
+   - preflight_commit_hash (or null)
+   - committed_files
+   - blocking_unrelated_files
+   - status_after
+"""
+  context: { preflight_commit_message, doc_scope }
+
+if **git_preflight.status is blocked**:
+  output review_result = session "Report blocked preflight due to unrelated dirty files"
+    prompt: """
+Preflight is blocked because unrelated dirty files exist.
+
+Report:
+- current branch
+- blocking_unrelated_files
+- guidance: commit/stash unrelated files, then rerun
+"""
+    context: git_preflight
+  throw "Preflight blocked by unrelated dirty files"
+
+# ============================================================================
+# Step 0: Build context + identity preamble
+# ============================================================================
+
+let baseline_context = session: context_reader
+  prompt: """
+Prioritize the target docs from doc_scope for review, but build supporting
+context from anywhere useful in repository documentation.
+
+Start with:
+1. CLAUDE.md
+2. README.md
+3. docs/**/*.md
+
+Return:
+- Target docs from doc_scope that will be reviewed
+- Project and sub-project status summary
+- Critical commands/workflows that must be correct
+- Assumptions docs make about user environment
+- File list scanned
+"""
+  context: { doc_scope }
+
+let doc_identity_plan = session: identity_router
+  prompt: """
+Classify each scanned documentation file into:
+- requirements
+- solution
+- plan
+- nearest_match (if ambiguous)
+
+Apply policy:
+{identity_policy}
+
+Apply classification_overrides first when provided.
+Do NOT auto-route remaining unmatched files.
+
+Return:
+- requirements_files (array)
+- solution_files (array)
+- plan_files (array)
+- unmatched_files (array of {file_path, nearest_match, rationale})
+"""
+  context: { baseline_context, identity_policy, classification_overrides }
+
+if **doc_identity_plan.unmatched_files contains one or more items**:
+  output review_result = session "Request manual classification for unmatched docs"
+    prompt: """
+Manual classification is required before review can continue.
+
+Return:
+- unmatched files with nearest_match and rationale
+- example JSON for classification_overrides input
+- instruction to rerun after providing overrides
+"""
+    context: doc_identity_plan
+  throw "Manual classification required for unmatched docs"
+
+if **doc_identity_plan has zero requirements_files, zero solution_files, and zero plan_files**:
+  output review_result = session "No reviewable docs found"
+    prompt: """
+No files were classified into requirements, solution, or plan.
+
+Return:
+- target docs from doc_scope
+- scanned files summary
+- guidance for a narrower doc_scope or classification_overrides
+"""
+    context: { baseline_context, doc_identity_plan, doc_scope }
+  throw "No classified docs to review"
+
+# ============================================================================
+# Step 1: Identity-isolated, stage-agnostic fan-out discovery
+# ============================================================================
+
+let requirements_findings = []
+let solution_findings = []
+let plan_findings = []
+
+parallel:
+  requirements_findings = session: pm_reviewer
+    prompt: """
+If doc_identity_plan.requirements_files is empty, return [].
+Otherwise review ONLY requirements_files from doc_identity_plan.
+
+Critical constraints:
+1. Ignore solution and plan docs.
+2. Do NOT infer or use product maturity (prototype/demo/production).
+3. Do NOT reference or reconcile with other identities.
+4. Perform explicit gap analysis for every finding: identify what is missing and likely needed soon.
+
+Return findings array items with:
+- file_path
+- doc_type: requirements
+- review_identity: product_manager
+- severity (high/medium/low)
+- concern
+- gap_analysis
+- why_this_can_go_wrong
+- suggested_fix
+- anchor_hint
+"""
+    context: { baseline_context, doc_identity_plan }
+
+  solution_findings = session: architect_reviewer
+    prompt: """
+If doc_identity_plan.solution_files is empty, return [].
+Otherwise review ONLY solution_files from doc_identity_plan.
+
+Critical constraints:
+1. Ignore requirements and plan docs.
+2. Do NOT infer or use product maturity (prototype/demo/production).
+3. Do NOT reference or reconcile with other identities.
+4. Perform explicit gap analysis for every finding: identify what is missing and likely needed soon.
+5. Explicitly assess core loop/workflow clarity and require numbered execution lists.
+6. For non-trivial flows (multiple steps and decision points), require both numbered
+   execution lists and Mermaid/ASCII diagrams; flag any missing piece.
+7. Explicitly assess full testing + verification strategy clarity.
+8. Require acceptance criteria that map directly to automated tests or agent-driven
+   probe sessions; flag missing or non-actionable mappings.
+9. Explicitly assess whether third-party external runtime dependencies are identified
+   (network APIs/services and out-of-process CLIs; not installed in-process libraries).
+10. Require a unit-test stubbing/mocking plan for those external runtime dependencies.
+11. Require an E2E usage plan that controls API load/cost and defines resource
+    cleanup.
+12. Require explicit E2E lifecycle coverage: isolated environment setup, test run
+    steps, assertions, and teardown cleanup; flag missing safeguards.
+
+Return findings array items with:
+- file_path
+- doc_type: solution
+- review_identity: systems_architect
+- severity (high/medium/low)
+- concern
+- gap_analysis
+- why_this_can_go_wrong
+- suggested_fix
+- anchor_hint
+"""
+    context: { baseline_context, doc_identity_plan }
+
+  plan_findings = session: engineer_reviewer
+    prompt: """
+If doc_identity_plan.plan_files is empty, return [].
+Otherwise review ONLY plan_files from doc_identity_plan.
+
+Critical constraints:
+1. Ignore requirements and solution docs.
+2. Do NOT infer or use product maturity (prototype/demo/production).
+3. Do NOT reference or reconcile with other identities.
+4. Perform explicit gap analysis for every finding: identify what is missing and likely needed soon.
+
+Return findings array items with:
+- file_path
+- doc_type: plan
+- review_identity: engineer_qa_owner
+- severity (high/medium/low)
+- concern
+- gap_analysis
+- why_this_can_go_wrong
+- suggested_fix
+- anchor_hint
+"""
+    context: { baseline_context, doc_identity_plan }
+
+let all_findings = session: triager
+  prompt: """
+Merge, de-duplicate, and normalize all findings.
+Treat gap_analysis as a first-class signal and fold it into prioritization and fixes.
+
+Return normalized issues:
+- id
+- file_path
+- doc_type
+- review_identity
+- severity
+- concern
+- gap_analysis
+- relevance_reason
+- suggested_fix
+- anchor_hint
+"""
+  context: { requirements_findings, solution_findings, plan_findings }
+
+# ============================================================================
+# Step 2: Discover maturity, filter now-stage issues, and write future concerns
+# ============================================================================
+
+let stage_assessment = session: triager
+  prompt: """
+Infer the CURRENT project maturity stage from evidence.
+
+Allowed values:
+- prototype
+- demo
+- production
+
+If stage_hint is present, treat it as a weak hint and validate against evidence.
+
+Return:
+- current_stage
+- confidence (high/medium/low)
+- evidence (bullet list)
+- next_stage
+- filtering_principles
+"""
+  context: { baseline_context, all_findings, stage_hint }
+
+let prioritized_concerns = session: triager
+  prompt: """
+Select concerns that matter NOW for current_stage in stage_assessment.
+
+Rules:
+1. Keep only concerns that can hurt this stage immediately.
+2. Drop cosmetic-only concerns.
+3. Keep at most {max_concerns} concerns.
+4. Preserve review_identity and doc_type from discovery.
+
+Return ordered array with:
+- id
+- file_path
+- doc_type
+- review_identity
+- severity
+- stage
+- concern
+- gap_analysis
+- relevance_reason
+- suggested_fix
+- anchor_hint
+- markdown_comment
+
+For markdown_comment use exactly this shape:
+<!-- doc-review:{id} severity={severity} doc_type={doc_type}
+Identity: {review_identity}
+Stage: {stage}
+Concern: {concern}
+Gap analysis: {gap_analysis}
+Why now: {relevance_reason}
+Suggested fix: {suggested_fix}
+-->
+"""
+  context: { all_findings, stage_assessment, max_concerns }
+
+let future_concerns = session: triager
+  prompt: """
+Select HIGH and MEDIUM concerns that are NOT urgent for current_stage, but are
+likely to matter at next_stage.
+
+Return ordered array with:
+- id
+- file_path
+- doc_type
+- review_identity
+- priority (high/medium)
+- concern
+- gap_analysis
+- why_not_now
+- trigger_stage
+- suggested_fix
+"""
+  context: { all_findings, stage_assessment }
+
+let future_concerns_output = session: triager
+  prompt: """
+Resolve the output path for the future concerns report.
+
+Rules (in order):
+1. If doc_identity_plan.requirements_files has one or more files:
+   - Use the directory of the first requirements file
+   - Path = <that directory>/future-concerns.md
+2. Else if future_concerns has one or more items:
+   - Use the directory of the first future_concerns.file_path
+   - Path = <that directory>/future-concerns.md
+3. Else if baseline_context includes target docs:
+   - Use the directory of the first target doc
+   - Path = <that directory>/future-concerns.md
+4. Else fallback to docs/future-concerns.md
+
+Return:
+- output_path
+- basis
+"""
+  context: { doc_identity_plan, future_concerns, baseline_context }
+
+if **future_concerns contains one or more items**:
+  session: doc_commenter
+    prompt: """
+Create or replace {future_concerns_output.output_path}.
+
+Write a concise markdown report with:
+1. Title: Future Concerns
+2. Current stage and next stage from stage_assessment
+3. Scope summary (doc_scope)
+4. A numbered list of future_concerns:
+   - ID
+   - File
+   - Doc Type
+   - Identity
+   - Priority
+   - Concern
+   - Gap analysis
+   - Why not now
+   - Trigger stage
+   - Suggested fix
+
+Overwrite the file so it stays current with latest review run.
+"""
+    context: { future_concerns, stage_assessment, doc_scope, future_concerns_output }
+else:
+  session "Skip future concerns document update"
+    prompt: """
+No high/medium deferred concerns for next stage.
+
+Policy:
+- If {future_concerns_output.output_path} does not exist, do not create it.
+- If it exists, leave it untouched.
+"""
+    context: { future_concerns_output }
+
+# ============================================================================
+# Step 3: Add markdown comments for now-stage concerns
+# ============================================================================
+
+if **no prioritized concerns remain after filtering**:
+  session "No now-stage annotations required"
+    prompt: """
+Provide a brief summary of why no now-stage concerns were selected.
+"""
+    context: { all_findings, stage_assessment }
+else:
+  for concern in prioritized_concerns:
+    session: doc_commenter
+      prompt: """
+Apply this concern to documentation:
+{concern}
+
+Edit rules:
+1. Edit only concern.file_path.
+2. Insert concern.markdown_comment near concern.anchor_hint.
+3. If a doc-review comment for concern.id already exists, update in place.
+4. Keep edits minimal and valid markdown.
+5. Do not alter unrelated content.
+"""
+      context: concern
+
+let review_edit_summary = session: doc_commenter
+  prompt: """
+Summarize the review outputs for this run.
+
+Return:
+- now_stage_concerns_count
+- future_concerns_count
+- likely_files_touched
+- short_summary
+"""
+  context: { prioritized_concerns, future_concerns, stage_assessment }
+
+# ============================================================================
+# Step 4: Commit changes
+# ============================================================================
+
+output review_result = session: committer
+  prompt: """
+Create a focused git commit for this documentation review run.
+
+Process:
+1. Run git status --short.
+2. If clean, return no-op result and do not commit.
+3. Otherwise:
+   - Stage only task-related docs:
+     - prioritized_concerns.file_path
+     - {future_concerns_output.output_path} (if modified)
+     - README.md or CLAUDE.md only when modified by this run
+   - Do not stage unrelated files.
+   - If no task-related files are modified after filtering, return no-op.
+   - Commit with subject:
+     {commit_message}
+   - Commit body must include:
+     - Current stage: stage_assessment.current_stage
+     - Next stage: stage_assessment.next_stage
+     - Now-stage concerns: count + IDs
+     - Future concerns: count + IDs
+     - Preflight checkpoint: git_preflight.preflight_commit_hash or "none"
+
+Return:
+- commit_hash (or null)
+- committed_files
+- commit_subject
+- commit_body
+- final_status
+"""
+  context: { commit_message, git_preflight, stage_assessment, prioritized_concerns, future_concerns, future_concerns_output, review_edit_summary }

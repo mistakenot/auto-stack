@@ -1,0 +1,2 @@
+{"type":"user","sessionId":"bbbb1111-2222-3333-4444-555566667777","timestamp":"2026-03-10T11:00:00.000Z","cwd":"/home/user/project","isSidechain":false,"message":{"role":"user","content":"explore the repo"}}
+{"type":"assistant","sessionId":"bbbb1111-2222-3333-4444-555566667777","timestamp":"2026-03-10T11:00:05.000Z","cwd":"/home/user/project","isSidechain":false,"message":{"role":"assistant","model":"claude-opus-4-6","content":[{"type":"tool_use","id":"tu_1","name":"Agent","input":{"prompt":"explore repo"}}],"usage":{"input_tokens":20,"output_tokens":15}}}

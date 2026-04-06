@@ -1,0 +1,3 @@
+{"type":"user","sessionId":"aaaa1111-2222-3333-4444-555566667777","timestamp":"2026-03-10T10:00:00.000Z","cwd":"/home/user/project","isSidechain":false,"message":{"role":"user","content":"hello"}}
+{"type":"assistant","sessionId":"aaaa1111-2222-3333-4444-555566667777","timestamp":"2026-03-10T10:00:05.000Z","cwd":"/home/user/project","isSidechain":false,"message":{"role":"assistant","model":"claude-opus-4-6","content":"Hi there!","usage":{"input_tokens":10,"output_tokens":5}}}
+{"type":"user","sessionId":"aaaa1111-2222-3333-4444-555566667777","timestamp":"2026-03-10T10:01:00.000Z","cwd":"/home/user/project","isSidechain":false,"message":{"role":"user","content":"thanks"}}

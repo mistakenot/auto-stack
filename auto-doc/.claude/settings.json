@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go test ./...)",
+      "Bash(go build ./...)",
+      "Bash(bash install_locally.sh)",
+      "Bash(autodoc *)"
+    ]
+  }
+}

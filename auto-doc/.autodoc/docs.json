@@ -1,0 +1,9 @@
+{
+  "docsDir": "docs",
+  "agentFiles": [
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "parallelism": 4,
+  "ignores": null
+}

@@ -1,0 +1,17 @@
+.ntm/
+bin/
+
+# bv (beads viewer) local config and caches
+.bv/
+.tmp/
+**/.tmp/
+
+# Credentials and secrets
+*.env
+*.env.*
+.credentials.json
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx

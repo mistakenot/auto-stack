@@ -1,0 +1,18 @@
+{
+  "id": "auto-stack",
+  "tasks": {
+    "run-etl": {
+      "type": "bash",
+      "command": "autoetl run"
+    }
+  },
+  "triggers": {
+    "every-10-minutes": {
+      "type": "cron",
+      "when": "*/10 * * * *",
+      "tasks": [
+        "run-etl"
+      ]
+    }
+  }
+}

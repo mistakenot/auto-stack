@@ -1,0 +1,5 @@
+{
+  "env": {
+    "GOMEMLIMIT": "1GiB"
+  }
+}

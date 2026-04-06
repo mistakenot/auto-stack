@@ -1,0 +1,2 @@
+{"type":"user","sessionId":"bbbb1111-2222-3333-4444-555566667777","timestamp":"2026-03-10T11:00:06.000Z","cwd":"/home/user/project","isSidechain":true,"agentId":"abc123","message":{"role":"user","content":"explore repo"}}
+{"type":"assistant","sessionId":"bbbb1111-2222-3333-4444-555566667777","timestamp":"2026-03-10T11:00:10.000Z","cwd":"/home/user/project","isSidechain":true,"agentId":"abc123","message":{"role":"assistant","model":"claude-opus-4-6","content":"Found 3 files.","usage":{"input_tokens":15,"output_tokens":8}}}

@@ -1,0 +1,88 @@
+version: "2"
+
+run:
+  concurrency: 1
+
+linters:
+  # Defaults: errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    # Existing
+    - errorlint
+    - misspell
+    - unconvert
+    - unparam
+
+    # Bug catchers
+    - bodyclose        # unclosed HTTP response bodies
+    - nilerr           # if err != nil { return nil } mistakes
+    - sqlclosecheck    # unclosed sql.Rows / sql.Stmt
+    - rowserrcheck     # unchecked rows.Err() after iteration
+    - errchkjson       # unchecked JSON encoding errors
+    - gosec            # security issues
+
+    # Code hygiene
+    - gocritic         # broad diagnostics (bugs, performance)
+    - perfsprint       # faster alternatives to fmt.Sprintf
+    - fatcontext       # context leak in loops
+    - intrange         # use range over int
+    - usestdlibvars    # use net/http constants etc.
+    - exptostd         # x/exp functions moved to stdlib
+    - modernize        # modern Go idioms
+
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Closer).Close
+        - (*github.com/blugelabs/bluge.Reader).Close
+        - (*github.com/blugelabs/bluge.Writer).Close
+        - (*github.com/yuin/goldmark/ast.Node).Walk
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-tags:
+        - style
+        - opinionated
+        - experimental
+
+    gosec:
+      excludes:
+        - G104  # already covered by errcheck
+        - G115  # integer overflow on conversion is rare in practice
+        - G122  # filepath.WalkDir TOCTOU — not a real risk for CLI tools
+        - G204  # subprocess with variable args is normal in CLI tools
+        - G301  # 0755 dirs are standard for CLI tools
+        - G304  # file path from variable is normal in CLI tools
+        - G306  # 0644 files are standard for CLI tools
+        - G401  # md5 used for content hashing, not crypto
+        - G501  # md5 import — same as G401
+        - G703  # path traversal via taint — false positives in CLI tools
+
+  exclusions:
+    rules:
+      # Test files: relax errcheck, unparam, and security
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unparam
+          - gosec
+      - path: testutil/
+        linters:
+          - errcheck
+          - gosec
+      - path: e2e/
+        linters:
+          - errcheck
+          - gosec
+      # staticcheck suggestions (QF) are informational, not bugs
+      - linters:
+          - staticcheck
+        text: "QF"
+
+formatters:
+  enable:
+    - gofmt

@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+
+# --- 1. goimports + gofmt: auto-fix staged .go files and re-stage ---
+# goimports is a superset of gofmt — it formats AND fixes unused/missing imports.
+
+STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM -- '*.go' || true)
+
+if [ -n "$STAGED_GO_FILES" ]; then
+    echo "$STAGED_GO_FILES" | while IFS= read -r f; do
+        if [ -f "$ROOT/$f" ]; then
+            if command -v goimports &>/dev/null; then
+                goimports -w "$ROOT/$f"
+            else
+                gofmt -w "$ROOT/$f"
+            fi
+        fi
+    done
+    echo "$STAGED_GO_FILES" | xargs -I{} git add "$ROOT/{}"
+    echo "pre-commit: goimports/gofmt applied"
+fi
+
+# --- 2. lint: golangci-lint (includes govet), only if .go files changed ---
+
+if [ -n "$STAGED_GO_FILES" ]; then
+    make -C "$ROOT" lint
+    echo "pre-commit: lint passed"
+fi
+
+# --- 3. autodoc fix: validate doc-code freshness links ---
+
+if command -v autodoc &>/dev/null; then
+    autodoc fix
+    git add "$ROOT" 2>/dev/null || true
+    echo "pre-commit: autodoc fix applied"
+fi
+
+# --- 4. br sync: flush beads to JSONL ---
+
+if command -v br &>/dev/null && [ -d "$ROOT/.beads" ]; then
+    br sync --flush-only --quiet 2>/dev/null || true
+    git add "$ROOT/.beads/" 2>/dev/null || true
+    echo "pre-commit: beads synced"
+fi

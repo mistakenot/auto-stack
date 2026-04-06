@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: [auto-doc, auto-etl, auto-etl-2]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: ${{ matrix.project }}/go.sum
+
+      - name: Check formatting
+        run: |
+          cd ${{ matrix.project }}
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Files not formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: |
+          cd ${{ matrix.project }}
+          go vet ./...
+
+      - name: Build (linux/amd64)
+        run: |
+          cd ${{ matrix.project }}
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./...
+
+      - name: Build (darwin/arm64)
+        run: |
+          cd ${{ matrix.project }}
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build ./...
