@@ -1,3 +1,10 @@
+---
+hash: "b87d8449"
+id: "badba584"
+summary: "Spec for ingesting merged GitHub PR feedback (reviews, comments, diffs, CI checks) into parquet datasets via auto-etl."
+title: "GitHub PR Feedback ETL"
+---
+
 # GitHub PR Feedback ETL
 
 Spec for ingesting GitHub pull request feedback (reviews, comments, CI status, metadata) into structured parquet tables alongside the existing session/message ETL pipeline.
