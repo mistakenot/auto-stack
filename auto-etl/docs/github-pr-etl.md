@@ -1,5 +1,5 @@
 ---
-hash: "b87d8449"
+hash: "881f5403"
 id: "badba584"
 summary: "Spec for ingesting merged GitHub PR feedback (reviews, comments, diffs, CI checks) into parquet datasets via auto-etl."
 title: "GitHub PR Feedback ETL"
@@ -23,7 +23,7 @@ PR feedback contains valuable signal — code review insights, design decisions,
 | PR filter | Merged only | Open = WIP, closed-without-merge = abandoned. Successfully synced merged PRs are never re-fetched; failed syncs are retried |
 | GitHub client | `google/go-github` library | Native Go, handles pagination and rate limit headers |
 | Auth | `GITHUB_TOKEN` env var first, fall back to `gh auth token` | Works in CI (env var) and local dev (gh CLI) |
-| CLI surface | Integrated into `autoetl run` with `--only` filter | `--only messages`, `--only github`, or both; default runs all |
+| CLI surface | Integrated into `autoetl run` with `--only` filter | `--only sessions`, `--only github`, or both; default runs all |
 | Identity | Username + display name | Enough to identify people without excessive PII |
 | Rate limits | Sleep and retry | Respect `X-RateLimit-Reset`, sleep until reset, continue automatically |
 | Testing | Interface-based mock | Define `GitHubClient` interface, mock in tests |
@@ -191,6 +191,7 @@ type PRComment struct {
   "schema_version": 1,
   "repos": {
     "owner/repo": {
+      "high_water_mark": "2026-04-06T12:00:00Z",
       "prs": {
         "123": {
           "synced": true,
@@ -215,7 +216,10 @@ type PRComment struct {
 
 - `synced: true` → all critical endpoints succeeded; PR will be skipped on future runs
 - `synced: false` → a critical endpoint failed; PR will be retried on next run
-- `missing_fields` → non-critical fields that failed (informational, does not block sync)
+- `missing_fields` → non-critical fields that failed (informational, does not block sync).
+  **These gaps are intentionally permanent** — non-critical fields (checks, diff, files) are not retried
+  once a PR is marked `synced: true`. To re-fetch, manually delete the PR's entry from sync-state.json
+  and re-run. This tradeoff keeps the sync simple and fast.
 - `failed_endpoints` → which critical endpoints failed (for diagnostics)
 
 ### Sync algorithm
@@ -231,14 +235,14 @@ for each repo discovered from git remotes:
      - This runs BEFORE pagination so failed PRs are never missed by the early-stop condition
 
   PHASE 2: DISCOVER newly merged PRs
-     - GET /repos/{owner}/{repo}/pulls?state=closed&sort=created&direction=desc
+     - GET /repos/{owner}/{repo}/pulls?state=closed&sort=updated&direction=desc
      - Filter client-side: only PRs where merged_at is set
        (GitHub state=closed returns both closed and merged)
-     - No date cutoff — paginate through full history
      - Each page: skip PRs with synced: true in sync-state, collect the rest
        (synced: false entries were already handled in Phase 1)
-     - Early stop: when an entire page contains zero un-synced merged PRs,
-       stop paginating (all remaining are older and already synced)
+     - First run (no high-water mark): paginate through ALL pages, no early stop
+     - Subsequent runs: stop when updated_at drops below the high-water mark
+       (see "High-water mark" below)
 
   PHASE 3: FETCH each un-synced merged PR (from Phase 1 retries + Phase 2 discoveries)
 
@@ -266,13 +270,23 @@ for each repo discovered from git remotes:
      - Determine which monthly partitions were affected (contain new or retried PRs)
      - For each affected partition:
        a. READ existing parquet file for that month (if it exists)
-       b. MERGE with newly fetched/retried PR rows, deduplicating by PR ID
-          (new data wins over existing for the same ID)
+       b. MERGE with newly fetched/retried rows, deduplicating:
+          - `pull_requests`: dedupe by PR ID (e.g., `owner/repo#123`). New data wins.
+          - `pr_comments`: dedupe by comment ID + comment_type
+            (e.g., `owner/repo#123/c/456789`). New data wins.
+          - For retried PRs: all old comments for that PR are replaced with the
+            fresh fetch (delete-by-PR-ID then insert). This handles edited and
+            deleted comments — we don't track individual comment mutations.
        c. WRITE merged result back to the partition file
      - Unaffected partitions are not touched
      - NOTE: unlike session/message ETL, GitHub partitions are NOT immutable.
        This is an intentional exception because failed PRs may be retried across
        runs, requiring updates to historical month partitions.
+     - **Downstream impact**: `autosearch` incremental indexing currently assumes
+       past partitions don't change. When GitHub PR indexing is added to autosearch,
+       it must either re-index all PR partitions on each run, or check file
+       modification times to detect rewritten partitions. This is a future concern
+       scoped to the autosearch integration spec, not this ETL spec.
 
   PHASE 5: PERSIST sync-state.json
 ```
@@ -281,9 +295,15 @@ for each repo discovered from git remotes:
 
 On first run (no sync-state.json), the sync paginates through all merged PRs for each discovered repo. Progress is logged to stderr (e.g., `fetched 150 merged PRs for owner/repo...`). For repos with thousands of merged PRs this may take several minutes due to API pagination, but only happens once — subsequent runs skip all synced PRs.
 
-### Pagination stop condition
+### High-water mark
 
-We sort by `created` (not `updated`) and descend. This gives a monotonic ordering — once we hit a full page where every merged PR is already in sync-state, we can stop. Sorting by `updated` would not be safe here because an old PR updated recently would appear early and break early-stop logic.
+The sync-state stores a `high_water_mark` per repo — the highest `updated_at` timestamp seen across all successfully synced PRs in the previous run.
+
+- **First run**: no high-water mark exists → paginate through all pages (no early stop). This may be slow for repos with thousands of PRs but only happens once.
+- **Subsequent runs**: sort by `updated` descending. Stop paginating when `updated_at` drops below the high-water mark. This catches PRs created long ago but merged recently (they appear early because `updated_at` reflects the merge).
+- After each successful run, update the high-water mark to the max `updated_at` from this run.
+
+We sort by `updated` (not `created`) because `updated_at` reflects merges, new comments, and label changes — exactly the activity we want to catch. The high-water mark makes this safe: we only stop when we reach PRs that haven't changed since our last sync.
 
 ### Why merged-only is sufficient
 
@@ -295,6 +315,8 @@ We sort by `created` (not `updated`) and descend. This gives a monotonic orderin
 - Closed-without-merge PRs are abandoned — typically low value
 - Future enhancement: add `--include-open` flag if open PR data becomes useful
 
+**Note on canonical data**: PR feedback is a supplementary data source, not the canonical journey record. The canonical journey is coding sessions (`messages`/`sessions`). PR data enriches the picture but tolerating bounded staleness for merged PRs is an acceptable tradeoff for sync simplicity.
+
 ## Auth
 
 ```
@@ -303,6 +325,10 @@ We sort by `created` (not `updated`) and descend. This gives a monotonic orderin
 3. If both fail, log warning to stderr and skip GitHub sync
    (do not fail the entire ETL run)
 ```
+
+**Exit code behavior**:
+- Default run (`autoetl run`): auth failure → warning, skip GitHub sync, exit 0 (session ETL succeeded)
+- Explicit `--only github`: auth failure → error, exit 1 (the user explicitly asked for GitHub sync and it can't run)
 
 The token is resolved once at the start of the GitHub sync phase and reused for all API calls in that run.
 
@@ -315,7 +341,7 @@ Auth failures should never halt the pipeline. Handle at every granularity:
 | **All GitHub** | Both `GITHUB_TOKEN` and `gh auth token` fail | Log warning to stderr, skip entire GitHub sync, session ETL still runs |
 | **Per-repo** | 401/403 on a specific repo (e.g., private repo) | Log warning, skip that repo, continue with remaining repos |
 | **Per-endpoint** | Token lacks specific scope (e.g., no Actions read for checks) | Log warning, leave that field empty (e.g., `checks_json = "[]"`), continue with rest of PR data |
-| **Per-PR** | Transient 500/502 on a single PR fetch | Log warning, skip that PR, continue with remaining PRs |
+| **Per-PR** | Transient 500/502 on a single PR fetch | Log warning, record as `synced: false` in sync-state (retried in Phase 1 on next run), continue with remaining PRs |
 
 Report all warnings in a summary block at the end of the GitHub sync phase:
 
@@ -361,22 +387,22 @@ autoetl run [flags]
 New flag:
 
 ```
---only strings   Run only specified ETL sources. Valid values: messages, github. Default: all.
+--only strings   Run only specified ETL sources. Valid values: sessions, github. Default: all.
 ```
 
 **Parsing rules** (per project CLI conventions):
-- Accepts comma-separated values: `--only messages,github`
-- Also accepts repeated flags: `--only messages --only github`
+- Accepts comma-separated values: `--only sessions,github`
+- Also accepts repeated flags: `--only sessions --only github`
 - Values are lowercased and trimmed before validation
-- Invalid values → fail-fast with error listing valid options: `invalid --only value "foo"; valid values: messages, github`
+- Invalid values → fail-fast with error listing valid options: `invalid --only value "foo"; valid values: sessions, github`
 - Duplicates are silently deduplicated
 
 Examples:
 ```bash
 autoetl run                      # Run all: session ETL + GitHub PR sync
-autoetl run --only messages      # Session ETL only (current behavior)
+autoetl run --only sessions      # Session ETL only (current behavior)
 autoetl run --only github        # GitHub PR sync only
-autoetl run --only messages,github  # Explicit: both (same as default)
+autoetl run --only sessions,github  # Explicit: both (same as default)
 ```
 
 No additional GitHub-specific flags. First run fetches all merged PRs (no cutoff).
@@ -408,6 +434,8 @@ Reuse the existing git remote cache at `~/.auto/etl/settings.json`:
 ```
 
 Extract unique `owner/repo` pairs from the cached remote URLs. Filter to GitHub remotes using exact hostname matching: `github.com` only (both HTTPS and SSH formats). Deduplicate across workspaces that point to the same repo. Non-GitHub remotes (GitLab, Bitbucket, etc.) are silently ignored.
+
+**Scope**: all GitHub repos in the global cache are synced, including repos from old or inactive workspaces. This is intentional — if you coded in a repo, its PR feedback is relevant context. Old repos simply won't have new merged PRs to discover, so the cost is one API list call per repo per run (which returns empty quickly).
 
 ## Output Layout
 
@@ -462,39 +490,40 @@ A `RealGitHubClient` wraps `*github.Client` and implements this interface. Unit 
 12. **Incremental skip**: Sync state has a merged PR with `synced: true` → verify no API calls for that PR
 13. **New merged PR**: PR not in sync-state → verify full fetch + mark synced
 14. **Skips non-merged**: Open and closed-without-merge PRs in API response → verify they are filtered out
-15. **Pagination stop**: Full page of already-synced PRs → verify pagination stops
-16. **Critical endpoint failure**: Reviews endpoint returns 500 → PR marked `synced: false`, retried on next run
-17. **Non-critical endpoint failure**: Checks endpoint returns 403 → PR marked `synced: true` with `missing_fields: ["checks_json"]`
-18. **Retry phase runs first**: `synced: false` PR from previous run → retried in Phase 1 before pagination in Phase 2
-19. **Retry success**: Previously failed PR retried → all critical endpoints succeed → marked `synced: true`
-20. **Partition read-merge-write**: Existing partition has 5 PRs, new run adds 2 → output partition has all 7
-21. **Partition merge dedup**: Re-synced PR (retry) already exists in partition → new data replaces old, no duplicates
-22. **Partition idempotency**: Run twice with no new PRs → parquet output is identical (no data loss from rewrite)
+15. **First run full pagination**: No high-water mark → all pages fetched, no early stop
+16. **Subsequent run high-water mark stop**: High-water mark set → stop when `updated_at` drops below it
+17. **Critical endpoint failure**: Reviews endpoint returns 500 → PR marked `synced: false`, retried on next run
+18. **Non-critical endpoint failure**: Checks endpoint returns 403 → PR marked `synced: true` with `missing_fields: ["checks_json"]`
+19. **Retry phase runs first**: `synced: false` PR from previous run → retried in Phase 1 before pagination in Phase 2
+20. **Retry success**: Previously failed PR retried → all critical endpoints succeed → marked `synced: true`
+21. **Partition read-merge-write**: Existing partition has 5 PRs, new run adds 2 → output partition has all 7
+22. **Partition merge dedup**: Re-synced PR (retry) already exists in partition → new data replaces old, no duplicates
+23. **Partition idempotency**: Run twice with no new PRs → parquet output is identical (no data loss from rewrite)
 
 #### Transform & output
 
-23. **Transform correctness**: Mock client returns known PR + comments → verify parquet rows match expected values
-24. **Comment threading**: Multiple `review_comment` rows with `in_reply_to_id` → verify thread linkage is preserved
-25. **Partition correctness**: PR merged in January → lands in `year=YYYY/month=01/` partition
-26. **Diff and files stored**: PR fetch includes diff + files → verify `diff` and `files_json` columns populated
-27. **Comment types**: Review, review_comment, and issue_comment all present → verify `comment_type` discriminator correct
-28. **State normalization**: GitHub returns state="closed" + merged_at set → stored as state="merged"
-29. **Truncated diff handling**: GitHub returns empty patch for binary file → `patch` is null in `files_json`, no error
+24. **Transform correctness**: Mock client returns known PR + comments → verify parquet rows match expected values
+25. **Comment threading**: Multiple `review_comment` rows with `in_reply_to_id` → verify thread linkage is preserved
+26. **Partition correctness**: PR merged in January → lands in `year=YYYY/month=01/` partition
+27. **Diff and files stored**: PR fetch includes diff + files → verify `diff` and `files_json` columns populated
+28. **Comment types**: Review, review_comment, and issue_comment all present → verify `comment_type` discriminator correct
+29. **State normalization**: GitHub returns state="closed" + merged_at set → stored as state="merged"
+30. **Truncated diff handling**: GitHub returns empty patch for binary file → `patch` is null in `files_json`, no error
 
 #### Auth
 
-30. **GITHUB_TOKEN preferred**: Env var set → used directly, `gh auth token` not called
-31. **Fallback to gh CLI**: No env var → `gh auth token` called and token used
-32. **Auth failure**: Both methods fail → warning logged, no panic, session ETL still runs
-33. **Per-repo auth failure**: One repo returns 403 → other repos still processed
-34. **Per-endpoint auth failure**: Checks endpoint returns 403 → `checks_json` is `"[]"`, rest of PR data intact
+31. **GITHUB_TOKEN preferred**: Env var set → used directly, `gh auth token` not called
+32. **Fallback to gh CLI**: No env var → `gh auth token` called and token used
+33. **Auth failure**: Both methods fail → warning logged, no panic, session ETL still runs
+34. **Per-repo auth failure**: One repo returns 403 → other repos still processed
+35. **Per-endpoint auth failure**: Checks endpoint returns 403 → `checks_json` is `"[]"`, rest of PR data intact
 
 #### Rate limiting
 
-35. **Primary rate limit sleep**: Mock returns 403 with rate limit headers → verify sleep until reset + retry
-36. **Rate limit mid-run**: Rate limited after 5 PRs → sleeps, then continues with remaining PRs
-37. **Secondary abuse limit**: Mock returns 403 with `Retry-After` header → verify sleep for specified duration + retry
-38. **Abuse limit max retries**: Same request triggers `Retry-After` 3 times → skip request, log warning
+36. **Primary rate limit sleep**: Mock returns 403 with rate limit headers → verify sleep until reset + retry
+37. **Rate limit mid-run**: Rate limited after 5 PRs → sleeps, then continues with remaining PRs
+38. **Secondary abuse limit**: Mock returns 403 with `Retry-After` header → verify sleep for specified duration + retry
+39. **Abuse limit max retries**: Same request triggers `Retry-After` 3 times → skip request, log warning
 
 ## Example Queries
 
@@ -575,4 +604,3 @@ gh api repos/{owner}/{repo}/pulls/{n}/comments \
 6. **CLI integration**: Add `--only` flag to `cmd/run.go`, wire up GitHub sync phase
 7. **Tests**: Unit tests with mock client for each component
 8. **Sync state**: Read/write `sync-state.json` with proper locking
-
