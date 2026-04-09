@@ -4,9 +4,12 @@ go 1.26.1
 
 require (
 	github.com/google/go-github/v72 v72.0.0
+	github.com/mistakenot/auto-shared v0.0.0
 	github.com/parquet-go/parquet-go v0.29.0
 	github.com/spf13/cobra v1.10.2
 )
+
+replace github.com/mistakenot/auto-shared => ../auto-shared
 
 require (
 	github.com/andybalholm/brotli v1.1.1 // indirect

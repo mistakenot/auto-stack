@@ -3,10 +3,13 @@ module github.com/mistakenot/auto-watch
 go 1.26.1
 
 require (
+	github.com/mistakenot/auto-shared v0.0.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/cobra v1.10.2
 	modernc.org/sqlite v1.39.1
 )
+
+replace github.com/mistakenot/auto-shared => ../auto-shared
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

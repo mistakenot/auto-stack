@@ -22,22 +22,25 @@ GOOS   ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 SUFFIX ?= $(GOOS)-$(GOARCH)
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS  := -s -w -X github.com/mistakenot/auto-shared/version.Version=$(VERSION)
+
 # --- Local build ---
 
 build: $(addprefix build-,$(subst auto-,,$(PROJECTS)))
 	@echo "All binaries built in ./$(BUILD_DIR)/"
 
 build-etl:
-	cd auto-etl && go build -o ../$(BUILD_DIR)/autoetl $(auto-etl_ENTRY)
+	cd auto-etl && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autoetl $(auto-etl_ENTRY)
 
 build-doc:
-	cd auto-doc && go build -o ../$(BUILD_DIR)/autodoc $(auto-doc_ENTRY)
+	cd auto-doc && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autodoc $(auto-doc_ENTRY)
 
 build-watch:
-	cd auto-watch && go build -o ../$(BUILD_DIR)/autowatch $(auto-watch_ENTRY)
+	cd auto-watch && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autowatch $(auto-watch_ENTRY)
 
 build-search:
-	cd auto-search && go build -o ../$(BUILD_DIR)/autosearch $(auto-search_ENTRY)
+	cd auto-search && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autosearch $(auto-search_ENTRY)
 
 # --- Release cross-compile (produces dist/<binary>-<suffix>) ---
 
@@ -47,22 +50,22 @@ dist: $(addprefix dist-,$(subst auto-,,$(PROJECTS)))
 dist-doc:
 	@mkdir -p $(DIST_DIR)
 	cd auto-doc && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags="-s -w" -o ../$(DIST_DIR)/autodoc-$(SUFFIX) $(auto-doc_ENTRY)
+		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autodoc-$(SUFFIX) $(auto-doc_ENTRY)
 
 dist-etl:
 	@mkdir -p $(DIST_DIR)
 	cd auto-etl && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags="-s -w" -o ../$(DIST_DIR)/autoetl-$(SUFFIX) $(auto-etl_ENTRY)
+		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autoetl-$(SUFFIX) $(auto-etl_ENTRY)
 
 dist-watch:
 	@mkdir -p $(DIST_DIR)
 	cd auto-watch && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags="-s -w" -o ../$(DIST_DIR)/autowatch-$(SUFFIX) $(auto-watch_ENTRY)
+		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autowatch-$(SUFFIX) $(auto-watch_ENTRY)
 
 dist-search:
 	@mkdir -p $(DIST_DIR)
 	cd auto-search && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags="-s -w" -o ../$(DIST_DIR)/autosearch-$(SUFFIX) $(auto-search_ENTRY)
+		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autosearch-$(SUFFIX) $(auto-search_ENTRY)
 
 # --- Quality ---
 
