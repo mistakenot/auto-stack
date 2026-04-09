@@ -33,6 +33,13 @@ var zenKoans = []string{
 	"Attachment to mutable state is the root of all suffering.",
 	"The backfill is the journey. The incremental is the destination.",
 	"What was your original query before you were born?",
+	"The goroutine that grasps at channels finds only deadlock.",
+	"Ten thousand rows flow through the pipeline. Not one knows it is being transformed.",
+	"The master debugger stares at the logs and sees nothing. Then sees everything.",
+	"To understand recursion, first understand recursion.",
+	"The data does not care about your schema. The schema does not care about your queries. Only the user suffers.",
+	"An unread metric is indistinguishable from a metric that does not exist.",
+	"The fastest query is the one you never run.",
 }
 
 func init() {
