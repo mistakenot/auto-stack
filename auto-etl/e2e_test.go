@@ -321,7 +321,7 @@ func TestE2E_EmptyInput(t *testing.T) {
 	outputDir := filepath.Join(t.TempDir(), "output")
 	os.MkdirAll(emptyDir, 0o755)
 
-	run := exec.Command(bin, "run", "--input", emptyDir, "--output", outputDir)
+	run := exec.Command(bin, "run", "--input", emptyDir, "--output", outputDir, "--only", "sessions")
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run failed: %v\n%s", err, out)

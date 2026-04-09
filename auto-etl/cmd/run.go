@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	ghclient "github.com/mistakenot/auto-etl/internal/github"
 	"github.com/mistakenot/auto-etl/internal/model"
 	"github.com/mistakenot/auto-etl/internal/parser"
 	"github.com/mistakenot/auto-etl/internal/progress"
@@ -20,7 +23,14 @@ var (
 	inputDir  string
 	outputDir string
 	fullRun   bool
+	onlyFlag  []string
 )
+
+// validOnlyValues is the set of valid --only values.
+var validOnlyValues = map[string]bool{
+	"sessions": true,
+	"github":   true,
+}
 
 func init() {
 	home, _ := os.UserHomeDir()
@@ -30,6 +40,7 @@ func init() {
 	runCmd.Flags().StringVar(&inputDir, "input", defaultInput, "Input directory containing raw session data")
 	runCmd.Flags().StringVar(&outputDir, "output", defaultOutput, "Output directory for transformed parquet files")
 	runCmd.Flags().BoolVar(&fullRun, "full", false, "Delete output directory before running (full rebuild)")
+	runCmd.Flags().StringSliceVar(&onlyFlag, "only", nil, "Run only specified ETL sources (sessions, github). Default: all.")
 
 	rootCmd.AddCommand(runCmd)
 }
@@ -38,6 +49,12 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run the ETL pipeline",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Parse and validate --only flag
+		sources, err := parseOnlyFlag(onlyFlag)
+		if err != nil {
+			return err
+		}
+
 		if fullRun {
 			fmt.Printf("full rebuild: removing %s\n", outputDir)
 			if err := os.RemoveAll(outputDir); err != nil {
@@ -48,40 +65,22 @@ var runCmd = &cobra.Command{
 		fmt.Printf("input:  %s\n", inputDir)
 		fmt.Printf("output: %s\n", outputDir)
 
-		parseBar := &progress.Bar{Label: "parsing"}
-		sessions, err := parser.ScanAndParse(inputDir, func(current, total int) {
-			parseBar.Total = total
-			parseBar.Update(current)
-		})
-		if err != nil {
-			return fmt.Errorf("parse: %w", err)
-		}
-		parseBar.Done()
-		fmt.Printf("parsed %d sessions\n", len(sessions))
-
-		// Build transform config
-		cfg := transform.DefaultConfig()
-		cfg.HostID = loadHostID()
-
-		// Set up git remote resolver with caching
 		remotes := loadRemotesCache()
-		cfg.GitRemoteForSession = func(workspace string) string {
-			return resolveGitRemote(workspace, remotes)
+		hostID := loadHostID()
+
+		// Session ETL phase
+		if sources["sessions"] {
+			if err := runSessionETL(hostID, remotes); err != nil {
+				return err
+			}
 		}
 
-		transformBar := &progress.Bar{Label: "transforming", Total: len(sessions)}
-		rows, err := transform.Transform(sessions, cfg, func(current, total int) {
-			transformBar.Update(current)
-		})
-		if err != nil {
-			return fmt.Errorf("transform: %w", err)
-		}
-		transformBar.Done()
-		fmt.Printf("transformed: %d messages, %d sessions\n",
-			len(rows.Messages), len(rows.Sessions))
-
-		if err := writer.Write(outputDir, rows); err != nil {
-			return fmt.Errorf("write: %w", err)
+		// GitHub PR sync phase
+		if sources["github"] {
+			explicitGitHub := len(onlyFlag) > 0 && !sources["sessions"]
+			if err := runGitHubSync(cmd.Context(), hostID, remotes, explicitGitHub); err != nil {
+				return err
+			}
 		}
 
 		// Persist updated remotes cache
@@ -90,6 +89,127 @@ var runCmd = &cobra.Command{
 		fmt.Println("done")
 		return nil
 	},
+}
+
+// parseOnlyFlag validates and normalizes the --only flag values.
+// Returns a set of sources to run. If no flag provided, all sources are enabled.
+func parseOnlyFlag(values []string) (map[string]bool, error) {
+	if len(values) == 0 {
+		// Default: run all
+		return map[string]bool{"sessions": true, "github": true}, nil
+	}
+
+	sources := make(map[string]bool)
+	for _, v := range values {
+		v = strings.ToLower(strings.TrimSpace(v))
+		if !validOnlyValues[v] {
+			valid := make([]string, 0, len(validOnlyValues))
+			for k := range validOnlyValues {
+				valid = append(valid, k)
+			}
+			return nil, fmt.Errorf("invalid --only value %q; valid values: %s", v, strings.Join(valid, ", "))
+		}
+		sources[v] = true
+	}
+	return sources, nil
+}
+
+func runSessionETL(hostID string, remotes map[string]string) error {
+	parseBar := &progress.Bar{Label: "parsing"}
+	sessions, err := parser.ScanAndParse(inputDir, func(current, total int) {
+		parseBar.Total = total
+		parseBar.Update(current)
+	})
+	if err != nil {
+		return fmt.Errorf("parse: %w", err)
+	}
+	parseBar.Done()
+	fmt.Printf("parsed %d sessions\n", len(sessions))
+
+	cfg := transform.DefaultConfig()
+	cfg.HostID = hostID
+	cfg.GitRemoteForSession = func(workspace string) string {
+		return resolveGitRemote(workspace, remotes)
+	}
+
+	transformBar := &progress.Bar{Label: "transforming", Total: len(sessions)}
+	rows, err := transform.Transform(sessions, cfg, func(current, total int) {
+		transformBar.Update(current)
+	})
+	if err != nil {
+		return fmt.Errorf("transform: %w", err)
+	}
+	transformBar.Done()
+	fmt.Printf("transformed: %d messages, %d sessions\n",
+		len(rows.Messages), len(rows.Sessions))
+
+	if err := writer.Write(outputDir, rows); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+
+	return nil
+}
+
+func runGitHubSync(ctx context.Context, hostID string, remotes map[string]string, explicitOnly bool) error {
+	// Resolve token
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		var err error
+		token, err = ghclient.ResolveToken()
+		if err != nil {
+			if explicitOnly {
+				return fmt.Errorf("GitHub auth failed: %w (set GITHUB_TOKEN or run 'gh auth login')", err)
+			}
+			fmt.Fprintf(os.Stderr, "warning: GitHub auth not available (%v), skipping GitHub sync\n", err)
+			return nil
+		}
+	}
+
+	// Discover repos from remotes cache
+	repos := ghclient.DiscoverRepos(remotes)
+	if len(repos) == 0 {
+		if explicitOnly {
+			return errors.New("no GitHub repos found in settings cache")
+		}
+		return nil
+	}
+
+	client := ghclient.NewRealClient(token)
+	fetchCfg := ghclient.FetchConfig{
+		HostID:        hostID,
+		SyncStatePath: ghclient.SyncStatePath(),
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	result, summary, err := ghclient.FetchAll(ctx, client, repos, fetchCfg)
+	if err != nil {
+		return fmt.Errorf("github sync: %w", err)
+	}
+
+	// Write parquet output
+	if err := writer.WriteGitHub(outputDir, result); err != nil {
+		return fmt.Errorf("write github: %w", err)
+	}
+
+	// Print summary
+	fmt.Fprintf(os.Stderr, "GitHub PR sync complete: %d repos, %d PRs synced", summary.ReposProcessed, summary.PRsSynced)
+	if len(summary.Warnings) > 0 {
+		fmt.Fprintf(os.Stderr, ", %d warnings:\n", len(summary.Warnings))
+		for _, w := range summary.Warnings {
+			if w.PR > 0 {
+				fmt.Fprintf(os.Stderr, "  - %s#%d: %s\n", w.Repo, w.PR, w.Message)
+			} else {
+				fmt.Fprintf(os.Stderr, "  - %s: %s\n", w.Repo, w.Message)
+			}
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "\n")
+	}
+
+	return nil
 }
 
 // --- host ID ---
