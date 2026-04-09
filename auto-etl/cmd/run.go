@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	ghclient "github.com/mistakenot/auto-etl/internal/github"
 	"github.com/mistakenot/auto-etl/internal/model"
@@ -49,6 +51,11 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run the ETL pipeline",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		var runStart time.Time
+		if debug {
+			runStart = time.Now()
+		}
+
 		// Parse and validate --only flag
 		sources, err := parseOnlyFlag(onlyFlag)
 		if err != nil {
@@ -86,6 +93,9 @@ var runCmd = &cobra.Command{
 		// Persist updated remotes cache
 		saveRemotesCache(remotes)
 
+		if debug {
+			fmt.Fprintf(os.Stderr, "[debug] total: %s\n", time.Since(runStart))
+		}
 		fmt.Println("done")
 		return nil
 	},
@@ -115,6 +125,12 @@ func parseOnlyFlag(values []string) (map[string]bool, error) {
 }
 
 func runSessionETL(hostID string, remotes map[string]string) error {
+	var phaseStart time.Time
+
+	// Parse phase
+	if debug {
+		phaseStart = time.Now()
+	}
 	parseBar := &progress.Bar{Label: "parsing"}
 	sessions, err := parser.ScanAndParse(inputDir, func(current, total int) {
 		parseBar.Total = total
@@ -125,13 +141,23 @@ func runSessionETL(hostID string, remotes map[string]string) error {
 	}
 	parseBar.Done()
 	fmt.Printf("parsed %d sessions\n", len(sessions))
+	if debug {
+		fmt.Fprintf(os.Stderr, "[debug] parse: %s\n", time.Since(phaseStart))
+	}
 
+	// Transform phase
+	var remotesMu sync.Mutex
 	cfg := transform.DefaultConfig()
 	cfg.HostID = hostID
 	cfg.GitRemoteForSession = func(workspace string) string {
+		remotesMu.Lock()
+		defer remotesMu.Unlock()
 		return resolveGitRemote(workspace, remotes)
 	}
 
+	if debug {
+		phaseStart = time.Now()
+	}
 	transformBar := &progress.Bar{Label: "transforming", Total: len(sessions)}
 	rows, err := transform.Transform(sessions, cfg, func(current, total int) {
 		transformBar.Update(current)
@@ -142,15 +168,27 @@ func runSessionETL(hostID string, remotes map[string]string) error {
 	transformBar.Done()
 	fmt.Printf("transformed: %d messages, %d sessions\n",
 		len(rows.Messages), len(rows.Sessions))
+	if debug {
+		fmt.Fprintf(os.Stderr, "[debug] transform: %s\n", time.Since(phaseStart))
+	}
 
+	// Write phase
+	if debug {
+		phaseStart = time.Now()
+	}
 	if err := writer.Write(outputDir, rows); err != nil {
 		return fmt.Errorf("write: %w", err)
+	}
+	if debug {
+		fmt.Fprintf(os.Stderr, "[debug] write: %s\n", time.Since(phaseStart))
 	}
 
 	return nil
 }
 
 func runGitHubSync(ctx context.Context, hostID string, remotes map[string]string, explicitOnly bool) error {
+	var phaseStart time.Time
+
 	// Resolve token
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
@@ -184,14 +222,26 @@ func runGitHubSync(ctx context.Context, hostID string, remotes map[string]string
 		ctx = context.Background()
 	}
 
+	if debug {
+		phaseStart = time.Now()
+	}
 	result, summary, err := ghclient.FetchAll(ctx, client, repos, fetchCfg)
 	if err != nil {
 		return fmt.Errorf("github sync: %w", err)
 	}
+	if debug {
+		fmt.Fprintf(os.Stderr, "[debug] github fetch: %s\n", time.Since(phaseStart))
+	}
 
 	// Write parquet output
+	if debug {
+		phaseStart = time.Now()
+	}
 	if err := writer.WriteGitHub(outputDir, result); err != nil {
 		return fmt.Errorf("write github: %w", err)
+	}
+	if debug {
+		fmt.Fprintf(os.Stderr, "[debug] github write: %s\n", time.Since(phaseStart))
 	}
 
 	// Print summary

@@ -7,9 +7,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var debug bool
+
 var rootCmd = &cobra.Command{
 	Use:   "autoetl",
 	Short: "Transform raw coding agent sessions into structured parquet files",
+}
+
+func init() {
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Print timing and diagnostic information to stderr")
 }
 
 func Execute() {

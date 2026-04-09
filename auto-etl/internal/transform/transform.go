@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mistakenot/auto-etl/internal/model"
@@ -31,35 +34,103 @@ func DefaultConfig() Config {
 // ProgressFunc is called during processing with (current, total) counts.
 type ProgressFunc func(current, total int)
 
-// Transform converts parsed sessions into structured rows for parquet output.
-// An optional progress callback is invoked after each session is transformed.
-func Transform(sessions []parser.ParsedSession, cfg Config, onProgress ...ProgressFunc) (*model.TransformedRows, error) {
-	result := &model.TransformedRows{}
+// sessionResult holds the output of transforming a single session.
+type sessionResult struct {
+	messages []model.AgentMessage
+	session  model.AgentSession
+}
 
+// Transform converts parsed sessions into structured rows for parquet output.
+// An optional progress callback is invoked as sessions are transformed.
+// Sessions are processed in parallel across available CPUs.
+func Transform(sessions []parser.ParsedSession, cfg Config, onProgress ...ProgressFunc) (*model.TransformedRows, error) {
 	var progress ProgressFunc
 	if len(onProgress) > 0 {
 		progress = onProgress[0]
 	}
 
 	total := len(sessions)
-	var skipped int
+	results := make([]sessionResult, total)
+
+	// Worker pool
+	workers := min(runtime.NumCPU(), total)
+
+	var completed atomic.Int64
+	work := make(chan int, total)
+	var wg sync.WaitGroup
+
+	for range workers {
+		wg.Go(func() {
+			for i := range work {
+				msgs, session := transformSession(&sessions[i], cfg)
+				results[i] = sessionResult{messages: msgs, session: session}
+				n := int(completed.Add(1))
+				if progress != nil {
+					progress(n, total)
+				}
+			}
+		})
+	}
+
 	for i := range sessions {
-		msgs, session := transformSession(&sessions[i], cfg)
-		if session.FirstMessageAt == 0 {
+		work <- i
+	}
+	close(work)
+	wg.Wait()
+
+	// Collect results in original order
+	result := &model.TransformedRows{}
+	var skipped int
+	for i := range results {
+		if results[i].session.FirstMessageAt == 0 {
 			skipped++
 		} else {
-			result.Messages = append(result.Messages, msgs...)
-			result.Sessions = append(result.Sessions, session)
-		}
-		if progress != nil {
-			progress(i+1, total)
+			result.Messages = append(result.Messages, results[i].messages...)
+			result.Sessions = append(result.Sessions, results[i].session)
 		}
 	}
 
-	log.Printf("transform: %d sessions (%d skipped, no timestamps) -> %d messages",
-		len(sessions), skipped, len(result.Messages))
+	log.Printf("transform: %d sessions (%d skipped, no timestamps) -> %d messages (workers=%d)",
+		len(sessions), skipped, len(result.Messages), workers)
 
 	return result, nil
+}
+
+// buildToolUseIndex pre-scans all lines to build a map from tool_use ID to its metadata.
+// This replaces the O(n) per-result scan with a single O(n) pass up front.
+func buildToolUseIndex(lines []parser.ParsedLine) map[string]toolUseMeta {
+	idx := make(map[string]toolUseMeta)
+	for i := range lines {
+		_, blocks := parser.ParseContentBlocks(lines[i].Message.Content)
+		for j := range blocks {
+			b := &blocks[j]
+			if b.Type != "tool_use" || b.ID == "" {
+				continue
+			}
+			m := toolUseMeta{Name: b.Name}
+			var inputMap map[string]any
+			if err := json.Unmarshal(b.Input, &inputMap); err == nil {
+				if fp, ok := inputMap["file_path"].(string); ok {
+					m.FilePath = fp
+				}
+				if b.Name == "Bash" {
+					if cmd, ok := inputMap["command"].(string); ok {
+						m.BashCommand = cmd
+					}
+				}
+				if b.Name == "Read" {
+					if offset, ok := inputMap["offset"].(float64); ok {
+						m.FileStartLine = int32(offset)
+					}
+					if limit, ok := inputMap["limit"].(float64); ok {
+						m.FileNumLines = int32(limit)
+					}
+				}
+			}
+			idx[b.ID] = m
+		}
+	}
+	return idx
 }
 
 func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessage, model.AgentSession) {
@@ -67,6 +138,9 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 
 	// Resolve git remote for this session's workspace
 	gitRemote := cfg.GitRemoteForSession(raw.Workspace)
+
+	// Build tool_use index once for O(1) lookups from tool_result blocks
+	toolUseIdx := buildToolUseIndex(raw.Lines)
 
 	var (
 		totalInput, totalOutput, totalTokens          int64
@@ -179,7 +253,7 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 
 			case "tool_result":
 				msg.Role = string(model.RoleTool)
-				meta := toolMetaForResult(block.ToolUseID, raw.Lines)
+				meta := toolUseIdx[block.ToolUseID]
 				msg.ToolName = meta.Name
 				msg.BashCommand = meta.BashCommand
 				msg.ToolFilePath = meta.FilePath
@@ -324,44 +398,6 @@ func unmarshalToolResultContent(raw json.RawMessage) string {
 	}
 
 	return ""
-}
-
-// toolMetaForResult finds the matching tool_use block for a tool_result and
-// extracts its name plus input metadata (bash command, file path, etc.).
-func toolMetaForResult(toolUseID string, lines []parser.ParsedLine) toolUseMeta {
-	if toolUseID == "" {
-		return toolUseMeta{}
-	}
-	for i := range lines {
-		_, blocks := parser.ParseContentBlocks(lines[i].Message.Content)
-		for j := range blocks {
-			b := &blocks[j]
-			if b.Type == "tool_use" && b.ID == toolUseID {
-				m := toolUseMeta{Name: b.Name}
-				var inputMap map[string]any
-				if err := json.Unmarshal(b.Input, &inputMap); err == nil {
-					if fp, ok := inputMap["file_path"].(string); ok {
-						m.FilePath = fp
-					}
-					if b.Name == "Bash" {
-						if cmd, ok := inputMap["command"].(string); ok {
-							m.BashCommand = cmd
-						}
-					}
-					if b.Name == "Read" {
-						if offset, ok := inputMap["offset"].(float64); ok {
-							m.FileStartLine = int32(offset)
-						}
-						if limit, ok := inputMap["limit"].(float64); ok {
-							m.FileNumLines = int32(limit)
-						}
-					}
-				}
-				return m
-			}
-		}
-	}
-	return toolUseMeta{}
 }
 
 // buildTranscripts concatenates message contents into session-level transcripts.
