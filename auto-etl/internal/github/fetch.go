@@ -42,6 +42,19 @@ func FetchAll(ctx context.Context, client Client, repos []RepoRef, cfg FetchConf
 	summary := &SyncSummary{}
 	result := &model.GitHubSyncResult{}
 
+	// Log discovered repos and existing sync state
+	fmt.Fprintf(os.Stderr, "discovered %d GitHub repos:\n", len(repos))
+	for _, repo := range repos {
+		rs := state.GetRepo(repo.OwnerRepo())
+		synced := rs.SyncedCount()
+		failed := len(rs.FailedPRNumbers())
+		if synced > 0 || failed > 0 {
+			fmt.Fprintf(os.Stderr, "  %s  (indexed: %d, failed: %d)\n", repo.OwnerRepo(), synced, failed)
+		} else {
+			fmt.Fprintf(os.Stderr, "  %s  (first sync)\n", repo.OwnerRepo())
+		}
+	}
+
 	for _, repo := range repos {
 		prs, comments, warnings, err := fetchRepo(ctx, client, repo, state, cfg)
 		if err != nil {
@@ -61,6 +74,9 @@ func FetchAll(ctx context.Context, client Client, repos []RepoRef, cfg FetchConf
 		summary.Warnings = append(summary.Warnings, warnings...)
 		summary.ReposProcessed++
 		summary.PRsSynced += len(prs)
+		if len(prs) > 0 {
+			fmt.Fprintf(os.Stderr, "  %s: pulled %d new PRs\n", repo.OwnerRepo(), len(prs))
+		}
 	}
 
 	// Phase 5: Persist sync state

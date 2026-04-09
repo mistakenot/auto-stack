@@ -570,9 +570,34 @@ WHERE m.tool_name = 'Write'
 
 This environment (`/home/vscode/src/auto-stack`) has `gh` CLI authenticated and can be used for ad-hoc API probing during development. The remote cache at `~/.auto/etl/settings.json` already has repos (e.g. `mistakenot/auto-stack`).
 
-**Note:** The cached repos currently have no merged PRs. To test against real data during development:
-- Create a test PR on `mistakenot/auto-stack`, merge it, then probe with `gh api`
-- Or add a public repo with merged PRs to the cache for testing
+### Stable test PR
+
+`mistakenot/auto-stack#1` — "Add hidden 'autoetl zen' easter egg command" — is a merged PR with known data covering all ETL code paths:
+
+| Data point | Value |
+|-----------|-------|
+| PR number | 1 |
+| Repo | `mistakenot/auto-stack` |
+| Author | `yR56Ie` |
+| State | merged |
+| Merged at | `2026-04-09T14:09:06Z` |
+| Merge commit SHA | `0436b724d3446622a5cbff6fdf4703c82a5f5a62` |
+| Commits | 6 |
+| Additions / Deletions | 1207 / 1 |
+| Changed files | 6 |
+| Labels | `easter-egg`, `test-data` |
+
+**Comment coverage:**
+
+| `comment_type` | Count | Details |
+|----------------|-------|---------|
+| `review` | 4 | COMMENTED (×2), CHANGES_REQUESTED (×1), APPROVED (×1) |
+| `review_comment` | 4 | Inline on `auto-etl/cmd/zen.go:19`, includes threaded reply (`in_reply_to_id` set) |
+| `issue_comment` | 1 | General conversation comment |
+
+**Reviewers:** `mistakenot` (repo owner), `yR56Ie` (collaborator)
+
+This covers: all three comment type discriminators, review state variants (COMMENTED, CHANGES_REQUESTED, APPROVED), comment threading via `in_reply_to_id`, labels, multiple reviewers, and multi-commit history. Use this PR for end-to-end validation: run the ETL, then verify parquet output against these known values with DuckDB.
 
 Useful ad-hoc probe commands:
 ```bash

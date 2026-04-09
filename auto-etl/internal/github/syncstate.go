@@ -122,6 +122,17 @@ func (r *RepoState) MarkFailed(prID string, failedEndpoints []string) {
 	}
 }
 
+// SyncedCount returns how many PRs have been successfully synced.
+func (r *RepoState) SyncedCount() int {
+	n := 0
+	for _, info := range r.PRs {
+		if info.Synced {
+			n++
+		}
+	}
+	return n
+}
+
 // FailedPRNumbers returns PR IDs that need retrying.
 func (r *RepoState) FailedPRNumbers() []string {
 	var result []string
