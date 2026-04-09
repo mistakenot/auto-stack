@@ -17,6 +17,22 @@ var zenKoans = []string{
 	"Normalize your data, but never your curiosity.",
 	"A session without context is just a list of tool calls.",
 	"The schema evolved. The data remained.",
+	"Before enlightenment: parse JSON, handle errors. After enlightenment: parse JSON, handle errors.",
+	"The empty partition contains all possibilities.",
+	"What is the sound of one row inserting?",
+	"To seek the bug, first become the bug.",
+	"The wise engineer does not fear the nil pointer — they expect it.",
+	"A thousand retries begin with a single timeout.",
+	"There is no diff between the master branch and the feature branch — only the illusion of separation.",
+	"When the rate limit strikes, the patient process drinks tea.",
+	"The schema that can be described is not the eternal schema.",
+	"In the beginner's mind there are many columns. In the expert's mind there are few.",
+	"Do not chase the merged PR. Sit quietly, and the webhook will come to you.",
+	"The token expires. The wisdom remains.",
+	"You cannot step into the same stream twice, but you can replay the same offset.",
+	"Attachment to mutable state is the root of all suffering.",
+	"The backfill is the journey. The incremental is the destination.",
+	"What was your original query before you were born?",
 }
 
 func init() {

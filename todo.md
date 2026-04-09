@@ -39,6 +39,19 @@
   - flag when combined skill descriptions consume too much context budget
   - identify redundant/overlapping skills that could be consolidated
 
+## auto-img
+
+- [ ] Agent-friendly tool for storing image artifacts long term
+  - uploads to S3, keeps images out of the repository
+  - optional S3 lifecycle rules (e.g. expire after N days, transition to glacier)
+  - auto-generated descriptions per image (from context or vision model)
+  - index file for progressive disclosure (like skill frontmatter — agents see summaries, fetch full images on demand)
+  - `init` command uses a CloudFormation template to create S3 bucket + IAM + lifecycle rules
+  - CLI: `autoimg upload <file>`, `autoimg list`, `autoimg show <id>`, `autoimg init`
+  - namespacing to separate different projects (e.g. S3 prefix per project)
+  - auto-generates downsized preview thumbnails so agents can browse before fetching full-size originals
+  - metadata includes token cost estimate and file size for budget-aware fetching
+
 ## autodoc
 
 - [ ] exclude .claude folder by default
