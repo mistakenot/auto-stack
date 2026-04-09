@@ -32,12 +32,14 @@ Today `autosearch` indexes coding sessions and messages. Adding PR data enables:
 |----------|--------|-----------|
 | Table strategy | First-class `pull_requests` + `pr_comments` tables | PR data has unique fields (diff hunks, review state, file paths) that don't fit session/message schema |
 | FTS targets | PR: `title`, `body`. Comment: `body`, `diff_hunk` | High-signal text fields. Full diff is too noisy for FTS — store for retrieval only |
-| Diff indexing | Per-file patches from `files_json`, not monolithic `diff` | File-level granularity, bounded size, matches how reviewers think about changes |
+| Diff indexing | `diff_hunk` on comments only; full `diff` and `files_json` stored for retrieval, not FTS-indexed | Comment diff hunks are reviewer-curated and high-signal; monolithic diff is too noisy; per-file patch indexing deferred |
 | Cross-scope search | `--scope all` unions results from all FTS tables | The killer feature: one query finds the PR, the review comment, and the session |
 | JSON field handling | Denormalize `labels_json` and `reviewers_json` at index time | Enables column-level filtering without JSON parsing at query time |
 | Score normalization | Per-table min-max normalization for `--scope all` | BM25 scores from different FTS tables aren't directly comparable |
 | Graceful degradation | PR tables are optional in the index | If `autoetl` hasn't run `--only github`, PR tables are empty — search still works for sessions/messages |
 | Backward compatibility | Schema version bump triggers full rebuild | Existing v1 indexes rebuild automatically when PR tables are added |
+
+**FK and orphan handling**: `pr_comments.pr_id` references `pull_requests(pr_id)` and `foreign_keys=ON` is enabled. The indexer must process `pull_requests` parquet files before `pr_comments` parquet files within each incremental run to avoid FK violations. If a `pr_comments` partition references a PR not yet in the index (e.g. comment partition arrives before PR partition due to partitioning by different time columns), the indexer should log a warning and skip the orphan comment rows — they will be picked up on the next run when the PR partition lands. This is consistent with "graceful degradation": missing PR data means missing comments, not a crash.
 
 ## 3. Input: Parquet Schema
 
@@ -69,7 +71,7 @@ pr_comments/year=YYYY/month=MM/pr_comments.parquet
 | `labels_json` | string | **Denormalize at index time** → `labels` text column for filter |
 | `checks_json` | string | Store as-is, query via retrieval only |
 | `diff` | string | **Store for retrieval only** — too large/noisy for FTS |
-| `files_json` | string | **Parse at index time** → index per-file patches in `pr_file_patches` FTS |
+| `files_json` | string | **Store for retrieval only** — per-file patch indexing deferred (see section 9) |
 | `additions`, `deletions`, `changed_files` | int32 | Metadata, stats |
 | `comment_count`, `commit_count` | int32 | Metadata, stats |
 | `created_at`, `updated_at`, `closed_at`, `merged_at` | int64 | Time filters (use `merged_at`) |
@@ -109,7 +111,7 @@ New tables added alongside existing `sessions`, `messages`, and their FTS counte
 
 ```sql
 -- Pull requests: one row per merged PR
-CREATE TABLE pull_requests (
+CREATE TABLE IF NOT EXISTS pull_requests (
   doc_id INTEGER PRIMARY KEY,
   partition_source_path TEXT NOT NULL,
   pr_id TEXT NOT NULL UNIQUE,          -- "owner/repo#number"
@@ -146,11 +148,11 @@ CREATE TABLE pull_requests (
 );
 
 -- PR comments: one row per comment (review, review_comment, issue_comment)
-CREATE TABLE pr_comments (
+CREATE TABLE IF NOT EXISTS pr_comments (
   doc_id INTEGER PRIMARY KEY,
   partition_source_path TEXT NOT NULL,
   comment_id TEXT NOT NULL UNIQUE,     -- "owner/repo#pr_number/c/github_id"
-  pr_id TEXT NOT NULL,                 -- FK to pull_requests.pr_id
+  pr_id TEXT NOT NULL REFERENCES pull_requests(pr_id),
   github_comment_id INTEGER NOT NULL,
   in_reply_to_id INTEGER NOT NULL,     -- 0 = top-level
   comment_type TEXT NOT NULL,          -- "review", "review_comment", "issue_comment"
@@ -179,21 +181,21 @@ CREATE TABLE pr_comments (
 );
 
 -- Indexes for column filters
-CREATE INDEX idx_pr_pr_id ON pull_requests(pr_id);
-CREATE INDEX idx_pr_owner_repo ON pull_requests(owner, repo);
-CREATE INDEX idx_pr_author_login ON pull_requests(author_login);
-CREATE INDEX idx_pr_git_remote ON pull_requests(git_remote);
-CREATE INDEX idx_pr_merged_at ON pull_requests(merged_at);
+CREATE INDEX IF NOT EXISTS idx_pr_pr_id ON pull_requests(pr_id);
+CREATE INDEX IF NOT EXISTS idx_pr_owner_repo ON pull_requests(owner, repo);
+CREATE INDEX IF NOT EXISTS idx_pr_author_login ON pull_requests(author_login);
+CREATE INDEX IF NOT EXISTS idx_pr_git_remote ON pull_requests(git_remote);
+CREATE INDEX IF NOT EXISTS idx_pr_merged_at ON pull_requests(merged_at);
 
-CREATE INDEX idx_prc_comment_id ON pr_comments(comment_id);
-CREATE INDEX idx_prc_pr_id ON pr_comments(pr_id);
-CREATE INDEX idx_prc_comment_type ON pr_comments(comment_type);
-CREATE INDEX idx_prc_review_state ON pr_comments(review_state);
-CREATE INDEX idx_prc_path ON pr_comments(path);
-CREATE INDEX idx_prc_author_login ON pr_comments(author_login);
-CREATE INDEX idx_prc_git_remote ON pr_comments(git_remote);
-CREATE INDEX idx_prc_created_at ON pr_comments(created_at);
-CREATE INDEX idx_prc_in_reply_to ON pr_comments(in_reply_to_id);
+CREATE INDEX IF NOT EXISTS idx_prc_comment_id ON pr_comments(comment_id);
+CREATE INDEX IF NOT EXISTS idx_prc_pr_id ON pr_comments(pr_id);
+CREATE INDEX IF NOT EXISTS idx_prc_comment_type ON pr_comments(comment_type);
+CREATE INDEX IF NOT EXISTS idx_prc_review_state ON pr_comments(review_state);
+CREATE INDEX IF NOT EXISTS idx_prc_path ON pr_comments(path);
+CREATE INDEX IF NOT EXISTS idx_prc_author_login ON pr_comments(author_login);
+CREATE INDEX IF NOT EXISTS idx_prc_git_remote ON pr_comments(git_remote);
+CREATE INDEX IF NOT EXISTS idx_prc_created_at ON pr_comments(created_at);
+CREATE INDEX IF NOT EXISTS idx_prc_in_reply_to ON pr_comments(in_reply_to_id);
 
 -- FTS5: PR title + body
 CREATE VIRTUAL TABLE pull_requests_fts USING fts5(
@@ -217,6 +219,8 @@ CREATE VIRTUAL TABLE pr_comments_fts USING fts5(
 );
 ```
 
+**Column naming**: The SQLite schema renames upstream parquet `id` to `pr_id` (pull requests) and `id` to `comment_id` (comments) to avoid ambiguity in joins and to be self-documenting. The upstream `comment_id` (int64) is stored as `github_comment_id` to distinguish it from the string composite ID. This divergence is intentional — the indexer maps between naming conventions in the parquet reader, same as it does for sessions (`id` → `session_id`) and messages (`id` → `message_id`).
+
 Auto-sync triggers (same pattern as existing `sessions_fts`/`messages_fts`):
 
 ```sql
@@ -239,6 +243,20 @@ CREATE TRIGGER pr_comments_ad AFTER DELETE ON pr_comments BEGIN
   INSERT INTO pr_comments_fts(pr_comments_fts, rowid, body, diff_hunk, path)
   VALUES ('delete', old.doc_id, old.body, old.diff_hunk, old.path);
 END;
+
+CREATE TRIGGER pull_requests_au AFTER UPDATE ON pull_requests BEGIN
+  INSERT INTO pull_requests_fts(pull_requests_fts, rowid, title, body, reviewers, labels)
+  VALUES ('delete', old.doc_id, old.title, old.body, old.reviewers, old.labels);
+  INSERT INTO pull_requests_fts(rowid, title, body, reviewers, labels)
+  VALUES (new.doc_id, new.title, new.body, new.reviewers, new.labels);
+END;
+
+CREATE TRIGGER pr_comments_au AFTER UPDATE ON pr_comments BEGIN
+  INSERT INTO pr_comments_fts(pr_comments_fts, rowid, body, diff_hunk, path)
+  VALUES ('delete', old.doc_id, old.body, old.diff_hunk, old.path);
+  INSERT INTO pr_comments_fts(rowid, body, diff_hunk, path)
+  VALUES (new.doc_id, new.body, new.diff_hunk, new.path);
+END;
 ```
 
 ## 5. Indexing
@@ -253,6 +271,8 @@ Extend `etlscan/discover.go` to walk two additional directories:
 ```
 
 Each discovered file gets the same `(dataset, partition_key, source_path, size, mtime)` treatment as messages/sessions.
+
+**Indexer dispatch**: The current `indexdb/indexer.go` switches on dataset name (`sessions`, `messages`) with no default branch. This must be extended to handle `pull_requests` and `pr_comments`, and add a default branch that returns an error for unknown datasets to prevent writing `index_state` rows with zero indexed records.
 
 ### 5.2 Parquet Read Model
 
@@ -270,9 +290,11 @@ Same approach as existing `ParquetSessionRow`/`ParquetMessageRow` — mirror the
 
 Before inserting into SQLite, transform these JSON fields:
 
-- `reviewers_json` → `reviewers`: space-separated login names (e.g. `"alice bob charlie"`). This makes reviewer names searchable via FTS and filterable via `LIKE`.
-- `labels_json` → `labels`: space-separated label names (e.g. `"bug security p0"`). Same rationale.
+- `reviewers_json` → `reviewers`: space-separated login names (e.g. `"alice bob charlie"`).
+- `labels_json` → `labels`: space-separated label names (e.g. `"bug security p0"`).
 - `files_json` → not denormalized into separate rows for v1. The `path` field on `pr_comments` already gives file-level search for code review comments. Full file-patch indexing is deferred.
+
+**Filter implementation for denormalized fields**: The `--label` and `--reviewer` filters do **not** use FTS `MATCH`. Instead, they use SQL `WHERE` clauses with word-boundary matching on the base table: `WHERE ' ' || labels || ' ' LIKE '% value %'`. This avoids touching the FTS query compiler (`compile_fts.go`) which only handles the user's free-text search expression. The pattern pads the space-separated string to ensure exact token matching (e.g. `"p0"` won't match `"xp0x"`). These filters compose with an optional FTS `MATCH` clause via `AND` in the final SQL.
 
 ### 5.4 Incremental Policy
 
@@ -299,6 +321,8 @@ Add two new search scopes alongside `messages` and `sessions`:
 | `pr` | `pull_requests_fts` | `merged_at` | Search PR titles and bodies |
 | `pr_comments` | `pr_comments_fts` | `created_at` | Search review comments and code feedback |
 
+The existing `--mode` flag (currently accepts but ignores values) should validate that only `bm25` is accepted for now. The new filter-only execution path (when no query is provided) sets `_meta.mode = "filter"` automatically — `--mode` is not applicable and should be rejected if explicitly passed without a query.
+
 ### 6.2 Scope-Specific Filters
 
 **`--scope pr`**
@@ -307,7 +331,7 @@ Add two new search scopes alongside `messages` and `sessions`:
 |------|--------|-------|
 | `--remote` | `git_remote` | Shared with session/message scopes |
 | `--author` | `author_login` | PR author |
-| `--label` | `labels` | Substring match on denormalized label string |
+| `--label` | `labels` | FTS token match on denormalized label field (exact token, not substring) |
 | `--since`, `--after`, `--before` | `merged_at` | Same date semantics as other scopes |
 
 **`--scope pr_comments`**
@@ -317,7 +341,7 @@ Add two new search scopes alongside `messages` and `sessions`:
 | `--remote` | `git_remote` | Shared |
 | `--review-state` | `review_state` | `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED` |
 | `--comment-type` | `comment_type` | `review`, `review_comment`, `issue_comment` |
-| `--path` | `path` | File path prefix match |
+| `--path` | `path` | Prefix match via `path LIKE 'value%'`. Supports directory prefixes (e.g. `internal/auth/`), not glob patterns |
 | `--author` | `author_login` | Comment author |
 | `--since`, `--after`, `--before` | `created_at` | Same date semantics |
 
@@ -327,7 +351,7 @@ Add two new search scopes alongside `messages` and `sessions`:
 
 **Query execution**: Run the compiled FTS query against each table independently, collect top 50 per table.
 
-**Score normalization**: BM25 scores from different FTS tables have different distributions. Normalize per-table using min-max scaling to [0, 1], then merge and sort.
+**Score normalization**: SQLite FTS5 `bm25()` returns negative values where lower (more negative) is better. For cross-scope merging, negate scores so higher is better, then apply per-table min-max scaling to [0, 1]. This matches the existing single-scope behavior (which sorts ascending on raw `bm25()`) while giving a uniform scale for merging. The `score` field in cross-scope results uses the normalized [0, 1] scale; single-scope results continue to use raw `bm25()` values for backward compatibility.
 
 **Result envelope**:
 
@@ -379,7 +403,11 @@ Add two new search scopes alongside `messages` and `sessions`:
 
 Each hit includes a `type` discriminator so consumers can handle the different shapes.
 
+**`--cwd` behavior**: PR data has no `workspace` column — PRs are identified by `git_remote`, not local path. For `--scope pr` and `--scope pr_comments`, `--cwd` is not supported and should produce a clear error suggesting `--remote` instead. For `--scope all`, `--cwd` applies only to the session/message sub-queries; PR sub-queries are unfiltered (or the caller should use `--remote` to filter everything uniformly). The existing `--cwd`/`--remote` mutual exclusivity rule continues to apply.
+
 **Deferred**: `--scope all` does not support scope-specific filters like `--review-state` or `--comment-type`. These only work with their matching scope. `--scope all` supports only the shared filters: `--remote`, `--since`, `--after`, `--before`.
+
+**Result types**: `--scope all` returns a new `UnifiedSearchResult` type with `_meta.scope = "all"` and a `hits` array of polymorphic objects discriminated by `type`. Existing `MessageSearchResult` and `SessionSearchResult` are unchanged — single-scope queries continue to return their current envelope shapes. New `PRSearchResult` and `PRCommentSearchResult` types are added for `--scope pr` and `--scope pr_comments` respectively. The `UnifiedSearchResult` embeds hits from all four types.
 
 ### 6.4 PR-Scope Hit Shape
 
@@ -424,6 +452,8 @@ Each hit includes a `type` discriminator so consumers can handle the different s
 ```
 
 ## 7. Helper Commands
+
+**Shell quoting**: PR IDs contain `#` which shells interpret as comment start. All CLI examples and documentation must use single quotes: `autosearch pr get 'mistakenot/auto-stack#42'`. The same applies to comment IDs. Consider also accepting numeric shorthand (`autosearch pr get 42 --repo mistakenot/auto-stack`) as an ergonomic alternative, but this is deferred — quoted full IDs are the v1 interface.
 
 ### 7.1 `autosearch pr get <pr_id>`
 
@@ -551,6 +581,17 @@ Lighter version of `comment get` — metadata only, body as preview.
 
 These are the primary query patterns a self-reflecting agent would use. Each maps to existing or proposed CLI surfaces.
 
+**Query argument change**: The current CLI requires exactly one positional query argument (`cobra.ExactArgs(1)`). This design requires relaxing that to `cobra.MaximumNArgs(1)`. When no query is provided but filters are present, search uses a **filter-only execution path** that bypasses the FTS pipeline entirely:
+
+- CLI validation: at least one filter flag is required when no query is given (otherwise error with usage hint)
+- No call to `query.Parse()` — the current parser errors on empty input and this is correct behavior; filter-only mode should not invoke it
+- SQL: query the base table directly with `WHERE` clauses from filters, ordered by the scope's time column descending, `LIMIT 50`
+- No snippet extraction (no query terms to match)
+- Hit shape: same as FTS results but with `score: 0` and empty `snippet`/offset fields
+- `_meta.mode`: `"filter"` (not `"bm25"`) to distinguish from ranked results
+
+This enables filter-only browsing patterns essential for reflection workflows.
+
 ### 8.1 Surface Recent Feedback
 
 "What review feedback did I get recently?"
@@ -580,10 +621,10 @@ One comment is anecdotal. Three comments about the same thing is a pattern worth
 
 ```bash
 # Get full comment with diff hunk and thread
-autosearch comment get mistakenot/auto-stack#42/c/12345
+autosearch comment get 'mistakenot/auto-stack#42/c/12345'
 
 # Get the full PR for broader context
-autosearch pr get mistakenot/auto-stack#42
+autosearch pr get 'mistakenot/auto-stack#42'
 
 # Find the session that produced this PR
 autosearch search "auto-stack#42" --scope messages
@@ -611,8 +652,11 @@ Skills should encode what works, not just what to avoid.
 "What feedback patterns exist for this area of the codebase?"
 
 ```bash
-autosearch search --scope pr_comments --path "internal/auth"
-autosearch search --scope pr_comments --path "*_test.go" --review-state CHANGES_REQUESTED
+# All feedback on auth code
+autosearch search --scope pr_comments --path "internal/auth/"
+
+# Search for test-related feedback by keyword instead of path pattern
+autosearch search "test" --scope pr_comments --review-state CHANGES_REQUESTED
 ```
 
 Different parts of the codebase have different conventions. File-scoped queries let the agent build area-specific rules.
@@ -623,7 +667,7 @@ Different parts of the codebase have different conventions. File-scoped queries 
 
 ```bash
 # Get a comment with its thread replies
-autosearch comment get mistakenot/auto-stack#42/c/12345
+autosearch comment get 'mistakenot/auto-stack#42/c/12345'
 # → includes threadReplies showing the discussion and resolution
 ```
 
@@ -674,8 +718,11 @@ These are explicitly out of scope for this iteration:
 7. Add scope-specific filters (`--review-state`, `--comment-type`, `--path`, `--author`, `--label`)
 8. Add `pr get`, `pr describe`, `comment get`, `comment describe` helper commands
 9. Add `--scope all` cross-scope search with score normalization
-10. Add test fixtures using `mistakenot/auto-stack#1` (the stable test PR from the ETL spec)
-11. Update `quickstart` and `docs` commands to cover PR search
+10. Extend `indexdb/state.go`: add `pull_requests` and `pr_comments` to `DeleteRowsBySource` and `RowCounts` dataset handling
+11. Register `pr` and `comment` subcommands in `cli/root.go`
+12. Update existing tests that hard-code dataset lists (`indexer_integration_test.go`, `indexdb_test.go`) to include the two new datasets
+13. Add test fixtures using `mistakenot/auto-stack#1` (the stable test PR from the ETL spec)
+14. Update `quickstart` output to cover PR search
 
 ## 11. Test Plan
 
@@ -687,7 +734,9 @@ Use `mistakenot/auto-stack#1` as the canonical test PR. The ETL spec documents i
 - 1 issue comment
 - Labels: `easter-egg`, `test-data`
 
-Generate parquet fixtures via `autoetl run --only github` against this PR, then commit a trimmed version to `auto-search/testdata/etl-output/pull_requests/` and `pr_comments/`.
+Add deterministic PR fixture generators in `internal/testutil` (matching the existing pattern for session/message fixtures) that produce `ParquetPullRequestRow` and `ParquetPRCommentRow` data based on the known `mistakenot/auto-stack#1` shape. Write generated parquet to `auto-search/testdata/etl-output/pull_requests/` and `pr_comments/`. This avoids depending on ad-hoc external ETL runs for CI stability.
+
+Extend `internal/testutil/fixtures.go` to expose `PullRequestsPath()` and `PRCommentsPath()` helpers alongside the existing `SessionsPath()` and `MessagesPath()`, so all integration tests locate fixtures through one consistent API.
 
 ### Unit Tests
 

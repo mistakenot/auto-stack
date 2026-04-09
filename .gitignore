@@ -17,3 +17,5 @@ credentials.json
 *.key
 *.p12
 *.pfx
+
+.claude/worktrees
