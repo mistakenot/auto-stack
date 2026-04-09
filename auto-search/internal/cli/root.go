@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/mistakenot/auto-shared/version"
 	"github.com/mistakenot/auto-search/internal/app"
 	"github.com/spf13/cobra"
 )
@@ -46,6 +47,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
+	rootCmd.Version = version.Version
 	rootCmd.SetOut(application.Stdout)
 	rootCmd.SetErr(application.Stderr)
 

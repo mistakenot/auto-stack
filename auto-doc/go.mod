@@ -2,7 +2,14 @@ module github.com/datadyne-io/autodoc
 
 go 1.26.1
 
-require github.com/spf13/cobra v1.10.2
+require (
+	github.com/blugelabs/bluge v0.2.2
+	github.com/mistakenot/auto-shared v0.0.0
+	github.com/spf13/cobra v1.10.2
+	github.com/yuin/goldmark v1.7.16
+)
+
+replace github.com/mistakenot/auto-shared => ../auto-shared
 
 require (
 	github.com/RoaringBitmap/roaring v0.9.4 // indirect
@@ -13,7 +20,6 @@ require (
 	github.com/blevesearch/segment v0.9.0 // indirect
 	github.com/blevesearch/snowballstem v0.9.0 // indirect
 	github.com/blevesearch/vellum v1.0.7 // indirect
-	github.com/blugelabs/bluge v0.2.2 // indirect
 	github.com/blugelabs/bluge_segment_api v0.2.0 // indirect
 	github.com/blugelabs/ice v1.0.0 // indirect
 	github.com/blugelabs/ice/v2 v2.0.1 // indirect
@@ -24,7 +30,6 @@ require (
 	github.com/klauspost/compress v1.15.2 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
-	github.com/yuin/goldmark v1.7.16 // indirect
 	golang.org/x/sys v0.0.0-20220520151302-bc2c85ada10a // indirect
 	golang.org/x/text v0.3.0 // indirect
 )

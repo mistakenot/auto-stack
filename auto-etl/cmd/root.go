@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/mistakenot/auto-shared/version"
 	"github.com/spf13/cobra"
 )
 
@@ -15,6 +16,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.Version = version.Version
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Print timing and diagnostic information to stderr")
 }
 

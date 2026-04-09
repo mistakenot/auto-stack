@@ -2,7 +2,14 @@ module github.com/mistakenot/auto-search
 
 go 1.26.1
 
-require github.com/spf13/cobra v1.10.2
+require (
+	github.com/mistakenot/auto-shared v0.0.0
+	github.com/parquet-go/parquet-go v0.29.0
+	github.com/spf13/cobra v1.10.2
+	modernc.org/sqlite v1.47.0
+)
+
+replace github.com/mistakenot/auto-shared => ../auto-shared
 
 require (
 	github.com/andybalholm/brotli v1.1.1 // indirect
@@ -14,7 +21,6 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/parquet-go/bitpack v1.0.0 // indirect
 	github.com/parquet-go/jsonlite v1.0.0 // indirect
-	github.com/parquet-go/parquet-go v0.29.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
@@ -24,5 +30,4 @@ require (
 	modernc.org/libc v1.70.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.47.0 // indirect
 )

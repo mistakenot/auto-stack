@@ -9,6 +9,7 @@ import (
 	"github.com/datadyne-io/autodoc/internal/config"
 	"github.com/datadyne-io/autodoc/internal/doctree"
 	"github.com/datadyne-io/autodoc/internal/frontmatter"
+	"github.com/mistakenot/auto-shared/version"
 	"github.com/spf13/cobra"
 )
 
@@ -21,6 +22,7 @@ func main() {
 		Long:  "autodoc helps AI coding agents find, navigate and manage documentation in a repository.",
 	}
 
+	rootCmd.Version = version.Version
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 
 	rootCmd.AddCommand(

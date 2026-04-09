@@ -7,6 +7,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/mistakenot/auto-shared/version"
 	"github.com/mistakenot/auto-watch/internal/app"
 	"github.com/mistakenot/auto-watch/internal/config"
 	"github.com/mistakenot/auto-watch/internal/gitx"
@@ -52,6 +53,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
+	rootCmd.Version = version.Version
 	rootCmd.SetOut(application.Stdout)
 	rootCmd.SetErr(application.Stderr)
 
