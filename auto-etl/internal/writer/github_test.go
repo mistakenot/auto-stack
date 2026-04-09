@@ -119,7 +119,7 @@ func TestWriteGitHub_Roundtrip(t *testing.T) {
 	}
 
 	// Read back comments
-	commentPath := filepath.Join(dir, "pr_comments", "year=2026", "month=04", "pr_comments.parquet")
+	commentPath := filepath.Join(dir, "pull_request_comments", "year=2026", "month=04", "pull_request_comments.parquet")
 	comments, err := readExistingParquet[model.PRComment](commentPath)
 	if err != nil {
 		t.Fatal(err)

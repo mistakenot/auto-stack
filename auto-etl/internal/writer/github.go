@@ -20,7 +20,7 @@ import (
 //
 // Partition scheme:
 //   - pull_requests: year=YYYY/month=MM/pull_requests.parquet
-//   - pr_comments:   year=YYYY/month=MM/pr_comments.parquet
+//   - pull_request_comments:   year=YYYY/month=MM/pull_request_comments.parquet
 func WriteGitHub(outputDir string, result *model.GitHubSyncResult) error {
 	if len(result.PullRequests) == 0 && len(result.Comments) == 0 {
 		return nil
@@ -44,11 +44,11 @@ func WriteGitHub(outputDir string, result *model.GitHubSyncResult) error {
 		log.Printf("wrote %s (%d rows)", path, len(merged))
 	}
 
-	// Write pr_comments (monthly partitions, read-merge-write)
+	// Write pull_request_comments (monthly partitions, read-merge-write)
 	commentPartitions := groupCommentsByMonth(result.Comments)
 	for key, comments := range commentPartitions {
-		dir := filepath.Join(outputDir, "pr_comments", fmt.Sprintf("year=%d", key.Year), fmt.Sprintf("month=%02d", key.Month))
-		path := filepath.Join(dir, "pr_comments.parquet")
+		dir := filepath.Join(outputDir, "pull_request_comments", fmt.Sprintf("year=%d", key.Year), fmt.Sprintf("month=%02d", key.Month))
+		path := filepath.Join(dir, "pull_request_comments.parquet")
 
 		existing, err := readExistingParquet[model.PRComment](path)
 		if err != nil {
@@ -58,7 +58,7 @@ func WriteGitHub(outputDir string, result *model.GitHubSyncResult) error {
 		// For retried PRs, delete all old comments for that PR then insert new ones
 		merged := mergeComments(existing, comments)
 		if err := writeParquet(path, merged); err != nil {
-			return fmt.Errorf("write pr_comments year=%d/month=%02d: %w", key.Year, key.Month, err)
+			return fmt.Errorf("write pull_request_comments year=%d/month=%02d: %w", key.Year, key.Month, err)
 		}
 		log.Printf("wrote %s (%d rows)", path, len(merged))
 	}
