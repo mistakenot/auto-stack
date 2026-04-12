@@ -1,11 +1,11 @@
-.PHONY: build build-etl build-doc build-watch build-search clean test vet fmt lint \
+.PHONY: build build-etl build-doc build-watch build-search build-skill clean test vet fmt lint \
        install install-hooks gen-stats check dist test-install
 
 BUILD_DIR := bin
 DIST_DIR  := dist
 INSTALL_DIR ?= $(HOME)/.local/bin
 
-PROJECTS := auto-doc auto-etl auto-watch auto-search
+PROJECTS := auto-doc auto-etl auto-watch auto-search auto-skill
 
 # Binary name and entry point per project
 auto-doc_BIN   := autodoc
@@ -16,6 +16,8 @@ auto-watch_BIN   := autowatch
 auto-watch_ENTRY := ./cmd/autowatch
 auto-search_BIN   := autosearch
 auto-search_ENTRY := ./cmd/autosearch
+auto-skill_BIN   := autoskill
+auto-skill_ENTRY := ./cmd/autoskill
 
 # Platform defaults (overridable for cross-compilation)
 GOOS   ?= $(shell go env GOOS)
@@ -42,6 +44,9 @@ build-watch:
 build-search:
 	cd auto-search && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autosearch $(auto-search_ENTRY)
 
+build-skill:
+	cd auto-skill && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autoskill $(auto-skill_ENTRY)
+
 # --- Release cross-compile (produces dist/<binary>-<suffix>) ---
 
 dist: $(addprefix dist-,$(subst auto-,,$(PROJECTS)))
@@ -66,6 +71,11 @@ dist-search:
 	@mkdir -p $(DIST_DIR)
 	cd auto-search && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autosearch-$(SUFFIX) $(auto-search_ENTRY)
+
+dist-skill:
+	@mkdir -p $(DIST_DIR)
+	cd auto-skill && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autoskill-$(SUFFIX) $(auto-skill_ENTRY)
 
 # --- Quality ---
 
@@ -120,8 +130,19 @@ install: build
 	@mkdir -p $(INSTALL_DIR)
 	cp $(BUILD_DIR)/autodoc $(INSTALL_DIR)/
 	cp $(BUILD_DIR)/autoetl $(INSTALL_DIR)/
-	cp $(BUILD_DIR)/autowatch $(INSTALL_DIR)/
+	@err=$$(mktemp); \
+	if ! cp $(BUILD_DIR)/autowatch $(INSTALL_DIR)/ 2>$$err; then \
+		if grep -qi "text file busy" $$err; then \
+			echo "autowatch install skipped: destination binary is busy (text file busy)"; \
+		else \
+			cat $$err >&2; \
+			rm -f $$err; \
+			exit 1; \
+		fi; \
+	fi; \
+	rm -f $$err
 	cp $(BUILD_DIR)/autosearch $(INSTALL_DIR)/
+	cp $(BUILD_DIR)/autoskill $(INSTALL_DIR)/
 	@echo "Installed to $(INSTALL_DIR)/"
 
 test-install:
