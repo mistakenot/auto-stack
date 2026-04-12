@@ -138,3 +138,79 @@ Mirrors how coding agents present skills to the model — a flat list of name + 
 - Flag skills whose referenced docs have changed since the skill was last updated.
 - Surface in `autoskill lint` output via the `broken_autodoc_link` and `stale_autodoc_link` checks.
 - Workflow: doc changes → `autodoc fix` flags stale hashes → author updates the skill → `autoskill lint` confirms consistency.
+
+## Test Strategy
+
+### Approach
+
+Each test gets a fresh directory under `.tmp/`. The CLI accepts a `--root <path>` flag that overrides where autoskill looks for `./skills/` and `.auto/`. Tests seed the `skills/` folder with fixture data, run autoskill with `--root .tmp/test-<name>/`, and assert on stdout/stderr/exit code. Cleanup is `os.RemoveAll`.
+
+No external dependencies — no network, no `~/.auto/`, no real repos.
+
+### init fixtures
+
+| Test | Seed | Expected |
+|------|------|----------|
+| `init-empty` | Empty dir | `skills/` and `.auto/skill/settings.json` created |
+| `init-idempotent` | Dir with existing config | Nothing overwritten, reports already exists |
+
+### create fixtures
+
+| Test | Seed | Expected |
+|------|------|----------|
+| `create-happy` | Empty `skills/` | `skills/<name>/SKILL.md` created from template |
+| `create-conflict` | Existing `skills/my-skill/` | Error, refuses to overwrite |
+| `create-bad-name` | Empty `skills/` | Rejected for `"My Skill"` |
+| `create-long-name` | Empty `skills/` | Rejected for name >64 chars |
+| `create-with-dirs` | Empty `skills/` | `references/`, `scripts/`, `assets/` created |
+
+### lint — frontmatter fixtures
+
+| Test | Seed SKILL.md | Expected |
+|------|---------------|----------|
+| `lint-valid` | Correct name, description with "Use when...", body with workflow | Clean, exit 0 |
+| `lint-missing-name` | No `name` field | error `missing_name` |
+| `lint-bad-name` | `name: "My Skill"` | error `invalid_name` |
+| `lint-name-mismatch` | Dir is `foo/`, name field is `bar` | error `name_dir_mismatch` |
+| `lint-no-description` | Missing `description` | error `missing_description` |
+| `lint-no-trigger` | `description: "Helps with deployment"` | warning `missing_trigger_phrase` |
+| `lint-no-frontmatter` | Body only, no `---` block | error `invalid_frontmatter` |
+
+### lint — body fixtures
+
+| Test | Seed SKILL.md | Expected |
+|------|---------------|----------|
+| `lint-empty-body` | Frontmatter only, no body | error `empty_body` |
+| `lint-prose-opening` | Body starts with "This skill is designed to..." | warning `weak_opening` |
+| `lint-large-body` | >16k chars body (~4000+ tokens) | warning `body_too_large` |
+| `lint-huge-body` | >32k chars body (~8000+ tokens) | error `body_too_large` |
+
+### lint — link fixtures
+
+| Test | Seed | Expected |
+|------|------|----------|
+| `lint-broken-link` | Body contains `[see docs](../docs/nonexistent.md)` | error `broken_local_link` |
+| `lint-broken-side-file` | Body references `scripts/run.sh` that doesn't exist | error `broken_side_file` |
+| `lint-valid-links` | All referenced files present | Clean |
+
+### lint — token budget fixtures (aggregate)
+
+| Test | Seed | Expected |
+|------|------|----------|
+| `lint-listing-warning` | 20+ skills with long descriptions (~2000+ tokens aggregate) | warning `listing_too_large` |
+| `lint-listing-error` | 40+ skills with long descriptions (~4000+ tokens aggregate) | error `listing_too_large` |
+
+### lint — structure fixtures
+
+| Test | Seed | Expected |
+|------|------|----------|
+| `lint-standalone-file` | `skills/standalone.md` (file, not directory) | error `not_a_directory` |
+| `lint-has-secret` | Body contains `AKIAIOSFODNN7EXAMPLE` | error `secret_detected` |
+
+### ls fixtures
+
+| Test | Seed | Expected |
+|------|------|----------|
+| `ls-mixed` | 3 valid skills + 1 with broken frontmatter | Valid skills listed on stdout, error on stderr, exit non-zero |
+| `ls-empty` | Empty `skills/` | No output, exit 0 |
+| `ls-json` | 2 valid skills | JSON array with `name`, `description`, `path` fields |
