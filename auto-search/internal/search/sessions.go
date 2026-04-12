@@ -35,6 +35,7 @@ type SessionSearchOpts struct {
 	Before    string
 	CWD       string
 	Remote    string
+	Skill     string
 	RequestID string
 	Now       time.Time
 }
@@ -66,9 +67,9 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	}
 
 	fts := query.CompileFTS(ast)
-	filters := normalizeFilters(opts.CWD, opts.Remote, timeFilter.Canonical)
+	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, timeFilter.Canonical)
 
-	hits, err := execSessionSearch(opts.DB, fts, opts.CWD, opts.Remote, timeFilter, opts.Query, filters)
+	hits, err := execSessionSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, timeFilter, opts.Query, filters)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +88,7 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	}, nil
 }
 
-func execSessionSearch(db *sql.DB, fts, cwd, remote string, timeFilter TimeFilter, rawQuery, filters string) ([]SessionHit, error) {
+func execSessionSearch(db *sql.DB, fts, cwd, remote, skill string, timeFilter TimeFilter, rawQuery, filters string) ([]SessionHit, error) {
 	q := `
 		SELECT s.session_id, s.workspace, s.first_message_at, s.last_message_at,
 		       bm25(sessions_fts) AS score
@@ -104,6 +105,10 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote string, timeFilter TimeFilte
 	if remote != "" {
 		q += " AND s.git_remote = ?"
 		args = append(args, remote)
+	}
+	if skill != "" {
+		q += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE skill_name = ?)"
+		args = append(args, skill)
 	}
 	if timeFilter.StartMs != nil {
 		q += " AND s.first_message_at >= ?"

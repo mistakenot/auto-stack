@@ -116,6 +116,7 @@ func newMessageDescribeCmd() *cobra.Command {
 					"toolName":              msg.ToolName,
 					"toolFilePath":          msg.ToolFilePath,
 					"bashCommand":           msg.BashCommand,
+					"skillName":             msg.SkillName,
 					"preview":               preview,
 					"previousMessageId":     prev,
 					"nextMessageId":         next,

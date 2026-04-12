@@ -57,6 +57,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newSearchCmd(),
 		newSessionCmd(),
 		newMessageCmd(),
+		newSkillsCmd(),
 		newQuickstartCmd(),
 		newAgentsCmd(),
 	)

@@ -122,6 +122,8 @@ func newSessionDescribeCmd() *cobra.Command {
 					"bashMessages":      counts.Bash,
 					"readFileMessages":  counts.ReadFile,
 					"writeFileMessages": counts.WriteFile,
+					"skillMessages":     counts.Skill,
+					"skillsUsed":        counts.SkillsUsed,
 					"transcriptSummary": summary,
 				},
 			}
@@ -175,6 +177,10 @@ func roleTag(m *indexdb.MessageRow) (string, string) {
 		case "Read", "Write", "Edit", "Glob":
 			if m.ToolFilePath != "" {
 				attrs += fmt.Sprintf(" path=%q", truncateStr(m.ToolFilePath, maxToolArgPreview))
+			}
+		case "Skill":
+			if m.SkillName != "" {
+				attrs += fmt.Sprintf(" skill=%q", m.SkillName)
 			}
 		}
 	}

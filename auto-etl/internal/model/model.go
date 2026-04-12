@@ -40,6 +40,7 @@ type AgentMessage struct {
 	ToolFileNumLines   int32  `parquet:"tool_file_num_lines"`
 	ToolFileTotalLines int32  `parquet:"tool_file_total_lines"`
 	BashCommand        string `parquet:"bash_command"`
+	SkillName          string `parquet:"skill_name,dict"`
 
 	InputTokens      int32 `parquet:"input_tokens"`
 	CacheInputTokens int32 `parquet:"cache_input_tokens"`

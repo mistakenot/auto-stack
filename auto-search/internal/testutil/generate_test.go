@@ -118,8 +118,8 @@ func TestFixturesReadable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadMessages: %v", err)
 		}
-		if len(messages) != 10 {
-			t.Fatalf("expected 10 messages, got %d", len(messages))
+		if len(messages) != 12 {
+			t.Fatalf("expected 12 messages, got %d", len(messages))
 		}
 
 		// Check roles are present
@@ -159,6 +159,22 @@ func TestFixturesReadable(t *testing.T) {
 		if len(m3.ContentTruncated) >= len(m3.Content) {
 			t.Errorf("msg 2 ContentTruncated (%d) should be shorter than Content (%d)",
 				len(m3.ContentTruncated), len(m3.Content))
+		}
+
+		// Check Skill tool messages
+		m11 := messages[10]
+		if m11.ToolName != "Skill" {
+			t.Errorf("msg 10 ToolName = %q, want Skill", m11.ToolName)
+		}
+		if m11.SkillName != "contextual-commit" {
+			t.Errorf("msg 10 SkillName = %q, want contextual-commit", m11.SkillName)
+		}
+		m12 := messages[11]
+		if m12.ToolName != "Skill" {
+			t.Errorf("msg 11 ToolName = %q, want Skill", m12.ToolName)
+		}
+		if m12.SkillName != "contextual-commit" {
+			t.Errorf("msg 11 SkillName = %q, want contextual-commit", m12.SkillName)
 		}
 
 		// Check searchable content exists

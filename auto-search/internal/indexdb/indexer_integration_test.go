@@ -39,8 +39,8 @@ func TestFullBuildFromFixtures(t *testing.T) {
 	if result.SessionsIndexed != 3 {
 		t.Errorf("sessions = %d, want 3", result.SessionsIndexed)
 	}
-	if result.MessagesIndexed != 10 {
-		t.Errorf("messages = %d, want 10", result.MessagesIndexed)
+	if result.MessagesIndexed != 12 {
+		t.Errorf("messages = %d, want 12", result.MessagesIndexed)
 	}
 	if result.FilesProcessed != 2 {
 		t.Errorf("files = %d, want 2", result.FilesProcessed)
@@ -60,8 +60,8 @@ func TestFullBuildFromFixtures(t *testing.T) {
 	if sessions != 3 {
 		t.Errorf("session rows = %d, want 3", sessions)
 	}
-	if messages != 10 {
-		t.Errorf("message rows = %d, want 10", messages)
+	if messages != 12 {
+		t.Errorf("message rows = %d, want 12", messages)
 	}
 	if indexState != 2 {
 		t.Errorf("index_state rows = %d, want 2", indexState)
@@ -107,8 +107,8 @@ func TestIncrementalUpdateIdempotent(t *testing.T) {
 	if sessions != 3 {
 		t.Errorf("session rows after 2nd run = %d, want 3", sessions)
 	}
-	if messages != 10 {
-		t.Errorf("message rows after 2nd run = %d, want 10", messages)
+	if messages != 12 {
+		t.Errorf("message rows after 2nd run = %d, want 12", messages)
 	}
 }
 
@@ -252,8 +252,8 @@ func TestSessionMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SessionMessages: %v", err)
 	}
-	if len(msgs) != 6 {
-		t.Fatalf("expected 6 messages for test-session-1, got %d", len(msgs))
+	if len(msgs) != 8 {
+		t.Fatalf("expected 8 messages for test-session-1, got %d", len(msgs))
 	}
 	// Verify ordering.
 	for i := 1; i < len(msgs); i++ {
@@ -284,11 +284,17 @@ func TestCountSessionMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CountSessionMessages: %v", err)
 	}
-	if counts.Total != 6 {
-		t.Errorf("total = %d, want 6", counts.Total)
+	if counts.Total != 8 {
+		t.Errorf("total = %d, want 8", counts.Total)
 	}
 	if counts.Tool == 0 {
 		t.Error("expected tool message count > 0")
+	}
+	if counts.Skill != 2 {
+		t.Errorf("skill = %d, want 2", counts.Skill)
+	}
+	if len(counts.SkillsUsed) != 1 || counts.SkillsUsed[0] != "contextual-commit" {
+		t.Errorf("SkillsUsed = %v, want [contextual-commit]", counts.SkillsUsed)
 	}
 }
 

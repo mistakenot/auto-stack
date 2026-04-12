@@ -71,7 +71,7 @@ func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
 			message_index, role, content, content_truncated, timestamp,
 			tool_name, tool_input, tool_file_path,
 			tool_file_start_line, tool_file_num_lines, tool_file_total_lines,
-			bash_command, input_tokens, cache_input_tokens, output_tokens,
+			bash_command, skill_name, input_tokens, cache_input_tokens, output_tokens,
 			workspace, git_remote, git_branch, model,
 			parent_session_id, is_subagent, source_line_index, schema_version
 		FROM messages
@@ -92,7 +92,7 @@ func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
 			&m.MessageIndex, &m.Role, &m.Content, &m.ContentTruncated, &m.Timestamp,
 			&m.ToolName, &m.ToolInput, &m.ToolFilePath,
 			&m.ToolFileStartLine, &m.ToolFileNumLines, &m.ToolFileTotalLines,
-			&m.BashCommand, &m.InputTokens, &m.CacheInputTokens, &m.OutputTokens,
+			&m.BashCommand, &m.SkillName, &m.InputTokens, &m.CacheInputTokens, &m.OutputTokens,
 			&m.Workspace, &m.GitRemote, &m.GitBranch, &m.Model,
 			&m.ParentSessionID, &isSubagentInt, &m.SourceLineIndex, &m.SchemaVersion,
 		); err != nil {
@@ -106,11 +106,13 @@ func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
 
 // SessionMessageCounts returns counts of messages by category for a session.
 type SessionMessageCounts struct {
-	Total     int
-	Tool      int
-	Bash      int
-	ReadFile  int
-	WriteFile int
+	Total      int
+	Tool       int
+	Bash       int
+	ReadFile   int
+	WriteFile  int
+	Skill      int
+	SkillsUsed []string
 }
 
 // CountSessionMessages returns categorized message counts for a session.
@@ -135,6 +137,25 @@ func CountSessionMessages(db *sql.DB, sessionID string) (SessionMessageCounts, e
 	err = db.QueryRow("SELECT COUNT(*) FROM messages WHERE session_id = ? AND (tool_name = 'Write' OR tool_name = 'Edit')", sessionID).Scan(&c.WriteFile)
 	if err != nil {
 		return c, fmt.Errorf("count write messages: %w", err)
+	}
+	err = db.QueryRow("SELECT COUNT(*) FROM messages WHERE session_id = ? AND skill_name != ''", sessionID).Scan(&c.Skill)
+	if err != nil {
+		return c, fmt.Errorf("count skill messages: %w", err)
+	}
+	rows, err := db.Query("SELECT DISTINCT skill_name FROM messages WHERE session_id = ? AND skill_name != '' ORDER BY skill_name", sessionID)
+	if err != nil {
+		return c, fmt.Errorf("query skills used: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return c, fmt.Errorf("scan skill name: %w", err)
+		}
+		c.SkillsUsed = append(c.SkillsUsed, name)
+	}
+	if err := rows.Err(); err != nil {
+		return c, fmt.Errorf("iterate skills: %w", err)
 	}
 	return c, nil
 }

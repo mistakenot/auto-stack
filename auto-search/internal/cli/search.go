@@ -20,6 +20,7 @@ func newSearchCmd() *cobra.Command {
 	var before string
 	var cwd string
 	var remote string
+	var skill string
 	var requestID string
 	var highlight bool
 
@@ -56,6 +57,7 @@ func newSearchCmd() *cobra.Command {
 					Before:    before,
 					CWD:       cwd,
 					Remote:    remote,
+					Skill:     skill,
 					RequestID: requestID,
 					Highlight: highlight,
 				})
@@ -73,6 +75,7 @@ func newSearchCmd() *cobra.Command {
 					Before:    before,
 					CWD:       cwd,
 					Remote:    remote,
+					Skill:     skill,
 					RequestID: requestID,
 				})
 				if err != nil {
@@ -93,6 +96,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&before, "before", "", "exclusive upper date bound")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "workspace path filter")
 	cmd.Flags().StringVar(&remote, "remote", "", "git remote filter")
+	cmd.Flags().StringVar(&skill, "skill", "", "filter by skill name")
 	cmd.Flags().BoolVar(&highlight, "highlight", false, "highlight matched terms in snippets")
 	cmd.Flags().StringVar(&requestID, "request-id", "", "request identifier to echo in responses")
 	return cmd

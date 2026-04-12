@@ -50,6 +50,7 @@ type MessageSearchOpts struct {
 	Before    string
 	CWD       string
 	Remote    string
+	Skill     string
 	RequestID string
 	Highlight bool
 	Now       time.Time
@@ -81,9 +82,9 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 
 	fts := query.CompileFTS(ast)
 	terms := ExtractTerms(ast)
-	filters := normalizeFilters(opts.CWD, opts.Remote, timeFilter.Canonical)
+	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, timeFilter.Canonical)
 
-	hits, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, timeFilter, terms, opts.Highlight, opts.Query, filters)
+	hits, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, timeFilter, terms, opts.Highlight, opts.Query, filters)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +93,7 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	if len(hits) < minHitsForFallback {
 		fallbackAST := query.PrefixFallback(ast)
 		fallbackFTS := query.CompileFTS(fallbackAST)
-		fallbackHits, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, timeFilter, terms, opts.Highlight, opts.Query, filters)
+		fallbackHits, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, opts.Skill, timeFilter, terms, opts.Highlight, opts.Query, filters)
 		if err == nil && len(fallbackHits) > len(hits) {
 			hits = fallbackHits
 			wildcard = true
@@ -114,7 +115,7 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	}, nil
 }
 
-func execMessageSearch(db *sql.DB, fts, cwd, remote string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string) ([]MessageHit, error) {
+func execMessageSearch(db *sql.DB, fts, cwd, remote, skill string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string) ([]MessageHit, error) {
 	q := `
 		SELECT m.message_id, m.session_id, m.role, m.content_truncated,
 		       m.message_index, bm25(messages_fts) AS score
@@ -131,6 +132,10 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote string, timeFilter TimeFilte
 	if remote != "" {
 		q += " AND m.git_remote = ?"
 		args = append(args, remote)
+	}
+	if skill != "" {
+		q += " AND m.skill_name = ?"
+		args = append(args, skill)
 	}
 	if timeFilter.StartMs != nil {
 		q += " AND m.timestamp >= ?"
@@ -201,13 +206,16 @@ func neighborMessageIDs(db *sql.DB, sessionID string, messageIndex int) (prev, n
 	return
 }
 
-func normalizeFilters(cwd, remote, timeCanonical string) string {
+func normalizeFilters(cwd, remote, skill, timeCanonical string) string {
 	var parts []string
 	if cwd != "" {
 		parts = append(parts, "cwd="+cwd)
 	}
 	if remote != "" {
 		parts = append(parts, "remote="+remote)
+	}
+	if skill != "" {
+		parts = append(parts, "skill="+skill)
 	}
 	if timeCanonical != "" {
 		parts = append(parts, timeCanonical)

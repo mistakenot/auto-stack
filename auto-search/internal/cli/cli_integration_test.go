@@ -193,8 +193,8 @@ func TestIndexFullBuild(t *testing.T) {
 	if out["sessions_indexed"] != float64(3) {
 		t.Fatalf("sessions_indexed = %v, want 3", out["sessions_indexed"])
 	}
-	if out["messages_indexed"] != float64(10) {
-		t.Fatalf("messages_indexed = %v, want 10", out["messages_indexed"])
+	if out["messages_indexed"] != float64(12) {
+		t.Fatalf("messages_indexed = %v, want 12", out["messages_indexed"])
 	}
 
 	dbPath := filepath.Join(home, ".auto", "search", "default.sqlite")
@@ -593,6 +593,97 @@ func TestIndexSkipsDuplicatesE2E(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "WARNING: skipping duplicate session") {
 		t.Errorf("expected duplicate session warning on stderr, got:\n%s", stderr)
+	}
+}
+
+func TestMessageDescribeSkillName(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "message", "describe", "msg-012")
+	if code != 0 {
+		t.Fatalf("message describe failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	msg := out["message"].(map[string]any)
+	if msg["skillName"] != "contextual-commit" {
+		t.Errorf("skillName = %v, want contextual-commit", msg["skillName"])
+	}
+	if msg["toolName"] != "Skill" {
+		t.Errorf("toolName = %v, want Skill", msg["toolName"])
+	}
+}
+
+func TestSessionDescribeSkillCounts(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "session", "describe", "test-session-1")
+	if code != 0 {
+		t.Fatalf("session describe failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	session := out["session"].(map[string]any)
+
+	skillMessages := session["skillMessages"].(float64)
+	if skillMessages != 2 {
+		t.Errorf("skillMessages = %v, want 2", skillMessages)
+	}
+
+	skillsUsed := session["skillsUsed"].([]any)
+	if len(skillsUsed) != 1 || skillsUsed[0] != "contextual-commit" {
+		t.Errorf("skillsUsed = %v, want [contextual-commit]", skillsUsed)
+	}
+}
+
+func TestSessionGetSkillAttribute(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "session", "get", "test-session-1")
+	if code != 0 {
+		t.Fatalf("session get failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	if !strings.Contains(stdout, `skill="contextual-commit"`) {
+		t.Errorf("expected skill attribute in session get output, got:\n%.500s", stdout)
+	}
+}
+
+func TestSearchWithSkillFilter(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "search", "--skill", "contextual-commit", "commit")
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	totalHits := meta["total_hits"].(float64)
+	if totalHits == 0 {
+		t.Fatal("expected at least 1 hit for skill filter")
+	}
+}
+
+func TestSkillsList(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "skills")
+	if code != 0 {
+		t.Fatalf("skills failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	skills := out["skills"].([]any)
+	if len(skills) == 0 {
+		t.Fatal("expected at least 1 skill")
+	}
+	first := skills[0].(map[string]any)
+	if first["skillName"] != "contextual-commit" {
+		t.Errorf("first skill = %v, want contextual-commit", first["skillName"])
+	}
+	if first["count"] != float64(2) {
+		t.Errorf("count = %v, want 2", first["count"])
 	}
 }
 

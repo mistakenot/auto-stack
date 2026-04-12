@@ -113,6 +113,11 @@ func buildToolUseIndex(lines []parser.ParsedLine) map[string]toolUseMeta {
 				if fp, ok := inputMap["file_path"].(string); ok {
 					m.FilePath = fp
 				}
+				if b.Name == "Skill" {
+					if skill, ok := inputMap["skill"].(string); ok {
+						m.SkillName = skill
+					}
+				}
 				if b.Name == "Bash" {
 					if cmd, ok := inputMap["command"].(string); ok {
 						m.BashCommand = cmd
@@ -227,6 +232,12 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 							msg.BashCommand = cmd
 						}
 					}
+					// Extract Skill tool skill name
+					if block.Name == "Skill" {
+						if skill, ok := inputMap["skill"].(string); ok {
+							msg.SkillName = skill
+						}
+					}
 					// Extract Read tool file metadata
 					if block.Name == "Read" {
 						if offset, ok := inputMap["offset"].(float64); ok {
@@ -259,6 +270,7 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 				msg.ToolFilePath = meta.FilePath
 				msg.ToolFileStartLine = meta.FileStartLine
 				msg.ToolFileNumLines = meta.FileNumLines
+				msg.SkillName = meta.SkillName
 				// tool_result content: store full unmodified content.
 				// Content can be a plain string or an array of content blocks.
 				if len(block.Content) > 0 {
@@ -370,6 +382,7 @@ type toolUseMeta struct {
 	FilePath      string
 	FileStartLine int32
 	FileNumLines  int32
+	SkillName     string
 }
 
 // unmarshalToolResultContent extracts text from tool_result content which can

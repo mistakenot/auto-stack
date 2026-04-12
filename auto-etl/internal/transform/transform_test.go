@@ -598,6 +598,151 @@ func TestToolUseContentTruncated_LargeInput(t *testing.T) {
 	}
 }
 
+// --- Phase 6: Skill name extraction ---
+
+func TestTransformSession_SkillName_ToolUse(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:            "assistant",
+		Timestamp:       time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:       "parent-uuid-1234",
+		Cwd:             "/home/user/project",
+		SourceLineIndex: 1,
+		Message: parser.ParsedMessage{
+			Role:    "assistant",
+			Content: json.RawMessage(`[{"type":"tool_use","id":"tu1","name":"Skill","input":{"skill":"contextual-commit"}}]`),
+			Model:   "claude-opus-4-6",
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+	var found bool
+	for _, msg := range msgs {
+		if msg.ToolName == "Skill" && msg.Role == "assistant" {
+			found = true
+			if msg.SkillName != "contextual-commit" {
+				t.Errorf("SkillName = %q, want contextual-commit", msg.SkillName)
+			}
+		}
+	}
+	if !found {
+		t.Error("no Skill tool_use message found")
+	}
+}
+
+func TestTransformSession_SkillName_ToolResult(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:            "assistant",
+		Timestamp:       time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:       "parent-uuid-1234",
+		Cwd:             "/home/user/project",
+		SourceLineIndex: 1,
+		Message: parser.ParsedMessage{
+			Role: "assistant",
+			Content: json.RawMessage(`[
+				{"type":"tool_use","id":"tu1","name":"Skill","input":{"skill":"langchain-docs","args":"how does X work?"}},
+				{"type":"tool_result","tool_use_id":"tu1","content":"\"Launching skill: langchain-docs\""}
+			]`),
+			Model: "claude-opus-4-6",
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+	var toolUseFound, toolResultFound bool
+	for _, msg := range msgs {
+		if msg.ToolName == "Skill" && msg.Role == "assistant" {
+			toolUseFound = true
+			if msg.SkillName != "langchain-docs" {
+				t.Errorf("tool_use SkillName = %q, want langchain-docs", msg.SkillName)
+			}
+		}
+		if msg.ToolName == "Skill" && msg.Role == "tool" {
+			toolResultFound = true
+			if msg.SkillName != "langchain-docs" {
+				t.Errorf("tool_result SkillName = %q, want langchain-docs", msg.SkillName)
+			}
+		}
+	}
+	if !toolUseFound {
+		t.Error("no Skill tool_use message found")
+	}
+	if !toolResultFound {
+		t.Error("no Skill tool_result message found")
+	}
+}
+
+func TestTransformSession_SkillName_WithArgs(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:            "assistant",
+		Timestamp:       time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:       "parent-uuid-1234",
+		Cwd:             "/home/user/project",
+		SourceLineIndex: 1,
+		Message: parser.ParsedMessage{
+			Role:    "assistant",
+			Content: json.RawMessage(`[{"type":"tool_use","id":"tu1","name":"Skill","input":{"skill":"create-solution","args":"docs/requirements.md"}}]`),
+			Model:   "claude-opus-4-6",
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+	for _, msg := range msgs {
+		if msg.ToolName == "Skill" {
+			if msg.SkillName != "create-solution" {
+				t.Errorf("SkillName = %q, want create-solution", msg.SkillName)
+			}
+		}
+	}
+}
+
+func TestTransformSession_SkillName_EmptyForNonSkillTools(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:            "assistant",
+		Timestamp:       time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:       "parent-uuid-1234",
+		Cwd:             "/home/user/project",
+		SourceLineIndex: 1,
+		Message: parser.ParsedMessage{
+			Role:    "assistant",
+			Content: json.RawMessage(`[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"ls"}}]`),
+			Model:   "claude-opus-4-6",
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+	for _, msg := range msgs {
+		if msg.ToolName == "Bash" && msg.SkillName != "" {
+			t.Errorf("non-Skill tool should have empty SkillName, got %q", msg.SkillName)
+		}
+	}
+}
+
+func TestTransformSession_SkillName_MissingSkillField(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:            "assistant",
+		Timestamp:       time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:       "parent-uuid-1234",
+		Cwd:             "/home/user/project",
+		SourceLineIndex: 1,
+		Message: parser.ParsedMessage{
+			Role:    "assistant",
+			Content: json.RawMessage(`[{"type":"tool_use","id":"tu1","name":"Skill","input":{"args":"something"}}]`),
+			Model:   "claude-opus-4-6",
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+	for _, msg := range msgs {
+		if msg.ToolName == "Skill" && msg.SkillName != "" {
+			t.Errorf("Skill with missing skill field should have empty SkillName, got %q", msg.SkillName)
+		}
+	}
+}
+
 func TestToolUseContentTruncated_EmptyInput(t *testing.T) {
 	raw := makeParentSession()
 	raw.Lines = append(raw.Lines, parser.ParsedLine{

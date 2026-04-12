@@ -35,8 +35,8 @@ func buildTestDB(t *testing.T) *sql.DB {
 	if result.SessionsIndexed != 3 {
 		t.Fatalf("expected 3 sessions, got %d", result.SessionsIndexed)
 	}
-	if result.MessagesIndexed != 10 {
-		t.Fatalf("expected 10 messages, got %d", result.MessagesIndexed)
+	if result.MessagesIndexed != 12 {
+		t.Fatalf("expected 12 messages, got %d", result.MessagesIndexed)
 	}
 
 	db, err := indexdb.Open(dbPath)
