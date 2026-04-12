@@ -40,6 +40,9 @@ autosearch search "Exit code 0" --after 2024-03-21T08:00:00Z --before 2024-03-21
 
 # Highlight matched terms in snippets
 autosearch search "undefined symbol" --highlight
+
+# Pagination: default page size is 20; advance with offset
+autosearch search "undefined symbol" --offset 20
 ` + "```" + `
 
 Queries support AND, OR, NOT (uppercase), and quoted phrases:

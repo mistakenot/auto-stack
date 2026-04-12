@@ -21,6 +21,9 @@ func newSearchCmd() *cobra.Command {
 	var cwd string
 	var remote string
 	var skill string
+	var role string
+	var offset int
+	var limit int
 	var requestID string
 	var highlight bool
 
@@ -58,6 +61,9 @@ func newSearchCmd() *cobra.Command {
 					CWD:       cwd,
 					Remote:    remote,
 					Skill:     skill,
+					Role:      role,
+					Offset:    offset,
+					PageSize:  limit,
 					RequestID: requestID,
 					Highlight: highlight,
 				})
@@ -76,6 +82,9 @@ func newSearchCmd() *cobra.Command {
 					CWD:       cwd,
 					Remote:    remote,
 					Skill:     skill,
+					Role:      role,
+					Offset:    offset,
+					PageSize:  limit,
 					RequestID: requestID,
 				})
 				if err != nil {
@@ -97,6 +106,9 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cwd, "cwd", "", "workspace path filter")
 	cmd.Flags().StringVar(&remote, "remote", "", "git remote filter")
 	cmd.Flags().StringVar(&skill, "skill", "", "filter by skill name")
+	cmd.Flags().StringVar(&role, "role", "", "filter by message role (user, assistant, tool)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "result offset for pagination (0-based)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "max results to return (default 20)")
 	cmd.Flags().BoolVar(&highlight, "highlight", false, "highlight matched terms in snippets")
 	cmd.Flags().StringVar(&requestID, "request-id", "", "request identifier to echo in responses")
 	return cmd

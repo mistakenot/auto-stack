@@ -36,6 +36,9 @@ type SessionSearchOpts struct {
 	CWD       string
 	Remote    string
 	Skill     string
+	Role      string
+	Offset    int
+	PageSize  int
 	RequestID string
 	Now       time.Time
 }
@@ -50,6 +53,10 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 
 	if opts.CWD != "" && opts.Remote != "" {
 		return nil, errors.New("--cwd and --remote are mutually exclusive")
+	}
+	offset, pageSize, err := normalizePagination(opts.Offset, opts.PageSize)
+	if err != nil {
+		return nil, err
 	}
 
 	now := opts.Now
@@ -67,31 +74,42 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	}
 
 	fts := query.CompileFTS(ast)
-	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, timeFilter.Canonical)
+	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, opts.Role, timeFilter.Canonical)
 
-	hits, err := execSessionSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, timeFilter, opts.Query, filters)
+	hits, totalHits, err := execSessionSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, opts.Role, timeFilter, opts.Query, filters, offset, pageSize)
 	if err != nil {
 		return nil, err
+	}
+
+	returnedHits := len(hits)
+	hasMore := offset+returnedHits < totalHits
+	var nextOffset *int
+	if hasMore {
+		next := offset + returnedHits
+		nextOffset = &next
 	}
 
 	elapsed := time.Since(start).Milliseconds()
 	return &SessionSearchResult{
 		Meta: Meta{
-			RequestID: opts.RequestID,
-			Scope:     "sessions",
-			Mode:      "bm25",
-			Query:     opts.Query,
-			ElapsedMs: elapsed,
-			TotalHits: len(hits),
+			RequestID:    opts.RequestID,
+			Scope:        "sessions",
+			Mode:         "bm25",
+			Query:        opts.Query,
+			ElapsedMs:    elapsed,
+			TotalHits:    totalHits,
+			ReturnedHits: returnedHits,
+			PageSize:     pageSize,
+			Offset:       offset,
+			HasMore:      hasMore,
+			NextOffset:   nextOffset,
 		},
 		Hits: hits,
 	}, nil
 }
 
-func execSessionSearch(db *sql.DB, fts, cwd, remote, skill string, timeFilter TimeFilter, rawQuery, filters string) ([]SessionHit, error) {
-	q := `
-		SELECT s.session_id, s.workspace, s.first_message_at, s.last_message_at,
-		       bm25(sessions_fts) AS score
+func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role string, timeFilter TimeFilter, rawQuery, filters string, offset, pageSize int) ([]SessionHit, int, error) {
+	baseQuery := `
 		FROM sessions_fts
 		JOIN sessions s ON s.doc_id = sessions_fts.rowid
 		WHERE sessions_fts MATCH ?
@@ -99,31 +117,48 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill string, timeFilter Ti
 	args := []any{fts}
 
 	if cwd != "" {
-		q += " AND s.workspace = ?"
+		baseQuery += " AND s.workspace = ?"
 		args = append(args, cwd)
 	}
 	if remote != "" {
-		q += " AND s.git_remote = ?"
+		baseQuery += " AND s.git_remote = ?"
 		args = append(args, remote)
 	}
 	if skill != "" {
-		q += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE skill_name = ?)"
+		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE skill_name = ?)"
 		args = append(args, skill)
 	}
+	if role != "" {
+		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE role = ?)"
+		args = append(args, role)
+	}
 	if timeFilter.StartMs != nil {
-		q += " AND s.first_message_at >= ?"
+		baseQuery += " AND s.first_message_at >= ?"
 		args = append(args, *timeFilter.StartMs)
 	}
 	if timeFilter.EndMs != nil {
-		q += " AND s.first_message_at < ?"
+		baseQuery += " AND s.first_message_at < ?"
 		args = append(args, *timeFilter.EndMs)
 	}
 
-	q += " ORDER BY score LIMIT 50"
+	countQuery := "SELECT COUNT(*) " + baseQuery
+	var totalHits int
+	if err := db.QueryRow(countQuery, args...).Scan(&totalHits); err != nil {
+		return nil, 0, fmt.Errorf("session search count query: %w", err)
+	}
 
-	rows, err := db.Query(q, args...)
+	q := `
+		SELECT s.session_id, s.workspace, s.first_message_at, s.last_message_at,
+		       bm25(sessions_fts) AS score
+	` + baseQuery + `
+		ORDER BY score, s.session_id
+		LIMIT ? OFFSET ?
+	`
+	hitArgs := append(append([]any{}, args...), pageSize, offset)
+
+	rows, err := db.Query(q, hitArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("session search query: %w", err)
+		return nil, 0, fmt.Errorf("session search query: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -137,7 +172,7 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill string, timeFilter Ti
 			score          float64
 		)
 		if err := rows.Scan(&sessionID, &workspace, &firstMessageAt, &lastMessageAt, &score); err != nil {
-			return nil, fmt.Errorf("scan session hit: %w", err)
+			return nil, 0, fmt.Errorf("scan session hit: %w", err)
 		}
 
 		// Count messages for this session.
@@ -155,10 +190,10 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill string, timeFilter Ti
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate session hits: %w", err)
+		return nil, 0, fmt.Errorf("iterate session hits: %w", err)
 	}
 	if hits == nil {
 		hits = []SessionHit{}
 	}
-	return hits, nil
+	return hits, totalHits, nil
 }

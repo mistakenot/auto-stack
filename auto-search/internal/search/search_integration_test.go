@@ -269,6 +269,100 @@ func TestMessageSearchHitIDChangesWithDateFilter(t *testing.T) {
 	}
 }
 
+func TestMessageSearchPagination(t *testing.T) {
+	db := buildTestDB(t)
+
+	firstPage, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:       db,
+		Query:    "Exit code 0",
+		PageSize: 1,
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages first page: %v", err)
+	}
+	if firstPage.Meta.TotalHits != 2 {
+		t.Fatalf("total_hits = %d, want 2", firstPage.Meta.TotalHits)
+	}
+	if firstPage.Meta.ReturnedHits != 1 {
+		t.Fatalf("returned_hits = %d, want 1", firstPage.Meta.ReturnedHits)
+	}
+	if firstPage.Meta.PageSize != 1 {
+		t.Fatalf("page_size = %d, want 1", firstPage.Meta.PageSize)
+	}
+	if firstPage.Meta.Offset != 0 {
+		t.Fatalf("offset = %d, want 0", firstPage.Meta.Offset)
+	}
+	if !firstPage.Meta.HasMore {
+		t.Fatal("has_more = false, want true")
+	}
+	if firstPage.Meta.NextOffset == nil || *firstPage.Meta.NextOffset != 1 {
+		t.Fatalf("next_offset = %v, want 1", firstPage.Meta.NextOffset)
+	}
+	if len(firstPage.Hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(firstPage.Hits))
+	}
+
+	secondPage, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:       db,
+		Query:    "Exit code 0",
+		PageSize: 1,
+		Offset:   1,
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages second page: %v", err)
+	}
+	if secondPage.Meta.TotalHits != 2 {
+		t.Fatalf("total_hits = %d, want 2", secondPage.Meta.TotalHits)
+	}
+	if secondPage.Meta.ReturnedHits != 1 {
+		t.Fatalf("returned_hits = %d, want 1", secondPage.Meta.ReturnedHits)
+	}
+	if secondPage.Meta.HasMore {
+		t.Fatal("has_more = true, want false")
+	}
+	if secondPage.Meta.NextOffset != nil {
+		t.Fatalf("next_offset = %v, want nil", *secondPage.Meta.NextOffset)
+	}
+	if len(secondPage.Hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(secondPage.Hits))
+	}
+	if firstPage.Hits[0].MessageID == secondPage.Hits[0].MessageID {
+		t.Fatalf("expected different message IDs across offsets, got %q", firstPage.Hits[0].MessageID)
+	}
+
+	emptyPage, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:       db,
+		Query:    "Exit code 0",
+		PageSize: 1,
+		Offset:   2,
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages empty page: %v", err)
+	}
+	if emptyPage.Meta.TotalHits != 2 {
+		t.Fatalf("total_hits = %d, want 2", emptyPage.Meta.TotalHits)
+	}
+	if emptyPage.Meta.ReturnedHits != 0 {
+		t.Fatalf("returned_hits = %d, want 0", emptyPage.Meta.ReturnedHits)
+	}
+	if len(emptyPage.Hits) != 0 {
+		t.Fatalf("hits = %d, want 0", len(emptyPage.Hits))
+	}
+}
+
+func TestMessageSearchRejectsNegativeOffset(t *testing.T) {
+	db := buildTestDB(t)
+
+	_, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:     db,
+		Query:  "Exit code 0",
+		Offset: -1,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative offset")
+	}
+}
+
 func TestSessionSearchBasic(t *testing.T) {
 	db := buildTestDB(t)
 
@@ -402,6 +496,220 @@ func TestSessionSearchBeforeIsExclusive(t *testing.T) {
 	}
 	if len(result.Hits) != 1 || result.Hits[0].SessionID != "test-session-1" {
 		t.Fatalf("unexpected hits: %+v", result.Hits)
+	}
+}
+
+func TestSessionSearchPagination(t *testing.T) {
+	db := buildTestDB(t)
+
+	firstPage, err := search.SearchSessions(&search.SessionSearchOpts{
+		DB:       db,
+		Query:    "User",
+		PageSize: 1,
+	})
+	if err != nil {
+		t.Fatalf("SearchSessions first page: %v", err)
+	}
+	if firstPage.Meta.TotalHits != 3 {
+		t.Fatalf("total_hits = %d, want 3", firstPage.Meta.TotalHits)
+	}
+	if firstPage.Meta.ReturnedHits != 1 {
+		t.Fatalf("returned_hits = %d, want 1", firstPage.Meta.ReturnedHits)
+	}
+	if !firstPage.Meta.HasMore {
+		t.Fatal("has_more = false, want true")
+	}
+	if firstPage.Meta.NextOffset == nil || *firstPage.Meta.NextOffset != 1 {
+		t.Fatalf("next_offset = %v, want 1", firstPage.Meta.NextOffset)
+	}
+	if len(firstPage.Hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(firstPage.Hits))
+	}
+
+	secondPage, err := search.SearchSessions(&search.SessionSearchOpts{
+		DB:       db,
+		Query:    "User",
+		PageSize: 1,
+		Offset:   1,
+	})
+	if err != nil {
+		t.Fatalf("SearchSessions second page: %v", err)
+	}
+	if secondPage.Meta.TotalHits != 3 {
+		t.Fatalf("total_hits = %d, want 3", secondPage.Meta.TotalHits)
+	}
+	if secondPage.Meta.ReturnedHits != 1 {
+		t.Fatalf("returned_hits = %d, want 1", secondPage.Meta.ReturnedHits)
+	}
+	if !secondPage.Meta.HasMore {
+		t.Fatal("has_more = false, want true")
+	}
+	if secondPage.Meta.NextOffset == nil || *secondPage.Meta.NextOffset != 2 {
+		t.Fatalf("next_offset = %v, want 2", secondPage.Meta.NextOffset)
+	}
+	if len(secondPage.Hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(secondPage.Hits))
+	}
+
+	lastPage, err := search.SearchSessions(&search.SessionSearchOpts{
+		DB:       db,
+		Query:    "User",
+		PageSize: 1,
+		Offset:   2,
+	})
+	if err != nil {
+		t.Fatalf("SearchSessions last page: %v", err)
+	}
+	if lastPage.Meta.TotalHits != 3 {
+		t.Fatalf("total_hits = %d, want 3", lastPage.Meta.TotalHits)
+	}
+	if lastPage.Meta.ReturnedHits != 1 {
+		t.Fatalf("returned_hits = %d, want 1", lastPage.Meta.ReturnedHits)
+	}
+	if lastPage.Meta.HasMore {
+		t.Fatal("has_more = true, want false")
+	}
+	if lastPage.Meta.NextOffset != nil {
+		t.Fatalf("next_offset = %v, want nil", *lastPage.Meta.NextOffset)
+	}
+	if len(lastPage.Hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(lastPage.Hits))
+	}
+}
+
+func TestSessionSearchRejectsNegativeOffset(t *testing.T) {
+	db := buildTestDB(t)
+
+	_, err := search.SearchSessions(&search.SessionSearchOpts{
+		DB:     db,
+		Query:  "User",
+		Offset: -1,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative offset")
+	}
+}
+
+func TestMessageSearchRoleFilter(t *testing.T) {
+	db := buildTestDB(t)
+
+	// "authentication middleware" appears in user (msg-002), assistant (msg-003), and tool (msg-004).
+	// Filtering by role=tool should only return tool messages.
+	result, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "authentication middleware",
+		Role:  "tool",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	if result.Meta.TotalHits == 0 {
+		t.Fatal("expected at least 1 hit for role=tool")
+	}
+	for _, hit := range result.Hits {
+		if hit.MessageType != "tool" {
+			t.Errorf("expected messageType=tool, got %q (messageId=%s)", hit.MessageType, hit.MessageID)
+		}
+	}
+
+	// Filtering by role=user should return only user messages.
+	userResult, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "authentication middleware",
+		Role:  "user",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	if userResult.Meta.TotalHits == 0 {
+		t.Fatal("expected at least 1 hit for role=user")
+	}
+	for _, hit := range userResult.Hits {
+		if hit.MessageType != "user" {
+			t.Errorf("expected messageType=user, got %q (messageId=%s)", hit.MessageType, hit.MessageID)
+		}
+	}
+
+	// role=tool should return fewer hits than unfiltered.
+	allResult, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "authentication middleware",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	if result.Meta.TotalHits >= allResult.Meta.TotalHits {
+		t.Errorf("role-filtered hits (%d) should be fewer than unfiltered (%d)",
+			result.Meta.TotalHits, allResult.Meta.TotalHits)
+	}
+}
+
+func TestMessageSearchRoleFilterHitIDChanges(t *testing.T) {
+	db := buildTestDB(t)
+
+	// Same query with different role filter should produce different hit IDs.
+	unfiltered, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "authentication middleware",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages unfiltered: %v", err)
+	}
+	filtered, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "authentication middleware",
+		Role:  "tool",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages filtered: %v", err)
+	}
+	if len(unfiltered.Hits) == 0 || len(filtered.Hits) == 0 {
+		t.Fatalf("expected hits in both, got %d and %d", len(unfiltered.Hits), len(filtered.Hits))
+	}
+
+	// Find a message that appears in both result sets.
+	unfilteredIDs := make(map[string]string)
+	for _, h := range unfiltered.Hits {
+		unfilteredIDs[h.MessageID] = h.ID
+	}
+	for _, h := range filtered.Hits {
+		if unfilteredID, ok := unfilteredIDs[h.MessageID]; ok {
+			if unfilteredID == h.ID {
+				t.Errorf("hit ID for %s should differ between filtered and unfiltered", h.MessageID)
+			}
+			return
+		}
+	}
+}
+
+func TestSessionSearchRoleFilter(t *testing.T) {
+	db := buildTestDB(t)
+
+	// "authentication" appears in session transcripts. All sessions have tool
+	// messages, so role=tool should still return results.
+	result, err := search.SearchSessions(&search.SessionSearchOpts{
+		DB:    db,
+		Query: "authentication",
+		Role:  "tool",
+	})
+	if err != nil {
+		t.Fatalf("SearchSessions: %v", err)
+	}
+	if result.Meta.TotalHits == 0 {
+		t.Fatal("expected at least 1 session hit with role=tool")
+	}
+
+	// A nonexistent role should filter out all sessions.
+	noResult, err := search.SearchSessions(&search.SessionSearchOpts{
+		DB:    db,
+		Query: "authentication",
+		Role:  "nonexistent",
+	})
+	if err != nil {
+		t.Fatalf("SearchSessions: %v", err)
+	}
+	if noResult.Meta.TotalHits != 0 {
+		t.Errorf("expected 0 hits for nonexistent role, got %d", noResult.Meta.TotalHits)
 	}
 }
 

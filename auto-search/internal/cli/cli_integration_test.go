@@ -262,6 +262,40 @@ func TestSearchMessages(t *testing.T) {
 	}
 }
 
+func TestSearchMessagesPaginationMeta(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "search", "Exit code 0", "--offset", "1")
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	if meta["total_hits"] != float64(2) {
+		t.Fatalf("total_hits = %v, want 2", meta["total_hits"])
+	}
+	if meta["returned_hits"] != float64(1) {
+		t.Fatalf("returned_hits = %v, want 1", meta["returned_hits"])
+	}
+	if meta["page_size"] != float64(20) {
+		t.Fatalf("page_size = %v, want 20", meta["page_size"])
+	}
+	if meta["offset"] != float64(1) {
+		t.Fatalf("offset = %v, want 1", meta["offset"])
+	}
+	if meta["has_more"] != false {
+		t.Fatalf("has_more = %v, want false", meta["has_more"])
+	}
+	if _, ok := meta["next_offset"]; ok {
+		t.Fatalf("next_offset should be omitted when has_more=false, got %v", meta["next_offset"])
+	}
+	hits := out["hits"].([]any)
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+}
+
 func TestSearchSessions(t *testing.T) {
 	setupIndexedFixtures(t)
 
@@ -286,6 +320,33 @@ func TestSearchSessions(t *testing.T) {
 		if _, ok := hit[field]; !ok {
 			t.Errorf("missing field %q in session hit", field)
 		}
+	}
+}
+
+func TestSearchSessionsPaginationMeta(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "search", "--scope", "sessions", "--offset", "1", "User")
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	if meta["total_hits"] != float64(3) {
+		t.Fatalf("total_hits = %v, want 3", meta["total_hits"])
+	}
+	if meta["returned_hits"] != float64(2) {
+		t.Fatalf("returned_hits = %v, want 2", meta["returned_hits"])
+	}
+	if meta["page_size"] != float64(20) {
+		t.Fatalf("page_size = %v, want 20", meta["page_size"])
+	}
+	if meta["offset"] != float64(1) {
+		t.Fatalf("offset = %v, want 1", meta["offset"])
+	}
+	if meta["has_more"] != false {
+		t.Fatalf("has_more = %v, want false", meta["has_more"])
 	}
 }
 
@@ -404,6 +465,66 @@ func TestSearchWildcardFallback(t *testing.T) {
 	}
 }
 
+func TestSearchWithRoleFilter(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	// "Exit code" appears in tool messages. Filter to only tool role.
+	stdout, stderr, code := runCLI(t, "search", "Exit code", "--role", "tool")
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	totalHits := meta["total_hits"].(float64)
+	if totalHits == 0 {
+		t.Fatal("expected at least 1 hit for --role tool")
+	}
+
+	hits := out["hits"].([]any)
+	for _, h := range hits {
+		hit := h.(map[string]any)
+		if hit["messageType"] != "tool" {
+			t.Errorf("expected messageType=tool, got %v", hit["messageType"])
+		}
+	}
+}
+
+func TestSearchWithRoleFilterNoResults(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	// "Exit code" does not appear in user messages.
+	stdout, stderr, code := runCLI(t, "search", "Exit code", "--role", "user")
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	totalHits := meta["total_hits"].(float64)
+	if totalHits != 0 {
+		t.Errorf("expected 0 hits for 'Exit code' with --role user, got %v", totalHits)
+	}
+}
+
+func TestSearchSessionsWithRoleFilter(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	// "authentication" appears in session transcripts. Filter to sessions that
+	// contain tool-role messages (all fixture sessions do).
+	stdout, stderr, code := runCLI(t, "search", "--scope", "sessions", "--role", "tool", "authentication")
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	totalHits := meta["total_hits"].(float64)
+	if totalHits == 0 {
+		t.Fatal("expected at least 1 session hit with --role tool")
+	}
+}
+
 func TestSearchCwdRemoteConflict(t *testing.T) {
 	setupIndexedFixtures(t)
 
@@ -413,6 +534,18 @@ func TestSearchCwdRemoteConflict(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "mutually exclusive") {
 		t.Fatalf("expected 'mutually exclusive' in stderr, got:\n%s", stderr)
+	}
+}
+
+func TestSearchRejectsNegativeOffset(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	_, stderr, code := runCLI(t, "search", "Exit code", "--offset", "-1")
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for negative offset")
+	}
+	if !strings.Contains(stderr, "--offset must be >= 0") {
+		t.Fatalf("expected offset error in stderr, got:\n%s", stderr)
 	}
 }
 

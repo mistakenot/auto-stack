@@ -38,6 +38,11 @@ type Meta struct {
 	Query            string `json:"query"`
 	ElapsedMs        int64  `json:"elapsed_ms"`
 	TotalHits        int    `json:"total_hits"`
+	ReturnedHits     int    `json:"returned_hits"`
+	PageSize         int    `json:"page_size"`
+	Offset           int    `json:"offset"`
+	HasMore          bool   `json:"has_more"`
+	NextOffset       *int   `json:"next_offset,omitempty"`
 	WildcardFallback bool   `json:"wildcard_fallback"`
 }
 
@@ -51,12 +56,18 @@ type MessageSearchOpts struct {
 	CWD       string
 	Remote    string
 	Skill     string
+	Role      string
+	Offset    int
+	PageSize  int
 	RequestID string
 	Highlight bool
 	Now       time.Time
 }
 
-const minHitsForFallback = 3
+const (
+	minHitsForFallback = 3
+	defaultPageSize    = 20
+)
 
 // SearchMessages performs a BM25 message-scope search.
 func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
@@ -64,6 +75,10 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 
 	if opts.CWD != "" && opts.Remote != "" {
 		return nil, errors.New("--cwd and --remote are mutually exclusive")
+	}
+	offset, pageSize, err := normalizePagination(opts.Offset, opts.PageSize)
+	if err != nil {
+		return nil, err
 	}
 
 	now := opts.Now
@@ -82,22 +97,31 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 
 	fts := query.CompileFTS(ast)
 	terms := ExtractTerms(ast)
-	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, timeFilter.Canonical)
+	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, opts.Role, timeFilter.Canonical)
 
-	hits, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, timeFilter, terms, opts.Highlight, opts.Query, filters)
+	hits, totalHits, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, opts.Role, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
 	if err != nil {
 		return nil, err
 	}
 
 	wildcard := false
-	if len(hits) < minHitsForFallback {
+	if totalHits < minHitsForFallback {
 		fallbackAST := query.PrefixFallback(ast)
 		fallbackFTS := query.CompileFTS(fallbackAST)
-		fallbackHits, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, opts.Skill, timeFilter, terms, opts.Highlight, opts.Query, filters)
-		if err == nil && len(fallbackHits) > len(hits) {
+		fallbackHits, fallbackTotal, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, opts.Skill, opts.Role, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
+		if err == nil && fallbackTotal > totalHits {
 			hits = fallbackHits
+			totalHits = fallbackTotal
 			wildcard = true
 		}
+	}
+
+	returnedHits := len(hits)
+	hasMore := offset+returnedHits < totalHits
+	var nextOffset *int
+	if hasMore {
+		next := offset + returnedHits
+		nextOffset = &next
 	}
 
 	elapsed := time.Since(start).Milliseconds()
@@ -108,17 +132,20 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 			Mode:             "bm25",
 			Query:            opts.Query,
 			ElapsedMs:        elapsed,
-			TotalHits:        len(hits),
+			TotalHits:        totalHits,
+			ReturnedHits:     returnedHits,
+			PageSize:         pageSize,
+			Offset:           offset,
+			HasMore:          hasMore,
+			NextOffset:       nextOffset,
 			WildcardFallback: wildcard,
 		},
 		Hits: hits,
 	}, nil
 }
 
-func execMessageSearch(db *sql.DB, fts, cwd, remote, skill string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string) ([]MessageHit, error) {
-	q := `
-		SELECT m.message_id, m.session_id, m.role, m.content_truncated,
-		       m.message_index, bm25(messages_fts) AS score
+func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, int, error) {
+	baseQuery := `
 		FROM messages_fts
 		JOIN messages m ON m.doc_id = messages_fts.rowid
 		WHERE messages_fts MATCH ?
@@ -126,31 +153,48 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill string, timeFilter Ti
 	args := []any{fts}
 
 	if cwd != "" {
-		q += " AND m.workspace = ?"
+		baseQuery += " AND m.workspace = ?"
 		args = append(args, cwd)
 	}
 	if remote != "" {
-		q += " AND m.git_remote = ?"
+		baseQuery += " AND m.git_remote = ?"
 		args = append(args, remote)
 	}
 	if skill != "" {
-		q += " AND m.skill_name = ?"
+		baseQuery += " AND m.skill_name = ?"
 		args = append(args, skill)
 	}
+	if role != "" {
+		baseQuery += " AND m.role = ?"
+		args = append(args, role)
+	}
 	if timeFilter.StartMs != nil {
-		q += " AND m.timestamp >= ?"
+		baseQuery += " AND m.timestamp >= ?"
 		args = append(args, *timeFilter.StartMs)
 	}
 	if timeFilter.EndMs != nil {
-		q += " AND m.timestamp < ?"
+		baseQuery += " AND m.timestamp < ?"
 		args = append(args, *timeFilter.EndMs)
 	}
 
-	q += " ORDER BY score LIMIT 50"
+	countQuery := "SELECT COUNT(*) " + baseQuery
+	var totalHits int
+	if err := db.QueryRow(countQuery, args...).Scan(&totalHits); err != nil {
+		return nil, 0, fmt.Errorf("message search count query: %w", err)
+	}
 
-	rows, err := db.Query(q, args...)
+	q := `
+		SELECT m.message_id, m.session_id, m.role, m.content_truncated,
+		       m.message_index, bm25(messages_fts) AS score
+	` + baseQuery + `
+		ORDER BY score, m.message_id
+		LIMIT ? OFFSET ?
+	`
+	hitArgs := append(append([]any{}, args...), pageSize, offset)
+
+	rows, err := db.Query(q, hitArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("message search query: %w", err)
+		return nil, 0, fmt.Errorf("message search query: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -165,7 +209,7 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill string, timeFilter Ti
 			score            float64
 		)
 		if err := rows.Scan(&messageID, &sessionID, &role, &contentTruncated, &messageIndex, &score); err != nil {
-			return nil, fmt.Errorf("scan message hit: %w", err)
+			return nil, 0, fmt.Errorf("scan message hit: %w", err)
 		}
 
 		snippet, startIdx, endIdx := Snippet(contentTruncated, terms, highlight)
@@ -186,12 +230,12 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill string, timeFilter Ti
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate message hits: %w", err)
+		return nil, 0, fmt.Errorf("iterate message hits: %w", err)
 	}
 	if hits == nil {
 		hits = []MessageHit{}
 	}
-	return hits, nil
+	return hits, totalHits, nil
 }
 
 func neighborMessageIDs(db *sql.DB, sessionID string, messageIndex int) (prev, next string) {
@@ -206,7 +250,7 @@ func neighborMessageIDs(db *sql.DB, sessionID string, messageIndex int) (prev, n
 	return
 }
 
-func normalizeFilters(cwd, remote, skill, timeCanonical string) string {
+func normalizeFilters(cwd, remote, skill, role, timeCanonical string) string {
 	var parts []string
 	if cwd != "" {
 		parts = append(parts, "cwd="+cwd)
@@ -217,8 +261,21 @@ func normalizeFilters(cwd, remote, skill, timeCanonical string) string {
 	if skill != "" {
 		parts = append(parts, "skill="+skill)
 	}
+	if role != "" {
+		parts = append(parts, "role="+role)
+	}
 	if timeCanonical != "" {
 		parts = append(parts, timeCanonical)
 	}
 	return strings.Join(parts, ";")
+}
+
+func normalizePagination(offset, pageSize int) (int, int, error) {
+	if offset < 0 {
+		return 0, 0, errors.New("--offset must be >= 0")
+	}
+	if pageSize <= 0 {
+		pageSize = defaultPageSize
+	}
+	return offset, pageSize, nil
 }
