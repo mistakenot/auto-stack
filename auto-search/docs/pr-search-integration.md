@@ -47,7 +47,7 @@ Today `autosearch` indexes coding sessions and messages. Adding PR data enables:
 
 ```
 pull_requests/year=YYYY/month=MM/pull_requests.parquet
-pr_comments/year=YYYY/month=MM/pr_comments.parquet
+pull_request_comments/year=YYYY/month=MM/pull_request_comments.parquet
 ```
 
 ### PullRequest fields (from `auto-etl/internal/model/github.go`)
@@ -267,12 +267,12 @@ Extend `etlscan/discover.go` to walk two additional directories:
 
 ```
 ~/.auto/etl/output/pull_requests/**/*.parquet
-~/.auto/etl/output/pr_comments/**/*.parquet
+~/.auto/etl/output/pull_request_comments/**/*.parquet
 ```
 
 Each discovered file gets the same `(dataset, partition_key, source_path, size, mtime)` treatment as messages/sessions.
 
-**Indexer dispatch**: The current `indexdb/indexer.go` switches on dataset name (`sessions`, `messages`) with no default branch. This must be extended to handle `pull_requests` and `pr_comments`, and add a default branch that returns an error for unknown datasets to prevent writing `index_state` rows with zero indexed records.
+**Indexer dispatch**: The current `indexdb/indexer.go` switches on dataset name (`sessions`, `messages`) with no default branch. This must be extended to handle `pull_requests` and `pull_request_comments`, and add a default branch that returns an error for unknown datasets to prevent writing `index_state` rows with zero indexed records.
 
 ### 5.2 Parquet Read Model
 
@@ -300,7 +300,7 @@ Before inserting into SQLite, transform these JSON fields:
 
 Same rules as sessions/messages:
 
-- Always reindex the newest `pull_requests` partition and newest `pr_comments` partition
+- Always reindex the newest `pull_requests` partition and newest `pull_request_comments` partition
 - Reindex older partitions when source metadata changes
 - Full rebuild on schema version bump
 
@@ -308,7 +308,7 @@ This aligns with the ETL's dedup semantics — PRs and comments can be updated o
 
 ### 5.5 Graceful Absence
 
-If `pull_requests/` or `pr_comments/` directories don't exist under the input path, indexing skips them silently. The tables are created in the schema regardless (empty tables are fine). This means `autosearch index` works the same whether or not `autoetl run --only github` has ever been run.
+If `pull_requests/` or `pull_request_comments/` directories don't exist under the input path, indexing skips them silently. The tables are created in the schema regardless (empty tables are fine). This means `autosearch index` works the same whether or not `autoetl run --only github` has ever been run.
 
 ## 6. Search
 
@@ -457,49 +457,100 @@ Each hit includes a `type` discriminator so consumers can handle the different s
 
 ### 7.1 `autosearch pr get <pr_id>`
 
-Renders a full PR view. Output is markdown-like text (same approach as `session get`).
+Renders a full PR view mimicking the GitHub PR experience: metadata header, per-file diffs with review comments anchored inline, and a conversation timeline. Output is structured text (same approach as `session get`).
+
+The view has three sections:
+
+1. **Header** — status line with key metadata at a glance
+2. **Files** — each changed file with its diff and any review comments anchored to their lines
+3. **Conversation** — timeline of issue comments and top-level review submissions (APPROVED, CHANGES_REQUESTED)
 
 ```
-# mistakenot/auto-stack#42 — Add auth middleware to API routes
+┌─────────────────────────────────────────────────────────────────┐
+│ mistakenot/auto-stack#42  MERGED                                │
+│ Add auth middleware to API routes                               │
+│                                                                 │
+│ Author: agent-bot        Merged: 2026-04-09T14:09:06Z          │
+│ Branch: feature/auth-middleware → main                          │
+│ Reviewers: alice ✓  bob ✗→✓                                    │
+│ Labels: security, api                                           │
+│ Files: 6 changed  +150 -20  Commits: 3                         │
+└─────────────────────────────────────────────────────────────────┘
 
-**Author:** agent-bot
-**Merged:** 2026-04-09T14:09:06Z
-**Branch:** feature/auth-middleware → main
-**Reviewers:** alice (APPROVED), bob (CHANGES_REQUESTED, APPROVED)
-**Labels:** security, api
-**Files changed:** 6 (+150 -20)
-
-## Body
+## Description
 
 <pr body text>
 
-## Reviews
+## Files
 
-<review state="CHANGES_REQUESTED" author="bob" at="2026-04-09T12:00:00Z">
-  <comment path="internal/auth/middleware.go" line="42">
-    Don't mock the database here — use the test helper.
+### internal/auth/middleware.go (+45 -3)
 
-    ```diff
-    <diff_hunk>
-    ```
-  </comment>
-  <comment path="internal/auth/middleware.go" line="78" in_reply_to="previous">
-    Agreed, fixed in the next push.
-  </comment>
-</review>
+```diff
+@@ -38,6 +38,12 @@ func NewAuthMiddleware(store SessionStore) *AuthMiddleware {
+     return &AuthMiddleware{store: store}
+ }
 
-<review state="APPROVED" author="alice" at="2026-04-09T13:30:00Z">
-  LGTM, clean implementation.
-</review>
++func (m *AuthMiddleware) Validate(ctx context.Context, token string) error {
++    session, err := m.store.Get(ctx, token)
++    if err != nil {
++        return fmt.Errorf("auth validation: %w", err)
++    }
++    if session.Expired() {
+```
 
-## Issue Comments
+  ┌── bob (CHANGES_REQUESTED) at line 42 ──────────────────────
+  │ Don't mock the database here — use the test helper.
+  │
+  │   └── agent-bot replied:
+  │       Agreed, fixed in the next push.
+  └────────────────────────────────────────────────────────────
+
+```diff
+@@ -78,3 +84,9 @@ func (m *AuthMiddleware) Handler(next http.Handler) http.Handler {
++    if err := m.Validate(r.Context(), token); err != nil {
++        http.Error(w, "unauthorized", http.StatusUnauthorized)
++        return
++    }
+```
+
+### internal/auth/middleware_test.go (+95 -0)
+
+```diff
+@@ -0,0 +1,95 @@
++package auth_test
++
++func TestAuthMiddleware_Validate(t *testing.T) {
+...
+```
+
+  (no comments on this file)
+
+### cmd/server/main.go (+10 -1)
+
+  ...
+
+## Conversation
 
 <comment author="agent-bot" at="2026-04-09T11:00:00Z">
   Ready for review. This adds auth middleware to all API routes.
 </comment>
+
+<review author="bob" state="CHANGES_REQUESTED" at="2026-04-09T12:00:00Z">
+  A few things to fix — see inline comments.
+</review>
+
+<review author="alice" state="APPROVED" at="2026-04-09T13:30:00Z">
+  LGTM, clean implementation.
+</review>
 ```
 
-Comments are grouped by review (using `review_id`), with review comments threaded via `in_reply_to_id`. Issue comments appear separately.
+**Rendering rules**:
+
+- **Header**: Reviewer status uses shorthand: `✓` = APPROVED, `✗` = CHANGES_REQUESTED, `✗→✓` = requested changes then approved. Derived from `pr_comments` rows where `comment_type = "review"`.
+- **Files section**: Files are listed from `files_json` (parsed at render time, not index time). Each file shows its per-file patch. Review comments (`comment_type = "review_comment"`) are anchored below the diff hunk they reference, using `path` and `line` to position them. Threaded replies (`in_reply_to_id != 0`) are nested under their parent.
+- **Conversation section**: Issue comments (`comment_type = "issue_comment"`) and top-level review submissions (`comment_type = "review"`) are shown in chronological order.
+- **Truncation**: For large diffs (>200 lines per file), mid-truncate with `... [+N more lines — run: autosearch pr diff 'owner/repo#42' --file path/to/file]`. For PRs with >20 files, show the first 20 and note `... and N more files`.
+- **No-diff fallback**: If `diff` is empty (non-critical fetch failed in ETL), show file list from `files_json` without patches, with a note that diff data is unavailable.
 
 ### 7.2 `autosearch pr describe <pr_id>`
 
@@ -702,7 +753,8 @@ This is the highest-value pattern. One query surfaces the session where the code
 These are explicitly out of scope for this iteration:
 
 - **`autosearch stats`**: Aggregation commands (top files by feedback count, review turnaround, etc.). Valuable for reflection but separate design.
-- **PR ↔ Session linkage**: Automatic correlation between PRs and the sessions that produced them. Requires heuristics (time window + git remote + commit SHA matching). Future feature.
+- **PR ↔ Session linkage**: Automatic correlation between PRs and the sessions that produced them. Branch names won't work — Claude Code worktrees use auto-generated names (`worktree-agent-*`) that don't match the PR's `head_branch`. Commit SHAs are available on both sides but require text extraction: PRs have structured `head_sha`/`merge_commit_sha` fields, while sessions only contain SHAs as substrings in `git commit`/`git push` tool output. Best practical approach is **time window + `git_remote`** (session `last_message_at` near PR `created_at` on same remote), optionally strengthened by regex-extracting short SHAs from bash tool results and matching against PR `head_sha`. Stretch goal — not blocking search or reflection workflows.
+- **Git push hooks for structured linkage data**: A Claude Code hook firing after `git push` bash commands could capture the pushed branch, commit SHA range, and remote into a structured sidecar file. `autoetl` would then pick this up and write it as proper columns on the session/message parquet (e.g. `pushed_branch`, `pushed_commits`), giving `autosearch` a clean join key for PR ↔ session linkage without text extraction. This is an ETL-level concern — the hook writes the data, ETL normalizes it, search consumes it.
 - **Per-file patch indexing**: Indexing individual file patches from `files_json` as separate FTS rows. Adds complexity; `path` on `pr_comments` covers the main use case.
 - **Semantic search**: Vector embeddings over PR content. Deferred alongside session semantic search.
 - **Review round counting**: Derived "how many rounds of review" metric. Useful for stats, not needed for search.
@@ -710,7 +762,7 @@ These are explicitly out of scope for this iteration:
 ## 10. Implementation Order
 
 1. Add `ParquetPullRequestRow` and `ParquetPRCommentRow` structs to `auto-search/internal/model/`
-2. Extend `etlscan/discover.go` to find `pull_requests/` and `pr_comments/` parquet files
+2. Extend `etlscan/discover.go` to find `pull_requests/` and `pull_request_comments/` parquet files
 3. Add parquet readers for both new datasets
 4. Add new SQLite tables, indexes, FTS tables, and triggers to `indexdb/schema.go`
 5. Extend indexer to process PR and comment parquet files (with JSON denormalization)
@@ -718,9 +770,9 @@ These are explicitly out of scope for this iteration:
 7. Add scope-specific filters (`--review-state`, `--comment-type`, `--path`, `--author`, `--label`)
 8. Add `pr get`, `pr describe`, `comment get`, `comment describe` helper commands
 9. Add `--scope all` cross-scope search with score normalization
-10. Extend `indexdb/state.go`: add `pull_requests` and `pr_comments` to `DeleteRowsBySource` and `RowCounts` dataset handling
+10. Extend `indexdb/state.go`: add `pull_requests` and `pull_request_comments` to `DeleteRowsBySource` and `RowCounts` dataset handling
 11. Register `pr` and `comment` subcommands in `cli/root.go`
-12. Update existing tests that hard-code dataset lists (`indexer_integration_test.go`, `indexdb_test.go`) to include the two new datasets
+12. Update existing tests that hard-code dataset lists (`indexer_integration_test.go`, `indexdb_test.go`) to include `pull_requests` and `pull_request_comments`
 13. Add test fixtures using `mistakenot/auto-stack#1` (the stable test PR from the ETL spec)
 14. Update `quickstart` output to cover PR search
 
@@ -728,15 +780,19 @@ These are explicitly out of scope for this iteration:
 
 ### Fixtures
 
-Use `mistakenot/auto-stack#1` as the canonical test PR. The ETL spec documents its exact shape:
-- 4 reviews (COMMENTED ×2, CHANGES_REQUESTED ×1, APPROVED ×1)
-- 4 review comments (with threading via `in_reply_to_id`)
-- 1 issue comment
-- Labels: `easter-egg`, `test-data`
+Tests must not depend on the GitHub API or `~/.auto/` directories. All test data comes from two sources:
 
-Add deterministic PR fixture generators in `internal/testutil` (matching the existing pattern for session/message fixtures) that produce `ParquetPullRequestRow` and `ParquetPRCommentRow` data based on the known `mistakenot/auto-stack#1` shape. Write generated parquet to `auto-search/testdata/etl-output/pull_requests/` and `pr_comments/`. This avoids depending on ad-hoc external ETL runs for CI stability.
+**Unit / integration tests**: Deterministic fixture generators in `internal/testutil` (matching the existing pattern for session/message fixtures) that produce `ParquetPullRequestRow` and `ParquetPRCommentRow` structs programmatically. Extend `internal/testutil/fixtures.go` to expose `PullRequestsPath()` and `PRCommentsPath()` helpers alongside the existing `SessionsPath()` and `MessagesPath()`, so all integration tests locate fixtures through one consistent API.
 
-Extend `internal/testutil/fixtures.go` to expose `PullRequestsPath()` and `PRCommentsPath()` helpers alongside the existing `SessionsPath()` and `MessagesPath()`, so all integration tests locate fixtures through one consistent API.
+**E2E tests**: Use `auto-search/.tmp/etl-output/` which contains a snapshot of real data copied from `~/.auto/etl/output/` (git-ignored, not committed). This directory already contains all four datasets (`messages/`, `sessions/`, `pull_requests/`, `pull_request_comments/`). E2E tests run the full `autosearch index` + `autosearch search` pipeline against this snapshot. The data includes:
+- 2 PRs (`mistakenot/auto-stack#2`, `#3`)
+- 4 PR comments on #2 (2 reviews, 2 review comments with threading and file paths)
+- 0 comments on #3 (clean approval)
+
+To refresh the snapshot after re-running `autoetl`:
+```bash
+rsync -a --delete ~/.auto/etl/output/ auto-search/.tmp/etl-output/
+```
 
 ### Unit Tests
 
