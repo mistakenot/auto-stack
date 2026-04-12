@@ -525,6 +525,64 @@ func TestSearchSessionsWithRoleFilter(t *testing.T) {
 	}
 }
 
+func TestSearchWithFieldFilter(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "search", "contextual-commit", "--field", "tool_input")
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	if meta["total_hits"] != float64(1) {
+		t.Fatalf("total_hits = %v, want 1", meta["total_hits"])
+	}
+	hits := out["hits"].([]any)
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+	hit := hits[0].(map[string]any)
+	if hit["messageId"] != "msg-011" {
+		t.Fatalf("messageId = %v, want msg-011", hit["messageId"])
+	}
+}
+
+func TestSearchSessionsWithFieldFilter(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "search", "--scope", "sessions", "--field", "tool_output", "authentication")
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	if meta["total_hits"] != float64(1) {
+		t.Fatalf("total_hits = %v, want 1", meta["total_hits"])
+	}
+	hits := out["hits"].([]any)
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+	hit := hits[0].(map[string]any)
+	if hit["sessionId"] != "test-session-1" {
+		t.Fatalf("sessionId = %v, want test-session-1", hit["sessionId"])
+	}
+}
+
+func TestSearchRejectsInvalidField(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	_, stderr, code := runCLI(t, "search", "auth", "--field", "bad_field")
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for invalid --field")
+	}
+	if !strings.Contains(stderr, "invalid --field value") {
+		t.Fatalf("expected invalid field error in stderr, got:\n%s", stderr)
+	}
+}
+
 func TestSearchCwdRemoteConflict(t *testing.T) {
 	setupIndexedFixtures(t)
 

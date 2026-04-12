@@ -57,6 +57,7 @@ type MessageSearchOpts struct {
 	Remote    string
 	Skill     string
 	Role      string
+	Field     string
 	Offset    int
 	PageSize  int
 	RequestID string
@@ -69,6 +70,13 @@ const (
 	defaultPageSize    = 20
 )
 
+const (
+	searchFieldAll        = "all"
+	searchFieldContent    = "content"
+	searchFieldToolInput  = "tool_input"
+	searchFieldToolOutput = "tool_output"
+)
+
 // SearchMessages performs a BM25 message-scope search.
 func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	start := time.Now()
@@ -77,6 +85,10 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 		return nil, errors.New("--cwd and --remote are mutually exclusive")
 	}
 	offset, pageSize, err := normalizePagination(opts.Offset, opts.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	field, err := normalizeField(opts.Field)
 	if err != nil {
 		return nil, err
 	}
@@ -97,9 +109,9 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 
 	fts := query.CompileFTS(ast)
 	terms := ExtractTerms(ast)
-	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, opts.Role, timeFilter.Canonical)
+	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter.Canonical)
 
-	hits, totalHits, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, opts.Role, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
+	hits, totalHits, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +120,7 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	if totalHits < minHitsForFallback {
 		fallbackAST := query.PrefixFallback(ast)
 		fallbackFTS := query.CompileFTS(fallbackAST)
-		fallbackHits, fallbackTotal, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, opts.Skill, opts.Role, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
+		fallbackHits, fallbackTotal, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
 		if err == nil && fallbackTotal > totalHits {
 			hits = fallbackHits
 			totalHits = fallbackTotal
@@ -144,7 +156,7 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	}, nil
 }
 
-func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, int, error) {
+func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, int, error) {
 	baseQuery := `
 		FROM messages_fts
 		JOIN messages m ON m.doc_id = messages_fts.rowid
@@ -167,6 +179,18 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role string, timeFil
 	if role != "" {
 		baseQuery += " AND m.role = ?"
 		args = append(args, role)
+	}
+	switch field {
+	case searchFieldAll:
+		// no-op
+	case searchFieldContent:
+		baseQuery += " AND m.tool_input = '' AND m.role != 'tool'"
+	case searchFieldToolInput:
+		baseQuery += " AND m.tool_input != ''"
+	case searchFieldToolOutput:
+		baseQuery += " AND m.role = 'tool'"
+	default:
+		return nil, 0, fmt.Errorf("invalid --field value %q (use all, content, tool_input, tool_output)", field)
 	}
 	if timeFilter.StartMs != nil {
 		baseQuery += " AND m.timestamp >= ?"
@@ -250,7 +274,7 @@ func neighborMessageIDs(db *sql.DB, sessionID string, messageIndex int) (prev, n
 	return
 }
 
-func normalizeFilters(cwd, remote, skill, role, timeCanonical string) string {
+func normalizeFilters(cwd, remote, skill, role, field, timeCanonical string) string {
 	var parts []string
 	if cwd != "" {
 		parts = append(parts, "cwd="+cwd)
@@ -263,6 +287,9 @@ func normalizeFilters(cwd, remote, skill, role, timeCanonical string) string {
 	}
 	if role != "" {
 		parts = append(parts, "role="+role)
+	}
+	if field != "" && field != searchFieldAll {
+		parts = append(parts, "field="+field)
 	}
 	if timeCanonical != "" {
 		parts = append(parts, timeCanonical)
@@ -278,4 +305,17 @@ func normalizePagination(offset, pageSize int) (int, int, error) {
 		pageSize = defaultPageSize
 	}
 	return offset, pageSize, nil
+}
+
+func normalizeField(field string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(field))
+	if normalized == "" {
+		return searchFieldAll, nil
+	}
+	switch normalized {
+	case searchFieldAll, searchFieldContent, searchFieldToolInput, searchFieldToolOutput:
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("invalid --field value %q (use all, content, tool_input, tool_output)", field)
+	}
 }

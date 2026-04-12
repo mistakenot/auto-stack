@@ -37,6 +37,7 @@ type SessionSearchOpts struct {
 	Remote    string
 	Skill     string
 	Role      string
+	Field     string
 	Offset    int
 	PageSize  int
 	RequestID string
@@ -58,6 +59,10 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	field, err := normalizeField(opts.Field)
+	if err != nil {
+		return nil, err
+	}
 
 	now := opts.Now
 	if now.IsZero() {
@@ -74,9 +79,9 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	}
 
 	fts := query.CompileFTS(ast)
-	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, opts.Role, timeFilter.Canonical)
+	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter.Canonical)
 
-	hits, totalHits, err := execSessionSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, opts.Role, timeFilter, opts.Query, filters, offset, pageSize)
+	hits, totalHits, err := execSessionSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter, opts.Query, filters, offset, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +113,7 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	}, nil
 }
 
-func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role string, timeFilter TimeFilter, rawQuery, filters string, offset, pageSize int) ([]SessionHit, int, error) {
+func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, timeFilter TimeFilter, rawQuery, filters string, offset, pageSize int) ([]SessionHit, int, error) {
 	baseQuery := `
 		FROM sessions_fts
 		JOIN sessions s ON s.doc_id = sessions_fts.rowid
@@ -131,6 +136,18 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role string, timeFil
 	if role != "" {
 		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE role = ?)"
 		args = append(args, role)
+	}
+	switch field {
+	case searchFieldAll:
+		// no-op
+	case searchFieldContent:
+		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE tool_input = '' AND role != 'tool')"
+	case searchFieldToolInput:
+		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE tool_input != '')"
+	case searchFieldToolOutput:
+		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE role = 'tool')"
+	default:
+		return nil, 0, fmt.Errorf("invalid --field value %q (use all, content, tool_input, tool_output)", field)
 	}
 	if timeFilter.StartMs != nil {
 		baseQuery += " AND s.first_message_at >= ?"

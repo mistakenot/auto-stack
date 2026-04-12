@@ -22,6 +22,7 @@ func newSearchCmd() *cobra.Command {
 	var remote string
 	var skill string
 	var role string
+	var field string
 	var offset int
 	var limit int
 	var requestID string
@@ -62,6 +63,7 @@ func newSearchCmd() *cobra.Command {
 					Remote:    remote,
 					Skill:     skill,
 					Role:      role,
+					Field:     field,
 					Offset:    offset,
 					PageSize:  limit,
 					RequestID: requestID,
@@ -83,6 +85,7 @@ func newSearchCmd() *cobra.Command {
 					Remote:    remote,
 					Skill:     skill,
 					Role:      role,
+					Field:     field,
 					Offset:    offset,
 					PageSize:  limit,
 					RequestID: requestID,
@@ -107,6 +110,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&remote, "remote", "", "git remote filter")
 	cmd.Flags().StringVar(&skill, "skill", "", "filter by skill name")
 	cmd.Flags().StringVar(&role, "role", "", "filter by message role (user, assistant, tool)")
+	cmd.Flags().StringVar(&field, "field", "all", "filter searchable field: all, content, tool_input, tool_output")
 	cmd.Flags().IntVar(&offset, "offset", 0, "result offset for pagination (0-based)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max results to return (default 20)")
 	cmd.Flags().BoolVar(&highlight, "highlight", false, "highlight matched terms in snippets")

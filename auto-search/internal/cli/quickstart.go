@@ -41,8 +41,19 @@ autosearch search "Exit code 0" --after 2024-03-21T08:00:00Z --before 2024-03-21
 # Highlight matched terms in snippets
 autosearch search "undefined symbol" --highlight
 
-# Pagination: default page size is 20; advance with offset
+# Pagination: default page size is 20; set page size with --limit
+autosearch search "undefined symbol" --limit 10
+
+# Skip results with --offset (skip first 20)
 autosearch search "undefined symbol" --offset 20
+
+# Restrict search to specific content classes
+autosearch search "contextual-commit" --field tool_input
+autosearch search "Exit code 1" --field tool_output
+
+# Filter by message role
+autosearch search "database is busy" --role tool
+autosearch search "undo that" --role user
 ` + "```" + `
 
 Queries support AND, OR, NOT (uppercase), and quoted phrases:

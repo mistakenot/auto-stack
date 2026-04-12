@@ -713,6 +713,117 @@ func TestSessionSearchRoleFilter(t *testing.T) {
 	}
 }
 
+func TestMessageSearchFieldFilter(t *testing.T) {
+	db := buildTestDB(t)
+
+	toolInput, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "contextual-commit",
+		Field: "tool_input",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages tool_input: %v", err)
+	}
+	if toolInput.Meta.TotalHits != 1 {
+		t.Fatalf("tool_input total_hits = %d, want 1", toolInput.Meta.TotalHits)
+	}
+	if len(toolInput.Hits) != 1 || toolInput.Hits[0].MessageID != "msg-011" {
+		t.Fatalf("unexpected tool_input hits: %+v", toolInput.Hits)
+	}
+
+	contentOnly, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "contextual-commit",
+		Field: "content",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages content: %v", err)
+	}
+	if contentOnly.Meta.TotalHits != 0 {
+		t.Fatalf("content total_hits = %d, want 0", contentOnly.Meta.TotalHits)
+	}
+
+	toolOutput, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "Committed",
+		Field: "tool_output",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages tool_output: %v", err)
+	}
+	if toolOutput.Meta.TotalHits != 1 {
+		t.Fatalf("tool_output total_hits = %d, want 1", toolOutput.Meta.TotalHits)
+	}
+	if len(toolOutput.Hits) != 1 || toolOutput.Hits[0].MessageID != "msg-012" {
+		t.Fatalf("unexpected tool_output hits: %+v", toolOutput.Hits)
+	}
+}
+
+func TestSessionSearchFieldFilter(t *testing.T) {
+	db := buildTestDB(t)
+
+	toolInput, err := search.SearchSessions(&search.SessionSearchOpts{
+		DB:    db,
+		Query: "authentication middleware",
+		Field: "tool_input",
+	})
+	if err != nil {
+		t.Fatalf("SearchSessions tool_input: %v", err)
+	}
+	if toolInput.Meta.TotalHits != 1 {
+		t.Fatalf("tool_input total_hits = %d, want 1", toolInput.Meta.TotalHits)
+	}
+	if len(toolInput.Hits) != 1 || toolInput.Hits[0].SessionID != "test-session-1" {
+		t.Fatalf("unexpected tool_input session hits: %+v", toolInput.Hits)
+	}
+
+	noToolInput, err := search.SearchSessions(&search.SessionSearchOpts{
+		DB:    db,
+		Query: "CI pipeline",
+		Field: "tool_input",
+	})
+	if err != nil {
+		t.Fatalf("SearchSessions noToolInput: %v", err)
+	}
+	if noToolInput.Meta.TotalHits != 0 {
+		t.Fatalf("tool_input total_hits for CI pipeline = %d, want 0", noToolInput.Meta.TotalHits)
+	}
+
+	contentOnly, err := search.SearchSessions(&search.SessionSearchOpts{
+		DB:    db,
+		Query: "CI pipeline",
+		Field: "content",
+	})
+	if err != nil {
+		t.Fatalf("SearchSessions content: %v", err)
+	}
+	if contentOnly.Meta.TotalHits != 1 {
+		t.Fatalf("content total_hits for CI pipeline = %d, want 1", contentOnly.Meta.TotalHits)
+	}
+}
+
+func TestSearchRejectsInvalidField(t *testing.T) {
+	db := buildTestDB(t)
+
+	_, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "auth",
+		Field: "bad_field",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid field value in message search")
+	}
+
+	_, err = search.SearchSessions(&search.SessionSearchOpts{
+		DB:    db,
+		Query: "auth",
+		Field: "bad_field",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid field value in session search")
+	}
+}
+
 func TestCWDAndRemoteMutuallyExclusive(t *testing.T) {
 	db := buildTestDB(t)
 
