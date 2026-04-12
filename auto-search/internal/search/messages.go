@@ -38,12 +38,22 @@ type Meta struct {
 	Query            string `json:"query"`
 	ElapsedMs        int64  `json:"elapsed_ms"`
 	TotalHits        int    `json:"total_hits"`
+	TotalMatches     int    `json:"total_matches"`
+	DistinctSessions int    `json:"distinct_sessions"`
+	DistinctMessages int    `json:"distinct_messages"`
 	ReturnedHits     int    `json:"returned_hits"`
 	PageSize         int    `json:"page_size"`
 	Offset           int    `json:"offset"`
 	HasMore          bool   `json:"has_more"`
 	NextOffset       *int   `json:"next_offset,omitempty"`
+	IsCapped         bool   `json:"is_capped"`
 	WildcardFallback bool   `json:"wildcard_fallback"`
+}
+
+type matchStats struct {
+	TotalMatches     int
+	DistinctSessions int
+	DistinctMessages int
 }
 
 // MessageSearchOpts holds the parameters for a message-scope search.
@@ -111,25 +121,25 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	terms := ExtractTerms(ast)
 	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter.Canonical)
 
-	hits, totalHits, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
+	hits, stats, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
 	if err != nil {
 		return nil, err
 	}
 
 	wildcard := false
-	if totalHits < minHitsForFallback {
+	if stats.TotalMatches < minHitsForFallback {
 		fallbackAST := query.PrefixFallback(ast)
 		fallbackFTS := query.CompileFTS(fallbackAST)
-		fallbackHits, fallbackTotal, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
-		if err == nil && fallbackTotal > totalHits {
+		fallbackHits, fallbackStats, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
+		if err == nil && fallbackStats.TotalMatches > stats.TotalMatches {
 			hits = fallbackHits
-			totalHits = fallbackTotal
+			stats = fallbackStats
 			wildcard = true
 		}
 	}
 
 	returnedHits := len(hits)
-	hasMore := offset+returnedHits < totalHits
+	hasMore := offset+returnedHits < stats.TotalMatches
 	var nextOffset *int
 	if hasMore {
 		next := offset + returnedHits
@@ -144,19 +154,25 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 			Mode:             "bm25",
 			Query:            opts.Query,
 			ElapsedMs:        elapsed,
-			TotalHits:        totalHits,
+			TotalHits:        stats.TotalMatches,
+			TotalMatches:     stats.TotalMatches,
+			DistinctSessions: stats.DistinctSessions,
+			DistinctMessages: stats.DistinctMessages,
 			ReturnedHits:     returnedHits,
 			PageSize:         pageSize,
 			Offset:           offset,
 			HasMore:          hasMore,
 			NextOffset:       nextOffset,
+			IsCapped:         false,
 			WildcardFallback: wildcard,
 		},
 		Hits: hits,
 	}, nil
 }
 
-func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, int, error) {
+func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, matchStats, error) {
+	zeroStats := matchStats{}
+
 	baseQuery := `
 		FROM messages_fts
 		JOIN messages m ON m.doc_id = messages_fts.rowid
@@ -190,7 +206,7 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	case searchFieldToolOutput:
 		baseQuery += " AND m.role = 'tool'"
 	default:
-		return nil, 0, fmt.Errorf("invalid --field value %q (use all, content, tool_input, tool_output)", field)
+		return nil, zeroStats, fmt.Errorf("invalid --field value %q (use all, content, tool_input, tool_output)", field)
 	}
 	if timeFilter.StartMs != nil {
 		baseQuery += " AND m.timestamp >= ?"
@@ -204,7 +220,19 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	countQuery := "SELECT COUNT(*) " + baseQuery
 	var totalHits int
 	if err := db.QueryRow(countQuery, args...).Scan(&totalHits); err != nil {
-		return nil, 0, fmt.Errorf("message search count query: %w", err)
+		return nil, zeroStats, fmt.Errorf("message search count query: %w", err)
+	}
+
+	distinctSessionsQuery := "SELECT COUNT(DISTINCT m.session_id) " + baseQuery
+	var distinctSessions int
+	if err := db.QueryRow(distinctSessionsQuery, args...).Scan(&distinctSessions); err != nil {
+		return nil, zeroStats, fmt.Errorf("message search distinct sessions query: %w", err)
+	}
+
+	distinctMessagesQuery := "SELECT COUNT(DISTINCT m.message_id) " + baseQuery
+	var distinctMessages int
+	if err := db.QueryRow(distinctMessagesQuery, args...).Scan(&distinctMessages); err != nil {
+		return nil, zeroStats, fmt.Errorf("message search distinct messages query: %w", err)
 	}
 
 	q := `
@@ -218,7 +246,7 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 
 	rows, err := db.Query(q, hitArgs...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("message search query: %w", err)
+		return nil, zeroStats, fmt.Errorf("message search query: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -233,7 +261,7 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 			score            float64
 		)
 		if err := rows.Scan(&messageID, &sessionID, &role, &contentTruncated, &messageIndex, &score); err != nil {
-			return nil, 0, fmt.Errorf("scan message hit: %w", err)
+			return nil, zeroStats, fmt.Errorf("scan message hit: %w", err)
 		}
 
 		snippet, startIdx, endIdx := Snippet(contentTruncated, terms, highlight)
@@ -254,12 +282,16 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("iterate message hits: %w", err)
+		return nil, zeroStats, fmt.Errorf("iterate message hits: %w", err)
 	}
 	if hits == nil {
 		hits = []MessageHit{}
 	}
-	return hits, totalHits, nil
+	return hits, matchStats{
+		TotalMatches:     totalHits,
+		DistinctSessions: distinctSessions,
+		DistinctMessages: distinctMessages,
+	}, nil
 }
 
 func neighborMessageIDs(db *sql.DB, sessionID string, messageIndex int) (prev, next string) {

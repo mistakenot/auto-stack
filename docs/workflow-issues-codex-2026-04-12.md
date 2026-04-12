@@ -1,109 +1,95 @@
-# Recent Workflow Probe
+# Auto-Stack Session Workflow Issues (Recent)
 File: workflow-issues-codex-2026-04-12.md
-Window analyzed: 2026-03-13 to 2026-04-12 (UTC, last 30 days)
+Window analyzed: 2026-03-29T00:00:00Z to 2026-04-12T20:20:00Z (rolling 14d queries)
 Workspace: /home/vscode/src/auto-stack
 
 ## Issues
 
-### Beads SQLite Contention During Issue Operations (Severity: HIGH)
-- Symptom: `br` operations intermittently fail with WAL salt mismatch logs and `database is busy` errors during active workflows.
-- Times seen: 5 runtime incidents were found after filtering strict `tool` outputs for the exact busy-error signature.
-- First seen: 2026-03-21T11:56:28Z in message `6c71f534-8a37-4157-9ae2-cabe1ab541c9-98`.
-- Most recent seen: 2026-03-22T17:23:16Z in message `ae60077a-6e73-4fa3-998e-01d40e8e8a2e-96`.
-- Context check: I reviewed neighboring messages `6c71f534-...-97/98/99` and `ae60077a-...-95/96/97` to confirm the failures happened inside issue-close/dependency-update flows with immediate retries.
-- Transferability: portable, because every sub-project in this stack uses the same Beads-backed issue flow and can hit the same SQLite contention mode.
-- Search evidence:
-  - `autosearch search '"Error: Database error: database is busy"' --scope messages --cwd /home/vscode/src/auto-stack --since 30d` - This isolated explicit busy-error payloads instead of generic mentions.
-  - `jq -r '.hits[] | select(.messageType=="tool") | select((.snippet|contains("Total hits:"))|not) | select((.snippet|contains("autosearch search"))|not) | .messageId' /tmp/autosearch-probe-2026-04-12/stats/db_busy_strict.search.json` - This removed meta-analysis echoes and kept runtime tool failures.
-- Thought process:
-  - The strict error phrase plus `tool` filtering gave high-confidence runtime failures rather than references in docs or retrospective analysis output.
-  - I marked this HIGH because it blocks issue state transitions and can derail close/sync workflows mid-task.
-- Representative incidents:
-  - `6c71f534-8a37-4157-9ae2-cabe1ab541c9-98` - A dependency-removal sequence logs `database is busy` while partially succeeding, leaving the operation in an uncertain state.
-  - `ae60077a-6e73-4fa3-998e-01d40e8e8a2e-96` - Repeated WAL mismatch errors accompany a close/skip sequence and force retry behavior.
-- Recommendation:
-  - Add a Beads-safe wrapper that serializes `br` mutations, applies bounded retries with backoff, and emits a deterministic remediation step when contention persists.
+### Edit Tool State Errors (Severity: HIGH)
+- Symptom: Edit operations repeatedly fail with stale-read and replacement-target mismatches, causing avoidable retry loops.
+- Times seen: 9 matching incidents.
+- First seen: 2026-04-05T15:16:46Z in `a1a34b0915fc65f5b-49`.
+- Most recent seen: 2026-04-12T19:52:12Z in `0e160d60-06ee-4e5b-8bff-fccdc0138c9a-77`.
+- Context check: Reviewed adjacent messages for `1028af22-f1f9-4f69-a132-a3ab08072bcb-120/121/122` and `b6c7afc8-4e01-4559-9874-745676564ddc-239/240/241/242/243/244`.
+- Transferability: portable, because the failure mode is tied to generic agent edit workflows (read-write ordering and brittle string replacement).
+- Search evidence: `autosearch search '"File has not been read yet" OR "modified since read" OR "String to replace not found in file"' --scope messages --cwd /home/vscode/src/auto-stack --since 14d --limit 200` — isolated direct edit-tool failure messages.
+- Search evidence: `autosearch session get 1028af22-f1f9-4f69-a132-a3ab08072bcb | rg -n 'index=120|index=121|index=122|modified since read|Read it again'` — confirmed in-session failure and immediate retry context.
+- Thought process: I grouped all failures where edits were blocked by stale buffers or missing replacement strings because they share the same root cause (unsafe edit sequencing).
+- Thought process: Severity is HIGH because each incident interrupts code changes mid-task and forces additional read/edit cycles.
+- Representative incident: `1028af22-f1f9-4f69-a132-a3ab08072bcb-121` — tool returned `File has been modified since read... Read it again before attempting to write it.`
+- Representative incident: `b6c7afc8-4e01-4559-9874-745676564ddc-240` — tool returned `String to replace not found in file`, followed by another replacement miss at `...-243`.
+- Recommendation: Create a `tool-edit-recovery` skill that enforces re-read-before-write, validates replacement anchors before edit, and automatically falls back to narrower patch scopes.
 
-### Tool Read/Write Contract Violations (Severity: HIGH)
-- Symptom: write/edit calls frequently fail with `tool_use_error` because files were not read first or changed between read and write.
-- Times seen: 44 incidents matched `modified since read` or `File has not been read yet` in the 30-day window.
-- First seen: 2026-03-20T11:43:27Z in message `d3b3f45c-2c43-41f8-ae25-7a2efbc073ab-5`.
-- Most recent seen: 2026-04-12T19:10:27Z in message `1028af22-f1f9-4f69-a132-a3ab08072bcb-121`.
-- Context check: I reviewed adjacent messages `d3b3f45c-...-4/5/6` and `1028af22-...-120/121/122` to confirm these failures occur directly around attempted edits and retries.
-- Transferability: portable, because this is a core tool orchestration pattern that applies to any repo using the same coding-agent toolchain.
-- Search evidence:
-  - `autosearch search '"modified since read" OR "File has not been read yet"' --scope messages --cwd /home/vscode/src/auto-stack --since 30d` - This captured both major variants of read/write precondition failures.
-  - `autosearch message get d3b3f45c-2c43-41f8-ae25-7a2efbc073ab-5` - This verified the canonical first-seen `tool_use_error` payload.
-- Thought process:
-  - The two error strings are direct protocol violations, so they are precise indicators of avoidable edit-loop churn.
-  - I marked this HIGH because these failures recur across sessions and add repeated non-value retries.
-- Representative incidents:
-  - `d3b3f45c-2c43-41f8-ae25-7a2efbc073ab-5` - The tool rejects a write attempt with `File has not been read yet`.
-  - `1028af22-f1f9-4f69-a132-a3ab08072bcb-121` - The tool rejects a write with `File has been modified since read`, forcing re-read and replay.
-- Recommendation:
-  - Enforce a standard edit loop that always re-reads immediately before write when any formatter/linter or concurrent process might touch the target file.
+### Environment Prereq / Install Blockers (Severity: MEDIUM)
+- Symptom: Build/test/install steps fail due missing toolchain prerequisites and live-binary overwrite conflicts.
+- Times seen: 3 matching incidents.
+- First seen: 2026-04-09T14:53:11Z in `e35ca62d-f692-4e3e-8b62-bd8674e9726a-499`.
+- Most recent seen: 2026-04-09T15:34:39Z in `44325cd4-d81a-44ee-bc56-ccb77c319af7-99`.
+- Context check: Reviewed adjacent messages for `44325cd4-d81a-44ee-bc56-ccb77c319af7-91/92/93` and `44325cd4-d81a-44ee-bc56-ccb77c319af7-98/99/100`.
+- Transferability: portable, because these are standard preflight gaps for local dev environments and CI-like runs.
+- Search evidence: `autosearch search '"cannot create regular file '/home/vscode/.local/bin/autowatch': Text file busy" OR "cgo: C compiler \"gcc\" not found"' --scope messages --cwd /home/vscode/src/auto-stack --since 14d --limit 200` — isolated high-precision install/test blockers.
+- Search evidence: `autosearch session get 44325cd4-d81a-44ee-bc56-ccb77c319af7 | rg -n 'index=91|index=92|index=93|index=98|index=99|index=100|gcc|Text file busy|autowatch is running'` — validated immediate remediation behavior after failures.
+- Thought process: I excluded noisy generic `command not found` matches and kept only exact blocker strings to avoid false positives.
+- Thought process: Severity is MEDIUM because failures were recoverable but still consumed significant execution time.
+- Representative incident: `44325cd4-d81a-44ee-bc56-ccb77c319af7-92` — `cgo: C compiler "gcc" not found` caused race-enabled test failure.
+- Representative incident: `44325cd4-d81a-44ee-bc56-ccb77c319af7-99` — `make install` failed with `autowatch ... Text file busy` during binary copy.
+- Recommendation: Create an `env-preflight-and-safe-install` skill that checks required compilers/tools, detects running binaries, and applies non-destructive install fallbacks with explicit remediation commands.
 
-### Install Pipeline Collision: `Text file busy` (Severity: MEDIUM)
-- Symptom: `make install` intermittently fails when copying `autowatch` into a running target path.
-- Times seen: 5 incidents matched the exact `Text file busy` signature.
-- First seen: 2026-03-22T16:40:49Z in message `17c23bc9-8d0e-40b7-9e17-ac363b6c77d0-649`.
-- Most recent seen: 2026-04-12T19:44:53Z in message `1028af22-f1f9-4f69-a132-a3ab08072bcb-202`.
-- Context check: I reviewed neighboring messages `17c23bc9-...-648/649/650` and `1028af22-...-201/202/203` to confirm this appears during install and then triggers manual mitigation or Makefile hardening.
-- Transferability: portable, because any long-running daemon binary in-place install can hit the same busy-file failure mode.
-- Search evidence:
-  - `autosearch search '"Text file busy"' --scope messages --cwd /home/vscode/src/auto-stack --since 30d` - This isolated install-time file-lock collisions.
-  - `autosearch message get 17c23bc9-8d0e-40b7-9e17-ac363b6c77d0-649` - This validated the concrete `cp ... Text file busy` failure path inside `make install`.
-- Thought process:
-  - The error is narrow and operationally clear, which makes the issue highly actionable.
-  - I marked this MEDIUM because it is disruptive but already has evidence of recent mitigation work in Makefile diffs.
-- Representative incidents:
-  - `17c23bc9-8d0e-40b7-9e17-ac363b6c77d0-649` - `cp` fails for `/home/vscode/.local/bin/autowatch` and aborts `make install` with exit code 2.
-  - `1028af22-f1f9-4f69-a132-a3ab08072bcb-202` - A follow-up Makefile patch shows targeted handling for the busy-file case.
-- Recommendation:
-  - Keep installs atomic per binary and make busy-target handling explicit so one daemon collision does not fail the entire install batch.
+### Search Signal Quality Gaps (Severity: HIGH)
+- Symptom: Session-analysis passes produce low-confidence ranking because of saturated hit caps and repeated complaints about missing practical signal quality.
+- Times seen: 10 matching incidents.
+- First seen: 2026-04-12T00:38:07Z in `b815b122-99ad-48b0-9717-ba8577c7387d-308`.
+- Most recent seen: 2026-04-12T20:19:36Z in `0e160d60-06ee-4e5b-8bff-fccdc0138c9a-274`.
+- Context check: Reviewed `b815b122-99ad-48b0-9717-ba8577c7387d-307/308/309` and `0e160d60-06ee-4e5b-8bff-fccdc0138c9a-169/183/274` to verify these were not isolated one-off comments.
+- Transferability: portable, because this affects any workflow that relies on autosearch hit counts for prioritization.
+- Search evidence: `autosearch search '"hits 50" OR "highlights were always null" OR "--count mode" OR "can''t do structured queries"' --scope messages --cwd /home/vscode/src/auto-stack --since 14d --limit 200` — captured recurring critiques of search usefulness.
+- Search evidence: `autosearch message get b815b122-99ad-48b0-9717-ba8577c7387d-308` — confirmed explicit user feedback calling out cap saturation, null highlights, and missing structured aggregations.
+- Thought process: I treated this as a reliability issue in the analysis loop because poor signal quality degrades decision-making even when data exists.
+- Thought process: Severity is HIGH because this directly limits the stack's ability to identify true priorities from session history.
+- Representative incident: `b815b122-99ad-48b0-9717-ba8577c7387d-308` — user reported cap saturation (`50` everywhere), null highlights, and no structured aggregation.
+- Representative incident: `0e160d60-06ee-4e5b-8bff-fccdc0138c9a-169` — downstream analysis excerpt still reported capped hit patterns (`total_hits: 50`) during issue discovery.
+- Recommendation: Create an `autosearch-evidence-hardening` skill that forces precision query design, false-positive checks, uncapped frequency estimation strategies, and transcript-first validation when counts saturate.
 
-### Go Compile Churn From Unused Imports and Runtime Panic Loops (Severity: MEDIUM)
-- Symptom: build/test iterations repeatedly fail on unused imports and panic traces before converging.
-- Times seen: 20 incidents matched `"imported and not used" OR "panic: runtime error"` in this workspace window.
-- First seen: 2026-03-20T22:01:47Z in message `88943e4d-fa33-444d-9c32-4fe269718550-249`.
-- Most recent seen: 2026-03-30T09:56:18Z in message `9e8c7cca-0ce9-474e-be58-a396bbaa10cf-103`.
-- Context check: I reviewed adjacent messages `88943e4d-...-248/249/250` and `9e8c7cca-...-102/103/104` to verify these were active fix loops rather than static references.
-- Transferability: portable, because this pattern follows common Go edit/build loops across multiple sub-project modules.
-- Search evidence:
-  - `autosearch search '"imported and not used" OR "panic: runtime error"' --scope messages --cwd /home/vscode/src/auto-stack --since 30d` - This focused on high-signal compile/test failure classes.
-  - `autosearch message get 88943e4d-fa33-444d-9c32-4fe269718550-249` - This confirmed a representative unused-import compile break in a real test run.
-- Thought process:
-  - These signatures directly indicate failed feedback cycles that should be caught earlier with tighter build discipline.
-  - I marked this MEDIUM because impact is mostly iteration cost rather than irreversible workflow blockage.
-- Representative incidents:
-  - `88943e4d-fa33-444d-9c32-4fe269718550-249` - `go test` fails in `auto-etl` due to an imported-but-unused package in `transform_test.go`.
-  - `9e8c7cca-0ce9-474e-be58-a396bbaa10cf-103` - Build fails in `autodoc` config code due to unused `fmt` import.
-- Recommendation:
-  - Enforce per-file/per-module compile checks immediately after each Go edit and auto-run import cleanup before the next action.
-
-## User Anti-Signals
-- The explicit correction query `autosearch search '"didn''t ask" OR "not what I asked" OR "no this is wrong" OR "undo that"' --scope messages --cwd /home/vscode/src/auto-stack --since 30d` returned 13 hits, including direct rollback language in `51f5dc53-...-40`.
-- The broad why-query `autosearch search '"why" OR "why did" OR "why are" OR "why would" OR "why didn''t"' --scope messages --cwd /home/vscode/src/auto-stack --since 30d` is capped at 50 hits, with 10 user-message hits in the returned set that were mostly neutral clarification and at least one direct challenge (`44325cd4-...-108` context was explanatory, not corrective).
+### User Correction Churn (Severity: MEDIUM)
+- Symptom: Users repeatedly intervene to redirect execution, indicating action drift or premature assumptions.
+- Times seen: 10 matching incidents.
+- First seen: 2026-04-05T15:20:10Z in `941bcf49-5646-4aeb-9049-b094ecf5cefc-139`.
+- Most recent seen: 2026-04-12T00:38:07Z in `b815b122-99ad-48b0-9717-ba8577c7387d-308`.
+- Context check: Reviewed adjacent messages for `1b0a7009-560d-488b-a239-3a1a92ffa331-270/271/272`, `44325cd4-d81a-44ee-bc56-ccb77c319af7-242/243/244`, and `e35ca62d-f692-4e3e-8b62-bd8674e9726a-500/501/502`.
+- Transferability: portable, because correction language appears across multiple sessions and task types.
+- Search evidence: `autosearch search '"no, " OR "didn''t ask" OR "undo" OR "stop" OR "not what I asked" OR "wrong"' --scope messages --cwd /home/vscode/src/auto-stack --since 14d --role user --limit 200` — surfaced explicit user redirect signals.
+- Search evidence: `autosearch message get 44325cd4-d81a-44ee-bc56-ccb77c319af7-243` — validated concrete correction tied to workspace/worktree safety.
+- Thought process: I retained this issue despite some noisy matches because there are multiple direct imperative corrections with clear redirection intent.
+- Thought process: Severity is MEDIUM because corrections are recoverable but increase churn and reduce trust in autonomous execution.
+- Representative incident: `44325cd4-d81a-44ee-bc56-ccb77c319af7-243` — user correction: `no this isnt on a worktree, you'll conflict with other work, move back to main`.
+- Representative incident: `1b0a7009-560d-488b-a239-3a1a92ffa331-271` — user correction: `no add to todo.md` immediately after agent asserted completion.
+- Recommendation: Create a `correction-aware-execution` skill that pauses on correction phrases, restates updated intent in one sentence, and gates further tool calls until the new plan is explicit.
 
 ## Proposed New Skills
-1. `beads-lock-recovery`: Detect Beads WAL/busy contention, serialize mutating `br` commands, retry with bounded backoff, and emit exact remediation output when lock pressure persists.
-2. `safe-edit-loop`: Force `read -> edit -> verify -> reread-on-change` sequencing so `tool_use_error` preconditions are handled proactively instead of reactively.
-3. `daemon-safe-install`: Install binaries with per-target atomic copy semantics, busy-binary detection, and optional stop/install/start hooks for known daemons like `autowatch`.
-4. `go-compile-guard`: After every Go-file modification, run scoped `go build`/`go test` checks plus import-cleanup checks to collapse compile-fix loops early.
+- `tool-edit-recovery`: Mitigate edit-state failures by enforcing read freshness checks, anchor validation, and deterministic fallback edit strategies.
+- `env-preflight-and-safe-install`: Run prerequisite checks (`gcc`, toolchain, writable install targets, busy binary detection) before build/install commands.
+- `autosearch-evidence-hardening`: Standardize high-precision query packs, anti-noise filtering, and count saturation handling (`50+ lower-bound` labeling and time-bucket splits).
+- `correction-aware-execution`: Detect user correction language and switch to confirmation-first behavior before continuing execution.
+- `session-pattern-aggregator`: Add reusable workflow for deriving structured aggregates from transcripts (top files read, top docs referenced, retry-loop hotspots).
+
+## User Anti-Signals
+- Explicit correction language query returned 10 hits, with at least 3 clearly directive corrections that changed execution (`...-271`, `...-243`, `...-501`).
+- `why` query returned 5 user hits; manual context classification found 3 challenge/diagnostic prompts and 2 neutral clarification prompts.
 
 ## Commands Run
 ```bash
+cat .agents/skills/reflect-on-agent-sessions/SKILL.md
+autosearch --help
 autosearch quickstart
 autosearch index
-autosearch search 'error OR fail OR timeout OR busy OR tool_use_error' --scope messages --cwd /home/vscode/src/auto-stack --since 30d
-autosearch search 'error OR fail OR timeout OR busy OR tool_use_error' --scope sessions --cwd /home/vscode/src/auto-stack --since 30d
-autosearch search '"database is busy"' --scope messages --cwd /home/vscode/src/auto-stack --since 30d
-autosearch search '"Error: Database error: database is busy"' --scope messages --cwd /home/vscode/src/auto-stack --since 30d
-autosearch search '"modified since read" OR "File has not been read yet"' --scope messages --cwd /home/vscode/src/auto-stack --since 30d
-autosearch search '"Text file busy"' --scope messages --cwd /home/vscode/src/auto-stack --since 30d
-autosearch search '"imported and not used" OR "panic: runtime error"' --scope messages --cwd /home/vscode/src/auto-stack --since 30d
-autosearch search '"didn''t ask" OR "not what I asked" OR "no this is wrong" OR "undo that"' --scope messages --cwd /home/vscode/src/auto-stack --since 30d
-autosearch search '"why" OR "why did" OR "why are" OR "why would" OR "why didn''t"' --scope messages --cwd /home/vscode/src/auto-stack --since 30d
+autosearch search "error OR fail OR timeout OR busy OR tool_use_error" --scope sessions --cwd /home/vscode/src/auto-stack --since 14d --limit 50
+autosearch search "error OR fail OR timeout OR busy OR tool_use_error" --scope messages --cwd /home/vscode/src/auto-stack --since 14d --highlight --limit 50
+autosearch search '"File has not been read yet" OR "modified since read" OR "String to replace not found in file"' --scope messages --cwd /home/vscode/src/auto-stack --since 14d --limit 200
+autosearch search '"cannot create regular file '/home/vscode/.local/bin/autowatch': Text file busy" OR "cgo: C compiler \"gcc\" not found"' --scope messages --cwd /home/vscode/src/auto-stack --since 14d --limit 200
+autosearch search '"hits 50" OR "highlights were always null" OR "--count mode" OR "can''t do structured queries"' --scope messages --cwd /home/vscode/src/auto-stack --since 14d --limit 200
+autosearch search '"no, " OR "didn''t ask" OR "undo" OR "stop" OR "not what I asked" OR "wrong"' --scope messages --cwd /home/vscode/src/auto-stack --since 14d --role user --limit 200
+autosearch search '"why" OR "why did" OR "why are" OR "why would" OR "why didn''t"' --scope messages --cwd /home/vscode/src/auto-stack --since 14d --role user --limit 200
 autosearch message describe <message_id>
 autosearch message get <message_id>
+autosearch session get <session_id>
 ```

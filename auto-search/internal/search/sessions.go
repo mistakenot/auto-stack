@@ -81,13 +81,13 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	fts := query.CompileFTS(ast)
 	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter.Canonical)
 
-	hits, totalHits, err := execSessionSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter, opts.Query, filters, offset, pageSize)
+	hits, stats, err := execSessionSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter, opts.Query, filters, offset, pageSize)
 	if err != nil {
 		return nil, err
 	}
 
 	returnedHits := len(hits)
-	hasMore := offset+returnedHits < totalHits
+	hasMore := offset+returnedHits < stats.TotalMatches
 	var nextOffset *int
 	if hasMore {
 		next := offset + returnedHits
@@ -102,18 +102,24 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 			Mode:         "bm25",
 			Query:        opts.Query,
 			ElapsedMs:    elapsed,
-			TotalHits:    totalHits,
+			TotalHits:    stats.TotalMatches,
+			TotalMatches: stats.TotalMatches,
+			DistinctSessions: stats.DistinctSessions,
+			DistinctMessages: stats.DistinctMessages,
 			ReturnedHits: returnedHits,
 			PageSize:     pageSize,
 			Offset:       offset,
 			HasMore:      hasMore,
 			NextOffset:   nextOffset,
+			IsCapped:     false,
 		},
 		Hits: hits,
 	}, nil
 }
 
-func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, timeFilter TimeFilter, rawQuery, filters string, offset, pageSize int) ([]SessionHit, int, error) {
+func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, timeFilter TimeFilter, rawQuery, filters string, offset, pageSize int) ([]SessionHit, matchStats, error) {
+	zeroStats := matchStats{}
+
 	baseQuery := `
 		FROM sessions_fts
 		JOIN sessions s ON s.doc_id = sessions_fts.rowid
@@ -147,7 +153,7 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	case searchFieldToolOutput:
 		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE role = 'tool')"
 	default:
-		return nil, 0, fmt.Errorf("invalid --field value %q (use all, content, tool_input, tool_output)", field)
+		return nil, zeroStats, fmt.Errorf("invalid --field value %q (use all, content, tool_input, tool_output)", field)
 	}
 	if timeFilter.StartMs != nil {
 		baseQuery += " AND s.first_message_at >= ?"
@@ -161,7 +167,20 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	countQuery := "SELECT COUNT(*) " + baseQuery
 	var totalHits int
 	if err := db.QueryRow(countQuery, args...).Scan(&totalHits); err != nil {
-		return nil, 0, fmt.Errorf("session search count query: %w", err)
+		return nil, zeroStats, fmt.Errorf("session search count query: %w", err)
+	}
+
+	distinctMessagesQuery := `
+		SELECT COUNT(DISTINCT m.message_id)
+		FROM messages m
+		JOIN (
+			SELECT DISTINCT s.session_id
+	` + baseQuery + `
+		) matched ON matched.session_id = m.session_id
+	`
+	var distinctMessages int
+	if err := db.QueryRow(distinctMessagesQuery, args...).Scan(&distinctMessages); err != nil {
+		return nil, zeroStats, fmt.Errorf("session search distinct messages query: %w", err)
 	}
 
 	q := `
@@ -175,7 +194,7 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 
 	rows, err := db.Query(q, hitArgs...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("session search query: %w", err)
+		return nil, zeroStats, fmt.Errorf("session search query: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -189,7 +208,7 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 			score          float64
 		)
 		if err := rows.Scan(&sessionID, &workspace, &firstMessageAt, &lastMessageAt, &score); err != nil {
-			return nil, 0, fmt.Errorf("scan session hit: %w", err)
+			return nil, zeroStats, fmt.Errorf("scan session hit: %w", err)
 		}
 
 		// Count messages for this session.
@@ -207,10 +226,14 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("iterate session hits: %w", err)
+		return nil, zeroStats, fmt.Errorf("iterate session hits: %w", err)
 	}
 	if hits == nil {
 		hits = []SessionHit{}
 	}
-	return hits, totalHits, nil
+	return hits, matchStats{
+		TotalMatches:     totalHits,
+		DistinctSessions: totalHits,
+		DistinctMessages: distinctMessages,
+	}, nil
 }

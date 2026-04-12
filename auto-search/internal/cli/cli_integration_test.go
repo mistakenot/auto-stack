@@ -249,6 +249,21 @@ func TestSearchMessages(t *testing.T) {
 	if totalHits <= 0 {
 		t.Fatalf("total_hits = %v, want > 0 for query 'Exit code'", totalHits)
 	}
+	totalMatches := meta["total_matches"].(float64)
+	if totalMatches != totalHits {
+		t.Fatalf("total_matches = %v, want %v", totalMatches, totalHits)
+	}
+	distinctSessions := meta["distinct_sessions"].(float64)
+	if distinctSessions <= 0 {
+		t.Fatalf("distinct_sessions = %v, want > 0", distinctSessions)
+	}
+	distinctMessages := meta["distinct_messages"].(float64)
+	if distinctMessages <= 0 {
+		t.Fatalf("distinct_messages = %v, want > 0", distinctMessages)
+	}
+	if meta["is_capped"] != false {
+		t.Fatalf("is_capped = %v, want false", meta["is_capped"])
+	}
 
 	hits := out["hits"].([]any)
 	if len(hits) == 0 {
@@ -312,6 +327,21 @@ func TestSearchSessions(t *testing.T) {
 	totalHits := meta["total_hits"].(float64)
 	if totalHits <= 0 {
 		t.Fatalf("total_hits = %v, want > 0 for query 'authentication'", totalHits)
+	}
+	totalMatches := meta["total_matches"].(float64)
+	if totalMatches != totalHits {
+		t.Fatalf("total_matches = %v, want %v", totalMatches, totalHits)
+	}
+	distinctSessions := meta["distinct_sessions"].(float64)
+	if distinctSessions != totalHits {
+		t.Fatalf("distinct_sessions = %v, want %v", distinctSessions, totalHits)
+	}
+	distinctMessages := meta["distinct_messages"].(float64)
+	if distinctMessages <= 0 {
+		t.Fatalf("distinct_messages = %v, want > 0", distinctMessages)
+	}
+	if meta["is_capped"] != false {
+		t.Fatalf("is_capped = %v, want false", meta["is_capped"])
 	}
 
 	hits := out["hits"].([]any)
