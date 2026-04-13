@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mistakenot/auto-search/internal/query"
@@ -198,38 +199,65 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	}
 	defer func() { _ = rows.Close() }()
 
-	var hits []SessionHit
+	type sessionRow struct {
+		sessionID      string
+		workspace      string
+		firstMessageAt int64
+		lastMessageAt  int64
+		score          float64
+	}
+	var scannedRows []sessionRow
 	for rows.Next() {
-		var (
-			sessionID      string
-			workspace      string
-			firstMessageAt int64
-			lastMessageAt  int64
-			score          float64
-		)
-		if err := rows.Scan(&sessionID, &workspace, &firstMessageAt, &lastMessageAt, &score); err != nil {
+		var r sessionRow
+		if err := rows.Scan(&r.sessionID, &r.workspace, &r.firstMessageAt, &r.lastMessageAt, &r.score); err != nil {
 			return nil, zeroStats, fmt.Errorf("scan session hit: %w", err)
 		}
-
-		// Count messages for this session.
-		var totalMessages int
-		_ = db.QueryRow("SELECT COUNT(*) FROM messages WHERE session_id = ?", sessionID).Scan(&totalMessages)
-
-		hits = append(hits, SessionHit{
-			ID:             HitID("sessions", "bm25", rawQuery, filters, sessionID),
-			SessionID:      sessionID,
-			Score:          score,
-			Workspace:      workspace,
-			FirstMessageAt: firstMessageAt,
-			LastMessageAt:  lastMessageAt,
-			TotalMessages:  totalMessages,
-		})
+		scannedRows = append(scannedRows, r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, zeroStats, fmt.Errorf("iterate session hits: %w", err)
 	}
-	if hits == nil {
-		hits = []SessionHit{}
+
+	// Batch-fetch message counts for all session IDs in one query.
+	msgCounts := make(map[string]int, len(scannedRows))
+	if len(scannedRows) > 0 {
+		sessionIDs := make([]any, len(scannedRows))
+		placeholders := make([]string, len(scannedRows))
+		for i, r := range scannedRows {
+			sessionIDs[i] = r.sessionID
+			placeholders[i] = "?"
+		}
+		batchQuery := "SELECT session_id, COUNT(*) FROM messages WHERE session_id IN (" +
+			strings.Join(placeholders, ",") + ") GROUP BY session_id"
+		countRows, err := db.Query(batchQuery, sessionIDs...)
+		if err != nil {
+			return nil, zeroStats, fmt.Errorf("batch message count query: %w", err)
+		}
+		defer func() { _ = countRows.Close() }()
+		for countRows.Next() {
+			var sid string
+			var cnt int
+			if err := countRows.Scan(&sid, &cnt); err != nil {
+				return nil, zeroStats, fmt.Errorf("scan batch message count: %w", err)
+			}
+			msgCounts[sid] = cnt
+		}
+		if err := countRows.Err(); err != nil {
+			return nil, zeroStats, fmt.Errorf("iterate batch message counts: %w", err)
+		}
+	}
+
+	hits := make([]SessionHit, 0, len(scannedRows))
+	for _, r := range scannedRows {
+		hits = append(hits, SessionHit{
+			ID:             HitID("sessions", "bm25", rawQuery, filters, r.sessionID),
+			SessionID:      r.sessionID,
+			Score:          r.score,
+			Workspace:      r.workspace,
+			FirstMessageAt: r.firstMessageAt,
+			LastMessageAt:  r.lastMessageAt,
+			TotalMessages:  msgCounts[r.sessionID],
+		})
 	}
 	return hits, matchStats{
 		TotalMatches:     totalHits,
