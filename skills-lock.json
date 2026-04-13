@@ -1,9 +1,14 @@
 {
   "version": 1,
   "skills": {
+    "cass": {
+      "source": "/home/vscode/src/auto-stack/skills",
+      "sourceType": "local",
+      "computedHash": "c0df9536088f8c6f87bc746c68b3398076b19a164ee2dae990eeabb97d6f4e3e"
+    },
     "contextual-commit": {
-      "source": "berserkdisruptors/contextual-commits",
-      "sourceType": "github",
+      "source": "/home/vscode/src/auto-stack/skills",
+      "sourceType": "local",
       "computedHash": "3ec7893fcabb2f1a3ab2e6cdf001354982aade9ed539047f44cb21858879eff0"
     },
     "improve-claude-md": {
@@ -17,8 +22,8 @@
       "computedHash": "cd4dcd087c2e0e60ab51eadd6b16bcd6133c846614dd84901062a6a2566f302b"
     },
     "recall": {
-      "source": "berserkdisruptors/contextual-commits",
-      "sourceType": "github",
+      "source": "/home/vscode/src/auto-stack/skills",
+      "sourceType": "local",
       "computedHash": "b12b1e8916baa48bf8374c6bc629f23acfb870d97e8a22ff629ef21face88317"
     },
     "reflect-on-agent-sessions": {
@@ -27,7 +32,7 @@
       "computedHash": "054312a87024641f7b2dde57973c13a7ffea64a4adb93959fa26a111489e0e2d"
     },
     "release": {
-      "source": "/home/vscode/src/auto-stack/skills/release",
+      "source": "/home/vscode/src/auto-stack/skills",
       "sourceType": "local",
       "computedHash": "53bb37624988b417ea2ec2f3c6daa8ba47821cec16d9ac3c21100ec8a87b58f0"
     }

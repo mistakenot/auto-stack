@@ -4,6 +4,10 @@
 
 - When you need user input, break it down into single numbered items. Never combine multiple questions into one paragraph. Ask one question, wait for the answer, then ask the next if needed.
 
+## Git Worktree Discipline
+
+- ALWAYS run `git fetch origin && git checkout main && git pull origin main` before creating a worktree branch. Worktrees forked from a stale main will cause merge conflicts and divergent history.
+
 ## Go Build Discipline
 
 - After writing or modifying a Go file, run `go build ./...` in the relevant module before moving to the next file. Don't accumulate unbuilt files — catch compilation errors immediately.
