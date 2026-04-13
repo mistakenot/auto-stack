@@ -732,17 +732,14 @@ func TestSessionSearchRoleFilter(t *testing.T) {
 		t.Fatal("expected at least 1 session hit with role=tool")
 	}
 
-	// A nonexistent role should filter out all sessions.
-	noResult, err := search.SearchSessions(&search.SessionSearchOpts{
+	// A nonexistent role should return a validation error.
+	_, err = search.SearchSessions(&search.SessionSearchOpts{
 		DB:    db,
 		Query: "authentication",
 		Role:  "nonexistent",
 	})
-	if err != nil {
-		t.Fatalf("SearchSessions: %v", err)
-	}
-	if noResult.Meta.TotalHits != 0 {
-		t.Errorf("expected 0 hits for nonexistent role, got %d", noResult.Meta.TotalHits)
+	if err == nil {
+		t.Fatal("expected error for invalid role, got nil")
 	}
 }
 
@@ -854,6 +851,61 @@ func TestSearchRejectsInvalidField(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid field value in session search")
+	}
+}
+
+func TestMessageSearchRejectsInvalidRole(t *testing.T) {
+	db := buildTestDB(t)
+
+	_, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "authentication",
+		Role:  "bogus",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid role in message search, got nil")
+	}
+}
+
+func TestSearchRejectsInvalidLimit(t *testing.T) {
+	db := buildTestDB(t)
+
+	// Negative limit should be rejected.
+	_, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:       db,
+		Query:    "test",
+		PageSize: -1,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative limit in message search")
+	}
+
+	_, err = search.SearchSessions(&search.SessionSearchOpts{
+		DB:       db,
+		Query:    "test",
+		PageSize: -1,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative limit in session search")
+	}
+
+	// Over-1000 limit should be rejected.
+	_, err = search.SearchMessages(&search.MessageSearchOpts{
+		DB:       db,
+		Query:    "test",
+		PageSize: 1001,
+	})
+	if err == nil {
+		t.Fatal("expected error for over-1000 limit in message search")
+	}
+
+	_, err = search.SearchSessions(&search.SessionSearchOpts{
+		DB:       db,
+		Query:    "test",
+		PageSize: 1001,
+	})
+	if err == nil {
+		t.Fatal("expected error for over-1000 limit in session search")
 	}
 }
 

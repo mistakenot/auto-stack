@@ -64,6 +64,10 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	role, err := normalizeRole(opts.Role)
+	if err != nil {
+		return nil, err
+	}
 
 	now := opts.Now
 	if now.IsZero() {
@@ -80,9 +84,9 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	}
 
 	fts := query.CompileFTS(ast)
-	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter.Canonical)
+	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter.Canonical)
 
-	hits, stats, err := execSessionSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter, opts.Query, filters, offset, pageSize)
+	hits, stats, err := execSessionSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter, opts.Query, filters, offset, pageSize)
 	if err != nil {
 		return nil, err
 	}

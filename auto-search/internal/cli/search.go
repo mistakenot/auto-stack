@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/mistakenot/auto-search/internal/config"
 	"github.com/mistakenot/auto-search/internal/indexdb"
@@ -35,6 +36,10 @@ func newSearchCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cwd != "" && remote != "" {
 				return &ExitError{Code: 1, Err: errors.New("--cwd and --remote are mutually exclusive")}
+			}
+			mode = strings.ToLower(strings.TrimSpace(mode))
+			if mode != "bm25" {
+				return &ExitError{Code: 1, Err: fmt.Errorf("invalid --mode value %q (only bm25 is supported)", mode)}
 			}
 
 			dbPath, err := config.IndexPath(index)

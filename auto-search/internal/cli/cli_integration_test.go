@@ -380,6 +380,18 @@ func TestSearchSessionsPaginationMeta(t *testing.T) {
 	}
 }
 
+func TestSearchModeVectorReturnsError(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	_, stderr, code := runCLI(t, "search", "--mode", "vector", "test query")
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for --mode vector")
+	}
+	if !strings.Contains(stderr, "invalid --mode") {
+		t.Fatalf("expected error message about invalid --mode, got: %s", stderr)
+	}
+}
+
 func TestSearchWithSinceFilter(t *testing.T) {
 	setupIndexedFixtures(t)
 

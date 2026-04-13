@@ -78,6 +78,7 @@ type MessageSearchOpts struct {
 const (
 	minHitsForFallback = 3
 	defaultPageSize    = 20
+	maxPageSize        = 1000
 )
 
 const (
@@ -102,6 +103,10 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	role, err := normalizeRole(opts.Role)
+	if err != nil {
+		return nil, err
+	}
 
 	now := opts.Now
 	if now.IsZero() {
@@ -119,9 +124,9 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 
 	fts := query.CompileFTS(ast)
 	terms := ExtractTerms(ast)
-	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter.Canonical)
+	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter.Canonical)
 
-	hits, stats, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
+	hits, stats, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +135,7 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	if stats.TotalMatches < minHitsForFallback {
 		fallbackAST := query.PrefixFallback(ast)
 		fallbackFTS := query.CompileFTS(fallbackAST)
-		fallbackHits, fallbackStats, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, opts.Skill, opts.Role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
+		fallbackHits, fallbackStats, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
 		if err == nil && fallbackStats.TotalMatches > stats.TotalMatches {
 			hits = fallbackHits
 			stats = fallbackStats
@@ -321,10 +326,29 @@ func normalizePagination(offset, pageSize int) (int, int, error) {
 	if offset < 0 {
 		return 0, 0, errors.New("--offset must be >= 0")
 	}
-	if pageSize <= 0 {
+	if pageSize < 0 {
+		return 0, 0, fmt.Errorf("--limit must be >= 0 (got %d)", pageSize)
+	}
+	if pageSize == 0 {
 		pageSize = defaultPageSize
 	}
+	if pageSize > maxPageSize {
+		return 0, 0, fmt.Errorf("--limit must be <= %d (got %d)", maxPageSize, pageSize)
+	}
 	return offset, pageSize, nil
+}
+
+func normalizeRole(role string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(role))
+	if normalized == "" {
+		return "", nil
+	}
+	switch normalized {
+	case "user", "assistant", "tool":
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("invalid --role value %q (use user, assistant, or tool)", role)
+	}
 }
 
 func normalizeField(field string) (string, error) {
