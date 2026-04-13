@@ -217,22 +217,10 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 		args = append(args, *timeFilter.EndMs)
 	}
 
-	countQuery := "SELECT COUNT(*) " + baseQuery
-	var totalHits int
-	if err := db.QueryRow(countQuery, args...).Scan(&totalHits); err != nil {
+	countQuery := "SELECT COUNT(*), COUNT(DISTINCT m.session_id), COUNT(DISTINCT m.message_id) " + baseQuery
+	var totalHits, distinctSessions, distinctMessages int
+	if err := db.QueryRow(countQuery, args...).Scan(&totalHits, &distinctSessions, &distinctMessages); err != nil {
 		return nil, zeroStats, fmt.Errorf("message search count query: %w", err)
-	}
-
-	distinctSessionsQuery := "SELECT COUNT(DISTINCT m.session_id) " + baseQuery
-	var distinctSessions int
-	if err := db.QueryRow(distinctSessionsQuery, args...).Scan(&distinctSessions); err != nil {
-		return nil, zeroStats, fmt.Errorf("message search distinct sessions query: %w", err)
-	}
-
-	distinctMessagesQuery := "SELECT COUNT(DISTINCT m.message_id) " + baseQuery
-	var distinctMessages int
-	if err := db.QueryRow(distinctMessagesQuery, args...).Scan(&distinctMessages); err != nil {
-		return nil, zeroStats, fmt.Errorf("message search distinct messages query: %w", err)
 	}
 
 	q := `
