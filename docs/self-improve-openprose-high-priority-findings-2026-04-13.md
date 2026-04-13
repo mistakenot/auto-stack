@@ -1,3 +1,10 @@
+---
+hash: "f22efd23"
+id: "75be21f7"
+summary: "Technical review of OpenProse v1 self-improvement scripts identifying three P1 execution risks: missing priority items, misdeclared delegation schema, and fail-fast vs. partial-failure contract mismatch."
+title: "Self-Improve OpenProse Review: High-Priority Findings"
+---
+
 # Self-Improve OpenProse Review: High-Priority Findings
 
 **Date:** 2026-04-13  

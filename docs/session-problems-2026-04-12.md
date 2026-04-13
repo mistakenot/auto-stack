@@ -1,3 +1,10 @@
+---
+hash: "c1eb814f"
+id: "98c7c34f"
+summary: "Analysis of recurring failures in coding agent sessions over April 12, 2026, with 6 categories of problems and 6 proposed skills to prevent them"
+title: "Session Problem Analysis & Skill Proposals — April 12, 2026"
+---
+
 # Session Problem Analysis & Skill Proposals — April 12, 2026
 
 Analysis of recent coding agent sessions in auto-stack using `autosearch`, looking for recurring failures and proposing new skills to prevent them.

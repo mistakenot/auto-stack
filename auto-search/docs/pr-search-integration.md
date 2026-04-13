@@ -1,5 +1,5 @@
 ---
-hash: "00000000"
+hash: "9a4ddc14"
 id: "a3f7e291"
 summary: "Design for indexing GitHub PR feedback in autosearch: schema, FTS strategy, query access patterns, CLI surface, and reflection-agent workflows."
 title: "PR Search Integration"

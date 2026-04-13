@@ -1,3 +1,10 @@
+---
+hash: "fb7e34ae"
+id: "a7f2c4b9"
+summary: "Analysis of workflow issues in auto-stack coding sessions (April 2026): edit tool state errors, environment blocker gaps, search signal quality issues, and user correction churn, with proposed skills for remediation."
+title: "Auto-Stack Session Workflow Issues (April 2026)"
+---
+
 # Auto-Stack Session Workflow Issues (Recent)
 File: workflow-issues-codex-2026-04-12.md
 Window analyzed: 2026-03-29T00:00:00Z to 2026-04-12T20:20:00Z (rolling 14d queries)

@@ -1,5 +1,5 @@
 ---
-hash: ""
+hash: "a99c802f"
 id: "91bc2e67"
 summary: "Technical reference for the meta_skill Rust CLI: architecture, data model, mining pipeline, search, security, and distribution"
 title: "Meta Skill (ms) — Reference"

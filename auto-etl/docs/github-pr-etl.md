@@ -1,5 +1,5 @@
 ---
-hash: "881f5403"
+hash: "2f3f58e9"
 id: "badba584"
 summary: "Spec for ingesting merged GitHub PR feedback (reviews, comments, diffs, CI checks) into parquet datasets via auto-etl."
 title: "GitHub PR Feedback ETL"

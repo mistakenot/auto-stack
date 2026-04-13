@@ -1,3 +1,9 @@
+---
+hash: "80c1eb58"
+id: "b782c976"
+summary: "Comprehensive reference for Claude Code, Codex, and OpenCode skill architecture, discovery, loading, and best practices for skill authors."
+title: "Coding Agents Skill Guidance"
+---
 
 ## Claude Code Skills reference
 

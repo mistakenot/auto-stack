@@ -1,3 +1,10 @@
+---
+hash: "7708af0c"
+id: "a4a6f2e9"
+summary: "Analysis of 14-day session history via autosearch identifying 6 recurring development problems and proposing 11 skills to reduce agent friction and improve coding efficiency."
+title: "Stack Probe: Session History Analysis & Skill Opportunities (April 12, 2026)"
+---
+
 # Stack Probe: Session History Analysis & Skill Opportunities
 
 **Date:** 2026-04-12

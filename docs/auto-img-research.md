@@ -1,5 +1,5 @@
 ---
-hash: ""
+hash: "f97f5d7c"
 id: "50ed0334"
 summary: "Research on optimising image storage and retrieval for AI coding agents, covering token costs, progressive disclosure, and S3 patterns"
 title: "auto-img Research: Context-Protective Image Access for Coding Agents"

@@ -32,9 +32,9 @@ fi
 # --- 3. autodoc fix: validate doc-code freshness links ---
 
 if command -v autodoc &>/dev/null; then
-    autodoc fix || true
+    autodoc fix
     git add "$ROOT" 2>/dev/null || true
-    echo "pre-commit: autodoc fix applied"
+    echo "pre-commit: autodoc fix passed"
 fi
 
 # --- 4. skills sync: reinstall all local skills if any changed ---

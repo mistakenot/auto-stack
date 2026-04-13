@@ -1,5 +1,5 @@
 ---
-hash: ""
+hash: "2d076b8b"
 id: "8c156daa"
 summary: "Requirements for autoskill: agent skill management, linting, and scaffolding"
 title: "autoskill — Requirements"
