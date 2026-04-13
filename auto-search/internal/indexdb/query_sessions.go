@@ -3,6 +3,7 @@ package indexdb
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // SessionRow holds the full data for a single indexed session.
@@ -29,6 +30,113 @@ type SessionRow struct {
 	TotalInputBytes     int64
 	TranscriptTruncated string
 	SchemaVersion       int
+}
+
+// ListSessionsOpts holds optional filters for ListSessions.
+type ListSessionsOpts struct {
+	Workspace string // filter by workspace path (case-insensitive substring)
+	Remote    string // filter by git_remote (case-insensitive substring)
+	StartMs   *int64 // inclusive lower bound on first_message_at
+	EndMs     *int64 // exclusive upper bound on first_message_at
+	Limit     int    // max rows; 0 means default (50)
+	Offset    int    // pagination offset
+}
+
+// SessionListRow is a compact session summary for list output.
+type SessionListRow struct {
+	SessionID      string `json:"session_id"`
+	Workspace      string `json:"workspace"`
+	GitRemote      string `json:"git_remote"`
+	Model          string `json:"model"`
+	Agent          string `json:"agent"`
+	FirstMessageAt int64  `json:"first_message_at"`
+	LastMessageAt  int64  `json:"last_message_at"`
+	TotalTokens    int64  `json:"total_tokens"`
+	MessageCount   int    `json:"message_count"`
+}
+
+// ListSessions queries the sessions table directly (no FTS) with optional filters.
+func ListSessions(db *sql.DB, opts ListSessionsOpts) ([]SessionListRow, int, error) {
+	if opts.Limit < 0 {
+		return nil, 0, fmt.Errorf("invalid limit: %d (must be >= 0)", opts.Limit)
+	}
+	if opts.Offset < 0 {
+		return nil, 0, fmt.Errorf("invalid offset: %d (must be >= 0)", opts.Offset)
+	}
+	if opts.Limit == 0 {
+		opts.Limit = 50
+	}
+
+	var where []string
+	var args []any
+
+	if opts.Workspace != "" {
+		where = append(where, "s.workspace LIKE ?")
+		args = append(args, "%"+opts.Workspace+"%")
+	}
+	if opts.Remote != "" {
+		where = append(where, "s.git_remote LIKE ?")
+		args = append(args, "%"+opts.Remote+"%")
+	}
+	if opts.StartMs != nil {
+		where = append(where, "s.first_message_at >= ?")
+		args = append(args, *opts.StartMs)
+	}
+	if opts.EndMs != nil {
+		where = append(where, "s.first_message_at < ?")
+		args = append(args, *opts.EndMs)
+	}
+
+	whereClause := ""
+	if len(where) > 0 {
+		whereClause = "WHERE " + strings.Join(where, " AND ")
+	}
+
+	// Count total matching rows for pagination metadata.
+	countSQL := fmt.Sprintf("SELECT COUNT(*) FROM sessions s %s", whereClause)
+	var total int
+	if err := db.QueryRow(countSQL, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count sessions: %w", err)
+	}
+
+	// Fetch rows with a LEFT JOIN to get message counts.
+	querySQL := fmt.Sprintf(`
+		SELECT s.session_id, s.workspace, s.git_remote, s.model, s.agent,
+			s.first_message_at, s.last_message_at, s.total_tokens,
+			COALESCE(mc.cnt, 0) AS message_count
+		FROM sessions s
+		LEFT JOIN (
+			SELECT session_id, COUNT(*) AS cnt FROM messages GROUP BY session_id
+		) mc ON mc.session_id = s.session_id
+		%s
+		ORDER BY s.first_message_at DESC
+		LIMIT ? OFFSET ?
+	`, whereClause)
+	args = append(args, opts.Limit, opts.Offset)
+
+	rows, err := db.Query(querySQL, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list sessions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := []SessionListRow{}
+	for rows.Next() {
+		var r SessionListRow
+		if err := rows.Scan(
+			&r.SessionID, &r.Workspace, &r.GitRemote, &r.Model, &r.Agent,
+			&r.FirstMessageAt, &r.LastMessageAt, &r.TotalTokens,
+			&r.MessageCount,
+		); err != nil {
+			return nil, 0, fmt.Errorf("scan session list row: %w", err)
+		}
+		result = append(result, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate session list: %w", err)
+	}
+
+	return result, total, nil
 }
 
 // GetSessionByID loads one session row by session_id.
