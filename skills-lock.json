@@ -25,6 +25,11 @@
       "source": "/home/vscode/src/auto-stack/auto-reflect",
       "sourceType": "local",
       "computedHash": "054312a87024641f7b2dde57973c13a7ffea64a4adb93959fa26a111489e0e2d"
+    },
+    "release": {
+      "source": "/home/vscode/src/auto-stack/skills/release",
+      "sourceType": "local",
+      "computedHash": "53bb37624988b417ea2ec2f3c6daa8ba47821cec16d9ac3c21100ec8a87b58f0"
     }
   }
 }

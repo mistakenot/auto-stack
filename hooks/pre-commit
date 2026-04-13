@@ -37,7 +37,17 @@ if command -v autodoc &>/dev/null; then
     echo "pre-commit: autodoc fix applied"
 fi
 
-# --- 4. br sync: flush beads to JSONL ---
+# --- 4. skills sync: reinstall all local skills if any changed ---
+
+STAGED_SKILL_FILES=$(git diff --cached --name-only --diff-filter=ACMR -- 'skills/' || true)
+
+if [ -n "$STAGED_SKILL_FILES" ] && command -v npx &>/dev/null; then
+    npx skills install "$ROOT/skills" -y 2>/dev/null || true
+    git add "$ROOT/.agents/" 2>/dev/null || true
+    echo "pre-commit: skills synced"
+fi
+
+# --- 5. br sync: flush beads to JSONL ---
 
 if command -v br &>/dev/null && [ -d "$ROOT/.beads" ]; then
     br sync --flush-only --quiet 2>/dev/null || true
