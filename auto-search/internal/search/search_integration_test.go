@@ -699,17 +699,14 @@ func TestSessionSearchRoleFilter(t *testing.T) {
 		t.Fatal("expected at least 1 session hit with role=tool")
 	}
 
-	// A nonexistent role should filter out all sessions.
-	noResult, err := search.SearchSessions(&search.SessionSearchOpts{
+	// A nonexistent role should return a validation error.
+	_, err = search.SearchSessions(&search.SessionSearchOpts{
 		DB:    db,
 		Query: "authentication",
 		Role:  "nonexistent",
 	})
-	if err != nil {
-		t.Fatalf("SearchSessions: %v", err)
-	}
-	if noResult.Meta.TotalHits != 0 {
-		t.Errorf("expected 0 hits for nonexistent role, got %d", noResult.Meta.TotalHits)
+	if err == nil {
+		t.Fatal("expected error for invalid role, got nil")
 	}
 }
 

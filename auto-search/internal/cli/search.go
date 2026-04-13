@@ -36,6 +36,9 @@ func newSearchCmd() *cobra.Command {
 			if cwd != "" && remote != "" {
 				return &ExitError{Code: 1, Err: errors.New("--cwd and --remote are mutually exclusive")}
 			}
+			if mode != "bm25" {
+				return &ExitError{Code: 1, Err: fmt.Errorf("invalid --mode value %q (only bm25 is supported)", mode)}
+			}
 
 			dbPath, err := config.IndexPath(index)
 			if err != nil {
