@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/mistakenot/auto-shared/version"
 	"github.com/mistakenot/auto-search/internal/app"
+	"github.com/mistakenot/auto-shared/version"
 	"github.com/spf13/cobra"
 )
 
@@ -55,6 +55,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newInitCmd(),
 		newIndexCmd(),
 		newSearchCmd(),
+		newStatsCmd(),
 		newSessionCmd(),
 		newMessageCmd(),
 		newSkillsCmd(),

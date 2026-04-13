@@ -73,7 +73,27 @@ autosearch search '"import cycle" OR "dependency cycle"'
 autosearch search "timeout NOT config"
 ` + "```" + `
 
-### 2. Read a full session transcript
+` + "```" + `bash
+# search = examples; stats = grouped counts and dominant patterns
+autosearch stats --scope messages --group-by session_id --query '"Exit code 1"' --role tool --since 14d --limit 10
+autosearch stats --scope messages --group-by bash_command --query '"Exit code 1"' --role tool --since 14d --limit 10
+` + "```" + `
+
+### 2. Use stats to rank dominant patterns
+
+Use ` + "`" + `stats` + "`" + ` when you need frequencies and top buckets instead of individual examples.
+` + "```" + `bash
+# Top sessions for a failure signature
+autosearch stats --scope messages --group-by session_id --query '"Exit code 1" OR "FAIL"' --role tool --since 14d --limit 10
+
+# Top command families (normalized)
+autosearch stats --scope messages --group-by bash_command --query '"Exit code 1"' --role tool --since 14d --limit 10
+
+# Time trend (sparse day buckets)
+autosearch stats --scope messages --group-by day --query '"cannot find main module"' --role tool --since 14d
+` + "```" + `
+
+### 3. Read a full session transcript
 
 ` + "```" + `bash
 # Get the session ID from search hits, then:
@@ -83,7 +103,7 @@ autosearch session get <session_id>
 This renders the full conversation as markdown. Each message is tagged with its index,
 e.g. ` + "`" + `<user index=0>` + "`" + `, ` + "`" + `<agent index=1>` + "`" + `, ` + "`" + `<tool name="Bash" index=26>` + "`" + `.
 
-### 3. Drill into a specific message
+### 4. Drill into a specific message
 
 Message IDs follow the format ` + "`" + `{sessionId}-{index}` + "`" + `. The index comes from
 either a search hit (` + "`" + `messageId` + "`" + ` field) or the index shown in ` + "`" + `session get` + "`" + ` output.
@@ -96,7 +116,7 @@ autosearch message get abc123-26
 autosearch message describe abc123-26
 ` + "```" + `
 
-### 4. Get session metadata
+### 5. Get session metadata
 
 ` + "```" + `bash
 autosearch session describe <session_id>
@@ -104,7 +124,7 @@ autosearch session describe <session_id>
 
 Returns JSON with message counts, token usage, time range, workspace.
 
-### 5. List skills used across sessions
+### 6. List skills used across sessions
 
 ` + "```" + `bash
 autosearch skills
@@ -230,6 +250,28 @@ autosearch search "error OR fail OR broken" --scope sessions --cwd /path/to/proj
 --highlight   bold matched terms in snippets (message scope only)
 --skill       filter by skill name
 --mode        bm25 (default)
+--index       named index to query (default: "default")
+--request-id  echo an ID back in _meta
+` + "```" + `
+
+## Key stats flags
+
+` + "```" + `
+--scope       messages (default) or sessions
+--group-by    required grouping key (for example: session_id, bash_command, role, day)
+--query       optional FTS prefilter before grouping
+--measure     count (default), distinct_sessions, distinct_messages
+--min-count   minimum threshold for selected measure
+--limit       max buckets per page (default 20)
+--offset      skip N buckets for pagination
+--role        role filter
+--field       all (default), content, tool_input, tool_output
+--cwd         filter by workspace path (mutually exclusive with --remote)
+--remote      filter by git remote URL
+--since       relative time: 5m, 7d, 2w
+--after       absolute lower bound (ISO 8601, inclusive)
+--before      absolute upper bound (ISO 8601, exclusive)
+--skill       filter by skill name
 --index       named index to query (default: "default")
 --request-id  echo an ID back in _meta
 ` + "```" + `

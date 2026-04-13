@@ -886,6 +886,172 @@ func TestSearchWithSkillFilter(t *testing.T) {
 	}
 }
 
+func TestStatsMessagesSuccess(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "stats", "--scope", "messages", "--group-by", "session_id")
+	if code != 0 {
+		t.Fatalf("stats failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	if meta["scope"] != "messages" {
+		t.Fatalf("scope = %v, want messages", meta["scope"])
+	}
+	if meta["group_by"] != "session_id" {
+		t.Fatalf("group_by = %v, want session_id", meta["group_by"])
+	}
+	if meta["total_matches"] != float64(12) {
+		t.Fatalf("total_matches = %v, want 12", meta["total_matches"])
+	}
+	buckets := out["buckets"].([]any)
+	if len(buckets) != 3 {
+		t.Fatalf("len(buckets) = %d, want 3", len(buckets))
+	}
+}
+
+func TestStatsMetadataPagination(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t,
+		"stats",
+		"--scope", "messages",
+		"--group-by", "session_id",
+		"--query", `"Exit code 0"`,
+		"--limit", "1",
+	)
+	if code != 0 {
+		t.Fatalf("stats failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	if meta["total_matches"] != float64(2) {
+		t.Fatalf("total_matches = %v, want 2", meta["total_matches"])
+	}
+	if meta["total_buckets_unfiltered"] != float64(2) {
+		t.Fatalf("total_buckets_unfiltered = %v, want 2", meta["total_buckets_unfiltered"])
+	}
+	if meta["total_buckets"] != float64(2) {
+		t.Fatalf("total_buckets = %v, want 2", meta["total_buckets"])
+	}
+	if meta["returned_buckets"] != float64(1) {
+		t.Fatalf("returned_buckets = %v, want 1", meta["returned_buckets"])
+	}
+	if meta["has_more"] != true {
+		t.Fatalf("has_more = %v, want true", meta["has_more"])
+	}
+	if meta["next_offset"] != float64(1) {
+		t.Fatalf("next_offset = %v, want 1", meta["next_offset"])
+	}
+}
+
+func TestStatsDrilldownSampleIDs(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t,
+		"stats",
+		"--scope", "messages",
+		"--group-by", "session_id",
+		"--query", `"Exit code 0"`,
+		"--limit", "1",
+	)
+	if code != 0 {
+		t.Fatalf("stats failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	buckets := out["buckets"].([]any)
+	if len(buckets) == 0 {
+		t.Fatal("expected at least one bucket")
+	}
+	first := buckets[0].(map[string]any)
+	sampleSessionID, _ := first["sample_session_id"].(string)
+	sampleMessageID, _ := first["sample_message_id"].(string)
+	if sampleSessionID == "" || sampleMessageID == "" {
+		t.Fatalf("missing sample ids in bucket: %+v", first)
+	}
+
+	sessionOut, sessionErr, sessionCode := runCLI(t, "session", "get", sampleSessionID)
+	if sessionCode != 0 {
+		t.Fatalf("session get failed for sample_session_id=%s: stderr=%s", sampleSessionID, sessionErr)
+	}
+	if !strings.Contains(sessionOut, "<") {
+		t.Fatalf("expected rendered transcript for sample_session_id=%s", sampleSessionID)
+	}
+
+	messageOut, messageErr, messageCode := runCLI(t, "message", "get", sampleMessageID)
+	if messageCode != 0 {
+		t.Fatalf("message get failed for sample_message_id=%s: stderr=%s", sampleMessageID, messageErr)
+	}
+	if strings.TrimSpace(messageOut) == "" {
+		t.Fatalf("expected message content for sample_message_id=%s", sampleMessageID)
+	}
+}
+
+func TestStatsInvalidGroupBy(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "stats", "--scope", "messages", "--group-by", "nope")
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for invalid --group-by")
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("expected empty stdout on error, got:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "invalid --group-by value") {
+		t.Fatalf("expected invalid group-by error, got:\n%s", stderr)
+	}
+}
+
+func TestStatsScopeKeyMismatch(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	_, stderr, code := runCLI(t, "stats", "--scope", "sessions", "--group-by", "bash_command")
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for scope/key mismatch")
+	}
+	if !strings.Contains(stderr, "invalid --group-by value") {
+		t.Fatalf("expected invalid --group-by error, got:\n%s", stderr)
+	}
+}
+
+func TestStatsCWDRemoteConflict(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	_, stderr, code := runCLI(t, "stats", "--scope", "messages", "--group-by", "session_id", "--cwd", "/workspace/project-a", "--remote", "git@github.com:test/repo")
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for --cwd + --remote conflict")
+	}
+	if !strings.Contains(stderr, "--cwd and --remote are mutually exclusive") {
+		t.Fatalf("expected cwd/remote conflict, got:\n%s", stderr)
+	}
+}
+
+func TestStatsInvalidTimeFlags(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	_, stderr, code := runCLI(t, "stats", "--scope", "messages", "--group-by", "session_id", "--since", "7d", "--after", "2026-03-01")
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for invalid time mode mix")
+	}
+	if !strings.Contains(stderr, "--since") {
+		t.Fatalf("expected --since error, got:\n%s", stderr)
+	}
+}
+
+func TestStatsInvalidRole(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	_, stderr, code := runCLI(t, "stats", "--scope", "messages", "--group-by", "session_id", "--role", "system")
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for invalid role")
+	}
+	if !strings.Contains(stderr, "invalid --role value") {
+		t.Fatalf("expected invalid --role error, got:\n%s", stderr)
+	}
+}
+
 func TestSkillsList(t *testing.T) {
 	setupIndexedFixtures(t)
 
