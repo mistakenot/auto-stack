@@ -3,6 +3,7 @@ package indexdb_test
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -427,6 +428,134 @@ func TestFTSTriggersSync(t *testing.T) {
 	err = db.QueryRow("SELECT rowid FROM messages_fts WHERE messages_fts MATCH '\"Exit code\"'").Scan(&msgRowID)
 	if !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("expected no FTS message rows after delete, got err=%v", err)
+	}
+}
+
+// --- ListSessions tests ---
+
+// createTestDB creates a fresh DB and returns it. Caller must close.
+func createTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.sqlite")
+	db, err := indexdb.Create(dbPath)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	return db
+}
+
+// insertSession inserts a minimal session row for testing.
+func insertSession(t *testing.T, db *sql.DB, sessionID, workspace, remote string, firstMessageAt int64) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO sessions (partition_source_path, session_id, parent_session_id, host_id, agent, subagent_name, is_subagent, workspace, git_remote, model, source_path, first_message_at, last_message_at, total_input_tokens, total_output_tokens, total_tokens, total_bytes, total_output_bytes, total_input_bytes, transcript_truncated, schema_version)
+		VALUES ('/src.parquet', ?, '', 'host1', 'claude', '', 0, ?, ?, 'opus', '/src', ?, ?, 100, 200, 300, 400, 200, 200, 'transcript', 1)
+	`, sessionID, workspace, remote, firstMessageAt, firstMessageAt+1000)
+	if err != nil {
+		t.Fatalf("insert session %s: %v", sessionID, err)
+	}
+}
+
+func TestListSessionsEmptyResult(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+
+	// Query with a filter that matches nothing.
+	sessions, total, err := indexdb.ListSessions(db, indexdb.ListSessionsOpts{
+		Workspace: "nonexistent-workspace",
+	})
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if total != 0 {
+		t.Fatalf("expected total=0, got %d", total)
+	}
+	if sessions == nil {
+		t.Fatal("expected non-nil empty slice, got nil")
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("expected 0 sessions, got %d", len(sessions))
+	}
+}
+
+func TestListSessionsPagination(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+
+	// Insert 5 sessions with descending timestamps.
+	for i := 0; i < 5; i++ {
+		insertSession(t, db, fmt.Sprintf("sess-%d", i), "/work", "origin", int64(5000-i*1000))
+	}
+
+	// Page 1: limit=2, offset=0 — should get the 2 most recent.
+	sessions, total, err := indexdb.ListSessions(db, indexdb.ListSessionsOpts{
+		Limit:  2,
+		Offset: 0,
+	})
+	if err != nil {
+		t.Fatalf("ListSessions page 1: %v", err)
+	}
+	if total != 5 {
+		t.Fatalf("expected total=5, got %d", total)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("expected 2 sessions, got %d", len(sessions))
+	}
+	// First result should be the most recent (highest first_message_at).
+	if sessions[0].SessionID != "sess-0" {
+		t.Fatalf("expected first session sess-0, got %s", sessions[0].SessionID)
+	}
+
+	// Page 2: limit=2, offset=2.
+	sessions2, total2, err := indexdb.ListSessions(db, indexdb.ListSessionsOpts{
+		Limit:  2,
+		Offset: 2,
+	})
+	if err != nil {
+		t.Fatalf("ListSessions page 2: %v", err)
+	}
+	if total2 != 5 {
+		t.Fatalf("expected total=5, got %d", total2)
+	}
+	if len(sessions2) != 2 {
+		t.Fatalf("expected 2 sessions on page 2, got %d", len(sessions2))
+	}
+
+	// Page 3: limit=2, offset=4 — should get 1 remaining.
+	sessions3, _, err := indexdb.ListSessions(db, indexdb.ListSessionsOpts{
+		Limit:  2,
+		Offset: 4,
+	})
+	if err != nil {
+		t.Fatalf("ListSessions page 3: %v", err)
+	}
+	if len(sessions3) != 1 {
+		t.Fatalf("expected 1 session on page 3, got %d", len(sessions3))
+	}
+}
+
+func TestListSessionsNegativeLimitRejected(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+
+	_, _, err := indexdb.ListSessions(db, indexdb.ListSessionsOpts{
+		Limit: -1,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative limit, got nil")
+	}
+}
+
+func TestListSessionsNegativeOffsetRejected(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+
+	_, _, err := indexdb.ListSessions(db, indexdb.ListSessionsOpts{
+		Offset: -1,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative offset, got nil")
 	}
 }
 

@@ -57,7 +57,13 @@ type SessionListRow struct {
 
 // ListSessions queries the sessions table directly (no FTS) with optional filters.
 func ListSessions(db *sql.DB, opts ListSessionsOpts) ([]SessionListRow, int, error) {
-	if opts.Limit <= 0 {
+	if opts.Limit < 0 {
+		return nil, 0, fmt.Errorf("invalid limit: %d (must be >= 0)", opts.Limit)
+	}
+	if opts.Offset < 0 {
+		return nil, 0, fmt.Errorf("invalid offset: %d (must be >= 0)", opts.Offset)
+	}
+	if opts.Limit == 0 {
 		opts.Limit = 50
 	}
 
@@ -114,7 +120,7 @@ func ListSessions(db *sql.DB, opts ListSessionsOpts) ([]SessionListRow, int, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	var result []SessionListRow
+	result := []SessionListRow{}
 	for rows.Next() {
 		var r SessionListRow
 		if err := rows.Scan(

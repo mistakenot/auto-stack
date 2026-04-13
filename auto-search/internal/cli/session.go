@@ -67,6 +67,12 @@ func newSessionListCmd() *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 
+			// Normalize default limit in the caller so _meta.limit reports
+			// the effective value rather than the zero the user omitted.
+			if limit == 0 {
+				limit = 50
+			}
+
 			opts := indexdb.ListSessionsOpts{
 				Workspace: cwd,
 				Remote:    remote,
