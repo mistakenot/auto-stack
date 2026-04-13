@@ -19,3 +19,4 @@ credentials.json
 *.pfx
 
 .claude/worktrees
+.prose
