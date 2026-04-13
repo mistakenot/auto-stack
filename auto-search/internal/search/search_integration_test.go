@@ -821,6 +821,61 @@ func TestSearchRejectsInvalidField(t *testing.T) {
 	}
 }
 
+func TestMessageSearchRejectsInvalidRole(t *testing.T) {
+	db := buildTestDB(t)
+
+	_, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "authentication",
+		Role:  "bogus",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid role in message search, got nil")
+	}
+}
+
+func TestSearchRejectsInvalidLimit(t *testing.T) {
+	db := buildTestDB(t)
+
+	// Negative limit should be rejected.
+	_, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:       db,
+		Query:    "test",
+		PageSize: -1,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative limit in message search")
+	}
+
+	_, err = search.SearchSessions(&search.SessionSearchOpts{
+		DB:       db,
+		Query:    "test",
+		PageSize: -1,
+	})
+	if err == nil {
+		t.Fatal("expected error for negative limit in session search")
+	}
+
+	// Over-1000 limit should be rejected.
+	_, err = search.SearchMessages(&search.MessageSearchOpts{
+		DB:       db,
+		Query:    "test",
+		PageSize: 1001,
+	})
+	if err == nil {
+		t.Fatal("expected error for over-1000 limit in message search")
+	}
+
+	_, err = search.SearchSessions(&search.SessionSearchOpts{
+		DB:       db,
+		Query:    "test",
+		PageSize: 1001,
+	})
+	if err == nil {
+		t.Fatal("expected error for over-1000 limit in session search")
+	}
+}
+
 func TestCWDAndRemoteMutuallyExclusive(t *testing.T) {
 	db := buildTestDB(t)
 
