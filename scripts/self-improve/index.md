@@ -1,7 +1,7 @@
 ---
 name: self-improve
 kind: program
-services: [preflight, explorer, analyst, reviewer, consolidator, implementer, plan-reviewer]
+services: [preflight, explorer, analyst, reviewer, consolidator, implementer]
 ---
 
 requires:
@@ -9,7 +9,7 @@ requires:
 - codebase-context: brief description of the codebase and conventions (optional)
 
 ensures:
-- summary: a report with up to 3 pull requests ready for human review, each addressing a top-priority improvement. Includes status for any that failed or were skipped.
+- summary: a report with up to 3 pull requests ready for human review, each addressing a top-priority improvement. Includes status for any that failed or were skipped. The long-term record of each implementation lives in the PR body and contextual commit — no separate result files.
 
 errors:
 - no-problems-found: the explorer found no problems or setbacks worth addressing

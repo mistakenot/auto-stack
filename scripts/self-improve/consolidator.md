@@ -8,9 +8,9 @@ requires:
 - review: the review document with feedback (optional, not present for final-summary task)
 - focus: the tool or area being improved (optional)
 - task: "consolidate" (default) or "final-summary"
-- pr1: first PR result (only for final-summary)
-- pr2: second PR result (only for final-summary)
-- pr3: third PR result (only for final-summary)
+- pr1: first PR confirmation — branch name and PR URL (only for final-summary)
+- pr2: second PR confirmation — branch name and PR URL (only for final-summary)
+- pr3: third PR confirmation — branch name and PR URL (only for final-summary)
 - priorities: the priority items (only for final-summary)
 
 ensures:
@@ -28,7 +28,8 @@ strategies:
   - output must include item_1, item_2, item_3 fields and a count field
 
 - for final-summary:
-  - summarize all 3 PR outcomes
+  - for each PR URL, fetch the PR body using `gh pr view <url> --json body` to get the full workflow record
+  - summarize all 3 PR outcomes based on the PR bodies (not separate result files)
   - list the branch names and PR URLs
   - note any PRs that failed (tests didn't pass, couldn't create PR)
   - provide a one-paragraph executive summary of what was improved
