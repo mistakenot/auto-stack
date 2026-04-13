@@ -8,6 +8,7 @@ import (
 
 	"github.com/mistakenot/auto-search/internal/config"
 	"github.com/mistakenot/auto-search/internal/indexdb"
+	"github.com/mistakenot/auto-search/internal/search"
 	"github.com/spf13/cobra"
 )
 
@@ -22,9 +23,92 @@ func newSessionCmd() *cobra.Command {
 		Short: "Inspect indexed sessions",
 	}
 	cmd.AddCommand(
+		newSessionListCmd(),
 		newSessionGetCmd(),
 		newSessionDescribeCmd(),
 	)
+	return cmd
+}
+
+func newSessionListCmd() *cobra.Command {
+	var index string
+	var since string
+	var after string
+	var before string
+	var cwd string
+	var remote string
+	var limit int
+	var offset int
+	var requestID string
+
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List indexed sessions ordered by most recent first",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			start := time.Now()
+
+			if cwd != "" && remote != "" {
+				return &ExitError{Code: 1, Err: fmt.Errorf("--cwd and --remote are mutually exclusive")}
+			}
+
+			dbPath, err := config.IndexPath(index)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			db, err := indexdb.Open(dbPath)
+			if err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("open index: %w; run: autosearch index", err)}
+			}
+			defer func() { _ = db.Close() }()
+
+			tf, err := search.ParseTimeFilter(time.Now(), since, after, before)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+
+			opts := indexdb.ListSessionsOpts{
+				Workspace: cwd,
+				Remote:    remote,
+				StartMs:   tf.StartMs,
+				EndMs:     tf.EndMs,
+				Limit:     limit,
+				Offset:    offset,
+			}
+
+			sessions, total, err := indexdb.ListSessions(db, opts)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+
+			elapsed := time.Since(start).Milliseconds()
+
+			out := map[string]any{
+				"_meta": map[string]any{
+					"request_id": requestID,
+					"elapsed_ms": elapsed,
+					"total":      total,
+					"offset":     offset,
+					"limit":      opts.Limit,
+					"returned":   len(sessions),
+				},
+				"sessions": sessions,
+			}
+
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(out)
+		},
+	}
+	cmd.Flags().StringVar(&index, "index", config.DefaultIndexName, "named index to query")
+	cmd.Flags().StringVar(&since, "since", "", "relative time filter (e.g. 1w, 7d, 12h)")
+	cmd.Flags().StringVar(&after, "after", "", "inclusive lower date bound (YYYY-MM-DD or RFC3339)")
+	cmd.Flags().StringVar(&before, "before", "", "exclusive upper date bound (YYYY-MM-DD or RFC3339)")
+	cmd.Flags().StringVar(&cwd, "cwd", "", "filter by workspace path (substring match)")
+	cmd.Flags().StringVar(&remote, "remote", "", "filter by git remote (substring match)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "max sessions to return (default 50)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "pagination offset (0-based)")
+	cmd.Flags().StringVar(&requestID, "request-id", "", "request identifier to echo in responses")
 	return cmd
 }
 
