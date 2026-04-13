@@ -218,32 +218,45 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 		return nil, zeroStats, fmt.Errorf("iterate session hits: %w", err)
 	}
 
-	// Batch-fetch message counts for all session IDs in one query.
+	// Batch-fetch message counts for all session IDs, chunked to stay within
+	// SQLite's bind-parameter ceiling (SQLITE_MAX_VARIABLE_NUMBER, default 999).
+	const msgCountChunkSize = 500
 	msgCounts := make(map[string]int, len(scannedRows))
 	if len(scannedRows) > 0 {
-		sessionIDs := make([]any, len(scannedRows))
-		placeholders := make([]string, len(scannedRows))
+		allIDs := make([]any, len(scannedRows))
 		for i, r := range scannedRows {
-			sessionIDs[i] = r.sessionID
-			placeholders[i] = "?"
+			allIDs[i] = r.sessionID
 		}
-		batchQuery := "SELECT session_id, COUNT(*) FROM messages WHERE session_id IN (" +
-			strings.Join(placeholders, ",") + ") GROUP BY session_id"
-		countRows, err := db.Query(batchQuery, sessionIDs...)
-		if err != nil {
-			return nil, zeroStats, fmt.Errorf("batch message count query: %w", err)
-		}
-		defer func() { _ = countRows.Close() }()
-		for countRows.Next() {
-			var sid string
-			var cnt int
-			if err := countRows.Scan(&sid, &cnt); err != nil {
-				return nil, zeroStats, fmt.Errorf("scan batch message count: %w", err)
+		for start := 0; start < len(allIDs); start += msgCountChunkSize {
+			end := start + msgCountChunkSize
+			if end > len(allIDs) {
+				end = len(allIDs)
 			}
-			msgCounts[sid] = cnt
-		}
-		if err := countRows.Err(); err != nil {
-			return nil, zeroStats, fmt.Errorf("iterate batch message counts: %w", err)
+			chunk := allIDs[start:end]
+			placeholders := make([]string, len(chunk))
+			for i := range chunk {
+				placeholders[i] = "?"
+			}
+			batchQuery := "SELECT session_id, COUNT(*) FROM messages WHERE session_id IN (" +
+				strings.Join(placeholders, ",") + ") GROUP BY session_id"
+			countRows, err := db.Query(batchQuery, chunk...)
+			if err != nil {
+				return nil, zeroStats, fmt.Errorf("batch message count query: %w", err)
+			}
+			for countRows.Next() {
+				var sid string
+				var cnt int
+				if err := countRows.Scan(&sid, &cnt); err != nil {
+					countRows.Close()
+					return nil, zeroStats, fmt.Errorf("scan batch message count: %w", err)
+				}
+				msgCounts[sid] = cnt
+			}
+			if err := countRows.Err(); err != nil {
+				countRows.Close()
+				return nil, zeroStats, fmt.Errorf("iterate batch message counts: %w", err)
+			}
+			countRows.Close()
 		}
 	}
 

@@ -398,6 +398,39 @@ func TestSessionSearchBasic(t *testing.T) {
 	}
 }
 
+func TestSessionSearchBatchMessageCounts(t *testing.T) {
+	db := buildTestDB(t)
+
+	// Search that returns all 3 sessions — verifies the chunked batch IN query
+	// produces correct message counts (same results as the old N+1 approach).
+	result, err := search.SearchSessions(&search.SessionSearchOpts{
+		DB:    db,
+		Query: "User",
+	})
+	if err != nil {
+		t.Fatalf("SearchSessions: %v", err)
+	}
+	if result.Meta.TotalHits != 3 {
+		t.Fatalf("total hits = %d, want 3", result.Meta.TotalHits)
+	}
+
+	// Every returned session must have a positive message count.
+	for _, hit := range result.Hits {
+		if hit.TotalMessages <= 0 {
+			t.Errorf("session %s: TotalMessages = %d, want > 0", hit.SessionID, hit.TotalMessages)
+		}
+	}
+
+	// Verify the sum of per-session counts equals the total indexed messages (12).
+	total := 0
+	for _, hit := range result.Hits {
+		total += hit.TotalMessages
+	}
+	if total != 12 {
+		t.Errorf("sum of TotalMessages across sessions = %d, want 12", total)
+	}
+}
+
 func TestSessionSearchTranscriptScope(t *testing.T) {
 	db := buildTestDB(t)
 
