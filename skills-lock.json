@@ -14,7 +14,7 @@
     "open-prose": {
       "source": "openprose/prose",
       "sourceType": "github",
-      "computedHash": "ded67dc1621b5b53163cb517b5a406a42c8ad3b90f82ff1295fdf108cc3a37fc"
+      "computedHash": "cd4dcd087c2e0e60ab51eadd6b16bcd6133c846614dd84901062a6a2566f302b"
     },
     "recall": {
       "source": "berserkdisruptors/contextual-commits",

@@ -5,7 +5,7 @@ summary: |
   Read this file when authoring new programs or reviewing existing ones.
 see-also:
   - prose.md: Execution semantics, how to run programs
-  - compiler.md: Full syntax grammar, validation rules
+  - v0/compiler.md: Full syntax grammar, validation rules
   - antipatterns.md: Patterns to avoid
 ---
 
@@ -109,6 +109,32 @@ do review-and-revise("the architecture doc", "clarity and completeness")
 do review-and-revise("the API design", "consistency and usability")
 do review-and-revise("the test plan", "coverage and edge cases")
 ```
+
+---
+
+#### declarative-each
+
+Express collection processing as a postcondition rather than a loop. The `each` construct belongs in `ensures:` — it declares that every item must satisfy a property, without prescribing how to get there.
+
+**Legacy imperative (execution block):**
+
+```prose
+for each article in articles:
+  session "Summarize article and score relevance"
+    context: article
+```
+
+**Declarative (contract):**
+
+```markdown
+ensures:
+- articles: collected articles from the feed
+- each article has: a summary, a relevance score (0-1), and key claims extracted
+```
+
+The imperative version prescribes sequential iteration. The declarative version states the end condition and lets the model (or Forme) decide whether to iterate, fan out, or batch. A smarter model can satisfy the same contract more efficiently — this is the "bitter lesson" principle (tenet 14) applied to collections.
+
+Use declarative `each` when the processing strategy doesn't matter to the caller. Use explicit iteration in an execution block when ordering, batching, or error handling per item requires author control.
 
 ---
 
@@ -683,6 +709,39 @@ agent structured-reviewer:
 
 let review = session: structured-reviewer
   prompt: "Review this code for security issues"
+```
+
+---
+
+## Dependency Management Patterns
+
+#### dependency-management
+
+Declare dependencies via `use` statements. Run `prose install` to clone repos into `.deps/`. Commit `prose.lock`, gitignore `.deps/`.
+
+```prose
+# Good: Use standard library programs
+use "std/evals/inspector"
+use "std/memory/project-memory"
+
+# Good: Use third-party programs
+use "alice/research-pipeline" as research
+
+let result = research(topic: "quantum computing")
+```
+
+Pin versions via `prose.lock`. Run `prose install --update` deliberately — don't update dependencies as a side effect of other work. Review changes to `prose.lock` in code review just like any other code change.
+
+#### std-shorthand
+
+Use the `std/` shorthand for standard library references instead of the full `openprose/std/` path.
+
+```prose
+# Good: Concise
+use "std/evals/inspector"
+
+# Unnecessary: Fully qualified (works, but verbose)
+use "openprose/std/evals/inspector"
 ```
 
 ---
