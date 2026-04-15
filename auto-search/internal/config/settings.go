@@ -1,17 +1,16 @@
 package config
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	sharedconfig "github.com/mistakenot/auto-shared/config"
 )
 
 const (
-	autoDirName      = ".auto"
 	searchDirName    = "search"
 	etlDirName       = "etl"
 	outputDirName    = "output"
@@ -21,33 +20,11 @@ const (
 
 var indexNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`)
 
-type ValidationError struct {
-	Code    string `json:"code"`
-	Path    string `json:"path"`
-	Field   string `json:"field"`
-	Message string `json:"message"`
-	Value   any    `json:"value,omitempty"`
-}
+// ValidationError is an alias for the shared validation error type.
+type ValidationError = sharedconfig.ValidationError
 
-type ValidationErrorsError struct {
-	Path   string
-	Errors []ValidationError
-}
-
-func (e *ValidationErrorsError) Error() string {
-	if e == nil || len(e.Errors) == 0 {
-		return ""
-	}
-	var builder strings.Builder
-	builder.WriteString("invalid settings")
-	if e.Path != "" {
-		builder.WriteString(" in ")
-		builder.WriteString(e.Path)
-	}
-	builder.WriteString(": ")
-	builder.WriteString(e.Errors[0].Message)
-	return builder.String()
-}
+// ValidationErrorsError is an alias for the shared validation errors wrapper.
+type ValidationErrorsError = sharedconfig.ValidationErrorsError
 
 type SharedSettings struct {
 	Host string `json:"host"`
@@ -58,27 +35,8 @@ type SearchSettings struct {
 	DefaultInput string `json:"default_input"`
 }
 
-func HomeDir() (string, error) {
-	if home := os.Getenv("HOME"); strings.TrimSpace(home) != "" {
-		return home, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
-	}
-	return home, nil
-}
-
-func AutoDir() (string, error) {
-	home, err := HomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, autoDirName), nil
-}
-
 func SharedSettingsPath() (string, error) {
-	autoDir, err := AutoDir()
+	autoDir, err := sharedconfig.AutoDir()
 	if err != nil {
 		return "", err
 	}
@@ -86,7 +44,7 @@ func SharedSettingsPath() (string, error) {
 }
 
 func SearchDir() (string, error) {
-	autoDir, err := AutoDir()
+	autoDir, err := sharedconfig.AutoDir()
 	if err != nil {
 		return "", err
 	}
@@ -102,7 +60,7 @@ func SearchSettingsPath() (string, error) {
 }
 
 func DefaultInputPath() (string, error) {
-	autoDir, err := AutoDir()
+	autoDir, err := sharedconfig.AutoDir()
 	if err != nil {
 		return "", err
 	}
@@ -182,7 +140,7 @@ func ValidateSearchSettings(path string, cfg SearchSettings) []ValidationError {
 
 func LoadSharedSettings(path string) (SharedSettings, error) {
 	var cfg SharedSettings
-	if err := decodeJSONFile(path, &cfg); err != nil {
+	if err := sharedconfig.DecodeJSONFileStrict(path, &cfg); err != nil {
 		return SharedSettings{}, err
 	}
 	if errs := ValidateSharedSettings(path, cfg); len(errs) > 0 {
@@ -193,7 +151,7 @@ func LoadSharedSettings(path string) (SharedSettings, error) {
 
 func LoadSearchSettings(path string) (SearchSettings, error) {
 	var cfg SearchSettings
-	if err := decodeJSONFile(path, &cfg); err != nil {
+	if err := sharedconfig.DecodeJSONFileStrict(path, &cfg); err != nil {
 		return SearchSettings{}, err
 	}
 	if errs := ValidateSearchSettings(path, cfg); len(errs) > 0 {
@@ -207,12 +165,8 @@ func EnsureSharedSettings() (string, SharedSettings, bool, error) {
 	if err != nil {
 		return "", SharedSettings{}, false, err
 	}
-	autoDir, err := AutoDir()
-	if err != nil {
+	if err := sharedconfig.EnsureAutoDir(); err != nil {
 		return "", SharedSettings{}, false, err
-	}
-	if err := os.MkdirAll(autoDir, 0o755); err != nil {
-		return "", SharedSettings{}, false, fmt.Errorf("create %s: %w", autoDir, err)
 	}
 	if _, err := os.Stat(path); err == nil {
 		cfg, err := LoadSharedSettings(path)
@@ -222,7 +176,7 @@ func EnsureSharedSettings() (string, SharedSettings, bool, error) {
 	}
 
 	cfg := DefaultSharedSettings()
-	if err := writeJSONFile(path, cfg); err != nil {
+	if err := sharedconfig.WriteJSONFile(path, cfg); err != nil {
 		return "", SharedSettings{}, false, err
 	}
 	return path, cfg, true, nil
@@ -251,36 +205,8 @@ func EnsureSearchSettings() (string, SearchSettings, bool, error) {
 	if err != nil {
 		return "", SearchSettings{}, false, err
 	}
-	if err := writeJSONFile(path, cfg); err != nil {
+	if err := sharedconfig.WriteJSONFile(path, cfg); err != nil {
 		return "", SearchSettings{}, false, err
 	}
 	return path, cfg, true, nil
-}
-
-func decodeJSONFile(path string, target any) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(target); err != nil {
-		return fmt.Errorf("decode %s: %w", path, err)
-	}
-	return nil
-}
-
-func writeJSONFile(path string, value any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create parent for %s: %w", path, err)
-	}
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal %s: %w", path, err)
-	}
-	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
 }

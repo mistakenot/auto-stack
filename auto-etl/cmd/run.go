@@ -12,8 +12,9 @@ import (
 	"sync"
 	"time"
 
+	sharedconfig "github.com/mistakenot/auto-shared/config"
+
 	ghclient "github.com/mistakenot/auto-etl/internal/github"
-	"github.com/mistakenot/auto-etl/internal/model"
 	"github.com/mistakenot/auto-etl/internal/parser"
 	"github.com/mistakenot/auto-etl/internal/progress"
 	"github.com/mistakenot/auto-etl/internal/transform"
@@ -265,14 +266,18 @@ func runGitHubSync(ctx context.Context, hostID string, remotes map[string]string
 // --- host ID ---
 
 func loadHostID() string {
-	hostPath := hostConfigPath()
-
-	data, err := os.ReadFile(hostPath)
-	if err == nil {
-		var cfg model.HostConfig
-		if json.Unmarshal(data, &cfg) == nil && cfg.HostID != "" {
-			return cfg.HostID
+	hostPath, err := sharedconfig.HostConfigPath()
+	if err != nil {
+		hostname, _ := os.Hostname()
+		if hostname == "" {
+			return "unknown"
 		}
+		return hostname
+	}
+
+	cfg, err := sharedconfig.LoadHost(hostPath)
+	if err == nil {
+		return cfg.HostID
 	}
 
 	// Fallback to hostname
@@ -282,11 +287,6 @@ func loadHostID() string {
 	}
 	fmt.Fprintf(os.Stderr, "warning: %s missing valid hostId, using hostname %q\n", hostPath, hostname)
 	return hostname
-}
-
-func hostConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".auto", "host.json")
 }
 
 // --- git remote cache ---

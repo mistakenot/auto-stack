@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	sharedconfig "github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-watch/internal/model"
 )
 
@@ -21,7 +22,7 @@ func DefaultProjectConfig(projectID string) model.ProjectConfig {
 func LoadProjectConfig(repoRoot string) (model.ProjectConfig, error) {
 	var cfg model.ProjectConfig
 	path := ProjectConfigPath(repoRoot)
-	if err := decodeJSONFile(path, &cfg); err != nil {
+	if err := sharedconfig.DecodeJSONFileStrict(path, &cfg); err != nil {
 		return cfg, err
 	}
 	if cfg.Tasks == nil {
@@ -40,7 +41,7 @@ func SaveProjectConfig(repoRoot string, cfg model.ProjectConfig) error {
 	if cfg.Triggers == nil {
 		cfg.Triggers = map[string]model.TriggerDef{}
 	}
-	return writeJSONFile(ProjectConfigPath(repoRoot), cfg)
+	return sharedconfig.WriteJSONFile(ProjectConfigPath(repoRoot), cfg)
 }
 
 func EnsureProjectConfig(repoRoot, projectID string) (model.ProjectConfig, bool, error) {

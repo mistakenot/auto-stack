@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	sharedconfig "github.com/mistakenot/auto-shared/config"
+
 	"github.com/datadyne-io/autodoc/internal/config"
 	"github.com/datadyne-io/autodoc/internal/doctree"
 )
@@ -14,7 +16,7 @@ import (
 // InitGlobal initializes global autodoc config at ~/.auto/doc/settings.json
 // and creates ~/.auto/host.json if it doesn't exist.
 func InitGlobal(w io.Writer) error {
-	home, err := os.UserHomeDir()
+	home, err := sharedconfig.HomeDir()
 	if err != nil {
 		return fmt.Errorf("getting home dir: %w", err)
 	}
@@ -42,20 +44,11 @@ func InitGlobal(w io.Writer) error {
 	}
 
 	// Create ~/.auto/host.json if it doesn't exist
-	hostPath := filepath.Join(home, config.GlobalAutoDir, config.HostConfigFile)
-	if _, err := os.Stat(hostPath); os.IsNotExist(err) {
-		hostname, err := os.Hostname()
-		if err != nil {
-			hostname = "unknown"
-		}
-		hostCfg := config.HostConfig{HostID: hostname}
-		data, err := json.MarshalIndent(hostCfg, "", "  ")
-		if err != nil {
-			return fmt.Errorf("marshaling host config: %w", err)
-		}
-		if err := os.WriteFile(hostPath, append(data, '\n'), 0o644); err != nil {
-			return fmt.Errorf("writing host config: %w", err)
-		}
+	_, _, hostCreated, err := sharedconfig.EnsureHost()
+	if err != nil {
+		return fmt.Errorf("ensuring host config: %w", err)
+	}
+	if hostCreated {
 		fmt.Fprintln(w, "Created ~/.auto/host.json")
 	} else {
 		fmt.Fprintln(w, "~/.auto/host.json already exists")

@@ -1,6 +1,13 @@
 package model
 
-import "time"
+import (
+	"time"
+
+	sharedconfig "github.com/mistakenot/auto-shared/config"
+)
+
+// ValidationError is an alias for the shared validation error type.
+type ValidationError = sharedconfig.ValidationError
 
 type GlobalConfig struct {
 	Projects []ProjectRef `json:"projects"`
@@ -29,14 +36,6 @@ type TriggerDef struct {
 	When                string   `json:"when,omitempty"`
 	Tasks               []string `json:"tasks"`
 	OnlyIfBranchChanged string   `json:"onlyIfBranchHasChanged,omitempty"`
-}
-
-type ValidationError struct {
-	Code    string `json:"code"`
-	Path    string `json:"path"`
-	Field   string `json:"field"`
-	Message string `json:"message"`
-	Value   any    `json:"value,omitempty"`
 }
 
 type RunState string

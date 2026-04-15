@@ -4,16 +4,21 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	sharedconfig "github.com/mistakenot/auto-shared/config"
 )
 
 func TestHostConfigPathUsesHomeDir(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 
-	got := hostConfigPath()
+	got, err := sharedconfig.HostConfigPath()
+	if err != nil {
+		t.Fatalf("HostConfigPath() error = %v", err)
+	}
 	want := filepath.Join(tmpHome, ".auto", "host.json")
 	if got != want {
-		t.Fatalf("hostConfigPath() = %q, want %q", got, want)
+		t.Fatalf("HostConfigPath() = %q, want %q", got, want)
 	}
 }
 

@@ -2,9 +2,10 @@ package config
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
+
+	sharedconfig "github.com/mistakenot/auto-shared/config"
 )
 
 const DefaultConfigFile = "settings.json"
@@ -28,11 +29,6 @@ type Config struct {
 // GlobalConfig holds fields that make sense at the machine level.
 type GlobalConfig struct {
 	Ignores []string `json:"ignores"`
-}
-
-// HostConfig holds host identification for cross-host scenarios.
-type HostConfig struct {
-	HostID string `json:"hostId"`
 }
 
 func Load(path string) (*Config, error) {
@@ -74,7 +70,7 @@ func Load(path string) (*Config, error) {
 
 // LoadGlobal loads the global config from ~/.auto/doc/settings.json.
 func LoadGlobal() (*GlobalConfig, error) {
-	home, err := os.UserHomeDir()
+	home, err := sharedconfig.HomeDir()
 	if err != nil {
 		return &GlobalConfig{}, err
 	}
@@ -107,20 +103,10 @@ func LoadWithGlobal(projectPath string) (*Config, error) {
 	return cfg, nil
 }
 
-// LoadHost loads host identification from ~/.auto/host.json.
-func LoadHost(path string) (*HostConfig, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var cfg HostConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, err
-	}
-	if cfg.HostID == "" {
-		return nil, errors.New("hostId is required")
-	}
-	return &cfg, nil
+// LoadHost loads host identification from the given path.
+// Delegates to the shared config package.
+func LoadHost(path string) (*sharedconfig.HostConfig, error) {
+	return sharedconfig.LoadHost(path)
 }
 
 // unionStrings returns the union of two string slices, preserving order,
@@ -146,7 +132,7 @@ func unionStrings(a, b []string) []string {
 
 // GlobalConfigPath returns the path to ~/.auto/doc/settings.json.
 func GlobalConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := sharedconfig.HomeDir()
 	if err != nil {
 		return "", err
 	}
@@ -155,9 +141,5 @@ func GlobalConfigPath() (string, error) {
 
 // HostConfigPath returns the path to ~/.auto/host.json.
 func HostConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, GlobalAutoDir, HostConfigFile), nil
+	return sharedconfig.HostConfigPath()
 }

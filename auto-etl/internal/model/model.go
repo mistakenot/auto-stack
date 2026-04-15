@@ -93,13 +93,6 @@ type AgentSession struct {
 	SchemaVersion int32 `parquet:"schema_version"`
 }
 
-// HostConfig is the structure of ~/.auto/host.json.
-type HostConfig struct {
-	SchemaVersion int    `json:"v"`
-	HostID        string `json:"hostId"`
-	CreatedAt     int64  `json:"created_at"`
-}
-
 // TransformedRows holds the output of the transform step.
 type TransformedRows struct {
 	Messages []AgentMessage
