@@ -4,40 +4,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	sharedconfig "github.com/mistakenot/auto-shared/config"
 )
 
 const (
-	autoDirName      = ".auto"
 	watchDirName     = "watch"
 	settingsFileName = "settings.json"
-	hostFileName     = "host.json"
 	projectFileName  = "project.json"
 	lockFileName     = "daemon.lock"
 	pidFileName      = "daemon.pid.json"
 	dbFileName       = "logs.sqlite"
 )
 
-func HomeDir() (string, error) {
-	if home := os.Getenv("HOME"); home != "" {
-		return home, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
-	}
-	return home, nil
-}
-
+// AutoDir returns ~/.auto, delegating to the shared config package.
 func AutoDir() (string, error) {
-	home, err := HomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, autoDirName), nil
+	return sharedconfig.AutoDir()
 }
 
 func WatchDir() (string, error) {
-	autoDir, err := AutoDir()
+	autoDir, err := sharedconfig.AutoDir()
 	if err != nil {
 		return "", err
 	}
@@ -53,11 +39,7 @@ func SettingsPath() (string, error) {
 }
 
 func HostPath() (string, error) {
-	dir, err := AutoDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, hostFileName), nil
+	return sharedconfig.HostConfigPath()
 }
 
 func DBPath() (string, error) {
@@ -93,7 +75,7 @@ func PIDPath() (string, error) {
 }
 
 func ProjectDir(repoRoot string) string {
-	return filepath.Join(repoRoot, autoDirName, watchDirName)
+	return filepath.Join(repoRoot, ".auto", watchDirName)
 }
 
 func ProjectConfigPath(repoRoot string) string {
@@ -109,7 +91,7 @@ func WorktreesDir(repoRoot string) string {
 }
 
 func EnsureGlobalDirs() error {
-	autoDir, err := AutoDir()
+	autoDir, err := sharedconfig.AutoDir()
 	if err != nil {
 		return err
 	}
