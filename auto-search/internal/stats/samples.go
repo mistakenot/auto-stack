@@ -24,7 +24,7 @@ type sessionSample struct {
 	SampleMessageID string
 }
 
-func betterMessageSample(candidate, current messageSample, hasQuery bool) bool {
+func betterMessageSample(candidate, current *messageSample, hasQuery bool) bool {
 	if current.MessageID == "" {
 		return true
 	}
@@ -43,27 +43,6 @@ func betterMessageSample(candidate, current messageSample, hasQuery bool) bool {
 		return false
 	}
 	return candidate.MessageID < current.MessageID
-}
-
-func betterSessionSample(candidate, current sessionSample, hasQuery bool) bool {
-	if current.SessionID == "" {
-		return true
-	}
-	if hasQuery {
-		if candidate.Score < current.Score {
-			return true
-		}
-		if candidate.Score > current.Score {
-			return false
-		}
-	}
-	if candidate.FirstMessageAt > current.FirstMessageAt {
-		return true
-	}
-	if candidate.FirstMessageAt < current.FirstMessageAt {
-		return false
-	}
-	return candidate.SessionID < current.SessionID
 }
 
 func snippetForQuery(text string, terms []string, hasQuery bool) string {

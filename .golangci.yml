@@ -57,6 +57,8 @@ linters:
         - G204  # subprocess with variable args is normal in CLI tools
         - G301  # 0755 dirs are standard for CLI tools
         - G304  # file path from variable is normal in CLI tools
+        - G201  # fmt.Sprintf SQL is safe — all user values are parameterized
+        - G202  # SQL concatenation is safe — joins CTEs/placeholders, not user input
         - G306  # 0644 files are standard for CLI tools
         - G401  # md5 used for content hashing, not crypto
         - G501  # md5 import — same as G401

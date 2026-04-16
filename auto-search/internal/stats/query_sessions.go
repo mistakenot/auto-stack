@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func querySessionStats(req normalizedRequest) (queryResult, error) {
+func querySessionStats(req *normalizedRequest) (queryResult, error) {
 	bucketExpr, err := normalizedBucketExpr(scopeSessions, req.GroupBy)
 	if err != nil {
 		return queryResult{}, err
@@ -48,7 +48,7 @@ func querySessionStats(req normalizedRequest) (queryResult, error) {
 	}, nil
 }
 
-func buildSessionMatchedCTE(req normalizedRequest, bucketExpr string) (string, []any) {
+func buildSessionMatchedCTE(req *normalizedRequest, bucketExpr string) (string, []any) {
 	fromClause := "FROM sessions s"
 	where := []string{"1=1"}
 	args := make([]any, 0, 8)
@@ -151,7 +151,7 @@ func countSessionBuckets(db *sql.DB, groupedCTE string, baseArgs []any, withMin 
 	return total, nil
 }
 
-func pageSessionBuckets(db *sql.DB, groupedCTE string, baseArgs []any, req normalizedRequest) ([]Bucket, error) {
+func pageSessionBuckets(db *sql.DB, groupedCTE string, baseArgs []any, req *normalizedRequest) ([]Bucket, error) {
 	sqlText := groupedCTE + fmt.Sprintf(`
 		SELECT bucket_key, count, distinct_sessions, distinct_messages
 		FROM grouped_with_messages
@@ -186,7 +186,7 @@ func pageSessionBuckets(db *sql.DB, groupedCTE string, baseArgs []any, req norma
 	return buckets, nil
 }
 
-func hydrateSessionSamples(req normalizedRequest, matchedCTE string, baseArgs []any, buckets []Bucket) error {
+func hydrateSessionSamples(req *normalizedRequest, matchedCTE string, baseArgs []any, buckets []Bucket) error {
 	keys := make([]string, 0, len(buckets))
 	for _, b := range buckets {
 		keys = append(keys, b.Key)

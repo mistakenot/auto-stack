@@ -484,7 +484,7 @@ func TestListSessionsPagination(t *testing.T) {
 	defer db.Close()
 
 	// Insert 5 sessions with descending timestamps.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		insertSession(t, db, fmt.Sprintf("sess-%d", i), "/work", "origin", int64(5000-i*1000))
 	}
 

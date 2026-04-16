@@ -223,7 +223,7 @@ func List(env Env) ([]SkillSummary, []string, error) {
 		return nil, nil, fmt.Errorf("stat %s: %w", displayPath(skillsDir), err)
 	}
 	if !info.IsDir() {
-		return nil, []string{fmt.Sprintf("%s: skills root is not a directory", relPath(env.Root, skillsDir))}, nil
+		return nil, []string{relPath(env.Root, skillsDir) + ": skills root is not a directory"}, nil
 	}
 
 	entries, err := os.ReadDir(skillsDir)
@@ -236,7 +236,7 @@ func List(env Env) ([]SkillSummary, []string, error) {
 	for _, entry := range entries {
 		full := filepath.Join(skillsDir, entry.Name())
 		if !entry.IsDir() {
-			parseErrors = append(parseErrors, fmt.Sprintf("%s: not a skill directory", relPath(env.Root, full)))
+			parseErrors = append(parseErrors, relPath(env.Root, full)+": not a skill directory")
 			continue
 		}
 
@@ -246,11 +246,11 @@ func List(env Env) ([]SkillSummary, []string, error) {
 			continue
 		}
 		if parsed.Name == "" {
-			parseErrors = append(parseErrors, fmt.Sprintf("%s: missing frontmatter name", relPath(env.Root, parsed.File)))
+			parseErrors = append(parseErrors, relPath(env.Root, parsed.File)+": missing frontmatter name")
 			continue
 		}
 		if parsed.Description == "" {
-			parseErrors = append(parseErrors, fmt.Sprintf("%s: missing frontmatter description", relPath(env.Root, parsed.File)))
+			parseErrors = append(parseErrors, relPath(env.Root, parsed.File)+": missing frontmatter description")
 			continue
 		}
 
@@ -669,7 +669,7 @@ func lintSkill(env Env, target lintTarget, docsByID map[string]string) ([]Diagno
 				Code:     "broken_local_link",
 				Path:     relPath(env.Root, parsed.File),
 				Field:    "link",
-				Message:  fmt.Sprintf("local markdown link does not resolve: %s", rawLink),
+				Message:  "local markdown link does not resolve: " + rawLink,
 				Value:    rawLink,
 			})
 		}
@@ -685,7 +685,7 @@ func lintSkill(env Env, target lintTarget, docsByID map[string]string) ([]Diagno
 			Code:     "broken_side_file",
 			Path:     relPath(env.Root, parsed.File),
 			Field:    "side_file",
-			Message:  fmt.Sprintf("referenced side file does not exist: %s", sidePath),
+			Message:  "referenced side file does not exist: " + sidePath,
 			Value:    sidePath,
 		})
 	}
@@ -805,7 +805,7 @@ func discoverDocsByID(root string) (map[string]string, error) {
 			}
 			front, _, err := parseFrontmatterAndBody(string(data))
 			if err != nil {
-				return nil
+				return err
 			}
 			docID := strings.TrimSpace(readString(front, "id"))
 			hash := strings.TrimSpace(readString(front, "hash"))

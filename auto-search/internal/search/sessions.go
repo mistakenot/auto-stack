@@ -102,21 +102,21 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	elapsed := time.Since(start).Milliseconds()
 	return &SessionSearchResult{
 		Meta: Meta{
-			RequestID:    opts.RequestID,
-			Scope:        "sessions",
-			Mode:         "bm25",
-			Query:        opts.Query,
-			ElapsedMs:    elapsed,
-			TotalHits:    stats.TotalMatches,
-			TotalMatches: stats.TotalMatches,
+			RequestID:        opts.RequestID,
+			Scope:            "sessions",
+			Mode:             "bm25",
+			Query:            opts.Query,
+			ElapsedMs:        elapsed,
+			TotalHits:        stats.TotalMatches,
+			TotalMatches:     stats.TotalMatches,
 			DistinctSessions: stats.DistinctSessions,
 			DistinctMessages: stats.DistinctMessages,
-			ReturnedHits: returnedHits,
-			PageSize:     pageSize,
-			Offset:       offset,
-			HasMore:      hasMore,
-			NextOffset:   nextOffset,
-			IsCapped:     false,
+			ReturnedHits:     returnedHits,
+			PageSize:         pageSize,
+			Offset:           offset,
+			HasMore:          hasMore,
+			NextOffset:       nextOffset,
+			IsCapped:         false,
 		},
 		Hits: hits,
 	}, nil
@@ -232,35 +232,11 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 			allIDs[i] = r.sessionID
 		}
 		for start := 0; start < len(allIDs); start += msgCountChunkSize {
-			end := start + msgCountChunkSize
-			if end > len(allIDs) {
-				end = len(allIDs)
-			}
+			end := min(start+msgCountChunkSize, len(allIDs))
 			chunk := allIDs[start:end]
-			placeholders := make([]string, len(chunk))
-			for i := range chunk {
-				placeholders[i] = "?"
+			if err := fetchChunkMsgCounts(db, chunk, msgCounts); err != nil {
+				return nil, zeroStats, err
 			}
-			batchQuery := "SELECT session_id, COUNT(*) FROM messages WHERE session_id IN (" +
-				strings.Join(placeholders, ",") + ") GROUP BY session_id"
-			countRows, err := db.Query(batchQuery, chunk...)
-			if err != nil {
-				return nil, zeroStats, fmt.Errorf("batch message count query: %w", err)
-			}
-			for countRows.Next() {
-				var sid string
-				var cnt int
-				if err := countRows.Scan(&sid, &cnt); err != nil {
-					countRows.Close()
-					return nil, zeroStats, fmt.Errorf("scan batch message count: %w", err)
-				}
-				msgCounts[sid] = cnt
-			}
-			if err := countRows.Err(); err != nil {
-				countRows.Close()
-				return nil, zeroStats, fmt.Errorf("iterate batch message counts: %w", err)
-			}
-			countRows.Close()
 		}
 	}
 
@@ -281,4 +257,30 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 		DistinctSessions: totalHits,
 		DistinctMessages: distinctMessages,
 	}, nil
+}
+
+func fetchChunkMsgCounts(db *sql.DB, chunk []any, msgCounts map[string]int) error {
+	placeholders := make([]string, len(chunk))
+	for i := range chunk {
+		placeholders[i] = "?"
+	}
+	batchQuery := "SELECT session_id, COUNT(*) FROM messages WHERE session_id IN (" +
+		strings.Join(placeholders, ",") + ") GROUP BY session_id"
+	countRows, err := db.Query(batchQuery, chunk...)
+	if err != nil {
+		return fmt.Errorf("batch message count query: %w", err)
+	}
+	defer func() { _ = countRows.Close() }()
+	for countRows.Next() {
+		var sid string
+		var cnt int
+		if err := countRows.Scan(&sid, &cnt); err != nil {
+			return fmt.Errorf("scan batch message count: %w", err)
+		}
+		msgCounts[sid] = cnt
+	}
+	if err := countRows.Err(); err != nil {
+		return fmt.Errorf("iterate batch message counts: %w", err)
+	}
+	return nil
 }

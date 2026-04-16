@@ -1,5 +1,5 @@
 ---
-hash: "10585084"
+hash: "62212252"
 id: "50e72364"
 summary: "V1 requirements for autowatch — a cron-driven daemon that monitors repositories and launches bash or Claude Code tasks in response."
 title: "autowatch — Requirements"

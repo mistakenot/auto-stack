@@ -15,7 +15,7 @@ type messageBucketAgg struct {
 	Sample   messageSample
 }
 
-func queryMessageStats(req normalizedRequest) (queryResult, error) {
+func queryMessageStats(req *normalizedRequest) (queryResult, error) {
 	if req.GroupBy == "bash_command" {
 		return queryMessageBashStats(req)
 	}
@@ -60,7 +60,7 @@ func queryMessageStats(req normalizedRequest) (queryResult, error) {
 	}, nil
 }
 
-func queryMessageBashStats(req normalizedRequest) (queryResult, error) {
+func queryMessageBashStats(req *normalizedRequest) (queryResult, error) {
 	matchedCTE, baseArgs := buildMessageMatchedCTE(req, "m.bash_command")
 	sqlText := matchedCTE + `
 		SELECT bucket_key, message_id, session_id, timestamp, content_truncated, score
@@ -111,7 +111,7 @@ func queryMessageBashStats(req normalizedRequest) (queryResult, error) {
 			Timestamp: ts,
 			Score:     scoreVal,
 		}
-		if betterMessageSample(candidate, agg.Sample, req.HasQuery) {
+		if betterMessageSample(&candidate, &agg.Sample, req.HasQuery) {
 			agg.Sample = candidate
 		}
 	}
@@ -147,7 +147,7 @@ func queryMessageBashStats(req normalizedRequest) (queryResult, error) {
 	}, nil
 }
 
-func buildMessageMatchedCTE(req normalizedRequest, bucketExpr string) (string, []any) {
+func buildMessageMatchedCTE(req *normalizedRequest, bucketExpr string) (string, []any) {
 	fromClause := "FROM messages m"
 	where := []string{"1=1"}
 	args := make([]any, 0, 8)
@@ -245,7 +245,7 @@ func countMessageBuckets(db *sql.DB, matchedCTE string, baseArgs []any, withMin 
 	return total, nil
 }
 
-func pageMessageBuckets(db *sql.DB, matchedCTE string, baseArgs []any, req normalizedRequest) ([]Bucket, error) {
+func pageMessageBuckets(db *sql.DB, matchedCTE string, baseArgs []any, req *normalizedRequest) ([]Bucket, error) {
 	sqlText := matchedCTE + fmt.Sprintf(`
 		SELECT
 			bucket_key,
@@ -285,7 +285,7 @@ func pageMessageBuckets(db *sql.DB, matchedCTE string, baseArgs []any, req norma
 	return buckets, nil
 }
 
-func hydrateMessageSamples(req normalizedRequest, matchedCTE string, baseArgs []any, buckets []Bucket) error {
+func hydrateMessageSamples(req *normalizedRequest, matchedCTE string, baseArgs []any, buckets []Bucket) error {
 	keys := make([]string, 0, len(buckets))
 	for _, b := range buckets {
 		keys = append(keys, b.Key)
@@ -370,9 +370,9 @@ func filterBucketsByMinCount(buckets []Bucket, measure string, minCount int) []B
 		return out
 	}
 	out := make([]Bucket, 0, len(buckets))
-	for _, b := range buckets {
-		if bucketMeasureValue(b, measure) >= minCount {
-			out = append(out, b)
+	for i := range buckets {
+		if bucketMeasureValue(&buckets[i], measure) >= minCount {
+			out = append(out, buckets[i])
 		}
 	}
 	return out
@@ -380,8 +380,8 @@ func filterBucketsByMinCount(buckets []Bucket, measure string, minCount int) []B
 
 func sortBuckets(buckets []Bucket, measure string) {
 	sort.SliceStable(buckets, func(i, j int) bool {
-		mi := bucketMeasureValue(buckets[i], measure)
-		mj := bucketMeasureValue(buckets[j], measure)
+		mi := bucketMeasureValue(&buckets[i], measure)
+		mj := bucketMeasureValue(&buckets[j], measure)
 		if mi != mj {
 			return mi > mj
 		}
@@ -393,14 +393,11 @@ func applyOffsetLimit(buckets []Bucket, offset, limit int) []Bucket {
 	if offset >= len(buckets) {
 		return []Bucket{}
 	}
-	end := offset + limit
-	if end > len(buckets) {
-		end = len(buckets)
-	}
+	end := min(offset+limit, len(buckets))
 	return buckets[offset:end]
 }
 
-func bucketMeasureValue(b Bucket, measure string) int {
+func bucketMeasureValue(b *Bucket, measure string) int {
 	switch measure {
 	case measureDistinctSessions:
 		return b.DistinctSessions

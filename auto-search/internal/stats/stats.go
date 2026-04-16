@@ -17,9 +17,9 @@ func Run(req *Request) (*Response, error) {
 	var result queryResult
 	switch normalized.Scope {
 	case scopeMessages:
-		result, err = queryMessageStats(normalized)
+		result, err = queryMessageStats(&normalized)
 	case scopeSessions:
-		result, err = querySessionStats(normalized)
+		result, err = querySessionStats(&normalized)
 	default:
 		err = fmt.Errorf("unsupported scope: %s", normalized.Scope)
 	}

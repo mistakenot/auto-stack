@@ -93,7 +93,7 @@ func ListSessions(db *sql.DB, opts ListSessionsOpts) ([]SessionListRow, int, err
 	}
 
 	// Count total matching rows for pagination metadata.
-	countSQL := fmt.Sprintf("SELECT COUNT(*) FROM sessions s %s", whereClause)
+	countSQL := "SELECT COUNT(*) FROM sessions s " + whereClause
 	var total int
 	if err := db.QueryRow(countSQL, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count sessions: %w", err)

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -49,7 +50,7 @@ func newSessionListCmd() *cobra.Command {
 			start := time.Now()
 
 			if cwd != "" && remote != "" {
-				return &ExitError{Code: 1, Err: fmt.Errorf("--cwd and --remote are mutually exclusive")}
+				return &ExitError{Code: 1, Err: errors.New("--cwd and --remote are mutually exclusive")}
 			}
 
 			dbPath, err := config.IndexPath(index)

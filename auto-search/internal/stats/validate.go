@@ -3,6 +3,7 @@ package stats
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -116,10 +117,8 @@ func normalizeGroupBy(scope, raw string) (string, error) {
 		return "", errors.New("--group-by is required; run: autosearch stats --help")
 	}
 
-	for _, key := range validKeysForScope(scope) {
-		if groupBy == key {
-			return groupBy, nil
-		}
+	if slices.Contains(validKeysForScope(scope), groupBy) {
+		return groupBy, nil
 	}
 	return "", fmt.Errorf(
 		"invalid --group-by value %q for --scope %s; valid values: %s",
@@ -141,10 +140,8 @@ func normalizeMeasure(raw string) (string, error) {
 	if measure == "" {
 		measure = measureCount
 	}
-	for _, valid := range validMeasures {
-		if measure == valid {
-			return measure, nil
-		}
+	if slices.Contains(validMeasures, measure) {
+		return measure, nil
 	}
 	return "", fmt.Errorf(
 		"invalid --measure value %q; valid values: %s",
