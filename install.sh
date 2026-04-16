@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="mistakenot/auto-stack"
 INSTALL_DIR="$HOME/.local/bin"
-BINARIES="autodoc autoetl autosearch autowatch"
+BINARIES="autodoc autoetl autosearch autoskill autowatch"
 
 # Detect platform
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -33,9 +33,19 @@ fi
 echo "Installing auto-stack ${TAG} for ${SUFFIX}..."
 mkdir -p "$INSTALL_DIR"
 
+RESTART_SERVICES=""
+
 for bin in $BINARIES; do
     URL="https://github.com/${REPO}/releases/download/${TAG}/${bin}-${SUFFIX}"
     echo "  ${bin}..."
+    # Remove before writing — a running binary (e.g. autowatch daemon) keeps its
+    # old inode open, so the delete succeeds and the new file gets a fresh inode.
+    if [ -f "${INSTALL_DIR}/${bin}" ]; then
+        if fuser "${INSTALL_DIR}/${bin}" >/dev/null 2>&1; then
+            RESTART_SERVICES="${RESTART_SERVICES} ${bin}"
+        fi
+        rm -f "${INSTALL_DIR}/${bin}"
+    fi
     curl -fsSL "$URL" -o "${INSTALL_DIR}/${bin}"
     chmod +x "${INSTALL_DIR}/${bin}"
 done
@@ -51,4 +61,13 @@ if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
     echo ""
     echo "Add ${INSTALL_DIR} to your PATH:"
     echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+fi
+
+# Hint to restart any services that were running during upgrade
+if [ -n "$RESTART_SERVICES" ]; then
+    echo ""
+    echo "The following binaries were running during install and need a restart:"
+    for svc in $RESTART_SERVICES; do
+        echo "  systemctl --user restart ${svc}  # if managed by systemd"
+    done
 fi

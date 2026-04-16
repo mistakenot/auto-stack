@@ -9,6 +9,7 @@ import (
 	"github.com/datadyne-io/autodoc/internal/config"
 	"github.com/datadyne-io/autodoc/internal/doctree"
 	"github.com/datadyne-io/autodoc/internal/frontmatter"
+	"github.com/mistakenot/auto-shared/update"
 	"github.com/mistakenot/auto-shared/version"
 	"github.com/spf13/cobra"
 )
@@ -36,6 +37,7 @@ func main() {
 		newQuickstartCmd(),
 		newDocsCmd(),
 		newDoctorCmd(),
+		newUpdateCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -305,6 +307,24 @@ func newFixedCmd() *cobra.Command {
 				})
 			}
 			fmt.Printf("Updated hash for %s\n", args[0])
+			return nil
+		},
+	}
+}
+
+func newUpdateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "update",
+		Short: "Check for and install the latest auto-stack release",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := update.Run(os.Stdout, os.Stderr)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return commands.WriteJSON(os.Stdout, result)
+			}
+			fmt.Fprintln(os.Stdout, result.Message)
 			return nil
 		},
 	}
