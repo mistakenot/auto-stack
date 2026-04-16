@@ -104,6 +104,87 @@ func TestTaskAndTriggerCRUDJSONList(t *testing.T) {
 	}
 }
 
+func TestFileCreatedTriggerCRUD(t *testing.T) {
+	env := testutil.NewEnv(t)
+	repoRoot := env.NewRepo("demo")
+	if _, _, code := env.RunCLI(repoRoot, "init"); code != 0 {
+		t.Fatal("init failed")
+	}
+	if _, stderr, code := env.RunCLI(repoRoot, "task", "create", "--id", "process-doc", "--bash", "echo ok"); code != 0 {
+		t.Fatalf("task create failed: %s", stderr)
+	}
+
+	// Create a file_created trigger.
+	stdout, stderr, code := env.RunCLI(repoRoot, "trigger", "create", "--type", "file_created", "--glob", "docs/*.md", "--id", "watch-docs")
+	if code != 0 {
+		t.Fatalf("trigger create failed (code %d): %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "Saved trigger watch-docs") {
+		t.Fatalf("unexpected output: %s", stdout)
+	}
+
+	// Link task.
+	if _, stderr, code := env.RunCLI(repoRoot, "trigger", "add-task", "--trigger", "watch-docs", "--task", "process-doc"); code != 0 {
+		t.Fatalf("trigger add-task failed: %s", stderr)
+	}
+
+	// Verify trigger list JSON output.
+	stdout, stderr, code = env.RunCLI(repoRoot, "trigger", "list", "--json")
+	if code != 0 {
+		t.Fatalf("trigger list failed: %s", stderr)
+	}
+	var payload struct {
+		Triggers []struct {
+			ID    string   `json:"id"`
+			Type  string   `json:"type"`
+			Glob  string   `json:"glob"`
+			Tasks []string `json:"tasks"`
+		} `json:"triggers"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("unmarshal trigger list: %v\nstdout: %s", err, stdout)
+	}
+	if len(payload.Triggers) != 1 {
+		t.Fatalf("expected 1 trigger, got %d", len(payload.Triggers))
+	}
+	trig := payload.Triggers[0]
+	if trig.ID != "watch-docs" || trig.Type != "file_created" || trig.Glob != "docs/*.md" {
+		t.Fatalf("unexpected trigger: %+v", trig)
+	}
+	if len(trig.Tasks) != 1 || trig.Tasks[0] != "process-doc" {
+		t.Fatalf("unexpected tasks: %+v", trig.Tasks)
+	}
+
+	// Verify project.json persisted correctly.
+	cfg, err := config.LoadProjectConfig(repoRoot)
+	if err != nil {
+		t.Fatalf("load project config: %v", err)
+	}
+	trigDef, ok := cfg.Triggers["watch-docs"]
+	if !ok {
+		t.Fatalf("trigger watch-docs not found in project config")
+	}
+	if trigDef.Type != "file_created" || trigDef.Glob != "docs/*.md" {
+		t.Fatalf("unexpected trigger def: %+v", trigDef)
+	}
+}
+
+func TestTriggerCreateRejectsMissingGlob(t *testing.T) {
+	env := testutil.NewEnv(t)
+	repoRoot := env.NewRepo("demo")
+	if _, _, code := env.RunCLI(repoRoot, "init"); code != 0 {
+		t.Fatal("init failed")
+	}
+
+	_, stderr, code := env.RunCLI(repoRoot, "trigger", "create", "--type", "file_created", "--id", "bad")
+	if code == 0 {
+		t.Fatal("expected non-zero exit for missing --glob")
+	}
+	if !strings.Contains(stderr, "--glob is required") {
+		t.Fatalf("expected glob required error, got: %s", stderr)
+	}
+}
+
 func TestTaskRunBashReturnsUnderlyingExitCode(t *testing.T) {
 	env := testutil.NewEnv(t)
 	repoRoot := env.NewRepo("demo")

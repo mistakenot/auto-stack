@@ -555,8 +555,14 @@ func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time,
 		knownFiles[snap.FilePath] = struct{}{}
 	}
 
-	// First tick (no snapshot): seed silently without firing.
-	seeding := len(snapshots) == 0 && len(currentFiles) > 0
+	// First evaluation ever: seed silently without firing.
+	// We check trigger_state to distinguish "never evaluated" from "evaluated
+	// but snapshot is currently empty" (e.g. all files were deleted).
+	triggerState, err := s.Store.GetTriggerState(ctx, projectID, triggerID)
+	if err != nil {
+		return err
+	}
+	seeding := triggerState.UpdatedAt.IsZero() && len(currentFiles) > 0
 
 	// Detect new files.
 	var newFiles []string
@@ -591,6 +597,16 @@ func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time,
 
 	// Remove deleted files from snapshot.
 	if err := s.Store.DeleteFileSnapshots(ctx, projectID, triggerID, deletedFiles); err != nil {
+		return err
+	}
+
+	// Record that this trigger has been evaluated (used to distinguish
+	// "never evaluated" from "evaluated but snapshot empty").
+	if err := s.Store.UpsertTriggerState(ctx, &model.TriggerStateRecord{
+		ProjectID: projectID,
+		TriggerID: triggerID,
+		UpdatedAt: now,
+	}); err != nil {
 		return err
 	}
 

@@ -212,6 +212,218 @@ func TestTickReapsCompletedRunsBeforeDedupReservation(t *testing.T) {
 	}
 }
 
+func setupFileCreatedProject(t *testing.T) (env *testutil.Env, repoRoot string, db *store.Store) {
+	t.Helper()
+	env = testutil.NewEnv(t)
+	repoRoot = env.NewRepo("demo")
+	if _, _, code := env.RunCLI(repoRoot, "init"); code != 0 {
+		t.Fatal("init failed")
+	}
+	if _, stderr, code := env.RunCLI(repoRoot, "task", "create", "--id", "process-doc", "--bash", "echo ok"); code != 0 {
+		t.Fatalf("task create failed: %s", stderr)
+	}
+	if _, stderr, code := env.RunCLI(repoRoot, "trigger", "create", "--type", "file_created", "--glob", "docs/*.md", "--id", "watch-docs"); code != 0 {
+		t.Fatalf("trigger create failed: %s", stderr)
+	}
+	if _, stderr, code := env.RunCLI(repoRoot, "trigger", "add-task", "--trigger", "watch-docs", "--task", "process-doc"); code != 0 {
+		t.Fatalf("trigger add-task failed: %s", stderr)
+	}
+	var err error
+	db, err = store.Open(filepath.Join(env.Home, ".auto", "watch", "logs.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate store: %v", err)
+	}
+	return env, repoRoot, db
+}
+
+func TestFileCreatedTriggerSeedsOnFirstTickWithoutFiring(t *testing.T) {
+	env, repoRoot, db := setupFileCreatedProject(t)
+	ctx := context.Background()
+
+	// Create a file before the first tick — it should be treated as baseline.
+	env.WriteFile(repoRoot, "docs/existing.md", "# existing\n")
+
+	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current })
+
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("first tick failed: %v", err)
+	}
+	service.WaitWorkers()
+
+	// No runs should have been launched (seeding).
+	runs, err := db.ListRunsByStates(ctx, model.RunPending, model.RunRunning, model.RunCompleted, model.RunFailed)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("expected 0 runs on seed tick, got %d", len(runs))
+	}
+
+	// Snapshot should have been created.
+	snaps, err := db.ListFileSnapshots(ctx, "demo", "watch-docs")
+	if err != nil {
+		t.Fatalf("list snapshots: %v", err)
+	}
+	if len(snaps) != 1 || snaps[0].FilePath != "docs/existing.md" {
+		t.Fatalf("expected 1 snapshot for docs/existing.md, got %+v", snaps)
+	}
+}
+
+func TestFileCreatedTriggerFiresOnNewFile(t *testing.T) {
+	env, repoRoot, db := setupFileCreatedProject(t)
+	ctx := context.Background()
+
+	// Seed tick with one existing file.
+	env.WriteFile(repoRoot, "docs/existing.md", "# existing\n")
+	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current })
+
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("seed tick failed: %v", err)
+	}
+	service.WaitWorkers()
+
+	// Add a new file and tick again.
+	env.WriteFile(repoRoot, "docs/new-feature.md", "# new\n")
+	current = current.Add(time.Minute)
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("second tick failed: %v", err)
+	}
+	service.WaitWorkers()
+	if err := service.Reap(ctx); err != nil {
+		t.Fatalf("reap failed: %v", err)
+	}
+
+	counts, err := db.RecentRunCounts(ctx, time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("RecentRunCounts: %v", err)
+	}
+	if counts["completed"] != 1 {
+		runs, _ := db.ListRunsByStates(ctx, model.RunPending, model.RunRunning, model.RunCompleted, model.RunFailed)
+		events, _ := db.ListEvents(ctx, &store.EventFilter{Limit: 50})
+		t.Logf("runs: %+v", runs)
+		t.Logf("events: %+v", events)
+		t.Fatalf("expected 1 completed run, got %+v", counts)
+	}
+
+	// Snapshot should now include both files.
+	snaps, err := db.ListFileSnapshots(ctx, "demo", "watch-docs")
+	if err != nil {
+		t.Fatalf("list snapshots: %v", err)
+	}
+	if len(snaps) != 2 {
+		t.Fatalf("expected 2 snapshots, got %d", len(snaps))
+	}
+}
+
+func TestFileCreatedTriggerNoFireWhenUnchanged(t *testing.T) {
+	env, repoRoot, db := setupFileCreatedProject(t)
+	ctx := context.Background()
+
+	env.WriteFile(repoRoot, "docs/existing.md", "# existing\n")
+	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current })
+
+	// Seed tick.
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("seed tick: %v", err)
+	}
+	service.WaitWorkers()
+
+	// Second tick with no new files.
+	current = current.Add(time.Minute)
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+	service.WaitWorkers()
+
+	runs, err := db.ListRunsByStates(ctx, model.RunPending, model.RunRunning, model.RunCompleted, model.RunFailed)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("expected 0 runs when no new files, got %d", len(runs))
+	}
+}
+
+func TestFileCreatedTriggerDeleteAndRecreateFiresAgain(t *testing.T) {
+	env, repoRoot, db := setupFileCreatedProject(t)
+	ctx := context.Background()
+
+	// Seed with file.
+	env.WriteFile(repoRoot, "docs/ephemeral.md", "# temp\n")
+	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current })
+
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("seed tick: %v", err)
+	}
+	service.WaitWorkers()
+
+	// Delete the file and tick — no fire, snapshot cleaned up.
+	os.Remove(filepath.Join(repoRoot, "docs/ephemeral.md"))
+	current = current.Add(time.Minute)
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("tick after delete: %v", err)
+	}
+	service.WaitWorkers()
+
+	snaps, _ := db.ListFileSnapshots(ctx, "demo", "watch-docs")
+	if len(snaps) != 0 {
+		t.Fatalf("expected 0 snapshots after delete, got %d", len(snaps))
+	}
+
+	// Recreate the same file — should fire.
+	env.WriteFile(repoRoot, "docs/ephemeral.md", "# back\n")
+	current = current.Add(time.Minute)
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("tick after recreate: %v", err)
+	}
+	service.WaitWorkers()
+	if err := service.Reap(ctx); err != nil {
+		t.Fatalf("reap: %v", err)
+	}
+
+	counts, err := db.RecentRunCounts(ctx, time.Date(2026, 4, 16, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("RecentRunCounts: %v", err)
+	}
+	if counts["completed"] != 1 {
+		t.Fatalf("expected 1 completed run after recreate, got %+v", counts)
+	}
+}
+
+func TestFileCreatedTriggerNonMatchingFilesIgnored(t *testing.T) {
+	env, repoRoot, db := setupFileCreatedProject(t)
+	ctx := context.Background()
+
+	// Seed empty.
+	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current })
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("seed tick: %v", err)
+	}
+	service.WaitWorkers()
+
+	// Add a file that doesn't match the glob (docs/*.md won't match src/main.go).
+	env.WriteFile(repoRoot, "src/main.go", "package main\n")
+	current = current.Add(time.Minute)
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("tick after non-matching file: %v", err)
+	}
+	service.WaitWorkers()
+
+	runs, _ := db.ListRunsByStates(ctx, model.RunPending, model.RunRunning, model.RunCompleted, model.RunFailed)
+	if len(runs) != 0 {
+		t.Fatalf("expected 0 runs for non-matching file, got %d", len(runs))
+	}
+}
+
 func TestCleanRemovesExpiredTerminalWorktrees(t *testing.T) {
 	env := testutil.NewEnv(t)
 	repoRoot := env.NewRepo("demo")
