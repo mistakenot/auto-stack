@@ -92,7 +92,8 @@ func ValidateProjectConfig(cfg model.ProjectConfig) []model.ValidationError {
 	}
 	sort.Strings(triggerNames)
 	for _, id := range triggerNames {
-		errs = append(errs, ValidateTriggerEntry(id, cfg.Triggers[id], taskIDs)...)
+		trig := cfg.Triggers[id]
+		errs = append(errs, ValidateTriggerEntry(id, &trig, taskIDs)...)
 	}
 	return errs
 }
@@ -158,7 +159,7 @@ func ValidateTaskEntry(id string, def model.TaskDef) []model.ValidationError {
 	return errs
 }
 
-func ValidateTriggerEntry(id string, def model.TriggerDef, tasks map[string]struct{}) []model.ValidationError {
+func ValidateTriggerEntry(id string, def *model.TriggerDef, tasks map[string]struct{}) []model.ValidationError {
 	errs := []model.ValidationError{}
 	path := "$.triggers." + id
 	if !idPattern.MatchString(id) {
@@ -170,22 +171,41 @@ func ValidateTriggerEntry(id string, def model.TriggerDef, tasks map[string]stru
 			Value:   id,
 		})
 	}
-	if def.Type != "cron" {
+	switch def.Type {
+	case "cron":
+		if _, err := ParseCron(def.When); err != nil {
+			errs = append(errs, model.ValidationError{
+				Code:    "invalid_cron",
+				Path:    path,
+				Field:   "when",
+				Message: "trigger cron must be a valid 5-field cron expression",
+				Value:   def.When,
+			})
+		}
+	case "file_created":
+		if strings.TrimSpace(def.Glob) == "" {
+			errs = append(errs, model.ValidationError{
+				Code:    "missing_trigger_glob",
+				Path:    path,
+				Field:   "glob",
+				Message: "file_created triggers require a glob pattern",
+			})
+		} else if _, err := filepath.Match(def.Glob, ""); err != nil {
+			errs = append(errs, model.ValidationError{
+				Code:    "invalid_trigger_glob",
+				Path:    path,
+				Field:   "glob",
+				Message: "glob pattern is invalid",
+				Value:   def.Glob,
+			})
+		}
+	default:
 		errs = append(errs, model.ValidationError{
 			Code:    "invalid_trigger_type",
 			Path:    path,
 			Field:   "type",
-			Message: "trigger type must be cron",
+			Message: "trigger type must be cron or file_created",
 			Value:   def.Type,
-		})
-	}
-	if _, err := ParseCron(def.When); err != nil {
-		errs = append(errs, model.ValidationError{
-			Code:    "invalid_cron",
-			Path:    path,
-			Field:   "when",
-			Message: "trigger cron must be a valid 5-field cron expression",
-			Value:   def.When,
 		})
 	}
 	seenTasks := map[string]struct{}{}

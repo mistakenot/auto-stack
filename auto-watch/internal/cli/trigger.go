@@ -30,7 +30,9 @@ func newTriggerCmd(application *app.App) *cobra.Command {
 
 func newTriggerCreateCmd(application *app.App) *cobra.Command {
 	var id string
+	var triggerType string
 	var cronExpr string
+	var globPattern string
 	var onlyIfBranchChanged string
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -40,22 +42,38 @@ func newTriggerCreateCmd(application *app.App) *cobra.Command {
 			if triggerID == "" {
 				return &ExitError{Code: 1, Err: errors.New("--id is required")}
 			}
-			if strings.TrimSpace(cronExpr) == "" {
-				return &ExitError{Code: 1, Err: errors.New("--cron is required")}
-			}
-			if _, err := config.ParseCron(cronExpr); err != nil {
-				return &ExitError{Code: 1, Err: fmt.Errorf("invalid cron expression: %w", err)}
+			var def model.TriggerDef
+			switch triggerType {
+			case "cron":
+				if strings.TrimSpace(cronExpr) == "" {
+					return &ExitError{Code: 1, Err: errors.New("--cron is required for cron triggers")}
+				}
+				if _, err := config.ParseCron(cronExpr); err != nil {
+					return &ExitError{Code: 1, Err: fmt.Errorf("invalid cron expression: %w", err)}
+				}
+				def = model.TriggerDef{
+					Type:                "cron",
+					When:                strings.TrimSpace(cronExpr),
+					Tasks:               []string{},
+					OnlyIfBranchChanged: strings.TrimSpace(onlyIfBranchChanged),
+				}
+			case "file_created":
+				if strings.TrimSpace(globPattern) == "" {
+					return &ExitError{Code: 1, Err: errors.New("--glob is required for file_created triggers")}
+				}
+				def = model.TriggerDef{
+					Type:  "file_created",
+					Glob:  strings.TrimSpace(globPattern),
+					Tasks: []string{},
+				}
+			default:
+				return &ExitError{Code: 1, Err: fmt.Errorf("--type must be cron or file_created, got %q", triggerType)}
 			}
 			repoRoot, cfg, err := requireProjectConfig(application.CWD)
 			if err != nil {
 				return err
 			}
-			cfg.Triggers[triggerID] = model.TriggerDef{
-				Type:                "cron",
-				When:                strings.TrimSpace(cronExpr),
-				Tasks:               []string{},
-				OnlyIfBranchChanged: strings.TrimSpace(onlyIfBranchChanged),
-			}
+			cfg.Triggers[triggerID] = def
 			if err := saveValidatedProjectConfig(repoRoot, cfg); err != nil {
 				return err
 			}
@@ -64,8 +82,10 @@ func newTriggerCreateCmd(application *app.App) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&id, "id", "", "trigger id")
-	cmd.Flags().StringVar(&cronExpr, "cron", "", "5-field cron expression")
-	cmd.Flags().StringVar(&onlyIfBranchChanged, "only-if-branch-changed", "", "only fire when this branch head changes")
+	cmd.Flags().StringVar(&triggerType, "type", "cron", "trigger type (cron or file_created)")
+	cmd.Flags().StringVar(&cronExpr, "cron", "", "5-field cron expression (cron triggers)")
+	cmd.Flags().StringVar(&globPattern, "glob", "", "glob pattern relative to project root (file_created triggers)")
+	cmd.Flags().StringVar(&onlyIfBranchChanged, "only-if-branch-changed", "", "only fire when this branch head changes (cron triggers)")
 	return cmd
 }
 
@@ -154,7 +174,8 @@ func newTriggerListCmd(application *app.App) *cobra.Command {
 			type triggerRow struct {
 				ID                  string   `json:"id"`
 				Type                string   `json:"type"`
-				When                string   `json:"when"`
+				When                string   `json:"when,omitempty"`
+				Glob                string   `json:"glob,omitempty"`
 				OnlyIfBranchChanged string   `json:"onlyIfBranchChanged,omitempty"`
 				Tasks               []string `json:"tasks"`
 			}
@@ -173,7 +194,7 @@ func newTriggerListCmd(application *app.App) *cobra.Command {
 			sort.Strings(ids)
 			for _, id := range ids {
 				trigger := cfg.Triggers[id]
-				if validationErrs := config.ValidateTriggerEntry(id, trigger, taskSet); len(validationErrs) > 0 {
+				if validationErrs := config.ValidateTriggerEntry(id, &trigger, taskSet); len(validationErrs) > 0 {
 					errs = append(errs, validationErrs...)
 					continue
 				}
@@ -181,6 +202,7 @@ func newTriggerListCmd(application *app.App) *cobra.Command {
 					ID:                  id,
 					Type:                trigger.Type,
 					When:                trigger.When,
+					Glob:                trigger.Glob,
 					OnlyIfBranchChanged: trigger.OnlyIfBranchChanged,
 					Tasks:               append([]string(nil), trigger.Tasks...),
 				})
@@ -192,11 +214,17 @@ func newTriggerListCmd(application *app.App) *cobra.Command {
 				}
 			} else {
 				for _, row := range rows {
-					branchGuard := ""
-					if row.OnlyIfBranchChanged != "" {
-						branchGuard = " branch=" + row.OnlyIfBranchChanged
+					extra := ""
+					switch row.Type {
+					case "cron":
+						extra = row.When
+						if row.OnlyIfBranchChanged != "" {
+							extra += " branch=" + row.OnlyIfBranchChanged
+						}
+					case "file_created":
+						extra = "glob=" + row.Glob
 					}
-					fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s%s\ttasks=%s\n", row.ID, row.Type, row.When, branchGuard, strings.Join(row.Tasks, ","))
+					fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\ttasks=%s\n", row.ID, row.Type, extra, strings.Join(row.Tasks, ","))
 				}
 				writeValidationErrors(cmd.ErrOrStderr(), errs)
 			}
