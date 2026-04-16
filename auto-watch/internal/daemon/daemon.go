@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/mistakenot/auto-watch/internal/config"
 	"github.com/mistakenot/auto-watch/internal/gitx"
 	"github.com/mistakenot/auto-watch/internal/model"
@@ -322,20 +323,27 @@ func (s *Service) tickProject(ctx context.Context, now time.Time, project model.
 	}
 	for _, triggerID := range triggerIDs {
 		trigger := projectCfg.Triggers[triggerID]
-		if errs := config.ValidateTriggerEntry(triggerID, trigger, taskSet); len(errs) > 0 {
+		if errs := config.ValidateTriggerEntry(triggerID, &trigger, taskSet); len(errs) > 0 {
 			if err := s.logValidationErrors(ctx, now, projectID, triggerID, "", "trigger_invalid", errs); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := s.evaluateTrigger(ctx, now, projectID, project.Path, triggerID, trigger, validTasks); err != nil {
-			return err
+		switch trigger.Type {
+		case "cron":
+			if err := s.evaluateTrigger(ctx, now, projectID, project.Path, triggerID, &trigger, validTasks); err != nil {
+				return err
+			}
+		case "file_created":
+			if err := s.evaluateFileCreatedTrigger(ctx, now, projectID, project.Path, triggerID, &trigger, validTasks); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID, projectPath, triggerID string, trigger model.TriggerDef, tasks map[string]model.TaskDef) error {
+func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID, projectPath, triggerID string, trigger *model.TriggerDef, tasks map[string]model.TaskDef) error {
 	tickMinuteLocal := now.In(time.Local).Truncate(time.Minute)
 	tickMinute := tickMinuteLocal.UTC()
 	state, err := s.Store.GetTriggerState(ctx, projectID, triggerID)
@@ -508,6 +516,207 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 			"outcome":      outcome,
 			"cron":         trigger.When,
 			"resource_key": "cron:" + triggerID,
+			"launched":     launched,
+		},
+	})
+}
+
+func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time, projectID, projectPath, triggerID string, trigger *model.TriggerDef, tasks map[string]model.TaskDef) error {
+	resourceKey := "file_created:" + triggerID
+
+	// Glob the project directory for matching files.
+	fsys := os.DirFS(projectPath)
+	matches, err := doublestar.Glob(fsys, trigger.Glob)
+	if err != nil {
+		return fmt.Errorf("glob %q in %s: %w", trigger.Glob, projectPath, err)
+	}
+	sort.Strings(matches)
+
+	// Build a set of current files with their mod times.
+	currentFiles := make(map[string]time.Time, len(matches))
+	for _, match := range matches {
+		info, err := os.Stat(filepath.Join(projectPath, match))
+		if err != nil {
+			continue // file vanished between glob and stat
+		}
+		if info.IsDir() {
+			continue
+		}
+		currentFiles[match] = info.ModTime()
+	}
+
+	// Load the stored snapshot.
+	snapshots, err := s.Store.ListFileSnapshots(ctx, projectID, triggerID)
+	if err != nil {
+		return err
+	}
+	knownFiles := make(map[string]struct{}, len(snapshots))
+	for _, snap := range snapshots {
+		knownFiles[snap.FilePath] = struct{}{}
+	}
+
+	// First tick (no snapshot): seed silently without firing.
+	seeding := len(snapshots) == 0 && len(currentFiles) > 0
+
+	// Detect new files.
+	var newFiles []string
+	for path := range currentFiles {
+		if _, known := knownFiles[path]; !known {
+			newFiles = append(newFiles, path)
+		}
+	}
+	sort.Strings(newFiles)
+
+	// Detect deleted files for snapshot cleanup.
+	var deletedFiles []string
+	for _, snap := range snapshots {
+		if _, exists := currentFiles[snap.FilePath]; !exists {
+			deletedFiles = append(deletedFiles, snap.FilePath)
+		}
+	}
+
+	// Upsert all current files into the snapshot (tracks mod_time and updated_at).
+	for path, modTime := range currentFiles {
+		if err := s.Store.UpsertFileSnapshot(ctx, &model.FileSnapshotRecord{
+			ProjectID:   projectID,
+			TriggerID:   triggerID,
+			FilePath:    path,
+			ModTime:     modTime,
+			FirstSeenAt: now,
+			UpdatedAt:   now,
+		}); err != nil {
+			return err
+		}
+	}
+
+	// Remove deleted files from snapshot.
+	if err := s.Store.DeleteFileSnapshots(ctx, projectID, triggerID, deletedFiles); err != nil {
+		return err
+	}
+
+	if seeding {
+		return s.logEvent(ctx, &store.EventInput{
+			Timestamp: now,
+			Level:     "info",
+			EventType: "trigger_evaluated",
+			ProjectID: projectID,
+			TriggerID: triggerID,
+			Message:   "file_created trigger seeded baseline snapshot",
+			Metadata: map[string]any{
+				"outcome":      "seeded",
+				"glob":         trigger.Glob,
+				"resource_key": resourceKey,
+				"file_count":   len(currentFiles),
+			},
+		})
+	}
+
+	if len(newFiles) == 0 {
+		return s.logEvent(ctx, &store.EventInput{
+			Timestamp: now,
+			Level:     "info",
+			EventType: "trigger_evaluated",
+			ProjectID: projectID,
+			TriggerID: triggerID,
+			Message:   "no new files detected",
+			Metadata: map[string]any{
+				"outcome":      "no_new_files",
+				"glob":         trigger.Glob,
+				"resource_key": resourceKey,
+			},
+		})
+	}
+
+	// Fire: launch linked tasks.
+	launched := 0
+	taskIDs := append([]string(nil), trigger.Tasks...)
+	sort.Strings(taskIDs)
+	for _, taskID := range taskIDs {
+		task := tasks[taskID]
+		runID, err := s.Store.ReserveRun(ctx, &store.ReserveRunInput{
+			ProjectID:   projectID,
+			ProjectPath: projectPath,
+			TriggerID:   triggerID,
+			TriggerType: trigger.Type,
+			TaskID:      taskID,
+			TaskType:    task.Type,
+			ResourceKey: resourceKey,
+			StartedAt:   now,
+		})
+		if err != nil {
+			if errors.Is(err, store.ErrActiveRunExists) {
+				if logErr := s.logEvent(ctx, &store.EventInput{
+					Timestamp: now,
+					Level:     "info",
+					EventType: "task_skipped_dedup",
+					ProjectID: projectID,
+					TriggerID: triggerID,
+					TaskID:    taskID,
+					Message:   "skipped duplicate active run",
+					Metadata: map[string]any{
+						"resource_key": resourceKey,
+						"glob":         trigger.Glob,
+					},
+				}); logErr != nil {
+					return logErr
+				}
+				continue
+			}
+			return err
+		}
+		launched++
+		if err := s.logEvent(ctx, &store.EventInput{
+			Timestamp: now,
+			Level:     "info",
+			EventType: "task_reserved",
+			ProjectID: projectID,
+			TriggerID: triggerID,
+			TaskID:    taskID,
+			RunID:     &runID,
+			Message:   fmt.Sprintf("reserved run %d for %d new file(s)", runID, len(newFiles)),
+			Metadata: map[string]any{
+				"resource_key": resourceKey,
+				"glob":         trigger.Glob,
+				"new_files":    newFiles,
+			},
+		}); err != nil {
+			return err
+		}
+		if err := s.startWorker(ctx, runID, task); err != nil {
+			run, loadErr := s.Store.GetRun(ctx, runID)
+			if loadErr == nil && run.State == model.RunPending {
+				_ = s.failRun(ctx, &run, "", err)
+			}
+			_ = s.logEvent(ctx, &store.EventInput{
+				Timestamp: s.Now(),
+				Level:     "error",
+				EventType: "system_warning",
+				ProjectID: projectID,
+				TriggerID: triggerID,
+				TaskID:    taskID,
+				RunID:     &runID,
+				Message:   "worker startup failed",
+				Metadata:  map[string]any{"error": err.Error()},
+			})
+		}
+	}
+
+	outcome := "launched"
+	if launched == 0 {
+		outcome = "dedup"
+	}
+	return s.logEvent(ctx, &store.EventInput{
+		Timestamp: now,
+		Level:     "info",
+		EventType: "trigger_evaluated",
+		ProjectID: projectID,
+		TriggerID: triggerID,
+		Message:   fmt.Sprintf("file_created trigger fired for %d new file(s)", len(newFiles)),
+		Metadata: map[string]any{
+			"outcome":      outcome,
+			"glob":         trigger.Glob,
+			"resource_key": resourceKey,
+			"new_files":    newFiles,
 			"launched":     launched,
 		},
 	})

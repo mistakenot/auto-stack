@@ -34,8 +34,18 @@ type TaskDef struct {
 type TriggerDef struct {
 	Type                string   `json:"type"`
 	When                string   `json:"when,omitempty"`
+	Glob                string   `json:"glob,omitempty"`
 	Tasks               []string `json:"tasks"`
 	OnlyIfBranchChanged string   `json:"onlyIfBranchHasChanged,omitempty"`
+}
+
+type FileSnapshotRecord struct {
+	ProjectID   string    `json:"project_id"`
+	TriggerID   string    `json:"trigger_id"`
+	FilePath    string    `json:"file_path"`
+	ModTime     time.Time `json:"mod_time"`
+	FirstSeenAt time.Time `json:"first_seen_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type RunState string

@@ -146,6 +146,18 @@ func (s *Store) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_events_project_timestamp ON events (project_id, timestamp DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_events_task_timestamp ON events (task_id, timestamp DESC);`,
 		`INSERT OR IGNORE INTO schema_migrations(version) VALUES (1);`,
+		// v2: file_created trigger support
+		`CREATE TABLE IF NOT EXISTS file_snapshots (
+			project_id TEXT NOT NULL,
+			trigger_id TEXT NOT NULL,
+			file_path TEXT NOT NULL,
+			mod_time DATETIME NOT NULL,
+			first_seen_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			PRIMARY KEY (project_id, trigger_id, file_path)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_file_snapshots_trigger ON file_snapshots (project_id, trigger_id);`,
+		`INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);`,
 	}
 	for _, stmt := range statements {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -522,6 +534,69 @@ func (s *Store) DedupSkipGroups(ctx context.Context, since time.Time, minCount i
 		})
 	}
 	return issues, nil
+}
+
+func (s *Store) ListFileSnapshots(ctx context.Context, projectID, triggerID string) ([]model.FileSnapshotRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT project_id, trigger_id, file_path, mod_time, first_seen_at, updated_at
+	FROM file_snapshots WHERE project_id = ? AND trigger_id = ?
+	ORDER BY file_path`, projectID, triggerID)
+	if err != nil {
+		return nil, fmt.Errorf("query file snapshots: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var records []model.FileSnapshotRecord
+	for rows.Next() {
+		var r model.FileSnapshotRecord
+		var modTime, firstSeen, updated string
+		if err := rows.Scan(&r.ProjectID, &r.TriggerID, &r.FilePath, &modTime, &firstSeen, &updated); err != nil {
+			return nil, fmt.Errorf("scan file snapshot: %w", err)
+		}
+		r.ModTime = mustParseTime(modTime)
+		r.FirstSeenAt = mustParseTime(firstSeen)
+		r.UpdatedAt = mustParseTime(updated)
+		records = append(records, r)
+	}
+	return records, rows.Err()
+}
+
+func (s *Store) UpsertFileSnapshot(ctx context.Context, record *model.FileSnapshotRecord) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO file_snapshots (
+		project_id, trigger_id, file_path, mod_time, first_seen_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?)
+	ON CONFLICT(project_id, trigger_id, file_path) DO UPDATE SET
+		mod_time = excluded.mod_time,
+		updated_at = excluded.updated_at`,
+		record.ProjectID,
+		record.TriggerID,
+		record.FilePath,
+		formatTime(record.ModTime),
+		formatTime(record.FirstSeenAt),
+		formatTime(record.UpdatedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert file snapshot: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) DeleteFileSnapshots(ctx context.Context, projectID, triggerID string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(paths))
+	args := []any{projectID, triggerID}
+	for i, p := range paths {
+		placeholders[i] = "?"
+		args = append(args, p)
+	}
+	//nolint:gosec // SQL built from constant "?" placeholders only
+	_, err := s.db.ExecContext(ctx, fmt.Sprintf(`DELETE FROM file_snapshots
+	WHERE project_id = ? AND trigger_id = ? AND file_path IN (%s)`,
+		strings.Join(placeholders, ",")), args...)
+	if err != nil {
+		return fmt.Errorf("delete file snapshots: %w", err)
+	}
+	return nil
 }
 
 func scanRun(scanner interface{ Scan(dest ...any) error }) (model.RunRecord, error) {
