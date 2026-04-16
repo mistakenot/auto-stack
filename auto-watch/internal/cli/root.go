@@ -59,6 +59,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 
 	rootCmd.AddCommand(
 		newInitCmd(application),
+		newQuickstartCmd(),
 		newTaskCmd(application),
 		newTriggerCmd(application),
 		newDaemonCmd(application),

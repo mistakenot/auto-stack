@@ -7,14 +7,14 @@ title: "autowatch — Requirements"
 
 # autowatch — Requirements
 
-A daemon that monitors coding repositories and runs tasks on cron schedules (and later, GitHub events).
+A daemon that monitors coding repositories and runs tasks on cron schedules, file creation events, and (later) GitHub events.
 
 Not a replacement for git hooks or CI/CD. Designed for background, longer-running agent tasks like weekly reflections, cleanup jobs, and recurring shell commands like ETL pipelines.
 
 ## v1 Scope
 
 **In scope:**
-- Trigger type: cron schedules
+- Trigger types: cron schedules, file creation (glob-based)
 - Two task types: `bash` (run a shell command) and `claude` (start a Claude Code session in a worktree)
 - Imperative CLI for task/trigger CRUD — commands modify `project.json` directly
 - Execution: tmux sessions (abstracted behind an interface for future swapping)
@@ -27,7 +27,7 @@ Not a replacement for git hooks or CI/CD. Designed for background, longer-runnin
 - Global tasks and triggers (`--global` flag, stored in `~/.auto/watch/project.json`)
 - `claude.session.ended` / local session triggers
 - Codex / other agent support
-- Markdown file detection triggers
+- File modification / file deletion triggers (currently only file creation is detected)
 
 ### v1 Success Criteria
 
@@ -122,7 +122,7 @@ After configuring tasks and triggers:
 
 ### Trigger types
 
-**`cron`** (v1) — fires on a cron schedule. Supports optional `onlyIfBranchHasChanged` to skip if no new commits.
+**`cron`** — fires on a cron schedule. Supports optional `onlyIfBranchHasChanged` to skip if no new commits.
 
 ```json
 {
@@ -133,7 +133,25 @@ After configuring tasks and triggers:
 }
 ```
 
-**`github_pr`** (v2) — fires when a PR is opened, synchronized, or reopened. Polled via `gh pr list`. Same-repo PRs only.
+**`file_created`** — fires when new files matching a glob pattern appear in the project directory. Poll-based: checked every 60 seconds on the daemon tick loop.
+
+```json
+{
+  "type": "file_created",
+  "glob": "docs/**/*.md",
+  "tasks": ["review-docs"]
+}
+```
+
+Behavior:
+- **Baseline seeding:** on the first tick after a trigger is created, existing files are recorded as a baseline snapshot. No tasks fire during the seed tick.
+- **Detection:** each subsequent tick globs the project directory, compares against the stored snapshot, and fires linked tasks if new files are found.
+- **Snapshot management:** deleted files are removed from the snapshot. Re-creating a previously deleted file counts as a new creation and will fire again.
+- **Glob scope:** patterns are relative to the project root. Supports `**` for recursive matching (e.g. `docs/**/*.md`).
+- **Dedup key:** `file_created:<trigger-id>` — prevents duplicate active runs for the same trigger.
+- **Tracking:** each file in the snapshot stores `mod_time`, `first_seen_at`, and `updated_at` in the SQLite `file_snapshots` table, for future reference and diagnostics.
+
+**`github_pr`** (v2, deferred) — fires when a PR is opened, synchronized, or reopened. Polled via `gh pr list`. Same-repo PRs only.
 
 ```json
 {
@@ -226,12 +244,17 @@ autowatch trigger create --id daily --cron "0 0 * * *"
 
 # cron trigger with branch-change guard
 autowatch trigger create --id weekly-if-changed --cron "0 9 * * 1" --only-if-branch-changed main
+
+# file_created trigger — fires when new files match a glob
+autowatch trigger create --type file_created --glob "docs/**/*.md" --id watch-docs
 ```
 
 Flags:
 - `--id` (required) — trigger identifier
-- `--cron <expression>` (required) — cron schedule
-- `--only-if-branch-changed <branch>` — only fire if the branch has new commits since last run
+- `--type <type>` — trigger type: `cron` (default) or `file_created`
+- `--cron <expression>` — cron schedule (required for cron triggers)
+- `--glob <pattern>` — glob pattern relative to project root (required for file_created triggers)
+- `--only-if-branch-changed <branch>` — only fire if the branch has new commits since last run (cron triggers only)
 
 Overwrites if the trigger ID already exists (resets task list).
 
@@ -316,13 +339,14 @@ Ticks every 60s:
    - Read `.auto/watch/project.json`
    - Check event log for active tasks (skip duplicates if one is still running)
    - **Cron triggers:** check if any are due based on schedule + last run time. Cron schedules are evaluated in the host's local timezone (`time.Now()`). Missed runs (daemon was stopped) are skipped — no catch-up on restart.
+   - **File-created triggers:** glob the project directory, compare against the stored file snapshot in SQLite. On the first evaluation, seed the snapshot silently. On subsequent evaluations, fire linked tasks for any new files detected.
    - For each task to launch:
      - **Claude tasks:** create a git worktree under `.auto/watch/worktrees/`, build the prompt with context header, start a tmux session with Claude Code
      - **Bash tasks:** start the command in a tmux session in the project directory (no worktree)
      - Context variables injected into claude prompts as a header block:
        - `PROJECT_ID` — the project identifier from `project.json`
-       - `TRIGGER_TYPE` — `cron`
-       - `RESOURCE_KEY` — the stable runtime key for what fired the trigger (for cron in v1: `cron:<trigger-id>`)
+       - `TRIGGER_TYPE` — `cron` or `file_created`
+       - `RESOURCE_KEY` — the stable runtime key for what fired the trigger (`cron:<trigger-id>` or `file_created:<trigger-id>`)
        - `BRANCH` — the default branch for cron tasks
      - Record the tmux session ID, worktree path (if any), start time, resource key, and cron expression in the event log
    - Check status of in-progress tmux sessions:
@@ -342,5 +366,6 @@ The execution model (currently tmux) is behind an interface so it can be swapped
 
 - Single SQLite file at `~/.auto/watch/logs.sqlite`
 - Event log tracks: task starts, completions, failures, trigger evaluations, worktree creation/cleanup
-- Dedup key is **(project, task ID, resource key)** — not just task ID. For cron triggers in v1, the resource key is `cron:<trigger-id>`. This means: two tasks on different triggers can run concurrently even if their cron expressions happen to match, but a second run for the same trigger is skipped while the first is still in-progress.
+- Dedup key is **(project, task ID, resource key)** — not just task ID. For cron triggers the resource key is `cron:<trigger-id>`; for file_created triggers it is `file_created:<trigger-id>`. This means: two tasks on different triggers can run concurrently, but a second run for the same trigger is skipped while the first is still in-progress.
+- File snapshot data is stored in a `file_snapshots` table keyed by (project, trigger, file_path), tracking `mod_time`, `first_seen_at`, and `updated_at`.
 - Used to evaluate cron schedules (last run time per trigger)
