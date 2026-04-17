@@ -188,9 +188,39 @@ br sync --status      # Check sync status
 git status              # Check what changed
 git add <files>         # Stage code changes
 br sync --flush-only    # Export beads changes to JSONL
-git commit -m "..."     # Commit everything
+# Use /contextual-commit to commit (never bare git commit -m)
 git push                # Push to remote
 ```
+
+## Skill Usage
+
+The following skills are installed and should be used when their trigger conditions are met.
+
+**Note:** The recall skill works best when contextual-commit has been used consistently, because it reconstructs context from the structured action lines in commit bodies.
+
+<important if="committing code, finishing a task, or ending a session">
+Use the /contextual-commit skill instead of bare `git commit -m`. Stage files first with `git add`, then invoke the skill. Never use `--no-verify`.
+</important>
+
+<important if="releasing, tagging, publishing, or creating a new version">
+Use the /release skill. Do not manually run `git tag` or `gh release create`.
+</important>
+
+<important if="starting a session, resuming work on a branch, or needing to understand recent changes">
+Use the /recall skill to reconstruct development context from contextual commits.
+</important>
+
+<important if="editing, updating, or improving a CLAUDE.md file">
+Use the /improve-claude-md skill. It uses `<important if>` blocks for better instruction adherence.
+</important>
+
+<important if="analyzing past sessions, finding recurring problems, or reviewing agent workflow effectiveness">
+Use the /reflect-on-agent-sessions skill to search session history and produce evidence-backed reports.
+</important>
+
+<important if="searching coding agent session history across multiple tools">
+Use the /cass skill for cross-tool session indexing and search. Complements autosearch with TUI and multi-tool support.
+</important>
 
 ### Best Practices
 
