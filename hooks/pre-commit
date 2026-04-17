@@ -22,10 +22,38 @@ if [ -n "$STAGED_GO_FILES" ]; then
     echo "pre-commit: goimports/gofmt applied"
 fi
 
-# --- 2. lint: golangci-lint (includes govet), only if .go files changed ---
+# --- 2. lint: golangci-lint (includes govet), scoped to staged .go files only ---
+# We scope to staged packages so pre-existing lint failures in unmodified code
+# don't block commits. The full `make lint` still runs in CI.
 
 if [ -n "$STAGED_GO_FILES" ]; then
-    make -C "$ROOT" lint
+    # Group staged Go files by their sub-project directory, then lint only
+    # the packages that contain staged files.
+    staged_projects=$(echo "$STAGED_GO_FILES" | cut -d/ -f1 | sort -u)
+    lint_failed=0
+    for proj in $staged_projects; do
+        # Collect unique package directories within this project
+        pkg_dirs=$(echo "$STAGED_GO_FILES" | grep "^${proj}/" | xargs -I{} dirname {} | sed "s|^${proj}/||" | sort -u)
+        # Convert to Go package paths (prefix with ./)
+        pkg_paths=""
+        for d in $pkg_dirs; do
+            if [ "$d" = "$proj" ] || [ -z "$d" ]; then
+                pkg_paths="$pkg_paths ."
+            else
+                pkg_paths="$pkg_paths ./$d"
+            fi
+        done
+        # Deduplicate package paths
+        pkg_paths=$(echo "$pkg_paths" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ')
+        if [ -n "$pkg_paths" ]; then
+            echo "pre-commit: linting staged packages in $proj: $pkg_paths"
+            (cd "$ROOT/$proj" && golangci-lint run $pkg_paths) || lint_failed=1
+        fi
+    done
+    if [ $lint_failed -ne 0 ]; then
+        echo "pre-commit: lint failed on staged packages"
+        exit 1
+    fi
     echo "pre-commit: lint passed"
 fi
 
