@@ -97,7 +97,7 @@ Determine the commit scope, then compose action lines:
 
 1. **Check for staged changes first** — run `git diff --cached --stat`.
    - **If staged changes exist:** these are the commit scope. Do not consider unstaged or untracked files — the user has already expressed what belongs in this commit by staging it.
-   - **If nothing is staged:** consider all unstaged modifications and untracked files as candidates. Use session context and the diff to decide what to stage and commit.
+   - **If nothing is staged:** review all unstaged modifications and untracked files. Use session context and the diff to decide what belongs in this commit, then **stage the selected files with `git add <files>`** before proceeding. Never run `git commit` with nothing staged.
 2. **Identify what you have session context for** — changes you produced, discussed, or observed reasoning for during this conversation.
 3. **Identify what you don't** — files or changes from a prior session, another agent, or manual edits outside this conversation.
 4. **Write action lines accordingly:**
