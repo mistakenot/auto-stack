@@ -35,6 +35,11 @@
       "source": "/home/vscode/src/auto-stack/skills",
       "sourceType": "local",
       "computedHash": "53bb37624988b417ea2ec2f3c6daa8ba47821cec16d9ac3c21100ec8a87b58f0"
+    },
+    "self-improve": {
+      "source": "/home/vscode/src/auto-stack/skills",
+      "sourceType": "local",
+      "computedHash": "585255bff4359d1e26a70ab233e06f832ffe24c43dfe8a3b5ba5fc98cdbaf5db"
     }
   }
 }

@@ -88,6 +88,8 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newQuickstartCmd(),
 		newDocsCmd(),
 		newUpdateCmd(),
+		newAgentsCmd(),
+		newSyncCmd(),
 	)
 
 	return cmd
