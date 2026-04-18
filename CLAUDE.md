@@ -235,19 +235,21 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 
 **When to add one:** whenever code implements behavior described in a doc, so that future changes to either side surface as staleness.
 
+**auto-config/docs**
+
+- [AutoConfig Requirements](auto-config/docs/requirements.md): Requirements for autoconfig: validate and manage Claude/Codex agent configuration, set session names, and provide utility functions for coding agent environments.
+
 **auto-web/docs**
 
 - [Autoweb Requirements](auto-web/docs/requirements.md): Requirements for autoweb, a safe web research portal for AI coding agents with pluggable backends and result deduplication.
 
 **docs**
 
+- [auto-img Research: Context-Protective Image Access for Coding Agents](docs/auto-img-research.md): Research on optimising image storage and retrieval for AI coding agents, covering token costs, progressive disclosure, and S3 patterns
+- [Auto Package Patterns](docs/auto-package-patterns.md): Reference patterns and conventions shared across all auto-* packages in the auto-stack monorepo. Used as the blueprint when creating new packages.
 - [autostack install-daemon](docs/autostack-install-daemon.md): Design and implementation spec for installing and managing the autowatch daemon as a system systemd service running as a non-root user.
 - [End-to-End Problems: autosearch session get Rendering](docs/end-to-end-problems.md): Identified rendering problems in autosearch session output, including missing closing tags, absent tool command previews, empty tool-use blocks, and message truncation.
-- [Gemini Session Analysis](docs/gemini-session-analysis.md): Analysis of coding sessions from March 20-22 2026 using autosearch, identifying duplicate session IDs, timeout patterns, and recurring error loops
-- [High-Priority Workflow Issues: March 20-22, 2026](docs/high-priority-workflow-issues-2026-03-22.md): High-priority coding workflow issues found via autosearch in the March 20-22, 2026 window, with evidence and exact commands run
-- [System Improvement Opportunities — March 22, 2026](docs/improvement-opportunities-2026-03-22.md): System improvement opportunities found by searching recent coding session history with autosearch, extending the earlier session-problems analysis
 - [Auto — Agentic Coding Intelligence Platform](docs/random.md): High-level product overview of the Auto platform: architecture, data format, tool suite, query examples, security model, and roadmap.
-- [Session Problem Analysis: March 20-22, 2026](docs/session-problems-2026-03-20-22.md): Recurring problems found in coding sessions over the last 48 hours, classified by severity with prevention recommendations
 - [Signals](docs/signals.md): Exploration of how raw coding session data can be transformed into actionable signals indicating what is working well or poorly in a codebase.
 - [Review: user-journey.md](docs/user-journey.claude.md): Open questions and action items from reviewing the auto-stack user journey document for consistency and end-to-end coherence.
 - [User Journey Consistency Review](docs/user-journey.codex.md): Consistency review of the auto-stack user journey, confirming directional decisions and capturing open planning-stage questions for future resolution.
@@ -262,6 +264,10 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 - [Research: Blogs](docs/research/blogs.md): Collected blog and reference links relevant to the auto-stack research and development process.
 - [Research: Agent Engineering Principles (Tweets)](docs/research/tweets.md): Curated research notes on agent engineering principles covering progressive disclosure, worktree isolation, spec-first development, architecture enforcement, and integrated feedback loops.
 <!-- autodoc: end -->
+
+
+
+
 
 
 

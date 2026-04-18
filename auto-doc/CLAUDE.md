@@ -13,7 +13,7 @@ By default, autodoc discovers docs recursively across the repo:
 
 ## Configuration
 
-`.auto/docs/settings.json` in the repo root. If absent, all values use defaults. The `init` command creates the `.auto/docs/` directory and bootstraps `~/.auto/settings.json` if needed.
+`.auto/doc/settings.json` in the repo root. If absent, all values use defaults. The `init` command creates the `.auto/doc/` directory and bootstraps `~/.auto/settings.json` if needed.
 
 ```json
 {
@@ -57,7 +57,7 @@ hash: "deadbeef"
 
 Initializes a project for autodoc:
 
-1. Create `.auto/docs/settings.json` with defaults (if it doesn't exist)
+1. Create `.auto/doc/settings.json` with defaults (if it doesn't exist)
 2. Create `./docs` directory (if it doesn't exist)
 3. Create `~/.auto/settings.json` with current host info if it doesn't exist yet
 4. Run `autodoc tree` to show current state
@@ -155,6 +155,8 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 
 - [Doc Tags and List Filtering Requirements](auto-doc/docs/features/requirements.md): Requirements for adding frontmatter tags and tag-based list/filter output in autodoc.
 <!-- autodoc: end -->
+
+
 
 
 
