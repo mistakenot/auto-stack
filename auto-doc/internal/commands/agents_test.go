@@ -12,7 +12,7 @@ func TestAgentsCreatesFileWhenNoneExist(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
 	ws.WriteDoc("test.md", "Test", "A test", "# Test")
 
-	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil)
+	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestAgentsAppendsToExistingFile(t *testing.T) {
 	ws.WriteDoc("test.md", "Test", "A test", "# Test")
 	ws.WriteFile("CLAUDE.md", "# My Agent File\n\nExisting content.\n")
 
-	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil)
+	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestAgentsReplacesExistingMarkers(t *testing.T) {
 	existing := "# Agent\n\n" + markerStart + "\nold content\n" + markerEnd + "\n\nMore stuff.\n"
 	ws.WriteFile("AGENTS.md", existing)
 
-	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil)
+	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestAgentsIncludesSearchExamples(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
 	ws.WriteDoc("test.md", "Test", "A test", "# Test")
 
-	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil)
+	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestAgentsWorksWithCLAUDEmd(t *testing.T) {
 	ws.WriteDoc("test.md", "Test", "A test", "# Test")
 	ws.WriteFile("CLAUDE.md", "# Claude\n")
 
-	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil)
+	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestAgentsRoutesDocsToNearestAncestorOwner(t *testing.T) {
 	writeRepoDocFile(t, ws, "services/payments/docs/payments.md", "Payments", "Payments docs")
 	writeRepoDocFile(t, ws, "services/identity/docs/identity.md", "Identity", "Identity docs")
 
-	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil)
+	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestAgentsUpdatesAllAgentFilesAtSameLevel(t *testing.T) {
 	ws.WriteFile("services/payments/CLAUDE.md", "# Payments CLAUDE\n")
 	writeRepoDocFile(t, ws, "services/payments/docs/payments.md", "Payments", "Payments docs")
 
-	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil)
+	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestAgentsCreatesRootFallbackOwnerForNestedDocs(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
 	writeRepoDocFile(t, ws, "services/payments/docs/payments.md", "Payments", "Payments docs")
 
-	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil)
+	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestAgentsSymlinkedRootFilesBothReceiveIndex(t *testing.T) {
 		t.Fatalf("create symlink AGENTS.md -> CLAUDE.md: %v", err)
 	}
 
-	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil)
+	err := Agents(ws.Dir, "docs", []string{"AGENTS.md", "CLAUDE.md"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

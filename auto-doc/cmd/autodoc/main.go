@@ -153,7 +153,7 @@ func newAgentsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			updatedFiles, err := commands.AgentsWithResult(cwd, cfg.DocsDir, cfg.AgentFiles, cfg.Ignores)
+			updatedFiles, err := commands.AgentsWithResult(cwd, cfg.DocsDir, cfg.AgentFiles, cfg.Ignores, cfg.ExcludeTagsFromIndex)
 			if err != nil {
 				return err
 			}

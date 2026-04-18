@@ -18,6 +18,7 @@ type Doc struct {
 	Title   string
 	Summary string
 	Hash    string
+	Tags    []string
 	Body    string
 }
 
@@ -66,9 +67,37 @@ func Parse(content string) Doc {
 			doc.Summary = val
 		case "hash":
 			doc.Hash = val
+		case "tags":
+			doc.Tags = parseTags(val)
 		}
 	}
 	return doc
+}
+
+// parseTags parses a tags value in the format ["val1", "val2"] or [val1, val2].
+func parseTags(val string) []string {
+	val = strings.TrimSpace(val)
+	// Remove surrounding brackets
+	if strings.HasPrefix(val, "[") && strings.HasSuffix(val, "]") {
+		val = val[1 : len(val)-1]
+	}
+	if val == "" {
+		return nil
+	}
+	parts := strings.Split(val, ",")
+	tags := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		p = unquote(p)
+		p = strings.TrimSpace(p)
+		if p != "" {
+			tags = append(tags, p)
+		}
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+	return tags
 }
 
 // unquote removes surrounding double quotes if present.
@@ -81,6 +110,7 @@ func unquote(s string) string {
 
 // Serialize writes a Doc back to a markdown string with YAML frontmatter.
 // Keys are sorted alphabetically; hash is included.
+// Tags are serialized in inline format: tags: ["val1", "val2"].
 func Serialize(doc *Doc) string {
 	fields := map[string]string{
 		"title":   doc.Title,
@@ -91,22 +121,40 @@ func Serialize(doc *Doc) string {
 		fields["id"] = doc.Id
 	}
 
-	keys := make([]string, 0, len(fields))
+	// Collect all keys including "tags" if present
+	keys := make([]string, 0, len(fields)+1)
 	for k := range fields {
 		keys = append(keys, k)
+	}
+	hasTags := len(doc.Tags) > 0
+	if hasTags {
+		keys = append(keys, "tags")
 	}
 	sort.Strings(keys)
 
 	var sb strings.Builder
 	sb.WriteString("---\n")
 	for _, k := range keys {
-		sb.WriteString(fmt.Sprintf("%s: %q\n", k, fields[k]))
+		if k == "tags" {
+			sb.WriteString(serializeTags(doc.Tags))
+		} else {
+			sb.WriteString(fmt.Sprintf("%s: %q\n", k, fields[k]))
+		}
 	}
 	sb.WriteString("---\n")
 	if doc.Body != "" {
 		sb.WriteString(doc.Body)
 	}
 	return sb.String()
+}
+
+// serializeTags formats tags as: tags: ["val1", "val2"]
+func serializeTags(tags []string) string {
+	quoted := make([]string, len(tags))
+	for i, t := range tags {
+		quoted[i] = fmt.Sprintf("%q", t)
+	}
+	return fmt.Sprintf("tags: [%s]\n", strings.Join(quoted, ", "))
 }
 
 // ComputeHash computes the hash for a Doc: sort frontmatter keys alphabetically

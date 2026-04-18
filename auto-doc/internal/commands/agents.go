@@ -17,17 +17,17 @@ const markerStart = "<!-- autodoc: start -->"
 const markerEnd = "<!-- autodoc: end -->"
 
 // AgentsWithResult inserts tree output into agent memory files and returns the list of updated files.
-func AgentsWithResult(rootDir string, docsDir string, agentFiles []string, ignores []string) ([]string, error) {
-	return agentsImpl(rootDir, docsDir, agentFiles, ignores)
+func AgentsWithResult(rootDir string, docsDir string, agentFiles []string, ignores []string, excludeTags []string) ([]string, error) {
+	return agentsImpl(rootDir, docsDir, agentFiles, ignores, excludeTags)
 }
 
 // Agents inserts tree output into agent memory files.
-func Agents(rootDir string, docsDir string, agentFiles []string, ignores []string) error {
-	_, err := agentsImpl(rootDir, docsDir, agentFiles, ignores)
+func Agents(rootDir string, docsDir string, agentFiles []string, ignores []string, excludeTags []string) error {
+	_, err := agentsImpl(rootDir, docsDir, agentFiles, ignores, excludeTags)
 	return err
 }
 
-func agentsImpl(rootDir string, docsDir string, agentFiles []string, ignores []string) ([]string, error) {
+func agentsImpl(rootDir string, docsDir string, agentFiles []string, ignores []string, excludeTags []string) ([]string, error) {
 	if len(agentFiles) == 0 {
 		return nil, errors.New("agent files list cannot be empty")
 	}
@@ -97,7 +97,7 @@ func agentsImpl(rootDir string, docsDir string, agentFiles []string, ignores []s
 		})
 
 		var buf bytes.Buffer
-		DocsIndex(&buf, group, docsDir)
+		DocsIndex(&buf, group, docsDir, excludeTags...)
 		indexContent := buf.String()
 		block := fmt.Sprintf("%s\n%s%s%s\n", markerStart, preamble, indexContent, markerEnd)
 

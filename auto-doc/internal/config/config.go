@@ -20,10 +20,11 @@ var DefaultAgentFiles = []string{"AGENTS.md", "CLAUDE.md"}
 const DefaultParallelism = 4
 
 type Config struct {
-	DocsDir     string   `json:"docsDir"`
-	AgentFiles  []string `json:"agentFiles"`
-	Parallelism int      `json:"parallelism"`
-	Ignores     []string `json:"ignores"`
+	DocsDir              string   `json:"docsDir"`
+	AgentFiles           []string `json:"agentFiles"`
+	Parallelism          int      `json:"parallelism"`
+	Ignores              []string `json:"ignores"`
+	ExcludeTagsFromIndex []string `json:"excludeTagsFromIndex"`
 }
 
 // GlobalConfig holds fields that make sense at the machine level.

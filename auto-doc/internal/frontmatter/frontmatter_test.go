@@ -145,6 +145,103 @@ func TestComputeHashIgnoresId(t *testing.T) {
 	}
 }
 
+func TestParseTags(t *testing.T) {
+	input := "---\nid: \"deadbeef\"\ntitle: \"Test\"\nsummary: \"A test\"\nhash: \"a1b2c3d4\"\ntags: [\"archive\", \"reference\"]\n---\n\n# Hello\n"
+	doc := Parse(input)
+
+	if len(doc.Tags) != 2 {
+		t.Fatalf("Tags length = %d, want 2", len(doc.Tags))
+	}
+	if doc.Tags[0] != "archive" {
+		t.Errorf("Tags[0] = %q, want %q", doc.Tags[0], "archive")
+	}
+	if doc.Tags[1] != "reference" {
+		t.Errorf("Tags[1] = %q, want %q", doc.Tags[1], "reference")
+	}
+}
+
+func TestParseTagsEmpty(t *testing.T) {
+	input := "---\ntitle: \"Test\"\nsummary: \"A test\"\nhash: \"a1b2c3d4\"\n---\n\n# Hello\n"
+	doc := Parse(input)
+
+	if doc.Tags != nil {
+		t.Errorf("Tags = %v, want nil", doc.Tags)
+	}
+}
+
+func TestParseTagsEmptyBrackets(t *testing.T) {
+	input := "---\ntitle: \"Test\"\nsummary: \"A test\"\nhash: \"a1b2c3d4\"\ntags: []\n---\n\n# Hello\n"
+	doc := Parse(input)
+
+	if doc.Tags != nil {
+		t.Errorf("Tags = %v, want nil", doc.Tags)
+	}
+}
+
+func TestSerializeTags(t *testing.T) {
+	doc := Doc{
+		Id:      "deadbeef",
+		Title:   "Test",
+		Summary: "A test",
+		Hash:    "a1b2c3d4",
+		Tags:    []string{"archive", "reference"},
+		Body:    "\n# Hello\n",
+	}
+	s := Serialize(&doc)
+	if !strings.Contains(s, `tags: ["archive", "reference"]`) {
+		t.Errorf("serialized tags wrong, got:\n%s", s)
+	}
+}
+
+func TestSerializeNoTagsWhenEmpty(t *testing.T) {
+	doc := Doc{
+		Id:      "deadbeef",
+		Title:   "Test",
+		Summary: "A test",
+		Hash:    "a1b2c3d4",
+		Body:    "\n# Hello\n",
+	}
+	s := Serialize(&doc)
+	if strings.Contains(s, "tags:") {
+		t.Errorf("should not serialize empty tags, got:\n%s", s)
+	}
+}
+
+func TestRoundTripWithTags(t *testing.T) {
+	original := Doc{
+		Id:      "deadbeef",
+		Title:   "Test Doc",
+		Summary: "A test document",
+		Hash:    "abcd1234",
+		Tags:    []string{"archive", "reference"},
+		Body:    "\n# Content\n\nSome text.\n",
+	}
+
+	serialized := Serialize(&original)
+	parsed := Parse(serialized)
+
+	if len(parsed.Tags) != 2 {
+		t.Fatalf("Tags length = %d, want 2", len(parsed.Tags))
+	}
+	if parsed.Tags[0] != "archive" || parsed.Tags[1] != "reference" {
+		t.Errorf("Tags = %v, want [archive reference]", parsed.Tags)
+	}
+}
+
+func TestComputeHashIgnoresTags(t *testing.T) {
+	doc := Doc{
+		Title:   "Getting Started",
+		Summary: "Setup instructions for new users",
+		Body:    "\n# Hello\n\nSome content.\n",
+	}
+	withTags := doc
+	withTags.Tags = []string{"archive", "reference"}
+
+	if got, want := ComputeHash(&withTags), ComputeHash(&doc); got != want {
+		t.Fatalf("ComputeHash should ignore tags, got %q want %q", got, want)
+	}
+}
+
 func TestUpdateHash(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.md")

@@ -120,6 +120,65 @@ func TestDocsIndexMissingSummary(t *testing.T) {
 	}
 }
 
+func TestDocsIndexExcludesTags(t *testing.T) {
+	entries := []doctree.Entry{
+		{RelPath: "getting-started.md", RepoRelPath: "docs/getting-started.md", Title: "Getting Started", Summary: "Setup instructions"},
+		{RelPath: "old-notes.md", RepoRelPath: "docs/old-notes.md", Title: "Old Notes", Summary: "Archived notes", Tags: []string{"archive"}},
+		{RelPath: "reference.md", RepoRelPath: "docs/reference.md", Title: "Reference", Summary: "API reference", Tags: []string{"reference"}},
+	}
+
+	var buf bytes.Buffer
+	DocsIndex(&buf, entries, "docs", "archive")
+	output := buf.String()
+
+	if !strings.Contains(output, "Getting Started") {
+		t.Error("missing non-excluded entry")
+	}
+	if strings.Contains(output, "Old Notes") {
+		t.Error("excluded entry should not appear")
+	}
+	if !strings.Contains(output, "Reference") {
+		t.Error("non-excluded tagged entry should appear")
+	}
+}
+
+func TestDocsIndexExcludesMultipleTags(t *testing.T) {
+	entries := []doctree.Entry{
+		{RelPath: "keep.md", RepoRelPath: "docs/keep.md", Title: "Keep", Summary: "Keep this"},
+		{RelPath: "archive.md", RepoRelPath: "docs/archive.md", Title: "Archive", Summary: "Archived", Tags: []string{"archive"}},
+		{RelPath: "draft.md", RepoRelPath: "docs/draft.md", Title: "Draft", Summary: "Draft doc", Tags: []string{"draft"}},
+	}
+
+	var buf bytes.Buffer
+	DocsIndex(&buf, entries, "docs", "archive", "draft")
+	output := buf.String()
+
+	if !strings.Contains(output, "Keep") {
+		t.Error("missing non-excluded entry")
+	}
+	if strings.Contains(output, "Archive") {
+		t.Error("archive entry should be excluded")
+	}
+	if strings.Contains(output, "Draft") {
+		t.Error("draft entry should be excluded")
+	}
+}
+
+func TestDocsIndexNoExcludedTagsShowsAll(t *testing.T) {
+	entries := []doctree.Entry{
+		{RelPath: "a.md", RepoRelPath: "docs/a.md", Title: "A", Summary: "Doc A", Tags: []string{"archive"}},
+		{RelPath: "b.md", RepoRelPath: "docs/b.md", Title: "B", Summary: "Doc B"},
+	}
+
+	var buf bytes.Buffer
+	DocsIndex(&buf, entries, "docs")
+	output := buf.String()
+
+	if !strings.Contains(output, "A") || !strings.Contains(output, "B") {
+		t.Errorf("without exclude tags, all entries should appear, got:\n%s", output)
+	}
+}
+
 func TestDocsIndexUsesRepoRelativePathsAcrossMultipleRoots(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
 	ws.WriteDoc("root.md", "Root", "Root docs", "# Root")

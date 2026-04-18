@@ -22,6 +22,7 @@ type Entry struct {
 	Title   string
 	Summary string
 	Hash    string
+	Tags    []string
 	Body    string
 
 	DocsRootRel string // docs root relative to repo root (e.g. "auto-etl/docs")
@@ -72,6 +73,7 @@ func Walk(docsDir string, ignores ...string) ([]Entry, error) {
 			Title:       doc.Title,
 			Summary:     doc.Summary,
 			Hash:        doc.Hash,
+			Tags:        doc.Tags,
 			Body:        doc.Body,
 			DocsRootRel: docsRootRel,
 			RepoRelPath: repoRelPath,
@@ -122,6 +124,7 @@ func WalkRepo(rootDir string, docsDir string, ignores ...string) ([]Entry, error
 			Title:       doc.Title,
 			Summary:     doc.Summary,
 			Hash:        doc.Hash,
+			Tags:        doc.Tags,
 			Body:        doc.Body,
 			DocsRootRel: docsRootRel,
 			RepoRelPath: repoRelPath,

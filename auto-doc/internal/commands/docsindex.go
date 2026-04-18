@@ -5,16 +5,36 @@ import (
 	"io"
 	"path"
 	"sort"
+	"strings"
 
 	"github.com/datadyne-io/autodoc/internal/doctree"
 )
 
 // DocsIndex renders entries in llms.txt style, grouped by parent directory.
 // Links are repo-relative when available.
-func DocsIndex(w io.Writer, entries []doctree.Entry, docsDir string) {
+// excludeTags filters out entries that have any of the specified tags.
+func DocsIndex(w io.Writer, entries []doctree.Entry, docsDir string, excludeTags ...string) {
 	_ = docsDir
 	if len(entries) == 0 {
 		return
+	}
+
+	// Filter out entries with excluded tags
+	if len(excludeTags) > 0 {
+		excludeSet := make(map[string]bool, len(excludeTags))
+		for _, t := range excludeTags {
+			excludeSet[strings.ToLower(strings.TrimSpace(t))] = true
+		}
+		filtered := make([]doctree.Entry, 0, len(entries))
+		for i := range entries {
+			if !hasExcludedTag(&entries[i], excludeSet) {
+				filtered = append(filtered, entries[i])
+			}
+		}
+		entries = filtered
+		if len(entries) == 0 {
+			return
+		}
 	}
 
 	// Group entries by parent directory (relative to docs root)
@@ -63,4 +83,14 @@ func DocsIndex(w io.Writer, entries []doctree.Entry, docsDir string) {
 			}
 		}
 	}
+}
+
+// hasExcludedTag returns true if the entry has any tag in the exclude set.
+func hasExcludedTag(e *doctree.Entry, excludeSet map[string]bool) bool {
+	for _, t := range e.Tags {
+		if excludeSet[strings.ToLower(t)] {
+			return true
+		}
+	}
+	return false
 }
