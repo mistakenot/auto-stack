@@ -43,11 +43,13 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 
 **auto-watch/docs**
 
-- [Future Concerns](auto-watch/docs/future-concerns.md): Deferred architectural concerns for auto-watch covering SQLite migration strategy, task output capture, and multi-instance safety, each with a trigger stage and suggested fix.
-- [autowatch — Requirements](auto-watch/docs/requirements.md): V1 requirements for autowatch — a cron-driven daemon that monitors repositories and launches bash or Claude Code tasks in response.
-- [autowatch — Technical Solution](auto-watch/docs/solution.md): Implementation plan for autowatch v1, covering project structure, trigger types, executor design, daemon loop, SQLite state store, and CLI surface.
-- [autowatch v1 Technical Solution](auto-watch/docs/v1-solution.md): Implementation spec for autowatch v1: cron-triggered task scheduling, tmux-backed execution, SQLite run logging, and daemon lifecycle management.
+- [Future Concerns](auto-watch/docs/future-concerns.md): Deferred architectural concerns for auto-watch covering SQLite migration strategy, task output capture, and multi-instance safety, each with a trigger stage and suggested fix
+- [autowatch — Requirements](auto-watch/docs/requirements.md): V1 requirements for autowatch — a cron-driven daemon that monitors repositories and launches bash or Claude Code tasks in response
+- [autowatch — Technical Solution](auto-watch/docs/solution.md): Implementation plan for autowatch v1, covering project structure, trigger types, executor design, daemon loop, SQLite state store, and CLI surface
+- [autowatch v1 Technical Solution](auto-watch/docs/v1-solution.md): Implementation spec for autowatch v1: cron-triggered task scheduling, tmux-backed execution, SQLite run logging, and daemon lifecycle management
 <!-- autodoc: end -->
+
+
 
 
 

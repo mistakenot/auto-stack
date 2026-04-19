@@ -29,21 +29,23 @@ func linkStatusString(s linkcheck.LinkStatus) string {
 
 // DocJSON is the JSON representation of a doc entry.
 type DocJSON struct {
-	Path    string `json:"path"`
-	ID      string `json:"id,omitempty"`
-	Title   string `json:"title"`
-	Summary string `json:"summary"`
-	Hash    string `json:"hash"`
+	Path     string `json:"path"`
+	ID       string `json:"id,omitempty"`
+	Title    string `json:"title"`
+	Summary  string `json:"summary"`
+	ReadWhen string `json:"read_when,omitempty"`
+	Hash     string `json:"hash"`
 }
 
 // StaleDocJSON is the JSON representation of a stale doc.
 type StaleDocJSON struct {
-	Path    string   `json:"path"`
-	ID      string   `json:"id,omitempty"`
-	Title   string   `json:"title"`
-	Summary string   `json:"summary"`
-	Hash    string   `json:"hash"`
-	Issues  []string `json:"issues"`
+	Path     string   `json:"path"`
+	ID       string   `json:"id,omitempty"`
+	Title    string   `json:"title"`
+	Summary  string   `json:"summary"`
+	ReadWhen string   `json:"read_when,omitempty"`
+	Hash     string   `json:"hash"`
+	Issues   []string `json:"issues"`
 }
 
 // FixIssueJSON is the JSON representation of a fix issue.
@@ -76,11 +78,12 @@ func TreeOutputJSON(w io.Writer, entries []doctree.Entry) error {
 	for i := range entries {
 		e := &entries[i]
 		docs = append(docs, DocJSON{
-			Path:    entryDisplayPath(e),
-			ID:      e.Id,
-			Title:   e.Title,
-			Summary: e.Summary,
-			Hash:    e.Hash,
+			Path:     entryDisplayPath(e),
+			ID:       e.Id,
+			Title:    e.Title,
+			Summary:  e.Summary,
+			ReadWhen: e.ReadWhen,
+			Hash:     e.Hash,
 		})
 	}
 	return WriteJSON(w, docs)
@@ -106,13 +109,17 @@ func StaleOutputJSON(w io.Writer, staleFiles []doctree.Entry) error {
 		if e.Title == "" {
 			issues = append(issues, "default_title")
 		}
+		if e.ReadWhen == "" {
+			issues = append(issues, "empty_read_when")
+		}
 		docs = append(docs, StaleDocJSON{
-			Path:    entryDisplayPath(e),
-			ID:      e.Id,
-			Title:   e.Title,
-			Summary: e.Summary,
-			Hash:    e.Hash,
-			Issues:  issues,
+			Path:     entryDisplayPath(e),
+			ID:       e.Id,
+			Title:    e.Title,
+			Summary:  e.Summary,
+			ReadWhen: e.ReadWhen,
+			Hash:     e.Hash,
+			Issues:   issues,
 		})
 	}
 	return WriteJSON(w, docs)
@@ -141,6 +148,13 @@ func FixOutputJSON(w io.Writer, docIssues []docIssue, linkIssues []linkcheck.Lin
 				Type:    "default_title",
 				Path:    d.RepoRelPath,
 				Details: "Title is empty or matches filename",
+			})
+		}
+		if d.EmptyReadWhen {
+			issues = append(issues, FixIssueJSON{
+				Type:    "empty_read_when",
+				Path:    d.RepoRelPath,
+				Details: "read_when is empty",
 			})
 		}
 	}

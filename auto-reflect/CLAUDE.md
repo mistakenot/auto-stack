@@ -62,10 +62,12 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 
 **auto-reflect/docs**
 
-- [Cass Memory System Analysis for Auto-Reflect](auto-reflect/docs/cass-memory-system-analysis.md): Analysis of the Cass memory system architecture and what auto-reflect should borrow, adapt, or avoid from it.
-- [Auto-Reflect V1 Requirements](auto-reflect/docs/requirements.md): V1 requirements for autoreflect — a tool for persisting and retrieving learned repository rules via a local playbook.
-- [Trauma Candidate Promotion Pattern](auto-reflect/docs/trauma-candidate-promotion-pattern.md): Describes the cass-memory trauma workflow where regex candidates are discovered from sessions but only persisted after explicit user promotion.
+- [Cass Memory System Analysis for Auto-Reflect](auto-reflect/docs/cass-memory-system-analysis.md): Analysis of the Cass memory system architecture and what auto-reflect should borrow, adapt, or avoid from it
+- [Auto-Reflect V1 Requirements](auto-reflect/docs/requirements.md): V1 requirements for autoreflect — a tool for persisting and retrieving learned repository rules via a local playbook
+- [Trauma Candidate Promotion Pattern](auto-reflect/docs/trauma-candidate-promotion-pattern.md): Describes the cass-memory trauma workflow where regex candidates are discovered from sessions but only persisted after explicit user promotion
 <!-- autodoc: end -->
+
+
 
 
 

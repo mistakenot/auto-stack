@@ -106,11 +106,12 @@ func Fix(w io.Writer, rootDir string, docsDir string, parallelism int, agentFile
 }
 
 type docIssue struct {
-	RepoRelPath  string
-	MissingFM    bool
-	StaleHash    bool
-	DefaultTitle bool
-	EmptySummary bool
+	RepoRelPath   string
+	MissingFM     bool
+	StaleHash     bool
+	DefaultTitle  bool
+	EmptySummary  bool
+	EmptyReadWhen bool
 }
 
 func collectDocIssues(entries []doctree.Entry) []docIssue {
@@ -143,8 +144,11 @@ func collectDocIssues(entries []doctree.Entry) []docIssue {
 		if e.Summary == "" && !iss.MissingFM {
 			iss.EmptySummary = true
 		}
+		if e.ReadWhen == "" && !iss.MissingFM {
+			iss.EmptyReadWhen = true
+		}
 
-		if iss.MissingFM || iss.StaleHash || iss.DefaultTitle || iss.EmptySummary {
+		if iss.MissingFM || iss.StaleHash || iss.DefaultTitle || iss.EmptySummary || iss.EmptyReadWhen {
 			issues = append(issues, iss)
 		}
 	}
@@ -161,10 +165,11 @@ func writeDocFreshness(w io.Writer, parallelism int, issues []docIssue) {
 	fmt.Fprintln(w, "---")
 	fmt.Fprintln(w, `title: "Human-Readable Title"`)
 	fmt.Fprintln(w, `summary: "One-line summary of the document's content"`)
+	fmt.Fprintln(w, `read_when: "when modifying the auth middleware"`)
 	fmt.Fprintln(w, "---")
 	fmt.Fprintln(w, "```")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Only set `title` and `summary`. `autodoc fix` manages `id`, and hashes are managed by `autodoc fixed`.")
+	fmt.Fprintln(w, "Only set `title`, `summary`, and `read_when`. `autodoc fix` manages `id`, and hashes are managed by `autodoc fixed`.")
 	fmt.Fprintln(w)
 
 	numGroups := parallelism
@@ -189,14 +194,18 @@ func writeDocFreshness(w io.Writer, parallelism int, issues []docIssue) {
 			fmt.Fprintf(w, "### `%s`\n\n", fullPath)
 
 			if iss.MissingFM {
-				fmt.Fprintln(w, "- Add frontmatter with `title` and `summary` fields.")
+				fmt.Fprintln(w, "- Add frontmatter with `title`, `summary`, and `read_when` fields.")
 				fmt.Fprintln(w, "- Set `summary` to a one-line description of the file's content.")
+				fmt.Fprintln(w, "- Set `read_when` to a short sentence describing when an agent should read this file.")
 			}
 			if iss.DefaultTitle {
 				fmt.Fprintln(w, "- Set `title` to a human-readable version based on the content or main H1 heading.")
 			}
 			if iss.EmptySummary && !iss.MissingFM {
 				fmt.Fprintln(w, "- Set `summary` to a one-line description of the file's content.")
+			}
+			if iss.EmptyReadWhen && !iss.MissingFM {
+				fmt.Fprintln(w, "- Set `read_when` to a short sentence describing when an agent should read this file.")
 			}
 			if iss.StaleHash && !iss.MissingFM && !iss.DefaultTitle && !iss.EmptySummary {
 				fmt.Fprintln(w, "- Review that `title` and `summary` still accurately reflect the content.")

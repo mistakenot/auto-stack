@@ -257,6 +257,41 @@ func read() {
 	}
 }
 
+func TestFixReportsEmptyReadWhen(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDoc("guide.md", "Guide", "How to use the guide", "# Guide")
+	ws.InitGitRepo()
+
+	var buf bytes.Buffer
+	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
+	if err == nil {
+		t.Fatal("expected error for doc issues")
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "read_when") {
+		t.Fatalf("expected read_when instruction in output:\n%s", out)
+	}
+}
+
+func TestFixNoIssueWhenReadWhenPresent(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDocWithReadWhen("guide.md", "Guide", "How to use the guide", "when updating the guide", "# Guide")
+
+	guidePath := ws.Path("docs/guide.md")
+	if err := Fixed(guidePath, "", ""); err != nil {
+		t.Fatalf("Fixed: %v", err)
+	}
+
+	ws.InitGitRepo()
+
+	var buf bytes.Buffer
+	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
+	if err != nil {
+		t.Fatalf("expected no issues, got error: %v\noutput:\n%s", err, buf.String())
+	}
+}
+
 func createDocWithID(t *testing.T, ws *testutil.Workspace, relPath, id string) string {
 	t.Helper()
 	path := ws.WriteDocWithId(strings.TrimPrefix(relPath, "docs/"), id, "Cache", "Cache docs", "", "# Cache")

@@ -35,9 +35,11 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 
 **auto-skill/docs**
 
-- [Coding Agents Skill Guidance](auto-skill/docs/coding_agents_guidance.md): Comprehensive reference for Claude Code, Codex, and OpenCode skill architecture, discovery, loading, and best practices for skill authors.
+- [Coding Agents Skill Guidance](auto-skill/docs/coding_agents_guidance.md): Comprehensive reference for Claude Code, Codex, and OpenCode skill architecture, discovery, loading, and best practices for skill authors
 - [important-if-feature.md](auto-skill/docs/important-if-feature.md)
 - [Meta Skill (ms) — Reference](auto-skill/docs/meta_skill.md): Technical reference for the meta_skill Rust CLI: architecture, data model, mining pipeline, search, security, and distribution
 - [autoskill — Requirements](auto-skill/docs/requirements.md): Requirements for autoskill: agent skill management, linting, and scaffolding
 <!-- autodoc: end -->
+
+
 

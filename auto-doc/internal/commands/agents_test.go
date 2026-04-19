@@ -217,6 +217,26 @@ func TestAgentsCreatesRootFallbackOwnerForNestedDocs(t *testing.T) {
 	}
 }
 
+func TestAgentsIncludesReadWhenInIndex(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDocWithReadWhen("test.md", "Test", "A test", "when running tests", "# Test")
+
+	err := Agents(ws.Dir, "docs", []string{"CLAUDE.md"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(ws.Path("CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, ". Read when: when running tests") {
+		t.Fatalf("expected read_when in agents output:\n%s", content)
+	}
+}
+
 func TestAgentsSymlinkedRootFilesBothReceiveIndex(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
 	writeRepoDocFile(t, ws, "docs/root.md", "Root", "Root docs")

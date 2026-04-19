@@ -14,11 +14,12 @@ import (
 
 // Doc represents parsed frontmatter and body of a markdown file.
 type Doc struct {
-	Id      string
-	Title   string
-	Summary string
-	Hash    string
-	Body    string
+	Id       string
+	Title    string
+	Summary  string
+	ReadWhen string
+	Hash     string
+	Body     string
 }
 
 // Parse extracts YAML frontmatter from a markdown string.
@@ -64,6 +65,8 @@ func Parse(content string) Doc {
 			doc.Title = val
 		case "summary":
 			doc.Summary = val
+		case "read_when":
+			doc.ReadWhen = val
 		case "hash":
 			doc.Hash = val
 		}
@@ -89,6 +92,9 @@ func Serialize(doc *Doc) string {
 	}
 	if doc.Id != "" {
 		fields["id"] = doc.Id
+	}
+	if doc.ReadWhen != "" {
+		fields["read_when"] = doc.ReadWhen
 	}
 
 	keys := make([]string, 0, len(fields))

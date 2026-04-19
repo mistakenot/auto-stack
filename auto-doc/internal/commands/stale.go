@@ -27,7 +27,7 @@ func CheckStale(entries []doctree.Entry) StaleResult {
 			Summary: e.Summary,
 			Body:    e.Body,
 		})
-		if e.Hash != expected || e.Title == "" || e.Summary == "" {
+		if e.Hash != expected || e.Title == "" || e.Summary == "" || e.ReadWhen == "" {
 			stale = append(stale, *e)
 		}
 	}

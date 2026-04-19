@@ -72,6 +72,20 @@ func (w *Workspace) WriteDocWithId(relPath, id, title, summary, hash, body strin
 	return full
 }
 
+// WriteDocWithReadWhen creates a markdown doc file with a read_when field.
+func (w *Workspace) WriteDocWithReadWhen(relPath, title, summary, readWhen, body string) string {
+	w.t.Helper()
+	full := filepath.Join(w.Dir, "docs", relPath)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		w.t.Fatalf("mkdir for doc %s: %v", relPath, err)
+	}
+	content := fmt.Sprintf("---\ntitle: %q\nsummary: %q\nread_when: %q\nhash: \"\"\n---\n\n%s\n", title, summary, readWhen, body)
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		w.t.Fatalf("write doc %s: %v", relPath, err)
+	}
+	return full
+}
+
 // WriteConfig writes a settings.json config file at .auto/doc/settings.json in the workspace.
 func (w *Workspace) WriteConfig(docsDir string) string {
 	w.t.Helper()

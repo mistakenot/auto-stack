@@ -1,6 +1,7 @@
 ---
 hash: "b2750ddd"
 id: "3e03dfac"
+read_when: "when adding or changing ETL transform logic"
 summary: "V1 functional and non-functional requirements for normalizing raw Claude session history into partitioned parquet datasets."
 title: "autoetl — Requirements"
 ---

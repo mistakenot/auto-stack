@@ -5,6 +5,7 @@ import (
 	"io"
 	"path"
 	"sort"
+	"strings"
 
 	"github.com/datadyne-io/autodoc/internal/doctree"
 )
@@ -57,7 +58,12 @@ func DocsIndex(w io.Writer, entries []doctree.Entry, docsDir string) {
 				title = path.Base(linkPath)
 			}
 			if e.Summary != "" {
-				fmt.Fprintf(w, "- [%s](%s): %s\n", title, linkPath, e.Summary)
+				summary := strings.TrimRight(e.Summary, ".")
+				line := fmt.Sprintf("- [%s](%s): %s", title, linkPath, summary)
+				if e.ReadWhen != "" {
+					line += fmt.Sprintf(". Read when: %s", e.ReadWhen)
+				}
+				fmt.Fprintln(w, line)
 			} else {
 				fmt.Fprintf(w, "- [%s](%s)\n", title, linkPath)
 			}

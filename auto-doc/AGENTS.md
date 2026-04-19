@@ -139,19 +139,22 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 - [BM25 Keyword Search](auto-doc/docs/bm25-search.md): Full-text keyword search over docs using BM25 scoring via Bluge
 - [Feedback](auto-doc/docs/feedback.md): Agent feedback loops for tracking which docs were useful during tasks
 - [Full Text Search](auto-doc/docs/indexing.md): Research notes on BM25 search implementation using Bluge
-- [Recursive Docs Discovery Technical PRD](auto-doc/docs/recursive-docs-discovery-tech-design.md): Technical PRD for autodoc to discover all `docs` directories recursively and index markdown files recursively under each.
+- [Markdown-Embedded Autodoc Tags Technical Design](auto-doc/docs/markdown-embedded-tags-tech-design.md): Technical design for dropping [autodoc()] links inside any markdown file as HTML comments, with header-depth-based scope selection for freshness checks across doc-to-doc dependencies
+- [Recursive Docs Discovery Technical PRD](auto-doc/docs/recursive-docs-discovery-tech-design.md): Technical PRD for autodoc to discover all `docs` directories recursively and index markdown files recursively under each
 - [Semantic Search](auto-doc/docs/semantic-search.md): Research notes on semantic search using hugot and Go-native embeddings
 - [Two-Way Freshness End-to-End Guide](auto-doc/docs/two-way-freshness-guide.md): Walkthrough of the full lifecycle for keeping docs and code in sync using autodoc two-way freshness links
 - [Two-Way Freshness Review](auto-doc/docs/two-way-freshness-review.md): Edge case analysis and user-perspective review of the two-way freshness design covering tag parsing, duplicate IDs, and scope hashing
-- [Two-Way Freshness: Technical Solution](auto-doc/docs/two-way-freshness-solution.md): Implementation details for two-way code-doc freshness checks in autodoc.
-- [Two-Way Freshness Technical Design](auto-doc/docs/two-way-freshness-tech-design.md): Technical design for implementing two-way freshness between docs and code tags in autodoc.
+- [Two-Way Freshness: Technical Solution](auto-doc/docs/two-way-freshness-solution.md): Implementation details for two-way code-doc freshness checks in autodoc
+- [Two-Way Freshness Technical Design](auto-doc/docs/two-way-freshness-tech-design.md): Technical design for implementing two-way freshness between docs and code tags in autodoc
 - [Two-Way Freshness](auto-doc/docs/two-way-freshness.md): Design for bidirectional hash-based links between code and docs to detect and fix drift in either direction
 - [Autodoc v1 Changes](auto-doc/docs/v1-changes.md): Gap analysis between user journey vision and current autodoc, with changes needed for v1
 
 **auto-doc/docs/features**
 
-- [Doc Tags and List Filtering Requirements](auto-doc/docs/features/requirements.md): Requirements for adding frontmatter tags and tag-based list/filter output in autodoc.
+- [Doc Tags and List Filtering Requirements](auto-doc/docs/features/requirements.md): Requirements for adding frontmatter tags and tag-based list/filter output in autodoc
 <!-- autodoc: end -->
+
+
 
 
 
