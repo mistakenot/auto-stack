@@ -1,6 +1,7 @@
 ---
 hash: "747d95f2"
 id: "8bd7e96d"
+read_when: "when confirming auto-stack direction or resolving planning questions"
 summary: "Consistency review of the auto-stack user journey, confirming directional decisions and capturing open planning-stage questions for future resolution."
 title: "User Journey Consistency Review"
 ---

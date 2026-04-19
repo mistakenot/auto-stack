@@ -1,6 +1,7 @@
 ---
 hash: "9f2073e0"
 id: "5a3fa5e8"
+read_when: "when debugging autosearch session rendering or ETL data flow"
 summary: "Identified rendering problems in autosearch session output, including missing closing tags, absent tool command previews, empty tool-use blocks, and message truncation."
 title: "End-to-End Problems: autosearch session get Rendering"
 ---

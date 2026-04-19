@@ -1,6 +1,7 @@
 ---
-hash: "d4e7a1b3"
+hash: "f259711f"
 id: "8c2f59e1"
+read_when: "when implementing autoenv or managing multi-worktree development environments"
 summary: "Requirements for autoenv: manage isolated development environments for worktree-based coding agents, handling port allocation, databases, logs, and service lifecycle to avoid conflicts across concurrent instances."
 title: "AutoEnv Requirements"
 ---

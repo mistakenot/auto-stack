@@ -1,6 +1,7 @@
 ---
 hash: "66493236"
 id: "19cc4aad"
+read_when: "when designing cross-agent session normalization or building agent connectors"
 summary: "Reference notes on the CASS Rust CLI's session file locations, normalized data model, connector architecture, and patterns reusable for the Go ETL implementation."
 title: "Reference: coding_agent_session_search (CASS)"
 ---

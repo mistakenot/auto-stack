@@ -155,6 +155,26 @@ func rewriteAutodocTag(t *testing.T, filePath, docID, docHash, scopeHash string)
 	}
 }
 
+func rewriteMarkdownTag(t *testing.T, filePath, docID, docHash, scopeHash string) {
+	t.Helper()
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+
+	re := regexp.MustCompile(`<!--\s*\[autodoc\([0-9a-f]{8}@[0-9a-f]{8},\s*[0-9a-f]{8}\)\]\s*-->`)
+	loc := re.FindStringIndex(string(data))
+	if loc == nil {
+		t.Fatalf("markdown autodoc tag not found in %s", filePath)
+	}
+	newTag := fmt.Sprintf("<!-- [autodoc(%s@%s, %s)] -->", docID, docHash, scopeHash)
+	updated := string(data[:loc[0]]) + newTag + string(data[loc[1]:])
+
+	if err := os.WriteFile(filePath, []byte(updated), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+}
+
 func rewriteText(t *testing.T, path, old, new string) {
 	t.Helper()
 	data, err := os.ReadFile(path)

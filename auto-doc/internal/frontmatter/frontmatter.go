@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, 06d8462e)]
+// [autodoc(e8d3cf9c@34e92e15, c1904ee4)]
 package frontmatter
 
 import (
@@ -85,6 +85,10 @@ func unquote(s string) string {
 // Serialize writes a Doc back to a markdown string with YAML frontmatter.
 // Keys are sorted alphabetically; hash is included.
 func Serialize(doc *Doc) string {
+	return serializeWithLineEnding(doc, "\n")
+}
+
+func serializeWithLineEnding(doc *Doc, lineEnding string) string {
 	fields := map[string]string{
 		"title":   doc.Title,
 		"summary": doc.Summary,
@@ -104,13 +108,19 @@ func Serialize(doc *Doc) string {
 	sort.Strings(keys)
 
 	var sb strings.Builder
-	sb.WriteString("---\n")
+	sb.WriteString("---")
+	sb.WriteString(lineEnding)
 	for _, k := range keys {
-		sb.WriteString(fmt.Sprintf("%s: %q\n", k, fields[k]))
+		sb.WriteString(fmt.Sprintf("%s: %q%s", k, fields[k], lineEnding))
 	}
-	sb.WriteString("---\n")
+	sb.WriteString("---")
+	sb.WriteString(lineEnding)
 	if doc.Body != "" {
-		sb.WriteString(doc.Body)
+		body := strings.ReplaceAll(doc.Body, "\r\n", "\n")
+		if lineEnding != "\n" {
+			body = strings.ReplaceAll(body, "\n", lineEnding)
+		}
+		sb.WriteString(body)
 	}
 	return sb.String()
 }
@@ -149,6 +159,10 @@ func UpdateHash(path string) error {
 
 	doc := Parse(string(data))
 	doc.Hash = ComputeHash(&doc)
+	lineEnding := "\n"
+	if strings.Contains(string(data), "\r\n") {
+		lineEnding = "\r\n"
+	}
 
-	return os.WriteFile(path, []byte(Serialize(&doc)), 0o644)
+	return os.WriteFile(path, []byte(serializeWithLineEnding(&doc, lineEnding)), 0o644)
 }

@@ -22,6 +22,8 @@ func linkStatusString(s linkcheck.LinkStatus) string {
 		return "orphaned_tag"
 	case linkcheck.MalformedTag:
 		return "malformed_tag"
+	case linkcheck.SelfReferencingTag:
+		return "self_referencing_tag"
 	default:
 		return "unknown"
 	}

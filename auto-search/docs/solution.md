@@ -1,6 +1,7 @@
 ---
 hash: "d4cb1f0a"
 id: "19e64c81"
+read_when: "when implementing autosearch v1 indexing, search, and helper commands"
 summary: "Implementation spec for autosearch v1: SQLite FTS5 indexing over autoetl parquet output, BM25 search, and session/message helper commands."
 title: "autosearch v1 Technical Solution"
 ---

@@ -130,17 +130,18 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 
 **auto-etl/docs**
 
-- [Claude Message Types and ETL Mapping](auto-etl/docs/claude-message-types-and-etl-mapping.md): Technical reference for Claude Code JSONL message types, content block types, and how each maps to auto-etl normalized parquet fields — including what data is preserved and what is lost
-- [GitHub PR Feedback ETL](auto-etl/docs/github-pr-etl.md): Spec for ingesting merged GitHub PR feedback (reviews, comments, diffs, CI checks) into parquet datasets via auto-etl
-- [Plan: Schema Cleanup — Align with User-Journey Spec](auto-etl/docs/plan-schema-cleanup.md): Phased plan to bring auto-etl output schema in line with the user-journey spec, covering blob removal, git metadata, session transcripts, and field population
+- [Claude Message Types and ETL Mapping](auto-etl/docs/claude-message-types-and-etl-mapping.md): Technical reference for Claude Code JSONL message types, content block types, and how each maps to auto-etl normalized parquet fields — including what data is preserved and what is lost. Read when: when modifying auto-etl message transformation logic or understanding ETL field population
+- [GitHub PR Feedback ETL](auto-etl/docs/github-pr-etl.md): Spec for ingesting merged GitHub PR feedback (reviews, comments, diffs, CI checks) into parquet datasets via auto-etl. Read when: when implementing GitHub PR ETL ingestion or querying PR feedback datasets
+- [Plan: Schema Cleanup — Align with User-Journey Spec](auto-etl/docs/plan-schema-cleanup.md): Phased plan to bring auto-etl output schema in line with the user-journey spec, covering blob removal, git metadata, session transcripts, and field population. Read when: when implementing auto-etl schema updates or normalizing parquet field population
 - [autoetl — Requirements](auto-etl/docs/requirements.md): V1 functional and non-functional requirements for normalizing raw Claude session history into partitioned parquet datasets. Read when: when adding or changing ETL transform logic
-- [Subagent Session Deduplication](auto-etl/docs/subagent-session-dedup.md): Design doc for resolving duplicate session IDs caused by Claude Code subagent files, using agentId-based unique IDs with parent linkage
+- [Subagent Session Deduplication](auto-etl/docs/subagent-session-dedup.md): Design doc for resolving duplicate session IDs caused by Claude Code subagent files, using agentId-based unique IDs with parent linkage. Read when: when implementing subagent session handling or deduplication in ETL
 
 **auto-etl/docs/reference**
 
-- [Auto ETL Normalized Schema Reference](auto-etl/docs/reference/normalized-schema.md): Canonical reference for auto-etl normalized parquet datasets, fields, partitions, and population rules
-- [Reference: coding_agent_session_search (CASS)](auto-etl/docs/reference/reference-cass.md): Reference notes on the CASS Rust CLI's session file locations, normalized data model, connector architecture, and patterns reusable for the Go ETL implementation
+- [Auto ETL Normalized Schema Reference](auto-etl/docs/reference/normalized-schema.md): Canonical reference for auto-etl normalized parquet datasets, fields, partitions, and population rules. Read when: when querying normalized parquet data or understanding auto-etl output schema
+- [Reference: coding_agent_session_search (CASS)](auto-etl/docs/reference/reference-cass.md): Reference notes on the CASS Rust CLI's session file locations, normalized data model, connector architecture, and patterns reusable for the Go ETL implementation. Read when: when designing cross-agent session normalization or building agent connectors
 <!-- autodoc: end -->
+
 
 
 

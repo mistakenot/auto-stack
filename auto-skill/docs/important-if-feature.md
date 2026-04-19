@@ -1,3 +1,11 @@
+---
+hash: "2c2d03b8"
+id: "d30bbd13"
+read_when: "when implementing skill-to-agent-file injection or important_if metadata"
+summary: "Design for skills to declare trigger conditions that get auto-injected as important-if blocks in CLAUDE.md"
+title: "important_if Skill Metadata for Agent File Injection"
+---
+
 # Feature: `important_if` skill metadata for agent file injection
 
 ## Problem

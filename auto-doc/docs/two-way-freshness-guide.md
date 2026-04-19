@@ -1,6 +1,7 @@
 ---
 hash: "816eb2de"
 id: "6719b91e"
+read_when: "when using two-way freshness links to keep documentation and code synchronized"
 summary: "Walkthrough of the full lifecycle for keeping docs and code in sync using autodoc two-way freshness links"
 title: "Two-Way Freshness End-to-End Guide"
 ---

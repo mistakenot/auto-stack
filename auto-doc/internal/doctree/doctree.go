@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, 070f2fc4)]
+// [autodoc(e8d3cf9c@34e92e15, 86224d80)]
 package doctree
 
 import (

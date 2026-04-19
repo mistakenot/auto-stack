@@ -1,6 +1,7 @@
 ---
 hash: "a0595943"
 id: "b4e2d831"
+read_when: "when prioritizing autosearch improvements based on reflection workflow needs"
 summary: "Field feedback from using autosearch for session reflection: what worked, what didn't, and concrete improvements needed."
 title: "Feedback: Reflection Usage of Autosearch"
 ---

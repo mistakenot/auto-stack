@@ -1,6 +1,7 @@
 ---
 hash: "0cdd17b6"
 id: "e5d39c11"
+read_when: "when implementing two-stage rule discovery and promotion workflows"
 summary: "Describes the cass-memory trauma workflow where regex candidates are discovered from sessions but only persisted after explicit user promotion."
 title: "Trauma Candidate Promotion Pattern"
 ---

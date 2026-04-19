@@ -1,8 +1,9 @@
 ---
+hash: "46dc24a4"
 id: "a7c3e1f0"
-title: "Auto Package Patterns"
+read_when: "when creating a new package in the auto-stack monorepo"
 summary: "Reference patterns and conventions shared across all auto-* packages in the auto-stack monorepo. Used as the blueprint when creating new packages."
-hash: ""
+title: "Auto Package Patterns"
 ---
 
 # Auto Package Patterns

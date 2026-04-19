@@ -1,6 +1,7 @@
 ---
 hash: "c60b31ec"
 id: "b48925a1"
+read_when: "when reviewing edge cases and user experience in two-way freshness implementation"
 summary: "Edge case analysis and user-perspective review of the two-way freshness design covering tag parsing, duplicate IDs, and scope hashing"
 title: "Two-Way Freshness Review"
 ---

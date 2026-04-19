@@ -1,6 +1,7 @@
 ---
 hash: "831a32ff"
 id: "afd6ca72"
+read_when: "when designing autoreflect memory architecture and reflection patterns"
 summary: "Analysis of the Cass memory system architecture and what auto-reflect should borrow, adapt, or avoid from it."
 title: "Cass Memory System Analysis for Auto-Reflect"
 ---

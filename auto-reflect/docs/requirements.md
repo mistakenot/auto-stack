@@ -1,6 +1,7 @@
 ---
 hash: "fdfe75f3"
 id: "67c76c0e"
+read_when: "when building autoreflect v1 or implementing rule persistence and retrieval"
 summary: "V1 requirements for autoreflect — a tool for persisting and retrieving learned repository rules via a local playbook."
 title: "Auto-Reflect V1 Requirements"
 ---
