@@ -1,7 +1,9 @@
 ---
-id: autoenv-v1-requirements
+hash: "dfccbb6c"
+id: "autoenv-v1-requirements"
+read_when: "when implementing autoenv v1 or understanding the simplified environment management design"
+summary: "V1 spec for autoenv: template-based config file generation with deterministic per-worktree port allocation, supporting init/up/down/status commands with auto-restart and file-only manifest tracking."
 title: "AutoEnv V1 Requirements"
-read_when: when implementing autoenv v1 or understanding the simplified environment management design
 ---
 
 # AutoEnv V1 Requirements
@@ -150,28 +152,31 @@ Commands are single shell strings executed via `sh -c` from the **repo root** di
 
 Scaffolds the `.auto/env/` directory structure:
 
-1. Create `.auto/env/config.json` with placeholder `up_command` and `down_command`
+1. Create `.auto/env/config.json` with empty `up_command` and `down_command` values (`""`)
 2. Create `.auto/env/files/` directory
 3. Print next-steps instructions to stderr
+
+The empty command values are intentionally invalid — `autoenv up` will fail with a clear error listing exactly which fields need to be filled in. This forces the user to configure real commands before first use.
 
 Idempotent — does not overwrite existing files.
 
 ### `autoenv up [--force] [--dry-run]`
 
 1. Read `.auto/env/config.json` — error if missing or lacking required fields
-2. Walk `.auto/env/files/` to discover all template files
-3. Scan templates for port variable references, collect unique port names
-4. Determine worktree name and slot (main = 0, others = hash-based)
-5. Compute port map: sort names alphabetically, assign `base + slot*stride + index`
-6. Render all templates with the full variable set (ports, name, branch, branch slug, slot, paths)
-7. **If `--dry-run`**: print rendered output to stdout for each file (with paths as headers), then exit without writing
-8. Check all destination paths — **error** if any file already exists (unless `--force`), listing all conflicts
-9. Write rendered files to repo root, preserving directory structure
-   - `--force` overwrites existing files
-10. Write manifest file (`.auto/env/.generated`) listing all placed files
-11. Check if any generated paths are not gitignored — warn to stderr if so
-12. Run `up_command` via `sh -c` from repo root
-13. Print JSON to stdout: `{"name": "...", "slot": 0, "ports": {"web": 3003, ...}}`
+2. **If manifest already exists**: automatically run the `down` sequence first (down_command → delete files → remove manifest), then continue with `up`. This makes `up` idempotent — re-running it restarts the environment without requiring an explicit `down`.
+3. Walk `.auto/env/files/` to discover all template files
+4. Scan templates for port variable references, collect unique port names
+5. Determine worktree name and slot (main = 0, others = hash-based)
+6. Compute port map: sort names alphabetically, assign `base + slot*stride + index`
+7. Render all templates with the full variable set (ports, name, branch, branch slug, slot, paths)
+8. **If `--dry-run`**: print rendered output to stdout for each file (with paths as headers), then exit without writing
+9. Check all destination paths — **error** if any file already exists (unless `--force`), listing all conflicts. This catches files that exist but were *not* placed by a previous `autoenv up` (since those were already cleaned up in step 2).
+10. Write rendered files to repo root, preserving directory structure
+    - `--force` overwrites existing files
+11. Write manifest file (`.auto/env/.generated`) listing all placed files
+12. Check if any generated paths are not gitignored — warn to stderr if so
+13. Run `up_command` via `sh -c` from repo root
+14. Print JSON to stdout: `{"name": "...", "slot": 0, "ports": {"web": 3003, ...}}`
 
 Files are written before `up_command` because the command typically needs them (e.g. `pm2 start ecosystem.config.js`). If `up_command` fails, generated files remain on disk for debugging — use `autoenv down` to clean up.
 
@@ -181,21 +186,24 @@ Files are written before `up_command` because the command typically needs them (
 2. Run `down_command` via `sh -c` from repo root
 3. If `down_command` fails: report error to stderr, **abort** without deleting files, exit non-zero
 4. Read `.auto/env/.generated` manifest
-5. Delete all files listed in the manifest
-6. Remove empty parent directories that were created by `up` (tracked in manifest)
-7. Remove the manifest file itself
-8. Print confirmation to stdout
+5. Delete all files listed in the manifest (these correspond exactly to paths from `.auto/env/files/`)
+6. Remove the manifest file itself
+7. Print confirmation to stdout
+
+No directory tracking is needed. The manifest contains only file paths that mirror the `.auto/env/files/` tree. If removing a generated file leaves an empty parent directory, it is left in place — autoenv does not manage directories it didn't create.
 
 `down_command` runs before file deletion because the command may need the generated files (e.g. `docker-compose -f docker-compose.yml down`). If `down_command` fails, files are preserved so the user can fix the issue and retry.
 
 ### `autoenv status`
 
 1. Check if `.auto/env/.generated` manifest exists
-2. If yes: read it, resolve current worktree name/slot/ports, print JSON:
+2. If yes: re-scan templates from `.auto/env/files/` to derive the current port map (same discovery logic as `up`), resolve worktree name/slot, print JSON:
    ```json
    {"provisioned": true, "name": "...", "slot": 0, "ports": {"web": 3003, ...}, "files": ["ecosystem.config.js", ...]}
    ```
 3. If no: print `{"provisioned": false}`
+
+Ports are always derived from the current template files, not stored at `up` time. This means `status` reflects any template edits made since the last `up` — useful for seeing what ports *would* be assigned on the next `up`.
 
 The `provisioned` field indicates whether template files have been placed. It does not indicate whether services are actually running — use your process manager's status command for that (e.g. `pm2 status`).
 
@@ -227,8 +235,8 @@ The `provisioned` field indicates whether template files have been placed. It do
 | `.auto/env/config.json` missing | Error: `run autoenv init` |
 | `up_command` or `down_command` missing from config | Error listing missing fields |
 | `.auto/env/files/` empty or missing | Error: no template files found |
-| Destination file exists (no `--force`) | Error listing all conflicting files |
-| Manifest already exists (no `--force`) | Error: environment already provisioned, run `autoenv down` first or use `--force` |
+| Destination file exists (no `--force`) | Error listing all conflicting files (only for files not placed by a previous `up`) |
+| Manifest already exists on `up` | Auto-restart: run `down` sequence first, then proceed with `up` |
 | Template syntax error | Error with file path and template error message |
 | Port name count exceeds stride | Error: too many ports for configured stride |
 | `down` with no `.generated` manifest | Warn, still run `down_command` |
@@ -295,17 +303,17 @@ auto-env/
 - Validate: `len(names) <= stride`, else error
 
 **Manifest** (`internal/manifest/`):
-- `.generated` is a newline-delimited list of relative file paths
-- Lines prefixed with `dir:` track directories created by `up` (for cleanup of empty parents)
-- `Write(path string, files []string, dirs []string) error`
-- `Read(path string) (files []string, dirs []string, error)`
+- `.generated` is a newline-delimited list of relative file paths (mirroring `.auto/env/files/` tree)
+- No directory tracking — only files are listed
+- `Write(path string, files []string) error`
+- `Read(path string) (files []string, error)`
 
 **Commands** (`cmd/`):
 - Use Cobra. Root command detects project root via `git rev-parse --show-toplevel`
 - `init`: scaffold config and files directory
 - `up`: orchestrates config → discover → scan → worktree → allocate → render → manifest → gitignore-warn → exec
 - `up --dry-run`: render and print without writing or executing
-- `down`: config → exec down_command → (abort if failed) → read manifest → delete files → delete empty dirs → delete manifest
+- `down`: config → exec down_command → (abort if failed) → read manifest → delete files → delete manifest
 - `status`: check manifest exists, compute port map, print JSON with `provisioned` field
 
 ### Build Order
@@ -344,8 +352,8 @@ Pure-function and single-package tests. No git repos, no filesystem side effects
 | `template` | `TestRenderBasic` | Renders a template string with port map and name variables, verifies output |
 | `template` | `TestRenderCustomDelimiters` | JS file with `{{ }}` literals + `[[ ]]` autoenv vars renders correctly |
 | `template` | `TestRenderGoldenFile` | Renders a realistic ecosystem.config.js template, compares against a golden snapshot |
-| `manifest` | `TestWriteRead` | Write file list + dir list, read back, verify round-trip |
-| `manifest` | `TestReadMissing` | Reading a nonexistent manifest returns empty lists and no error (for status command) |
+| `manifest` | `TestWriteRead` | Write file list, read back, verify round-trip |
+| `manifest` | `TestReadMissing` | Reading a nonexistent manifest returns empty list and no error (for status command) |
 
 #### E2E Tests
 
@@ -354,7 +362,8 @@ Full command-level tests. Each test creates a fresh git repo in `/tmp` with `t.C
 | Test | Setup | Steps | Verifies |
 |---|---|---|---|
 | `TestInitScaffold` | Empty git repo | Run `autoenv init` twice | Creates `config.json` and `files/` dir; second run is idempotent (no overwrite, no error) |
-| `TestUpDownHappyPath` | Git repo with config + template files using `{{.Port.web}}`, `{{.Port.db}}`, `{{.Name}}` | `up` → check files → `status` → `down` → `status` | Rendered files exist with correct port values; `status` shows `provisioned: true` with port map; after `down`, files deleted, empty dirs cleaned, marker proves `down_command` ran; `status` shows `provisioned: false` |
+| `TestUpDownHappyPath` | Git repo with config + template files using `{{.Port.web}}`, `{{.Port.db}}`, `{{.Name}}` | `up` → check files → `status` → `down` → `status` | Rendered files exist with correct port values; `status` shows `provisioned: true` with port map; after `down`, files deleted, marker proves `down_command` ran; `status` shows `provisioned: false` |
+| `TestUpAutoRestart` | Provisioned environment (manifest exists) | Run `up` again without explicit `down` | Auto-runs `down` first (down_command executes, old files cleaned), then provisions fresh environment |
 | `TestUpFileConflict` | Pre-create a file at a destination path | Run `up` without `--force` | Errors listing the conflicting file path; no files written (fail-fast) |
 | `TestUpForce` | Same as conflict | Run `up --force` | Overwrites the existing file; renders correctly |
 | `TestUpDryRun` | Git repo with config + templates | Run `up --dry-run` | Rendered content printed to stdout; no files written to disk; no manifest created; `up_command` not executed |
