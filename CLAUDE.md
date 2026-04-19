@@ -2,7 +2,8 @@
 
 ## Agent Interaction Rules
 
-- When you need user input, break it down into single numbered items. Never combine multiple questions into one paragraph. Ask one question, wait for the answer, then ask the next if needed.
+- ALWAYS use the `AskUserQuestion` tool when asking questions about work. Do not ask questions in plain text.
+- Break questions into single numbered items. Never combine multiple questions into one paragraph. Ask one question (or up to 4 via `AskUserQuestion`), wait for the answer, then ask the next if needed.
 
 ## Git Worktree Discipline
 
