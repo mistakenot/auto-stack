@@ -33,7 +33,6 @@ fi
 
 if command -v autodoc &>/dev/null; then
     autodoc fix
-    git add "$ROOT" 2>/dev/null || true
     echo "pre-commit: autodoc fix passed"
 fi
 
