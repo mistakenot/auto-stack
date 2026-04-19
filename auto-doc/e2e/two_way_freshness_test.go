@@ -43,7 +43,7 @@ func TestE2ETwoWayFreshnessLifecycle(t *testing.T) {
 	if exit == 0 {
 		t.Fatalf("expected non-zero exit for both mismatch, got exit=%d", exit)
 	}
-	if !strings.Contains(out, "LINK STALE: both code and doc changed since last sync") {
+	if !strings.Contains(out, "LINK STALE: both source and doc changed since last sync") {
 		t.Fatalf("expected both-mismatch output, got:\n%s", out)
 	}
 	docHash, scopeHash := extractCurrentHashes(t, out)
@@ -62,7 +62,7 @@ func TestE2ETwoWayFreshnessLifecycle(t *testing.T) {
 	if exit == 0 {
 		t.Fatalf("expected non-zero exit for scope mismatch, got exit=%d", exit)
 	}
-	if !strings.Contains(out, "LINK STALE: code changed, doc may need updating") {
+	if !strings.Contains(out, "LINK STALE: source changed, doc may need updating") {
 		t.Fatalf("expected scope-mismatch output, got:\n%s", out)
 	}
 	docHash, scopeHash = extractCurrentHashes(t, out)
@@ -86,7 +86,7 @@ func TestE2ETwoWayFreshnessLifecycle(t *testing.T) {
 	if exit == 0 {
 		t.Fatalf("expected non-zero exit for doc mismatch, got exit=%d", exit)
 	}
-	if !strings.Contains(out, "LINK STALE: doc updated, code tag needs refresh") {
+	if !strings.Contains(out, "LINK STALE: doc updated, source tag needs refresh") {
 		t.Fatalf("expected doc-mismatch output, got:\n%s", out)
 	}
 
@@ -114,7 +114,7 @@ func TestE2EOneDocReferencedByManyFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	doc := frontmatter.Doc{Id: "deadbeef", Title: "Shared", Summary: "Shared doc", Hash: "", Body: "\n# Shared\n"}
+	doc := frontmatter.Doc{Id: "deadbeef", Title: "Shared", Summary: "Shared doc", ReadWhen: "when using shared resources", Hash: "", Body: "\n# Shared\n"}
 	if err := os.WriteFile(filepath.Join(workspace, "docs", "shared.md"), []byte(frontmatter.Serialize(&doc)), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestE2EOneDocReferencedByManyFiles(t *testing.T) {
 		t.Fatalf("expected non-zero exit for link issues, got exit=%d", exit)
 	}
 
-	if strings.Count(out, "LINK STALE: doc updated, code tag needs refresh") != 2 {
+	if strings.Count(out, "LINK STALE: doc updated, source tag needs refresh") != 2 {
 		t.Fatalf("expected two doc-mismatch blocks, got:\n%s", out)
 	}
 	if !strings.Contains(out, "pkg/a/one.go") || !strings.Contains(out, "pkg/b/two.go") {
@@ -167,7 +167,7 @@ func TestE2EMultipleTagsOneFileIsolatedScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	doc := frontmatter.Doc{Id: "deadbeef", Title: "Cache", Summary: "Cache doc", Hash: "", Body: "\n# Cache\n"}
+	doc := frontmatter.Doc{Id: "deadbeef", Title: "Cache", Summary: "Cache doc", ReadWhen: "when modifying cache logic", Hash: "", Body: "\n# Cache\n"}
 	if err := os.WriteFile(filepath.Join(workspace, "docs", "cache.md"), []byte(frontmatter.Serialize(&doc)), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func second() {
 	if exit == 0 {
 		t.Fatalf("expected non-zero exit for scope edit, got exit=%d", exit)
 	}
-	if strings.Count(out, "LINK STALE: code changed, doc may need updating") != 1 {
+	if strings.Count(out, "LINK STALE: source changed, doc may need updating") != 1 {
 		t.Fatalf("expected one scope-mismatch block, got:\n%s", out)
 	}
 }

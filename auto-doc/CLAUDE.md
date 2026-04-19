@@ -2,7 +2,7 @@
 
 CLI tool for helping AI coding agents find, navigate and use documentation inside a repository. Built in Go (latest stable), compiled to a single binary.
 
-Doc files are markdown with YAML frontmatter containing `id`, `title`, `summary`, and `hash` keys.
+Doc files are markdown with YAML frontmatter containing `id`, `title`, `summary`, `read_when`, and `hash` keys.
 By default, autodoc discovers docs recursively across the repo:
 - find directories named `docs`
 - include `.md` files recursively under each
@@ -13,7 +13,7 @@ By default, autodoc discovers docs recursively across the repo:
 
 ## Configuration
 
-`.auto/docs/settings.json` in the repo root. If absent, all values use defaults. The `init` command creates the `.auto/docs/` directory and bootstraps `~/.auto/settings.json` if needed.
+`.auto/doc/settings.json` in the repo root. If absent, all values use defaults. The `init` command creates the `.auto/doc/` directory and bootstraps `~/.auto/settings.json` if needed.
 
 ```json
 {
@@ -40,6 +40,7 @@ By default, autodoc discovers docs recursively across the repo:
 id: "a1b2c3d4"
 title: "Getting Started"
 summary: "Setup instructions for new users"
+read_when: "when onboarding new team members"
 hash: "deadbeef"
 ---
 ```
@@ -47,6 +48,7 @@ hash: "deadbeef"
 - **`id`** — Stable 8-char hex document identifier used by `[autodoc(...)]` code references
 - **`title`** — Human-readable document title
 - **`summary`** — One-line summary of the document's content
+- **`read_when`** — Short sentence describing when an agent should read this document (not included in content hash)
 - **`hash`** — Current 8-char content hash for the document, updated with `autodoc fixed`
 
 ---
@@ -57,7 +59,7 @@ hash: "deadbeef"
 
 Initializes a project for autodoc:
 
-1. Create `.auto/docs/settings.json` with defaults (if it doesn't exist)
+1. Create `.auto/doc/settings.json` with defaults (if it doesn't exist)
 2. Create `./docs` directory (if it doesn't exist)
 3. Create `~/.auto/settings.json` with current host info if it doesn't exist yet
 4. Run `autodoc tree` to show current state
@@ -138,23 +140,29 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 
 **auto-doc/docs**
 
-- [autodoc Implementation Plan](auto-doc/docs/PLAN.md): Step-by-step TDD implementation plan for the autodoc CLI: commands, config, frontmatter, and BM25 search
-- [BM25 Keyword Search](auto-doc/docs/bm25-search.md): Full-text keyword search over docs using BM25 scoring via Bluge
-- [Feedback](auto-doc/docs/feedback.md): Agent feedback loops for tracking which docs were useful during tasks
-- [Full Text Search](auto-doc/docs/indexing.md): Research notes on BM25 search implementation using Bluge
-- [Recursive Docs Discovery Technical PRD](auto-doc/docs/recursive-docs-discovery-tech-design.md): Technical PRD for autodoc to discover all `docs` directories recursively and index markdown files recursively under each.
-- [Semantic Search](auto-doc/docs/semantic-search.md): Research notes on semantic search using hugot and Go-native embeddings
-- [Two-Way Freshness End-to-End Guide](auto-doc/docs/two-way-freshness-guide.md): Walkthrough of the full lifecycle for keeping docs and code in sync using autodoc two-way freshness links
-- [Two-Way Freshness Review](auto-doc/docs/two-way-freshness-review.md): Edge case analysis and user-perspective review of the two-way freshness design covering tag parsing, duplicate IDs, and scope hashing
-- [Two-Way Freshness: Technical Solution](auto-doc/docs/two-way-freshness-solution.md): Implementation details for two-way code-doc freshness checks in autodoc.
-- [Two-Way Freshness Technical Design](auto-doc/docs/two-way-freshness-tech-design.md): Technical design for implementing two-way freshness between docs and code tags in autodoc.
-- [Two-Way Freshness](auto-doc/docs/two-way-freshness.md): Design for bidirectional hash-based links between code and docs to detect and fix drift in either direction
-- [Autodoc v1 Changes](auto-doc/docs/v1-changes.md): Gap analysis between user journey vision and current autodoc, with changes needed for v1
+- [autodoc Implementation Plan](auto-doc/docs/PLAN.md): Step-by-step TDD implementation plan for the autodoc CLI: commands, config, frontmatter, and BM25 search. Read when: when implementing autodoc CLI features using test-driven development
+- [BM25 Keyword Search](auto-doc/docs/bm25-search.md): Full-text keyword search over docs using BM25 scoring via Bluge. Read when: when implementing full-text search indexing for documentation
+- [Feedback](auto-doc/docs/feedback.md): Agent feedback loops for tracking which docs were useful during tasks. Read when: when implementing feedback systems to track documentation usage by agents
+- [Full Text Search](auto-doc/docs/indexing.md): Research notes on BM25 search implementation using Bluge. Read when: when researching search indexing strategies and BM25 implementation approaches
+- [Markdown-Embedded Autodoc Tags Technical Design](auto-doc/docs/markdown-embedded-tags-tech-design.md): Technical design for dropping [autodoc()] links inside any markdown file as HTML comments, with header-depth-based scope selection for freshness checks across doc-to-doc dependencies. Read when: when implementing two-way freshness links between documentation files
+- [Recursive Docs Discovery Technical PRD](auto-doc/docs/recursive-docs-discovery-tech-design.md): Technical PRD for autodoc to discover all `docs` directories recursively and index markdown files recursively under each. Read when: when implementing recursive documentation discovery across monorepo structures
+- [Semantic Search](auto-doc/docs/semantic-search.md): Research notes on semantic search using hugot and Go-native embeddings. Read when: when exploring semantic search and embedding-based retrieval for documentation
+- [Two-Way Freshness End-to-End Guide](auto-doc/docs/two-way-freshness-guide.md): Walkthrough of the full lifecycle for keeping docs and code in sync using autodoc two-way freshness links. Read when: when using two-way freshness links to keep documentation and code synchronized
+- [Two-Way Freshness Review](auto-doc/docs/two-way-freshness-review.md): Edge case analysis and user-perspective review of the two-way freshness design covering tag parsing, duplicate IDs, and scope hashing. Read when: when reviewing edge cases and user experience in two-way freshness implementation
+- [Two-Way Freshness: Technical Solution](auto-doc/docs/two-way-freshness-solution.md): Implementation details for two-way code-doc freshness checks in autodoc. Read when: when implementing two-way freshness checking between code and documentation
+- [Two-Way Freshness Technical Design](auto-doc/docs/two-way-freshness-tech-design.md): Technical design for implementing two-way freshness between docs and code tags in autodoc. Read when: when designing two-way freshness mechanisms for documentation and code
+- [Two-Way Freshness](auto-doc/docs/two-way-freshness.md): Design for bidirectional hash-based links between code and docs to detect and fix drift in either direction. Read when: when understanding bidirectional code-documentation freshness and drift detection
+- [Autodoc v1 Changes](auto-doc/docs/v1-changes.md): Gap analysis between user journey vision and current autodoc, with changes needed for v1. Read when: when planning autodoc v1 release and implementation phases
 
 **auto-doc/docs/features**
 
-- [Doc Tags and List Filtering Requirements](auto-doc/docs/features/requirements.md): Requirements for adding frontmatter tags and tag-based list/filter output in autodoc.
+- [Doc Tags and List Filtering Requirements](auto-doc/docs/features/requirements.md): Requirements for adding frontmatter tags and tag-based list/filter output in autodoc. Read when: when adding document tagging and filtering functionality to autodoc
 <!-- autodoc: end -->
+
+
+
+
+
 
 
 
@@ -198,7 +206,7 @@ The index follows llms.txt conventions: each entry is a markdown link with the s
 Outputs text instructions for an AI agent to follow. Provides full context on what is broken and exact steps to fix each issue:
 
 1. Add frontmatter to any doc files missing it (`title` set to filename without extension).
-2. Ensure each doc has `id`, `hash`, `title`, and `summary`; generate a new random 8-char hex `id` where missing.
+2. Ensure each doc has `id`, `hash`, `title`, `summary`, and `read_when`; generate a new random 8-char hex `id` where missing.
 3. Run `autodoc stale` to identify all stale docs.
 4. Group docs into sets (based on `parallelism` config).
 5. For each file:

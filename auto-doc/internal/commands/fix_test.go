@@ -90,7 +90,7 @@ func read() {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "LINK STALE: code changed, doc may need updating") {
+	if !strings.Contains(out, "LINK STALE: source changed, doc may need updating") {
 		t.Fatalf("missing scope mismatch block:\n%s", out)
 	}
 }
@@ -122,7 +122,7 @@ func read() {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "LINK STALE: doc updated, code tag needs refresh") {
+	if !strings.Contains(out, "LINK STALE: doc updated, source tag needs refresh") {
 		t.Fatalf("missing doc mismatch block:\n%s", out)
 	}
 }
@@ -149,7 +149,7 @@ func read() {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "LINK STALE: both code and doc changed since last sync") {
+	if !strings.Contains(out, "LINK STALE: both source and doc changed since last sync") {
 		t.Fatalf("missing both-mismatch block:\n%s", out)
 	}
 }
@@ -254,6 +254,68 @@ func read() {
 	out := buf.String()
 	if !strings.Contains(out, "doc:       auto-etl/docs/cache.md (id: deadbeef)") {
 		t.Fatalf("expected repo-relative doc path in output:\n%s", out)
+	}
+}
+
+func TestFixReportsSelfReferencingMarkdownTag(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteFile("docs/self.md", strings.TrimLeft(`
+---
+id: "deadbeef"
+title: "Self"
+summary: "Self doc"
+hash: "00000000"
+---
+<!-- [autodoc(deadbeef@cafebabe, 00000000)] -->
+
+# Self
+`, "\n"))
+	ws.InitGitRepo()
+
+	var buf bytes.Buffer
+	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
+	if err == nil {
+		t.Fatal("expected error for self-referencing tag")
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "LINK ERROR: self-referencing autodoc tag") {
+		t.Fatalf("missing self-reference block:\n%s", out)
+	}
+}
+
+func TestFixReportsEmptyReadWhen(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDoc("guide.md", "Guide", "How to use the guide", "# Guide")
+	ws.InitGitRepo()
+
+	var buf bytes.Buffer
+	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
+	if err == nil {
+		t.Fatal("expected error for doc issues")
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "read_when") {
+		t.Fatalf("expected read_when instruction in output:\n%s", out)
+	}
+}
+
+func TestFixNoIssueWhenReadWhenPresent(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDocWithReadWhen("guide.md", "Guide", "How to use the guide", "when updating the guide", "# Guide")
+
+	guidePath := ws.Path("docs/guide.md")
+	if err := Fixed(guidePath, "", ""); err != nil {
+		t.Fatalf("Fixed: %v", err)
+	}
+
+	ws.InitGitRepo()
+
+	var buf bytes.Buffer
+	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
+	if err != nil {
+		t.Fatalf("expected no issues, got error: %v\noutput:\n%s", err, buf.String())
 	}
 }
 

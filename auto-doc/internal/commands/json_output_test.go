@@ -121,6 +121,44 @@ func TestFixOutputJSON(t *testing.T) {
 	}
 }
 
+func TestTreeOutputJSONIncludesReadWhen(t *testing.T) {
+	entries := []doctree.Entry{
+		{RelPath: "guide.md", RepoRelPath: "docs/guide.md", Title: "Guide", Summary: "A guide", ReadWhen: "when onboarding", Hash: "12345678"},
+	}
+
+	var buf bytes.Buffer
+	if err := TreeOutputJSON(&buf, entries); err != nil {
+		t.Fatal(err)
+	}
+
+	var docs []DocJSON
+	if err := json.Unmarshal(buf.Bytes(), &docs); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if docs[0].ReadWhen != "when onboarding" {
+		t.Errorf("read_when = %q, want %q", docs[0].ReadWhen, "when onboarding")
+	}
+}
+
+func TestFixOutputJSONIncludesEmptyReadWhen(t *testing.T) {
+	docIssues := []docIssue{
+		{RepoRelPath: "docs/a.md", EmptyReadWhen: true},
+	}
+
+	var buf bytes.Buffer
+	if err := FixOutputJSON(&buf, docIssues, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var issues []FixIssueJSON
+	if err := json.Unmarshal(buf.Bytes(), &issues); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(issues) != 1 || issues[0].Type != "empty_read_when" {
+		t.Fatalf("expected empty_read_when issue, got %+v", issues)
+	}
+}
+
 func TestFixedResultJSONOutput(t *testing.T) {
 	result := FixedResultJSON{Path: "docs/test.md", OldHash: "aabbccdd", NewHash: "11223344"}
 	var buf bytes.Buffer

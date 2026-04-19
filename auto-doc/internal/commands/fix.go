@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, 1dafaa78)]
+// [autodoc(e8d3cf9c@34e92e15, ce30d4f3)]
 package commands
 
 import (
@@ -48,6 +48,12 @@ func FixCollect(rootDir string, docsDir string, ignores []string) (*FixResult, e
 	if err != nil {
 		return nil, fmt.Errorf("scanning source tags: %w", err)
 	}
+	markdownScan, err := linkscan.ScanMarkdownDocs(entries)
+	if err != nil {
+		return nil, fmt.Errorf("scanning markdown tags: %w", err)
+	}
+	scanResult.Tags = append(scanResult.Tags, markdownScan.Tags...)
+	scanResult.Malformed = append(scanResult.Malformed, markdownScan.Malformed...)
 
 	linkIssues, err := linkcheck.Check(scanResult.Tags, entries)
 	if err != nil {
@@ -106,11 +112,12 @@ func Fix(w io.Writer, rootDir string, docsDir string, parallelism int, agentFile
 }
 
 type docIssue struct {
-	RepoRelPath  string
-	MissingFM    bool
-	StaleHash    bool
-	DefaultTitle bool
-	EmptySummary bool
+	RepoRelPath   string
+	MissingFM     bool
+	StaleHash     bool
+	DefaultTitle  bool
+	EmptySummary  bool
+	EmptyReadWhen bool
 }
 
 func collectDocIssues(entries []doctree.Entry) []docIssue {
@@ -143,8 +150,11 @@ func collectDocIssues(entries []doctree.Entry) []docIssue {
 		if e.Summary == "" && !iss.MissingFM {
 			iss.EmptySummary = true
 		}
+		if e.ReadWhen == "" && !iss.MissingFM {
+			iss.EmptyReadWhen = true
+		}
 
-		if iss.MissingFM || iss.StaleHash || iss.DefaultTitle || iss.EmptySummary {
+		if iss.MissingFM || iss.StaleHash || iss.DefaultTitle || iss.EmptySummary || iss.EmptyReadWhen {
 			issues = append(issues, iss)
 		}
 	}
@@ -161,10 +171,11 @@ func writeDocFreshness(w io.Writer, parallelism int, issues []docIssue) {
 	fmt.Fprintln(w, "---")
 	fmt.Fprintln(w, `title: "Human-Readable Title"`)
 	fmt.Fprintln(w, `summary: "One-line summary of the document's content"`)
+	fmt.Fprintln(w, `read_when: "when modifying the auth middleware"`)
 	fmt.Fprintln(w, "---")
 	fmt.Fprintln(w, "```")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Only set `title` and `summary`. `autodoc fix` manages `id`, and hashes are managed by `autodoc fixed`.")
+	fmt.Fprintln(w, "Only set `title`, `summary`, and `read_when`. `autodoc fix` manages `id`, and hashes are managed by `autodoc fixed`.")
 	fmt.Fprintln(w)
 
 	numGroups := parallelism
@@ -189,14 +200,18 @@ func writeDocFreshness(w io.Writer, parallelism int, issues []docIssue) {
 			fmt.Fprintf(w, "### `%s`\n\n", fullPath)
 
 			if iss.MissingFM {
-				fmt.Fprintln(w, "- Add frontmatter with `title` and `summary` fields.")
+				fmt.Fprintln(w, "- Add frontmatter with `title`, `summary`, and `read_when` fields.")
 				fmt.Fprintln(w, "- Set `summary` to a one-line description of the file's content.")
+				fmt.Fprintln(w, "- Set `read_when` to a short sentence describing when an agent should read this file.")
 			}
 			if iss.DefaultTitle {
 				fmt.Fprintln(w, "- Set `title` to a human-readable version based on the content or main H1 heading.")
 			}
 			if iss.EmptySummary && !iss.MissingFM {
 				fmt.Fprintln(w, "- Set `summary` to a one-line description of the file's content.")
+			}
+			if iss.EmptyReadWhen && !iss.MissingFM {
+				fmt.Fprintln(w, "- Set `read_when` to a short sentence describing when an agent should read this file.")
 			}
 			if iss.StaleHash && !iss.MissingFM && !iss.DefaultTitle && !iss.EmptySummary {
 				fmt.Fprintln(w, "- Review that `title` and `summary` still accurately reflect the content.")
@@ -219,11 +234,11 @@ func writeLinkFreshness(w io.Writer, rootDir string, issues []linkcheck.LinkIssu
 
 	for i := range issues {
 		issue := &issues[i]
-		codePath := issue.Tag.FilePath
+		sourcePath := issue.Tag.FilePath
 		if rel, err := filepath.Rel(rootDir, issue.Tag.FilePath); err == nil {
-			codePath = rel
+			sourcePath = rel
 		}
-		codePath = filepath.ToSlash(codePath)
+		sourcePath = filepath.ToSlash(sourcePath)
 		tagText := formatTag(&issue.Tag)
 		docPath := ""
 		if issue.DocFile != "" {
@@ -232,48 +247,53 @@ func writeLinkFreshness(w io.Writer, rootDir string, issues []linkcheck.LinkIssu
 
 		switch issue.Status {
 		case linkcheck.ScopeHashMismatch:
-			fmt.Fprintln(w, "LINK STALE: code changed, doc may need updating")
-			fmt.Fprintf(w, "  code file: %s:%d\n", codePath, issue.Tag.Line)
+			fmt.Fprintln(w, "LINK STALE: source changed, doc may need updating")
+			fmt.Fprintf(w, "  location:  %s:%d\n", sourcePath, issue.Tag.Line)
 			fmt.Fprintf(w, "  tag:       %s\n", tagText)
 			fmt.Fprintf(w, "  doc:       %s (id: %s)\n", docPath, issue.Tag.DocId)
 			fmt.Fprintf(w, "  current doc hash:   %s (unchanged)\n", issue.CurrentDocHash)
 			fmt.Fprintf(w, "  current scope hash: %s (was %s)\n", issue.CurrentScopeHash, issue.Tag.ScopeHash)
-			fmt.Fprintln(w, "  action: Read the code scope and the doc. If the doc is still accurate,")
+			fmt.Fprintln(w, "  action: Read the source scope and the doc. If the doc is still accurate,")
 			fmt.Fprintf(w, "          update the tag to [autodoc"+"(%s@%s, %s)].\n", issue.Tag.DocId, issue.CurrentDocHash, issue.CurrentScopeHash)
 			fmt.Fprintln(w, "          If the doc needs updating, update the doc content first,")
 			fmt.Fprintln(w, "          then run `autodoc fixed <docPath>` to get the new doc hash,")
 			fmt.Fprintln(w, "          then update the tag with both new hashes.")
 		case linkcheck.DocHashMismatch:
-			fmt.Fprintln(w, "LINK STALE: doc updated, code tag needs refresh")
-			fmt.Fprintf(w, "  code file: %s:%d\n", codePath, issue.Tag.Line)
+			fmt.Fprintln(w, "LINK STALE: doc updated, source tag needs refresh")
+			fmt.Fprintf(w, "  location:  %s:%d\n", sourcePath, issue.Tag.Line)
 			fmt.Fprintf(w, "  tag:       %s\n", tagText)
 			fmt.Fprintf(w, "  doc:       %s (id: %s)\n", docPath, issue.Tag.DocId)
 			fmt.Fprintf(w, "  current doc hash:   %s (was %s)\n", issue.CurrentDocHash, issue.Tag.DocHash)
 			fmt.Fprintf(w, "  current scope hash: %s (unchanged)\n", issue.CurrentScopeHash)
-			fmt.Fprintf(w, "  action: Update the docHash in the code tag to %s.\n", issue.CurrentDocHash)
+			fmt.Fprintf(w, "  action: Update the docHash in the source tag to %s.\n", issue.CurrentDocHash)
 			fmt.Fprintf(w, "          New tag: [autodoc"+"(%s@%s, %s)]\n", issue.Tag.DocId, issue.CurrentDocHash, issue.Tag.ScopeHash)
 		case linkcheck.BothMismatch:
-			fmt.Fprintln(w, "LINK STALE: both code and doc changed since last sync")
-			fmt.Fprintf(w, "  code file: %s:%d\n", codePath, issue.Tag.Line)
+			fmt.Fprintln(w, "LINK STALE: both source and doc changed since last sync")
+			fmt.Fprintf(w, "  location:  %s:%d\n", sourcePath, issue.Tag.Line)
 			fmt.Fprintf(w, "  tag:       %s\n", tagText)
 			fmt.Fprintf(w, "  doc:       %s (id: %s)\n", docPath, issue.Tag.DocId)
 			fmt.Fprintf(w, "  current doc hash:   %s (was %s)\n", issue.CurrentDocHash, issue.Tag.DocHash)
 			fmt.Fprintf(w, "  current scope hash: %s (was %s)\n", issue.CurrentScopeHash, issue.Tag.ScopeHash)
-			fmt.Fprintln(w, "  action: Read both the code scope and the doc carefully.")
+			fmt.Fprintln(w, "  action: Read both the source scope and the doc carefully.")
 			fmt.Fprintln(w, "          Update the doc if needed, then run `autodoc fixed <docPath>`.")
 			fmt.Fprintln(w, "          Update the tag with both current hashes.")
 		case linkcheck.OrphanedTag:
 			fmt.Fprintf(w, "LINK ORPHANED: doc not found for id %s\n", issue.Tag.DocId)
-			fmt.Fprintf(w, "  code file: %s:%d\n", codePath, issue.Tag.Line)
+			fmt.Fprintf(w, "  location:  %s:%d\n", sourcePath, issue.Tag.Line)
 			fmt.Fprintf(w, "  tag:       %s\n", tagText)
 			fmt.Fprintln(w, "  action: The referenced doc no longer exists. Remove the tag or")
 			fmt.Fprintln(w, "          update it to reference a valid doc ID.")
 		case linkcheck.MalformedTag:
 			fmt.Fprintln(w, "LINK ERROR: malformed autodoc tag")
-			fmt.Fprintf(w, "  code file: %s:%d\n", codePath, issue.Tag.Line)
+			fmt.Fprintf(w, "  location:  %s:%d\n", sourcePath, issue.Tag.Line)
 			fmt.Fprintf(w, "  tag text:  %s\n", issue.Tag.RawTag)
 			fmt.Fprintln(w, "  action: Fix the tag format to:")
 			fmt.Fprintln(w, "          [autodoc"+"(<docId>@<docHash>, <scopeHash>)]")
+		case linkcheck.SelfReferencingTag:
+			fmt.Fprintln(w, "LINK ERROR: self-referencing autodoc tag")
+			fmt.Fprintf(w, "  location:  %s:%d\n", sourcePath, issue.Tag.Line)
+			fmt.Fprintf(w, "  tag:       %s\n", tagText)
+			fmt.Fprintln(w, "  action: Remove the tag or point it at a different doc ID.")
 		}
 		fmt.Fprintln(w)
 	}

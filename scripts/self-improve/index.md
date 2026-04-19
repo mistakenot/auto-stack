@@ -9,11 +9,11 @@ requires:
 - codebase-context: brief description of the codebase and conventions (optional)
 
 ensures:
-- summary: a report with up to 3 pull requests ready for human review, each addressing a top-priority improvement. Includes status for any that failed or were skipped. The long-term record of each implementation lives in the PR body and contextual commit — no separate result files.
+- summary: an insights report describing structural gaps and patterns discovered, plus up to 3 tactical PRs for specific fixes. The insights report is the primary deliverable — PRs are secondary. Includes status for any PRs that failed or were skipped.
 
 errors:
-- no-problems-found: the explorer found no problems or setbacks worth addressing
-- no-actionable-items: analysis produced suggestions but none were actionable enough to implement
+- no-problems-found: the explorer found no problems or patterns worth addressing
+- no-actionable-items: analysis produced no insights and no tactical suggestions
 
 ### Execution
 
@@ -25,7 +25,8 @@ let preflight-result = call preflight
   focus: focus
 
 # ==========================================================================
-# Phase 1: Exploration — discover problems by using the tool as a real user
+# Phase 1: Exploration — mine session history for structural patterns,
+#           then explore the tool hands-on for tactical issues
 # ==========================================================================
 
 let problems = call explorer
@@ -37,66 +38,71 @@ if no problems found:
   throw no-problems-found
 
 # ==========================================================================
-# Phase 2: Analysis — compare problems to codebase, produce suggestions doc
+# Phase 2: Analysis — separate structural insights from tactical fixes
 # ==========================================================================
 
-let suggestions = call analyst
+let analysis = call analyst
   problems: problems
   focus: focus
   codebase-context: codebase-context
 
 # ==========================================================================
-# Phase 3: Independent review — a fresh reviewer critiques the suggestions
+# Phase 3: Independent review — a fresh reviewer critiques both insights
+#           and tactical suggestions
 # ==========================================================================
 
 let review = call reviewer
-  suggestions: suggestions
+  analysis: analysis
   focus: focus
 
 # ==========================================================================
-# Phase 4: Consolidation — incorporate feedback, pick top 3
+# Phase 4: Consolidation — produce insights report (primary), pick top 3
+#           tactical items (secondary)
 # ==========================================================================
 
 let priorities = call consolidator
-  suggestions: suggestions
+  analysis: analysis
   review: review
   focus: focus
 
-if priorities.count < 1:
+if no insights and priorities.count < 1:
   throw no-actionable-items
 
 # ==========================================================================
-# Phase 5: Implementation — up to 3 parallel agents, each on its own worktree
-# One implementer failing should not abort the others.
+# Phase 5: Implementation — up to 3 parallel agents for tactical PRs.
+#           Skipped entirely if no tactical items survived review.
+#           One implementer failing should not abort the others.
 # ==========================================================================
 
-parallel (on-fail: "continue"):
-  let pr1 = call implementer
-    priority-item: priorities.item_1
-    item-number: "1"
-    focus: focus
-    codebase-context: codebase-context
-
-  if priorities.count >= 2:
-    let pr2 = call implementer
-      priority-item: priorities.item_2
-      item-number: "2"
+if priorities.count >= 1:
+  parallel (on-fail: "continue"):
+    let pr1 = call implementer
+      priority-item: priorities.item_1
+      item-number: "1"
       focus: focus
       codebase-context: codebase-context
 
-  if priorities.count >= 3:
-    let pr3 = call implementer
-      priority-item: priorities.item_3
-      item-number: "3"
-      focus: focus
-      codebase-context: codebase-context
+    if priorities.count >= 2:
+      let pr2 = call implementer
+        priority-item: priorities.item_2
+        item-number: "2"
+        focus: focus
+        codebase-context: codebase-context
+
+    if priorities.count >= 3:
+      let pr3 = call implementer
+        priority-item: priorities.item_3
+        item-number: "3"
+        focus: focus
+        codebase-context: codebase-context
 
 # ==========================================================================
-# Phase 6: Summary — always runs, even if some implementers failed
+# Phase 6: Summary — always runs. Leads with insights, then PR status.
 # ==========================================================================
 
 let summary = call consolidator
   task: "final-summary"
+  insights-report: priorities.insights-report
   pr1: pr1
   pr2: pr2
   pr3: pr3

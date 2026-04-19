@@ -1,6 +1,7 @@
 ---
 hash: "2e8d1de6"
 id: "8fad0ddc"
+read_when: "when implementing feedback systems to track documentation usage by agents"
 summary: "Agent feedback loops for tracking which docs were useful during tasks"
 title: "Feedback"
 ---

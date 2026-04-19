@@ -1,6 +1,7 @@
 ---
 hash: "6d9c10f6"
 id: "0dedcb3f"
+read_when: "when understanding bidirectional code-documentation freshness and drift detection"
 summary: "Design for bidirectional hash-based links between code and docs to detect and fix drift in either direction"
 title: "Two-Way Freshness"
 ---

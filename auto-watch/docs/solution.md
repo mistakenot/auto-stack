@@ -1,6 +1,7 @@
 ---
 hash: "8a85aea5"
 id: "70746492"
+read_when: "when implementing autowatch daemon architecture and trigger evaluation"
 summary: "Implementation plan for autowatch v1, covering project structure, trigger types, executor design, daemon loop, SQLite state store, and CLI surface."
 title: "autowatch — Technical Solution"
 ---

@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, be609cd3)]
+// [autodoc(e8d3cf9c@34e92e15, 04ca59b6)]
 package linkcheck
 
 import (
@@ -18,6 +18,7 @@ const (
 	BothMismatch
 	OrphanedTag
 	MalformedTag
+	SelfReferencingTag
 )
 
 // LinkIssue represents a single staleness finding.
@@ -32,13 +33,20 @@ type LinkIssue struct {
 // Check compares code tags to docs and returns only non-OK issues.
 func Check(tags []linkscan.Tag, docs []doctree.Entry) ([]LinkIssue, error) {
 	docsByID := make(map[string]doctree.Entry, len(docs))
+	docsByPath := make(map[string]doctree.Entry, len(docs))
 	for i := range docs {
 		d := &docs[i]
 		if d.Id == "" {
+			if d.AbsPath != "" {
+				docsByPath[d.AbsPath] = *d
+			}
 			continue
 		}
 		if _, exists := docsByID[d.Id]; !exists {
 			docsByID[d.Id] = *d
+		}
+		if d.AbsPath != "" {
+			docsByPath[d.AbsPath] = *d
 		}
 	}
 
@@ -46,6 +54,15 @@ func Check(tags []linkscan.Tag, docs []doctree.Entry) ([]LinkIssue, error) {
 	issues := make([]LinkIssue, 0)
 
 	for _, tag := range tags {
+		if sourceDoc, ok := docsByPath[tag.FilePath]; ok && sourceDoc.Id != "" && sourceDoc.Id == tag.DocId {
+			issues = append(issues, LinkIssue{
+				Status: SelfReferencingTag,
+				Tag:    tag,
+				DocFile: docPath(&sourceDoc),
+			})
+			continue
+		}
+
 		doc, found := docsByID[tag.DocId]
 		if !found {
 			issues = append(issues, LinkIssue{
@@ -65,7 +82,7 @@ func Check(tags []linkscan.Tag, docs []doctree.Entry) ([]LinkIssue, error) {
 			fileCache[tag.FilePath] = content
 		}
 
-		scopeHash, err := linkscan.ComputeScopeHashFromContent(content, tag.Line)
+		scopeHash, err := linkscan.ComputeScopeHashFromContentForTag(content, tag)
 		if err != nil {
 			return nil, fmt.Errorf("scope hash %s:%d: %w", tag.FilePath, tag.Line, err)
 		}

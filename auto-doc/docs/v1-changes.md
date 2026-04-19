@@ -1,6 +1,7 @@
 ---
 hash: "1a6a3af6"
 id: "b034fd7c"
+read_when: "when planning autodoc v1 release and implementation phases"
 summary: "Gap analysis between user journey vision and current autodoc, with changes needed for v1"
 title: "Autodoc v1 Changes"
 ---

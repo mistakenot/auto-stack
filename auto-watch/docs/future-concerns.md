@@ -1,6 +1,7 @@
 ---
 hash: "58faed4b"
 id: "8b9036fd"
+read_when: "when planning autowatch demo or production deployment"
 summary: "Deferred architectural concerns for auto-watch covering SQLite migration strategy, task output capture, and multi-instance safety, each with a trigger stage and suggested fix."
 title: "Future Concerns"
 ---

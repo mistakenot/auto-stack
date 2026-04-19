@@ -1,6 +1,7 @@
 ---
 hash: "b33a9747"
 id: "2750b106"
+read_when: "when designing safe web research portals for coding agents"
 summary: "Requirements for autoweb, a safe web research portal for AI coding agents with pluggable backends and result deduplication."
 title: "Autoweb Requirements"
 ---

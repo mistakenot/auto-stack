@@ -9,12 +9,17 @@
     "contextual-commit": {
       "source": "/home/vscode/src/auto-stack/skills",
       "sourceType": "local",
-      "computedHash": "3ec7893fcabb2f1a3ab2e6cdf001354982aade9ed539047f44cb21858879eff0"
+      "computedHash": "81b45872f2818e199e7fc8dc01accadd364e9bfe0015e91052390f8a62b70b0b"
     },
     "improve-claude-md": {
       "source": "humanlayer/skills",
       "sourceType": "github",
       "computedHash": "a93226f53ffa6a2599c89fb983f3aed00c843c04071a7aa59ee3365141619d25"
+    },
+    "new-package": {
+      "source": "/home/vscode/src/auto-stack/skills",
+      "sourceType": "local",
+      "computedHash": "2775889614ee1c47986dbe1ed8c46dacab3e31cc89587b167117eb9d296898ad"
     },
     "open-prose": {
       "source": "openprose/prose",

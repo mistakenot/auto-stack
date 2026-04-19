@@ -1,6 +1,7 @@
 ---
 hash: "1074e94a"
 id: "a41ab3e6"
+read_when: "when querying normalized parquet data or understanding auto-etl output schema"
 summary: "Canonical reference for auto-etl normalized parquet datasets, fields, partitions, and population rules."
 title: "Auto ETL Normalized Schema Reference"
 ---

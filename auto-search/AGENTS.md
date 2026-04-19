@@ -35,8 +35,17 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 
 **auto-search/docs**
 
-- [CASS Inspiration Notes](auto-search/docs/cass_inspiration.md): Research notes from the coding_agent_session_search (CASS) Rust CLI covering search modes, query patterns, output formats, indexing architecture, and design patterns informing autosearch.
-- [AutoSearch Date Filter Implementation](auto-search/docs/date-filters-implementation.md): Implementation plan for autosearch date filters (`--since`, `--after`, `--before`) across message and session search, including validation, SQL wiring, and test coverage.
-- [AutoSearch Requirements](auto-search/docs/requirements.md): Requirements for autosearch: indexing normalized session history from autoetl and exposing BM25 search, session/message retrieval, and reflection workflow primitives.
-- [autosearch v1 Technical Solution](auto-search/docs/solution.md): Implementation spec for autosearch v1: SQLite FTS5 indexing over autoetl parquet output, BM25 search, and session/message helper commands.
+- [CASS Inspiration Notes](auto-search/docs/cass_inspiration.md): Research notes from the coding_agent_session_search (CASS) Rust CLI covering search modes, query patterns, output formats, indexing architecture, and design patterns informing autosearch. Read when: when designing autosearch search modes, query patterns, or output formatting
+- [AutoSearch Date Filter Implementation](auto-search/docs/date-filters-implementation.md): Implementation plan for autosearch date filters (`--since`, `--after`, `--before`) across message and session search, including validation, SQL wiring, and test coverage. Read when: when implementing date filtering in autosearch or time-bounded session queries
+- [Feedback: Reflection Usage of Autosearch](auto-search/docs/feedback-reflection-usage.md): Field feedback from using autosearch for session reflection: what worked, what didn't, and concrete improvements needed. Read when: when prioritizing autosearch improvements based on reflection workflow needs
+- [AutoSearch Grouping Requirements](auto-search/docs/grouping-requirements.md): Requirements for autosearch grouping and aggregation functionality, including prioritized use cases and concrete CLI examples. Read when: when implementing autosearch stats command and grouped aggregations
+- [AutoSearch Grouping Solution Sketch](auto-search/docs/grouping-solution.md): Technical solution sketch for autosearch grouping/statistics, including architecture, query strategy, and expected end-state UX. Read when: when building autosearch stats with SQL aggregation and bucket ranking
+- [PR Search Integration](auto-search/docs/pr-search-integration.md): Design for indexing GitHub PR feedback in autosearch: schema, FTS strategy, query access patterns, CLI surface, and reflection-agent workflows. Read when: when adding GitHub PR and comment search to autosearch
+- [AutoSearch Requirements](auto-search/docs/requirements.md): Requirements for autosearch: indexing normalized session history from autoetl and exposing BM25 search, session/message retrieval, and reflection workflow primitives. Read when: when planning or building autosearch CLI surface and query primitives
+- [autosearch v1 Technical Solution](auto-search/docs/solution.md): Implementation spec for autosearch v1: SQLite FTS5 indexing over autoetl parquet output, BM25 search, and session/message helper commands. Read when: when implementing autosearch v1 indexing, search, and helper commands
 <!-- autodoc: end -->
+
+
+
+
+

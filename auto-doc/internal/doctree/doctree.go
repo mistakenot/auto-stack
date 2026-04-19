@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, 070f2fc4)]
+// [autodoc(e8d3cf9c@34e92e15, 86224d80)]
 package doctree
 
 import (
@@ -17,12 +17,13 @@ import (
 
 // Entry represents a single doc file in the tree.
 type Entry struct {
-	RelPath string // relative to docs dir (e.g. "api/auth.md")
-	Id      string
-	Title   string
-	Summary string
-	Hash    string
-	Body    string
+	RelPath  string // relative to docs dir (e.g. "api/auth.md")
+	Id       string
+	Title    string
+	Summary  string
+	ReadWhen string
+	Hash     string
+	Body     string
 
 	DocsRootRel string // docs root relative to repo root (e.g. "auto-etl/docs")
 	RepoRelPath string // file path relative to repo root (e.g. "auto-etl/docs/api/auth.md")
@@ -71,6 +72,7 @@ func Walk(docsDir string, ignores ...string) ([]Entry, error) {
 			Id:          doc.Id,
 			Title:       doc.Title,
 			Summary:     doc.Summary,
+			ReadWhen:    doc.ReadWhen,
 			Hash:        doc.Hash,
 			Body:        doc.Body,
 			DocsRootRel: docsRootRel,
@@ -121,6 +123,7 @@ func WalkRepo(rootDir string, docsDir string, ignores ...string) ([]Entry, error
 			Id:          doc.Id,
 			Title:       doc.Title,
 			Summary:     doc.Summary,
+			ReadWhen:    doc.ReadWhen,
 			Hash:        doc.Hash,
 			Body:        doc.Body,
 			DocsRootRel: docsRootRel,

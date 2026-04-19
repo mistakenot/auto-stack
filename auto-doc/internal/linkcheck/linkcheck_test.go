@@ -101,6 +101,22 @@ func TestCheckSkipsLinkOK(t *testing.T) {
 	}
 }
 
+func TestCheckSelfReferencingTag(t *testing.T) {
+	tc := setupCheckCase(t)
+	tc.doc.AbsPath = tc.tag.FilePath
+
+	issues, err := Check([]linkscan.Tag{tc.tag}, []doctree.Entry{tc.doc})
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("len(issues) = %d, want 1", len(issues))
+	}
+	if issues[0].Status != SelfReferencingTag {
+		t.Fatalf("status = %v, want %v", issues[0].Status, SelfReferencingTag)
+	}
+}
+
 func TestIssuesFromMalformed(t *testing.T) {
 	issues := IssuesFromMalformed([]linkscan.MalformedTag{{
 		FilePath: "/tmp/example.go",

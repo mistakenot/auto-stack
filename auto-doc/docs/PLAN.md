@@ -1,6 +1,7 @@
 ---
 hash: "1a8075b3"
 id: "6f5672e2"
+read_when: "when implementing autodoc CLI features using test-driven development"
 summary: "Step-by-step TDD implementation plan for the autodoc CLI: commands, config, frontmatter, and BM25 search"
 title: "autodoc Implementation Plan"
 ---

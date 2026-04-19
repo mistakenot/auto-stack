@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, 50933180)]
+// [autodoc(e8d3cf9c@34e92e15, d360d1db)]
 package linkscan
 
 import (
@@ -53,6 +53,13 @@ var ignoredSuffixes = []string{
 	"_test.go",
 }
 
+type ScopeKind int
+
+const (
+	ScopeKindIndent ScopeKind = iota
+	ScopeKindMarkdown
+)
+
 // Tag represents a single parsed [autodoc()] tag found in a source file.
 type Tag struct {
 	FilePath  string // absolute path to the source file
@@ -61,6 +68,7 @@ type Tag struct {
 	DocHash   string // 8-char hex doc hash snapshot
 	ScopeHash string // 8-char hex scope hash snapshot
 	RawTag    string // the full [autodoc(...)] string as found
+	ScopeKind ScopeKind
 }
 
 // MalformedTag records a marker-shaped autodoc reference that failed strict parsing.
@@ -132,6 +140,7 @@ func ScanFiles(rootDir string) (ScanResult, error) {
 					DocHash:   match[2],
 					ScopeHash: match[3],
 					RawTag:    rawTag,
+					ScopeKind: ScopeKindIndent,
 				})
 				continue
 			}
@@ -155,15 +164,39 @@ func ScanFiles(rootDir string) (ScanResult, error) {
 
 // ComputeScopeHash computes the scope hash for a tag in filePath at tagLine.
 func ComputeScopeHash(filePath string, tagLine int) (string, error) {
-	data, err := os.ReadFile(filePath)
+	return ComputeScopeHashForTag(Tag{
+		FilePath:  filePath,
+		Line:      tagLine,
+		ScopeKind: ScopeKindIndent,
+	})
+}
+
+// ComputeScopeHashForTag computes the scope hash for a parsed tag.
+func ComputeScopeHashForTag(tag Tag) (string, error) {
+	data, err := os.ReadFile(tag.FilePath)
 	if err != nil {
 		return "", err
 	}
-	return ComputeScopeHashFromContent(string(data), tagLine)
+	return ComputeScopeHashFromContentForTag(string(data), tag)
 }
 
 // ComputeScopeHashFromContent computes a scope hash using in-memory file content.
 func ComputeScopeHashFromContent(content string, tagLine int) (string, error) {
+	return ComputeScopeHashFromContentForTag(content, Tag{
+		Line:      tagLine,
+		ScopeKind: ScopeKindIndent,
+	})
+}
+
+// ComputeScopeHashFromContentForTag computes a scope hash using in-memory file content.
+func ComputeScopeHashFromContentForTag(content string, tag Tag) (string, error) {
+	if tag.ScopeKind == ScopeKindMarkdown {
+		return computeMarkdownScopeHashFromContent(content, tag.Line)
+	}
+	return computeIndentedScopeHashFromContent(content, tag.Line)
+}
+
+func computeIndentedScopeHashFromContent(content string, tagLine int) (string, error) {
 	if tagLine <= 0 {
 		return "", errors.New("tag line must be >= 1")
 	}

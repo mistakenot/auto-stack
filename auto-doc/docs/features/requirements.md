@@ -1,6 +1,7 @@
 ---
 hash: "52d728ec"
 id: "7c2f9e1a"
+read_when: "when adding document tagging and filtering functionality to autodoc"
 summary: "Requirements for adding frontmatter tags and tag-based list/filter output in autodoc."
 title: "Doc Tags and List Filtering Requirements"
 ---

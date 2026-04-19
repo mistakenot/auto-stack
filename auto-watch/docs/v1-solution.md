@@ -1,6 +1,7 @@
 ---
 hash: "3deddeab"
 id: "f315bcb9"
+read_when: "when implementing autowatch v1 init, config, and daemon tick loop"
 summary: "Implementation spec for autowatch v1: cron-triggered task scheduling, tmux-backed execution, SQLite run logging, and daemon lifecycle management."
 title: "autowatch v1 Technical Solution"
 ---

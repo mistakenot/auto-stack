@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ func TestCheckStaleCorrectHash(t *testing.T) {
 	hash := frontmatter.ComputeHash(&doc)
 
 	entries := []doctree.Entry{
-		{RelPath: "test.md", Title: "Test", Summary: "A test", Hash: hash, Body: body},
+		{RelPath: "test.md", Title: "Test", Summary: "A test", ReadWhen: "when testing", Hash: hash, Body: body},
 	}
 
 	result := CheckStale(entries)
@@ -57,6 +58,7 @@ func TestStaleThenFixedRemovesFromStale(t *testing.T) {
 	ws.WriteFile("docs/guide.md", `---
 title: "User Guide"
 summary: "Old summary"
+read_when: "when updating the getting started guide"
 hash: "wronghsh"
 ---
 
@@ -113,7 +115,7 @@ func TestStaleOutputShowsStale(t *testing.T) {
 	// Write one file with correct hash and one with wrong hash
 	doc := frontmatter.Doc{Title: "Good", Summary: "A good doc", Body: "\n# Good\n"}
 	goodHash := frontmatter.ComputeHash(&doc)
-	ws.WriteDocWithHash("good.md", "Good", "A good doc", goodHash, "# Good")
+	ws.WriteFile("docs/good.md", fmt.Sprintf("---\ntitle: \"Good\"\nsummary: \"A good doc\"\nread_when: \"when testing\"\nhash: %q\n---\n\n# Good\n", goodHash))
 	ws.WriteDocWithHash("bad.md", "Bad", "A bad doc", "wronghsh", "# Bad")
 
 	entries, err := doctree.Walk(ws.Path("docs"))
@@ -131,6 +133,21 @@ func TestStaleOutputShowsStale(t *testing.T) {
 	}
 	if !strings.Contains(output, "A good doc") {
 		t.Error("stale output missing good doc summary")
+	}
+}
+
+func TestStaleFlagsMissingReadWhen(t *testing.T) {
+	body := "\n# Test\n"
+	doc := frontmatter.Doc{Title: "Test", Summary: "A test", Body: body}
+	hash := frontmatter.ComputeHash(&doc)
+
+	entries := []doctree.Entry{
+		{RelPath: "test.md", Title: "Test", Summary: "A test", Hash: hash, Body: body},
+	}
+
+	result := CheckStale(entries)
+	if !result.HasStale {
+		t.Error("expected stale for missing read_when")
 	}
 }
 
