@@ -59,6 +59,27 @@ func bad() {
 	}
 }
 
+func TestScanFilesSkipsDataFileExtensions(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	// Content that would otherwise match the malformed detector.
+	junk := `{"description":"see [autodoc(abcdefgh@deadbeef, 12345678)] for context"}` + "\n"
+	ws.WriteSourceFile(".beads/issues.jsonl", junk)
+	ws.WriteSourceFile("data/records.ndjson", junk)
+	ws.WriteSourceFile("config.json", junk)
+	ws.InitGitRepo()
+
+	result, err := ScanFiles(ws.Dir)
+	if err != nil {
+		t.Fatalf("ScanFiles: %v", err)
+	}
+	if len(result.Tags) != 0 {
+		t.Fatalf("len(result.Tags) = %d, want 0 (data files should be skipped)", len(result.Tags))
+	}
+	if len(result.Malformed) != 0 {
+		t.Fatalf("len(result.Malformed) = %d, want 0 (data files should be skipped)", len(result.Malformed))
+	}
+}
+
 func TestScanFilesOnlyTrackedFiles(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
 	ws.WriteSourceFile("tracked.go", "// [autodoc(deadbeef@cafebabe, 01234567)]\n")

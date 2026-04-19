@@ -109,6 +109,40 @@ outside
 	}
 }
 
+func TestScanMarkdownDocsIgnoresInlineCodeMentions(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteFile("docs/guide.md", strings.TrimLeft(`
+---
+id: "feedface"
+title: "Guide"
+summary: "Guide doc"
+hash: "00000000"
+---
+
+# Guide
+
+Skills use the `+"`[autodoc(<docId>@<docHash>, <scopeHash>)]`"+` comment syntax. Place it as an HTML comment (`+"`<!-- [autodoc(...)] -->`"+`) above the section.
+
+Typos like `+"`<!-- [autodoc(abc@def) -->`"+` or `+"`<!-- [autodoc(abcdefgh@deadbeef, 123)] -->`"+` emit malformed errors.
+`, "\n"))
+
+	entries, err := doctree.WalkRepo(ws.Dir, "docs")
+	if err != nil {
+		t.Fatalf("WalkRepo: %v", err)
+	}
+
+	result, err := ScanMarkdownDocs(entries)
+	if err != nil {
+		t.Fatalf("ScanMarkdownDocs: %v", err)
+	}
+	if len(result.Tags) != 0 {
+		t.Fatalf("len(result.Tags) = %d, want 0", len(result.Tags))
+	}
+	if len(result.Malformed) != 0 {
+		t.Fatalf("len(result.Malformed) = %d, want 0 (inline code spans should be treated as prose)", len(result.Malformed))
+	}
+}
+
 func TestScanMarkdownDocsIgnoresFencedExamples(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
 	ws.WriteFile("docs/guide.md", strings.TrimLeft(`

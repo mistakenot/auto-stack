@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, d360d1db)]
+// [autodoc(e8d3cf9c@34e92e15, f407732a)]
 package linkscan
 
 import (
@@ -40,6 +40,8 @@ var ignoredExtensions = map[string]bool{
 	".md":       true,
 	".markdown": true,
 	".json":     true,
+	".jsonl":    true,
+	".ndjson":   true,
 	".yaml":     true,
 	".yml":      true,
 	".toml":     true,

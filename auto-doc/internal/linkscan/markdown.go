@@ -17,6 +17,7 @@ import (
 var markdownTagLineRegex = regexp.MustCompile(`^\s*<!--\s*(\[autodoc\([^)]*\)\])\s*-->\s*$`)
 var markdownTagStripLineRegex = regexp.MustCompile(`^\s*<!--\s*\[autodoc\([^)]*\)\]\s*-->\s*$`)
 var markdownHeadingRegex = regexp.MustCompile(`^(#{1,6})[ \t]+.*$`)
+var markdownInlineCodeRegex = regexp.MustCompile("`+[^`]*`+")
 
 func ScanMarkdownDocs(entries []doctree.Entry) (ScanResult, error) {
 	var result ScanResult
@@ -38,11 +39,17 @@ func ScanMarkdownDocs(entries []doctree.Entry) (ScanResult, error) {
 			lineNo := i + 1
 			parser.updateFenceState(line)
 
-			if parser.inFence || !strings.Contains(line, "<!--") || !strings.Contains(line, "[autodoc(") {
+			if parser.inFence {
 				continue
 			}
 
-			if !strings.Contains(line, "@") || !strings.Contains(line, "-->") {
+			// Inline code spans (backtick-delimited) are prose, not tags.
+			stripped := stripInlineCode(line)
+			if !strings.Contains(stripped, "<!--") || !strings.Contains(stripped, "[autodoc(") {
+				continue
+			}
+
+			if !strings.Contains(stripped, "@") || !strings.Contains(stripped, "-->") {
 				continue
 			}
 
@@ -224,6 +231,10 @@ func (p *markdownParser) findScopeEnd(anchorLine int, anchorDepth int) int {
 		}
 	}
 	return len(p.lines) + 1
+}
+
+func stripInlineCode(line string) string {
+	return markdownInlineCodeRegex.ReplaceAllString(line, "")
 }
 
 func normalizeLines(content string) []string {
