@@ -242,6 +242,7 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 
 **auto-env/docs**
 
+- [AutoEnv V1 Requirements](auto-env/docs/requirements-v1.md)
 - [AutoEnv Requirements](auto-env/docs/requirements.md): Requirements for autoenv: manage isolated development environments for worktree-based coding agents, handling port allocation, databases, logs, and service lifecycle to avoid conflicts across concurrent instances. Read when: when implementing autoenv or managing multi-worktree development environments
 
 **auto-web/docs**
@@ -270,6 +271,8 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 - [Research: Blogs](docs/research/blogs.md): Collected blog and reference links relevant to the auto-stack research and development process. Read when: when researching external references on agent engineering or tooling
 - [Research: Agent Engineering Principles (Tweets)](docs/research/tweets.md): Curated research notes on agent engineering principles covering progressive disclosure, worktree isolation, spec-first development, architecture enforcement, and integrated feedback loops. Read when: when understanding core agent engineering principles
 <!-- autodoc: end -->
+
+
 
 
 
