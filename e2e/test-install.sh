@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
 #
-# E2E test: install auto-stack from GitHub releases into a fresh Linux container,
+# E2E test: install auto-stack into a fresh Linux container,
 # then run init for all tools and validate the resulting directory structure.
 #
 # Usage:
-#   ./e2e/test-install.sh          # test latest release
-#   ./e2e/test-install.sh v0.1.0   # test a specific tag
+#   ./e2e/test-install.sh              # test latest release
+#   ./e2e/test-install.sh v0.1.0       # test a specific tag
+#   ./e2e/test-install.sh --local      # test locally-built binaries from bin/
 #
 set -euo pipefail
 
-TAG="${1:-}"
+LOCAL_MODE=false
+TAG=""
+if [ "${1:-}" = "--local" ]; then
+    LOCAL_MODE=true
+elif [ -n "${1:-}" ]; then
+    TAG="$1"
+fi
+
 IMAGE="ubuntu:24.04"
 CONTAINER_NAME="autostack-install-test-$$"
 REPO="mistakenot/auto-stack"
 INSTALL_URL="https://raw.githubusercontent.com/${REPO}/main/install.sh"
-BINARIES="autodoc autoetl autosearch autowatch"
+BINARIES="autodoc autoenv autoetl autosearch autoskill autowatch"
 BIN_DIR="/root/.local/bin"
 PROJECT_DIR="/root/src/testproject"
 
@@ -68,8 +76,21 @@ for p in parts:
 echo "=== auto-stack install e2e test ==="
 echo "Image:  $IMAGE"
 
-# If a tag was given, verify the release exists before spinning up a container.
-if [ -n "$TAG" ]; then
+if [ "$LOCAL_MODE" = true ]; then
+    echo "Mode:   local (bin/)"
+    SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+    BIN_SRC="$SCRIPT_DIR/bin"
+    if [ ! -d "$BIN_SRC" ]; then
+        echo "FAIL: bin/ directory not found — run 'make build' first" >&2
+        exit 1
+    fi
+    for bin in $BINARIES; do
+        if [ ! -f "$BIN_SRC/$bin" ]; then
+            echo "FAIL: $BIN_SRC/$bin not found — run 'make build' first" >&2
+            exit 1
+        fi
+    done
+elif [ -n "$TAG" ]; then
     echo "Tag:    $TAG"
     if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
         echo "FAIL: release $TAG not found" >&2
@@ -88,8 +109,17 @@ docker exec "$CONTAINER_NAME" bash -c "apt-get update -qq && apt-get install -y 
 # ============================================================
 # Phase 1: Install binaries
 # ============================================================
-echo "--- running install.sh ---"
-docker exec "$CONTAINER_NAME" bash -c "curl -fsSL '$INSTALL_URL' | bash"
+if [ "$LOCAL_MODE" = true ]; then
+    echo "--- copying local binaries ---"
+    docker exec "$CONTAINER_NAME" mkdir -p "$BIN_DIR"
+    for bin in $BINARIES; do
+        docker cp "$BIN_SRC/$bin" "$CONTAINER_NAME:$BIN_DIR/$bin"
+        docker exec "$CONTAINER_NAME" chmod +x "$BIN_DIR/$bin"
+    done
+else
+    echo "--- running install.sh ---"
+    docker exec "$CONTAINER_NAME" bash -c "curl -fsSL '$INSTALL_URL' | bash"
+fi
 
 echo ""
 echo "--- validating binaries ---"
@@ -139,7 +169,14 @@ docker exec "$CONTAINER_NAME" bash -c "$BIN_DIR/autosearch init" 2>&1 | sed 's/^
 # autowatch: global init then project init
 docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/autowatch init" 2>&1 | sed 's/^/  [autowatch] /'
 
+# autoenv: project init only (no global state)
+docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/autoenv init" 2>&1 | sed 's/^/  [autoenv] /'
+
 # autoetl: no init command
+
+# autoskill: global init, then project init
+docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/autoskill init" 2>&1 | sed 's/^/  [autoskill] /'
+docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/autoskill init --project" 2>&1 | sed 's/^/  [autoskill] /'
 
 # ============================================================
 # Phase 3: Validate ~/.auto global structure
@@ -169,6 +206,10 @@ assert_file "/root/.auto/watch/settings.json"     "autowatch global settings"
 assert_json_field "/root/.auto/watch/settings.json" "projects" "autowatch has projects array"
 assert_dir  "/root/.auto/watch/runs"              "autowatch runs dir"
 
+# autoskill global
+assert_dir  "/root/.auto/skill"                   "autoskill global dir"
+assert_file "/root/.auto/skill/settings.json"      "autoskill global settings"
+
 # ============================================================
 # Phase 4: Validate project .auto structure
 # ============================================================
@@ -183,6 +224,19 @@ assert_file "$PROJECT_DIR/.auto/doc/settings.json"      "autodoc project setting
 assert_json_field "$PROJECT_DIR/.auto/doc/settings.json" "docsDir" "autodoc has docsDir"
 assert_file "$PROJECT_DIR/.auto/doc/.gitignore"         "autodoc project gitignore"
 assert_dir  "$PROJECT_DIR/docs"                         "docs directory created"
+
+# autoenv project
+assert_dir  "$PROJECT_DIR/.auto/env"                    "autoenv project dir"
+assert_file "$PROJECT_DIR/.auto/env/config.json"        "autoenv config"
+assert_json_field "$PROJECT_DIR/.auto/env/config.json" "up_command" "autoenv has up_command"
+assert_json_field "$PROJECT_DIR/.auto/env/config.json" "down_command" "autoenv has down_command"
+assert_dir  "$PROJECT_DIR/.auto/env/files"              "autoenv files dir"
+assert_file "$PROJECT_DIR/.auto/env/.gitignore"         "autoenv gitignore"
+
+# autoskill project
+assert_dir  "$PROJECT_DIR/.auto/skill"                  "autoskill project dir"
+assert_file "$PROJECT_DIR/.auto/skill/settings.json"    "autoskill project settings"
+assert_dir  "$PROJECT_DIR/skills"                       "skills directory created"
 
 # autowatch project
 assert_dir  "$PROJECT_DIR/.auto/watch"                  "autowatch project dir"

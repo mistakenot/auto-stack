@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="mistakenot/auto-stack"
 INSTALL_DIR="$HOME/.local/bin"
-BINARIES="autodoc autoetl autosearch autoskill autowatch"
+BINARIES="autodoc autoenv autoetl autosearch autoskill autowatch"
 
 # Detect platform
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
