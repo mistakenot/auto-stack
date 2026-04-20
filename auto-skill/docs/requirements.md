@@ -1,7 +1,7 @@
 ---
 hash: "2d076b8b"
 id: "8c156daa"
-read_when: "when implementing autoskill create, lint, and skill validation commands"
+read_when: "implementing autoskill create, lint, and skill validation commands"
 summary: "Requirements for autoskill: agent skill management, linting, and scaffolding"
 title: "autoskill — Requirements"
 ---

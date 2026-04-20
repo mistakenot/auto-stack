@@ -1,7 +1,7 @@
 ---
 hash: "29cf1abf"
 id: "b3e7f290"
-read_when: "when analyzing doc discovery patterns or improving doc tooling"
+read_when: "analyzing doc discovery patterns or improving doc tooling"
 summary: "Analysis of how agents interact with documentation files across 420 coding sessions, revealing that docs are seen constantly but read rarely, discovery bypasses the tooling, and user direction is the primary driver of doc consumption."
 title: "Doc File Usage in Agent Sessions: Findings and Structural Insights"
 ---

@@ -1,7 +1,7 @@
 ---
 hash: "621f8248"
 id: "26b2da6c"
-read_when: "when implementing auto-etl schema updates or normalizing parquet field population"
+read_when: "implementing auto-etl schema updates or normalizing parquet field population"
 summary: "Phased plan to bring auto-etl output schema in line with the user-journey spec, covering blob removal, git metadata, session transcripts, and field population."
 title: "Plan: Schema Cleanup — Align with User-Journey Spec"
 ---

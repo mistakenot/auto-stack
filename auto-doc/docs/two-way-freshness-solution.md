@@ -1,7 +1,7 @@
 ---
 hash: "34e92e15"
 id: "e8d3cf9c"
-read_when: "when implementing two-way freshness checking between code and documentation"
+read_when: "implementing two-way freshness checking between code and documentation"
 summary: "Implementation details for two-way code-doc freshness checks in autodoc."
 title: "Two-Way Freshness: Technical Solution"
 ---

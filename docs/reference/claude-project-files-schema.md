@@ -1,7 +1,7 @@
 ---
 hash: "6fbb1345"
 id: "17bfbcbb"
-read_when: "when parsing Claude Code session files or understanding ETL data"
+read_when: "parsing Claude Code session files or understanding ETL data"
 summary: "Reference for the on-disk JSONL file format produced by Claude Code sessions, covering directory structure, line types, content blocks, token usage, subagent files, and tool-results directories."
 title: "Claude Code Project Files Schema"
 ---

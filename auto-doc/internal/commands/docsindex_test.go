@@ -122,21 +122,21 @@ func TestDocsIndexMissingSummary(t *testing.T) {
 
 func TestDocsIndexWithReadWhen(t *testing.T) {
 	entries := []doctree.Entry{
-		{RelPath: "guide.md", RepoRelPath: "docs/guide.md", Title: "Guide", Summary: "How to use", ReadWhen: "when onboarding new users"},
+		{RelPath: "guide.md", RepoRelPath: "docs/guide.md", Title: "Guide", Summary: "How to use", ReadWhen: "onboarding new users"},
 	}
 
 	var buf bytes.Buffer
 	DocsIndex(&buf, entries, "docs")
 	output := buf.String()
 
-	if !strings.Contains(output, ". Read when: when onboarding new users") {
+	if !strings.Contains(output, ". Read when: onboarding new users") {
 		t.Fatalf("expected read_when inline, got:\n%s", output)
 	}
 }
 
 func TestDocsIndexReadWhenWithoutSummary(t *testing.T) {
 	entries := []doctree.Entry{
-		{RelPath: "bare.md", RepoRelPath: "docs/bare.md", Title: "Bare", Summary: "", ReadWhen: "when testing"},
+		{RelPath: "bare.md", RepoRelPath: "docs/bare.md", Title: "Bare", Summary: "", ReadWhen: "testing"},
 	}
 
 	var buf bytes.Buffer

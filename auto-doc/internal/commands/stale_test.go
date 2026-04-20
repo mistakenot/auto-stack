@@ -18,7 +18,7 @@ func TestCheckStaleCorrectHash(t *testing.T) {
 	hash := frontmatter.ComputeHash(&doc)
 
 	entries := []doctree.Entry{
-		{RelPath: "test.md", Title: "Test", Summary: "A test", ReadWhen: "when testing", Hash: hash, Body: body},
+		{RelPath: "test.md", Title: "Test", Summary: "A test", ReadWhen: "testing", Hash: hash, Body: body},
 	}
 
 	result := CheckStale(entries)
@@ -58,7 +58,7 @@ func TestStaleThenFixedRemovesFromStale(t *testing.T) {
 	ws.WriteFile("docs/guide.md", `---
 title: "User Guide"
 summary: "Old summary"
-read_when: "when updating the getting started guide"
+read_when: "updating the getting started guide"
 hash: "wronghsh"
 ---
 
@@ -115,7 +115,7 @@ func TestStaleOutputShowsStale(t *testing.T) {
 	// Write one file with correct hash and one with wrong hash
 	doc := frontmatter.Doc{Title: "Good", Summary: "A good doc", Body: "\n# Good\n"}
 	goodHash := frontmatter.ComputeHash(&doc)
-	ws.WriteFile("docs/good.md", fmt.Sprintf("---\ntitle: \"Good\"\nsummary: \"A good doc\"\nread_when: \"when testing\"\nhash: %q\n---\n\n# Good\n", goodHash))
+	ws.WriteFile("docs/good.md", fmt.Sprintf("---\ntitle: \"Good\"\nsummary: \"A good doc\"\nread_when: \"testing\"\nhash: %q\n---\n\n# Good\n", goodHash))
 	ws.WriteDocWithHash("bad.md", "Bad", "A bad doc", "wronghsh", "# Bad")
 
 	entries, err := doctree.Walk(ws.Path("docs"))

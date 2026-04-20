@@ -1,7 +1,7 @@
 ---
 hash: "3092b420"
 id: "96330979"
-read_when: "when designing metrics or feedback signals from session data"
+read_when: "designing metrics or feedback signals from session data"
 summary: "Exploration of how raw coding session data can be transformed into actionable signals indicating what is working well or poorly in a codebase."
 title: "Signals"
 ---

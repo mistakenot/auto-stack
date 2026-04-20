@@ -1,7 +1,7 @@
 ---
 hash: "e50cf1d7"
 id: "463f31b9"
-read_when: "when reviewing user-journey open questions or implementation roadmap"
+read_when: "reviewing user-journey open questions or implementation roadmap"
 summary: "Open questions and action items from reviewing the auto-stack user journey document for consistency and end-to-end coherence."
 title: "Review: user-journey.md"
 ---

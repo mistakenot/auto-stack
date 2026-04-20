@@ -22,7 +22,7 @@ func TestE2EMarkdownEmbeddedTagsLifecycle(t *testing.T) {
 id: "deadbeef"
 title: "Reference"
 summary: "Reference doc"
-read_when: "when updating the shared reference"
+read_when: "updating the shared reference"
 hash: "00000000"
 ---
 
@@ -37,7 +37,7 @@ Canonical content.
 id: "feedface"
 title: "Consumer"
 summary: "Consumer doc"
-read_when: "when updating consumer docs"
+read_when: "updating consumer docs"
 hash: "00000000"
 ---
 <!-- [autodoc(deadbeef@00000000, 00000000)] -->
@@ -53,7 +53,7 @@ Whole-doc content.
 id: "c0ffee00"
 title: "Section Scoped"
 summary: "Section scoped doc"
-read_when: "when updating section scoped docs"
+read_when: "updating section scoped docs"
 hash: "00000000"
 ---
 

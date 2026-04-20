@@ -146,17 +146,17 @@ func TestComputeHashIgnoresId(t *testing.T) {
 }
 
 func TestParseReadWhen(t *testing.T) {
-	input := "---\ntitle: \"Test\"\nsummary: \"A test\"\nread_when: \"when modifying auth\"\nhash: \"12345678\"\n---\n\n# Body\n"
+	input := "---\ntitle: \"Test\"\nsummary: \"A test\"\nread_when: \"modifying auth\"\nhash: \"12345678\"\n---\n\n# Body\n"
 	doc := Parse(input)
-	if doc.ReadWhen != "when modifying auth" {
-		t.Errorf("ReadWhen = %q, want %q", doc.ReadWhen, "when modifying auth")
+	if doc.ReadWhen != "modifying auth" {
+		t.Errorf("ReadWhen = %q, want %q", doc.ReadWhen, "modifying auth")
 	}
 }
 
 func TestComputeHashIgnoresReadWhen(t *testing.T) {
 	doc := Doc{Title: "Test", Summary: "A test", Body: "\n# Body\n"}
 	withReadWhen := doc
-	withReadWhen.ReadWhen = "when modifying auth"
+	withReadWhen.ReadWhen = "modifying auth"
 	if got, want := ComputeHash(&withReadWhen), ComputeHash(&doc); got != want {
 		t.Fatalf("ComputeHash should ignore read_when, got %q want %q", got, want)
 	}
@@ -171,11 +171,11 @@ func TestSerializeOmitsEmptyReadWhen(t *testing.T) {
 }
 
 func TestSerializeIncludesReadWhen(t *testing.T) {
-	doc := Doc{Title: "Title", Summary: "Summary", ReadWhen: "when testing", Hash: "12345678"}
+	doc := Doc{Title: "Title", Summary: "Summary", ReadWhen: "testing", Hash: "12345678"}
 	s := Serialize(&doc)
 	parsed := Parse(s)
-	if parsed.ReadWhen != "when testing" {
-		t.Fatalf("round-trip ReadWhen = %q, want %q", parsed.ReadWhen, "when testing")
+	if parsed.ReadWhen != "testing" {
+		t.Fatalf("round-trip ReadWhen = %q, want %q", parsed.ReadWhen, "testing")
 	}
 }
 

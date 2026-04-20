@@ -1,7 +1,7 @@
 ---
 hash: "dda3d92c"
 id: "9c27e5d1"
-read_when: "when implementing date filtering in autosearch or time-bounded session queries"
+read_when: "implementing date filtering in autosearch or time-bounded session queries"
 summary: "Implementation plan for autosearch date filters (`--since`, `--after`, `--before`) across message and session search, including validation, SQL wiring, and test coverage."
 title: "AutoSearch Date Filter Implementation"
 ---

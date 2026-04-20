@@ -114,7 +114,7 @@ func TestE2EOneDocReferencedByManyFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	doc := frontmatter.Doc{Id: "deadbeef", Title: "Shared", Summary: "Shared doc", ReadWhen: "when using shared resources", Hash: "", Body: "\n# Shared\n"}
+	doc := frontmatter.Doc{Id: "deadbeef", Title: "Shared", Summary: "Shared doc", ReadWhen: "using shared resources", Hash: "", Body: "\n# Shared\n"}
 	if err := os.WriteFile(filepath.Join(workspace, "docs", "shared.md"), []byte(frontmatter.Serialize(&doc)), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestE2EMultipleTagsOneFileIsolatedScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	doc := frontmatter.Doc{Id: "deadbeef", Title: "Cache", Summary: "Cache doc", ReadWhen: "when modifying cache logic", Hash: "", Body: "\n# Cache\n"}
+	doc := frontmatter.Doc{Id: "deadbeef", Title: "Cache", Summary: "Cache doc", ReadWhen: "modifying cache logic", Hash: "", Body: "\n# Cache\n"}
 	if err := os.WriteFile(filepath.Join(workspace, "docs", "cache.md"), []byte(frontmatter.Serialize(&doc)), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -1,7 +1,7 @@
 ---
 hash: "e5f34098"
 id: "ecafb95b"
-read_when: "when implementing two-way freshness links between documentation files"
+read_when: "implementing two-way freshness links between documentation files"
 summary: "Technical design for dropping [autodoc()] links inside any markdown file as HTML comments, with header-depth-based scope selection for freshness checks across doc-to-doc dependencies."
 title: "Markdown-Embedded Autodoc Tags Technical Design"
 ---

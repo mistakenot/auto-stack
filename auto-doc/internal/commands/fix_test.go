@@ -303,7 +303,7 @@ func TestFixReportsEmptyReadWhen(t *testing.T) {
 
 func TestFixNoIssueWhenReadWhenPresent(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
-	ws.WriteDocWithReadWhen("guide.md", "Guide", "How to use the guide", "when updating the guide", "# Guide")
+	ws.WriteDocWithReadWhen("guide.md", "Guide", "How to use the guide", "updating the guide", "# Guide")
 
 	guidePath := ws.Path("docs/guide.md")
 	if err := Fixed(guidePath, "", ""); err != nil {

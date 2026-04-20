@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, ce30d4f3)]
+// [autodoc(e8d3cf9c@34e92e15, 4532114a)]
 package commands
 
 import (
@@ -171,7 +171,7 @@ func writeDocFreshness(w io.Writer, parallelism int, issues []docIssue) {
 	fmt.Fprintln(w, "---")
 	fmt.Fprintln(w, `title: "Human-Readable Title"`)
 	fmt.Fprintln(w, `summary: "One-line summary of the document's content"`)
-	fmt.Fprintln(w, `read_when: "when modifying the auth middleware"`)
+	fmt.Fprintln(w, `read_when: "modifying the auth middleware"`)
 	fmt.Fprintln(w, "---")
 	fmt.Fprintln(w, "```")
 	fmt.Fprintln(w)
@@ -202,7 +202,7 @@ func writeDocFreshness(w io.Writer, parallelism int, issues []docIssue) {
 			if iss.MissingFM {
 				fmt.Fprintln(w, "- Add frontmatter with `title`, `summary`, and `read_when` fields.")
 				fmt.Fprintln(w, "- Set `summary` to a one-line description of the file's content.")
-				fmt.Fprintln(w, "- Set `read_when` to a short sentence describing when an agent should read this file.")
+				fmt.Fprintln(w, "- Set `read_when` to a short phrase describing the situation an agent should read this file (omit the leading \"when\").")
 			}
 			if iss.DefaultTitle {
 				fmt.Fprintln(w, "- Set `title` to a human-readable version based on the content or main H1 heading.")
@@ -211,7 +211,7 @@ func writeDocFreshness(w io.Writer, parallelism int, issues []docIssue) {
 				fmt.Fprintln(w, "- Set `summary` to a one-line description of the file's content.")
 			}
 			if iss.EmptyReadWhen && !iss.MissingFM {
-				fmt.Fprintln(w, "- Set `read_when` to a short sentence describing when an agent should read this file.")
+				fmt.Fprintln(w, "- Set `read_when` to a short phrase describing the situation an agent should read this file (omit the leading \"when\").")
 			}
 			if iss.StaleHash && !iss.MissingFM && !iss.DefaultTitle && !iss.EmptySummary {
 				fmt.Fprintln(w, "- Review that `title` and `summary` still accurately reflect the content.")

@@ -1,7 +1,7 @@
 ---
 hash: "602f82e4"
 id: "7e454001"
-read_when: "when understanding core agent engineering principles"
+read_when: "understanding core agent engineering principles"
 summary: "Curated research notes on agent engineering principles covering progressive disclosure, worktree isolation, spec-first development, architecture enforcement, and integrated feedback loops."
 title: "Research: Agent Engineering Principles (Tweets)"
 ---

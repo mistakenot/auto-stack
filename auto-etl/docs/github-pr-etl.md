@@ -1,7 +1,7 @@
 ---
 hash: "2f3f58e9"
 id: "badba584"
-read_when: "when implementing GitHub PR ETL ingestion or querying PR feedback datasets"
+read_when: "implementing GitHub PR ETL ingestion or querying PR feedback datasets"
 summary: "Spec for ingesting merged GitHub PR feedback (reviews, comments, diffs, CI checks) into parquet datasets via auto-etl."
 title: "GitHub PR Feedback ETL"
 ---

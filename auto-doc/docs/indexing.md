@@ -1,7 +1,7 @@
 ---
 hash: "9324b2f6"
 id: "bdc8c577"
-read_when: "when researching search indexing strategies and BM25 implementation approaches"
+read_when: "researching search indexing strategies and BM25 implementation approaches"
 summary: "Research notes on BM25 search implementation using Bluge"
 title: "Full Text Search"
 ---

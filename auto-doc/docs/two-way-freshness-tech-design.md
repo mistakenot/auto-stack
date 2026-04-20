@@ -1,7 +1,7 @@
 ---
 hash: "a854db23"
 id: "6450267b"
-read_when: "when designing two-way freshness mechanisms for documentation and code"
+read_when: "designing two-way freshness mechanisms for documentation and code"
 summary: "Technical design for implementing two-way freshness between docs and code tags in autodoc."
 title: "Two-Way Freshness Technical Design"
 ---

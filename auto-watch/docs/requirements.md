@@ -1,7 +1,7 @@
 ---
 hash: "62212252"
 id: "50e72364"
-read_when: "when planning autowatch CLI surface and task scheduling behavior"
+read_when: "planning autowatch CLI surface and task scheduling behavior"
 summary: "V1 requirements for autowatch — a cron-driven daemon that monitors repositories and launches bash or Claude Code tasks in response."
 title: "autowatch — Requirements"
 ---

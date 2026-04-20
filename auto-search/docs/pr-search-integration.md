@@ -1,7 +1,7 @@
 ---
 hash: "9a4ddc14"
 id: "a3f7e291"
-read_when: "when adding GitHub PR and comment search to autosearch"
+read_when: "adding GitHub PR and comment search to autosearch"
 summary: "Design for indexing GitHub PR feedback in autosearch: schema, FTS strategy, query access patterns, CLI surface, and reflection-agent workflows."
 title: "PR Search Integration"
 ---

@@ -123,7 +123,7 @@ func TestFixOutputJSON(t *testing.T) {
 
 func TestTreeOutputJSONIncludesReadWhen(t *testing.T) {
 	entries := []doctree.Entry{
-		{RelPath: "guide.md", RepoRelPath: "docs/guide.md", Title: "Guide", Summary: "A guide", ReadWhen: "when onboarding", Hash: "12345678"},
+		{RelPath: "guide.md", RepoRelPath: "docs/guide.md", Title: "Guide", Summary: "A guide", ReadWhen: "onboarding", Hash: "12345678"},
 	}
 
 	var buf bytes.Buffer
@@ -135,8 +135,8 @@ func TestTreeOutputJSONIncludesReadWhen(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &docs); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	if docs[0].ReadWhen != "when onboarding" {
-		t.Errorf("read_when = %q, want %q", docs[0].ReadWhen, "when onboarding")
+	if docs[0].ReadWhen != "onboarding" {
+		t.Errorf("read_when = %q, want %q", docs[0].ReadWhen, "onboarding")
 	}
 }
 

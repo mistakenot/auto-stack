@@ -35,11 +35,12 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 
 **auto-skill/docs**
 
-- [Coding Agents Skill Guidance](auto-skill/docs/coding_agents_guidance.md): Comprehensive reference for Claude Code, Codex, and OpenCode skill architecture, discovery, loading, and best practices for skill authors. Read when: when authoring agent skills or designing skill discovery systems
-- [important_if Skill Metadata for Agent File Injection](auto-skill/docs/important-if-feature.md): Design for skills to declare trigger conditions that get auto-injected as important-if blocks in CLAUDE.md. Read when: when implementing skill-to-agent-file injection or important_if metadata
-- [Meta Skill (ms) — Reference](auto-skill/docs/meta_skill.md): Technical reference for the meta_skill Rust CLI: architecture, data model, mining pipeline, search, security, and distribution. Read when: when implementing autoskill mining, search, and skill distribution
-- [autoskill — Requirements](auto-skill/docs/requirements.md): Requirements for autoskill: agent skill management, linting, and scaffolding. Read when: when implementing autoskill create, lint, and skill validation commands
+- [Coding Agents Skill Guidance](auto-skill/docs/coding_agents_guidance.md): Comprehensive reference for Claude Code, Codex, and OpenCode skill architecture, discovery, loading, and best practices for skill authors. Read when: authoring agent skills or designing skill discovery systems
+- [important_if Skill Metadata for Agent File Injection](auto-skill/docs/important-if-feature.md): Design for skills to declare trigger conditions that get auto-injected as important-if blocks in CLAUDE.md. Read when: implementing skill-to-agent-file injection or important_if metadata
+- [Meta Skill (ms) — Reference](auto-skill/docs/meta_skill.md): Technical reference for the meta_skill Rust CLI: architecture, data model, mining pipeline, search, security, and distribution. Read when: implementing autoskill mining, search, and skill distribution
+- [autoskill — Requirements](auto-skill/docs/requirements.md): Requirements for autoskill: agent skill management, linting, and scaffolding. Read when: implementing autoskill create, lint, and skill validation commands
 <!-- autodoc: end -->
+
 
 
 

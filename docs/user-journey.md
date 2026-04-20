@@ -1,7 +1,7 @@
 ---
 hash: "4a6d6cd7"
 id: "81eb7b5a"
-read_when: "when understanding the end-to-end auto-stack workflow and architecture"
+read_when: "understanding the end-to-end auto-stack workflow and architecture"
 summary: "End-to-end walkthrough of the Auto stack: from doc management and session ETL through search, reflection, and automated task scheduling."
 title: "Auto Stack User Journey"
 ---

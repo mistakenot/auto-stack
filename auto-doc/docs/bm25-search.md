@@ -1,7 +1,7 @@
 ---
 hash: "2fd626aa"
 id: "6f55b37d"
-read_when: "when implementing full-text search indexing for documentation"
+read_when: "implementing full-text search indexing for documentation"
 summary: "Full-text keyword search over docs using BM25 scoring via Bluge"
 title: "BM25 Keyword Search"
 ---

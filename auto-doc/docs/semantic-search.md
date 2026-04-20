@@ -1,7 +1,7 @@
 ---
 hash: "a89d6902"
 id: "b65a8bb0"
-read_when: "when exploring semantic search and embedding-based retrieval for documentation"
+read_when: "exploring semantic search and embedding-based retrieval for documentation"
 summary: "Research notes on semantic search using hugot and Go-native embeddings"
 title: "Semantic Search"
 ---

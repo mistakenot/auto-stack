@@ -1,7 +1,7 @@
 ---
 hash: "d882f64c"
 id: "7d9b2f41"
-read_when: "when implementing autosearch stats command and grouped aggregations"
+read_when: "implementing autosearch stats command and grouped aggregations"
 summary: "Requirements for autosearch grouping and aggregation functionality, including prioritized use cases and concrete CLI examples."
 title: "AutoSearch Grouping Requirements"
 ---

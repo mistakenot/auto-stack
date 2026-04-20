@@ -1,7 +1,7 @@
 ---
 hash: "4f5c8f38"
 id: "f7b21d3a"
-read_when: "when validating coding agent configuration or setting up development environments"
+read_when: "validating coding agent configuration or setting up development environments"
 summary: "Requirements for autoconfig: validate and manage Claude/Codex agent configuration, set session names, and provide utility functions for coding agent environments."
 title: "AutoConfig Requirements"
 ---

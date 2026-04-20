@@ -1,7 +1,7 @@
 ---
 hash: "a99c802f"
 id: "91bc2e67"
-read_when: "when implementing autoskill mining, search, and skill distribution"
+read_when: "implementing autoskill mining, search, and skill distribution"
 summary: "Technical reference for the meta_skill Rust CLI: architecture, data model, mining pipeline, search, security, and distribution"
 title: "Meta Skill (ms) — Reference"
 ---

@@ -1,7 +1,7 @@
 ---
 hash: "dfccbb6c"
 id: "autoenv-v1-requirements"
-read_when: "when implementing autoenv v1 or understanding the simplified environment management design"
+read_when: "implementing autoenv v1 or understanding the simplified environment management design"
 summary: "V1 spec for autoenv: template-based config file generation with deterministic per-worktree port allocation, supporting init/up/down/status commands with auto-restart and file-only manifest tracking."
 title: "AutoEnv V1 Requirements"
 ---

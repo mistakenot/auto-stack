@@ -219,7 +219,7 @@ func TestAgentsCreatesRootFallbackOwnerForNestedDocs(t *testing.T) {
 
 func TestAgentsIncludesReadWhenInIndex(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
-	ws.WriteDocWithReadWhen("test.md", "Test", "A test", "when running tests", "# Test")
+	ws.WriteDocWithReadWhen("test.md", "Test", "A test", "running tests", "# Test")
 
 	err := Agents(ws.Dir, "docs", []string{"CLAUDE.md"}, nil)
 	if err != nil {
@@ -232,7 +232,7 @@ func TestAgentsIncludesReadWhenInIndex(t *testing.T) {
 	}
 
 	content := string(data)
-	if !strings.Contains(content, ". Read when: when running tests") {
+	if !strings.Contains(content, ". Read when: running tests") {
 		t.Fatalf("expected read_when in agents output:\n%s", content)
 	}
 }

@@ -1,7 +1,7 @@
 ---
 hash: "89d4d004"
 id: "a52d8c0b"
-read_when: "when building autosearch stats with SQL aggregation and bucket ranking"
+read_when: "building autosearch stats with SQL aggregation and bucket ranking"
 summary: "Technical solution sketch for autosearch grouping/statistics, including architecture, query strategy, and expected end-state UX."
 title: "AutoSearch Grouping Solution Sketch"
 ---

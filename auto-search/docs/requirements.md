@@ -1,7 +1,7 @@
 ---
 hash: "c854a908"
 id: "e712776c"
-read_when: "when planning or building autosearch CLI surface and query primitives"
+read_when: "planning or building autosearch CLI surface and query primitives"
 summary: "Requirements for autosearch: indexing normalized session history from autoetl and exposing BM25 search, session/message retrieval, and reflection workflow primitives."
 title: "AutoSearch Requirements"
 ---

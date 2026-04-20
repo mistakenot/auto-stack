@@ -1,7 +1,7 @@
 ---
 hash: "3b345bdb"
 id: "11a9fe19"
-read_when: "when implementing recursive documentation discovery across monorepo structures"
+read_when: "implementing recursive documentation discovery across monorepo structures"
 summary: "Technical PRD for autodoc to discover all `docs` directories recursively and index markdown files recursively under each."
 title: "Recursive Docs Discovery Technical PRD"
 ---

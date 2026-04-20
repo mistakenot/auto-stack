@@ -1,7 +1,7 @@
 ---
 hash: "26d7635c"
 id: "ba149ace"
-read_when: "when designing autosearch search modes, query patterns, or output formatting"
+read_when: "designing autosearch search modes, query patterns, or output formatting"
 summary: "Research notes from the coding_agent_session_search (CASS) Rust CLI covering search modes, query patterns, output formats, indexing architecture, and design patterns informing autosearch."
 title: "CASS Inspiration Notes"
 ---

@@ -1,7 +1,7 @@
 ---
 hash: "1835330a"
 id: "576fcbbf"
-read_when: "when implementing subagent session handling or deduplication in ETL"
+read_when: "implementing subagent session handling or deduplication in ETL"
 summary: "Design doc for resolving duplicate session IDs caused by Claude Code subagent files, using agentId-based unique IDs with parent linkage."
 title: "Subagent Session Deduplication"
 ---

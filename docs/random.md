@@ -1,7 +1,7 @@
 ---
 hash: "ef2ee1f7"
 id: "6356cfa1"
-read_when: "when learning the auto-stack architecture and product vision"
+read_when: "learning the auto-stack architecture and product vision"
 summary: "High-level product overview of the Auto platform: architecture, data format, tool suite, query examples, security model, and roadmap."
 title: "Auto — Agentic Coding Intelligence Platform"
 ---
