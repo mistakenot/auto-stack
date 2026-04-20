@@ -44,6 +44,7 @@
 | Directory      | Binary        | Status      | Description                                                        |
 |----------------|---------------|-------------|--------------------------------------------------------------------|
 | `auto-doc/`    | `autodoc`     | Active      | Doc management for AI agents — freshness checking, search, indexing |
+| `auto-env/`    | `autoenv`     | Active      | Template-based config generation with per-worktree port allocation  |
 | `auto-etl/`    | `autoetl`     | Active      | ETL for coding agent session histories (SSH, LXC, local)           |
 | `auto-graph/`  | `autograph`   | Early       | Context graphs built with a coding agent                           |
 | `auto-reflect/`| `autoreflect` | Early       | Analyze past sessions, extract rules for future ones               |

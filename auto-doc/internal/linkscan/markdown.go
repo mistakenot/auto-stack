@@ -22,14 +22,14 @@ var markdownInlineCodeRegex = regexp.MustCompile("`+[^`]*`+")
 func ScanMarkdownDocs(entries []doctree.Entry) (ScanResult, error) {
 	var result ScanResult
 
-	for _, entry := range entries {
-		if entry.AbsPath == "" {
+	for ei := range entries {
+		if entries[ei].AbsPath == "" {
 			continue
 		}
 
-		data, err := os.ReadFile(entry.AbsPath)
+		data, err := os.ReadFile(entries[ei].AbsPath)
 		if err != nil {
-			return result, fmt.Errorf("read %s: %w", entry.RepoRelPath, err)
+			return result, fmt.Errorf("read %s: %w", entries[ei].RepoRelPath, err)
 		}
 
 		lines := normalizeLines(string(data))
@@ -55,7 +55,7 @@ func ScanMarkdownDocs(entries []doctree.Entry) (ScanResult, error) {
 
 			if parser.inFrontmatter(lineNo) {
 				result.Malformed = append(result.Malformed, MalformedTag{
-					FilePath: entry.AbsPath,
+					FilePath: entries[ei].AbsPath,
 					Line:     lineNo,
 					RawText:  strings.TrimRight(line, "\r"),
 				})
@@ -68,7 +68,7 @@ func ScanMarkdownDocs(entries []doctree.Entry) (ScanResult, error) {
 				strict := strictTagRegex.FindStringSubmatch(inner)
 				if len(strict) == 4 {
 					result.Tags = append(result.Tags, Tag{
-						FilePath:  entry.AbsPath,
+						FilePath:  entries[ei].AbsPath,
 						Line:      lineNo,
 						DocId:     strict[1],
 						DocHash:   strict[2],
@@ -82,7 +82,7 @@ func ScanMarkdownDocs(entries []doctree.Entry) (ScanResult, error) {
 
 			if strings.Contains(line, "@") {
 				result.Malformed = append(result.Malformed, MalformedTag{
-					FilePath: entry.AbsPath,
+					FilePath: entries[ei].AbsPath,
 					Line:     lineNo,
 					RawText:  strings.TrimRight(line, "\r"),
 				})
@@ -139,17 +139,17 @@ type markdownHeading struct {
 }
 
 type markdownParser struct {
-	lines         []string
-	headings      []markdownHeading
-	bodyStartLine int
-	inFence       bool
+	lines          []string
+	headings       []markdownHeading
+	bodyStartLine  int
+	inFence        bool
 	frontmatterEnd int
 }
 
 func newMarkdownParser(lines []string) *markdownParser {
 	p := &markdownParser{
-		lines:         lines,
-		bodyStartLine: 1,
+		lines:          lines,
+		bodyStartLine:  1,
 		frontmatterEnd: -1,
 	}
 
@@ -165,7 +165,7 @@ func newMarkdownParser(lines []string) *markdownParser {
 
 	inFence := false
 	for i, line := range lines {
-		if toggleFence(line, inFence) {
+		if toggleFence(line) {
 			inFence = !inFence
 			continue
 		}
@@ -188,7 +188,7 @@ func newMarkdownParser(lines []string) *markdownParser {
 }
 
 func (p *markdownParser) updateFenceState(line string) {
-	if toggleFence(line, p.inFence) {
+	if toggleFence(line) {
 		p.inFence = !p.inFence
 	}
 }
@@ -242,12 +242,9 @@ func normalizeLines(content string) []string {
 	return strings.Split(content, "\n")
 }
 
-func toggleFence(line string, inFence bool) bool {
+func toggleFence(line string) bool {
 	trimmed := strings.TrimSpace(strings.TrimRight(line, "\r"))
-	if !strings.HasPrefix(trimmed, "```") {
-		return false
-	}
-	return true
+	return strings.HasPrefix(trimmed, "```")
 }
 
 func IsMarkdownPath(path string) bool {

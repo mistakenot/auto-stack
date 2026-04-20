@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, 04ca59b6)]
+// [autodoc(e8d3cf9c@34e92e15, bfec9559)]
 package linkcheck
 
 import (
@@ -56,8 +56,8 @@ func Check(tags []linkscan.Tag, docs []doctree.Entry) ([]LinkIssue, error) {
 	for _, tag := range tags {
 		if sourceDoc, ok := docsByPath[tag.FilePath]; ok && sourceDoc.Id != "" && sourceDoc.Id == tag.DocId {
 			issues = append(issues, LinkIssue{
-				Status: SelfReferencingTag,
-				Tag:    tag,
+				Status:  SelfReferencingTag,
+				Tag:     tag,
 				DocFile: docPath(&sourceDoc),
 			})
 			continue
@@ -82,7 +82,7 @@ func Check(tags []linkscan.Tag, docs []doctree.Entry) ([]LinkIssue, error) {
 			fileCache[tag.FilePath] = content
 		}
 
-		scopeHash, err := linkscan.ComputeScopeHashFromContentForTag(content, tag)
+		scopeHash, err := linkscan.ComputeScopeHashFromContentForTag(content, &tag)
 		if err != nil {
 			return nil, fmt.Errorf("scope hash %s:%d: %w", tag.FilePath, tag.Line, err)
 		}

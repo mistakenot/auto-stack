@@ -61,7 +61,7 @@ func DocsIndex(w io.Writer, entries []doctree.Entry, docsDir string) {
 				summary := strings.TrimRight(e.Summary, ".")
 				line := fmt.Sprintf("- [%s](%s): %s", title, linkPath, summary)
 				if e.ReadWhen != "" {
-					line += fmt.Sprintf(". Read when: %s", e.ReadWhen)
+					line += ". Read when: " + e.ReadWhen
 				}
 				fmt.Fprintln(w, line)
 			} else {

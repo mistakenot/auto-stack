@@ -5,7 +5,7 @@ BUILD_DIR := bin
 DIST_DIR  := dist
 INSTALL_DIR ?= $(HOME)/.local/bin
 
-PROJECTS := auto-doc auto-etl auto-watch auto-search auto-skill
+PROJECTS := auto-doc auto-env auto-etl auto-watch auto-search auto-skill
 
 # Binary name and entry point per project
 auto-doc_BIN   := autodoc
@@ -16,6 +16,8 @@ auto-watch_BIN   := autowatch
 auto-watch_ENTRY := ./cmd/autowatch
 auto-search_BIN   := autosearch
 auto-search_ENTRY := ./cmd/autosearch
+auto-env_BIN   := autoenv
+auto-env_ENTRY := ./cmd/autoenv
 auto-skill_BIN   := autoskill
 auto-skill_ENTRY := ./cmd/autoskill
 
@@ -31,6 +33,9 @@ LDFLAGS  := -s -w -X github.com/mistakenot/auto-shared/version.Version=$(VERSION
 
 build: $(addprefix build-,$(subst auto-,,$(PROJECTS)))
 	@echo "All binaries built in ./$(BUILD_DIR)/"
+
+build-env:
+	cd auto-env && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autoenv $(auto-env_ENTRY)
 
 build-etl:
 	cd auto-etl && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autoetl $(auto-etl_ENTRY)
@@ -51,6 +56,11 @@ build-skill:
 
 dist: $(addprefix dist-,$(subst auto-,,$(PROJECTS)))
 	@echo "Release binaries in ./$(DIST_DIR)/"
+
+dist-env:
+	@mkdir -p $(DIST_DIR)
+	cd auto-env && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autoenv-$(SUFFIX) $(auto-env_ENTRY)
 
 dist-doc:
 	@mkdir -p $(DIST_DIR)
@@ -129,6 +139,7 @@ test:
 install: build
 	@mkdir -p $(INSTALL_DIR)
 	cp $(BUILD_DIR)/autodoc $(INSTALL_DIR)/
+	cp $(BUILD_DIR)/autoenv $(INSTALL_DIR)/
 	cp $(BUILD_DIR)/autoetl $(INSTALL_DIR)/
 	@err=$$(mktemp); \
 	if ! cp $(BUILD_DIR)/autowatch $(INSTALL_DIR)/ 2>$$err; then \

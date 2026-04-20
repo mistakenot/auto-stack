@@ -71,9 +71,9 @@ func rewriteMarkdownTagScopeHashes(filePath string) error {
 	}
 
 	docsByID := make(map[string]doctree.Entry, len(entries))
-	for _, entry := range entries {
-		if entry.Id != "" {
-			docsByID[entry.Id] = entry
+	for i := range entries {
+		if entries[i].Id != "" {
+			docsByID[entries[i].Id] = entries[i]
 		}
 	}
 
@@ -99,7 +99,7 @@ func rewriteMarkdownTagScopeHashes(filePath string) error {
 			continue
 		}
 
-		scopeHash, err := linkscan.ComputeScopeHashFromContentForTag(content, tag)
+		scopeHash, err := linkscan.ComputeScopeHashFromContentForTag(content, &tag)
 		if err != nil {
 			return err
 		}

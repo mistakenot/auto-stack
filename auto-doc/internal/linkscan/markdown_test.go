@@ -82,21 +82,21 @@ outside
 	wholeTag := Tag{Line: 7, ScopeKind: ScopeKindMarkdown}
 	sectionTag := Tag{Line: 12, ScopeKind: ScopeKindMarkdown}
 
-	wholeHash1, err := ComputeScopeHashFromContentForTag(content, wholeTag)
+	wholeHash1, err := ComputeScopeHashFromContentForTag(content, &wholeTag)
 	if err != nil {
 		t.Fatalf("whole scope hash: %v", err)
 	}
-	sectionHash1, err := ComputeScopeHashFromContentForTag(content, sectionTag)
+	sectionHash1, err := ComputeScopeHashFromContentForTag(content, &sectionTag)
 	if err != nil {
 		t.Fatalf("section scope hash: %v", err)
 	}
 
 	changedOutsideSection := strings.Replace(content, "outside", "outside changed", 1)
-	wholeHash2, err := ComputeScopeHashFromContentForTag(changedOutsideSection, wholeTag)
+	wholeHash2, err := ComputeScopeHashFromContentForTag(changedOutsideSection, &wholeTag)
 	if err != nil {
 		t.Fatalf("whole scope hash after outer edit: %v", err)
 	}
-	sectionHash2, err := ComputeScopeHashFromContentForTag(changedOutsideSection, sectionTag)
+	sectionHash2, err := ComputeScopeHashFromContentForTag(changedOutsideSection, &sectionTag)
 	if err != nil {
 		t.Fatalf("section scope hash after outer edit: %v", err)
 	}

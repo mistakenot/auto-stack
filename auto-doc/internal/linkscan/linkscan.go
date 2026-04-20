@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, f407732a)]
+// [autodoc(e8d3cf9c@34e92e15, b248a5c1)]
 package linkscan
 
 import (
@@ -166,7 +166,7 @@ func ScanFiles(rootDir string) (ScanResult, error) {
 
 // ComputeScopeHash computes the scope hash for a tag in filePath at tagLine.
 func ComputeScopeHash(filePath string, tagLine int) (string, error) {
-	return ComputeScopeHashForTag(Tag{
+	return ComputeScopeHashForTag(&Tag{
 		FilePath:  filePath,
 		Line:      tagLine,
 		ScopeKind: ScopeKindIndent,
@@ -174,7 +174,7 @@ func ComputeScopeHash(filePath string, tagLine int) (string, error) {
 }
 
 // ComputeScopeHashForTag computes the scope hash for a parsed tag.
-func ComputeScopeHashForTag(tag Tag) (string, error) {
+func ComputeScopeHashForTag(tag *Tag) (string, error) {
 	data, err := os.ReadFile(tag.FilePath)
 	if err != nil {
 		return "", err
@@ -184,14 +184,14 @@ func ComputeScopeHashForTag(tag Tag) (string, error) {
 
 // ComputeScopeHashFromContent computes a scope hash using in-memory file content.
 func ComputeScopeHashFromContent(content string, tagLine int) (string, error) {
-	return ComputeScopeHashFromContentForTag(content, Tag{
+	return ComputeScopeHashFromContentForTag(content, &Tag{
 		Line:      tagLine,
 		ScopeKind: ScopeKindIndent,
 	})
 }
 
 // ComputeScopeHashFromContentForTag computes a scope hash using in-memory file content.
-func ComputeScopeHashFromContentForTag(content string, tag Tag) (string, error) {
+func ComputeScopeHashFromContentForTag(content string, tag *Tag) (string, error) {
 	if tag.ScopeKind == ScopeKindMarkdown {
 		return computeMarkdownScopeHashFromContent(content, tag.Line)
 	}
