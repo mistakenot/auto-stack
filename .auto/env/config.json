@@ -1,0 +1,4 @@
+{
+  "up_command": "bash start.sh",
+  "down_command": "echo 'Tearing down environment for auto-stack...'"
+}
