@@ -359,6 +359,24 @@ func ValidateSkillName(name string) error {
 	return nil
 }
 
+func FormatDiagnosticsText(diags []Diagnostic) string {
+	var b strings.Builder
+	for i, d := range diags {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "%s[%s]: %s\n", d.Severity, d.Code, d.Path)
+		fmt.Fprintf(&b, "  %s\n", d.Message)
+		if d.Value != nil {
+			v := fmt.Sprintf("%v", d.Value)
+			for line := range strings.SplitSeq(v, "\n") {
+				fmt.Fprintf(&b, "  | %s\n", line)
+			}
+		}
+	}
+	return b.String()
+}
+
 func EncodeJSON(v any) ([]byte, error) {
 	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -493,13 +511,17 @@ func lintSkill(env Env, target lintTarget, docsByID map[string]string) ([]Diagno
 
 	parsed, err := readSkillFile(target.Dir)
 	if err != nil {
-		diags = append(diags, Diagnostic{
+		diag := Diagnostic{
 			Severity: SeverityError,
 			Code:     "invalid_frontmatter",
 			Path:     relPath(env.Root, target.File),
 			Field:    "frontmatter",
 			Message:  err.Error(),
-		})
+		}
+		if parsed.Content != "" {
+			diag.Value = firstNLines(parsed.Content, 3)
+		}
+		diags = append(diags, diag)
 		return diags, ""
 	}
 
@@ -559,15 +581,21 @@ func lintSkill(env Env, target lintTarget, docsByID map[string]string) ([]Diagno
 				Path:     relPath(env.Root, parsed.File),
 				Field:    "description",
 				Message:  "frontmatter description must be <= 1024 chars",
+				Value:    len(parsed.Description),
 			})
 		}
 		if !triggerPhraseRE.MatchString(parsed.Description) {
+			desc := parsed.Description
+			if len(desc) > 80 {
+				desc = desc[:80] + "..."
+			}
 			diags = append(diags, Diagnostic{
 				Severity: SeverityWarning,
 				Code:     "missing_trigger_phrase",
 				Path:     relPath(env.Root, parsed.File),
 				Field:    "description",
 				Message:  "description should include trigger phrases such as \"Use when\" or \"Prefer for\"",
+				Value:    desc,
 			})
 		}
 	}
@@ -579,6 +607,7 @@ func lintSkill(env Env, target lintTarget, docsByID map[string]string) ([]Diagno
 			Path:     relPath(env.Root, parsed.File),
 			Field:    "metadata.short-description",
 			Message:  "metadata.short-description must be <= 1024 chars",
+			Value:    len(parsed.ShortDescription),
 		})
 	}
 
@@ -599,6 +628,7 @@ func lintSkill(env Env, target lintTarget, docsByID map[string]string) ([]Diagno
 			Path:     relPath(env.Root, parsed.File),
 			Field:    "body",
 			Message:  "body should open with actionable rules or workflow steps, not prose preamble",
+			Value:    firstNLines(strings.TrimSpace(body), 2),
 		})
 	}
 	switch {
@@ -803,9 +833,9 @@ func discoverDocsByID(root string) (map[string]string, error) {
 			if err != nil {
 				return err
 			}
-			front, _, err := parseFrontmatterAndBody(string(data))
-			if err != nil {
-				return err
+			front, _, parseErr := parseFrontmatterAndBody(string(data))
+			if parseErr != nil {
+				return nil //nolint:nilerr // intentional: skip non-autodoc markdown
 			}
 			docID := strings.TrimSpace(readString(front, "id"))
 			hash := strings.TrimSpace(readString(front, "hash"))
@@ -1021,6 +1051,19 @@ func hasSecret(content string) bool {
 		}
 	}
 	return false
+}
+
+func firstNLines(s string, n int) string {
+	const maxChars = 200
+	lines := strings.SplitN(s, "\n", n+1)
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	out := strings.Join(lines, "\n")
+	if len(out) > maxChars {
+		out = out[:maxChars] + "..."
+	}
+	return out
 }
 
 func estimateTokens(s string) int {

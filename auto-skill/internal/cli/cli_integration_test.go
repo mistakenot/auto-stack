@@ -194,6 +194,76 @@ func TestLintListingTokenBudgetWarningAndError(t *testing.T) {
 	assertHasDiag(t, decodeDiagnostics(t, stdout), "listing_too_large")
 }
 
+func TestLintSkipsNonFrontmatterDocs(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "docs", "plain.md"), "# Just a plain doc\nNo frontmatter here.\n")
+	writeFile(t, filepath.Join(root, "docs", "valid.md"), "---\nid: \"aabbccdd\"\nhash: \"11223344\"\ntitle: \"x\"\nsummary: \"x\"\n---\nDoc body.\n")
+	writeFile(t, filepath.Join(root, "skills", "good", "SKILL.md"), validSkill("good", "Use when testing doc discovery resilience.", "## Workflow\n\n1. Step.\n"))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "lint")
+	if code != 0 {
+		t.Fatalf("expected lint success despite non-frontmatter doc: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+}
+
+func TestLintTextOutput(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "skills", "bad", "SKILL.md"), "---\ndescription: \"Helps with deployment\"\n---\nThis skill is designed to do things.\n")
+
+	stdout, _, code := runCLI(t, "--root", root, "lint", "--text")
+	if code == 0 {
+		t.Fatalf("expected lint errors\nstdout:\n%s", stdout)
+	}
+
+	if !strings.Contains(stdout, "error[missing_name]:") {
+		t.Fatalf("expected text output with error[missing_name]:, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "skills/bad/SKILL.md") {
+		t.Fatalf("expected full path in text output, got:\n%s", stdout)
+	}
+	if strings.HasPrefix(strings.TrimSpace(stdout), "[") {
+		t.Fatalf("expected text output, got JSON:\n%s", stdout)
+	}
+}
+
+func TestLintTextAndJSONMutuallyExclusive(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "skills", "ok", "SKILL.md"), validSkill("ok", "Use when testing flags.", "## Workflow\n\n1. Step.\n"))
+
+	_, stderr, code := runCLI(t, "--root", root, "lint", "--text", "--json")
+	if code == 0 {
+		t.Fatal("expected error when --text and --json combined")
+	}
+	if !strings.Contains(stderr, "cannot be combined") {
+		t.Fatalf("expected mutual exclusion error, got stderr:\n%s", stderr)
+	}
+}
+
+func TestLintValueFieldsPopulated(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "skills", "bad", "SKILL.md"), "---\ndescription: \"Helps with deployment\"\n---\nThis skill is designed to do things.\n")
+
+	stdout, _, code := runCLI(t, "--root", root, "lint")
+	if code == 0 {
+		t.Fatalf("expected lint errors\nstdout:\n%s", stdout)
+	}
+
+	diags := decodeDiagnostics(t, stdout)
+	for _, d := range diags {
+		code, _ := d["code"].(string)
+		switch code {
+		case "missing_trigger_phrase":
+			if d["value"] == nil {
+				t.Fatal("missing_trigger_phrase should have value with description snippet")
+			}
+		case "weak_opening":
+			if d["value"] == nil {
+				t.Fatal("weak_opening should have value with body snippet")
+			}
+		}
+	}
+}
+
 func TestLsMixedAndJSON(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "skills", "alpha", "SKILL.md"), validSkill("alpha", "Use when alpha. Prefer for alpha tasks.", "## Workflow\n\n1. Run alpha.\n"))

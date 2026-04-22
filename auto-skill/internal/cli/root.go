@@ -252,11 +252,18 @@ func newCreateCmd(resolveEnv envResolver) *cobra.Command {
 }
 
 func newLintCmd(resolveEnv envResolver) *cobra.Command {
+	var textOutput bool
+	var jsonOutput bool
+
 	cmd := &cobra.Command{
 		Use:   "lint [path]",
 		Short: "Lint skills for schema and portability issues",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if textOutput && jsonOutput {
+				return &ExitError{Code: 1, Err: errors.New("invalid flags: --text and --json cannot be combined")}
+			}
+
 			env, err := resolveEnv()
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
@@ -271,12 +278,19 @@ func newLintCmd(resolveEnv envResolver) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 
-			data, err := skill.EncodeJSON(diags)
-			if err != nil {
-				return &ExitError{Code: 1, Err: err}
-			}
-			if _, err := cmd.OutOrStdout().Write(data); err != nil {
-				return &ExitError{Code: 1, Err: err}
+			if textOutput {
+				text := skill.FormatDiagnosticsText(diags)
+				if _, err := cmd.OutOrStdout().Write([]byte(text)); err != nil {
+					return &ExitError{Code: 1, Err: err}
+				}
+			} else {
+				data, err := skill.EncodeJSON(diags)
+				if err != nil {
+					return &ExitError{Code: 1, Err: err}
+				}
+				if _, err := cmd.OutOrStdout().Write(data); err != nil {
+					return &ExitError{Code: 1, Err: err}
+				}
 			}
 
 			if skill.HasErrors(diags) {
@@ -285,6 +299,9 @@ func newLintCmd(resolveEnv envResolver) *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&textOutput, "text", false, "emit human-readable diagnostic output")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON array output (default)")
 	return cmd
 }
 
