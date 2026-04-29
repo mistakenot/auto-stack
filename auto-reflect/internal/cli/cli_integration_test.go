@@ -16,6 +16,121 @@ import (
 	"github.com/mistakenot/auto-reflect/internal/cli"
 )
 
+func TestInitCreatesSettingsAndStateAndIsIdempotent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := initGitRepo(t)
+
+	writeFile(t, filepath.Join(repo, "README.md"), "seed\n")
+	gitAddCommit(t, repo, "seed")
+
+	stdout, stderr, code := runCLIAt(t, repo, "init")
+	if code != 0 {
+		t.Fatalf("first init failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	sharedPath := filepath.Join(home, ".auto", "settings.json")
+	reflectSettingsPath := filepath.Join(home, ".auto", "reflect", "settings.json")
+	playbookPath := filepath.Join(repo, ".auto", "reflect", "playbook.json")
+	feedbackPath := filepath.Join(repo, ".auto", "reflect", "feedback.jsonl")
+
+	assertFileExists(t, sharedPath)
+	assertFileExists(t, reflectSettingsPath)
+	assertFileExists(t, playbookPath)
+	assertFileExists(t, feedbackPath)
+
+	playbookBytes, err := os.ReadFile(playbookPath)
+	if err != nil {
+		t.Fatalf("read playbook: %v", err)
+	}
+	var playbook map[string]any
+	if err := json.Unmarshal(playbookBytes, &playbook); err != nil {
+		t.Fatalf("decode playbook: %v", err)
+	}
+	if playbook["schema_version"] != float64(1) {
+		t.Fatalf("unexpected schema_version: %v", playbook["schema_version"])
+	}
+	rules, ok := playbook["rules"].([]any)
+	if !ok {
+		t.Fatalf("playbook rules missing or wrong type: %#v", playbook["rules"])
+	}
+	if len(rules) != 0 {
+		t.Fatalf("expected empty rules array, got %d", len(rules))
+	}
+
+	firstShared, err := os.ReadFile(sharedPath)
+	if err != nil {
+		t.Fatalf("read first shared settings: %v", err)
+	}
+	firstReflect, err := os.ReadFile(reflectSettingsPath)
+	if err != nil {
+		t.Fatalf("read first reflect settings: %v", err)
+	}
+	firstPlaybook, err := os.ReadFile(playbookPath)
+	if err != nil {
+		t.Fatalf("read first playbook: %v", err)
+	}
+	firstFeedback, err := os.ReadFile(feedbackPath)
+	if err != nil {
+		t.Fatalf("read first feedback log: %v", err)
+	}
+
+	stdout, stderr, code = runCLIAt(t, repo, "init")
+	if code != 0 {
+		t.Fatalf("second init failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	secondShared, err := os.ReadFile(sharedPath)
+	if err != nil {
+		t.Fatalf("read second shared settings: %v", err)
+	}
+	secondReflect, err := os.ReadFile(reflectSettingsPath)
+	if err != nil {
+		t.Fatalf("read second reflect settings: %v", err)
+	}
+	secondPlaybook, err := os.ReadFile(playbookPath)
+	if err != nil {
+		t.Fatalf("read second playbook: %v", err)
+	}
+	secondFeedback, err := os.ReadFile(feedbackPath)
+	if err != nil {
+		t.Fatalf("read second feedback log: %v", err)
+	}
+
+	if !bytes.Equal(firstShared, secondShared) {
+		t.Fatalf("shared settings changed across repeated init runs\nfirst:\n%s\nsecond:\n%s", firstShared, secondShared)
+	}
+	if !bytes.Equal(firstReflect, secondReflect) {
+		t.Fatalf("reflect settings changed across repeated init runs\nfirst:\n%s\nsecond:\n%s", firstReflect, secondReflect)
+	}
+	if !bytes.Equal(firstPlaybook, secondPlaybook) {
+		t.Fatalf("playbook changed across repeated init runs\nfirst:\n%s\nsecond:\n%s", firstPlaybook, secondPlaybook)
+	}
+	if !bytes.Equal(firstFeedback, secondFeedback) {
+		t.Fatalf("feedback log changed across repeated init runs\nfirst:\n%s\nsecond:\n%s", firstFeedback, secondFeedback)
+	}
+}
+
+func TestQuickstartIncludesInitAndCoreCommands(t *testing.T) {
+	cwd := t.TempDir()
+	stdout, stderr, code := runCLIAt(t, cwd, "quickstart")
+	if code != 0 {
+		t.Fatalf("quickstart failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	for _, needle := range []string{
+		"autoreflect init",
+		"autoreflect rule create",
+		"autoreflect lookup",
+		"autoreflect feedback add",
+		"autoreflect feedback list",
+		"--context",
+	} {
+		if !strings.Contains(stdout, needle) {
+			t.Fatalf("quickstart output missing %q\noutput:\n%s", needle, stdout)
+		}
+	}
+}
+
 func TestFeedbackAddAndListJSON(t *testing.T) {
 	repo := initGitRepo(t)
 	writeFile(t, filepath.Join(repo, "docs", "auth.md"), "line one\nline two\nline three\n")
@@ -310,5 +425,12 @@ func runCmd(t *testing.T, cwd string, name string, args ...string) {
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("%s %s failed: %v\nstderr:\n%s", name, strings.Join(args, " "), err, stderr.String())
+	}
+}
+
+func assertFileExists(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected %s to exist: %v", path, err)
 	}
 }

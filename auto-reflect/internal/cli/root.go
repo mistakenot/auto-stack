@@ -54,6 +54,8 @@ func NewRootCmd(application *app.App) *cobra.Command {
 	cmd.SetErr(application.Stderr)
 
 	cmd.AddCommand(
+		newInitCmd(application),
+		newQuickstartCmd(),
 		newRuleCmd(application),
 		newLookupCmd(application),
 		newFeedbackCmd(application),
