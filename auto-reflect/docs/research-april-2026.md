@@ -1,3 +1,11 @@
+---
+hash: "e8e3447e"
+id: "43a05c62"
+read_when: "designing autoreflect learning-loop architecture or evaluating rule-memory and skill-retrieval tradeoffs"
+summary: "Research brief on recent agent self-improvement systems, memory architectures, retrieval strategies, and context-engineering patterns relevant to autoreflect design."
+title: "Rules, Skills, and Playbooks for Self-Improving Coding Agents (Nov 2025 → Apr 2026)"
+---
+
 # Rules, Skills, and Playbooks for Self-Improving Coding Agents — State of the Art (Nov 2025 → Apr 2026)
 
 Concise, technical brief. Coverage limited to the last ~6 months unless a paper is the canonical reference for terminology being actively built on. Embedded URLs are bare links rather than markdown footnotes.

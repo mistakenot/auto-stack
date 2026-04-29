@@ -1,5 +1,5 @@
 ---
-hash: "5f1b8c2a"
+hash: "a4defc73"
 id: "fb-rule-synth-v1"
 read_when: "designing autoreflect v1 to combine rule memory with feedback capture"
 summary: "Synthesis design for autoreflect v1: preserve rule create/lookup while adding append-only feedback events for helpful/harmful/missing signals."
