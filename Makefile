@@ -1,11 +1,12 @@
-.PHONY: build build-etl build-doc build-watch build-search build-skill clean test vet fmt lint \
+.PHONY: build build-etl build-doc build-watch build-search build-reflect build-skill clean test vet fmt lint \
+       dist-reflect \
        install install-hooks gen-stats check dist test-install
 
 BUILD_DIR := bin
 DIST_DIR  := dist
 INSTALL_DIR ?= $(HOME)/.local/bin
 
-PROJECTS := auto-doc auto-env auto-etl auto-watch auto-search auto-skill
+PROJECTS := auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill
 
 # Binary name and entry point per project
 auto-doc_BIN   := autodoc
@@ -16,6 +17,8 @@ auto-watch_BIN   := autowatch
 auto-watch_ENTRY := ./cmd/autowatch
 auto-search_BIN   := autosearch
 auto-search_ENTRY := ./cmd/autosearch
+auto-reflect_BIN   := autoreflect
+auto-reflect_ENTRY := ./cmd/autoreflect
 auto-env_BIN   := autoenv
 auto-env_ENTRY := ./cmd/autoenv
 auto-skill_BIN   := autoskill
@@ -49,6 +52,9 @@ build-watch:
 build-search:
 	cd auto-search && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autosearch $(auto-search_ENTRY)
 
+build-reflect:
+	cd auto-reflect && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autoreflect $(auto-reflect_ENTRY)
+
 build-skill:
 	cd auto-skill && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autoskill $(auto-skill_ENTRY)
 
@@ -81,6 +87,11 @@ dist-search:
 	@mkdir -p $(DIST_DIR)
 	cd auto-search && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autosearch-$(SUFFIX) $(auto-search_ENTRY)
+
+dist-reflect:
+	@mkdir -p $(DIST_DIR)
+	cd auto-reflect && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autoreflect-$(SUFFIX) $(auto-reflect_ENTRY)
 
 dist-skill:
 	@mkdir -p $(DIST_DIR)
@@ -153,6 +164,7 @@ install: build
 	fi; \
 	rm -f $$err
 	cp $(BUILD_DIR)/autosearch $(INSTALL_DIR)/
+	cp $(BUILD_DIR)/autoreflect $(INSTALL_DIR)/
 	cp $(BUILD_DIR)/autoskill $(INSTALL_DIR)/
 	@echo "Installed to $(INSTALL_DIR)/"
 

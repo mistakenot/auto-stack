@@ -58,4 +58,6 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 
 
 
+
+
 **autosearch** — Search past coding agent sessions. Run `autosearch quickstart` to learn more.

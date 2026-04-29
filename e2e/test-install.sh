@@ -22,7 +22,7 @@ IMAGE="ubuntu:24.04"
 CONTAINER_NAME="autostack-install-test-$$"
 REPO="mistakenot/auto-stack"
 INSTALL_URL="https://raw.githubusercontent.com/${REPO}/main/install.sh"
-BINARIES="autodoc autoenv autoetl autosearch autoskill autowatch"
+BINARIES="autodoc autoenv autoetl autosearch autoreflect autoskill autowatch"
 BIN_DIR="/root/.local/bin"
 PROJECT_DIR="/root/src/testproject"
 

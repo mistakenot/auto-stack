@@ -65,8 +65,13 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 - [Cass Memory System Analysis for Auto-Reflect](auto-reflect/docs/cass-memory-system-analysis.md): Analysis of the Cass memory system architecture and what auto-reflect should borrow, adapt, or avoid from it. Read when: designing autoreflect memory architecture and reflection patterns
 - [Decision Mining from Agent Sessions](auto-reflect/docs/decision-mining.md): Pipeline for extracting user decisions from coding agent sessions, calibrating scope, and converting patterns into reusable rules with feedback-driven lifecycles. Read when: designing or improving systems that extract user decisions from coding agent sessions and turn them into reusable rules
 - [Auto-Reflect V1 Requirements](auto-reflect/docs/requirements.md): V1 requirements for autoreflect — a tool for persisting and retrieving learned repository rules via a local playbook. Read when: building autoreflect v1 or implementing rule persistence and retrieval
+- [Rules, Skills, and Playbooks for Self-Improving Coding Agents (Nov 2025 → Apr 2026)](auto-reflect/docs/research-april-2026.md): Research brief on recent agent self-improvement systems, memory architectures, retrieval strategies, and context-engineering patterns relevant to autoreflect design. Read when: designing autoreflect learning-loop architecture or evaluating rule-memory and skill-retrieval tradeoffs
 - [Trauma Candidate Promotion Pattern](auto-reflect/docs/trauma-candidate-promotion-pattern.md): Describes the cass-memory trauma workflow where regex candidates are discovered from sessions but only persisted after explicit user promotion. Read when: implementing two-stage rule discovery and promotion workflows
+- [V1 Feedback Annotations Design](auto-reflect/docs/v1-feedback-annotations-design.md): Design analysis for a v1 autoreflect feedback annotation CLI — agents annotate files as good/bad/missing after tasks, stored as JSONL with git provenance, queryable by type/file/time. Read when: designing or building the autoreflect feedback annotation system
+- [Auto-Reflect V1 Synthesis: Rule Memory + Feedback Events](auto-reflect/docs/v1-feedback-rule-memory-synthesis.md): Synthesis design for autoreflect v1: preserve rule create/lookup while adding append-only feedback events for helpful/harmful/missing signals. Read when: designing autoreflect v1 to combine rule memory with feedback capture
 <!-- autodoc: end -->
+
+
 
 
 
