@@ -49,3 +49,4 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 - [AutoEnv V1 Requirements](auto-env/docs/requirements-v1.md): V1 spec for autoenv: template-based config file generation with deterministic per-worktree port allocation, supporting init/up/down/status commands with auto-restart and file-only manifest tracking. Read when: implementing autoenv v1 or understanding the simplified environment management design
 - [AutoEnv Requirements](auto-env/docs/requirements.md): Requirements for autoenv: manage isolated development environments for worktree-based coding agents, handling port allocation, databases, logs, and service lifecycle to avoid conflicts across concurrent instances. Read when: implementing autoenv or managing multi-worktree development environments
 <!-- autodoc: end -->
+
