@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -124,30 +125,28 @@ func normalizeRemote(raw string) string {
 	value := strings.TrimSpace(raw)
 	value = strings.TrimSuffix(value, ".git")
 
-	if trimmed, ok := strings.CutPrefix(value, "git@"); ok {
-		parts := strings.SplitN(trimmed, ":", 2)
-		if len(parts) == 2 {
+	// scp-style: [user@]host:path (no scheme)
+	if !strings.Contains(value, "://") {
+		cleaned := value
+		if at := strings.Index(cleaned, "@"); at >= 0 {
+			cleaned = cleaned[at+1:]
+		}
+		parts := strings.SplitN(cleaned, ":", 2)
+		if len(parts) == 2 && !strings.Contains(parts[0], "/") {
 			return filepath.ToSlash(strings.ToLower(parts[0]) + "/" + strings.TrimPrefix(parts[1], "/"))
 		}
+		return filepath.ToSlash(cleaned)
 	}
-	if trimmed, ok := strings.CutPrefix(value, "ssh://"); ok {
-		trimmed = strings.TrimPrefix(trimmed, "git@")
-		idx := strings.Index(trimmed, "/")
-		if idx > 0 {
-			host := strings.ToLower(trimmed[:idx])
-			path := strings.TrimPrefix(trimmed[idx:], "/")
-			return filepath.ToSlash(host + "/" + path)
-		}
+
+	// URL-style: ssh://, https://, http://, git://, etc.
+	u, err := url.Parse(value)
+	if err != nil {
+		return filepath.ToSlash(value)
 	}
-	if strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://") {
-		trimmed := strings.TrimPrefix(strings.TrimPrefix(value, "https://"), "http://")
-		idx := strings.Index(trimmed, "/")
-		if idx > 0 {
-			host := strings.ToLower(trimmed[:idx])
-			path := strings.TrimPrefix(trimmed[idx:], "/")
-			return filepath.ToSlash(host + "/" + path)
-		}
-		return strings.ToLower(trimmed)
+	host := strings.ToLower(u.Host)
+	path := strings.TrimPrefix(u.Path, "/")
+	if host == "" {
+		return filepath.ToSlash(value)
 	}
-	return filepath.ToSlash(value)
+	return filepath.ToSlash(host + "/" + path)
 }

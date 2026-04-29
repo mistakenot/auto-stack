@@ -62,6 +62,7 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 
 **auto-reflect/docs**
 
+- [Security Bug: Git Remote Credential Leak in Feedback Events](auto-reflect/docs/bugfix-git-remote-credential-leak.md): Bug report and fix scope for autoreflect feedback add leaking git remote credentials into feedback JSONL. Read when: investigating git remote URL sanitization or credential handling in feedback events
 - [Cass Memory System Analysis for Auto-Reflect](auto-reflect/docs/cass-memory-system-analysis.md): Analysis of the Cass memory system architecture and what auto-reflect should borrow, adapt, or avoid from it. Read when: designing autoreflect memory architecture and reflection patterns
 - [Decision Mining from Agent Sessions](auto-reflect/docs/decision-mining.md): Pipeline for extracting user decisions from coding agent sessions, calibrating scope, and converting patterns into reusable rules with feedback-driven lifecycles. Read when: designing or improving systems that extract user decisions from coding agent sessions and turn them into reusable rules
 - [Auto-Reflect V1 Requirements](auto-reflect/docs/requirements.md): V1 requirements for autoreflect — a tool for persisting and retrieving learned repository rules via a local playbook. Read when: building autoreflect v1 or implementing rule persistence and retrieval
@@ -70,6 +71,7 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 - [V1 Feedback Annotations Design](auto-reflect/docs/v1-feedback-annotations-design.md): Design analysis for a v1 autoreflect feedback annotation CLI — agents annotate files as good/bad/missing after tasks, stored as JSONL with git provenance, queryable by type/file/time. Read when: designing or building the autoreflect feedback annotation system
 - [Auto-Reflect V1 Synthesis: Rule Memory + Feedback Events](auto-reflect/docs/v1-feedback-rule-memory-synthesis.md): Synthesis design for autoreflect v1: preserve rule create/lookup while adding append-only feedback events for helpful/harmful/missing signals. Read when: designing autoreflect v1 to combine rule memory with feedback capture
 <!-- autodoc: end -->
+
 
 
 

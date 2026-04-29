@@ -1,3 +1,11 @@
+---
+hash: "68f8b286"
+id: "487f6155"
+read_when: "investigating git remote URL sanitization or credential handling in feedback events"
+summary: "Bug report and fix scope for autoreflect feedback add leaking git remote credentials into feedback JSONL"
+title: "Security Bug: Git Remote Credential Leak in Feedback Events"
+---
+
 Title: Security bug: `autoreflect feedback add` leaks git remote credentials into feedback logs
 
 Priority: P0 (security)
