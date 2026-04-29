@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"os"
 	"strings"
 	"testing"
@@ -265,6 +266,125 @@ func TestAgentsSymlinkedRootFilesBothReceiveIndex(t *testing.T) {
 	}
 	if !strings.Contains(string(claudeData), "docs/root.md") {
 		t.Fatalf("CLAUDE.md missing root doc link:\n%s", claudeData)
+	}
+}
+
+func TestAgentsIdempotentReplace(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDoc("test.md", "Test", "A test", "# Test")
+
+	existing := "# Agent\n\n" + markerStart + "\nold content\n" + markerEnd + "\n\nMore stuff.\n"
+	ws.WriteFile("AGENTS.md", existing)
+
+	agentFiles := []string{"AGENTS.md", "CLAUDE.md"}
+	if err := Agents(ws.Dir, "docs", agentFiles, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := os.ReadFile(ws.Path("AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Agents(ws.Dir, "docs", agentFiles, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := os.ReadFile(ws.Path("AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(first, second) {
+		t.Errorf("agents is not idempotent on replace:\n--- first run ---\n%s\n--- second run ---\n%s", first, second)
+	}
+}
+
+func TestAgentsIdempotentAppend(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDoc("test.md", "Test", "A test", "# Test")
+	ws.WriteFile("CLAUDE.md", "# My Agent File\n\nExisting content.\n")
+
+	agentFiles := []string{"AGENTS.md", "CLAUDE.md"}
+	if err := Agents(ws.Dir, "docs", agentFiles, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := os.ReadFile(ws.Path("CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Agents(ws.Dir, "docs", agentFiles, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := os.ReadFile(ws.Path("CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(first, second) {
+		t.Errorf("agents is not idempotent on append:\n--- first run ---\n%s\n--- second run ---\n%s", first, second)
+	}
+}
+
+func TestAgentsIdempotentCreate(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDoc("test.md", "Test", "A test", "# Test")
+
+	agentFiles := []string{"AGENTS.md"}
+	if err := Agents(ws.Dir, "docs", agentFiles, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := os.ReadFile(ws.Path("AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Agents(ws.Dir, "docs", agentFiles, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := os.ReadFile(ws.Path("AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(first, second) {
+		t.Errorf("agents is not idempotent on create:\n--- first run ---\n%s\n--- second run ---\n%s", first, second)
+	}
+}
+
+func TestAgentsIdempotentMultipleRuns(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDoc("test.md", "Test", "A test", "# Test")
+
+	existing := "# Agent\n\n" + markerStart + "\nold\n" + markerEnd + "\n\nTrailing.\n"
+	ws.WriteFile("AGENTS.md", existing)
+
+	agentFiles := []string{"AGENTS.md"}
+	for i := range 5 {
+		if err := Agents(ws.Dir, "docs", agentFiles, nil); err != nil {
+			t.Fatalf("run %d: %v", i, err)
+		}
+	}
+
+	data, err := os.ReadFile(ws.Path("AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := string(data)
+	if strings.Count(content, markerStart) != 1 {
+		t.Errorf("expected exactly 1 start marker, got %d", strings.Count(content, markerStart))
+	}
+	if strings.Count(content, markerEnd) != 1 {
+		t.Errorf("expected exactly 1 end marker, got %d", strings.Count(content, markerEnd))
+	}
+	if !strings.Contains(content, "Trailing.") {
+		t.Error("lost content after markers")
 	}
 }
 

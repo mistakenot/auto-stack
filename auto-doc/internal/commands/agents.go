@@ -189,8 +189,9 @@ func updateAgentFile(path string, block string) error {
 	endIdx := strings.Index(content, markerEnd)
 
 	if startIdx != -1 && endIdx != -1 {
-		// Replace between markers (inclusive)
-		newContent := content[:startIdx] + block + content[endIdx+len(markerEnd):]
+		suffix := content[endIdx+len(markerEnd):]
+		trimmedBlock := strings.TrimRight(block, "\n")
+		newContent := content[:startIdx] + trimmedBlock + suffix
 		return os.WriteFile(path, []byte(newContent), 0o644)
 	}
 
