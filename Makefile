@@ -1,6 +1,6 @@
 .PHONY: build build-etl build-doc build-watch build-search build-reflect build-skill clean test vet fmt lint \
        dist-reflect \
-       install install-hooks gen-stats check dist test-install
+       install install-hooks gen-stats check dist test-install test-curl-install
 
 BUILD_DIR := bin
 DIST_DIR  := dist
@@ -170,6 +170,9 @@ install: build
 
 test-install:
 	./e2e/test-install.sh
+
+test-curl-install:
+	./e2e/test-curl-install.sh
 
 clean:
 	rm -rf $(BUILD_DIR) $(DIST_DIR)

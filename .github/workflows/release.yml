@@ -51,3 +51,14 @@ jobs:
           gh release upload "${{ github.ref_name }}" dist/* \
             --repo "${{ github.repository }}" \
             --clobber
+
+  verify-install:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify curl install
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./e2e/test-curl-install.sh "${{ github.ref_name }}"
