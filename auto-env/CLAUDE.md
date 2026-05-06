@@ -50,5 +50,4 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 - [AutoEnv Requirements](auto-env/docs/requirements.md): Requirements for autoenv: manage isolated development environments for worktree-based coding agents, handling port allocation, databases, logs, and service lifecycle to avoid conflicts across concurrent instances. Read when: implementing autoenv or managing multi-worktree development environments
 <!-- autodoc: end -->
 
-
-
+**autoenv** — Standalone dev environments for worktree branches. Run `autoenv quickstart` to learn how to stand up an isolated environment.

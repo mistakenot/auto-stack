@@ -306,3 +306,5 @@ This creates a two-way freshness link — `autodoc fix` will warn when either th
 **autosearch** — Search past coding agent sessions. Run `autosearch quickstart` to learn more.
 
 **autoskill** — Author and lint reusable agent skills. Run `autoskill quickstart` to learn more.
+
+**autoenv** — Standalone dev environments for worktree branches. Run `autoenv quickstart` to learn how to stand up an isolated environment.
