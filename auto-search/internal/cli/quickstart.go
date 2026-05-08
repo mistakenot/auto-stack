@@ -128,9 +128,27 @@ Returns JSON with message counts, token usage, time range, workspace.
 
 ` + "```" + `bash
 autosearch skills
+
+# Filter by time window or workspace
+autosearch skills --since 7d
+autosearch skills --cwd /home/vscode/src/my-project
+autosearch skills --after 2026-01-01 --before 2026-02-01
 ` + "```" + `
 
-Returns JSON with each skill name and usage count across all indexed sessions.
+Returns JSON with each skill name, usage count, and distinct session count.
+
+### 7. Analyze skill adoption patterns with stats
+
+` + "```" + `bash
+# Rank skills by usage
+autosearch stats --scope messages --group-by skill_name --since 30d
+
+# Time trend for a specific skill
+autosearch stats --scope messages --group-by day --skill contextual-commit --since 14d
+
+# Which workspaces use skills most
+autosearch stats --scope messages --group-by workspace --skill release
+` + "```" + `
 
 ## Understanding search output
 

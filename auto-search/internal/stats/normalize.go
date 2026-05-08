@@ -19,6 +19,8 @@ func normalizedBucketExpr(scope, groupBy string) (string, error) {
 			inner = "m.role"
 		case "tool_name":
 			inner = "m.tool_name"
+		case "skill_name":
+			inner = "m.skill_name"
 		case "tool_file_path":
 			inner = "m.tool_file_path"
 		case "bash_command":
