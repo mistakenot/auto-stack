@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mistakenot/auto-search/internal/indexdb"
 	"github.com/mistakenot/auto-search/internal/query"
 )
 
@@ -53,7 +54,7 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 
 	start := time.Now()
 
-	if opts.CWD != "" && opts.Remote != "" {
+	if strings.TrimSpace(opts.CWD) != "" && strings.TrimSpace(opts.Remote) != "" {
 		return nil, errors.New("--cwd and --remote are mutually exclusive")
 	}
 	offset, pageSize, err := normalizePagination(opts.Offset, opts.PageSize)
@@ -132,17 +133,19 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	`
 	args := []any{fts}
 
-	if cwd != "" {
-		baseQuery += " AND s.workspace = ?"
-		args = append(args, cwd)
+	// CWD/Remote/Skill are case-insensitive substring matches. See
+	// indexdb.SubstringFilter for normalization rules.
+	if frag, arg := indexdb.SubstringFilter("s.workspace", cwd); frag != "" {
+		baseQuery += " AND " + frag
+		args = append(args, arg)
 	}
-	if remote != "" {
-		baseQuery += " AND s.git_remote = ?"
-		args = append(args, remote)
+	if frag, arg := indexdb.SubstringFilter("s.git_remote", remote); frag != "" {
+		baseQuery += " AND " + frag
+		args = append(args, arg)
 	}
-	if skill != "" {
-		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE skill_name = ?)"
-		args = append(args, skill)
+	if frag, arg := indexdb.SubstringFilter("skill_name", skill); frag != "" {
+		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE " + frag + ")"
+		args = append(args, arg)
 	}
 	if role != "" {
 		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE role = ?)"

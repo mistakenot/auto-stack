@@ -70,13 +70,14 @@ func ListSessions(db *sql.DB, opts ListSessionsOpts) ([]SessionListRow, int, err
 	var where []string
 	var args []any
 
-	if opts.Workspace != "" {
-		where = append(where, "s.workspace LIKE ?")
-		args = append(args, "%"+opts.Workspace+"%")
+	// Workspace/Remote are case-insensitive substring matches. See SubstringFilter.
+	if frag, arg := SubstringFilter("s.workspace", opts.Workspace); frag != "" {
+		where = append(where, frag)
+		args = append(args, arg)
 	}
-	if opts.Remote != "" {
-		where = append(where, "s.git_remote LIKE ?")
-		args = append(args, "%"+opts.Remote+"%")
+	if frag, arg := SubstringFilter("s.git_remote", opts.Remote); frag != "" {
+		where = append(where, frag)
+		args = append(args, arg)
 	}
 	if opts.StartMs != nil {
 		where = append(where, "s.first_message_at >= ?")

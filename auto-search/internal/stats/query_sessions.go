@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/mistakenot/auto-search/internal/indexdb"
 )
 
 func querySessionStats(req *normalizedRequest) (queryResult, error) {
@@ -61,17 +63,19 @@ func buildSessionMatchedCTE(req *normalizedRequest, bucketExpr string) (string, 
 		scoreExpr = "bm25(sessions_fts) AS score"
 	}
 
-	if req.CWD != "" {
-		where = append(where, "s.workspace = ?")
-		args = append(args, req.CWD)
+	// CWD/Remote/Skill are case-insensitive substring matches. See
+	// indexdb.SubstringFilter for normalization rules.
+	if frag, arg := indexdb.SubstringFilter("s.workspace", req.CWD); frag != "" {
+		where = append(where, frag)
+		args = append(args, arg)
 	}
-	if req.Remote != "" {
-		where = append(where, "s.git_remote = ?")
-		args = append(args, req.Remote)
+	if frag, arg := indexdb.SubstringFilter("s.git_remote", req.Remote); frag != "" {
+		where = append(where, frag)
+		args = append(args, arg)
 	}
-	if req.Skill != "" {
-		where = append(where, "s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE skill_name = ?)")
-		args = append(args, req.Skill)
+	if frag, arg := indexdb.SubstringFilter("skill_name", req.Skill); frag != "" {
+		where = append(where, "s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE "+frag+")")
+		args = append(args, arg)
 	}
 	if req.Role != "" {
 		where = append(where, "s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE role = ?)")

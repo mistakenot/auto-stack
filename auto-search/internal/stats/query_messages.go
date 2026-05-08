@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/mistakenot/auto-search/internal/indexdb"
 )
 
 type messageBucketAgg struct {
@@ -160,17 +162,19 @@ func buildMessageMatchedCTE(req *normalizedRequest, bucketExpr string) (string, 
 		scoreExpr = "bm25(messages_fts) AS score"
 	}
 
-	if req.CWD != "" {
-		where = append(where, "m.workspace = ?")
-		args = append(args, req.CWD)
+	// CWD/Remote/Skill are case-insensitive substring matches. See
+	// indexdb.SubstringFilter for normalization rules.
+	if frag, arg := indexdb.SubstringFilter("m.workspace", req.CWD); frag != "" {
+		where = append(where, frag)
+		args = append(args, arg)
 	}
-	if req.Remote != "" {
-		where = append(where, "m.git_remote = ?")
-		args = append(args, req.Remote)
+	if frag, arg := indexdb.SubstringFilter("m.git_remote", req.Remote); frag != "" {
+		where = append(where, frag)
+		args = append(args, arg)
 	}
-	if req.Skill != "" {
-		where = append(where, "m.skill_name = ?")
-		args = append(args, req.Skill)
+	if frag, arg := indexdb.SubstringFilter("m.skill_name", req.Skill); frag != "" {
+		where = append(where, frag)
+		args = append(args, arg)
 	}
 	if req.Role != "" {
 		where = append(where, "m.role = ?")

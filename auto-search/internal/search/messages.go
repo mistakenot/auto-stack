@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mistakenot/auto-search/internal/indexdb"
 	"github.com/mistakenot/auto-search/internal/query"
 )
 
@@ -92,7 +93,7 @@ const (
 func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	start := time.Now()
 
-	if opts.CWD != "" && opts.Remote != "" {
+	if strings.TrimSpace(opts.CWD) != "" && strings.TrimSpace(opts.Remote) != "" {
 		return nil, errors.New("--cwd and --remote are mutually exclusive")
 	}
 	offset, pageSize, err := normalizePagination(opts.Offset, opts.PageSize)
@@ -185,17 +186,19 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	`
 	args := []any{fts}
 
-	if cwd != "" {
-		baseQuery += " AND m.workspace = ?"
-		args = append(args, cwd)
+	// CWD/Remote/Skill are case-insensitive substring matches. See
+	// indexdb.SubstringFilter for normalization rules.
+	if frag, arg := indexdb.SubstringFilter("m.workspace", cwd); frag != "" {
+		baseQuery += " AND " + frag
+		args = append(args, arg)
 	}
-	if remote != "" {
-		baseQuery += " AND m.git_remote = ?"
-		args = append(args, remote)
+	if frag, arg := indexdb.SubstringFilter("m.git_remote", remote); frag != "" {
+		baseQuery += " AND " + frag
+		args = append(args, arg)
 	}
-	if skill != "" {
-		baseQuery += " AND m.skill_name = ?"
-		args = append(args, skill)
+	if frag, arg := indexdb.SubstringFilter("m.skill_name", skill); frag != "" {
+		baseQuery += " AND " + frag
+		args = append(args, arg)
 	}
 	if role != "" {
 		baseQuery += " AND m.role = ?"
@@ -301,14 +304,14 @@ func neighborMessageIDs(db *sql.DB, sessionID string, messageIndex int) (prev, n
 
 func normalizeFilters(cwd, remote, skill, role, field, timeCanonical string) string {
 	var parts []string
-	if cwd != "" {
-		parts = append(parts, "cwd="+cwd)
+	if v := strings.ToLower(strings.TrimSpace(cwd)); v != "" {
+		parts = append(parts, "cwd="+v)
 	}
-	if remote != "" {
-		parts = append(parts, "remote="+remote)
+	if v := strings.ToLower(strings.TrimSpace(remote)); v != "" {
+		parts = append(parts, "remote="+v)
 	}
-	if skill != "" {
-		parts = append(parts, "skill="+skill)
+	if v := strings.ToLower(strings.TrimSpace(skill)); v != "" {
+		parts = append(parts, "skill="+v)
 	}
 	if role != "" {
 		parts = append(parts, "role="+role)

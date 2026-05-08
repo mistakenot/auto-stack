@@ -35,9 +35,10 @@ func ListSkillUsages(db *sql.DB, filter *SkillFilter) ([]SkillUsage, error) {
 			where = append(where, "timestamp < ?")
 			args = append(args, *filter.EndMs)
 		}
-		if filter.CWD != "" {
-			where = append(where, "workspace = ?")
-			args = append(args, filter.CWD)
+		// CWD is a case-insensitive substring match. See SubstringFilter.
+		if frag, arg := SubstringFilter("workspace", filter.CWD); frag != "" {
+			where = append(where, frag)
+			args = append(args, arg)
 		}
 	}
 

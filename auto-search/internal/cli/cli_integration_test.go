@@ -1086,6 +1086,182 @@ func TestSkillsList(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Filter normalization tests: --cwd, --remote, --skill must be substring +
+// case-insensitive across `search`, `stats`, and `session list`.
+// ---------------------------------------------------------------------------
+
+// totalHitsFor runs `search "Exit code"` with one extra flag pair and returns
+// the total_hits value from the response, failing the test on any error.
+func totalHitsFor(t *testing.T, extra ...string) float64 {
+	t.Helper()
+	args := append([]string{"search", "Exit code"}, extra...)
+	stdout, stderr, code := runCLI(t, args...)
+	if code != 0 {
+		t.Fatalf("search %v failed: code=%d\nstdout:\n%s\nstderr:\n%s", extra, code, stdout, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	return meta["total_hits"].(float64)
+}
+
+func TestSearchCwdSubstringMatch(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	full := totalHitsFor(t, "--cwd", "/workspace/project-a")
+	if full == 0 {
+		t.Fatal("baseline search with full --cwd path returned 0 hits; fixture changed?")
+	}
+	substring := totalHitsFor(t, "--cwd", "project-a")
+	if substring != full {
+		t.Fatalf("substring --cwd=project-a got %v hits, want %v (same as full path)", substring, full)
+	}
+}
+
+func TestSearchCwdCaseInsensitive(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	lower := totalHitsFor(t, "--cwd", "project-a")
+	upper := totalHitsFor(t, "--cwd", "PROJECT-A")
+	mixed := totalHitsFor(t, "--cwd", "Project-A")
+	if lower == 0 {
+		t.Fatal("baseline lowercase search returned 0 hits")
+	}
+	if upper != lower || mixed != lower {
+		t.Fatalf("case-insensitive --cwd mismatch: lower=%v upper=%v mixed=%v", lower, upper, mixed)
+	}
+}
+
+func TestSearchCwdEmptyReturnsAll(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	withFlag := totalHitsFor(t, "--cwd", "")
+	without := totalHitsFor(t)
+	if withFlag != without {
+		t.Fatalf("empty --cwd should not filter: got %v, want %v", withFlag, without)
+	}
+	if without == 0 {
+		t.Fatal("baseline returned 0 hits; fixture changed?")
+	}
+}
+
+func TestSearchCwdWhitespaceTrimmed(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	plain := totalHitsFor(t, "--cwd", "project-a")
+	padded := totalHitsFor(t, "--cwd", "  project-a  ")
+	if padded != plain {
+		t.Fatalf("whitespace-padded --cwd mismatch: padded=%v plain=%v", padded, plain)
+	}
+}
+
+func TestSearchRemoteSubstringCaseInsensitive(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	full := totalHitsFor(t, "--remote", "git@github.com:test/repo")
+	if full == 0 {
+		t.Fatal("baseline --remote search returned 0 hits")
+	}
+	// "test/repo" is a substring of both "test/repo" and "test/other-repo",
+	// so use the unique substring "test/repo" only (it appears in both).
+	// Use a more specific substring that uniquely identifies test/repo.
+	subUnique := totalHitsFor(t, "--remote", ":TEST/Repo")
+	if subUnique != full {
+		t.Fatalf("substring+case-insensitive --remote mismatch: got %v, want %v", subUnique, full)
+	}
+}
+
+// totalHitsForQuery is like totalHitsFor but lets the caller choose the query.
+func totalHitsForQuery(t *testing.T, query string, extra ...string) float64 {
+	t.Helper()
+	args := append([]string{"search", query}, extra...)
+	stdout, stderr, code := runCLI(t, args...)
+	if code != 0 {
+		t.Fatalf("search %v failed: code=%d\nstdout:\n%s\nstderr:\n%s", args, code, stdout, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	return meta["total_hits"].(float64)
+}
+
+func TestSearchSkillSubstringCaseInsensitive(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	full := totalHitsForQuery(t, "commit", "--skill", "contextual-commit")
+	if full == 0 {
+		t.Fatal("baseline --skill search returned 0 hits; fixture changed?")
+	}
+	sub := totalHitsForQuery(t, "commit", "--skill", "Contextual")
+	if sub != full {
+		t.Fatalf("substring+case-insensitive --skill mismatch: got %v, want %v", sub, full)
+	}
+}
+
+// statsBucketCount returns the number of buckets returned by `stats --scope
+// messages --group-by session_id` with extra flags.
+func statsBucketCount(t *testing.T, extra ...string) int {
+	t.Helper()
+	args := append([]string{"stats", "--scope", "messages", "--group-by", "session_id"}, extra...)
+	stdout, stderr, code := runCLI(t, args...)
+	if code != 0 {
+		t.Fatalf("stats %v failed: code=%d\nstdout:\n%s\nstderr:\n%s", extra, code, stdout, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	buckets := out["buckets"].([]any)
+	return len(buckets)
+}
+
+func TestStatsCwdSubstringCaseInsensitive(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	full := statsBucketCount(t, "--cwd", "/workspace/project-a")
+	if full == 0 {
+		t.Fatal("baseline stats with full --cwd returned 0 buckets")
+	}
+	sub := statsBucketCount(t, "--cwd", "project-a")
+	if sub != full {
+		t.Fatalf("substring --cwd: got %d buckets, want %d", sub, full)
+	}
+	upper := statsBucketCount(t, "--cwd", "PROJECT-A")
+	if upper != full {
+		t.Fatalf("uppercase --cwd: got %d buckets, want %d", upper, full)
+	}
+}
+
+// sessionListCount returns the number of session rows returned from
+// `session list` with the given extra flags.
+func sessionListCount(t *testing.T, extra ...string) int {
+	t.Helper()
+	args := append([]string{"session", "list"}, extra...)
+	stdout, stderr, code := runCLI(t, args...)
+	if code != 0 {
+		t.Fatalf("session list %v failed: code=%d\nstdout:\n%s\nstderr:\n%s", extra, code, stdout, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	sessions, ok := out["sessions"].([]any)
+	if !ok {
+		t.Fatalf("missing sessions array in session list output:\n%s", stdout)
+	}
+	return len(sessions)
+}
+
+func TestSessionListCwdSubstringCaseInsensitive(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	full := sessionListCount(t, "--cwd", "/workspace/project-a")
+	if full == 0 {
+		t.Fatal("baseline session list with full --cwd returned 0 rows")
+	}
+	sub := sessionListCount(t, "--cwd", "project-a")
+	if sub != full {
+		t.Fatalf("substring --cwd: got %d rows, want %d", sub, full)
+	}
+	upper := sessionListCount(t, "--cwd", "PROJECT-A")
+	if upper != full {
+		t.Fatalf("uppercase --cwd: got %d rows, want %d (no regression)", upper, full)
+	}
+}
+
 func TestIndexOnEmptyInputFails(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
