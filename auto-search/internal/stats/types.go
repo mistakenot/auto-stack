@@ -23,6 +23,7 @@ var messageGroupKeys = []string{
 	"session_id",
 	"role",
 	"tool_name",
+	"skill_name",
 	"tool_file_path",
 	"bash_command",
 	"workspace",
