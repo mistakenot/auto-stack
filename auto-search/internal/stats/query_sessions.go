@@ -69,6 +69,10 @@ func buildSessionMatchedCTE(req *normalizedRequest, bucketExpr string) (string, 
 		where = append(where, "s.git_remote = ?")
 		args = append(args, req.Remote)
 	}
+	if req.SessionID != "" {
+		where = append(where, "s.session_id = ?")
+		args = append(args, req.SessionID)
+	}
 	if req.Skill != "" {
 		where = append(where, "s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE skill_name = ?)")
 		args = append(args, req.Skill)

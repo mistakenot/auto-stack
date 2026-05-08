@@ -649,6 +649,150 @@ func TestSearchRejectsNegativeOffset(t *testing.T) {
 	}
 }
 
+// TestSearchSessionIDFilter verifies --session-id scopes hits to one session
+// and reports distinct_sessions=1 (vs the FTS --query <sid> footgun, which
+// false-positives across other sessions that quote the id in their content).
+func TestSearchSessionIDFilter(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "search", "authentication", "--session-id", "test-session-1")
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	hits := out["hits"].([]any)
+	if len(hits) == 0 {
+		t.Fatal("expected at least 1 hit for --session-id test-session-1")
+	}
+	if meta["distinct_sessions"] != float64(1) {
+		t.Fatalf("distinct_sessions = %v, want 1", meta["distinct_sessions"])
+	}
+	for i, h := range hits {
+		hit := h.(map[string]any)
+		if hit["sessionId"] != "test-session-1" {
+			t.Fatalf("hit[%d].sessionId = %v, want test-session-1", i, hit["sessionId"])
+		}
+	}
+}
+
+// TestSearchEmptySessionIDIsNoop verifies an empty --session-id flag does not
+// add a predicate (parity with omitting it entirely).
+func TestSearchEmptySessionIDIsNoop(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "search", "authentication", "--session-id", "")
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	if meta["distinct_sessions"].(float64) < 1 {
+		t.Fatalf("distinct_sessions = %v, want >= 1 with empty filter", meta["distinct_sessions"])
+	}
+}
+
+// TestSearchRejectsInvalidSessionID verifies fail-fast on misshapen ids.
+func TestSearchRejectsInvalidSessionID(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	_, stderr, code := runCLI(t, "search", "auth", "--session-id", "xyz")
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for invalid --session-id")
+	}
+	if !strings.Contains(stderr, "invalid --session-id value") {
+		t.Fatalf("expected invalid --session-id error, got:\n%s", stderr)
+	}
+}
+
+// TestSearchSessionIDPlusCwd verifies --session-id combines with --cwd.
+// The fixture session test-session-1 lives under /workspace/project-a, so the
+// combo should still return its hits.
+func TestSearchSessionIDPlusCwd(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t,
+		"search", "authentication",
+		"--session-id", "test-session-1",
+		"--cwd", "/workspace/project-a",
+	)
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	hits := out["hits"].([]any)
+	if len(hits) == 0 {
+		t.Fatal("expected at least 1 hit for --session-id + --cwd combo")
+	}
+	for _, h := range hits {
+		hit := h.(map[string]any)
+		if hit["sessionId"] != "test-session-1" {
+			t.Fatalf("sessionId = %v, want test-session-1", hit["sessionId"])
+		}
+	}
+
+	// And a wrong cwd should yield 0 hits even with a valid session-id.
+	stdout, stderr, code = runCLI(t,
+		"search", "authentication",
+		"--session-id", "test-session-1",
+		"--cwd", "/workspace/does-not-exist",
+	)
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	out = decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	if meta["total_hits"] != float64(0) {
+		t.Fatalf("total_hits = %v, want 0 for mismatched cwd", meta["total_hits"])
+	}
+}
+
+// TestStatsSessionIDFilter verifies --session-id on stats produces single-
+// session bash distribution. Reproduces the bug fix: previously --query <sid>
+// would over-report distinct_sessions because session ids appear in other
+// sessions' transcripts.
+func TestStatsSessionIDFilter(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t,
+		"stats",
+		"--scope", "messages",
+		"--group-by", "bash_command",
+		"--session-id", "test-session-1",
+		"--limit", "20",
+	)
+	if code != 0 {
+		t.Fatalf("stats failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	buckets := out["buckets"].([]any)
+	for i, b := range buckets {
+		bucket := b.(map[string]any)
+		if bucket["distinct_sessions"] != float64(1) {
+			t.Fatalf("buckets[%d].distinct_sessions = %v, want 1", i, bucket["distinct_sessions"])
+		}
+	}
+}
+
+// TestStatsRejectsInvalidSessionID verifies stats fail-fast on bad ids.
+func TestStatsRejectsInvalidSessionID(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	_, stderr, code := runCLI(t,
+		"stats",
+		"--scope", "messages",
+		"--group-by", "session_id",
+		"--session-id", "xyz",
+	)
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for invalid --session-id")
+	}
+	if !strings.Contains(stderr, "invalid --session-id value") {
+		t.Fatalf("expected invalid --session-id error, got:\n%s", stderr)
+	}
+}
+
 func TestSessionGet(t *testing.T) {
 	setupIndexedFixtures(t)
 

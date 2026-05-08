@@ -187,11 +187,17 @@ Search results are JSON with two top-level keys: ` + "`" + `_meta` + "`" + ` and
 A score of ` + "`" + `-17.0` + "`" + ` is a much stronger match than ` + "`" + `-0.001` + "`" + `. Results are already sorted
 by relevance, so you can usually just read them top-to-bottom.
 
-**Browsing sessions:** There is no ` + "`" + `session list` + "`" + ` command. To see recent sessions in a project,
-use a broad session-scope search:
+**Browsing sessions:** use ` + "`" + `autosearch session list` + "`" + ` to enumerate recent sessions
+(filterable by ` + "`" + `--cwd` + "`" + `, ` + "`" + `--since` + "`" + `, etc.), then drill in with ` + "`" + `--session-id` + "`" + `:
 
 ` + "```" + `bash
-autosearch search "user" --scope sessions --cwd /path/to/project --since 7d
+# Recent sessions in a project
+autosearch session list --cwd /path/to/project --since 7d
+
+# Search inside one specific session (avoid the FTS --query <sid> footgun:
+# session ids are quoted across other sessions' transcripts)
+autosearch search "go test" --session-id ab2a6291-d5fb-4aa3-a590-fc3584911d44
+autosearch stats --group-by bash_command --session-id ab2a6291-d5fb-4aa3-a590-fc3584911d44 --limit 20
 ` + "```" + `
 
 ## Example: investigating a recurring bug
@@ -260,6 +266,7 @@ autosearch search "error OR fail OR broken" --scope sessions --cwd /path/to/proj
 --field       all (default), content, tool_input, tool_output
 --cwd         filter by workspace path (mutually exclusive with --remote)
 --remote      filter by git remote URL
+--session-id  scope to a single session id (preferred over --query <sid>)
 --since       relative time: 5m, 7d, 2w
 --after       absolute lower bound (ISO 8601, inclusive)
 --before      absolute upper bound (ISO 8601, exclusive)
@@ -286,6 +293,7 @@ autosearch search "error OR fail OR broken" --scope sessions --cwd /path/to/proj
 --field       all (default), content, tool_input, tool_output
 --cwd         filter by workspace path (mutually exclusive with --remote)
 --remote      filter by git remote URL
+--session-id  scope to a single session id (preferred over --query <sid>)
 --since       relative time: 5m, 7d, 2w
 --after       absolute lower bound (ISO 8601, inclusive)
 --before      absolute upper bound (ISO 8601, exclusive)

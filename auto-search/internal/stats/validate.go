@@ -42,6 +42,10 @@ func normalizeAndValidate(req *Request) (normalizedRequest, error) {
 	if err != nil {
 		return normalizedRequest{}, err
 	}
+	sessionID, err := search.NormalizeSessionID(req.SessionID)
+	if err != nil {
+		return normalizedRequest{}, err
+	}
 	offset, pageSize, err := normalizePagination(req.Offset, req.PageSize)
 	if err != nil {
 		return normalizedRequest{}, err
@@ -86,6 +90,7 @@ func normalizeAndValidate(req *Request) (normalizedRequest, error) {
 		Before:    strings.TrimSpace(req.Before),
 		CWD:       strings.TrimSpace(req.CWD),
 		Remote:    strings.TrimSpace(req.Remote),
+		SessionID: sessionID,
 		Skill:     strings.TrimSpace(req.Skill),
 		Role:      role,
 		Field:     field,

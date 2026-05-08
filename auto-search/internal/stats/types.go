@@ -63,6 +63,7 @@ type Request struct {
 	Before    string
 	CWD       string
 	Remote    string
+	SessionID string
 	Skill     string
 	Role      string
 	Field     string
@@ -123,6 +124,7 @@ type normalizedRequest struct {
 	Before    string
 	CWD       string
 	Remote    string
+	SessionID string
 	Skill     string
 	Role      string
 	Field     string

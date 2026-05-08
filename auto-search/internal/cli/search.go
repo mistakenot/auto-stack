@@ -21,6 +21,7 @@ func newSearchCmd() *cobra.Command {
 	var before string
 	var cwd string
 	var remote string
+	var sessionID string
 	var skill string
 	var role string
 	var field string
@@ -66,6 +67,7 @@ func newSearchCmd() *cobra.Command {
 					Before:    before,
 					CWD:       cwd,
 					Remote:    remote,
+					SessionID: sessionID,
 					Skill:     skill,
 					Role:      role,
 					Field:     field,
@@ -88,6 +90,7 @@ func newSearchCmd() *cobra.Command {
 					Before:    before,
 					CWD:       cwd,
 					Remote:    remote,
+					SessionID: sessionID,
 					Skill:     skill,
 					Role:      role,
 					Field:     field,
@@ -113,6 +116,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&before, "before", "", "exclusive upper date bound")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "workspace path filter")
 	cmd.Flags().StringVar(&remote, "remote", "", "git remote filter")
+	cmd.Flags().StringVar(&sessionID, "session-id", "", "scope to a single session id (e.g. ab2a6291-d5fb-4aa3-a590-fc3584911d44)")
 	cmd.Flags().StringVar(&skill, "skill", "", "filter by skill name")
 	cmd.Flags().StringVar(&role, "role", "", "filter by message role (user, assistant, tool)")
 	cmd.Flags().StringVar(&field, "field", "all", "filter searchable field: all, content, tool_input, tool_output")

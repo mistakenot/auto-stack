@@ -168,6 +168,10 @@ func buildMessageMatchedCTE(req *normalizedRequest, bucketExpr string) (string, 
 		where = append(where, "m.git_remote = ?")
 		args = append(args, req.Remote)
 	}
+	if req.SessionID != "" {
+		where = append(where, "m.session_id = ?")
+		args = append(args, req.SessionID)
+	}
 	if req.Skill != "" {
 		where = append(where, "m.skill_name = ?")
 		args = append(args, req.Skill)

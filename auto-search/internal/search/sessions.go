@@ -36,6 +36,7 @@ type SessionSearchOpts struct {
 	Before    string
 	CWD       string
 	Remote    string
+	SessionID string
 	Skill     string
 	Role      string
 	Field     string
@@ -68,6 +69,10 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	sessionID, err := NormalizeSessionID(opts.SessionID)
+	if err != nil {
+		return nil, err
+	}
 
 	now := opts.Now
 	if now.IsZero() {
@@ -84,9 +89,9 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	}
 
 	fts := query.CompileFTS(ast)
-	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter.Canonical)
+	filters := normalizeFilters(opts.CWD, opts.Remote, sessionID, opts.Skill, role, field, timeFilter.Canonical)
 
-	hits, stats, err := execSessionSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter, opts.Query, filters, offset, pageSize)
+	hits, stats, err := execSessionSearch(opts.DB, fts, opts.CWD, opts.Remote, sessionID, opts.Skill, role, field, timeFilter, opts.Query, filters, offset, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +127,7 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	}, nil
 }
 
-func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, timeFilter TimeFilter, rawQuery, filters string, offset, pageSize int) ([]SessionHit, matchStats, error) {
+func execSessionSearch(db *sql.DB, fts, cwd, remote, sessionID, skill, role, field string, timeFilter TimeFilter, rawQuery, filters string, offset, pageSize int) ([]SessionHit, matchStats, error) {
 	zeroStats := matchStats{}
 
 	baseQuery := `
@@ -139,6 +144,10 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	if remote != "" {
 		baseQuery += " AND s.git_remote = ?"
 		args = append(args, remote)
+	}
+	if sessionID != "" {
+		baseQuery += " AND s.session_id = ?"
+		args = append(args, sessionID)
 	}
 	if skill != "" {
 		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE skill_name = ?)"

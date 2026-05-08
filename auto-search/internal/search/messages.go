@@ -4,11 +4,34 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/mistakenot/auto-search/internal/query"
 )
+
+// sessionIDPattern matches normalized session-id shapes seen in the corpus:
+// UUIDs, dashed prefixes like `acompact-…` or `subagent-…`, and short hex ids.
+// Lowercase letters, digits, and dashes; minimum length 8 to fail-fast on
+// obvious typos while still permitting all real id variants.
+var sessionIDPattern = regexp.MustCompile(`^[a-z0-9-]{8,}$`)
+
+// NormalizeSessionID trims, lowercases, and validates a session id filter.
+// Returns "" with no error when the input is empty (filter not applied).
+func NormalizeSessionID(raw string) (string, error) {
+	id := strings.ToLower(strings.TrimSpace(raw))
+	if id == "" {
+		return "", nil
+	}
+	if !sessionIDPattern.MatchString(id) {
+		return "", fmt.Errorf(
+			"invalid --session-id value %q (expected lowercase alphanumeric and dashes, min 8 chars; e.g. ab2a6291-d5fb-4aa3-a590-fc3584911d44)",
+			raw,
+		)
+	}
+	return id, nil
+}
 
 // MessageHit is a single message-scope search result.
 type MessageHit struct {
@@ -65,6 +88,7 @@ type MessageSearchOpts struct {
 	Before    string
 	CWD       string
 	Remote    string
+	SessionID string
 	Skill     string
 	Role      string
 	Field     string
@@ -107,6 +131,10 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	sessionID, err := NormalizeSessionID(opts.SessionID)
+	if err != nil {
+		return nil, err
+	}
 
 	now := opts.Now
 	if now.IsZero() {
@@ -124,9 +152,9 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 
 	fts := query.CompileFTS(ast)
 	terms := ExtractTerms(ast)
-	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter.Canonical)
+	filters := normalizeFilters(opts.CWD, opts.Remote, sessionID, opts.Skill, role, field, timeFilter.Canonical)
 
-	hits, stats, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
+	hits, stats, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, sessionID, opts.Skill, role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +163,7 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	if stats.TotalMatches < minHitsForFallback {
 		fallbackAST := query.PrefixFallback(ast)
 		fallbackFTS := query.CompileFTS(fallbackAST)
-		fallbackHits, fallbackStats, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
+		fallbackHits, fallbackStats, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, sessionID, opts.Skill, role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
 		if err == nil && fallbackStats.TotalMatches > stats.TotalMatches {
 			hits = fallbackHits
 			stats = fallbackStats
@@ -175,7 +203,7 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	}, nil
 }
 
-func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, matchStats, error) {
+func execMessageSearch(db *sql.DB, fts, cwd, remote, sessionID, skill, role, field string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, matchStats, error) {
 	zeroStats := matchStats{}
 
 	baseQuery := `
@@ -192,6 +220,10 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	if remote != "" {
 		baseQuery += " AND m.git_remote = ?"
 		args = append(args, remote)
+	}
+	if sessionID != "" {
+		baseQuery += " AND m.session_id = ?"
+		args = append(args, sessionID)
 	}
 	if skill != "" {
 		baseQuery += " AND m.skill_name = ?"
@@ -299,13 +331,16 @@ func neighborMessageIDs(db *sql.DB, sessionID string, messageIndex int) (prev, n
 	return
 }
 
-func normalizeFilters(cwd, remote, skill, role, field, timeCanonical string) string {
+func normalizeFilters(cwd, remote, sessionID, skill, role, field, timeCanonical string) string {
 	var parts []string
 	if cwd != "" {
 		parts = append(parts, "cwd="+cwd)
 	}
 	if remote != "" {
 		parts = append(parts, "remote="+remote)
+	}
+	if sessionID != "" {
+		parts = append(parts, "session_id="+sessionID)
 	}
 	if skill != "" {
 		parts = append(parts, "skill="+skill)
