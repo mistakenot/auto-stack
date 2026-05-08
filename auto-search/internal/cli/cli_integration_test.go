@@ -1086,6 +1086,145 @@ func TestSkillsList(t *testing.T) {
 	}
 }
 
+func TestSearchWithToolFilterSingle(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	// Empty query with --tool Bash should return only the Bash row (msg-005).
+	stdout, stderr, code := runCLI(t, "search", "", "--tool", "Bash")
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	if meta["total_hits"] != float64(1) {
+		t.Fatalf("total_hits = %v, want 1", meta["total_hits"])
+	}
+	hits := out["hits"].([]any)
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1", len(hits))
+	}
+	if hits[0].(map[string]any)["messageId"] != "msg-005" {
+		t.Errorf("messageId = %v, want msg-005", hits[0].(map[string]any)["messageId"])
+	}
+}
+
+func TestSearchWithToolFilterMultiValue(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	// Comma-separated --tool Read,Bash returns the union (msg-004 + msg-005).
+	stdout, stderr, code := runCLI(t, "search", "", "--tool", "Read,Bash")
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	if meta["total_hits"] != float64(2) {
+		t.Fatalf("total_hits = %v, want 2", meta["total_hits"])
+	}
+
+	// Repeated flag form: --tool Read --tool Bash should be equivalent.
+	stdout, stderr, code = runCLI(t, "search", "", "--tool", "Read", "--tool", "Bash")
+	if code != 0 {
+		t.Fatalf("search failed (repeated): code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	out = decodeJSON(t, stdout)
+	meta = out["_meta"].(map[string]any)
+	if meta["total_hits"] != float64(2) {
+		t.Fatalf("repeated --tool total_hits = %v, want 2", meta["total_hits"])
+	}
+}
+
+func TestSearchWithToolFilterUnknownFailsFast(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "search", "", "--tool", "NotARealTool")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit code for unknown tool; stdout=%s stderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "invalid --tool") {
+		t.Errorf("expected 'invalid --tool' in stderr, got:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "NotARealTool") {
+		t.Errorf("error should echo the bad value, got:\n%s", stderr)
+	}
+	// User must be told what's valid.
+	if !strings.Contains(stderr, "Edit") {
+		t.Errorf("error should list valid tools (e.g. Edit), got:\n%s", stderr)
+	}
+}
+
+func TestSearchWithToolFilterCombinedWithCwd(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	// Skill calls live in /workspace/project-a only; project-b has none.
+	stdout, stderr, code := runCLI(t, "search", "",
+		"--tool", "Skill",
+		"--cwd", "/workspace/project-b",
+	)
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	if meta["total_hits"] != float64(0) {
+		t.Fatalf("Skill in project-b total_hits = %v, want 0", meta["total_hits"])
+	}
+
+	stdout, stderr, code = runCLI(t, "search", "",
+		"--tool", "Skill",
+		"--cwd", "/workspace/project-a",
+	)
+	if code != 0 {
+		t.Fatalf("search failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	out = decodeJSON(t, stdout)
+	meta = out["_meta"].(map[string]any)
+	if meta["total_hits"] != float64(2) {
+		t.Errorf("Skill in project-a total_hits = %v, want 2", meta["total_hits"])
+	}
+}
+
+func TestStatsWithToolFilter(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	// stats --group-by bash_command --tool Bash should scope to actual Bash rows.
+	// Without the filter, all messages would feed in regardless of tool_name.
+	stdout, stderr, code := runCLI(t, "stats",
+		"--scope", "messages",
+		"--group-by", "bash_command",
+		"--tool", "Bash",
+	)
+	if code != 0 {
+		t.Fatalf("stats failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	// Only msg-005 has tool_name=Bash, so total_matches should be 1.
+	if meta["total_matches"] != float64(1) {
+		t.Fatalf("total_matches with --tool Bash = %v, want 1", meta["total_matches"])
+	}
+	buckets := out["buckets"].([]any)
+	if len(buckets) != 1 {
+		t.Fatalf("buckets = %d, want 1", len(buckets))
+	}
+}
+
+func TestStatsWithToolFilterUnknownFailsFast(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	_, stderr, code := runCLI(t, "stats",
+		"--scope", "messages",
+		"--group-by", "session_id",
+		"--tool", "Bogus",
+	)
+	if code == 0 {
+		t.Fatal("expected non-zero exit code for unknown tool")
+	}
+	if !strings.Contains(stderr, "invalid --tool") {
+		t.Errorf("expected invalid --tool error, got:\n%s", stderr)
+	}
+}
+
 func TestIndexOnEmptyInputFails(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

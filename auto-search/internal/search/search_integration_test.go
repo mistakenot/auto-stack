@@ -933,6 +933,214 @@ func TestCWDAndRemoteMutuallyExclusive(t *testing.T) {
 	}
 }
 
+func TestMessageSearchToolFilterSingle(t *testing.T) {
+	db := buildTestDB(t)
+
+	// Empty query returns all messages; --tool Edit narrows to tool_name=Edit.
+	// The fixture has Read, Bash, Skill — no Edit calls, so this should be 0.
+	resEdit, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "",
+		Tools: []string{"Edit"},
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages Edit: %v", err)
+	}
+	if resEdit.Meta.TotalHits != 0 {
+		t.Errorf("Edit total hits = %d, want 0 (fixture has no Edit calls)", resEdit.Meta.TotalHits)
+	}
+
+	// --tool Bash should match the one Bash call in fixtures (msg-005).
+	resBash, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "",
+		Tools: []string{"Bash"},
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages Bash: %v", err)
+	}
+	if resBash.Meta.TotalHits != 1 {
+		t.Fatalf("Bash total hits = %d, want 1", resBash.Meta.TotalHits)
+	}
+	if resBash.Hits[0].MessageID != "msg-005" {
+		t.Errorf("Bash hit = %q, want msg-005", resBash.Hits[0].MessageID)
+	}
+}
+
+func TestMessageSearchToolFilterMultiValueUnion(t *testing.T) {
+	db := buildTestDB(t)
+
+	// Read appears once (msg-004), Bash once (msg-005), Skill twice (msg-011, msg-012).
+	res, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "",
+		Tools: []string{"Read", "Bash"},
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	if res.Meta.TotalHits != 2 {
+		t.Fatalf("Read+Bash total hits = %d, want 2", res.Meta.TotalHits)
+	}
+
+	// Comma-separated form goes through the same normalizer.
+	resComma, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "",
+		Tools: []string{"Read,Bash"},
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages comma: %v", err)
+	}
+	if resComma.Meta.TotalHits != 2 {
+		t.Errorf("Read,Bash comma total hits = %d, want 2", resComma.Meta.TotalHits)
+	}
+}
+
+func TestMessageSearchToolFilterCaseInsensitive(t *testing.T) {
+	db := buildTestDB(t)
+
+	res, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "",
+		Tools: []string{"bash"},
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	if res.Meta.TotalHits != 1 {
+		t.Errorf("lowercase bash total hits = %d, want 1", res.Meta.TotalHits)
+	}
+}
+
+func TestMessageSearchToolFilterCombinedWithCWD(t *testing.T) {
+	db := buildTestDB(t)
+
+	// Skill calls live in /workspace/project-a; project-b has none.
+	res, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "",
+		Tools: []string{"Skill"},
+		CWD:   "/workspace/project-b",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	if res.Meta.TotalHits != 0 {
+		t.Errorf("Skill in project-b total hits = %d, want 0", res.Meta.TotalHits)
+	}
+
+	res, err = search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "",
+		Tools: []string{"Skill"},
+		CWD:   "/workspace/project-a",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	if res.Meta.TotalHits != 2 {
+		t.Errorf("Skill in project-a total hits = %d, want 2", res.Meta.TotalHits)
+	}
+}
+
+func TestMessageSearchToolFilterRejectsUnknown(t *testing.T) {
+	db := buildTestDB(t)
+
+	_, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "",
+		Tools: []string{"NotARealTool"},
+	})
+	if err == nil {
+		t.Fatal("expected error for unknown tool name")
+	}
+	if !containsStr(err.Error(), "NotARealTool") {
+		t.Errorf("error should mention the bad value, got: %s", err.Error())
+	}
+	if !containsStr(err.Error(), "Edit") {
+		t.Errorf("error should list valid tools (e.g. Edit), got: %s", err.Error())
+	}
+}
+
+func TestMessageSearchToolFilterEmptySliceIsNoOp(t *testing.T) {
+	db := buildTestDB(t)
+
+	// With a query and no Tools we get a baseline. Adding an empty Tools slice
+	// must not narrow results — it should be treated as "no tool filter".
+	resBaseline, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "authentication",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages baseline: %v", err)
+	}
+
+	resEmpty, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "authentication",
+		Tools: []string{},
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages empty Tools: %v", err)
+	}
+
+	if resEmpty.Meta.TotalHits != resBaseline.Meta.TotalHits {
+		t.Errorf("empty Tools changed hits: %d vs %d (want equal)",
+			resEmpty.Meta.TotalHits, resBaseline.Meta.TotalHits)
+	}
+
+	resWhitespace, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "authentication",
+		Tools: []string{"", "  "},
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages whitespace Tools: %v", err)
+	}
+	if resWhitespace.Meta.TotalHits != resBaseline.Meta.TotalHits {
+		t.Errorf("whitespace Tools changed hits: %d vs %d (want equal)",
+			resWhitespace.Meta.TotalHits, resBaseline.Meta.TotalHits)
+	}
+}
+
+func TestMessageSearchEmptyQueryNoFiltersErrors(t *testing.T) {
+	db := buildTestDB(t)
+
+	// Empty query with no structured filters must fail-fast: returning every
+	// indexed message would be misleading and is never the user's intent.
+	_, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "",
+	})
+	if err == nil {
+		t.Fatal("expected error when both query and structured filters are empty")
+	}
+	if !containsStr(err.Error(), "structured filter") {
+		t.Errorf("error should mention structured filter; got: %s", err.Error())
+	}
+}
+
+func TestSessionSearchToolFilter(t *testing.T) {
+	db := buildTestDB(t)
+
+	// Bash calls only in test-session-1 (msg-005).
+	res, err := search.SearchSessions(&search.SessionSearchOpts{
+		DB:    db,
+		Query: "User",
+		Tools: []string{"Bash"},
+	})
+	if err != nil {
+		t.Fatalf("SearchSessions: %v", err)
+	}
+	if res.Meta.TotalHits != 1 {
+		t.Fatalf("Bash session hits = %d, want 1", res.Meta.TotalHits)
+	}
+	if res.Hits[0].SessionID != "test-session-1" {
+		t.Errorf("session = %q, want test-session-1", res.Hits[0].SessionID)
+	}
+}
+
 func containsStr(s, sub string) bool {
 	for i := 0; i <= len(s)-len(sub); i++ {
 		if s[i:i+len(sub)] == sub {

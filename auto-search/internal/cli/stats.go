@@ -24,6 +24,7 @@ func newStatsCmd() *cobra.Command {
 	var skill string
 	var role string
 	var field string
+	var tools []string
 	var minCount int
 	var offset int
 	var limit int
@@ -58,6 +59,7 @@ func newStatsCmd() *cobra.Command {
 				Skill:     skill,
 				Role:      role,
 				Field:     field,
+				Tools:     tools,
 				MinCount:  minCount,
 				Offset:    offset,
 				PageSize:  limit,
@@ -86,6 +88,7 @@ func newStatsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&skill, "skill", "", "filter by skill name")
 	cmd.Flags().StringVar(&role, "role", "", "filter by message role")
 	cmd.Flags().StringVar(&field, "field", "all", "filter searchable field: all, content, tool_input, tool_output")
+	cmd.Flags().StringSliceVar(&tools, "tool", nil, "filter by tool_name (repeatable or comma-separated, e.g. --tool Edit,Write); case-insensitive")
 	cmd.Flags().IntVar(&minCount, "min-count", 0, "minimum threshold for selected measure")
 	cmd.Flags().IntVar(&offset, "offset", 0, "bucket offset for pagination (0-based)")
 	cmd.Flags().IntVar(&limit, "limit", 20, "max buckets to return")

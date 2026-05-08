@@ -39,6 +39,7 @@ type SessionSearchOpts struct {
 	Skill     string
 	Role      string
 	Field     string
+	Tools     []string
 	Offset    int
 	PageSize  int
 	RequestID string
@@ -68,6 +69,10 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	tools, err := NormalizeToolNames(opts.Tools)
+	if err != nil {
+		return nil, err
+	}
 
 	now := opts.Now
 	if now.IsZero() {
@@ -78,15 +83,25 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 		return nil, err
 	}
 
-	ast, err := query.Parse(opts.Query)
-	if err != nil {
-		return nil, fmt.Errorf("parse query: %w", err)
+	hasQuery := strings.TrimSpace(opts.Query) != ""
+	hasStructuredFilter := opts.CWD != "" || opts.Remote != "" || opts.Skill != "" ||
+		role != "" || field != searchFieldAll || len(tools) > 0 ||
+		timeFilter.StartMs != nil || timeFilter.EndMs != nil
+	if !hasQuery && !hasStructuredFilter {
+		return nil, errors.New("query is required when no structured filter is set; pass a query or use --tool/--cwd/--role/--skill/--since/--after/--before")
 	}
 
-	fts := query.CompileFTS(ast)
-	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter.Canonical)
+	var fts string
+	if hasQuery {
+		ast, err := query.Parse(opts.Query)
+		if err != nil {
+			return nil, fmt.Errorf("parse query: %w", err)
+		}
+		fts = query.CompileFTS(ast)
+	}
+	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, role, field, tools, timeFilter.Canonical)
 
-	hits, stats, err := execSessionSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter, opts.Query, filters, offset, pageSize)
+	hits, stats, err := execSessionSearch(opts.DB, fts, hasQuery, opts.CWD, opts.Remote, opts.Skill, role, field, tools, timeFilter, opts.Query, filters, offset, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -122,15 +137,25 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 	}, nil
 }
 
-func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, timeFilter TimeFilter, rawQuery, filters string, offset, pageSize int) ([]SessionHit, matchStats, error) {
+func execSessionSearch(db *sql.DB, fts string, hasQuery bool, cwd, remote, skill, role, field string, tools []string, timeFilter TimeFilter, rawQuery, filters string, offset, pageSize int) ([]SessionHit, matchStats, error) {
 	zeroStats := matchStats{}
 
-	baseQuery := `
-		FROM sessions_fts
-		JOIN sessions s ON s.doc_id = sessions_fts.rowid
-		WHERE sessions_fts MATCH ?
-	`
-	args := []any{fts}
+	var baseQuery string
+	var args []any
+	if hasQuery {
+		baseQuery = `
+			FROM sessions_fts
+			JOIN sessions s ON s.doc_id = sessions_fts.rowid
+			WHERE sessions_fts MATCH ?
+		`
+		args = []any{fts}
+	} else {
+		baseQuery = `
+			FROM sessions s
+			WHERE 1=1
+		`
+		args = []any{}
+	}
 
 	if cwd != "" {
 		baseQuery += " AND s.workspace = ?"
@@ -147,6 +172,12 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	if role != "" {
 		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE role = ?)"
 		args = append(args, role)
+	}
+	if len(tools) > 0 {
+		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE tool_name IN (" + placeholdersN(len(tools)) + "))"
+		for _, t := range tools {
+			args = append(args, t)
+		}
 	}
 	switch field {
 	case searchFieldAll:
@@ -188,9 +219,13 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 		return nil, zeroStats, fmt.Errorf("session search distinct messages query: %w", err)
 	}
 
+	scoreExpr := "0.0 AS score"
+	if hasQuery {
+		scoreExpr = "bm25(sessions_fts) AS score"
+	}
 	q := `
 		SELECT s.session_id, s.workspace, s.first_message_at, s.last_message_at,
-		       bm25(sessions_fts) AS score
+		       ` + scoreExpr + `
 	` + baseQuery + `
 		ORDER BY score, s.session_id
 		LIMIT ? OFFSET ?

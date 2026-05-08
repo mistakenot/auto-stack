@@ -68,6 +68,7 @@ type MessageSearchOpts struct {
 	Skill     string
 	Role      string
 	Field     string
+	Tools     []string
 	Offset    int
 	PageSize  int
 	RequestID string
@@ -107,6 +108,10 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	tools, err := NormalizeToolNames(opts.Tools)
+	if err != nil {
+		return nil, err
+	}
 
 	now := opts.Now
 	if now.IsZero() {
@@ -117,29 +122,49 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 		return nil, err
 	}
 
-	ast, err := query.Parse(opts.Query)
-	if err != nil {
-		return nil, fmt.Errorf("parse query: %w", err)
+	// Empty query is allowed when at least one structured filter is set; this
+	// drives the "show me all <tool> calls" / "show me all messages in <cwd>"
+	// use case without forcing the user to invent an FTS term that matches
+	// everything. We skip the FTS path entirely in that case.
+	hasQuery := strings.TrimSpace(opts.Query) != ""
+	hasStructuredFilter := opts.CWD != "" || opts.Remote != "" || opts.Skill != "" ||
+		role != "" || field != searchFieldAll || len(tools) > 0 ||
+		timeFilter.StartMs != nil || timeFilter.EndMs != nil
+	if !hasQuery && !hasStructuredFilter {
+		return nil, errors.New("query is required when no structured filter is set; pass a query or use --tool/--cwd/--role/--skill/--since/--after/--before")
 	}
 
-	fts := query.CompileFTS(ast)
-	terms := ExtractTerms(ast)
-	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter.Canonical)
+	var (
+		fts   string
+		terms []string
+	)
+	if hasQuery {
+		ast, err := query.Parse(opts.Query)
+		if err != nil {
+			return nil, fmt.Errorf("parse query: %w", err)
+		}
+		fts = query.CompileFTS(ast)
+		terms = ExtractTerms(ast)
+	}
+	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, role, field, tools, timeFilter.Canonical)
 
-	hits, stats, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
+	hits, stats, err := execMessageSearch(opts.DB, fts, hasQuery, opts.CWD, opts.Remote, opts.Skill, role, field, tools, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
 	if err != nil {
 		return nil, err
 	}
 
 	wildcard := false
-	if stats.TotalMatches < minHitsForFallback {
-		fallbackAST := query.PrefixFallback(ast)
-		fallbackFTS := query.CompileFTS(fallbackAST)
-		fallbackHits, fallbackStats, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
-		if err == nil && fallbackStats.TotalMatches > stats.TotalMatches {
-			hits = fallbackHits
-			stats = fallbackStats
-			wildcard = true
+	if hasQuery && stats.TotalMatches < minHitsForFallback {
+		ast, parseErr := query.Parse(opts.Query)
+		if parseErr == nil {
+			fallbackAST := query.PrefixFallback(ast)
+			fallbackFTS := query.CompileFTS(fallbackAST)
+			fallbackHits, fallbackStats, err := execMessageSearch(opts.DB, fallbackFTS, true, opts.CWD, opts.Remote, opts.Skill, role, field, tools, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
+			if err == nil && fallbackStats.TotalMatches > stats.TotalMatches {
+				hits = fallbackHits
+				stats = fallbackStats
+				wildcard = true
+			}
 		}
 	}
 
@@ -175,15 +200,29 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	}, nil
 }
 
-func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, matchStats, error) {
+func execMessageSearch(db *sql.DB, fts string, hasQuery bool, cwd, remote, skill, role, field string, tools []string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, matchStats, error) {
 	zeroStats := matchStats{}
 
-	baseQuery := `
-		FROM messages_fts
-		JOIN messages m ON m.doc_id = messages_fts.rowid
-		WHERE messages_fts MATCH ?
-	`
-	args := []any{fts}
+	// When there's no FTS query, drop the messages_fts join and start from the
+	// messages table directly. Score becomes a constant so ORDER BY score still
+	// works without producing meaningful BM25 ranks. The structured WHERE
+	// clauses below are identical in both paths.
+	var baseQuery string
+	var args []any
+	if hasQuery {
+		baseQuery = `
+			FROM messages_fts
+			JOIN messages m ON m.doc_id = messages_fts.rowid
+			WHERE messages_fts MATCH ?
+		`
+		args = []any{fts}
+	} else {
+		baseQuery = `
+			FROM messages m
+			WHERE 1=1
+		`
+		args = []any{}
+	}
 
 	if cwd != "" {
 		baseQuery += " AND m.workspace = ?"
@@ -200,6 +239,12 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	if role != "" {
 		baseQuery += " AND m.role = ?"
 		args = append(args, role)
+	}
+	if len(tools) > 0 {
+		baseQuery += " AND m.tool_name IN (" + placeholdersN(len(tools)) + ")"
+		for _, t := range tools {
+			args = append(args, t)
+		}
 	}
 	switch field {
 	case searchFieldAll:
@@ -228,9 +273,13 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 		return nil, zeroStats, fmt.Errorf("message search count query: %w", err)
 	}
 
+	scoreExpr := "0.0 AS score"
+	if hasQuery {
+		scoreExpr = "bm25(messages_fts) AS score"
+	}
 	q := `
 		SELECT m.message_id, m.session_id, m.role, m.content_truncated,
-		       m.message_index, bm25(messages_fts) AS score
+		       m.message_index, ` + scoreExpr + `
 	` + baseQuery + `
 		ORDER BY score, m.message_id
 		LIMIT ? OFFSET ?
@@ -299,7 +348,7 @@ func neighborMessageIDs(db *sql.DB, sessionID string, messageIndex int) (prev, n
 	return
 }
 
-func normalizeFilters(cwd, remote, skill, role, field, timeCanonical string) string {
+func normalizeFilters(cwd, remote, skill, role, field string, tools []string, timeCanonical string) string {
 	var parts []string
 	if cwd != "" {
 		parts = append(parts, "cwd="+cwd)
@@ -316,10 +365,23 @@ func normalizeFilters(cwd, remote, skill, role, field, timeCanonical string) str
 	if field != "" && field != searchFieldAll {
 		parts = append(parts, "field="+field)
 	}
+	if len(tools) > 0 {
+		// tools is already sorted+deduped+canonicalized by NormalizeToolNames.
+		parts = append(parts, "tool="+strings.Join(tools, ","))
+	}
 	if timeCanonical != "" {
 		parts = append(parts, timeCanonical)
 	}
 	return strings.Join(parts, ";")
+}
+
+// placeholdersN returns "?, ?, ..." with n placeholders. Panics if n<1; callers
+// must guard against empty input. Used to build parameterized SQL IN clauses.
+func placeholdersN(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strings.Repeat("?, ", n-1) + "?"
 }
 
 func normalizePagination(offset, pageSize int) (int, int, error) {

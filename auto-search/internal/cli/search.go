@@ -24,6 +24,7 @@ func newSearchCmd() *cobra.Command {
 	var skill string
 	var role string
 	var field string
+	var tools []string
 	var offset int
 	var limit int
 	var requestID string
@@ -69,6 +70,7 @@ func newSearchCmd() *cobra.Command {
 					Skill:     skill,
 					Role:      role,
 					Field:     field,
+					Tools:     tools,
 					Offset:    offset,
 					PageSize:  limit,
 					RequestID: requestID,
@@ -91,6 +93,7 @@ func newSearchCmd() *cobra.Command {
 					Skill:     skill,
 					Role:      role,
 					Field:     field,
+					Tools:     tools,
 					Offset:    offset,
 					PageSize:  limit,
 					RequestID: requestID,
@@ -116,6 +119,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&skill, "skill", "", "filter by skill name")
 	cmd.Flags().StringVar(&role, "role", "", "filter by message role (user, assistant, tool)")
 	cmd.Flags().StringVar(&field, "field", "all", "filter searchable field: all, content, tool_input, tool_output")
+	cmd.Flags().StringSliceVar(&tools, "tool", nil, "filter by tool_name (repeatable or comma-separated, e.g. --tool Edit,Write); case-insensitive")
 	cmd.Flags().IntVar(&offset, "offset", 0, "result offset for pagination (0-based)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max results to return (default 20)")
 	cmd.Flags().BoolVar(&highlight, "highlight", false, "highlight matched terms in snippets")

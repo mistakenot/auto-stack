@@ -66,6 +66,7 @@ type Request struct {
 	Skill     string
 	Role      string
 	Field     string
+	Tools     []string
 	MinCount  int
 	Offset    int
 	PageSize  int
@@ -126,6 +127,7 @@ type normalizedRequest struct {
 	Skill     string
 	Role      string
 	Field     string
+	Tools     []string
 	MinCount  int
 	Offset    int
 	PageSize  int

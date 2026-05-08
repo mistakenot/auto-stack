@@ -176,6 +176,12 @@ func buildMessageMatchedCTE(req *normalizedRequest, bucketExpr string) (string, 
 		where = append(where, "m.role = ?")
 		args = append(args, req.Role)
 	}
+	if len(req.Tools) > 0 {
+		where = append(where, "m.tool_name IN ("+makePlaceholders(len(req.Tools))+")")
+		for _, t := range req.Tools {
+			args = append(args, t)
+		}
+	}
 	switch req.Field {
 	case "all":
 	case "content":

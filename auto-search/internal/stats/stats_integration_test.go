@@ -261,3 +261,69 @@ func TestStatsMessagesPaginationDeterminism(t *testing.T) {
 		t.Fatalf("second page meta = %+v, want no next page", second.Meta)
 	}
 }
+
+func TestStatsMessagesToolFilterScopesBashGroupBy(t *testing.T) {
+	db := buildTestDB(t)
+
+	// Without --tool, --group-by bash_command groups every message including
+	// the no-bash ones into the (none) bucket. With --tool Bash, we should see
+	// only the actual Bash row (msg-005).
+	resp, err := stats.Run(&stats.Request{
+		DB:      db,
+		Scope:   "messages",
+		GroupBy: "bash_command",
+		Tools:   []string{"Bash"},
+	})
+	if err != nil {
+		t.Fatalf("stats.Run: %v", err)
+	}
+	if resp.Meta.TotalMatches != 1 {
+		t.Fatalf("total_matches with --tool Bash = %d, want 1", resp.Meta.TotalMatches)
+	}
+	if len(resp.Buckets) != 1 {
+		t.Fatalf("len(buckets) = %d, want 1", len(resp.Buckets))
+	}
+}
+
+func TestStatsMessagesToolFilterMultiValueUnion(t *testing.T) {
+	db := buildTestDB(t)
+
+	// Read appears once (msg-004), Bash once (msg-005). Union should be 2 rows
+	// across two distinct tool_name buckets.
+	resp, err := stats.Run(&stats.Request{
+		DB:      db,
+		Scope:   "messages",
+		GroupBy: "tool_name",
+		Tools:   []string{"Read", "Bash"},
+	})
+	if err != nil {
+		t.Fatalf("stats.Run: %v", err)
+	}
+	if resp.Meta.TotalMatches != 2 {
+		t.Fatalf("total_matches = %d, want 2", resp.Meta.TotalMatches)
+	}
+	if len(resp.Buckets) != 2 {
+		t.Fatalf("len(buckets) = %d, want 2", len(resp.Buckets))
+	}
+	keys := map[string]int{}
+	for _, b := range resp.Buckets {
+		keys[b.Key] = b.Count
+	}
+	if keys["Read"] != 1 || keys["Bash"] != 1 {
+		t.Fatalf("expected one Read and one Bash bucket, got %+v", keys)
+	}
+}
+
+func TestStatsMessagesToolFilterRejectsUnknown(t *testing.T) {
+	db := buildTestDB(t)
+
+	_, err := stats.Run(&stats.Request{
+		DB:      db,
+		Scope:   "messages",
+		GroupBy: "session_id",
+		Tools:   []string{"NotARealTool"},
+	})
+	if err == nil {
+		t.Fatal("expected error for unknown tool name")
+	}
+}

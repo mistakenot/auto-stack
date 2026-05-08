@@ -42,6 +42,10 @@ func normalizeAndValidate(req *Request) (normalizedRequest, error) {
 	if err != nil {
 		return normalizedRequest{}, err
 	}
+	tools, err := search.NormalizeToolNames(req.Tools)
+	if err != nil {
+		return normalizedRequest{}, err
+	}
 	offset, pageSize, err := normalizePagination(req.Offset, req.PageSize)
 	if err != nil {
 		return normalizedRequest{}, err
@@ -89,6 +93,7 @@ func normalizeAndValidate(req *Request) (normalizedRequest, error) {
 		Skill:     strings.TrimSpace(req.Skill),
 		Role:      role,
 		Field:     field,
+		Tools:     tools,
 		MinCount:  req.MinCount,
 		Offset:    offset,
 		PageSize:  pageSize,
