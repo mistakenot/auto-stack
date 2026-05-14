@@ -367,6 +367,7 @@ func batchNeighborMessageIDs(db *sql.DB, hits []neighborLookup) []neighborPair {
 			}
 			resolved[lookupKey{sid, midx}] = mid
 		}
+		_ = rows.Err()
 	}
 
 	for i, h := range hits {

@@ -10,6 +10,7 @@ import (
 	"github.com/mistakenot/auto-env/internal/app"
 	"github.com/mistakenot/auto-env/internal/config"
 	"github.com/mistakenot/auto-env/internal/manifest"
+	"github.com/mistakenot/auto-env/internal/registry"
 	"github.com/mistakenot/auto-env/internal/worktree"
 	"github.com/spf13/cobra"
 )
@@ -53,6 +54,12 @@ func newDownCmd(application *app.App) *cobra.Command {
 				_ = os.Remove(filepath.Join(repoRoot, f))
 			}
 			_ = os.Remove(manifestPath)
+
+			if reg, err := registry.Default(); err == nil {
+				if err := reg.Remove(repoRoot); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not deregister environment: %v\n", err)
+				}
+			}
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Environment stopped and generated files removed.")
 			return nil

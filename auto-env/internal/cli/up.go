@@ -7,10 +7,13 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"time"
+
 	"github.com/mistakenot/auto-env/internal/app"
 	"github.com/mistakenot/auto-env/internal/config"
 	"github.com/mistakenot/auto-env/internal/manifest"
 	"github.com/mistakenot/auto-env/internal/port"
+	"github.com/mistakenot/auto-env/internal/registry"
 	"github.com/mistakenot/auto-env/internal/template"
 	"github.com/mistakenot/auto-env/internal/worktree"
 	"github.com/spf13/cobra"
@@ -119,6 +122,24 @@ func newUpCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: fmt.Errorf("up_command failed: %w (generated files left in place for debugging, run autoenv down to clean up)", err)}
 			}
 
+			reg, err := registry.Default()
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not access environment registry: %v\n", err)
+			} else {
+				entry := &registry.Entry{
+					RepoRoot:   repoRoot,
+					Branch:     info.Branch,
+					BranchSlug: info.BranchSlug,
+					Slot:       info.Slot,
+					Ports:      ports,
+					Files:      generatedFiles,
+					CreatedAt:  time.Now(),
+				}
+				if err := reg.Add(entry); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not register environment: %v\n", err)
+				}
+			}
+
 			output := map[string]any{
 				"name":  info.Name,
 				"slot":  info.Slot,
@@ -150,6 +171,9 @@ func runDown(repoRoot string, cfg *config.Config, manifestPath string) *ExitErro
 		_ = os.Remove(filepath.Join(repoRoot, f))
 	}
 	_ = os.Remove(manifestPath)
+	if reg, err := registry.Default(); err == nil {
+		_ = reg.Remove(repoRoot)
+	}
 	return nil
 }
 

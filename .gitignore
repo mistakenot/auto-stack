@@ -20,3 +20,6 @@ credentials.json
 
 .claude/worktrees
 .prose
+
+# autoenv local runtime state
+.auto/env/.generated
