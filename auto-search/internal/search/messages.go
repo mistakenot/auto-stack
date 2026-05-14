@@ -178,48 +178,66 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, matchStats, error) {
 	zeroStats := matchStats{}
 
-	baseQuery := `
-		FROM messages_fts
-		JOIN messages m ON m.doc_id = messages_fts.rowid
-		WHERE messages_fts MATCH ?
-	`
-	args := []any{fts}
+	var preFilterConds []string
+	var preFilterArgs []any
 
 	if cwd != "" {
-		baseQuery += " AND m.workspace = ?"
-		args = append(args, cwd)
+		preFilterConds = append(preFilterConds, "workspace = ?")
+		preFilterArgs = append(preFilterArgs, cwd)
 	}
 	if remote != "" {
-		baseQuery += " AND m.git_remote = ?"
-		args = append(args, remote)
+		preFilterConds = append(preFilterConds, "git_remote = ?")
+		preFilterArgs = append(preFilterArgs, remote)
 	}
 	if skill != "" {
-		baseQuery += " AND m.skill_name = ?"
-		args = append(args, skill)
+		preFilterConds = append(preFilterConds, "skill_name = ?")
+		preFilterArgs = append(preFilterArgs, skill)
 	}
 	if role != "" {
-		baseQuery += " AND m.role = ?"
-		args = append(args, role)
+		preFilterConds = append(preFilterConds, "role = ?")
+		preFilterArgs = append(preFilterArgs, role)
 	}
 	switch field {
 	case searchFieldAll:
 		// no-op
 	case searchFieldContent:
-		baseQuery += " AND m.tool_input = '' AND m.role != 'tool'"
+		preFilterConds = append(preFilterConds, "tool_input = ''", "role != 'tool'")
 	case searchFieldToolInput:
-		baseQuery += " AND m.tool_input != ''"
+		preFilterConds = append(preFilterConds, "tool_input != ''")
 	case searchFieldToolOutput:
-		baseQuery += " AND m.role = 'tool'"
+		preFilterConds = append(preFilterConds, "role = 'tool'")
 	default:
 		return nil, zeroStats, fmt.Errorf("invalid --field value %q (use all, content, tool_input, tool_output)", field)
 	}
 	if timeFilter.StartMs != nil {
-		baseQuery += " AND m.timestamp >= ?"
-		args = append(args, *timeFilter.StartMs)
+		preFilterConds = append(preFilterConds, "timestamp >= ?")
+		preFilterArgs = append(preFilterArgs, *timeFilter.StartMs)
 	}
 	if timeFilter.EndMs != nil {
-		baseQuery += " AND m.timestamp < ?"
-		args = append(args, *timeFilter.EndMs)
+		preFilterConds = append(preFilterConds, "timestamp < ?")
+		preFilterArgs = append(preFilterArgs, *timeFilter.EndMs)
+	}
+
+	var baseQuery string
+	var args []any
+
+	if len(preFilterConds) > 0 {
+		preFilter := "SELECT doc_id FROM messages WHERE " + strings.Join(preFilterConds, " AND ")
+		baseQuery = `
+			FROM messages_fts
+			JOIN messages m ON m.doc_id = messages_fts.rowid
+			WHERE messages_fts.rowid IN (` + preFilter + `)
+			AND messages_fts MATCH ?
+		`
+		args = append(args, preFilterArgs...)
+		args = append(args, fts)
+	} else {
+		baseQuery = `
+			FROM messages_fts
+			JOIN messages m ON m.doc_id = messages_fts.rowid
+			WHERE messages_fts MATCH ?
+		`
+		args = append(args, fts)
 	}
 
 	countQuery := "SELECT COUNT(*), COUNT(DISTINCT m.session_id), COUNT(DISTINCT m.message_id) " + baseQuery
@@ -243,42 +261,44 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	}
 	defer func() { _ = rows.Close() }()
 
-	var hits []MessageHit
+	type scannedHit struct {
+		messageID, sessionID, role string
+		contentTruncated           string
+		messageIndex               int
+		score                      float64
+	}
+	var scanned []scannedHit
 	for rows.Next() {
-		var (
-			messageID        string
-			sessionID        string
-			role             string
-			contentTruncated string
-			messageIndex     int
-			score            float64
-		)
-		if err := rows.Scan(&messageID, &sessionID, &role, &contentTruncated, &messageIndex, &score); err != nil {
+		var h scannedHit
+		if err := rows.Scan(&h.messageID, &h.sessionID, &h.role, &h.contentTruncated, &h.messageIndex, &h.score); err != nil {
 			return nil, zeroStats, fmt.Errorf("scan message hit: %w", err)
 		}
-
-		snippet, startIdx, endIdx := Snippet(contentTruncated, terms, highlight)
-
-		prev, next := neighborMessageIDs(db, sessionID, messageIndex)
-
-		hits = append(hits, MessageHit{
-			ID:                HitID("messages", "bm25", rawQuery, filters, messageID),
-			SessionID:         sessionID,
-			MessageID:         messageID,
-			MessageType:       role,
-			Score:             score,
-			SnippetStartIndex: startIdx,
-			SnippetEndIndex:   endIdx,
-			Snippet:           snippet,
-			PreviousMessageID: prev,
-			NextMessageID:     next,
-		})
+		scanned = append(scanned, h)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, zeroStats, fmt.Errorf("iterate message hits: %w", err)
 	}
-	if hits == nil {
-		hits = []MessageHit{}
+
+	lookups := make([]neighborLookup, len(scanned))
+	for i, h := range scanned {
+		lookups[i] = neighborLookup{h.sessionID, h.messageIndex}
+	}
+	neighbors := batchNeighborMessageIDs(db, lookups)
+	hits := make([]MessageHit, 0, len(scanned))
+	for i, h := range scanned {
+		snippet, startIdx, endIdx := Snippet(h.contentTruncated, terms, highlight)
+		hits = append(hits, MessageHit{
+			ID:                HitID("messages", "bm25", rawQuery, filters, h.messageID),
+			SessionID:         h.sessionID,
+			MessageID:         h.messageID,
+			MessageType:       h.role,
+			Score:             h.score,
+			SnippetStartIndex: startIdx,
+			SnippetEndIndex:   endIdx,
+			Snippet:           snippet,
+			PreviousMessageID: neighbors[i].prev,
+			NextMessageID:     neighbors[i].next,
+		})
 	}
 	return hits, matchStats{
 		TotalMatches:     totalHits,
@@ -287,16 +307,75 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	}, nil
 }
 
-func neighborMessageIDs(db *sql.DB, sessionID string, messageIndex int) (prev, next string) {
-	_ = db.QueryRow(
-		"SELECT message_id FROM messages WHERE session_id = ? AND message_index = ?",
-		sessionID, messageIndex-1,
-	).Scan(&prev)
-	_ = db.QueryRow(
-		"SELECT message_id FROM messages WHERE session_id = ? AND message_index = ?",
-		sessionID, messageIndex+1,
-	).Scan(&next)
-	return
+type neighborLookup struct {
+	sessionID    string
+	messageIndex int
+}
+
+type neighborPair struct {
+	prev, next string
+}
+
+func batchNeighborMessageIDs(db *sql.DB, hits []neighborLookup) []neighborPair {
+	result := make([]neighborPair, len(hits))
+	if len(hits) == 0 {
+		return result
+	}
+
+	type lookupKey struct {
+		sessionID    string
+		messageIndex int
+	}
+
+	var entries []lookupKey
+	seen := make(map[lookupKey]struct{})
+	for _, h := range hits {
+		prev := lookupKey{h.sessionID, h.messageIndex - 1}
+		next := lookupKey{h.sessionID, h.messageIndex + 1}
+		if _, ok := seen[prev]; !ok {
+			entries = append(entries, prev)
+			seen[prev] = struct{}{}
+		}
+		if _, ok := seen[next]; !ok {
+			entries = append(entries, next)
+			seen[next] = struct{}{}
+		}
+	}
+
+	valueParts := make([]string, len(entries))
+	args := make([]any, 0, len(entries)*2)
+	for i, e := range entries {
+		valueParts[i] = "(?, ?)"
+		args = append(args, e.sessionID, e.messageIndex)
+	}
+
+	q := `WITH lookups(sid, midx) AS (VALUES ` + strings.Join(valueParts, ", ") + `)
+		SELECT l.sid, l.midx, m.message_id
+		FROM lookups l
+		JOIN messages m ON m.session_id = l.sid AND m.message_index = l.midx`
+
+	resolved := make(map[lookupKey]string)
+	rows, err := db.Query(q, args...)
+	if err == nil {
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var sid string
+			var midx int
+			var mid string
+			if err := rows.Scan(&sid, &midx, &mid); err != nil {
+				break
+			}
+			resolved[lookupKey{sid, midx}] = mid
+		}
+	}
+
+	for i, h := range hits {
+		result[i] = neighborPair{
+			prev: resolved[lookupKey{h.sessionID, h.messageIndex - 1}],
+			next: resolved[lookupKey{h.sessionID, h.messageIndex + 1}],
+		}
+	}
+	return result
 }
 
 func normalizeFilters(cwd, remote, skill, role, field, timeCanonical string) string {

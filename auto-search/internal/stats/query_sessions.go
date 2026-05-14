@@ -53,22 +53,44 @@ func buildSessionMatchedCTE(req *normalizedRequest, bucketExpr string) (string, 
 	where := []string{"1=1"}
 	args := make([]any, 0, 8)
 
+	var preFilterConds []string
+	var preFilterArgs []any
+
+	if req.CWD != "" {
+		preFilterConds = append(preFilterConds, "workspace = ?")
+		preFilterArgs = append(preFilterArgs, req.CWD)
+	}
+	if req.Remote != "" {
+		preFilterConds = append(preFilterConds, "git_remote = ?")
+		preFilterArgs = append(preFilterArgs, req.Remote)
+	}
+	if req.Time.StartMs != nil {
+		preFilterConds = append(preFilterConds, "first_message_at >= ?")
+		preFilterArgs = append(preFilterArgs, *req.Time.StartMs)
+	}
+	if req.Time.EndMs != nil {
+		preFilterConds = append(preFilterConds, "first_message_at < ?")
+		preFilterArgs = append(preFilterArgs, *req.Time.EndMs)
+	}
+
 	scoreExpr := "0.0 AS score"
 	if req.HasQuery {
 		fromClause = "FROM sessions_fts JOIN sessions s ON s.doc_id = sessions_fts.rowid"
+		if len(preFilterConds) > 0 {
+			preFilter := "SELECT doc_id FROM sessions WHERE " + strings.Join(preFilterConds, " AND ")
+			where = append(where, "sessions_fts.rowid IN ("+preFilter+")")
+			args = append(args, preFilterArgs...)
+		}
 		where = append(where, "sessions_fts MATCH ?")
 		args = append(args, req.FTS)
 		scoreExpr = "bm25(sessions_fts) AS score"
+	} else {
+		for _, cond := range preFilterConds {
+			where = append(where, "s."+cond)
+		}
+		args = append(args, preFilterArgs...)
 	}
 
-	if req.CWD != "" {
-		where = append(where, "s.workspace = ?")
-		args = append(args, req.CWD)
-	}
-	if req.Remote != "" {
-		where = append(where, "s.git_remote = ?")
-		args = append(args, req.Remote)
-	}
 	if req.Skill != "" {
 		where = append(where, "s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE skill_name = ?)")
 		args = append(args, req.Skill)
@@ -85,14 +107,6 @@ func buildSessionMatchedCTE(req *normalizedRequest, bucketExpr string) (string, 
 		where = append(where, "s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE tool_input != '')")
 	case "tool_output":
 		where = append(where, "s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE role = 'tool')")
-	}
-	if req.Time.StartMs != nil {
-		where = append(where, "s.first_message_at >= ?")
-		args = append(args, *req.Time.StartMs)
-	}
-	if req.Time.EndMs != nil {
-		where = append(where, "s.first_message_at < ?")
-		args = append(args, *req.Time.EndMs)
 	}
 
 	sqlText := fmt.Sprintf(`

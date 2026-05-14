@@ -125,21 +125,48 @@ func SearchSessions(opts *SessionSearchOpts) (*SessionSearchResult, error) {
 func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, timeFilter TimeFilter, rawQuery, filters string, offset, pageSize int) ([]SessionHit, matchStats, error) {
 	zeroStats := matchStats{}
 
-	baseQuery := `
-		FROM sessions_fts
-		JOIN sessions s ON s.doc_id = sessions_fts.rowid
-		WHERE sessions_fts MATCH ?
-	`
-	args := []any{fts}
+	var preFilterConds []string
+	var preFilterArgs []any
 
 	if cwd != "" {
-		baseQuery += " AND s.workspace = ?"
-		args = append(args, cwd)
+		preFilterConds = append(preFilterConds, "workspace = ?")
+		preFilterArgs = append(preFilterArgs, cwd)
 	}
 	if remote != "" {
-		baseQuery += " AND s.git_remote = ?"
-		args = append(args, remote)
+		preFilterConds = append(preFilterConds, "git_remote = ?")
+		preFilterArgs = append(preFilterArgs, remote)
 	}
+	if timeFilter.StartMs != nil {
+		preFilterConds = append(preFilterConds, "first_message_at >= ?")
+		preFilterArgs = append(preFilterArgs, *timeFilter.StartMs)
+	}
+	if timeFilter.EndMs != nil {
+		preFilterConds = append(preFilterConds, "first_message_at < ?")
+		preFilterArgs = append(preFilterArgs, *timeFilter.EndMs)
+	}
+
+	var baseQuery string
+	var args []any
+
+	if len(preFilterConds) > 0 {
+		preFilter := "SELECT doc_id FROM sessions WHERE " + strings.Join(preFilterConds, " AND ")
+		baseQuery = `
+			FROM sessions_fts
+			JOIN sessions s ON s.doc_id = sessions_fts.rowid
+			WHERE sessions_fts.rowid IN (` + preFilter + `)
+			AND sessions_fts MATCH ?
+		`
+		args = append(args, preFilterArgs...)
+		args = append(args, fts)
+	} else {
+		baseQuery = `
+			FROM sessions_fts
+			JOIN sessions s ON s.doc_id = sessions_fts.rowid
+			WHERE sessions_fts MATCH ?
+		`
+		args = append(args, fts)
+	}
+
 	if skill != "" {
 		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE skill_name = ?)"
 		args = append(args, skill)
@@ -159,14 +186,6 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE role = 'tool')"
 	default:
 		return nil, zeroStats, fmt.Errorf("invalid --field value %q (use all, content, tool_input, tool_output)", field)
-	}
-	if timeFilter.StartMs != nil {
-		baseQuery += " AND s.first_message_at >= ?"
-		args = append(args, *timeFilter.StartMs)
-	}
-	if timeFilter.EndMs != nil {
-		baseQuery += " AND s.first_message_at < ?"
-		args = append(args, *timeFilter.EndMs)
 	}
 
 	countQuery := "SELECT COUNT(*) " + baseQuery

@@ -152,46 +152,59 @@ func buildMessageMatchedCTE(req *normalizedRequest, bucketExpr string) (string, 
 	where := []string{"1=1"}
 	args := make([]any, 0, 8)
 
-	scoreExpr := "0.0 AS score"
-	if req.HasQuery {
-		fromClause = "FROM messages_fts JOIN messages m ON m.doc_id = messages_fts.rowid"
-		where = append(where, "messages_fts MATCH ?")
-		args = append(args, req.FTS)
-		scoreExpr = "bm25(messages_fts) AS score"
-	}
+	var filterConds []string
+	var filterArgs []any
 
 	if req.CWD != "" {
-		where = append(where, "m.workspace = ?")
-		args = append(args, req.CWD)
+		filterConds = append(filterConds, "workspace = ?")
+		filterArgs = append(filterArgs, req.CWD)
 	}
 	if req.Remote != "" {
-		where = append(where, "m.git_remote = ?")
-		args = append(args, req.Remote)
+		filterConds = append(filterConds, "git_remote = ?")
+		filterArgs = append(filterArgs, req.Remote)
 	}
 	if req.Skill != "" {
-		where = append(where, "m.skill_name = ?")
-		args = append(args, req.Skill)
+		filterConds = append(filterConds, "skill_name = ?")
+		filterArgs = append(filterArgs, req.Skill)
 	}
 	if req.Role != "" {
-		where = append(where, "m.role = ?")
-		args = append(args, req.Role)
+		filterConds = append(filterConds, "role = ?")
+		filterArgs = append(filterArgs, req.Role)
 	}
 	switch req.Field {
 	case "all":
 	case "content":
-		where = append(where, "m.tool_input = ''", "m.role != 'tool'")
+		filterConds = append(filterConds, "tool_input = ''", "role != 'tool'")
 	case "tool_input":
-		where = append(where, "m.tool_input != ''")
+		filterConds = append(filterConds, "tool_input != ''")
 	case "tool_output":
-		where = append(where, "m.role = 'tool'")
+		filterConds = append(filterConds, "role = 'tool'")
 	}
 	if req.Time.StartMs != nil {
-		where = append(where, "m.timestamp >= ?")
-		args = append(args, *req.Time.StartMs)
+		filterConds = append(filterConds, "timestamp >= ?")
+		filterArgs = append(filterArgs, *req.Time.StartMs)
 	}
 	if req.Time.EndMs != nil {
-		where = append(where, "m.timestamp < ?")
-		args = append(args, *req.Time.EndMs)
+		filterConds = append(filterConds, "timestamp < ?")
+		filterArgs = append(filterArgs, *req.Time.EndMs)
+	}
+
+	scoreExpr := "0.0 AS score"
+	if req.HasQuery {
+		fromClause = "FROM messages_fts JOIN messages m ON m.doc_id = messages_fts.rowid"
+		if len(filterConds) > 0 {
+			preFilter := "SELECT doc_id FROM messages WHERE " + strings.Join(filterConds, " AND ")
+			where = append(where, "messages_fts.rowid IN ("+preFilter+")")
+			args = append(args, filterArgs...)
+		}
+		where = append(where, "messages_fts MATCH ?")
+		args = append(args, req.FTS)
+		scoreExpr = "bm25(messages_fts) AS score"
+	} else {
+		for _, cond := range filterConds {
+			where = append(where, "m."+cond)
+		}
+		args = append(args, filterArgs...)
 	}
 
 	sqlText := fmt.Sprintf(`
