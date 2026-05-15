@@ -54,6 +54,7 @@ func TestE2EFeedbackAddList(t *testing.T) {
 		"--start", "1",
 		"--end", "2",
 		"--comment", "works",
+		"--effective-at", "2026-05-01T10:00:00Z",
 	)
 	if err != nil {
 		t.Fatalf("feedback add failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
@@ -78,7 +79,10 @@ func TestE2EFeedbackAddList(t *testing.T) {
 		t.Fatalf("expected one event, got %#v", list["events"])
 	}
 	event := events[0].(map[string]any)
-	requireFields(t, event, "git_hash", "git_tree_sha", "git_remote", "workspace_name")
+	requireFields(t, event, "git_hash", "git_tree_sha", "git_remote", "workspace_name", "effective_at")
+	if event["effective_at"] != "2026-05-01T10:00:00Z" {
+		t.Fatalf("expected effective_at=2026-05-01T10:00:00Z, got %v", event["effective_at"])
+	}
 	subject := event["subject"].(map[string]any)
 	requireFields(t, subject, "head_blob_sha", "observed_blob_sha", "capture_source", "worktree_dirty", "content_snippet")
 	if subject["content_snippet"] != "alpha\nbeta\n" {
@@ -100,6 +104,7 @@ func TestE2EFeedbackDirtyWorktreeAndInvalidSpan(t *testing.T) {
 		"--file", "docs/guide.md",
 		"--start", "1",
 		"--comment", "dirty state",
+		"--effective-at", "2026-04-20",
 	)
 	if err != nil {
 		t.Fatalf("feedback add dirty failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
@@ -125,6 +130,7 @@ func TestE2EFeedbackDirtyWorktreeAndInvalidSpan(t *testing.T) {
 		"--start", "1",
 		"--end", "99",
 		"--comment", "bad span",
+		"--effective-at", "2026-04-20",
 	)
 	if err == nil {
 		t.Fatal("expected non-zero for invalid span")
@@ -140,7 +146,7 @@ func TestE2EFeedbackMissingContext(t *testing.T) {
 	runCmd(t, repo, "git", "add", ".")
 	runCmd(t, repo, "git", "commit", "-m", "seed")
 
-	stdout, stderr, err := runBinary(repo, "feedback", "add", "--kind", "missing", "--comment", "need more docs")
+	stdout, stderr, err := runBinary(repo, "feedback", "add", "--kind", "missing", "--comment", "need more docs", "--effective-at", "2026-05-08")
 	if err != nil {
 		t.Fatalf("feedback add missing failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}

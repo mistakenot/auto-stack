@@ -41,12 +41,14 @@ autoreflect feedback add \
   --start 12 \
   --end 18 \
   --comment "this section avoided redoing the install flow" \
+  --effective-at 2026-05-01T10:00:00Z \
   --context "installing autoreflect in a fresh repo"
 
 # Missing context annotation (no file needed).
 autoreflect feedback add \
   --kind missing \
   --comment "missing docs for release rollback steps" \
+  --effective-at 2026-04-28 \
   --context "writing release runbook automation"
 
 # Harmful annotation with context to capture why it caused churn.
@@ -56,6 +58,7 @@ autoreflect feedback add \
   --start 6 \
   --end 9 \
   --comment "outdated command led to repeated retries" \
+  --effective-at 2026-05-03T14:30:00Z \
   --context "following first-time setup docs in CI container"
 
 # Query recent feedback.

@@ -143,6 +143,7 @@ func TestFeedbackAddAndListJSON(t *testing.T) {
 		"--start", "1",
 		"--end", "2",
 		"--comment", "clear guidance",
+		"--effective-at", "2026-05-01T10:00:00Z",
 	)
 	if code != 0 {
 		t.Fatalf("feedback add failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
@@ -195,6 +196,7 @@ func TestFeedbackAddMissingAndContextAndTextMode(t *testing.T) {
 		"feedback", "add",
 		"--kind", "missing",
 		"--comment", "missing setup docs",
+		"--effective-at", "2026-05-01",
 		"--context", "while implementing init flow",
 		"--format", "text",
 	)
@@ -233,12 +235,12 @@ func TestFeedbackListFiltersAndWarningsOutput(t *testing.T) {
 	writeFile(t, filepath.Join(repo, "docs", "setup.md"), "s1\ns2\ns3\n")
 	gitAddCommit(t, repo, "seed docs")
 
-	_, _, code := runCLIAt(t, repo, "feedback", "add", "--kind", "helpful", "--file", "docs/auth.md", "--start", "1", "--comment", "auth line")
+	_, _, code := runCLIAt(t, repo, "feedback", "add", "--kind", "helpful", "--file", "docs/auth.md", "--start", "1", "--comment", "auth line", "--effective-at", "2026-05-01")
 	if code != 0 {
 		t.Fatal("add auth event failed")
 	}
 	time.Sleep(1100 * time.Millisecond)
-	_, _, code = runCLIAt(t, repo, "feedback", "add", "--kind", "harmful", "--file", "docs/setup.md", "--start", "2", "--comment", "setup line")
+	_, _, code = runCLIAt(t, repo, "feedback", "add", "--kind", "harmful", "--file", "docs/setup.md", "--start", "2", "--comment", "setup line", "--effective-at", "2026-05-02")
 	if code != 0 {
 		t.Fatal("add setup event failed")
 	}
@@ -282,6 +284,7 @@ func TestFeedbackJSONModeStdoutStderrSeparation(t *testing.T) {
 		"--kind", "helpful",
 		"--start", "1",
 		"--comment", "bad",
+		"--effective-at", "2026-05-01",
 	)
 	if code == 0 {
 		t.Fatal("expected validation failure")
@@ -304,6 +307,7 @@ func TestFeedbackAddInvalidSpan(t *testing.T) {
 		"--kind", "helpful",
 		"--start", "1",
 		"--comment", "bad flags",
+		"--effective-at", "2026-05-01",
 	)
 	if code == 0 {
 		t.Fatal("expected non-zero for invalid span flags")

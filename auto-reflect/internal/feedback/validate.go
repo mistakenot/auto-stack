@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mistakenot/auto-shared/config"
 )
@@ -28,6 +29,13 @@ func ValidateAddInput(in *AddInput) []ValidationError {
 
 	if strings.TrimSpace(in.Comment) == "" {
 		errs = append(errs, ValidationError{Code: "required", Field: "comment", Message: "comment is required"})
+	}
+
+	effectiveAt := strings.TrimSpace(in.EffectiveAt)
+	if effectiveAt == "" {
+		errs = append(errs, ValidationError{Code: "required", Field: "effective_at", Message: "effective_at is required; use --effective-at <RFC3339 or YYYY-MM-DD>"})
+	} else if _, err := ParseEffectiveAt(effectiveAt); err != nil {
+		errs = append(errs, ValidationError{Code: "invalid_value", Field: "effective_at", Message: "effective_at must be RFC3339 or YYYY-MM-DD; e.g. 2026-05-08T14:00:00Z or 2026-05-08", Value: effectiveAt})
 	}
 
 	hasStart := in.Start != nil
@@ -73,6 +81,16 @@ func ValidateListInput(in ListInput) []ValidationError {
 		})
 	}
 	return errs
+}
+
+func ParseEffectiveAt(raw string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.UTC(), nil
+	}
+	if t, err := time.Parse("2006-01-02", raw); err == nil {
+		return t.UTC(), nil
+	}
+	return time.Time{}, errors.New("must be RFC3339 or YYYY-MM-DD")
 }
 
 func NormalizeRepoRelativePath(raw string) (string, error) {

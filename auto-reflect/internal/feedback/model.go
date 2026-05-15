@@ -29,6 +29,7 @@ type Event struct {
 	Comment       string  `json:"comment"`
 	Context       *string `json:"context,omitempty"`
 	Timestamp     string  `json:"timestamp"`
+	EffectiveAt   string  `json:"effective_at"`
 	GitHash       string  `json:"git_hash"`
 	GitTreeSHA    string  `json:"git_tree_sha"`
 	GitRemote     string  `json:"git_remote"`
@@ -40,12 +41,13 @@ type Event struct {
 }
 
 type AddInput struct {
-	Kind    string
-	Comment string
-	Context string
-	File    string
-	Start   *int
-	End     *int
+	Kind        string
+	Comment     string
+	Context     string
+	EffectiveAt string
+	File        string
+	Start       *int
+	End         *int
 }
 
 type AddResult struct {

@@ -88,12 +88,19 @@ func (s *Service) Add(cwd string, in *AddInput) (AddResult, []ValidationError, e
 	workspacePath := repoInfo.Root
 	timestamp := s.Now().UTC().Format(time.RFC3339)
 
+	effectiveAt, err := ParseEffectiveAt(strings.TrimSpace(in.EffectiveAt))
+	if err != nil {
+		return AddResult{}, nil, fmt.Errorf("parse effective_at: %w", err)
+	}
+	effectiveAtStr := effectiveAt.Format(time.RFC3339)
+
 	event := Event{
 		ID:            newFeedbackID(timestamp, repoInfo.Head, comment),
 		Kind:          kind,
 		Comment:       comment,
 		Context:       contextPtr,
 		Timestamp:     timestamp,
+		EffectiveAt:   effectiveAtStr,
 		GitHash:       repoInfo.Head,
 		GitTreeSHA:    repoInfo.Tree,
 		GitRemote:     repoInfo.Remote,

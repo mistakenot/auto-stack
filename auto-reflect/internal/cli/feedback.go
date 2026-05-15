@@ -33,6 +33,7 @@ func newFeedbackAddCmd(application *app.App) *cobra.Command {
 	var startSet bool
 	var endSet bool
 	var comment string
+	var effectiveAt string
 	var contextText string
 	var format string
 
@@ -49,10 +50,11 @@ func newFeedbackAddCmd(application *app.App) *cobra.Command {
 			}
 
 			input := feedback.AddInput{
-				Kind:    kind,
-				File:    file,
-				Comment: comment,
-				Context: contextText,
+				Kind:        kind,
+				File:        file,
+				Comment:     comment,
+				EffectiveAt: effectiveAt,
+				Context:     contextText,
 			}
 			if startSet {
 				input.Start = &start
@@ -94,10 +96,12 @@ func newFeedbackAddCmd(application *app.App) *cobra.Command {
 	cmd.Flags().IntVar(&start, "start", 0, "start line (1-based)")
 	cmd.Flags().IntVar(&end, "end", 0, "end line (1-based)")
 	cmd.Flags().StringVar(&comment, "comment", "", "feedback comment")
+	cmd.Flags().StringVar(&effectiveAt, "effective-at", "", "when the insight was relevant (RFC3339 or YYYY-MM-DD)")
 	cmd.Flags().StringVar(&contextText, "context", "", "optional workflow context")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
 	_ = cmd.MarkFlagRequired("kind")
 	_ = cmd.MarkFlagRequired("comment")
+	_ = cmd.MarkFlagRequired("effective-at")
 
 	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
 		startSet = cmd.Flags().Changed("start")
