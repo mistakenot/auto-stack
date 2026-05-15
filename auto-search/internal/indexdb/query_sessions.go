@@ -34,29 +34,36 @@ type SessionRow struct {
 
 // ListSessionsOpts holds optional filters for ListSessions.
 type ListSessionsOpts struct {
-	Workspace string // filter by workspace path (case-insensitive substring)
-	Remote    string // filter by git_remote (case-insensitive substring)
-	StartMs   *int64 // inclusive lower bound on first_message_at
-	EndMs     *int64 // exclusive upper bound on first_message_at
-	Limit     int    // max rows; 0 means default (50)
-	Offset    int    // pagination offset
+	Workspace     string // filter by workspace path (case-insensitive substring)
+	Remote        string // filter by git_remote (case-insensitive substring)
+	StartMs       *int64 // inclusive lower bound on first_message_at
+	EndMs         *int64 // exclusive upper bound on first_message_at
+	IsSubagent    *bool  // nil = no filter, true = only subagents, false = only parents
+	MinDurationMs *int64 // filter: (last_message_at - first_message_at) >= this value
+	SortBy        string // "recency" (default), "duration", "tokens", "messages"
+	Limit         int    // max rows; 0 means default (50)
+	Offset        int    // pagination offset
 }
 
 // SessionListRow is a compact session summary for list output.
 type SessionListRow struct {
-	SessionID      string `json:"session_id"`
-	Workspace      string `json:"workspace"`
-	GitRemote      string `json:"git_remote"`
-	Model          string `json:"model"`
-	Agent          string `json:"agent"`
-	FirstMessageAt int64  `json:"first_message_at"`
-	LastMessageAt  int64  `json:"last_message_at"`
-	TotalTokens    int64  `json:"total_tokens"`
-	MessageCount   int    `json:"message_count"`
+	SessionID       string `json:"session_id"`
+	ParentSessionID string `json:"parent_session_id,omitempty"`
+	SubagentName    string `json:"subagent_name,omitempty"`
+	IsSubagent      bool   `json:"is_subagent"`
+	Workspace       string `json:"workspace"`
+	GitRemote       string `json:"git_remote"`
+	Model           string `json:"model"`
+	Agent           string `json:"agent"`
+	FirstMessageAt  int64  `json:"first_message_at"`
+	LastMessageAt   int64  `json:"last_message_at"`
+	DurationMs      int64  `json:"duration_ms"`
+	TotalTokens     int64  `json:"total_tokens"`
+	MessageCount    int    `json:"message_count"`
 }
 
 // ListSessions queries the sessions table directly (no FTS) with optional filters.
-func ListSessions(db *sql.DB, opts ListSessionsOpts) ([]SessionListRow, int, error) {
+func ListSessions(db *sql.DB, opts *ListSessionsOpts) ([]SessionListRow, int, error) {
 	if opts.Limit < 0 {
 		return nil, 0, fmt.Errorf("invalid limit: %d (must be >= 0)", opts.Limit)
 	}
@@ -86,6 +93,17 @@ func ListSessions(db *sql.DB, opts ListSessionsOpts) ([]SessionListRow, int, err
 		where = append(where, "s.first_message_at < ?")
 		args = append(args, *opts.EndMs)
 	}
+	if opts.IsSubagent != nil {
+		if *opts.IsSubagent {
+			where = append(where, "s.is_subagent = 1")
+		} else {
+			where = append(where, "s.is_subagent = 0")
+		}
+	}
+	if opts.MinDurationMs != nil {
+		where = append(where, "(s.last_message_at - s.first_message_at) >= ?")
+		args = append(args, *opts.MinDurationMs)
+	}
 
 	whereClause := ""
 	if len(where) > 0 {
@@ -99,19 +117,32 @@ func ListSessions(db *sql.DB, opts ListSessionsOpts) ([]SessionListRow, int, err
 		return nil, 0, fmt.Errorf("count sessions: %w", err)
 	}
 
+	orderBy := "s.first_message_at DESC"
+	switch opts.SortBy {
+	case "duration":
+		orderBy = "(s.last_message_at - s.first_message_at) DESC"
+	case "tokens":
+		orderBy = "s.total_tokens DESC"
+	case "messages":
+		orderBy = "message_count DESC"
+	}
+
 	// Fetch rows with a LEFT JOIN to get message counts.
 	querySQL := fmt.Sprintf(`
-		SELECT s.session_id, s.workspace, s.git_remote, s.model, s.agent,
-			s.first_message_at, s.last_message_at, s.total_tokens,
+		SELECT s.session_id, s.parent_session_id, s.subagent_name, s.is_subagent,
+			s.workspace, s.git_remote, s.model, s.agent,
+			s.first_message_at, s.last_message_at,
+			(s.last_message_at - s.first_message_at) AS duration_ms,
+			s.total_tokens,
 			COALESCE(mc.cnt, 0) AS message_count
 		FROM sessions s
 		LEFT JOIN (
 			SELECT session_id, COUNT(*) AS cnt FROM messages GROUP BY session_id
 		) mc ON mc.session_id = s.session_id
 		%s
-		ORDER BY s.first_message_at DESC
+		ORDER BY %s
 		LIMIT ? OFFSET ?
-	`, whereClause)
+	`, whereClause, orderBy)
 	args = append(args, opts.Limit, opts.Offset)
 
 	rows, err := db.Query(querySQL, args...)
@@ -123,13 +154,17 @@ func ListSessions(db *sql.DB, opts ListSessionsOpts) ([]SessionListRow, int, err
 	result := []SessionListRow{}
 	for rows.Next() {
 		var r SessionListRow
+		var isSubagentInt int
 		if err := rows.Scan(
-			&r.SessionID, &r.Workspace, &r.GitRemote, &r.Model, &r.Agent,
-			&r.FirstMessageAt, &r.LastMessageAt, &r.TotalTokens,
+			&r.SessionID, &r.ParentSessionID, &r.SubagentName, &isSubagentInt,
+			&r.Workspace, &r.GitRemote, &r.Model, &r.Agent,
+			&r.FirstMessageAt, &r.LastMessageAt, &r.DurationMs,
+			&r.TotalTokens,
 			&r.MessageCount,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan session list row: %w", err)
 		}
+		r.IsSubagent = isSubagentInt != 0
 		result = append(result, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -215,6 +250,7 @@ func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
 // SessionMessageCounts returns counts of messages by category for a session.
 type SessionMessageCounts struct {
 	Total      int
+	User       int
 	Tool       int
 	Bash       int
 	ReadFile   int
@@ -229,6 +265,10 @@ func CountSessionMessages(db *sql.DB, sessionID string) (SessionMessageCounts, e
 	err := db.QueryRow("SELECT COUNT(*) FROM messages WHERE session_id = ?", sessionID).Scan(&c.Total)
 	if err != nil {
 		return c, fmt.Errorf("count messages: %w", err)
+	}
+	err = db.QueryRow("SELECT COUNT(*) FROM messages WHERE session_id = ? AND role = 'user'", sessionID).Scan(&c.User)
+	if err != nil {
+		return c, fmt.Errorf("count user messages: %w", err)
 	}
 	err = db.QueryRow("SELECT COUNT(*) FROM messages WHERE session_id = ? AND role = 'tool'", sessionID).Scan(&c.Tool)
 	if err != nil {

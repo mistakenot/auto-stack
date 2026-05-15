@@ -80,11 +80,14 @@ func ParseTimeFilter(now time.Time, since, after, before string) (TimeFilter, er
 	return tf, nil
 }
 
-func parseSinceStart(now time.Time, raw string) (int64, error) {
+// ParseDurationMs parses a duration string like "10m", "1h", "5d", "1w" and
+// returns the equivalent number of milliseconds. Uses the same format as --since.
+func ParseDurationMs(raw string) (int64, error) {
+	raw = strings.TrimSpace(raw)
 	matches := sincePattern.FindStringSubmatch(raw)
 	if len(matches) != 3 {
 		return 0, fmt.Errorf(
-			"invalid --since value %q: expected <int><unit> with unit in m|h|d|w (for example: 5m, 12h, 7d, 1w)",
+			"invalid duration %q: expected <int><unit> with unit in m|h|d|w (for example: 10m, 1h, 5d, 1w)",
 			raw,
 		)
 	}
@@ -92,35 +95,46 @@ func parseSinceStart(now time.Time, raw string) (int64, error) {
 	n, err := strconv.ParseInt(matches[1], 10, 64)
 	if err != nil || n <= 0 {
 		return 0, fmt.Errorf(
-			"invalid --since value %q: duration must be a positive integer (for example: 7d)",
+			"invalid duration %q: must be a positive integer (for example: 10m)",
 			raw,
 		)
 	}
 
-	unit := strings.ToLower(matches[2])
-	var unitMs int64
-	switch unit {
-	case "m":
-		unitMs = int64(time.Minute / time.Millisecond)
-	case "h":
-		unitMs = int64(time.Hour / time.Millisecond)
-	case "d":
-		unitMs = 24 * int64(time.Hour/time.Millisecond)
-	case "w":
-		unitMs = 7 * 24 * int64(time.Hour/time.Millisecond)
-	default:
-		// Guard for completeness in case regex/unit handling changes later.
-		return 0, fmt.Errorf(
-			"invalid --since value %q: expected unit m|h|d|w",
-			raw,
-		)
+	unitMs, err := unitToMs(strings.ToLower(matches[2]))
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %w", raw, err)
 	}
 
 	if n > math.MaxInt64/unitMs {
-		return 0, fmt.Errorf("invalid --since value %q: duration is too large", raw)
+		return 0, fmt.Errorf("invalid duration %q: value is too large", raw)
 	}
 
-	deltaMs := n * unitMs
+	return n * unitMs, nil
+}
+
+func unitToMs(unit string) (int64, error) {
+	switch unit {
+	case "m":
+		return int64(time.Minute / time.Millisecond), nil
+	case "h":
+		return int64(time.Hour / time.Millisecond), nil
+	case "d":
+		return 24 * int64(time.Hour/time.Millisecond), nil
+	case "w":
+		return 7 * 24 * int64(time.Hour/time.Millisecond), nil
+	default:
+		return 0, errors.New("expected unit m|h|d|w")
+	}
+}
+
+func parseSinceStart(now time.Time, raw string) (int64, error) {
+	deltaMs, err := ParseDurationMs(raw)
+	if err != nil {
+		return 0, fmt.Errorf(
+			"invalid --since value %q: expected <int><unit> with unit in m|h|d|w (for example: 5m, 12h, 7d, 1w)",
+			raw,
+		)
+	}
 	startMs := now.UTC().UnixMilli() - deltaMs
 	return startMs, nil
 }

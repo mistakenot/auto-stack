@@ -730,6 +730,193 @@ func TestSessionDescribe(t *testing.T) {
 	}
 }
 
+func TestSessionListNewFields(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "session", "list")
+	if code != 0 {
+		t.Fatalf("session list failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	sessions := out["sessions"].([]any)
+
+	// Find the subagent session (test-session-2)
+	var found bool
+	for _, s := range sessions {
+		sess := s.(map[string]any)
+		if sess["session_id"] == "test-session-2" {
+			found = true
+			if sess["is_subagent"] != true {
+				t.Fatalf("expected is_subagent=true for test-session-2, got %v", sess["is_subagent"])
+			}
+			if sess["parent_session_id"] != "test-session-1" {
+				t.Fatalf("expected parent_session_id=test-session-1, got %v", sess["parent_session_id"])
+			}
+			if sess["subagent_name"] != "Explore" {
+				t.Fatalf("expected subagent_name=Explore, got %v", sess["subagent_name"])
+			}
+			durMs, ok := sess["duration_ms"].(float64)
+			if !ok || durMs <= 0 {
+				t.Fatalf("expected positive duration_ms, got %v", sess["duration_ms"])
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatal("test-session-2 not found in session list output")
+	}
+
+	// Verify parent sessions have is_subagent=false
+	for _, s := range sessions {
+		sess := s.(map[string]any)
+		if sess["session_id"] == "test-session-1" {
+			if sess["is_subagent"] != false {
+				t.Fatalf("expected is_subagent=false for test-session-1")
+			}
+			break
+		}
+	}
+}
+
+func TestSessionListSubagentFilter(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	// --subagent: only subagent sessions
+	stdout, stderr, code := runCLI(t, "session", "list", "--subagent")
+	if code != 0 {
+		t.Fatalf("session list --subagent failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	sessions := out["sessions"].([]any)
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 subagent session, got %d", len(sessions))
+	}
+	sess := sessions[0].(map[string]any)
+	if sess["session_id"] != "test-session-2" {
+		t.Fatalf("expected test-session-2, got %v", sess["session_id"])
+	}
+
+	// --no-subagent: only parent sessions
+	stdout, stderr, code = runCLI(t, "session", "list", "--no-subagent")
+	if code != 0 {
+		t.Fatalf("session list --no-subagent failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	out = decodeJSON(t, stdout)
+	sessions = out["sessions"].([]any)
+	if len(sessions) != 2 {
+		t.Fatalf("expected 2 parent sessions, got %d", len(sessions))
+	}
+
+	// --subagent --no-subagent: mutual exclusion error
+	_, stderr, code = runCLI(t, "session", "list", "--subagent", "--no-subagent")
+	if code == 0 {
+		t.Fatal("expected error for --subagent --no-subagent")
+	}
+	if !strings.Contains(stderr, "mutually exclusive") {
+		t.Fatalf("expected mutual exclusion error, got: %s", stderr)
+	}
+}
+
+func TestSessionListMinDuration(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	// Fixtures: session-1 = 3600s (60min), session-2 = 1000s (~16.7min), session-3 = 3600s (60min)
+	stdout, stderr, code := runCLI(t, "session", "list", "--min-duration", "30m")
+	if code != 0 {
+		t.Fatalf("session list --min-duration failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	sessions := out["sessions"].([]any)
+	if len(sessions) != 2 {
+		t.Fatalf("expected 2 sessions >= 30min, got %d", len(sessions))
+	}
+	for _, s := range sessions {
+		sess := s.(map[string]any)
+		if sess["session_id"] == "test-session-2" {
+			t.Fatal("test-session-2 (~16.7min) should have been filtered out")
+		}
+	}
+}
+
+func TestSessionListSortBy(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	// Sort by duration
+	stdout, stderr, code := runCLI(t, "session", "list", "--sort-by", "duration")
+	if code != 0 {
+		t.Fatalf("session list --sort-by duration failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	sessions := out["sessions"].([]any)
+	if len(sessions) < 2 {
+		t.Fatalf("expected at least 2 sessions, got %d", len(sessions))
+	}
+	// First two should be the 60-min sessions, last should be the 16.7-min subagent
+	lastSess := sessions[len(sessions)-1].(map[string]any)
+	if lastSess["session_id"] != "test-session-2" {
+		t.Fatalf("expected test-session-2 last by duration, got %v", lastSess["session_id"])
+	}
+
+	// Sort by tokens
+	stdout, stderr, code = runCLI(t, "session", "list", "--sort-by", "tokens")
+	if code != 0 {
+		t.Fatalf("session list --sort-by tokens failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	out = decodeJSON(t, stdout)
+	sessions = out["sessions"].([]any)
+	// session-1 has 8000 tokens, session-3 has 6500, session-2 has 3500
+	firstSess := sessions[0].(map[string]any)
+	if firstSess["session_id"] != "test-session-1" {
+		t.Fatalf("expected test-session-1 first by tokens, got %v", firstSess["session_id"])
+	}
+
+	// Invalid sort-by
+	_, stderr, code = runCLI(t, "session", "list", "--sort-by", "invalid")
+	if code == 0 {
+		t.Fatal("expected error for --sort-by invalid")
+	}
+	if !strings.Contains(stderr, "invalid --sort-by") {
+		t.Fatalf("expected sort-by error, got: %s", stderr)
+	}
+}
+
+func TestSessionDescribeNewFields(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "session", "describe", "test-session-2")
+	if code != 0 {
+		t.Fatalf("session describe failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	session := out["session"].(map[string]any)
+
+	if session["isSubagent"] != true {
+		t.Fatalf("expected isSubagent=true, got %v", session["isSubagent"])
+	}
+	if session["parentSessionId"] != "test-session-1" {
+		t.Fatalf("expected parentSessionId=test-session-1, got %v", session["parentSessionId"])
+	}
+	if session["subagentName"] != "Explore" {
+		t.Fatalf("expected subagentName=Explore, got %v", session["subagentName"])
+	}
+
+	durMs, ok := session["durationMs"].(float64)
+	if !ok || durMs <= 0 {
+		t.Fatalf("expected positive durationMs, got %v", session["durationMs"])
+	}
+
+	userMsgs, ok := session["userMessages"].(float64)
+	if !ok {
+		t.Fatalf("expected userMessages field, got %v", session["userMessages"])
+	}
+	// test-session-2 has 1 user message (msg-007: "Explore the auth module structure")
+	if userMsgs != 1 {
+		t.Fatalf("expected userMessages=1, got %v", userMsgs)
+	}
+}
+
 func TestMessageGet(t *testing.T) {
 	setupIndexedFixtures(t)
 

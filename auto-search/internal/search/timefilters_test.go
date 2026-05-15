@@ -206,6 +206,54 @@ func TestParseTimeFilterCanonicalStability(t *testing.T) {
 	}
 }
 
+func TestParseDurationMsValid(t *testing.T) {
+	tests := []struct {
+		input  string
+		wantMs int64
+	}{
+		{"10m", 600000},
+		{"1h", 3600000},
+		{"5d", 432000000},
+		{"1w", 604800000},
+		{"2H", 7200000},
+		{"3D", 259200000},
+	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := ParseDurationMs(tc.input)
+			if err != nil {
+				t.Fatalf("ParseDurationMs(%q): %v", tc.input, err)
+			}
+			if got != tc.wantMs {
+				t.Fatalf("ParseDurationMs(%q) = %d, want %d", tc.input, got, tc.wantMs)
+			}
+		})
+	}
+}
+
+func TestParseDurationMsInvalid(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"empty", ""},
+		{"no unit", "10"},
+		{"bad unit", "10s"},
+		{"non-numeric", "abc"},
+		{"zero", "0m"},
+		{"negative", "-5m"},
+		{"missing number", "m"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseDurationMs(tc.input)
+			if err == nil {
+				t.Fatalf("ParseDurationMs(%q): expected error, got nil", tc.input)
+			}
+		})
+	}
+}
+
 func assertMaybeInt64(t *testing.T, got *int64, wantSet bool, want int64, field string) {
 	t.Helper()
 	if !wantSet {

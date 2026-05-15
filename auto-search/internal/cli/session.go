@@ -38,6 +38,10 @@ func newSessionListCmd() *cobra.Command {
 	var before string
 	var cwd string
 	var remote string
+	var subagent bool
+	var noSubagent bool
+	var minDuration string
+	var sortBy string
 	var limit int
 	var offset int
 	var requestID string
@@ -51,6 +55,18 @@ func newSessionListCmd() *cobra.Command {
 
 			if cwd != "" && remote != "" {
 				return &ExitError{Code: 1, Err: errors.New("--cwd and --remote are mutually exclusive")}
+			}
+			if subagent && noSubagent {
+				return &ExitError{Code: 1, Err: errors.New("--subagent and --no-subagent are mutually exclusive")}
+			}
+
+			sortBy = strings.ToLower(strings.TrimSpace(sortBy))
+			switch sortBy {
+			case "", "recency":
+				sortBy = ""
+			case "duration", "tokens", "messages":
+			default:
+				return &ExitError{Code: 1, Err: fmt.Errorf("invalid --sort-by value %q (use recency, duration, tokens, or messages)", sortBy)}
 			}
 
 			dbPath, err := config.IndexPath(index)
@@ -68,8 +84,6 @@ func newSessionListCmd() *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 
-			// Normalize default limit in the caller so _meta.limit reports
-			// the effective value rather than the zero the user omitted.
 			if limit == 0 {
 				limit = 50
 			}
@@ -79,11 +93,28 @@ func newSessionListCmd() *cobra.Command {
 				Remote:    remote,
 				StartMs:   tf.StartMs,
 				EndMs:     tf.EndMs,
+				SortBy:    sortBy,
 				Limit:     limit,
 				Offset:    offset,
 			}
 
-			sessions, total, err := indexdb.ListSessions(db, opts)
+			if subagent {
+				v := true
+				opts.IsSubagent = &v
+			} else if noSubagent {
+				v := false
+				opts.IsSubagent = &v
+			}
+
+			if minDuration != "" {
+				ms, err := search.ParseDurationMs(minDuration)
+				if err != nil {
+					return &ExitError{Code: 1, Err: fmt.Errorf("invalid --min-duration: %w", err)}
+				}
+				opts.MinDurationMs = &ms
+			}
+
+			sessions, total, err := indexdb.ListSessions(db, &opts)
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
@@ -113,6 +144,10 @@ func newSessionListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&before, "before", "", "exclusive upper date bound (YYYY-MM-DD or RFC3339)")
 	cmd.Flags().StringVar(&cwd, "cwd", "", "filter by workspace path (substring match)")
 	cmd.Flags().StringVar(&remote, "remote", "", "filter by git remote (substring match)")
+	cmd.Flags().BoolVar(&subagent, "subagent", false, "show only sub-agent sessions")
+	cmd.Flags().BoolVar(&noSubagent, "no-subagent", false, "show only parent (non-sub-agent) sessions")
+	cmd.Flags().StringVar(&minDuration, "min-duration", "", "minimum session duration (e.g. 10m, 1h, 5d)")
+	cmd.Flags().StringVar(&sortBy, "sort-by", "", "sort order: recency (default), duration, tokens, messages")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max sessions to return (default 50)")
 	cmd.Flags().IntVar(&offset, "offset", 0, "pagination offset (0-based)")
 	cmd.Flags().StringVar(&requestID, "request-id", "", "request identifier to echo in responses")
@@ -201,14 +236,19 @@ func newSessionDescribeCmd() *cobra.Command {
 				},
 				"session": map[string]any{
 					"id":                sess.SessionID,
+					"parentSessionId":   sess.ParentSessionID,
+					"subagentName":      sess.SubagentName,
+					"isSubagent":        sess.IsSubagent,
 					"firstMessageAt":    sess.FirstMessageAt,
 					"lastMessageAt":     sess.LastMessageAt,
+					"durationMs":        sess.LastMessageAt - sess.FirstMessageAt,
 					"totalTokens":       sess.TotalTokens,
 					"totalBytes":        sess.TotalBytes,
 					"workspace":         sess.Workspace,
 					"gitRemote":         sess.GitRemote,
 					"model":             sess.Model,
 					"totalMessages":     counts.Total,
+					"userMessages":      counts.User,
 					"toolMessages":      counts.Tool,
 					"bashMessages":      counts.Bash,
 					"readFileMessages":  counts.ReadFile,
