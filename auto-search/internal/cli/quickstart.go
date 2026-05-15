@@ -116,15 +116,44 @@ autosearch message get abc123-26
 autosearch message describe abc123-26
 ` + "```" + `
 
-### 5. Get session metadata
+### 5. List and filter sessions
+
+` + "```" + `bash
+# List recent sessions
+autosearch session list
+
+# Filter by workspace
+autosearch session list --cwd /home/vscode/src/my-project --since 7d
+
+# Show only sub-agent sessions, sorted by duration
+autosearch session list --subagent --sort-by duration
+
+# Show only parent (non-sub-agent) sessions
+autosearch session list --no-subagent
+
+# Find long-running sessions (useful for diagnosing stuck agents)
+autosearch session list --min-duration 10m --sort-by duration
+
+# Combine: find long autonomous sub-agents — the "spinning agent" smell
+autosearch session list --subagent --min-duration 10m --sort-by duration
+
+# Sort by token usage to find expensive sessions
+autosearch session list --sort-by tokens --limit 10
+` + "```" + `
+
+Output includes ` + "`" + `duration_ms` + "`" + `, ` + "`" + `is_subagent` + "`" + `, ` + "`" + `parent_session_id` + "`" + `, and ` + "`" + `subagent_name` + "`" + `
+for each session.
+
+### 6. Get session metadata
 
 ` + "```" + `bash
 autosearch session describe <session_id>
 ` + "```" + `
 
-Returns JSON with message counts, token usage, time range, workspace.
+Returns JSON with message counts (including ` + "`" + `userMessages` + "`" + ` for interactivity analysis),
+token usage, ` + "`" + `durationMs` + "`" + `, sub-agent relationship fields, and a transcript summary.
 
-### 6. List skills used across sessions
+### 7. List skills used across sessions
 
 ` + "```" + `bash
 autosearch skills
@@ -137,7 +166,7 @@ autosearch skills --after 2026-01-01 --before 2026-02-01
 
 Returns JSON with each skill name, usage count, and distinct session count.
 
-### 7. Analyze skill adoption patterns with stats
+### 8. Analyze skill adoption patterns with stats
 
 ` + "```" + `bash
 # Rank skills by usage
@@ -187,11 +216,11 @@ Search results are JSON with two top-level keys: ` + "`" + `_meta` + "`" + ` and
 A score of ` + "`" + `-17.0` + "`" + ` is a much stronger match than ` + "`" + `-0.001` + "`" + `. Results are already sorted
 by relevance, so you can usually just read them top-to-bottom.
 
-**Browsing sessions:** There is no ` + "`" + `session list` + "`" + ` command. To see recent sessions in a project,
-use a broad session-scope search:
+**Browsing sessions:** Use ` + "`" + `session list` + "`" + ` for structured filtering and sorting:
 
 ` + "```" + `bash
-autosearch search "user" --scope sessions --cwd /path/to/project --since 7d
+autosearch session list --cwd /path/to/project --since 7d
+autosearch session list --subagent --min-duration 10m --sort-by duration
 ` + "```" + `
 
 ## Example: investigating a recurring bug
@@ -250,6 +279,24 @@ autosearch search '"File has not been read yet" OR "modified since read" OR "Str
 
 # Session-level overview — broad error signal across all sessions in a project
 autosearch search "error OR fail OR broken" --scope sessions --cwd /path/to/project --since 14d
+` + "```" + `
+
+## Session list flags
+
+` + "```" + `
+--subagent       show only sub-agent sessions
+--no-subagent    show only parent (non-sub-agent) sessions
+--min-duration   minimum session duration: 10m, 1h, 5d, 1w
+--sort-by        recency (default), duration, tokens, messages
+--cwd            filter by workspace path (mutually exclusive with --remote)
+--remote         filter by git remote URL
+--since          relative time: 5m, 7d, 2w
+--after          absolute lower bound (ISO 8601, inclusive)
+--before         absolute upper bound (ISO 8601, exclusive)
+--limit          max results per page (default 50)
+--offset         skip N results for pagination
+--index          named index to query (default: "default")
+--request-id     echo an ID back in _meta
 ` + "```" + `
 
 ## All search flags
