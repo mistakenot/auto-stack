@@ -34,15 +34,19 @@ type SessionRow struct {
 
 // ListSessionsOpts holds optional filters for ListSessions.
 type ListSessionsOpts struct {
-	Workspace     string // filter by workspace path (case-insensitive substring)
-	Remote        string // filter by git_remote (case-insensitive substring)
-	StartMs       *int64 // inclusive lower bound on first_message_at
-	EndMs         *int64 // exclusive upper bound on first_message_at
-	IsSubagent    *bool  // nil = no filter, true = only subagents, false = only parents
-	MinDurationMs *int64 // filter: (last_message_at - first_message_at) >= this value
-	SortBy        string // "recency" (default), "duration", "tokens", "messages"
-	Limit         int    // max rows; 0 means default (50)
-	Offset        int    // pagination offset
+	Workspace       string // filter by workspace path (case-insensitive substring)
+	Remote          string // filter by git_remote (case-insensitive substring)
+	StartMs         *int64 // inclusive lower bound on first_message_at
+	EndMs           *int64 // exclusive upper bound on first_message_at
+	IsSubagent      *bool  // nil = no filter, true = only subagents, false = only parents
+	MinDurationMs   *int64 // filter: (last_message_at - first_message_at) >= this value
+	MinTokens       *int64 // filter: total_tokens >= this value
+	MinMessages     *int   // filter: message_count >= this value
+	MinErrors       *int   // filter: error_count >= this value
+	ParentSessionID string // filter by parent_session_id (exact match)
+	SortBy          string // "recency" (default), "duration", "tokens", "messages", "errors"
+	Limit           int    // max rows; 0 means default (50)
+	Offset          int    // pagination offset
 }
 
 // SessionListRow is a compact session summary for list output.
@@ -60,6 +64,7 @@ type SessionListRow struct {
 	DurationMs      int64  `json:"duration_ms"`
 	TotalTokens     int64  `json:"total_tokens"`
 	MessageCount    int    `json:"message_count"`
+	ErrorCount      int    `json:"error_count"`
 }
 
 // ListSessions queries the sessions table directly (no FTS) with optional filters.
@@ -104,17 +109,70 @@ func ListSessions(db *sql.DB, opts *ListSessionsOpts) ([]SessionListRow, int, er
 		where = append(where, "(s.last_message_at - s.first_message_at) >= ?")
 		args = append(args, *opts.MinDurationMs)
 	}
+	if opts.MinTokens != nil {
+		where = append(where, "s.total_tokens >= ?")
+		args = append(args, *opts.MinTokens)
+	}
+	if opts.ParentSessionID != "" {
+		where = append(where, "s.parent_session_id = ?")
+		args = append(args, opts.ParentSessionID)
+	}
 
 	whereClause := ""
 	if len(where) > 0 {
 		whereClause = "WHERE " + strings.Join(where, " AND ")
 	}
 
+	// MinMessages and MinErrors filter on computed JOIN columns, so they need
+	// the LEFT JOIN in both the count and main queries.
+	needsJoin := opts.MinMessages != nil || opts.MinErrors != nil ||
+		opts.SortBy == "messages" || opts.SortBy == "errors"
+
+	// Build join-dependent WHERE conditions using raw expressions.
+	var joinWhere []string
+	var joinWhereArgs []any
+	if opts.MinMessages != nil {
+		joinWhere = append(joinWhere, "COALESCE(mc.cnt, 0) >= ?")
+		joinWhereArgs = append(joinWhereArgs, *opts.MinMessages)
+	}
+	if opts.MinErrors != nil {
+		joinWhere = append(joinWhere, "COALESCE(mc.err_cnt, 0) >= ?")
+		joinWhereArgs = append(joinWhereArgs, *opts.MinErrors)
+	}
+
+	joinWhereClause := ""
+	if len(joinWhere) > 0 {
+		if whereClause == "" {
+			joinWhereClause = "WHERE " + strings.Join(joinWhere, " AND ")
+		} else {
+			joinWhereClause = " AND " + strings.Join(joinWhere, " AND ")
+		}
+	}
+
+	joinSQL := `
+		LEFT JOIN (
+			SELECT session_id,
+				COUNT(*) AS cnt,
+				SUM(CASE WHEN bash_exit_code > 0 THEN 1 ELSE 0 END) AS err_cnt
+			FROM messages GROUP BY session_id
+		) mc ON mc.session_id = s.session_id`
+
 	// Count total matching rows for pagination metadata.
-	countSQL := "SELECT COUNT(*) FROM sessions s " + whereClause
 	var total int
-	if err := db.QueryRow(countSQL, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("count sessions: %w", err)
+	countArgs := append([]any{}, args...)
+	if needsJoin {
+		countSQL := fmt.Sprintf(`
+			SELECT COUNT(*) FROM sessions s %s %s%s`,
+			joinSQL, whereClause, joinWhereClause)
+		countArgs = append(countArgs, joinWhereArgs...)
+		if err := db.QueryRow(countSQL, countArgs...).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count sessions: %w", err)
+		}
+	} else {
+		countSQL := "SELECT COUNT(*) FROM sessions s " + whereClause
+		if err := db.QueryRow(countSQL, countArgs...).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("count sessions: %w", err)
+		}
 	}
 
 	orderBy := "s.first_message_at DESC"
@@ -125,24 +183,26 @@ func ListSessions(db *sql.DB, opts *ListSessionsOpts) ([]SessionListRow, int, er
 		orderBy = "s.total_tokens DESC"
 	case "messages":
 		orderBy = "message_count DESC"
+	case "errors":
+		orderBy = "error_count DESC"
 	}
 
-	// Fetch rows with a LEFT JOIN to get message counts.
+	// Fetch rows with a LEFT JOIN to get message and error counts.
 	querySQL := fmt.Sprintf(`
 		SELECT s.session_id, s.parent_session_id, s.subagent_name, s.is_subagent,
 			s.workspace, s.git_remote, s.model, s.agent,
 			s.first_message_at, s.last_message_at,
 			(s.last_message_at - s.first_message_at) AS duration_ms,
 			s.total_tokens,
-			COALESCE(mc.cnt, 0) AS message_count
+			COALESCE(mc.cnt, 0) AS message_count,
+			COALESCE(mc.err_cnt, 0) AS error_count
 		FROM sessions s
-		LEFT JOIN (
-			SELECT session_id, COUNT(*) AS cnt FROM messages GROUP BY session_id
-		) mc ON mc.session_id = s.session_id
 		%s
+		%s%s
 		ORDER BY %s
 		LIMIT ? OFFSET ?
-	`, whereClause, orderBy)
+	`, joinSQL, whereClause, joinWhereClause, orderBy)
+	args = append(args, joinWhereArgs...)
 	args = append(args, opts.Limit, opts.Offset)
 
 	rows, err := db.Query(querySQL, args...)
@@ -160,7 +220,7 @@ func ListSessions(db *sql.DB, opts *ListSessionsOpts) ([]SessionListRow, int, er
 			&r.Workspace, &r.GitRemote, &r.Model, &r.Agent,
 			&r.FirstMessageAt, &r.LastMessageAt, &r.DurationMs,
 			&r.TotalTokens,
-			&r.MessageCount,
+			&r.MessageCount, &r.ErrorCount,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan session list row: %w", err)
 		}
@@ -214,7 +274,7 @@ func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
 			message_index, role, content, content_truncated, timestamp,
 			tool_name, tool_input, tool_file_path,
 			tool_file_start_line, tool_file_num_lines, tool_file_total_lines,
-			bash_command, skill_name, input_tokens, cache_input_tokens, output_tokens,
+			bash_command, bash_exit_code, skill_name, input_tokens, cache_input_tokens, output_tokens,
 			workspace, git_remote, git_branch, model,
 			parent_session_id, is_subagent, source_line_index, schema_version
 		FROM messages
@@ -235,7 +295,7 @@ func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
 			&m.MessageIndex, &m.Role, &m.Content, &m.ContentTruncated, &m.Timestamp,
 			&m.ToolName, &m.ToolInput, &m.ToolFilePath,
 			&m.ToolFileStartLine, &m.ToolFileNumLines, &m.ToolFileTotalLines,
-			&m.BashCommand, &m.SkillName, &m.InputTokens, &m.CacheInputTokens, &m.OutputTokens,
+			&m.BashCommand, &m.BashExitCode, &m.SkillName, &m.InputTokens, &m.CacheInputTokens, &m.OutputTokens,
 			&m.Workspace, &m.GitRemote, &m.GitBranch, &m.Model,
 			&m.ParentSessionID, &isSubagentInt, &m.SourceLineIndex, &m.SchemaVersion,
 		); err != nil {

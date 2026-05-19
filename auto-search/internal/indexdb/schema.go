@@ -10,7 +10,7 @@ import (
 )
 
 // SchemaVersion is bumped whenever the index layout changes, forcing a full rebuild.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // schemaSQL contains the DDL for all base tables, indexes, and FTS virtual tables.
 const schemaSQL = `
@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS messages (
   tool_file_num_lines INTEGER NOT NULL,
   tool_file_total_lines INTEGER NOT NULL,
   bash_command TEXT NOT NULL,
+  bash_exit_code INTEGER NOT NULL,
   skill_name TEXT NOT NULL,
   input_tokens INTEGER NOT NULL,
   cache_input_tokens INTEGER NOT NULL,
@@ -99,6 +100,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_skill_name ON messages(skill_name);
 CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
 CREATE INDEX IF NOT EXISTS idx_messages_workspace_role_timestamp ON messages(workspace, role, timestamp);
 CREATE INDEX IF NOT EXISTS idx_sessions_workspace_first_message_at ON sessions(workspace, first_message_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_parent_session_id ON sessions(parent_session_id);
+CREATE INDEX IF NOT EXISTS idx_messages_bash_exit_code ON messages(bash_exit_code);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
   transcript_truncated,

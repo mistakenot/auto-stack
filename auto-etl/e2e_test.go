@@ -47,7 +47,7 @@ func TestMain(m *testing.M) {
 
 	// 3. Run the pipeline
 	outputDir, _ := os.MkdirTemp("", "auto-etl-e2e-output-*")
-	run := exec.Command(bin, "run", "--input", inputDir, "--output", outputDir)
+	run := exec.Command(bin, "run", "--input", inputDir, "--output", outputDir, "--only", "sessions")
 	out, err := run.CombinedOutput()
 	if err != nil {
 		os.RemoveAll(binDir)
@@ -295,7 +295,7 @@ func TestE2E_Idempotent(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 
-	run := exec.Command(bin, "run", "--input", inputDir, "--output", fixtureOutputDir)
+	run := exec.Command(bin, "run", "--input", inputDir, "--output", fixtureOutputDir, "--only", "sessions")
 	out, err := run.CombinedOutput()
 	if err != nil {
 		t.Fatalf("second run failed: %v\n%s", err, out)

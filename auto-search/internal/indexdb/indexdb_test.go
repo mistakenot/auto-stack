@@ -316,8 +316,8 @@ func TestDeleteRowsBySource(t *testing.T) {
 		t.Fatalf("insert session: %v", err)
 	}
 	if _, err := db.Exec(`
-		INSERT INTO messages (partition_source_path, message_id, session_id, host_id, message_index, role, content, content_truncated, timestamp, tool_name, tool_input, tool_file_path, tool_file_start_line, tool_file_num_lines, tool_file_total_lines, bash_command, skill_name, input_tokens, cache_input_tokens, output_tokens, workspace, git_remote, git_branch, model, parent_session_id, is_subagent, source_line_index, schema_version)
-		VALUES (?, 'msg-1', 'sess-1', 'host1', 0, 'user', 'full content', 'truncated', 1000, '', '', '', 0, 0, 0, '', '', 10, 0, 20, '/work', 'origin', 'main', 'opus', '', 0, 0, 1)
+		INSERT INTO messages (partition_source_path, message_id, session_id, host_id, message_index, role, content, content_truncated, timestamp, tool_name, tool_input, tool_file_path, tool_file_start_line, tool_file_num_lines, tool_file_total_lines, bash_command, bash_exit_code, skill_name, input_tokens, cache_input_tokens, output_tokens, workspace, git_remote, git_branch, model, parent_session_id, is_subagent, source_line_index, schema_version)
+		VALUES (?, 'msg-1', 'sess-1', 'host1', 0, 'user', 'full content', 'truncated', 1000, '', '', '', 0, 0, 0, '', 0, '', 10, 0, 20, '/work', 'origin', 'main', 'opus', '', 0, 0, 1)
 	`, sourcePath); err != nil {
 		t.Fatalf("insert message: %v", err)
 	}
@@ -393,8 +393,8 @@ func TestFTSTriggersSync(t *testing.T) {
 
 	// Insert a message.
 	if _, err := db.Exec(`
-		INSERT INTO messages (partition_source_path, message_id, session_id, host_id, message_index, role, content, content_truncated, timestamp, tool_name, tool_input, tool_file_path, tool_file_start_line, tool_file_num_lines, tool_file_total_lines, bash_command, skill_name, input_tokens, cache_input_tokens, output_tokens, workspace, git_remote, git_branch, model, parent_session_id, is_subagent, source_line_index, schema_version)
-		VALUES ('/src.parquet', 'msg-fts', 'sess-fts', 'host1', 0, 'user', 'full content here', 'Exit code 0 from test runner', 1000, '', '', '', 0, 0, 0, '', '', 10, 0, 20, '/workspace/project', 'git@github.com:test/repo', 'main', 'opus', '', 0, 0, 1)
+		INSERT INTO messages (partition_source_path, message_id, session_id, host_id, message_index, role, content, content_truncated, timestamp, tool_name, tool_input, tool_file_path, tool_file_start_line, tool_file_num_lines, tool_file_total_lines, bash_command, bash_exit_code, skill_name, input_tokens, cache_input_tokens, output_tokens, workspace, git_remote, git_branch, model, parent_session_id, is_subagent, source_line_index, schema_version)
+		VALUES ('/src.parquet', 'msg-fts', 'sess-fts', 'host1', 0, 'user', 'full content here', 'Exit code 0 from test runner', 1000, '', '', '', 0, 0, 0, '', 0, '', 10, 0, 20, '/workspace/project', 'git@github.com:test/repo', 'main', 'opus', '', 0, 0, 1)
 	`); err != nil {
 		t.Fatalf("insert message: %v", err)
 	}
@@ -586,8 +586,8 @@ func insertSessionFull(t *testing.T, db *sql.DB, sessionID, workspace string, fi
 func insertMessage(t *testing.T, db *sql.DB, messageID, sessionID, role string, index int, timestamp int64) {
 	t.Helper()
 	_, err := db.Exec(`
-		INSERT INTO messages (partition_source_path, message_id, session_id, host_id, message_index, role, content, content_truncated, timestamp, tool_name, tool_input, tool_file_path, tool_file_start_line, tool_file_num_lines, tool_file_total_lines, bash_command, skill_name, input_tokens, cache_input_tokens, output_tokens, workspace, git_remote, git_branch, model, parent_session_id, is_subagent, source_line_index, schema_version)
-		VALUES ('/src.parquet', ?, ?, 'host1', ?, ?, '', '', ?, '', '', '', 0, 0, 0, '', '', 0, 0, 0, '/work', 'origin', 'main', 'opus', '', 0, 0, 1)
+		INSERT INTO messages (partition_source_path, message_id, session_id, host_id, message_index, role, content, content_truncated, timestamp, tool_name, tool_input, tool_file_path, tool_file_start_line, tool_file_num_lines, tool_file_total_lines, bash_command, bash_exit_code, skill_name, input_tokens, cache_input_tokens, output_tokens, workspace, git_remote, git_branch, model, parent_session_id, is_subagent, source_line_index, schema_version)
+		VALUES ('/src.parquet', ?, ?, 'host1', ?, ?, '', '', ?, '', '', '', 0, 0, 0, '', 0, '', 0, 0, 0, '/work', 'origin', 'main', 'opus', '', 0, 0, 1)
 	`, messageID, sessionID, index, role, timestamp)
 	if err != nil {
 		t.Fatalf("insert message %s: %v", messageID, err)

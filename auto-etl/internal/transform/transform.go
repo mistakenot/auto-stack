@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,6 +15,8 @@ import (
 	"github.com/mistakenot/auto-etl/internal/model"
 	"github.com/mistakenot/auto-etl/internal/parser"
 )
+
+var exitCodeRe = regexp.MustCompile(`(?m)^Exit code (\d+)`)
 
 // Config holds transform-time settings.
 type Config struct {
@@ -278,6 +282,14 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 					if s != "" {
 						msg.Content = s
 						msg.ContentTruncated = MidTruncate(s, cfg.TruncateMaxChars)
+					}
+					if meta.Name == "Bash" {
+						if m := exitCodeRe.FindStringSubmatch(s); m != nil {
+							code, err := strconv.ParseInt(m[1], 10, 32)
+							if err == nil {
+								msg.BashExitCode = int32(code)
+							}
+						}
 					}
 				}
 
