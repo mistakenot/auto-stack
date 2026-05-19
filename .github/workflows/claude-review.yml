@@ -23,7 +23,7 @@ jobs:
 
       - name: Run Claude Code Review
         id: claude-review
-        uses: anthropics/claude-code-action@855a15bff2f22a6b15d90a4ebef506b5f1da1aec # v1
+        uses: anthropics/claude-code-action@24492741e0ccfdef4c1d19da8e11e0f373d07494 # v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # track_progress forces tag mode (without it, prompt + pull_request = agent mode which posts no comments)
