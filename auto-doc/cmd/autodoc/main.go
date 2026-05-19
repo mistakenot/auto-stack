@@ -145,13 +145,24 @@ func newStaleCmd() *cobra.Command {
 }
 
 func newAgentsCmd() *cobra.Command {
-	return &cobra.Command{
+	var fileFlag string
+	cmd := &cobra.Command{
 		Use:   "agents",
 		Short: "Insert tree output into agent memory files",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, cwd, err := loadConfig()
 			if err != nil {
 				return err
+			}
+			if fileFlag != "" {
+				if err := commands.AgentsToFile(cwd, cfg.DocsDir, fileFlag, cfg.Ignores); err != nil {
+					return err
+				}
+				if jsonOutput {
+					return commands.WriteJSON(os.Stdout, []string{fileFlag})
+				}
+				fmt.Printf("Updated %s\n", fileFlag)
+				return nil
 			}
 			updatedFiles, err := commands.AgentsWithResult(cwd, cfg.DocsDir, cfg.AgentFiles, cfg.Ignores)
 			if err != nil {
@@ -164,6 +175,8 @@ func newAgentsCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&fileFlag, "file", "", "write the doc index to this file instead of the default agent files")
+	return cmd
 }
 
 func newFixCmd() *cobra.Command {

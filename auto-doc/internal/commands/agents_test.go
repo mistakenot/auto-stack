@@ -388,6 +388,110 @@ func TestAgentsIdempotentMultipleRuns(t *testing.T) {
 	}
 }
 
+func TestAgentsToFileWritesAllDocsToTargetFile(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDoc("one.md", "One", "First doc", "# One")
+	ws.WriteDoc("two.md", "Two", "Second doc", "# Two")
+
+	err := AgentsToFile(ws.Dir, "docs", "SKILL.md", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(ws.Path("SKILL.md"))
+	if err != nil {
+		t.Fatalf("SKILL.md not created: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, markerStart) {
+		t.Error("missing start marker")
+	}
+	if !strings.Contains(content, markerEnd) {
+		t.Error("missing end marker")
+	}
+	if !strings.Contains(content, "one.md") {
+		t.Error("missing first doc entry")
+	}
+	if !strings.Contains(content, "two.md") {
+		t.Error("missing second doc entry")
+	}
+}
+
+func TestAgentsToFileAppendsToExistingFile(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDoc("test.md", "Test", "A test", "# Test")
+	ws.WriteFile("SKILL.md", "# My Skill\n\nExisting content.\n")
+
+	err := AgentsToFile(ws.Dir, "docs", "SKILL.md", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(ws.Path("SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "# My Skill") {
+		t.Error("lost existing content")
+	}
+	if !strings.Contains(content, "test.md") {
+		t.Error("missing doc entry")
+	}
+}
+
+func TestAgentsToFileReplacesExistingMarkers(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDoc("test.md", "Test", "A test", "# Test")
+
+	existing := "# Skill\n\n" + markerStart + "\nold content\n" + markerEnd + "\n\nFooter.\n"
+	ws.WriteFile("SKILL.md", existing)
+
+	err := AgentsToFile(ws.Dir, "docs", "SKILL.md", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(ws.Path("SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := string(data)
+	if strings.Contains(content, "old content") {
+		t.Error("old content not replaced")
+	}
+	if !strings.Contains(content, "test.md") {
+		t.Error("missing doc entry")
+	}
+	if !strings.Contains(content, "Footer.") {
+		t.Error("lost content after markers")
+	}
+}
+
+func TestAgentsToFileAcceptsAbsolutePath(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDoc("test.md", "Test", "A test", "# Test")
+
+	absPath := ws.Path("custom/SKILL.md")
+	err := AgentsToFile(ws.Dir, "docs", absPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		t.Fatalf("file not created at absolute path: %v", err)
+	}
+
+	content := string(data)
+	if !strings.Contains(content, "test.md") {
+		t.Error("missing doc entry")
+	}
+}
+
 func writeRepoDocFile(t *testing.T, ws *testutil.Workspace, relPath, title, summary string) {
 	t.Helper()
 	ws.WriteFile(relPath, `---
