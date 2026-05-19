@@ -139,10 +139,25 @@ autosearch session list --subagent --min-duration 10m --sort-by duration
 
 # Sort by token usage to find expensive sessions
 autosearch session list --sort-by tokens --limit 10
+
+# Find sessions that burned a lot of tokens (spinning agents)
+autosearch session list --min-tokens 1000000 --sort-by tokens
+
+# Find sessions with many messages (long conversations)
+autosearch session list --min-messages 200 --sort-by messages
+
+# Find sessions with bash errors (non-zero exit codes)
+autosearch session list --min-errors 3 --sort-by errors
+
+# Drill into a specific parent session's sub-agents
+autosearch session list --parent-session <parent-session-id>
+
+# Combined: find expensive, error-prone sub-agents
+autosearch session list --subagent --min-errors 5 --sort-by errors --min-duration 5m
 ` + "```" + `
 
-Output includes ` + "`" + `duration_ms` + "`" + `, ` + "`" + `is_subagent` + "`" + `, ` + "`" + `parent_session_id` + "`" + `, and ` + "`" + `subagent_name` + "`" + `
-for each session.
+Output includes ` + "`" + `duration_ms` + "`" + `, ` + "`" + `is_subagent` + "`" + `, ` + "`" + `parent_session_id` + "`" + `, ` + "`" + `subagent_name` + "`" + `,
+` + "`" + `message_count` + "`" + `, and ` + "`" + `error_count` + "`" + ` for each session.
 
 ### 6. Get session metadata
 
@@ -284,10 +299,14 @@ autosearch search "error OR fail OR broken" --scope sessions --cwd /path/to/proj
 ## Session list flags
 
 ` + "```" + `
---subagent       show only sub-agent sessions
---no-subagent    show only parent (non-sub-agent) sessions
---min-duration   minimum session duration: 10m, 1h, 5d, 1w
---sort-by        recency (default), duration, tokens, messages
+--subagent         show only sub-agent sessions
+--no-subagent      show only parent (non-sub-agent) sessions
+--parent-session   filter by parent session ID (exact match)
+--min-duration     minimum session duration: 10m, 1h, 5d, 1w
+--min-tokens       minimum total tokens (e.g. 1000000)
+--min-messages     minimum message count
+--min-errors       minimum bash error count (non-zero exit codes)
+--sort-by          recency (default), duration, tokens, messages, errors
 --cwd            filter by workspace path (mutually exclusive with --remote)
 --remote         filter by git remote URL
 --since          relative time: 5m, 7d, 2w

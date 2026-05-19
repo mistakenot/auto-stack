@@ -51,6 +51,7 @@ type ParquetMessageRow struct {
 	ToolFileNumLines   int32  `parquet:"tool_file_num_lines"`
 	ToolFileTotalLines int32  `parquet:"tool_file_total_lines"`
 	BashCommand        string `parquet:"bash_command"`
+	BashExitCode       int32  `parquet:"bash_exit_code"`
 	SkillName          string `parquet:"skill_name,dict"`
 
 	InputTokens      int32 `parquet:"input_tokens"`

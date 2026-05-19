@@ -61,6 +61,7 @@ type ContentBlock struct {
 	Input     json.RawMessage `json:"input"`
 	Content   json.RawMessage `json:"content"`
 	ToolUseID string          `json:"tool_use_id"` // tool_result reference
+	IsError   bool            `json:"is_error"`    // tool_result error flag
 }
 
 // rawLine is the JSON structure of a single JSONL line from Claude session files.

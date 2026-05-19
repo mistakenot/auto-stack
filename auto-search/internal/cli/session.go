@@ -41,6 +41,10 @@ func newSessionListCmd() *cobra.Command {
 	var subagent bool
 	var noSubagent bool
 	var minDuration string
+	var minTokens int64
+	var minMessages int
+	var minErrors int
+	var parentSession string
 	var sortBy string
 	var limit int
 	var offset int
@@ -64,9 +68,9 @@ func newSessionListCmd() *cobra.Command {
 			switch sortBy {
 			case "", "recency":
 				sortBy = ""
-			case "duration", "tokens", "messages":
+			case "duration", "tokens", "messages", "errors":
 			default:
-				return &ExitError{Code: 1, Err: fmt.Errorf("invalid --sort-by value %q (use recency, duration, tokens, or messages)", sortBy)}
+				return &ExitError{Code: 1, Err: fmt.Errorf("invalid --sort-by value %q (use recency, duration, tokens, messages, or errors)", sortBy)}
 			}
 
 			dbPath, err := config.IndexPath(index)
@@ -113,6 +117,18 @@ func newSessionListCmd() *cobra.Command {
 				}
 				opts.MinDurationMs = &ms
 			}
+			if minTokens > 0 {
+				opts.MinTokens = &minTokens
+			}
+			if minMessages > 0 {
+				opts.MinMessages = &minMessages
+			}
+			if minErrors > 0 {
+				opts.MinErrors = &minErrors
+			}
+			if parentSession != "" {
+				opts.ParentSessionID = parentSession
+			}
 
 			sessions, total, err := indexdb.ListSessions(db, &opts)
 			if err != nil {
@@ -147,7 +163,11 @@ func newSessionListCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&subagent, "subagent", false, "show only sub-agent sessions")
 	cmd.Flags().BoolVar(&noSubagent, "no-subagent", false, "show only parent (non-sub-agent) sessions")
 	cmd.Flags().StringVar(&minDuration, "min-duration", "", "minimum session duration (e.g. 10m, 1h, 5d)")
-	cmd.Flags().StringVar(&sortBy, "sort-by", "", "sort order: recency (default), duration, tokens, messages")
+	cmd.Flags().Int64Var(&minTokens, "min-tokens", 0, "minimum total tokens (e.g. 1000000)")
+	cmd.Flags().IntVar(&minMessages, "min-messages", 0, "minimum message count")
+	cmd.Flags().IntVar(&minErrors, "min-errors", 0, "minimum bash error count (non-zero exit codes)")
+	cmd.Flags().StringVar(&parentSession, "parent-session", "", "filter by parent session ID")
+	cmd.Flags().StringVar(&sortBy, "sort-by", "", "sort order: recency (default), duration, tokens, messages, errors")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max sessions to return (default 50)")
 	cmd.Flags().IntVar(&offset, "offset", 0, "pagination offset (0-based)")
 	cmd.Flags().StringVar(&requestID, "request-id", "", "request identifier to echo in responses")

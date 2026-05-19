@@ -1,5 +1,5 @@
 .PHONY: build build-etl build-doc build-watch build-search build-reflect build-skill clean test vet fmt lint \
-       dist-reflect \
+       dist-reflect vulncheck \
        install install-hooks gen-stats check dist test-install test-curl-install
 
 BUILD_DIR := bin
@@ -133,6 +133,13 @@ vet:
 		(cd "$$d" && go vet ./...) || exit 1; \
 	done
 	@echo "All projects passed vet"
+
+vulncheck:
+	@for d in $(PROJECTS); do \
+		echo "=== vulncheck $$d ==="; \
+		(cd "$$d" && govulncheck ./...) || exit 1; \
+	done
+	@echo "All projects passed vulncheck"
 
 check: fmt-check vet lint
 	@echo "All checks passed"

@@ -24,6 +24,7 @@ type MessageRow struct {
 	ToolFileNumLines    int
 	ToolFileTotalLines  int
 	BashCommand         string
+	BashExitCode        int
 	SkillName           string
 	InputTokens         int
 	CacheInputTokens    int
@@ -45,7 +46,7 @@ func GetMessageByID(db *sql.DB, messageID string) (*MessageRow, error) {
 			message_index, role, content, content_truncated, timestamp,
 			tool_name, tool_input, tool_file_path,
 			tool_file_start_line, tool_file_num_lines, tool_file_total_lines,
-			bash_command, skill_name, input_tokens, cache_input_tokens, output_tokens,
+			bash_command, bash_exit_code, skill_name, input_tokens, cache_input_tokens, output_tokens,
 			workspace, git_remote, git_branch, model,
 			parent_session_id, is_subagent, source_line_index, schema_version
 		FROM messages
@@ -59,7 +60,7 @@ func GetMessageByID(db *sql.DB, messageID string) (*MessageRow, error) {
 		&m.MessageIndex, &m.Role, &m.Content, &m.ContentTruncated, &m.Timestamp,
 		&m.ToolName, &m.ToolInput, &m.ToolFilePath,
 		&m.ToolFileStartLine, &m.ToolFileNumLines, &m.ToolFileTotalLines,
-		&m.BashCommand, &m.SkillName, &m.InputTokens, &m.CacheInputTokens, &m.OutputTokens,
+		&m.BashCommand, &m.BashExitCode, &m.SkillName, &m.InputTokens, &m.CacheInputTokens, &m.OutputTokens,
 		&m.Workspace, &m.GitRemote, &m.GitBranch, &m.Model,
 		&m.ParentSessionID, &isSubagentInt, &m.SourceLineIndex, &m.SchemaVersion,
 	)
