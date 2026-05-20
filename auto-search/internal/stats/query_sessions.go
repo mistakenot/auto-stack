@@ -76,13 +76,12 @@ func buildSessionMatchedCTE(req *normalizedRequest, bucketExpr string) (string, 
 	scoreExpr := "0.0 AS score"
 	if req.HasQuery {
 		fromClause = "FROM sessions_fts JOIN sessions s ON s.doc_id = sessions_fts.rowid"
-		if len(preFilterConds) > 0 {
-			preFilter := "SELECT doc_id FROM sessions WHERE " + strings.Join(preFilterConds, " AND ")
-			where = append(where, "sessions_fts.rowid IN ("+preFilter+")")
-			args = append(args, preFilterArgs...)
-		}
 		where = append(where, "sessions_fts MATCH ?")
 		args = append(args, req.FTS)
+		for _, cond := range preFilterConds {
+			where = append(where, "+s."+cond)
+		}
+		args = append(args, preFilterArgs...)
 		scoreExpr = "bm25(sessions_fts) AS score"
 	} else {
 		for _, cond := range preFilterConds {

@@ -145,27 +145,23 @@ func execSessionSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 		preFilterArgs = append(preFilterArgs, *timeFilter.EndMs)
 	}
 
-	var baseQuery string
 	var args []any
 
+	baseQuery := `
+		FROM sessions_fts
+		JOIN sessions s ON s.doc_id = sessions_fts.rowid
+		WHERE sessions_fts MATCH ?
+	`
+	args = append(args, fts)
 	if len(preFilterConds) > 0 {
-		preFilter := "SELECT doc_id FROM sessions WHERE " + strings.Join(preFilterConds, " AND ")
-		baseQuery = `
-			FROM sessions_fts
-			JOIN sessions s ON s.doc_id = sessions_fts.rowid
-			WHERE sessions_fts.rowid IN (` + preFilter + `)
-			AND sessions_fts MATCH ?
-		`
-		args = append(args, preFilterArgs...)
-		args = append(args, fts)
-	} else {
-		baseQuery = `
-			FROM sessions_fts
-			JOIN sessions s ON s.doc_id = sessions_fts.rowid
-			WHERE sessions_fts MATCH ?
-		`
-		args = append(args, fts)
+		var buf strings.Builder
+		for _, cond := range preFilterConds {
+			buf.WriteString(" AND +s.")
+			buf.WriteString(cond)
+		}
+		baseQuery += buf.String()
 	}
+	args = append(args, preFilterArgs...)
 
 	if skill != "" {
 		baseQuery += " AND s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE skill_name = ?)"

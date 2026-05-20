@@ -218,27 +218,23 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 		preFilterArgs = append(preFilterArgs, *timeFilter.EndMs)
 	}
 
-	var baseQuery string
 	var args []any
 
+	baseQuery := `
+		FROM messages_fts
+		JOIN messages m ON m.doc_id = messages_fts.rowid
+		WHERE messages_fts MATCH ?
+	`
+	args = append(args, fts)
 	if len(preFilterConds) > 0 {
-		preFilter := "SELECT doc_id FROM messages WHERE " + strings.Join(preFilterConds, " AND ")
-		baseQuery = `
-			FROM messages_fts
-			JOIN messages m ON m.doc_id = messages_fts.rowid
-			WHERE messages_fts.rowid IN (` + preFilter + `)
-			AND messages_fts MATCH ?
-		`
-		args = append(args, preFilterArgs...)
-		args = append(args, fts)
-	} else {
-		baseQuery = `
-			FROM messages_fts
-			JOIN messages m ON m.doc_id = messages_fts.rowid
-			WHERE messages_fts MATCH ?
-		`
-		args = append(args, fts)
+		var buf strings.Builder
+		for _, cond := range preFilterConds {
+			buf.WriteString(" AND +m.")
+			buf.WriteString(cond)
+		}
+		baseQuery += buf.String()
 	}
+	args = append(args, preFilterArgs...)
 
 	countQuery := "SELECT COUNT(*), COUNT(DISTINCT m.session_id), COUNT(DISTINCT m.message_id) " + baseQuery
 	var totalHits, distinctSessions, distinctMessages int

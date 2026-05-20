@@ -168,7 +168,7 @@ func buildMessageMatchedCTE(req *normalizedRequest, bucketExpr string) (string, 
 		filterArgs = append(filterArgs, req.Skill)
 	}
 	if req.ToolName != "" {
-		filterConds = append(filterConds, "LOWER(tool_name) = LOWER(?)")
+		filterConds = append(filterConds, "tool_name = ? COLLATE NOCASE")
 		filterArgs = append(filterArgs, req.ToolName)
 	}
 	if req.Role != "" {
@@ -196,13 +196,12 @@ func buildMessageMatchedCTE(req *normalizedRequest, bucketExpr string) (string, 
 	scoreExpr := "0.0 AS score"
 	if req.HasQuery {
 		fromClause = "FROM messages_fts JOIN messages m ON m.doc_id = messages_fts.rowid"
-		if len(filterConds) > 0 {
-			preFilter := "SELECT doc_id FROM messages WHERE " + strings.Join(filterConds, " AND ")
-			where = append(where, "messages_fts.rowid IN ("+preFilter+")")
-			args = append(args, filterArgs...)
-		}
 		where = append(where, "messages_fts MATCH ?")
 		args = append(args, req.FTS)
+		for _, cond := range filterConds {
+			where = append(where, "+m."+cond)
+		}
+		args = append(args, filterArgs...)
 		scoreExpr = "bm25(messages_fts) AS score"
 	} else {
 		for _, cond := range filterConds {
