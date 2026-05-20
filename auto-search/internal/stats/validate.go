@@ -87,6 +87,7 @@ func normalizeAndValidate(req *Request) (normalizedRequest, error) {
 		CWD:       strings.TrimSpace(req.CWD),
 		Remote:    strings.TrimSpace(req.Remote),
 		Skill:     strings.TrimSpace(req.Skill),
+		ToolName:  strings.TrimSpace(req.ToolName),
 		Role:      role,
 		Field:     field,
 		MinCount:  req.MinCount,

@@ -167,6 +167,10 @@ func buildMessageMatchedCTE(req *normalizedRequest, bucketExpr string) (string, 
 		filterConds = append(filterConds, "skill_name = ?")
 		filterArgs = append(filterArgs, req.Skill)
 	}
+	if req.ToolName != "" {
+		filterConds = append(filterConds, "LOWER(tool_name) = LOWER(?)")
+		filterArgs = append(filterArgs, req.ToolName)
+	}
 	if req.Role != "" {
 		filterConds = append(filterConds, "role = ?")
 		filterArgs = append(filterArgs, req.Role)

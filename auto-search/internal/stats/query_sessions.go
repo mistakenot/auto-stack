@@ -95,6 +95,10 @@ func buildSessionMatchedCTE(req *normalizedRequest, bucketExpr string) (string, 
 		where = append(where, "s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE skill_name = ?)")
 		args = append(args, req.Skill)
 	}
+	if req.ToolName != "" {
+		where = append(where, "s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE LOWER(tool_name) = LOWER(?))")
+		args = append(args, req.ToolName)
+	}
 	if req.Role != "" {
 		where = append(where, "s.session_id IN (SELECT DISTINCT session_id FROM messages WHERE role = ?)")
 		args = append(args, req.Role)

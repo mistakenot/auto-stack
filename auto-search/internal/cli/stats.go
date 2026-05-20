@@ -22,6 +22,7 @@ func newStatsCmd() *cobra.Command {
 	var cwd string
 	var remote string
 	var skill string
+	var toolName string
 	var role string
 	var field string
 	var minCount int
@@ -56,6 +57,7 @@ func newStatsCmd() *cobra.Command {
 				CWD:       cwd,
 				Remote:    remote,
 				Skill:     skill,
+				ToolName:  toolName,
 				Role:      role,
 				Field:     field,
 				MinCount:  minCount,
@@ -84,6 +86,7 @@ func newStatsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cwd, "cwd", "", "workspace path filter")
 	cmd.Flags().StringVar(&remote, "remote", "", "git remote filter")
 	cmd.Flags().StringVar(&skill, "skill", "", "filter by skill name")
+	cmd.Flags().StringVar(&toolName, "tool-name", "", "filter by tool name (e.g. Read, Write, Edit, Bash)")
 	cmd.Flags().StringVar(&role, "role", "", "filter by message role")
 	cmd.Flags().StringVar(&field, "field", "all", "filter searchable field: all, content, tool_input, tool_output")
 	cmd.Flags().IntVar(&minCount, "min-count", 0, "minimum threshold for selected measure")

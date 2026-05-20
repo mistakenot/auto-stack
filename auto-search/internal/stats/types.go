@@ -64,6 +64,7 @@ type Request struct {
 	CWD       string
 	Remote    string
 	Skill     string
+	ToolName  string
 	Role      string
 	Field     string
 	MinCount  int
@@ -124,6 +125,7 @@ type normalizedRequest struct {
 	CWD       string
 	Remote    string
 	Skill     string
+	ToolName  string
 	Role      string
 	Field     string
 	MinCount  int
