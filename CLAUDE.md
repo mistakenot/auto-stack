@@ -190,9 +190,13 @@ br sync --status      # Check sync status
 git status              # Check what changed
 git add <files>         # Stage code changes
 br sync --flush-only    # Export beads changes to JSONL
-git commit -m "..."     # Commit everything
+# Commit using the contextual-commit skill (see important block below)
 git push                # Push to remote
 ```
+
+<important if="you are committing code, the user asks to commit, or you are running the session-end checklist">
+Use the contextual-commit skill via the Skill tool to create commits. Do NOT use bare `git commit -m` — the contextual-commit skill captures intent, decisions, and constraints in structured commit bodies that are indexed by auto-search. Invoke it with: Skill tool, skill="contextual-commit".
+</important>
 
 ### Best Practices
 
@@ -201,6 +205,10 @@ git push                # Push to remote
 - Create new issues with `br create` when you discover tasks
 - Use descriptive titles and set appropriate priority/type
 - Always sync before ending session
+
+<important if="you are creating a release, tagging a version, or the user asks to release or publish">
+Use the release skill via the Skill tool to create releases. Do NOT manually run `git tag` or push tags — the release skill handles tagging, pushing, and triggering the GitHub Actions release workflow that builds binaries. Invoke it with: Skill tool, skill="release".
+</important>
 
 <!-- end-br-agent-instructions -->
 
