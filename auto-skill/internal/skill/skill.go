@@ -346,6 +346,62 @@ func Lint(env Env, target string) ([]Diagnostic, error) {
 	return diags, nil
 }
 
+// ImportantIfSkill represents a skill that declares an important_if trigger condition.
+type ImportantIfSkill struct {
+	Name            string `json:"name"`
+	ImportantIf     string `json:"important_if"`
+	ImportantIfBody string `json:"important_if_body,omitempty"`
+}
+
+// ListImportantIfSkills returns all installed skills that declare an important_if trigger.
+func ListImportantIfSkills(env Env) ([]ImportantIfSkill, error) {
+	skillsDir := env.SkillsDir()
+	info, err := os.Stat(skillsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("stat %s: %w", displayPath(skillsDir), err)
+	}
+	if !info.IsDir() {
+		return nil, nil
+	}
+
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", displayPath(skillsDir), err)
+	}
+
+	var result []ImportantIfSkill
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		full := filepath.Join(skillsDir, entry.Name())
+		parsed, err := readSkillFile(full)
+		if err != nil {
+			continue
+		}
+		if parsed.ImportantIf == "" {
+			continue
+		}
+		body := parsed.ImportantIfBody
+		if body == "" {
+			body = fmt.Sprintf("Use the **%s** skill.", parsed.Name)
+		}
+		result = append(result, ImportantIfSkill{
+			Name:            parsed.Name,
+			ImportantIf:     parsed.ImportantIf,
+			ImportantIfBody: body,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
+	return result, nil
+}
+
 func ValidateSkillName(name string) error {
 	if len(name) == 0 {
 		return errors.New("missing skill name")
@@ -611,6 +667,36 @@ func lintSkill(env Env, target lintTarget, docsByID map[string]string) ([]Diagno
 		})
 	}
 
+	// important_if lint rules
+	if parsed.ImportantIfSet && parsed.ImportantIf == "" {
+		diags = append(diags, Diagnostic{
+			Severity: SeverityWarning,
+			Code:     "empty_important_if",
+			Path:     relPath(env.Root, parsed.File),
+			Field:    "metadata.important_if",
+			Message:  "metadata.important_if is set but empty; remove it or provide a trigger condition",
+		})
+	}
+	if len(parsed.ImportantIf) > 200 {
+		diags = append(diags, Diagnostic{
+			Severity: SeverityWarning,
+			Code:     "important_if_too_long",
+			Path:     relPath(env.Root, parsed.File),
+			Field:    "metadata.important_if",
+			Message:  "metadata.important_if exceeds 200 characters; keep trigger conditions short",
+			Value:    len(parsed.ImportantIf),
+		})
+	}
+	if parsed.ImportantIfBody != "" && parsed.ImportantIf == "" {
+		diags = append(diags, Diagnostic{
+			Severity: SeverityWarning,
+			Code:     "important_if_body_without_trigger",
+			Path:     relPath(env.Root, parsed.File),
+			Field:    "metadata.important_if_body",
+			Message:  "metadata.important_if_body is set but metadata.important_if is not; body without trigger is useless",
+		})
+	}
+
 	body := parsed.Body
 	bodyTokens := estimateTokens(body)
 	if strings.TrimSpace(body) == "" {
@@ -745,6 +831,9 @@ type parsedSkill struct {
 	Name             string
 	Description      string
 	ShortDescription string
+	ImportantIf      string
+	ImportantIfSet   bool // true if metadata.important_if key exists in frontmatter
+	ImportantIfBody  string
 }
 
 func readSkillFile(skillDir string) (parsedSkill, error) {
@@ -770,6 +859,9 @@ func readSkillFile(skillDir string) (parsedSkill, error) {
 	result.Name = readString(front, "name")
 	result.Description = readString(front, "description")
 	result.ShortDescription = readNestedString(front, "metadata", "short-description")
+	result.ImportantIf = readNestedString(front, "metadata", "important_if")
+	result.ImportantIfSet = hasNestedKey(front, "metadata", "important_if")
+	result.ImportantIfBody = readNestedString(front, "metadata", "important_if_body")
 	return result, nil
 }
 
@@ -915,6 +1007,26 @@ func readString(m map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(s)
+}
+
+func hasNestedKey(m map[string]any, topKey, nestedKey string) bool {
+	raw, ok := m[topKey]
+	if !ok {
+		return false
+	}
+	switch typed := raw.(type) {
+	case map[string]any:
+		_, exists := typed[nestedKey]
+		return exists
+	case map[any]any:
+		for k := range typed {
+			ks, ok := k.(string)
+			if ok && ks == nestedKey {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func readNestedString(m map[string]any, topKey, nestedKey string) string {
@@ -1131,9 +1243,15 @@ func scaffoldSkillMarkdown(name, description string) (string, error) {
 		return "", fmt.Errorf("marshal frontmatter: %w", err)
 	}
 
+	// Insert commented important_if example after the metadata block
+	yamlStr := string(yamlBytes)
+	yamlStr = strings.TrimRight(yamlStr, "\n") + "\n"
+	yamlStr += "    # important_if: \"you are doing X or the user asks you to do X\"\n"
+	yamlStr += "    # important_if_body: \"Use the **" + name + "** skill.\"\n"
+
 	var b strings.Builder
 	b.WriteString("---\n")
-	b.Write(yamlBytes)
+	b.WriteString(yamlStr)
 	b.WriteString("---\n\n")
 	b.WriteString("## When to use\n\n")
 	b.WriteString("Use when the user needs this workflow and constraints should be applied consistently.\n\n")

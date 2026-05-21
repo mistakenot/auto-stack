@@ -477,3 +477,412 @@ func assertNoError(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+func validSkillWithImportantIf(name, description, body, importantIf, importantIfBody string) string {
+	var meta strings.Builder
+	meta.WriteString("metadata:\n")
+	meta.WriteString("    short-description: \"\"\n")
+	if importantIf != "" {
+		meta.WriteString(fmt.Sprintf("    important_if: \"%s\"\n", importantIf))
+	}
+	if importantIfBody != "" {
+		meta.WriteString(fmt.Sprintf("    important_if_body: \"%s\"\n", importantIfBody))
+	}
+	return fmt.Sprintf("---\nname: %s\ndescription: \"%s\"\n%s---\n%s", name, description, meta.String(), body)
+}
+
+func TestAgentsFencedSectionCreation(t *testing.T) {
+	root := t.TempDir()
+	// Create a skill with important_if
+	writeFile(t, filepath.Join(root, "skills", "ctx-commit", "SKILL.md"),
+		validSkillWithImportantIf("ctx-commit",
+			"Use when committing code. Trigger when the user asks to commit.",
+			"## Workflow\n\n1. Commit.\n",
+			"you are committing code or the user asks you to commit",
+			""))
+
+	// Run agents command
+	stdout, stderr, code := runCLI(t, "--root", root, "agents")
+	if code != 0 {
+		t.Fatalf("agents failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "CLAUDE.md: updated") {
+		t.Fatalf("expected CLAUDE.md updated, got:\n%s", stdout)
+	}
+
+	// Verify fenced section in CLAUDE.md
+	claudeMD, err := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+	content := string(claudeMD)
+
+	if !strings.Contains(content, "<!-- autoskill: start -->") {
+		t.Fatalf("missing fenced start marker in CLAUDE.md:\n%s", content)
+	}
+	if !strings.Contains(content, "<!-- autoskill: end -->") {
+		t.Fatalf("missing fenced end marker in CLAUDE.md:\n%s", content)
+	}
+	if !strings.Contains(content, `<important if="you are committing code or the user asks you to commit">`) {
+		t.Fatalf("missing important_if block in CLAUDE.md:\n%s", content)
+	}
+	if !strings.Contains(content, "Use the **ctx-commit** skill.") {
+		t.Fatalf("missing default important_if body in CLAUDE.md:\n%s", content)
+	}
+}
+
+func TestAgentsFencedSectionWithCustomBody(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "skills", "release", "SKILL.md"),
+		validSkillWithImportantIf("release",
+			"Use when releasing. Trigger when the user asks to release.",
+			"## Workflow\n\n1. Release.\n",
+			"the user asks to release, tag, or create a new version",
+			"Use the **release** skill. Do not manually run git tag."))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "agents")
+	if code != 0 {
+		t.Fatalf("agents failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	claudeMD, err := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+	content := string(claudeMD)
+
+	if !strings.Contains(content, "Use the **release** skill. Do not manually run git tag.") {
+		t.Fatalf("missing custom important_if_body in CLAUDE.md:\n%s", content)
+	}
+}
+
+func TestAgentsFencedSectionReplacement(t *testing.T) {
+	root := t.TempDir()
+
+	// First run: create with one skill
+	writeFile(t, filepath.Join(root, "skills", "alpha", "SKILL.md"),
+		validSkillWithImportantIf("alpha",
+			"Use when alpha. Trigger when alpha.",
+			"## Workflow\n\n1. Alpha.\n",
+			"you are doing alpha",
+			""))
+
+	_, _, code := runCLI(t, "--root", root, "agents")
+	if code != 0 {
+		t.Fatal("first agents run failed")
+	}
+
+	// Verify first state
+	data1, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	if !strings.Contains(string(data1), "Use the **alpha** skill.") {
+		t.Fatalf("first run missing alpha block:\n%s", string(data1))
+	}
+
+	// Add a second skill
+	writeFile(t, filepath.Join(root, "skills", "beta", "SKILL.md"),
+		validSkillWithImportantIf("beta",
+			"Use when beta. Trigger when beta.",
+			"## Workflow\n\n1. Beta.\n",
+			"you are doing beta",
+			""))
+
+	stdout, _, code := runCLI(t, "--root", root, "agents")
+	if code != 0 {
+		t.Fatal("second agents run failed")
+	}
+	if !strings.Contains(stdout, "CLAUDE.md: updated") {
+		t.Fatalf("expected update on second run, got:\n%s", stdout)
+	}
+
+	// Verify both skills present
+	data2, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	content := string(data2)
+	if !strings.Contains(content, "Use the **alpha** skill.") {
+		t.Fatalf("missing alpha after update:\n%s", content)
+	}
+	if !strings.Contains(content, "Use the **beta** skill.") {
+		t.Fatalf("missing beta after update:\n%s", content)
+	}
+
+	// Verify only one pair of markers
+	if strings.Count(content, "<!-- autoskill: start -->") != 1 {
+		t.Fatalf("expected exactly one start marker, got:\n%s", content)
+	}
+	if strings.Count(content, "<!-- autoskill: end -->") != 1 {
+		t.Fatalf("expected exactly one end marker, got:\n%s", content)
+	}
+}
+
+func TestAgentsFencedSectionIdempotent(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "skills", "alpha", "SKILL.md"),
+		validSkillWithImportantIf("alpha",
+			"Use when alpha. Trigger when alpha.",
+			"## Workflow\n\n1. Alpha.\n",
+			"you are doing alpha",
+			""))
+
+	_, _, code := runCLI(t, "--root", root, "agents")
+	if code != 0 {
+		t.Fatal("first agents run failed")
+	}
+
+	stdout, _, code := runCLI(t, "--root", root, "agents")
+	if code != 0 {
+		t.Fatal("second agents run failed")
+	}
+	if !strings.Contains(stdout, "CLAUDE.md: already present") {
+		t.Fatalf("expected idempotent 'already present', got:\n%s", stdout)
+	}
+}
+
+func TestAgentsMigrationFromUnfenced(t *testing.T) {
+	root := t.TempDir()
+
+	// Create a CLAUDE.md with old un-fenced snippet
+	existingContent := "# My Project\n\nSome docs here.\n\n**autoskill** — Author and lint reusable agent skills. Run `autoskill quickstart` to learn more.\n\n## More stuff\n"
+	writeFile(t, filepath.Join(root, "CLAUDE.md"), existingContent)
+
+	// Create a skill with important_if
+	writeFile(t, filepath.Join(root, "skills", "ctx-commit", "SKILL.md"),
+		validSkillWithImportantIf("ctx-commit",
+			"Use when committing code. Trigger when the user asks to commit.",
+			"## Workflow\n\n1. Commit.\n",
+			"you are committing code",
+			""))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "agents")
+	if code != 0 {
+		t.Fatalf("agents failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	claudeMD, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	content := string(claudeMD)
+
+	// Should have migrated to fenced section
+	if !strings.Contains(content, "<!-- autoskill: start -->") {
+		t.Fatalf("missing fenced start marker after migration:\n%s", content)
+	}
+	if !strings.Contains(content, "<!-- autoskill: end -->") {
+		t.Fatalf("missing fenced end marker after migration:\n%s", content)
+	}
+
+	// Original content should be preserved
+	if !strings.Contains(content, "# My Project") {
+		t.Fatalf("original content lost during migration:\n%s", content)
+	}
+	if !strings.Contains(content, "## More stuff") {
+		t.Fatalf("trailing content lost during migration:\n%s", content)
+	}
+
+	// Old un-fenced snippet should not exist outside markers
+	startIdx := strings.Index(content, "<!-- autoskill: start -->")
+	endIdx := strings.Index(content, "<!-- autoskill: end -->")
+	before := content[:startIdx]
+	after := content[endIdx+len("<!-- autoskill: end -->"):]
+	if strings.Contains(before, "autoskill quickstart") || strings.Contains(after, "autoskill quickstart") {
+		t.Fatalf("old un-fenced snippet still present outside markers:\n%s", content)
+	}
+}
+
+func TestAgentsUninstall(t *testing.T) {
+	root := t.TempDir()
+
+	// Create fenced section first
+	writeFile(t, filepath.Join(root, "skills", "alpha", "SKILL.md"),
+		validSkillWithImportantIf("alpha",
+			"Use when alpha. Trigger when alpha.",
+			"## Workflow\n\n1. Alpha.\n",
+			"you are doing alpha",
+			""))
+
+	_, _, code := runCLI(t, "--root", root, "agents")
+	if code != 0 {
+		t.Fatal("agents create failed")
+	}
+
+	// Verify it exists
+	data, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	if !strings.Contains(string(data), "<!-- autoskill: start -->") {
+		t.Fatal("fenced section not created")
+	}
+
+	// Uninstall
+	stdout, stderr, code := runCLI(t, "--root", root, "agents", "--uninstall")
+	if code != 0 {
+		t.Fatalf("uninstall failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "CLAUDE.md: uninstalled") {
+		t.Fatalf("expected uninstall message, got:\n%s", stdout)
+	}
+
+	// Verify section removed
+	data, _ = os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	content := string(data)
+	if strings.Contains(content, "<!-- autoskill: start -->") {
+		t.Fatalf("fenced section still present after uninstall:\n%s", content)
+	}
+	if strings.Contains(content, "<!-- autoskill: end -->") {
+		t.Fatalf("fenced end marker still present after uninstall:\n%s", content)
+	}
+	if strings.Contains(content, "autoskill") {
+		t.Fatalf("autoskill reference still present after uninstall:\n%s", content)
+	}
+}
+
+func TestAgentsUninstallOldSnippet(t *testing.T) {
+	root := t.TempDir()
+
+	// Create a CLAUDE.md with old un-fenced snippet
+	existingContent := "# My Project\n\n**autoskill** — Author and lint reusable agent skills. Run `autoskill quickstart` to learn more.\n\n## More stuff\n"
+	writeFile(t, filepath.Join(root, "CLAUDE.md"), existingContent)
+
+	stdout, stderr, code := runCLI(t, "--root", root, "agents", "--uninstall")
+	if code != 0 {
+		t.Fatalf("uninstall failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "CLAUDE.md: uninstalled") {
+		t.Fatalf("expected uninstall message, got:\n%s", stdout)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	content := string(data)
+	if strings.Contains(content, "autoskill") {
+		t.Fatalf("old snippet still present after uninstall:\n%s", content)
+	}
+	if !strings.Contains(content, "# My Project") {
+		t.Fatalf("original content lost during uninstall:\n%s", content)
+	}
+}
+
+func TestAgentsNoImportantIfSkills(t *testing.T) {
+	root := t.TempDir()
+	// Skill without important_if
+	writeFile(t, filepath.Join(root, "skills", "plain", "SKILL.md"),
+		validSkill("plain", "Use when doing plain things. Prefer for simple tasks.", "## Workflow\n\n1. Do it.\n"))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "agents")
+	if code != 0 {
+		t.Fatalf("agents failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	content := string(data)
+
+	// Should have fenced section but no important_if blocks
+	if !strings.Contains(content, "<!-- autoskill: start -->") {
+		t.Fatalf("missing fenced section:\n%s", content)
+	}
+	if strings.Contains(content, "<important if=") {
+		t.Fatalf("unexpected important_if block for skill without important_if:\n%s", content)
+	}
+}
+
+func TestLintImportantIfRules(t *testing.T) {
+	root := t.TempDir()
+
+	// Skill with empty important_if (whitespace only)
+	writeFile(t, filepath.Join(root, "skills", "empty-trigger", "SKILL.md"),
+		`---
+name: empty-trigger
+description: "Use when testing empty triggers. Trigger when testing."
+metadata:
+    important_if: "   "
+---
+## Workflow
+
+1. Step.
+`)
+
+	stdout, _, code := runCLI(t, "--root", root, "lint")
+	// Warnings don't cause non-zero exit
+	if code != 0 {
+		t.Fatalf("lint should succeed with only warnings, code=%d\nstdout:\n%s", code, stdout)
+	}
+	diags := decodeDiagnostics(t, stdout)
+	assertHasDiag(t, diags, "empty_important_if")
+}
+
+func TestLintImportantIfTooLong(t *testing.T) {
+	root := t.TempDir()
+
+	longTrigger := strings.Repeat("a", 201)
+	writeFile(t, filepath.Join(root, "skills", "long-trigger", "SKILL.md"),
+		fmt.Sprintf(`---
+name: long-trigger
+description: "Use when testing long triggers. Trigger when testing."
+metadata:
+    important_if: "%s"
+---
+## Workflow
+
+1. Step.
+`, longTrigger))
+
+	stdout, _, code := runCLI(t, "--root", root, "lint")
+	if code != 0 {
+		t.Fatalf("lint should succeed with only warnings, code=%d\nstdout:\n%s", code, stdout)
+	}
+	diags := decodeDiagnostics(t, stdout)
+	assertHasDiag(t, diags, "important_if_too_long")
+}
+
+func TestLintImportantIfBodyWithoutTrigger(t *testing.T) {
+	root := t.TempDir()
+
+	writeFile(t, filepath.Join(root, "skills", "orphan-body", "SKILL.md"),
+		`---
+name: orphan-body
+description: "Use when testing orphan body. Trigger when testing."
+metadata:
+    important_if_body: "Use the **orphan-body** skill."
+---
+## Workflow
+
+1. Step.
+`)
+
+	stdout, _, code := runCLI(t, "--root", root, "lint")
+	if code != 0 {
+		t.Fatalf("lint should succeed with only warnings, code=%d\nstdout:\n%s", code, stdout)
+	}
+	diags := decodeDiagnostics(t, stdout)
+	assertHasDiag(t, diags, "important_if_body_without_trigger")
+}
+
+func TestAgentsPreservesExistingContent(t *testing.T) {
+	root := t.TempDir()
+
+	// Create existing CLAUDE.md with content before and after where section will be
+	existingContent := "# Project\n\nSome important instructions.\n\n## Section 2\n\nMore content here.\n"
+	writeFile(t, filepath.Join(root, "CLAUDE.md"), existingContent)
+
+	writeFile(t, filepath.Join(root, "skills", "test-skill", "SKILL.md"),
+		validSkillWithImportantIf("test-skill",
+			"Use when testing. Trigger when testing.",
+			"## Workflow\n\n1. Test.\n",
+			"you are testing",
+			""))
+
+	_, _, code := runCLI(t, "--root", root, "agents")
+	if code != 0 {
+		t.Fatal("agents failed")
+	}
+
+	data, _ := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	content := string(data)
+
+	// All original content should be preserved
+	if !strings.Contains(content, "# Project") {
+		t.Fatalf("lost header:\n%s", content)
+	}
+	if !strings.Contains(content, "Some important instructions.") {
+		t.Fatalf("lost instructions:\n%s", content)
+	}
+	if !strings.Contains(content, "## Section 2") {
+		t.Fatalf("lost section 2:\n%s", content)
+	}
+	if !strings.Contains(content, "More content here.") {
+		t.Fatalf("lost trailing content:\n%s", content)
+	}
+}
