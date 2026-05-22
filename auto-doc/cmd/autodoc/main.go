@@ -33,6 +33,7 @@ func main() {
 		newAgentsCmd(),
 		newFixCmd(),
 		newFixedCmd(),
+		newGraphCmd(),
 		newSearchCmd(),
 		newQuickstartCmd(),
 		newDocsCmd(),
@@ -196,6 +197,28 @@ func newFixCmd() *cobra.Command {
 				return commands.FixOutputJSON(os.Stdout, result.DocIssues, result.LinkIssues)
 			}
 			return commands.Fix(os.Stdout, cwd, cfg.DocsDir, cfg.Parallelism, cfg.AgentFiles, cfg.Ignores)
+		},
+	}
+}
+
+func newGraphCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "graph",
+		Short: "Show connections between documents and code files",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, cwd, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			graph, err := commands.BuildGraph(cwd, cfg.DocsDir, cfg.Ignores)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return commands.GraphOutputJSON(os.Stdout, graph)
+			}
+			commands.GraphOutput(os.Stdout, graph)
+			return nil
 		},
 	}
 }
