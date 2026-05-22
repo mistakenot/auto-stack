@@ -9,7 +9,7 @@ requires:
 - codebase-context: brief description of the codebase and conventions (optional)
 
 ensures:
-- summary: an insights report describing structural gaps and patterns discovered, plus up to 3 tactical PRs for specific fixes. The insights report is the primary deliverable — PRs are secondary. Includes status for any PRs that failed or were skipped.
+- summary: a findings report describing tool functionality issues traced to code, plus up to 3 tactical PRs for specific fixes. The findings report is the primary deliverable — PRs are secondary. Includes status for any PRs that failed or were skipped.
 
 errors:
 - no-problems-found: the explorer found no problems or patterns worth addressing

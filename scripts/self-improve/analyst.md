@@ -9,16 +9,16 @@ requires:
 - codebase-context: optional project context
 
 ensures:
-- analysis: a markdown document written to the workspace containing two sections: (1) strategic insights about structural gaps, missing features, and design problems, and (2) tactical suggestions for specific code/config fixes. Returns the file path.
+- analysis: a markdown document written to the workspace containing two sections: (1) structural findings about systemic tool issues traced to root causes in the code, and (2) tactical suggestions for specific code fixes. Returns the file path.
 
 strategies:
 
 - step 1 — analyze structural findings first (this is the primary output):
-  - for each structural finding, read the relevant source code AND the surrounding architecture to understand the full picture
-  - don't just trace to a root cause in code — trace to a root cause in *design*. Why does the architecture make this failure mode possible? What's the missing abstraction, the wrong boundary, the broken information flow?
-  - connect structural findings to each other — patterns that seem separate often share a deeper cause
-  - frame each insight as: the structural gap, why it exists, what it means for agents, and what kind of solution it would require (without prescribing a specific implementation)
-  - rate each insight by: breadth (how many sessions/workflows affected), depth (how fundamentally it shapes agent behavior), and addressability (how feasible a solution would be)
+  - for each structural finding, read the relevant source code to understand the full picture
+  - trace each finding to its root cause in the code — which function, which data path, which assumption is wrong?
+  - connect structural findings to each other — problems that seem separate often share a code-level root cause
+  - frame each insight as: what the tool does wrong, where in the code it happens, why the code works this way, and what kind of fix it needs
+  - rate each insight by: breadth (how many commands/workflows affected), severity (how broken the behavior is), and addressability (how feasible a fix would be)
 
 - step 2 — analyze tactical findings (secondary output):
   - for each tactical problem, read the relevant source code to understand the root cause
@@ -35,8 +35,8 @@ strategies:
   - flag tactical fixes that are valuable standalone regardless of structural work
 
 invariants:
-- structural insights come first in the document, tactical suggestions second
-- every insight traces back to observed patterns with session evidence
-- insights describe the gap and its consequences, not a specific code fix
-- tactical suggestions include concrete file paths in the codebase
-- the document follows this structure: title, insights summary, detailed insight sections, then tactical summary table, then detailed tactical sections
+- structural findings come first in the document, tactical suggestions second
+- every finding traces to specific code (file paths, function names, line numbers)
+- findings describe what the tool does wrong and where in the code the problem lives
+- tactical suggestions include concrete file paths and proposed changes
+- the document follows this structure: title, findings summary, detailed finding sections, then tactical summary table, then detailed tactical sections

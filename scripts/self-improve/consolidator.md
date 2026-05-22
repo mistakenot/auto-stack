@@ -19,13 +19,13 @@ ensures:
 
 strategies:
 - for consolidation:
-  - FIRST, produce the insights report — this is the primary deliverable:
-    - merge the analyst's structural insights with the reviewer's feedback
-    - where the reviewer added supporting evidence, strengthen the insight
+  - FIRST, produce the findings report — this is the primary deliverable:
+    - merge the analyst's structural findings with the reviewer's feedback
+    - where the reviewer added supporting evidence, strengthen the finding
     - where the reviewer disagreed, weigh evidence from both sides
-    - for each validated insight, write a clear narrative: what the pattern is, why it exists, what it means, and what direction a solution might take
-    - the insights report should be understandable by someone who hasn't seen the raw data — include the key evidence inline
-    - write the insights report to the workspace as a standalone document
+    - for each validated finding, write a clear summary: what the tool does wrong, where in the code, and what direction a fix should take
+    - the findings report should be understandable by someone who hasn't used the tool — include reproduction steps and key evidence inline
+    - write the findings report to the workspace as a standalone document
 
   - SECOND, select up to 3 tactical items for implementation:
     - merge the analyst's tactical suggestions with the reviewer's feedback
@@ -44,8 +44,8 @@ strategies:
   - provide a one-paragraph executive summary connecting insights to actions taken
 
 invariants:
-- the insights report is always produced, even if no tactical items are viable
-- insights are written as narratives, not bullet lists of problems
-- each insight connects observed patterns to underlying causes
-- tactical items are clearly labeled as partial/tactical fixes, not solutions to the structural problems
-- the final summary leads with insights, not PRs
+- the findings report is always produced, even if no tactical items are viable
+- findings are concise and evidence-based — reproduction steps and code locations, not essay-length narratives
+- each finding connects observed tool behavior to root cause in the code
+- tactical items include concrete code changes, not just descriptions of what to fix
+- the final summary leads with findings, not PRs

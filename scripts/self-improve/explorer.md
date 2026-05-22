@@ -9,38 +9,39 @@ requires:
 - preflight: data pipeline status from preflight step (ETL and index freshness)
 
 ensures:
-- problems: a structured list of findings, separated into STRUCTURAL (cross-cutting patterns about why agents fail) and TACTICAL (specific bugs and config issues). Each finding includes evidence from autosearch with session counts, reproduction steps, and severity. Structural findings explain the underlying cause, not just the symptom. No suggestions or improvements — just raw observations and patterns.
+- problems: a structured list of findings, separated into STRUCTURAL (systemic tool issues: broken workflows, missing features, bad defaults, architectural limitations) and TACTICAL (specific bugs, crashes, wrong output, missing validation). Each finding includes reproduction steps, exact commands and output, and severity. Structural findings explain the underlying cause in the tool's code, not just the symptom. No suggestions or improvements — just raw observations and evidence.
 
 errors:
 - no-problems-found: exploration completed but no meaningful problems were encountered
 
 strategies:
 
-- step 1 — structural pattern mining (do this FIRST, it is the most valuable):
-  - use autosearch to query session history broadly across many sessions related to the focus area
-  - look for recurring patterns: what do agents consistently struggle with? what workflows break repeatedly? what context is missing when agents need it?
-  - ask WHY, not just WHAT. "Docs aren't read" is a symptom. "Nothing triggers agents to read docs at the point of need" is the structural insight.
-  - search for patterns like: agents re-doing work that was done before, agents failing to find information that exists, agents taking wrong approaches because they lack context, features that exist but agents don't discover them
-  - look at how information flows (or fails to flow) between sessions, between tools, between docs and code
-  - identify boundary problems: where do docs end and skills begin? where does config end and code begin? where does one tool's responsibility end and another's begin?
-  - quantify patterns with session counts and concrete queries — "X happened in Y of Z sessions" is evidence
-
-- step 2 — hands-on exploration (tactical, do this second):
+- step 1 — hands-on tool exploration (do this FIRST, it is the most valuable):
   - check preflight status first — if data is stale or missing, note this as context but still proceed
-  - act as a real user, not an auditor. Run the tool's commands, try its workflows end-to-end
+  - act as a real user of the compiled tool, not an auditor of the repo. Run the tool's commands, try its workflows end-to-end
   - run the tool's test suite and note any failures, slow tests, or flaky behavior
   - try the quickstart/docs output and note where guidance is wrong, missing, or confusing
   - try edge cases: empty inputs, invalid flags, large datasets, conflicting options
+  - look for: commands that error unexpectedly, output that is wrong or misleading, workflows that require too many steps, features that don't work as documented, missing error messages, bad defaults
   - capture exact commands run, exact error messages, and exact output
+  - this step produces the primary findings — everything else is supplementary
+
+- step 2 — session history mining (supplementary evidence, do this second):
+  - use autosearch to query session history for sessions where users hit problems with the focus tool
+  - look for recurring error patterns: what commands fail repeatedly? what workarounds do users apply? what features are attempted but abandoned?
+  - quantify patterns with session counts and concrete queries — "X error occurred in Y of Z sessions" is evidence
+  - session history adds weight to hands-on findings and may surface issues you did not encounter in step 1
+  - DO NOT mine for meta-patterns about agent behavior, skill routing, instruction hierarchy, or repo ergonomics — focus on the tool's functionality as experienced by its users
 
 - step 3 — classify findings into two tiers:
-  - STRUCTURAL: cross-cutting patterns that affect how agents work across many sessions. These are about missing capabilities, wrong boundaries, broken information flows. They require design thinking, not just code fixes.
-  - TACTICAL: specific bugs, config issues, missing validations. These can be fixed with a PR.
-  - weight structural findings higher — a structural insight that explains 20 session failures is more valuable than 5 tactical bugs
+  - STRUCTURAL: systemic tool issues that affect multiple commands or workflows. Broken pipelines, missing features, bad architectural defaults, incorrect data handling. These may require design work but the fix lives in the tool's code.
+  - TACTICAL: specific bugs, crashes, wrong output, missing validation. These can be fixed with a targeted PR.
+  - weight structural findings higher — a broken workflow that affects every user is more valuable than an edge-case crash
 
 invariants:
-- output contains only observed problems and patterns, never suggestions or recommendations
-- every finding includes evidence: session counts, autosearch queries, exact commands or output
-- structural findings explain WHY the pattern exists, not just WHAT the pattern is
+- output contains only observed problems with the tool's functionality, never suggestions or recommendations
+- every finding includes reproduction evidence: exact commands, exact output, and optionally session counts from autosearch
+- structural findings explain WHY the tool behaves this way (trace to code), not just WHAT the symptom is
 - problems are deduplicated — same root cause appears once with all manifestations listed
 - structural findings are listed before tactical findings
+- findings are about the tool itself (bugs, missing features, broken workflows, bad output) — never about repo ergonomics, agent configuration, skill routing, or instruction hierarchy
