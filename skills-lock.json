@@ -1,15 +1,50 @@
 {
   "version": 1,
   "skills": {
+    "address-feedback": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "d7dd47e143e5a3b441b8d2c38875e4d9310114ae17788bde269fc278c1b606d5"
+    },
     "cass": {
       "source": "/home/vscode/src/auto-stack/skills",
       "sourceType": "local",
       "computedHash": "c0df9536088f8c6f87bc746c68b3398076b19a164ee2dae990eeabb97d6f4e3e"
     },
+    "code-review": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "735d48691ff7369e8ccc71f2b0dd263b9eea5ad727e4f89ec86cdfb31d6cc027"
+    },
+    "commit-task": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "493aabaa44a254f5ee35768fc30bad4e0bfe4e858f55bda347e1e3240373d16b"
+    },
+    "complete-task": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "2a5b5d18c1ae2d8b56adab341a36071bc260427079eaa0f055c3fc3fb845d500"
+    },
     "contextual-commit": {
       "source": "/home/vscode/src/auto-stack/skills",
       "sourceType": "local",
       "computedHash": "81b45872f2818e199e7fc8dc01accadd364e9bfe0015e91052390f8a62b70b0b"
+    },
+    "delegate-task": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "496668a340781339187db7cbced6b5f0fea9ffecf0b6df31cb42f59ac72c1ebf"
+    },
+    "execute-task": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "acfca0febb712683f4d7060ef05793657ca48d2cc4c11865d12eaed2e7146449"
+    },
+    "executor-status-check": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "3f9d1188f27345bc8f8c7f14a4e94bafc836f0875974761d38f101b88abc93d3"
     },
     "improve-claude-md": {
       "source": "humanlayer/skills",
@@ -20,6 +55,21 @@
       "source": "/home/vscode/src/auto-stack/skills",
       "sourceType": "local",
       "computedHash": "2775889614ee1c47986dbe1ed8c46dacab3e31cc89587b167117eb9d296898ad"
+    },
+    "new-plan": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "8a2d101b97b44beb1fbd09f0555cc61129127945b8507ce824cee8cd8d8fdebb"
+    },
+    "new-solution": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "ecabc95fc32897ce1a68067dbef593862eecd334c4778a13b744dd224879d66c"
+    },
+    "new-task": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "0cf3c0c46bd23d18ba392d59409e1009682505972232a5a7e897ca0938d55195"
     },
     "open-prose": {
       "source": "openprose/prose",
@@ -41,10 +91,35 @@
       "sourceType": "local",
       "computedHash": "53bb37624988b417ea2ec2f3c6daa8ba47821cec16d9ac3c21100ec8a87b58f0"
     },
+    "resolve-comments": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "88773d55bf970148df881b56e820f4b27ab5ddd04e2f83762ab60e9b7287df53"
+    },
+    "review-resolve": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "f48f6336862626c170eca8c83806288a6ffe124ac52389f35708987e3c08fee1"
+    },
+    "review-task": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "bffd9a25ea64b9a9739b91c82459492cfcd80965382a46f3999de9fa61fcc76c"
+    },
     "self-improve": {
       "source": "/home/vscode/src/auto-stack/skills",
       "sourceType": "local",
       "computedHash": "585255bff4359d1e26a70ab233e06f832ffe24c43dfe8a3b5ba5fc98cdbaf5db"
+    },
+    "skill-reviewer": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "e89868280407c4403b99af0d3ab48d57c5ace8d30b206cc1af911deb0c318bbe"
+    },
+    "task-feedback-analyser": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "04fc16b7daee2c089025d41ccf22fde909f425f212ee3a992d9abafedb66814b"
     }
   }
 }
