@@ -1,5 +1,5 @@
 ---
-hash: "df2855fc"
+hash: "74375278"
 id: "e277113a"
 read_when: "adding Codex session ingestion to auto-etl or mapping Codex fields to normalized schema"
 summary: "Requirements for ingesting OpenAI Codex session history into auto-etl normalized parquet datasets, covering file discovery, schema mapping, and Codex-specific idiosyncrasies."
@@ -30,11 +30,46 @@ Add Codex CLI session history as a second ingestion source for auto-etl, produci
 | Originator variants | `codex_cli_rs` (21), `codex-tui` (31) |
 | Models observed | `gpt-5.3-codex` (33), `gpt-5.4` (18), `gpt-5.5` (1) |
 
-### Secondary data files (not in scope for v1 but noted)
+### Secondary data files (out of scope)
 
-- `~/.codex/history.jsonl` -- user prompt history, one line per prompt with `session_id` and `ts`.
-- `~/.codex/logs_2.sqlite` -- operational logs (8.4 MB). Tables unknown (sqlite3 not available in sandbox).
-- `~/.codex/state_5.sqlite` -- state database.
+- `~/.codex/history.jsonl` -- user prompt history
+- `~/.codex/logs_2.sqlite` -- operational telemetry (application debugging, not session content)
+- `~/.codex/state_5.sqlite` -- TUI metadata index over sessions (titles, token totals, git info). Secondary index, not a primary source.
+
+### Codex worktree structure
+
+The full `~/.codex` directory layout (explored from `.tmp/codex` worktree):
+
+```
+~/.codex/
+├── config.toml              # User config (TOML): model, MCP servers, project trust, hooks, model migrations
+├── version.json             # Latest version check: {"latest_version":"0.132.0","last_checked_at":"..."}
+├── history.jsonl            # User prompt history (89KB)
+├── state_5.sqlite           # Session metadata DB (threads table, 28 columns)
+├── logs_2.sqlite            # Operational logs (capped at ~2000 rows)
+├── log/
+│   └── codex-tui.log        # TUI debug log (19MB, very large)
+├── sessions/                # *** PRIMARY ETL SOURCE ***
+│   └── {year}/{month}/{day}/rollout-*.jsonl
+├── rules/
+│   ├── default.rules        # Custom DSL: prefix_rule(pattern=[...], decision="allow")
+│   └── ubs.md               # Markdown-formatted user rules
+├── skills/
+│   ├── {user-skill}/        # User-created skills (SKILL.md, references/, scripts/, subagents/)
+│   └── .system/             # Built-in system skills (imagegen, openai-docs, plugin-creator, etc.)
+├── memories/                # Empty (just .git subdir)
+├── shell_snapshots/         # Empty
+└── cache/
+    └── codex_apps_tools/    # Cached tool definitions (JSON, 348KB)
+```
+
+**config.toml** uses TOML format (unlike Claude's JSON settings). Contains model config (`model = "gpt-5.5"`, `model_reasoning_effort = "xhigh"`), MCP server definitions, project trust levels, notify hooks, and model migration mappings (`"gpt-5.3-codex" = "gpt-5.4"`).
+
+**rules/** contains a custom rule format (not standard TOML/JSON/YAML): `prefix_rule(pattern=["autosearch", "index"], decision="allow")`. Rules can also be plain markdown files. Not relevant for ETL but notable as a Codex-specific format.
+
+**skills/** mirrors Claude Code's skill concept. User-created skills have a `SKILL.md`, `references/`, `scripts/`, and `subagents/` subdirectory. System skills live under `.system/`. Not relevant for session ETL but could inform `auto-skill` cross-tool support.
+
+**For ETL purposes:** only `sessions/` and optionally `state_5.sqlite` matter. Everything else is configuration, caching, or empty.
 
 ## JSONL Line Format
 
@@ -504,27 +539,118 @@ Follow the existing test structure -- each test focuses on one behavior:
 - `TestTransformSession_CodexTranscriptPopulated` -- transcript_full and transcript_truncated are non-empty
 - `TestTransformSession_CodexBashCommand` -- bash_command populated from exec_command args
 
-### End-to-end verification
+### End-to-end testing
 
-Follow the pattern from the requirements doc (R-series requirements) and the development loop described in `auto-etl/CLAUDE.md`:
+The Claude ETL has a robust e2e test framework in `e2e_test.go` that the Codex integration must extend. The pattern:
 
-1. Build the binary: `cd auto-etl && go build ./...`
-2. Run against real local data: `./autoetl run --codex-input ~/.codex/sessions --output .tmp/output --full`
-3. Inspect with DuckDB:
+1. **`genstats`** (`cmd/genstats/main.go`) independently analyzes raw JSONL files and produces `stats.json` with ground-truth metrics (file counts, line types, content blocks, roles, session IDs, subagent info). It intentionally imports zero auto-etl packages — it's a fully independent implementation so it can serve as an oracle.
+2. **`TestMain`** builds the binary, runs the full pipeline against `.tmp/claude/projects`, loads `stats.json`, and stores the results for all test functions.
+3. **Test functions** read back parquet output and cross-validate against genstats metrics: message counts, session counts, role distributions, required fields, idempotency, truncation, transcripts, git metadata, subagent dedup.
+
+#### genstats-codex
+
+Create `cmd/genstats-codex/main.go` — an independent analyzer for Codex JSONL that produces a `codex-stats.json` with equivalent metrics. This must NOT import any auto-etl packages.
+
+Key differences from the Claude genstats:
+
+| Metric | Claude genstats | Codex genstats |
+|--------|----------------|----------------|
+| Line types | `type` field on each line (user/assistant/system) | `type` field (session_meta/response_item/event_msg/turn_context) + `payload.type` for subtypes |
+| Content blocks | `message.content` array or bare string | `payload.content` array (input_text/output_text) for messages, `payload.arguments` for function_calls, `payload.output` for function_call_output |
+| Roles | `message.role` | `payload.role` for messages, inferred for function_call (assistant) and function_call_output (tool) |
+| Session ID | `sessionId` field on lines | `session_meta.payload.id` (one per file) |
+| Subagents | `isSidechain` + `.meta.json` | None (always parent) |
+| Tool uses | content blocks with `type: "tool_use"` | `response_item` lines with `type: "function_call"` |
+
+The stats struct should track:
+- `TotalFiles`, `EmptyFiles`, `UnparseableFiles`
+- `TotalLines`, `UnparseableLines`
+- `LinesByType` (session_meta, response_item, event_msg, turn_context)
+- `ResponseItemsByType` (message, function_call, function_call_output, reasoning)
+- `EventMsgsByType` (exec_command_end, user_message, agent_message, etc.)
+- `MessagesByRole` (user, assistant, developer)
+- `FunctionCallsByName` (exec_command, _fetch_pr_comments, etc.)
+- `UniqueSessionIDs`, `FilesWithSessionID`
+- Per-file details for debugging
+
+Expected message count derivation: each `response_item` with type `message` (user/assistant/developer), `function_call`, or `function_call_output` becomes one message row. Plus each `event_msg` with type `user_message` or `agent_message`. Reasoning blocks are skipped.
+
+#### TestMain changes
+
+Extend `TestMain` in `e2e_test.go` to also run the Codex pipeline:
+
+```go
+// After existing Claude pipeline run...
+codexInputDir := filepath.Join(".", ".tmp", "codex", "sessions")
+if _, err := os.Stat(codexInputDir); err == nil {
+    // Run genstats-codex
+    codexStatsPath := filepath.Join(".", ".tmp", "codex-stats.json")
+    genCodexStats := exec.Command("go", "run", "./cmd/genstats-codex", codexInputDir, codexStatsPath)
+    // ...
+
+    // Run pipeline with --codex-input
+    run := exec.Command(bin, "run", "--codex-input", codexInputDir, "--output", codexOutputDir, "--only", "codex")
+    // ...
+
+    fixtureCodexStats = loadStats(codexStatsPath)
+    fixtureCodexOutputDir = codexOutputDir
+    fixtureCodexReady = true
+}
+```
+
+Use a separate output directory for Codex-only runs so counts can be validated independently without Claude data mixed in.
+
+#### E2E test cases for Codex
+
+Mirror the Claude e2e tests, adapted for Codex-specific properties:
+
+**Count validation** (same pattern as `TestE2E_MessageCount` / `TestE2E_SessionCount`):
+- `TestE2E_Codex_SessionCount` — parquet session count matches genstats expected sessions
+- `TestE2E_Codex_MessageCount` — parquet message count matches genstats expected messages
+
+**Required fields** (same pattern as `TestE2E_SessionsHaveRequiredFields`):
+- `TestE2E_Codex_SessionsHaveRequiredFields` — ID, FirstMessageAt, LastMessageAt non-zero
+- `TestE2E_Codex_AgentField` — all sessions have `Agent == "codex"`
+- `TestE2E_Codex_NoSubagents` — no sessions have `IsSubagent == true`
+- `TestE2E_Codex_NoParentSessionID` — all sessions have empty `ParentSessionID`
+
+**Role mapping** (same pattern as `TestE2E_ToolUseBecomesAssistantRole`):
+- `TestE2E_Codex_RoleDistribution` — function_calls map to assistant, function_call_output maps to tool, developer maps to system
+
+**Transcripts** (same pattern as `TestE2E_TranscriptsPopulated`):
+- `TestE2E_Codex_TranscriptsPopulated` — TranscriptFull and TranscriptTruncated non-empty
+- `TestE2E_Codex_TranscriptRolePrefixes` — transcripts contain `[user]:` and `[assistant]:`
+
+**Token fields** (Codex-specific):
+- `TestE2E_Codex_ZeroTokens` — all message-level token fields are 0
+
+**Tool metadata** (Codex-specific):
+- `TestE2E_Codex_BashCommandPopulated` — messages with `tool_name == "exec_command"` have non-empty `bash_command`
+
+**Git metadata** (same pattern as `TestE2E_GitBranchPopulated`):
+- `TestE2E_Codex_GitBranchPopulated` — at least some messages have git_branch
+
+**Idempotency** (same pattern as `TestE2E_Idempotent`):
+- `TestE2E_Codex_Idempotent` — running twice produces the same counts
+
+**Empty input** (same pattern as `TestE2E_EmptyInput`):
+- `TestE2E_Codex_EmptyInput` — empty codex input dir produces no output
+
+#### Test data
+
+`.tmp/codex/` is already populated with a full Codex worktree (52 session files, 46MB). The e2e tests use `.tmp/codex/sessions/` as the Codex input directory, mirroring how `.tmp/claude/projects/` is used for Claude.
+
+Both directories are gitignored and not checked in. Tests skip gracefully when fixture data is absent (`skipIfNoFixture` pattern).
+
+#### Manual verification with DuckDB
+
+For development iteration (not a substitute for the automated e2e tests above):
 
 ```sql
 -- Verify codex sessions exist
 SELECT agent, count(*) FROM '.tmp/output/sessions/**/*.parquet' GROUP BY agent;
 
--- Verify message counts
-SELECT agent, count(*) as msgs
-FROM (
-  SELECT s.agent, m.*
-  FROM '.tmp/output/messages/**/*.parquet' m
-  JOIN '.tmp/output/sessions/**/*.parquet' s ON m.session_id = s.id
-) GROUP BY agent;
-
--- Verify bash_command population for codex
+-- Verify bash_command population
 SELECT tool_name, bash_command, content_truncated
 FROM '.tmp/output/messages/**/*.parquet'
 WHERE session_id IN (
@@ -533,18 +659,12 @@ WHERE session_id IN (
 AND tool_name != ''
 LIMIT 10;
 
--- Verify no token data (expected for codex)
+-- Verify zero tokens (expected)
 SELECT sum(input_tokens), sum(output_tokens)
 FROM '.tmp/output/messages/**/*.parquet'
 WHERE session_id IN (
   SELECT id FROM '.tmp/output/sessions/**/*.parquet' WHERE agent = 'codex'
 );
-
--- Verify transcript is populated
-SELECT id, length(transcript_full), length(transcript_truncated)
-FROM '.tmp/output/sessions/**/*.parquet'
-WHERE agent = 'codex'
-LIMIT 5;
 ```
 
 ### Performance
@@ -654,8 +774,8 @@ Phase 1 can ship independently. Phases 2-4 are data-safety improvements that app
 
 ## Out of Scope
 
-- `~/.codex/history.jsonl` ingestion (prompt history without full context)
-- `~/.codex/logs_2.sqlite` or `state_5.sqlite` ingestion
+- `~/.codex/history.jsonl`, `logs_2.sqlite`, `state_5.sqlite` ingestion (secondary indexes, not primary source)
+- `config.toml`, `rules/`, `skills/`, `cache/` ingestion (configuration, not session data)
 - Parsing `exec_command` arguments to infer file read/write/edit operations
 - Decrypting reasoning blocks
 - Token count estimation from content length
