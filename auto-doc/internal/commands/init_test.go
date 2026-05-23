@@ -113,14 +113,8 @@ func TestInitCreatesGitignore(t *testing.T) {
 	}
 
 	content := string(data)
-	if !strings.Contains(content, "*") {
-		t.Error(".gitignore missing wildcard ignore")
-	}
-	if !strings.Contains(content, "!.gitignore") {
-		t.Error(".gitignore missing .gitignore exception")
-	}
-	if !strings.Contains(content, "!settings.json") {
-		t.Error(".gitignore missing settings.json exception")
+	if !strings.Contains(content, "index/") {
+		t.Error(".gitignore missing index/ ignore")
 	}
 }
 

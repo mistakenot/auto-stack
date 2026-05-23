@@ -82,7 +82,7 @@ func InitProject(w io.Writer, rootDir string) error {
 	// Create .auto/doc/.gitignore if it doesn't exist
 	gitignorePath := filepath.Join(configDir, ".gitignore")
 	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
-		gitignoreContent := "*\n!.gitignore\n!settings.json\n"
+		gitignoreContent := "index/\n"
 		if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0o644); err != nil {
 			return fmt.Errorf("writing .gitignore: %w", err)
 		}
