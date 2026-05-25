@@ -22,7 +22,7 @@ IMAGE="ubuntu:24.04"
 CONTAINER_NAME="autostack-install-test-$$"
 REPO="mistakenot/auto-stack"
 INSTALL_URL="https://raw.githubusercontent.com/${REPO}/main/install.sh"
-BINARIES="autodoc autoenv autoetl autosearch autoreflect autoskill autowatch"
+BINARIES="autodoc autoenv autoetl autograph autosearch autoreflect autoskill autowatch"
 BIN_DIR="/root/.local/bin"
 PROJECT_DIR="/root/src/testproject"
 
@@ -178,6 +178,9 @@ docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/autoenv init"
 docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/autoskill init" 2>&1 | sed 's/^/  [autoskill] /'
 docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/autoskill init --project" 2>&1 | sed 's/^/  [autoskill] /'
 
+# autograph: global init only (no project init)
+docker exec "$CONTAINER_NAME" bash -c "$BIN_DIR/autograph init" 2>&1 | sed 's/^/  [autograph] /'
+
 # ============================================================
 # Phase 3: Validate ~/.auto global structure
 # ============================================================
@@ -209,6 +212,10 @@ assert_dir  "/root/.auto/watch/runs"              "autowatch runs dir"
 # autoskill global
 assert_dir  "/root/.auto/skill"                   "autoskill global dir"
 assert_file "/root/.auto/skill/settings.json"      "autoskill global settings"
+
+# autograph global
+assert_dir  "/root/.auto/graph"                   "autograph global dir"
+assert_file "/root/.auto/graph/settings.json"      "autograph global settings"
 
 # ============================================================
 # Phase 4: Validate project .auto structure
