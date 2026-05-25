@@ -77,6 +77,10 @@ func (s *TypeScriptScanner) Scan(dir string) ([]ImportMatch, error) {
 		{pattern: `import "$_"`, kind: "side-effect"}, // fallback for side-effect imports
 	}
 
+	// ast-grep treats --lang=ts and --lang=tsx as separate language modes.
+	// We need to scan both to cover .ts and .tsx files.
+	langs := []string{"ts", "tsx"}
+
 	type seenKey struct {
 		file       string
 		importPath string
@@ -85,31 +89,33 @@ func (s *TypeScriptScanner) Scan(dir string) ([]ImportMatch, error) {
 	var results []ImportMatch
 
 	for _, ps := range patterns {
-		matches, err := s.runPattern(bin, dir, ps.pattern)
-		if err != nil {
-			return nil, fmt.Errorf("ast-grep pattern %q: %w", ps.pattern, err)
-		}
-
-		for _, m := range matches {
-			importPath := extractImportPath(m.Text, ps.kind)
-			if importPath == "" {
-				continue
+		for _, lang := range langs {
+			matches, err := s.runPattern(bin, dir, ps.pattern, lang)
+			if err != nil {
+				return nil, fmt.Errorf("ast-grep pattern %q (lang=%s): %w", ps.pattern, lang, err)
 			}
 
-			key := seenKey{file: m.File, importPath: importPath}
-			if seen[key] {
-				continue
+			for _, m := range matches {
+				importPath := extractImportPath(m.Text, ps.kind)
+				if importPath == "" {
+					continue
+				}
+
+				key := seenKey{file: m.File, importPath: importPath}
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+
+				kind := classifyKind(m.Text, ps.kind)
+
+				results = append(results, ImportMatch{
+					SourceFile: m.File,
+					ImportPath: importPath,
+					Kind:       kind,
+					Line:       m.Range.Start.Line + 1, // ast-grep uses 0-based lines
+				})
 			}
-			seen[key] = true
-
-			kind := classifyKind(m.Text, ps.kind)
-
-			results = append(results, ImportMatch{
-				SourceFile: m.File,
-				ImportPath: importPath,
-				Kind:       kind,
-				Line:       m.Range.Start.Line + 1, // ast-grep uses 0-based lines
-			})
 		}
 	}
 
@@ -129,9 +135,9 @@ func (s *TypeScriptScanner) findBinary() (string, error) {
 }
 
 // runPattern executes a single ast-grep pattern and parses the JSON stream output.
-func (s *TypeScriptScanner) runPattern(bin, dir, pattern string) ([]astGrepMatch, error) {
+func (s *TypeScriptScanner) runPattern(bin, dir, pattern, lang string) ([]astGrepMatch, error) {
 	ctx := context.Background()
-	cmd := exec.CommandContext(ctx, bin, "run", "--lang", "ts", "-p", pattern, "--json=stream", dir)
+	cmd := exec.CommandContext(ctx, bin, "run", "--lang", lang, "-p", pattern, "--json=stream", dir)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

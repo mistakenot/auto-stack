@@ -7,6 +7,8 @@ dist/
 .tmp/
 **/.tmp/
 **/testdata/
+!auto-graph/testdata/
+!auto-graph/e2e/testdata/
 
 # Credentials and secrets
 *.env
