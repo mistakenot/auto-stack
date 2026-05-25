@@ -23,7 +23,7 @@ func newDocsCmd() *cobra.Command {
 				"- `update`: check for and install the latest auto-stack release.",
 				"- `code graph <dir>`: scan a project directory and output the import graph.",
 				"  - `--format`: output format — json (default), dot, mermaid.",
-				"  - `--lang`: language override — typescript (auto-detected from tsconfig.json).",
+				"  - `--lang`: language override — typescript, go (auto-detected from tsconfig.json or go.mod).",
 			}, "\n")
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), docs)
 			return err

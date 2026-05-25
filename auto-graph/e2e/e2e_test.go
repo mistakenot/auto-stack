@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 var update = flag.Bool("update", false, "regenerate golden files")
@@ -75,6 +76,11 @@ func goldenDir() string {
 // sampleProjectDir returns the path to the local sample project fixture.
 func sampleProjectDir() string {
 	return filepath.Join(testdataDir(), "sample-project")
+}
+
+// goSampleProjectDir returns the path to the local Go sample project fixture.
+func goSampleProjectDir() string {
+	return filepath.Join(testdataDir(), "go-sample-project")
 }
 
 // runAutograph runs the autograph binary with the given args and returns stdout.
@@ -366,6 +372,247 @@ func max(a, b int) int {
 	return b
 }
 
+// fileExistsE2E checks if a file exists (used by e2e tests).
+func fileExistsE2E(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// cloneRepo clones a git repository to a temp directory and checks out a specific commit.
+func cloneRepo(t *testing.T, url, commit string) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	repoDir := filepath.Join(tmpDir, "repo")
+
+	cmd := exec.Command("git", "clone", url, repoDir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git clone failed: %v\n%s", err, out)
+	}
+
+	cmd = exec.Command("git", "-C", repoDir, "checkout", commit)
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git checkout %s failed: %v\n%s", commit, err, out)
+	}
+
+	return repoDir
+}
+
+// TestGoSampleProjectJSON runs the Go sample project through autograph and
+// verifies JSON output structure and golden file comparison.
+func TestGoSampleProjectJSON(t *testing.T) {
+	bin := buildBinary(t)
+	dir := goSampleProjectDir()
+
+	output := runAutograph(t, bin, "code", "graph", dir)
+
+	var g graph
+	if err := json.Unmarshal([]byte(output), &g); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\nraw output:\n%s", err, output)
+	}
+
+	// All nodes must have language "go".
+	for _, n := range g.Nodes {
+		if n.Language != "go" {
+			t.Errorf("node %q has language %q, want \"go\"", n.ID, n.Language)
+		}
+	}
+
+	// Verify at least 10 nodes (the project has 12 files).
+	if len(g.Nodes) < 10 {
+		t.Errorf("expected at least 10 nodes, got %d", len(g.Nodes))
+	}
+
+	// Verify we have edges.
+	if len(g.Edges) == 0 {
+		t.Fatal("expected non-empty edges array")
+	}
+
+	// Verify edge referential integrity.
+	nodeIDs := make(map[string]bool)
+	for _, n := range g.Nodes {
+		nodeIDs[n.ID] = true
+	}
+	for _, e := range g.Edges {
+		if !nodeIDs[e.Source] {
+			t.Errorf("edge source %q not found in nodes", e.Source)
+		}
+		if !nodeIDs[e.Target] {
+			t.Errorf("edge target %q not found in nodes", e.Target)
+		}
+	}
+
+	// Verify diverse import kinds.
+	importKinds := make(map[string]bool)
+	for _, e := range g.Edges {
+		if k, ok := e.Attrs["import_kind"]; ok {
+			importKinds[k] = true
+		}
+	}
+	for _, expected := range []string{"static", "blank", "dot", "aliased"} {
+		if !importKinds[expected] {
+			t.Errorf("expected import kind %q in edges, not found", expected)
+		}
+	}
+
+	// Golden file comparison.
+	goldenPath := filepath.Join(goldenDir(), "go-sample-project.json")
+	normalized := normalizeGraphJSON(t, g)
+
+	if *update {
+		if err := os.MkdirAll(goldenDir(), 0o755); err != nil {
+			t.Fatalf("creating golden dir: %v", err)
+		}
+		if err := os.WriteFile(goldenPath, []byte(normalized), 0o644); err != nil {
+			t.Fatalf("writing golden file: %v", err)
+		}
+		t.Logf("updated golden file: %s", goldenPath)
+		return
+	}
+
+	golden, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("reading golden file (run with -update to create): %v", err)
+	}
+	if string(golden) != normalized {
+		t.Errorf("output does not match golden file %s\n--- got ---\n%s\n--- want ---\n%s",
+			goldenPath, normalized, string(golden))
+	}
+}
+
+// TestGoSampleProjectFormats runs the Go sample project through all three output
+// formats and verifies structural properties.
+func TestGoSampleProjectFormats(t *testing.T) {
+	bin := buildBinary(t)
+	dir := goSampleProjectDir()
+
+	t.Run("json", func(t *testing.T) {
+		output := runAutograph(t, bin, "code", "graph", dir, "--format=json")
+		trimmed := strings.TrimSpace(output)
+		if !strings.HasPrefix(trimmed, "{") {
+			t.Errorf("JSON output should start with '{', got: %s", trimmed[:min(80, len(trimmed))])
+		}
+
+		var g graph
+		if err := json.Unmarshal([]byte(output), &g); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		if len(g.Nodes) < 10 {
+			t.Errorf("expected at least 10 nodes, got %d", len(g.Nodes))
+		}
+	})
+
+	t.Run("dot", func(t *testing.T) {
+		output := runAutograph(t, bin, "code", "graph", dir, "--format=dot")
+		trimmed := strings.TrimSpace(output)
+		if !strings.HasPrefix(trimmed, "digraph") {
+			t.Errorf("DOT output should start with 'digraph', got: %s", trimmed[:min(50, len(trimmed))])
+		}
+		if !strings.HasSuffix(trimmed, "}") {
+			t.Errorf("DOT output should end with '}', got: ...%s", trimmed[max(0, len(trimmed)-50):])
+		}
+		if !strings.Contains(output, "->") {
+			t.Error("DOT output should contain at least one '->' edge")
+		}
+	})
+
+	t.Run("mermaid", func(t *testing.T) {
+		output := runAutograph(t, bin, "code", "graph", dir, "--format=mermaid")
+		trimmed := strings.TrimSpace(output)
+		if !strings.HasPrefix(trimmed, "graph LR") {
+			t.Errorf("Mermaid output should start with 'graph LR', got: %s", trimmed[:min(50, len(trimmed))])
+		}
+		if !strings.Contains(output, "-->") {
+			t.Error("Mermaid output should contain at least one '-->' edge")
+		}
+	})
+}
+
+// TestPublicGoRepo clones a pinned Go repo and verifies autograph produces a valid graph.
+func TestPublicGoRepo(t *testing.T) {
+	// Load repo config from repos.json.
+	reposPath := filepath.Join(testdataDir(), "..", "repos.json")
+	data, err := os.ReadFile(reposPath)
+	if err != nil {
+		t.Fatalf("reading repos.json: %v", err)
+	}
+
+	type repoEntry struct {
+		Name   string `json:"name"`
+		URL    string `json:"url"`
+		Commit string `json:"commit"`
+		Subdir string `json:"subdir"`
+	}
+	var repos []repoEntry
+	if err := json.Unmarshal(data, &repos); err != nil {
+		t.Fatalf("parsing repos.json: %v", err)
+	}
+
+	// Find the cobra entry.
+	var cobraRepo *repoEntry
+	for i := range repos {
+		if repos[i].Name == "cobra" {
+			cobraRepo = &repos[i]
+			break
+		}
+	}
+	if cobraRepo == nil {
+		t.Skip("cobra entry not found in repos.json")
+	}
+
+	bin := buildBinary(t)
+	repoDir := cloneRepo(t, cobraRepo.URL, cobraRepo.Commit)
+
+	targetDir := repoDir
+	if cobraRepo.Subdir != "" {
+		targetDir = filepath.Join(repoDir, cobraRepo.Subdir)
+	}
+
+	// Time only the autograph run, not the clone.
+	start := time.Now()
+	output := runAutograph(t, bin, "code", "graph", targetDir, "--lang=go")
+	elapsed := time.Since(start)
+
+	// Performance assertion: should complete in under 3 seconds (AC-9).
+	if elapsed > 3*time.Second {
+		t.Errorf("autograph took %v, want < 3s", elapsed)
+	}
+
+	var g graph
+	if err := json.Unmarshal([]byte(output), &g); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\nfirst 500 chars:\n%s", err, output[:min(500, len(output))])
+	}
+
+	// Structural assertions.
+	if len(g.Nodes) == 0 {
+		t.Fatal("expected non-empty nodes array")
+	}
+	t.Logf("cobra: %d nodes, %d edges in %v", len(g.Nodes), len(g.Edges), elapsed)
+
+	// All nodes should have language "go".
+	for _, n := range g.Nodes {
+		if n.Language != "go" {
+			t.Errorf("node %q has language %q, want \"go\"", n.ID, n.Language)
+			break
+		}
+	}
+
+	// Edges referential integrity.
+	nodeIDs := make(map[string]bool)
+	for _, n := range g.Nodes {
+		nodeIDs[n.ID] = true
+	}
+	for _, e := range g.Edges {
+		if !nodeIDs[e.Source] {
+			t.Errorf("edge source %q not found in nodes", e.Source)
+		}
+		if !nodeIDs[e.Target] {
+			t.Errorf("edge target %q not found in nodes", e.Target)
+		}
+	}
+}
+
 // TestEdgeReferentialIntegrity verifies structural invariants on the graph
 // across all fixture directories.
 func TestEdgeReferentialIntegrity(t *testing.T) {
@@ -383,8 +630,9 @@ func TestEdgeReferentialIntegrity(t *testing.T) {
 			continue
 		}
 		fixtureDir := filepath.Join(fixturesDir, entry.Name())
-		tsconfigPath := filepath.Join(fixtureDir, "tsconfig.json")
-		if _, err := os.Stat(tsconfigPath); err != nil {
+		hasTSConfig := fileExistsE2E(filepath.Join(fixtureDir, "tsconfig.json"))
+		hasGoMod := fileExistsE2E(filepath.Join(fixtureDir, "go.mod"))
+		if !hasTSConfig && !hasGoMod {
 			continue
 		}
 
@@ -449,18 +697,18 @@ func TestInvalidDirectory(t *testing.T) {
 }
 
 // TestNoTSConfig verifies the binary returns a helpful error for a directory
-// without tsconfig.json.
+// without tsconfig.json or go.mod.
 func TestNoTSConfig(t *testing.T) {
 	bin := buildBinary(t)
 	tmpDir := t.TempDir()
 	cmd := exec.Command(bin, "code", "graph", tmpDir)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
-		t.Fatal("expected error for directory without tsconfig.json")
+		t.Fatal("expected error for directory without tsconfig.json or go.mod")
 	}
 	output := string(out)
-	if !strings.Contains(output, "tsconfig.json") {
-		t.Errorf("expected tsconfig.json in error message, got: %s", output)
+	if !strings.Contains(output, "go.mod") || !strings.Contains(output, "tsconfig.json") {
+		t.Errorf("expected both go.mod and tsconfig.json in error message, got: %s", output)
 	}
 }
 

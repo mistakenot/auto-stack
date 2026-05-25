@@ -8,40 +8,56 @@ import (
 
 const quickstartMarkdown = `# autograph quickstart
 
-Build and query code context graphs. Currently supports TypeScript import graphs via ast-grep.
+Build and query code context graphs. Supports TypeScript (via ast-grep) and Go (via go/parser) import graphs.
 
 ## Before you start
 
-Ensure ast-grep is installed:
+For TypeScript projects, ensure ast-grep is installed:
 
 ` + "```" + `bash
 npm install -g @ast-grep/cli
 autograph doctor
 ` + "```" + `
 
+For Go projects, no external dependencies are needed.
+
 ## Core workflow
 
-### 1. Generate an import graph
+### 1. Generate an import graph (TypeScript)
 
 ` + "```" + `bash
 # Scan a TypeScript project and output the import graph as JSON (default)
-autograph code graph ./my-project
+autograph code graph ./my-ts-project
 
 # Output as Graphviz DOT
-autograph code graph ./my-project --format=dot
+autograph code graph ./my-ts-project --format=dot
 
 # Output as Mermaid
-autograph code graph ./my-project --format=mermaid
+autograph code graph ./my-ts-project --format=mermaid
 ` + "```" + `
 
-### 2. Specify language explicitly
+### 2. Generate an import graph (Go)
 
 ` + "```" + `bash
-# Auto-detection uses tsconfig.json presence; override with --lang
-autograph code graph ./my-project --lang=typescript
+# Scan a Go project (auto-detected from go.mod)
+autograph code graph ./my-go-project
+
+# Explicit language override
+autograph code graph ./my-go-project --lang=go
+
+# Output as DOT
+autograph code graph ./my-go-project --format=dot
 ` + "```" + `
 
-### 3. Pipe to other tools
+### 3. Specify language explicitly
+
+` + "```" + `bash
+# Auto-detection uses go.mod or tsconfig.json presence; override with --lang
+autograph code graph ./my-project --lang=typescript
+autograph code graph ./my-project --lang=go
+` + "```" + `
+
+### 4. Pipe to other tools
 
 ` + "```" + `bash
 # Render DOT output with Graphviz
@@ -59,10 +75,12 @@ JSON output contains a graph with nodes for each file and edges for each import 
 {
   "root": "./my-project",
   "nodes": [
-    {"id": "src/index.ts", "kind": "file", "path": "src/index.ts", "language": "typescript"}
+    {"id": "src/index.ts", "kind": "file", "path": "src/index.ts", "language": "typescript"},
+    {"id": "cmd/main.go", "kind": "file", "path": "cmd/main.go", "language": "go"}
   ],
   "edges": [
-    {"source": "src/index.ts", "target": "src/utils.ts", "kind": "import"}
+    {"source": "src/index.ts", "target": "src/utils.ts", "kind": "import"},
+    {"source": "cmd/main.go", "target": "internal/server/server.go", "kind": "import"}
   ]
 }
 ` + "```" + `

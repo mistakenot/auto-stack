@@ -1,0 +1,349 @@
+{
+  "root": "\u003cproject-root\u003e",
+  "nodes": [
+    {
+      "id": "cmd/main.go",
+      "kind": "file",
+      "path": "cmd/main.go",
+      "language": "go"
+    },
+    {
+      "id": "cmd/version.go",
+      "kind": "file",
+      "path": "cmd/version.go",
+      "language": "go"
+    },
+    {
+      "id": "internal/handler/errors.go",
+      "kind": "file",
+      "path": "internal/handler/errors.go",
+      "language": "go"
+    },
+    {
+      "id": "internal/handler/handler.go",
+      "kind": "file",
+      "path": "internal/handler/handler.go",
+      "language": "go"
+    },
+    {
+      "id": "internal/handler/middleware_ref.go",
+      "kind": "file",
+      "path": "internal/handler/middleware_ref.go",
+      "language": "go"
+    },
+    {
+      "id": "internal/middleware/auth.go",
+      "kind": "file",
+      "path": "internal/middleware/auth.go",
+      "language": "go"
+    },
+    {
+      "id": "internal/middleware/logging.go",
+      "kind": "file",
+      "path": "internal/middleware/logging.go",
+      "language": "go"
+    },
+    {
+      "id": "internal/middleware/recover.go",
+      "kind": "file",
+      "path": "internal/middleware/recover.go",
+      "language": "go"
+    },
+    {
+      "id": "internal/server/config.go",
+      "kind": "file",
+      "path": "internal/server/config.go",
+      "language": "go"
+    },
+    {
+      "id": "internal/server/server.go",
+      "kind": "file",
+      "path": "internal/server/server.go",
+      "language": "go"
+    },
+    {
+      "id": "pkg/logger/level.go",
+      "kind": "file",
+      "path": "pkg/logger/level.go",
+      "language": "go"
+    },
+    {
+      "id": "pkg/logger/logger.go",
+      "kind": "file",
+      "path": "pkg/logger/logger.go",
+      "language": "go"
+    }
+  ],
+  "edges": [
+    {
+      "source": "cmd/main.go",
+      "target": "internal/server/config.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/internal/server"
+      }
+    },
+    {
+      "source": "cmd/main.go",
+      "target": "internal/server/server.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/internal/server"
+      }
+    },
+    {
+      "source": "cmd/main.go",
+      "target": "pkg/logger/level.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "cmd/main.go",
+      "target": "pkg/logger/logger.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "internal/handler/handler.go",
+      "target": "pkg/logger/level.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "internal/handler/handler.go",
+      "target": "pkg/logger/logger.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "internal/handler/middleware_ref.go",
+      "target": "internal/middleware/auth.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "aliased",
+        "raw": "example.com/sample/internal/middleware"
+      }
+    },
+    {
+      "source": "internal/handler/middleware_ref.go",
+      "target": "internal/middleware/logging.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "aliased",
+        "raw": "example.com/sample/internal/middleware"
+      }
+    },
+    {
+      "source": "internal/handler/middleware_ref.go",
+      "target": "internal/middleware/recover.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "aliased",
+        "raw": "example.com/sample/internal/middleware"
+      }
+    },
+    {
+      "source": "internal/handler/middleware_ref.go",
+      "target": "pkg/logger/level.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "internal/handler/middleware_ref.go",
+      "target": "pkg/logger/logger.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "internal/middleware/auth.go",
+      "target": "pkg/logger/level.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "internal/middleware/auth.go",
+      "target": "pkg/logger/logger.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "internal/middleware/logging.go",
+      "target": "pkg/logger/level.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "internal/middleware/logging.go",
+      "target": "pkg/logger/logger.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "internal/middleware/recover.go",
+      "target": "internal/handler/errors.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "blank",
+        "raw": "example.com/sample/internal/handler"
+      }
+    },
+    {
+      "source": "internal/middleware/recover.go",
+      "target": "internal/handler/handler.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "blank",
+        "raw": "example.com/sample/internal/handler"
+      }
+    },
+    {
+      "source": "internal/middleware/recover.go",
+      "target": "internal/handler/middleware_ref.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "blank",
+        "raw": "example.com/sample/internal/handler"
+      }
+    },
+    {
+      "source": "internal/middleware/recover.go",
+      "target": "pkg/logger/level.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "internal/middleware/recover.go",
+      "target": "pkg/logger/logger.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "internal/server/server.go",
+      "target": "internal/handler/errors.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/internal/handler"
+      }
+    },
+    {
+      "source": "internal/server/server.go",
+      "target": "internal/handler/handler.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/internal/handler"
+      }
+    },
+    {
+      "source": "internal/server/server.go",
+      "target": "internal/handler/middleware_ref.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/internal/handler"
+      }
+    },
+    {
+      "source": "internal/server/server.go",
+      "target": "internal/middleware/auth.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/internal/middleware"
+      }
+    },
+    {
+      "source": "internal/server/server.go",
+      "target": "internal/middleware/logging.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/internal/middleware"
+      }
+    },
+    {
+      "source": "internal/server/server.go",
+      "target": "internal/middleware/recover.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/internal/middleware"
+      }
+    },
+    {
+      "source": "internal/server/server.go",
+      "target": "pkg/logger/level.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "internal/server/server.go",
+      "target": "pkg/logger/logger.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "example.com/sample/pkg/logger"
+      }
+    },
+    {
+      "source": "pkg/logger/level.go",
+      "target": "internal/server/config.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "dot",
+        "raw": "example.com/sample/internal/server"
+      }
+    },
+    {
+      "source": "pkg/logger/level.go",
+      "target": "internal/server/server.go",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "dot",
+        "raw": "example.com/sample/internal/server"
+      }
+    }
+  ]
+}

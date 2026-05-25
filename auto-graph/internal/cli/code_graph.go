@@ -35,7 +35,7 @@ statements and resolving them to actual files. Outputs the graph in
 JSON (default), Graphviz DOT, or Mermaid format.
 
 The language is auto-detected from config files in the target directory
-(e.g. tsconfig.json for TypeScript). Use --lang to override detection.`,
+(go.mod for Go, tsconfig.json for TypeScript). Use --lang to override detection.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCodeGraph(cmd, args[0], formatFlag, langFlag)
