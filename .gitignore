@@ -1,12 +1,15 @@
 .ntm/
 bin/
 dist/
+auto-graph/autograph
 
 # bv (beads viewer) local config and caches
 .bv/
 .tmp/
 **/.tmp/
 **/testdata/
+!auto-graph/testdata/
+!auto-graph/e2e/testdata/
 
 # Credentials and secrets
 *.env

@@ -46,7 +46,7 @@
 | `auto-doc/`    | `autodoc`     | Active      | Doc management for AI agents — freshness checking, search, indexing |
 | `auto-env/`    | `autoenv`     | Active      | Template-based config generation with per-worktree port allocation  |
 | `auto-etl/`    | `autoetl`     | Active      | ETL for coding agent session histories (SSH, LXC, local)           |
-| `auto-graph/`  | `autograph`   | Early       | Context graphs built with a coding agent                           |
+| `auto-graph/`  | `autograph`   | Active      | Code context graphs — file-level import graph with ast-grep scanning |
 | `auto-reflect/`| `autoreflect` | Early       | Analyze past sessions, extract rules for future ones               |
 | `auto-search/` | `autosearch`  | Early       | Rich search over normalized session history from auto-etl          |
 | `auto-skill/`  | `autoskill`   | Early       | Agent skill management                                             |

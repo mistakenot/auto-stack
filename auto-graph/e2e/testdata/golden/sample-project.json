@@ -1,0 +1,214 @@
+{
+  "root": "\u003cproject-root\u003e",
+  "nodes": [
+    {
+      "id": "src/components/App.tsx",
+      "kind": "file",
+      "path": "src/components/App.tsx",
+      "language": "typescript"
+    },
+    {
+      "id": "src/components/Footer.ts",
+      "kind": "file",
+      "path": "src/components/Footer.ts",
+      "language": "typescript"
+    },
+    {
+      "id": "src/components/Header.tsx",
+      "kind": "file",
+      "path": "src/components/Header.tsx",
+      "language": "typescript"
+    },
+    {
+      "id": "src/config.ts",
+      "kind": "file",
+      "path": "src/config.ts",
+      "language": "typescript"
+    },
+    {
+      "id": "src/hooks/useAuth.ts",
+      "kind": "file",
+      "path": "src/hooks/useAuth.ts",
+      "language": "typescript"
+    },
+    {
+      "id": "src/index.ts",
+      "kind": "file",
+      "path": "src/index.ts",
+      "language": "typescript"
+    },
+    {
+      "id": "src/models/user.ts",
+      "kind": "file",
+      "path": "src/models/user.ts",
+      "language": "typescript"
+    },
+    {
+      "id": "src/services/analyticsService.ts",
+      "kind": "file",
+      "path": "src/services/analyticsService.ts",
+      "language": "typescript"
+    },
+    {
+      "id": "src/services/userService.ts",
+      "kind": "file",
+      "path": "src/services/userService.ts",
+      "language": "typescript"
+    },
+    {
+      "id": "src/utils/format.ts",
+      "kind": "file",
+      "path": "src/utils/format.ts",
+      "language": "typescript"
+    },
+    {
+      "id": "src/utils/index.ts",
+      "kind": "file",
+      "path": "src/utils/index.ts",
+      "language": "typescript"
+    },
+    {
+      "id": "src/utils/validate.ts",
+      "kind": "file",
+      "path": "src/utils/validate.ts",
+      "language": "typescript"
+    }
+  ],
+  "edges": [
+    {
+      "source": "src/components/App.tsx",
+      "target": "src/components/Header.tsx",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "./Header"
+      }
+    },
+    {
+      "source": "src/components/App.tsx",
+      "target": "src/hooks/useAuth.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "../hooks/useAuth"
+      }
+    },
+    {
+      "source": "src/components/App.tsx",
+      "target": "src/models/user.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "type",
+        "raw": "../models/user"
+      }
+    },
+    {
+      "source": "src/components/Header.tsx",
+      "target": "src/utils/format.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "@utils/format"
+      }
+    },
+    {
+      "source": "src/config.ts",
+      "target": "src/utils/validate.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "side-effect",
+        "raw": "./utils/validate"
+      }
+    },
+    {
+      "source": "src/hooks/useAuth.ts",
+      "target": "src/services/userService.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "../services/userService"
+      }
+    },
+    {
+      "source": "src/index.ts",
+      "target": "src/components/App.tsx",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "./components/App"
+      }
+    },
+    {
+      "source": "src/index.ts",
+      "target": "src/services/userService.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "./services/userService"
+      }
+    },
+    {
+      "source": "src/index.ts",
+      "target": "src/utils/format.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "@utils/format"
+      }
+    },
+    {
+      "source": "src/services/analyticsService.ts",
+      "target": "src/utils/format.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "dynamic",
+        "raw": "../utils/format"
+      }
+    },
+    {
+      "source": "src/services/userService.ts",
+      "target": "src/models/user.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "type",
+        "raw": "../models/user"
+      }
+    },
+    {
+      "source": "src/services/userService.ts",
+      "target": "src/utils/validate.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "@utils/validate"
+      }
+    },
+    {
+      "source": "src/utils/format.ts",
+      "target": "src/utils/validate.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "raw": "./validate"
+      }
+    },
+    {
+      "source": "src/utils/index.ts",
+      "target": "src/utils/format.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "reexport",
+        "raw": "./format"
+      }
+    },
+    {
+      "source": "src/utils/index.ts",
+      "target": "src/utils/validate.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "reexport",
+        "raw": "./validate"
+      }
+    }
+  ]
+}

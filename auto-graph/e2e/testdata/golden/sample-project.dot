@@ -1,0 +1,18 @@
+digraph imports {
+    rankdir=LR;
+    "src/components/App.tsx" -> "src/components/Header.tsx";
+    "src/components/App.tsx" -> "src/hooks/useAuth.ts";
+    "src/components/App.tsx" -> "src/models/user.ts";
+    "src/components/Header.tsx" -> "src/utils/format.ts";
+    "src/config.ts" -> "src/utils/validate.ts";
+    "src/hooks/useAuth.ts" -> "src/services/userService.ts";
+    "src/index.ts" -> "src/components/App.tsx";
+    "src/index.ts" -> "src/services/userService.ts";
+    "src/index.ts" -> "src/utils/format.ts";
+    "src/services/analyticsService.ts" -> "src/utils/format.ts";
+    "src/services/userService.ts" -> "src/models/user.ts";
+    "src/services/userService.ts" -> "src/utils/validate.ts";
+    "src/utils/format.ts" -> "src/utils/validate.ts";
+    "src/utils/index.ts" -> "src/utils/format.ts";
+    "src/utils/index.ts" -> "src/utils/validate.ts";
+}
