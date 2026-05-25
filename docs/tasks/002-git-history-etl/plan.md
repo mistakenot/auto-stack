@@ -28,11 +28,11 @@ Implement git history ETL as a new source in auto-etl, following the GitHub PR E
 
 ## How to Test
 
-- [ ] `auto-etl/internal/git/normalize_test.go` — unit: URL normalization, repo_id generation, no-remote fallback
-- [ ] `auto-etl/internal/git/state_test.go` — unit: seen-commit load/save/filter
-- [ ] `auto-etl/internal/git/extract_test.go` — unit: parse git log, diff-tree, show, for-each-ref output
-- [ ] `auto-etl/cmd/run_only_test.go` — unit: --only git accepted, unknown values rejected
-- [ ] Manual e2e: `go run . run --only git --repo-path . --output .tmp/output` against this repo, inspect with duckdb
+- [x] `auto-etl/internal/git/normalize_test.go` — unit: URL normalization, repo_id generation, no-remote fallback
+- [x] `auto-etl/internal/git/state_test.go` — unit: seen-commit load/save/filter
+- [x] `auto-etl/internal/git/extract_test.go` — unit: parse git log, diff-tree, show, for-each-ref output
+- [x] `auto-etl/cmd/run_only_test.go` — unit: --only git accepted, unknown values rejected
+- [x] Manual e2e: `go run . run --only git --repo-path . --output .tmp/output` against this repo, inspect with duckdb
 
 ## Execution Sequence
 
@@ -143,7 +143,7 @@ AUTHOR: Include `repo_id` prefix in all composite IDs: commit id = `{repo_id}-{s
 
 Wire git ETL into the run command and validate end-to-end.
 
-- [ ] Step 5.1: Modify `auto-etl/cmd/run.go`:
+- [x] Step 5.1: Modify `auto-etl/cmd/run.go`:
   - Add `"git"` to `validOnlyValues`
   - Add flag vars: `repoPathFlag []string`, `sinceFlag string`
   - Register flags: `--repo-path` (string slice), `--since` (string)
@@ -164,12 +164,12 @@ AUTHOR: Added to Step 5.1: when `--full` is passed, delete the git sync-state.js
 
     - Print summary: repos processed, commits indexed, files/hunks written
   - Call `runGitETL()` in the run command after session ETL (when `sources["git"]` is true)
-- [ ] Step 5.2: Update `auto-etl/cmd/run_only_test.go`:
+- [x] Step 5.2: Update `auto-etl/cmd/run_only_test.go`:
   - Add test: `--only git` is accepted
   - Add test: `--only git,sessions` is accepted
   - Add test: default (no `--only`) includes all three sources
   - Verify: `go test ./cmd/...` passes
-- [ ] Step 5.3: Manual e2e validation against this repo:
+- [x] Step 5.3: Manual e2e validation against this repo:
   ```bash
   cd auto-etl
   go build -o .tmp/autoetl . && .tmp/autoetl run --only git --repo-path /home/vscode/src/auto-stack --output .tmp/output --since 3m
@@ -182,19 +182,19 @@ AUTHOR: Added to Step 5.1: when `--full` is passed, delete the git sync-state.js
   - Verify: `duckdb -c "SELECT count(*) FROM read_parquet('.tmp/output/git_refs/*.parquet')"` returns rows
   - Verify: merge commits have `is_merge=true` and no matching `commit_files` rows
   - Run again: verify incremental (no new rows, completes quickly)
-- [ ] Step 5.4: Commit: `feat(002): phase 5 — CLI integration and e2e validation`
+- [x] Step 5.4: Commit: `feat(002): phase 5 — CLI integration and e2e validation`
 
 ## Success Criteria
 
-- [ ] `go build ./...` passes in `auto-etl/`
-- [ ] `go test ./...` passes in `auto-etl/` — all existing + new tests
-- [ ] `go vet ./...` clean
-- [ ] `autoetl run --only git --repo-path <this-repo>` writes five parquet dataset directories
-- [ ] duckdb confirms non-zero row counts in commits, commit_files, commit_hunks, git_refs, git_repositories
-- [ ] Merge commits have `is_merge=true` with zero commit_files/commit_hunks rows
-- [ ] Re-running with no new commits produces no new commit/file/hunk rows (incremental; git_refs appends snapshots by design)
-- [ ] `--only git` runs only git ETL; default runs all three sources
-- [ ] Repo with no origin remote gets indexed with path-based repo_id
+- [x] `go build ./...` passes in `auto-etl/`
+- [x] `go test ./...` passes in `auto-etl/` — all existing + new tests
+- [x] `go vet ./...` clean
+- [x] `autoetl run --only git --repo-path <this-repo>` writes five parquet dataset directories
+- [x] duckdb confirms non-zero row counts in commits, commit_files, commit_hunks, git_refs, git_repositories
+- [x] Merge commits have `is_merge=true` with zero commit_files/commit_hunks rows
+- [x] Re-running with no new commits produces no new commit/file/hunk rows (incremental; git_refs appends snapshots by design)
+- [x] `--only git` runs only git ETL; default runs all three sources
+- [x] Repo with no origin remote gets indexed with path-based repo_id
 
 ## Open Questions
 
