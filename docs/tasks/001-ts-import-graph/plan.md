@@ -139,26 +139,26 @@ Wire the `code graph` subcommand and implement JSON/DOT/Mermaid output.
 
 Create fixture projects and unit tests covering all acceptance criteria.
 
-- [ ] Step 5.1: Add `!auto-graph/testdata/` and `!auto-graph/e2e/testdata/` negations to root `.gitignore`
-- [ ] Step 5.2: Create fixture `auto-graph/testdata/fixtures/basic-imports/` — 3-4 .ts files with relative imports + tsconfig.json
-- [ ] Step 5.3: Create fixture `auto-graph/testdata/fixtures/all-import-styles/` — file using all 5 import styles (static, dynamic, require, re-export, type import)
-- [ ] Step 5.4: Create fixture `auto-graph/testdata/fixtures/path-aliases/` — tsconfig with paths/baseUrl, files using `@/...` imports
-- [ ] Step 5.5: Create fixture `auto-graph/testdata/fixtures/index-resolution/` — imports resolving to index.ts
-- [ ] Step 5.6: Create fixture `auto-graph/testdata/fixtures/circular/` — circular import references
-- [ ] Step 5.7: Create fixture `auto-graph/testdata/fixtures/mixed-extensions/` — .ts, .tsx, .js files
-- [ ] Step 5.8: Create `auto-graph/internal/scanner/typescript_test.go` — test all import styles are detected (AC-1, AC-2)
-- [ ] Step 5.9: Create `auto-graph/internal/resolver/typescript_test.go` — test alias resolution, extension probing (AC-3)
-- [ ] Step 5.10: Create `auto-graph/internal/format/format_test.go` — test JSON/DOT/Mermaid output (AC-5)
-- [ ] Step 5.11: Create `auto-graph/internal/cli/code_graph_test.go` — test AC-4 (ast-grep not found exits with remediation hint) and AC-8 (language auto-detection from tsconfig.json presence, error when no config found)
+- [x] Step 5.1: Add `!auto-graph/testdata/` and `!auto-graph/e2e/testdata/` negations to root `.gitignore`
+- [x] Step 5.2: Create fixture `auto-graph/testdata/fixtures/basic-imports/` — 3-4 .ts files with relative imports + tsconfig.json
+- [x] Step 5.3: Create fixture `auto-graph/testdata/fixtures/all-import-styles/` — file using all 5 import styles (static, dynamic, require, re-export, type import)
+- [x] Step 5.4: Create fixture `auto-graph/testdata/fixtures/path-aliases/` — tsconfig with paths/baseUrl, files using `@/...` imports
+- [x] Step 5.5: Create fixture `auto-graph/testdata/fixtures/index-resolution/` — imports resolving to index.ts
+- [x] Step 5.6: Create fixture `auto-graph/testdata/fixtures/circular/` — circular import references
+- [x] Step 5.7: Create fixture `auto-graph/testdata/fixtures/mixed-extensions/` — .ts, .tsx, .js files
+- [x] Step 5.8: Create `auto-graph/internal/scanner/typescript_test.go` — test all import styles are detected (AC-1, AC-2)
+- [x] Step 5.9: Create `auto-graph/internal/resolver/typescript_test.go` — test alias resolution, extension probing (AC-3)
+- [x] Step 5.10: Create `auto-graph/internal/format/format_test.go` — test JSON/DOT/Mermaid output (AC-5)
+- [x] Step 5.11: Create `auto-graph/internal/cli/code_graph_test.go` — test AC-4 (ast-grep not found exits with remediation hint) and AC-8 (language auto-detection from tsconfig.json presence, error when no config found)
 
 <!-- RESOLVED(P1): CLI tests for AC-4 and AC-8 are missing from the plan
 REVIEW: `solution.md` maps AC-4 and AC-8 to `auto-graph/internal/cli/code_graph_test.go`, and the success criteria say `go test ./...` covers those ACs. The changes table and Phase 5 steps never create `code_graph_test.go`, so ast-grep-missing behavior and language auto-detection/error handling have no planned unit coverage. Add the test file and steps for dependency-check and language-detection CLI cases.
 AUTHOR: Confirmed. Added Step 5.11 to create `code_graph_test.go` covering AC-4 (ast-grep not found exits with remediation hint) and AC-8 (language auto-detection from tsconfig.json, error when no config found). Added the file to the Changes table.
 -->
 
-- [ ] Step 5.12: Run `cd auto-graph && go test ./...`
-- [ ] Step 5.13: Verify: all unit tests pass, `go vet ./...` clean
-- [ ] Step 5.14: Commit: `feat(autograph): phase 5 - test fixtures and unit tests`
+- [x] Step 5.12: Run `cd auto-graph && go test ./...`
+- [x] Step 5.13: Verify: all unit tests pass, `go vet ./...` clean
+- [x] Step 5.14: Commit: `feat(autograph): phase 5 - test fixtures and unit tests`
 
 ### Phase 6: E2E Tests + Makefile Integration
 
