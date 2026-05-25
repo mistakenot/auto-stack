@@ -120,20 +120,20 @@ Implement tsconfig.json path alias resolution and file extension probing.
 
 Wire the `code graph` subcommand and implement JSON/DOT/Mermaid output.
 
-- [ ] Step 4.1: Create `auto-graph/internal/format/json.go` — JSON formatter outputting Graph struct with 2-space indent
-- [ ] Step 4.2: Create `auto-graph/internal/format/dot.go` — Graphviz DOT formatter
-- [ ] Step 4.3: Create `auto-graph/internal/format/mermaid.go` — Mermaid graph syntax formatter
-- [ ] Step 4.4: Create `auto-graph/internal/cli/code.go` — "code" command group
-- [ ] Step 4.5: Create `auto-graph/internal/cli/code_graph.go` — "code graph" subcommand:
+- [x] Step 4.1: Create `auto-graph/internal/format/json.go` — JSON formatter outputting Graph struct with 2-space indent
+- [x] Step 4.2: Create `auto-graph/internal/format/dot.go` — Graphviz DOT formatter
+- [x] Step 4.3: Create `auto-graph/internal/format/mermaid.go` — Mermaid graph syntax formatter
+- [x] Step 4.4: Create `auto-graph/internal/cli/code.go` — "code" command group
+- [x] Step 4.5: Create `auto-graph/internal/cli/code_graph.go` — "code graph" subcommand:
   - `--format` flag: json (default), dot, mermaid
   - `--lang` flag: typescript (auto-detected from tsconfig.json)
   - Check ast-grep installed, fail with remediation hint
   - Auto-detect language from config files
   - Scan → resolve → build graph → format → write to stdout
-- [ ] Step 4.6: Wire `code` command group into root command
-- [ ] Step 4.7: Run `cd auto-graph && go build ./cmd/autograph/`
-- [ ] Step 4.8: Verify: `autograph code graph --help` prints expected flags and usage
-- [ ] Step 4.9: Commit: `feat(autograph): phase 4 - code graph command with JSON/DOT/Mermaid output`
+- [x] Step 4.6: Wire `code` command group into root command
+- [x] Step 4.7: Run `cd auto-graph && go build ./cmd/autograph/`
+- [x] Step 4.8: Verify: `autograph code graph --help` prints expected flags and usage
+- [x] Step 4.9: Commit: `feat(autograph): phase 4 - code graph command with JSON/DOT/Mermaid output`
 
 ### Phase 5: Test Fixtures + Unit Tests
 
