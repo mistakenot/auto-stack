@@ -50,6 +50,16 @@ func TestNormalizeRemoteURL(t *testing.T) {
 			raw:  "  https://github.com/owner/repo.git  ",
 			want: "https://github.com/owner/repo",
 		},
+		{
+			name: "credentials stripped from https url",
+			raw:  "https://x-access-token:ghp_secret123@github.com/owner/repo.git",
+			want: "https://github.com/owner/repo",
+		},
+		{
+			name: "user:pass credentials stripped",
+			raw:  "https://user:password@github.com/owner/repo",
+			want: "https://github.com/owner/repo",
+		},
 	}
 
 	for _, tc := range tests {

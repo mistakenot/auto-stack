@@ -31,6 +31,19 @@ func NormalizeRemoteURL(raw string) string {
 	// Strip trailing .git
 	raw = strings.TrimSuffix(raw, ".git")
 
+	// Strip credentials from HTTPS URLs (e.g. https://user:token@host/path → https://host/path)
+	if idx := strings.Index(raw, "://"); idx != -1 {
+		scheme := raw[:idx+3]
+		rest := raw[idx+3:]
+		if atIdx := strings.Index(rest, "@"); atIdx != -1 {
+			slashIdx := strings.Index(rest, "/")
+			if slashIdx == -1 || atIdx < slashIdx {
+				rest = rest[atIdx+1:]
+			}
+		}
+		raw = scheme + rest
+	}
+
 	// Lowercase the hostname: split on :// then lowercase the host portion.
 	if idx := strings.Index(raw, "://"); idx != -1 {
 		scheme := raw[:idx+3]
@@ -45,6 +58,24 @@ func NormalizeRemoteURL(raw string) string {
 	}
 
 	return raw
+}
+
+// StripCredentials removes userinfo (user:password@) from a URL.
+func StripCredentials(raw string) string {
+	raw = strings.TrimSpace(raw)
+	idx := strings.Index(raw, "://")
+	if idx == -1 {
+		return raw
+	}
+	scheme := raw[:idx+3]
+	rest := raw[idx+3:]
+	if atIdx := strings.Index(rest, "@"); atIdx != -1 {
+		slashIdx := strings.Index(rest, "/")
+		if slashIdx == -1 || atIdx < slashIdx {
+			rest = rest[atIdx+1:]
+		}
+	}
+	return scheme + rest
 }
 
 // ComputeRepoID returns a stable 16-character hex identifier derived from

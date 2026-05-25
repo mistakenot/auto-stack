@@ -120,7 +120,7 @@ func observeRepo(path, repoID, normalizedRemote, rawRemote string, config Extrac
 
 	row := model.GitRepository{
 		RepoID:                repoID,
-		RepoRemote:            rawRemote,
+		RepoRemote:            StripCredentials(rawRemote),
 		RepoRemoteNormalized:  normalizedRemote,
 		RepoPath:              toplevel,
 		WorktreePath:          worktreePath,
