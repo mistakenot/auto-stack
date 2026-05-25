@@ -66,24 +66,24 @@ All phases are sequential — each builds on the previous.
 
 Scaffold auto-graph following auto-package-patterns.md. All standard subcommands, go.mod, Makefile integration.
 
-- [ ] Step 1.1: Create `auto-graph/cmd/autograph/main.go` — minimal entry point matching auto-search pattern
-- [ ] Step 1.2: Create `auto-graph/internal/app/app.go` — App struct with Stdout, Stderr, CWD
-- [ ] Step 1.3: Create `auto-graph/internal/cli/root.go` — ExitError type, Execute() func, newRootCmd() with Cobra
-- [ ] Step 1.4: Create standard subcommands: `init.go`, `doctor.go`, `quickstart.go`, `docs.go`, `update.go`
+- [x] Step 1.1: Create `auto-graph/cmd/autograph/main.go` — minimal entry point matching auto-search pattern
+- [x] Step 1.2: Create `auto-graph/internal/app/app.go` — App struct with Stdout, Stderr, CWD
+- [x] Step 1.3: Create `auto-graph/internal/cli/root.go` — ExitError type, Execute() func, newRootCmd() with Cobra
+- [x] Step 1.4: Create standard subcommands: `init.go`, `doctor.go`, `quickstart.go`, `docs.go`, `update.go`
   - doctor: check ast-grep installed (`exec.LookPath("ast-grep")`), check settings
   - quickstart: embedded markdown showing `autograph code graph ./my-project` workflow
-- [ ] Step 1.5: Create `auto-graph/internal/config/settings.go` — global/project settings loading
-- [ ] Step 1.6: Create `auto-graph/go.mod` — module `github.com/mistakenot/auto-graph`, go 1.26.1, auto-shared replace
-- [ ] Step 1.7: Run `cd auto-graph && go mod tidy && go build ./cmd/autograph/`
-- [ ] Step 1.8: Replace `auto-graph/CLAUDE.md` with proper build/test instructions
-- [ ] Step 1.9: Verify: `cd auto-graph && go vet ./...` passes, `cd auto-graph && ./autograph --version` prints version
+- [x] Step 1.5: Create `auto-graph/internal/config/settings.go` — global/project settings loading
+- [x] Step 1.6: Create `auto-graph/go.mod` — module `github.com/mistakenot/auto-graph`, go 1.26.1, auto-shared replace
+- [x] Step 1.7: Run `cd auto-graph && go mod tidy && go build ./cmd/autograph/`
+- [x] Step 1.8: Replace `auto-graph/CLAUDE.md` with proper build/test instructions
+- [x] Step 1.9: Verify: `cd auto-graph && go vet ./...` passes, `cd auto-graph && ./autograph --version` prints version
 
 <!-- RESOLVED(P2): Phase 1 verifies a binary that is not built yet
 REVIEW: Step 1.7 runs `go build ./cmd/autograph/` inside `auto-graph`, which produces `auto-graph/autograph`; `./bin/autograph` is only produced later after the Makefile target is added in Phase 6. This verification will fail in Phase 1 as written. Use `cd auto-graph && ./autograph --version`, or move the `./bin/autograph` check to the Makefile integration phase.
 AUTHOR: Confirmed. Fixed Step 1.9 to use `cd auto-graph && ./autograph --version` which references the binary `go build` produces locally. The `./bin/autograph` path is only used in Phase 6 after Makefile integration.
 -->
 
-- [ ] Step 1.10: Commit: `feat(autograph): phase 1 - scaffold package with standard subcommands`
+- [x] Step 1.10: Commit: `feat(autograph): phase 1 - scaffold package with standard subcommands`
 
 ### Phase 2: Graph Model + TypeScript Scanner
 
