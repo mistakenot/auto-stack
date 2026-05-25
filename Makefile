@@ -1,4 +1,4 @@
-.PHONY: build build-etl build-doc build-watch build-search build-reflect build-skill clean test vet fmt lint \
+.PHONY: build build-etl build-doc build-watch build-search build-reflect build-skill build-graph clean test vet fmt lint \
        dist-reflect vulncheck \
        install install-hooks gen-stats check dist test-install test-curl-install
 
@@ -6,7 +6,7 @@ BUILD_DIR := bin
 DIST_DIR  := dist
 INSTALL_DIR ?= $(HOME)/.local/bin
 
-PROJECTS := auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill
+PROJECTS := auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill auto-graph
 
 # Binary name and entry point per project
 auto-doc_BIN   := autodoc
@@ -23,6 +23,8 @@ auto-env_BIN   := autoenv
 auto-env_ENTRY := ./cmd/autoenv
 auto-skill_BIN   := autoskill
 auto-skill_ENTRY := ./cmd/autoskill
+auto-graph_BIN   := autograph
+auto-graph_ENTRY := ./cmd/autograph
 
 # Platform defaults (overridable for cross-compilation)
 GOOS   ?= $(shell go env GOOS)
@@ -57,6 +59,9 @@ build-reflect:
 
 build-skill:
 	cd auto-skill && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autoskill $(auto-skill_ENTRY)
+
+build-graph:
+	cd auto-graph && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autograph $(auto-graph_ENTRY)
 
 # --- Release cross-compile (produces dist/<binary>-<suffix>) ---
 
@@ -97,6 +102,11 @@ dist-skill:
 	@mkdir -p $(DIST_DIR)
 	cd auto-skill && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autoskill-$(SUFFIX) $(auto-skill_ENTRY)
+
+dist-graph:
+	@mkdir -p $(DIST_DIR)
+	cd auto-graph && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autograph-$(SUFFIX) $(auto-graph_ENTRY)
 
 # --- Quality ---
 
@@ -173,6 +183,7 @@ install: build
 	cp $(BUILD_DIR)/autosearch $(INSTALL_DIR)/
 	cp $(BUILD_DIR)/autoreflect $(INSTALL_DIR)/
 	cp $(BUILD_DIR)/autoskill $(INSTALL_DIR)/
+	cp $(BUILD_DIR)/autograph $(INSTALL_DIR)/
 	@echo "Installed to $(INSTALL_DIR)/"
 
 test-install:

@@ -1,6 +1,7 @@
 .ntm/
 bin/
 dist/
+auto-graph/autograph
 
 # bv (beads viewer) local config and caches
 .bv/
