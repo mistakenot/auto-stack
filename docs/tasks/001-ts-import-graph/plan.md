@@ -105,16 +105,16 @@ Define the language-agnostic graph model and implement the ast-grep TypeScript s
 
 Implement tsconfig.json path alias resolution and file extension probing.
 
-- [ ] Step 3.1: Create `auto-graph/internal/resolver/resolver.go` — Resolver interface (`Resolve(importPath, sourceFile, projectRoot string) (string, error)`)
-- [ ] Step 3.2: Create `auto-graph/internal/resolver/typescript.go`:
+- [x] Step 3.1: Create `auto-graph/internal/resolver/resolver.go` — Resolver interface (`Resolve(importPath, sourceFile, projectRoot string) (string, error)`)
+- [x] Step 3.2: Create `auto-graph/internal/resolver/typescript.go`:
   - Load and parse `tsconfig.json` for `paths` and `baseUrl`
   - Classify imports: relative (`./ ../`), alias (`@/...`), bare (node_modules)
   - Substitute aliases via tsconfig paths → treat as relative
   - Extension probe order: exact → `.ts` → `.tsx` → `.js` → `.jsx` → `/index.ts` → `/index.tsx` → `/index.js` → `/index.jsx`
   - Mark bare specifiers as external, exclude from graph
-- [ ] Step 3.3: Run `cd auto-graph && go build ./...`
-- [ ] Step 3.4: Verify: `go vet ./...` passes, resolver compiles
-- [ ] Step 3.5: Commit: `feat(autograph): phase 3 - TypeScript resolver with tsconfig alias support`
+- [x] Step 3.3: Run `cd auto-graph && go build ./...`
+- [x] Step 3.4: Verify: `go vet ./...` passes, resolver compiles
+- [x] Step 3.5: Commit: `feat(autograph): phase 3 - TypeScript resolver with tsconfig alias support`
 
 ### Phase 4: CLI Wiring + Output Formatters
 
