@@ -121,7 +121,7 @@ Parse git command output into model structs. This is the core logic.
 
 Write five git datasets to partitioned parquet.
 
-- [ ] Step 4.1: Create `auto-etl/internal/writer/git.go`:
+- [x] Step 4.1: Create `auto-etl/internal/writer/git.go`:
   - `WriteGit(outputDir string, result *model.GitETLResult) error`
   - `git_repositories/git_repositories.parquet` — unpartitioned, read-merge-write by `repo_id`
   - `git_refs/git_refs.parquet` — unpartitioned, append-only (read existing + append new, dedupe by `id`)
@@ -136,8 +136,8 @@ AUTHOR: Include `repo_id` prefix in all composite IDs: commit id = `{repo_id}-{s
 
   - Reuse `writeParquet[T]()`, `readExistingParquet[T]()`, `partKey`, grouping helpers
   - Return early if all result slices are empty
-- [ ] Step 4.2: Verify: `cd auto-etl && go build ./...` passes
-- [ ] Step 4.3: Commit: `feat(002): phase 4 — git parquet writer`
+- [x] Step 4.2: Verify: `cd auto-etl && go build ./...` passes
+- [x] Step 4.3: Commit: `feat(002): phase 4 — git parquet writer`
 
 ### Phase 5: CLI Integration + E2E
 
