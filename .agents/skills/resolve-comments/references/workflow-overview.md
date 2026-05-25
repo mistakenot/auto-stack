@@ -12,6 +12,7 @@ Plan (on main)                Execute (on feature branch)         Review & Compl
 /new-plan                                                          → merge
   → context.md + plan.md     /delegate-task (optional)
 /review-task (optional)       /executor-status-check (optional)
+/request-codex-review (optional)
 /resolve-comments (optional)
 /commit-task
 ```

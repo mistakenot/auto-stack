@@ -66,6 +66,16 @@ Use tools (grep, glob, read, bash) to gather evidence before commenting. Comment
 
 Only comment on actual problems, genuine ambiguities, or missing information. Do not comment on formatting, correct content, or style preferences.
 
+**If no issues are found:** insert a single clean-review comment at the top of `plan.md` (below the title):
+
+```markdown
+<!-- RESOLVED(P3): Review complete — no issues found
+REVIEW: All planning documents reviewed against the codebase. No problems, inconsistencies, or missing information detected.
+-->
+```
+
+This ensures the calling agent can distinguish a successful clean review from a failed review that produced no output.
+
 ### Step 5: Summary
 
 After leaving all comments, provide:
