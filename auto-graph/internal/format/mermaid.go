@@ -13,12 +13,13 @@ var reSpecialChars = regexp.MustCompile(`[^a-zA-Z0-9_]`)
 
 // WriteMermaid writes the graph in Mermaid flowchart syntax to w.
 func WriteMermaid(w io.Writer, g *graph.Graph) error {
+	pathMap := buildPathMap(g)
 	if _, err := fmt.Fprintln(w, "graph LR"); err != nil {
 		return err
 	}
 	for _, e := range g.Edges {
-		sourcePath := nodePath(g, e.Source)
-		targetPath := nodePath(g, e.Target)
+		sourcePath := pathMap[e.Source]
+		targetPath := pathMap[e.Target]
 		sourceID := sanitizeMermaidID(sourcePath)
 		targetID := sanitizeMermaidID(targetPath)
 		if _, err := fmt.Fprintf(w, "    %s[%s] --> %s[%s]\n", sourceID, sourcePath, targetID, targetPath); err != nil {

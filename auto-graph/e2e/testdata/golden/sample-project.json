@@ -191,6 +191,24 @@
         "import_kind": "static",
         "raw": "./validate"
       }
+    },
+    {
+      "source": "src/utils/index.ts",
+      "target": "src/utils/format.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "reexport",
+        "raw": "./format"
+      }
+    },
+    {
+      "source": "src/utils/index.ts",
+      "target": "src/utils/validate.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "reexport",
+        "raw": "./validate"
+      }
     }
   ]
 }

@@ -73,8 +73,10 @@ func (s *TypeScriptScanner) Scan(dir string) ([]ImportMatch, error) {
 		{pattern: "import $$$", kind: "static"},
 		{pattern: "import($$$)", kind: "dynamic"},
 		{pattern: "require($$$)", kind: "require"},
-		{pattern: `export { $_ } from "$_"`, kind: "reexport"},
-		{pattern: `import "$_"`, kind: "side-effect"}, // fallback for side-effect imports
+		{pattern: `export { $$$ } from "$_"`, kind: "reexport"},
+		{pattern: `export * from "$_"`, kind: "reexport"},
+		{pattern: `export type { $$$ } from "$_"`, kind: "reexport"},
+		{pattern: `import "$_"`, kind: "side-effect"},
 	}
 
 	// ast-grep treats --lang=ts and --lang=tsx as separate language modes.
@@ -137,7 +139,7 @@ func (s *TypeScriptScanner) findBinary() (string, error) {
 // runPattern executes a single ast-grep pattern and parses the JSON stream output.
 func (s *TypeScriptScanner) runPattern(bin, dir, pattern, lang string) ([]astGrepMatch, error) {
 	ctx := context.Background()
-	cmd := exec.CommandContext(ctx, bin, "run", "--lang", lang, "-p", pattern, "--json=stream", dir)
+	cmd := exec.CommandContext(ctx, bin, "run", "--lang", lang, "-p", pattern, "--json=stream", "--globs", "!node_modules", "--globs", "!dist", "--globs", "!build", dir)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

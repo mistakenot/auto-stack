@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mistakenot/auto-graph/internal/config"
 	"github.com/mistakenot/auto-graph/internal/format"
 	"github.com/mistakenot/auto-graph/internal/graph"
 	"github.com/mistakenot/auto-graph/internal/resolver"
@@ -18,6 +19,13 @@ import (
 func newCodeGraphCmd() *cobra.Command {
 	var formatFlag string
 	var langFlag string
+
+	defaultFormat := "json"
+	if path, err := config.GraphSettingsPath(); err == nil {
+		if cfg, err := config.LoadGraphSettings(path); err == nil {
+			defaultFormat = cfg.DefaultOutput
+		}
+	}
 
 	cmd := &cobra.Command{
 		Use:   "graph <dir>",
@@ -34,7 +42,7 @@ The language is auto-detected from config files in the target directory
 		},
 	}
 
-	cmd.Flags().StringVar(&formatFlag, "format", "json", "output format: json, dot, mermaid")
+	cmd.Flags().StringVar(&formatFlag, "format", defaultFormat, "output format: json, dot, mermaid")
 	cmd.Flags().StringVar(&langFlag, "lang", "", "language override (auto-detected from config files if omitted)")
 
 	return cmd

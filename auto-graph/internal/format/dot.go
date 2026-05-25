@@ -9,6 +9,7 @@ import (
 
 // WriteDOT writes the graph in Graphviz DOT format to w.
 func WriteDOT(w io.Writer, g *graph.Graph) error {
+	pathMap := buildPathMap(g)
 	if _, err := fmt.Fprintln(w, "digraph imports {"); err != nil {
 		return err
 	}
@@ -16,8 +17,8 @@ func WriteDOT(w io.Writer, g *graph.Graph) error {
 		return err
 	}
 	for _, e := range g.Edges {
-		sourcePath := nodePath(g, e.Source)
-		targetPath := nodePath(g, e.Target)
+		sourcePath := pathMap[e.Source]
+		targetPath := pathMap[e.Target]
 		if _, err := fmt.Fprintf(w, "    %q -> %q;\n", sourcePath, targetPath); err != nil {
 			return err
 		}
@@ -28,13 +29,11 @@ func WriteDOT(w io.Writer, g *graph.Graph) error {
 	return nil
 }
 
-// nodePath looks up the Path field for a node by ID. If not found, returns the
-// ID itself as a fallback.
-func nodePath(g *graph.Graph, id string) string {
+// buildPathMap creates a map from node ID to path for O(1) lookups.
+func buildPathMap(g *graph.Graph) map[string]string {
+	m := make(map[string]string, len(g.Nodes))
 	for _, n := range g.Nodes {
-		if n.ID == id {
-			return n.Path
-		}
+		m[n.ID] = n.Path
 	}
-	return id
+	return m
 }

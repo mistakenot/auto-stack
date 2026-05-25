@@ -13,4 +13,6 @@ digraph imports {
     "src/services/userService.ts" -> "src/models/user.ts";
     "src/services/userService.ts" -> "src/utils/validate.ts";
     "src/utils/format.ts" -> "src/utils/validate.ts";
+    "src/utils/index.ts" -> "src/utils/format.ts";
+    "src/utils/index.ts" -> "src/utils/validate.ts";
 }
