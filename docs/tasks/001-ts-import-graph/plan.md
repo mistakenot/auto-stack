@@ -89,17 +89,17 @@ AUTHOR: Confirmed. Fixed Step 1.9 to use `cd auto-graph && ./autograph --version
 
 Define the language-agnostic graph model and implement the ast-grep TypeScript scanner.
 
-- [ ] Step 2.1: Create `auto-graph/internal/graph/model.go` — NodeKind, EdgeKind, Node, Edge, Graph types as specified in solution.md
-- [ ] Step 2.2: Create `auto-graph/internal/scanner/scanner.go` — Scanner interface (`Scan(dir string) ([]ImportMatch, error)`), ImportMatch type
-- [ ] Step 2.3: Create `auto-graph/internal/scanner/typescript.go` — TypeScriptScanner implementation:
+- [x] Step 2.1: Create `auto-graph/internal/graph/model.go` — NodeKind, EdgeKind, Node, Edge, Graph types as specified in solution.md
+- [x] Step 2.2: Create `auto-graph/internal/scanner/scanner.go` — Scanner interface (`Scan(dir string) ([]ImportMatch, error)`), ImportMatch type
+- [x] Step 2.3: Create `auto-graph/internal/scanner/typescript.go` — TypeScriptScanner implementation:
   - Check ast-grep via `exec.LookPath`
   - Run 4 ast-grep patterns: `import $$$`, `import($$$)`, `require($$$)`, `export { $_ } from "$_"`
   - Plus `import "$_"` for side-effect imports
   - Parse `--json=stream` output
   - Extract import paths via regex: `from\s+['"]([^'"]+)['"]`, `import\s+['"]([^'"]+)['"]`, `['"]([^'"]+)['"]`
-- [ ] Step 2.4: Run `cd auto-graph && go build ./...`
-- [ ] Step 2.5: Verify: `go vet ./...` passes, scanner compiles with no errors
-- [ ] Step 2.6: Commit: `feat(autograph): phase 2 - graph model and TypeScript scanner`
+- [x] Step 2.4: Run `cd auto-graph && go build ./...`
+- [x] Step 2.5: Verify: `go vet ./...` passes, scanner compiles with no errors
+- [x] Step 2.6: Commit: `feat(autograph): phase 2 - graph model and TypeScript scanner`
 
 ### Phase 3: TypeScript Resolver
 
