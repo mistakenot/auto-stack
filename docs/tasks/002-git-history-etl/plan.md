@@ -88,10 +88,10 @@ URL normalization, repo_id computation, and incremental seen-commit tracking.
 
 Parse git command output into model structs. This is the core logic.
 
-- [ ] Step 3.1: Create `auto-etl/internal/git/discover.go`:
+- [x] Step 3.1: Create `auto-etl/internal/git/discover.go`:
   - `DiscoverRepos(remotes map[string]string, explicitPaths []string) []RepoInfo` — deduplicate by resolved repo path, validate each is a git repo via `git rev-parse --show-toplevel`
   - `RepoInfo` struct: `{Path, Remote string}`
-- [ ] Step 3.2: Create `auto-etl/internal/git/extract.go`:
+- [x] Step 3.2: Create `auto-etl/internal/git/extract.go`:
   - `ExtractRepo(repo RepoInfo, config ExtractConfig) (*model.GitETLResult, error)` — orchestrate per-repo extraction
   - `ExtractConfig` struct: `{HostID, ETLRunID string, CollectedAt int64, Since string, SeenSHAs map[string]bool}`
   - Internal functions:
@@ -106,7 +106,7 @@ Parse git command output into model structs. This is the core logic.
   - Set `year`/`month` partition fields from `author_date`
   - Filter commits against `SeenSHAs` — only extract file/hunk detail for new commits
   - Aggregate `files_changed`, `insertions`, `deletions` on commit rows from parsed file rows
-- [ ] Step 3.3: Create `auto-etl/internal/git/extract_test.go`:
+- [x] Step 3.3: Create `auto-etl/internal/git/extract_test.go`:
   - Test `observeRefs` parser with sample `for-each-ref` output
   - Test `extractCommits` parser with sample `git log` output (normal, merge, multi-parent)
   - Test `extractFilesAndHunks` parser with sample `diff-tree --raw`, `--numstat`, and unified diff output
@@ -114,8 +114,8 @@ Parse git command output into model structs. This is the core logic.
   - Test hunk header parsing (`@@ -1,5 +1,7 @@`)
   - Test merge commit detection (parent_count > 1, no files/hunks)
   - Verify: `go test ./internal/git/...` passes
-- [ ] Step 3.4: Verify: `cd auto-etl && go build ./...` passes
-- [ ] Step 3.5: Commit: `feat(002): phase 3 — git extraction and parsing`
+- [x] Step 3.4: Verify: `cd auto-etl && go build ./...` passes
+- [x] Step 3.5: Commit: `feat(002): phase 3 — git extraction and parsing`
 
 ### Phase 4: Writer
 
