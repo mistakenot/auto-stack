@@ -64,25 +64,25 @@ Define the five parquet row structs and result container.
 
 URL normalization, repo_id computation, and incremental seen-commit tracking.
 
-- [ ] Step 2.1: Create `auto-etl/internal/git/normalize.go`:
+- [x] Step 2.1: Create `auto-etl/internal/git/normalize.go`:
   - `NormalizeRemoteURL(raw string) string` — strip `.git` suffix, lowercase host, convert `git@host:owner/repo` to `https://host/owner/repo`
   - `ComputeRepoID(normalizedRemote string) string` — SHA256 hex of normalized remote, truncated to 16 chars for readability
   - `ComputeRepoIDFromPath(absPath string) string` — SHA256 hex of absolute path (fallback for no-remote repos)
-- [ ] Step 2.2: Create `auto-etl/internal/git/normalize_test.go`:
+- [x] Step 2.2: Create `auto-etl/internal/git/normalize_test.go`:
   - Test cases: HTTPS with/without `.git`, SSH `git@` format, uppercase hosts, no-remote path fallback, idempotency
   - Verify: `go test ./internal/git/...` passes
-- [ ] Step 2.3: Create `auto-etl/internal/git/state.go`:
+- [x] Step 2.3: Create `auto-etl/internal/git/state.go`:
   - `GitSyncState` struct: `{SchemaVersion int, Repos map[string]*GitRepoState}` where `GitRepoState` has `SeenSHAs map[string]bool`
   - `GitSyncStatePath() string` — returns `~/.auto/etl/git/sync-state.json`
   - `LoadGitSyncState(path string) *GitSyncState` — returns empty state if missing/corrupt, logs warning (match `syncstate.go` pattern)
   - `(*GitSyncState) Save(path string) error` — atomic write via temp+rename
   - `(*GitRepoState) IsNew(sha string) bool` — check against seen set
   - `(*GitRepoState) MarkSeen(shas []string)` — add batch of SHAs to seen set
-- [ ] Step 2.4: Create `auto-etl/internal/git/state_test.go`:
+- [x] Step 2.4: Create `auto-etl/internal/git/state_test.go`:
   - Test cases: load missing file, load corrupt file, save + reload roundtrip, IsNew/MarkSeen behavior, large SHA set
   - Verify: `go test ./internal/git/...` passes
-- [ ] Step 2.5: Verify: `cd auto-etl && go build ./...` passes
-- [ ] Step 2.6: Commit: `feat(002): phase 2 — URL normalization and sync state`
+- [x] Step 2.5: Verify: `cd auto-etl && go build ./...` passes
+- [x] Step 2.6: Commit: `feat(002): phase 2 — URL normalization and sync state`
 
 ### Phase 3: Git Extraction
 
