@@ -48,7 +48,7 @@ All phases are sequential — each builds on the prior phase's types and functio
 
 Define the five parquet row structs and result container.
 
-- [ ] Step 1.1: Create `auto-etl/internal/model/git.go` with structs:
+- [x] Step 1.1: Create `auto-etl/internal/model/git.go` with structs:
   - `GitRepository` — fields from spec table: `repo_id`, `repo_remote`, `repo_remote_normalized`, `repo_path`, `worktree_path`, `default_branch_observed`, `host_id`, `first_seen_at`, `last_seen_at`, `etl_run_id`, `collected_at`, `schema_version`
   - `GitRef` — fields: `id`, `repo_id`, `ref_name`, `ref_type`, `commit_id`, `is_default`, `is_remote`, `etl_run_id`, `collected_at`, `schema_version`
   - `Commit` — fields: `id`, `short_id`, `repo_id`, `tree_sha`, `author_name`, `author_email`, `author_date`, `author_date_offset`, `committer_name`, `committer_email`, `committer_date`, `committer_date_offset`, `message`, `message_truncated`, `is_merge`, `parent_count`, `parent_shas`, `files_changed`, `insertions`, `deletions`, `trailers_json`, `patch_id`, `etl_run_id`, `collected_at`, `year`, `month`, `schema_version`
@@ -57,8 +57,8 @@ Define the five parquet row structs and result container.
   - `GitETLResult` — container: `Repositories []GitRepository`, `Refs []GitRef`, `Commits []Commit`, `Files []CommitFile`, `Hunks []CommitHunk`
   - Use `parquet:"field,dict"` for: `repo_id`, `ref_name`, `ref_type`, `host_id`, `etl_run_id`, `author_name`, `author_email`, `committer_name`, `committer_email`, `change_type`, `file_path`, `old_path`
   - No dict for: `id`, `commit_id`, content strings (`message`, `diff`, `hunk_text`), truncated strings, SHAs, timestamps, counts
-- [ ] Step 1.2: Verify: `cd auto-etl && go build ./...` passes
-- [ ] Step 1.3: Commit: `feat(002): phase 1 — git ETL model structs`
+- [x] Step 1.2: Verify: `cd auto-etl && go build ./...` passes
+- [x] Step 1.3: Commit: `feat(002): phase 1 — git ETL model structs`
 
 ### Phase 2: Normalize + State
 
