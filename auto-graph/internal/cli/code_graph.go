@@ -60,15 +60,7 @@ func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string) error {
 		return &ExitError{Code: 1, Err: fmt.Errorf("not a directory: %s", dir)}
 	}
 
-	// Step 1: Check ast-grep is installed.
-	if _, err := exec.LookPath("ast-grep"); err != nil {
-		return &ExitError{
-			Code: 1,
-			Err:  fmt.Errorf("ast-grep not found: install with npm i -g @ast-grep/cli or brew install ast-grep"),
-		}
-	}
-
-	// Step 2: Detect language.
+	// Step 1: Detect language.
 	lang := langFlag
 	if lang == "" {
 		detected, err := detectLanguage(projectRoot)
@@ -78,10 +70,31 @@ func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string) error {
 		lang = detected
 	}
 
-	if lang != "typescript" {
+	// Step 2: Create language-specific scanner and resolver.
+	var sc scanner.Scanner
+	var res resolver.Resolver
+
+	switch lang {
+	case "typescript":
+		if _, err := exec.LookPath("ast-grep"); err != nil {
+			return &ExitError{
+				Code: 1,
+				Err:  fmt.Errorf("ast-grep not found: install with npm i -g @ast-grep/cli or brew install ast-grep"),
+			}
+		}
+		sc = scanner.NewTypeScriptScanner()
+		res = resolver.NewTypeScriptResolver(projectRoot)
+	case "go":
+		sc = scanner.NewGoScanner()
+		var goErr error
+		res, goErr = resolver.NewGoResolver(projectRoot)
+		if goErr != nil {
+			return &ExitError{Code: 1, Err: fmt.Errorf("initializing Go resolver: %w", goErr)}
+		}
+	default:
 		return &ExitError{
 			Code: 1,
-			Err:  fmt.Errorf("unsupported language %q; currently only typescript is supported", lang),
+			Err:  fmt.Errorf("unsupported language %q; supported: typescript, go", lang),
 		}
 	}
 
@@ -92,19 +105,15 @@ func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string) error {
 	}
 
 	// Step 4: Run the scanner to get import matches.
-	sc := scanner.NewTypeScriptScanner()
 	matches, err := sc.Scan(projectRoot)
 	if err != nil {
 		return &ExitError{Code: 1, Err: fmt.Errorf("scanning imports: %w", err)}
 	}
 
-	// Step 5: Create the resolver.
-	res := resolver.NewTypeScriptResolver(projectRoot)
+	// Step 5: Build the graph.
+	g := buildGraph(projectRoot, filePaths, matches, res, lang)
 
-	// Step 6: Build the graph.
-	g := buildGraph(projectRoot, filePaths, matches, res)
-
-	// Step 7: Output in requested format.
+	// Step 6: Output in requested format.
 	w := cmd.OutOrStdout()
 	switch formatFlag {
 	case "json":
@@ -132,15 +141,28 @@ func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string) error {
 // detectLanguage auto-detects the project language from config files present
 // in the project directory.
 func detectLanguage(projectRoot string) (string, error) {
-	// Check for TypeScript config.
-	if _, err := os.Stat(filepath.Join(projectRoot, "tsconfig.json")); err == nil {
+	hasGoMod := fileExists(filepath.Join(projectRoot, "go.mod"))
+	hasTSConfig := fileExists(filepath.Join(projectRoot, "tsconfig.json"))
+
+	if hasGoMod && hasTSConfig {
+		return "", fmt.Errorf("ambiguous: both go.mod and tsconfig.json found in %s; use --lang=go or --lang=typescript", projectRoot)
+	}
+	if hasGoMod {
+		return "go", nil
+	}
+	if hasTSConfig {
 		return "typescript", nil
 	}
 
 	return "", fmt.Errorf(
-		"could not detect project language: no tsconfig.json found in %s; use --lang=typescript to specify explicitly",
+		"could not detect project language: no go.mod or tsconfig.json found in %s; use --lang to specify explicitly",
 		projectRoot,
 	)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // discoverFiles walks the project directory and returns relative paths for all
@@ -154,6 +176,10 @@ func discoverFiles(projectRoot, lang string) ([]string, error) {
 			".ts":  true,
 			".tsx": true,
 		}
+	case "go":
+		extensions = map[string]bool{
+			".go": true,
+		}
 	default:
 		return nil, fmt.Errorf("no file extensions defined for language %q", lang)
 	}
@@ -165,10 +191,13 @@ func discoverFiles(projectRoot, lang string) ([]string, error) {
 			return err
 		}
 
-		// Skip hidden directories and node_modules.
+		// Skip hidden directories and language-specific dependency dirs.
 		if d.IsDir() {
 			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "node_modules" {
+			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" {
+				return filepath.SkipDir
+			}
+			if lang == "go" && (name == "testdata" || strings.HasPrefix(name, "_")) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -195,7 +224,7 @@ func discoverFiles(projectRoot, lang string) ([]string, error) {
 }
 
 // buildGraph constructs a Graph from discovered files and resolved imports.
-func buildGraph(projectRoot string, filePaths []string, matches []scanner.ImportMatch, res resolver.Resolver) *graph.Graph {
+func buildGraph(projectRoot string, filePaths []string, matches []scanner.ImportMatch, res resolver.Resolver, lang string) *graph.Graph {
 	g := &graph.Graph{
 		Root: projectRoot,
 	}
@@ -208,8 +237,15 @@ func buildGraph(projectRoot string, filePaths []string, matches []scanner.Import
 			ID:       p,
 			Kind:     graph.NodeFile,
 			Path:     p,
-			Language: "typescript",
+			Language: lang,
 		})
+	}
+
+	// Build directory-to-files index for package-level resolution (Go).
+	dirToFiles := make(map[string][]string)
+	for _, p := range filePaths {
+		dir := filepath.ToSlash(filepath.Dir(p))
+		dirToFiles[dir] = append(dirToFiles[dir], p)
 	}
 
 	// Create edges from resolved imports.
@@ -225,7 +261,7 @@ func buildGraph(projectRoot string, filePaths []string, matches []scanner.Import
 			continue
 		}
 
-		// Skip external (node_modules) and unresolved imports.
+		// Skip external (node_modules / stdlib / third-party) and unresolved imports.
 		if result.IsExternal || result.ResolvedPath == "" {
 			continue
 		}
@@ -239,32 +275,37 @@ func buildGraph(projectRoot string, filePaths []string, matches []scanner.Import
 
 		targetRel := result.ResolvedPath
 
-		// Skip self-imports.
-		if sourceRel == targetRel {
-			continue
+		// Determine target files: direct file match or package directory expansion.
+		var targetFiles []string
+		if nodeSet[targetRel] {
+			targetFiles = []string{targetRel}
+		} else if files, ok := dirToFiles[targetRel]; ok {
+			targetFiles = files
 		}
 
-		// Skip if source or target are not in our discovered node set.
-		if !nodeSet[sourceRel] || !nodeSet[targetRel] {
-			continue
-		}
+		for _, targetFile := range targetFiles {
+			// Skip self-imports.
+			if sourceRel == targetFile {
+				continue
+			}
 
-		// Deduplicate edges.
-		key := edgeKey{source: sourceRel, target: targetRel}
-		if edgeSeen[key] {
-			continue
-		}
-		edgeSeen[key] = true
+			// Deduplicate edges.
+			key := edgeKey{source: sourceRel, target: targetFile}
+			if edgeSeen[key] {
+				continue
+			}
+			edgeSeen[key] = true
 
-		g.Edges = append(g.Edges, graph.Edge{
-			Source: sourceRel,
-			Target: targetRel,
-			Kind:   graph.EdgeImport,
-			Attrs: map[string]string{
-				"import_kind": m.Kind,
-				"raw":         m.ImportPath,
-			},
-		})
+			g.Edges = append(g.Edges, graph.Edge{
+				Source: sourceRel,
+				Target: targetFile,
+				Kind:   graph.EdgeImport,
+				Attrs: map[string]string{
+					"import_kind": m.Kind,
+					"raw":         m.ImportPath,
+				},
+			})
+		}
 	}
 
 	return g

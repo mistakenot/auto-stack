@@ -35,6 +35,32 @@ func TestAstGrepNotFound(t *testing.T) {
 	}
 }
 
+func TestAstGrepNotCheckedForGo(t *testing.T) {
+	// Set PATH to an empty directory so ast-grep cannot be found.
+	tmpDir := t.TempDir()
+	t.Setenv("PATH", tmpDir)
+
+	// Create a Go project dir with go.mod and a .go file.
+	projDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projDir, "go.mod"), []byte("module example.com/test\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projDir, "main.go"), []byte("package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println() }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newCodeGraphCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	err := runCodeGraph(cmd, projDir, "json", "go")
+	// Should NOT fail with ast-grep error — Go doesn't need it.
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "ast-grep") {
+			t.Errorf("Go scanning should not require ast-grep, but got: %s", errMsg)
+		}
+	}
+}
+
 func TestLanguageAutoDetection(t *testing.T) {
 	// Create a temp dir with tsconfig.json.
 	projDir := t.TempDir()
@@ -51,8 +77,46 @@ func TestLanguageAutoDetection(t *testing.T) {
 	}
 }
 
+func TestLanguageAutoDetectionGo(t *testing.T) {
+	projDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projDir, "go.mod"), []byte("module example.com/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	lang, err := detectLanguage(projDir)
+	if err != nil {
+		t.Fatalf("detectLanguage failed: %v", err)
+	}
+	if lang != "go" {
+		t.Errorf("expected language %q, got %q", "go", lang)
+	}
+}
+
+func TestLanguageAutoDetectionAmbiguous(t *testing.T) {
+	projDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projDir, "go.mod"), []byte("module example.com/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projDir, "tsconfig.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := detectLanguage(projDir)
+	if err == nil {
+		t.Fatal("expected error when both config files found, got nil")
+	}
+
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "ambiguous") {
+		t.Errorf("error message should mention ambiguity, got: %s", errMsg)
+	}
+	if !strings.Contains(errMsg, "--lang=go") || !strings.Contains(errMsg, "--lang=typescript") {
+		t.Errorf("error message should contain both lang hints, got: %s", errMsg)
+	}
+}
+
 func TestLanguageAutoDetectionNoConfig(t *testing.T) {
-	// Create a temp dir without tsconfig.json.
+	// Create a temp dir without any config files.
 	projDir := t.TempDir()
 
 	_, err := detectLanguage(projDir)
@@ -64,8 +128,8 @@ func TestLanguageAutoDetectionNoConfig(t *testing.T) {
 	if !strings.Contains(errMsg, "could not detect project language") {
 		t.Errorf("error message should mention detection failure, got: %s", errMsg)
 	}
-	if !strings.Contains(errMsg, "--lang=typescript") {
-		t.Errorf("error message should contain remediation hint (--lang=typescript), got: %s", errMsg)
+	if !strings.Contains(errMsg, "--lang") {
+		t.Errorf("error message should contain remediation hint (--lang), got: %s", errMsg)
 	}
 }
 
