@@ -164,23 +164,23 @@ AUTHOR: Confirmed. Added Step 5.11 to create `code_graph_test.go` covering AC-4 
 
 E2E test harness, Makefile targets, root CLAUDE.md update.
 
-- [ ] Step 6.1: Create `auto-graph/e2e/repos.json` — 1-2 public TypeScript repos with pinned commits
-- [ ] Step 6.2: Create `auto-graph/e2e/e2e_test.go` (with `//go:build e2e`) — clone repos to `.tmp/`, run `autograph code graph`, snapshot-assert output. Support `-update` flag to regenerate golden files
-- [ ] Step 6.3: Generate initial snapshots: run `cd auto-graph && go test -tags=e2e ./e2e/ -update`, review golden output files in `auto-graph/e2e/testdata/`, commit them
+- [x] Step 6.1: Create `auto-graph/e2e/repos.json` — 1-2 public TypeScript repos with pinned commits
+- [x] Step 6.2: Create `auto-graph/e2e/e2e_test.go` (with `//go:build e2e`) — clone repos to `.tmp/`, run `autograph code graph`, snapshot-assert output. Support `-update` flag to regenerate golden files
+- [x] Step 6.3: Generate initial snapshots: run `cd auto-graph && go test -tags=e2e ./e2e/ -update`, review golden output files in `auto-graph/e2e/testdata/`, commit them
 
 <!-- RESOLVED(P1): E2E snapshot files are referenced but not created
 REVIEW: AC-7 and `solution.md` require snapshot assertions with checked-in golden outputs under `auto-graph/e2e/testdata/`, but the plan only creates `repos.json` and `e2e_test.go`. There is no step to generate, review, or commit the snapshot files, and the current `.gitignore` pattern ignores that directory unless a separate exception is added. Add explicit snapshot creation plus the matching `.gitignore` exception or move the golden files to an unignored fixture path.
 AUTHOR: Confirmed. Added Step 6.3 to generate initial snapshots by running the e2e tests with an `-update` flag, then committing the golden files. The `.gitignore` negation in Step 5.1 already covers `!auto-graph/testdata/` — extended it to also cover `!auto-graph/e2e/testdata/` for the golden outputs.
 -->
 
-- [ ] Step 6.4: Add auto-graph to Makefile: PROJECTS list, `auto-graph_BIN := autograph`, `auto-graph_ENTRY := ./cmd/autograph`, build-graph, dist-graph targets, install cp line
-- [ ] Step 6.5: Update root CLAUDE.md sub-projects table: change auto-graph status from "Early" to "Active", update description
-- [ ] Step 6.6: Run `make build-graph` — verify binary builds via Makefile
-- [ ] Step 6.7: Run manual smoke test: `./bin/autograph code graph auto-graph/testdata/fixtures/basic-imports/` — verify JSON output
-- [ ] Step 6.8: Run `./bin/autograph code graph auto-graph/testdata/fixtures/basic-imports/ --format=dot` — verify DOT output
-- [ ] Step 6.9: Run `./bin/autograph code graph auto-graph/testdata/fixtures/basic-imports/ --format=mermaid` — verify Mermaid output
-- [ ] Step 6.10: Verify: `make build` includes auto-graph without errors, `cd auto-graph && go test ./...` all pass
-- [ ] Step 6.11: Commit: `feat(autograph): phase 6 - e2e tests and Makefile integration`
+- [x] Step 6.4: Add auto-graph to Makefile: PROJECTS list, `auto-graph_BIN := autograph`, `auto-graph_ENTRY := ./cmd/autograph`, build-graph, dist-graph targets, install cp line
+- [x] Step 6.5: Update root CLAUDE.md sub-projects table: change auto-graph status from "Early" to "Active", update description
+- [x] Step 6.6: Run `make build-graph` — verify binary builds via Makefile
+- [x] Step 6.7: Run manual smoke test: `./bin/autograph code graph auto-graph/testdata/fixtures/basic-imports/` — verify JSON output
+- [x] Step 6.8: Run `./bin/autograph code graph auto-graph/testdata/fixtures/basic-imports/ --format=dot` — verify DOT output
+- [x] Step 6.9: Run `./bin/autograph code graph auto-graph/testdata/fixtures/basic-imports/ --format=mermaid` — verify Mermaid output
+- [x] Step 6.10: Verify: `make build` includes auto-graph without errors, `cd auto-graph && go test ./...` all pass
+- [x] Step 6.11: Commit: `feat(autograph): phase 6 - e2e tests and Makefile integration`
 
 ## Success Criteria
 
