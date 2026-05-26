@@ -43,19 +43,19 @@ func newDoctorCmd() *cobra.Command {
 func runDoctorChecks() []doctorCheck {
 	var checks []doctorCheck
 
-	// Check ast-grep is installed
+	// Check ast-grep is installed (required for TypeScript scanning only, not Go).
 	if _, err := exec.LookPath("ast-grep"); err != nil {
 		checks = append(checks, doctorCheck{
 			Check:   "ast-grep",
-			Status:  "fail",
-			Message: "ast-grep is not installed or not in PATH",
+			Status:  "warn",
+			Message: "ast-grep is not installed (required for TypeScript scanning; not needed for Go)",
 			Hint:    "install ast-grep: npm install -g @ast-grep/cli",
 		})
 	} else {
 		checks = append(checks, doctorCheck{
 			Check:   "ast-grep",
 			Status:  "pass",
-			Message: "ast-grep is installed",
+			Message: "ast-grep is installed (required for TypeScript scanning)",
 		})
 	}
 

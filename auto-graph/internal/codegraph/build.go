@@ -14,50 +14,69 @@ import (
 )
 
 // Build constructs a file-level import graph for the given project root and
-// language. It discovers files, scans imports via ast-grep, resolves import
-// paths, and returns the resulting graph with merged import metadata.
+// language. It discovers files, scans imports, resolves import paths, and
+// returns the resulting graph with merged import metadata.
 func Build(projectRoot, lang string) (*graph.Graph, error) {
-	// Check ast-grep is installed.
-	if _, err := exec.LookPath("ast-grep"); err != nil {
-		return nil, fmt.Errorf("ast-grep not found: install with npm i -g @ast-grep/cli or brew install ast-grep")
+	var sc scanner.Scanner
+	var res resolver.Resolver
+
+	switch lang {
+	case "typescript":
+		if _, err := exec.LookPath("ast-grep"); err != nil {
+			return nil, fmt.Errorf("ast-grep not found: install with npm i -g @ast-grep/cli or brew install ast-grep")
+		}
+		sc = scanner.NewTypeScriptScanner()
+		res = resolver.NewTypeScriptResolver(projectRoot)
+	case "go":
+		sc = scanner.NewGoScanner()
+		var goErr error
+		res, goErr = resolver.NewGoResolver(projectRoot)
+		if goErr != nil {
+			return nil, fmt.Errorf("initializing Go resolver: %w", goErr)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported language %q; supported: typescript, go", lang)
 	}
 
-	if lang != "typescript" {
-		return nil, fmt.Errorf("unsupported language %q; currently only typescript is supported", lang)
-	}
-
-	// Discover source files.
 	filePaths, err := DiscoverFiles(projectRoot, lang)
 	if err != nil {
 		return nil, fmt.Errorf("discovering files: %w", err)
 	}
 
-	// Run the scanner.
-	sc := scanner.NewTypeScriptScanner()
 	matches, err := sc.Scan(projectRoot)
 	if err != nil {
 		return nil, fmt.Errorf("scanning imports: %w", err)
 	}
 
-	// Create the resolver.
-	res := resolver.NewTypeScriptResolver(projectRoot)
-
-	// Build the graph with merged import metadata.
-	g := buildGraph(projectRoot, filePaths, matches, res)
+	g := buildGraph(projectRoot, filePaths, matches, res, lang)
 	return g, nil
 }
 
 // DetectLanguage auto-detects the project language from config files present
 // in the project directory.
 func DetectLanguage(projectRoot string) (string, error) {
-	if _, err := os.Stat(filepath.Join(projectRoot, "tsconfig.json")); err == nil {
+	hasGoMod := fileExists(filepath.Join(projectRoot, "go.mod"))
+	hasTSConfig := fileExists(filepath.Join(projectRoot, "tsconfig.json"))
+
+	if hasGoMod && hasTSConfig {
+		return "", fmt.Errorf("ambiguous: both go.mod and tsconfig.json found in %s; use --lang=go or --lang=typescript", projectRoot)
+	}
+	if hasGoMod {
+		return "go", nil
+	}
+	if hasTSConfig {
 		return "typescript", nil
 	}
 
 	return "", fmt.Errorf(
-		"could not detect project language: no tsconfig.json found in %s; use --lang=typescript to specify explicitly",
+		"could not detect project language: no go.mod or tsconfig.json found in %s; use --lang to specify explicitly",
 		projectRoot,
 	)
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // DiscoverFiles walks the project directory and returns relative paths for all
@@ -71,6 +90,10 @@ func DiscoverFiles(projectRoot, lang string) ([]string, error) {
 			".ts":  true,
 			".tsx": true,
 		}
+	case "go":
+		extensions = map[string]bool{
+			".go": true,
+		}
 	default:
 		return nil, fmt.Errorf("no file extensions defined for language %q", lang)
 	}
@@ -82,10 +105,12 @@ func DiscoverFiles(projectRoot, lang string) ([]string, error) {
 			return err
 		}
 
-		// Skip hidden directories and node_modules.
 		if d.IsDir() {
 			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "node_modules" {
+			if strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" {
+				return filepath.SkipDir
+			}
+			if lang == "go" && (name == "testdata" || strings.HasPrefix(name, "_")) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -113,7 +138,7 @@ func DiscoverFiles(projectRoot, lang string) ([]string, error) {
 
 // buildGraph constructs a Graph from discovered files and resolved imports.
 // It merges duplicate (source, target) edges by combining import metadata.
-func buildGraph(projectRoot string, filePaths []string, matches []scanner.ImportMatch, res resolver.Resolver) *graph.Graph {
+func buildGraph(projectRoot string, filePaths []string, matches []scanner.ImportMatch, res resolver.Resolver, lang string) *graph.Graph {
 	g := &graph.Graph{
 		Root: projectRoot,
 	}
@@ -126,8 +151,15 @@ func buildGraph(projectRoot string, filePaths []string, matches []scanner.Import
 			ID:       p,
 			Kind:     graph.NodeFile,
 			Path:     p,
-			Language: "typescript",
+			Language: lang,
 		})
+	}
+
+	// Build directory-to-files index for package-level resolution (Go).
+	dirToFiles := make(map[string][]string)
+	for _, p := range filePaths {
+		dir := filepath.ToSlash(filepath.Dir(p))
+		dirToFiles[dir] = append(dirToFiles[dir], p)
 	}
 
 	// Create edges from resolved imports, merging duplicate (source, target) pairs.
@@ -148,46 +180,50 @@ func buildGraph(projectRoot string, filePaths []string, matches []scanner.Import
 			continue
 		}
 
-		// Skip external (node_modules) and unresolved imports.
 		if result.IsExternal || result.ResolvedPath == "" {
 			continue
 		}
 
-		// Compute relative path for the source file.
 		sourceRel, err := filepath.Rel(projectRoot, m.SourceFile)
 		if err != nil {
 			continue
 		}
 		sourceRel = filepath.ToSlash(sourceRel)
 
+		if !nodeSet[sourceRel] {
+			continue
+		}
+
 		targetRel := result.ResolvedPath
 
-		// Skip self-imports.
-		if sourceRel == targetRel {
-			continue
+		// Determine target files: direct file match or package directory expansion.
+		var targetFiles []string
+		if nodeSet[targetRel] {
+			targetFiles = []string{targetRel}
+		} else if files, ok := dirToFiles[targetRel]; ok {
+			targetFiles = files
 		}
 
-		// Skip if source or target are not in our discovered node set.
-		if !nodeSet[sourceRel] || !nodeSet[targetRel] {
-			continue
-		}
+		for _, targetFile := range targetFiles {
+			if sourceRel == targetFile {
+				continue
+			}
 
-		key := edgeKey{source: sourceRel, target: targetRel}
-		data, exists := edgeMap[key]
-		if !exists {
-			data = &edgeData{}
-			edgeMap[key] = data
-			edgeOrder = append(edgeOrder, key)
-		}
+			key := edgeKey{source: sourceRel, target: targetFile}
+			data, exists := edgeMap[key]
+			if !exists {
+				data = &edgeData{}
+				edgeMap[key] = data
+				edgeOrder = append(edgeOrder, key)
+			}
 
-		// Add kind if not already present.
-		if !containsString(data.kinds, m.Kind) {
-			data.kinds = append(data.kinds, m.Kind)
-		}
+			if !containsString(data.kinds, m.Kind) {
+				data.kinds = append(data.kinds, m.Kind)
+			}
 
-		// Add raw import path if not already present.
-		if !containsString(data.raws, m.ImportPath) {
-			data.raws = append(data.raws, m.ImportPath)
+			if !containsString(data.raws, m.ImportPath) {
+				data.raws = append(data.raws, m.ImportPath)
+			}
 		}
 	}
 

@@ -9,7 +9,7 @@ func TestParseOnlyFlag_Default(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sources["sessions"] || !sources["github"] {
+	if !sources["sessions"] || !sources["github"] || !sources["git"] {
 		t.Errorf("default should enable all: %v", sources)
 	}
 }
@@ -64,6 +64,45 @@ func TestParseOnlyFlag_InvalidValue(t *testing.T) {
 	_, err := parseOnlyFlag([]string{"invalid"})
 	if err == nil {
 		t.Error("expected error for invalid value")
+	}
+}
+
+func TestParseOnlyFlag_Git(t *testing.T) {
+	sources, err := parseOnlyFlag([]string{"git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sources["git"] {
+		t.Error("git should be enabled")
+	}
+	if sources["sessions"] {
+		t.Error("sessions should not be enabled")
+	}
+	if sources["github"] {
+		t.Error("github should not be enabled")
+	}
+}
+
+func TestParseOnlyFlag_GitAndSessions(t *testing.T) {
+	sources, err := parseOnlyFlag([]string{"git", "sessions"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sources["git"] || !sources["sessions"] {
+		t.Errorf("git and sessions should be enabled: %v", sources)
+	}
+	if sources["github"] {
+		t.Error("github should not be enabled")
+	}
+}
+
+func TestParseOnlyFlag_AllThree(t *testing.T) {
+	sources, err := parseOnlyFlag([]string{"sessions", "github", "git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sources["sessions"] || !sources["github"] || !sources["git"] {
+		t.Errorf("all three should be enabled: %v", sources)
 	}
 }
 
