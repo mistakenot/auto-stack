@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -294,6 +295,95 @@ func TestReexportVariants(t *testing.T) {
 		}
 		if gotKind != e.kind {
 			t.Errorf("import %s -> %q: expected kind %q, got %q", e.file, e.importPath, e.kind, gotKind)
+		}
+	}
+}
+
+func TestReexportSingleQuotes(t *testing.T) {
+	requireAstGrep(t)
+	dir := fixtureDir(t, "single-quote-reexports")
+
+	sc := NewTypeScriptScanner()
+	matches, err := sc.Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+
+	type importEntry struct {
+		file       string
+		importPath string
+		kind       string
+	}
+	expectedEntries := []importEntry{
+		{file: "index.ts", importPath: "./Widget", kind: "reexport"},
+		{file: "index.ts", importPath: "./types", kind: "reexport"},
+		{file: "index.ts", importPath: "./widget-utils", kind: "reexport"},
+	}
+
+	type matchKey struct {
+		file       string
+		importPath string
+	}
+	gotKinds := make(map[matchKey]string)
+	for _, m := range matches {
+		rel, err := filepath.Rel(dir, m.SourceFile)
+		if err != nil {
+			t.Fatalf("could not make relative path: %v", err)
+		}
+		rel = filepath.ToSlash(rel)
+		gotKinds[matchKey{file: rel, importPath: m.ImportPath}] = m.Kind
+	}
+
+	for _, e := range expectedEntries {
+		key := matchKey{file: e.file, importPath: e.importPath}
+		gotKind, ok := gotKinds[key]
+		if !ok {
+			t.Errorf("expected %s to import %q (kind=%s), but import not found", e.file, e.importPath, e.kind)
+			continue
+		}
+		if gotKind != e.kind {
+			t.Errorf("import %s -> %q: expected kind %q, got %q", e.file, e.importPath, e.kind, gotKind)
+		}
+	}
+}
+
+func TestSideEffectSingleQuotes(t *testing.T) {
+	requireAstGrep(t)
+
+	dir := t.TempDir()
+
+	// Write a minimal tsconfig.json.
+	if err := os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write a file with a single-quoted side-effect import.
+	if err := os.WriteFile(filepath.Join(dir, "app.ts"), []byte("import './side-effect'\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write the target so ast-grep has something to scan.
+	if err := os.WriteFile(filepath.Join(dir, "side-effect.ts"), []byte("console.log('init')\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sc := NewTypeScriptScanner()
+	matches, err := sc.Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+
+	found := false
+	for _, m := range matches {
+		if m.ImportPath == "./side-effect" && m.Kind == "side-effect" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("single-quoted side-effect import './side-effect' not found in scan results")
+		for _, m := range matches {
+			t.Logf("  match: file=%s importPath=%s kind=%s", m.SourceFile, m.ImportPath, m.Kind)
 		}
 	}
 }
