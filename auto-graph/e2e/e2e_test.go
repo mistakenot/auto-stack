@@ -158,7 +158,7 @@ func TestSampleProjectJSON(t *testing.T) {
 			importKinds[k] = true
 		}
 	}
-	for _, expected := range []string{"static", "dynamic", "type", "side-effect"} {
+	for _, expected := range []string{"static", "dynamic", "type_only", "side_effect"} {
 		if !importKinds[expected] {
 			t.Errorf("expected import kind %q in edges, not found", expected)
 		}
@@ -361,6 +361,149 @@ func normalizeMermaid(output string) string {
 	return strings.Join(result, "\n") + "\n"
 }
 
+// runAutographWithStderr runs the autograph binary with the given args and
+// returns stdout and stderr separately. Does not fail on non-zero exit.
+func runAutographWithStderr(t *testing.T, bin string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err = cmd.Run()
+	return outBuf.String(), errBuf.String(), err
+}
+
+// TestSingleQuoteJSONCProject verifies that single-quoted imports/reexports
+// and JSONC tsconfig (trailing commas + comments) produce the correct graph.
+func TestSingleQuoteJSONCProject(t *testing.T) {
+	bin := buildBinary(t)
+	dir := filepath.Join(testdataDir(), "single-quote-jsonc-project")
+
+	output := runAutograph(t, bin, "code", "graph", dir)
+
+	var g graph
+	if err := json.Unmarshal([]byte(output), &g); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\nraw output:\n%s", err, output)
+	}
+
+	// Build node ID set.
+	nodeIDs := make(map[string]bool)
+	for _, n := range g.Nodes {
+		nodeIDs[n.ID] = true
+	}
+
+	// All edge sources and targets must reference existing nodes.
+	for _, e := range g.Edges {
+		if !nodeIDs[e.Source] {
+			t.Errorf("edge source %q not found in nodes", e.Source)
+		}
+		if !nodeIDs[e.Target] {
+			t.Errorf("edge target %q not found in nodes", e.Target)
+		}
+	}
+
+	// Expect exactly 4 edges:
+	// 1. src/routes/dashboard.tsx -> src/utils/format.ts (static, alias)
+	// 2. src/routes/dashboard.tsx -> src/components/Header.tsx (static, relative)
+	// 3. src/feature/index.ts -> src/feature/Widget.tsx (reexport — merged named + type)
+	// 4. src/feature/index.ts -> src/feature/widget-utils.ts (reexport)
+	if len(g.Edges) != 4 {
+		t.Errorf("expected 4 edges, got %d", len(g.Edges))
+		for _, e := range g.Edges {
+			t.Logf("  edge: %s -> %s (kind=%s, import_kind=%s)", e.Source, e.Target, e.Kind, e.Attrs["import_kind"])
+		}
+	}
+
+	// Verify diverse import kinds are represented.
+	importKinds := make(map[string]bool)
+	for _, e := range g.Edges {
+		if k, ok := e.Attrs["import_kind"]; ok {
+			importKinds[k] = true
+		}
+	}
+	for _, expected := range []string{"static", "reexport"} {
+		if !importKinds[expected] {
+			t.Errorf("expected import kind %q in edges, not found", expected)
+		}
+	}
+
+	// No duplicate edges.
+	type edgeKey struct{ source, target string }
+	edgeSeen := make(map[edgeKey]bool)
+	for _, e := range g.Edges {
+		key := edgeKey{e.Source, e.Target}
+		if edgeSeen[key] {
+			t.Errorf("duplicate edge: %s -> %s", e.Source, e.Target)
+		}
+		edgeSeen[key] = true
+	}
+
+	// Golden file comparison.
+	goldenPath := filepath.Join(goldenDir(), "single-quote-jsonc-project.json")
+	normalized := normalizeGraphJSON(t, g)
+
+	if *update {
+		if err := os.MkdirAll(goldenDir(), 0o755); err != nil {
+			t.Fatalf("creating golden dir: %v", err)
+		}
+		if err := os.WriteFile(goldenPath, []byte(normalized), 0o644); err != nil {
+			t.Fatalf("writing golden file: %v", err)
+		}
+		t.Logf("updated golden file: %s", goldenPath)
+		return
+	}
+
+	golden, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("reading golden file (run with -update to create): %v", err)
+	}
+	if string(golden) != normalized {
+		t.Errorf("output does not match golden file %s\n--- got ---\n%s\n--- want ---\n%s",
+			goldenPath, normalized, string(golden))
+	}
+}
+
+// TestMalformedTSConfigStderr verifies that a malformed tsconfig.json
+// produces a warning on stderr while still outputting a valid graph on stdout.
+func TestMalformedTSConfigStderr(t *testing.T) {
+	bin := buildBinary(t)
+
+	// Create a temp dir with a malformed tsconfig and one .ts file.
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "tsconfig.json"), []byte("{{{"), 0o644); err != nil {
+		t.Fatalf("writing tsconfig.json: %v", err)
+	}
+	srcDir := filepath.Join(tmpDir, "src")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatalf("creating src dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "app.ts"), []byte("export function main() {}\n"), 0o644); err != nil {
+		t.Fatalf("writing app.ts: %v", err)
+	}
+
+	stdout, stderr, _ := runAutographWithStderr(t, bin, "code", "graph", tmpDir, "--lang=typescript")
+
+	// Stderr should contain a warning about the tsconfig.
+	stderrLower := strings.ToLower(stderr)
+	if !strings.Contains(stderrLower, "warning") {
+		t.Errorf("expected stderr to contain 'warning', got: %s", stderr)
+	}
+	if !strings.Contains(stderrLower, "tsconfig") {
+		t.Errorf("expected stderr to contain 'tsconfig', got: %s", stderr)
+	}
+
+	// Stdout should still contain valid JSON graph output.
+	var g graph
+	if err := json.Unmarshal([]byte(stdout), &g); err != nil {
+		t.Fatalf("expected valid JSON graph on stdout despite malformed tsconfig: %v\nstdout: %s", err, stdout)
+	}
+
+	// Graph should still have nodes (the .ts file was discovered).
+	if len(g.Nodes) == 0 {
+		t.Error("expected at least one node in graph output")
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -453,7 +596,7 @@ func TestGoSampleProjectJSON(t *testing.T) {
 			importKinds[k] = true
 		}
 	}
-	for _, expected := range []string{"static", "blank", "dot", "aliased"} {
+	for _, expected := range []string{"static", "side_effect", "dot", "aliased"} {
 		if !importKinds[expected] {
 			t.Errorf("expected import kind %q in edges, not found", expected)
 		}

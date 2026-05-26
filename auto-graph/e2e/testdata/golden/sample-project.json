@@ -81,7 +81,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "./Header"
+        "import_kinds": "static",
+        "raw": "./Header",
+        "raws": "./Header"
       }
     },
     {
@@ -90,7 +92,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "../hooks/useAuth"
+        "import_kinds": "static",
+        "raw": "../hooks/useAuth",
+        "raws": "../hooks/useAuth"
       }
     },
     {
@@ -98,8 +102,10 @@
       "target": "src/models/user.ts",
       "kind": "import",
       "attrs": {
-        "import_kind": "type",
-        "raw": "../models/user"
+        "import_kind": "type_only",
+        "import_kinds": "type_only",
+        "raw": "../models/user",
+        "raws": "../models/user"
       }
     },
     {
@@ -108,7 +114,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "@utils/format"
+        "import_kinds": "static",
+        "raw": "@utils/format",
+        "raws": "@utils/format"
       }
     },
     {
@@ -116,8 +124,10 @@
       "target": "src/utils/validate.ts",
       "kind": "import",
       "attrs": {
-        "import_kind": "side-effect",
-        "raw": "./utils/validate"
+        "import_kind": "side_effect",
+        "import_kinds": "side_effect",
+        "raw": "./utils/validate",
+        "raws": "./utils/validate"
       }
     },
     {
@@ -126,7 +136,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "../services/userService"
+        "import_kinds": "static",
+        "raw": "../services/userService",
+        "raws": "../services/userService"
       }
     },
     {
@@ -135,7 +147,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "./components/App"
+        "import_kinds": "static",
+        "raw": "./components/App",
+        "raws": "./components/App"
       }
     },
     {
@@ -144,7 +158,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "./services/userService"
+        "import_kinds": "static",
+        "raw": "./services/userService",
+        "raws": "./services/userService"
       }
     },
     {
@@ -153,7 +169,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "@utils/format"
+        "import_kinds": "static",
+        "raw": "@utils/format",
+        "raws": "@utils/format"
       }
     },
     {
@@ -162,7 +180,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "dynamic",
-        "raw": "../utils/format"
+        "import_kinds": "dynamic",
+        "raw": "../utils/format",
+        "raws": "../utils/format"
       }
     },
     {
@@ -170,8 +190,10 @@
       "target": "src/models/user.ts",
       "kind": "import",
       "attrs": {
-        "import_kind": "type",
-        "raw": "../models/user"
+        "import_kind": "type_only",
+        "import_kinds": "type_only",
+        "raw": "../models/user",
+        "raws": "../models/user"
       }
     },
     {
@@ -180,7 +202,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "@utils/validate"
+        "import_kinds": "static",
+        "raw": "@utils/validate",
+        "raws": "@utils/validate"
       }
     },
     {
@@ -189,7 +213,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "./validate"
+        "import_kinds": "static",
+        "raw": "./validate",
+        "raws": "./validate"
       }
     },
     {
@@ -198,7 +224,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "reexport",
-        "raw": "./format"
+        "import_kinds": "reexport",
+        "raw": "./format",
+        "raws": "./format"
       }
     },
     {
@@ -207,7 +235,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "reexport",
-        "raw": "./validate"
+        "import_kinds": "reexport",
+        "raw": "./validate",
+        "raws": "./validate"
       }
     }
   ]

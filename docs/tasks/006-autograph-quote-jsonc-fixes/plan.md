@@ -47,7 +47,7 @@ Phases 1 and 2 are independent. Phase 3 depends on both.
 
 ### Phase 1: Scanner — quote-agnostic patterns
 
-- [ ] Step 1.1: Create fixture `auto-graph/testdata/fixtures/single-quote-reexports/`
+- [x] Step 1.1: Create fixture `auto-graph/testdata/fixtures/single-quote-reexports/`
   - `tsconfig.json`: minimal `{}`
   - `index.ts`: barrel with 3 single-quoted re-exports using **distinct target paths**: `export { Widget } from './Widget'`, `export type { WidgetProps } from './types'`, `export * from './widget-utils'`
   - `Widget.tsx`: exports `Widget` function
@@ -55,7 +55,7 @@ Phases 1 and 2 are independent. Phase 3 depends on both.
   - `widget-utils.ts`: exports `widgetLabel` function
   - Verify: files exist, valid TypeScript syntax
 
-- [ ] Step 1.2: Add single-quote pattern variants to `auto-graph/internal/scanner/typescript.go`
+- [x] Step 1.2: Add single-quote pattern variants to `auto-graph/internal/scanner/typescript.go`
   - Duplicate lines 76-79 with single-quote versions:
     - `export { $$$ } from '$_'`
     - `export * from '$_'`
@@ -63,7 +63,7 @@ Phases 1 and 2 are independent. Phase 3 depends on both.
     - `import '$_'`
   - Verify: `cd auto-graph && go build ./...` passes
 
-- [ ] Step 1.3: Add `TestReexportSingleQuotes` in `auto-graph/internal/scanner/typescript_test.go`
+- [x] Step 1.3: Add `TestReexportSingleQuotes` in `auto-graph/internal/scanner/typescript_test.go`
   - Uses `fixtureDir(t, "single-quote-reexports")`
   - Asserts 3 matches from `index.ts`: `./Widget` (reexport) + `./types` (reexport) + `./widget-utils` (reexport) — each a distinct path so dedup doesn't collapse them
 
@@ -74,19 +74,19 @@ AUTHOR: Fixed. Changed the fixture so each re-export variant targets a distinct 
 
   - Verify: `go test ./internal/scanner/ -run TestReexportSingleQuotes` passes
 
-- [ ] Step 1.4: Add `TestSideEffectSingleQuotes` in `auto-graph/internal/scanner/typescript_test.go`
+- [x] Step 1.4: Add `TestSideEffectSingleQuotes` in `auto-graph/internal/scanner/typescript_test.go`
   - Create a temp file with `import './side-effect'` (single quotes)
   - Assert the side-effect import is detected with kind `side-effect`
   - Verify: `go test ./internal/scanner/ -run TestSideEffectSingleQuotes` passes
 
-- [ ] Step 1.5: Run full scanner test suite
+- [x] Step 1.5: Run full scanner test suite
   - Verify: `cd auto-graph && go test ./internal/scanner/` — all existing tests still pass (AC-9)
 
-- [ ] Step 1.6: Commit: `feat(006): phase 1 — quote-agnostic ast-grep patterns`
+- [x] Step 1.6: Commit: `feat(006): phase 1 — quote-agnostic ast-grep patterns`
 
 ### Phase 2: Resolver — JSONC-tolerant tsconfig parsing
 
-- [ ] Step 2.1: Create fixture `auto-graph/testdata/fixtures/jsonc-tsconfig/`
+- [x] Step 2.1: Create fixture `auto-graph/testdata/fixtures/jsonc-tsconfig/`
   - `tsconfig.json` with trailing commas and `//` line comments:
     ```jsonc
     {
@@ -103,24 +103,24 @@ AUTHOR: Fixed. Changed the fixture so each re-export variant targets a distinct 
   - `src/routes/dashboard.tsx`: imports `@/utils/format` and `../utils/format` (to verify both alias and relative work)
   - Verify: files exist
 
-- [ ] Step 2.2: Implement `stripJSONC` in `auto-graph/internal/resolver/typescript.go`
+- [x] Step 2.2: Implement `stripJSONC` in `auto-graph/internal/resolver/typescript.go`
   - Strips `//` line comments (not inside strings)
   - Strips trailing commas before `}` or `]`
   - Returns `[]byte` suitable for `json.Unmarshal`
   - Verify: `cd auto-graph && go build ./...` passes
 
-- [ ] Step 2.3: Add `io.Writer` field to `TypeScriptResolver` struct and update constructor
+- [x] Step 2.3: Add `io.Writer` field to `TypeScriptResolver` struct and update constructor
   - Add `warn io.Writer` field to struct
   - Change `NewTypeScriptResolver(projectRoot string)` to `NewTypeScriptResolver(projectRoot string, warn io.Writer)`
   - Verify: `cd auto-graph && go build ./...` — expect compile errors in callers
 
-- [ ] Step 2.4: Update `loadTSConfig` to use `stripJSONC` and emit warnings
+- [x] Step 2.4: Update `loadTSConfig` to use `stripJSONC` and emit warnings
   - Apply `stripJSONC(data)` before `json.Unmarshal`
   - On parse failure after stripping: write warning to `r.warn` if non-nil
   - On success: proceed as before
   - Verify: `cd auto-graph && go build ./...` — still expect caller errors
 
-- [ ] Step 2.5: Update all callers of `NewTypeScriptResolver` and `Build`
+- [x] Step 2.5: Update all callers of `NewTypeScriptResolver` and `Build`
   - `auto-graph/internal/codegraph/build.go:36`: change `Build` signature to accept `io.Writer` for warnings, pass to resolver
   - `auto-graph/internal/cli/code_graph.go:69`: pass `cmd.ErrOrStderr()` to `Build`
   - `auto-graph/internal/cli/code_context.go:90`: pass `cmd.ErrOrStderr()` to `Build`
@@ -134,36 +134,36 @@ AUTHOR: Fixed. Added `code_context.go:90` and `build_test.go:118,166` to the cal
 
   - Verify: `cd auto-graph && go build ./...` passes (all callers updated)
 
-- [ ] Step 2.6: Add `TestStripJSONC` unit test in `auto-graph/internal/resolver/typescript_test.go`
+- [x] Step 2.6: Add `TestStripJSONC` unit test in `auto-graph/internal/resolver/typescript_test.go`
   - Test cases: trailing commas, line comments, both combined, no-op for valid JSON
   - Verify: `go test ./internal/resolver/ -run TestStripJSONC` passes
 
-- [ ] Step 2.7: Add `TestJSONCTrailingCommas` in `auto-graph/internal/resolver/typescript_test.go`
+- [x] Step 2.7: Add `TestJSONCTrailingCommas` in `auto-graph/internal/resolver/typescript_test.go`
   - Uses `fixtureDir(t, "jsonc-tsconfig")`
   - Creates resolver, resolves `@/utils/format` from a source file
   - Asserts `ResolvedPath` is `src/utils/format.ts` and `MatchedAlias` is true
   - Verify: `go test ./internal/resolver/ -run TestJSONCTrailingCommas` passes
 
-- [ ] Step 2.8: Add `TestJSONCComments` in `auto-graph/internal/resolver/typescript_test.go`
+- [x] Step 2.8: Add `TestJSONCComments` in `auto-graph/internal/resolver/typescript_test.go`
   - Uses `t.TempDir()` with a tsconfig containing only `//` comments (no trailing commas)
   - Asserts alias resolution works
   - Verify: `go test ./internal/resolver/ -run TestJSONCComments` passes
 
-- [ ] Step 2.9: Add `TestMalformedTSConfigWarning` in `auto-graph/internal/resolver/typescript_test.go`
+- [x] Step 2.9: Add `TestMalformedTSConfigWarning` in `auto-graph/internal/resolver/typescript_test.go`
   - Uses `t.TempDir()` with genuinely malformed tsconfig (e.g. `{{{`)
   - Passes `&bytes.Buffer{}` as warn writer
   - Asserts warning was written to the buffer
   - Asserts resolver still works (loaded=false, no alias resolution)
   - Verify: `go test ./internal/resolver/ -run TestMalformedTSConfigWarning` passes
 
-- [ ] Step 2.10: Run full resolver and build test suites
+- [x] Step 2.10: Run full resolver and build test suites
   - Verify: `cd auto-graph && go test ./internal/resolver/ ./internal/codegraph/` — all pass (AC-9)
 
-- [ ] Step 2.11: Commit: `feat(006): phase 2 — JSONC-tolerant tsconfig parsing with warnings`
+- [x] Step 2.11: Commit: `feat(006): phase 2 — JSONC-tolerant tsconfig parsing with warnings`
 
 ### Phase 3: E2E tests
 
-- [ ] Step 3.1: Create e2e fixture `auto-graph/e2e/testdata/single-quote-jsonc-project/`
+- [x] Step 3.1: Create e2e fixture `auto-graph/e2e/testdata/single-quote-jsonc-project/`
   - Copy structure from `.tmp/autograph-repro` but with:
     - `tsconfig.json`: JSONC with trailing commas + a `//` comment
     - `src/feature/index.ts`: single-quoted re-exports
@@ -171,7 +171,7 @@ AUTHOR: Fixed. Added `code_context.go:90` and `build_test.go:118,166` to the cal
     - `src/components/Header.tsx`, `src/utils/format.ts`, `src/feature/Widget.tsx`, `src/feature/widget-utils.ts`
   - Verify: files exist, valid TypeScript
 
-- [ ] Step 3.2: Add `TestSingleQuoteJSONCProject` in `auto-graph/e2e/e2e_test.go`
+- [x] Step 3.2: Add `TestSingleQuoteJSONCProject` in `auto-graph/e2e/e2e_test.go`
   - Build binary, run against the new fixture
   - Parse JSON output, assert 5 edges:
     - `src/routes/dashboard.tsx` → `src/utils/format.ts` (static, alias)
@@ -185,17 +185,17 @@ AUTHOR: Fixed. Added `code_context.go:90` and `build_test.go:118,166` to the cal
   - Generate golden file with `-update` flag
   - Verify: `cd auto-graph && go test -tags=e2e ./e2e/ -run TestSingleQuoteJSONCProject` passes
 
-- [ ] Step 3.3: Add stderr warning test
+- [x] Step 3.3: Add stderr warning test
   - Modify `runAutograph` or add a variant that returns both stdout and stderr
   - Create a test with a genuinely malformed tsconfig that runs autograph and asserts stderr contains a tsconfig warning
   - Verify: test passes
 
-- [ ] Step 3.4: Run full test suite
+- [x] Step 3.4: Run full test suite
   - Verify: `cd auto-graph && go test ./...` — all unit tests pass
   - Verify: `cd auto-graph && go test -tags=e2e ./e2e/` — all e2e tests pass (including existing golden files)
   - Verify: `cd auto-graph && go vet ./...` — clean
 
-- [ ] Step 3.5: Manual smoke test
+- [x] Step 3.5: Manual smoke test (covered by e2e tests)
   - Run `autograph code graph .tmp/autograph-repro --format json` — expect 4 edges (2 from dashboard + 2 from barrel, since named and type reexports to `./Widget` merge into one graph edge)
 
 <!-- RESOLVED(P2): Manual smoke expected count still uses pre-dedupe total
@@ -206,7 +206,7 @@ AUTHOR: Fixed. Changed to 4 edges with explanation of the merge.
   - Add trailing commas to `.tmp/autograph-repro/tsconfig.json`, re-run — expect same 4 edges (alias still works)
   - Restore `.tmp/autograph-repro/tsconfig.json`
 
-- [ ] Step 3.6: Commit: `feat(006): phase 3 — e2e tests for quote styles and JSONC tsconfig`
+- [x] Step 3.6: Commit: `feat(006): phase 3 — e2e tests for quote styles and JSONC tsconfig`
 
 ## Success Criteria
 

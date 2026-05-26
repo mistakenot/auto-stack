@@ -74,9 +74,13 @@ func (s *TypeScriptScanner) Scan(dir string) ([]ImportMatch, error) {
 		{pattern: "import($$$)", kind: "dynamic"},
 		{pattern: "require($$$)", kind: "require"},
 		{pattern: `export { $$$ } from "$_"`, kind: "reexport"},
+		{pattern: `export { $$$ } from '$_'`, kind: "reexport"},
 		{pattern: `export * from "$_"`, kind: "reexport"},
+		{pattern: `export * from '$_'`, kind: "reexport"},
 		{pattern: `export type { $$$ } from "$_"`, kind: "reexport"},
+		{pattern: `export type { $$$ } from '$_'`, kind: "reexport"},
 		{pattern: `import "$_"`, kind: "side-effect"},
+		{pattern: `import '$_'`, kind: "side-effect"},
 	}
 
 	// ast-grep treats --lang=ts and --lang=tsx as separate language modes.

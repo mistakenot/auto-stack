@@ -2,6 +2,8 @@ package resolver
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +54,65 @@ const (
 	importBare
 )
 
+// stripJSONC strips // line comments (that are not inside quoted strings) and
+// trailing commas before } or ] so that the result is valid JSON suitable for
+// json.Unmarshal. This handles the JSONC subset used by tsconfig.json.
+// Both transforms run in a single pass to avoid corrupting string contents.
+func stripJSONC(data []byte) []byte {
+	var buf []byte
+	inString := false
+	escaped := false
+	lastCommaIdx := -1
+	for i := 0; i < len(data); i++ {
+		ch := data[i]
+		if escaped {
+			buf = append(buf, ch)
+			escaped = false
+			continue
+		}
+		if inString {
+			if ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inString = false
+			}
+			buf = append(buf, ch)
+			continue
+		}
+		// Outside a string.
+		if ch == '"' {
+			inString = true
+			buf = append(buf, ch)
+			continue
+		}
+		if ch == '/' && i+1 < len(data) && data[i+1] == '/' {
+			for i < len(data) && data[i] != '\n' {
+				i++
+			}
+			if i < len(data) {
+				buf = append(buf, '\n')
+			}
+			continue
+		}
+		if ch == ',' {
+			lastCommaIdx = len(buf)
+			buf = append(buf, ch)
+			continue
+		}
+		if (ch == '}' || ch == ']') && lastCommaIdx >= 0 {
+			buf = append(buf[:lastCommaIdx], buf[lastCommaIdx+1:]...)
+			lastCommaIdx = -1
+		}
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+			buf = append(buf, ch)
+			continue
+		}
+		lastCommaIdx = -1
+		buf = append(buf, ch)
+	}
+	return buf
+}
+
 // TypeScriptResolver resolves TypeScript/JavaScript import paths using
 // tsconfig.json path aliases and file extension probing.
 type TypeScriptResolver struct {
@@ -62,13 +123,16 @@ type TypeScriptResolver struct {
 	baseURL string
 	// loaded tracks whether tsconfig was successfully parsed.
 	loaded bool
+	// warn receives diagnostic warnings (e.g. tsconfig parse failures). May be nil.
+	warn io.Writer
 }
 
 // NewTypeScriptResolver creates a resolver that reads tsconfig.json from the
 // given project root. If tsconfig.json is missing or unparseable, the resolver
-// still works — it just skips alias substitution.
-func NewTypeScriptResolver(projectRoot string) *TypeScriptResolver {
-	r := &TypeScriptResolver{}
+// still works — it just skips alias substitution. Warnings (e.g. parse
+// failures) are written to warn if non-nil.
+func NewTypeScriptResolver(projectRoot string, warn io.Writer) *TypeScriptResolver {
+	r := &TypeScriptResolver{warn: warn}
 	r.loadTSConfig(projectRoot)
 	return r
 }
@@ -80,8 +144,14 @@ func (r *TypeScriptResolver) loadTSConfig(projectRoot string) {
 		return
 	}
 
+	// Strip JSONC extensions (// comments, trailing commas) before parsing.
+	cleaned := stripJSONC(data)
+
 	var cfg tsconfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	if err := json.Unmarshal(cleaned, &cfg); err != nil {
+		if r.warn != nil {
+			fmt.Fprintf(r.warn, "warning: tsconfig.json: failed to parse: %v\n", err)
+		}
 		return
 	}
 

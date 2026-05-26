@@ -1,7 +1,9 @@
 package resolver
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,7 +21,7 @@ func fixtureDir(t *testing.T, name string) string {
 func TestRelativeResolve(t *testing.T) {
 	dir := fixtureDir(t, "basic-imports")
 
-	r := NewTypeScriptResolver(dir)
+	r := NewTypeScriptResolver(dir, io.Discard)
 
 	// Resolve ./utils from src/index.ts -> src/utils.ts
 	sourceFile := filepath.Join(dir, "src", "index.ts")
@@ -38,7 +40,7 @@ func TestRelativeResolve(t *testing.T) {
 func TestAliasResolve(t *testing.T) {
 	dir := fixtureDir(t, "path-aliases")
 
-	r := NewTypeScriptResolver(dir)
+	r := NewTypeScriptResolver(dir, io.Discard)
 
 	// Resolve @/components/Button from src/index.ts -> src/components/Button.ts
 	sourceFile := filepath.Join(dir, "src", "index.ts")
@@ -57,7 +59,7 @@ func TestAliasResolve(t *testing.T) {
 func TestIndexResolve(t *testing.T) {
 	dir := fixtureDir(t, "index-resolution")
 
-	r := NewTypeScriptResolver(dir)
+	r := NewTypeScriptResolver(dir, io.Discard)
 
 	// Resolve ./lib from src/index.ts -> src/lib/index.ts
 	sourceFile := filepath.Join(dir, "src", "index.ts")
@@ -76,7 +78,7 @@ func TestIndexResolve(t *testing.T) {
 func TestBareSpecifier(t *testing.T) {
 	dir := fixtureDir(t, "basic-imports")
 
-	r := NewTypeScriptResolver(dir)
+	r := NewTypeScriptResolver(dir, io.Discard)
 
 	// Resolve "react" -> should be external
 	sourceFile := filepath.Join(dir, "src", "index.ts")
@@ -92,7 +94,7 @@ func TestBareSpecifier(t *testing.T) {
 func TestExtensionProbing(t *testing.T) {
 	dir := fixtureDir(t, "basic-imports")
 
-	r := NewTypeScriptResolver(dir)
+	r := NewTypeScriptResolver(dir, io.Discard)
 
 	// Resolve ./helpers from src/utils.ts -> src/helpers.ts (probing adds .ts extension)
 	sourceFile := filepath.Join(dir, "src", "utils.ts")
@@ -111,7 +113,7 @@ func TestExtensionProbing(t *testing.T) {
 func TestTsxExtensionProbing(t *testing.T) {
 	dir := fixtureDir(t, "basic-imports")
 
-	r := NewTypeScriptResolver(dir)
+	r := NewTypeScriptResolver(dir, io.Discard)
 
 	// Resolve ./components/App from src/index.ts -> src/components/App.tsx
 	sourceFile := filepath.Join(dir, "src", "index.ts")
@@ -130,7 +132,7 @@ func TestTsxExtensionProbing(t *testing.T) {
 func TestAliasResolveWithDotSlashTarget(t *testing.T) {
 	dir := fixtureDir(t, "alias-reexports")
 
-	r := NewTypeScriptResolver(dir)
+	r := NewTypeScriptResolver(dir, io.Discard)
 
 	// The alias-reexports fixture has "@/*": ["./src/*"] with baseUrl: "."
 	// Resolve @/utils/format -> src/utils/format.ts
@@ -190,7 +192,7 @@ func TestExactAliasMapping(t *testing.T) {
 	})
 	writeFile(t, filepath.Join(dir, "src", "config.ts"), "export const cfg = {};")
 
-	r := NewTypeScriptResolver(dir)
+	r := NewTypeScriptResolver(dir, io.Discard)
 	sourceFile := filepath.Join(dir, "src", "index.ts")
 
 	// Exact match: "@config" should resolve.
@@ -221,7 +223,7 @@ func TestExactAliasMapping(t *testing.T) {
 func TestUnresolvedAliasMetadata(t *testing.T) {
 	dir := fixtureDir(t, "alias-reexports")
 
-	r := NewTypeScriptResolver(dir)
+	r := NewTypeScriptResolver(dir, io.Discard)
 	sourceFile := filepath.Join(dir, "src", "index.ts")
 
 	// @/does-not-exist matches the alias pattern but doesn't resolve to a file.
@@ -243,7 +245,7 @@ func TestUnresolvedAliasMetadata(t *testing.T) {
 func TestZeroLengthWildcardCapture(t *testing.T) {
 	dir := fixtureDir(t, "alias-reexports")
 
-	r := NewTypeScriptResolver(dir)
+	r := NewTypeScriptResolver(dir, io.Discard)
 	sourceFile := filepath.Join(dir, "src", "index.ts")
 
 	// "@/" is the alias prefix with zero-length capture — should not match.
@@ -266,7 +268,7 @@ func TestBaseUrlProbing(t *testing.T) {
 	writeTSConfig(t, dir, ".", nil)
 	writeFile(t, filepath.Join(dir, "src", "utils.ts"), "export function util() {}")
 
-	r := NewTypeScriptResolver(dir)
+	r := NewTypeScriptResolver(dir, io.Discard)
 	sourceFile := filepath.Join(dir, "app.ts")
 
 	// Import "src/utils" should probe baseUrl/src/utils and find src/utils.ts.
@@ -280,4 +282,140 @@ func TestBaseUrlProbing(t *testing.T) {
 	if result.ResolvedPath != "src/utils.ts" {
 		t.Errorf("expected resolved path %q, got %q", "src/utils.ts", result.ResolvedPath)
 	}
+}
+
+func TestStripJSONC(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "trailing commas stripped",
+			input: `{"a": 1, "b": [1, 2,], "c": {"x": 1,},}`,
+			want:  `{"a": 1, "b": [1, 2], "c": {"x": 1}}`,
+		},
+		{
+			name:  "line comments stripped",
+			input: "{\n  // comment\n  \"a\": 1\n}",
+			want:  "{\n  \n  \"a\": 1\n}",
+		},
+		{
+			name:  "both combined",
+			input: "{\n  // comment\n  \"a\": [1,],\n}",
+			want:  "{\n  \n  \"a\": [1]\n}",
+		},
+		{
+			name:  "valid JSON unchanged",
+			input: `{"a": 1, "b": [1, 2]}`,
+			want:  `{"a": 1, "b": [1, 2]}`,
+		},
+		{
+			name:  "comment-like text inside strings preserved",
+			input: `{"url": "https://example.com"}`,
+			want:  `{"url": "https://example.com"}`,
+		},
+		{
+			name:  "comma-brace inside string preserved",
+			input: `{"description": "Hello, }"}`,
+			want:  `{"description": "Hello, }"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := string(stripJSONC([]byte(tt.input)))
+			if got != tt.want {
+				t.Errorf("stripJSONC(%q)\n  got:  %q\n  want: %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestJSONCTrailingCommas(t *testing.T) {
+	dir := fixtureDir(t, "jsonc-tsconfig")
+
+	r := NewTypeScriptResolver(dir, io.Discard)
+
+	// Resolve @/utils/format from src/routes/dashboard.tsx -> src/utils/format.ts
+	sourceFile := filepath.Join(dir, "src", "routes", "dashboard.tsx")
+	result, err := r.Resolve("@/utils/format", sourceFile, dir)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if result.ResolvedPath != "src/utils/format.ts" {
+		t.Errorf("expected resolved path %q, got %q", "src/utils/format.ts", result.ResolvedPath)
+	}
+	if !result.MatchedAlias {
+		t.Error("expected MatchedAlias to be true")
+	}
+}
+
+func TestJSONCComments(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write a tsconfig with only // comments (no trailing commas).
+	tsconfig := `{
+  // This is a comment
+  "compilerOptions": {
+    // Base URL for module resolution
+    "baseUrl": ".",
+    "paths": {
+      "@lib/*": ["./lib/*"]
+    }
+  }
+}
+`
+	writeFile(t, filepath.Join(dir, "tsconfig.json"), tsconfig)
+	writeFile(t, filepath.Join(dir, "lib", "helpers.ts"), "export function help() {}")
+
+	r := NewTypeScriptResolver(dir, io.Discard)
+	sourceFile := filepath.Join(dir, "app.ts")
+
+	result, err := r.Resolve("@lib/helpers", sourceFile, dir)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if result.ResolvedPath != "lib/helpers.ts" {
+		t.Errorf("expected resolved path %q, got %q", "lib/helpers.ts", result.ResolvedPath)
+	}
+	if !result.MatchedAlias {
+		t.Error("expected MatchedAlias to be true")
+	}
+}
+
+func TestMalformedTSConfigWarning(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write a genuinely malformed tsconfig.
+	writeFile(t, filepath.Join(dir, "tsconfig.json"), "{{{")
+	writeFile(t, filepath.Join(dir, "src", "app.ts"), "export function app() {}")
+
+	var buf bytes.Buffer
+	r := NewTypeScriptResolver(dir, &buf)
+
+	// Should have written a warning.
+	if buf.Len() == 0 {
+		t.Error("expected warning to be written for malformed tsconfig")
+	}
+	warning := buf.String()
+	if !bytes.Contains([]byte(warning), []byte("warning: tsconfig.json: failed to parse:")) {
+		t.Errorf("unexpected warning message: %q", warning)
+	}
+
+	// Resolver should still work — no panic, just no alias resolution.
+	sourceFile := filepath.Join(dir, "src", "app.ts")
+	result, err := r.Resolve("./app", sourceFile, dir)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	// No aliases loaded, so non-relative should be external.
+	result2, err := r.Resolve("@/something", sourceFile, dir)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if !result2.IsExternal {
+		t.Error("expected @/something to be external when tsconfig is malformed")
+	}
+	_ = result // ensure no panic on relative resolve
 }
