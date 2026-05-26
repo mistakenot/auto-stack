@@ -81,7 +81,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/internal/server"
+        "import_kinds": "static",
+        "raw": "example.com/sample/internal/server",
+        "raws": "example.com/sample/internal/server"
       }
     },
     {
@@ -90,7 +92,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/internal/server"
+        "import_kinds": "static",
+        "raw": "example.com/sample/internal/server",
+        "raws": "example.com/sample/internal/server"
       }
     },
     {
@@ -99,7 +103,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -108,7 +114,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -117,7 +125,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -126,7 +136,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -135,7 +147,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "aliased",
-        "raw": "example.com/sample/internal/middleware"
+        "import_kinds": "aliased",
+        "raw": "example.com/sample/internal/middleware",
+        "raws": "example.com/sample/internal/middleware"
       }
     },
     {
@@ -144,7 +158,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "aliased",
-        "raw": "example.com/sample/internal/middleware"
+        "import_kinds": "aliased",
+        "raw": "example.com/sample/internal/middleware",
+        "raws": "example.com/sample/internal/middleware"
       }
     },
     {
@@ -153,7 +169,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "aliased",
-        "raw": "example.com/sample/internal/middleware"
+        "import_kinds": "aliased",
+        "raw": "example.com/sample/internal/middleware",
+        "raws": "example.com/sample/internal/middleware"
       }
     },
     {
@@ -162,7 +180,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -171,7 +191,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -180,7 +202,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -189,7 +213,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -198,7 +224,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -207,7 +235,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -215,8 +245,10 @@
       "target": "internal/handler/errors.go",
       "kind": "import",
       "attrs": {
-        "import_kind": "blank",
-        "raw": "example.com/sample/internal/handler"
+        "import_kind": "side_effect",
+        "import_kinds": "side_effect",
+        "raw": "example.com/sample/internal/handler",
+        "raws": "example.com/sample/internal/handler"
       }
     },
     {
@@ -224,8 +256,10 @@
       "target": "internal/handler/handler.go",
       "kind": "import",
       "attrs": {
-        "import_kind": "blank",
-        "raw": "example.com/sample/internal/handler"
+        "import_kind": "side_effect",
+        "import_kinds": "side_effect",
+        "raw": "example.com/sample/internal/handler",
+        "raws": "example.com/sample/internal/handler"
       }
     },
     {
@@ -233,8 +267,10 @@
       "target": "internal/handler/middleware_ref.go",
       "kind": "import",
       "attrs": {
-        "import_kind": "blank",
-        "raw": "example.com/sample/internal/handler"
+        "import_kind": "side_effect",
+        "import_kinds": "side_effect",
+        "raw": "example.com/sample/internal/handler",
+        "raws": "example.com/sample/internal/handler"
       }
     },
     {
@@ -243,7 +279,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -252,7 +290,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -261,7 +301,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/internal/handler"
+        "import_kinds": "static",
+        "raw": "example.com/sample/internal/handler",
+        "raws": "example.com/sample/internal/handler"
       }
     },
     {
@@ -270,7 +312,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/internal/handler"
+        "import_kinds": "static",
+        "raw": "example.com/sample/internal/handler",
+        "raws": "example.com/sample/internal/handler"
       }
     },
     {
@@ -279,7 +323,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/internal/handler"
+        "import_kinds": "static",
+        "raw": "example.com/sample/internal/handler",
+        "raws": "example.com/sample/internal/handler"
       }
     },
     {
@@ -288,7 +334,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/internal/middleware"
+        "import_kinds": "static",
+        "raw": "example.com/sample/internal/middleware",
+        "raws": "example.com/sample/internal/middleware"
       }
     },
     {
@@ -297,7 +345,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/internal/middleware"
+        "import_kinds": "static",
+        "raw": "example.com/sample/internal/middleware",
+        "raws": "example.com/sample/internal/middleware"
       }
     },
     {
@@ -306,7 +356,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/internal/middleware"
+        "import_kinds": "static",
+        "raw": "example.com/sample/internal/middleware",
+        "raws": "example.com/sample/internal/middleware"
       }
     },
     {
@@ -315,7 +367,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -324,7 +378,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "static",
-        "raw": "example.com/sample/pkg/logger"
+        "import_kinds": "static",
+        "raw": "example.com/sample/pkg/logger",
+        "raws": "example.com/sample/pkg/logger"
       }
     },
     {
@@ -333,7 +389,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "dot",
-        "raw": "example.com/sample/internal/server"
+        "import_kinds": "dot",
+        "raw": "example.com/sample/internal/server",
+        "raws": "example.com/sample/internal/server"
       }
     },
     {
@@ -342,7 +400,9 @@
       "kind": "import",
       "attrs": {
         "import_kind": "dot",
-        "raw": "example.com/sample/internal/server"
+        "import_kinds": "dot",
+        "raw": "example.com/sample/internal/server",
+        "raws": "example.com/sample/internal/server"
       }
     }
   ]

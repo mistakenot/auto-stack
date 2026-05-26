@@ -1,0 +1,87 @@
+{
+  "root": "\u003cproject-root\u003e",
+  "nodes": [
+    {
+      "id": "src/components/Header.tsx",
+      "kind": "file",
+      "path": "src/components/Header.tsx",
+      "language": "typescript"
+    },
+    {
+      "id": "src/feature/Widget.tsx",
+      "kind": "file",
+      "path": "src/feature/Widget.tsx",
+      "language": "typescript"
+    },
+    {
+      "id": "src/feature/index.ts",
+      "kind": "file",
+      "path": "src/feature/index.ts",
+      "language": "typescript"
+    },
+    {
+      "id": "src/feature/widget-utils.ts",
+      "kind": "file",
+      "path": "src/feature/widget-utils.ts",
+      "language": "typescript"
+    },
+    {
+      "id": "src/routes/dashboard.tsx",
+      "kind": "file",
+      "path": "src/routes/dashboard.tsx",
+      "language": "typescript"
+    },
+    {
+      "id": "src/utils/format.ts",
+      "kind": "file",
+      "path": "src/utils/format.ts",
+      "language": "typescript"
+    }
+  ],
+  "edges": [
+    {
+      "source": "src/feature/index.ts",
+      "target": "src/feature/Widget.tsx",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "reexport",
+        "import_kinds": "reexport",
+        "raw": "./Widget",
+        "raws": "./Widget"
+      }
+    },
+    {
+      "source": "src/feature/index.ts",
+      "target": "src/feature/widget-utils.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "reexport",
+        "import_kinds": "reexport",
+        "raw": "./widget-utils",
+        "raws": "./widget-utils"
+      }
+    },
+    {
+      "source": "src/routes/dashboard.tsx",
+      "target": "src/components/Header.tsx",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "import_kinds": "static",
+        "raw": "../components/Header",
+        "raws": "../components/Header"
+      }
+    },
+    {
+      "source": "src/routes/dashboard.tsx",
+      "target": "src/utils/format.ts",
+      "kind": "import",
+      "attrs": {
+        "import_kind": "static",
+        "import_kinds": "static",
+        "raw": "@/utils/format",
+        "raws": "@/utils/format"
+      }
+    }
+  ]
+}
