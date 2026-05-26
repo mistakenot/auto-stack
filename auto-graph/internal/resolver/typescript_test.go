@@ -1,6 +1,8 @@
 package resolver
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -122,5 +124,141 @@ func TestTsxExtensionProbing(t *testing.T) {
 	}
 	if result.ResolvedPath != "src/components/App.tsx" {
 		t.Errorf("expected resolved path %q, got %q", "src/components/App.tsx", result.ResolvedPath)
+	}
+}
+
+func TestAliasResolveWithDotSlashTarget(t *testing.T) {
+	dir := fixtureDir(t, "alias-reexports")
+
+	r := NewTypeScriptResolver(dir)
+
+	// The alias-reexports fixture has "@/*": ["./src/*"] with baseUrl: "."
+	// Resolve @/utils/format -> src/utils/format.ts
+	sourceFile := filepath.Join(dir, "src", "index.ts")
+	result, err := r.Resolve("@/utils/format", sourceFile, dir)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if result.IsExternal {
+		t.Fatal("expected internal import, got external")
+	}
+	if result.ResolvedPath != "src/utils/format.ts" {
+		t.Errorf("expected resolved path %q, got %q", "src/utils/format.ts", result.ResolvedPath)
+	}
+	if !result.MatchedAlias {
+		t.Error("expected MatchedAlias to be true")
+	}
+}
+
+// writeTSConfig is a test helper that writes a tsconfig.json with given compilerOptions.
+func writeTSConfig(t *testing.T, dir string, baseURL string, paths map[string][]string) {
+	t.Helper()
+	cfg := struct {
+		CompilerOptions struct {
+			BaseURL string              `json:"baseUrl,omitempty"`
+			Paths   map[string][]string `json:"paths,omitempty"`
+		} `json:"compilerOptions"`
+	}{}
+	cfg.CompilerOptions.BaseURL = baseURL
+	cfg.CompilerOptions.Paths = paths
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "tsconfig.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeFile is a test helper that creates a file with given content, making parent dirs.
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExactAliasMapping(t *testing.T) {
+	dir := t.TempDir()
+
+	// Set up tsconfig with exact mapping (no wildcard).
+	writeTSConfig(t, dir, ".", map[string][]string{
+		"@config": {"./src/config.ts"},
+	})
+	writeFile(t, filepath.Join(dir, "src", "config.ts"), "export const cfg = {};")
+
+	r := NewTypeScriptResolver(dir)
+	sourceFile := filepath.Join(dir, "src", "index.ts")
+
+	// Exact match: "@config" should resolve.
+	result, err := r.Resolve("@config", sourceFile, dir)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if result.ResolvedPath != "src/config.ts" {
+		t.Errorf("expected resolved path %q, got %q", "src/config.ts", result.ResolvedPath)
+	}
+	if !result.MatchedAlias {
+		t.Error("expected MatchedAlias to be true for exact alias match")
+	}
+
+	// "@config/extra" should NOT match the exact alias — it should be external.
+	result2, err := r.Resolve("@config/extra", sourceFile, dir)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if !result2.IsExternal {
+		t.Error("expected @config/extra to be classified as external (no wildcard match)")
+	}
+	if result2.MatchedAlias {
+		t.Error("expected MatchedAlias to be false for @config/extra")
+	}
+}
+
+func TestUnresolvedAliasMetadata(t *testing.T) {
+	dir := fixtureDir(t, "alias-reexports")
+
+	r := NewTypeScriptResolver(dir)
+	sourceFile := filepath.Join(dir, "src", "index.ts")
+
+	// @/does-not-exist matches the alias pattern but doesn't resolve to a file.
+	result, err := r.Resolve("@/does-not-exist", sourceFile, dir)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if result.ResolvedPath != "" {
+		t.Errorf("expected empty resolved path, got %q", result.ResolvedPath)
+	}
+	if result.IsExternal {
+		t.Error("expected IsExternal to be false for unresolved alias")
+	}
+	if !result.MatchedAlias {
+		t.Error("expected MatchedAlias to be true for unresolved alias")
+	}
+}
+
+func TestBaseUrlProbing(t *testing.T) {
+	dir := t.TempDir()
+
+	// Set up tsconfig with baseUrl but no paths.
+	writeTSConfig(t, dir, ".", nil)
+	writeFile(t, filepath.Join(dir, "src", "utils.ts"), "export function util() {}")
+
+	r := NewTypeScriptResolver(dir)
+	sourceFile := filepath.Join(dir, "app.ts")
+
+	// Import "src/utils" should probe baseUrl/src/utils and find src/utils.ts.
+	result, err := r.Resolve("src/utils", sourceFile, dir)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if result.IsExternal {
+		t.Fatal("expected baseUrl probe to resolve, got external")
+	}
+	if result.ResolvedPath != "src/utils.ts" {
+		t.Errorf("expected resolved path %q, got %q", "src/utils.ts", result.ResolvedPath)
 	}
 }

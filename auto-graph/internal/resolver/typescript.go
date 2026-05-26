@@ -17,8 +17,16 @@ type tsconfig struct {
 
 // pathMapping is a parsed tsconfig path alias with prefix/suffix split on *.
 type pathMapping struct {
-	prefix  string   // pattern text before the wildcard (e.g. "@/")
-	targets []string // replacement prefixes (text before * in each target)
+	prefix      string          // pattern text before the wildcard (e.g. "@/")
+	suffix      string          // pattern text after the wildcard (e.g. ""), empty for most cases
+	hasWildcard bool            // true if pattern contains *, false for exact mappings
+	targets     []targetMapping // replacement templates
+}
+
+// targetMapping is a parsed target replacement template.
+type targetMapping struct {
+	prefix string // target text before * (e.g. "./src/")
+	suffix string // target text after * (e.g. "")
 }
 
 // probeExtensions is the ordered list of extensions to try when resolving
@@ -80,26 +88,32 @@ func (r *TypeScriptResolver) loadTSConfig(projectRoot string) {
 	r.baseURL = cfg.CompilerOptions.BaseURL
 	r.loaded = true
 
-	// Parse path mappings. Each key like "@/*" maps to targets like ["src/*"].
-	// We strip the trailing "/*" (or "*") to get prefix strings for matching.
+	// Parse path mappings. Each key like "@/*" maps to targets like ["./src/*"].
+	// We split on the wildcard to get prefix/suffix for matching and substitution.
 	for pattern, targets := range cfg.CompilerOptions.Paths {
 		pm := pathMapping{}
 
-		// Strip the wildcard from the pattern.
 		if idx := strings.Index(pattern, "*"); idx >= 0 {
 			pm.prefix = pattern[:idx]
+			pm.suffix = pattern[idx+1:]
+			pm.hasWildcard = true
 		} else {
 			// Exact match (no wildcard) — use the full pattern as prefix.
 			pm.prefix = pattern
+			pm.suffix = ""
+			pm.hasWildcard = false
 		}
 
-		// Strip the wildcard from each target.
 		for _, t := range targets {
+			var tm targetMapping
 			if idx := strings.Index(t, "*"); idx >= 0 {
-				pm.targets = append(pm.targets, t[:idx])
+				tm.prefix = t[:idx]
+				tm.suffix = t[idx+1:]
 			} else {
-				pm.targets = append(pm.targets, t)
+				tm.prefix = t
+				tm.suffix = ""
 			}
+			pm.targets = append(pm.targets, tm)
 		}
 
 		if len(pm.targets) > 0 {
@@ -127,16 +141,13 @@ func (r *TypeScriptResolver) Resolve(importPath, sourceFile, projectRoot string)
 	kind := r.classifyImport(importPath)
 
 	switch kind {
-	case importBare:
-		return ResolveResult{IsExternal: true}, nil
-
 	case importAlias:
 		resolved := r.resolveAlias(importPath, projectRoot)
 		if resolved != "" {
-			return ResolveResult{ResolvedPath: resolved}, nil
+			return ResolveResult{ResolvedPath: resolved, MatchedAlias: true}, nil
 		}
-		// Alias didn't resolve to a file — treat as unresolved.
-		return ResolveResult{}, nil
+		// Alias matched but didn't resolve to a file — signal via MatchedAlias.
+		return ResolveResult{MatchedAlias: true}, nil
 
 	case importRelative:
 		resolved := r.resolveRelative(importPath, sourceFile, projectRoot)
@@ -144,6 +155,22 @@ func (r *TypeScriptResolver) Resolve(importPath, sourceFile, projectRoot string)
 			return ResolveResult{ResolvedPath: resolved}, nil
 		}
 		return ResolveResult{}, nil
+
+	case importBare:
+		// Before classifying as external, probe baseUrl/importPath.
+		if r.loaded && r.baseURL != "" {
+			var baseDir string
+			baseDir = filepath.Join(projectRoot, r.baseURL)
+			absCandidate := filepath.Join(baseDir, importPath)
+			resolved := probeFile(absCandidate)
+			if resolved != "" {
+				rel, err := filepath.Rel(projectRoot, resolved)
+				if err == nil {
+					return ResolveResult{ResolvedPath: filepath.ToSlash(rel)}, nil
+				}
+			}
+		}
+		return ResolveResult{IsExternal: true}, nil
 	}
 
 	return ResolveResult{}, nil
@@ -157,7 +184,7 @@ func (r *TypeScriptResolver) classifyImport(importPath string) importKind {
 
 	// Check if it matches any tsconfig path alias.
 	for _, m := range r.mappings {
-		if strings.HasPrefix(importPath, m.prefix) {
+		if matchesAlias(importPath, m) {
 			return importAlias
 		}
 	}
@@ -165,19 +192,51 @@ func (r *TypeScriptResolver) classifyImport(importPath string) importKind {
 	return importBare
 }
 
+// matchesAlias checks whether an import path matches a pathMapping.
+// For wildcard patterns: checks prefix AND suffix match with content between them.
+// For exact patterns: checks exact equality.
+func matchesAlias(importPath string, m pathMapping) bool {
+	if !m.hasWildcard {
+		return importPath == m.prefix
+	}
+	// Wildcard: must start with prefix, end with suffix, and have content between.
+	if !strings.HasPrefix(importPath, m.prefix) {
+		return false
+	}
+	if !strings.HasSuffix(importPath, m.suffix) {
+		return false
+	}
+	// Ensure the captured portion (between prefix and suffix) is non-negative length.
+	// For prefix="@/" suffix="" this means len >= 2 (at least "@/" plus one char).
+	return len(importPath) >= len(m.prefix)+len(m.suffix)
+}
+
+// wildcardCapture extracts the text matched by the wildcard in a pattern.
+func wildcardCapture(importPath string, m pathMapping) string {
+	return importPath[len(m.prefix) : len(importPath)-len(m.suffix)]
+}
+
 // resolveAlias substitutes tsconfig path aliases and probes for a file.
 func (r *TypeScriptResolver) resolveAlias(importPath, projectRoot string) string {
 	for _, m := range r.mappings {
-		if !strings.HasPrefix(importPath, m.prefix) {
+		if !matchesAlias(importPath, m) {
 			continue
 		}
 
-		// The portion after the alias prefix (the wildcard capture).
-		rest := importPath[len(m.prefix):]
+		// Extract the wildcard capture (or empty for exact mappings).
+		var captured string
+		if m.hasWildcard {
+			captured = wildcardCapture(importPath, m)
+		}
 
 		for _, target := range m.targets {
-			// Build the substituted path: target prefix + wildcard rest.
-			candidate := target + rest
+			// Build the substituted path.
+			var candidate string
+			if m.hasWildcard {
+				candidate = target.prefix + captured + target.suffix
+			} else {
+				candidate = target.prefix + target.suffix
+			}
 
 			// Resolve relative to baseUrl (which itself is relative to project root).
 			var baseDir string
