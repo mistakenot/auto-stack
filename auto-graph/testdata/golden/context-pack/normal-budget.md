@@ -1,6 +1,6 @@
 # Context Pack
 
-Budget: 1151/12000 tokens
+Budget: 1181/12000 tokens
 Omitted: 0 tokens
 Seeds: src/App.tsx
 

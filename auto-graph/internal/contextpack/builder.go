@@ -75,8 +75,15 @@ func Build(opts BuildOptions) (*Pack, error) {
 		estimator = defaultEstimator
 	}
 
+	// refreshDerived recomputes relationships, reading order, and guidance
+	// so the estimator sees the full rendered output, not just file entries.
+	refreshDerived := func() {
+		pack.Relationships = collectRelationships(pack.Files, fwd, rev, opts.Seeds)
+		pack.ReadingOrder = buildReadingOrder(pack.Files)
+		pack.Guidance = generateGuidance(pack, fwd, rev, opts.Graph)
+	}
+
 	// Phase 1: Add all seed files (mandatory).
-	var seedContents []string
 	for _, c := range candidates {
 		if c.role != "seed" {
 			continue
@@ -85,7 +92,6 @@ func Build(opts BuildOptions) (*Pack, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading seed file %s: %w", c.path, err)
 		}
-		seedContents = append(seedContents, content)
 		entry := FileEntry{
 			Path:            c.path,
 			Role:            c.role,
@@ -97,7 +103,8 @@ func Build(opts BuildOptions) (*Pack, error) {
 		pack.Files = append(pack.Files, entry)
 	}
 
-	// Check seed budget.
+	// Check seed budget with full derived sections.
+	refreshDerived()
 	seedEstimate := estimator(pack)
 	if seedEstimate > opts.TokenLimit {
 		minBudget := seedEstimate
@@ -114,7 +121,6 @@ func Build(opts BuildOptions) (*Pack, error) {
 		}
 		content, err := readFileContent(opts.ProjectRoot, c.path)
 		if err != nil {
-			// If file can't be read, record as omitted.
 			pack.OmittedCandidates = append(pack.OmittedCandidates, OmittedCandidate{
 				Path:            c.path,
 				Role:            c.role,
@@ -134,11 +140,11 @@ func Build(opts BuildOptions) (*Pack, error) {
 			Content:         content,
 		}
 
-		// Tentatively add the file and check budget.
+		// Tentatively add the file, recompute derived sections, and check budget.
 		pack.Files = append(pack.Files, entry)
+		refreshDerived()
 		tentative := estimator(pack)
 		if tentative > opts.TokenLimit {
-			// Remove the file and record as omitted.
 			pack.Files = pack.Files[:len(pack.Files)-1]
 			pack.OmittedCandidates = append(pack.OmittedCandidates, OmittedCandidate{
 				Path:            c.path,
@@ -146,25 +152,18 @@ func Build(opts BuildOptions) (*Pack, error) {
 				Reason:          c.reason,
 				EstimatedTokens: contentTokens,
 			})
+			refreshDerived()
 		}
 	}
 
-	// Collect relationships for included files.
-	pack.Relationships = collectRelationships(pack.Files, fwd, rev, opts.Seeds)
-
-	// Build reading order.
-	pack.ReadingOrder = buildReadingOrder(pack.Files)
-
-	// Compute budget accounting.
+	// Final accounting with all sections populated.
+	refreshDerived()
 	pack.EstimatedTokens = estimator(pack)
 	omittedTotal := 0
 	for _, oc := range pack.OmittedCandidates {
 		omittedTotal += oc.EstimatedTokens
 	}
 	pack.OmittedTokens = omittedTotal
-
-	// Generate guidance.
-	pack.Guidance = generateGuidance(pack, fwd, rev, opts.Graph)
 
 	return pack, nil
 }

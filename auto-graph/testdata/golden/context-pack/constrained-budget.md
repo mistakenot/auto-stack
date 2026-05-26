@@ -1,7 +1,7 @@
 # Context Pack
 
-Budget: 833/600 tokens
-Omitted: 237 tokens
+Budget: 785/600 tokens
+Omitted: 319 tokens
 Seeds: src/App.tsx
 
 ## Read First
@@ -10,13 +10,11 @@ Seeds: src/App.tsx
 3. src/hooks/useAuth.ts - direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags
 4. src/pages/HomePage.tsx - direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags
 5. src/types/config.ts - direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags
-6. src/utils/polyfills.ts - direct runtime dependency of src/App.tsx
-7. src/__tests__/App.test.tsx - direct runtime dependent of src/App.tsx; direct neighbor of src/App.tsx with risk flags
 
 ## Watch
 - Changing src/App.tsx may affect src/__tests__/App.test.tsx.
 - Changing src/App.tsx may affect src/index.ts.
-- Omitted files worth fetching with more budget: src/index.ts (86 tokens), src/services/userService.ts (66 tokens), src/types/user.ts (37 tokens).
+- Omitted files worth fetching with more budget: src/utils/polyfills.ts (48 tokens), src/__tests__/App.test.tsx (34 tokens), src/index.ts (86 tokens).
 
 ## Files
 ### src/App.tsx
@@ -100,31 +98,9 @@ export interface ThemeConfig {
 }
 ```
 
-### src/utils/polyfills.ts
-Role: dependency. Tokens: 48.
-
-```ts
-// Side-effect import: sets up global polyfills
-if (typeof globalThis.structuredClone === 'undefined') {
-  globalThis.structuredClone = (obj: unknown) => JSON.parse(JSON.stringify(obj));
-}
-```
-
-### src/__tests__/App.test.tsx
-Role: dependent. Tokens: 34.
-Flags: test_like.
-
-```tsx
-import { App } from '../App';
-
-describe('App', () => {
-  it('renders without crashing', () => {
-    // test implementation
-  });
-});
-```
-
 ## Omitted
+- src/utils/polyfills.ts - direct runtime dependency of src/App.tsx, 48 tokens
+- src/__tests__/App.test.tsx - direct runtime dependent of src/App.tsx; direct neighbor of src/App.tsx with risk flags, 34 tokens
 - src/index.ts - direct runtime dependent of src/App.tsx; direct neighbor of src/App.tsx with risk flags, 86 tokens
 - src/services/userService.ts - second-hop runtime dependency via src/hooks/useAuth.ts, 66 tokens
 - src/types/user.ts - second-hop runtime dependency via src/hooks/useAuth.ts; second-hop runtime dependency via src/components/UserProfile.tsx, 37 tokens

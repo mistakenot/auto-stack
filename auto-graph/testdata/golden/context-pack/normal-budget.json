@@ -1,7 +1,7 @@
 {
   "project_root": "/home/vscode/src/auto-stack-task-004/auto-graph/testdata/fixtures/context-pack",
   "token_limit": 12000,
-  "estimated_tokens": 3085,
+  "estimated_tokens": 3121,
   "omitted_tokens": 0,
   "seed_files": [
     "src/App.tsx"
