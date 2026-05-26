@@ -111,7 +111,15 @@ func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string) error {
 	}
 
 	// Step 5: Build the graph.
-	g := buildGraph(projectRoot, filePaths, matches, res, lang)
+	g, diagnostics := buildGraph(projectRoot, filePaths, matches, res, lang)
+
+	// Step 5b: Report unresolved alias diagnostics to stderr.
+	if len(diagnostics) > 0 {
+		errW := cmd.ErrOrStderr()
+		for _, d := range diagnostics {
+			fmt.Fprintf(errW, "warning: %s:%d: unresolved alias import %q (check compilerOptions.paths and baseUrl in tsconfig.json)\n", d.Source, d.Line, d.Raw)
+		}
+	}
 
 	// Step 6: Output in requested format.
 	w := cmd.OutOrStdout()
@@ -223,8 +231,16 @@ func discoverFiles(projectRoot, lang string) ([]string, error) {
 	return paths, nil
 }
 
+// graphDiagnostic records an import that matched a configured alias but could
+// not be resolved to an on-disk file.
+type graphDiagnostic struct {
+	Source string // source file relative path
+	Line   int    // 1-based line number
+	Raw    string // raw import specifier
+}
+
 // buildGraph constructs a Graph from discovered files and resolved imports.
-func buildGraph(projectRoot string, filePaths []string, matches []scanner.ImportMatch, res resolver.Resolver, lang string) *graph.Graph {
+func buildGraph(projectRoot string, filePaths []string, matches []scanner.ImportMatch, res resolver.Resolver, lang string) (*graph.Graph, []graphDiagnostic) {
 	g := &graph.Graph{
 		Root: projectRoot,
 	}
@@ -254,11 +270,27 @@ func buildGraph(projectRoot string, filePaths []string, matches []scanner.Import
 		target string
 	}
 	edgeSeen := make(map[edgeKey]bool)
+	var diagnostics []graphDiagnostic
 
 	for _, m := range matches {
 		result, err := res.Resolve(m.ImportPath, m.SourceFile, projectRoot)
 		if err != nil {
 			continue
+		}
+
+		// Collect diagnostics for alias imports that matched but didn't resolve.
+		if result.MatchedAlias && result.ResolvedPath == "" {
+			srcRel, relErr := filepath.Rel(projectRoot, m.SourceFile)
+			if relErr == nil {
+				srcRel = filepath.ToSlash(srcRel)
+			} else {
+				srcRel = m.SourceFile
+			}
+			diagnostics = append(diagnostics, graphDiagnostic{
+				Source: srcRel,
+				Line:   m.Line,
+				Raw:    m.ImportPath,
+			})
 		}
 
 		// Skip external (node_modules / stdlib / third-party) and unresolved imports.
@@ -313,5 +345,5 @@ func buildGraph(projectRoot string, filePaths []string, matches []scanner.Import
 		}
 	}
 
-	return g
+	return g, diagnostics
 }
