@@ -303,7 +303,7 @@ func TestStripJSONC(t *testing.T) {
 		{
 			name:  "both combined",
 			input: "{\n  // comment\n  \"a\": [1,],\n}",
-			want:  "{\n  \n  \"a\": [1]}",
+			want:  "{\n  \n  \"a\": [1]\n}",
 		},
 		{
 			name:  "valid JSON unchanged",
@@ -314,6 +314,11 @@ func TestStripJSONC(t *testing.T) {
 			name:  "comment-like text inside strings preserved",
 			input: `{"url": "https://example.com"}`,
 			want:  `{"url": "https://example.com"}`,
+		},
+		{
+			name:  "comma-brace inside string preserved",
+			input: `{"description": "Hello, }"}`,
+			want:  `{"description": "Hello, }"}`,
 		},
 	}
 

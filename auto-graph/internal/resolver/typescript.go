@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
@@ -55,17 +54,15 @@ const (
 	importBare
 )
 
-// trailingCommaRe matches a comma followed by optional whitespace and a closing brace or bracket.
-var trailingCommaRe = regexp.MustCompile(`,\s*([}\]])`)
-
 // stripJSONC strips // line comments (that are not inside quoted strings) and
 // trailing commas before } or ] so that the result is valid JSON suitable for
 // json.Unmarshal. This handles the JSONC subset used by tsconfig.json.
+// Both transforms run in a single pass to avoid corrupting string contents.
 func stripJSONC(data []byte) []byte {
-	// Pass 1: remove // line comments that are not inside strings.
 	var buf []byte
 	inString := false
 	escaped := false
+	lastCommaIdx := -1
 	for i := 0; i < len(data); i++ {
 		ch := data[i]
 		if escaped {
@@ -89,21 +86,31 @@ func stripJSONC(data []byte) []byte {
 			continue
 		}
 		if ch == '/' && i+1 < len(data) && data[i+1] == '/' {
-			// Skip until end of line.
 			for i < len(data) && data[i] != '\n' {
 				i++
 			}
-			// Keep the newline if present.
 			if i < len(data) {
 				buf = append(buf, '\n')
 			}
 			continue
 		}
+		if ch == ',' {
+			lastCommaIdx = len(buf)
+			buf = append(buf, ch)
+			continue
+		}
+		if (ch == '}' || ch == ']') && lastCommaIdx >= 0 {
+			buf = append(buf[:lastCommaIdx], buf[lastCommaIdx+1:]...)
+			lastCommaIdx = -1
+		}
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+			buf = append(buf, ch)
+			continue
+		}
+		lastCommaIdx = -1
 		buf = append(buf, ch)
 	}
-
-	// Pass 2: remove trailing commas before } or ].
-	return trailingCommaRe.ReplaceAll(buf, []byte("$1"))
+	return buf
 }
 
 // TypeScriptResolver resolves TypeScript/JavaScript import paths using
