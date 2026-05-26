@@ -85,6 +85,16 @@ JSON output contains a graph with nodes for each file and edges for each import 
 }
 ` + "```" + `
 
+### 4. Build a context pack
+
+` + "```" + `bash
+# Select relevant files around a seed file, output as markdown (default)
+autograph code context ./my-project --token-limit 12000 --file src/App.tsx
+
+# Multiple seed files, JSON output
+autograph code context ./my-project --token-limit 8000 --file src/App.tsx --file src/hooks/useAuth.ts --format=json
+` + "```" + `
+
 Run ` + "`autograph <command> --help`" + ` for full flag details on any command.
 `
 

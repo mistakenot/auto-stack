@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mistakenot/auto-graph/internal/codegraph"
 	"github.com/mistakenot/auto-graph/internal/graph"
 )
 
@@ -72,9 +73,9 @@ func TestLanguageAutoDetection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	lang, err := detectLanguage(projDir)
+	lang, err := codegraph.DetectLanguage(projDir)
 	if err != nil {
-		t.Fatalf("detectLanguage failed: %v", err)
+		t.Fatalf("DetectLanguage failed: %v", err)
 	}
 	if lang != "typescript" {
 		t.Errorf("expected language %q, got %q", "typescript", lang)
@@ -87,9 +88,9 @@ func TestLanguageAutoDetectionGo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	lang, err := detectLanguage(projDir)
+	lang, err := codegraph.DetectLanguage(projDir)
 	if err != nil {
-		t.Fatalf("detectLanguage failed: %v", err)
+		t.Fatalf("codegraph.DetectLanguage failed: %v", err)
 	}
 	if lang != "go" {
 		t.Errorf("expected language %q, got %q", "go", lang)
@@ -105,7 +106,7 @@ func TestLanguageAutoDetectionAmbiguous(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := detectLanguage(projDir)
+	_, err := codegraph.DetectLanguage(projDir)
 	if err == nil {
 		t.Fatal("expected error when both config files found, got nil")
 	}
@@ -123,7 +124,7 @@ func TestLanguageAutoDetectionNoConfig(t *testing.T) {
 	// Create a temp dir without any config files.
 	projDir := t.TempDir()
 
-	_, err := detectLanguage(projDir)
+	_, err := codegraph.DetectLanguage(projDir)
 	if err == nil {
 		t.Fatal("expected error when no config file found, got nil")
 	}
@@ -141,7 +142,7 @@ func TestLanguageOverride(t *testing.T) {
 	// Create a temp dir WITHOUT tsconfig.json.
 	projDir := t.TempDir()
 
-	// When --lang is specified, detectLanguage should not be called.
+	// When --lang is specified, codegraph.DetectLanguage should not be called.
 	// We verify this by checking that runCodeGraph with lang="typescript"
 	// on a dir without tsconfig.json does NOT fail with a language detection error.
 	// Instead it should get past detection and succeed or fail for other reasons
