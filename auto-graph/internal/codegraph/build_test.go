@@ -1,6 +1,7 @@
 package codegraph
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,7 +116,7 @@ func TestBuildGraphParity(t *testing.T) {
 	requireAstGrep(t)
 	dir := fixtureDir(t, "basic-imports")
 
-	g, _, err := Build(dir, "typescript")
+	g, _, err := Build(dir, "typescript", io.Discard)
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
@@ -163,7 +164,7 @@ func TestBuildMergedMetadata(t *testing.T) {
 	requireAstGrep(t)
 	dir := fixtureDir(t, "merged-imports")
 
-	g, _, err := Build(dir, "typescript")
+	g, _, err := Build(dir, "typescript", io.Discard)
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}

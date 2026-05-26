@@ -66,7 +66,7 @@ func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string) error {
 	}
 
 	// Build the graph.
-	g, diags, err := codegraph.Build(projectRoot, lang)
+	g, diags, err := codegraph.Build(projectRoot, lang, cmd.ErrOrStderr())
 	if err != nil {
 		return &ExitError{Code: 1, Err: err}
 	}

@@ -2,6 +2,7 @@ package codegraph
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,7 +24,7 @@ type Diagnostic struct {
 // language. It discovers files, scans imports, resolves import paths, and
 // returns the resulting graph with merged import metadata. Diagnostics are
 // returned for imports that matched an alias but could not be resolved.
-func Build(projectRoot, lang string) (*graph.Graph, []Diagnostic, error) {
+func Build(projectRoot, lang string, warn io.Writer) (*graph.Graph, []Diagnostic, error) {
 	var sc scanner.Scanner
 	var res resolver.Resolver
 
@@ -33,7 +34,7 @@ func Build(projectRoot, lang string) (*graph.Graph, []Diagnostic, error) {
 			return nil, nil, fmt.Errorf("ast-grep not found: install with npm i -g @ast-grep/cli or brew install ast-grep")
 		}
 		sc = scanner.NewTypeScriptScanner()
-		res = resolver.NewTypeScriptResolver(projectRoot)
+		res = resolver.NewTypeScriptResolver(projectRoot, warn)
 	case "go":
 		sc = scanner.NewGoScanner()
 		var goErr error
