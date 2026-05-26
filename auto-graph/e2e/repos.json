@@ -4,5 +4,11 @@
     "url": "https://github.com/gvergnaud/ts-pattern",
     "commit": "4c49e53e8e7dd3f53bfe1e55c9e6e32a38de9561",
     "subdir": ""
+  },
+  {
+    "name": "cobra",
+    "url": "https://github.com/spf13/cobra",
+    "commit": "d0e9887df6ec1f7bea4fa1f6e22e7b9483542e9f",
+    "subdir": ""
   }
 ]

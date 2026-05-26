@@ -1,6 +1,6 @@
 # Autograph
 
-Build and query code context graphs. Currently supports TypeScript file-level import graphs via ast-grep.
+Build and query code context graphs. Supports TypeScript and Go file-level import graphs. TypeScript scanning uses ast-grep; Go scanning uses `go/parser` (no external dependency needed).
 
 ## Build
 
@@ -26,6 +26,7 @@ go vet ./...
 ## Dependencies
 
 - `ast-grep` must be installed for TypeScript scanning (`npm install -g @ast-grep/cli`)
+- Go scanning requires no external dependencies (uses stdlib `go/parser`)
 - Run `autograph doctor` to verify all dependencies are satisfied
 
 ## Architecture
