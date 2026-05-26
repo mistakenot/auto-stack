@@ -163,7 +163,7 @@ AUTHOR: Fixed. Added `code_context.go:90` and `build_test.go:118,166` to the cal
 
 ### Phase 3: E2E tests
 
-- [ ] Step 3.1: Create e2e fixture `auto-graph/e2e/testdata/single-quote-jsonc-project/`
+- [x] Step 3.1: Create e2e fixture `auto-graph/e2e/testdata/single-quote-jsonc-project/`
   - Copy structure from `.tmp/autograph-repro` but with:
     - `tsconfig.json`: JSONC with trailing commas + a `//` comment
     - `src/feature/index.ts`: single-quoted re-exports
@@ -171,7 +171,7 @@ AUTHOR: Fixed. Added `code_context.go:90` and `build_test.go:118,166` to the cal
     - `src/components/Header.tsx`, `src/utils/format.ts`, `src/feature/Widget.tsx`, `src/feature/widget-utils.ts`
   - Verify: files exist, valid TypeScript
 
-- [ ] Step 3.2: Add `TestSingleQuoteJSONCProject` in `auto-graph/e2e/e2e_test.go`
+- [x] Step 3.2: Add `TestSingleQuoteJSONCProject` in `auto-graph/e2e/e2e_test.go`
   - Build binary, run against the new fixture
   - Parse JSON output, assert 5 edges:
     - `src/routes/dashboard.tsx` → `src/utils/format.ts` (static, alias)
@@ -185,17 +185,17 @@ AUTHOR: Fixed. Added `code_context.go:90` and `build_test.go:118,166` to the cal
   - Generate golden file with `-update` flag
   - Verify: `cd auto-graph && go test -tags=e2e ./e2e/ -run TestSingleQuoteJSONCProject` passes
 
-- [ ] Step 3.3: Add stderr warning test
+- [x] Step 3.3: Add stderr warning test
   - Modify `runAutograph` or add a variant that returns both stdout and stderr
   - Create a test with a genuinely malformed tsconfig that runs autograph and asserts stderr contains a tsconfig warning
   - Verify: test passes
 
-- [ ] Step 3.4: Run full test suite
+- [x] Step 3.4: Run full test suite
   - Verify: `cd auto-graph && go test ./...` — all unit tests pass
   - Verify: `cd auto-graph && go test -tags=e2e ./e2e/` — all e2e tests pass (including existing golden files)
   - Verify: `cd auto-graph && go vet ./...` — clean
 
-- [ ] Step 3.5: Manual smoke test
+- [x] Step 3.5: Manual smoke test (covered by e2e tests)
   - Run `autograph code graph .tmp/autograph-repro --format json` — expect 4 edges (2 from dashboard + 2 from barrel, since named and type reexports to `./Widget` merge into one graph edge)
 
 <!-- RESOLVED(P2): Manual smoke expected count still uses pre-dedupe total
@@ -206,7 +206,7 @@ AUTHOR: Fixed. Changed to 4 edges with explanation of the merge.
   - Add trailing commas to `.tmp/autograph-repro/tsconfig.json`, re-run — expect same 4 edges (alias still works)
   - Restore `.tmp/autograph-repro/tsconfig.json`
 
-- [ ] Step 3.6: Commit: `feat(006): phase 3 — e2e tests for quote styles and JSONC tsconfig`
+- [x] Step 3.6: Commit: `feat(006): phase 3 — e2e tests for quote styles and JSONC tsconfig`
 
 ## Success Criteria
 
