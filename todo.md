@@ -55,3 +55,22 @@
 ## autodoc
 
 - [ ] exclude .claude folder by default
+
+## auto-search
+
+**Git related apis - low level primitives**
+
+- [ ] list files that are scored as being frequently edited at the same time as a target file.
+- [ ] list files ranked by edit frequency across sessions (most-touched hotspots), filterable by time range and remote.
+- [ ] list files edited multiple times within a single session (rework signal — repeated edits suggest complexity or uncertainty).
+- [ ] list file edit sequences for a target file — what files are typically edited before/after it (workflow adjacency graph).
+- [ ] list tool failure hotspots by file — files associated with the most bash failures or tool errors (problematic areas).
+- [ ] list branches ranked by session count and token spend — surface where effort concentrates and long-lived branches.
+- [ ] list files edited within a short time window of each other (temporal co-edit pairs) — reveals implicit coupling not visible in imports.
+
+**Query gaps — found during requirements-extraction research**
+
+- [ ] `search` command: add `--session` filter to scope a search to a single session ID. Currently must use `session get` and parse locally.
+- [ ] `search` command: add `--min-index` / `--max-index` filter on message index. Needed to isolate session-opening messages (e.g. "user messages where index < 5") without post-filtering JSON.
+- [ ] `search` / `stats`: add `--tool-name AskUserQuestion` support — currently tool-name filter exists but AskUserQuestion isn't surfaced as a tool name in the index. Would directly surface Q&A decision pairs.
+- [ ] Skill metadata indexing: `--skill` filter doesn't match skills invoked via `<command-name>` tags in user messages (e.g. `/new-task`, `/process-requirements`). Only ETL-tracked skills appear in `autosearch skills`. Need to extract skill name from `<command-name>` tags during indexing.
