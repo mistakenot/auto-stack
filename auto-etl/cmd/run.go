@@ -14,6 +14,7 @@ import (
 
 	sharedconfig "github.com/mistakenot/auto-shared/config"
 
+	gitextract "github.com/mistakenot/auto-etl/internal/git"
 	ghclient "github.com/mistakenot/auto-etl/internal/github"
 	"github.com/mistakenot/auto-etl/internal/parser"
 	"github.com/mistakenot/auto-etl/internal/progress"
@@ -23,16 +24,19 @@ import (
 )
 
 var (
-	inputDir  string
-	outputDir string
-	fullRun   bool
-	onlyFlag  []string
+	inputDir     string
+	outputDir    string
+	fullRun      bool
+	onlyFlag     []string
+	repoPathFlag []string
+	sinceFlag    string
 )
 
 // validOnlyValues is the set of valid --only values.
 var validOnlyValues = map[string]bool{
 	"sessions": true,
 	"github":   true,
+	"git":      true,
 }
 
 func init() {
@@ -43,7 +47,9 @@ func init() {
 	runCmd.Flags().StringVar(&inputDir, "input", defaultInput, "Input directory containing raw session data")
 	runCmd.Flags().StringVar(&outputDir, "output", defaultOutput, "Output directory for transformed parquet files")
 	runCmd.Flags().BoolVar(&fullRun, "full", false, "Delete output directory before running (full rebuild)")
-	runCmd.Flags().StringSliceVar(&onlyFlag, "only", nil, "Run only specified ETL sources (sessions, github). Default: all.")
+	runCmd.Flags().StringSliceVar(&onlyFlag, "only", nil, "Run only specified ETL sources (sessions, github, git). Default: all.")
+	runCmd.Flags().StringSliceVar(&repoPathFlag, "repo-path", nil, "Explicit git repo paths to index (for --only git)")
+	runCmd.Flags().StringVar(&sinceFlag, "since", "", "Limit initial git history depth (e.g. 5m, 2h, 5d, 3w, 6mo, 1y)")
 
 	rootCmd.AddCommand(runCmd)
 }
@@ -91,6 +97,13 @@ var runCmd = &cobra.Command{
 			}
 		}
 
+		// Git history ETL phase
+		if sources["git"] {
+			if err := runGitETL(hostID, remotes, repoPathFlag, sinceFlag, fullRun); err != nil {
+				return err
+			}
+		}
+
 		// Persist updated remotes cache
 		saveRemotesCache(remotes)
 
@@ -107,7 +120,7 @@ var runCmd = &cobra.Command{
 func parseOnlyFlag(values []string) (map[string]bool, error) {
 	if len(values) == 0 {
 		// Default: run all
-		return map[string]bool{"sessions": true, "github": true}, nil
+		return map[string]bool{"sessions": true, "github": true, "git": true}, nil
 	}
 
 	sources := make(map[string]bool)
@@ -349,4 +362,90 @@ func gitRemoteOrigin(dir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func runGitETL(hostID string, remotes map[string]string, explicitPaths []string, since string, fullRebuild bool) error {
+	var phaseStart time.Time
+	if debug {
+		phaseStart = time.Now()
+	}
+
+	if fullRebuild {
+		statePath := gitextract.GitSyncStatePath()
+		if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "warning: could not remove git sync state %s: %v\n", statePath, err)
+		}
+	}
+
+	etlRunID := fmt.Sprintf("git-%d", time.Now().UnixMilli())
+	collectedAt := time.Now().UnixMilli()
+
+	statePath := gitextract.GitSyncStatePath()
+	syncState := gitextract.LoadGitSyncState(statePath)
+
+	repos := gitextract.DiscoverRepos(remotes, explicitPaths)
+	if len(repos) == 0 {
+		fmt.Fprintf(os.Stderr, "git ETL: no repos found\n")
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "git ETL: discovered %d repo(s)\n", len(repos))
+
+	var totalCommits, totalFiles, totalHunks int
+
+	for _, repo := range repos {
+		normalized := gitextract.NormalizeRemoteURL(repo.Remote)
+		var repoID string
+		if normalized != "" {
+			repoID = gitextract.ComputeRepoID(normalized)
+		} else {
+			repoID = gitextract.ComputeRepoIDFromPath(repo.Path)
+		}
+
+		repoState := syncState.GetRepo(repoID)
+		config := gitextract.ExtractConfig{
+			HostID:      hostID,
+			ETLRunID:    etlRunID,
+			CollectedAt: collectedAt,
+			Since:       since,
+			SeenSHAs:    repoState.SeenSHAs,
+		}
+
+		result, err := gitextract.ExtractRepo(repo, config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: git ETL failed for %s: %v\n", repo.Path, err)
+			continue
+		}
+
+		if err := writer.WriteGit(outputDir, result); err != nil {
+			return fmt.Errorf("write git %s: %w", repo.Path, err)
+		}
+
+		var newSHAs []string
+		for _, c := range result.Commits {
+			sha := strings.TrimPrefix(c.ID, repoID+"-")
+			newSHAs = append(newSHAs, sha)
+		}
+		repoState.MarkSeen(newSHAs)
+
+		totalCommits += len(result.Commits)
+		totalFiles += len(result.Files)
+		totalHunks += len(result.Hunks)
+
+		fmt.Fprintf(os.Stderr, "  %s: %d commits, %d files, %d hunks\n",
+			repo.Path, len(result.Commits), len(result.Files), len(result.Hunks))
+	}
+
+	if err := syncState.Save(statePath); err != nil {
+		return fmt.Errorf("save git sync state: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "git ETL complete: %d commits, %d files, %d hunks\n",
+		totalCommits, totalFiles, totalHunks)
+
+	if debug {
+		fmt.Fprintf(os.Stderr, "[debug] git ETL: %s\n", time.Since(phaseStart))
+	}
+
+	return nil
 }
