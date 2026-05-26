@@ -69,6 +69,7 @@ hash: "7ad7f070"
 
 func TestFixReportsScopeHashMismatch(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
 	docHash := createDocWithID(t, ws, "docs/cache.md", "deadbeef")
 
 	ws.WriteSourceFile("pkg/cache/lru.go", strings.TrimLeft(`
@@ -81,7 +82,7 @@ func read() {
 }
 `, "\n"))
 	rewriteFile(t, ws.Path("pkg/cache/lru.go"), "DOC_HASH", docHash)
-	ws.InitGitRepo()
+	ws.GitAddAll()
 
 	var buf bytes.Buffer
 	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
@@ -97,6 +98,7 @@ func read() {
 
 func TestFixReportsDocHashMismatch(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
 	createDocWithID(t, ws, "docs/cache.md", "deadbeef")
 
 	ws.WriteSourceFile("pkg/cache/lru.go", strings.TrimLeft(`
@@ -113,7 +115,7 @@ func read() {
 		t.Fatalf("ComputeScopeHash: %v", err)
 	}
 	rewriteFile(t, ws.Path("pkg/cache/lru.go"), "00000000)]", scopeHash+")]")
-	ws.InitGitRepo()
+	ws.GitAddAll()
 
 	var buf bytes.Buffer
 	err = Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
@@ -129,6 +131,7 @@ func read() {
 
 func TestFixReportsBothMismatch(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
 	createDocWithID(t, ws, "docs/cache.md", "deadbeef")
 
 	ws.WriteSourceFile("pkg/cache/lru.go", strings.TrimLeft(`
@@ -140,7 +143,7 @@ func read() {
     _ = value
 }
 `, "\n"))
-	ws.InitGitRepo()
+	ws.GitAddAll()
 
 	var buf bytes.Buffer
 	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
@@ -156,6 +159,7 @@ func read() {
 
 func TestFixReportsOrphanedTag(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
 	createDocWithID(t, ws, "docs/cache.md", "deadbeef")
 
 	ws.WriteSourceFile("pkg/cache/lru.go", strings.TrimLeft(`
@@ -166,7 +170,7 @@ func read() {
     value := 1
 }
 `, "\n"))
-	ws.InitGitRepo()
+	ws.GitAddAll()
 
 	var buf bytes.Buffer
 	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
@@ -182,6 +186,7 @@ func read() {
 
 func TestFixReportsMalformedTagAndReturnsError(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
 	createDocWithID(t, ws, "docs/cache.md", "deadbeef")
 
 	ws.WriteSourceFile("pkg/cache/lru.go", strings.TrimLeft(`
@@ -192,7 +197,7 @@ func read() {
     value := 1
 }
 `, "\n"))
-	ws.InitGitRepo()
+	ws.GitAddAll()
 
 	var buf bytes.Buffer
 	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
@@ -227,6 +232,7 @@ func TestFixGroupsDocIssues(t *testing.T) {
 
 func TestFixLinkFreshnessUsesRepoRelativeDocPath(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
 	createRepoDocWithID(t, ws, "auto-etl/docs/cache.md", "deadbeef")
 
 	ws.WriteSourceFile("pkg/cache/lru.go", strings.TrimLeft(`
@@ -243,7 +249,7 @@ func read() {
 		t.Fatalf("ComputeScopeHash: %v", err)
 	}
 	rewriteFile(t, ws.Path("pkg/cache/lru.go"), "00000000)]", scopeHash+")]")
-	ws.InitGitRepo()
+	ws.GitAddAll()
 
 	var buf bytes.Buffer
 	err = Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)
@@ -303,14 +309,13 @@ func TestFixReportsEmptyReadWhen(t *testing.T) {
 
 func TestFixNoIssueWhenReadWhenPresent(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
 	ws.WriteDocWithReadWhen("guide.md", "Guide", "How to use the guide", "updating the guide", "# Guide")
 
 	guidePath := ws.Path("docs/guide.md")
 	if err := Fixed(guidePath, "", ""); err != nil {
 		t.Fatalf("Fixed: %v", err)
 	}
-
-	ws.InitGitRepo()
 
 	var buf bytes.Buffer
 	err := Fix(&buf, ws.Dir, "docs", 2, []string{"AGENTS.md"}, nil)

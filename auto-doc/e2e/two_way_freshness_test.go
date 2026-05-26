@@ -128,6 +128,8 @@ func TestE2EOneDocReferencedByManyFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	initGitRepo(t, workspace)
+
 	_, stderr, exit := runCLI(t, workspace, "fixed", "docs/shared.md")
 	if exit != 0 {
 		t.Fatalf("autodoc fixed failed: exit=%d stderr=%s", exit, stderr)
@@ -143,8 +145,6 @@ func TestE2EOneDocReferencedByManyFiles(t *testing.T) {
 	}
 	rewriteAutodocTag(t, fileA, fixedDoc.Id, "00000000", scopeA)
 	rewriteAutodocTag(t, fileB, fixedDoc.Id, "00000000", scopeB)
-
-	initGitRepo(t, workspace)
 	out, _, exit := runCLI(t, workspace, "fix")
 	if exit == 0 {
 		t.Fatalf("expected non-zero exit for link issues, got exit=%d", exit)
@@ -171,6 +171,8 @@ func TestE2EMultipleTagsOneFileIsolatedScopes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "docs", "cache.md"), []byte(frontmatter.Serialize(&doc)), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	initGitRepo(t, workspace)
+
 	_, stderr, exit := runCLI(t, workspace, "fixed", "docs/cache.md")
 	if exit != 0 {
 		t.Fatalf("autodoc fixed failed: exit=%d stderr=%s", exit, stderr)
@@ -209,8 +211,7 @@ func second() {
 	}
 	rewriteText(t, codePath, "00000000", scope1)
 	rewriteText(t, codePath, "11111111", scope2)
-
-	initGitRepo(t, workspace)
+	runRaw(t, workspace, "git", "add", ".")
 	out, stderr, exit := runCLI(t, workspace, "fix")
 	if exit != 0 {
 		t.Fatalf("autodoc fix (clean) failed: exit=%d stderr=%s", exit, stderr)
