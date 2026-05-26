@@ -1,6 +1,6 @@
 # Context Pack
 
-Budget: 1181/12000 tokens
+Budget: 1222/12000 tokens
 Omitted: 0 tokens
 Seeds: src/App.tsx
 
@@ -9,22 +9,23 @@ Seeds: src/App.tsx
 2. src/components/UserProfile.tsx - direct runtime dependency of src/App.tsx
 3. src/hooks/useAuth.ts - direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags
 4. src/pages/HomePage.tsx - direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags
-5. src/types/config.ts - direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags
-6. src/utils/polyfills.ts - direct runtime dependency of src/App.tsx
-7. src/__tests__/App.test.tsx - direct runtime dependent of src/App.tsx; direct neighbor of src/App.tsx with risk flags
-8. src/index.ts - direct runtime dependent of src/App.tsx; direct neighbor of src/App.tsx with risk flags
+5. src/utils/polyfills.ts - direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags
+6. src/__tests__/App.test.tsx - direct runtime dependent of src/App.tsx; direct neighbor of src/App.tsx with risk flags
+7. src/index.ts - direct runtime dependent of src/App.tsx; direct neighbor of src/App.tsx with risk flags
+8. src/types/config.ts - direct neighbor of src/App.tsx with risk flags; direct type-only dependency of src/App.tsx
 9. src/services/userService.ts - second-hop runtime dependency via src/hooks/useAuth.ts
-10. src/types/user.ts - second-hop runtime dependency via src/hooks/useAuth.ts; second-hop runtime dependency via src/components/UserProfile.tsx
-11. src/utils/format.ts - second-hop runtime dependency via src/pages/HomePage.tsx
+10. src/utils/format.ts - second-hop runtime dependency via src/pages/HomePage.tsx
+11. src/types/user.ts - second-hop type-only neighbor via src/hooks/useAuth.ts; second-hop type-only neighbor via src/components/UserProfile.tsx
 
 ## Watch
 - Changing src/App.tsx may affect src/__tests__/App.test.tsx.
 - Changing src/App.tsx may affect src/index.ts.
+- src/App.tsx has a side-effect import of src/utils/polyfills.ts.
 
 ## Files
 ### src/App.tsx
 Role: seed. Tokens: 99.
-Flags: entrypoint_like, high_fan_out.
+Flags: entrypoint_like, high_fan_out, side_effect_import.
 
 ```tsx
 import React from 'react';
@@ -87,24 +88,9 @@ export function HomePage() {
 }
 ```
 
-### src/types/config.ts
-Role: dependency. Tokens: 36.
-Flags: reexport.
-
-```ts
-export interface AppConfig {
-  apiUrl: string;
-  debug: boolean;
-}
-
-export interface ThemeConfig {
-  primary: string;
-  secondary: string;
-}
-```
-
 ### src/utils/polyfills.ts
 Role: dependency. Tokens: 48.
+Flags: side_effect_import.
 
 ```ts
 // Side-effect import: sets up global polyfills
@@ -142,6 +128,22 @@ import { formatDate } from './utils/format';
 export { App, useAuth, UserProfile, Dashboard, Header, formatDate };
 ```
 
+### src/types/config.ts
+Role: dependency. Tokens: 36.
+Flags: reexport.
+
+```ts
+export interface AppConfig {
+  apiUrl: string;
+  debug: boolean;
+}
+
+export interface ThemeConfig {
+  primary: string;
+  secondary: string;
+}
+```
+
 ### src/services/userService.ts
 Role: transitive_neighbor. Tokens: 66.
 
@@ -154,6 +156,20 @@ export async function fetchUser(id: string): Promise<User> {
 
 export async function updateUser(user: User): Promise<void> {
   // update user in database
+}
+```
+
+### src/utils/format.ts
+Role: transitive_neighbor. Tokens: 48.
+Flags: high_fan_in.
+
+```ts
+export function formatDate(date: Date): string {
+  return date.toISOString().split('T')[0];
+}
+
+export function formatName(first: string, last: string): string {
+  return `${first} ${last}`;
 }
 ```
 
@@ -171,20 +187,6 @@ export interface User {
 export interface UserRole {
   role: string;
   permissions: string[];
-}
-```
-
-### src/utils/format.ts
-Role: transitive_neighbor. Tokens: 48.
-Flags: high_fan_in.
-
-```ts
-export function formatDate(date: Date): string {
-  return date.toISOString().split('T')[0];
-}
-
-export function formatName(first: string, last: string): string {
-  return `${first} ${last}`;
 }
 ```
 

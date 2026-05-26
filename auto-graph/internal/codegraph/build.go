@@ -217,8 +217,9 @@ func buildGraph(projectRoot string, filePaths []string, matches []scanner.Import
 				edgeOrder = append(edgeOrder, key)
 			}
 
-			if !containsString(data.kinds, m.Kind) {
-				data.kinds = append(data.kinds, m.Kind)
+			canonKind := canonicalizeKind(m.Kind)
+			if !containsString(data.kinds, canonKind) {
+				data.kinds = append(data.kinds, canonKind)
 			}
 
 			if !containsString(data.raws, m.ImportPath) {
@@ -256,6 +257,20 @@ func buildGraph(projectRoot string, filePaths []string, matches []scanner.Import
 	}
 
 	return g
+}
+
+// canonicalizeKind normalizes scanner-emitted import kind strings to the
+// canonical vocabulary expected by contextpack: type_only, side_effect,
+// dynamic, reexport, static.
+func canonicalizeKind(kind string) string {
+	switch kind {
+	case "type":
+		return "type_only"
+	case "side-effect", "blank":
+		return "side_effect"
+	default:
+		return kind
+	}
 }
 
 // containsString checks if a slice already contains a given string.

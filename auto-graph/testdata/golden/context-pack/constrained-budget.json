@@ -1,7 +1,7 @@
 {
   "project_root": "/home/vscode/src/auto-stack-task-004/auto-graph/testdata/fixtures/context-pack",
   "token_limit": 600,
-  "estimated_tokens": 1017,
+  "estimated_tokens": 1056,
   "omitted_tokens": 470,
   "seed_files": [
     "src/App.tsx"
@@ -24,7 +24,8 @@
       "estimated_tokens": 99,
       "flags": [
         "entrypoint_like",
-        "high_fan_out"
+        "high_fan_out",
+        "side_effect_import"
       ],
       "content": "import React from 'react';\nimport { useAuth } from './hooks/useAuth';\nimport { UserProfile } from './components/UserProfile';\nimport { HomePage } from './pages/HomePage';\nimport type { AppConfig } from './types/config';\nimport './utils/polyfills';\n\nexport function App() {\n  const { user } = useAuth();\n  return (\n    <div>\n      <UserProfile user={user} />\n      <HomePage />\n    </div>\n  );\n}\n"
     },
@@ -53,7 +54,8 @@
     "watch": [
       "Changing src/App.tsx may affect src/__tests__/App.test.tsx.",
       "Changing src/App.tsx may affect src/index.ts.",
-      "Omitted files worth fetching with more budget: src/hooks/useAuth.ts (52 tokens), src/pages/HomePage.tsx (63 tokens), src/types/config.ts (36 tokens)."
+      "src/App.tsx has a side-effect import of src/utils/polyfills.ts.",
+      "Omitted files worth fetching with more budget: src/hooks/useAuth.ts (52 tokens), src/pages/HomePage.tsx (63 tokens), src/utils/polyfills.ts (48 tokens)."
     ]
   },
   "omitted_candidates": [
@@ -70,15 +72,9 @@
       "estimated_tokens": 63
     },
     {
-      "path": "src/types/config.ts",
-      "role": "dependency",
-      "reason": "direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags",
-      "estimated_tokens": 36
-    },
-    {
       "path": "src/utils/polyfills.ts",
       "role": "dependency",
-      "reason": "direct runtime dependency of src/App.tsx",
+      "reason": "direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags",
       "estimated_tokens": 48
     },
     {
@@ -94,22 +90,28 @@
       "estimated_tokens": 86
     },
     {
+      "path": "src/types/config.ts",
+      "role": "dependency",
+      "reason": "direct neighbor of src/App.tsx with risk flags; direct type-only dependency of src/App.tsx",
+      "estimated_tokens": 36
+    },
+    {
       "path": "src/services/userService.ts",
       "role": "transitive_neighbor",
       "reason": "second-hop runtime dependency via src/hooks/useAuth.ts",
       "estimated_tokens": 66
     },
     {
-      "path": "src/types/user.ts",
-      "role": "transitive_neighbor",
-      "reason": "second-hop runtime dependency via src/hooks/useAuth.ts; second-hop runtime dependency via src/components/UserProfile.tsx",
-      "estimated_tokens": 37
-    },
-    {
       "path": "src/utils/format.ts",
       "role": "transitive_neighbor",
       "reason": "second-hop runtime dependency via src/pages/HomePage.tsx",
       "estimated_tokens": 48
+    },
+    {
+      "path": "src/types/user.ts",
+      "role": "transitive_neighbor",
+      "reason": "second-hop type-only neighbor via src/hooks/useAuth.ts; second-hop type-only neighbor via src/components/UserProfile.tsx",
+      "estimated_tokens": 37
     }
   ]
 }

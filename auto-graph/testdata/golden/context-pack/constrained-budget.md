@@ -1,7 +1,7 @@
 # Context Pack
 
-Budget: 785/600 tokens
-Omitted: 319 tokens
+Budget: 766/600 tokens
+Omitted: 355 tokens
 Seeds: src/App.tsx
 
 ## Read First
@@ -9,17 +9,17 @@ Seeds: src/App.tsx
 2. src/components/UserProfile.tsx - direct runtime dependency of src/App.tsx
 3. src/hooks/useAuth.ts - direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags
 4. src/pages/HomePage.tsx - direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags
-5. src/types/config.ts - direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags
 
 ## Watch
 - Changing src/App.tsx may affect src/__tests__/App.test.tsx.
 - Changing src/App.tsx may affect src/index.ts.
+- src/App.tsx has a side-effect import of src/utils/polyfills.ts.
 - Omitted files worth fetching with more budget: src/utils/polyfills.ts (48 tokens), src/__tests__/App.test.tsx (34 tokens), src/index.ts (86 tokens).
 
 ## Files
 ### src/App.tsx
 Role: seed. Tokens: 99.
-Flags: entrypoint_like, high_fan_out.
+Flags: entrypoint_like, high_fan_out, side_effect_import.
 
 ```tsx
 import React from 'react';
@@ -82,26 +82,11 @@ export function HomePage() {
 }
 ```
 
-### src/types/config.ts
-Role: dependency. Tokens: 36.
-Flags: reexport.
-
-```ts
-export interface AppConfig {
-  apiUrl: string;
-  debug: boolean;
-}
-
-export interface ThemeConfig {
-  primary: string;
-  secondary: string;
-}
-```
-
 ## Omitted
-- src/utils/polyfills.ts - direct runtime dependency of src/App.tsx, 48 tokens
+- src/utils/polyfills.ts - direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags, 48 tokens
 - src/__tests__/App.test.tsx - direct runtime dependent of src/App.tsx; direct neighbor of src/App.tsx with risk flags, 34 tokens
 - src/index.ts - direct runtime dependent of src/App.tsx; direct neighbor of src/App.tsx with risk flags, 86 tokens
+- src/types/config.ts - direct neighbor of src/App.tsx with risk flags; direct type-only dependency of src/App.tsx, 36 tokens
 - src/services/userService.ts - second-hop runtime dependency via src/hooks/useAuth.ts, 66 tokens
-- src/types/user.ts - second-hop runtime dependency via src/hooks/useAuth.ts; second-hop runtime dependency via src/components/UserProfile.tsx, 37 tokens
 - src/utils/format.ts - second-hop runtime dependency via src/pages/HomePage.tsx, 48 tokens
+- src/types/user.ts - second-hop type-only neighbor via src/hooks/useAuth.ts; second-hop type-only neighbor via src/components/UserProfile.tsx, 37 tokens

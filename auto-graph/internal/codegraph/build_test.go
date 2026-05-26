@@ -175,23 +175,23 @@ func TestBuildMergedMetadata(t *testing.T) {
 		if e.Source == "consumer.ts" && e.Target == "shared.ts" {
 			found = true
 
-			// Check import_kinds contains both static and type.
+			// Check import_kinds contains both static and type_only (canonicalized from "type").
 			kinds := strings.Split(e.Attrs["import_kinds"], ",")
 			hasStatic := false
-			hasType := false
+			hasTypeOnly := false
 			for _, k := range kinds {
 				if k == "static" {
 					hasStatic = true
 				}
-				if k == "type" {
-					hasType = true
+				if k == "type_only" {
+					hasTypeOnly = true
 				}
 			}
 			if !hasStatic {
 				t.Errorf("expected import_kinds to contain 'static', got %q", e.Attrs["import_kinds"])
 			}
-			if !hasType {
-				t.Errorf("expected import_kinds to contain 'type', got %q", e.Attrs["import_kinds"])
+			if !hasTypeOnly {
+				t.Errorf("expected import_kinds to contain 'type_only', got %q", e.Attrs["import_kinds"])
 			}
 
 			// Primary import_kind should be the first encountered (static).
