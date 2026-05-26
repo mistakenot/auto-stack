@@ -425,3 +425,79 @@ func TestGoFixtureCircular(t *testing.T) {
 		t.Errorf("expected 2 edges, got %d", len(g.Edges))
 	}
 }
+
+func TestCodeGraphAliasReexports(t *testing.T) {
+	// Skip if ast-grep not installed.
+	if _, err := findInPath("ast-grep"); err != nil {
+		t.Skip("ast-grep not installed")
+	}
+
+	dir := fixtureDir(t, "alias-reexports")
+
+	cmd := newCodeGraphCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := runCodeGraph(cmd, dir, "json", "typescript")
+	if err != nil {
+		t.Fatalf("runCodeGraph failed: %v", err)
+	}
+
+	// Parse stdout as JSON.
+	var g graph.Graph
+	if err := json.Unmarshal(stdout.Bytes(), &g); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nraw: %s", err, stdout.String())
+	}
+
+	// Build edge lookup.
+	type edgeKey struct {
+		source, target string
+	}
+	edgeAttrs := make(map[edgeKey]map[string]string)
+	for _, e := range g.Edges {
+		edgeAttrs[edgeKey{e.Source, e.Target}] = e.Attrs
+	}
+
+	// Helper to assert an edge exists with expected attributes.
+	assertEdge := func(source, target, importKind, raw string) {
+		t.Helper()
+		key := edgeKey{source, target}
+		attrs, ok := edgeAttrs[key]
+		if !ok {
+			t.Errorf("missing edge: %s -> %s", source, target)
+			return
+		}
+		if attrs["import_kind"] != importKind {
+			t.Errorf("edge %s -> %s: expected import_kind %q, got %q", source, target, importKind, attrs["import_kind"])
+		}
+		if raw != "" && attrs["raw"] != raw {
+			t.Errorf("edge %s -> %s: expected raw %q, got %q", source, target, raw, attrs["raw"])
+		}
+	}
+
+	// AC-1: Static alias import.
+	assertEdge("src/routes/dashboard.tsx", "src/utils/format.ts", "static", "@/utils/format")
+
+	// AC-1: Relative import (still works).
+	assertEdge("src/routes/dashboard.tsx", "src/components/Header.tsx", "static", "")
+
+	// AC-2: Dynamic alias import.
+	assertEdge("src/routes/dashboard.tsx", "src/services/heavy-service.ts", "dynamic", "@/services/heavy-service")
+
+	// AC-3: Re-export edges.
+	assertEdge("src/client/my-feature/index.ts", "src/client/my-feature/Widget.tsx", "reexport", "./Widget")
+	assertEdge("src/client/my-feature/index.ts", "src/client/my-feature/widget.utils.ts", "reexport", "./widget.utils")
+
+	// AC-5: Unresolved alias diagnostics on stderr.
+	stderrStr := stderr.String()
+	if !strings.Contains(stderrStr, "@/does-not-exist") {
+		t.Errorf("stderr should contain unresolved alias @/does-not-exist, got: %s", stderrStr)
+	}
+	if !strings.Contains(stderrStr, "warning") {
+		t.Errorf("stderr should contain 'warning', got: %s", stderrStr)
+	}
+	if !strings.Contains(stderrStr, "tsconfig.json") {
+		t.Errorf("stderr should contain remediation hint about tsconfig.json, got: %s", stderrStr)
+	}
+}

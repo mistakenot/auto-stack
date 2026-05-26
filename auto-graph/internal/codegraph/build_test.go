@@ -115,7 +115,7 @@ func TestBuildGraphParity(t *testing.T) {
 	requireAstGrep(t)
 	dir := fixtureDir(t, "basic-imports")
 
-	g, err := Build(dir, "typescript")
+	g, _, err := Build(dir, "typescript")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestBuildMergedMetadata(t *testing.T) {
 	requireAstGrep(t)
 	dir := fixtureDir(t, "merged-imports")
 
-	g, err := Build(dir, "typescript")
+	g, _, err := Build(dir, "typescript")
 	if err != nil {
 		t.Fatalf("Build failed: %v", err)
 	}

@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -87,11 +88,13 @@ func goSampleProjectDir() string {
 func runAutograph(t *testing.T, bin string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("autograph %v failed: %v\n%s", args, err, out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("autograph %v failed: %v\nstdout: %s\nstderr: %s", args, err, stdout.String(), stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 func TestSampleProjectJSON(t *testing.T) {

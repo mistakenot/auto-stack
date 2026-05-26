@@ -87,7 +87,7 @@ func runCodeContext(cmd *cobra.Command, dir string, tokenLimit int, files []stri
 	}
 
 	// Build the import graph.
-	g, err := codegraph.Build(projectRoot, lang)
+	g, _, err := codegraph.Build(projectRoot, lang)
 	if err != nil {
 		return &ExitError{Code: 1, Err: err}
 	}

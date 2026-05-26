@@ -66,9 +66,15 @@ func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string) error {
 	}
 
 	// Build the graph.
-	g, err := codegraph.Build(projectRoot, lang)
+	g, diags, err := codegraph.Build(projectRoot, lang)
 	if err != nil {
 		return &ExitError{Code: 1, Err: err}
+	}
+
+	// Print diagnostics for unresolved alias imports.
+	errW := cmd.ErrOrStderr()
+	for _, d := range diags {
+		fmt.Fprintf(errW, "warning: %s:%d: unresolved alias import %q (check compilerOptions.paths and baseUrl in tsconfig.json)\n", d.Source, d.Line, d.Raw)
 	}
 
 	// Output in requested format.

@@ -13,17 +13,24 @@ import (
 	"github.com/mistakenot/auto-graph/internal/scanner"
 )
 
+type Diagnostic struct {
+	Source string
+	Line   int
+	Raw    string
+}
+
 // Build constructs a file-level import graph for the given project root and
 // language. It discovers files, scans imports, resolves import paths, and
-// returns the resulting graph with merged import metadata.
-func Build(projectRoot, lang string) (*graph.Graph, error) {
+// returns the resulting graph with merged import metadata. Diagnostics are
+// returned for imports that matched an alias but could not be resolved.
+func Build(projectRoot, lang string) (*graph.Graph, []Diagnostic, error) {
 	var sc scanner.Scanner
 	var res resolver.Resolver
 
 	switch lang {
 	case "typescript":
 		if _, err := exec.LookPath("ast-grep"); err != nil {
-			return nil, fmt.Errorf("ast-grep not found: install with npm i -g @ast-grep/cli or brew install ast-grep")
+			return nil, nil, fmt.Errorf("ast-grep not found: install with npm i -g @ast-grep/cli or brew install ast-grep")
 		}
 		sc = scanner.NewTypeScriptScanner()
 		res = resolver.NewTypeScriptResolver(projectRoot)
@@ -32,24 +39,24 @@ func Build(projectRoot, lang string) (*graph.Graph, error) {
 		var goErr error
 		res, goErr = resolver.NewGoResolver(projectRoot)
 		if goErr != nil {
-			return nil, fmt.Errorf("initializing Go resolver: %w", goErr)
+			return nil, nil, fmt.Errorf("initializing Go resolver: %w", goErr)
 		}
 	default:
-		return nil, fmt.Errorf("unsupported language %q; supported: typescript, go", lang)
+		return nil, nil, fmt.Errorf("unsupported language %q; supported: typescript, go", lang)
 	}
 
 	filePaths, err := DiscoverFiles(projectRoot, lang)
 	if err != nil {
-		return nil, fmt.Errorf("discovering files: %w", err)
+		return nil, nil, fmt.Errorf("discovering files: %w", err)
 	}
 
 	matches, err := sc.Scan(projectRoot)
 	if err != nil {
-		return nil, fmt.Errorf("scanning imports: %w", err)
+		return nil, nil, fmt.Errorf("scanning imports: %w", err)
 	}
 
-	g := buildGraph(projectRoot, filePaths, matches, res, lang)
-	return g, nil
+	g, diags := buildGraph(projectRoot, filePaths, matches, res, lang)
+	return g, diags, nil
 }
 
 // DetectLanguage auto-detects the project language from config files present
@@ -138,7 +145,7 @@ func DiscoverFiles(projectRoot, lang string) ([]string, error) {
 
 // buildGraph constructs a Graph from discovered files and resolved imports.
 // It merges duplicate (source, target) edges by combining import metadata.
-func buildGraph(projectRoot string, filePaths []string, matches []scanner.ImportMatch, res resolver.Resolver, lang string) *graph.Graph {
+func buildGraph(projectRoot string, filePaths []string, matches []scanner.ImportMatch, res resolver.Resolver, lang string) (*graph.Graph, []Diagnostic) {
 	g := &graph.Graph{
 		Root: projectRoot,
 	}
@@ -173,10 +180,22 @@ func buildGraph(projectRoot string, filePaths []string, matches []scanner.Import
 	}
 	edgeMap := make(map[edgeKey]*edgeData)
 	var edgeOrder []edgeKey
+	var diags []Diagnostic
 
 	for _, m := range matches {
 		result, err := res.Resolve(m.ImportPath, m.SourceFile, projectRoot)
 		if err != nil {
+			continue
+		}
+
+		if result.MatchedAlias && result.ResolvedPath == "" {
+			sourceRel, relErr := filepath.Rel(projectRoot, m.SourceFile)
+			if relErr == nil {
+				sourceRel = filepath.ToSlash(sourceRel)
+			} else {
+				sourceRel = m.SourceFile
+			}
+			diags = append(diags, Diagnostic{Source: sourceRel, Line: m.Line, Raw: m.ImportPath})
 			continue
 		}
 
@@ -256,7 +275,7 @@ func buildGraph(projectRoot string, filePaths []string, matches []scanner.Import
 		})
 	}
 
-	return g
+	return g, diags
 }
 
 // canonicalizeKind normalizes scanner-emitted import kind strings to the
