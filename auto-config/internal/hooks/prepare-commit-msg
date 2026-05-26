@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Append Session-Id trailer to commit messages when running inside Claude Code.
+# The trailer links git commits to coding session history in auto-etl.
+
+set -euo pipefail
+
+MSG_FILE="$1"
+COMMIT_SOURCE="${2:-}"
+
+# Only modify user-initiated commits (not merges, squashes, or amends)
+case "$COMMIT_SOURCE" in
+    merge|squash) exit 0 ;;
+esac
+
+SID="${CLAUDE_CODE_SESSION_ID:-}"
+[ -z "$SID" ] && exit 0
+
+# Don't duplicate if already present
+if grep -q "^Session-Id:" "$MSG_FILE" 2>/dev/null; then
+    exit 0
+fi
+
+# Use git interpret-trailers to ensure correct blank-line separation
+git interpret-trailers --in-place --trailer "Session-Id: $SID" "$MSG_FILE"
