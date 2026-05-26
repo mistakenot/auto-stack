@@ -53,12 +53,13 @@ type candidate struct {
 func Build(opts BuildOptions) (*Pack, error) {
 	// Build adjacency maps.
 	fwd, rev := buildAdjacencyMaps(opts.Graph)
+	docFwd, _ := buildDocAdjacencyMaps(opts.Graph)
 
 	// Compute risk flags for all nodes.
 	riskFlags := computeAllRiskFlags(opts.Graph, fwd, rev)
 
 	// Collect candidates.
-	candidates := collectCandidates(opts.Seeds, fwd, rev, riskFlags, opts.Graph)
+	candidates := collectCandidates(opts.Seeds, fwd, rev, riskFlags, opts.Graph, docFwd)
 
 	// Sort candidates deterministically.
 	sortCandidates(candidates)
@@ -174,15 +175,33 @@ func buildAdjacencyMaps(g *graph.Graph) (fwd map[string][]graph.Edge, rev map[st
 	fwd = make(map[string][]graph.Edge)
 	rev = make(map[string][]graph.Edge)
 	for _, e := range g.Edges {
+		if e.Kind != graph.EdgeImport {
+			continue
+		}
 		fwd[e.Source] = append(fwd[e.Source], e)
 		rev[e.Target] = append(rev[e.Target], e)
 	}
 	return fwd, rev
 }
 
+// buildDocAdjacencyMaps creates forward and reverse adjacency maps containing
+// only doc_link edges.
+func buildDocAdjacencyMaps(g *graph.Graph) (docFwd map[string][]graph.Edge, docRev map[string][]graph.Edge) {
+	docFwd = make(map[string][]graph.Edge)
+	docRev = make(map[string][]graph.Edge)
+	for _, e := range g.Edges {
+		if e.Kind != graph.EdgeDocLink {
+			continue
+		}
+		docFwd[e.Source] = append(docFwd[e.Source], e)
+		docRev[e.Target] = append(docRev[e.Target], e)
+	}
+	return docFwd, docRev
+}
+
 // collectCandidates gathers all candidate files from the graph neighborhood
 // around the seed files, assigning roles and priorities.
-func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFlags map[string][]string, g *graph.Graph) []*candidate {
+func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFlags map[string][]string, g *graph.Graph, docFwd map[string][]graph.Edge) []*candidate {
 	seedSet := make(map[string]bool, len(seeds))
 	for _, s := range seeds {
 		seedSet[s] = true
@@ -232,6 +251,14 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 				addCandidate(e.Target, "dependency", 10, 1,
 					fmt.Sprintf("direct runtime dependency of %s", s))
 			}
+		}
+	}
+
+	// Priority 15: Docs linked from seeds.
+	for _, s := range seeds {
+		for _, e := range docFwd[s] {
+			addCandidate(e.Target, "doc", 15, 1,
+				fmt.Sprintf("doc linked from seed %s", s))
 		}
 	}
 
@@ -291,6 +318,22 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 				addCandidate(e.Source, "type_dependent", 30, 1,
 					fmt.Sprintf("direct type-only dependent of %s", s))
 			}
+		}
+	}
+
+	// Priority 35: Docs linked from non-seed dependencies.
+	// Take a snapshot of candidates collected so far (non-seed, non-doc).
+	var depPaths []string
+	for path, c := range candMap {
+		if c.role != "seed" && c.role != "doc" {
+			depPaths = append(depPaths, path)
+		}
+	}
+	sort.Strings(depPaths) // deterministic iteration
+	for _, depPath := range depPaths {
+		for _, e := range docFwd[depPath] {
+			addCandidate(e.Target, "doc", 35, 2,
+				fmt.Sprintf("doc linked from dependency %s", depPath))
 		}
 	}
 

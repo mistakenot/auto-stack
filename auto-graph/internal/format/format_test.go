@@ -175,3 +175,117 @@ func TestMermaidEmptyGraph(t *testing.T) {
 		t.Error("empty Mermaid output should start with 'graph LR'")
 	}
 }
+
+func testGraphWithDocs() *graph.Graph {
+	return &graph.Graph{
+		Root: "/project",
+		Nodes: []graph.Node{
+			{ID: "src/index.ts", Kind: graph.NodeFile, Path: "src/index.ts", Language: "typescript"},
+			{ID: "src/utils.ts", Kind: graph.NodeFile, Path: "src/utils.ts", Language: "typescript"},
+			{ID: "docs/guide.md", Kind: graph.NodeDoc, Path: "docs/guide.md"},
+		},
+		Edges: []graph.Edge{
+			{Source: "src/index.ts", Target: "src/utils.ts", Kind: graph.EdgeImport, Attrs: map[string]string{"import_kind": "static", "raw": "./utils"}},
+			{Source: "src/index.ts", Target: "docs/guide.md", Kind: graph.EdgeDocLink},
+		},
+	}
+}
+
+func TestDOTFormat_DocNodes(t *testing.T) {
+	g := testGraphWithDocs()
+
+	var buf bytes.Buffer
+	if err := WriteDOT(&buf, g); err != nil {
+		t.Fatalf("WriteDOT failed: %v", err)
+	}
+
+	output := buf.String()
+
+	// Doc node should have shape=note.
+	if !strings.Contains(output, `"docs/guide.md" [shape=note]`) {
+		t.Errorf("DOT output missing doc node declaration with [shape=note].\nOutput:\n%s", output)
+	}
+
+	// Doc edge should have style=dashed.
+	if !strings.Contains(output, `"src/index.ts" -> "docs/guide.md" [style=dashed]`) {
+		t.Errorf("DOT output missing dashed doc edge.\nOutput:\n%s", output)
+	}
+
+	// Import edge should NOT have style=dashed.
+	if !strings.Contains(output, `"src/index.ts" -> "src/utils.ts";`) {
+		t.Errorf("DOT output missing plain import edge.\nOutput:\n%s", output)
+	}
+}
+
+func TestMermaidFormat_DocNodes(t *testing.T) {
+	g := testGraphWithDocs()
+
+	var buf bytes.Buffer
+	if err := WriteMermaid(&buf, g); err != nil {
+		t.Fatalf("WriteMermaid failed: %v", err)
+	}
+
+	output := buf.String()
+
+	// Doc node should use hexagon syntax {{}}.
+	if !strings.Contains(output, "{{docs/guide.md}}") {
+		t.Errorf("Mermaid output missing doc node with hexagon syntax.\nOutput:\n%s", output)
+	}
+
+	// Doc edge should use dotted arrow -.->
+	if !strings.Contains(output, "-.->") {
+		t.Errorf("Mermaid output missing dotted arrow for doc edge.\nOutput:\n%s", output)
+	}
+
+	// Import edge should use solid arrow -->
+	if !strings.Contains(output, "-->") {
+		t.Errorf("Mermaid output missing solid arrow for import edge.\nOutput:\n%s", output)
+	}
+
+	// File nodes should use rectangle syntax [].
+	if !strings.Contains(output, "[src/index.ts]") {
+		t.Errorf("Mermaid output missing file node with rectangle syntax.\nOutput:\n%s", output)
+	}
+}
+
+func TestJSONFormat_DocNodes(t *testing.T) {
+	g := testGraphWithDocs()
+
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, g); err != nil {
+		t.Fatalf("WriteJSON failed: %v", err)
+	}
+
+	var parsed graph.Graph
+	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+
+	// Verify doc node kind.
+	var foundDocNode bool
+	for _, n := range parsed.Nodes {
+		if n.ID == "docs/guide.md" {
+			foundDocNode = true
+			if n.Kind != graph.NodeDoc {
+				t.Errorf("expected doc node kind %q, got %q", graph.NodeDoc, n.Kind)
+			}
+		}
+	}
+	if !foundDocNode {
+		t.Error("expected docs/guide.md node in JSON output")
+	}
+
+	// Verify doc_link edge kind.
+	var foundDocEdge bool
+	for _, e := range parsed.Edges {
+		if e.Target == "docs/guide.md" {
+			foundDocEdge = true
+			if e.Kind != graph.EdgeDocLink {
+				t.Errorf("expected edge kind %q, got %q", graph.EdgeDocLink, e.Kind)
+			}
+		}
+	}
+	if !foundDocEdge {
+		t.Error("expected doc_link edge in JSON output")
+	}
+}
