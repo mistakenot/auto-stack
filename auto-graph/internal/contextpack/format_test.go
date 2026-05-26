@@ -257,6 +257,32 @@ func TestJSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMarkdownBacktickFence(t *testing.T) {
+	p := &Pack{
+		ProjectRoot:     "/tmp/project",
+		TokenLimit:      5000,
+		EstimatedTokens: 200,
+		SeedFiles:       []string{"docs/guide.md"},
+		Files: []FileEntry{
+			{
+				Path:            "docs/guide.md",
+				Role:            "doc",
+				Reason:          "doc linked from seed",
+				EstimatedTokens: 200,
+				Content:         "# Guide\n\nExample:\n\n```go\nfmt.Println(\"hello\")\n```\n",
+			},
+		},
+	}
+	md := RenderMarkdown(p)
+
+	if !strings.Contains(md, "````markdown") {
+		t.Error("outer fence should use 4 backticks when content has triple backticks")
+	}
+	if !strings.Contains(md, "````\n\n") {
+		t.Error("closing fence should use 4 backticks")
+	}
+}
+
 func TestMarkdownStableOutput(t *testing.T) {
 	p := newTestPack()
 

@@ -51,12 +51,14 @@ func RenderMarkdown(p *Pack) string {
 			}
 			b.WriteString("\n")
 			lang := inferFenceLanguage(f.Path)
-			b.WriteString(fmt.Sprintf("```%s\n", lang))
+			fence := fenceForContent(f.Content)
+			b.WriteString(fmt.Sprintf("%s%s\n", fence, lang))
 			b.WriteString(f.Content)
 			if !strings.HasSuffix(f.Content, "\n") {
 				b.WriteString("\n")
 			}
-			b.WriteString("```\n\n")
+			b.WriteString(fence)
+			b.WriteString("\n\n")
 		}
 	}
 
@@ -78,6 +80,29 @@ func MarkdownEstimator() FormatEstimator {
 		rendered := RenderMarkdown(p)
 		return EstimateTokens(rendered)
 	}
+}
+
+// fenceForContent returns a backtick fence string that won't collide with
+// backtick runs inside content. Per CommonMark, the closing fence must be at
+// least as long as the opening fence, so we use max(3, longest_run+1).
+func fenceForContent(content string) string {
+	maxRun := 0
+	cur := 0
+	for _, ch := range content {
+		if ch == '`' {
+			cur++
+			if cur > maxRun {
+				maxRun = cur
+			}
+		} else {
+			cur = 0
+		}
+	}
+	n := 3
+	if maxRun >= 3 {
+		n = maxRun + 1
+	}
+	return strings.Repeat("`", n)
 }
 
 // inferFenceLanguage infers the fenced code block language from a file path.
