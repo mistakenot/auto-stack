@@ -3,6 +3,7 @@ package git
 import (
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -50,26 +51,22 @@ func LinkSessionIDs(commits []model.Commit, messagesDir string, repoRemoteNormal
 		return nil
 	}
 
-	// Discover messages parquet files
-	pattern := filepath.Join(messagesDir, "**", "*.parquet")
-	files, err := filepath.Glob(pattern)
-	if err != nil {
-		return err
-	}
-	// Also try flat directory
-	flatPattern := filepath.Join(messagesDir, "*.parquet")
-	flatFiles, err := filepath.Glob(flatPattern)
-	if err != nil {
-		return err
-	}
-	// Merge, dedup
-	seen := make(map[string]bool)
+	// Discover messages parquet files (recursive — messages are partitioned by year=YYYY/week=WW)
 	var allFiles []string
-	for _, f := range append(files, flatFiles...) {
-		if !seen[f] {
-			seen[f] = true
-			allFiles = append(allFiles, f)
+	err := filepath.WalkDir(messagesDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return filepath.SkipAll
+			}
+			return err
 		}
+		if !d.IsDir() && strings.HasSuffix(path, ".parquet") {
+			allFiles = append(allFiles, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
 	if len(allFiles) == 0 {
@@ -88,7 +85,8 @@ func LinkSessionIDs(commits []model.Commit, messagesDir string, repoRemoteNormal
 			if !isCommitCommand(row.BashCommand) {
 				continue // AC-3: only commit-creating commands
 			}
-			if repoRemoteNormalized != "" && row.GitRemote != "" && row.GitRemote != repoRemoteNormalized {
+			if repoRemoteNormalized != "" && row.GitRemote != "" &&
+				NormalizeRemoteURL(row.GitRemote) != repoRemoteNormalized {
 				continue // Repo scoping
 			}
 			matches := commitOutputRe.FindAllStringSubmatch(row.Content, -1)

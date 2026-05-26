@@ -28,9 +28,9 @@ func newInitCmd(application *app.App) *cobra.Command {
 }
 
 func initProject(application *app.App) error {
-	out, err := exec.Command("git", "rev-parse", "--git-dir").Output()
+	out, err := exec.Command("git", "rev-parse", "--git-common-dir").Output()
 	if err != nil {
-		return fmt.Errorf("not a git repository (git rev-parse --git-dir failed): %w", err)
+		return fmt.Errorf("not a git repository (git rev-parse --git-common-dir failed): %w", err)
 	}
 	gitDir := strings.TrimSpace(string(out))
 

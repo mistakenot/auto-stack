@@ -365,3 +365,63 @@ func TestLinkSessionIDs_CherryPickCommand(t *testing.T) {
 		t.Errorf("expected session-cherry, got %q", commits[0].SessionID)
 	}
 }
+
+func TestLinkSessionIDs_RawRemoteNormalized(t *testing.T) {
+	// row.GitRemote is raw SSH form, repoRemoteNormalized is the HTTPS-normalized
+	// form from NormalizeRemoteURL. Both should match after normalizing row.GitRemote.
+	dir := t.TempDir()
+	msgDir := filepath.Join(dir, "messages")
+	writeTestParquet(t, filepath.Join(msgDir, "test.parquet"), []messageRow{
+		{
+			SessionID:   "session-raw",
+			BashCommand: "git commit -m 'test'",
+			Content:     "[main abcdef1] test commit",
+			GitRemote:   "git@github.com:example/repo.git",
+		},
+	})
+
+	commits := []model.Commit{
+		{
+			ID:     "repoid-abcdef1234567890abcdef1234567890abcdef12",
+			RepoID: "repoid",
+		},
+	}
+
+	err := LinkSessionIDs(commits, msgDir, "https://github.com/example/repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if commits[0].SessionID != "session-raw" {
+		t.Errorf("expected session-raw, got %q", commits[0].SessionID)
+	}
+}
+
+func TestLinkSessionIDs_NestedPartitions(t *testing.T) {
+	// Messages are partitioned as year=YYYY/week=WW/messages.parquet.
+	// WalkDir must find files in nested subdirectories.
+	dir := t.TempDir()
+	msgDir := filepath.Join(dir, "messages")
+	writeTestParquet(t, filepath.Join(msgDir, "year=2026", "week=21", "messages.parquet"), []messageRow{
+		{
+			SessionID:   "session-nested",
+			BashCommand: "git commit -m 'nested'",
+			Content:     "[main abcdef1] nested commit",
+			GitRemote:   "github.com/example/repo",
+		},
+	})
+
+	commits := []model.Commit{
+		{
+			ID:     "repoid-abcdef1234567890abcdef1234567890abcdef12",
+			RepoID: "repoid",
+		},
+	}
+
+	err := LinkSessionIDs(commits, msgDir, "github.com/example/repo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if commits[0].SessionID != "session-nested" {
+		t.Errorf("expected session-nested, got %q", commits[0].SessionID)
+	}
+}
