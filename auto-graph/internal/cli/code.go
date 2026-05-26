@@ -11,6 +11,7 @@ func newCodeCmd() *cobra.Command {
 	}
 
 	codeCmd.AddCommand(newCodeGraphCmd())
+	codeCmd.AddCommand(newCodeContextCmd())
 
 	return codeCmd
 }
