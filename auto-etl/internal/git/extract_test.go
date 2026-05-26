@@ -573,6 +573,98 @@ func TestNormalizeWhitespace(t *testing.T) {
 	}
 }
 
+func TestExtractSessionID(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "with Session-Id trailer",
+			input:    `{"Session-Id":["550e8400-e29b-41d4-a716-446655440000"]}`,
+			expected: "550e8400-e29b-41d4-a716-446655440000",
+		},
+		{
+			name:     "empty trailers",
+			input:    "{}",
+			expected: "",
+		},
+		{
+			name:     "multiple Session-Id values returns first",
+			input:    `{"Session-Id":["first-uuid","second-uuid"]}`,
+			expected: "first-uuid",
+		},
+		{
+			name:     "invalid JSON",
+			input:    "not json",
+			expected: "",
+		},
+		{
+			name:     "other trailers but no Session-Id",
+			input:    `{"Co-Authored-By":["Alice <alice@example.com>"]}`,
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractSessionID(tt.input)
+			if got != tt.expected {
+				t.Errorf("extractSessionID(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseCommitLogSessionID(t *testing.T) {
+	// Commit with Session-Id trailer.
+	recordWithSession := strings.Join([]string{
+		"aaaa1111bbbb2222cccc3333dddd4444eeee5555", // SHA
+		"aaaa1111",                                 // short SHA
+		"tttt1111bbbb2222cccc3333dddd4444eeee5555", // tree SHA
+		"Alice",                                    // author name
+		"alice@example.com",                        // author email
+		"2024-05-25T12:30:00+00:00",                // author date
+		"Bob",                                      // committer name
+		"bob@example.com",                          // committer email
+		"2024-05-25T12:35:00+00:00",                // committer date
+		"pppp1111bbbb2222cccc3333dddd4444eeee5555",  // parents
+		"feat: add something\n\nThis is the body.\n\nSession-Id: test-uuid-123", // body with Session-Id trailer
+	}, "\x00")
+
+	// Commit without Session-Id trailer.
+	recordWithout := strings.Join([]string{
+		"bbbb2222cccc3333dddd4444eeee5555ffff6666", // SHA
+		"bbbb2222",                                 // short SHA
+		"uuuu2222cccc3333dddd4444eeee5555ffff6666", // tree SHA
+		"Charlie",                                  // author name
+		"charlie@example.com",                      // author email
+		"2024-05-25T13:00:00+00:00",                // author date
+		"Charlie",                                  // committer name
+		"charlie@example.com",                      // committer email
+		"2024-05-25T13:00:00+00:00",                // committer date
+		"aaaa1111bbbb2222cccc3333dddd4444eeee5555",  // parents
+		"fix: plain commit with no trailers",        // body without trailers
+	}, "\x00")
+
+	output := recordWithSession + "\x00\x00" + recordWithout + "\x00\x00"
+	commits := parseCommitLog(output, "repo1", "run1", 1716681600000)
+
+	if len(commits) != 2 {
+		t.Fatalf("expected 2 commits, got %d", len(commits))
+	}
+
+	// AC-1: Commit with Session-Id trailer should have SessionID populated.
+	if commits[0].SessionID != "test-uuid-123" {
+		t.Errorf("expected SessionID 'test-uuid-123', got %q", commits[0].SessionID)
+	}
+
+	// AC-5: Commit without Session-Id trailer should have empty SessionID.
+	if commits[1].SessionID != "" {
+		t.Errorf("expected empty SessionID, got %q", commits[1].SessionID)
+	}
+}
+
 func TestParseCommitLogMultipleRecords(t *testing.T) {
 	makeRecord := func(sha, msg string) string {
 		return strings.Join([]string{

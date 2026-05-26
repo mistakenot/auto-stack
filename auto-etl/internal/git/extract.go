@@ -415,6 +415,7 @@ func parseCommitLog(output string, repoID, etlRunID string, collectedAt int64) [
 
 		// Parse trailers.
 		trailersJSON := parseTrailers(messageBody)
+		sessionID := extractSessionID(trailersJSON)
 
 		// Partition fields from author date.
 		var year, month int32
@@ -451,6 +452,7 @@ func parseCommitLog(output string, repoID, etlRunID string, collectedAt int64) [
 			ParentCount:         parentCount,
 			ParentSHAs:          parentSHAs,
 			TrailersJSON:        trailersJSON,
+			SessionID:           sessionID,
 			PatchID:             "", // Left empty for v1
 			ETLRunID:            etlRunID,
 			CollectedAt:         collectedAt,
@@ -785,6 +787,19 @@ func parseTrailers(messageBody string) string {
 		return "{}"
 	}
 	return string(data)
+}
+
+// extractSessionID extracts the Session-Id trailer value from trailers JSON.
+// Returns the first Session-Id value if present, or empty string.
+func extractSessionID(trailersJSON string) string {
+	var trailers map[string][]string
+	if err := json.Unmarshal([]byte(trailersJSON), &trailers); err != nil {
+		return ""
+	}
+	if vals, ok := trailers["Session-Id"]; ok && len(vals) > 0 {
+		return vals[0]
+	}
+	return ""
 }
 
 // computeHunkHash returns a SHA256 hex hash of whitespace-normalized hunk text.

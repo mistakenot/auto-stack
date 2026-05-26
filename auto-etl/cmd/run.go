@@ -417,6 +417,11 @@ func runGitETL(hostID string, remotes map[string]string, explicitPaths []string,
 			continue
 		}
 
+		messagesDir := filepath.Join(outputDir, "messages")
+		if err := gitextract.LinkSessionIDs(result.Commits, messagesDir, normalized); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: session link fallback: %v\n", err)
+		}
+
 		if err := writer.WriteGit(outputDir, result); err != nil {
 			return fmt.Errorf("write git %s: %w", repo.Path, err)
 		}

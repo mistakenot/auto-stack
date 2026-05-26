@@ -72,6 +72,7 @@ type Commit struct {
 
 	// Metadata
 	TrailersJSON string `parquet:"trailers_json"`
+	SessionID    string `parquet:"session_id,dict"`
 	PatchID      string `parquet:"patch_id"`
 
 	ETLRunID      string `parquet:"etl_run_id,dict"`
