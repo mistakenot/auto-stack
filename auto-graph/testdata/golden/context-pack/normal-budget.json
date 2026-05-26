@@ -1,0 +1,357 @@
+{
+  "project_root": "/home/vscode/src/auto-stack-task-004/auto-graph/testdata/fixtures/context-pack",
+  "token_limit": 12000,
+  "estimated_tokens": 3085,
+  "omitted_tokens": 0,
+  "seed_files": [
+    "src/App.tsx"
+  ],
+  "reading_order": [
+    {
+      "path": "src/App.tsx",
+      "reason": "seed file"
+    },
+    {
+      "path": "src/components/UserProfile.tsx",
+      "reason": "direct runtime dependency of src/App.tsx"
+    },
+    {
+      "path": "src/hooks/useAuth.ts",
+      "reason": "direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags"
+    },
+    {
+      "path": "src/pages/HomePage.tsx",
+      "reason": "direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags"
+    },
+    {
+      "path": "src/types/config.ts",
+      "reason": "direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags"
+    },
+    {
+      "path": "src/utils/polyfills.ts",
+      "reason": "direct runtime dependency of src/App.tsx"
+    },
+    {
+      "path": "src/__tests__/App.test.tsx",
+      "reason": "direct runtime dependent of src/App.tsx; direct neighbor of src/App.tsx with risk flags"
+    },
+    {
+      "path": "src/index.ts",
+      "reason": "direct runtime dependent of src/App.tsx; direct neighbor of src/App.tsx with risk flags"
+    },
+    {
+      "path": "src/services/userService.ts",
+      "reason": "second-hop runtime dependency via src/hooks/useAuth.ts"
+    },
+    {
+      "path": "src/types/user.ts",
+      "reason": "second-hop runtime dependency via src/hooks/useAuth.ts; second-hop runtime dependency via src/components/UserProfile.tsx"
+    },
+    {
+      "path": "src/utils/format.ts",
+      "reason": "second-hop runtime dependency via src/pages/HomePage.tsx"
+    }
+  ],
+  "files": [
+    {
+      "path": "src/App.tsx",
+      "role": "seed",
+      "reason": "seed file",
+      "estimated_tokens": 99,
+      "flags": [
+        "entrypoint_like",
+        "high_fan_out"
+      ],
+      "content": "import React from 'react';\nimport { useAuth } from './hooks/useAuth';\nimport { UserProfile } from './components/UserProfile';\nimport { HomePage } from './pages/HomePage';\nimport type { AppConfig } from './types/config';\nimport './utils/polyfills';\n\nexport function App() {\n  const { user } = useAuth();\n  return (\n    <div>\n      <UserProfile user={user} />\n      <HomePage />\n    </div>\n  );\n}\n"
+    },
+    {
+      "path": "src/components/UserProfile.tsx",
+      "role": "dependency",
+      "reason": "direct runtime dependency of src/App.tsx",
+      "estimated_tokens": 53,
+      "content": "import { useAuth } from '../hooks/useAuth';\nimport type { User } from '../types/user';\n\nexport function UserProfile({ user }: { user: User | null }) {\n  if (!user) return null;\n  return <div>{user.name}</div>;\n}\n"
+    },
+    {
+      "path": "src/hooks/useAuth.ts",
+      "role": "dependency",
+      "reason": "direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags",
+      "estimated_tokens": 52,
+      "flags": [
+        "high_fan_in"
+      ],
+      "content": "import { fetchUser } from '../services/userService';\nimport type { User } from '../types/user';\n\nexport function useAuth(): { user: User | null } {\n  const user = fetchUser('current');\n  return { user };\n}\n"
+    },
+    {
+      "path": "src/pages/HomePage.tsx",
+      "role": "dependency",
+      "reason": "direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags",
+      "estimated_tokens": 63,
+      "flags": [
+        "entrypoint_like"
+      ],
+      "content": "import { useAuth } from '../hooks/useAuth';\nimport { formatDate } from '../utils/format';\n\nexport function HomePage() {\n  const { user } = useAuth();\n  const today = formatDate(new Date());\n  return <div>Welcome {user?.name}, today is {today}</div>;\n}\n"
+    },
+    {
+      "path": "src/types/config.ts",
+      "role": "dependency",
+      "reason": "direct runtime dependency of src/App.tsx; direct neighbor of src/App.tsx with risk flags",
+      "estimated_tokens": 36,
+      "flags": [
+        "reexport"
+      ],
+      "content": "export interface AppConfig {\n  apiUrl: string;\n  debug: boolean;\n}\n\nexport interface ThemeConfig {\n  primary: string;\n  secondary: string;\n}\n"
+    },
+    {
+      "path": "src/utils/polyfills.ts",
+      "role": "dependency",
+      "reason": "direct runtime dependency of src/App.tsx",
+      "estimated_tokens": 48,
+      "content": "// Side-effect import: sets up global polyfills\nif (typeof globalThis.structuredClone === 'undefined') {\n  globalThis.structuredClone = (obj: unknown) => JSON.parse(JSON.stringify(obj));\n}\n"
+    },
+    {
+      "path": "src/__tests__/App.test.tsx",
+      "role": "dependent",
+      "reason": "direct runtime dependent of src/App.tsx; direct neighbor of src/App.tsx with risk flags",
+      "estimated_tokens": 34,
+      "flags": [
+        "test_like"
+      ],
+      "content": "import { App } from '../App';\n\ndescribe('App', () => {\n  it('renders without crashing', () => {\n    // test implementation\n  });\n});\n"
+    },
+    {
+      "path": "src/index.ts",
+      "role": "dependent",
+      "reason": "direct runtime dependent of src/App.tsx; direct neighbor of src/App.tsx with risk flags",
+      "estimated_tokens": 86,
+      "flags": [
+        "entrypoint_like",
+        "high_fan_out"
+      ],
+      "content": "import { App } from './App';\nimport { useAuth } from './hooks/useAuth';\nimport { UserProfile } from './components/UserProfile';\nimport { Dashboard } from './components/Dashboard';\nimport { Header } from './components/Header';\nimport { formatDate } from './utils/format';\n\nexport { App, useAuth, UserProfile, Dashboard, Header, formatDate };\n"
+    },
+    {
+      "path": "src/services/userService.ts",
+      "role": "transitive_neighbor",
+      "reason": "second-hop runtime dependency via src/hooks/useAuth.ts",
+      "estimated_tokens": 66,
+      "content": "import type { User } from '../types/user';\n\nexport async function fetchUser(id: string): Promise<User> {\n  return { id, name: 'Test User', email: 'test@example.com' };\n}\n\nexport async function updateUser(user: User): Promise<void> {\n  // update user in database\n}\n"
+    },
+    {
+      "path": "src/types/user.ts",
+      "role": "transitive_neighbor",
+      "reason": "second-hop runtime dependency via src/hooks/useAuth.ts; second-hop runtime dependency via src/components/UserProfile.tsx",
+      "estimated_tokens": 37,
+      "flags": [
+        "high_fan_in",
+        "reexport"
+      ],
+      "content": "export interface User {\n  id: string;\n  name: string;\n  email: string;\n}\n\nexport interface UserRole {\n  role: string;\n  permissions: string[];\n}\n"
+    },
+    {
+      "path": "src/utils/format.ts",
+      "role": "transitive_neighbor",
+      "reason": "second-hop runtime dependency via src/pages/HomePage.tsx",
+      "estimated_tokens": 48,
+      "flags": [
+        "high_fan_in"
+      ],
+      "content": "export function formatDate(date: Date): string {\n  return date.toISOString().split('T')[0];\n}\n\nexport function formatName(first: string, last: string): string {\n  return `${first} ${last}`;\n}\n"
+    }
+  ],
+  "relationships": [
+    {
+      "source": "src/App.tsx",
+      "target": "src/components/UserProfile.tsx",
+      "direction": "forward",
+      "primary_import_kind": "static",
+      "import_kinds": [
+        "static"
+      ],
+      "distance": 1,
+      "reason": "src/App.tsx imports src/components/UserProfile.tsx"
+    },
+    {
+      "source": "src/App.tsx",
+      "target": "src/hooks/useAuth.ts",
+      "direction": "forward",
+      "primary_import_kind": "static",
+      "import_kinds": [
+        "static"
+      ],
+      "distance": 1,
+      "reason": "src/App.tsx imports src/hooks/useAuth.ts"
+    },
+    {
+      "source": "src/App.tsx",
+      "target": "src/pages/HomePage.tsx",
+      "direction": "forward",
+      "primary_import_kind": "static",
+      "import_kinds": [
+        "static"
+      ],
+      "distance": 1,
+      "reason": "src/App.tsx imports src/pages/HomePage.tsx"
+    },
+    {
+      "source": "src/App.tsx",
+      "target": "src/types/config.ts",
+      "direction": "forward",
+      "primary_import_kind": "type",
+      "import_kinds": [
+        "type"
+      ],
+      "distance": 1,
+      "reason": "src/App.tsx imports src/types/config.ts"
+    },
+    {
+      "source": "src/App.tsx",
+      "target": "src/utils/polyfills.ts",
+      "direction": "forward",
+      "primary_import_kind": "side-effect",
+      "import_kinds": [
+        "side-effect"
+      ],
+      "distance": 1,
+      "reason": "src/App.tsx imports src/utils/polyfills.ts"
+    },
+    {
+      "source": "src/__tests__/App.test.tsx",
+      "target": "src/App.tsx",
+      "direction": "forward",
+      "primary_import_kind": "static",
+      "import_kinds": [
+        "static"
+      ],
+      "distance": 1,
+      "reason": "src/__tests__/App.test.tsx imports src/App.tsx"
+    },
+    {
+      "source": "src/components/UserProfile.tsx",
+      "target": "src/hooks/useAuth.ts",
+      "direction": "forward",
+      "primary_import_kind": "static",
+      "import_kinds": [
+        "static"
+      ],
+      "distance": 1,
+      "reason": "src/components/UserProfile.tsx imports src/hooks/useAuth.ts"
+    },
+    {
+      "source": "src/components/UserProfile.tsx",
+      "target": "src/types/user.ts",
+      "direction": "forward",
+      "primary_import_kind": "type",
+      "import_kinds": [
+        "type"
+      ],
+      "distance": 1,
+      "reason": "src/components/UserProfile.tsx imports src/types/user.ts"
+    },
+    {
+      "source": "src/hooks/useAuth.ts",
+      "target": "src/services/userService.ts",
+      "direction": "forward",
+      "primary_import_kind": "static",
+      "import_kinds": [
+        "static"
+      ],
+      "distance": 1,
+      "reason": "src/hooks/useAuth.ts imports src/services/userService.ts"
+    },
+    {
+      "source": "src/hooks/useAuth.ts",
+      "target": "src/types/user.ts",
+      "direction": "forward",
+      "primary_import_kind": "type",
+      "import_kinds": [
+        "type"
+      ],
+      "distance": 1,
+      "reason": "src/hooks/useAuth.ts imports src/types/user.ts"
+    },
+    {
+      "source": "src/index.ts",
+      "target": "src/App.tsx",
+      "direction": "forward",
+      "primary_import_kind": "static",
+      "import_kinds": [
+        "static"
+      ],
+      "distance": 1,
+      "reason": "src/index.ts imports src/App.tsx"
+    },
+    {
+      "source": "src/index.ts",
+      "target": "src/components/UserProfile.tsx",
+      "direction": "forward",
+      "primary_import_kind": "static",
+      "import_kinds": [
+        "static"
+      ],
+      "distance": 1,
+      "reason": "src/index.ts imports src/components/UserProfile.tsx"
+    },
+    {
+      "source": "src/index.ts",
+      "target": "src/hooks/useAuth.ts",
+      "direction": "forward",
+      "primary_import_kind": "static",
+      "import_kinds": [
+        "static"
+      ],
+      "distance": 1,
+      "reason": "src/index.ts imports src/hooks/useAuth.ts"
+    },
+    {
+      "source": "src/index.ts",
+      "target": "src/utils/format.ts",
+      "direction": "forward",
+      "primary_import_kind": "static",
+      "import_kinds": [
+        "static"
+      ],
+      "distance": 1,
+      "reason": "src/index.ts imports src/utils/format.ts"
+    },
+    {
+      "source": "src/pages/HomePage.tsx",
+      "target": "src/hooks/useAuth.ts",
+      "direction": "forward",
+      "primary_import_kind": "static",
+      "import_kinds": [
+        "static"
+      ],
+      "distance": 1,
+      "reason": "src/pages/HomePage.tsx imports src/hooks/useAuth.ts"
+    },
+    {
+      "source": "src/pages/HomePage.tsx",
+      "target": "src/utils/format.ts",
+      "direction": "forward",
+      "primary_import_kind": "static",
+      "import_kinds": [
+        "static"
+      ],
+      "distance": 1,
+      "reason": "src/pages/HomePage.tsx imports src/utils/format.ts"
+    },
+    {
+      "source": "src/services/userService.ts",
+      "target": "src/types/user.ts",
+      "direction": "forward",
+      "primary_import_kind": "type",
+      "import_kinds": [
+        "type"
+      ],
+      "distance": 1,
+      "reason": "src/services/userService.ts imports src/types/user.ts"
+    }
+  ],
+  "guidance": {
+    "watch": [
+      "Changing src/App.tsx may affect src/__tests__/App.test.tsx.",
+      "Changing src/App.tsx may affect src/index.ts."
+    ]
+  },
+  "omitted_candidates": null
+}

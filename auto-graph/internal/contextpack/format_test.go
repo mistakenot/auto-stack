@@ -2,6 +2,9 @@ package contextpack
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -355,5 +358,121 @@ func TestJSONEmptyPack(t *testing.T) {
 	var parsed map[string]interface{}
 	if err := json.Unmarshal([]byte(output), &parsed); err != nil {
 		t.Fatalf("empty pack JSON is not parseable: %v", err)
+	}
+}
+
+// goldenDir returns the path to testdata/golden/context-pack relative to this
+// test file's location.
+func goldenDir() string {
+	_, thisFile, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(thisFile), "..", "..", "testdata", "golden", "context-pack")
+}
+
+func TestGolden_NormalBudgetMarkdown(t *testing.T) {
+	path := filepath.Join(goldenDir(), "normal-budget.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading golden file: %v", err)
+	}
+	md := string(data)
+
+	if !strings.HasPrefix(md, "# Context Pack\n") {
+		t.Error("golden markdown should start with '# Context Pack'")
+	}
+	if !strings.Contains(md, "Seeds: src/App.tsx") {
+		t.Error("golden markdown should contain seeds line")
+	}
+	if !strings.Contains(md, "## Files") {
+		t.Error("golden markdown should contain '## Files' section")
+	}
+	// Normal budget should have 0 omitted tokens.
+	if !strings.Contains(md, "Omitted: 0 tokens") {
+		t.Error("normal budget golden should have 'Omitted: 0 tokens'")
+	}
+}
+
+func TestGolden_NormalBudgetJSON(t *testing.T) {
+	path := filepath.Join(goldenDir(), "normal-budget.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading golden file: %v", err)
+	}
+
+	var pack Pack
+	if err := json.Unmarshal(data, &pack); err != nil {
+		t.Fatalf("parsing golden JSON: %v", err)
+	}
+
+	// Normal budget: estimated_tokens <= token_limit.
+	if pack.EstimatedTokens > pack.TokenLimit {
+		t.Errorf("normal budget: estimated_tokens (%d) should be <= token_limit (%d)",
+			pack.EstimatedTokens, pack.TokenLimit)
+	}
+
+	// Should have files.
+	if len(pack.Files) == 0 {
+		t.Error("normal budget JSON should have files")
+	}
+
+	// Should have no omitted candidates at normal budget.
+	if len(pack.OmittedCandidates) != 0 {
+		t.Errorf("normal budget should have 0 omitted candidates, got %d", len(pack.OmittedCandidates))
+	}
+
+	// Seed file should be first.
+	if len(pack.Files) > 0 && pack.Files[0].Role != "seed" {
+		t.Errorf("first file should be seed, got role %q", pack.Files[0].Role)
+	}
+}
+
+func TestGolden_ConstrainedBudgetMarkdown(t *testing.T) {
+	path := filepath.Join(goldenDir(), "constrained-budget.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading golden file: %v", err)
+	}
+	md := string(data)
+
+	if !strings.HasPrefix(md, "# Context Pack\n") {
+		t.Error("golden markdown should start with '# Context Pack'")
+	}
+	// Constrained budget should have omitted files.
+	if !strings.Contains(md, "## Omitted") {
+		t.Error("constrained budget golden should have '## Omitted' section")
+	}
+	// Should report non-zero omitted tokens.
+	if strings.Contains(md, "Omitted: 0 tokens") {
+		t.Error("constrained budget golden should have non-zero omitted tokens")
+	}
+}
+
+func TestGolden_ConstrainedBudgetJSON(t *testing.T) {
+	path := filepath.Join(goldenDir(), "constrained-budget.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading golden file: %v", err)
+	}
+
+	var pack Pack
+	if err := json.Unmarshal(data, &pack); err != nil {
+		t.Fatalf("parsing golden JSON: %v", err)
+	}
+
+	// Constrained budget should have omitted candidates.
+	if len(pack.OmittedCandidates) == 0 {
+		t.Error("constrained budget should have omitted candidates")
+	}
+
+	// Omitted tokens should be > 0.
+	if pack.OmittedTokens == 0 {
+		t.Error("constrained budget should have non-zero omitted tokens")
+	}
+
+	// Seed file should still be present.
+	if len(pack.Files) == 0 {
+		t.Fatal("constrained budget should have at least the seed file")
+	}
+	if pack.Files[0].Role != "seed" {
+		t.Errorf("first file should be seed, got role %q", pack.Files[0].Role)
 	}
 }

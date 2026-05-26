@@ -32,5 +32,7 @@ go vet ./...
 
 - `cmd/autograph/` — entry point
 - `internal/app/` — runtime context (stdout, stderr, cwd)
-- `internal/cli/` — Cobra commands (init, doctor, quickstart, docs, update, code graph)
+- `internal/cli/` — Cobra commands (init, doctor, quickstart, docs, update, code graph, code context)
+- `internal/codegraph/` — reusable graph construction (Build, DetectLanguage, DiscoverFiles)
 - `internal/config/` — settings loading and validation (~/.auto/graph/settings.json)
+- `internal/contextpack/` — context pack model, builder, validation, token estimation, and markdown/JSON renderers

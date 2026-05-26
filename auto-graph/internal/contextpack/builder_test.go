@@ -1,6 +1,7 @@
 package contextpack
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -931,6 +932,74 @@ func TestCandidate_PriorityOrder(t *testing.T) {
 		if pack.Files[i].Role != expected.role {
 			t.Errorf("position %d (%s): expected role %s, got %s", i, pack.Files[i].Path, expected.role, pack.Files[i].Role)
 		}
+	}
+}
+
+func TestBuild_MarkdownBudgetCompliance(t *testing.T) {
+	files := map[string]string{
+		"src/App.tsx":      "import { useAuth } from './hooks/useAuth';",
+		"src/hooks/useAuth.ts": "export function useAuth() {}",
+		"src/utils/helper.ts":  "export function helper() {}",
+	}
+	edges := []graph.Edge{
+		{Source: "src/App.tsx", Target: "src/hooks/useAuth.ts", Kind: graph.EdgeImport, Attrs: map[string]string{"import_kind": "static", "import_kinds": "static"}},
+		{Source: "src/App.tsx", Target: "src/utils/helper.ts", Kind: graph.EdgeImport, Attrs: map[string]string{"import_kind": "static", "import_kinds": "static"}},
+	}
+	dir, g := setupBuilderFixture(t, files, edges)
+
+	pack, err := Build(BuildOptions{
+		ProjectRoot: dir,
+		Seeds:       []string{"src/App.tsx"},
+		TokenLimit:  10000,
+		Graph:       g,
+		Estimator:   MarkdownEstimator(),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// With a generous budget, estimated_tokens must be <= token_limit.
+	if pack.EstimatedTokens > pack.TokenLimit {
+		t.Errorf("estimated_tokens (%d) should be <= token_limit (%d)",
+			pack.EstimatedTokens, pack.TokenLimit)
+	}
+}
+
+func TestBuild_JSONBudgetCompliance(t *testing.T) {
+	files := map[string]string{
+		"src/App.tsx":      "import { useAuth } from './hooks/useAuth';",
+		"src/hooks/useAuth.ts": "export function useAuth() {}",
+	}
+	edges := []graph.Edge{
+		{Source: "src/App.tsx", Target: "src/hooks/useAuth.ts", Kind: graph.EdgeImport, Attrs: map[string]string{"import_kind": "static", "import_kinds": "static"}},
+	}
+	dir, g := setupBuilderFixture(t, files, edges)
+
+	pack, err := Build(BuildOptions{
+		ProjectRoot: dir,
+		Seeds:       []string{"src/App.tsx"},
+		TokenLimit:  10000,
+		Graph:       g,
+		Estimator:   JSONEstimator(),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// With a generous budget, estimated_tokens must be <= token_limit.
+	if pack.EstimatedTokens > pack.TokenLimit {
+		t.Errorf("estimated_tokens (%d) should be <= token_limit (%d)",
+			pack.EstimatedTokens, pack.TokenLimit)
+	}
+
+	// Verify the JSON output is parseable.
+	output, err := RenderJSON(pack)
+	if err != nil {
+		t.Fatalf("RenderJSON failed: %v", err)
+	}
+	var parsed Pack
+	if err := json.Unmarshal([]byte(output), &parsed); err != nil {
+		t.Fatalf("JSON round-trip failed: %v", err)
 	}
 }
 
