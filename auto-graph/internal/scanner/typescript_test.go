@@ -205,3 +205,57 @@ func TestReexport(t *testing.T) {
 		t.Error("re-export ./reexport_target not found in scan results from reexport_source.ts")
 	}
 }
+
+func TestReexportVariants(t *testing.T) {
+	requireAstGrep(t)
+	dir := fixtureDir(t, "alias-reexports")
+
+	sc := NewTypeScriptScanner()
+	matches, err := sc.Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+
+	// Build lookup keyed by (file, importPath) -> kind.
+	type matchKey struct {
+		file       string
+		importPath string
+	}
+	gotKinds := make(map[matchKey]string)
+	for _, m := range matches {
+		rel, err := filepath.Rel(dir, m.SourceFile)
+		if err != nil {
+			t.Fatalf("could not make relative path: %v", err)
+		}
+		rel = filepath.ToSlash(rel)
+		gotKinds[matchKey{file: rel, importPath: m.ImportPath}] = m.Kind
+	}
+
+	type importEntry struct {
+		file       string
+		importPath string
+		kind       string
+	}
+	expectedEntries := []importEntry{
+		// Re-exports from the barrel file
+		{file: "src/client/my-feature/index.ts", importPath: "./Widget", kind: "reexport"},
+		{file: "src/client/my-feature/index.ts", importPath: "./widget.utils", kind: "reexport"},
+		// Imports from dashboard.tsx
+		{file: "src/routes/dashboard.tsx", importPath: "@/utils/format", kind: "static"},
+		{file: "src/routes/dashboard.tsx", importPath: "../components/Header", kind: "static"},
+		{file: "src/routes/dashboard.tsx", importPath: "@/services/heavy-service", kind: "dynamic"},
+		{file: "src/routes/dashboard.tsx", importPath: "@/does-not-exist", kind: "dynamic"},
+	}
+
+	for _, e := range expectedEntries {
+		key := matchKey{file: e.file, importPath: e.importPath}
+		gotKind, ok := gotKinds[key]
+		if !ok {
+			t.Errorf("expected %s to import %q (kind=%s), but import not found", e.file, e.importPath, e.kind)
+			continue
+		}
+		if gotKind != e.kind {
+			t.Errorf("import %s -> %q: expected kind %q, got %q", e.file, e.importPath, e.kind, gotKind)
+		}
+	}
+}
