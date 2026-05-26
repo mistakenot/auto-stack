@@ -273,6 +273,11 @@ func buildGraph(projectRoot string, filePaths []string, matches []scanner.Import
 		}
 		sourceRel = filepath.ToSlash(sourceRel)
 
+		// Skip if source is not in discovered node set (scanner/walker skip rule asymmetry).
+		if !nodeSet[sourceRel] {
+			continue
+		}
+
 		targetRel := result.ResolvedPath
 
 		// Determine target files: direct file match or package directory expansion.

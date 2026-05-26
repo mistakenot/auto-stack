@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -31,6 +32,14 @@ func NewGoResolver(projectRoot string) (*GoResolver, error) {
 		line := strings.TrimSpace(scanner.Text())
 		if strings.HasPrefix(line, "module ") {
 			modulePath := strings.TrimSpace(strings.TrimPrefix(line, "module "))
+			if idx := strings.Index(modulePath, "//"); idx >= 0 {
+				modulePath = strings.TrimSpace(modulePath[:idx])
+			}
+			if len(modulePath) > 0 && modulePath[0] == '"' {
+				if unquoted, err := strconv.Unquote(modulePath); err == nil {
+					modulePath = unquoted
+				}
+			}
 			if modulePath == "" {
 				continue
 			}

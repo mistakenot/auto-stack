@@ -19,6 +19,18 @@ func createTempGoMod(t *testing.T, modulePath string) string {
 	return dir
 }
 
+// createTempGoModRaw creates a temporary directory with a go.mod containing
+// the given raw content. Returns the directory path.
+func createTempGoModRaw(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(content), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestNewGoResolver(t *testing.T) {
 	dir := createTempGoMod(t, "github.com/example/myproject")
 
@@ -187,5 +199,40 @@ func TestGoResolverExternalPackages(t *testing.T) {
 				t.Errorf("expected external import %q to be external", importPath)
 			}
 		})
+	}
+}
+
+func TestGoResolverModuleWithInlineComment(t *testing.T) {
+	dir := createTempGoModRaw(t, "module github.com/example/foo // my project\n\ngo 1.21\n")
+
+	r, err := NewGoResolver(dir)
+	if err != nil {
+		t.Fatalf("NewGoResolver failed: %v", err)
+	}
+	if r.modulePath != "github.com/example/foo" {
+		t.Errorf("expected module path %q, got %q", "github.com/example/foo", r.modulePath)
+	}
+
+	result, err := r.Resolve("github.com/example/foo/internal/bar", filepath.Join(dir, "main.go"), dir)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if result.IsExternal {
+		t.Error("expected internal import, got external")
+	}
+	if result.ResolvedPath != "internal/bar" {
+		t.Errorf("expected resolved path %q, got %q", "internal/bar", result.ResolvedPath)
+	}
+}
+
+func TestGoResolverModuleWithQuotedPath(t *testing.T) {
+	dir := createTempGoModRaw(t, "module \"github.com/example/foo\"\n\ngo 1.21\n")
+
+	r, err := NewGoResolver(dir)
+	if err != nil {
+		t.Fatalf("NewGoResolver failed: %v", err)
+	}
+	if r.modulePath != "github.com/example/foo" {
+		t.Errorf("expected module path %q, got %q", "github.com/example/foo", r.modulePath)
 	}
 }
