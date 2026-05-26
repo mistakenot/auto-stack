@@ -25,7 +25,7 @@ func TestAstGrepNotFound(t *testing.T) {
 	}
 
 	cmd := newCodeGraphCmd()
-	err := runCodeGraph(cmd, projDir, "json", "typescript")
+	err := runCodeGraph(cmd, projDir, "json", "typescript", true)
 	if err == nil {
 		t.Fatal("expected error when ast-grep is not found, got nil")
 	}
@@ -56,7 +56,7 @@ func TestAstGrepNotCheckedForGo(t *testing.T) {
 
 	cmd := newCodeGraphCmd()
 	cmd.SetOut(&bytes.Buffer{})
-	err := runCodeGraph(cmd, projDir, "json", "go")
+	err := runCodeGraph(cmd, projDir, "json", "go", true)
 	// Should NOT fail with ast-grep error — Go doesn't need it.
 	if err != nil {
 		errMsg := err.Error()
@@ -158,7 +158,7 @@ func TestLanguageOverride(t *testing.T) {
 	cmd.SetOut(&bytes.Buffer{}) // suppress output during test
 	cmd.SetArgs([]string{projDir})
 
-	err := runCodeGraph(cmd, projDir, "json", "typescript")
+	err := runCodeGraph(cmd, projDir, "json", "typescript", true)
 	// The error should NOT be about language detection.
 	if err != nil {
 		errMsg := err.Error()
@@ -207,7 +207,7 @@ func runGoGraphFixture(t *testing.T, fixtureName string) *graph.Graph {
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 
-	err := runCodeGraph(cmd, dir, "json", "go")
+	err := runCodeGraph(cmd, dir, "json", "go", true)
 	if err != nil {
 		t.Fatalf("runCodeGraph(%s) failed: %v", fixtureName, err)
 	}
@@ -439,7 +439,7 @@ func TestCodeGraphAliasReexports(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 
-	err := runCodeGraph(cmd, dir, "json", "typescript")
+	err := runCodeGraph(cmd, dir, "json", "typescript", true)
 	if err != nil {
 		t.Fatalf("runCodeGraph failed: %v", err)
 	}
