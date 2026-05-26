@@ -206,9 +206,8 @@ func matchesAlias(importPath string, m pathMapping) bool {
 	if !strings.HasSuffix(importPath, m.suffix) {
 		return false
 	}
-	// Ensure the captured portion (between prefix and suffix) is non-negative length.
-	// For prefix="@/" suffix="" this means len >= 2 (at least "@/" plus one char).
-	return len(importPath) >= len(m.prefix)+len(m.suffix)
+	// Wildcard must capture one or more characters (TypeScript semantics).
+	return len(importPath) > len(m.prefix)+len(m.suffix)
 }
 
 // wildcardCapture extracts the text matched by the wildcard in a pattern.

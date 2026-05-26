@@ -240,6 +240,25 @@ func TestUnresolvedAliasMetadata(t *testing.T) {
 	}
 }
 
+func TestZeroLengthWildcardCapture(t *testing.T) {
+	dir := fixtureDir(t, "alias-reexports")
+
+	r := NewTypeScriptResolver(dir)
+	sourceFile := filepath.Join(dir, "src", "index.ts")
+
+	// "@/" is the alias prefix with zero-length capture — should not match.
+	result, err := r.Resolve("@/", sourceFile, dir)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if !result.IsExternal {
+		t.Error("expected @/ (zero-length capture) to fall through to bare/external")
+	}
+	if result.MatchedAlias {
+		t.Error("expected MatchedAlias to be false for zero-length wildcard capture")
+	}
+}
+
 func TestBaseUrlProbing(t *testing.T) {
 	dir := t.TempDir()
 
