@@ -176,6 +176,44 @@ func TestTypeImport(t *testing.T) {
 	}
 }
 
+func TestMultipleKindsSamePath(t *testing.T) {
+	requireAstGrep(t)
+	dir := fixtureDir(t, "merged-imports")
+
+	sc := NewTypeScriptScanner()
+	matches, err := sc.Scan(dir)
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+
+	// consumer.ts imports ./shared with both static and type kinds.
+	// With the updated dedupe key (file, importPath, kind), both should be returned.
+	type matchKey struct {
+		file       string
+		importPath string
+		kind       string
+	}
+	got := make(map[matchKey]bool)
+	for _, m := range matches {
+		rel, err := filepath.Rel(dir, m.SourceFile)
+		if err != nil {
+			t.Fatalf("could not make relative path: %v", err)
+		}
+		rel = filepath.ToSlash(rel)
+		got[matchKey{file: rel, importPath: m.ImportPath, kind: m.Kind}] = true
+	}
+
+	staticKey := matchKey{file: "consumer.ts", importPath: "./shared", kind: "static"}
+	typeKey := matchKey{file: "consumer.ts", importPath: "./shared", kind: "type"}
+
+	if !got[staticKey] {
+		t.Errorf("expected static import of ./shared from consumer.ts, got matches: %v", got)
+	}
+	if !got[typeKey] {
+		t.Errorf("expected type import of ./shared from consumer.ts, got matches: %v", got)
+	}
+}
+
 func TestReexport(t *testing.T) {
 	requireAstGrep(t)
 	dir := fixtureDir(t, "all-import-styles")

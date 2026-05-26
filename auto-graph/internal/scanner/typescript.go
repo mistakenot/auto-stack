@@ -86,6 +86,7 @@ func (s *TypeScriptScanner) Scan(dir string) ([]ImportMatch, error) {
 	type seenKey struct {
 		file       string
 		importPath string
+		kind       string
 	}
 	seen := make(map[seenKey]bool)
 	var results []ImportMatch
@@ -103,13 +104,13 @@ func (s *TypeScriptScanner) Scan(dir string) ([]ImportMatch, error) {
 					continue
 				}
 
-				key := seenKey{file: m.File, importPath: importPath}
+				kind := classifyKind(m.Text, ps.kind)
+
+				key := seenKey{file: m.File, importPath: importPath, kind: kind}
 				if seen[key] {
 					continue
 				}
 				seen[key] = true
-
-				kind := classifyKind(m.Text, ps.kind)
 
 				results = append(results, ImportMatch{
 					SourceFile: m.File,

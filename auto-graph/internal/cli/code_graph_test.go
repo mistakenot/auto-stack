@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mistakenot/auto-graph/internal/codegraph"
 )
 
 func TestAstGrepNotFound(t *testing.T) {
@@ -42,9 +44,9 @@ func TestLanguageAutoDetection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	lang, err := detectLanguage(projDir)
+	lang, err := codegraph.DetectLanguage(projDir)
 	if err != nil {
-		t.Fatalf("detectLanguage failed: %v", err)
+		t.Fatalf("DetectLanguage failed: %v", err)
 	}
 	if lang != "typescript" {
 		t.Errorf("expected language %q, got %q", "typescript", lang)
@@ -55,7 +57,7 @@ func TestLanguageAutoDetectionNoConfig(t *testing.T) {
 	// Create a temp dir without tsconfig.json.
 	projDir := t.TempDir()
 
-	_, err := detectLanguage(projDir)
+	_, err := codegraph.DetectLanguage(projDir)
 	if err == nil {
 		t.Fatal("expected error when no config file found, got nil")
 	}
