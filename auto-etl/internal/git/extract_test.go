@@ -80,15 +80,15 @@ func TestParseCommitLog(t *testing.T) {
 	// Build a record: fields separated by NUL, records by double-NUL.
 	record1 := strings.Join([]string{
 		"aaaa1111bbbb2222cccc3333dddd4444eeee5555", // SHA
-		"aaaa1111",                                  // short SHA
-		"tttt1111bbbb2222cccc3333dddd4444eeee5555",  // tree SHA
-		"Alice",                                     // author name
-		"alice@example.com",                         // author email
-		"2024-05-25T12:30:00+00:00",                 // author date
-		"Bob",                                       // committer name
-		"bob@example.com",                           // committer email
-		"2024-05-25T12:35:00+00:00",                 // committer date
-		"pppp1111bbbb2222cccc3333dddd4444eeee5555",  // parents
+		"aaaa1111", // short SHA
+		"tttt1111bbbb2222cccc3333dddd4444eeee5555", // tree SHA
+		"Alice",                     // author name
+		"alice@example.com",         // author email
+		"2024-05-25T12:30:00+00:00", // author date
+		"Bob",                       // committer name
+		"bob@example.com",           // committer email
+		"2024-05-25T12:35:00+00:00", // committer date
+		"pppp1111bbbb2222cccc3333dddd4444eeee5555",                                                  // parents
 		"feat: add something\n\nThis is the body.\n\nCo-Authored-By: Charlie <charlie@example.com>", // body
 	}, "\x00")
 
@@ -376,7 +376,7 @@ index abc..def 100644
 
 func TestParseHunkHeader(t *testing.T) {
 	tests := []struct {
-		header                             string
+		header                                 string
 		oldStart, oldLines, newStart, newLines int32
 	}{
 		{"@@ -1,3 +1,4 @@", 1, 3, 1, 4},
@@ -470,11 +470,12 @@ func TestConvertSinceToGit(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"6m", "6.months.ago"},
-		{"1y", "1.years.ago"},
-		{"3w", "3.weeks.ago"},
-		{"5d", "5.days.ago"},
+		{"5m", "5.minutes.ago"},
 		{"2h", "2.hours.ago"},
+		{"5d", "5.days.ago"},
+		{"3w", "3.weeks.ago"},
+		{"6mo", "6.months.ago"},
+		{"1y", "1.years.ago"},
 		{"", ""},
 		{"invalid", "invalid"},
 	}

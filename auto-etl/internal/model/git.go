@@ -23,13 +23,13 @@ type GitRepository struct {
 // GitRef represents a branch or tag reference in a repository.
 // One row per ref, keyed by id.
 type GitRef struct {
-	ID       string `parquet:"id"`
-	RepoID   string `parquet:"repo_id,dict"`
-	RefName  string `parquet:"ref_name,dict"`
-	RefType  string `parquet:"ref_type,dict"`
-	CommitID string `parquet:"commit_id"`
-	IsDefault bool  `parquet:"is_default"`
-	IsRemote  bool  `parquet:"is_remote"`
+	ID        string `parquet:"id"`
+	RepoID    string `parquet:"repo_id,dict"`
+	RefName   string `parquet:"ref_name,dict"`
+	RefType   string `parquet:"ref_type,dict"`
+	CommitID  string `parquet:"commit_id"`
+	IsDefault bool   `parquet:"is_default"`
+	IsRemote  bool   `parquet:"is_remote"`
 
 	ETLRunID      string `parquet:"etl_run_id,dict"`
 	CollectedAt   int64  `parquet:"collected_at"`

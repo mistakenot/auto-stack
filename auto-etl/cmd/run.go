@@ -49,7 +49,7 @@ func init() {
 	runCmd.Flags().BoolVar(&fullRun, "full", false, "Delete output directory before running (full rebuild)")
 	runCmd.Flags().StringSliceVar(&onlyFlag, "only", nil, "Run only specified ETL sources (sessions, github, git). Default: all.")
 	runCmd.Flags().StringSliceVar(&repoPathFlag, "repo-path", nil, "Explicit git repo paths to index (for --only git)")
-	runCmd.Flags().StringVar(&sinceFlag, "since", "", "Limit initial git history depth (e.g. 6m, 1y, 3w, 5d)")
+	runCmd.Flags().StringVar(&sinceFlag, "since", "", "Limit initial git history depth (e.g. 5m, 2h, 5d, 3w, 6mo, 1y)")
 
 	rootCmd.AddCommand(runCmd)
 }

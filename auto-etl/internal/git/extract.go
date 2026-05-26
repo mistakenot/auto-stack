@@ -231,13 +231,7 @@ func extractFilesAndHunks(path, sha, repoID string, commit *model.Commit, config
 			isBinary = ns.isBinary
 		}
 
-		// Find the unified diff for this file.
-		diffKey := filePath
-		if raw.changeType == "R" || raw.changeType == "C" {
-			// For renames/copies, the diff header shows the new path.
-			diffKey = filePath
-		}
-		diffText := fileDiffs[diffKey]
+		diffText := fileDiffs[filePath]
 		diffTruncated := transform.MidTruncate(diffText, model.DefaultTruncateMaxChars)
 
 		cf := model.CommitFile{
@@ -847,25 +841,33 @@ func convertSinceToGit(since string) string {
 		return since
 	}
 
+	// Check multi-char suffixes first.
+	if strings.HasSuffix(since, "mo") {
+		numStr := since[:len(since)-2]
+		if _, err := strconv.Atoi(numStr); err == nil {
+			return numStr + ".months.ago"
+		}
+		return since
+	}
+
 	numStr := since[:len(since)-1]
 	unit := since[len(since)-1]
 
-	// Validate the number part.
 	if _, err := strconv.Atoi(numStr); err != nil {
-		return since // Return as-is if not parseable.
+		return since
 	}
 
 	switch unit {
 	case 'm':
-		return numStr + ".months.ago"
-	case 'y':
-		return numStr + ".years.ago"
-	case 'w':
-		return numStr + ".weeks.ago"
-	case 'd':
-		return numStr + ".days.ago"
+		return numStr + ".minutes.ago"
 	case 'h':
 		return numStr + ".hours.ago"
+	case 'd':
+		return numStr + ".days.ago"
+	case 'w':
+		return numStr + ".weeks.ago"
+	case 'y':
+		return numStr + ".years.ago"
 	default:
 		return since
 	}
