@@ -4,7 +4,7 @@
     "address-feedback": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "d7dd47e143e5a3b441b8d2c38875e4d9310114ae17788bde269fc278c1b606d5"
+      "computedHash": "7d7e88df191f985c7199b42012e855b308e221fbc4dd85eea0c648e77f6d73bb"
     },
     "cass": {
       "source": "/home/vscode/src/auto-stack/skills",
@@ -14,17 +14,17 @@
     "code-review": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "735d48691ff7369e8ccc71f2b0dd263b9eea5ad727e4f89ec86cdfb31d6cc027"
+      "computedHash": "128eba85c95dc4fbdcbe42d3c27b3f6cd4e1ea4355a38e3bb9964de504d3feb7"
     },
     "commit-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "493aabaa44a254f5ee35768fc30bad4e0bfe4e858f55bda347e1e3240373d16b"
+      "computedHash": "4ad57cbf3a26c6cd4edc031f40aa1e3433b0deaddfbf1a0ca13379694dcdcd06"
     },
     "complete-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "2a5b5d18c1ae2d8b56adab341a36071bc260427079eaa0f055c3fc3fb845d500"
+      "computedHash": "2a8ddf0bde3ae6b6ebcbdf2f03d9cf438d6b8a29d0caf6dc81e269ca689c8230"
     },
     "contextual-commit": {
       "source": "/home/vscode/src/auto-stack/skills",
@@ -34,17 +34,22 @@
     "delegate-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "496668a340781339187db7cbced6b5f0fea9ffecf0b6df31cb42f59ac72c1ebf"
+      "computedHash": "5c0a9eb51293bb0258849baf29882de9be05355706a1d5218eed29070c0772f8"
     },
     "execute-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "acfca0febb712683f4d7060ef05793657ca48d2cc4c11865d12eaed2e7146449"
+      "computedHash": "1266568ca51fc2f298c7ac02b0c2645f81118010c5e3e5d95ffe79b18449eabe"
     },
     "executor-status-check": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "3f9d1188f27345bc8f8c7f14a4e94bafc836f0875974761d38f101b88abc93d3"
+      "computedHash": "302fbb8364ef637cc75d8989b681d77f35462edab7391149da4a0ec5790c0d8b"
+    },
+    "generate-10-ideas": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "558772747f16e0d0789de99ad1da0c8199b33fb06e93024282543aa1d8b6d4bd"
     },
     "improve-claude-md": {
       "source": "humanlayer/skills",
@@ -59,17 +64,17 @@
     "new-plan": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "8a2d101b97b44beb1fbd09f0555cc61129127945b8507ce824cee8cd8d8fdebb"
+      "computedHash": "8f08d26055baf6abbda4f3aefbec1b272fc7ab55826de674773bcfdf58de14bf"
     },
     "new-solution": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "ecabc95fc32897ce1a68067dbef593862eecd334c4778a13b744dd224879d66c"
+      "computedHash": "aa919d0b85518ad6111b31c0b8368e85df202e1c34131857beafc65539438d9a"
     },
     "new-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "0cf3c0c46bd23d18ba392d59409e1009682505972232a5a7e897ca0938d55195"
+      "computedHash": "12f293ed4be76f2b96ece00c10ada784e13f3ba504ce75f699c51ce119a6e64a"
     },
     "open-prose": {
       "source": "openprose/prose",
@@ -91,10 +96,15 @@
       "sourceType": "local",
       "computedHash": "53bb37624988b417ea2ec2f3c6daa8ba47821cec16d9ac3c21100ec8a87b58f0"
     },
+    "request-codex-review": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "cfae379430298143d5c00d343a813abdc30adbc8f9a1953b806a51ad92003bcc"
+    },
     "resolve-comments": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "88773d55bf970148df881b56e820f4b27ab5ddd04e2f83762ab60e9b7287df53"
+      "computedHash": "e08fc14b72345df39ec8c01a823ceef122418ca5cd0dea7b20f6ec9ce348423c"
     },
     "review-resolve": {
       "source": "mistakenot/skills",
@@ -104,7 +114,12 @@
     "review-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "bffd9a25ea64b9a9739b91c82459492cfcd80965382a46f3999de9fa61fcc76c"
+      "computedHash": "aa5ba259210a4187ad3a9d98b4e5fdd05d66e5438e62f3a56cff416e0b490968"
+    },
+    "revise-readme": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "97b62cc5c2315f671990b1e223741e8d0970315554cff3db0115827c89d852b4"
     },
     "self-improve": {
       "source": "/home/vscode/src/auto-stack/skills",
@@ -119,7 +134,12 @@
     "task-feedback-analyser": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "04fc16b7daee2c089025d41ccf22fde909f425f212ee3a992d9abafedb66814b"
+      "computedHash": "bcdc5f6b1748b5fc7033e885fb3a2c3856d2ed3b72716de04bf20d8d36e6e3d5"
+    },
+    "tech-spike": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "94f583dda121121249d8e9f1d98a9702b5d15785dfb2f63395a05e5426d49feb"
     }
   }
 }

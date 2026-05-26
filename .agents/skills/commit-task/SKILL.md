@@ -28,18 +28,30 @@ All checks must pass before committing:
 
 If any check fails, report the failures and stop. Do not commit incomplete docs.
 
-### Step 3: Commit
+### Step 3: Commit and Push
 
 ```bash
 git add docs/tasks/$ID-$NAME/*
 git commit -m "docs(tasks): add task $ID-$NAME planning docs"
 ```
 
+After committing, push to origin:
+
+```bash
+git push origin main
+```
+
+If the push fails because the local branch is behind origin:
+
+1. Try `git pull --rebase origin main` then `git push origin main`
+2. If the rebase fails (conflicts), abort with `git rebase --abort` and try `git pull --no-rebase origin main` then `git push origin main`
+3. If that also fails, stop and ask the user for help — do not force-push or discard changes
+
 ### Step 4: Next Steps
 
-After successful commit, tell the user:
+After successful push, tell the user:
 
-"Task $ID planning docs committed to main. To begin implementation, run `/execute-task $ID`."
+"Task $ID planning docs committed and pushed to main. To begin implementation, run `/execute-task $ID`."
 
 Do NOT create a feature branch. Do NOT start implementation.
 
