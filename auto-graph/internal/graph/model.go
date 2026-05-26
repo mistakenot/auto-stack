@@ -9,8 +9,11 @@ type NodeKind string
 type EdgeKind string
 
 const (
-	NodeFile   NodeKind = "file"
-	EdgeImport EdgeKind = "import"
+	NodeFile NodeKind = "file"
+	NodeDoc  NodeKind = "doc"
+
+	EdgeImport  EdgeKind = "import"
+	EdgeDocLink EdgeKind = "doc_link"
 )
 
 // Node represents a vertex in the code graph.

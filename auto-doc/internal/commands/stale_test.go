@@ -54,6 +54,7 @@ func TestCheckStaleMissingFrontmatter(t *testing.T) {
 
 func TestStaleThenFixedRemovesFromStale(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
 	// Write a raw file with a wrong hash — should show as stale.
 	ws.WriteFile("docs/guide.md", `---
 title: "User Guide"

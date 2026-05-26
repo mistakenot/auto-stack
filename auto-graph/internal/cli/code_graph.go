@@ -7,6 +7,7 @@ import (
 
 	"github.com/mistakenot/auto-graph/internal/codegraph"
 	"github.com/mistakenot/auto-graph/internal/config"
+	"github.com/mistakenot/auto-graph/internal/doclink"
 	"github.com/mistakenot/auto-graph/internal/format"
 	"github.com/spf13/cobra"
 )
@@ -14,6 +15,7 @@ import (
 func newCodeGraphCmd() *cobra.Command {
 	var formatFlag string
 	var langFlag string
+	var noDocs bool
 
 	defaultFormat := "json"
 	if path, err := config.GraphSettingsPath(); err == nil {
@@ -33,17 +35,18 @@ The language is auto-detected from config files in the target directory
 (e.g. tsconfig.json for TypeScript). Use --lang to override detection.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCodeGraph(cmd, args[0], formatFlag, langFlag)
+			return runCodeGraph(cmd, args[0], formatFlag, langFlag, noDocs)
 		},
 	}
 
 	cmd.Flags().StringVar(&formatFlag, "format", defaultFormat, "output format: json, dot, mermaid")
 	cmd.Flags().StringVar(&langFlag, "lang", "", "language override (auto-detected from config files if omitted)")
+	cmd.Flags().BoolVar(&noDocs, "no-docs", false, "exclude documentation links from graph")
 
 	return cmd
 }
 
-func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string) error {
+func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string, noDocs bool) error {
 	// Resolve the project directory to an absolute path.
 	projectRoot, err := filepath.Abs(dir)
 	if err != nil {
@@ -75,6 +78,15 @@ func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string) error {
 	errW := cmd.ErrOrStderr()
 	for _, d := range diags {
 		fmt.Fprintf(errW, "warning: %s:%d: unresolved alias import %q (check compilerOptions.paths and baseUrl in tsconfig.json)\n", d.Source, d.Line, d.Raw)
+	}
+
+	// Enrich graph with documentation links unless --no-docs is set.
+	if !noDocs {
+		links, err := doclink.Scan(projectRoot, cmd.ErrOrStderr())
+		if err != nil {
+			return &ExitError{Code: 1, Err: fmt.Errorf("scanning doc links: %w", err)}
+		}
+		doclink.Enrich(g, links)
 	}
 
 	// Output in requested format.

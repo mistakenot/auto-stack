@@ -8,6 +8,7 @@ import (
 
 	"github.com/mistakenot/auto-graph/internal/codegraph"
 	"github.com/mistakenot/auto-graph/internal/contextpack"
+	"github.com/mistakenot/auto-graph/internal/doclink"
 	"github.com/spf13/cobra"
 )
 
@@ -17,6 +18,7 @@ func newCodeContextCmd() *cobra.Command {
 		files      []string
 		formatFlag string
 		langFlag   string
+		noDocs     bool
 	)
 
 	cmd := &cobra.Command{
@@ -31,7 +33,7 @@ mandatory and must fit within the budget; additional dependencies and
 dependents are included by priority while budget allows.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCodeContext(cmd, args[0], tokenLimit, files, formatFlag, langFlag)
+			return runCodeContext(cmd, args[0], tokenLimit, files, formatFlag, langFlag, noDocs)
 		},
 	}
 
@@ -39,13 +41,14 @@ dependents are included by priority while budget allows.`,
 	cmd.Flags().StringArrayVar(&files, "file", nil, "seed file path (repeatable, at least one required)")
 	cmd.Flags().StringVar(&formatFlag, "format", "markdown", "output format: markdown, json")
 	cmd.Flags().StringVar(&langFlag, "lang", "", "language override (auto-detected if omitted)")
+	cmd.Flags().BoolVar(&noDocs, "no-docs", false, "exclude documentation links from graph")
 
 	_ = cmd.MarkFlagRequired("token-limit")
 
 	return cmd
 }
 
-func runCodeContext(cmd *cobra.Command, dir string, tokenLimit int, files []string, formatFlag, langFlag string) error {
+func runCodeContext(cmd *cobra.Command, dir string, tokenLimit int, files []string, formatFlag, langFlag string, noDocs bool) error {
 	// Validate required flags.
 	if tokenLimit <= 0 {
 		return &ExitError{Code: 1, Err: fmt.Errorf("--token-limit must be a positive integer")}
@@ -90,6 +93,15 @@ func runCodeContext(cmd *cobra.Command, dir string, tokenLimit int, files []stri
 	g, _, err := codegraph.Build(projectRoot, lang, cmd.ErrOrStderr())
 	if err != nil {
 		return &ExitError{Code: 1, Err: err}
+	}
+
+	// Enrich graph with documentation links unless --no-docs is set.
+	if !noDocs {
+		links, err := doclink.Scan(projectRoot, cmd.ErrOrStderr())
+		if err != nil {
+			return &ExitError{Code: 1, Err: fmt.Errorf("scanning doc links: %w", err)}
+		}
+		doclink.Enrich(g, links)
 	}
 
 	// Normalize and validate seed files.

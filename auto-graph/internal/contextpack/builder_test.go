@@ -1003,6 +1003,203 @@ func TestBuild_JSONBudgetCompliance(t *testing.T) {
 	}
 }
 
+// addDocNode adds a doc file to the fixture directory and appends a NodeDoc node to the graph.
+func addDocNode(t *testing.T, dir string, g *graph.Graph, path, content string) {
+	t.Helper()
+	abs := filepath.Join(dir, filepath.FromSlash(path))
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g.Nodes = append(g.Nodes, graph.Node{
+		ID:   path,
+		Kind: graph.NodeDoc,
+		Path: path,
+	})
+}
+
+func TestBuild_DocLinkedFromSeed(t *testing.T) {
+	files := map[string]string{
+		"src/App.tsx":          "import { useAuth } from './hooks/useAuth';",
+		"src/hooks/useAuth.ts": "export function useAuth() {}",
+	}
+	edges := []graph.Edge{
+		{
+			Source: "src/App.tsx",
+			Target: "src/hooks/useAuth.ts",
+			Kind:   graph.EdgeImport,
+			Attrs:  map[string]string{"import_kind": "static", "import_kinds": "static"},
+		},
+		{
+			Source: "src/App.tsx",
+			Target: "docs/app-guide.md",
+			Kind:   graph.EdgeDocLink,
+		},
+	}
+	dir, g := setupBuilderFixture(t, files, edges)
+	addDocNode(t, dir, g, "docs/app-guide.md", "# App Guide\nHow to use the app.")
+
+	pack, err := Build(BuildOptions{
+		ProjectRoot: dir,
+		Seeds:       []string{"src/App.tsx"},
+		TokenLimit:  10000,
+		Graph:       g,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Doc file should be included with role "doc".
+	var foundDoc bool
+	for _, f := range pack.Files {
+		if f.Path == "docs/app-guide.md" {
+			foundDoc = true
+			if f.Role != "doc" {
+				t.Errorf("expected role doc, got %s", f.Role)
+			}
+			if !strings.Contains(f.Reason, "doc linked from seed") {
+				t.Errorf("expected reason containing 'doc linked from seed', got %s", f.Reason)
+			}
+		}
+	}
+	if !foundDoc {
+		t.Error("expected docs/app-guide.md to be included")
+	}
+}
+
+func TestBuild_DocLinkedFromDependency(t *testing.T) {
+	files := map[string]string{
+		"src/App.tsx":          "import { useAuth } from './hooks/useAuth';",
+		"src/hooks/useAuth.ts": "export function useAuth() {}",
+	}
+	edges := []graph.Edge{
+		{
+			Source: "src/App.tsx",
+			Target: "src/hooks/useAuth.ts",
+			Kind:   graph.EdgeImport,
+			Attrs:  map[string]string{"import_kind": "static", "import_kinds": "static"},
+		},
+		{
+			Source: "src/hooks/useAuth.ts",
+			Target: "docs/auth-guide.md",
+			Kind:   graph.EdgeDocLink,
+		},
+	}
+	dir, g := setupBuilderFixture(t, files, edges)
+	addDocNode(t, dir, g, "docs/auth-guide.md", "# Auth Guide\nAuthentication docs.")
+
+	pack, err := Build(BuildOptions{
+		ProjectRoot: dir,
+		Seeds:       []string{"src/App.tsx"},
+		TokenLimit:  10000,
+		Graph:       g,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Doc file should be included with role "doc" at priority 35 (linked from dependency).
+	var foundDoc bool
+	for _, f := range pack.Files {
+		if f.Path == "docs/auth-guide.md" {
+			foundDoc = true
+			if f.Role != "doc" {
+				t.Errorf("expected role doc, got %s", f.Role)
+			}
+			if !strings.Contains(f.Reason, "doc linked from dependency") {
+				t.Errorf("expected reason containing 'doc linked from dependency', got %s", f.Reason)
+			}
+		}
+	}
+	if !foundDoc {
+		t.Error("expected docs/auth-guide.md to be included")
+	}
+}
+
+func TestBuild_NoDocLinks_RegressionCheck(t *testing.T) {
+	// Graph with no doc_link edges should behave identically to before.
+	files := map[string]string{
+		"src/App.tsx":          "import { useAuth } from './hooks/useAuth';",
+		"src/hooks/useAuth.ts": "export function useAuth() {}",
+	}
+	edges := []graph.Edge{
+		{
+			Source: "src/App.tsx",
+			Target: "src/hooks/useAuth.ts",
+			Kind:   graph.EdgeImport,
+			Attrs:  map[string]string{"import_kind": "static", "import_kinds": "static"},
+		},
+	}
+	dir, g := setupBuilderFixture(t, files, edges)
+
+	pack, err := Build(BuildOptions{
+		ProjectRoot: dir,
+		Seeds:       []string{"src/App.tsx"},
+		TokenLimit:  10000,
+		Graph:       g,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have seed + dependency = 2 files, no doc files.
+	if len(pack.Files) != 2 {
+		t.Fatalf("expected 2 files, got %d", len(pack.Files))
+	}
+	for _, f := range pack.Files {
+		if f.Role == "doc" {
+			t.Errorf("did not expect any doc files, got %s", f.Path)
+		}
+	}
+}
+
+func TestBuild_DocOmittedWhenBudgetTight(t *testing.T) {
+	files := map[string]string{
+		"src/seed.ts": strings.Repeat("x", 400), // 100 tokens
+	}
+	edges := []graph.Edge{
+		{
+			Source: "src/seed.ts",
+			Target: "docs/big-doc.md",
+			Kind:   graph.EdgeDocLink,
+		},
+	}
+	dir, g := setupBuilderFixture(t, files, edges)
+	addDocNode(t, dir, g, "docs/big-doc.md", strings.Repeat("y", 4000)) // 1000 tokens
+
+	tightEstimator := func(p *Pack) int {
+		total := 0
+		for _, f := range p.Files {
+			total += EstimateTokens(f.Content)
+		}
+		return total
+	}
+
+	pack, err := Build(BuildOptions{
+		ProjectRoot: dir,
+		Seeds:       []string{"src/seed.ts"},
+		TokenLimit:  110, // Enough for seed (100) but not doc (1000).
+		Graph:       g,
+		Estimator:   tightEstimator,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Doc should be omitted.
+	if len(pack.OmittedCandidates) != 1 {
+		t.Fatalf("expected 1 omitted candidate, got %d", len(pack.OmittedCandidates))
+	}
+	if pack.OmittedCandidates[0].Path != "docs/big-doc.md" {
+		t.Errorf("expected omitted candidate docs/big-doc.md, got %s", pack.OmittedCandidates[0].Path)
+	}
+	if pack.OmittedCandidates[0].Role != "doc" {
+		t.Errorf("expected omitted role doc, got %s", pack.OmittedCandidates[0].Role)
+	}
+}
+
 // containsFlag checks if a slice contains a given flag string.
 func containsFlag(flags []string, flag string) bool {
 	for _, f := range flags {

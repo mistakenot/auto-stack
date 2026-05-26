@@ -12,6 +12,7 @@ import (
 
 func TestFixed(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
 	path := ws.WriteDoc("test.md", "Test Doc", "A test document", "# Content")
 
 	if err := Fixed(path, "", ""); err != nil {
@@ -32,6 +33,7 @@ func TestFixed(t *testing.T) {
 
 func TestFixedSortsKeysAlphabetically(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
 	path := ws.WriteDoc("test.md", "Test", "Summary", "# Body")
 
 	if err := Fixed(path, "", ""); err != nil {
@@ -55,6 +57,7 @@ func TestFixedSortsKeysAlphabetically(t *testing.T) {
 
 func TestFixedUpdatesSearchIndex(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
 	path := ws.WriteDoc("indexed.md", "Indexed Doc", "A searchable document", "# Unique Quux Content")
 	indexPath := ws.Path(".auto/doc/index")
 
@@ -93,6 +96,7 @@ func TestFixedUpdatesSearchIndex(t *testing.T) {
 
 func TestFixedSkipsWhenNoIndex(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
 	path := ws.WriteDoc("test.md", "Test", "Summary", "# Body")
 
 	if err := Fixed(path, "/nonexistent/path/index", "docs/test.md"); err != nil {
@@ -102,6 +106,7 @@ func TestFixedSkipsWhenNoIndex(t *testing.T) {
 
 func TestFixedSkipsWhenEmptyIndexPath(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
 	path := ws.WriteDoc("test.md", "Test", "Summary", "# Body")
 
 	if err := Fixed(path, "", ""); err != nil {

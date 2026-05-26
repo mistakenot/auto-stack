@@ -73,7 +73,7 @@ func TestCodeContextRequiredSeedFiles(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 
-	err := runCodeContext(cmd, dir, 10000, nil, "markdown", "typescript")
+	err := runCodeContext(cmd, dir, 10000, nil, "markdown", "typescript", true)
 	if err == nil {
 		t.Fatal("expected error when no --file is provided")
 	}
@@ -89,7 +89,7 @@ func TestCodeContextInvalidFormat(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 
-	err := runCodeContext(cmd, "/tmp", 10000, []string{"src/app.ts"}, "xml", "typescript")
+	err := runCodeContext(cmd, "/tmp", 10000, []string{"src/app.ts"}, "xml", "typescript", true)
 	if err == nil {
 		t.Fatal("expected error for invalid format")
 	}
@@ -114,7 +114,7 @@ func TestCodeContextDefaultMarkdownOutput(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 
-	err := runCodeContext(cmd, dir, 50000, []string{"src/app.ts"}, "markdown", "")
+	err := runCodeContext(cmd, dir, 50000, []string{"src/app.ts"}, "markdown", "", true)
 	if err != nil {
 		t.Fatalf("runCodeContext failed: %v (stderr: %s)", err, stderr.String())
 	}
@@ -154,7 +154,7 @@ func TestCodeContextJSONOutput(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 
-	err := runCodeContext(cmd, dir, 50000, []string{"src/app.ts"}, "json", "")
+	err := runCodeContext(cmd, dir, 50000, []string{"src/app.ts"}, "json", "", true)
 	if err != nil {
 		t.Fatalf("runCodeContext failed: %v (stderr: %s)", err, stderr.String())
 	}
@@ -199,7 +199,7 @@ func TestCodeContextValidationErrorsToStderr(t *testing.T) {
 	cmd.SetErr(&stderr)
 
 	// Use a file that doesn't exist in the project.
-	err := runCodeContext(cmd, dir, 50000, []string{"nonexistent.ts"}, "markdown", "")
+	err := runCodeContext(cmd, dir, 50000, []string{"nonexistent.ts"}, "markdown", "", true)
 	if err == nil {
 		t.Fatal("expected error for invalid seed file")
 	}
@@ -242,7 +242,7 @@ func TestCodeContextLangOverride(t *testing.T) {
 	cmd.SetErr(&stderr)
 
 	// Without --lang, this should fail because there's no tsconfig.json.
-	err := runCodeContext(cmd, dir, 50000, []string{"src/app.ts"}, "markdown", "")
+	err := runCodeContext(cmd, dir, 50000, []string{"src/app.ts"}, "markdown", "", true)
 	if err == nil {
 		t.Fatal("expected error without tsconfig.json and no --lang override")
 	}
@@ -253,7 +253,7 @@ func TestCodeContextLangOverride(t *testing.T) {
 	// With --lang=typescript, it should succeed.
 	stdout.Reset()
 	stderr.Reset()
-	err = runCodeContext(cmd, dir, 50000, []string{"src/app.ts"}, "markdown", "typescript")
+	err = runCodeContext(cmd, dir, 50000, []string{"src/app.ts"}, "markdown", "typescript", true)
 	if err != nil {
 		t.Fatalf("expected success with --lang=typescript, got: %v (stderr: %s)", err, stderr.String())
 	}
@@ -270,7 +270,7 @@ func TestCodeContextNotADirectory(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 
-	err := runCodeContext(cmd, "/nonexistent/path", 10000, []string{"src/app.ts"}, "markdown", "typescript")
+	err := runCodeContext(cmd, "/nonexistent/path", 10000, []string{"src/app.ts"}, "markdown", "typescript", true)
 	if err == nil {
 		t.Fatal("expected error for nonexistent directory")
 	}

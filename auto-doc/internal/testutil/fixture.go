@@ -130,6 +130,12 @@ func (w *Workspace) InitGitRepo() {
 	w.runGit("commit", "--allow-empty", "-m", "initial")
 }
 
+// GitAddAll stages all current files in the workspace so they are visible to git ls-files.
+func (w *Workspace) GitAddAll() {
+	w.t.Helper()
+	w.runGit("add", ".")
+}
+
 // Path returns the absolute path for a path relative to the workspace root.
 func (w *Workspace) Path(relPath string) string {
 	return filepath.Join(w.Dir, relPath)

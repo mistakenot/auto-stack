@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -839,6 +840,315 @@ func TestInvalidDirectory(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "not a directory") {
 		t.Errorf("expected 'not a directory' in error, got: %s", out)
+	}
+}
+
+// doclinksProjectDir returns the path to the doclinks project fixture.
+func doclinksProjectDir() string {
+	return filepath.Join(testdataDir(), "doclinks-project")
+}
+
+// prepareDoclinksGitRepo copies the doclinks fixture to a temp dir and
+// initializes a git repo so that git ls-files works for doclink scanning.
+func prepareDoclinksGitRepo(t *testing.T) string {
+	t.Helper()
+	src := doclinksProjectDir()
+	dst := filepath.Join(t.TempDir(), "doclinks-project")
+
+	// Copy the fixture tree.
+	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
+	if err != nil {
+		t.Fatalf("copying doclinks fixture: %v", err)
+	}
+
+	// Initialize git repo so git ls-files works for doclink scanning.
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "test"},
+		{"add", "-A"},
+		{"commit", "-m", "init", "--allow-empty"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", dst}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	return dst
+}
+
+// TestDocLinksProjectJSON verifies that doc nodes and doc_link edges appear
+// in the JSON output when autodoc tags reference doc files with matching IDs.
+func TestDocLinksProjectJSON(t *testing.T) {
+	bin := buildBinary(t)
+	dir := prepareDoclinksGitRepo(t)
+
+	output := runAutograph(t, bin, "code", "graph", dir)
+
+	var g graph
+	if err := json.Unmarshal([]byte(output), &g); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\nraw output:\n%s", err, output)
+	}
+
+	// Build node maps.
+	nodeIDs := make(map[string]bool)
+	nodesByKind := make(map[string][]node)
+	for _, n := range g.Nodes {
+		nodeIDs[n.ID] = true
+		nodesByKind[n.Kind] = append(nodesByKind[n.Kind], n)
+	}
+
+	// Assert doc nodes exist.
+	docNodes := nodesByKind["doc"]
+	if len(docNodes) != 2 {
+		t.Errorf("expected 2 doc nodes, got %d", len(docNodes))
+		for _, n := range g.Nodes {
+			t.Logf("  node: id=%s kind=%s path=%s", n.ID, n.Kind, n.Path)
+		}
+	}
+
+	// Assert file nodes exist (app.ts, helper.ts, utils.ts).
+	fileNodes := nodesByKind["file"]
+	if len(fileNodes) < 3 {
+		t.Errorf("expected at least 3 file nodes, got %d", len(fileNodes))
+	}
+
+	// Assert doc_link edges exist.
+	var docLinkEdges []edge
+	var importEdges []edge
+	for _, e := range g.Edges {
+		switch e.Kind {
+		case "doc_link":
+			docLinkEdges = append(docLinkEdges, e)
+		case "import":
+			importEdges = append(importEdges, e)
+		}
+	}
+
+	if len(docLinkEdges) != 2 {
+		t.Errorf("expected 2 doc_link edges, got %d", len(docLinkEdges))
+		for _, e := range g.Edges {
+			t.Logf("  edge: %s -> %s kind=%s", e.Source, e.Target, e.Kind)
+		}
+	}
+
+	// Assert import edges still present.
+	if len(importEdges) < 2 {
+		t.Errorf("expected at least 2 import edges, got %d", len(importEdges))
+	}
+
+	// Referential integrity: all edge sources and targets must be in nodes.
+	for _, e := range g.Edges {
+		if !nodeIDs[e.Source] {
+			t.Errorf("edge source %q not found in nodes", e.Source)
+		}
+		if !nodeIDs[e.Target] {
+			t.Errorf("edge target %q not found in nodes", e.Target)
+		}
+	}
+
+	// Verify specific doc node attributes.
+	for _, n := range docNodes {
+		if n.Attrs == nil || n.Attrs["title"] == "" {
+			t.Errorf("doc node %q missing title attr", n.ID)
+		}
+	}
+}
+
+// TestDocLinksProjectNoDocs verifies that --no-docs excludes doc nodes and doc_link edges.
+func TestDocLinksProjectNoDocs(t *testing.T) {
+	bin := buildBinary(t)
+	dir := prepareDoclinksGitRepo(t)
+
+	output := runAutograph(t, bin, "code", "graph", dir, "--no-docs")
+
+	var g graph
+	if err := json.Unmarshal([]byte(output), &g); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\nraw output:\n%s", err, output)
+	}
+
+	// All nodes must be "file" kind.
+	for _, n := range g.Nodes {
+		if n.Kind != "file" {
+			t.Errorf("with --no-docs, node %q has kind %q, want \"file\"", n.ID, n.Kind)
+		}
+	}
+
+	// All edges must be "import" kind.
+	for _, e := range g.Edges {
+		if e.Kind != "import" {
+			t.Errorf("with --no-docs, edge %s->%s has kind %q, want \"import\"", e.Source, e.Target, e.Kind)
+		}
+	}
+}
+
+// TestDocLinksProjectDOT verifies doc nodes use [shape=note] and doc edges use [style=dashed] in DOT output.
+func TestDocLinksProjectDOT(t *testing.T) {
+	bin := buildBinary(t)
+	dir := prepareDoclinksGitRepo(t)
+
+	output := runAutograph(t, bin, "code", "graph", dir, "--format=dot")
+
+	if len(output) == 0 {
+		t.Fatal("expected non-empty DOT output")
+	}
+
+	// DOT output must contain [shape=note] for doc nodes.
+	if !strings.Contains(output, "[shape=note]") {
+		t.Error("DOT output should contain '[shape=note]' for doc nodes")
+	}
+
+	// DOT output must contain [style=dashed] for doc_link edges.
+	if !strings.Contains(output, "[style=dashed]") {
+		t.Error("DOT output should contain '[style=dashed]' for doc_link edges")
+	}
+
+	// Verify structural DOT properties.
+	trimmed := strings.TrimSpace(output)
+	if !strings.HasPrefix(trimmed, "digraph") {
+		t.Errorf("DOT output should start with 'digraph', got: %s", trimmed[:min(50, len(trimmed))])
+	}
+	if !strings.HasSuffix(trimmed, "}") {
+		t.Errorf("DOT output should end with '}'")
+	}
+}
+
+// TestDocLinksProjectMermaid verifies doc nodes use hexagon syntax and doc edges use dashed arrows in Mermaid output.
+func TestDocLinksProjectMermaid(t *testing.T) {
+	bin := buildBinary(t)
+	dir := prepareDoclinksGitRepo(t)
+
+	output := runAutograph(t, bin, "code", "graph", dir, "--format=mermaid")
+
+	if len(output) == 0 {
+		t.Fatal("expected non-empty Mermaid output")
+	}
+
+	trimmed := strings.TrimSpace(output)
+	if !strings.HasPrefix(trimmed, "graph LR") {
+		t.Errorf("Mermaid output should start with 'graph LR', got: %s", trimmed[:min(50, len(trimmed))])
+	}
+
+	// Mermaid doc nodes use hexagon syntax: {{path}}
+	if !strings.Contains(output, "{{") {
+		t.Error("Mermaid output should contain '{{' for doc node hexagon syntax")
+	}
+
+	// Mermaid doc edges use dashed arrows: -.->
+	if !strings.Contains(output, "-.->") {
+		t.Error("Mermaid output should contain '-.->' for doc_link dashed edges")
+	}
+
+	// Regular import edges should also be present.
+	if !strings.Contains(output, "-->") {
+		t.Error("Mermaid output should contain '-->' for regular import edges")
+	}
+}
+
+// TestDocLinksContextPack verifies that doc files appear in context pack output
+// when autodoc tags link seed files to docs.
+func TestDocLinksContextPack(t *testing.T) {
+	bin := buildBinary(t)
+	dir := prepareDoclinksGitRepo(t)
+
+	output := runAutograph(t, bin, "code", "context", dir,
+		"--file", "src/app.ts",
+		"--token-limit", "50000",
+		"--format", "json")
+
+	// Parse as generic JSON to check structure.
+	var pack map[string]interface{}
+	if err := json.Unmarshal([]byte(output), &pack); err != nil {
+		t.Fatalf("failed to parse context pack JSON: %v\nraw output:\n%s", err, output)
+	}
+
+	// Check that files array contains a doc entry.
+	filesRaw, ok := pack["files"].([]interface{})
+	if !ok {
+		t.Fatalf("expected 'files' array in context pack output")
+	}
+
+	var docFiles []string
+	var allRoles []string
+	for _, fRaw := range filesRaw {
+		f, ok := fRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		role, _ := f["role"].(string)
+		path, _ := f["path"].(string)
+		allRoles = append(allRoles, role)
+		if role == "doc" {
+			docFiles = append(docFiles, path)
+		}
+	}
+
+	if len(docFiles) == 0 {
+		t.Errorf("expected at least one doc file in context pack, got roles: %v", allRoles)
+	}
+
+	// The doc linked from the seed (app.ts -> guide.md) should be present.
+	foundGuide := false
+	for _, p := range docFiles {
+		if strings.Contains(p, "guide.md") {
+			foundGuide = true
+		}
+	}
+	if !foundGuide {
+		t.Errorf("expected docs/guide.md in context pack doc files, got: %v", docFiles)
+	}
+}
+
+// TestDocLinksContextPackNoDocs verifies that --no-docs excludes doc files from context pack.
+func TestDocLinksContextPackNoDocs(t *testing.T) {
+	bin := buildBinary(t)
+	dir := prepareDoclinksGitRepo(t)
+
+	output := runAutograph(t, bin, "code", "context", dir,
+		"--file", "src/app.ts",
+		"--token-limit", "50000",
+		"--format", "json",
+		"--no-docs")
+
+	var pack map[string]interface{}
+	if err := json.Unmarshal([]byte(output), &pack); err != nil {
+		t.Fatalf("failed to parse context pack JSON: %v\nraw output:\n%s", err, output)
+	}
+
+	filesRaw, ok := pack["files"].([]interface{})
+	if !ok {
+		t.Fatalf("expected 'files' array in context pack output")
+	}
+
+	for _, fRaw := range filesRaw {
+		f, ok := fRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		role, _ := f["role"].(string)
+		if role == "doc" {
+			path, _ := f["path"].(string)
+			t.Errorf("with --no-docs, found doc file in context pack: %s", path)
+		}
 	}
 }
 
