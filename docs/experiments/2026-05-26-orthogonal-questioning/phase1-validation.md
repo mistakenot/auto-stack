@@ -377,3 +377,68 @@ Spikes 1-3 are independent and can run in parallel once Spike 0 produces the dat
 | **Total** | **~10-14 hours** | |
 
 Spike 0 can be shortcut with synthetic data (1 hour instead of 3) if extraction proves fiddly. The geometric tests are valid regardless of whether the input decisions are mined or hand-crafted.
+
+---
+
+## Findings (run 2026-05-26)
+
+All four spikes executed against real session data. Artifacts in `.tmp/experiments/orthogonal-questioning/` (decisions.jsonl, scripts, results JSONs, plots).
+
+### Headline verdicts
+
+| Spike | Threshold | Result | Verdict |
+|---|---|---|---|
+| 0: Extraction | 300+ decisions, 50+ sessions, 15+ types | 725 / 68 / 155 | **PASS** |
+| 1: Geometry | n_90 < 20, ≥3 of top 5 PCs interpretable | n_90 = 40, 5/5 PCs interpretable | **PARTIAL** |
+| 2: Embeddings | ρ > 0.3 bare OR > 0.4 enriched | ρ_bare = 0.353, ρ_enriched = 0.398 | **PASS** (w/ caveats) |
+| 3: Stability | Procrustes < 0.4, <20% chaotic | Procrustes = 0.994, 96% chaotic | **FAIL** |
+| 4: Simulation | Ortho-PCA 30%+ fewer Q than Frequency | 27.0% savings (just under bar) | **PARTIAL** |
+
+Mapping to the go/no-go matrix: closest row is `Pass / Pass / Fail → Pivot scope`. With Spike 1 also partially failing, the honest read is **no-go for the geometric framework as originally proposed**, with two specific salvage paths described below.
+
+### The dominant finding (not in the original hypothesis)
+
+**Most decision dimensions are silent in any given session.** Spike 4's pre-flight measured the actual u-vs-default deviation per session: mean **6.2 of 30 dimensions** carry a non-default value. The other ~24 dimensions are noise — the session never made that decision, the centroid default stands. This caps the maximum possible improvement: Oracle averages 6.1 questions because it never asks about the ~24 silent dimensions, while every other strategy burns questions on them.
+
+The corollary: the original framing ("collapse a 50-dim space with 3 orthogonal questions") assumes most dimensions matter and need probing. The data shows most dimensions don't matter per task. The lever isn't *orthogonality between questions* — it's *correctly identifying which dimensions are even alive in this session*. That's a different problem (sparse support recovery), and embeddings don't directly solve it.
+
+Quantitative comparison from Spike 4 (n=47 sessions, threshold = median(initial residual)/10):
+
+| Strategy | Avg Q to converge | AUC | Resid@5 | Converged within 10 Q |
+|---|---|---|---|---|
+| Random | 25.9 | 35.7 | 1.72 | 0% |
+| Frequency | 24.6 | 34.3 | 1.69 | 0% |
+| Orthogonal-PCA | 17.9 | 22.6 | 1.49 | 9% |
+| Oracle | 6.1 | 7.2 | 0.51 | 91% |
+
+Orthogonal-PCA does provide a real ~27% lift over Frequency — better than nothing. But the gap to Oracle (11.8 questions) is much larger than the gap from Random (8.0 questions). The structural information PCA exploits is small relative to what an oracle who knows which dimensions are alive can do.
+
+### Per-spike detail
+
+**Spike 0** Extracted 725 structured decisions across 68 sessions using gpt-4.1-mini. 155 distinct `decision_type` categories emerged — long-tailed, top 15 cover ~50%. Spot-check on random samples: extracted decisions are real, but values are highly free-form ("split validation into shared validate() function" vs "use shared validate() approach" vs "shared validate() function") — same decision rephrased differently each time. This becomes the central methodology issue for all downstream spikes.
+
+**Spike 1 (Geometry)** Built a 58×46080 session-by-(top-30-types × 1536-dim-embedding) matrix. PCA spectrum is **flat**: n_80=31, n_90=40, n_95=46. No elbow. By the spike doc's own framing, "every component explains ~equal variance" is the "what bad looks like" case. The top-5 PCs each concentrate L2-energy on a single decision type (PC1=file_layout, PC4=api_style, etc.) — they look interpretable, but on inspection the axis meaning is "is this a code project vs a docs project?" That's project identity, not a shared decision axis that would help predict the next question.
+
+**Spike 2 (Embeddings)** Spearman ρ_bare = 0.353 (p≈0) between cosine-similarity-of-embeddings and session-co-occurrence-counts. ρ enriched with type+context = 0.398 — a modest improvement, validating that context helps. But: when filtered to *only pairs with positive co-occurrence*, ρ drops to 0.063 (p=0.21). The correlation is doing one thing well (separating "these never go together" from "these sometimes go together") and one thing badly (ordering within positive pairs). Top-10 false positives are dominated by extractor near-duplicates at sim ≈ 0.9 — strong evidence that without a dedup pre-pass, embeddings will treat paraphrases as if they were distinct decisions.
+
+**Spike 3 (Stability)** Chronological split (timestamps from `autosearch session describe`). After dimension reduction (1536→32 via PCA over value embeddings), Procrustes disparity between the top-5 PCs of half-1 and half-2 = **0.994** — essentially orthogonal. Matched-PC cosine similarities: 0.03–0.13. Per-dimension entropy: 1/25 stable, 0/25 contextual, 24/25 chaotic — even at the most permissive canonicalization threshold, ≥84% remain chaotic. One bright spot: in the context-prediction sub-test, `test_strategy` was predictable from task embeddings at 74% vs 20% baseline (3.7×). But only 1 dimension had enough data after singleton-drop to test. **The dominant signal is non-stationarity caused by extractor verbalization noise**, not a fundamental finding about user preferences.
+
+**Spike 4 (Simulation)** Static orthogonal-PCA ranking (not full dynamic re-projection — justified because Spike 3 showed the basis is unstable). Ortho-PCA beats Frequency by 27% and Random by 31%. Criterion B (faster drop in first 3 questions) fails — Ortho-PCA's lift shows up *later*, not earlier. Criterion C (Ortho-Oracle gap < Freq-Oracle gap) passes. The signal Ortho-PCA exploits is weak but real: PCA finds dimensions that are simultaneously high-entropy *and* high-variance across sessions, which is more discriminating than entropy alone at this sample size.
+
+### What's actually salvageable
+
+Three concrete next steps, in priority order:
+
+1. **Fix the extractor before re-running anything geometric.** Spike 2's false-positive analysis and Spike 3's chaotic entropy both point at the same root cause: the LLM extractor produces a free-form paraphrase per session, and string-level (or embedding-based) canonicalization at threshold 0.55 collapses some but not all duplicates. A second-pass clustering of extracted values *per decision_type* at sim ≥ 0.85, followed by a stable canonical label per cluster, would likely halve the chaotic-dimension count. Re-run Spikes 1 and 3 after this — the results may shift materially.
+
+2. **Context-conditioned models over universal models.** Spike 3's lone positive signal — `test_strategy` predictable from task embedding at 3.7× baseline — is the seed of a viable approach. Rather than a universal prior over all decisions, train per-task-cluster priors: "for sessions about doc tooling, the modal `file_layout` is `docs/tasks/$id/`; for code projects, it's `src/<package>/`." This is the "pivot scope" verdict from the decision matrix, and it's the most defensible path given the data.
+
+3. **Sparse-support recovery, not orthogonal questioning.** The 6.2/30 finding from Spike 4 says the real problem is identifying *which* dimensions are alive in a session, not *in which order* to ask them. A classifier `f(task_description) → set of alive dimensions` operating *before* any question-asking would give Oracle-level convergence. This reframes the whole problem: don't ask 3 orthogonal questions, predict the 6 questions worth asking and ask them.
+
+### What's *not* salvageable
+
+The original headline claim — "3-5 questions instead of 50, via PCA-aligned orthogonal probing" — does not survive contact with this data. The geometric structure required (low effective dimensionality, stable across time, semantic-cosine-similarity ≈ behavioral co-occurrence within positives) is not present at the current data scale and extraction quality.
+
+### Cost
+
+OpenAI spend across all four spikes: well under $1 of the $30 budget. Most of the spend was embeddings (text-embedding-3-small) for ~700 unique values and gpt-4.1-mini for 321 extraction calls. Re-running with a better extractor + dedup pass is cheap.
