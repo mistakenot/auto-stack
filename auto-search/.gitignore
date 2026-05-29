@@ -1,2 +1,6 @@
 .tmp
 testdata
+# Checked-in conformance fixtures are an exception to the testdata ignore.
+!testdata/
+!testdata/fixtures/
+!testdata/fixtures/**

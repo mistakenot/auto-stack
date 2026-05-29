@@ -1,8 +1,12 @@
 .PHONY: build build-etl build-doc build-watch build-search build-reflect build-skill build-graph clean test vet fmt lint \
        dist-reflect vulncheck \
-       install install-hooks gen-stats check dist test-install test-curl-install
+       install install-hooks gen-stats check dist test-install test-curl-install \
+       fixtures verify-fixtures
 
 BUILD_DIR := bin
+
+# Checked-in co-change snapshot fixture (auto-search)
+FIXTURE_DIR := auto-search/testdata/fixtures/auto-stack-snapshot
 DIST_DIR  := dist
 INSTALL_DIR ?= $(HOME)/.local/bin
 
@@ -156,11 +160,30 @@ check: fmt-check vet lint
 
 # --- Test ---
 
-test:
+test: verify-fixtures
 	@for d in $(PROJECTS); do \
 		echo "=== test $$d ==="; \
 		(cd "$$d" && go test ./...) || exit 1; \
 	done
+
+# --- Co-change snapshot fixtures ---
+
+# Regenerate the checked-in co-change snapshot fixture from this repo's own git
+# history under an isolated HOME (the developer's real ~/.auto is untouched).
+fixtures:
+	cd auto-search && go run ./internal/cochange/fixturegen -repo "$(CURDIR)"
+	@echo "Fixtures regenerated under $(FIXTURE_DIR)/"
+
+# Privacy guard (AC-20) + size budget (AC-16): assert no forbidden datasets /
+# columns leaked into the fixture and the total checked-in size is < 1 MB.
+verify-fixtures:
+	cd auto-search && go run ./internal/cochange/fixturegen -verify -repo "$(CURDIR)"
+	@size=$$(du -sk "$(FIXTURE_DIR)" | cut -f1); \
+	echo "fixture size: $${size} KiB"; \
+	if [ "$$size" -ge 1024 ]; then \
+		echo "ERROR: fixture exceeds 1 MB budget ($${size} KiB)"; exit 1; \
+	fi; \
+	echo "fixture size budget: OK (< 1 MB)"
 
 # --- Install ---
 

@@ -91,11 +91,11 @@ AUTHOR: Resolved by standardising on the existing `search.ParseDurationMs` (time
 - [x] Step 4.7: Commit: `feat(010): phase 4 - scoring, repo resolution, and co-change CLI command`
 
 ### Phase 5: Fixture builder, privacy guard, Makefile
-- [ ] Step 5.1: `cochange/fixturegen/main.go` — run autoetl under an **isolated temp HOME** (`HOME=<tmp_home> autoetl run --repo-path <repo> --output <tmp_out> --only git`) so the git sync-state is empty → full deterministic extraction and the dev's real `~/.auto` is untouched (do NOT use `--full` against the real HOME — it deletes the user's sync-state). Then `parquet-go`-read each dataset, project to the AC-16 retained columns, sort by stable key, write `auto-search/testdata/fixtures/auto-stack-snapshot/<dataset>/<dataset>.parquet`; write `SHA.txt`; delete temp dirs.
-- [ ] Step 5.2: Add privacy-guard mode (or `verify-fixtures`): via `parquet-go` schema introspection, assert NO `messages/`,`sessions/`,`commit_hunks/` dirs and NO `diff`/`diff_truncated`/`message`/`trailers_json` columns; fail loudly otherwise (AC-20).
-- [ ] Step 5.3: Root `Makefile`: add `fixtures` (regen) and `verify-fixtures` (guard + size<1MB) targets.
-- [ ] Step 5.4: Run `make fixtures` against this repo; verify checked-in snapshot is < 1 MB and `make verify-fixtures` passes; re-run `make fixtures` and confirm byte-identical output (AC-17 determinism).
-- [ ] Step 5.5: Commit: `feat(010): phase 5 - fixture builder, privacy guard, make targets`
+- [x] Step 5.1: `cochange/fixturegen/main.go` — run autoetl under an **isolated temp HOME** (`HOME=<tmp_home> autoetl run --repo-path <repo> --output <tmp_out> --only git`) so the git sync-state is empty → full deterministic extraction and the dev's real `~/.auto` is untouched (do NOT use `--full` against the real HOME — it deletes the user's sync-state). Then `parquet-go`-read each dataset, project to the AC-16 retained columns, sort by stable key, write `auto-search/testdata/fixtures/auto-stack-snapshot/<dataset>/<dataset>.parquet`; write `SHA.txt`; delete temp dirs.
+- [x] Step 5.2: Add privacy-guard mode (or `verify-fixtures`): via `parquet-go` schema introspection, assert NO `messages/`,`sessions/`,`commit_hunks/` dirs and NO `diff`/`diff_truncated`/`message`/`trailers_json` columns; fail loudly otherwise (AC-20).
+- [x] Step 5.3: Root `Makefile`: add `fixtures` (regen) and `verify-fixtures` (guard + size<1MB) targets.
+- [x] Step 5.4: Run `make fixtures` against this repo; verify checked-in snapshot is < 1 MB and `make verify-fixtures` passes; re-run `make fixtures` and confirm byte-identical output (AC-17 determinism).
+- [x] Step 5.5: Commit: `feat(010): phase 5 - fixture builder, privacy guard, make targets`
 
 ### Phase 6: Tests
 - [ ] Step 6.1: `conformance_test.go` — run co-change against the snapshot for a known file (e.g. `auto-etl/internal/git/extract.go`); assert valid JSON to schema, an expected related file appears (e.g. `extract_test.go`), all metadata fields populated, unknown-file → metadata-only exit 0 (AC-1,4,5,9,19).
