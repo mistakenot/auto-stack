@@ -9,7 +9,8 @@ import (
 
 // ParquetSource represents a discovered parquet file with its metadata.
 type ParquetSource struct {
-	// Dataset is "messages" or "sessions".
+	// Dataset is the dataset subdirectory name, e.g. "messages", "sessions",
+	// "commits", "commit_files", "git_repositories", or "git_refs".
 	Dataset string
 	// PartitionKey is the Hive-style partition path, e.g. "year=2026/week=12".
 	PartitionKey string
@@ -23,7 +24,19 @@ type ParquetSource struct {
 
 // Discover walks the input root and finds all parquet files under the
 // messages/ and sessions/ subdirectories. It returns them grouped by dataset.
+//
+// Discover is intentionally scoped to the messages/sessions datasets the FTS
+// indexer consumes. The indexer writes index_state / FilesProcessed for any
+// discovered source, so git datasets must NOT leak into it. Callers that need
+// git datasets (e.g. co-change) use DiscoverDatasets directly.
 func Discover(inputRoot string) ([]ParquetSource, error) {
+	return DiscoverDatasets(inputRoot, []string{"messages", "sessions"})
+}
+
+// DiscoverDatasets walks the input root and finds all parquet files under each
+// of the named dataset subdirectories. It returns them grouped by dataset.
+// Datasets whose subdirectory does not exist are skipped silently.
+func DiscoverDatasets(inputRoot string, datasets []string) ([]ParquetSource, error) {
 	info, err := os.Stat(inputRoot)
 	if err != nil {
 		return nil, fmt.Errorf("stat input root %s: %w", inputRoot, err)
@@ -33,7 +46,7 @@ func Discover(inputRoot string) ([]ParquetSource, error) {
 	}
 
 	var sources []ParquetSource
-	for _, dataset := range []string{"messages", "sessions"} {
+	for _, dataset := range datasets {
 		datasetDir := filepath.Join(inputRoot, dataset)
 		if _, err := os.Stat(datasetDir); os.IsNotExist(err) {
 			continue
