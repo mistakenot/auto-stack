@@ -194,6 +194,31 @@ autosearch stats --scope messages --group-by day --skill contextual-commit --sin
 autosearch stats --scope messages --group-by workspace --skill release
 ` + "```" + `
 
+### 9. Find files that change together (co-change)
+
+Given a file, find the other files that historically change with it — a fast
+onboarding heuristic and a refactor-safety signal. Reads git parquet produced by
+` + "`" + `autoetl run --only git` + "`" + `; resolves the repo from the input path's git toplevel.
+
+` + "```" + `bash
+# What else tends to change when I touch this file?
+autosearch co-change auto-etl/internal/git/extract.go
+
+# Limit results and disable time decay
+autosearch co-change internal/cli/root.go --limit 10 --no-decay
+
+# Override the decay constant (units m|h|d|w)
+autosearch co-change internal/cli/root.go --decay-tau 26w
+
+# Select the repo explicitly (no origin remote, or multiple matches)
+autosearch co-change path/to/file.go --repo-id <repo-id>
+` + "```" + `
+
+Output is JSON: a ` + "`" + `metadata` + "`" + ` header (the input file's history, authors,
+sessions, renames) and a ` + "`" + `related_files` + "`" + ` list ranked by coupling score, each
+with ` + "`" + `co_commits` + "`" + `, ` + "`" + `confidence_a_to_b` + "`" + `, ` + "`" + `lift` + "`" + `, and ` + "`" + `top_sessions` + "`" + ` you can
+pivot into ` + "`" + `autosearch session get` + "`" + `.
+
 ## Understanding search output
 
 Search results are JSON with two top-level keys: ` + "`" + `_meta` + "`" + ` and ` + "`" + `hits` + "`" + `.

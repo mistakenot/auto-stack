@@ -473,3 +473,98 @@ type RenameStep struct {
 	Path      string
 	UntilDate int64 // author_date (unix ms) of the rename commit
 }
+
+// AMeta holds A-level (input-file) metadata derived from the commits touching
+// A's canonical path: recency-ordered top sessions, top authors, the first and
+// last touch dates, and the mean cohort size (files_changed) of those commits.
+// These populate the AC-5 metadata header for the input file itself.
+type AMeta struct {
+	FirstTouched      int64 // author_date (unix ms) of the earliest commit touching A
+	LastTouched       int64 // author_date (unix ms) of the latest commit touching A
+	AvgFilesPerCommit float64
+	TopAuthors        []AuthorCount
+	TopSessions       []string // session ids, recency order, up to 5
+}
+
+// MetaForA computes the A-level metadata over the commits touching A's canonical
+// path (post rename canonicalisation, post large-commit filter). canonA is
+// always bound as a SQL argument (never concatenated), per AC-12.
+func MetaForA(db *DB, canonA string) (AMeta, error) {
+	var m AMeta
+	if canonA == "" {
+		return m, nil
+	}
+	sdb := db.SQL()
+
+	// The set of commits touching A's canonical path.
+	aCommitsCTE := pathCanonCTE + cfCanonCTE + `,
+aco AS (
+	SELECT DISTINCT cfc.commit_id AS commit_id
+	FROM cfc WHERE cfc.path = ?
+)
+`
+
+	// first/last touched + avg cohort size (mean files_changed).
+	scalarQ := aCommitsCTE + `
+SELECT COALESCE(MIN(c.author_date), 0),
+       COALESCE(MAX(c.author_date), 0),
+       COALESCE(AVG(c.files_changed), 0)
+FROM c JOIN aco ON aco.commit_id = c.commit_id`
+	if err := sdb.QueryRow(scalarQ, canonA).Scan(&m.FirstTouched, &m.LastTouched, &m.AvgFilesPerCommit); err != nil {
+		return m, fmt.Errorf("A metadata scalars: %w", err)
+	}
+
+	// Top authors.
+	authorsQ := aCommitsCTE + `
+SELECT c.author_name, COUNT(*) AS cnt
+FROM c JOIN aco ON aco.commit_id = c.commit_id
+GROUP BY c.author_name
+ORDER BY cnt DESC, c.author_name ASC
+LIMIT 5`
+	rows, err := sdb.Query(authorsQ, canonA)
+	if err != nil {
+		return m, fmt.Errorf("A top authors: %w", err)
+	}
+	for rows.Next() {
+		var a AuthorCount
+		if err := rows.Scan(&a.Name, &a.Count); err != nil {
+			_ = rows.Close()
+			return m, fmt.Errorf("scan A author: %w", err)
+		}
+		m.TopAuthors = append(m.TopAuthors, a)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return m, fmt.Errorf("iterate A authors: %w", err)
+	}
+	_ = rows.Close()
+
+	// Top sessions, recency order, non-empty only.
+	sessionsQ := aCommitsCTE + `
+SELECT c.session_id, MAX(c.author_date) AS recent
+FROM c JOIN aco ON aco.commit_id = c.commit_id
+WHERE c.session_id <> ''
+GROUP BY c.session_id
+ORDER BY recent DESC
+LIMIT 5`
+	rows, err = sdb.Query(sessionsQ, canonA)
+	if err != nil {
+		return m, fmt.Errorf("A top sessions: %w", err)
+	}
+	for rows.Next() {
+		var sid string
+		var recent int64
+		if err := rows.Scan(&sid, &recent); err != nil {
+			_ = rows.Close()
+			return m, fmt.Errorf("scan A session: %w", err)
+		}
+		m.TopSessions = append(m.TopSessions, sid)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return m, fmt.Errorf("iterate A sessions: %w", err)
+	}
+	_ = rows.Close()
+
+	return m, nil
+}
