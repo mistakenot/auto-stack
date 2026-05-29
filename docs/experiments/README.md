@@ -13,6 +13,8 @@ Long-lived writeups for research-style experiments run against auto-stack. Code,
 
 - **[2026-05-26 — Orthogonal Questioning](2026-05-26-orthogonal-questioning/README.md)**: Tested whether requirements could be modeled as a vector space and compressed to ~3 questions via cosine-geometry orthogonal probing. Four phases. Conclusion: the geometric framework as originally proposed doesn't work, but a relaxed version using per-dimension classifiers + active learning hits the same 3-5 question budget on linguistically-legible preference dimensions.
 
+- **[2026-05-28 — Co-change query latency](2026-05-28-cochange-query-latency/phase1-engine-latency.md)**: Tested Task 010's in-memory-SQLite-over-parquet engine for `autosearch co-change`. A query in this repo takes ~348 ms end-to-end, but ~97% is the parquet read — the engine is only ~10 ms. Column projection works (reads 1.35% of the 445 MB). modernc-SQLite beats duckdb 6.4× at this repo's scale but *loses* 3.1× at 33× scale (opencode) due to its row-insert tax; they cross around ~130k commit_files. Verdict: ship v1 as designed (pure-Go, per-query, no duckdb); the cheapest scaling fix is a pure-Go map group-by, not duckdb.
+
 - **[Structured Compiler](structured-compiler/)**: (separate experiment, see folder)
 
 ## See also
