@@ -98,11 +98,11 @@ AUTHOR: Resolved by standardising on the existing `search.ParseDurationMs` (time
 - [x] Step 5.5: Commit: `feat(010): phase 5 - fixture builder, privacy guard, make targets`
 
 ### Phase 6: Tests
-- [ ] Step 6.1: `conformance_test.go` — run co-change against the snapshot for a known file (e.g. `auto-etl/internal/git/extract.go`); assert valid JSON to schema, an expected related file appears (e.g. `extract_test.go`), all metadata fields populated, unknown-file → metadata-only exit 0 (AC-1,4,5,9,19).
-- [ ] Step 6.2: `cli_integration_test.go` cases — outside-repo, no-origin-without-`--repo-id`, missing-parquet all exit non-zero with stderr remediation; an **existing file path** and a **non-existent file path inside a repo** both resolve the repo correctly (path→dir algorithm, AC-1/AC-9); `--help` and quickstart contain co-change (AC-10,15).
-- [ ] Step 6.3: Backfill any uncovered AC unit cases (AC-3 thresholds, AC-8 limit/sort, AC-16 size assertion).
-- [ ] Step 6.4: Verify: `cd auto-search && go build ./... && go vet ./... && go test ./...` all pass; `make verify-fixtures` passes.
-- [ ] Step 6.5: Commit: `test(010): phase 6 - conformance, integration, and unit coverage`
+- [x] Step 6.1: `conformance_test.go` — run co-change against the snapshot for a known file (e.g. `auto-etl/internal/git/extract.go`); assert valid JSON to schema, an expected related file appears (e.g. `extract_test.go`), all metadata fields populated, unknown-file → metadata-only exit 0 (AC-1,4,5,9,19).
+- [x] Step 6.2: `cli_integration_test.go` cases — outside-repo, no-origin-without-`--repo-id`, missing-parquet all exit non-zero with stderr remediation; an **existing file path** and a **non-existent file path inside a repo** both resolve the repo correctly (path→dir algorithm, AC-1/AC-9); `--help` and quickstart contain co-change (AC-10,15).
+- [x] Step 6.3: Backfill any uncovered AC unit cases (AC-3 thresholds, AC-8 limit/sort, AC-16 size assertion).
+- [x] Step 6.4: Verify: `cd auto-search && go build ./... && go vet ./... && go test ./...` all pass; `make verify-fixtures` passes.
+- [x] Step 6.5: Commit: `test(010): phase 6 - conformance, integration, and unit coverage`
 
 ## Success Criteria
 - [ ] `cd auto-shared && go test ./...`, `cd auto-etl && go test ./...`, `cd auto-search && go test ./...` all pass
