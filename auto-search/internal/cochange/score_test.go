@@ -134,6 +134,42 @@ func TestScore_CoCommitsThreshold(t *testing.T) {
 	}
 }
 
+// AC-3b: commits with files_changed > LargeCommitCutoff are dropped entirely
+// before aggregation, so a candidate co-changing only in oversized commits never
+// contributes. Here B co-changes with A in 5 small commits; C co-changes only in
+// oversized commits and must not appear.
+func TestScore_LargeCommitDropped(t *testing.T) {
+	var commits []etlscan.CommitSlim
+	var files []etlscan.CommitFileSlim
+	// 5 small commits: A + B (cohort size 2, well under the cutoff).
+	for _, sha := range []string{"s1", "s2", "s3", "s4", "s5"} {
+		commits = append(commits, commit(sha, 1000, 2))
+		files = append(files, touch(sha, "A.go"), touch(sha, "B.go"))
+	}
+	// 4 oversized commits: A + C, files_changed above the cutoff. These are
+	// dropped, so C never co-changes and A's own totals exclude them.
+	big := int32(LargeCommitCutoff + 1)
+	for _, sha := range []string{"big1", "big2", "big3", "big4"} {
+		commits = append(commits, commit(sha, 1000, big))
+		files = append(files, touch(sha, "A.go"), touch(sha, "C.go"))
+	}
+	db := loadSynthetic(t, commits, files, nil)
+	res, err := Aggregate(db, "A.go")
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	// A's commit count must exclude the oversized commits (5, not 9).
+	if res.CommitsA != 5 {
+		t.Errorf("commits(A) = %d, want 5 (oversized commits dropped)", res.CommitsA)
+	}
+	if findCandidate(res, "C.go") != nil {
+		t.Error("C.go co-changed only in oversized commits and must be dropped before scoring")
+	}
+	if findCandidate(res, "B.go") == nil {
+		t.Error("B.go co-changed in small commits and should survive")
+	}
+}
+
 // AC-3c: when commits(A) < 5, InsufficientHistory is true; otherwise false.
 func TestScore_InsufficientHistory(t *testing.T) {
 	build := func(n int) *AggregateResult {
