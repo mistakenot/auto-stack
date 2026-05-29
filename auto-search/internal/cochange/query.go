@@ -98,13 +98,28 @@ func Aggregate(db *DB, inputPath string) (*AggregateResult, error) {
 	if err := fillCandidateTotals(sdb, candidates); err != nil {
 		return nil, err
 	}
-	for i := range candidates {
-		if err := fillCandidateDetail(sdb, canonA, &candidates[i]); err != nil {
-			return nil, err
-		}
-	}
+	// Per-candidate detail (top authors/sessions/sample commits) is intentionally
+	// NOT fetched here: it re-runs the recursive rename CTE several times per
+	// candidate. The orchestrator scores, filters (MinCoCommits) and truncates to
+	// the limit first, then calls FillCandidateDetails on only the survivors, so
+	// the expensive detail queries run for the top-N rather than every candidate.
 	res.Candidates = candidates
 	return res, nil
+}
+
+// FillCandidateDetails populates TopAuthors, TopSessions and SampleCommit for the
+// given ranked candidates. It is called by the orchestrator AFTER ScoreAndRank
+// has applied the MinCoCommits filter and the limit, so the detail CTEs run only
+// for the surviving top-N candidates rather than every co-occurring path — the
+// single hot path on a large real dataset.
+func FillCandidateDetails(db *DB, canonA string, scored []ScoredCandidate) error {
+	sdb := db.SQL()
+	for i := range scored {
+		if err := fillCandidateDetail(sdb, canonA, &scored[i].Candidate); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // pathCanonCTE is the recursive CTE that folds rename edges (change_type='R':

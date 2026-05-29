@@ -153,8 +153,12 @@ func Run(opts Options) (*Result, error) {
 		return &Result{Meta: meta, Metadata: metadata, RelatedFiles: []RelatedFile{}}, nil
 	}
 
-	// 4. Score, filter, sort, limit.
+	// 4. Score, filter, sort, limit, then fetch per-candidate detail for only the
+	// surviving top-N (the detail queries are the hot path on large repos).
 	scored := ScoreAndRank(agg, limit)
+	if err := FillCandidateDetails(db, agg.CanonicalA, scored); err != nil {
+		return nil, err
+	}
 	related := make([]RelatedFile, 0, len(scored))
 	for i := range scored {
 		related = append(related, relatedToJSON(scored[i]))

@@ -1,6 +1,11 @@
 .tmp
 testdata
-# Checked-in conformance fixtures are an exception to the testdata ignore.
+# Checked-in test data is an exception to the broad testdata ignore: the
+# conformance fixtures and the etl-output fixtures the discover/index tests read.
+# Without these, a regenerated or added partition would be silently dropped from
+# git status and ship missing from the diff.
 !testdata/
 !testdata/fixtures/
 !testdata/fixtures/**
+!testdata/etl-output/
+!testdata/etl-output/**
