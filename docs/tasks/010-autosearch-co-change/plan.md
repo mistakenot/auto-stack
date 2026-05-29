@@ -70,10 +70,10 @@ Phase 2 (slim readers + discover) ─→ Phase 3 (core engine) ─→ Phase 4 (r
 - [x] Step 2.5: Commit: `feat(010): phase 2 - slim git parquet readers and dataset discovery`
 
 ### Phase 3: Core engine — load → in-memory SQLite → aggregate
-- [ ] Step 3.1: `cochange/load.go` — open `sql.Open("sqlite", ":memory:")` with `SetMaxOpenConns(1)`; create temp tables `cf`, `c`, `refs`; insert projected rows filtered to `repo_id`; compute per-commit `weight = 1/log1p(max(1,files_changed)) * (noDecay ? 1 : exp(-Δt/τ))` in Go and store on `c`.
-- [ ] Step 3.2: `cochange/query.go` — (a) `path_canon` recursive CTE folding rename edges forward to current path; (b) per-path weighted totals (`Wa`, `Wb`, raw counts) over ALL filtered `cf`; (c) co-occurrence self-join producing ONLY `Wab`, raw `co_commits`, `last_co_change`; (d) `Wn` scalar + window functions for top-5 authors/sessions, top-3 sample commits; (e) ref-tip query joining `refs.commit_id = substring(c.commit_id, length(repoID)+2)`.
-- [ ] Step 3.3: Verify: `go build ./...`; `query_test.go` over a synthetic in-memory dataset asserts (i) renamed candidate canonicalised to current path, (ii) `Wb` counts B's non-A commits (so `Wb > Wab` when applicable), (iii) ref-tip join returns the seeded default branch.
-- [ ] Step 3.4: Commit: `feat(010): phase 3 - in-memory sqlite load and co-change aggregation`
+- [x] Step 3.1: `cochange/load.go` — open `sql.Open("sqlite", ":memory:")` with `SetMaxOpenConns(1)`; create temp tables `cf`, `c`, `refs`; insert projected rows filtered to `repo_id`; compute per-commit `weight = 1/log1p(max(1,files_changed)) * (noDecay ? 1 : exp(-Δt/τ))` in Go and store on `c`.
+- [x] Step 3.2: `cochange/query.go` — (a) `path_canon` recursive CTE folding rename edges forward to current path; (b) per-path weighted totals (`Wa`, `Wb`, raw counts) over ALL filtered `cf`; (c) co-occurrence self-join producing ONLY `Wab`, raw `co_commits`, `last_co_change`; (d) `Wn` scalar + window functions for top-5 authors/sessions, top-3 sample commits; (e) ref-tip query joining `refs.commit_id = substring(c.commit_id, length(repoID)+2)`.
+- [x] Step 3.3: Verify: `go build ./...`; `query_test.go` over a synthetic in-memory dataset asserts (i) renamed candidate canonicalised to current path, (ii) `Wb` counts B's non-A commits (so `Wb > Wab` when applicable), (iii) ref-tip join returns the seeded default branch.
+- [x] Step 3.4: Commit: `feat(010): phase 3 - in-memory sqlite load and co-change aggregation`
 
 ### Phase 4: Scoring, repo resolution, orchestrator, CLI
 - [ ] Step 4.1: `cochange/types.go` — JSON structs (`Result{Meta, Metadata, RelatedFiles}`, etc.) matching AC-4/AC-5 field names.
