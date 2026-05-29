@@ -57,17 +57,17 @@ Phase 2 (slim readers + discover) ─→ Phase 3 (core engine) ─→ Phase 4 (r
 ## Plan
 
 ### Phase 1: Extract remote normalisation to auto-shared
-- [ ] Step 1.1: Create `auto-shared/git/normalize.go` with `NormalizeRemoteURL`, `ComputeRepoID`, `ComputeRepoIDFromPath` (moved verbatim from `auto-etl/internal/git/normalize.go`); move `normalize_test.go` cases too.
-- [ ] Step 1.2: Update `auto-etl/internal/git/` callers to import `github.com/mistakenot/auto-shared/git` (keep thin wrappers only if external callers exist; otherwise delete the auto-etl copy).
-- [ ] Step 1.3: Verify: `cd auto-shared && go build ./... && go test ./git/...` passes; `cd auto-etl && go build ./... && go test ./...` passes (normalisation behaviour unchanged).
-- [ ] Step 1.4: Commit: `refactor(010): phase 1 - move git remote normalisation to auto-shared`
+- [x] Step 1.1: Create `auto-shared/git/normalize.go` with `NormalizeRemoteURL`, `ComputeRepoID`, `ComputeRepoIDFromPath` (moved verbatim from `auto-etl/internal/git/normalize.go`); move `normalize_test.go` cases too.
+- [x] Step 1.2: Update `auto-etl/internal/git/` callers to import `github.com/mistakenot/auto-shared/git` (keep thin wrappers only if external callers exist; otherwise delete the auto-etl copy).
+- [x] Step 1.3: Verify: `cd auto-shared && go build ./... && go test ./git/...` passes; `cd auto-etl && go build ./... && go test ./...` passes (normalisation behaviour unchanged).
+- [x] Step 1.4: Commit: `refactor(010): phase 1 - move git remote normalisation to auto-shared`
 
 ### Phase 2: Slim git parquet readers + dataset discovery
-- [ ] Step 2.1: Add `etlscan.DiscoverDatasets(inputRoot, datasets []string)` and reimplement `Discover` as `DiscoverDatasets(inputRoot, []string{"messages","sessions"})` (do NOT broaden the global `Discover` — the indexer writes `index_state`/`FilesProcessed` for any discovered source). Co-change will call `DiscoverDatasets` with the git datasets. Verify the indexer is untouched.
-- [ ] Step 2.2: Add `auto-search/internal/etlscan/parquet_git.go` with slim structs (parquet tags matching `auto-etl/internal/model/git.go`) + readers `ReadCommitsSlim`, `ReadCommitFilesSlim`, `ReadGitRepos`, `ReadGitRefs` (follow `parquet_sessions.go` pattern).
-- [ ] Step 2.3: Verify: `cd auto-search && go build ./...`; add a quick unit test that `Discover` on `testdata/etl-output` still returns only messages/sessions, and that readers parse a hand-written tiny parquet (or defer reader assertion to Phase 6 conformance).
-- [ ] Step 2.4: Verify: existing `go test ./internal/etlscan/... ./internal/indexdb/...` still pass (no regression to indexing).
-- [ ] Step 2.5: Commit: `feat(010): phase 2 - slim git parquet readers and dataset discovery`
+- [x] Step 2.1: Add `etlscan.DiscoverDatasets(inputRoot, datasets []string)` and reimplement `Discover` as `DiscoverDatasets(inputRoot, []string{"messages","sessions"})` (do NOT broaden the global `Discover` — the indexer writes `index_state`/`FilesProcessed` for any discovered source). Co-change will call `DiscoverDatasets` with the git datasets. Verify the indexer is untouched.
+- [x] Step 2.2: Add `auto-search/internal/etlscan/parquet_git.go` with slim structs (parquet tags matching `auto-etl/internal/model/git.go`) + readers `ReadCommitsSlim`, `ReadCommitFilesSlim`, `ReadGitRepos`, `ReadGitRefs` (follow `parquet_sessions.go` pattern).
+- [x] Step 2.3: Verify: `cd auto-search && go build ./...`; add a quick unit test that `Discover` on `testdata/etl-output` still returns only messages/sessions, and that readers parse a hand-written tiny parquet (or defer reader assertion to Phase 6 conformance).
+- [x] Step 2.4: Verify: existing `go test ./internal/etlscan/... ./internal/indexdb/...` still pass (no regression to indexing).
+- [x] Step 2.5: Commit: `feat(010): phase 2 - slim git parquet readers and dataset discovery`
 
 ### Phase 3: Core engine — load → in-memory SQLite → aggregate
 - [ ] Step 3.1: `cochange/load.go` — open `sql.Open("sqlite", ":memory:")` with `SetMaxOpenConns(1)`; create temp tables `cf`, `c`, `refs`; insert projected rows filtered to `repo_id`; compute per-commit `weight = 1/log1p(max(1,files_changed)) * (noDecay ? 1 : exp(-Δt/τ))` in Go and store on `c`.
