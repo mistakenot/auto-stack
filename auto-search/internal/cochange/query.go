@@ -77,7 +77,9 @@ func Aggregate(db *DB, inputPath string) (*AggregateResult, error) {
 
 	res := &AggregateResult{CanonicalA: canonA}
 
-	if err := sdb.QueryRow(`SELECT COALESCE(SUM(weight), 0) FROM c`).Scan(&res.Wn); err != nil {
+	// Wn must honour the AC-3b large-commit drop, like every other pass; reading
+	// c unfiltered would leak oversized commits' weight into Wn and inflate lift.
+	if err := sdb.QueryRow(`SELECT COALESCE(SUM(weight), 0) FROM c WHERE files_changed <= ` + cutoffStr).Scan(&res.Wn); err != nil {
 		return nil, fmt.Errorf("compute Wn: %w", err)
 	}
 

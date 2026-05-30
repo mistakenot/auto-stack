@@ -168,6 +168,13 @@ func TestScore_LargeCommitDropped(t *testing.T) {
 	if findCandidate(res, "B.go") == nil {
 		t.Error("B.go co-changed in small commits and should survive")
 	}
+	// Wn must exclude the oversized commits too (AC-3b): only the 5 small commits
+	// contribute. A leaked big-commit weight would inflate Wn and thus lift. With
+	// decay disabled each small commit weighs commitWeight(2, ...).
+	wantWn := 5 * commitWeight(2, 0, 0, true, 90)
+	if !approx(res.Wn, wantWn) {
+		t.Errorf("Wn = %v, want %v (only the 5 small commits; oversized dropped)", res.Wn, wantWn)
+	}
 }
 
 // AC-3c: when commits(A) < 5, InsufficientHistory is true; otherwise false.
