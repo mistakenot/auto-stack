@@ -243,8 +243,8 @@ func TestGoFixtureBasicImports(t *testing.T) {
 	// util/helper.go -> service/service.go (imports service package)
 	// util/format.go -> service/service.go (imports service package)
 	expectedEdges := map[string]bool{
-		"main.go->util/helper.go":          false,
-		"main.go->util/format.go":          false,
+		"main.go->util/helper.go":            false,
+		"main.go->util/format.go":            false,
 		"util/helper.go->service/service.go": false,
 		"util/format.go->service/service.go": false,
 	}
@@ -399,8 +399,8 @@ func TestGoFixtureCircular(t *testing.T) {
 	// alpha/alpha.go -> beta/beta.go
 	// beta/beta.go -> alpha/alpha.go
 	expectedEdges := map[string]bool{
-		"alpha/alpha.go->beta/beta.go":  false,
-		"beta/beta.go->alpha/alpha.go":  false,
+		"alpha/alpha.go->beta/beta.go": false,
+		"beta/beta.go->alpha/alpha.go": false,
 	}
 
 	for _, e := range g.Edges {

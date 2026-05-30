@@ -13,6 +13,7 @@ import (
 
 	"github.com/mistakenot/auto-etl/internal/model"
 	"github.com/mistakenot/auto-etl/internal/transform"
+	sharedgit "github.com/mistakenot/auto-shared/git"
 )
 
 // ExtractConfig holds configuration for extraction.
@@ -28,12 +29,12 @@ type ExtractConfig struct {
 // Returns a GitETLResult with all five dataset types populated.
 func ExtractRepo(repo RepoInfo, config ExtractConfig) (*model.GitETLResult, error) {
 	// Compute repo identity.
-	normalized := NormalizeRemoteURL(repo.Remote)
+	normalized := sharedgit.NormalizeRemoteURL(repo.Remote)
 	var repoID string
 	if normalized != "" {
-		repoID = ComputeRepoID(normalized)
+		repoID = sharedgit.ComputeRepoID(normalized)
 	} else {
-		repoID = ComputeRepoIDFromPath(repo.Path)
+		repoID = sharedgit.ComputeRepoIDFromPath(repo.Path)
 	}
 
 	// Observe repo metadata.

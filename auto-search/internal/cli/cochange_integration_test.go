@@ -1,0 +1,311 @@
+package cli_test
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/mistakenot/auto-search/internal/etlscan"
+)
+
+// snapshotFixtureRoot returns the absolute path to the checked-in co-change
+// snapshot fixture (commits/commit_files/git_repositories/git_refs parquet).
+func snapshotFixtureRoot(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Join(filepath.Dir(thisFile), "..", "..", "testdata", "fixtures", "auto-stack-snapshot")
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		t.Fatalf("resolve snapshot root: %v", err)
+	}
+	if _, err := os.Stat(abs); err != nil {
+		t.Skipf("snapshot fixture not found: %v", err)
+	}
+	return abs
+}
+
+// snapshotRepoID reads the single repo id from the snapshot's git_repositories
+// parquet so the CLI tests can resolve hermetically via --repo-id.
+func snapshotRepoID(t *testing.T, root string) string {
+	t.Helper()
+	sources, err := etlscan.DiscoverDatasets(root, []string{"git_repositories"})
+	if err != nil {
+		t.Fatalf("discover git_repositories: %v", err)
+	}
+	for _, s := range sources {
+		if s.Dataset != "git_repositories" {
+			continue
+		}
+		repos, err := etlscan.ReadGitRepos(s.Path)
+		if err != nil {
+			t.Fatalf("read git_repositories: %v", err)
+		}
+		if len(repos) > 0 && repos[0].RepoID != "" {
+			return repos[0].RepoID
+		}
+	}
+	t.Fatal("snapshot has no usable repo id")
+	return ""
+}
+
+func gitToplevel(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Skipf("not inside a git repo: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// AC-1, AC-15: `co-change --help` lists all flags.
+func TestCoChangeHelpListsAllFlags(t *testing.T) {
+	stdout, stderr, code := runCLI(t, "co-change", "--help")
+	if code != 0 {
+		t.Fatalf("co-change --help failed: code=%d stderr=%s", code, stderr)
+	}
+	out := stdout + stderr
+	for _, flag := range []string{"--repo-id", "--limit", "--decay-tau", "--no-decay", "--input", "--request-id"} {
+		if !strings.Contains(out, flag) {
+			t.Errorf("co-change --help missing flag %q\noutput:\n%s", flag, out)
+		}
+	}
+}
+
+// AC-15: quickstart output contains a co-change example.
+func TestQuickstartMentionsCoChange(t *testing.T) {
+	stdout, stderr, code := runCLI(t, "quickstart")
+	if code != 0 {
+		t.Fatalf("quickstart failed: code=%d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "co-change") {
+		t.Errorf("quickstart output does not mention co-change\noutput:\n%s", stdout)
+	}
+}
+
+// AC-1, AC-4, AC-5: the CLI emits conforming JSON to stdout against the snapshot
+// for a known file (resolved hermetically via --repo-id + --input).
+func TestCoChangeCLIKnownFileJSON(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	root := snapshotFixtureRoot(t)
+	repoID := snapshotRepoID(t, root)
+	top := gitToplevel(t)
+	inputAbs := filepath.Join(top, "auto-etl/internal/git/extract.go")
+
+	stdout, stderr, code := runCLI(t,
+		"co-change", inputAbs,
+		"--repo-id", repoID,
+		"--input", root,
+		"--request-id", "cli-known",
+	)
+	if code != 0 {
+		t.Fatalf("co-change failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	meta := out["metadata"].(map[string]any)
+	if meta["resolved_path"] != "auto-etl/internal/git/extract.go" {
+		t.Errorf("resolved_path = %v, want auto-etl/internal/git/extract.go", meta["resolved_path"])
+	}
+	if tc, _ := meta["total_commits"].(float64); tc <= 0 {
+		t.Errorf("total_commits = %v, want > 0", meta["total_commits"])
+	}
+	related, ok := out["related_files"].([]any)
+	if !ok || len(related) == 0 {
+		t.Fatalf("expected non-empty related_files, got %v", out["related_files"])
+	}
+	// The adjacent test file should appear.
+	var found bool
+	for _, r := range related {
+		rf := r.(map[string]any)
+		if rf["path"] == "auto-etl/internal/git/extract_test.go" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected extract_test.go in related_files; got %v", related)
+	}
+	envelope := out["_meta"].(map[string]any)
+	if envelope["request_id"] != "cli-known" {
+		t.Errorf("_meta.request_id = %v, want cli-known", envelope["request_id"])
+	}
+}
+
+// AC-1, AC-9: an EXISTING file and a NON-EXISTENT file inside the same repo both
+// resolve the repo correctly (path->dir algorithm). The non-existent path
+// yields a metadata-only payload, exit 0.
+func TestCoChangeCLIExistingAndNonExistentPaths(t *testing.T) {
+	root := snapshotFixtureRoot(t)
+	repoID := snapshotRepoID(t, root)
+	top := gitToplevel(t)
+
+	// Existing file (in history).
+	existing := filepath.Join(top, "auto-etl/internal/git/extract.go")
+	stdout, stderr, code := runCLI(t, "co-change", existing, "--repo-id", repoID, "--input", root)
+	if code != 0 {
+		t.Fatalf("co-change on existing file failed: code=%d stderr=%s", code, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	if meta := out["metadata"].(map[string]any); meta["resolved_path"] != "auto-etl/internal/git/extract.go" {
+		t.Errorf("existing resolved_path = %v", meta["resolved_path"])
+	}
+
+	// Non-existent file inside the repo: still resolves the repo (exit 0,
+	// metadata-only).
+	missing := filepath.Join(top, "auto-etl/internal/git/does-not-exist.go")
+	stdout, stderr, code = runCLI(t, "co-change", missing, "--repo-id", repoID, "--input", root)
+	if code != 0 {
+		t.Fatalf("co-change on non-existent file should exit 0 (AC-9): code=%d stderr=%s", code, stderr)
+	}
+	out = decodeJSON(t, stdout)
+	meta := out["metadata"].(map[string]any)
+	if meta["resolved_path"] != "auto-etl/internal/git/does-not-exist.go" {
+		t.Errorf("missing resolved_path = %v, want repo-relative path", meta["resolved_path"])
+	}
+	if tc, _ := meta["total_commits"].(float64); tc != 0 {
+		t.Errorf("total_commits = %v, want 0 for untracked path", meta["total_commits"])
+	}
+}
+
+// AC-10: input path outside any git repo -> non-zero exit with remediation, and
+// stdout stays empty/parseable.
+func TestCoChangeCLIOutsideRepo(t *testing.T) {
+	root := snapshotFixtureRoot(t)
+
+	// A path in a temp dir that is NOT a git repo.
+	nonRepo := t.TempDir()
+	target := filepath.Join(nonRepo, "file.go")
+	if err := os.WriteFile(target, []byte("package x"), 0o644); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	stdout, stderr, code := runCLI(t, "co-change", target, "--input", root)
+	if code == 0 {
+		t.Fatal("expected non-zero exit for path outside any git repo")
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("stdout should be empty on error, got:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "not inside a git repository") {
+		t.Errorf("stderr missing outside-repo condition, got:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "--repo-id") && !strings.Contains(stderr, "cd into") {
+		t.Errorf("stderr missing remediation hint, got:\n%s", stderr)
+	}
+}
+
+// AC-10: missing parquet data -> non-zero exit with remediation naming
+// `autoetl run --only git`.
+func TestCoChangeCLIMissingParquet(t *testing.T) {
+	top := gitToplevel(t)
+	inputAbs := filepath.Join(top, "auto-etl/internal/git/extract.go")
+
+	// An empty input root: no git parquet datasets at all.
+	emptyRoot := t.TempDir()
+
+	stdout, stderr, code := runCLI(t,
+		"co-change", inputAbs,
+		"--repo-id", "anything",
+		"--input", emptyRoot,
+	)
+	if code == 0 {
+		t.Fatal("expected non-zero exit when git parquet is missing")
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("stdout should be empty on error, got:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "autoetl run --only git") {
+		t.Errorf("stderr missing 'autoetl run --only git' remediation, got:\n%s", stderr)
+	}
+}
+
+// AC-10: no origin remote and no --repo-id -> non-zero exit with remediation
+// naming --repo-id. Exercised against a temp git repo with no origin remote.
+func TestCoChangeCLINoOriginRemote(t *testing.T) {
+	root := snapshotFixtureRoot(t)
+
+	// Build a throwaway git repo with a commit but NO origin remote.
+	repoDir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init")
+	target := filepath.Join(repoDir, "main.go")
+	if err := os.WriteFile(target, []byte("package main"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	run("add", "main.go")
+	run("commit", "-m", "init")
+
+	stdout, stderr, code := runCLI(t, "co-change", target, "--input", root)
+	if code == 0 {
+		t.Fatal("expected non-zero exit for repo with no origin remote and no --repo-id")
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("stdout should be empty on error, got:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "origin remote") {
+		t.Errorf("stderr missing no-origin condition, got:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "--repo-id") {
+		t.Errorf("stderr missing --repo-id remediation, got:\n%s", stderr)
+	}
+}
+
+// AC-10: an origin remote that matches no indexed repo -> non-zero with
+// remediation naming --repo-id (and autoetl run). Uses a temp git repo whose
+// origin is a fabricated remote not present in the snapshot.
+func TestCoChangeCLINoRepoMatch(t *testing.T) {
+	root := snapshotFixtureRoot(t)
+
+	repoDir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init")
+	run("remote", "add", "origin", "https://github.com/nobody/not-indexed.git")
+	target := filepath.Join(repoDir, "main.go")
+	if err := os.WriteFile(target, []byte("package main"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	run("add", "main.go")
+	run("commit", "-m", "init")
+
+	stdout, stderr, code := runCLI(t, "co-change", target, "--input", root)
+	if code == 0 {
+		t.Fatal("expected non-zero exit when origin remote matches no indexed repo")
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("stdout should be empty on error, got:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "no match") && !strings.Contains(stderr, "not found") {
+		t.Errorf("stderr missing no-match condition, got:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "--repo-id") {
+		t.Errorf("stderr missing --repo-id remediation, got:\n%s", stderr)
+	}
+}

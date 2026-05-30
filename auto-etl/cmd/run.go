@@ -20,6 +20,7 @@ import (
 	"github.com/mistakenot/auto-etl/internal/progress"
 	"github.com/mistakenot/auto-etl/internal/transform"
 	"github.com/mistakenot/auto-etl/internal/writer"
+	sharedgit "github.com/mistakenot/auto-shared/git"
 	"github.com/spf13/cobra"
 )
 
@@ -394,12 +395,12 @@ func runGitETL(hostID string, remotes map[string]string, explicitPaths []string,
 	var totalCommits, totalFiles, totalHunks int
 
 	for _, repo := range repos {
-		normalized := gitextract.NormalizeRemoteURL(repo.Remote)
+		normalized := sharedgit.NormalizeRemoteURL(repo.Remote)
 		var repoID string
 		if normalized != "" {
-			repoID = gitextract.ComputeRepoID(normalized)
+			repoID = sharedgit.ComputeRepoID(normalized)
 		} else {
-			repoID = gitextract.ComputeRepoIDFromPath(repo.Path)
+			repoID = sharedgit.ComputeRepoIDFromPath(repo.Path)
 		}
 
 		repoState := syncState.GetRepo(repoID)

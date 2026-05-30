@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/mistakenot/auto-etl/internal/model"
+	sharedgit "github.com/mistakenot/auto-shared/git"
 	"github.com/parquet-go/parquet-go"
 )
 
@@ -86,7 +87,7 @@ func LinkSessionIDs(commits []model.Commit, messagesDir string, repoRemoteNormal
 				continue // AC-3: only commit-creating commands
 			}
 			if repoRemoteNormalized != "" && row.GitRemote != "" &&
-				NormalizeRemoteURL(row.GitRemote) != repoRemoteNormalized {
+				sharedgit.NormalizeRemoteURL(row.GitRemote) != repoRemoteNormalized {
 				continue // Repo scoping
 			}
 			matches := commitOutputRe.FindAllStringSubmatch(row.Content, -1)

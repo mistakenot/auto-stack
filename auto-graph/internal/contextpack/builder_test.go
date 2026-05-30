@@ -129,8 +129,8 @@ func TestBuild_DirectDependencies(t *testing.T) {
 
 func TestBuild_DirectDependents(t *testing.T) {
 	files := map[string]string{
-		"src/hooks/useAuth.ts":      "export function useAuth() {}",
-		"src/App.tsx":               "import { useAuth } from './hooks/useAuth';",
+		"src/hooks/useAuth.ts":       "export function useAuth() {}",
+		"src/App.tsx":                "import { useAuth } from './hooks/useAuth';",
 		"src/components/Profile.tsx": "import { useAuth } from '../hooks/useAuth';",
 	}
 	edges := []graph.Edge{
@@ -179,9 +179,9 @@ func TestBuild_DirectDependents(t *testing.T) {
 
 func TestBuild_TypeOnlyOrdering(t *testing.T) {
 	files := map[string]string{
-		"src/App.tsx":        "import type { User } from './types'; import { api } from './api';",
-		"src/types.ts":       "export type User = { name: string };",
-		"src/api.ts":         "export function api() {}",
+		"src/App.tsx":         "import type { User } from './types'; import { api } from './api';",
+		"src/types.ts":        "export type User = { name: string };",
+		"src/api.ts":          "export function api() {}",
 		"src/typeConsumer.ts": "import type { User } from './types';",
 	}
 	edges := []graph.Edge{
@@ -237,8 +237,8 @@ func TestBuild_TypeOnlyOrdering(t *testing.T) {
 
 func TestBuild_MergedImportKinds(t *testing.T) {
 	files := map[string]string{
-		"src/App.tsx":  "import { api } from './api'; import type { ApiResult } from './api';",
-		"src/api.ts":   "export function api() {} export type ApiResult = {};",
+		"src/App.tsx": "import { api } from './api'; import type { ApiResult } from './api';",
+		"src/api.ts":  "export function api() {} export type ApiResult = {};",
 	}
 	edges := []graph.Edge{
 		{
@@ -286,7 +286,7 @@ func TestBuild_MergedImportKinds(t *testing.T) {
 
 func TestRiskFlags_SideEffect(t *testing.T) {
 	files := map[string]string{
-		"src/App.tsx":    "import './polyfills';",
+		"src/App.tsx":      "import './polyfills';",
 		"src/polyfills.ts": "// side effect",
 	}
 	edges := []graph.Edge{
@@ -316,8 +316,8 @@ func TestRiskFlags_SideEffect(t *testing.T) {
 
 func TestRiskFlags_DynamicImport(t *testing.T) {
 	files := map[string]string{
-		"src/App.tsx":   "const mod = await import('./lazy');",
-		"src/lazy.ts":   "export default function lazy() {}",
+		"src/App.tsx": "const mod = await import('./lazy');",
+		"src/lazy.ts": "export default function lazy() {}",
 	}
 	edges := []graph.Edge{
 		{
@@ -340,8 +340,8 @@ func TestRiskFlags_DynamicImport(t *testing.T) {
 
 func TestRiskFlags_Reexport(t *testing.T) {
 	files := map[string]string{
-		"src/index.ts":  "export { foo } from './foo';",
-		"src/foo.ts":    "export function foo() {}",
+		"src/index.ts": "export { foo } from './foo';",
+		"src/foo.ts":   "export function foo() {}",
 	}
 	edges := []graph.Edge{
 		{
@@ -456,13 +456,13 @@ func TestRiskFlags_HighFanOut(t *testing.T) {
 
 func TestRiskFlags_EntrypointLike(t *testing.T) {
 	files := map[string]string{
-		"src/index.ts":          "export * from './App';",
-		"src/main.tsx":          "ReactDOM.render(<App />);",
-		"src/app.ts":            "export const app = {};",
-		"src/pages/home.tsx":    "export default function Home() {}",
-		"src/routes/api.ts":     "export const routes = [];",
-		"src/app/layout.tsx":    "export default function Layout() {}",
-		"src/utils/helper.ts":   "export function helper() {}",
+		"src/index.ts":        "export * from './App';",
+		"src/main.tsx":        "ReactDOM.render(<App />);",
+		"src/app.ts":          "export const app = {};",
+		"src/pages/home.tsx":  "export default function Home() {}",
+		"src/routes/api.ts":   "export const routes = [];",
+		"src/app/layout.tsx":  "export default function Layout() {}",
+		"src/utils/helper.ts": "export function helper() {}",
 	}
 	_, g := setupBuilderFixture(t, files, nil)
 
@@ -527,11 +527,11 @@ func TestRiskFlags_TestLike(t *testing.T) {
 func TestRiskFlags_LexicographicOrder(t *testing.T) {
 	// A file with multiple flags should have them in lexicographic order.
 	files := map[string]string{
-		"src/index.ts":  "import './polyfills'; import { a } from './a';",
+		"src/index.ts":     "import './polyfills'; import { a } from './a';",
 		"src/polyfills.ts": "// polyfills",
-		"src/a.ts":      "import { index } from './index';",
-		"src/b.ts":      "import { index } from './index';",
-		"src/c.ts":      "import { index } from './index';",
+		"src/a.ts":         "import { index } from './index';",
+		"src/b.ts":         "import { index } from './index';",
+		"src/c.ts":         "import { index } from './index';",
 	}
 	edges := []graph.Edge{
 		{Source: "src/index.ts", Target: "src/polyfills.ts", Kind: graph.EdgeImport, Attrs: map[string]string{"import_kind": "side_effect", "import_kinds": "side_effect"}},
@@ -601,7 +601,7 @@ func TestBuild_CycleMembers(t *testing.T) {
 func TestBuild_OmittedCandidates(t *testing.T) {
 	// Create files where seed takes most of the budget.
 	largeContent := strings.Repeat("x", 400) // 100 tokens
-	smallContent := "y"                        // 1 token
+	smallContent := "y"                      // 1 token
 
 	files := map[string]string{
 		"src/seed.ts": largeContent,
@@ -686,10 +686,10 @@ func TestBuild_SeedBudgetExceeded(t *testing.T) {
 
 func TestBuild_DeterministicSorting(t *testing.T) {
 	files := map[string]string{
-		"src/App.tsx":      "import many things",
-		"src/z-module.ts":  "export function z() {}",
-		"src/a-module.ts":  "export function a() {}",
-		"src/m-module.ts":  "export function m() {}",
+		"src/App.tsx":     "import many things",
+		"src/z-module.ts": "export function z() {}",
+		"src/a-module.ts": "export function a() {}",
+		"src/m-module.ts": "export function m() {}",
 	}
 	edges := []graph.Edge{
 		{Source: "src/App.tsx", Target: "src/z-module.ts", Kind: graph.EdgeImport, Attrs: map[string]string{"import_kind": "static", "import_kinds": "static"}},
@@ -741,9 +741,9 @@ func TestBuild_DeterministicSorting(t *testing.T) {
 
 func TestGuidance_DependentsMayBreak(t *testing.T) {
 	files := map[string]string{
-		"src/shared.ts":     "export const shared = 1;",
-		"src/consumer1.ts":  "import { shared } from './shared';",
-		"src/consumer2.ts":  "import { shared } from './shared';",
+		"src/shared.ts":    "export const shared = 1;",
+		"src/consumer1.ts": "import { shared } from './shared';",
+		"src/consumer2.ts": "import { shared } from './shared';",
 	}
 	edges := []graph.Edge{
 		{Source: "src/consumer1.ts", Target: "src/shared.ts", Kind: graph.EdgeImport, Attrs: map[string]string{"import_kind": "static", "import_kinds": "static"}},
@@ -882,11 +882,11 @@ func TestGuidance_OmittedSuggestion(t *testing.T) {
 func TestCandidate_PriorityOrder(t *testing.T) {
 	// Verify the priority ordering of candidates matches the spec.
 	files := map[string]string{
-		"src/seed.ts":           "import './dep'; import type { T } from './typeDep';",
-		"src/dep.ts":            "export function dep() {}",
-		"src/typeDep.ts":        "export type T = string;",
-		"src/dependent.ts":      "import { seed } from './seed';",
-		"src/typeDependent.ts":  "import type { Seed } from './seed';",
+		"src/seed.ts":          "import './dep'; import type { T } from './typeDep';",
+		"src/dep.ts":           "export function dep() {}",
+		"src/typeDep.ts":       "export type T = string;",
+		"src/dependent.ts":     "import { seed } from './seed';",
+		"src/typeDependent.ts": "import type { Seed } from './seed';",
 	}
 	edges := []graph.Edge{
 		{Source: "src/seed.ts", Target: "src/dep.ts", Kind: graph.EdgeImport, Attrs: map[string]string{"import_kind": "static", "import_kinds": "static"}},
@@ -937,7 +937,7 @@ func TestCandidate_PriorityOrder(t *testing.T) {
 
 func TestBuild_MarkdownBudgetCompliance(t *testing.T) {
 	files := map[string]string{
-		"src/App.tsx":      "import { useAuth } from './hooks/useAuth';",
+		"src/App.tsx":          "import { useAuth } from './hooks/useAuth';",
 		"src/hooks/useAuth.ts": "export function useAuth() {}",
 		"src/utils/helper.ts":  "export function helper() {}",
 	}
@@ -967,7 +967,7 @@ func TestBuild_MarkdownBudgetCompliance(t *testing.T) {
 
 func TestBuild_JSONBudgetCompliance(t *testing.T) {
 	files := map[string]string{
-		"src/App.tsx":      "import { useAuth } from './hooks/useAuth';",
+		"src/App.tsx":          "import { useAuth } from './hooks/useAuth';",
 		"src/hooks/useAuth.ts": "export function useAuth() {}",
 	}
 	edges := []graph.Edge{

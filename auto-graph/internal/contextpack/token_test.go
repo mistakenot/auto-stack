@@ -41,7 +41,7 @@ func TestEstimateTokens_MultibytRunes(t *testing.T) {
 		{"日本語x", 1},    // 4 runes -> ceil(4/4) = 1
 		{"日本語xy", 2},   // 5 runes -> ceil(5/4) = 2
 		{"こんにちは世界", 2}, // 7 runes -> ceil(7/4) = 2
-		{"🎉🎉🎉🎉🎉", 2}, // 5 runes (20 bytes) -> ceil(5/4) = 2
+		{"🎉🎉🎉🎉🎉", 2},   // 5 runes (20 bytes) -> ceil(5/4) = 2
 	}
 	for _, tt := range tests {
 		got := EstimateTokens(tt.input)
@@ -92,7 +92,7 @@ func TestBudgetFits(t *testing.T) {
 
 func TestMinSeedBudget(t *testing.T) {
 	seeds := []string{
-		"const x = 1;\n",  // 14 chars -> ceil(14/4) = 4
+		"const x = 1;\n",   // 14 chars -> ceil(14/4) = 4
 		"export default x", // 16 chars -> ceil(16/4) = 4
 	}
 	formatOverhead := 10
@@ -137,8 +137,8 @@ func TestBudgetFits_SelectedFormatAccounting(t *testing.T) {
 	content := "const x = 1;\n"
 	contentTokens := EstimateTokens(content)
 
-	markdownOverhead := 50  // simulated markdown metadata cost
-	jsonOverhead := 80      // simulated JSON metadata cost (keys, braces, etc.)
+	markdownOverhead := 50 // simulated markdown metadata cost
+	jsonOverhead := 80     // simulated JSON metadata cost (keys, braces, etc.)
 
 	markdownTotal := contentTokens + markdownOverhead
 	jsonTotal := contentTokens + jsonOverhead
