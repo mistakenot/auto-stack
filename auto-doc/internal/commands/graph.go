@@ -12,9 +12,9 @@ import (
 )
 
 type GraphJSON struct {
-	Nodes []GraphNodeJSON  `json:"nodes"`
-	Edges []GraphEdgeJSON  `json:"edges"`
-	Stats GraphStatsJSON   `json:"stats"`
+	Nodes []GraphNodeJSON `json:"nodes"`
+	Edges []GraphEdgeJSON `json:"edges"`
+	Stats GraphStatsJSON  `json:"stats"`
 }
 
 type GraphNodeJSON struct {
@@ -326,4 +326,3 @@ func GraphOutput(w io.Writer, graph *GraphJSON) {
 		fmt.Fprintln(w, "No documents found.")
 	}
 }
-

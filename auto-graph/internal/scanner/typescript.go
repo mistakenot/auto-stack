@@ -36,10 +36,10 @@ type astGrepPos struct {
 
 // Regex patterns for extracting import paths from match text.
 var (
-	reFromClause    = regexp.MustCompile(`from\s+['"]([^'"]+)['"]`)
-	reSideEffect    = regexp.MustCompile(`import\s+['"]([^'"]+)['"]`)
-	reQuotedString  = regexp.MustCompile(`['"]([^'"]+)['"]`)
-	reImportType    = regexp.MustCompile(`import\s+type\b`)
+	reFromClause   = regexp.MustCompile(`from\s+['"]([^'"]+)['"]`)
+	reSideEffect   = regexp.MustCompile(`import\s+['"]([^'"]+)['"]`)
+	reQuotedString = regexp.MustCompile(`['"]([^'"]+)['"]`)
+	reImportType   = regexp.MustCompile(`import\s+type\b`)
 )
 
 // patternSpec describes an ast-grep pattern and how to classify its matches.

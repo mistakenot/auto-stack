@@ -620,22 +620,22 @@ func TestParseCommitLogSessionID(t *testing.T) {
 	// Commit with Session-Id trailer.
 	recordWithSession := strings.Join([]string{
 		"aaaa1111bbbb2222cccc3333dddd4444eeee5555", // SHA
-		"aaaa1111",                                 // short SHA
+		"aaaa1111", // short SHA
 		"tttt1111bbbb2222cccc3333dddd4444eeee5555", // tree SHA
-		"Alice",                                    // author name
-		"alice@example.com",                        // author email
-		"2024-05-25T12:30:00+00:00",                // author date
-		"Bob",                                      // committer name
-		"bob@example.com",                          // committer email
-		"2024-05-25T12:35:00+00:00",                // committer date
-		"pppp1111bbbb2222cccc3333dddd4444eeee5555",  // parents
+		"Alice",                     // author name
+		"alice@example.com",         // author email
+		"2024-05-25T12:30:00+00:00", // author date
+		"Bob",                       // committer name
+		"bob@example.com",           // committer email
+		"2024-05-25T12:35:00+00:00", // committer date
+		"pppp1111bbbb2222cccc3333dddd4444eeee5555",                              // parents
 		"feat: add something\n\nThis is the body.\n\nSession-Id: test-uuid-123", // body with Session-Id trailer
 	}, "\x00")
 
 	// Commit without Session-Id trailer.
 	recordWithout := strings.Join([]string{
 		"bbbb2222cccc3333dddd4444eeee5555ffff6666", // SHA
-		"bbbb2222",                                 // short SHA
+		"bbbb2222", // short SHA
 		"uuuu2222cccc3333dddd4444eeee5555ffff6666", // tree SHA
 		"Charlie",                                  // author name
 		"charlie@example.com",                      // author email
@@ -643,8 +643,8 @@ func TestParseCommitLogSessionID(t *testing.T) {
 		"Charlie",                                  // committer name
 		"charlie@example.com",                      // committer email
 		"2024-05-25T13:00:00+00:00",                // committer date
-		"aaaa1111bbbb2222cccc3333dddd4444eeee5555",  // parents
-		"fix: plain commit with no trailers",        // body without trailers
+		"aaaa1111bbbb2222cccc3333dddd4444eeee5555", // parents
+		"fix: plain commit with no trailers",       // body without trailers
 	}, "\x00")
 
 	output := recordWithSession + "\x00\x00" + recordWithout + "\x00\x00"

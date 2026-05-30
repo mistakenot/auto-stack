@@ -39,8 +39,8 @@ func TestBasicImports(t *testing.T) {
 	// src/utils.ts -> ./helpers
 	// src/components/App.tsx -> ../utils
 	expected := map[string][]string{
-		"src/index.ts":          {"./utils", "./components/App"},
-		"src/utils.ts":          {"./helpers"},
+		"src/index.ts":           {"./utils", "./components/App"},
+		"src/utils.ts":           {"./helpers"},
 		"src/components/App.tsx": {"../utils"},
 	}
 
