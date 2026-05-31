@@ -17,6 +17,11 @@ type ParquetSessionRow struct {
 	FirstMessageAt int64 `parquet:"first_message_at"`
 	LastMessageAt  int64 `parquet:"last_message_at"`
 
+	// TotalTurnDurationMs mirrors auto-etl AgentSession.TotalTurnDurationMs.
+	// Sum of per-turn `system / turn_duration` durations; real wall-clock
+	// work time, distinct from the calendar span.
+	TotalTurnDurationMs int64 `parquet:"total_turn_duration_ms"`
+
 	TotalInputTokens  int64 `parquet:"total_input_tokens"`
 	TotalOutputTokens int64 `parquet:"total_output_tokens"`
 	TotalTokens       int64 `parquet:"total_tokens"`

@@ -768,3 +768,80 @@ func TestToolUseContentTruncated_EmptyInput(t *testing.T) {
 		}
 	}
 }
+
+// --- turn_duration accumulation ---
+
+func TestTransformSession_TotalTurnDurationMsAccumulates(t *testing.T) {
+	// Claude Code emits one `system / subtype=turn_duration` line at the end
+	// of every turn with a `durationMs` field measuring per-turn agent work
+	// time. transformSession must sum these into the returned
+	// AgentSession.TotalTurnDurationMs.
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines,
+		parser.ParsedLine{
+			Type:       "system",
+			Subtype:    "turn_duration",
+			Timestamp:  time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+			DurationMs: 12000,
+		},
+		parser.ParsedLine{
+			Type:       "system",
+			Subtype:    "turn_duration",
+			Timestamp:  time.Date(2026, 3, 10, 10, 0, 10, 0, time.UTC),
+			DurationMs: 18000,
+		},
+		parser.ParsedLine{
+			Type:       "system",
+			Subtype:    "turn_duration",
+			Timestamp:  time.Date(2026, 3, 10, 10, 0, 15, 0, time.UTC),
+			DurationMs: 20000,
+		},
+	)
+
+	_, session := transformSession(&raw, testConfig())
+
+	if got, want := session.TotalTurnDurationMs, int64(50000); got != want {
+		t.Errorf("TotalTurnDurationMs = %d, want %d", got, want)
+	}
+}
+
+func TestTransformSession_TotalTurnDurationMsIgnoresOtherSystemSubtypes(t *testing.T) {
+	// Non-turn_duration system events (e.g. `system / subtype=init`) must not
+	// contribute to TotalTurnDurationMs even if a `DurationMs` field is set.
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines,
+		parser.ParsedLine{
+			Type:       "system",
+			Subtype:    "init",
+			Timestamp:  time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+			DurationMs: 999999,
+		},
+		parser.ParsedLine{
+			Type:       "system",
+			Subtype:    "turn_duration",
+			Timestamp:  time.Date(2026, 3, 10, 10, 0, 10, 0, time.UTC),
+			DurationMs: 7000,
+		},
+	)
+
+	_, session := transformSession(&raw, testConfig())
+
+	if got, want := session.TotalTurnDurationMs, int64(7000); got != want {
+		t.Errorf("TotalTurnDurationMs = %d, want %d (init subtype must be ignored)", got, want)
+	}
+}
+
+func TestTransformSession_TotalTurnDurationMsZeroWhenAbsent(t *testing.T) {
+	// Sessions with no turn_duration events (e.g. older Claude Code versions)
+	// should yield TotalTurnDurationMs=0, preserving FirstMessageAt/LastMessageAt
+	// as the only available time-span signal.
+	raw := makeParentSession()
+	_, session := transformSession(&raw, testConfig())
+
+	if session.TotalTurnDurationMs != 0 {
+		t.Errorf("TotalTurnDurationMs = %d, want 0", session.TotalTurnDurationMs)
+	}
+	if session.FirstMessageAt == 0 {
+		t.Error("FirstMessageAt should still be set when turn_duration is absent")
+	}
+}

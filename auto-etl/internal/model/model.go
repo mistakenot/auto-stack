@@ -2,7 +2,7 @@ package model
 
 import "time"
 
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // Default truncation threshold for content_truncated (chars).
 const DefaultTruncateMaxChars = 4096
@@ -78,6 +78,13 @@ type AgentSession struct {
 	// Unix milliseconds
 	FirstMessageAt int64 `parquet:"first_message_at"`
 	LastMessageAt  int64 `parquet:"last_message_at"`
+
+	// TotalTurnDurationMs is the sum of per-turn work-time durations emitted by
+	// Claude Code as `system / subtype=turn_duration` events. This measures the
+	// agent's actual wall-clock work time and is distinct from the calendar
+	// span `LastMessageAt - FirstMessageAt`, which is inflated by idle gaps
+	// (e.g. an overnight pause between turns).
+	TotalTurnDurationMs int64 `parquet:"total_turn_duration_ms"`
 
 	TotalInputTokens  int64 `parquet:"total_input_tokens"`
 	TotalOutputTokens int64 `parquet:"total_output_tokens"`

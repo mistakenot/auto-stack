@@ -154,8 +154,22 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 	var (
 		totalInput, totalOutput, totalTokens          int64
 		totalBytes, totalInputBytes, totalOutputBytes int64
+		totalTurnDurationMs                           int64
 		msgIndex                                      int32
 	)
+
+	// Accumulate per-turn agent work time from `system / turn_duration` events.
+	// Claude Code emits one of these at the end of every turn. The sum is real
+	// wall-clock work time and complements the calendar span
+	// `LastMessageAt - FirstMessageAt`, which is inflated by idle gaps.
+	// Done as a separate pass because the main loop below only handles lines
+	// that have `message` content blocks; turn_duration lines do not.
+	for i := range raw.Lines {
+		line := &raw.Lines[i]
+		if line.Type == "system" && line.Subtype == "turn_duration" {
+			totalTurnDurationMs += line.DurationMs
+		}
+	}
 
 	for i := range raw.Lines {
 		line := &raw.Lines[i]
@@ -342,6 +356,7 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 		SourcePath:          raw.SourcePath,
 		FirstMessageAt:      firstAt,
 		LastMessageAt:       lastAt,
+		TotalTurnDurationMs: totalTurnDurationMs,
 		TotalInputTokens:    totalInput,
 		TotalOutputTokens:   totalOutput,
 		TotalTokens:         totalTokens,
