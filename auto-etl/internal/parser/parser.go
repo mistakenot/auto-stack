@@ -26,6 +26,7 @@ type ParsedSession struct {
 // ParsedLine represents a single parsed line from a JSONL file.
 type ParsedLine struct {
 	Type            string
+	Subtype         string // for `system` lines: e.g. "turn_duration", "init"
 	Timestamp       time.Time
 	SessionID       string
 	Cwd             string
@@ -33,6 +34,7 @@ type ParsedLine struct {
 	IsSubagent      bool   // from line's isSidechain field
 	AgentID         string // from line's agentId field
 	SourceLineIndex int    // 0-based position in the JSONL file
+	DurationMs      int64  // populated on `system / turn_duration` lines: per-turn agent work time in ms
 	Message         ParsedMessage
 	ToolUseResult   json.RawMessage // raw toolUseResult envelope (sibling of message)
 }
@@ -68,12 +70,14 @@ type ContentBlock struct {
 // rawLine is the JSON structure of a single JSONL line from Claude session files.
 type rawLine struct {
 	Type          string          `json:"type"`
+	Subtype       string          `json:"subtype"` // for `system` lines: e.g. "turn_duration", "init"
 	SessionID     string          `json:"sessionId"`
 	Cwd           string          `json:"cwd"`
 	GitBranch     *string         `json:"gitBranch"` // pointer to distinguish null from missing
 	Timestamp     string          `json:"timestamp"`
 	IsSidechain   bool            `json:"isSidechain"`
 	AgentID       string          `json:"agentId"`
+	DurationMs    int64           `json:"durationMs"` // populated on `system / turn_duration` lines
 	Message       rawMessage      `json:"message"`
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
 }
@@ -178,6 +182,7 @@ func ParseSession(path string) (*ParsedSession, error) {
 
 		parsed := ParsedLine{
 			Type:            line.Type,
+			Subtype:         line.Subtype,
 			Timestamp:       ts,
 			SessionID:       line.SessionID,
 			Cwd:             line.Cwd,
@@ -185,6 +190,7 @@ func ParseSession(path string) (*ParsedSession, error) {
 			IsSubagent:      line.IsSidechain,
 			AgentID:         line.AgentID,
 			SourceLineIndex: lineIndex,
+			DurationMs:      line.DurationMs,
 			Message: ParsedMessage{
 				Role:    line.Message.Role,
 				Content: line.Message.Content,
