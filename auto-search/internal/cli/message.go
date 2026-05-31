@@ -99,6 +99,16 @@ func newMessageDescribeCmd() *cobra.Command {
 
 			elapsed := time.Since(start).Milliseconds()
 
+			// Per-tool-call fields. Populated by auto-etl from the raw
+			// `tool_use.id` ↔ `tool_result.tool_use_id` pairing and the
+			// `toolUseResult.durationMs` / `interrupted` envelope. Empty /
+			// zero on non-tool messages.
+			//
+			// Naming: matches this file's existing camelCase convention
+			// (`sessionId`, `messageIndex`, …). The reviewer's flagged
+			// snake_case/camelCase inconsistency is across commands
+			// (`session describe` vs `session list`); we deliberately do
+			// not fix that here — Item 3 owns the normalization.
 			out := map[string]any{
 				"_meta": map[string]any{
 					"request_id": requestID,
@@ -117,6 +127,9 @@ func newMessageDescribeCmd() *cobra.Command {
 					"toolFilePath":          msg.ToolFilePath,
 					"bashCommand":           msg.BashCommand,
 					"skillName":             msg.SkillName,
+					"toolUseId":             msg.ToolUseID,
+					"durationMs":            msg.DurationMs,
+					"interrupted":           msg.Interrupted,
 					"preview":               preview,
 					"previousMessageId":     prev,
 					"nextMessageId":         next,

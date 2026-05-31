@@ -59,6 +59,17 @@ type ParquetMessageRow struct {
 	BashExitCode       int32  `parquet:"bash_exit_code"`
 	SkillName          string `parquet:"skill_name,dict"`
 
+	// ToolUseID mirrors auto-etl AgentMessage.ToolUseID. Pairing key for
+	// tool_use ↔ tool_result rows; required for exact JOINs that work
+	// under parallel tool dispatch.
+	ToolUseID string `parquet:"tool_use_id,dict"`
+	// DurationMs mirrors auto-etl AgentMessage.DurationMs. Per-tool-call
+	// wall-clock duration in ms. Populated on tool_result rows only.
+	DurationMs int64 `parquet:"duration_ms"`
+	// Interrupted mirrors auto-etl AgentMessage.Interrupted. True when
+	// Claude flagged the call as cancelled/stuck.
+	Interrupted bool `parquet:"interrupted"`
+
 	InputTokens      int32 `parquet:"input_tokens"`
 	CacheInputTokens int32 `parquet:"cache_input_tokens"`
 	OutputTokens     int32 `parquet:"output_tokens"`
