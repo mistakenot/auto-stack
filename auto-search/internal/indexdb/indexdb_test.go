@@ -751,6 +751,125 @@ func TestListSessionsOutputFields(t *testing.T) {
 	}
 }
 
+// insertSessionWithToolDuration inserts a parent session with explicit
+// total_turn_duration_ms set, for testing --sort-by tool_duration.
+func insertSessionWithToolDuration(t *testing.T, db *sql.DB, sessionID, workspace string, firstMessageAt, lastMessageAt, totalTurnDurationMs int64) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO sessions (partition_source_path, session_id, parent_session_id, host_id, agent, subagent_name, is_subagent, workspace, git_remote, model, source_path, first_message_at, last_message_at, total_turn_duration_ms, total_input_tokens, total_output_tokens, total_tokens, total_bytes, total_output_bytes, total_input_bytes, transcript_truncated, schema_version)
+		VALUES ('/src.parquet', ?, '', 'host1', 'claude', '', 0, ?, 'origin', 'opus', '/src', ?, ?, ?, 0, 0, 0, 0, 0, 0, 'transcript', 1)
+	`, sessionID, workspace, firstMessageAt, lastMessageAt, totalTurnDurationMs)
+	if err != nil {
+		t.Fatalf("insert session with tool duration %s: %v", sessionID, err)
+	}
+}
+
+// insertToolMessage inserts a tool-role message with duration_ms and
+// interrupted set, for testing the new EXISTS-based filters.
+func insertToolMessage(t *testing.T, db *sql.DB, messageID, sessionID, toolName string, index int, timestamp, durationMs int64, interrupted bool) {
+	t.Helper()
+	interruptedInt := 0
+	if interrupted {
+		interruptedInt = 1
+	}
+	_, err := db.Exec(`
+		INSERT INTO messages (partition_source_path, message_id, session_id, host_id, message_index, role, content, content_truncated, timestamp, tool_name, tool_input, tool_file_path, tool_file_start_line, tool_file_num_lines, tool_file_total_lines, bash_command, bash_exit_code, skill_name, tool_use_id, duration_ms, interrupted, input_tokens, cache_input_tokens, output_tokens, workspace, git_remote, git_branch, model, parent_session_id, is_subagent, source_line_index, schema_version)
+		VALUES ('/src.parquet', ?, ?, 'host1', ?, 'tool', '', '', ?, ?, '', '', 0, 0, 0, '', 0, '', '', ?, ?, 0, 0, 0, '/work', 'origin', 'main', 'opus', '', 0, 0, 1)
+	`, messageID, sessionID, index, timestamp, toolName, durationMs, interruptedInt)
+	if err != nil {
+		t.Fatalf("insert tool message %s: %v", messageID, err)
+	}
+}
+
+func TestListSessionsSortByToolDuration(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+
+	// Calendar span vs total_turn_duration_ms is intentionally different:
+	// "long-calendar" has a 1-hour calendar span but only 500ms of real work
+	// (overnight gap). "short-calendar" has a 1-minute calendar span but
+	// 30s of real work (continuous active session). Sorting by
+	// tool_duration must pick "short-calendar" first, sorting by duration
+	// (calendar span) must pick "long-calendar" first.
+	insertSessionWithToolDuration(t, db, "long-calendar", "/work", 10000, 3610000, 500)
+	insertSessionWithToolDuration(t, db, "short-calendar", "/work", 10000, 70000, 30000)
+	insertSessionWithToolDuration(t, db, "no-work", "/work", 20000, 21000, 0)
+
+	// tool_duration sort
+	sessions, _, err := indexdb.ListSessions(db, &indexdb.ListSessionsOpts{SortBy: "tool_duration"})
+	if err != nil {
+		t.Fatalf("sort by tool_duration: %v", err)
+	}
+	if len(sessions) < 2 {
+		t.Fatalf("expected >=2 sessions, got %d", len(sessions))
+	}
+	if sessions[0].SessionID != "short-calendar" {
+		t.Fatalf("expected short-calendar first by tool_duration, got %s", sessions[0].SessionID)
+	}
+	if sessions[0].ToolDurationMs != 30000 {
+		t.Fatalf("expected ToolDurationMs=30000, got %d", sessions[0].ToolDurationMs)
+	}
+
+	// duration (calendar) sort must NOT have been broken — long-calendar wins.
+	sessions, _, err = indexdb.ListSessions(db, &indexdb.ListSessionsOpts{SortBy: "duration"})
+	if err != nil {
+		t.Fatalf("sort by duration: %v", err)
+	}
+	if sessions[0].SessionID != "long-calendar" {
+		t.Fatalf("expected long-calendar first by duration (calendar), got %s", sessions[0].SessionID)
+	}
+}
+
+func TestListSessionsMinToolDuration(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+
+	insertSessionFull(t, db, "fast", "/work", 1000, 2000, 100)
+	insertSessionFull(t, db, "slow", "/work", 1000, 2000, 100)
+
+	// fast session: only short tool calls
+	insertToolMessage(t, db, "fast-m1", "fast", "Bash", 0, 1000, 500, false)
+	insertToolMessage(t, db, "fast-m2", "fast", "Read", 1, 1500, 1000, false)
+	// slow session: one tool call > 60s
+	insertToolMessage(t, db, "slow-m1", "slow", "Bash", 0, 1000, 100, false)
+	insertToolMessage(t, db, "slow-m2", "slow", "Bash", 1, 1500, 90_000, false)
+
+	min := int64(60_000)
+	sessions, total, err := indexdb.ListSessions(db, &indexdb.ListSessionsOpts{MinToolDurationMs: &min})
+	if err != nil {
+		t.Fatalf("ListSessions min-tool-duration: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("expected total=1, got %d", total)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != "slow" {
+		t.Fatalf("expected only slow session, got %v", sessions)
+	}
+}
+
+func TestListSessionsInterruptedFilter(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+
+	insertSessionFull(t, db, "clean", "/work", 1000, 2000, 100)
+	insertSessionFull(t, db, "stuck", "/work", 1000, 2000, 100)
+
+	insertToolMessage(t, db, "clean-m1", "clean", "Bash", 0, 1000, 500, false)
+	insertToolMessage(t, db, "stuck-m1", "stuck", "Bash", 0, 1000, 1000, false)
+	insertToolMessage(t, db, "stuck-m2", "stuck", "Bash", 1, 1500, 2000, true)
+
+	sessions, total, err := indexdb.ListSessions(db, &indexdb.ListSessionsOpts{OnlyInterrupted: true})
+	if err != nil {
+		t.Fatalf("ListSessions interrupted: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("expected total=1, got %d", total)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != "stuck" {
+		t.Fatalf("expected only stuck session, got %v", sessions)
+	}
+}
+
 func TestCountSessionMessagesUserCount(t *testing.T) {
 	db := createTestDB(t)
 	defer db.Close()

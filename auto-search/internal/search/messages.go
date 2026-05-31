@@ -11,11 +11,18 @@ import (
 )
 
 // MessageHit is a single message-scope search result.
+//
+// ToolName, DurationMs, and Interrupted are surfaced so callers don't need a
+// follow-up `message describe` to see the basic timing of a tool call. They
+// are omitted from JSON when zero/empty so non-tool hits stay clean.
 type MessageHit struct {
 	ID                string  `json:"id"`
 	SessionID         string  `json:"sessionId"`
 	MessageID         string  `json:"messageId"`
 	MessageType       string  `json:"messageType"`
+	ToolName          string  `json:"toolName,omitempty"`
+	DurationMs        int64   `json:"durationMs,omitempty"`
+	Interrupted       bool    `json:"interrupted,omitempty"`
 	Score             float64 `json:"score"`
 	SnippetStartIndex int     `json:"snippetStartIndex"`
 	SnippetEndIndex   int     `json:"snippetEndIndex"`
@@ -68,11 +75,20 @@ type MessageSearchOpts struct {
 	Skill     string
 	Role      string
 	Field     string
-	Offset    int
-	PageSize  int
-	RequestID string
-	Highlight bool
-	Now       time.Time
+	ToolName  string
+	SessionID string
+	// MinToolDurationMs filters to messages with duration_ms >= this value.
+	// Implies a tool_use/tool_result row because non-tool rows always have
+	// duration_ms = 0. Combined with other filters with AND.
+	MinToolDurationMs *int64
+	// OnlyInterrupted, when true, restricts results to messages where
+	// interrupted=true (Claude's per-tool-call cancel/stuck flag).
+	OnlyInterrupted bool
+	Offset          int
+	PageSize        int
+	RequestID       string
+	Highlight       bool
+	Now             time.Time
 }
 
 const (
@@ -117,29 +133,61 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 		return nil, err
 	}
 
-	ast, err := query.Parse(opts.Query)
-	if err != nil {
-		return nil, fmt.Errorf("parse query: %w", err)
+	hasStructuredFilter := opts.ToolName != "" || opts.SessionID != "" ||
+		opts.MinToolDurationMs != nil || opts.OnlyInterrupted
+
+	queryText := strings.TrimSpace(opts.Query)
+	emptyQuery := queryText == ""
+	if emptyQuery && !hasStructuredFilter {
+		return nil, errors.New("query must be non-empty unless at least one structured filter (--tool-name / --session-id / --min-tool-duration / --interrupted) is set")
 	}
 
-	fts := query.CompileFTS(ast)
-	terms := ExtractTerms(ast)
 	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter.Canonical)
 
-	hits, stats, err := execMessageSearch(opts.DB, fts, opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
-	if err != nil {
-		return nil, err
-	}
-
+	var hits []MessageHit
+	var stats matchStats
 	wildcard := false
-	if stats.TotalMatches < minHitsForFallback {
-		fallbackAST := query.PrefixFallback(ast)
-		fallbackFTS := query.CompileFTS(fallbackAST)
-		fallbackHits, fallbackStats, err := execMessageSearch(opts.DB, fallbackFTS, opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
-		if err == nil && fallbackStats.TotalMatches > stats.TotalMatches {
-			hits = fallbackHits
-			stats = fallbackStats
-			wildcard = true
+
+	if emptyQuery {
+		// Structured-only path: skip FTS entirely and run a direct scan of
+		// the messages table. This lets callers ask "show me every
+		// interrupted call" or "every Bash call >60s in this session"
+		// without inventing a dummy FTS query.
+		hits, stats, err = execMessageSearchNoFTS(opts.DB, opts.CWD, opts.Remote, opts.Skill, role, field,
+			opts.ToolName, opts.SessionID, opts.MinToolDurationMs, opts.OnlyInterrupted,
+			timeFilter, nil, opts.Highlight, opts.Query, filters, offset, pageSize)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		ast, err := query.Parse(opts.Query)
+		if err != nil {
+			return nil, fmt.Errorf("parse query: %w", err)
+		}
+
+		fts := query.CompileFTS(ast)
+		terms := ExtractTerms(ast)
+
+		exec := func(ftsExpr string) ([]MessageHit, matchStats, error) {
+			return execMessageSearch(opts.DB, ftsExpr, opts.CWD, opts.Remote, opts.Skill, role, field,
+				opts.ToolName, opts.SessionID, opts.MinToolDurationMs, opts.OnlyInterrupted,
+				timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
+		}
+
+		hits, stats, err = exec(fts)
+		if err != nil {
+			return nil, err
+		}
+
+		if stats.TotalMatches < minHitsForFallback {
+			fallbackAST := query.PrefixFallback(ast)
+			fallbackFTS := query.CompileFTS(fallbackAST)
+			fallbackHits, fallbackStats, err := exec(fallbackFTS)
+			if err == nil && fallbackStats.TotalMatches > stats.TotalMatches {
+				hits = fallbackHits
+				stats = fallbackStats
+				wildcard = true
+			}
 		}
 	}
 
@@ -175,7 +223,7 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	}, nil
 }
 
-func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, matchStats, error) {
+func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field, toolName, sessionID string, minToolDurationMs *int64, onlyInterrupted bool, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, matchStats, error) {
 	zeroStats := matchStats{}
 
 	var preFilterConds []string
@@ -196,6 +244,23 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 	if role != "" {
 		preFilterConds = append(preFilterConds, "role = ?")
 		preFilterArgs = append(preFilterArgs, role)
+	}
+	if toolName != "" {
+		preFilterConds = append(preFilterConds, "tool_name = ?")
+		preFilterArgs = append(preFilterArgs, toolName)
+	}
+	if sessionID != "" {
+		preFilterConds = append(preFilterConds, "session_id = ?")
+		preFilterArgs = append(preFilterArgs, sessionID)
+	}
+	if minToolDurationMs != nil {
+		// Hits the idx_messages_duration_ms index (added in PR 2).
+		preFilterConds = append(preFilterConds, "duration_ms >= ?")
+		preFilterArgs = append(preFilterArgs, *minToolDurationMs)
+	}
+	if onlyInterrupted {
+		// Hits the idx_messages_interrupted index (added in PR 2).
+		preFilterConds = append(preFilterConds, "interrupted = 1")
 	}
 	switch field {
 	case searchFieldAll:
@@ -244,7 +309,8 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 
 	q := `
 		SELECT m.message_id, m.session_id, m.role, m.content_truncated,
-		       m.message_index, bm25(messages_fts) AS score
+		       m.message_index, m.tool_name, m.duration_ms, m.interrupted,
+		       bm25(messages_fts) AS score
 	` + baseQuery + `
 		ORDER BY score, m.message_id
 		LIMIT ? OFFSET ?
@@ -261,14 +327,19 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 		messageID, sessionID, role string
 		contentTruncated           string
 		messageIndex               int
+		toolName                   string
+		durationMs                 int64
+		interrupted                bool
 		score                      float64
 	}
 	var scanned []scannedHit
 	for rows.Next() {
 		var h scannedHit
-		if err := rows.Scan(&h.messageID, &h.sessionID, &h.role, &h.contentTruncated, &h.messageIndex, &h.score); err != nil {
+		var interruptedInt int
+		if err := rows.Scan(&h.messageID, &h.sessionID, &h.role, &h.contentTruncated, &h.messageIndex, &h.toolName, &h.durationMs, &interruptedInt, &h.score); err != nil {
 			return nil, zeroStats, fmt.Errorf("scan message hit: %w", err)
 		}
+		h.interrupted = interruptedInt != 0
 		scanned = append(scanned, h)
 	}
 	if err := rows.Err(); err != nil {
@@ -288,6 +359,9 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 			SessionID:         h.sessionID,
 			MessageID:         h.messageID,
 			MessageType:       h.role,
+			ToolName:          h.toolName,
+			DurationMs:        h.durationMs,
+			Interrupted:       h.interrupted,
 			Score:             h.score,
 			SnippetStartIndex: startIdx,
 			SnippetEndIndex:   endIdx,
@@ -300,6 +374,165 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field string, 
 		TotalMatches:     totalHits,
 		DistinctSessions: distinctSessions,
 		DistinctMessages: distinctMessages,
+	}, nil
+}
+
+// execMessageSearchNoFTS runs the message search against the base messages
+// table when the user supplied no FTS query — they're filtering by
+// structured columns only (tool_name, session_id, duration_ms, interrupted,
+// time window, workspace, role, etc.). Results are ordered by descending
+// duration_ms when --min-tool-duration is set, otherwise by descending
+// timestamp ("most recent first"), so the most-interesting rows surface
+// first in --text output. No snippet highlighting is meaningful here
+// (there's no matched term), so snippet is just a truncated content view.
+func execMessageSearchNoFTS(db *sql.DB, cwd, remote, skill, role, field, toolName, sessionID string, minToolDurationMs *int64, onlyInterrupted bool, timeFilter TimeFilter, _ []string, _ bool, _ string, _ string, offset, pageSize int) ([]MessageHit, matchStats, error) {
+	zeroStats := matchStats{}
+
+	var conds []string
+	var args []any
+
+	if cwd != "" {
+		conds = append(conds, "m.workspace = ?")
+		args = append(args, cwd)
+	}
+	if remote != "" {
+		conds = append(conds, "m.git_remote = ?")
+		args = append(args, remote)
+	}
+	if skill != "" {
+		conds = append(conds, "m.skill_name = ?")
+		args = append(args, skill)
+	}
+	if role != "" {
+		conds = append(conds, "m.role = ?")
+		args = append(args, role)
+	}
+	if toolName != "" {
+		conds = append(conds, "m.tool_name = ?")
+		args = append(args, toolName)
+	}
+	if sessionID != "" {
+		conds = append(conds, "m.session_id = ?")
+		args = append(args, sessionID)
+	}
+	if minToolDurationMs != nil {
+		conds = append(conds, "m.duration_ms >= ?")
+		args = append(args, *minToolDurationMs)
+	}
+	if onlyInterrupted {
+		conds = append(conds, "m.interrupted = 1")
+	}
+	switch field {
+	case searchFieldAll, "":
+		// no-op
+	case searchFieldContent:
+		conds = append(conds, "m.tool_input = ''", "m.role != 'tool'")
+	case searchFieldToolInput:
+		conds = append(conds, "m.tool_input != ''")
+	case searchFieldToolOutput:
+		conds = append(conds, "m.role = 'tool'")
+	default:
+		return nil, zeroStats, fmt.Errorf("invalid --field value %q (use all, content, tool_input, tool_output)", field)
+	}
+	if timeFilter.StartMs != nil {
+		conds = append(conds, "m.timestamp >= ?")
+		args = append(args, *timeFilter.StartMs)
+	}
+	if timeFilter.EndMs != nil {
+		conds = append(conds, "m.timestamp < ?")
+		args = append(args, *timeFilter.EndMs)
+	}
+
+	whereClause := ""
+	if len(conds) > 0 {
+		whereClause = "WHERE " + strings.Join(conds, " AND ")
+	}
+
+	var totalHits int
+	countQuery := "SELECT COUNT(*) FROM messages m " + whereClause
+	if err := db.QueryRow(countQuery, args...).Scan(&totalHits); err != nil {
+		return nil, zeroStats, fmt.Errorf("structured count query: %w", err)
+	}
+
+	orderBy := "m.timestamp DESC, m.message_id"
+	if minToolDurationMs != nil {
+		// User asked "show me the slowest" — order accordingly.
+		orderBy = "m.duration_ms DESC, m.timestamp DESC"
+	}
+
+	q := `
+		SELECT m.message_id, m.session_id, m.role, m.content_truncated,
+		       m.message_index, m.tool_name, m.duration_ms, m.interrupted
+		FROM messages m
+	` + whereClause + `
+		ORDER BY ` + orderBy + `
+		LIMIT ? OFFSET ?
+	`
+	queryArgs := append(append([]any{}, args...), pageSize, offset)
+	rows, err := db.Query(q, queryArgs...)
+	if err != nil {
+		return nil, zeroStats, fmt.Errorf("structured message query: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	type scanned struct {
+		messageID, sessionID, role, contentTruncated, toolName string
+		messageIndex                                           int
+		durationMs                                             int64
+		interrupted                                            bool
+	}
+	var scannedRows []scanned
+	distinctSessions := map[string]struct{}{}
+	distinctMessages := map[string]struct{}{}
+	for rows.Next() {
+		var s scanned
+		var interruptedInt int
+		if err := rows.Scan(&s.messageID, &s.sessionID, &s.role, &s.contentTruncated, &s.messageIndex, &s.toolName, &s.durationMs, &interruptedInt); err != nil {
+			return nil, zeroStats, fmt.Errorf("scan structured hit: %w", err)
+		}
+		s.interrupted = interruptedInt != 0
+		scannedRows = append(scannedRows, s)
+		distinctSessions[s.sessionID] = struct{}{}
+		distinctMessages[s.messageID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, zeroStats, fmt.Errorf("iterate structured hits: %w", err)
+	}
+
+	lookups := make([]neighborLookup, len(scannedRows))
+	for i, s := range scannedRows {
+		lookups[i] = neighborLookup{s.sessionID, s.messageIndex}
+	}
+	neighbors := batchNeighborMessageIDs(db, lookups)
+
+	hits := make([]MessageHit, 0, len(scannedRows))
+	for i, s := range scannedRows {
+		// No query terms → no highlight; just return a trimmed snippet so
+		// the row is identifiable in --text output without an extra
+		// `message get` round-trip.
+		snippet := strings.TrimSpace(s.contentTruncated)
+		if len(snippet) > 320 {
+			snippet = snippet[:320] + "…"
+		}
+		hits = append(hits, MessageHit{
+			ID:                HitID("messages", "structured", "", "", s.messageID),
+			SessionID:         s.sessionID,
+			MessageID:         s.messageID,
+			MessageType:       s.role,
+			ToolName:          s.toolName,
+			DurationMs:        s.durationMs,
+			Interrupted:       s.interrupted,
+			Score:             0,
+			Snippet:           snippet,
+			PreviousMessageID: neighbors[i].prev,
+			NextMessageID:     neighbors[i].next,
+		})
+	}
+
+	return hits, matchStats{
+		TotalMatches:     totalHits,
+		DistinctSessions: len(distinctSessions),
+		DistinctMessages: len(distinctMessages),
 	}, nil
 }
 

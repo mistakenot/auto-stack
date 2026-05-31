@@ -35,22 +35,35 @@ type SessionRow struct {
 
 // ListSessionsOpts holds optional filters for ListSessions.
 type ListSessionsOpts struct {
-	Workspace       string // filter by workspace path (case-insensitive substring)
-	Remote          string // filter by git_remote (case-insensitive substring)
-	StartMs         *int64 // inclusive lower bound on first_message_at
-	EndMs           *int64 // exclusive upper bound on first_message_at
-	IsSubagent      *bool  // nil = no filter, true = only subagents, false = only parents
-	MinDurationMs   *int64 // filter: (last_message_at - first_message_at) >= this value
-	MinTokens       *int64 // filter: total_tokens >= this value
-	MinMessages     *int   // filter: message_count >= this value
-	MinErrors       *int   // filter: error_count >= this value
-	ParentSessionID string // filter by parent_session_id (exact match)
-	SortBy          string // "recency" (default), "duration", "tokens", "messages", "errors"
-	Limit           int    // max rows; 0 means default (50)
-	Offset          int    // pagination offset
+	Workspace         string // filter by workspace path (case-insensitive substring)
+	Remote            string // filter by git_remote (case-insensitive substring)
+	StartMs           *int64 // inclusive lower bound on first_message_at
+	EndMs             *int64 // exclusive upper bound on first_message_at
+	IsSubagent        *bool  // nil = no filter, true = only subagents, false = only parents
+	MinDurationMs     *int64 // filter: (last_message_at - first_message_at) >= this value (calendar span)
+	MinToolDurationMs *int64 // filter: session contains a message with duration_ms >= this value
+	OnlyInterrupted   bool   // filter: session contains at least one interrupted=1 message
+	MinTokens         *int64 // filter: total_tokens >= this value
+	MinMessages       *int   // filter: message_count >= this value
+	MinErrors         *int   // filter: error_count >= this value
+	ParentSessionID   string // filter by parent_session_id (exact match)
+	// SortBy is the ordering key:
+	//   "recency" (default) — first_message_at DESC
+	//   "duration"          — calendar span (last_message_at - first_message_at) DESC
+	//   "tool_duration"     — total_turn_duration_ms DESC (real work time; see Item 1)
+	//   "tokens", "messages", "errors"
+	SortBy string
+	Limit  int // max rows; 0 means default (50)
+	Offset int // pagination offset
 }
 
 // SessionListRow is a compact session summary for list output.
+//
+// duration_ms is the calendar span (last_message_at - first_message_at) —
+// historical, kept for backwards compatibility with recall /
+// reflect-on-agent-sessions. tool_duration_ms is the sum of Claude's
+// per-turn `turn_duration` system messages (real work time) and is the
+// preferred metric for "which sessions actually did the most work".
 type SessionListRow struct {
 	SessionID       string `json:"session_id"`
 	ParentSessionID string `json:"parent_session_id,omitempty"`
@@ -63,6 +76,7 @@ type SessionListRow struct {
 	FirstMessageAt  int64  `json:"first_message_at"`
 	LastMessageAt   int64  `json:"last_message_at"`
 	DurationMs      int64  `json:"duration_ms"`
+	ToolDurationMs  int64  `json:"tool_duration_ms"`
 	TotalTokens     int64  `json:"total_tokens"`
 	MessageCount    int    `json:"message_count"`
 	ErrorCount      int    `json:"error_count"`
@@ -117,6 +131,18 @@ func ListSessions(db *sql.DB, opts *ListSessionsOpts) ([]SessionListRow, int, er
 	if opts.ParentSessionID != "" {
 		where = append(where, "s.parent_session_id = ?")
 		args = append(args, opts.ParentSessionID)
+	}
+	// MinToolDurationMs and OnlyInterrupted are EXISTS subqueries on the
+	// messages table — they ask "does this session have any tool call that
+	// matches?" rather than touching the sessions row directly. The
+	// idx_messages_duration_ms / idx_messages_interrupted indexes
+	// (auto-search/internal/indexdb/schema.go) cover the inner scan.
+	if opts.MinToolDurationMs != nil {
+		where = append(where, "EXISTS (SELECT 1 FROM messages m_d WHERE m_d.session_id = s.session_id AND m_d.duration_ms >= ?)")
+		args = append(args, *opts.MinToolDurationMs)
+	}
+	if opts.OnlyInterrupted {
+		where = append(where, "EXISTS (SELECT 1 FROM messages m_i WHERE m_i.session_id = s.session_id AND m_i.interrupted = 1)")
 	}
 
 	whereClause := ""
@@ -179,7 +205,18 @@ func ListSessions(db *sql.DB, opts *ListSessionsOpts) ([]SessionListRow, int, er
 	orderBy := "s.first_message_at DESC"
 	switch opts.SortBy {
 	case "duration":
+		// "duration" is the historical name for calendar span
+		// (last_message_at - first_message_at). DO NOT change this — it is
+		// load-bearing for downstream consumers (recall,
+		// reflect-on-agent-sessions). Use "tool_duration" for real work time.
 		orderBy = "(s.last_message_at - s.first_message_at) DESC"
+	case "tool_duration":
+		// Real work time, summed from Claude's per-turn `turn_duration`
+		// system messages (see PR 1 of the duration-tooling series). This
+		// is the right answer to "which sessions actually did the most
+		// work" — calendar span gets distorted by lunch breaks and
+		// overnight gaps.
+		orderBy = "s.total_turn_duration_ms DESC"
 	case "tokens":
 		orderBy = "s.total_tokens DESC"
 	case "messages":
@@ -194,6 +231,7 @@ func ListSessions(db *sql.DB, opts *ListSessionsOpts) ([]SessionListRow, int, er
 			s.workspace, s.git_remote, s.model, s.agent,
 			s.first_message_at, s.last_message_at,
 			(s.last_message_at - s.first_message_at) AS duration_ms,
+			s.total_turn_duration_ms,
 			s.total_tokens,
 			COALESCE(mc.cnt, 0) AS message_count,
 			COALESCE(mc.err_cnt, 0) AS error_count
@@ -220,6 +258,7 @@ func ListSessions(db *sql.DB, opts *ListSessionsOpts) ([]SessionListRow, int, er
 			&r.SessionID, &r.ParentSessionID, &r.SubagentName, &isSubagentInt,
 			&r.Workspace, &r.GitRemote, &r.Model, &r.Agent,
 			&r.FirstMessageAt, &r.LastMessageAt, &r.DurationMs,
+			&r.ToolDurationMs,
 			&r.TotalTokens,
 			&r.MessageCount, &r.ErrorCount,
 		); err != nil {

@@ -254,6 +254,57 @@ func TestParseDurationMsInvalid(t *testing.T) {
 	}
 }
 
+func TestParseToolDurationMsValid(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int64
+	}{
+		{"500ms", 500},
+		{"1500ms", 1500},
+		{"1s", 1000},
+		{"60s", 60_000},
+		{"5m", 5 * 60 * 1000},
+		{"1h", 60 * 60 * 1000},
+		{"2d", 2 * 24 * 60 * 60 * 1000},
+		{"1w", 7 * 24 * 60 * 60 * 1000},
+	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := ParseToolDurationMs(tc.input)
+			if err != nil {
+				t.Fatalf("ParseToolDurationMs(%q): %v", tc.input, err)
+			}
+			if got != tc.want {
+				t.Fatalf("ParseToolDurationMs(%q) = %d, want %d", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseToolDurationMsInvalid(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"empty", ""},
+		{"no unit", "60"},
+		{"unknown unit", "60x"},
+		{"non-numeric", "abc"},
+		{"zero", "0s"},
+		{"negative", "-5s"},
+		{"missing number", "s"},
+		{"too many digits/units", "60ssm"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseToolDurationMs(tc.input)
+			if err == nil {
+				t.Fatalf("ParseToolDurationMs(%q): expected error, got nil", tc.input)
+			}
+		})
+	}
+}
+
 func assertMaybeInt64(t *testing.T, got *int64, wantSet bool, want int64, field string) {
 	t.Helper()
 	if !wantSet {

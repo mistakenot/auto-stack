@@ -62,6 +62,15 @@ autosearch search "Exit code 1" --field tool_output
 # Filter by message role
 autosearch search "database is busy" --role tool
 autosearch search "undo that" --role user
+
+# Find expected-slow tool calls (e.g. all Bash commands > 60s).
+autosearch search "" --tool-name Bash --min-tool-duration 60s --since 30d
+
+# Find hangs — tool calls Claude reported as interrupted.
+autosearch search "" --interrupted --since 30d
+
+# Scope a duration query to one session (e.g. "which calls in this session were slow?").
+autosearch search "" --session-id <session-id> --min-tool-duration 60s --text
 ` + "```" + `
 
 Tip: use ` + "`" + `--role tool` + "`" + ` for error hunting — errors and build output live in tool messages.
@@ -131,8 +140,17 @@ autosearch session list --subagent --sort-by duration
 # Show only parent (non-sub-agent) sessions
 autosearch session list --no-subagent
 
-# Find long-running sessions (useful for diagnosing stuck agents)
+# Find long-running sessions by calendar span (useful for diagnosing stuck agents)
 autosearch session list --min-duration 10m --sort-by duration
+
+# Sort by real work time (sum of Claude turn durations), not wall-clock span
+autosearch session list --sort-by tool_duration --limit 10
+
+# Find sessions where Claude ran a tool call > 60s (expected-slow or stuck)
+autosearch session list --min-tool-duration 60s --sort-by tool_duration
+
+# Find sessions with at least one interrupted tool call (hang detection)
+autosearch session list --interrupted --since 30d
 
 # Combine: find long autonomous sub-agents — the "spinning agent" smell
 autosearch session list --subagent --min-duration 10m --sort-by duration
@@ -345,11 +363,13 @@ autosearch search "error OR fail OR broken" --scope sessions --cwd /path/to/proj
 --subagent         show only sub-agent sessions
 --no-subagent      show only parent (non-sub-agent) sessions
 --parent-session   filter by parent session ID (exact match)
---min-duration     minimum session duration: 10m, 1h, 5d, 1w
+--min-duration     minimum session calendar span: 10m, 1h, 5d, 1w
+--min-tool-duration include only sessions with a tool call >= this duration (60s, 5m, 1500ms)
+--interrupted      include only sessions with at least one interrupted tool call
 --min-tokens       minimum total tokens (e.g. 1000000)
 --min-messages     minimum message count
 --min-errors       minimum bash error count (non-zero exit codes)
---sort-by          recency (default), duration, tokens, messages, errors
+--sort-by          recency (default), duration (calendar), tool_duration (work time), tokens, messages, errors
 --cwd            filter by workspace path (mutually exclusive with --remote)
 --remote         filter by git remote URL
 --since          relative time: 5m, 7d, 2w
@@ -364,21 +384,26 @@ autosearch search "error OR fail OR broken" --scope sessions --cwd /path/to/proj
 ## All search flags
 
 ` + "```" + `
---scope       messages (default) or sessions
---role        user, assistant, or tool
---field       all (default), content, tool_input, tool_output
---cwd         filter by workspace path (mutually exclusive with --remote)
---remote      filter by git remote URL
---since       relative time: 5m, 7d, 2w
---after       absolute lower bound (ISO 8601, inclusive)
---before      absolute upper bound (ISO 8601, exclusive)
---limit       max results per page (default 20)
---offset      skip N results for pagination
---highlight   bold matched terms in snippets (message scope only)
---skill       filter by skill name
---mode        bm25 (default)
---index       named index to query (default: "default")
---request-id  echo an ID back in _meta
+--scope             messages (default) or sessions
+--role              user, assistant, or tool
+--field             all (default), content, tool_input, tool_output
+--tool-name         filter by tool name (Read, Write, Edit, Bash) [messages scope]
+--session-id        filter to a single session ID [messages scope]
+--min-tool-duration include only tool calls with duration_ms >= value (60s, 5m, 1500ms) [messages scope]
+--interrupted       include only tool calls Claude reported as interrupted [messages scope]
+--cwd               filter by workspace path (mutually exclusive with --remote)
+--remote            filter by git remote URL
+--since             relative time: 5m, 7d, 2w
+--after             absolute lower bound (ISO 8601, inclusive)
+--before            absolute upper bound (ISO 8601, exclusive)
+--limit             max results per page (default 20)
+--offset            skip N results for pagination
+--highlight         bold matched terms in snippets (message scope only)
+--text              skim-friendly text table instead of JSON (messages scope only)
+--skill             filter by skill name
+--mode              bm25 (default)
+--index             named index to query (default: "default")
+--request-id        echo an ID back in _meta
 ` + "```" + `
 
 ## Key stats flags
