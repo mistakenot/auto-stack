@@ -275,7 +275,9 @@ func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
 			message_index, role, content, content_truncated, timestamp,
 			tool_name, tool_input, tool_file_path,
 			tool_file_start_line, tool_file_num_lines, tool_file_total_lines,
-			bash_command, bash_exit_code, skill_name, input_tokens, cache_input_tokens, output_tokens,
+			bash_command, bash_exit_code, skill_name,
+			tool_use_id, duration_ms, interrupted,
+			input_tokens, cache_input_tokens, output_tokens,
 			workspace, git_remote, git_branch, model,
 			parent_session_id, is_subagent, source_line_index, schema_version
 		FROM messages
@@ -290,19 +292,22 @@ func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
 	var msgs []MessageRow
 	for rows.Next() {
 		var m MessageRow
-		var isSubagentInt int
+		var isSubagentInt, interruptedInt int
 		if err := rows.Scan(
 			&m.DocID, &m.PartitionSourcePath, &m.MessageID, &m.SessionID, &m.HostID,
 			&m.MessageIndex, &m.Role, &m.Content, &m.ContentTruncated, &m.Timestamp,
 			&m.ToolName, &m.ToolInput, &m.ToolFilePath,
 			&m.ToolFileStartLine, &m.ToolFileNumLines, &m.ToolFileTotalLines,
-			&m.BashCommand, &m.BashExitCode, &m.SkillName, &m.InputTokens, &m.CacheInputTokens, &m.OutputTokens,
+			&m.BashCommand, &m.BashExitCode, &m.SkillName,
+			&m.ToolUseID, &m.DurationMs, &interruptedInt,
+			&m.InputTokens, &m.CacheInputTokens, &m.OutputTokens,
 			&m.Workspace, &m.GitRemote, &m.GitBranch, &m.Model,
 			&m.ParentSessionID, &isSubagentInt, &m.SourceLineIndex, &m.SchemaVersion,
 		); err != nil {
 			return nil, fmt.Errorf("scan message row: %w", err)
 		}
 		m.IsSubagent = isSubagentInt != 0
+		m.Interrupted = interruptedInt != 0
 		msgs = append(msgs, m)
 	}
 	return msgs, rows.Err()

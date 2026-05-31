@@ -27,17 +27,27 @@ type MessageRow struct {
 	BashExitCode        int
 	SkillName           string
 	ToolUseResultJSON   string
-	InputTokens         int
-	CacheInputTokens    int
-	OutputTokens        int
-	Workspace           string
-	GitRemote           string
-	GitBranch           string
-	Model               string
-	ParentSessionID     string
-	IsSubagent          bool
-	SourceLineIndex     int
-	SchemaVersion       int
+	// ToolUseID is the per-tool-call pairing key. Set on both the
+	// originator tool_use row and the matching tool_result row. Empty for
+	// non-tool messages.
+	ToolUseID string
+	// DurationMs is the per-tool-call wall-clock duration in ms. Set on
+	// tool_result rows only; zero on rows where neither Claude's envelope
+	// durationMs nor a ts-diff fallback was available.
+	DurationMs int64
+	// Interrupted is true when Claude flagged the call as cancelled/stuck.
+	Interrupted      bool
+	InputTokens      int
+	CacheInputTokens int
+	OutputTokens     int
+	Workspace        string
+	GitRemote        string
+	GitBranch        string
+	Model            string
+	ParentSessionID  string
+	IsSubagent       bool
+	SourceLineIndex  int
+	SchemaVersion    int
 }
 
 // GetMessageByID loads one message row by message_id.
@@ -47,7 +57,9 @@ func GetMessageByID(db *sql.DB, messageID string) (*MessageRow, error) {
 			message_index, role, content, content_truncated, timestamp,
 			tool_name, tool_input, tool_file_path,
 			tool_file_start_line, tool_file_num_lines, tool_file_total_lines,
-			bash_command, bash_exit_code, skill_name, tool_use_result_json, input_tokens, cache_input_tokens, output_tokens,
+			bash_command, bash_exit_code, skill_name, tool_use_result_json,
+			tool_use_id, duration_ms, interrupted,
+			input_tokens, cache_input_tokens, output_tokens,
 			workspace, git_remote, git_branch, model,
 			parent_session_id, is_subagent, source_line_index, schema_version
 		FROM messages
@@ -55,13 +67,15 @@ func GetMessageByID(db *sql.DB, messageID string) (*MessageRow, error) {
 	`, messageID)
 
 	m := &MessageRow{}
-	var isSubagentInt int
+	var isSubagentInt, interruptedInt int
 	err := row.Scan(
 		&m.DocID, &m.PartitionSourcePath, &m.MessageID, &m.SessionID, &m.HostID,
 		&m.MessageIndex, &m.Role, &m.Content, &m.ContentTruncated, &m.Timestamp,
 		&m.ToolName, &m.ToolInput, &m.ToolFilePath,
 		&m.ToolFileStartLine, &m.ToolFileNumLines, &m.ToolFileTotalLines,
-		&m.BashCommand, &m.BashExitCode, &m.SkillName, &m.ToolUseResultJSON, &m.InputTokens, &m.CacheInputTokens, &m.OutputTokens,
+		&m.BashCommand, &m.BashExitCode, &m.SkillName, &m.ToolUseResultJSON,
+		&m.ToolUseID, &m.DurationMs, &interruptedInt,
+		&m.InputTokens, &m.CacheInputTokens, &m.OutputTokens,
 		&m.Workspace, &m.GitRemote, &m.GitBranch, &m.Model,
 		&m.ParentSessionID, &isSubagentInt, &m.SourceLineIndex, &m.SchemaVersion,
 	)
@@ -72,6 +86,7 @@ func GetMessageByID(db *sql.DB, messageID string) (*MessageRow, error) {
 		return nil, fmt.Errorf("query message %s: %w", messageID, err)
 	}
 	m.IsSubagent = isSubagentInt != 0
+	m.Interrupted = interruptedInt != 0
 	return m, nil
 }
 

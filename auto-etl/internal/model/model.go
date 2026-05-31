@@ -2,7 +2,7 @@ package model
 
 import "time"
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // Default truncation threshold for content_truncated (chars).
 const DefaultTruncateMaxChars = 4096
@@ -43,6 +43,30 @@ type AgentMessage struct {
 	BashExitCode       int32  `parquet:"bash_exit_code"`
 	SkillName          string `parquet:"skill_name,dict"`
 	ToolUseResultJSON  string `parquet:"tool_use_result_json"`
+
+	// ToolUseID is the canonical pairing key linking a `tool_use` block
+	// (originator on an assistant message) to its matching `tool_result`
+	// block (on the subsequent user/tool message). Set on both rows of the
+	// pair. Empty for non-tool messages. Lets downstream queries do an exact
+	// JOIN that works even when the agent dispatches multiple tool calls in
+	// parallel — adjacency-based pairing breaks for parallel calls.
+	ToolUseID string `parquet:"tool_use_id,dict"`
+
+	// DurationMs is the per-tool-call wall-clock duration in milliseconds.
+	// Populated on `tool_result` rows. Source preference:
+	//   1. `toolUseResult.durationMs` from the raw JSONL envelope (Claude's
+	//      own measurement; accounts for interruption).
+	//   2. `tool_result.timestamp - tool_use.timestamp` fallback when (1) is
+	//      absent.
+	// Zero on rows where neither is available (e.g. tool_use without a
+	// paired result, non-tool messages).
+	DurationMs int64 `parquet:"duration_ms"`
+
+	// Interrupted is true when the raw `toolUseResult.interrupted` envelope
+	// flag is set — Claude's literal signal that a tool call was cancelled
+	// or stuck (e.g. user-interrupted Bash). Only meaningful on
+	// `tool_result` rows.
+	Interrupted bool `parquet:"interrupted"`
 
 	InputTokens      int32 `parquet:"input_tokens"`
 	CacheInputTokens int32 `parquet:"cache_input_tokens"`

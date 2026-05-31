@@ -36,7 +36,36 @@ type ParsedLine struct {
 	SourceLineIndex int    // 0-based position in the JSONL file
 	DurationMs      int64  // populated on `system / turn_duration` lines: per-turn agent work time in ms
 	Message         ParsedMessage
-	ToolUseResult   json.RawMessage // raw toolUseResult envelope (sibling of message)
+	// ToolUseResultRaw is the raw `toolUseResult` envelope (sibling of
+	// message), preserved verbatim for structured tool-output rendering.
+	ToolUseResultRaw json.RawMessage
+	// ToolUseResult mirrors the sibling `toolUseResult` envelope that Claude
+	// Code attaches to lines carrying a `tool_result` content block. It
+	// carries Claude's own per-call wall-clock measurement and the
+	// `interrupted` flag (stuck / cancelled). Present only on tool_result
+	// lines; absent on all others.
+	ToolUseResult ParsedToolUseResult
+}
+
+// ParsedToolUseResult holds the fields we extract from the raw
+// `toolUseResult` envelope. The envelope shape varies per tool (Bash has
+// stdout/stderr/interrupted; WebFetch has bytes/durationMs; subagent Task
+// has totalDurationMs; Read tools may emit a bare string). We deliberately
+// extract only the cross-tool signal fields here.
+type ParsedToolUseResult struct {
+	// Present indicates the envelope was a JSON object (vs absent or a bare
+	// string). Distinguishes "no envelope" from "envelope present but
+	// durationMs=0".
+	Present bool
+	// DurationMs is Claude's own measured wall-clock duration in ms.
+	// Populated by some tools (e.g. WebFetch, Glob with `truncated`); not
+	// emitted by every tool. Prefer this over a timestamp delta when
+	// available.
+	DurationMs int64
+	// Interrupted is true when Claude flags the call as cancelled or stuck
+	// (e.g. user-interrupted Bash). The literal "stuck vs expected-slow"
+	// signal.
+	Interrupted bool
 }
 
 // ParsedMessage holds the message payload from a JSONL line.
@@ -69,17 +98,29 @@ type ContentBlock struct {
 
 // rawLine is the JSON structure of a single JSONL line from Claude session files.
 type rawLine struct {
-	Type          string          `json:"type"`
-	Subtype       string          `json:"subtype"` // for `system` lines: e.g. "turn_duration", "init"
-	SessionID     string          `json:"sessionId"`
-	Cwd           string          `json:"cwd"`
-	GitBranch     *string         `json:"gitBranch"` // pointer to distinguish null from missing
-	Timestamp     string          `json:"timestamp"`
-	IsSidechain   bool            `json:"isSidechain"`
-	AgentID       string          `json:"agentId"`
-	DurationMs    int64           `json:"durationMs"` // populated on `system / turn_duration` lines
-	Message       rawMessage      `json:"message"`
+	Type        string     `json:"type"`
+	Subtype     string     `json:"subtype"` // for `system` lines: e.g. "turn_duration", "init"
+	SessionID   string     `json:"sessionId"`
+	Cwd         string     `json:"cwd"`
+	GitBranch   *string    `json:"gitBranch"` // pointer to distinguish null from missing
+	Timestamp   string     `json:"timestamp"`
+	IsSidechain bool       `json:"isSidechain"`
+	AgentID     string     `json:"agentId"`
+	DurationMs  int64      `json:"durationMs"` // populated on `system / turn_duration` lines
+	Message     rawMessage `json:"message"`
+	// ToolUseResult is the sibling envelope on tool_result-bearing lines.
+	// It can be either an object (most tools) or a bare string (Read-style
+	// tools), hence RawMessage + post-decode handling.
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
+}
+
+// rawToolUseResult is the object-shaped subset of `toolUseResult` we
+// decode. Tools whose envelope is a bare string (e.g. Read) simply do not
+// populate these fields. Tools whose envelope is an object but lacks
+// these keys (e.g. Edit's structuredPatch payload) leave them at zero.
+type rawToolUseResult struct {
+	DurationMs  int64 `json:"durationMs"`
+	Interrupted bool  `json:"interrupted"`
 }
 
 type rawMessage struct {
@@ -181,23 +222,24 @@ func ParseSession(path string) (*ParsedSession, error) {
 		}
 
 		parsed := ParsedLine{
-			Type:            line.Type,
-			Subtype:         line.Subtype,
-			Timestamp:       ts,
-			SessionID:       line.SessionID,
-			Cwd:             line.Cwd,
-			GitBranch:       gitBranch,
-			IsSubagent:      line.IsSidechain,
-			AgentID:         line.AgentID,
-			SourceLineIndex: lineIndex,
-			DurationMs:      line.DurationMs,
+			Type:             line.Type,
+			Subtype:          line.Subtype,
+			Timestamp:        ts,
+			SessionID:        line.SessionID,
+			Cwd:              line.Cwd,
+			GitBranch:        gitBranch,
+			IsSubagent:       line.IsSidechain,
+			AgentID:          line.AgentID,
+			SourceLineIndex:  lineIndex,
+			DurationMs:       line.DurationMs,
+			ToolUseResult:    parseToolUseResult(line.ToolUseResult),
+			ToolUseResultRaw: line.ToolUseResult,
 			Message: ParsedMessage{
 				Role:    line.Message.Role,
 				Content: line.Message.Content,
 				Model:   line.Message.Model,
 				Usage:   line.Message.Usage,
 			},
-			ToolUseResult: line.ToolUseResult,
 		}
 
 		session.Lines = append(session.Lines, parsed)
@@ -279,6 +321,33 @@ func ParseContentBlocks(raw json.RawMessage) (string, []ContentBlock) {
 	}
 
 	return "", nil
+}
+
+// parseToolUseResult decodes the `toolUseResult` sibling envelope. The
+// envelope is heterogeneous — it can be absent, a bare JSON string, or an
+// object whose keys vary by tool (Bash, WebFetch, Glob, Task, Edit, …).
+// We return a struct populated only with the cross-tool signal fields
+// (`durationMs`, `interrupted`) and a `Present` flag to distinguish "no
+// envelope" from "envelope but no durationMs".
+func parseToolUseResult(raw json.RawMessage) ParsedToolUseResult {
+	trimmed := strings.TrimSpace(string(raw))
+	if len(trimmed) == 0 || trimmed == "null" {
+		return ParsedToolUseResult{}
+	}
+	// Object envelope: decode known fields. Bare strings and arrays fall
+	// through with Present=false because they carry no per-tool-call timing.
+	if trimmed[0] != '{' {
+		return ParsedToolUseResult{}
+	}
+	var rt rawToolUseResult
+	if err := json.Unmarshal(raw, &rt); err != nil {
+		return ParsedToolUseResult{}
+	}
+	return ParsedToolUseResult{
+		Present:     true,
+		DurationMs:  rt.DurationMs,
+		Interrupted: rt.Interrupted,
+	}
 }
 
 func parseTimestamp(s string) time.Time {

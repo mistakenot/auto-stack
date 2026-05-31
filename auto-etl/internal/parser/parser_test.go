@@ -112,12 +112,12 @@ func TestParseSession_ToolUseResultEnvelope(t *testing.T) {
 	}
 
 	// Line 0 is the assistant tool_use line — no toolUseResult envelope.
-	if len(s.Lines[0].ToolUseResult) != 0 {
-		t.Errorf("assistant line ToolUseResult = %q, want empty", string(s.Lines[0].ToolUseResult))
+	if len(s.Lines[0].ToolUseResultRaw) != 0 {
+		t.Errorf("assistant line ToolUseResultRaw = %q, want empty", string(s.Lines[0].ToolUseResultRaw))
 	}
 
 	// Line 1 is the user tool_result line — carries the envelope.
-	if len(s.Lines[1].ToolUseResult) == 0 {
+	if len(s.Lines[1].ToolUseResultRaw) == 0 {
 		t.Error("tool_result line ToolUseResult is empty, want non-empty envelope")
 	}
 }
@@ -136,6 +136,75 @@ func TestParseSession_ParentNotSubagent(t *testing.T) {
 	if s.ID != "bbbb1111-2222-3333-4444-555566667777" {
 		t.Errorf("ID = %q, want parent UUID", s.ID)
 	}
+}
+
+func TestParseSession_ToolUseResultCaptured(t *testing.T) {
+	// Claude Code attaches a `toolUseResult` sibling envelope to lines
+	// carrying a `tool_result` content block. Three shapes show up in real
+	// data: an object with `interrupted` (Bash); an object with `durationMs`
+	// (WebFetch); a bare string (Read). The parser must surface
+	// `interrupted=true` and `durationMs` from the first two shapes and
+	// silently skip the bare-string case (Present=false).
+	path := filepath.Join("testdata", "tool-use-result", "session.jsonl")
+	s, err := ParseSession(path)
+	if err != nil {
+		t.Fatalf("ParseSession: %v", err)
+	}
+
+	// Collect tool_result-bearing lines in order.
+	var toolResults []ParsedLine
+	for _, l := range s.Lines {
+		if l.Type == "user" && containsToolResultBlock(l.Message.Content) {
+			toolResults = append(toolResults, l)
+		}
+	}
+	if len(toolResults) != 3 {
+		t.Fatalf("tool_result lines = %d, want 3", len(toolResults))
+	}
+
+	// Line 0: Bash with interrupted=true, no durationMs.
+	if !toolResults[0].ToolUseResult.Present {
+		t.Error("toolResults[0].ToolUseResult.Present = false, want true")
+	}
+	if !toolResults[0].ToolUseResult.Interrupted {
+		t.Error("toolResults[0].ToolUseResult.Interrupted = false, want true")
+	}
+	if toolResults[0].ToolUseResult.DurationMs != 0 {
+		t.Errorf("toolResults[0].ToolUseResult.DurationMs = %d, want 0",
+			toolResults[0].ToolUseResult.DurationMs)
+	}
+
+	// Line 1: WebFetch with durationMs=850, no interrupted.
+	if !toolResults[1].ToolUseResult.Present {
+		t.Error("toolResults[1].ToolUseResult.Present = false, want true")
+	}
+	if toolResults[1].ToolUseResult.DurationMs != 850 {
+		t.Errorf("toolResults[1].ToolUseResult.DurationMs = %d, want 850",
+			toolResults[1].ToolUseResult.DurationMs)
+	}
+	if toolResults[1].ToolUseResult.Interrupted {
+		t.Error("toolResults[1].ToolUseResult.Interrupted = true, want false")
+	}
+
+	// Line 2: Read with bare-string envelope. We don't decode strings,
+	// so Present must be false (and the result row falls back to ts-diff
+	// in the transform stage).
+	if toolResults[2].ToolUseResult.Present {
+		t.Error("toolResults[2].ToolUseResult.Present = true, want false (bare-string envelope)")
+	}
+}
+
+// containsToolResultBlock is a small helper for the tool_use_result test.
+// Returns true if the content array decodes to at least one tool_result
+// block. Avoids re-implementing ContentBlock parsing in the test.
+func containsToolResultBlock(raw []byte) bool {
+	_, blocks := ParseContentBlocks(raw)
+	for i := range blocks {
+		if blocks[i].Type == "tool_result" {
+			return true
+		}
+	}
+	return false
 }
 
 func TestParseSession_TurnDurationCaptured(t *testing.T) {
