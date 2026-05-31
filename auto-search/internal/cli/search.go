@@ -129,8 +129,8 @@ find slow or stuck tool calls:
 				return enc.Encode(result)
 
 			case "sessions":
-				if toolName != "" || sessionID != "" || minToolDurationMs != nil || interrupted {
-					return &ExitError{Code: 1, Err: errors.New("--tool-name, --session-id, --min-tool-duration, and --interrupted only apply to --scope messages")}
+				if toolName != "" || sessionID != "" || minToolDurationMs != nil || interrupted || textOut {
+					return &ExitError{Code: 1, Err: errors.New("--tool-name, --session-id, --min-tool-duration, --interrupted, and --text only apply to --scope messages")}
 				}
 				result, err := search.SearchSessions(&search.SessionSearchOpts{
 					DB:        db,
@@ -174,7 +174,7 @@ find slow or stuck tool calls:
 	cmd.Flags().BoolVar(&interrupted, "interrupted", false, "include only tool calls Claude reported as interrupted — messages scope only")
 	cmd.Flags().IntVar(&offset, "offset", 0, "result offset for pagination (0-based)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max results to return (default 20)")
-	cmd.Flags().BoolVar(&highlight, "highlight", false, "highlight matched terms in snippets")
+	cmd.Flags().BoolVar(&highlight, "highlight", false, "highlight matched terms in snippets (no-op when query is empty)")
 	cmd.Flags().BoolVar(&textOut, "text", false, "render hits as a skim-friendly text table instead of JSON (messages scope only)")
 	cmd.Flags().StringVar(&requestID, "request-id", "", "request identifier to echo in responses")
 	return cmd
@@ -209,10 +209,7 @@ func renderMessageHitsText(w io.Writer, result *search.MessageSearchResult) {
 		if showInterrupted && h.Interrupted {
 			extras += " interrupted=true"
 		}
-		snippet := strings.ReplaceAll(strings.TrimSpace(h.Snippet), "\n", " ")
-		if len(snippet) > 160 {
-			snippet = snippet[:160] + "…"
-		}
+		snippet := search.TruncateAtRune(strings.ReplaceAll(strings.TrimSpace(h.Snippet), "\n", " "), 160)
 		fmt.Fprintf(w, "[%s] %s%s\n  %s\n", h.MessageType, h.MessageID, extras, snippet)
 	}
 }

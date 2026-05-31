@@ -155,7 +155,7 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 		// without inventing a dummy FTS query.
 		hits, stats, err = execMessageSearchNoFTS(opts.DB, opts.CWD, opts.Remote, opts.Skill, role, field,
 			opts.ToolName, opts.SessionID, opts.MinToolDurationMs, opts.OnlyInterrupted,
-			timeFilter, nil, opts.Highlight, opts.Query, filters, offset, pageSize)
+			timeFilter, offset, pageSize)
 		if err != nil {
 			return nil, err
 		}
@@ -385,7 +385,7 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field, toolNam
 // timestamp ("most recent first"), so the most-interesting rows surface
 // first in --text output. No snippet highlighting is meaningful here
 // (there's no matched term), so snippet is just a truncated content view.
-func execMessageSearchNoFTS(db *sql.DB, cwd, remote, skill, role, field, toolName, sessionID string, minToolDurationMs *int64, onlyInterrupted bool, timeFilter TimeFilter, _ []string, _ bool, _ string, _ string, offset, pageSize int) ([]MessageHit, matchStats, error) {
+func execMessageSearchNoFTS(db *sql.DB, cwd, remote, skill, role, field, toolName, sessionID string, minToolDurationMs *int64, onlyInterrupted bool, timeFilter TimeFilter, offset, pageSize int) ([]MessageHit, matchStats, error) {
 	zeroStats := matchStats{}
 
 	var conds []string
@@ -510,10 +510,7 @@ func execMessageSearchNoFTS(db *sql.DB, cwd, remote, skill, role, field, toolNam
 		// No query terms → no highlight; just return a trimmed snippet so
 		// the row is identifiable in --text output without an extra
 		// `message get` round-trip.
-		snippet := strings.TrimSpace(s.contentTruncated)
-		if len(snippet) > 320 {
-			snippet = snippet[:320] + "…"
-		}
+		snippet := TruncateAtRune(strings.TrimSpace(s.contentTruncated), 320)
 		hits = append(hits, MessageHit{
 			ID:                HitID("messages", "structured", "", "", s.messageID),
 			SessionID:         s.sessionID,

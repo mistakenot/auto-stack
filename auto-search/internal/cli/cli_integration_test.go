@@ -953,6 +953,11 @@ func TestSearchNewFlagsRejectBadInput(t *testing.T) {
 			args:     []string{"search", "foo", "--scope", "sessions", "--interrupted"},
 			wantSnip: "only apply to --scope messages",
 		},
+		{
+			name:     "text rejected on sessions scope",
+			args:     []string{"search", "foo", "--scope", "sessions", "--text"},
+			wantSnip: "--text",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

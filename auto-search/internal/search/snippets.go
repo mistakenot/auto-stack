@@ -78,6 +78,24 @@ func highlightTerms(text string, terms []string) string {
 	return result
 }
 
+// TruncateAtRune trims s to at most maxBytes bytes plus, if truncation
+// occurred, an ellipsis ("…"). The byte boundary is advanced forward
+// to the next UTF-8 rune start so the result is always valid UTF-8 —
+// callers do not have to worry about slicing through a multi-byte
+// sequence and producing mojibake on terminals or U+FFFD substitution
+// in json.Encoder output. The returned length may exceed maxBytes by
+// up to 3 bytes (the max non-leading byte count of a UTF-8 sequence).
+func TruncateAtRune(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	end := maxBytes
+	for end < len(s) && !utf8.RuneStart(s[end]) {
+		end++
+	}
+	return s[:end] + "…"
+}
+
 // ExtractTerms collects the positive search terms from a parsed query AST
 // for use in snippet generation.
 func ExtractTerms(node *query.Node) []string {
