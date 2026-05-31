@@ -40,9 +40,9 @@ func Scan(projectRoot string, warn io.Writer) ([]Link, error) {
 	}
 
 	docByID := make(map[string]docs.Entry, len(entries))
-	for _, e := range entries {
-		if e.Id != "" {
-			docByID[e.Id] = e
+	for i := range entries {
+		if entries[i].Id != "" {
+			docByID[entries[i].Id] = entries[i]
 		}
 	}
 

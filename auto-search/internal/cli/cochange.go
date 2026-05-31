@@ -46,7 +46,7 @@ func newCoChangeCmd() *cobra.Command {
 				inputRoot = defaultRoot
 			}
 
-			result, err := cochange.Run(cochange.Options{
+			result, err := cochange.Run(&cochange.Options{
 				InputPath:      inputPath,
 				RepoIDOverride: repoID,
 				InputRoot:      inputRoot,

@@ -96,7 +96,7 @@ func TestConformance_KnownFile(t *testing.T) {
 	const wantRelated = "auto-etl/internal/git/extract_test.go"
 	inputAbs := filepath.Join(top, inputRel)
 
-	res, err := Run(Options{
+	res, err := Run(&Options{
 		InputPath:      inputAbs,
 		RepoIDOverride: repoID,
 		InputRoot:      root,
@@ -271,7 +271,7 @@ func TestConformance_LiveRemoteResolution(t *testing.T) {
 	}
 
 	inputAbs := filepath.Join(top, "auto-etl/internal/git/extract.go")
-	res, err := Run(Options{
+	res, err := Run(&Options{
 		InputPath: inputAbs,
 		InputRoot: root,
 		Limit:     50,
@@ -297,7 +297,7 @@ func TestConformance_UnknownFile(t *testing.T) {
 	// A path that does not appear in the snapshot's commit history.
 	inputAbs := filepath.Join(top, "auto-search/internal/cochange/this-file-never-existed.go")
 
-	res, err := Run(Options{
+	res, err := Run(&Options{
 		InputPath:      inputAbs,
 		RepoIDOverride: repoID,
 		InputRoot:      root,
@@ -335,7 +335,7 @@ func TestConformance_InsufficientHistory(t *testing.T) {
 	// This task's requirements doc was added in a single commit in the snapshot.
 	inputAbs := filepath.Join(top, "docs/tasks/010-autosearch-co-change/requirements.md")
 
-	res, err := Run(Options{
+	res, err := Run(&Options{
 		InputPath:      inputAbs,
 		RepoIDOverride: repoID,
 		InputRoot:      root,

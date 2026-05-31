@@ -2,6 +2,7 @@ package git
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -309,8 +310,7 @@ func parseForEachRef(output string, repoID, etlRunID string, collectedAt int64, 
 	}
 
 	var refs []model.GitRef
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
+	for line := range strings.SplitSeq(output, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -623,9 +623,8 @@ func parseUnifiedDiff(output string) map[string]string {
 
 	// Split on "diff --git " boundaries.
 	diffPrefix := "diff --git "
-	sections := strings.Split(output, diffPrefix)
 
-	for _, section := range sections {
+	for section := range strings.SplitSeq(output, diffPrefix) {
 		section = strings.TrimSpace(section)
 		if section == "" {
 			continue
@@ -636,8 +635,8 @@ func parseUnifiedDiff(output string) map[string]string {
 
 		// Extract the b/ path from the first line: "a/path b/path"
 		firstLine := section
-		if idx := strings.Index(section, "\n"); idx != -1 {
-			firstLine = section[:idx]
+		if before, _, ok := strings.Cut(section, "\n"); ok {
+			firstLine = before
 		}
 
 		// Parse "a/old b/new" — take the b/ path.
@@ -655,11 +654,11 @@ func parseUnifiedDiff(output string) map[string]string {
 func extractBPath(headerLine string) string {
 	// The format is "a/path b/path". The tricky part is paths can contain spaces.
 	// We look for " b/" as the separator.
-	idx := strings.Index(headerLine, " b/")
-	if idx == -1 {
+	_, after, ok := strings.Cut(headerLine, " b/")
+	if !ok {
 		return ""
 	}
-	return headerLine[idx+3:] // strip " b/"
+	return after
 }
 
 // parsedHunk holds a parsed diff hunk.
@@ -808,7 +807,7 @@ func computeHunkHash(hunkText string) string {
 	// Normalize: collapse runs of whitespace, trim.
 	normalized := normalizeWhitespace(hunkText)
 	h := sha256.Sum256([]byte(normalized))
-	return fmt.Sprintf("%x", h)
+	return hex.EncodeToString(h[:])
 }
 
 // normalizeWhitespace collapses runs of whitespace into a single space and trims.

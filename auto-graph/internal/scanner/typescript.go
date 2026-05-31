@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -136,7 +137,7 @@ func (s *TypeScriptScanner) findBinary() (string, error) {
 	}
 	bin, err := exec.LookPath("ast-grep")
 	if err != nil {
-		return "", fmt.Errorf("ast-grep not found: install with npm i -g @ast-grep/cli or brew install ast-grep")
+		return "", errors.New("ast-grep not found: install with npm i -g @ast-grep/cli or brew install ast-grep")
 	}
 	return bin, nil
 }
@@ -182,7 +183,8 @@ func (s *TypeScriptScanner) runPattern(bin, dir, pattern, lang string) ([]astGre
 	// ast-grep exits 0 when matches are found, 1 when no matches are found.
 	// Both are valid outcomes for us.
 	if err := cmd.Wait(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 			// No matches found — not an error.
 			return matches, nil
 		}

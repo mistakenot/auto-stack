@@ -3,6 +3,7 @@ package cochange
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
 )
 
 // LargeCommitCutoff is the files_changed threshold above which a commit is
@@ -181,7 +182,7 @@ func init() {
 }
 
 func itoa(n int) string {
-	return fmt.Sprintf("%d", n)
+	return strconv.Itoa(n)
 }
 
 // canonicalPath resolves inputPath to its canonical (latest) path. If the path
@@ -325,23 +326,26 @@ FROM c JOIN co ON co.commit_id = c.commit_id
 GROUP BY c.author_name
 ORDER BY cnt DESC, c.author_name ASC
 LIMIT 5`
-	rows, err := sdb.Query(authorsQ, canonA, cand.Path)
-	if err != nil {
-		return fmt.Errorf("top authors query: %w", err)
-	}
-	for rows.Next() {
-		var a AuthorCount
-		if err := rows.Scan(&a.Name, &a.Count); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("scan author: %w", err)
+	if err := func() error {
+		rows, err := sdb.Query(authorsQ, canonA, cand.Path)
+		if err != nil {
+			return fmt.Errorf("top authors query: %w", err)
 		}
-		cand.TopAuthors = append(cand.TopAuthors, a)
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var a AuthorCount
+			if err := rows.Scan(&a.Name, &a.Count); err != nil {
+				return fmt.Errorf("scan author: %w", err)
+			}
+			cand.TopAuthors = append(cand.TopAuthors, a)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate authors: %w", err)
+		}
+		return nil
+	}(); err != nil {
+		return err
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return fmt.Errorf("iterate authors: %w", err)
-	}
-	_ = rows.Close()
 
 	// Top sessions, recency order (most recent co-change first). Skip empty
 	// session ids (commits with no linked session).
@@ -352,24 +356,27 @@ WHERE c.session_id <> ''
 GROUP BY c.session_id
 ORDER BY recent DESC
 LIMIT 5`
-	rows, err = sdb.Query(sessionsQ, canonA, cand.Path)
-	if err != nil {
-		return fmt.Errorf("top sessions query: %w", err)
-	}
-	for rows.Next() {
-		var sid string
-		var recent int64
-		if err := rows.Scan(&sid, &recent); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("scan session: %w", err)
+	if err := func() error {
+		rows, err := sdb.Query(sessionsQ, canonA, cand.Path)
+		if err != nil {
+			return fmt.Errorf("top sessions query: %w", err)
 		}
-		cand.TopSessions = append(cand.TopSessions, sid)
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var sid string
+			var recent int64
+			if err := rows.Scan(&sid, &recent); err != nil {
+				return fmt.Errorf("scan session: %w", err)
+			}
+			cand.TopSessions = append(cand.TopSessions, sid)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate sessions: %w", err)
+		}
+		return nil
+	}(); err != nil {
+		return err
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return fmt.Errorf("iterate sessions: %w", err)
-	}
-	_ = rows.Close()
 
 	// Sample commits, most recent first.
 	samplesQ := coCommitsCTE + `
@@ -377,23 +384,26 @@ SELECT c.short_id, c.author_date, c.message_truncated
 FROM c JOIN co ON co.commit_id = c.commit_id
 ORDER BY c.author_date DESC
 LIMIT 3`
-	rows, err = sdb.Query(samplesQ, canonA, cand.Path)
-	if err != nil {
-		return fmt.Errorf("sample commits query: %w", err)
-	}
-	for rows.Next() {
-		var s SampleCommit
-		if err := rows.Scan(&s.SHA, &s.Date, &s.Subject); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("scan sample commit: %w", err)
+	if err := func() error {
+		rows, err := sdb.Query(samplesQ, canonA, cand.Path)
+		if err != nil {
+			return fmt.Errorf("sample commits query: %w", err)
 		}
-		cand.SampleCommit = append(cand.SampleCommit, s)
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var s SampleCommit
+			if err := rows.Scan(&s.SHA, &s.Date, &s.Subject); err != nil {
+				return fmt.Errorf("scan sample commit: %w", err)
+			}
+			cand.SampleCommit = append(cand.SampleCommit, s)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate sample commits: %w", err)
+		}
+		return nil
+	}(); err != nil {
+		return err
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return fmt.Errorf("iterate sample commits: %w", err)
-	}
-	_ = rows.Close()
 
 	return nil
 }
@@ -528,7 +538,7 @@ SELECT COALESCE(MIN(c.author_date), 0),
        COALESCE(AVG(c.files_changed), 0)
 FROM c JOIN aco ON aco.commit_id = c.commit_id`
 	if err := sdb.QueryRow(scalarQ, canonA).Scan(&m.FirstTouched, &m.LastTouched, &m.AvgFilesPerCommit); err != nil {
-		return m, fmt.Errorf("A metadata scalars: %w", err)
+		return m, fmt.Errorf("metadata scalars for A: %w", err)
 	}
 
 	// Top authors.
@@ -538,23 +548,26 @@ FROM c JOIN aco ON aco.commit_id = c.commit_id
 GROUP BY c.author_name
 ORDER BY cnt DESC, c.author_name ASC
 LIMIT 5`
-	rows, err := sdb.Query(authorsQ, canonA)
-	if err != nil {
-		return m, fmt.Errorf("A top authors: %w", err)
-	}
-	for rows.Next() {
-		var a AuthorCount
-		if err := rows.Scan(&a.Name, &a.Count); err != nil {
-			_ = rows.Close()
-			return m, fmt.Errorf("scan A author: %w", err)
+	if err := func() error {
+		rows, err := sdb.Query(authorsQ, canonA)
+		if err != nil {
+			return fmt.Errorf("top authors for A: %w", err)
 		}
-		m.TopAuthors = append(m.TopAuthors, a)
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var a AuthorCount
+			if err := rows.Scan(&a.Name, &a.Count); err != nil {
+				return fmt.Errorf("scan A author: %w", err)
+			}
+			m.TopAuthors = append(m.TopAuthors, a)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate A authors: %w", err)
+		}
+		return nil
+	}(); err != nil {
+		return m, err
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return m, fmt.Errorf("iterate A authors: %w", err)
-	}
-	_ = rows.Close()
 
 	// Top sessions, recency order, non-empty only.
 	sessionsQ := aCommitsCTE + `
@@ -564,24 +577,27 @@ WHERE c.session_id <> ''
 GROUP BY c.session_id
 ORDER BY recent DESC
 LIMIT 5`
-	rows, err = sdb.Query(sessionsQ, canonA)
-	if err != nil {
-		return m, fmt.Errorf("A top sessions: %w", err)
-	}
-	for rows.Next() {
-		var sid string
-		var recent int64
-		if err := rows.Scan(&sid, &recent); err != nil {
-			_ = rows.Close()
-			return m, fmt.Errorf("scan A session: %w", err)
+	if err := func() error {
+		rows, err := sdb.Query(sessionsQ, canonA)
+		if err != nil {
+			return fmt.Errorf("top sessions for A: %w", err)
 		}
-		m.TopSessions = append(m.TopSessions, sid)
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var sid string
+			var recent int64
+			if err := rows.Scan(&sid, &recent); err != nil {
+				return fmt.Errorf("scan A session: %w", err)
+			}
+			m.TopSessions = append(m.TopSessions, sid)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate A sessions: %w", err)
+		}
+		return nil
+	}(); err != nil {
+		return m, err
 	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return m, fmt.Errorf("iterate A sessions: %w", err)
-	}
-	_ = rows.Close()
 
 	return m, nil
 }

@@ -106,12 +106,13 @@ func LinkSessionIDs(commits []model.Commit, messagesDir string, repoRemoteNormal
 
 	// Match commits to session IDs via prefix matching
 	for i := range commits {
-		if commits[i].SessionID != "" {
+		commit := &commits[i]
+		if commit.SessionID != "" {
 			continue // AC-4: trailer takes precedence
 		}
 		// Extract full SHA from Commit.ID (format: "repoID-fullsha")
-		fullSHA := strings.TrimPrefix(commits[i].ID, commits[i].RepoID+"-")
-		if fullSHA == commits[i].ID {
+		fullSHA := strings.TrimPrefix(commit.ID, commit.RepoID+"-")
+		if fullSHA == commit.ID {
 			continue // Could not extract SHA
 		}
 
@@ -124,7 +125,7 @@ func LinkSessionIDs(commits []model.Commit, messagesDir string, repoRemoteNormal
 			}
 		}
 		if matchCount == 1 {
-			commits[i].SessionID = matchedSessionID
+			commit.SessionID = matchedSessionID
 		}
 		// matchCount > 1 = ambiguous, skip per AC-5
 	}

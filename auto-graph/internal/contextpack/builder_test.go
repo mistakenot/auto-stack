@@ -2,8 +2,10 @@ package contextpack
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -672,8 +674,8 @@ func TestBuild_SeedBudgetExceeded(t *testing.T) {
 		t.Fatal("expected SeedBudgetExceededError")
 	}
 
-	seedErr, ok := err.(*SeedBudgetExceededError)
-	if !ok {
+	var seedErr *SeedBudgetExceededError
+	if !errors.As(err, &seedErr) {
 		t.Fatalf("expected *SeedBudgetExceededError, got %T: %v", err, err)
 	}
 	if seedErr.TokenLimit != 500 {
@@ -700,7 +702,7 @@ func TestBuild_DeterministicSorting(t *testing.T) {
 
 	// Run build multiple times and verify same order.
 	var lastOrder []string
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		pack, err := Build(BuildOptions{
 			ProjectRoot: dir,
 			Seeds:       []string{"src/App.tsx"},
@@ -1202,10 +1204,5 @@ func TestBuild_DocOmittedWhenBudgetTight(t *testing.T) {
 
 // containsFlag checks if a slice contains a given flag string.
 func containsFlag(flags []string, flag string) bool {
-	for _, f := range flags {
-		if f == flag {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(flags, flag)
 }

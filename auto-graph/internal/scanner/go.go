@@ -49,7 +49,7 @@ func (s *GoScanner) Scan(dir string) ([]ImportMatch, error) {
 		f, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
 		if parseErr != nil {
 			// Skip files that fail to parse (e.g. generated code with syntax issues).
-			return nil
+			return nil //nolint:nilerr // intentional skip; aborting the walk on a single bad file would lose all valid imports
 		}
 
 		absPath, absErr := filepath.Abs(path)

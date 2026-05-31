@@ -79,7 +79,7 @@ func runDoctorChecks() []doctorCheck {
 		checks = append(checks, doctorCheck{
 			Check:   "shared_settings",
 			Status:  "pass",
-			Message: fmt.Sprintf("shared settings found at %s", sharedPath),
+			Message: "shared settings found at " + sharedPath,
 		})
 	}
 
@@ -103,7 +103,7 @@ func runDoctorChecks() []doctorCheck {
 		checks = append(checks, doctorCheck{
 			Check:   "graph_settings",
 			Status:  "pass",
-			Message: fmt.Sprintf("graph settings found at %s", graphPath),
+			Message: "graph settings found at " + graphPath,
 		})
 	}
 

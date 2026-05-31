@@ -319,10 +319,15 @@ vulncheck-if-deps-changed:
 		echo "pre-commit: vulncheck skipped (no go.sum/go.mod changes)"; \
 	fi
 
+# autodoc fix reports doc-code drift; a non-zero exit means it found issues that
+# need agent attention, not a hard build failure. Print honestly and continue.
 autodoc-fix:
 	@if command -v autodoc >/dev/null 2>&1; then \
-		autodoc fix; \
-		echo "pre-commit: autodoc fix passed"; \
+		if autodoc fix; then \
+			echo "pre-commit: autodoc fix — no issues"; \
+		else \
+			echo "pre-commit: autodoc fix found issues (informational; commit allowed)"; \
+		fi; \
 	fi
 
 # Reinstall locally authored skills if anything under skills/ was staged.

@@ -24,9 +24,10 @@ func findCandidate(res *AggregateResult, path string) *Candidate {
 }
 
 func scored(res *AggregateResult, path string, limit int) *ScoredCandidate {
-	for i, s := range ScoreAndRank(res, limit) {
-		if s.Candidate.Path == path {
-			out := ScoreAndRank(res, limit)[i]
+	ranked := ScoreAndRank(res, limit)
+	for i := range ranked {
+		if ranked[i].Candidate.Path == path {
+			out := ranked[i]
 			return &out
 		}
 	}
@@ -183,7 +184,7 @@ func TestScore_InsufficientHistory(t *testing.T) {
 		var commits []etlscan.CommitSlim
 		var files []etlscan.CommitFileSlim
 		shas := []string{"a1", "a2", "a3", "a4", "a5", "a6"}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			commits = append(commits, commit(shas[i], 1000, 2))
 			files = append(files, touch(shas[i], "A.go"), touch(shas[i], "B.go"))
 		}
@@ -332,7 +333,7 @@ func TestScore_SafeDivGuards(t *testing.T) {
 		t.Errorf("safeDiv(0,0) = %v, want 0", got)
 	}
 	c := Candidate{Wab: 1, Wb: 0, CoCommits: 5}
-	s := scoreCandidate(c, 0, 0)
+	s := scoreCandidate(&c, 0, 0)
 	if math.IsNaN(s.Score) || math.IsInf(s.Score, 0) {
 		t.Errorf("score with zero denominators must be finite, got %v", s.Score)
 	}

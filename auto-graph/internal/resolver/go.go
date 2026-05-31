@@ -25,13 +25,13 @@ func NewGoResolver(projectRoot string) (*GoResolver, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open go.mod: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "module ") {
-			modulePath := strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		if rest, ok := strings.CutPrefix(line, "module "); ok {
+			modulePath := strings.TrimSpace(rest)
 			if idx := strings.Index(modulePath, "//"); idx >= 0 {
 				modulePath = strings.TrimSpace(modulePath[:idx])
 			}
@@ -61,8 +61,7 @@ func (r *GoResolver) Resolve(importPath, sourceFile, projectRoot string) (Resolv
 	if importPath == r.modulePath {
 		return ResolveResult{ResolvedPath: "."}, nil
 	}
-	if strings.HasPrefix(importPath, r.modulePath+"/") {
-		relPkgDir := strings.TrimPrefix(importPath, r.modulePath+"/")
+	if relPkgDir, ok := strings.CutPrefix(importPath, r.modulePath+"/"); ok {
 		return ResolveResult{ResolvedPath: relPkgDir}, nil
 	}
 

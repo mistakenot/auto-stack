@@ -428,8 +428,8 @@ func runGitETL(hostID string, remotes map[string]string, explicitPaths []string,
 		}
 
 		var newSHAs []string
-		for _, c := range result.Commits {
-			sha := strings.TrimPrefix(c.ID, repoID+"-")
+		for i := range result.Commits {
+			sha := strings.TrimPrefix(result.Commits[i].ID, repoID+"-")
 			newSHAs = append(newSHAs, sha)
 		}
 		repoState.MarkSeen(newSHAs)

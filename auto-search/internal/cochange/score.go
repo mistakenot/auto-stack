@@ -40,13 +40,13 @@ func safeDiv(num, den float64) float64 {
 //	confidence_b_to_a = Wab / Wb
 //	lift              = (Wab * Wn) / (Wa * Wb)
 //	score             = confidence_a_to_b * log1p(lift)
-func scoreCandidate(c Candidate, wa, wn float64) ScoredCandidate {
+func scoreCandidate(c *Candidate, wa, wn float64) ScoredCandidate {
 	confAtoB := safeDiv(c.Wab, wa)
 	confBtoA := safeDiv(c.Wab, c.Wb)
 	lift := safeDiv(c.Wab*wn, wa*c.Wb)
 	score := confAtoB * math.Log1p(lift)
 	return ScoredCandidate{
-		Candidate:      c,
+		Candidate:      *c,
 		Score:          score,
 		ConfidenceAtoB: confAtoB,
 		ConfidenceBtoA: confBtoA,
@@ -67,7 +67,8 @@ func ScoreAndRank(res *AggregateResult, limit int) []ScoredCandidate {
 		return nil
 	}
 	scored := make([]ScoredCandidate, 0, len(res.Candidates))
-	for _, c := range res.Candidates {
+	for i := range res.Candidates {
+		c := &res.Candidates[i]
 		if c.CoCommits < MinCoCommits {
 			continue
 		}

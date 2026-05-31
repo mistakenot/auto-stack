@@ -51,10 +51,10 @@ dependents are included by priority while budget allows.`,
 func runCodeContext(cmd *cobra.Command, dir string, tokenLimit int, files []string, formatFlag, langFlag string, noDocs bool) error {
 	// Validate required flags.
 	if tokenLimit <= 0 {
-		return &ExitError{Code: 1, Err: fmt.Errorf("--token-limit must be a positive integer")}
+		return &ExitError{Code: 1, Err: errors.New("--token-limit must be a positive integer")}
 	}
 	if len(files) == 0 {
-		return &ExitError{Code: 1, Err: fmt.Errorf("at least one --file is required")}
+		return &ExitError{Code: 1, Err: errors.New("at least one --file is required")}
 	}
 
 	// Validate format.
@@ -114,7 +114,7 @@ func runCodeContext(cmd *cobra.Command, dir string, tokenLimit int, files []stri
 			for _, ve := range valErrs.Errors {
 				fmt.Fprintf(w, "Error [%s]: %s\n", ve.Code, ve.Message)
 			}
-			return &ExitError{Code: 1, Err: fmt.Errorf("seed file validation failed")}
+			return &ExitError{Code: 1, Err: errors.New("seed file validation failed")}
 		}
 		return &ExitError{Code: 1, Err: err}
 	}

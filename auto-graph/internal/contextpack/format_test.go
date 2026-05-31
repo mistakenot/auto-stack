@@ -185,7 +185,7 @@ func TestJSONValidFields(t *testing.T) {
 	}
 
 	// Must be parseable JSON.
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if err := json.Unmarshal([]byte(output), &parsed); err != nil {
 		t.Fatalf("JSON output is not parseable: %v", err)
 	}
@@ -210,11 +210,11 @@ func TestJSONValidFields(t *testing.T) {
 	}
 
 	// Verify file entries have required fields.
-	files, ok := parsed["files"].([]interface{})
+	files, ok := parsed["files"].([]any)
 	if !ok || len(files) == 0 {
 		t.Fatal("JSON output should have non-empty 'files' array")
 	}
-	fileObj, ok := files[0].(map[string]interface{})
+	fileObj, ok := files[0].(map[string]any)
 	if !ok {
 		t.Fatal("JSON file entry should be an object")
 	}
@@ -381,7 +381,7 @@ func TestJSONEmptyPack(t *testing.T) {
 		t.Fatalf("RenderJSON on empty pack failed: %v", err)
 	}
 
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if err := json.Unmarshal([]byte(output), &parsed); err != nil {
 		t.Fatalf("empty pack JSON is not parseable: %v", err)
 	}

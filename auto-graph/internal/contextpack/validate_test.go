@@ -1,6 +1,7 @@
 package contextpack
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -120,8 +121,8 @@ func TestValidate_MissingFiles(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
-	valErrs, ok := err.(*ValidationErrors)
-	if !ok {
+	var valErrs *ValidationErrors
+	if !errors.As(err, &valErrs) {
 		t.Fatalf("expected *ValidationErrors, got %T", err)
 	}
 	if len(valErrs.Errors) != 1 {
@@ -140,8 +141,8 @@ func TestValidate_OutsideProjectPaths(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for outside-project path")
 	}
-	valErrs, ok := err.(*ValidationErrors)
-	if !ok {
+	var valErrs *ValidationErrors
+	if !errors.As(err, &valErrs) {
 		t.Fatalf("expected *ValidationErrors, got %T", err)
 	}
 	if len(valErrs.Errors) != 1 {
@@ -160,8 +161,8 @@ func TestValidate_AbsolutePathOutsideProject(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for absolute path outside project")
 	}
-	valErrs, ok := err.(*ValidationErrors)
-	if !ok {
+	var valErrs *ValidationErrors
+	if !errors.As(err, &valErrs) {
 		t.Fatalf("expected *ValidationErrors, got %T", err)
 	}
 	if valErrs.Errors[0].Code != "outside_project" {
@@ -183,8 +184,8 @@ func TestValidate_NotInGraph(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for file not in graph")
 	}
-	valErrs, ok := err.(*ValidationErrors)
-	if !ok {
+	var valErrs *ValidationErrors
+	if !errors.As(err, &valErrs) {
 		t.Fatalf("expected *ValidationErrors, got %T", err)
 	}
 	if len(valErrs.Errors) != 1 {
@@ -203,8 +204,8 @@ func TestValidate_MultipleErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected errors")
 	}
-	valErrs, ok := err.(*ValidationErrors)
-	if !ok {
+	var valErrs *ValidationErrors
+	if !errors.As(err, &valErrs) {
 		t.Fatalf("expected *ValidationErrors, got %T", err)
 	}
 	if len(valErrs.Errors) != 2 {
@@ -221,8 +222,8 @@ func TestValidate_MixedValidAndInvalid(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when any seed is invalid")
 	}
-	valErrs, ok := err.(*ValidationErrors)
-	if !ok {
+	var valErrs *ValidationErrors
+	if !errors.As(err, &valErrs) {
 		t.Fatalf("expected *ValidationErrors, got %T", err)
 	}
 	if len(valErrs.Errors) != 1 {

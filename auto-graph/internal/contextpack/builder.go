@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -44,7 +45,6 @@ type candidate struct {
 	distance int
 	reason   string
 	flags    []string
-	rel      *Relationship
 }
 
 // Build constructs a context pack from a graph and set of seed files. It
@@ -208,9 +208,6 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 	}
 
 	// Use a map to deduplicate candidates by path, merging reasons and flags.
-	type candEntry struct {
-		cand *candidate
-	}
 	candMap := make(map[string]*candidate)
 
 	addCandidate := func(path, role string, priority, distance int, reason string) {
@@ -249,7 +246,7 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 			}
 			if isRuntimeImport(e) {
 				addCandidate(e.Target, "dependency", 10, 1,
-					fmt.Sprintf("direct runtime dependency of %s", s))
+					"direct runtime dependency of "+s)
 			}
 		}
 	}
@@ -258,7 +255,7 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 	for _, s := range seeds {
 		for _, e := range docFwd[s] {
 			addCandidate(e.Target, "doc", 15, 1,
-				fmt.Sprintf("doc linked from seed %s", s))
+				"doc linked from seed "+s)
 		}
 	}
 
@@ -270,7 +267,7 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 			}
 			if isRuntimeImport(e) {
 				addCandidate(e.Source, "dependent", 20, 1,
-					fmt.Sprintf("direct runtime dependent of %s", s))
+					"direct runtime dependent of "+s)
 			}
 		}
 	}
@@ -307,7 +304,7 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 			}
 			if isTypeOnlyImport(e) && !isRuntimeImport(e) {
 				addCandidate(e.Target, "type_dependency", 30, 1,
-					fmt.Sprintf("direct type-only dependency of %s", s))
+					"direct type-only dependency of "+s)
 			}
 		}
 		for _, e := range rev[s] {
@@ -316,7 +313,7 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 			}
 			if isTypeOnlyImport(e) && !isRuntimeImport(e) {
 				addCandidate(e.Source, "type_dependent", 30, 1,
-					fmt.Sprintf("direct type-only dependent of %s", s))
+					"direct type-only dependent of "+s)
 			}
 		}
 	}
@@ -333,7 +330,7 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 	for _, depPath := range depPaths {
 		for _, e := range docFwd[depPath] {
 			addCandidate(e.Target, "doc", 35, 2,
-				fmt.Sprintf("doc linked from dependency %s", depPath))
+				"doc linked from dependency "+depPath)
 		}
 	}
 
@@ -344,14 +341,7 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 			if len(scc) <= 1 {
 				continue
 			}
-			inSCC := false
-			for _, node := range scc {
-				if node == s {
-					inSCC = true
-					break
-				}
-			}
-			if !inSCC {
+			if !slices.Contains(scc, s) {
 				continue
 			}
 			for _, node := range scc {
@@ -359,7 +349,7 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 					continue
 				}
 				addCandidate(node, "cycle_neighbor", 35, 1,
-					fmt.Sprintf("cycle member with %s", s))
+					"cycle member with "+s)
 			}
 		}
 	}
@@ -387,7 +377,7 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 				}
 				if isRuntimeImport(e2) {
 					addCandidate(e2.Target, "transitive_neighbor", 40, 2,
-						fmt.Sprintf("second-hop runtime dependency via %s", e1.Target))
+						"second-hop runtime dependency via "+e1.Target)
 				}
 			}
 		}
@@ -402,7 +392,7 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 				}
 				if isRuntimeImport(e2) {
 					addCandidate(e2.Source, "transitive_neighbor", 40, 2,
-						fmt.Sprintf("second-hop runtime dependent via %s", e1.Source))
+						"second-hop runtime dependent via "+e1.Source)
 				}
 			}
 		}
@@ -420,7 +410,7 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 				}
 				if isTypeOnlyImport(e2) && !isRuntimeImport(e2) {
 					addCandidate(e2.Target, "transitive_neighbor", 50, 2,
-						fmt.Sprintf("second-hop type-only neighbor via %s", e1.Target))
+						"second-hop type-only neighbor via "+e1.Target)
 				}
 			}
 		}
@@ -434,7 +424,7 @@ func collectCandidates(seeds []string, fwd, rev map[string][]graph.Edge, riskFla
 				}
 				if isTypeOnlyImport(e2) && !isRuntimeImport(e2) {
 					addCandidate(e2.Source, "transitive_neighbor", 50, 2,
-						fmt.Sprintf("second-hop type-only neighbor via %s", e1.Source))
+						"second-hop type-only neighbor via "+e1.Source)
 				}
 			}
 		}
@@ -478,12 +468,7 @@ func isRuntimeImport(e graph.Edge) bool {
 // isTypeOnlyImport returns true if the edge has at least one type-only import kind.
 func isTypeOnlyImport(e graph.Edge) bool {
 	kinds := getImportKinds(e)
-	for _, k := range kinds {
-		if k == "type_only" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(kinds, "type_only")
 }
 
 // getImportKinds reads the import kinds from an edge, preferring attrs.import_kinds
@@ -505,17 +490,13 @@ func getImportKinds(e graph.Edge) []string {
 // the given import kind.
 func hasImportKind(path string, kind string, fwd, rev map[string][]graph.Edge) bool {
 	for _, e := range fwd[path] {
-		for _, k := range getImportKinds(e) {
-			if k == kind {
-				return true
-			}
+		if slices.Contains(getImportKinds(e), kind) {
+			return true
 		}
 	}
 	for _, e := range rev[path] {
-		for _, k := range getImportKinds(e) {
-			if k == kind {
-				return true
-			}
+		if slices.Contains(getImportKinds(e), kind) {
+			return true
 		}
 	}
 	return false
@@ -902,10 +883,8 @@ func generateGuidance(pack *Pack, fwd, rev map[string][]graph.Edge, g *graph.Gra
 	if len(pack.OmittedCandidates) > 0 {
 		var topOmitted []string
 		limit := 3
-		if len(pack.OmittedCandidates) < limit {
-			limit = len(pack.OmittedCandidates)
-		}
-		for i := 0; i < limit; i++ {
+		limit = min(limit, len(pack.OmittedCandidates))
+		for i := range limit {
 			oc := pack.OmittedCandidates[i]
 			topOmitted = append(topOmitted, fmt.Sprintf("%s (%d tokens)", oc.Path, oc.EstimatedTokens))
 		}

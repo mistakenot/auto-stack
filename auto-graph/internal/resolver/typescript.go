@@ -163,9 +163,9 @@ func (r *TypeScriptResolver) loadTSConfig(projectRoot string) {
 	for pattern, targets := range cfg.CompilerOptions.Paths {
 		pm := pathMapping{}
 
-		if idx := strings.Index(pattern, "*"); idx >= 0 {
-			pm.prefix = pattern[:idx]
-			pm.suffix = pattern[idx+1:]
+		if before, after, ok := strings.Cut(pattern, "*"); ok {
+			pm.prefix = before
+			pm.suffix = after
 			pm.hasWildcard = true
 		} else {
 			// Exact match (no wildcard) — use the full pattern as prefix.
@@ -176,9 +176,9 @@ func (r *TypeScriptResolver) loadTSConfig(projectRoot string) {
 
 		for _, t := range targets {
 			var tm targetMapping
-			if idx := strings.Index(t, "*"); idx >= 0 {
-				tm.prefix = t[:idx]
-				tm.suffix = t[idx+1:]
+			if before, after, ok := strings.Cut(t, "*"); ok {
+				tm.prefix = before
+				tm.suffix = after
 			} else {
 				tm.prefix = t
 				tm.suffix = ""
@@ -229,8 +229,7 @@ func (r *TypeScriptResolver) Resolve(importPath, sourceFile, projectRoot string)
 	case importBare:
 		// Before classifying as external, probe baseUrl/importPath.
 		if r.loaded && r.baseURL != "" {
-			var baseDir string
-			baseDir = filepath.Join(projectRoot, r.baseURL)
+			baseDir := filepath.Join(projectRoot, r.baseURL)
 			absCandidate := filepath.Join(baseDir, importPath)
 			resolved := probeFile(absCandidate)
 			if resolved != "" {

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,7 +163,7 @@ func TestCodeContextJSONOutput(t *testing.T) {
 	output := stdout.String()
 
 	// Must be parseable JSON.
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	if err := json.Unmarshal([]byte(output), &parsed); err != nil {
 		t.Fatalf("JSON output is not parseable: %v\nOutput: %s", err, output)
 	}
@@ -205,8 +206,8 @@ func TestCodeContextValidationErrorsToStderr(t *testing.T) {
 	}
 
 	// The error should be an ExitError.
-	exitErr, ok := err.(*ExitError)
-	if !ok {
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) {
 		t.Fatalf("expected *ExitError, got %T: %v", err, err)
 	}
 	if exitErr.Code != 1 {

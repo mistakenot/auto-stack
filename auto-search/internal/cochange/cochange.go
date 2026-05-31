@@ -38,7 +38,7 @@ type Options struct {
 // and AC-3c insufficient-history cases, which are NOT errors). Resolution and
 // data errors are returned as typed errors (see repo.go ErrOutsideRepo etc.)
 // for the CLI to map to exit codes.
-func Run(opts Options) (*Result, error) {
+func Run(opts *Options) (*Result, error) {
 	start := time.Now()
 
 	tau := opts.TauDays
@@ -46,9 +46,7 @@ func Run(opts Options) (*Result, error) {
 		tau = 90
 	}
 	limit := opts.Limit
-	if limit < 0 {
-		limit = 0
-	}
+	limit = max(limit, 0)
 
 	// 1. Resolve repo. git_repositories is needed for origin-remote matching.
 	repoSources, err := etlscan.DiscoverDatasets(opts.InputRoot, []string{"git_repositories"})
@@ -161,7 +159,7 @@ func Run(opts Options) (*Result, error) {
 	}
 	related := make([]RelatedFile, 0, len(scored))
 	for i := range scored {
-		related = append(related, relatedToJSON(scored[i]))
+		related = append(related, relatedToJSON(&scored[i]))
 	}
 	metadata.RelatedFilesFound = len(related)
 
@@ -221,7 +219,7 @@ func isoDate(unixMs int64) string {
 func authorsToJSON(in []AuthorCount) []AuthorCountJSON {
 	out := make([]AuthorCountJSON, 0, len(in))
 	for _, a := range in {
-		out = append(out, AuthorCountJSON{Name: a.Name, Count: a.Count})
+		out = append(out, AuthorCountJSON(a))
 	}
 	return out
 }
@@ -237,12 +235,12 @@ func renamedToJSON(in []RenameStep) []RenamedFromJSON {
 func refTipsToJSON(in []RefTip) []RefTipJSON {
 	out := make([]RefTipJSON, 0, len(in))
 	for _, r := range in {
-		out = append(out, RefTipJSON{RefName: r.RefName, RefType: r.RefType, IsDefault: r.IsDefault})
+		out = append(out, RefTipJSON(r))
 	}
 	return out
 }
 
-func relatedToJSON(s ScoredCandidate) RelatedFile {
+func relatedToJSON(s *ScoredCandidate) RelatedFile {
 	c := s.Candidate
 	samples := make([]SampleCommitJSON, 0, len(c.SampleCommit))
 	for _, sc := range c.SampleCommit {

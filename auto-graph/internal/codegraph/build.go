@@ -1,11 +1,13 @@
 package codegraph
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -31,7 +33,7 @@ func Build(projectRoot, lang string, warn io.Writer) (*graph.Graph, []Diagnostic
 	switch lang {
 	case "typescript":
 		if _, err := exec.LookPath("ast-grep"); err != nil {
-			return nil, nil, fmt.Errorf("ast-grep not found: install with npm i -g @ast-grep/cli or brew install ast-grep")
+			return nil, nil, errors.New("ast-grep not found: install with npm i -g @ast-grep/cli or brew install ast-grep")
 		}
 		sc = scanner.NewTypeScriptScanner()
 		res = resolver.NewTypeScriptResolver(projectRoot, warn)
@@ -295,10 +297,5 @@ func canonicalizeKind(kind string) string {
 
 // containsString checks if a slice already contains a given string.
 func containsString(slice []string, s string) bool {
-	for _, v := range slice {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, s)
 }

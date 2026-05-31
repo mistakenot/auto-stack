@@ -318,8 +318,8 @@ func writeCommits(tmpOut, outDir string) error {
 		return fmt.Errorf("read commits: %w", err)
 	}
 	out := make([]CommitFixture, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, CommitFixture(r))
+	for i := range rows {
+		out = append(out, CommitFixture(rows[i]))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return writeFixtureParquet(filepath.Join(outDir, "commits", "commits.parquet"), out)
@@ -331,8 +331,8 @@ func writeCommitFiles(tmpOut, outDir string) error {
 		return fmt.Errorf("read commit_files: %w", err)
 	}
 	out := make([]CommitFileFixture, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, CommitFileFixture(r))
+	for i := range rows {
+		out = append(out, CommitFileFixture(rows[i]))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].CommitID != out[j].CommitID {
@@ -479,7 +479,7 @@ func verifyFixture(outDir string) error {
 		if info.IsDir() {
 			for _, fd := range forbiddenDirs {
 				if info.Name() == fd {
-					problems = append(problems, fmt.Sprintf("forbidden dataset directory present: %s", path))
+					problems = append(problems, "forbidden dataset directory present: "+path)
 				}
 			}
 		}
