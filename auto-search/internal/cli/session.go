@@ -306,10 +306,14 @@ func messageContent(m *indexdb.MessageRow) string {
 // roleTag returns an XML-like opening and closing tag pair for session get rendering.
 //
 // For tool rows we surface the per-call timing data captured by auto-etl:
-//   - duration_ms="<ms>" when populated (lets users eyeball slow calls in
+//   - duration_ms=<ms> when populated (lets users eyeball slow calls in
 //     the transcript without dropping to duckdb).
-//   - interrupted="true" only when set (omitted on the common false case
+//   - interrupted=true only when set (omitted on the common false case
 //     to keep transcripts uncluttered).
+//
+// Both render unquoted to match the existing index=<n> precedent on the
+// opening tag — quoted attrs (name="...", cmd="...") are reserved for
+// opaque strings that may contain whitespace.
 //
 // Naming: snake_case attribute names match the underlying parquet column
 // names. This makes "what column does this come from" trivially
@@ -353,7 +357,7 @@ func roleTag(m *indexdb.MessageRow) (string, string) {
 			attrs += fmt.Sprintf(" duration_ms=%d", m.DurationMs)
 		}
 		if m.Interrupted {
-			attrs += " interrupted=\"true\""
+			attrs += " interrupted=true"
 		}
 	}
 
