@@ -258,19 +258,23 @@ test-curl-install:
 clean:
 	rm -rf $(BUILD_DIR) $(DIST_DIR)
 
-# Install developer tooling used by the pre-commit pipeline and CI.
+# Install developer tooling used by the pre-commit pipeline and CI. Targets
+# $(INSTALL_DIR) so tools land alongside the project binaries — ~/.local/bin is
+# on PATH for typical dev shells and GitHub Actions runners, whereas the
+# default $(go env GOPATH)/bin often isn't.
 install-tools:
+	@mkdir -p $(INSTALL_DIR)
 	@if ! command -v goimports >/dev/null 2>&1; then \
 		echo "installing goimports..."; \
-		go install golang.org/x/tools/cmd/goimports@latest; \
+		GOBIN=$(INSTALL_DIR) go install golang.org/x/tools/cmd/goimports@latest; \
 	fi
 	@if ! command -v govulncheck >/dev/null 2>&1; then \
 		echo "installing govulncheck..."; \
-		go install golang.org/x/vuln/cmd/govulncheck@latest; \
+		GOBIN=$(INSTALL_DIR) go install golang.org/x/vuln/cmd/govulncheck@latest; \
 	fi
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
 		echo "installing golangci-lint..."; \
-		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest; \
+		GOBIN=$(INSTALL_DIR) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest; \
 	fi
 	@echo "Developer tooling ready"
 
