@@ -1,7 +1,9 @@
-.PHONY: build build-etl build-doc build-watch build-search build-reflect build-skill build-graph clean test vet fmt lint \
-       dist-reflect vulncheck \
-       install install-hooks gen-stats check dist test-install test-curl-install \
-       fixtures verify-fixtures
+.PHONY: build build-etl build-doc build-watch build-search build-reflect build-skill build-graph build-env clean test vet fmt lint \
+       dist dist-doc dist-env dist-etl dist-watch dist-search dist-reflect dist-skill dist-graph vulncheck \
+       install install-doc install-env install-etl install-watch install-search install-reflect install-skill install-graph \
+       install-hooks install-tools gen-stats check fmt-check test-install test-curl-install \
+       fixtures verify-fixtures \
+       fmt-staged vulncheck-if-deps-changed autodoc-fix skills-sync beads-sync pre-commit
 
 BUILD_DIR := bin
 
@@ -209,6 +211,44 @@ install: build
 	cp $(BUILD_DIR)/autograph $(INSTALL_DIR)/
 	@echo "Installed to $(INSTALL_DIR)/"
 
+# Per-binary install (build + copy a single binary). Useful for fast iteration
+# on one subproject.
+install-doc: build-doc
+	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autodoc $(INSTALL_DIR)/ && echo "Installed autodoc to $(INSTALL_DIR)/autodoc"
+
+install-env: build-env
+	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autoenv $(INSTALL_DIR)/ && echo "Installed autoenv to $(INSTALL_DIR)/autoenv"
+
+install-etl: build-etl
+	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autoetl $(INSTALL_DIR)/ && echo "Installed autoetl to $(INSTALL_DIR)/autoetl"
+
+# autowatch may be running; tolerate "text file busy" on overwrite.
+install-watch: build-watch
+	@mkdir -p $(INSTALL_DIR); \
+	err=$$(mktemp); \
+	if ! cp $(BUILD_DIR)/autowatch $(INSTALL_DIR)/ 2>$$err; then \
+		if grep -qi "text file busy" $$err; then \
+			echo "autowatch install skipped: destination binary is busy (text file busy)"; \
+		else \
+			cat $$err >&2; rm -f $$err; exit 1; \
+		fi; \
+	else \
+		echo "Installed autowatch to $(INSTALL_DIR)/autowatch"; \
+	fi; \
+	rm -f $$err
+
+install-search: build-search
+	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autosearch $(INSTALL_DIR)/ && echo "Installed autosearch to $(INSTALL_DIR)/autosearch"
+
+install-reflect: build-reflect
+	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autoreflect $(INSTALL_DIR)/ && echo "Installed autoreflect to $(INSTALL_DIR)/autoreflect"
+
+install-skill: build-skill
+	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autoskill $(INSTALL_DIR)/ && echo "Installed autoskill to $(INSTALL_DIR)/autoskill"
+
+install-graph: build-graph
+	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autograph $(INSTALL_DIR)/ && echo "Installed autograph to $(INSTALL_DIR)/autograph"
+
 test-install:
 	./e2e/test-install.sh
 
@@ -218,9 +258,92 @@ test-curl-install:
 clean:
 	rm -rf $(BUILD_DIR) $(DIST_DIR)
 
-install-hooks:
+# Install developer tooling used by the pre-commit pipeline and CI.
+install-tools:
+	@if ! command -v goimports >/dev/null 2>&1; then \
+		echo "installing goimports..."; \
+		go install golang.org/x/tools/cmd/goimports@latest; \
+	fi
+	@if ! command -v govulncheck >/dev/null 2>&1; then \
+		echo "installing govulncheck..."; \
+		go install golang.org/x/vuln/cmd/govulncheck@latest; \
+	fi
+	@if ! command -v golangci-lint >/dev/null 2>&1; then \
+		echo "installing golangci-lint..."; \
+		go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest; \
+	fi
+	@echo "Developer tooling ready"
+
+install-hooks: install-tools
 	git config core.hooksPath hooks/
 	@echo "Git hooks installed (hooks/)"
 
 gen-stats:
 	cd auto-etl && go run ./cmd/genstats .tmp/claude/projects .tmp/stats.json
+
+# --- Pre-commit pipeline ---
+# Single entry point for the git pre-commit hook. Each sub-target is also
+# runnable standalone for debugging. Build + test are intentionally excluded
+# (CI runs those); pre-commit covers formatting, lint, vet, vulncheck (gated on
+# go.sum changes), fixture privacy guard, and repo housekeeping.
+
+# Auto-format staged .go files in place and re-stage them. Falls back to gofmt
+# if goimports isn't installed. Re-staging keeps formatting changes inside the
+# commit being made.
+fmt-staged:
+	@staged=$$(git diff --cached --name-only --diff-filter=ACM -- '*.go' || true); \
+	if [ -n "$$staged" ]; then \
+		echo "$$staged" | while IFS= read -r f; do \
+			[ -f "$$f" ] || continue; \
+			if command -v goimports >/dev/null 2>&1; then \
+				goimports -w "$$f"; \
+			else \
+				gofmt -w "$$f"; \
+			fi; \
+		done; \
+		echo "$$staged" | xargs git add; \
+		echo "pre-commit: goimports/gofmt applied"; \
+	fi
+
+# Run vulncheck only when staged changes include go.mod / go.sum — vulns enter
+# the repo through dependency updates, so checking on every commit is wasteful.
+vulncheck-if-deps-changed:
+	@if git diff --cached --name-only --diff-filter=ACMR | grep -qE '(^|/)go\.(sum|mod)$$'; then \
+		if ! command -v govulncheck >/dev/null 2>&1; then \
+			echo "pre-commit: go.sum/go.mod changed but govulncheck missing — run 'make install-tools'"; \
+			exit 1; \
+		fi; \
+		echo "pre-commit: go.sum/go.mod changed — running vulncheck"; \
+		$(MAKE) --no-print-directory vulncheck; \
+	else \
+		echo "pre-commit: vulncheck skipped (no go.sum/go.mod changes)"; \
+	fi
+
+autodoc-fix:
+	@if command -v autodoc >/dev/null 2>&1; then \
+		autodoc fix; \
+		echo "pre-commit: autodoc fix passed"; \
+	fi
+
+# Reinstall locally authored skills if anything under skills/ was staged.
+skills-sync:
+	@staged=$$(git diff --cached --name-only --diff-filter=ACMR -- 'skills/' || true); \
+	if [ -n "$$staged" ] && command -v npx >/dev/null 2>&1; then \
+		npx skills install "$(CURDIR)/skills" -y 2>/dev/null || true; \
+		git add "$(CURDIR)/.agents/" 2>/dev/null || true; \
+		echo "pre-commit: skills synced"; \
+	fi
+
+# Flush beads issue state to JSONL so issue changes land in the commit.
+beads-sync:
+	@if command -v br >/dev/null 2>&1 && [ -d "$(CURDIR)/.beads" ]; then \
+		br sync --flush-only --quiet 2>/dev/null || true; \
+		git add "$(CURDIR)/.beads/" 2>/dev/null || true; \
+		echo "pre-commit: beads synced"; \
+	fi
+
+# Pre-commit pipeline. Excludes `build` + `test` (CI runs those). Format first
+# so subsequent checks see formatted code, then run all check-style gates,
+# then repo housekeeping.
+pre-commit: fmt-staged check verify-fixtures vulncheck-if-deps-changed autodoc-fix skills-sync beads-sync
+	@echo "pre-commit: all checks passed"

@@ -209,7 +209,7 @@ Recalculates and writes the current 8-char content hash for a single doc file an
 
 ## Build
 
-After any code change, run all tests then run `./install_locally.sh` to rebuild and install the binary to `~/.local/bin/autodoc`.
+After any code change, run all tests then run `make install-doc` from the repo root to rebuild and install the binary to `~/.local/bin/autodoc`.
 
 ## Testing
 
