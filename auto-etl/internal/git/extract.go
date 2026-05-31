@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -752,8 +753,8 @@ func parseTrailers(messageBody string) string {
 
 	// Scan from the end backwards, collecting trailers until we hit a non-trailer, non-blank line.
 	foundTrailer := false
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
+	for _, raw := range slices.Backward(lines) {
+		line := strings.TrimSpace(raw)
 		if line == "" {
 			if foundTrailer {
 				break // Blank line above trailers = end of trailer block
