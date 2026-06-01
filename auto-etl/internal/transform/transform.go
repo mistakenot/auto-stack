@@ -275,6 +275,9 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 				msg.ToolFileStartLine = meta.FileStartLine
 				msg.ToolFileNumLines = meta.FileNumLines
 				msg.SkillName = meta.SkillName
+				if len(line.ToolUseResult) > 0 {
+					msg.ToolUseResultJSON = string(line.ToolUseResult)
+				}
 				// tool_result content: store full unmodified content.
 				// Content can be a plain string or an array of content blocks.
 				if len(block.Content) > 0 {

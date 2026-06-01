@@ -34,6 +34,7 @@ type ParsedLine struct {
 	AgentID         string // from line's agentId field
 	SourceLineIndex int    // 0-based position in the JSONL file
 	Message         ParsedMessage
+	ToolUseResult   json.RawMessage // raw toolUseResult envelope (sibling of message)
 }
 
 // ParsedMessage holds the message payload from a JSONL line.
@@ -66,14 +67,15 @@ type ContentBlock struct {
 
 // rawLine is the JSON structure of a single JSONL line from Claude session files.
 type rawLine struct {
-	Type        string     `json:"type"`
-	SessionID   string     `json:"sessionId"`
-	Cwd         string     `json:"cwd"`
-	GitBranch   *string    `json:"gitBranch"` // pointer to distinguish null from missing
-	Timestamp   string     `json:"timestamp"`
-	IsSidechain bool       `json:"isSidechain"`
-	AgentID     string     `json:"agentId"`
-	Message     rawMessage `json:"message"`
+	Type          string          `json:"type"`
+	SessionID     string          `json:"sessionId"`
+	Cwd           string          `json:"cwd"`
+	GitBranch     *string         `json:"gitBranch"` // pointer to distinguish null from missing
+	Timestamp     string          `json:"timestamp"`
+	IsSidechain   bool            `json:"isSidechain"`
+	AgentID       string          `json:"agentId"`
+	Message       rawMessage      `json:"message"`
+	ToolUseResult json.RawMessage `json:"toolUseResult"`
 }
 
 type rawMessage struct {
@@ -189,6 +191,7 @@ func ParseSession(path string) (*ParsedSession, error) {
 				Model:   line.Message.Model,
 				Usage:   line.Message.Usage,
 			},
+			ToolUseResult: line.ToolUseResult,
 		}
 
 		session.Lines = append(session.Lines, parsed)
