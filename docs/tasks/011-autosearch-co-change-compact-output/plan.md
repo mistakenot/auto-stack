@@ -111,19 +111,19 @@ AUTHOR: Step 2.5 now spells out the branch order: unknown-file case emits `Resol
 
 ### Phase 4: Quickstart — section rewrite + test
 
-- [ ] Step 4.1: Rewrite section 9 of `auto-search/internal/cli/quickstart.go` (lines ~197-220). The new section MUST contain:
+- [x] Step 4.1: Rewrite section 9 of `auto-search/internal/cli/quickstart.go` (lines ~197-220). The new section MUST contain:
   - A short intro paragraph explaining co-change as a "phase-one router": run it to get a ranked shortlist of files worth opening, then open and read those files. State explicitly that the compact default exists so an agent can fan out across a changeset without burning context.
   - The literal phrase "phase one" or "two-phase" at least once.
   - A new bash example block with at least: (a) a no-flag default invocation, (b) a `--budget 800` (or similar non-default) example, (c) an `--all` example labelled for the hot-file case, (d) a `--json` example labelled "for programmatic / jq consumers", (e) the existing `--decay-tau` and `--repo-id` examples retained.
   - A closing paragraph describing the compact text shape (header + one line per file with `<score>  <N>×  d<n>` columns and `[sha "subject"]` on cross-dir rows) and pointing at `--json` for the full envelope with `_meta`, `metadata`, `related_files`.
   - No `--limit` substring anywhere in the section.
   Verify: `grep -n "limit\|--limit" auto-search/internal/cli/quickstart.go` returns no matches within lines 197-260 (cochange section only).
-- [ ] Step 4.2: Add `TestQuickstartCoChangeSection` in `auto-search/internal/cli/cochange_integration_test.go`: `runCLI(t, "quickstart")`, then on stdout assert: contains `phase one` or `two-phase` (case-insensitive); contains `--budget`; contains `--all`; contains `--json`; does NOT contain `--limit`; still contains the section header (`co-change`). Keep the existing `TestQuickstartMentionsCoChange` untouched. Verify: `cd auto-search && go test ./internal/cli/ -run TestQuickstart` passes.
-- [ ] Step 4.3: Run `cd auto-search && go test ./...`. Verify: full auto-search package suite green.
-- [ ] Step 4.4: Run `make verify-fixtures` from repo root. Verify: fixture privacy guard + <1 MB size check pass.
-- [ ] Step 4.5: Run `cd auto-search && go vet ./...`. Verify: no warnings.
-- [ ] Step 4.6: Hermetic manual eyeball — does NOT require live ETL on the host. From `auto-search/`, derive the snapshot fixture root and repo id (same paths the integration tests use), then run: `go run ./cmd/autosearch co-change "$(git rev-parse --show-toplevel)/auto-etl/internal/git/extract.go" --repo-id <id-from-git_repositories-parquet> --input ./testdata/fixtures/auto-stack-snapshot 2>&1 | head -40`. Confirm: header on lines 1-2, ranked rows below, no JSON braces, no `--limit` mention. Then `go run ./cmd/autosearch co-change --help 2>&1 | grep -E "limit|budget|all|json"` — confirm `--budget`/`--all`/`--json` present and `--limit` absent. Then `go run ./cmd/autosearch quickstart 2>&1 | grep -A 40 "co-change"` — confirm the new section reads cleanly.
-- [ ] Step 4.7: Commit: `feat(011): phase 4 - rewrite co-change quickstart section to explain two-phase usage`
+- [x] Step 4.2: Add `TestQuickstartCoChangeSection` in `auto-search/internal/cli/cochange_integration_test.go`: `runCLI(t, "quickstart")`, then on stdout assert: contains `phase one` or `two-phase` (case-insensitive); contains `--budget`; contains `--all`; contains `--json`; does NOT contain `--limit`; still contains the section header (`co-change`). Keep the existing `TestQuickstartMentionsCoChange` untouched. Verify: `cd auto-search && go test ./internal/cli/ -run TestQuickstart` passes.
+- [x] Step 4.3: Run `cd auto-search && go test ./...`. Verify: full auto-search package suite green.
+- [x] Step 4.4: Run `make verify-fixtures` from repo root. Verify: fixture privacy guard + <1 MB size check pass.
+- [x] Step 4.5: Run `cd auto-search && go vet ./...`. Verify: no warnings.
+- [x] Step 4.6: Hermetic manual eyeball — does NOT require live ETL on the host. From `auto-search/`, derive the snapshot fixture root and repo id (same paths the integration tests use), then run: `go run ./cmd/autosearch co-change "$(git rev-parse --show-toplevel)/auto-etl/internal/git/extract.go" --repo-id <id-from-git_repositories-parquet> --input ./testdata/fixtures/auto-stack-snapshot 2>&1 | head -40`. Confirm: header on lines 1-2, ranked rows below, no JSON braces, no `--limit` mention. Then `go run ./cmd/autosearch co-change --help 2>&1 | grep -E "limit|budget|all|json"` — confirm `--budget`/`--all`/`--json` present and `--limit` absent. Then `go run ./cmd/autosearch quickstart 2>&1 | grep -A 40 "co-change"` — confirm the new section reads cleanly.
+- [x] Step 4.7: Commit: `feat(011): phase 4 - rewrite co-change quickstart section to explain two-phase usage`
 
 ### Phase 5: E2E validation via JSON-seeded scenario fixtures
 
