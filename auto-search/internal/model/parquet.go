@@ -63,7 +63,7 @@ type ParquetMessageRow struct {
 	// ToolUseID mirrors auto-etl AgentMessage.ToolUseID. Pairing key for
 	// tool_use ↔ tool_result rows; required for exact JOINs that work
 	// under parallel tool dispatch.
-	ToolUseID string `parquet:"tool_use_id,dict"`
+	ToolUseID string `parquet:"tool_use_id"`
 	// DurationMs mirrors auto-etl AgentMessage.DurationMs. Per-tool-call
 	// wall-clock duration in ms. Populated on tool_result rows only.
 	DurationMs int64 `parquet:"duration_ms"`
