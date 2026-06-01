@@ -88,6 +88,43 @@ func TestQuickstartMentionsCoChange(t *testing.T) {
 	}
 }
 
+// AC-13: the quickstart co-change section explains the two-phase router usage,
+// advertises --budget/--all/--json, and no longer mentions the removed --limit.
+func TestQuickstartCoChangeSection(t *testing.T) {
+	stdout, stderr, code := runCLI(t, "quickstart")
+	if code != 0 {
+		t.Fatalf("quickstart failed: code=%d stderr=%s", code, stderr)
+	}
+	// Isolate the co-change section: from its heading to the next "## " heading
+	// or end of doc. AC-13 scopes the --limit prohibition to this section, while
+	// --limit is still a valid flag advertised for other commands (search, stats).
+	const heading = "### 9. Find files that change together (co-change)"
+	_, rest, found := strings.Cut(stdout, heading)
+	if !found {
+		t.Fatalf("quickstart missing co-change section heading %q\noutput:\n%s", heading, stdout)
+	}
+	section := rest
+	if before, _, ok := strings.Cut(rest, "\n## "); ok {
+		section = before
+	}
+
+	lower := strings.ToLower(section)
+	if !strings.Contains(lower, "phase one") && !strings.Contains(lower, "two-phase") {
+		t.Errorf("quickstart co-change section should describe the two-phase workflow\nsection:\n%s", section)
+	}
+	for _, want := range []string{"--budget", "--all", "--json"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("quickstart co-change section should contain %q\nsection:\n%s", want, section)
+		}
+	}
+	if !strings.Contains(stdout, "co-change") {
+		t.Errorf("quickstart should still mention co-change\noutput:\n%s", stdout)
+	}
+	if strings.Contains(section, "--limit") {
+		t.Errorf("quickstart co-change section should not mention removed --limit flag\nsection:\n%s", section)
+	}
+}
+
 // AC-1, AC-4, AC-5: the CLI emits conforming JSON to stdout against the snapshot
 // for a known file (resolved hermetically via --repo-id + --input).
 func TestCoChangeCLIKnownFileJSON(t *testing.T) {

@@ -196,28 +196,46 @@ autosearch stats --scope messages --group-by workspace --skill release
 
 ### 9. Find files that change together (co-change)
 
-Given a file, find the other files that historically change with it — a fast
-onboarding heuristic and a refactor-safety signal. Reads git parquet produced by
-` + "`" + `autoetl run --only git` + "`" + `; resolves the repo from the input path's git toplevel.
+Treat co-change as a **phase-one router**, not a report to read instead of the
+files. Phase one: run co-change on a file to get a cheap ranked shortlist of the
+other files that historically change with it. Phase two: open and read the files
+the shortlist points at. The compact text output is the default precisely so an
+agent can fan out across a whole changeset — calling co-change once per touched
+file — without burning context on prose it is about to re-derive by reading the
+code. It is a fast onboarding heuristic and a refactor-safety signal. Reads git
+parquet produced by ` + "`" + `autoetl run --only git` + "`" + `; resolves the repo from the input
+path's git toplevel.
 
 ` + "```" + `bash
-# What else tends to change when I touch this file?
+# Phase one: what else tends to change when I touch this file?
+# (compact text is the default — a cheap shortlist to open next)
 autosearch co-change auto-etl/internal/git/extract.go
 
-# Limit results and disable time decay
-autosearch co-change internal/cli/root.go --limit 10 --no-decay
+# Spend a bigger token budget when you want a longer shortlist
+autosearch co-change internal/cli/root.go --budget 800
 
-# Override the decay constant (units m|h|d|w)
-autosearch co-change internal/cli/root.go --decay-tau 26w
+# Hot file with many couplings? --all emits every row, bypassing the budget
+autosearch co-change internal/cli/root.go --all
+
+# For programmatic / jq consumers: the full JSON envelope
+autosearch co-change internal/cli/root.go --json
+
+# Override the decay constant (units m|h|d|w), or disable decay
+autosearch co-change internal/cli/root.go --decay-tau 26w --no-decay
 
 # Select the repo explicitly (no origin remote, or multiple matches)
 autosearch co-change path/to/file.go --repo-id <repo-id>
 ` + "```" + `
 
-Output is JSON: a ` + "`" + `metadata` + "`" + ` header (the input file's history, authors,
-sessions, renames) and a ` + "`" + `related_files` + "`" + ` list ranked by coupling score, each
-with ` + "`" + `co_commits` + "`" + `, ` + "`" + `confidence_a_to_b` + "`" + `, ` + "`" + `lift` + "`" + `, and ` + "`" + `top_sessions` + "`" + ` you can
-pivot into ` + "`" + `autosearch session get` + "`" + `.
+The compact text output is a two-line header (the seed file's repo-relative path,
+then its total commits and date range) followed by one line per related file:
+` + "`" + `<path>  <score>  <N>×  d<n>` + "`" + `, where ` + "`" + `<score>` + "`" + ` is normalized to ` + "`" + `[0.00, 1.00]` + "`" + ` (top
+row ` + "`" + `1.00` + "`" + `), ` + "`" + `<N>×` + "`" + ` is the co-commit count, and ` + "`" + `d<n>` + "`" + ` is the directory
+tree-distance from the seed (` + "`" + `d0` + "`" + ` = same dir). Cross-directory rows (` + "`" + `d>0` + "`" + `) also
+carry a ` + "`" + `[sha "subject"]` + "`" + ` sample of the most recent shared commit. Pass ` + "`" + `--json` + "`" + `
+for the full envelope — a ` + "`" + `_meta` + "`" + ` block, a ` + "`" + `metadata` + "`" + ` header (history, authors,
+sessions, renames), and a ` + "`" + `related_files` + "`" + ` list at full precision (` + "`" + `co_commits` + "`" + `,
+` + "`" + `confidence_a_to_b` + "`" + `, ` + "`" + `lift` + "`" + `, ` + "`" + `top_sessions` + "`" + `) you can pivot into ` + "`" + `autosearch session get` + "`" + `.
 
 ## Understanding search output
 
