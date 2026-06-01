@@ -82,9 +82,7 @@ type SampleCommitJSON struct {
 
 // ParamsUsed records the scoring parameters in effect for the query (AC-5).
 type ParamsUsed struct {
-	DecayTauDays      float64 `json:"decay_tau_days"`
-	LargeCommitCutoff int     `json:"large_commit_cutoff"`
-	MinCoCommits      int     `json:"min_co_commits"`
-	MinCommitsA       int     `json:"min_commits_a"`
-	Limit             int     `json:"limit"`
+	DecayTauDays float64 `json:"decay_tau_days"`
+	MinCoCommits int     `json:"min_co_commits"`
+	MinCommitsA  int     `json:"min_commits_a"`
 }

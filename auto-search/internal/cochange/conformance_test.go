@@ -100,7 +100,6 @@ func TestConformance_KnownFile(t *testing.T) {
 		InputPath:      inputAbs,
 		RepoIDOverride: repoID,
 		InputRoot:      root,
-		Limit:          50,
 		RequestID:      "conf-known",
 	})
 	if err != nil {
@@ -238,17 +237,11 @@ func TestConformance_KnownFile(t *testing.T) {
 	if m.ParamsUsed.DecayTauDays != 90 {
 		t.Errorf("params_used.decay_tau_days = %v, want 90", m.ParamsUsed.DecayTauDays)
 	}
-	if m.ParamsUsed.LargeCommitCutoff != LargeCommitCutoff {
-		t.Errorf("params_used.large_commit_cutoff = %d, want %d", m.ParamsUsed.LargeCommitCutoff, LargeCommitCutoff)
-	}
 	if m.ParamsUsed.MinCoCommits != MinCoCommits {
 		t.Errorf("params_used.min_co_commits = %d, want %d", m.ParamsUsed.MinCoCommits, MinCoCommits)
 	}
 	if m.ParamsUsed.MinCommitsA != MinCommitsA {
 		t.Errorf("params_used.min_commits_a = %d, want %d", m.ParamsUsed.MinCommitsA, MinCommitsA)
-	}
-	if m.ParamsUsed.Limit != 50 {
-		t.Errorf("params_used.limit = %d, want 50", m.ParamsUsed.Limit)
 	}
 
 	// _meta envelope.
@@ -274,7 +267,6 @@ func TestConformance_LiveRemoteResolution(t *testing.T) {
 	res, err := Run(&Options{
 		InputPath: inputAbs,
 		InputRoot: root,
-		Limit:     50,
 	})
 	if err != nil {
 		t.Fatalf("Run (live resolution): %v", err)
@@ -301,7 +293,6 @@ func TestConformance_UnknownFile(t *testing.T) {
 		InputPath:      inputAbs,
 		RepoIDOverride: repoID,
 		InputRoot:      root,
-		Limit:          50,
 	})
 	if err != nil {
 		t.Fatalf("Run on unknown file should not error (AC-9): %v", err)
@@ -339,7 +330,6 @@ func TestConformance_InsufficientHistory(t *testing.T) {
 		InputPath:      inputAbs,
 		RepoIDOverride: repoID,
 		InputRoot:      root,
-		Limit:          50,
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)

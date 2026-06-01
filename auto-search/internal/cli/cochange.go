@@ -50,7 +50,6 @@ func newCoChangeCmd() *cobra.Command {
 				InputPath:      inputPath,
 				RepoIDOverride: repoID,
 				InputRoot:      inputRoot,
-				Limit:          limit,
 				TauDays:        tauDays,
 				NoDecay:        noDecay,
 				RequestID:      requestID,

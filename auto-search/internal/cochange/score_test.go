@@ -1,6 +1,7 @@
 package cochange
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -135,46 +136,45 @@ func TestScore_CoCommitsThreshold(t *testing.T) {
 	}
 }
 
-// AC-3b: commits with files_changed > LargeCommitCutoff are dropped entirely
-// before aggregation, so a candidate co-changing only in oversized commits never
-// contributes. Here B co-changes with A in 5 small commits; C co-changes only in
-// oversized commits and must not appear.
-func TestScore_LargeCommitDropped(t *testing.T) {
+// AC-5: the binary large-commit cutoff is gone. A coupling observed only in a
+// large (100-file) commit still contributes to aggregation, but its inverse
+// fan-out weight (1 / log1p(files_changed)) makes that contribution small — much
+// less than the per-edge weight of a focused 2-file commit. Here Big.go
+// co-changes with A only in one 100-file commit; Small.go co-changes in four
+// 2-file commits. Big.go must appear with 0 < Wab < the 2-file per-edge weight.
+func TestScore_LargeCommitContributesContinuously(t *testing.T) {
 	var commits []etlscan.CommitSlim
 	var files []etlscan.CommitFileSlim
-	// 5 small commits: A + B (cohort size 2, well under the cutoff).
-	for _, sha := range []string{"s1", "s2", "s3", "s4", "s5"} {
+	// One 100-file commit touching A and Big.go (plus 98 unrelated paths so
+	// files_changed is genuinely 100).
+	commits = append(commits, commit("big1", 1000, 100))
+	files = append(files, touch("big1", "A.go"), touch("big1", "Big.go"))
+	for i := range 98 {
+		files = append(files, touch("big1", fmt.Sprintf("noise/f%02d.go", i)))
+	}
+	// Four focused 2-file commits touching A and Small.go.
+	for _, sha := range []string{"s1", "s2", "s3", "s4"} {
 		commits = append(commits, commit(sha, 1000, 2))
-		files = append(files, touch(sha, "A.go"), touch(sha, "B.go"))
+		files = append(files, touch(sha, "A.go"), touch(sha, "Small.go"))
 	}
-	// 4 oversized commits: A + C, files_changed above the cutoff. These are
-	// dropped, so C never co-changes and A's own totals exclude them.
-	big := int32(LargeCommitCutoff + 1)
-	for _, sha := range []string{"big1", "big2", "big3", "big4"} {
-		commits = append(commits, commit(sha, 1000, big))
-		files = append(files, touch(sha, "A.go"), touch(sha, "C.go"))
-	}
+
 	db := loadSynthetic(t, commits, files, nil)
 	res, err := Aggregate(db, "A.go")
 	if err != nil {
 		t.Fatalf("Aggregate: %v", err)
 	}
-	// A's commit count must exclude the oversized commits (5, not 9).
-	if res.CommitsA != 5 {
-		t.Errorf("commits(A) = %d, want 5 (oversized commits dropped)", res.CommitsA)
+
+	big := findCandidate(res, "Big.go")
+	if big == nil {
+		t.Fatal("Big.go co-changed in a 100-file commit and must still appear (no binary cutoff)")
 	}
-	if findCandidate(res, "C.go") != nil {
-		t.Error("C.go co-changed only in oversized commits and must be dropped before scoring")
+	if !(big.Wab > 0) {
+		t.Errorf("Big.go Wab = %v, want > 0 (large commit still contributes)", big.Wab)
 	}
-	if findCandidate(res, "B.go") == nil {
-		t.Error("B.go co-changed in small commits and should survive")
-	}
-	// Wn must exclude the oversized commits too (AC-3b): only the 5 small commits
-	// contribute. A leaked big-commit weight would inflate Wn and thus lift. With
-	// decay disabled each small commit weighs commitWeight(2, ...).
-	wantWn := 5 * commitWeight(2, 0, 0, true, 90)
-	if !approx(res.Wn, wantWn) {
-		t.Errorf("Wn = %v, want %v (only the 5 small commits; oversized dropped)", res.Wn, wantWn)
+	// Per-edge weight of a focused 2-file commit (decay disabled).
+	smallEdge := commitWeight(2, 0, 0, true, 90)
+	if !(big.Wab < smallEdge) {
+		t.Errorf("Big.go Wab = %v, want < per-edge 2-file weight %v (continuous fan-out damping)", big.Wab, smallEdge)
 	}
 }
 
