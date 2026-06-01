@@ -1,5 +1,5 @@
 ---
-hash: "82bf7bd8"
+hash: "c4317f81"
 id: "290481dd"
 read_when: "modifying auto-etl message transformation logic or understanding ETL field population"
 summary: "Technical reference for Claude Code JSONL message types, content block types, and how each maps to auto-etl normalized parquet fields — including what data is preserved and what is lost"
@@ -371,9 +371,10 @@ This example is from a real session (`ce837746`) where the agent presented code 
 
 #### What is searchable vs lost
 
-- **Searchable via autosearch:** The flat answer string in step 4 — e.g. searching `"Fix all three"` finds the tool_result.
-- **Not searchable:** The structured questions from step 3. Searching `"AgentSession leaks Postgres connections"` will **not** find the AskUserQuestion invocation because that text is in `tool_input`, not `content`. The `tool_input` field preserves the full JSON in parquet, but autosearch FTS indexes only `content_truncated`.
-- **Also lost from search:** Option descriptions like `"Add close() to AgentSession, fix Slack async, remove duplicated scheduler tools"` — these are only in `tool_input` JSON.
+- **Searchable via autosearch FTS:** The flat answer string in step 4 — e.g. searching `"Fix all three"` finds the tool_result.
+- **Not searchable via FTS:** The structured questions from step 3. Searching `"AgentSession leaks Postgres connections"` will **not** find the AskUserQuestion invocation because that text is in `tool_input`, not `content`. The `tool_input` field preserves the full JSON in parquet, but autosearch FTS indexes only `content_truncated`.
+- **Also not in FTS:** Option descriptions like `"Add close() to AgentSession, fix Slack async, remove duplicated scheduler tools"` — these are only in `tool_input` JSON.
+- **Queryable via SQL (not FTS):** As of `SchemaVersion 3`, the step-4 user answers and per-question annotation notes are captured verbatim in the `tool_use_result_json` column on the step-4 `role=tool` row. They are recoverable structurally — `json_extract(tool_use_result_json, '$.answers')` and `json_extract(tool_use_result_json, '$.annotations.<question text>.notes')` — over both the parquet (DuckDB) and the SQLite index. FTS itself is unchanged: this column is **not** added to the FTS5 index.
 
 #### How to view AskUserQuestion data today
 
@@ -393,6 +394,34 @@ duckdb -c "
   LIMIT 5
 "
 ```
+
+#### Querying the user's answers via `tool_use_result_json`
+
+As of `SchemaVersion 3`, the verbatim `toolUseResult` envelope is captured into the `tool_use_result_json` column on the `role=tool` row (see the [normalized schema reference](reference/normalized-schema.md)). The user's actual picks live under `$.answers` (keyed by question text), and per-question free-text notes live under `$.annotations.<question text>.notes`. This replaces the regex-over-prose Q5 workaround documented in `docs/research/askuserquestion-analytics.md` — the answers are now structured rather than parsed out of the flat `content` string.
+
+Against the **parquet** files via DuckDB (`json_extract` or `json_extract_string` both work):
+
+```bash
+duckdb -c "
+  SELECT json_extract(tool_use_result_json, '\$.answers') AS answers
+  FROM read_parquet('~/.auto/etl/output/messages/year=*/week=*/messages.parquet')
+  WHERE tool_name = 'AskUserQuestion' AND tool_use_result_json != ''
+  LIMIT 5
+"
+```
+
+Against the **autosearch SQLite index** (driver `modernc.org/sqlite` — use plain `json_extract`, which returns the scalar string directly; `json_extract_string` is a DuckDB-only function and is **not** available here):
+
+```bash
+sqlite3 ~/.auto/search/default.sqlite "
+  SELECT json_extract(tool_use_result_json, '\$.answers') AS answers
+  FROM messages
+  WHERE tool_name = 'AskUserQuestion' AND tool_use_result_json != ''
+  LIMIT 5;
+"
+```
+
+Per-row inspection of the parsed envelope is also available via `autosearch message describe <message-id>`, which emits the envelope under a `toolUseResult` key when the row carries it.
 
 ### Bash
 
@@ -432,18 +461,20 @@ One row per content block in the source JSONL:
 
 Autosearch indexes `content_truncated` for full-text search (BM25). This means:
 
-**Searchable:**
+**Searchable via FTS:**
 - User's typed messages (bare strings and text blocks)
 - Assistant's text responses
 - Tool outputs (file contents, command output, error messages)
 - AskUserQuestion answers (the flat "User has answered..." string)
 
-**Not searchable:**
+**Not searchable via FTS:**
 - Tool invocation inputs (questions asked via AskUserQuestion, bash commands in tool_use blocks, file content being written, Agent prompts)
 - Thinking block content
 - Tool metadata (file paths, line numbers) — stored in separate fields, not in FTS index
 
 Note: `bash_command` and `tool_file_path` are stored as separate columns in the parquet/sqlite schema, so they could be made searchable with additional indexing, but aren't currently included in the FTS5 index.
+
+**Queryable via structured SQL (not FTS):** AskUserQuestion answers and per-question annotation notes are captured verbatim in the `tool_use_result_json` column (`SchemaVersion 3`). These are recoverable with `json_extract` over `$.answers` and `$.annotations.<question text>.notes` against either the parquet (DuckDB) or the SQLite index — see [section 4](#how-to-view-askuserquestion-data-today). This is a structured-query path, not full-text search: the column is deliberately **not** added to the FTS5 index, so FTS semantics are unchanged.
 
 ## 7. Known Gaps and Potential Improvements
 

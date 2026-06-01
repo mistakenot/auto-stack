@@ -1,5 +1,5 @@
 ---
-hash: "1074e94a"
+hash: "36af2aca"
 id: "a41ab3e6"
 read_when: "querying normalized parquet data or understanding auto-etl output schema"
 summary: "Canonical reference for auto-etl normalized parquet datasets, fields, partitions, and population rules."
@@ -20,7 +20,7 @@ If this doc conflicts with those files, treat the code as canonical.
 ## Schema Version
 
 - `schema_version` is set from `model.SchemaVersion`
-- Current value: `1`
+- Current value: `3`
 
 ## Output Datasets and Partitions
 
@@ -52,6 +52,7 @@ Represents one normalized message block in a session. For content arrays, each c
 | `tool_file_num_lines` | int32 | From Read tool input `limit` field (0 otherwise) |
 | `tool_file_total_lines` | int32 | Not reliably available; always 0 for now |
 | `bash_command` | string | Bash command extracted when `tool_name == "Bash"` |
+| `tool_use_result_json` | string | Raw `toolUseResult` envelope (verbatim JSON) from the source JSONL line. Populated on `role=tool` rows whose source line carries the envelope (e.g. `AskUserQuestion` answers/annotations, deferred-tool results); empty string otherwise. Stored unmodified for `json_extract` querying. |
 | `input_tokens` | int32 | `usage.input_tokens` |
 | `cache_input_tokens` | int32 | `usage.cache_creation_input_tokens + usage.cache_read_input_tokens` |
 | `output_tokens` | int32 | `usage.output_tokens` |

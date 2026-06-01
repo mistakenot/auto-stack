@@ -1,5 +1,5 @@
 ---
-hash: ""
+hash: "63e507ce"
 id: "d3da9d0c"
 read_when: "investigating AskUserQuestion analytics, planning ETL schema changes for structured tool envelopes, or scoping autosearch CLI work around tool filtering"
 summary: "How AskUserQuestion data flows through the auto-etl / auto-search pipeline, where the structured payload is lost, and a phased plan to surface the five target analytics metrics (frequency, question text, options, recommended option, picked option) for tuning Claude's question-asking against latent user intent."
@@ -341,3 +341,13 @@ Source locations cited above, grouped by area:
 **Pre-existing open-issue docs**
 - `docs/better-questions.md:117-125` — AUQ gaps flagged
 - `auto-etl/docs/claude-message-types-and-etl-mapping.md:120,375,439-457` — message-type mapping
+
+## Postscript — landed in task 012
+
+The schema change proposed as F1 / Phase C above shipped in task 012 (`docs/tasks/012-structured-tool-output/`). The verbatim `toolUseResult` envelope is now captured into a single new `tool_use_result_json STRING` column on the `messages` parquet dataset (`SchemaVersion 3`), mirrored as a `TEXT` column on the autosearch SQLite index, and surfaced per-row through `autosearch message describe <id>` under a parsed `toolUseResult` key.
+
+The Q5 regex-over-prose query is superseded by structured `json_extract`. Against the **parquet** files via DuckDB, either `json_extract` or `json_extract_string` works; against the **autosearch SQLite index** (driver `modernc.org/sqlite`) use plain `json_extract(tool_use_result_json, '$.answers')`, which returns the scalar directly — `json_extract_string` is a DuckDB-only function and is not available there. Per-question free-text notes that the flat prose dropped are now recoverable via `json_extract(tool_use_result_json, '$.annotations.<question text>.notes')`.
+
+Capturing the envelope also corrected the headline metric. The **55.7% (34/61)** baseline above was a documented regex undercount: the single `User has answered…` prose template plus the fragile `r_idx = u_idx+1` adjacency join silently dropped real calls (reproducing that exact query on the current corpus finds only 41 of the 61 calls offering a recommendation). The structured query over the verbatim envelope finds all 61 and yields a true recommended-acceptance rate of **45/61 = 73.8%**. Track ~74%, not ~56%, going forward.
+
+The investigation narrative above this Postscript is a frozen point-in-time record and remains unchanged — including its original 55.7% baseline and regex query examples — so the reasoning that motivated the task stays legible.
