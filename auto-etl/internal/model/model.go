@@ -49,7 +49,7 @@ type AgentMessage struct {
 	// pair. Empty for non-tool messages. Lets downstream queries do an exact
 	// JOIN that works even when the agent dispatches multiple tool calls in
 	// parallel — adjacency-based pairing breaks for parallel calls.
-	ToolUseID string `parquet:"tool_use_id,dict"`
+	ToolUseID string `parquet:"tool_use_id"`
 
 	// DurationMs is the per-tool-call wall-clock duration in milliseconds.
 	// Populated on `tool_result` rows. Source preference:
