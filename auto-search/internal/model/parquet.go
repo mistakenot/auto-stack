@@ -53,6 +53,7 @@ type ParquetMessageRow struct {
 	BashCommand        string `parquet:"bash_command"`
 	BashExitCode       int32  `parquet:"bash_exit_code"`
 	SkillName          string `parquet:"skill_name,dict"`
+	ToolUseResultJSON  string `parquet:"tool_use_result_json"`
 
 	InputTokens      int32 `parquet:"input_tokens"`
 	CacheInputTokens int32 `parquet:"cache_input_tokens"`

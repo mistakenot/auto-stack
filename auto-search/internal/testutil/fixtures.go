@@ -494,6 +494,87 @@ func GenerateDuplicateSessionFixtures(outputDir string) error {
 	return writeParquet(p, sessions)
 }
 
+// AUQEnvelopeJSON is the toolUseResult envelope written onto the AUQ
+// tool_result fixture row. It carries an answers map plus per-question
+// annotation notes, mirroring the live JSONL shape.
+const AUQEnvelopeJSON = `{"questions":[{"question":"Which database should we use?","options":[{"label":"Postgres (Recommended)"},{"label":"SQLite"}]}],"answers":{"Which database should we use?":"Postgres (Recommended)"},"annotations":{"Which database should we use?":{"notes":"prefer managed instance"}}}`
+
+// GenerateAUQFixtures writes a sessions + messages parquet pair containing two
+// AskUserQuestion messages: an assistant tool_use row (no envelope) and a tool
+// tool_result row carrying the toolUseResult envelope. Used to exercise the
+// tool_use_result_json round-trip through index → SQLite → message describe.
+func GenerateAUQFixtures(outputDir string) error {
+	sp := SessionsFixturePath(outputDir)
+	if err := os.MkdirAll(filepath.Dir(sp), 0o755); err != nil {
+		return err
+	}
+	sessions := []model.ParquetSessionRow{
+		{
+			ID:                  "auq-session-1",
+			HostID:              "test-host",
+			Agent:               "claude",
+			Workspace:           "/workspace/project-a",
+			GitRemote:           "git@github.com:test/repo",
+			Model:               "opus",
+			FirstMessageAt:      1711000000000,
+			LastMessageAt:       1711000200000,
+			TranscriptTruncated: "User asks a question via AskUserQuestion",
+			Year:                2026,
+			Month:               3,
+			SchemaVersion:       1,
+		},
+	}
+	if err := writeParquet(sp, sessions); err != nil {
+		return err
+	}
+
+	mp := MessagesFixturePath(outputDir)
+	if err := os.MkdirAll(filepath.Dir(mp), 0o755); err != nil {
+		return err
+	}
+	messages := []model.ParquetMessageRow{
+		{
+			ID:               "auq-msg-use",
+			SessionID:        "auq-session-1",
+			HostID:           "test-host",
+			Index:            0,
+			Role:             "assistant",
+			Content:          "AskUserQuestion: Which database should we use?",
+			ContentTruncated: "AskUserQuestion: Which database should we use?",
+			Timestamp:        1711000100000,
+			ToolName:         "AskUserQuestion",
+			ToolInput:        `{"questions":[{"question":"Which database should we use?","options":[{"label":"Postgres (Recommended)"},{"label":"SQLite"}]}]}`,
+			Workspace:        "/workspace/project-a",
+			GitRemote:        "git@github.com:test/repo",
+			Model:            "opus",
+			Year:             2026,
+			Week:             12,
+			Month:            3,
+			SchemaVersion:    3,
+		},
+		{
+			ID:                "auq-msg-result",
+			SessionID:         "auq-session-1",
+			HostID:            "test-host",
+			Index:             1,
+			Role:              "tool",
+			Content:           "Postgres (Recommended)",
+			ContentTruncated:  "Postgres (Recommended)",
+			Timestamp:         1711000200000,
+			ToolName:          "AskUserQuestion",
+			ToolUseResultJSON: AUQEnvelopeJSON,
+			Workspace:         "/workspace/project-a",
+			GitRemote:         "git@github.com:test/repo",
+			Model:             "opus",
+			Year:              2026,
+			Week:              12,
+			Month:             3,
+			SchemaVersion:     3,
+		},
+	}
+	return writeParquet(mp, messages)
+}
+
 func writeParquet[T any](path string, rows []T) error {
 	f, err := os.Create(path)
 	if err != nil {

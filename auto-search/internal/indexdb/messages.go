@@ -21,6 +21,7 @@ func InsertMessage(tx *sql.Tx, partitionSourcePath string,
 	parentSessionID string,
 	isSubagent bool,
 	sourceLineIndex, schemaVersion int,
+	toolUseResultJSON string,
 ) error {
 	isSubagentInt := 0
 	if isSubagent {
@@ -35,8 +36,9 @@ func InsertMessage(tx *sql.Tx, partitionSourcePath string,
 			bash_command, bash_exit_code, skill_name,
 			input_tokens, cache_input_tokens, output_tokens,
 			workspace, git_remote, git_branch, model,
-			parent_session_id, is_subagent, source_line_index, schema_version
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			parent_session_id, is_subagent, source_line_index, schema_version,
+			tool_use_result_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		partitionSourcePath, messageID, sessionID, hostID,
 		messageIndex, role, content, contentTruncated, timestamp,
@@ -46,6 +48,7 @@ func InsertMessage(tx *sql.Tx, partitionSourcePath string,
 		inputTokens, cacheInputTokens, outputTokens,
 		workspace, gitRemote, gitBranch, model,
 		parentSessionID, isSubagentInt, sourceLineIndex, schemaVersion,
+		toolUseResultJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("insert message %s: %w", messageID, err)
