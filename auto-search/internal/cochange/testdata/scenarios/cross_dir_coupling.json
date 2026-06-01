@@ -1,0 +1,286 @@
+{
+  "repo_id": "fixture-repo",
+  "origin_remote": "https://github.com/fixture/crossdir.git",
+  "commits": [
+    {
+      "sha": "cd00001",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-02T12:00:00Z",
+      "subject": "weak same-dir edit",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "src/a/sib_0.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00002",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-03T12:00:00Z",
+      "subject": "weak same-dir edit",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "src/a/sib_0.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00003",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-04T12:00:00Z",
+      "subject": "weak same-dir edit",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "src/a/sib_0.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00004",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-05T12:00:00Z",
+      "subject": "weak same-dir edit",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "src/a/sib_1.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00005",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-06T12:00:00Z",
+      "subject": "weak same-dir edit",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "src/a/sib_1.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00006",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-07T12:00:00Z",
+      "subject": "weak same-dir edit",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "src/a/sib_1.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00007",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-08T12:00:00Z",
+      "subject": "weak same-dir edit",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "src/a/sib_2.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00008",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-09T12:00:00Z",
+      "subject": "weak same-dir edit",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "src/a/sib_2.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00009",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-10T12:00:00Z",
+      "subject": "weak same-dir edit",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "src/a/sib_2.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00010",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-11T12:00:00Z",
+      "subject": "weak same-dir edit",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "src/a/sib_3.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00011",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-12T12:00:00Z",
+      "subject": "weak same-dir edit",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "src/a/sib_3.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00012",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-13T12:00:00Z",
+      "subject": "weak same-dir edit",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "src/a/sib_3.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00013",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-14T12:00:00Z",
+      "subject": "strong cross-dir coupling",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "infra/pipeline/runner.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00014",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-15T12:00:00Z",
+      "subject": "strong cross-dir coupling",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "infra/pipeline/runner.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00015",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-16T12:00:00Z",
+      "subject": "strong cross-dir coupling",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "infra/pipeline/runner.go",
+          "change_type": "M"
+        }
+      ]
+    },
+    {
+      "sha": "cd00016",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-17T12:00:00Z",
+      "subject": "strong cross-dir coupling",
+      "files": [
+        {
+          "path": "src/a/main.go",
+          "change_type": "M"
+        },
+        {
+          "path": "infra/pipeline/runner.go",
+          "change_type": "M"
+        }
+      ]
+    }
+  ],
+  "refs": [
+    {
+      "ref_name": "main",
+      "ref_type": "branch",
+      "commit_sha": "cd00016",
+      "is_default": true
+    }
+  ]
+}

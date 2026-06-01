@@ -7,9 +7,18 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/mistakenot/auto-search/internal/cochange/scenariofixture"
 	"github.com/mistakenot/auto-search/internal/etlscan"
 )
+
+// cliApproxTokens recomputes the engine's approxTokens metric (ceil(runes/4)).
+// approxTokens is unexported in package cochange and these CLI tests live in
+// package cli_test, so the formula is recomputed inline here.
+func cliApproxTokens(s string) int {
+	return (utf8.RuneCountInString(s) + 3) / 4
+}
 
 // snapshotFixtureRoot returns the absolute path to the checked-in co-change
 // snapshot fixture (commits/commit_files/git_repositories/git_refs parquet).
@@ -485,5 +494,64 @@ func TestCoChangeCLI_SurvivingFlagsStillWork(t *testing.T) {
 	paramsUsed := meta["params_used"].(map[string]any)
 	if tau, _ := paramsUsed["decay_tau_days"].(float64); tau != 30 {
 		t.Errorf("params_used.decay_tau_days = %v, want 30", paramsUsed["decay_tau_days"])
+	}
+}
+
+// hotFileSeedArg builds the absolute seed path the CLI must be handed for the
+// hot_file scenario. The seed is joined onto the git toplevel so the engine's
+// lexical path-relativisation reproduces the repo-relative "src/a/hot.go" the
+// scenario parquet's file_path column carries (a bare relative arg would resolve
+// against the test process's cwd and miss the scenario rows).
+func hotFileSeedArg(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(gitToplevel(t), "src", "a", "hot.go")
+}
+
+// AC-15 (CLI-level): with no --budget flag, the cobra default of 500 bounds the
+// compact text output for the hot-file scenario.
+func TestCoChangeCLI_HotFile_TokenBudgetBound(t *testing.T) {
+	root := scenariofixture.LoadScenario(t, "hot_file")
+	seed := hotFileSeedArg(t)
+
+	stdout, stderr, code := runCLI(t, "co-change", seed, "--repo-id", "fixture-repo", "--input", root)
+	if code != 0 {
+		t.Fatalf("co-change failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if tok := cliApproxTokens(stdout); tok > 500 {
+		t.Errorf("default-budget CLI output is %d approx tokens, want <= 500\noutput:\n%s", tok, stdout)
+	}
+}
+
+// AC-15 (CLI-level): --all bypasses the budget, so the hot-file output exceeds
+// the 500-token bound.
+func TestCoChangeCLI_HotFile_AllBypassesBudget(t *testing.T) {
+	root := scenariofixture.LoadScenario(t, "hot_file")
+	seed := hotFileSeedArg(t)
+
+	stdout, stderr, code := runCLI(t, "co-change", seed, "--repo-id", "fixture-repo", "--input", root, "--all")
+	if code != 0 {
+		t.Fatalf("co-change --all failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if tok := cliApproxTokens(stdout); tok <= 500 {
+		t.Errorf("--all CLI output is %d approx tokens, want > 500 (budget should be bypassed)", tok)
+	}
+}
+
+// AC-15 (CLI-level): the compact text form is far smaller than the JSON
+// envelope for the same query.
+func TestCoChangeCLI_HotFile_TextVsJSONSize(t *testing.T) {
+	root := scenariofixture.LoadScenario(t, "hot_file")
+	seed := hotFileSeedArg(t)
+
+	textOut, stderr, code := runCLI(t, "co-change", seed, "--repo-id", "fixture-repo", "--input", root)
+	if code != 0 {
+		t.Fatalf("co-change (text) failed: code=%d stderr=%s", code, stderr)
+	}
+	jsonOut, stderr, code := runCLI(t, "co-change", seed, "--repo-id", "fixture-repo", "--input", root, "--json")
+	if code != 0 {
+		t.Fatalf("co-change --json failed: code=%d stderr=%s", code, stderr)
+	}
+	if textRunes := utf8.RuneCountInString(textOut); textRunes > len(jsonOut)/4 {
+		t.Errorf("text is %d runes, want <= json/4 = %d", textRunes, len(jsonOut)/4)
 	}
 }

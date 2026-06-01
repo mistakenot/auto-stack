@@ -1,0 +1,19 @@
+{
+  "repo_id": "fixture-repo",
+  "origin_remote": "https://github.com/fixture/nohistory.git",
+  "commits": [
+    {"sha": "nh00001", "author_name": "Dev", "author_email": "dev@example.com", "author_date_iso": "2026-01-01", "subject": "edit alpha", "files": [{"path": "src/alpha.go", "change_type": "A"}]},
+    {"sha": "nh00002", "author_name": "Dev", "author_email": "dev@example.com", "author_date_iso": "2026-01-02", "subject": "edit beta", "files": [{"path": "src/beta.go", "change_type": "A"}]},
+    {"sha": "nh00003", "author_name": "Dev", "author_email": "dev@example.com", "author_date_iso": "2026-01-03", "subject": "edit gamma", "files": [{"path": "pkg/gamma.go", "change_type": "A"}]},
+    {"sha": "nh00004", "author_name": "Dev", "author_email": "dev@example.com", "author_date_iso": "2026-01-04", "subject": "edit delta", "files": [{"path": "pkg/delta.go", "change_type": "M"}]},
+    {"sha": "nh00005", "author_name": "Dev", "author_email": "dev@example.com", "author_date_iso": "2026-01-05", "subject": "edit epsilon", "files": [{"path": "cmd/epsilon.go", "change_type": "M"}]},
+    {"sha": "nh00006", "author_name": "Dev", "author_email": "dev@example.com", "author_date_iso": "2026-01-06", "subject": "edit zeta", "files": [{"path": "cmd/zeta.go", "change_type": "M"}]},
+    {"sha": "nh00007", "author_name": "Dev", "author_email": "dev@example.com", "author_date_iso": "2026-01-07", "subject": "edit eta", "files": [{"path": "internal/eta.go", "change_type": "M"}]},
+    {"sha": "nh00008", "author_name": "Dev", "author_email": "dev@example.com", "author_date_iso": "2026-01-08", "subject": "edit theta", "files": [{"path": "internal/theta.go", "change_type": "M"}]},
+    {"sha": "nh00009", "author_name": "Dev", "author_email": "dev@example.com", "author_date_iso": "2026-01-09", "subject": "edit iota", "files": [{"path": "docs/iota.md", "change_type": "M"}]},
+    {"sha": "nh00010", "author_name": "Dev", "author_email": "dev@example.com", "author_date_iso": "2026-01-10", "subject": "edit kappa", "files": [{"path": "docs/kappa.md", "change_type": "M"}]}
+  ],
+  "refs": [
+    {"ref_name": "main", "ref_type": "branch", "commit_sha": "nh00010", "is_default": true}
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "repo_id": "fixture-repo",
+  "origin_remote": "https://github.com/fixture/insufficient.git",
+  "commits": [
+    {
+      "sha": "aaaa0001",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-05",
+      "subject": "introduce the seed file",
+      "files": [
+        {"path": "src/a/seed.go", "change_type": "A"},
+        {"path": "src/a/helper.go", "change_type": "M"}
+      ]
+    },
+    {
+      "sha": "aaaa0002",
+      "author_name": "Dev",
+      "author_email": "dev@example.com",
+      "author_date_iso": "2026-01-06",
+      "subject": "touch the seed again",
+      "files": [
+        {"path": "src/a/seed.go", "change_type": "M"},
+        {"path": "src/a/helper.go", "change_type": "M"}
+      ]
+    }
+  ],
+  "refs": [
+    {"ref_name": "main", "ref_type": "branch", "commit_sha": "aaaa0002", "is_default": true}
+  ]
+}
