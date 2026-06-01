@@ -36,14 +36,14 @@ Thread a single new `tool_use_result_json` column from JSONL through auto-etl pa
 
 ## How to Test
 
-- [ ] `auto-etl/internal/parser/parser_test.go::TestParseSession_ToolUseResultEnvelope` — AC-1 (parser captures envelope verbatim)
-- [ ] `auto-etl/internal/transform/transform_test.go::TestTransform_ToolUseResultEnvelope` — AC-1, AC-11(b) (envelope on `role=tool` row; assistant row empty)
-- [ ] `auto-search/internal/indexdb/indexer_integration_test.go` (extended) — AC-5, AC-11(c) (parquet → SQLite round-trip)
-- [ ] `auto-search/internal/cli/message_envelope_test.go::TestMessageDescribe_ToolUseResult` — AC-6, AC-11(d) (parsed JSON when populated; key omitted when empty)
-- [ ] `auto-search/internal/indexdb/auq_e2e_test.go::TestRecommendedAcceptanceFromFixture` — AC-7, AC-8, AC-11(e) (SQL recommended-acceptance + per-question notes)
-- [ ] Regression: existing transform golden snapshot for `content_truncated` on an AUQ tool_use row — AC-9, AC-11(f)
-- [ ] Human acceptance: `autoetl run --full && autosearch index && duckdb <Q5 query>` returns ≥ 261 rows with `tool_use_result_json != ''` on the live corpus — AC-3
-- [ ] Human acceptance: `duckdb DESCRIBE` across all weekly partitions returns a single consistent column set — AC-4
+- [x] `auto-etl/internal/parser/parser_test.go::TestParseSession_ToolUseResultEnvelope` — AC-1 (parser captures envelope verbatim)
+- [x] `auto-etl/internal/transform/transform_test.go::TestTransform_ToolUseResultEnvelope` — AC-1, AC-11(b) (envelope on `role=tool` row; assistant row empty)
+- [x] `auto-search/internal/indexdb/indexer_integration_test.go` (extended) — AC-5, AC-11(c) (parquet → SQLite round-trip)
+- [x] `auto-search/internal/cli/message_envelope_test.go::TestMessageDescribe_ToolUseResult` — AC-6, AC-11(d) (parsed JSON when populated; key omitted when empty)
+- [x] `auto-search/internal/indexdb/auq_e2e_test.go::TestRecommendedAcceptanceFromFixture` — AC-7, AC-8, AC-11(e) (SQL recommended-acceptance + per-question notes)
+- [x] Regression: existing transform golden snapshot for `content_truncated` on an AUQ tool_use row — AC-9, AC-11(f)
+- [x] Human acceptance: `autoetl run --full && autosearch index && duckdb <Q5 query>` returns ≥ 261 rows with `tool_use_result_json != ''` on the live corpus — AC-3
+- [x] Human acceptance: `duckdb DESCRIBE` across all weekly partitions returns a single consistent column set — AC-4
 
 ## Execution Sequence
 
@@ -98,24 +98,24 @@ Phases are sequential because each writer depends on the prior writer's schema. 
 
 ### Phase 4: Documentation closeout
 
-- [ ] Step 4.1: Update `auto-etl/docs/reference/normalized-schema.md` — add a row for `tool_use_result_json` (type STRING, populated on `role=tool` rows when JSONL carries the envelope) and update the documented `SchemaVersion` to `3`. **Verify**: doc renders cleanly (no broken table layout); the column row sits next to `skill_name`.
-- [ ] Step 4.2: Update `auto-etl/docs/claude-message-types-and-etl-mapping.md` around lines 120, 375, 439-457 — replace the regex Q5 example with a `json_extract(tool_use_result_json, '$.answers')` example; update the "Not searchable" entry to clarify that AUQ answers are now queryable via SQL `json_extract` over the new column (not via FTS — that's still unchanged). **Verify**: every Q5 regex example referenced in the investigation report has been replaced; Q1–Q4 examples remain untouched.
-- [ ] Step 4.3: Update `docs/better-questions.md:117-125` — close out the "AUQ doesn't surface Q&A pairs" bullet by striking it through or rewriting it to reference the new `tool_use_result_json` column and `autosearch message describe`. **Verify**: the resolved item is clearly marked; the remaining open items in that section are untouched.
-- [ ] Step 4.4: Append a `## Postscript — landed in task 012` section to `docs/research/askuserquestion-analytics.md` (after line 342). Body: 5–10 lines pointing at (a) the new `tool_use_result_json` column on `messages` parquet, (b) the SQL `json_extract` pattern that supersedes the Q5 regex, (c) the `message describe` surface for per-row envelope inspection, (d) note that the investigation narrative above remains the frozen point-in-time record. **Verify**: original investigation body is byte-unchanged above the Postscript; new section uses the same heading style as the rest of the doc.
-- [ ] Step 4.5: Run `autodoc fix` (or whatever doc-index regenerator the project uses) so the doc index entries reflect any edits. **Verify**: `git diff` shows no unexpected changes to docs not in this task's scope.
-- [ ] Step 4.6: Commit: `docs(012): phase 4 - close out AUQ envelope docs after schema change`
+- [x] Step 4.1: Update `auto-etl/docs/reference/normalized-schema.md` — add a row for `tool_use_result_json` (type STRING, populated on `role=tool` rows when JSONL carries the envelope) and update the documented `SchemaVersion` to `3`. **Verify**: doc renders cleanly (no broken table layout); the column row sits next to `skill_name`.
+- [x] Step 4.2: Update `auto-etl/docs/claude-message-types-and-etl-mapping.md` around lines 120, 375, 439-457 — replace the regex Q5 example with a `json_extract(tool_use_result_json, '$.answers')` example; update the "Not searchable" entry to clarify that AUQ answers are now queryable via SQL `json_extract` over the new column (not via FTS — that's still unchanged). **Verify**: every Q5 regex example referenced in the investigation report has been replaced; Q1–Q4 examples remain untouched.
+- [x] Step 4.3: Update `docs/better-questions.md:117-125` — close out the "AUQ doesn't surface Q&A pairs" bullet by striking it through or rewriting it to reference the new `tool_use_result_json` column and `autosearch message describe`. **Verify**: the resolved item is clearly marked; the remaining open items in that section are untouched.
+- [x] Step 4.4: Append a `## Postscript — landed in task 012` section to `docs/research/askuserquestion-analytics.md` (after line 342). Body: 5–10 lines pointing at (a) the new `tool_use_result_json` column on `messages` parquet, (b) the SQL `json_extract` pattern that supersedes the Q5 regex, (c) the `message describe` surface for per-row envelope inspection, (d) note that the investigation narrative above remains the frozen point-in-time record. **Verify**: original investigation body is byte-unchanged above the Postscript; new section uses the same heading style as the rest of the doc.
+- [x] Step 4.5: Run `autodoc fix` (or whatever doc-index regenerator the project uses) so the doc index entries reflect any edits. **Verify**: `git diff` shows no unexpected changes to docs not in this task's scope.
+- [x] Step 4.6: Commit: `docs(012): phase 4 - close out AUQ envelope docs after schema change`
 
 ## Success Criteria
 
-- [ ] All Phase 1–4 commits land in order; each is independently buildable and testable.
-- [ ] `go build ./...` succeeds at every commit boundary.
-- [ ] `go test ./...` passes at every commit boundary.
-- [ ] `go vet ./...` passes at every commit boundary.
-- [ ] All AC-1 through AC-11 test rows in [solution.md](./solution.md#test-coverage) have a passing test or a recorded human-acceptance result.
-- [ ] Corpus-wide `tool_use_result_json` row count ≥ 261 on the live corpus after backfill (AC-3).
-- [ ] Single column set across all weekly partitions after backfill — no week=11 drift (AC-4).
-- [ ] `autosearch message describe <id>` returns a parsed JSON envelope under the `toolUseResult` key for a known AUQ tool_result row, and omits the key for a row without the envelope (AC-6).
-- [ ] The 4 docs in Phase 4 are updated and committed together; `docs/research/askuserquestion-analytics.md` original narrative is preserved verbatim above the Postscript.
+- [x] All Phase 1–4 commits land in order; each is independently buildable and testable.
+- [x] `go build ./...` succeeds at every commit boundary.
+- [x] `go test ./...` passes at every commit boundary.
+- [x] `go vet ./...` passes at every commit boundary.
+- [x] All AC-1 through AC-11 test rows in [solution.md](./solution.md#test-coverage) have a passing test or a recorded human-acceptance result.
+- [x] Corpus-wide `tool_use_result_json` row count ≥ 261 on the live corpus after backfill (AC-3).
+- [x] Single column set across all weekly partitions after backfill — no week=11 drift (AC-4).
+- [x] `autosearch message describe <id>` returns a parsed JSON envelope under the `toolUseResult` key for a known AUQ tool_result row, and omits the key for a row without the envelope (AC-6).
+- [x] The 4 docs in Phase 4 are updated and committed together; `docs/research/askuserquestion-analytics.md` original narrative is preserved verbatim above the Postscript.
 
 ## Open Questions
 
