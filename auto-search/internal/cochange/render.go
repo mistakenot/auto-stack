@@ -253,6 +253,13 @@ func approxTokens(s string) int {
 // truncSubject caps s at subjectCap runes, appending a single-rune ellipsis on
 // overflow.
 func truncSubject(s string) string {
+	// sc.Subject is sourced from the message_truncated column, which holds the
+	// full commit message (subject + body) and may carry MidTruncate's embedded
+	// "\n…[truncated]…\n" marker. Take only the first line so the bracket segment
+	// can never split a row across lines (AC-3's one-line-per-file contract).
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
 	if utf8.RuneCountInString(s) <= subjectCap {
 		return s
 	}

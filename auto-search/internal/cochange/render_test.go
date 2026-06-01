@@ -94,6 +94,27 @@ func TestRenderRow_DPositive_NoSampleCommit_OmitsBracket(t *testing.T) {
 	}
 }
 
+func TestRenderRow_MultiLineSubject_StaysOneLine(t *testing.T) {
+	// message_truncated holds the full commit message (subject + body) and may
+	// carry MidTruncate's embedded "\n…[truncated]…\n" marker; the rendered row
+	// must remain a single line regardless.
+	rf := &RelatedFile{
+		Path:      "src/b/other.go",
+		CoCommits: 5,
+		SampleCommits: []SampleCommitJSON{
+			{SHA: "abcdef1234567", Subject: "fix coupling\n\nlong body line that would split the row\nsecond body line"},
+		},
+	}
+	got := renderRow(rf, "src/a/hot.go", 0.65)
+	if strings.Contains(got, "\n") {
+		t.Fatalf("renderRow with multi-line subject must be one line, got:\n%q", got)
+	}
+	want := `src/b/other.go  0.65  5×  d2  [abcdef1 "fix coupling"]`
+	if got != want {
+		t.Fatalf("renderRow multi-line subject =\n%q\nwant\n%q", got, want)
+	}
+}
+
 func TestTreeDistance(t *testing.T) {
 	cases := []struct {
 		name    string
