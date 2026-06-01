@@ -1,9 +1,9 @@
 ---
-title: "AskUserQuestion Analytics — Pipeline Investigation"
-summary: "How AskUserQuestion data flows through the auto-etl / auto-search pipeline, where the structured payload is lost, and a phased plan to surface the five target analytics metrics (frequency, question text, options, recommended option, picked option) for tuning Claude's question-asking against latent user intent."
+hash: ""
+id: "d3da9d0c"
 read_when: "investigating AskUserQuestion analytics, planning ETL schema changes for structured tool envelopes, or scoping autosearch CLI work around tool filtering"
-date: 2026-06-01
-status: investigation-complete
+summary: "How AskUserQuestion data flows through the auto-etl / auto-search pipeline, where the structured payload is lost, and a phased plan to surface the five target analytics metrics (frequency, question text, options, recommended option, picked option) for tuning Claude's question-asking against latent user intent."
+title: "AskUserQuestion Analytics — Pipeline Investigation"
 ---
 
 # AskUserQuestion Analytics — Pipeline Investigation
