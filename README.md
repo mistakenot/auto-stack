@@ -14,13 +14,10 @@ flowchart LR
     Graph --> Reflect
     Reflect --> Skill[autoskill<br/>compile skills]
     Skill -.->|skills feed back<br/>into agents| Agents
-    Watch[autowatch<br/>scheduler] -. orchestrates .-> ETL
-    Watch -. orchestrates .-> Search
-    Watch -. orchestrates .-> Reflect
 
     classDef active fill:#1f6feb,stroke:#1f6feb,color:#fff;
     classDef io fill:#21262d,stroke:#30363d,color:#c9d1d9;
-    class ETL,Search,Graph,Reflect,Skill,Watch active;
+    class ETL,Search,Graph,Reflect,Skill active;
     class Agents,Git io;
 ```
 
