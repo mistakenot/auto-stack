@@ -2,14 +2,29 @@
 
 **Intelligence layer for AI coding agents.**
 
-Auto Stack is a set of CLI tools that capture, index, analyze, and learn from your coding agent sessions. The tools form a feedback loop: your agents code, the stack watches, and the next session is smarter than the last.
+Auto Stack is a suite of CLI tools that capture, index, analyze, and learn from coding agent sessions. The tools form a feedback loop: your agents code, the stack watches, and the next session is smarter than the last.
 
+```mermaid
+flowchart LR
+    Agents([Coding agents<br/>Claude · Codex · Gemini]) -->|raw logs| ETL[autoetl<br/>normalize]
+    Git([Git history]) -->|commits, diffs| ETL
+    ETL -->|Parquet| Search[autosearch<br/>FTS + analytics]
+    ETL -->|Parquet| Graph[autograph<br/>code + import graphs]
+    Search --> Reflect[autoreflect<br/>extract rules]
+    Graph --> Reflect
+    Reflect --> Skill[autoskill<br/>compile skills]
+    Skill -.->|skills feed back<br/>into agents| Agents
+    Watch[autowatch<br/>scheduler] -. orchestrates .-> ETL
+    Watch -. orchestrates .-> Search
+    Watch -. orchestrates .-> Reflect
+
+    classDef active fill:#1f6feb,stroke:#1f6feb,color:#fff;
+    classDef io fill:#21262d,stroke:#30363d,color:#c9d1d9;
+    class ETL,Search,Graph,Reflect,Skill,Watch active;
+    class Agents,Git io;
 ```
-Code with agents  -->  autoetl  -->  autosearch  -->  autoreflect  -->  autoskill
-       ^                                                                    |
-       +--------------------------------------------------------------------+
-                              autowatch orchestrates the loop
-```
+
+---
 
 ## Install
 
@@ -23,22 +38,37 @@ Custom install directory:
 INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/mistakenot/auto-stack/main/install.sh | bash
 ```
 
-Requires Go 1.22+.
+The installer pulls pre-built binaries for `linux-amd64` and `darwin-arm64` from the latest [GitHub release](https://github.com/mistakenot/auto-stack/releases). Building from source requires Go 1.22+.
+
+Every binary ships with `update`:
+
+```bash
+autoetl update    # re-runs install.sh to pull the latest release
+```
+
+---
 
 ## The Tools
 
-| Tool | What it does |
-|------|-------------|
-| **autoetl** | Extracts session logs from Claude Code, Codex, and other agents. Normalizes them into partitioned Parquet datasets (messages + sessions). |
-| **autosearch** | Indexes the Parquet output into SQLite FTS. Full-text search across messages and sessions with date, workspace, and role filters. |
-| **autodoc** | Doc management with freshness tracking. Links code blocks to docs via `[autodoc()]` comments and detects drift. |
-| **autoreflect** | Analyzes past sessions to find patterns, extract rules, and build project playbooks. |
-| **autoskill** | Turns reflect outputs into reusable agent skills. |
-| **autowatch** | Daemon that monitors repos and triggers ETL, search indexing, and reflection jobs on a schedule. |
+| Tool | Status | What it does |
+|------|--------|-------------|
+| **autoetl** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Extracts session logs from Claude Code, Codex, and other agents — plus git history — into partitioned Parquet datasets. |
+| **autosearch** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | SQLite FTS5 index over messages, sessions, and commits. Co-change queries, stats grouping, skill adoption tracking. |
+| **autograph** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | File-level import graphs for TypeScript and Go. Doc-to-code overlays via `[autodoc()]` tags. Context-pack builder with token budgets. |
+| **autodoc** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Documentation management with two-way freshness tracking, BM25 search, and `[autodoc()]` source-tag linking. |
+| **autoenv** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Template-based config generation with deterministic per-worktree port allocation. Stand up isolated dev envs for parallel agent branches. |
+| **autoskill** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Author, lint, and sync reusable agent skills. Detects skill bloat and validates trigger conditions. |
+| **autowatch** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Cron-driven daemon that monitors repos and launches bash or Claude Code tasks on schedule or file events. |
+| **autoreflect** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Capture session feedback, mine recurring patterns, and persist learned rules into project playbooks. |
+| **autoconfig** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Validate and bootstrap agent configuration. Installs `prepare-commit-msg` hooks that link commits to sessions. |
+| **auto-eval** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Scenario-replay evaluation harness. Grade agents against ground truth and compare planning strategies. |
+| **auto-web** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Safe web-research portal with pluggable backends (Exa, Parallel, OpenAI), dedupe, and Markdown conversion. |
+
+---
 
 ## Quick Start: The Full Loop
 
-Here's the happy path from raw coding sessions to self-improving agents.
+The happy path from raw coding sessions to self-improving agents.
 
 ### 1. Capture session history
 
@@ -48,17 +78,20 @@ After coding with Claude Code, Codex, or other agents, extract and normalize the
 autoetl run
 ```
 
-This reads raw session logs (default: `~/.claude/projects`), normalizes them into two Parquet datasets, and writes incremental output to `~/.auto/etl/output/`:
+This reads raw session logs (default: `~/.claude/projects`), normalizes them into Parquet datasets, and writes incremental output to `~/.auto/etl/output/`:
 
 ```
 ~/.auto/etl/output/
   messages/year=2026/week=15/messages.parquet
   sessions/year=2026/month=04/sessions.parquet
+  commits/year=2026/month=04/commits.parquet
 ```
+
+The same command also extracts git history (commits, diffs, branches, authors) so you can correlate code changes with the sessions that produced them.
 
 ### 2. Index for search
 
-Build a full-text search index over the normalized data:
+Build a full-text index over the normalized data:
 
 ```bash
 autosearch index
@@ -66,119 +99,190 @@ autosearch index
 
 ### 3. Search your history
 
-Find what your agents have been doing:
-
 ```bash
 # Find error patterns across all sessions
 autosearch search "Exit code 1" --since 1w
 
-# Which sessions touched auth code?
+# Sessions that touched auth code
 autosearch search "auth middleware" --scope sessions
 
-# Drill into a specific session
-autosearch session get $SESSION_ID
+# Sessions where the agent burned tokens hitting bash errors
+autosearch session list --since 2w --min-errors 5 --sort-by errors
 
-# List recent sessions
-autosearch session list --limit 10
+# Drill into a specific session, or list the worst ones
+autosearch session get $SESSION_ID
+autosearch session list --since 1w --min-tokens 50000 --sort-by tokens
 
 # Filter by workspace
 autosearch search "flaky test" --cwd /home/dev/my-project
+
+# Group results by tool to find which tools fire most often
+autosearch stats --group-by tool_name --since 1w
+
+# Which skills are getting used (and which are dead weight)?
+autosearch skills --since 1w
 ```
 
-All commands output JSON by default. Use `--highlight` to add bold markers to matching terms in snippets.
+All commands output JSON by default. Use `--highlight` to bold matching terms in snippets.
 
-### 4. Reflect and improve
+### 4. Correlate sessions with commits
 
-Use autosearch as the foundation for finding patterns. A reflection agent can:
+Every commit produced inside a Claude Code session is linked back to that session via a `Session-Id:` trailer (installed by `autoconfig init`). You can drill from a commit to the agent transcript that produced it, or list every commit a given session shipped.
 
 ```bash
-# Find sessions with repeated failures
-autosearch search "Exit code 1 AND retry" --scope sessions --since 2w
-
-# Inspect the worst session
-autosearch session get $SESSION_ID
-
-# Search for a specific recurring mistake
-autosearch search "playwright mcp" --scope messages --since 1w
+# Files that change together with auth.go over the last 90 days
+autosearch co-change auth.go --decay-tau 90d --limit 10
 ```
 
-Then feed those findings into a rule or a skill that prevents the same mistake next session.
+`co-change` reads the commits dataset and surfaces implicit coupling — useful for refactor impact analysis and finding hidden dependencies that don't show up in import graphs. Results are ranked by directional confidence weighted by lift, with a large-commit penalty and configurable time decay.
 
-### 5. Self-improve (automated)
+### 5. Map the code
 
-The self-improve pipeline ties it all together. It uses autosearch to find problems in your coding sessions, analyzes them against your codebase, and opens PRs to fix the top issues:
+```bash
+# Build a file-level import graph for the current repo (TypeScript + Go)
+autograph code graph
+
+# Assemble a context pack for an LLM, budgeted to N tokens
+autograph code context src/auth/login.ts --max-tokens 8000
+```
+
+`autograph` understands TypeScript (`tsconfig` path aliases, JSONC comments, dynamic `import()`, `require()`, re-exports) and Go (module-aware via `go.mod`). It also overlays `[autodoc()]` tags so you can see which docs cover which files.
+
+### 6. Reflect and improve
+
+```bash
+# Capture feedback while it's fresh, optionally pinned to a file range
+autoreflect feedback add \
+  --kind harmful \
+  --comment "gorm caused N+1 on dashboard query" \
+  --file internal/db/users.go --start 42 --end 80 \
+  --effective-at 2026-06-01
+
+# Record a rule for future sessions
+autoreflect rule create --comment "prefer sqlc over gorm for new queries"
+
+# Look up rules that apply to the current task
+autoreflect lookup "database queries"
+```
+
+`autoreflect` persists rule memory across sessions, attaches feedback to specific lines, and feeds patterns back into project playbooks.
+
+### 7. Schedule the loop
+
+`autowatch` runs the whole pipeline on a cadence — daily ETL, on-change indexing, weekly reflection runs:
+
+```bash
+# Define a task (bash or Claude Code prompt)
+autowatch task create --id nightly-etl --bash "autoetl run && autosearch index"
+
+# Wire it to a cron trigger
+autowatch trigger create --id daily-2am --cron "0 2 * * *"
+autowatch trigger add-task daily-2am nightly-etl
+
+# Or trigger on file events (glob-based, polled every 60s)
+autowatch trigger create --id new-prs --type file_created --glob ".github/pull_requests/*.md"
+autowatch trigger add-task new-prs review-pr
+
+autowatch daemon start
+```
+
+Triggers and tasks are defined separately and linked, so the same task can fan out across cron schedules and file-event watchers.
+
+### 8. Self-improve (automated)
+
+The self-improve pipeline ties it all together — it uses autosearch to find problems in your coding sessions, analyzes them against your codebase, and opens PRs to fix the top issues:
 
 ```bash
 prose run scripts/self-improve/index.md -- focus: "autosearch"
 ```
 
 This runs a multi-agent pipeline:
-1. **Preflight** -- refreshes ETL and search index
-2. **Explorer** -- uses the tools as a real user, captures every friction point
-3. **Analyst** -- reads the codebase to find root causes
-4. **Reviewer** -- independently verifies the analysis
-5. **Consolidator** -- picks the top 3 improvements by impact-to-effort ratio
-6. **Implementers** -- 3 parallel agents, each on an isolated worktree, each opening a PR
+1. **Preflight** — refreshes ETL and search index
+2. **Explorer** — uses the tools as a real user, captures every friction point
+3. **Analyst** — reads the codebase to find root causes
+4. **Reviewer** — independently verifies the analysis
+5. **Consolidator** — picks the top 3 improvements by impact-to-effort ratio
+6. **Implementers** — 3 parallel agents, each on an isolated worktree, each opening a PR
 
-The PR bodies capture the full workflow narrative (problem, plan, decisions, test results), which gets indexed by the next ETL run -- closing the feedback loop.
+The PR bodies capture the full workflow narrative (problem, plan, decisions, test results), which gets re-indexed by the next ETL run — closing the feedback loop.
 
-## Example: Finding and Fixing a Real Problem
+---
 
-```bash
-# 1. Run ETL to capture recent sessions
-autoetl run
+## Feature Highlights
 
-# 2. Index them
-autosearch index
+### Session ETL & analytics
+- **Multi-source ETL** — Claude Code, Codex, and git history land in the same Parquet schema.
+- **Incremental partitioning** — weekly partitions for messages, monthly for sessions and commits; re-runs are cheap.
+- **Commit ↔ session linking** — `Session-Id:` git trailers (auto-installed) tie every commit to the agent transcript that produced it.
+- **bash exit code parsing** — tool-result exit codes are extracted so you can find sessions where the agent looped on failing commands.
 
-# 3. Search for sessions where agents got stuck in loops
-autosearch search "retry AND failed" --scope sessions --since 2w
+### Search & discovery
+- **SQLite FTS5 + BM25** — sub-second full-text search over months of session history.
+- **Rich filters** — `--since` / `--after` / `--before`, `--cwd`, `--remote`, `--role`, `--skill`, plus session-level `--min-tokens`, `--min-messages`, `--min-errors`, `--min-duration`, `--no-subagent` / `--subagent`, `--parent-session`, and `--sort-by recency|duration|tokens|messages|errors`.
+- **Co-change queries** — find files frequently edited together across git history.
+- **Skill adoption tracking** — which skills are firing, which aren't, grouped by date and workspace.
+- **Stats grouping** — group results by tool, file, session, skill, or workspace.
 
-# 4. Find the 3 worst sessions by token usage
-autosearch session list --since 2w --limit 20
-# (pick the ones with highest total_tokens)
+### Code context
+- **TypeScript import graphs** — ast-grep-powered, handles static/dynamic imports, `require()`, re-exports, and `tsconfig` path aliases (with wildcard prefix+suffix, baseUrl probing, JSONC tolerance).
+- **Go import graphs** — native `go/parser` walk, module-aware via `go.mod`.
+- **Context packs** — deterministic, token-budgeted code bundles for LLM analysis.
+- **Doc-code overlay** — `autograph` and `autodoc graph` visualize which docs cover which files via `[autodoc()]` tags.
 
-# 5. Read the transcript of the worst one
-autosearch session get abc123-def456
+### Documentation
+- **Two-way freshness links** — `[autodoc()]` tags in source code and content hashes in doc frontmatter detect drift in both directions.
+- **BM25 doc search** — `autodoc search keyword <query>` searches every doc in the tree.
+- **`read_when` routing hints** — frontmatter tells agents when to pull a doc into context.
+- **Auto-generated indexes** — `autodoc fix` regenerates the documentation index in CLAUDE.md / AGENTS.md.
 
-# 6. Discover the agent kept re-running a test that was timing out
-#    because verbose passing-test output filled the context window
+### Worktree environments
+- **Deterministic ports** — CRC32-hashed per-worktree port allocation; no collisions when running multiple agent branches in parallel.
+- **Template-driven configs** — render `.env`, `process-compose.yaml`, etc. with per-worktree variables.
+- **Central registry** — `~/.auto/env/environments.json` (flock-protected) tracks every active worktree env for status and cleanup from anywhere.
 
-# 7. Add a rule to prevent this next time
-#    (via CLAUDE.md, autoreflect, or a skill)
-```
+### Skills, watch, reflect
+- **Skill linting & sync** — validate trigger metadata, schema, descriptions, total token cost.
+- **File-event triggers** — `autowatch` supports `file_created` with glob patterns alongside cron.
+- **Rule memory** — `autoreflect` persists learned rules with `--effective-at` timestamps for time-travel queries.
+
+---
 
 ## Data Architecture
 
-All tools share a common data format. They communicate through files, not APIs.
+All tools share a common data format and communicate through files, not APIs.
 
+```mermaid
+flowchart TD
+    Raw[Raw logs<br/>~/.claude/projects, codex, git] --> Etl[autoetl]
+    Etl --> P1[messages.parquet]
+    Etl --> P2[sessions.parquet]
+    Etl --> P3[commits.parquet]
+    P1 --> Search[autosearch<br/>SQLite FTS5]
+    P2 --> Search
+    P3 --> Search
+    P3 --> Graph[autograph<br/>code + doc graphs]
+    Search --> Reflect[autoreflect<br/>rules + playbooks]
+    Graph --> Reflect
+    Reflect --> Skill[autoskill<br/>skills]
+
+    classDef storage fill:#21262d,stroke:#30363d,color:#c9d1d9;
+    classDef tool fill:#1f6feb,stroke:#1f6feb,color:#fff;
+    class Raw,P1,P2,P3 storage;
+    class Etl,Search,Graph,Reflect,Skill tool;
 ```
-Raw session logs (Claude, Codex, etc.)
-    |
-    v
-autoetl --> Partitioned Parquet (messages + sessions)
-    |           ~/.auto/etl/output/
-    v
-autosearch --> SQLite FTS index
-    |              ~/.auto/search/default.sqlite
-    v
-autoreflect --> Rules and patterns
-    |
-    v
-autoskill --> Reusable agent skills
-```
 
-The canonical schema is defined in `auto-etl/internal/model/model.go`. Two datasets:
+The canonical schema is defined in `auto-etl/internal/model/model.go`. The three datasets:
 
-- **messages** -- one row per message. Includes role, content, tool name, file paths, token counts, timestamps. Content is stored inline (Parquet is columnar, so large text columns don't slow down metadata queries).
-- **sessions** -- one row per session. Includes workspace, git remote, model, token totals, and full/truncated transcripts.
+- **messages** — one row per message. Role, content (inline), tool name, file paths, token counts, timestamps, bash exit codes.
+- **sessions** — one row per session. Workspace, git remote, model, token totals, full and truncated transcripts, subagent flag.
+- **commits** — one row per commit. SHA, author, message, branch, file diffs, parent SHA, `Session-Id` if present.
 
-You can query the Parquet files directly with DuckDB:
+Parquet is columnar, so wide content columns don't slow down metadata queries. You can also query the files directly with DuckDB:
 
 ```bash
 # Most-edited files across all sessions
 duckdb -c "
-  SELECT tool_file_path, count(*) as edits
+  SELECT tool_file_path, count(*) AS edits
   FROM '~/.auto/etl/output/messages/**/*.parquet'
   WHERE tool_name = 'Write'
   GROUP BY tool_file_path
@@ -186,16 +290,28 @@ duckdb -c "
   LIMIT 20
 "
 
-# Token usage by session
+# Token usage by top-level (non-subagent) session
 duckdb -c "
   SELECT workspace, total_tokens,
-    epoch_ms(first_message_at) as started
+    epoch_ms(first_message_at) AS started
   FROM '~/.auto/etl/output/sessions/**/*.parquet'
   WHERE is_subagent = false
   ORDER BY total_tokens DESC
   LIMIT 10
 "
+
+# Commits per session (which session shipped the most code?)
+duckdb -c "
+  SELECT session_id, count(*) AS commits, sum(insertions) AS lines_added
+  FROM '~/.auto/etl/output/commits/**/*.parquet'
+  WHERE session_id IS NOT NULL
+  GROUP BY session_id
+  ORDER BY lines_added DESC
+  LIMIT 10
+"
 ```
+
+---
 
 ## Configuration
 
@@ -203,39 +319,47 @@ Global config lives in `~/.auto/`. Each tool has its own subdirectory:
 
 ```
 ~/.auto/
-  settings.json          # shared host-level defaults
-  etl/                   # autoetl settings and raw data
-  search/                # autosearch indexes
+  settings.json          # shared host-level defaults (hostname, host_id)
+  etl/                   # raw session copies + Parquet output
+  search/                # SQLite FTS indexes
+  graph/                 # cached code graphs
   docs/                  # autodoc settings
-  watch/                 # autowatch schedules
+  watch/                 # autowatch schedules + state.sqlite
+  reflect/               # rule memory
+  env/                   # environments.json registry
 ```
 
-Project-local config lives in `.auto/` within your repo.
+Project-local config lives in `.auto/` within your repo. Both layers support `init` and `init --project`.
+
+Most commands default to JSON for machine consumption. Date filters are uniform across tools that support time-based queries:
+
+```bash
+--since 5m             # last 5 minutes
+--since 5d             # last 5 days
+--since 1w             # last 1 week
+--after 2026-01-01 --before 2026-02-01
+```
+
+---
 
 ## Development
 
 ```bash
 git clone https://github.com/mistakenot/auto-stack.git
 cd auto-stack
-make install-hooks   # pre-commit hooks (gofmt, go vet, beads sync)
+make install-hooks   # pre-commit hooks (gofmt, go vet, autodoc, beads sync)
+make install-tools   # golangci-lint, ast-grep, etc.
 make build           # build all binaries to ./bin/
 make install         # build and install to ~/.local/bin/
 make test            # run all tests
+make check           # fmt-check + vet + lint + test
 ```
 
-Each sub-project is an independent Go module under its own directory (`auto-etl/`, `auto-search/`, etc.) with its own `go.mod`. See each sub-project's `CLAUDE.md` for specific build and test instructions.
+Each sub-project is an independent Go module with its own `go.mod`, sharing common utilities via the `auto-shared` module. See each sub-project's `CLAUDE.md` for build and test specifics.
 
-## Status
+Releases are cut by tagging a commit; the `release` GitHub Actions workflow builds binaries for `linux-amd64` and `darwin-arm64` and publishes them. See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
-| Tool | Status | Description |
-|------|--------|-------------|
-| autoetl | Active | Session ETL from multiple agent tools |
-| autosearch | Active | Full-text search over normalized sessions |
-| autodoc | Active | Doc management with freshness tracking |
-| autoskill | Active | Agent skill management |
-| autowatch | Early | Repo monitoring and job scheduling |
-| autoreflect | Early | Pattern extraction from session history |
-| autograph | Early | Context graphs built from coding sessions |
+---
 
 ## License
 
