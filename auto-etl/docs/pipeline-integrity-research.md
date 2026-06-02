@@ -1,3 +1,9 @@
+---
+title: "ETL Pipeline Integrity and Merge Architecture"
+summary: "Research on CRDT-based merge models, event-sourced pipelines, concurrent writer safety, schema evolution, and property-based testing for the autoetl output store"
+read_when: "designing ETL merge semantics, hardening the pipeline, or planning S3 backend support"
+---
+
 # Research: ETL Pipeline Integrity and Merge Architecture
 
 Status: Active research — not yet translated into requirements.
@@ -14,22 +20,42 @@ autoetl produces the **source of truth** for all downstream tools (search, refle
 
 As the system grows to multiple clients, providers, and storage backends, the pipeline must be formally sound — not just patched.
 
-## Problem Space Constraints
+## Assumptions and Constraints
 
-These are the ground rules for any solution:
+### Data Assumptions
 
-1. **Every entity type has a stable ID** (message, session, git commit, PR, etc.)
+These describe the fundamental properties of the data flowing through the pipeline:
+
+1. **Every entity type has a stable, unique ID** — messages, sessions, git commits, PRs, etc. are all keyed by an ID that does not change after creation. IDs are the primary dedup key across all merge operations.
+
 2. **Two-layer immutability model**:
-   - **Raw layer**: The original session files on disk (`~/.auto/etl/raw/`) are truly immutable. They are the source artifacts and never change after creation.
-   - **ETL layer**: The parquet output is a *computed projection* derived from raw files. These records can change when the parser improves, the schema evolves, or new fields are backfilled. The entity *content at the raw layer* doesn't change, but the ETL *representation* of it may.
-   - This means: immutability guarantees apply to raw source data, not to ETL output. The ETL output is a deterministic function of (raw data + parser version + schema version). Re-running the ETL with a newer parser on the same raw file may produce different output — and that's expected.
-3. **Deletion must be supported** — unlikely in practice, but required for data protection (GDPR-style). This means pure grow-only sets are not sufficient; we need a deletion mechanism layered on top.
-4. **The architecture must safely support different storage backends** — local disk is the default, S3-compatible object storage is the long-term target.
-5. **Remote storage needs a reusable mechanism for concurrent edit protection** — multiple hosts may push to the same store simultaneously.
-6. **A two-stage pipeline is acceptable** — e.g. two G-Sets with a merge/compaction stage, if it simplifies the model.
-7. **Incremental updates are the priority** — the pipeline runs frequently; a typical run should only process new data. Fast incremental is more important than fast full rebuild.
-8. **Full reindex must be supported** — equivalent of `--full`, but how it interacts with the two-layer model needs more research. A full reindex re-parses raw files with the current parser, which may produce different ETL output than the original parse.
-9. **Schema evolution must be handled** — new fields may be added over time. Since ETL output is a derived projection (not an immutable record), schema changes are a re-derivation, not a mutation. But the merge model must handle mixed-version records gracefully.
+   - **Raw layer (truly immutable)**: The original session files on disk (`~/.auto/etl/raw/`) never change after creation. They are the source artifacts — the ground truth.
+   - **ETL layer (derived, may change)**: The parquet output is a *computed projection* — a deterministic function of `(raw data + parser version + schema version)`. Re-running the ETL with a newer parser on the same raw file may produce different output, and that's expected.
+   - Immutability guarantees apply to raw source data. ETL output is a derived view that can be regenerated.
+
+3. **Entity body content is stable at the raw layer** — after a raw session file is written, the content of each message within it does not change. A message ID always refers to the same underlying content in the raw file.
+
+4. **Entity metadata at the ETL layer may evolve** — the same raw message may produce a richer ETL record over time (new fields extracted, better parsing). The ETL representation of an entity can change even though the raw source hasn't.
+
+5. **Deletion is rare but must be supported** — unlikely in normal operation, but required for data protection (GDPR-style). Deletions must propagate through merge operations and not be silently undone by re-syncs.
+
+6. **Client data may be incomplete** — clients may lose data, re-sync partial histories, or submit overlapping batches. The pipeline must be additive: a re-sync with fewer records must not delete records already in the store.
+
+### Architectural Constraints
+
+These describe the system-level requirements the architecture must satisfy:
+
+7. **Multiple storage backends** — local disk is the default implementation. S3-compatible object storage is the long-term target. The architecture must support both through a common interface.
+
+8. **Concurrent writer safety** — with remote storage, multiple hosts may push to the same store simultaneously. The architecture needs a reusable mechanism to prevent concurrent edits from clobbering each other.
+
+9. **Two-stage pipeline is acceptable** — e.g. append-only batch ingestion followed by a merge/compaction stage, if it simplifies correctness and concurrency.
+
+10. **Incremental-first** — the pipeline runs frequently; a typical run should only process new data. Fast incremental is more important than fast full rebuild.
+
+11. **Full reindex must be supported** — equivalent of `--full`, re-parses raw files with the current parser. Since ETL output is derived (assumption 4), a full reindex may produce different records than the original parse. How this interacts with merge semantics needs more research.
+
+12. **Schema evolution without breaking merges** — new fields may be added over time. Since ETL output is a derived projection (assumption 4), schema changes are a re-derivation, not a mutation of immutable records. But the merge model must handle mixed-version records gracefully (see Schema Evolution section).
 
 ## Current State
 
