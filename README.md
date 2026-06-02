@@ -47,16 +47,18 @@ autoetl update    # re-runs install.sh to pull the latest release
 
 ## The Tools
 
+Roughly ordered by where each tool sits in the pipeline — raw inputs at the top, derived signals in the middle, orchestration and infra below.
+
 | Tool | Status | What it does |
 |------|--------|-------------|
 | **autoetl** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Extracts session logs from Claude Code, Codex, and other agents — plus git history — into partitioned Parquet datasets. |
-| **autosearch** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | SQLite FTS5 index over messages, sessions, and commits. Co-change queries, stats grouping, skill adoption tracking. |
-| **autograph** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | File-level import graphs for TypeScript and Go. Doc-to-code overlays via `[autodoc()]` tags. Context-pack builder with token budgets. |
 | **autodoc** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Documentation management with two-way freshness tracking, BM25 search, and `[autodoc()]` source-tag linking. |
-| **autoenv** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Template-based config generation with deterministic per-worktree port allocation. Stand up isolated dev envs for parallel agent branches. |
+| **autograph** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | File-level import graphs for TypeScript and Go. Doc-to-code overlays via `[autodoc()]` tags. Context-pack builder with token budgets. |
+| **autosearch** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | SQLite FTS5 index over messages, sessions, and commits. Co-change queries, stats grouping, skill adoption tracking. |
+| **autoreflect** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Capture session feedback, mine recurring patterns, and persist learned rules into project playbooks. |
 | **autoskill** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Author, lint, and sync reusable agent skills. Detects skill bloat and validates trigger conditions. |
 | **autowatch** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Cron-driven daemon that monitors repos and launches bash or Claude Code tasks on schedule or file events. |
-| **autoreflect** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Capture session feedback, mine recurring patterns, and persist learned rules into project playbooks. |
+| **autoenv** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Template-based config generation with deterministic per-worktree port allocation. Stand up isolated dev envs for parallel agent branches. |
 | **autoconfig** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Validate and bootstrap agent configuration. Installs `prepare-commit-msg` hooks that link commits to sessions. |
 | **autoeval** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Scenario-replay evaluation harness. Grade agents against ground truth and compare planning strategies. |
 | **autoweb** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Safe web-research portal with pluggable backends (Exa, Parallel, OpenAI), dedupe, and Markdown conversion. |
