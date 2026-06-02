@@ -233,17 +233,39 @@ A bulleted section grouped by domain (e.g. "Ingest & analytics",
 git-history mining agent's report. Each bullet is one sentence, name in
 bold.
 
-### Voice
+### Writing rules
 
-Write as if the features have always been there. Don't say "we recently
-added X" — just describe X. The git log carries the change history;
-the README carries the current state.
+These rules apply to every change you make in the README. They keep the
+prose feeling consistent and prevent the document from drifting into a
+changelog.
+
+- **Present tense, current state only.** Describe the system as it is —
+  as if it had always been this way. Never say "we added X", "X is now
+  Y", "new in v2", "now supports Z", or anything that implies a
+  before/after. The git log carries the change history; the README
+  carries the current state. This is the single most common drift
+  pattern and the easiest to catch yourself doing.
+- **Match the existing tone and style.** If the README uses terse bullet
+  points, keep that style. If it uses full paragraphs, match that. Don't
+  impose a new voice mid-document.
+- **Preserve existing structure where it works.** Add new sections or
+  entries in the logical place within the existing document. Don't
+  reorganise unless the current structure genuinely can't accommodate
+  the new content. Other docs and external sites may link to existing
+  heading anchors.
+- **Be specific.** Use actual command names, flag names, file paths, and
+  concrete examples — not vague descriptions ("supports several
+  options"). Specificity is what makes a README useful as a reference,
+  not just an introduction.
+- **Don't pad.** If a feature is simple, a one-liner is fine. Don't
+  inflate descriptions to seem thorough. Short and accurate beats long
+  and hedging.
 
 ### What to keep
 
-Keep the existing structure where it works. Sections worth preserving by
-default: Install, Quick Start, Data Architecture, Configuration,
-Development, License. Don't rewrite for the sake of it.
+Sections worth preserving by default: Install, Quick Start, Data
+Architecture, Configuration, Development, License. Don't rewrite for
+the sake of it.
 
 ## Phase 5 — Verify (non-negotiable)
 

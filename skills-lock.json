@@ -81,6 +81,11 @@
       "sourceType": "github",
       "computedHash": "cd4dcd087c2e0e60ab51eadd6b16bcd6133c846614dd84901062a6a2566f302b"
     },
+    "readme-updater": {
+      "source": "/home/vscode/src/auto-stack/skills",
+      "sourceType": "local",
+      "computedHash": "1d42777b2b1b82ca6057b680ebcb2457969286010b5da2c0b7b35ad0bc2f6b74"
+    },
     "recall": {
       "source": "/home/vscode/src/auto-stack/skills",
       "sourceType": "local",
@@ -115,11 +120,6 @@
       "source": "mistakenot/skills",
       "sourceType": "github",
       "computedHash": "aa5ba259210a4187ad3a9d98b4e5fdd05d66e5438e62f3a56cff416e0b490968"
-    },
-    "revise-readme": {
-      "source": "mistakenot/skills",
-      "sourceType": "github",
-      "computedHash": "97b62cc5c2315f671990b1e223741e8d0970315554cff3db0115827c89d852b4"
     },
     "self-improve": {
       "source": "/home/vscode/src/auto-stack/skills",
