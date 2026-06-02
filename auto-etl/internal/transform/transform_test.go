@@ -2,6 +2,7 @@ package transform
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -394,6 +395,81 @@ func TestTransformSession_ReadToolFileMetadata(t *testing.T) {
 	}
 	if !found {
 		t.Error("no Read tool message found")
+	}
+}
+
+// --- Task 012: toolUseResult envelope propagation ---
+
+// parseFixture loads the hand-authored AUQ envelope fixture via the real parser
+// so the transform test exercises the same path as production.
+func parseAUQEnvelopeFixture(t *testing.T) parser.ParsedSession {
+	t.Helper()
+	path := filepath.Join("..", "parser", "testdata", "auq_envelope.jsonl")
+	s, err := parser.ParseSession(path)
+	if err != nil {
+		t.Fatalf("ParseSession: %v", err)
+	}
+	if len(s.Lines) != 2 {
+		t.Fatalf("fixture Lines count = %d, want 2", len(s.Lines))
+	}
+	return *s
+}
+
+func TestTransform_ToolUseResultEnvelope(t *testing.T) {
+	raw := parseAUQEnvelopeFixture(t)
+	// The tool_result line (index 1) carries the raw envelope verbatim.
+	wantEnvelope := string(raw.Lines[1].ToolUseResult)
+	if wantEnvelope == "" {
+		t.Fatal("fixture tool_result line has empty ToolUseResult")
+	}
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	var sawTool, sawAssistant bool
+	for i := range msgs {
+		msg := msgs[i]
+		switch msg.Role {
+		case "tool":
+			sawTool = true
+			if msg.ToolUseResultJSON != wantEnvelope {
+				t.Errorf("tool row ToolUseResultJSON = %q, want byte-identical %q", msg.ToolUseResultJSON, wantEnvelope)
+			}
+		case "assistant":
+			sawAssistant = true
+			if msg.ToolUseResultJSON != "" {
+				t.Errorf("assistant row ToolUseResultJSON = %q, want empty", msg.ToolUseResultJSON)
+			}
+		}
+	}
+	if !sawTool {
+		t.Error("no role=tool message found in transformed output")
+	}
+	if !sawAssistant {
+		t.Error("no role=assistant message found in transformed output")
+	}
+}
+
+// TestTransform_AskUserQuestionContentTruncatedGolden is an AC-9 regression
+// guard: the markdown rendering of an AUQ tool_use row's content_truncated must
+// remain byte-identical to this pre-change snapshot. It proves the
+// toolUseResult envelope capture did not alter renderAskUserQuestion output.
+func TestTransform_AskUserQuestionContentTruncatedGolden(t *testing.T) {
+	raw := parseAUQEnvelopeFixture(t)
+	msgs, _ := transformSession(&raw, testConfig())
+
+	const golden = "## Question\n\n**Database**\n\nWhich database should we use?\n\nOptions:\n- **Postgres (Recommended)**: Relational, mature, good JSON support\n- **SQLite**: Embedded, zero-config\n"
+
+	var found bool
+	for i := range msgs {
+		if msgs[i].Role == "assistant" && msgs[i].ToolName == "AskUserQuestion" {
+			found = true
+			if msgs[i].ContentTruncated != golden {
+				t.Errorf("AUQ content_truncated drifted from golden snapshot.\n got: %q\nwant: %q", msgs[i].ContentTruncated, golden)
+			}
+		}
+	}
+	if !found {
+		t.Error("no AskUserQuestion tool_use message found")
 	}
 }
 

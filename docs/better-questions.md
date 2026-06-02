@@ -120,5 +120,5 @@ Found during this research — tracked in todo.md:
 
 - `search` needs a `--session` filter to scope queries to a single session
 - `search` needs `--min-index` / `--max-index` to isolate early messages without post-filtering
-- `--tool-name AskUserQuestion` doesn't surface Q&A pairs — tool name not indexed
+- ~~`--tool-name AskUserQuestion` doesn't surface Q&A pairs — tool name not indexed~~ **Resolved (task 012):** the verbatim `toolUseResult` envelope is now captured in the `tool_use_result_json` column on the `role=tool` row, so Q&A pairs (`$.answers`) and per-question notes (`$.annotations.<question>.notes`) are queryable via `json_extract`, and `autosearch message describe <id>` surfaces the parsed envelope per row. (Tool-name FTS indexing remains a separate gap.)
 - `--skill` filter doesn't match skills invoked via `<command-name>` tags (e.g. /new-task) — only ETL-tracked skills appear in the index

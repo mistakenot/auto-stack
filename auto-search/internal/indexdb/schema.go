@@ -10,7 +10,7 @@ import (
 )
 
 // SchemaVersion is bumped whenever the index layout changes, forcing a full rebuild.
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 // schemaSQL contains the DDL for all base tables, indexes, and FTS virtual tables.
 const schemaSQL = `
@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS messages (
   bash_command TEXT NOT NULL,
   bash_exit_code INTEGER NOT NULL,
   skill_name TEXT NOT NULL,
+  tool_use_result_json TEXT NOT NULL DEFAULT '',
   input_tokens INTEGER NOT NULL,
   cache_input_tokens INTEGER NOT NULL,
   output_tokens INTEGER NOT NULL,

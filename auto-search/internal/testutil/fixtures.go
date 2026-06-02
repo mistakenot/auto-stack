@@ -494,6 +494,178 @@ func GenerateDuplicateSessionFixtures(outputDir string) error {
 	return writeParquet(p, sessions)
 }
 
+// AUQEnvelopeJSON is the toolUseResult envelope written onto the AUQ
+// tool_result fixture row. It carries an answers map plus per-question
+// annotation notes, mirroring the live JSONL shape.
+const AUQEnvelopeJSON = `{"questions":[{"question":"Which database should we use?","options":[{"label":"Postgres (Recommended)"},{"label":"SQLite"}]}],"answers":{"Which database should we use?":"Postgres (Recommended)"},"annotations":{"Which database should we use?":{"notes":"prefer managed instance"}}}`
+
+// GenerateAUQFixtures writes a sessions + messages parquet pair containing two
+// AskUserQuestion messages: an assistant tool_use row (no envelope) and a tool
+// tool_result row carrying the toolUseResult envelope. Used to exercise the
+// tool_use_result_json round-trip through index → SQLite → message describe.
+func GenerateAUQFixtures(outputDir string) error {
+	sp := SessionsFixturePath(outputDir)
+	if err := os.MkdirAll(filepath.Dir(sp), 0o755); err != nil {
+		return err
+	}
+	sessions := []model.ParquetSessionRow{
+		{
+			ID:                  "auq-session-1",
+			HostID:              "test-host",
+			Agent:               "claude",
+			Workspace:           "/workspace/project-a",
+			GitRemote:           "git@github.com:test/repo",
+			Model:               "opus",
+			FirstMessageAt:      1711000000000,
+			LastMessageAt:       1711000200000,
+			TranscriptTruncated: "User asks a question via AskUserQuestion",
+			Year:                2026,
+			Month:               3,
+			SchemaVersion:       1,
+		},
+	}
+	if err := writeParquet(sp, sessions); err != nil {
+		return err
+	}
+
+	mp := MessagesFixturePath(outputDir)
+	if err := os.MkdirAll(filepath.Dir(mp), 0o755); err != nil {
+		return err
+	}
+	messages := []model.ParquetMessageRow{
+		{
+			ID:               "auq-msg-use",
+			SessionID:        "auq-session-1",
+			HostID:           "test-host",
+			Index:            0,
+			Role:             "assistant",
+			Content:          "AskUserQuestion: Which database should we use?",
+			ContentTruncated: "AskUserQuestion: Which database should we use?",
+			Timestamp:        1711000100000,
+			ToolName:         "AskUserQuestion",
+			ToolInput:        `{"questions":[{"question":"Which database should we use?","options":[{"label":"Postgres (Recommended)"},{"label":"SQLite"}]}]}`,
+			Workspace:        "/workspace/project-a",
+			GitRemote:        "git@github.com:test/repo",
+			Model:            "opus",
+			Year:             2026,
+			Week:             12,
+			Month:            3,
+			SchemaVersion:    3,
+		},
+		{
+			ID:                "auq-msg-result",
+			SessionID:         "auq-session-1",
+			HostID:            "test-host",
+			Index:             1,
+			Role:              "tool",
+			Content:           "Postgres (Recommended)",
+			ContentTruncated:  "Postgres (Recommended)",
+			Timestamp:         1711000200000,
+			ToolName:          "AskUserQuestion",
+			ToolUseResultJSON: AUQEnvelopeJSON,
+			Workspace:         "/workspace/project-a",
+			GitRemote:         "git@github.com:test/repo",
+			Model:             "opus",
+			Year:              2026,
+			Week:              12,
+			Month:             3,
+			SchemaVersion:     3,
+		},
+	}
+	return writeParquet(mp, messages)
+}
+
+// AUQAcceptancePair describes one AskUserQuestion call/result pair for the
+// recommended-acceptance fixture: the assistant tool_use row carries the
+// questions/options in toolInput, the tool tool_result row carries the
+// toolUseResult envelope (answers + optional annotations).
+type AUQAcceptancePair struct {
+	SessionID  string
+	ToolInput  string // questions/options array on the assistant tool_use row
+	ResultJSON string // toolUseResult envelope on the tool tool_result row
+}
+
+// GenerateAUQAcceptanceFixtures writes a sessions + messages parquet pair built
+// from the supplied AUQ pairs. Each pair produces two messages in its own
+// session: an assistant AskUserQuestion tool_use row (toolInput populated, no
+// envelope) at index 0 and a tool tool_result row (toolUseResult envelope
+// populated) at index 1. This drives the SQL recommended-acceptance test.
+func GenerateAUQAcceptanceFixtures(outputDir string, pairs []AUQAcceptancePair) error {
+	sp := SessionsFixturePath(outputDir)
+	if err := os.MkdirAll(filepath.Dir(sp), 0o755); err != nil {
+		return err
+	}
+	var sessions []model.ParquetSessionRow
+	var messages []model.ParquetMessageRow
+	ts := int64(1711000000000)
+	for _, p := range pairs {
+		sessions = append(sessions, model.ParquetSessionRow{
+			ID:                  p.SessionID,
+			HostID:              "test-host",
+			Agent:               "claude",
+			Workspace:           "/workspace/project-a",
+			GitRemote:           "git@github.com:test/repo",
+			Model:               "opus",
+			FirstMessageAt:      ts,
+			LastMessageAt:       ts + 100,
+			TranscriptTruncated: "AskUserQuestion call",
+			Year:                2026,
+			Month:               3,
+			SchemaVersion:       1,
+		})
+		messages = append(messages,
+			model.ParquetMessageRow{
+				ID:               p.SessionID + "-use",
+				SessionID:        p.SessionID,
+				HostID:           "test-host",
+				Index:            0,
+				Role:             "assistant",
+				Content:          "AskUserQuestion",
+				ContentTruncated: "AskUserQuestion",
+				Timestamp:        ts,
+				ToolName:         "AskUserQuestion",
+				ToolInput:        p.ToolInput,
+				Workspace:        "/workspace/project-a",
+				GitRemote:        "git@github.com:test/repo",
+				Model:            "opus",
+				Year:             2026,
+				Week:             12,
+				Month:            3,
+				SchemaVersion:    3,
+			},
+			model.ParquetMessageRow{
+				ID:                p.SessionID + "-result",
+				SessionID:         p.SessionID,
+				HostID:            "test-host",
+				Index:             1,
+				Role:              "tool",
+				Content:           "answer recorded",
+				ContentTruncated:  "answer recorded",
+				Timestamp:         ts + 100,
+				ToolName:          "AskUserQuestion",
+				ToolUseResultJSON: p.ResultJSON,
+				Workspace:         "/workspace/project-a",
+				GitRemote:         "git@github.com:test/repo",
+				Model:             "opus",
+				Year:              2026,
+				Week:              12,
+				Month:             3,
+				SchemaVersion:     3,
+			},
+		)
+		ts += 1000
+	}
+	if err := writeParquet(sp, sessions); err != nil {
+		return err
+	}
+
+	mp := MessagesFixturePath(outputDir)
+	if err := os.MkdirAll(filepath.Dir(mp), 0o755); err != nil {
+		return err
+	}
+	return writeParquet(mp, messages)
+}
+
 func writeParquet[T any](path string, rows []T) error {
 	f, err := os.Create(path)
 	if err != nil {

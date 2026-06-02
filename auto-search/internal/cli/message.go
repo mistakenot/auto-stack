@@ -99,30 +99,35 @@ func newMessageDescribeCmd() *cobra.Command {
 
 			elapsed := time.Since(start).Milliseconds()
 
+			msgMap := map[string]any{
+				"id":                    msg.MessageID,
+				"sessionId":             msg.SessionID,
+				"messageIndex":          msg.MessageIndex,
+				"messageType":           msg.Role,
+				"timestamp":             msg.Timestamp,
+				"workspace":             msg.Workspace,
+				"gitRemote":             msg.GitRemote,
+				"model":                 msg.Model,
+				"toolName":              msg.ToolName,
+				"toolFilePath":          msg.ToolFilePath,
+				"bashCommand":           msg.BashCommand,
+				"skillName":             msg.SkillName,
+				"preview":               preview,
+				"previousMessageId":     prev,
+				"nextMessageId":         next,
+				"sessionFirstMessageAt": sessionFirstAt,
+				"sessionLastMessageAt":  sessionLastAt,
+			}
+			if msg.ToolUseResultJSON != "" {
+				msgMap["toolUseResult"] = json.RawMessage(msg.ToolUseResultJSON)
+			}
+
 			out := map[string]any{
 				"_meta": map[string]any{
 					"request_id": requestID,
 					"elapsed_ms": elapsed,
 				},
-				"message": map[string]any{
-					"id":                    msg.MessageID,
-					"sessionId":             msg.SessionID,
-					"messageIndex":          msg.MessageIndex,
-					"messageType":           msg.Role,
-					"timestamp":             msg.Timestamp,
-					"workspace":             msg.Workspace,
-					"gitRemote":             msg.GitRemote,
-					"model":                 msg.Model,
-					"toolName":              msg.ToolName,
-					"toolFilePath":          msg.ToolFilePath,
-					"bashCommand":           msg.BashCommand,
-					"skillName":             msg.SkillName,
-					"preview":               preview,
-					"previousMessageId":     prev,
-					"nextMessageId":         next,
-					"sessionFirstMessageAt": sessionFirstAt,
-					"sessionLastMessageAt":  sessionLastAt,
-				},
+				"message": msgMap,
 			}
 
 			enc := json.NewEncoder(cmd.OutOrStdout())

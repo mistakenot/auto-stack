@@ -311,5 +311,6 @@ func insertMessageFromParquet(tx *sql.Tx, sourcePath string, r *model.ParquetMes
 		r.ParentSessionID,
 		r.IsSubagent,
 		int(r.SourceLineIndex), int(r.SchemaVersion),
+		r.ToolUseResultJSON,
 	)
 }

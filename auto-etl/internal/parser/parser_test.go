@@ -100,6 +100,28 @@ func TestParseSession_SourceLineIndex(t *testing.T) {
 	}
 }
 
+func TestParseSession_ToolUseResultEnvelope(t *testing.T) {
+	path := filepath.Join("testdata", "auq_envelope.jsonl")
+	s, err := ParseSession(path)
+	if err != nil {
+		t.Fatalf("ParseSession: %v", err)
+	}
+
+	if len(s.Lines) != 2 {
+		t.Fatalf("Lines count = %d, want 2", len(s.Lines))
+	}
+
+	// Line 0 is the assistant tool_use line — no toolUseResult envelope.
+	if len(s.Lines[0].ToolUseResult) != 0 {
+		t.Errorf("assistant line ToolUseResult = %q, want empty", string(s.Lines[0].ToolUseResult))
+	}
+
+	// Line 1 is the user tool_result line — carries the envelope.
+	if len(s.Lines[1].ToolUseResult) == 0 {
+		t.Error("tool_result line ToolUseResult is empty, want non-empty envelope")
+	}
+}
+
 func TestParseSession_ParentNotSubagent(t *testing.T) {
 	// Parent session file in the with-subagent dir should NOT be marked as subagent
 	path := filepath.Join("testdata", "with-subagent", "session.jsonl")

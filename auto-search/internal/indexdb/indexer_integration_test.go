@@ -2,6 +2,7 @@ package indexdb_test
 
 import (
 	"bytes"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,6 +66,76 @@ func TestFullBuildFromFixtures(t *testing.T) {
 	}
 	if indexState != 2 {
 		t.Errorf("index_state rows = %d, want 2", indexState)
+	}
+}
+
+func TestToolUseResultJSONColumnAndRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Build an index from a fixture carrying the toolUseResult envelope.
+	outputDir := filepath.Join(home, "etl-output")
+	if err := testutil.GenerateAUQFixtures(outputDir); err != nil {
+		t.Fatalf("GenerateAUQFixtures: %v", err)
+	}
+
+	dbPath := filepath.Join(home, "test.sqlite")
+	if _, err := indexdb.FullBuild(dbPath, outputDir, os.Stderr); err != nil {
+		t.Fatalf("FullBuild: %v", err)
+	}
+
+	db, err := indexdb.Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+
+	// The messages table must carry the tool_use_result_json column.
+	rows, err := db.Query("PRAGMA table_info('messages')")
+	if err != nil {
+		t.Fatalf("PRAGMA table_info: %v", err)
+	}
+	defer rows.Close()
+	var found bool
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			typ       string
+			notnull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dfltValue, &pk); err != nil {
+			t.Fatalf("scan table_info: %v", err)
+		}
+		if name == "tool_use_result_json" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("table_info rows: %v", err)
+	}
+	if !found {
+		t.Fatal("messages table is missing the tool_use_result_json column")
+	}
+
+	// The tool_result row round-trips the envelope verbatim.
+	msg, err := indexdb.GetMessageByID(db, "auq-msg-result")
+	if err != nil {
+		t.Fatalf("GetMessageByID(auq-msg-result): %v", err)
+	}
+	if msg.ToolUseResultJSON != testutil.AUQEnvelopeJSON {
+		t.Errorf("ToolUseResultJSON = %q, want %q", msg.ToolUseResultJSON, testutil.AUQEnvelopeJSON)
+	}
+
+	// The assistant tool_use row has no envelope.
+	useMsg, err := indexdb.GetMessageByID(db, "auq-msg-use")
+	if err != nil {
+		t.Fatalf("GetMessageByID(auq-msg-use): %v", err)
+	}
+	if useMsg.ToolUseResultJSON != "" {
+		t.Errorf("assistant tool_use ToolUseResultJSON = %q, want empty", useMsg.ToolUseResultJSON)
 	}
 }
 
