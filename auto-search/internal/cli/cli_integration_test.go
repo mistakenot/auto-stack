@@ -907,6 +907,10 @@ func TestSessionDescribeNewFields(t *testing.T) {
 		t.Fatalf("expected positive durationMs, got %v", session["durationMs"])
 	}
 
+	if _, ok := session["totalTurnDurationMs"].(float64); !ok {
+		t.Fatalf("expected totalTurnDurationMs field in session describe output, got %v", session["totalTurnDurationMs"])
+	}
+
 	userMsgs, ok := session["userMessages"].(float64)
 	if !ok {
 		t.Fatalf("expected userMessages field, got %v", session["userMessages"])

@@ -6,24 +6,9 @@ Discovered 2026-03-16 during E2E test development. The `genstats` tool was built
 
 **Status:** Fixed in `01bb8ad`. Subagent files now use `agentId` as session ID with `parent_session_id` FK linking back to the parent. See `docs/subagent-session-dedup.md` for design.
 
-## 2. System lines are processed but always empty
+## ~~2. System lines are processed but always empty~~ (FIXED)
 
-**Severity:** Low — no incorrect output, just wasted work.
-
-**Problem:** The transform filters on `line.Type == "user" || "assistant" || "system"` (`transform.go:58`), so 289 `system` lines enter the processing loop. But these lines are metadata (e.g. `subtype: "turn_duration"`) with no `message.role` and no `message.content`. They all hit the empty-content check and produce nothing.
-
-**Discovered by:** The `genstats` raw stats show `linesByType.system: 289` but `messagesByRole` has no `"system"` key — meaning none of these lines have a `message.role` field. Inspecting a sample system line confirmed it's structured like:
-
-```json
-{
-  "type": "system",
-  "subtype": "turn_duration",
-  "durationMs": 1066017,
-  "message": {}
-}
-```
-
-**Fix:** Remove `"system"` from the type filter in `transform.go:58`, or explicitly handle system metadata (e.g. extract `durationMs` into session stats).
+**Status:** Fixed by capturing `system / subtype=turn_duration` into `AgentSession.TotalTurnDurationMs`. Other system subtypes still produce no rows, which is correct — they're metadata, not transcript content.
 
 ## 3. 9 file tool uses with no extractable blob
 

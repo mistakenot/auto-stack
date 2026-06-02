@@ -22,6 +22,7 @@ type SessionRow struct {
 	SourcePath          string
 	FirstMessageAt      int64
 	LastMessageAt       int64
+	TotalTurnDurationMs int64
 	TotalInputTokens    int64
 	TotalOutputTokens   int64
 	TotalTokens         int64
@@ -239,7 +240,7 @@ func GetSessionByID(db *sql.DB, sessionID string) (*SessionRow, error) {
 	row := db.QueryRow(`
 		SELECT doc_id, partition_source_path, session_id, parent_session_id, host_id,
 			agent, subagent_name, is_subagent, workspace, git_remote, model, source_path,
-			first_message_at, last_message_at,
+			first_message_at, last_message_at, total_turn_duration_ms,
 			total_input_tokens, total_output_tokens, total_tokens,
 			total_bytes, total_output_bytes, total_input_bytes,
 			transcript_truncated, schema_version
@@ -252,7 +253,7 @@ func GetSessionByID(db *sql.DB, sessionID string) (*SessionRow, error) {
 	err := row.Scan(
 		&s.DocID, &s.PartitionSourcePath, &s.SessionID, &s.ParentSessionID, &s.HostID,
 		&s.Agent, &s.SubagentName, &isSubagentInt, &s.Workspace, &s.GitRemote, &s.Model, &s.SourcePath,
-		&s.FirstMessageAt, &s.LastMessageAt,
+		&s.FirstMessageAt, &s.LastMessageAt, &s.TotalTurnDurationMs,
 		&s.TotalInputTokens, &s.TotalOutputTokens, &s.TotalTokens,
 		&s.TotalBytes, &s.TotalOutputBytes, &s.TotalInputBytes,
 		&s.TranscriptTruncated, &s.SchemaVersion,

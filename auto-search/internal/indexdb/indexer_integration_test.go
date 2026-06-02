@@ -480,3 +480,47 @@ func TestDuplicateSessionSkipped(t *testing.T) {
 		t.Errorf("session rows = %d, want 2", sessions)
 	}
 }
+
+// TestInsertSessionTotalTurnDurationRoundtrip verifies that InsertSession
+// persists TotalTurnDurationMs and GetSessionByID reads it back. Catches a
+// regression where the column DDL is added but the INSERT or SELECT statement
+// forgets to include it.
+func TestInsertSessionTotalTurnDurationRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.sqlite")
+
+	db, err := indexdb.Create(dbPath)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer db.Close()
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("Begin: %v", err)
+	}
+	if err := indexdb.InsertSession(tx,
+		"/data/sessions/year=2026/month=04/part-0.parquet",
+		"sess-ttd", "", "host-x", "claude", "",
+		false,
+		"/work/proj", "git@example.com:proj.git", "claude-opus-4-7", "/src.jsonl",
+		1700000000000, 1700000100000, 73000,
+		10, 20, 30,
+		400, 200, 200,
+		"some transcript",
+		int(indexdb.SchemaVersion),
+	); err != nil {
+		t.Fatalf("InsertSession: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	sess, err := indexdb.GetSessionByID(db, "sess-ttd")
+	if err != nil {
+		t.Fatalf("GetSessionByID: %v", err)
+	}
+	if sess.TotalTurnDurationMs != 73000 {
+		t.Errorf("TotalTurnDurationMs = %d, want 73000", sess.TotalTurnDurationMs)
+	}
+}

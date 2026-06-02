@@ -137,3 +137,32 @@ func TestParseSession_ParentNotSubagent(t *testing.T) {
 		t.Errorf("ID = %q, want parent UUID", s.ID)
 	}
 }
+
+func TestParseSession_TurnDurationCaptured(t *testing.T) {
+	// Claude Code emits one `system / subtype=turn_duration` line at the end of
+	// every turn with a `durationMs` field. The parser must surface both
+	// `Subtype` and `DurationMs` on the corresponding ParsedLine so the
+	// transform stage can accumulate them into AgentSession.TotalTurnDurationMs.
+	path := filepath.Join("testdata", "turn-duration", "session.jsonl")
+	s, err := ParseSession(path)
+	if err != nil {
+		t.Fatalf("ParseSession: %v", err)
+	}
+
+	var got []ParsedLine
+	for _, l := range s.Lines {
+		if l.Type == "system" && l.Subtype == "turn_duration" {
+			got = append(got, l)
+		}
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("turn_duration lines = %d, want 2", len(got))
+	}
+	if got[0].DurationMs != 12345 {
+		t.Errorf("got[0].DurationMs = %d, want 12345", got[0].DurationMs)
+	}
+	if got[1].DurationMs != 58601 {
+		t.Errorf("got[1].DurationMs = %d, want 58601", got[1].DurationMs)
+	}
+}

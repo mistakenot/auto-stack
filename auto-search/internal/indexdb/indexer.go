@@ -287,7 +287,7 @@ func insertSessionFromParquet(tx *sql.Tx, sourcePath string, r *model.ParquetSes
 		r.ID, r.ParentSessionID, r.HostID, r.Agent, r.SubagentName,
 		r.IsSubagent,
 		r.Workspace, r.GitRemote, r.Model, r.SourcePath,
-		r.FirstMessageAt, r.LastMessageAt,
+		r.FirstMessageAt, r.LastMessageAt, r.TotalTurnDurationMs,
 		r.TotalInputTokens, r.TotalOutputTokens, r.TotalTokens,
 		r.TotalBytes, r.TotalOutputBytes, r.TotalInputBytes,
 		r.TranscriptTruncated,
