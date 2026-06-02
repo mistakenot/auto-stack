@@ -12,7 +12,9 @@ import (
 
 func newCoChangeCmd() *cobra.Command {
 	var repoID string
-	var limit int
+	var budget int
+	var all bool
+	var emitJSON bool
 	var decayTau string
 	var noDecay bool
 	var input string
@@ -50,7 +52,6 @@ func newCoChangeCmd() *cobra.Command {
 				InputPath:      inputPath,
 				RepoIDOverride: repoID,
 				InputRoot:      inputRoot,
-				Limit:          limit,
 				TauDays:        tauDays,
 				NoDecay:        noDecay,
 				RequestID:      requestID,
@@ -63,14 +64,22 @@ func newCoChangeCmd() *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 
-			enc := json.NewEncoder(cmd.OutOrStdout())
-			enc.SetIndent("", "  ")
-			return enc.Encode(result)
+			if emitJSON {
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(result)
+			}
+
+			out := cochange.Render(result, cochange.RenderOptions{Budget: budget, All: all})
+			fmt.Fprint(cmd.OutOrStdout(), out)
+			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&repoID, "repo-id", "", "explicit repo id (bypasses origin-remote matching)")
-	cmd.Flags().IntVar(&limit, "limit", 50, "max related files to return (0 = no cap)")
+	cmd.Flags().IntVar(&budget, "budget", 500, "approximate token budget for text output (0 = use default)")
+	cmd.Flags().BoolVar(&all, "all", false, "emit every row, bypassing --budget")
+	cmd.Flags().BoolVar(&emitJSON, "json", false, "emit the full JSON envelope instead of compact text")
 	cmd.Flags().StringVar(&decayTau, "decay-tau", "90d", "time-decay constant (units m|h|d|w, e.g. 30d, 26w)")
 	cmd.Flags().BoolVar(&noDecay, "no-decay", false, "disable time decay")
 	cmd.Flags().StringVar(&input, "input", "", "etl output root (default: ~/.auto/etl/output)")

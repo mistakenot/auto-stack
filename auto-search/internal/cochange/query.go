@@ -3,13 +3,7 @@ package cochange
 import (
 	"database/sql"
 	"fmt"
-	"strconv"
 )
-
-// LargeCommitCutoff is the files_changed threshold above which a commit is
-// dropped entirely before aggregation (AC-3b). It lives here because the
-// aggregation passes apply it; Phase 4 surfaces it in params_used.
-const LargeCommitCutoff = 50
 
 // AggregateResult is the full output of one co-change aggregation over the
 // loaded repo for a single input file A. All weighted quantities (Wa, Wn, and
@@ -78,9 +72,10 @@ func Aggregate(db *DB, inputPath string) (*AggregateResult, error) {
 
 	res := &AggregateResult{CanonicalA: canonA}
 
-	// Wn must honour the AC-3b large-commit drop, like every other pass; reading
-	// c unfiltered would leak oversized commits' weight into Wn and inflate lift.
-	if err := sdb.QueryRow(`SELECT COALESCE(SUM(weight), 0) FROM c WHERE files_changed <= ` + cutoffStr).Scan(&res.Wn); err != nil {
+	// Wn sums weight over every loaded commit. Large commits are no longer
+	// dropped; their inverse-fan-out weight (applied at load time) already damps
+	// their contribution continuously.
+	if err := sdb.QueryRow(`SELECT COALESCE(SUM(weight), 0) FROM c`).Scan(&res.Wn); err != nil {
 		return nil, fmt.Errorf("compute Wn: %w", err)
 	}
 
@@ -142,7 +137,6 @@ rename_edge AS (
 	FROM cf JOIN c ON c.commit_id = cf.commit_id
 	WHERE cf.change_type = 'R'
 	  AND cf.old_path <> '' AND cf.file_path <> '' AND cf.old_path <> cf.file_path
-	  AND c.files_changed <= ` + cutoffStr + `
 ),
 -- latest forward edge per source path
 edge AS (
@@ -171,20 +165,6 @@ path_canon AS (
 )
 `
 
-// cutoffStr is the large-commit cutoff inlined into static SQL. It is a
-// compile-time constant integer, never user input, so inlining is safe.
-const cutoffStr = "50"
-
-func init() {
-	if cutoffStr != itoa(LargeCommitCutoff) {
-		panic("cutoffStr out of sync with LargeCommitCutoff")
-	}
-}
-
-func itoa(n int) string {
-	return strconv.Itoa(n)
-}
-
 // canonicalPath resolves inputPath to its canonical (latest) path. If the path
 // never appears in history (neither as file_path nor old_path), it returns "".
 func canonicalPath(sdb *sql.DB, inputPath string) (string, error) {
@@ -202,7 +182,8 @@ SELECT canonical_path FROM path_canon WHERE observed_path = ? LIMIT 1`
 }
 
 // cfCanonCTE is appended after pathCanonCTE to expose `cfc`: each cf row with its
-// canonical path and its commit weight, restricted to non-large commits.
+// canonical path and its commit weight. Large commits are not filtered out;
+// inverse-fan-out weighting (applied at load time) damps their contribution.
 const cfCanonCTE = `,
 cfc AS (
 	SELECT cf.commit_id AS commit_id,
@@ -212,7 +193,6 @@ cfc AS (
 	FROM cf
 	JOIN path_canon pc ON pc.observed_path = cf.file_path
 	JOIN c ON c.commit_id = cf.commit_id
-	WHERE c.files_changed <= ` + cutoffStr + `
 )
 `
 
@@ -468,7 +448,6 @@ JOIN path_canon pc ON pc.observed_path = cf.file_path
 WHERE cf.change_type = 'R'
   AND cf.old_path <> '' AND cf.old_path <> cf.file_path
   AND pc.canonical_path = ?
-  AND c.files_changed <= ` + cutoffStr + `
 ORDER BY c.author_date DESC`
 	rows, err := sdb.Query(q, canonA)
 	if err != nil {

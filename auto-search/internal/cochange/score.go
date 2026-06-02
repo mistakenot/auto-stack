@@ -40,6 +40,11 @@ func safeDiv(num, den float64) float64 {
 //	confidence_b_to_a = Wab / Wb
 //	lift              = (Wab * Wn) / (Wa * Wb)
 //	score             = confidence_a_to_b * log1p(lift)
+//
+// Large commits are no longer dropped by a binary cutoff. They are damped
+// continuously by the inverse-fan-out weight applied at load time
+// (filesWeight = 1 / log1p(max(1, files_changed))), so a coupling observed in a
+// big commit still contributes a small, non-zero amount rather than vanishing.
 func scoreCandidate(c *Candidate, wa, wn float64) ScoredCandidate {
 	confAtoB := safeDiv(c.Wab, wa)
 	confBtoA := safeDiv(c.Wab, c.Wb)

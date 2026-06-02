@@ -19,8 +19,6 @@ type Options struct {
 	// InputRoot is the etl output root containing the git datasets
 	// (default config.DefaultInputPath()).
 	InputRoot string
-	// Limit caps related files (default 50; 0 = no cap). Negative is treated as 0.
-	Limit int
 	// TauDays is the time-decay constant in days (default 90).
 	TauDays float64
 	// NoDecay disables time decay.
@@ -45,8 +43,6 @@ func Run(opts *Options) (*Result, error) {
 	if tau <= 0 {
 		tau = 90
 	}
-	limit := opts.Limit
-	limit = max(limit, 0)
 
 	// 1. Resolve repo. git_repositories is needed for origin-remote matching.
 	repoSources, err := etlscan.DiscoverDatasets(opts.InputRoot, []string{"git_repositories"})
@@ -85,11 +81,9 @@ func Run(opts *Options) (*Result, error) {
 	}
 
 	params := ParamsUsed{
-		DecayTauDays:      tau,
-		LargeCommitCutoff: LargeCommitCutoff,
-		MinCoCommits:      MinCoCommits,
-		MinCommitsA:       MinCommitsA,
-		Limit:             limit,
+		DecayTauDays: tau,
+		MinCoCommits: MinCoCommits,
+		MinCommitsA:  MinCommitsA,
 	}
 
 	meta := Meta{
@@ -151,9 +145,10 @@ func Run(opts *Options) (*Result, error) {
 		return &Result{Meta: meta, Metadata: metadata, RelatedFiles: []RelatedFile{}}, nil
 	}
 
-	// 4. Score, filter, sort, limit, then fetch per-candidate detail for only the
-	// surviving top-N (the detail queries are the hot path on large repos).
-	scored := ScoreAndRank(agg, limit)
+	// 4. Score, filter, sort, then fetch per-candidate detail for every survivor
+	// (the detail queries are the hot path on large repos). Text-mode budget
+	// truncation happens at render time; the engine no longer caps the row count.
+	scored := ScoreAndRank(agg, 0)
 	if err := FillCandidateDetails(db, agg.CanonicalA, scored); err != nil {
 		return nil, err
 	}
