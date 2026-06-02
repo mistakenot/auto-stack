@@ -15,16 +15,9 @@ flowchart LR
     Reflect --> Skill[autoskill<br/>compile skills]
     Skill -.->|skills feed back<br/>into agents| Agents
 
-    subgraph adjacent [Adjacent tools]
-        Watch[autowatch<br/>schedules the pipeline]
-        Doc[autodoc<br/>keeps docs synced to code]
-    end
-
     classDef active fill:#1f6feb,stroke:#1f6feb,color:#fff;
-    classDef aux fill:#373e47,stroke:#444c56,color:#c9d1d9;
     classDef io fill:#21262d,stroke:#30363d,color:#c9d1d9;
     class ETL,Search,Graph,Reflect,Skill active;
-    class Watch,Doc aux;
     class Agents,Git io;
 ```
 
