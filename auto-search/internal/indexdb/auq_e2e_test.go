@@ -70,6 +70,13 @@ func auqPairs() []testutil.AUQAcceptancePair {
 // session_id, derives the recommended label by enumerating the option labels in
 // tool_input with json_each and matching the " (Recommended)" suffix, and
 // compares that label against the answer extracted from the envelope.
+//
+// NOTE: the question text is concatenated into the JSON path string
+// ('$.answers."' || ? || '"'). This is safe here only because the test's
+// question constants contain no double-quote or backslash characters. Do NOT
+// copy this pattern into a production query without escaping the key — a real
+// question containing " or \ would corrupt the path. Prefer escaping the bound
+// value before interpolation.
 const recommendedAcceptanceSQL = `
 WITH calls AS (
   SELECT
