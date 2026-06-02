@@ -1,7 +1,9 @@
 ---
-title: "ETL Pipeline Integrity and Merge Architecture"
-summary: "Research on CRDT-based merge models, event-sourced pipelines, concurrent writer safety, schema evolution, and property-based testing for the autoetl output store"
+hash: ""
+id: "d3f66cde"
 read_when: "designing ETL merge semantics, hardening the pipeline, or planning S3 backend support"
+summary: "Research on CRDT-based merge models, event-sourced pipelines, concurrent writer safety, schema evolution, and property-based testing for the autoetl output store"
+title: "ETL Pipeline Integrity and Merge Architecture"
 ---
 
 # Research: ETL Pipeline Integrity and Merge Architecture
@@ -272,6 +274,104 @@ The CRDT properties are algebraic and can be verified with property-based tests 
 2. **Serialization round-trip** — write to parquet, read back, merge, verify properties hold through serialization. Catches encoding bugs.
 3. **Concurrent stress tests** — N goroutines writing batches through the real writer path, assert convergence on final state.
 4. **Fault injection** — wrap StorageBackend with a decorator that simulates failures (crash mid-write, partial upload, corrupt read). Verify recovery.
+
+## Ideas Backlog
+
+A collection of theoretical foundations, architectural patterns, and concrete ideas gathered from research. Not all of these will be implemented — this is the long list to draw from.
+
+### Theoretical Foundations
+
+**Semilattices / CRDTs** `[✅ Worth exploring]`
+Merge operations should be associative, commutative, and idempotent. This makes retry, overlap, reordering, and partial sync safe by construction. Messages as G-Sets and sessions as LWW-Registers are the starting point, but the semilattice framing is more general — any merge function that forms a join-semilattice gives you convergence for free.
+
+**CALM Theorem (Consistency As Logical Monotonicity)** `[✅ Worth exploring]`
+Monotonic operations (adding records, growing sets) can be eventually consistent without coordination. Non-monotonic operations (deletion, compaction, "absence means delete") require coordination. This gives a formal lens for which parts of the pipeline can run freely across hosts and which need locking or sequencing. Implication: ingestion should be purely monotonic; deletion and compaction are the coordination boundaries.
+
+**Incremental View Maintenance** `[❌ Skip]`
+The ETL output is a materialized view over raw data. Frequent runs are delta updates; full reindex is view recomputation under a new transformation version. Database literature on IVM (incremental view maintenance) has formal models for when deltas are sufficient vs. when full recomputation is needed — relevant for deciding when `--full` is necessary vs. when incremental is provably equivalent.
+
+**LSM-Tree Model** `[❌ Skip]`
+Immutable segments, tombstones, and background compaction. This is structurally identical to append-only batch ingestion plus parquet compaction. LSM literature covers write amplification, space amplification, compaction scheduling, and tombstone TTL — all directly applicable.
+
+**Provenance Semirings** `[❌ Skip]`
+Every derived row should be explainable as a function of (raw inputs, parser version, schema version, deletion state). Provenance semirings from database theory formalize this: each output tuple carries an algebraic expression over its input tuples. Practical benefit: if a downstream anomaly is detected, you can trace exactly which raw files and which parser version produced it.
+
+**MVCC / Snapshot Isolation** `[✅ Worth exploring]`
+Readers need coherent snapshots, not half-written parquet states. Writers create new table versions while readers see stable old ones. This is exactly how Delta Lake, Iceberg, and Hudi work — manifest-based snapshots where each write produces a new manifest version. Readers pin to a manifest and see a consistent view.
+
+### Architectural Patterns
+
+**Delta Lake / Iceberg / Hudi Table Format** `[✅ Worth exploring]`
+These are direct prior art for exactly this problem: manifest-based snapshots over immutable parquet files, optimistic concurrency on the manifest, schema evolution built in, time travel, and delete support via deletion vectors or rewrite. We could adopt the pattern without the full framework — a JSON manifest listing parquet files per partition, with atomic swap on write.
+
+**Event Sourcing + Compaction (Two-Stage Pipeline)** `[✅ Worth exploring]`
+Stage 1: append immutable batch files (events). Stage 2: compact batches into materialized parquet partitions. Writers never modify existing files — eliminates concurrent write conflicts on storage. S3-friendly (each batch is a new key). `--full` becomes "re-compact from all batches." The batch files serve as audit log and backup simultaneously.
+
+**Content-Addressed Storage (Git Model)** `[❌ Skip]`
+Immutable objects addressed by content hash, mutable refs pointing to the latest version. Each ETL run produces new objects; a manifest ref is atomically updated to point to the new set. Old objects are retained for history/recovery. Natural dedup — identical content stored once regardless of how many times it's ingested.
+
+**Datomic-Style Immutable Facts** `[❌ Skip]`
+Every fact is a (entity, attribute, value, transaction, added?) tuple. Nothing is ever overwritten; retractions are new facts with `added?=false`. Time-aware: you can query the database "as of" any transaction. Maps well to the two-layer model — raw facts are immutable, ETL derivations are new facts attributed to a parser/schema transaction.
+
+**Write-Ahead Log (WAL)** `[❌ Skip]`
+Before modifying a partition: write intent to a WAL. Perform the merge. Mark WAL entry as committed. On crash recovery, replay uncommitted entries. Classic database pattern (Postgres, SQLite). Adds crash recovery without requiring the full event-sourcing model.
+
+### Critical Invariants to Enforce
+
+**Determinism**: same raw inputs + same parser/schema version = same ETL records. This makes reindexing safe and reproducible.
+
+**Confluence**: merge order does not affect final state. Proven by CRDT properties (commutativity + associativity).
+
+**Idempotence**: replaying the same batch has no effect beyond the first application. Proven by CRDT idempotency property.
+
+**Tombstone Dominance**: deletion facts must beat later re-syncs or reparses. A deleted message must stay deleted even if a client re-submits it. This means the delete-set must be checked during merge, not just during reads.
+
+**Open-World Sync**: missing client records mean "unknown", not "deleted". A client syncing 800 of 1000 messages doesn't imply the other 200 should be removed. The pipeline has no "delete by absence" semantics.
+
+**Snapshot Atomicity**: readers observe one complete ETL version, never a partially-written state. Achievable via manifest-based versioning or atomic directory swaps.
+
+**Lineage**: each derived entity is traceable to raw source evidence and transformation version. Enables debugging, auditing, and answering "why does this record look like this?"
+
+### Concrete Ideas
+
+**Manifest-based partition versioning** `[✅ Worth exploring]`
+Each partition directory contains a `manifest.json` listing: parquet file hash, row count, record IDs, schema version, writer host, write timestamp. Writes produce a new manifest atomically. Readers pin to a manifest. Cheap to implement, enables integrity checking and snapshot isolation.
+
+**StorageBackend interface with conditional writes** `[✅ Worth exploring]`
+Abstract `Read/Write/List/Delete/AtomicWrite`. Local disk uses temp+rename. S3 uses conditional PutObject (`If-Match` on ETag). Merge logic is backend-agnostic. Concurrency strategy is part of the backend contract.
+
+**Per-message content hash** `[✅ Worth exploring]`
+SHA-256 of raw message content, stored as a field on the ETL record. Enables: detecting re-submitted content that differs from what's stored, verifying round-trip integrity, dedup across hosts that may generate different IDs for the same content.
+
+**Schema version on every record** `[✅ Worth exploring]`
+Each ETL record carries `schema_version` (or `parser_version`). Merge rule: higher schema version wins on ID collision. Makes reindex and backfill safe — newer derivations naturally supersede older ones without violating CRDT properties.
+
+**Batch ingestion log** `[✅ Worth exploring]`
+Every `autoetl run` writes a batch metadata record: timestamp, host ID, raw files processed, records produced, schema version. Enables auditing ("when was this partition last updated?"), debugging ("which run introduced this record?"), and coordinating compaction.
+
+**Merkle tree over partition store** `[❌ Skip]`
+Hash tree over all partitions. Quick integrity check: compare root hashes between hosts or between local and S3. Detect drift, corruption, or partial sync failures without reading every file.
+
+**TLA+ / Alloy specification** `[❌ Skip]`
+Model the merge protocol, deletion propagation, and concurrent writer behavior in a formal specification language. Prove no lost updates, no deletion resurrection, snapshot atomicity, and convergence. High effort but high confidence — especially valuable before implementing the S3 concurrent writer path.
+
+**Quint formal specification** `[✅ Worth exploring]`
+Use [Quint](https://github.com/informalsystems/quint) — a modern, TypeScript-like specification language that compiles to TLA+ — to model the merge protocol, concurrent writers, and deletion propagation. Covers the same ground as TLA+/Alloy but with a much friendlier syntax and faster feedback loop (REPL, simulation, property-based testing built in). Good learning opportunity for formal methods without the steep TLA+ learning curve.
+
+**Compaction as a separate command** `[✅ Worth exploring]`
+`autoetl compact` materializes the merged view from batch files. Can be run independently of ingestion. Supports `--partition` for targeted recompaction. `--full` becomes `autoetl run --reparse && autoetl compact --all`.
+
+**Deletion ledger** `[❌ Skip]`
+Separate append-only file recording deletion requests: (entity ID, deletion timestamp, reason). Checked during every merge and compaction. Never deleted itself (legal audit trail). Prevents deletion resurrection by re-sync.
+
+### Systems to Study
+
+- **Delta Lake / Iceberg / Hudi** — table snapshots, manifests, optimistic concurrency, schema evolution, deletes
+- **Kafka / Flink** — event time, watermarks, replay, exactly-once effects via idempotent operations
+- **RocksDB / Cassandra** — LSM compaction, immutable files, tombstones, compaction scheduling
+- **Lucene** — immutable search segments, delete bitsets, segment merging
+- **Git** — content-addressed immutable objects, mutable refs, garbage collection
+- **Datomic** — immutable facts, time-aware database values, derived views, excision for GDPR
 
 ## Open Research Questions
 
