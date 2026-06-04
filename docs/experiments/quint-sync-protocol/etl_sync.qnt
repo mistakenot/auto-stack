@@ -29,9 +29,13 @@ module etl_merge {
   }
 
   pure def mergeMessages(a: Set[MessageRecord], b: Set[MessageRecord]): Set[MessageRecord] = {
-    val onlyA = a.filter(ma => b.forall(mb => mb.id != ma.id))
-    val onlyB = b.filter(mb => a.forall(ma => ma.id != mb.id))
-    val both = a.filter(ma => b.exists(mb => mb.id == ma.id))
+    val aIds = a.map(m => m.id)
+    val bIds = b.map(m => m.id)
+    val onlyA = a.filter(ma => not(ma.id.in(bIds)))
+    val onlyB = b.filter(mb => not(mb.id.in(aIds)))
+    // Precondition: valid stores have at most 1 record per ID,
+    // so the filtered set is always size 1 and fold is deterministic.
+    val both = a.filter(ma => ma.id.in(bIds))
               .map(ma => {
                 val mb = b.filter(mb => mb.id == ma.id).fold(ma, (_, x) => x)
                 resolveMessage(ma, mb)
@@ -51,9 +55,12 @@ module etl_merge {
   }
 
   pure def mergeSessions(a: Set[SessionRecord], b: Set[SessionRecord]): Set[SessionRecord] = {
-    val onlyA = a.filter(sa => b.forall(sb => sb.id != sa.id))
-    val onlyB = b.filter(sb => a.forall(sa => sa.id != sb.id))
-    val both = a.filter(sa => b.exists(sb => sb.id == sa.id))
+    val aIds = a.map(s => s.id)
+    val bIds = b.map(s => s.id)
+    val onlyA = a.filter(sa => not(sa.id.in(bIds)))
+    val onlyB = b.filter(sb => not(sb.id.in(aIds)))
+    // Precondition: valid stores have at most 1 record per ID.
+    val both = a.filter(sa => sa.id.in(bIds))
               .map(sa => {
                 val sb = b.filter(sb => sb.id == sa.id).fold(sa, (_, x) => x)
                 resolveSession(sa, sb)
@@ -153,7 +160,7 @@ module etl_merge_test {
 
   // Valid message stores: subsets where each ID appears at most once
   pure def validMsgStore(s: Set[MessageRecord]): bool = {
-    s.forall(m1 => s.forall(m2 => (m1.id == m2.id) implies (m1 == m2)))
+    s.map(m => m.id).size() == s.size()
   }
 
   pure val VALID_MSG_STORES: Set[Set[MessageRecord]] =
@@ -172,7 +179,7 @@ module etl_merge_test {
     ).flatten()
 
   pure def validSessStore(s: Set[SessionRecord]): bool = {
-    s.forall(s1 => s.forall(s2 => (s1.id == s2.id) implies (s1 == s2)))
+    s.map(r => r.id).size() == s.size()
   }
 
   pure val VALID_SESS_STORES: Set[Set[SessionRecord]] =
@@ -284,6 +291,113 @@ module etl_merge_test {
     sessIdemp,
     sessMono,
     convergence,
+  }
+}
+
+// ============================================================
+// Verification module: self-contained for Apalache model checking
+// ============================================================
+//
+// Inlines merge logic to avoid the Quint→Apalache false cyclic dependency
+// bug that occurs when invariants and imported pure functions share operators.
+//
+// State space: 1 ID × 2 versions × 2 delete states = 4 records.
+// Valid stores: empty or 1 record = 5 options. Two stores = 25 pairs.
+//
+// Run: quint verify --main etl_merge_verify --invariant allVerifyProperties \
+//        --max-steps 3 etl_sync.qnt
+
+module etl_merge_verify {
+  type Msg = {
+    id: str,
+    content: str,
+    schema_version: int,
+    deleted_at: int,
+  }
+
+  pure def resolve(left: Msg, right: Msg): Msg = {
+    val winner = if (right.schema_version > left.schema_version) right else left
+    val ts = if (left.deleted_at > right.deleted_at) left.deleted_at else right.deleted_at
+    { ...winner, deleted_at: ts }
+  }
+
+  pure def merge(a: Set[Msg], b: Set[Msg]): Set[Msg] = {
+    val aIds = a.map(m => m.id)
+    val bIds = b.map(m => m.id)
+    val onlyA = a.filter(ma => not(ma.id.in(bIds)))
+    val onlyB = b.filter(mb => not(mb.id.in(aIds)))
+    val both = a.filter(ma => ma.id.in(bIds))
+              .map(ma => {
+                val mb = b.filter(mb => mb.id == ma.id).fold(ma, (_, x) => x)
+                resolve(ma, mb)
+              })
+    onlyA.union(onlyB).union(both)
+  }
+
+  pure val ALL_RECORDS: Set[Msg] = Set(
+    { id: "m1", content: "x", schema_version: 1, deleted_at: 0 },
+    { id: "m1", content: "x", schema_version: 1, deleted_at: 100 },
+    { id: "m1", content: "x", schema_version: 2, deleted_at: 0 },
+    { id: "m1", content: "x", schema_version: 2, deleted_at: 100 }
+  )
+
+  pure val VALID_STORES: Set[Set[Msg]] =
+    Set(Set()).union(ALL_RECORDS.map(r => Set(r)))
+
+  var storeA: Set[Msg]
+  var storeB: Set[Msg]
+
+  action init = {
+    nondet a = VALID_STORES.oneOf()
+    nondet b = VALID_STORES.oneOf()
+    all { storeA' = a, storeB' = b }
+  }
+
+  action step = {
+    nondet a = VALID_STORES.oneOf()
+    nondet b = VALID_STORES.oneOf()
+    all { storeA' = a, storeB' = b }
+  }
+
+  val commutativity = merge(storeA, storeB) == merge(storeB, storeA)
+
+  val idempotency = merge(storeA, storeA) == storeA and
+                    merge(storeB, storeB) == storeB
+
+  val monotonicity = {
+    val merged = merge(storeA, storeB)
+    val mergedIds = merged.map(m => m.id)
+    storeA.map(m => m.id).subseteq(mergedIds) and
+    storeB.map(m => m.id).subseteq(mergedIds)
+  }
+
+  val tombstone = {
+    val merged = merge(storeA, storeB)
+    val tombstonedIds = storeA.filter(m => m.deleted_at > 0).map(m => m.id)
+                        .union(storeB.filter(m => m.deleted_at > 0).map(m => m.id))
+    tombstonedIds.forall(tid =>
+      merged.filter(m => m.id == tid).forall(m => m.deleted_at > 0)
+    )
+  }
+
+  val schema = {
+    val merged = merge(storeA, storeB)
+    storeA.forall(ma =>
+      storeB.filter(mb => mb.id == ma.id).forall(mb => {
+        merged.filter(m => m.id == ma.id).forall(m =>
+          m.schema_version >= ma.schema_version and
+          m.schema_version >= mb.schema_version
+        )
+      })
+    )
+  }
+
+  val allVerifyProperties = and {
+    commutativity,
+    idempotency,
+    monotonicity,
+    tombstone,
+    schema,
   }
 }
 
@@ -447,12 +561,7 @@ module partial_sync {
 // ============================================================
 
 module buggy_merge {
-  type MessageRecord = {
-    id: str,
-    content: str,
-    schema_version: int,
-    deleted_at: int,
-  }
+  import etl_merge.MessageRecord
 
   // BUG: does NOT propagate tombstones — just picks winner by schema version
   pure def buggyResolve(left: MessageRecord, right: MessageRecord): MessageRecord = {
@@ -460,9 +569,11 @@ module buggy_merge {
   }
 
   pure def buggyMerge(a: Set[MessageRecord], b: Set[MessageRecord]): Set[MessageRecord] = {
-    val onlyA = a.filter(ma => b.forall(mb => mb.id != ma.id))
-    val onlyB = b.filter(mb => a.forall(ma => ma.id != mb.id))
-    val both = a.filter(ma => b.exists(mb => mb.id == ma.id))
+    val aIds = a.map(m => m.id)
+    val bIds = b.map(m => m.id)
+    val onlyA = a.filter(ma => not(ma.id.in(bIds)))
+    val onlyB = b.filter(mb => not(mb.id.in(aIds)))
+    val both = a.filter(ma => ma.id.in(bIds))
               .map(ma => {
                 val mb = b.filter(mb => mb.id == ma.id).fold(ma, (_, x) => x)
                 buggyResolve(ma, mb)
