@@ -15,6 +15,8 @@ Long-lived writeups for research-style experiments run against auto-stack. Code,
 
 - **[2026-05-28 — Co-change query latency](2026-05-28-cochange-query-latency/phase1-engine-latency.md)**: Tested Task 010's in-memory-SQLite-over-parquet engine for `autosearch co-change`. A query in this repo takes ~348 ms end-to-end, but ~97% is the parquet read — the engine is only ~10 ms. Column projection works (reads 1.35% of the 445 MB). modernc-SQLite beats duckdb 6.4× at this repo's scale but *loses* 3.1× at 33× scale (opencode) due to its row-insert tax; they cross around ~130k commit_files. Verdict: ship v1 as designed (pure-Go, per-query, no duckdb); the cheapest scaling fix is a pure-Go map group-by, not duckdb.
 
+- **[Quint Sync Protocol](quint-sync-protocol/)**: Formal verification of ETL CRDT merge semantics using the Quint specification language. Phase 1 (tech spike) validated Quint as viable for modeling merge operations — all CRDT properties pass simulation, tombstone resurrection caught in ~60ms. Phase 2 (model-based testing) replayed Quint-generated ITF traces against Go merge functions — a spec-aligned merge matches Quint perfectly (0 divergences / 5200 steps), while the production-style naive "incoming wins" merge diverges on 100% of traces (3889 divergences across tombstone, schema_version, and LWW gaps). Experiment artifact only — no merge code is in the live tree.
+
 - **[Structured Compiler](structured-compiler/)**: (separate experiment, see folder)
 
 ## See also
