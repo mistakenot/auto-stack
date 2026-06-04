@@ -4,6 +4,7 @@
 
 - [ ] autoetl: add `quickstart` command
 - [ ] fix: warning: `~/.auto/host.json` not found, using hostname:
+- [ ] ensure sessions/messages include `model_id`
 - [ ] etl should import GitHub PR feedback (comments, reviews) as an additional data source — contains valuable signal (code review insights, design decisions, bug context). Spec: `auto-etl/docs/github-pr-etl.md`
 - [ ] auto-doc: support filtering by `tags: []` front matter value (e.g. `tags: [needs-review]`), so autowatch cron triggers can pick up on tagged docs
 - [ ] auto-doc: fix source tag scanning to skip directories (crashes on `.claude/skills/open-prose` directory). The `ignores` config only applies to doc scanning, not source tag scanning.
@@ -57,6 +58,8 @@
 - [ ] exclude .claude folder by default
 
 ## auto-search
+
+- [ ] `truncateStr` in `auto-search/internal/cli/session.go` slices by bytes, not runes — same UTF-8 bug as the `search.TruncateAtRune` fix in PR #47 (`messages.go` / `cli/search.go` snippets). Fires at the 80-char tool-arg preview when args contain emoji, accented chars, or unicode in commands/paths. Route through `search.TruncateAtRune` (or duplicate the `utf8.RuneStart` advance loop) so tool tags in `session get` output stay valid UTF-8.
 
 **Git related apis - low level primitives**
 

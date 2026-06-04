@@ -9,3 +9,8 @@ testdata
 !testdata/fixtures/**
 !testdata/etl-output/
 !testdata/etl-output/**
+
+# Guard against the doubled-path artifact a generator/test writes when run with
+# its cwd set to testdata/ instead of the package dir (resolves testdata/etl-output
+# to testdata/testdata/etl-output). Never a real fixture; keep it out of git.
+testdata/testdata/
