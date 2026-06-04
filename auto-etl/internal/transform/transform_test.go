@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mistakenot/auto-etl/internal/model"
 	"github.com/mistakenot/auto-etl/internal/parser"
 )
 
@@ -418,9 +419,9 @@ func parseAUQEnvelopeFixture(t *testing.T) parser.ParsedSession {
 func TestTransform_ToolUseResultEnvelope(t *testing.T) {
 	raw := parseAUQEnvelopeFixture(t)
 	// The tool_result line (index 1) carries the raw envelope verbatim.
-	wantEnvelope := string(raw.Lines[1].ToolUseResult)
+	wantEnvelope := string(raw.Lines[1].ToolUseResultRaw)
 	if wantEnvelope == "" {
-		t.Fatal("fixture tool_result line has empty ToolUseResult")
+		t.Fatal("fixture tool_result line has empty ToolUseResultRaw")
 	}
 
 	msgs, _ := transformSession(&raw, testConfig())
@@ -907,6 +908,35 @@ func TestTransformSession_TotalTurnDurationMsIgnoresOtherSystemSubtypes(t *testi
 	}
 }
 
+func TestTransformSession_TotalTurnDurationMsExcludesSubagentLines(t *testing.T) {
+	// Subagent (sidechain) turn_duration lines must not be summed into the
+	// parent's TotalTurnDurationMs. Safe today because Claude Code emits
+	// subagents to separate files, but this guards against future inlining
+	// of subagent turns into the parent transcript.
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines,
+		parser.ParsedLine{
+			Type:       "system",
+			Subtype:    "turn_duration",
+			Timestamp:  time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+			DurationMs: 9000,
+		},
+		parser.ParsedLine{
+			Type:       "system",
+			Subtype:    "turn_duration",
+			Timestamp:  time.Date(2026, 3, 10, 10, 0, 10, 0, time.UTC),
+			DurationMs: 99999,
+			IsSubagent: true,
+		},
+	)
+
+	_, session := transformSession(&raw, testConfig())
+
+	if got, want := session.TotalTurnDurationMs, int64(9000); got != want {
+		t.Errorf("TotalTurnDurationMs = %d, want %d (subagent line must be excluded)", got, want)
+	}
+}
+
 func TestTransformSession_TotalTurnDurationMsZeroWhenAbsent(t *testing.T) {
 	// Sessions with no turn_duration events (e.g. older Claude Code versions)
 	// should yield TotalTurnDurationMs=0, preserving FirstMessageAt/LastMessageAt
@@ -919,5 +949,261 @@ func TestTransformSession_TotalTurnDurationMsZeroWhenAbsent(t *testing.T) {
 	}
 	if session.FirstMessageAt == 0 {
 		t.Error("FirstMessageAt should still be set when turn_duration is absent")
+	}
+}
+
+// --- per-tool-call duration / tool_use_id / interrupted ---
+
+// makeToolPairLines returns a (tool_use, tool_result) pair of ParsedLines
+// for the given tool_use_id, tool name, and timestamps. The tool_result
+// line carries the given toolUseResult envelope. Used by the per-call
+// duration tests below.
+func makeToolPairLines(
+	toolUseID, toolName string,
+	useTS, resultTS time.Time,
+	envelope parser.ParsedToolUseResult,
+	bashCmd string,
+) []parser.ParsedLine {
+	useContent := `[{"type":"tool_use","id":"` + toolUseID +
+		`","name":"` + toolName + `","input":{"command":"` + bashCmd + `"}}]`
+	resultContent := `[{"type":"tool_result","tool_use_id":"` + toolUseID +
+		`","content":"ok"}]`
+	return []parser.ParsedLine{
+		{
+			Type:      "assistant",
+			Timestamp: useTS,
+			SessionID: "parent-uuid-1234",
+			Cwd:       "/home/user/project",
+			Message: parser.ParsedMessage{
+				Role:    "assistant",
+				Content: json.RawMessage(useContent),
+				Model:   "claude-opus-4-6",
+			},
+		},
+		{
+			Type:          "user",
+			Timestamp:     resultTS,
+			SessionID:     "parent-uuid-1234",
+			Cwd:           "/home/user/project",
+			ToolUseResult: envelope,
+			Message: parser.ParsedMessage{
+				Role:    "user",
+				Content: json.RawMessage(resultContent),
+			},
+		},
+	}
+}
+
+func TestTransformSession_ToolUseIDPropagatedOnBothRows(t *testing.T) {
+	// The transform must persist tool_use.id on the assistant tool_use row
+	// AND propagate it to the matching tool_result row. This is the load-
+	// bearing JOIN key for downstream queries that need to pair calls
+	// without falling back to lossy adjacency-based heuristics.
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines,
+		makeToolPairLines(
+			"toolu_abc",
+			"Bash",
+			time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+			time.Date(2026, 3, 10, 10, 0, 7, 0, time.UTC),
+			parser.ParsedToolUseResult{},
+			"ls",
+		)...,
+	)
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	var use, result *model.AgentMessage
+	for i := range msgs {
+		switch msgs[i].Role {
+		case "assistant":
+			if msgs[i].ToolName == "Bash" {
+				use = &msgs[i]
+			}
+		case "tool":
+			result = &msgs[i]
+		}
+	}
+	if use == nil {
+		t.Fatal("no assistant tool_use row found")
+	}
+	if result == nil {
+		t.Fatal("no tool_result row found")
+	}
+	if use.ToolUseID != "toolu_abc" {
+		t.Errorf("tool_use.ToolUseID = %q, want toolu_abc", use.ToolUseID)
+	}
+	if result.ToolUseID != "toolu_abc" {
+		t.Errorf("tool_result.ToolUseID = %q, want toolu_abc", result.ToolUseID)
+	}
+}
+
+func TestTransformSession_DurationMsFromExplicitEnvelope(t *testing.T) {
+	// When Claude emits toolUseResult.durationMs we MUST prefer it over
+	// the ts-diff fallback because it is wall-clock and correct under
+	// interruption. The ts-diff here would be 3200ms; the envelope says
+	// 2500ms — assert we surface 2500.
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines,
+		makeToolPairLines(
+			"toolu_explicit",
+			"WebFetch",
+			time.Date(2026, 3, 10, 10, 0, 1, 0, time.UTC),
+			time.Date(2026, 3, 10, 10, 0, 4, 200_000_000, time.UTC),
+			parser.ParsedToolUseResult{Present: true, DurationMs: 2500},
+			"",
+		)...,
+	)
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	var result *model.AgentMessage
+	for i := range msgs {
+		if msgs[i].Role == "tool" {
+			result = &msgs[i]
+		}
+	}
+	if result == nil {
+		t.Fatal("no tool_result row found")
+	}
+	if got, want := result.DurationMs, int64(2500); got != want {
+		t.Errorf("DurationMs = %d, want %d (explicit envelope must win over ts-diff)", got, want)
+	}
+}
+
+func TestTransformSession_DurationMsFallbackFromTimestampDelta(t *testing.T) {
+	// When the envelope is absent (e.g. Read, Edit, most tools that emit
+	// a bare-string toolUseResult, or older Claude Code versions), we MUST
+	// fall back to (result_ts - use_ts) so the field is still populated
+	// for the common case.
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines,
+		makeToolPairLines(
+			"toolu_fallback",
+			"Read",
+			time.Date(2026, 3, 10, 10, 0, 1, 0, time.UTC),
+			time.Date(2026, 3, 10, 10, 0, 4, 200_000_000, time.UTC),
+			parser.ParsedToolUseResult{}, // Present=false; no envelope
+			"",
+		)...,
+	)
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	var result *model.AgentMessage
+	for i := range msgs {
+		if msgs[i].Role == "tool" {
+			result = &msgs[i]
+		}
+	}
+	if result == nil {
+		t.Fatal("no tool_result row found")
+	}
+	if got, want := result.DurationMs, int64(3200); got != want {
+		t.Errorf("DurationMs = %d, want %d (ts-diff fallback)", got, want)
+	}
+}
+
+func TestTransformSession_InterruptedFlagSurvives(t *testing.T) {
+	// The `interrupted` envelope flag is Claude's literal "stuck or
+	// cancelled" signal and is the only way to distinguish (a) expected-
+	// slow from (b) hung tool calls. Verify the boolean survives the
+	// transform.
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines,
+		makeToolPairLines(
+			"toolu_interrupt",
+			"Bash",
+			time.Date(2026, 3, 10, 10, 0, 1, 0, time.UTC),
+			time.Date(2026, 3, 10, 10, 0, 9, 0, time.UTC),
+			parser.ParsedToolUseResult{Present: true, Interrupted: true},
+			"sleep 30",
+		)...,
+	)
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	var result *model.AgentMessage
+	for i := range msgs {
+		if msgs[i].Role == "tool" {
+			result = &msgs[i]
+		}
+	}
+	if result == nil {
+		t.Fatal("no tool_result row found")
+	}
+	if !result.Interrupted {
+		t.Error("Interrupted = false, want true (envelope flag must survive)")
+	}
+}
+
+func TestTransformSession_ParallelToolCallsPairedByID(t *testing.T) {
+	// When the agent dispatches multiple tools in parallel (common for
+	// Read/Glob bursts), the JSONL contains interleaved tool_use blocks
+	// followed by interleaved tool_result blocks. Adjacency-based pairing
+	// silently mis-pairs these; the id-based JOIN must keep each result
+	// matched to its correct originator.
+	//
+	// Layout: two tool_use blocks on one assistant line, then two
+	// tool_result blocks on one user line, in opposite order.
+	raw := makeParentSession()
+	useTS := time.Date(2026, 3, 10, 10, 0, 1, 0, time.UTC)
+	resultTS := time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC)
+	raw.Lines = append(raw.Lines,
+		parser.ParsedLine{
+			Type:      "assistant",
+			Timestamp: useTS,
+			SessionID: "parent-uuid-1234",
+			Cwd:       "/home/user/project",
+			Message: parser.ParsedMessage{
+				Role: "assistant",
+				Content: json.RawMessage(`[
+					{"type":"tool_use","id":"toolu_A","name":"Read","input":{"file_path":"/a.txt"}},
+					{"type":"tool_use","id":"toolu_B","name":"Read","input":{"file_path":"/b.txt"}}
+				]`),
+				Model: "claude-opus-4-6",
+			},
+		},
+		// Results in REVERSE order — B before A. Adjacency would mis-pair.
+		parser.ParsedLine{
+			Type:      "user",
+			Timestamp: resultTS,
+			SessionID: "parent-uuid-1234",
+			Cwd:       "/home/user/project",
+			Message: parser.ParsedMessage{
+				Role: "user",
+				Content: json.RawMessage(`[
+					{"type":"tool_result","tool_use_id":"toolu_B","content":"b contents"},
+					{"type":"tool_result","tool_use_id":"toolu_A","content":"a contents"}
+				]`),
+			},
+		},
+	)
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	// Collect tool_result rows in order; check each one keeps the correct
+	// originator id and inherited file_path metadata.
+	var results []model.AgentMessage
+	for _, m := range msgs {
+		if m.Role == "tool" {
+			results = append(results, m)
+		}
+	}
+	if len(results) != 2 {
+		t.Fatalf("tool_result rows = %d, want 2", len(results))
+	}
+	// First result row corresponds to B (because the result line lists B first).
+	if results[0].ToolUseID != "toolu_B" {
+		t.Errorf("results[0].ToolUseID = %q, want toolu_B", results[0].ToolUseID)
+	}
+	if results[0].ToolFilePath != "/b.txt" {
+		t.Errorf("results[0].ToolFilePath = %q, want /b.txt (id-based join, not adjacency)", results[0].ToolFilePath)
+	}
+	if results[1].ToolUseID != "toolu_A" {
+		t.Errorf("results[1].ToolUseID = %q, want toolu_A", results[1].ToolUseID)
+	}
+	if results[1].ToolFilePath != "/a.txt" {
+		t.Errorf("results[1].ToolFilePath = %q, want /a.txt (id-based join, not adjacency)", results[1].ToolFilePath)
 	}
 }

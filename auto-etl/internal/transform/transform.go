@@ -102,6 +102,9 @@ func Transform(sessions []parser.ParsedSession, cfg Config, onProgress ...Progre
 
 // buildToolUseIndex pre-scans all lines to build a map from tool_use ID to its metadata.
 // This replaces the O(n) per-result scan with a single O(n) pass up front.
+// Also records the tool_use line's timestamp so the tool_result branch can
+// compute a duration as `result_ts - use_ts` when Claude's raw
+// `toolUseResult.durationMs` is absent.
 func buildToolUseIndex(lines []parser.ParsedLine) map[string]toolUseMeta {
 	idx := make(map[string]toolUseMeta)
 	for i := range lines {
@@ -111,7 +114,7 @@ func buildToolUseIndex(lines []parser.ParsedLine) map[string]toolUseMeta {
 			if b.Type != "tool_use" || b.ID == "" {
 				continue
 			}
-			m := toolUseMeta{Name: b.Name}
+			m := toolUseMeta{Name: b.Name, StartedAtMs: toUnixMillis(lines[i].Timestamp)}
 			var inputMap map[string]any
 			if err := json.Unmarshal(b.Input, &inputMap); err == nil {
 				if fp, ok := inputMap["file_path"].(string); ok {
@@ -164,8 +167,15 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 	// `LastMessageAt - FirstMessageAt`, which is inflated by idle gaps.
 	// Done as a separate pass because the main loop below only handles lines
 	// that have `message` content blocks; turn_duration lines do not.
+	// Skip subagent (sidechain) lines so a parent session never double-counts
+	// turn work that belongs to a subagent. Safe today because Claude Code
+	// emits subagents to separate files, but this guards against future
+	// inlining of subagent turns into the parent transcript.
 	for i := range raw.Lines {
 		line := &raw.Lines[i]
+		if line.IsSubagent {
+			continue
+		}
 		if line.Type == "system" && line.Subtype == "turn_duration" {
 			totalTurnDurationMs += line.DurationMs
 		}
@@ -235,6 +245,10 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 			case "tool_use":
 				msg.Role = string(model.RoleAssistant)
 				msg.ToolName = block.Name
+				// Persist the canonical pairing key on the originator row so
+				// downstream queries can JOIN tool_use ↔ tool_result without
+				// adjacency-based heuristics that break on parallel calls.
+				msg.ToolUseID = block.ID
 				if len(block.Input) > 0 {
 					msg.ToolInput = string(block.Input)
 				}
@@ -289,8 +303,27 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 				msg.ToolFileStartLine = meta.FileStartLine
 				msg.ToolFileNumLines = meta.FileNumLines
 				msg.SkillName = meta.SkillName
-				if len(line.ToolUseResult) > 0 {
-					msg.ToolUseResultJSON = string(line.ToolUseResult)
+				if len(line.ToolUseResultRaw) > 0 {
+					msg.ToolUseResultJSON = string(line.ToolUseResultRaw)
+				}
+				// Persist canonical pairing key on the result row too so
+				// queries can JOIN by id without needing per-line adjacency.
+				msg.ToolUseID = block.ToolUseID
+				// Per-call duration: prefer Claude's own measurement
+				// (`toolUseResult.durationMs`) because it is wall-clock and
+				// correct under interruption. Fall back to the ts-diff when
+				// the envelope is absent or carried no durationMs (most
+				// tools other than WebFetch / Glob do not emit one).
+				switch {
+				case line.ToolUseResult.Present && line.ToolUseResult.DurationMs > 0:
+					msg.DurationMs = line.ToolUseResult.DurationMs
+				case meta.StartedAtMs > 0 && tsMillis > meta.StartedAtMs:
+					msg.DurationMs = tsMillis - meta.StartedAtMs
+				}
+				// Interrupted / cancelled signal. Only meaningful when
+				// Claude emits the envelope; absent envelopes leave it false.
+				if line.ToolUseResult.Present {
+					msg.Interrupted = line.ToolUseResult.Interrupted
 				}
 				// tool_result content: store full unmodified content.
 				// Content can be a plain string or an array of content blocks.
@@ -406,6 +439,9 @@ func makeBaseMessage(session *parser.ParsedSession, line *parser.ParsedLine, ind
 }
 
 // toolUseMeta holds metadata extracted from a matching tool_use block.
+// StartedAtMs is the tool_use line's Unix-ms timestamp, used as the
+// fallback for per-tool-call duration computation when Claude does not
+// emit `toolUseResult.durationMs`.
 type toolUseMeta struct {
 	Name          string
 	BashCommand   string
@@ -413,6 +449,7 @@ type toolUseMeta struct {
 	FileStartLine int32
 	FileNumLines  int32
 	SkillName     string
+	StartedAtMs   int64
 }
 
 // unmarshalToolResultContent extracts text from tool_result content which can

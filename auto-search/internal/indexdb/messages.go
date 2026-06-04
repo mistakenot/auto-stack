@@ -6,6 +6,9 @@ import (
 )
 
 // InsertMessage inserts a message row into the database within a transaction.
+// toolUseID, durationMs, and interrupted carry the per-tool-call linkage
+// and timing data captured from auto-etl's `tool_use_id`, `duration_ms`,
+// and `interrupted` parquet columns.
 func InsertMessage(tx *sql.Tx, partitionSourcePath string,
 	messageID, sessionID, hostID string,
 	messageIndex int,
@@ -16,6 +19,9 @@ func InsertMessage(tx *sql.Tx, partitionSourcePath string,
 	bashCommand string,
 	bashExitCode int,
 	skillName string,
+	toolUseID string,
+	durationMs int64,
+	interrupted bool,
 	inputTokens, cacheInputTokens, outputTokens int,
 	workspace, gitRemote, gitBranch, model string,
 	parentSessionID string,
@@ -27,6 +33,10 @@ func InsertMessage(tx *sql.Tx, partitionSourcePath string,
 	if isSubagent {
 		isSubagentInt = 1
 	}
+	interruptedInt := 0
+	if interrupted {
+		interruptedInt = 1
+	}
 	_, err := tx.Exec(`
 		INSERT INTO messages (
 			partition_source_path, message_id, session_id, host_id,
@@ -35,10 +45,11 @@ func InsertMessage(tx *sql.Tx, partitionSourcePath string,
 			tool_file_start_line, tool_file_num_lines, tool_file_total_lines,
 			bash_command, bash_exit_code, skill_name,
 			tool_use_result_json,
+			tool_use_id, duration_ms, interrupted,
 			input_tokens, cache_input_tokens, output_tokens,
 			workspace, git_remote, git_branch, model,
 			parent_session_id, is_subagent, source_line_index, schema_version
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		partitionSourcePath, messageID, sessionID, hostID,
 		messageIndex, role, content, contentTruncated, timestamp,
@@ -46,6 +57,7 @@ func InsertMessage(tx *sql.Tx, partitionSourcePath string,
 		toolFileStartLine, toolFileNumLines, toolFileTotalLines,
 		bashCommand, bashExitCode, skillName,
 		toolUseResultJSON,
+		toolUseID, durationMs, interruptedInt,
 		inputTokens, cacheInputTokens, outputTokens,
 		workspace, gitRemote, gitBranch, model,
 		parentSessionID, isSubagentInt, sourceLineIndex, schemaVersion,

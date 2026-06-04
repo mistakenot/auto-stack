@@ -306,6 +306,7 @@ func insertMessageFromParquet(tx *sql.Tx, sourcePath string, r *model.ParquetMes
 		r.BashCommand,
 		int(r.BashExitCode),
 		r.SkillName,
+		r.ToolUseID, r.DurationMs, r.Interrupted,
 		int(r.InputTokens), int(r.CacheInputTokens), int(r.OutputTokens),
 		r.Workspace, r.GitRemote, r.GitBranch, r.Model,
 		r.ParentSessionID,

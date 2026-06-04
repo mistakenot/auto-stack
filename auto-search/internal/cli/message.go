@@ -99,6 +99,12 @@ func newMessageDescribeCmd() *cobra.Command {
 
 			elapsed := time.Since(start).Milliseconds()
 
+			// Per-tool-call fields (toolUseId/durationMs/interrupted) are
+			// populated by auto-etl from the raw `tool_use.id` ↔
+			// `tool_result.tool_use_id` pairing and the
+			// `toolUseResult.durationMs` / `interrupted` envelope. Empty /
+			// zero on non-tool messages. Naming matches this file's existing
+			// camelCase convention.
 			msgMap := map[string]any{
 				"id":                    msg.MessageID,
 				"sessionId":             msg.SessionID,
@@ -112,6 +118,9 @@ func newMessageDescribeCmd() *cobra.Command {
 				"toolFilePath":          msg.ToolFilePath,
 				"bashCommand":           msg.BashCommand,
 				"skillName":             msg.SkillName,
+				"toolUseId":             msg.ToolUseID,
+				"durationMs":            msg.DurationMs,
+				"interrupted":           msg.Interrupted,
 				"preview":               preview,
 				"previousMessageId":     prev,
 				"nextMessageId":         next,
