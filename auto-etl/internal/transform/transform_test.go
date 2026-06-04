@@ -908,6 +908,35 @@ func TestTransformSession_TotalTurnDurationMsIgnoresOtherSystemSubtypes(t *testi
 	}
 }
 
+func TestTransformSession_TotalTurnDurationMsExcludesSubagentLines(t *testing.T) {
+	// Subagent (sidechain) turn_duration lines must not be summed into the
+	// parent's TotalTurnDurationMs. Safe today because Claude Code emits
+	// subagents to separate files, but this guards against future inlining
+	// of subagent turns into the parent transcript.
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines,
+		parser.ParsedLine{
+			Type:       "system",
+			Subtype:    "turn_duration",
+			Timestamp:  time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+			DurationMs: 9000,
+		},
+		parser.ParsedLine{
+			Type:       "system",
+			Subtype:    "turn_duration",
+			Timestamp:  time.Date(2026, 3, 10, 10, 0, 10, 0, time.UTC),
+			DurationMs: 99999,
+			IsSubagent: true,
+		},
+	)
+
+	_, session := transformSession(&raw, testConfig())
+
+	if got, want := session.TotalTurnDurationMs, int64(9000); got != want {
+		t.Errorf("TotalTurnDurationMs = %d, want %d (subagent line must be excluded)", got, want)
+	}
+}
+
 func TestTransformSession_TotalTurnDurationMsZeroWhenAbsent(t *testing.T) {
 	// Sessions with no turn_duration events (e.g. older Claude Code versions)
 	// should yield TotalTurnDurationMs=0, preserving FirstMessageAt/LastMessageAt

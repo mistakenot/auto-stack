@@ -167,8 +167,15 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 	// `LastMessageAt - FirstMessageAt`, which is inflated by idle gaps.
 	// Done as a separate pass because the main loop below only handles lines
 	// that have `message` content blocks; turn_duration lines do not.
+	// Skip subagent (sidechain) lines so a parent session never double-counts
+	// turn work that belongs to a subagent. Safe today because Claude Code
+	// emits subagents to separate files, but this guards against future
+	// inlining of subagent turns into the parent transcript.
 	for i := range raw.Lines {
 		line := &raw.Lines[i]
+		if line.IsSubagent {
+			continue
+		}
 		if line.Type == "system" && line.Subtype == "turn_duration" {
 			totalTurnDurationMs += line.DurationMs
 		}
