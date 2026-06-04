@@ -10,7 +10,14 @@ import (
 	"time"
 )
 
+// sincePattern matches the shorthand used by --since (m|h|d|w).
 var sincePattern = regexp.MustCompile(`^([0-9]+)([mhdwMHDW])$`)
+
+// toolDurationPattern matches finer-grained durations used by
+// --min-tool-duration: ms (milliseconds), s (seconds), plus the --since
+// units (m|h|d|w). Tool calls run in seconds, not weeks, so the small
+// units matter here in a way they don't for --since.
+var toolDurationPattern = regexp.MustCompile(`^([0-9]+)(ms|s|m|h|d|w)$`)
 
 // TimeFilter contains normalized time-filter bounds and canonical filter text.
 // StartMs is an inclusive lower bound (>=) and EndMs is an exclusive upper bound (<).
@@ -124,6 +131,53 @@ func unitToMs(unit string) (int64, error) {
 		return 7 * 24 * int64(time.Hour/time.Millisecond), nil
 	default:
 		return 0, errors.New("expected unit m|h|d|w")
+	}
+}
+
+// ParseToolDurationMs parses a tool-call duration string like "60s", "5m",
+// "1h", or "1500ms" and returns the equivalent number of milliseconds.
+//
+// This is a strict superset of ParseDurationMs that adds s and ms units.
+// It is used by --min-tool-duration on `autosearch search` and
+// `autosearch session list`, where typical values are seconds, not days.
+func ParseToolDurationMs(raw string) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	matches := toolDurationPattern.FindStringSubmatch(raw)
+	if len(matches) != 3 {
+		return 0, fmt.Errorf(
+			"invalid duration %q: expected <int><unit> with unit in ms|s|m|h|d|w (for example: 1500ms, 60s, 5m, 1h)",
+			raw,
+		)
+	}
+
+	n, err := strconv.ParseInt(matches[1], 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf(
+			"invalid duration %q: must be a positive integer (for example: 60s)",
+			raw,
+		)
+	}
+
+	unitMs, err := toolUnitToMs(strings.ToLower(matches[2]))
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration %q: %w", raw, err)
+	}
+
+	if n > math.MaxInt64/unitMs {
+		return 0, fmt.Errorf("invalid duration %q: value is too large", raw)
+	}
+
+	return n * unitMs, nil
+}
+
+func toolUnitToMs(unit string) (int64, error) {
+	switch unit {
+	case "ms":
+		return 1, nil
+	case "s":
+		return int64(time.Second / time.Millisecond), nil
+	default:
+		return unitToMs(unit)
 	}
 }
 

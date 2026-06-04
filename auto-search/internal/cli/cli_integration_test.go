@@ -881,6 +881,97 @@ func TestSessionListSortBy(t *testing.T) {
 	}
 }
 
+func TestSessionListSortByToolDurationAccepted(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	// The fixture's total_turn_duration_ms is zero (predates PR 1) so we
+	// don't assert ordering here — we only assert the flag is wired and
+	// returns rows without erroring. The ordering correctness is covered
+	// by indexdb_test.go::TestListSessionsSortByToolDuration.
+	stdout, stderr, code := runCLI(t, "session", "list", "--sort-by", "tool_duration")
+	if code != 0 {
+		t.Fatalf("session list --sort-by tool_duration failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	out := decodeJSON(t, stdout)
+	if _, ok := out["sessions"]; !ok {
+		t.Fatalf("expected sessions key, got %v", out)
+	}
+}
+
+func TestSessionListNewFlagsRejectBadInput(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	cases := []struct {
+		name     string
+		args     []string
+		wantSnip string
+	}{
+		{
+			name:     "min-tool-duration unparseable",
+			args:     []string{"session", "list", "--min-tool-duration", "foo"},
+			wantSnip: "min-tool-duration",
+		},
+		{
+			name:     "min-tool-duration unknown unit",
+			args:     []string{"session", "list", "--min-tool-duration", "60x"},
+			wantSnip: "min-tool-duration",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runCLI(t, tc.args...)
+			if code == 0 {
+				t.Fatalf("expected non-zero exit for %v", tc.args)
+			}
+			if !strings.Contains(stderr, tc.wantSnip) {
+				t.Fatalf("stderr = %q, want substring %q", stderr, tc.wantSnip)
+			}
+		})
+	}
+}
+
+func TestSearchNewFlagsRejectBadInput(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	cases := []struct {
+		name     string
+		args     []string
+		wantSnip string
+	}{
+		{
+			name:     "min-tool-duration unparseable",
+			args:     []string{"search", "foo", "--min-tool-duration", "wat"},
+			wantSnip: "min-tool-duration",
+		},
+		{
+			name:     "duration flags rejected on sessions scope",
+			args:     []string{"search", "foo", "--scope", "sessions", "--min-tool-duration", "60s"},
+			wantSnip: "only apply to --scope messages",
+		},
+		{
+			name:     "interrupted rejected on sessions scope",
+			args:     []string{"search", "foo", "--scope", "sessions", "--interrupted"},
+			wantSnip: "only apply to --scope messages",
+		},
+		{
+			name:     "text rejected on sessions scope",
+			args:     []string{"search", "foo", "--scope", "sessions", "--text"},
+			wantSnip: "--text",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runCLI(t, tc.args...)
+			if code == 0 {
+				t.Fatalf("expected non-zero exit for %v", tc.args)
+			}
+			if !strings.Contains(stderr, tc.wantSnip) {
+				t.Fatalf("stderr = %q, want substring %q", stderr, tc.wantSnip)
+			}
+		})
+	}
+}
+
 func TestSessionDescribeNewFields(t *testing.T) {
 	setupIndexedFixtures(t)
 
