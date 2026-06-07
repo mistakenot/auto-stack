@@ -96,3 +96,30 @@ func TestMissingAsset(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
+
+// TestCacheControlByMode enables the AC-2 dev edit→refresh loop: in disk (dev)
+// mode static assets must be served with Cache-Control: no-store so a plain
+// browser reload re-fetches edited files; in embed mode they are not.
+func TestCacheControlByMode(t *testing.T) {
+	tests := []struct {
+		mode        string
+		wantNoStore bool
+	}{
+		{mode: "disk", wantNoStore: true},
+		{mode: "embed", wantNoStore: false},
+	}
+	for _, tt := range tests {
+		handler := server.New(newTestFS(), tt.mode)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		got := rec.Header().Get("Cache-Control")
+		if tt.wantNoStore && got != "no-store" {
+			t.Errorf("mode=%q Cache-Control = %q, want no-store", tt.mode, got)
+		}
+		if !tt.wantNoStore && got == "no-store" {
+			t.Errorf("mode=%q Cache-Control = no-store, want it unset", tt.mode)
+		}
+	}
+}

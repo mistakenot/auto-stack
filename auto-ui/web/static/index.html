@@ -4,12 +4,15 @@
   <meta charset="utf-8" />
   <title>auto-ui</title>
   <!-- The `*` external-all prefix tells esm.sh NOT to inline transitive deps, so every nested
-       `import "preact"` resolves through THIS import map → a single preact instance (hooks work). -->
+       `import "preact"` resolves through THIS import map → a single preact instance (hooks work).
+       Because deps are externalized, EVERY bare specifier they import must also be in this map —
+       e.g. `htm/preact` imports bare `htm` and `preact`, so both leaf packages are listed below. -->
   <script type="importmap">
   {
     "imports": {
       "preact": "https://esm.sh/preact@10.24.3",
       "preact/hooks": "https://esm.sh/*preact@10.24.3/hooks",
+      "htm": "https://esm.sh/htm@3.1.1",
       "htm/preact": "https://esm.sh/*htm@3.1.1/preact",
       "react": "https://esm.sh/*preact@10.24.3/compat",
       "react-dom": "https://esm.sh/*preact@10.24.3/compat"
