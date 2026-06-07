@@ -89,11 +89,11 @@ said "informational" and is unchanged.
 - [x] Step 2.7: Commit: `feat(autoui): phase 2 - no-build SPA assets with dev/embed split`
 
 ### Phase 3: HTTP server + serve command  (depends on Phase 2)
-- [ ] Step 3.1: Create `internal/server/server.go` — `New(fsys fs.FS, mode string) http.Handler`: mux with `/api/hello` (JSON `{message, mode}`, `Content-Type: application/json`) and `/` → `http.FileServer(http.FS(fsys))`
-- [ ] Step 3.2: Create `internal/cli/serve.go` — `serve` command: `--port` (default from settings, fallback 8080); build handler from `web.FS()`/`web.Mode`; start `http.Server`; goroutine `<-cmd.Context().Done()` → `srv.Shutdown`; log `serving on http://localhost:<port> (assets=<mode>)` to **stderr**; treat `http.ErrServerClosed` as clean exit
-- [ ] Step 3.3: Register `newServeCmd(application)` in `NewRootCmd` (root.go AddCommand)
-- [ ] Step 3.4: Verify — `cd auto-ui && go build ./... && go build -tags dev ./... && go vet ./...`. Manually: `go build -o /tmp/autoui ./cmd/autoui && /tmp/autoui serve --port 8099 &` then `curl -s localhost:8099/api/hello` returns JSON with `mode":"embed"`, `curl -s localhost:8099/` returns the HTML shell; `curl` a missing asset returns 404; kill the process and confirm graceful exit
-- [ ] Step 3.5: Commit: `feat(autoui): phase 3 - http server and serve command`
+- [x] Step 3.1: Create `internal/server/server.go` — `New(fsys fs.FS, mode string) http.Handler`: mux with `/api/hello` (JSON `{message, mode}`, `Content-Type: application/json`) and `/` → `http.FileServer(http.FS(fsys))`
+- [x] Step 3.2: Create `internal/cli/serve.go` — `serve` command: `--port` (default from settings, fallback 8080); build handler from `web.FS()`/`web.Mode`; start `http.Server`; goroutine `<-cmd.Context().Done()` → `srv.Shutdown`; log `serving on http://localhost:<port> (assets=<mode>)` to **stderr**; treat `http.ErrServerClosed` as clean exit
+- [x] Step 3.3: Register `newServeCmd(application)` in `NewRootCmd` (root.go AddCommand)
+- [x] Step 3.4: Verify — `cd auto-ui && go build ./... && go build -tags dev ./... && go vet ./...`. Manually: `go build -o /tmp/autoui ./cmd/autoui && /tmp/autoui serve --port 8099 &` then `curl -s localhost:8099/api/hello` returns JSON with `mode":"embed"`, `curl -s localhost:8099/` returns the HTML shell; `curl` a missing asset returns 404; kill the process and confirm graceful exit
+- [x] Step 3.5: Commit: `feat(autoui): phase 3 - http server and serve command`
 
 ### Phase 4: Go tests  (depends on Phase 3)
 - [ ] Step 4.1: Write `internal/server/server_test.go` using `httptest`: (a) `GET /api/hello` → 200, `Content-Type: application/json`, body decodes to a struct with non-empty `message` and `mode` (AC-3 server); (b) `GET /` → 200 with `text/html` body containing `id="app"` (AC-4); (c) `GET /nope.js` → 404. Build the handler with a small in-memory `fstest.MapFS` so the test does not depend on embed tags
