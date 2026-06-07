@@ -57,6 +57,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newQuickstartCmd(),
 		newDocsCmd(),
 		newUpdateCmd(),
+		newServeCmd(application),
 	)
 
 	return rootCmd
