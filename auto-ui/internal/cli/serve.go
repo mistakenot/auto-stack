@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/mistakenot/auto-ui/internal/app"
 	"github.com/mistakenot/auto-ui/internal/config"
@@ -30,11 +33,18 @@ func newServeCmd(application *app.App) *cobra.Command {
 				}
 			}
 
+			// Cancel on SIGINT/SIGTERM so the server shuts down gracefully.
+			// main.go passes context.Background() (matching every other auto-* binary),
+			// so signal handling is wired here, in the long-running command — mirrors
+			// auto-watch/internal/cli/ops.go.
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
 			handler := server.New(web.FS(), web.Mode)
 			srv := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: handler}
 
 			go func() {
-				<-cmd.Context().Done()
+				<-ctx.Done()
 				_ = srv.Shutdown(context.Background())
 			}()
 
