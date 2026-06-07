@@ -36,10 +36,10 @@ conformance run.
 - [Conformance script](./conformance.md)
 
 ## How to Test
-- [ ] `auto-ui/internal/server/server_test.go` — `GET /` returns 200 + HTML (AC-4); `GET /api/hello` returns JSON with `message` + `mode` (AC-3 server side)
-- [ ] `go build ./...` in `auto-ui` (default tags) and `go build -tags dev ./...` — both compile (AC-6)
-- [ ] `go vet ./...` in `auto-ui` clean
-- [ ] agent-browser conformance run per [conformance.md](./conformance.md) — AC-1, AC-2, AC-3 (UI), AC-5
+- [x] `auto-ui/internal/server/server_test.go` — `GET /` returns 200 + HTML (AC-4); `GET /api/hello` returns JSON with `message` + `mode` (AC-3 server side)
+- [x] `go build ./...` in `auto-ui` (default tags) and `go build -tags dev ./...` — both compile (AC-6)
+- [x] `go vet ./...` in `auto-ui` clean
+- [x] agent-browser conformance run per [conformance.md](./conformance.md) — AC-1, AC-2, AC-3 (UI), AC-5
 
 ## Execution Sequence
 ```
@@ -117,20 +117,20 @@ AUTHOR: Confirmed `BUILD_DIR := bin` at Makefile:8. Updated Step 5.4 to `bin/aut
 - [x] Step 5.5: Commit: `feat(autoui): phase 5 - makefile and docs registration`
 
 ### Phase 6: agent-browser conformance  (depends on Phases 2-5)
-- [ ] Step 6.1: Default-tag run — `go build -o /tmp/autoui ./cmd/autoui && /tmp/autoui serve --port 8080`; agent-browser loads `/` and asserts the shell renders (AC-1)
-- [ ] Step 6.2: Dev-tag run — from `auto-ui/`, `go run -tags dev ./cmd/autoui serve --port 8080`; agent-browser: Dashboard → click fetch → assert `/api/hello` message in DOM (AC-3 UI)
-- [ ] Step 6.3: agent-browser: Home → click `+` ×3 → assert `#/home?n=3`; reload → assert counter still 3 (AC-5)
-- [ ] Step 6.4: agent-browser: edit a label string in `web/static/app.js`, reload (no Go restart) → assert new label visible (AC-2); revert the edit
-- [ ] Step 6.5: Capture evidence (screenshots/log) into the task folder or PR description
-- [ ] Step 6.6: Commit any conformance notes: `test(autoui): phase 6 - agent-browser conformance evidence`
+- [x] Step 6.1: Default-tag run — `go build -o /tmp/autoui ./cmd/autoui && /tmp/autoui serve --port 8080`; agent-browser loads `/` and asserts the shell renders (AC-1)
+- [x] Step 6.2: Dev-tag run — from `auto-ui/`, `go run -tags dev ./cmd/autoui serve --port 8080`; agent-browser: Dashboard → click fetch → assert `/api/hello` message in DOM (AC-3 UI)
+- [x] Step 6.3: agent-browser: Home → click `+` ×3 → assert `#/home?n=3`; reload → assert counter still 3 (AC-5)
+- [x] Step 6.4: agent-browser: edit a label string in `web/static/app.js`, reload (no Go restart) → assert new label visible (AC-2); revert the edit
+- [x] Step 6.5: Capture evidence (screenshots/log) into the task folder or PR description
+- [x] Step 6.6: Commit any conformance notes: `test(autoui): phase 6 - agent-browser conformance evidence`
 
 ## Success Criteria
-- [ ] `cd auto-ui && go build ./...` and `go build -tags dev ./...` both succeed (AC-6)
-- [ ] `cd auto-ui && go test ./...` and `go test -tags dev ./...` pass (AC-3 server, AC-4)
-- [ ] `go vet ./...` clean; gofmt clean
-- [ ] `make build-ui` produces a runnable `autoui` binary; `make build` (all) unaffected (AC-6)
-- [ ] agent-browser conformance: shell renders from embedded binary (AC-1); fetch result renders (AC-3); counter+view restored from hash on reload (AC-5); dev-mode file edit visible on reload with no Go rebuild (AC-2)
-- [ ] auto-ui registered in root Makefile + CLAUDE.md sub-projects table (AC-6)
+- [x] `cd auto-ui && go build ./...` and `go build -tags dev ./...` both succeed (AC-6)
+- [x] `cd auto-ui && go test ./...` and `go test -tags dev ./...` pass (AC-3 server, AC-4)
+- [x] `go vet ./...` clean; gofmt clean
+- [x] `make build-ui` produces a runnable `autoui` binary; `make build` (all) unaffected (AC-6)
+- [x] agent-browser conformance: shell renders from embedded binary (AC-1); fetch result renders (AC-3); counter+view restored from hash on reload (AC-5); dev-mode file edit visible on reload with no Go rebuild (AC-2)
+- [x] auto-ui registered in root Makefile + CLAUDE.md sub-projects table (AC-6)
 
 ## Open Questions
 - (none — all resolved in requirements Q1–Q4)

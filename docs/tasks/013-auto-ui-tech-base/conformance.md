@@ -76,3 +76,33 @@ All asserts in Steps 1, 3, 4, 5 pass, and `internal/server/server_test.go` passe
 (server side) and AC-4 contract. Record the agent-browser run (screenshots/log) under the task
 folder or PR for evidence.
 ```
+
+## Run results (2026-06-07, agent-browser + Chrome 149)
+
+**Outcome: PASS** — all four browser ACs verified. The tool used was `agent-browser`
+(`/home/vscode/.local/bin/agent-browser`); the SPA's esm.sh CDN imports were reachable.
+Screenshots in `evidence/`.
+
+| AC | Step | Result | Evidence |
+|----|------|--------|----------|
+| AC-1 | Embedded binary (`go build` default tags, port 8190) loads `/` → shell renders (nav + Home + counter) | PASS | `evidence/ac1-embed-home.png` |
+| AC-3 | Dev server, Dashboard view → "fetch from go" → DOM shows `go says: hi from go (mode=disk)` | PASS | `evidence/ac3-dashboard-fetched.png` |
+| AC-5 | Home, `+` ×3 → URL `#/home?n=3`, counter "clicked: 3"; reload → still `n=3` | PASS | `evidence/ac5-counter-3-after-reload.png` |
+| AC-2 | Dev server running, edit `web/static/app.js` label, **plain** reload (Go PID unchanged) → new label "Dashboard ✦" visible; edit reverted | PASS | `evidence/ac2-hot-edit-visible.png` |
+
+### Two defects the conformance run caught (fixed in commit `fa7785e`)
+
+1. **Blank page — import map missing the bare `htm` leaf.** With esm.sh's `*` external-all
+   prefix, `htm/preact` imports bare `htm`, which wasn't mapped → `Failed to resolve module
+   specifier "htm"` → `#app` stayed empty (AC-1/3/5 all failed). The Go server and tests were
+   green throughout; only a real browser surfaced it. Fixed by adding the `htm` entry.
+2. **Dev edit→reload served stale modules.** `http.FileServer` sends only `Last-Modified`
+   (no `Cache-Control`), so a plain browser reload reused the cached `app.js` even though the
+   server served fresh bytes (verified via curl). AC-2 failed on a normal reload. Fixed by
+   serving `Cache-Control: no-store` in disk (dev) mode; regression-locked by
+   `TestCacheControlByMode`.
+
+### Test-harness note (not a product defect)
+`agent-browser`'s `find role button <name> click` form did not fire the click; the reliable
+pattern is `snapshot -i` then `click @ref`, re-snapshotting after each re-render (a stale ref
+silently drops the click, which first looked like an off-by-one in the counter).
