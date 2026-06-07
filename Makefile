@@ -1,6 +1,6 @@
-.PHONY: build build-etl build-doc build-watch build-search build-reflect build-skill build-graph build-env clean test vet fmt lint \
-       dist dist-doc dist-env dist-etl dist-watch dist-search dist-reflect dist-skill dist-graph vulncheck \
-       install install-doc install-env install-etl install-watch install-search install-reflect install-skill install-graph \
+.PHONY: build build-etl build-doc build-watch build-search build-reflect build-skill build-graph build-ui build-env clean test vet fmt lint \
+       dist dist-doc dist-env dist-etl dist-watch dist-search dist-reflect dist-skill dist-graph dist-ui vulncheck \
+       install install-doc install-env install-etl install-watch install-search install-reflect install-skill install-graph install-ui \
        install-hooks install-tools gen-stats check fmt-check test-install test-curl-install \
        fixtures verify-fixtures \
        fmt-staged vulncheck-if-deps-changed autodoc-fix skills-sync beads-sync pre-commit
