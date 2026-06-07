@@ -96,15 +96,15 @@ said "informational" and is unchanged.
 - [x] Step 3.5: Commit: `feat(autoui): phase 3 - http server and serve command`
 
 ### Phase 4: Go tests  (depends on Phase 3)
-- [ ] Step 4.1: Write `internal/server/server_test.go` using `httptest`: (a) `GET /api/hello` → 200, `Content-Type: application/json`, body decodes to a struct with non-empty `message` and `mode` (AC-3 server); (b) `GET /` → 200 with `text/html` body containing `id="app"` (AC-4); (c) `GET /nope.js` → 404. Build the handler with a small in-memory `fstest.MapFS` so the test does not depend on embed tags
-- [ ] Step 4.2: Verify — `cd auto-ui && go test ./...` passes; `go test -tags dev ./...` passes
-- [ ] Step 4.3: Commit: `feat(autoui): phase 4 - server contract tests`
+- [x] Step 4.1: Write `internal/server/server_test.go` using `httptest`: (a) `GET /api/hello` → 200, `Content-Type: application/json`, body decodes to a struct with non-empty `message` and `mode` (AC-3 server); (b) `GET /` → 200 with `text/html` body containing `id="app"` (AC-4); (c) `GET /nope.js` → 404. Build the handler with a small in-memory `fstest.MapFS` so the test does not depend on embed tags
+- [x] Step 4.2: Verify — `cd auto-ui && go test ./...` passes; `go test -tags dev ./...` passes
+- [x] Step 4.3: Commit: `feat(autoui): phase 4 - server contract tests`
 
 ### Phase 5: Monorepo wiring  (depends on Phase 3)
-- [ ] Step 5.1: `Makefile` — append `auto-ui` to `PROJECTS` (line 15); add `auto-ui_BIN := autoui` / `auto-ui_ENTRY := ./cmd/autoui`; add `build-ui`, `dist-ui`, `install-ui` targets mirroring `*-graph`; add `cp $(BUILD_DIR)/autoui $(INSTALL_DIR)/` to the aggregate install
-- [ ] Step 5.2: Root `CLAUDE.md` — add `| auto-ui/ | autoui | Early | Local web dashboard + server (self-contained no-build SPA) |` row between `auto-skill/` and `auto-watch/` (alphabetical)
-- [ ] Step 5.3: `auto-ui/CLAUDE.md` — fill in description + build/test (`go build ./cmd/autoui`, `go test ./...`, dev: `go run -tags dev ./cmd/autoui serve`)
-- [ ] Step 5.4: Verify — `make build-ui` produces `bin/autoui`; `./bin/autoui --version` works; `make build` (all) still succeeds; root `go vet`/pre-commit hook clean
+- [x] Step 5.1: `Makefile` — append `auto-ui` to `PROJECTS` (line 15); add `auto-ui_BIN := autoui` / `auto-ui_ENTRY := ./cmd/autoui`; add `build-ui`, `dist-ui`, `install-ui` targets mirroring `*-graph`; add `cp $(BUILD_DIR)/autoui $(INSTALL_DIR)/` to the aggregate install
+- [x] Step 5.2: Root `CLAUDE.md` — add `| auto-ui/ | autoui | Early | Local web dashboard + server (self-contained no-build SPA) |` row between `auto-skill/` and `auto-watch/` (alphabetical)
+- [x] Step 5.3: `auto-ui/CLAUDE.md` — fill in description + build/test (`go build ./cmd/autoui`, `go test ./...`, dev: `go run -tags dev ./cmd/autoui serve`)
+- [x] Step 5.4: Verify — `make build-ui` produces `bin/autoui`; `./bin/autoui --version` works; `make build` (all) still succeeds; root `go vet`/pre-commit hook clean
 
 <!-- RESOLVED(P3): wrong output path — binaries land in bin/, not build/
 REVIEW: The root Makefile sets `BUILD_DIR := bin` (Makefile:8), so `make build-ui` produces `bin/autoui`
@@ -114,7 +114,7 @@ AUTHOR: Confirmed `BUILD_DIR := bin` at Makefile:8. Updated Step 5.4 to `bin/aut
 --version`.
 -->
 
-- [ ] Step 5.5: Commit: `feat(autoui): phase 5 - makefile and docs registration`
+- [x] Step 5.5: Commit: `feat(autoui): phase 5 - makefile and docs registration`
 
 ### Phase 6: agent-browser conformance  (depends on Phases 2-5)
 - [ ] Step 6.1: Default-tag run — `go build -o /tmp/autoui ./cmd/autoui && /tmp/autoui serve --port 8080`; agent-browser loads `/` and asserts the shell renders (AC-1)
