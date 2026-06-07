@@ -62,6 +62,7 @@
 | `auto-reflect/`| `autoreflect` | Early       | Analyze past sessions, extract rules for future ones               |
 | `auto-search/` | `autosearch`  | Early       | Rich search over normalized session history from auto-etl          |
 | `auto-skill/`  | `autoskill`   | Early       | Agent skill management                                             |
+| `auto-ui/`     | `autoui`      | Early       | Local web dashboard + server (self-contained no-build SPA)         |
 | `auto-watch/`  | `autowatch`   | Early       | Monitor repo changes, trigger agent prompts in response            |
 
 Each sub-project has its own `CLAUDE.md` with build/test instructions.
