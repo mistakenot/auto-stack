@@ -80,13 +80,13 @@ said "informational" and is unchanged.
 - [x] Step 1.7: Commit: `feat(autoui): phase 1 - scaffold package with standard subcommands`
 
 ### Phase 2: Web assets + build-tag split  (depends on Phase 1)
-- [ ] Step 2.1: Create `web/static/index.html` with the import map (preact@10, preact/hooks, htm/preact, plus `react`/`react-dom` → `preact@10/compat` aliases), `<div id="app">`, `<script type="module" src="./app.js">`
-- [ ] Step 2.2: Create `web/static/router.js` — `parseHash()` → `{view, params}`, `setHash(view, params)`, `onRouteChange(cb)` over the `hashchange` event
-- [ ] Step 2.3: Create `web/static/app.js` — Preact+htm app: nav (Home/Dashboard) that calls `setHash`; Home shows a counter whose value is read from / written to `?n=`; Dashboard has a "fetch from go" button that GETs `/api/hello` and renders `message`; re-render on `onRouteChange`
-- [ ] Step 2.4: Create `web/embed_prod.go` (`//go:build !dev`): `//go:embed all:static`, `const Mode = "embed"`, `func FS() fs.FS` via `fs.Sub(content, "static")`
-- [ ] Step 2.5: Create `web/embed_dev.go` (`//go:build dev`): `const Mode = "disk"`, `func FS() fs.FS { return os.DirFS("web/static") }` (path is relative to module root — `serve` must be run from `auto-ui/`)
-- [ ] Step 2.6: Verify — `cd auto-ui && go build ./web/ && go build -tags dev ./web/` both compile; `gofmt -l web/*.go` clean. Sanity-check the import map URLs resolve (the conformance run is the real check).
-- [ ] Step 2.7: Commit: `feat(autoui): phase 2 - no-build SPA assets with dev/embed split`
+- [x] Step 2.1: Create `web/static/index.html` with the import map (preact@10, preact/hooks, htm/preact, plus `react`/`react-dom` → `preact@10/compat` aliases), `<div id="app">`, `<script type="module" src="./app.js">`
+- [x] Step 2.2: Create `web/static/router.js` — `parseHash()` → `{view, params}`, `setHash(view, params)`, `onRouteChange(cb)` over the `hashchange` event
+- [x] Step 2.3: Create `web/static/app.js` — Preact+htm app: nav (Home/Dashboard) that calls `setHash`; Home shows a counter whose value is read from / written to `?n=`; Dashboard has a "fetch from go" button that GETs `/api/hello` and renders `message`; re-render on `onRouteChange`
+- [x] Step 2.4: Create `web/embed_prod.go` (`//go:build !dev`): `//go:embed all:static`, `const Mode = "embed"`, `func FS() fs.FS` via `fs.Sub(content, "static")`
+- [x] Step 2.5: Create `web/embed_dev.go` (`//go:build dev`): `const Mode = "disk"`, `func FS() fs.FS { return os.DirFS("web/static") }` (path is relative to module root — `serve` must be run from `auto-ui/`)
+- [x] Step 2.6: Verify — `cd auto-ui && go build ./web/ && go build -tags dev ./web/` both compile; `gofmt -l web/*.go` clean. Sanity-check the import map URLs resolve (the conformance run is the real check).
+- [x] Step 2.7: Commit: `feat(autoui): phase 2 - no-build SPA assets with dev/embed split`
 
 ### Phase 3: HTTP server + serve command  (depends on Phase 2)
 - [ ] Step 3.1: Create `internal/server/server.go` — `New(fsys fs.FS, mode string) http.Handler`: mux with `/api/hello` (JSON `{message, mode}`, `Content-Type: application/json`) and `/` → `http.FileServer(http.FS(fsys))`
