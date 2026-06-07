@@ -57,11 +57,11 @@ Phase 1 (scaffold) --> Phase 2 (web assets + tag split) --> Phase 3 (server + se
 ## Plan
 
 ### Phase 1: Scaffold package
-- [ ] Step 1.1: Run worktree discipline — `git fetch origin && git checkout main && git pull origin main`, then create branch `feat/013-auto-ui-tech-base`
-- [ ] Step 1.2: Scaffold via the `new-package` skill (name `ui`, binary `autoui`) — produces `cmd/autoui/main.go`, `internal/app/app.go`, `internal/cli/{root,init,doctor,quickstart,docs,update}.go`, `internal/config/settings.go`, `go.mod`, `CLAUDE.md`. If the skill is unavailable, hand-copy the auto-graph scaffold (commit `78d2616`).
-- [ ] Step 1.3: Set `go.mod` to `go 1.26.1`, cobra `v1.10.2`, `replace github.com/mistakenot/auto-shared => ../auto-shared`; run `go mod tidy`
-- [ ] Step 1.4: Edit `internal/config/settings.go` so the tool settings struct is `Settings{Port int}` (default 8080) under `~/.auto/ui/settings.json`; `validate()` rejects port <1 or >65535 with a `config.ValidationError`
-- [ ] Step 1.5: Point `doctor` checks at real conditions — settings file present/valid, and a "port" check (informational). `quickstart`/`docs` markdown mention `autoui serve`
+- [x] Step 1.1: Run worktree discipline — `git fetch origin && git checkout main && git pull origin main`, then create branch `feat/013-auto-ui-tech-base`
+- [x] Step 1.2: Scaffold via the `new-package` skill (name `ui`, binary `autoui`) — produces `cmd/autoui/main.go`, `internal/app/app.go`, `internal/cli/{root,init,doctor,quickstart,docs,update}.go`, `internal/config/settings.go`, `go.mod`, `CLAUDE.md`. If the skill is unavailable, hand-copy the auto-graph scaffold (commit `78d2616`).
+- [x] Step 1.3: Set `go.mod` to `go 1.26.1`, cobra `v1.10.2`, `replace github.com/mistakenot/auto-shared => ../auto-shared`; run `go mod tidy`
+- [x] Step 1.4: Edit `internal/config/settings.go` so the tool settings struct is `Settings{Port int}` (default 8080) under `~/.auto/ui/settings.json`; `validate()` rejects port <1 or >65535 with a `config.ValidationError`
+- [x] Step 1.5: Point `doctor` checks at real conditions — settings file present/valid, and a "port" check (informational). `quickstart`/`docs` markdown mention `autoui serve`
 
 <!-- RESOLVED(P3): doctor "port" check — clarify it's informational, not a "port free" probe
 REVIEW: solution.md (Files table, doctor.go line) describes the doctor check as "port free", but this step
@@ -76,8 +76,8 @@ the auto-graph doctor pattern (reports config/dependency status, not liveness). 
 said "informational" and is unchanged.
 -->
 
-- [ ] Step 1.6: Verify — `cd auto-ui && go build ./... && go vet ./...`; run `go run ./cmd/autoui --version` (prints version), `... quickstart` (prints markdown), `... doctor` (valid JSON array to stdout). **Note:** default-tag build will fail until Phase 2 creates `web/static` if `web` is imported; keep `serve`/`web` import out until Phase 2, OR create an empty `web/static/.gitkeep` placeholder now so `//go:embed` has a target.
-- [ ] Step 1.7: Commit: `feat(autoui): phase 1 - scaffold package with standard subcommands`
+- [x] Step 1.6: Verify — `cd auto-ui && go build ./... && go vet ./...`; run `go run ./cmd/autoui --version` (prints version), `... quickstart` (prints markdown), `... doctor` (valid JSON array to stdout). **Note:** default-tag build will fail until Phase 2 creates `web/static` if `web` is imported; keep `serve`/`web` import out until Phase 2, OR create an empty `web/static/.gitkeep` placeholder now so `//go:embed` has a target.
+- [x] Step 1.7: Commit: `feat(autoui): phase 1 - scaffold package with standard subcommands`
 
 ### Phase 2: Web assets + build-tag split  (depends on Phase 1)
 - [ ] Step 2.1: Create `web/static/index.html` with the import map (preact@10, preact/hooks, htm/preact, plus `react`/`react-dom` → `preact@10/compat` aliases), `<div id="app">`, `<script type="module" src="./app.js">`
