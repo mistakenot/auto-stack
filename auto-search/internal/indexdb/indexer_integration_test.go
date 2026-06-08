@@ -508,6 +508,7 @@ func TestInsertSessionTotalTurnDurationRoundtrip(t *testing.T) {
 		10, 20, 30,
 		400, 200, 200,
 		"some transcript",
+		"", "",
 		int(indexdb.SchemaVersion),
 	); err != nil {
 		t.Fatalf("InsertSession: %v", err)

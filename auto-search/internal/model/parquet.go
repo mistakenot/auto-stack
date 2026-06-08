@@ -32,6 +32,15 @@ type ParquetSessionRow struct {
 	TranscriptFull      string `parquet:"transcript_full"`
 	TranscriptTruncated string `parquet:"transcript_truncated"`
 
+	// FirstUserIntent mirrors auto-etl AgentSession.FirstUserIntent: the
+	// first "clean" user message in the session (junk caveats/command
+	// wrappers skipped), or the slash-command fallback.
+	FirstUserIntent string `parquet:"first_user_intent"`
+	// FirstUserIntentTruncated mirrors auto-etl
+	// AgentSession.FirstUserIntentTruncated: FirstUserIntent collapsed to a
+	// single line and head-truncated for previews.
+	FirstUserIntentTruncated string `parquet:"first_user_intent_truncated"`
+
 	Year          int32 `parquet:"year"`
 	Month         int32 `parquet:"month"`
 	SchemaVersion int32 `parquet:"schema_version"`

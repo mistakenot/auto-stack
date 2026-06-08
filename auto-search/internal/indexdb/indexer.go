@@ -291,6 +291,7 @@ func insertSessionFromParquet(tx *sql.Tx, sourcePath string, r *model.ParquetSes
 		r.TotalInputTokens, r.TotalOutputTokens, r.TotalTokens,
 		r.TotalBytes, r.TotalOutputBytes, r.TotalInputBytes,
 		r.TranscriptTruncated,
+		r.FirstUserIntent, r.FirstUserIntentTruncated,
 		int(r.SchemaVersion),
 	)
 }
