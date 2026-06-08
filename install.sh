@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="mistakenot/auto-stack"
 INSTALL_DIR="$HOME/.local/bin"
-BINARIES="autodoc autoenv autoetl autograph autosearch autoreflect autoskill autowatch"
+BINARIES="auto"
 
 # Detect platform
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -63,11 +63,12 @@ if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
     echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
 fi
 
-# Hint to restart any services that were running during upgrade
+# Hint to restart any services that were running during upgrade. The merged
+# `auto` binary backs the `auto watch` daemon (systemd unit autowatch.service).
 if [ -n "$RESTART_SERVICES" ]; then
     echo ""
-    echo "The following binaries were running during install and need a restart:"
-    for svc in $RESTART_SERVICES; do
-        echo "  systemctl --user restart ${svc}  # if managed by systemd"
-    done
+    echo "The auto binary was running during install (likely the 'auto watch' daemon)."
+    echo "Restart it to pick up the new binary:"
+    echo "  sudo systemctl restart autowatch.service   # if managed by systemd"
+    echo "  # or: auto watch daemon restart"
 fi
