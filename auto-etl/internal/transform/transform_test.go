@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mistakenot/auto-etl/internal/model"
 	"github.com/mistakenot/auto-etl/internal/parser"
@@ -1205,5 +1206,157 @@ func TestTransformSession_ParallelToolCallsPairedByID(t *testing.T) {
 	}
 	if results[1].ToolFilePath != "/a.txt" {
 		t.Errorf("results[1].ToolFilePath = %q, want /a.txt (id-based join, not adjacency)", results[1].ToolFilePath)
+	}
+}
+
+func userMsg(content string) model.AgentMessage {
+	return model.AgentMessage{Role: string(model.RoleUser), Content: content}
+}
+
+func assistantMsg(content string) model.AgentMessage {
+	return model.AgentMessage{Role: string(model.RoleAssistant), Content: content}
+}
+
+func TestFirstUserIntent(t *testing.T) {
+	tests := []struct {
+		name          string
+		messages      []model.AgentMessage
+		wantFull      string
+		wantTruncated string
+	}{
+		{
+			name: "caveat then prose",
+			messages: []model.AgentMessage{
+				userMsg("<local-command-caveat>this is a caveat</local-command-caveat>"),
+				userMsg("Please fix the failing test in transform.go"),
+			},
+			wantFull:      "Please fix the failing test in transform.go",
+			wantTruncated: "Please fix the failing test in transform.go",
+		},
+		{
+			name: "command then prose",
+			messages: []model.AgentMessage{
+				userMsg("<command-name>/clear</command-name><command-args></command-args>"),
+				userMsg("Add a new field to the model"),
+			},
+			wantFull:      "Add a new field to the model",
+			wantTruncated: "Add a new field to the model",
+		},
+		{
+			name: "system-reminder then prose",
+			messages: []model.AgentMessage{
+				userMsg("<system-reminder>some injected reminder text</system-reminder>"),
+				userMsg("Refactor the parser"),
+			},
+			wantFull:      "Refactor the parser",
+			wantTruncated: "Refactor the parser",
+		},
+		{
+			name: "empty and whitespace messages skipped",
+			messages: []model.AgentMessage{
+				userMsg(""),
+				userMsg("   \n\t  "),
+				userMsg("The real intent"),
+			},
+			wantFull:      "The real intent",
+			wantTruncated: "The real intent",
+		},
+		{
+			name: "slash command only with args",
+			messages: []model.AgentMessage{
+				userMsg("<local-command-caveat>caveat</local-command-caveat>"),
+				userMsg("<command-name>/execute-task</command-name><command-message>execute-task</command-message><command-args>014</command-args>"),
+			},
+			wantFull:      "/execute-task 014",
+			wantTruncated: "/execute-task 014",
+		},
+		{
+			name: "slash command only no args",
+			messages: []model.AgentMessage{
+				userMsg("<command-name>/clear</command-name><command-args></command-args>"),
+			},
+			wantFull:      "/clear",
+			wantTruncated: "/clear",
+		},
+		{
+			name: "prose first",
+			messages: []model.AgentMessage{
+				userMsg("Just do the thing"),
+				userMsg("<command-name>/clear</command-name><command-args></command-args>"),
+			},
+			wantFull:      "Just do the thing",
+			wantTruncated: "Just do the thing",
+		},
+		{
+			name: "no user message",
+			messages: []model.AgentMessage{
+				assistantMsg("I am an assistant"),
+			},
+			wantFull:      "",
+			wantTruncated: "",
+		},
+		{
+			name: "only junk no command yields empty",
+			messages: []model.AgentMessage{
+				userMsg("<system-reminder>reminder</system-reminder>"),
+				userMsg("<local-command-stdout>output</local-command-stdout>"),
+			},
+			wantFull:      "",
+			wantTruncated: "",
+		},
+		{
+			name: "multiline prose collapses to single line and truncates",
+			messages: []model.AgentMessage{
+				userMsg(strings.Repeat("ab ", 200)), // 600 chars across many words
+			},
+			wantFull:      strings.TrimSpace(strings.Repeat("ab ", 200)),
+			wantTruncated: headTruncate(collapseWhitespace(strings.Repeat("ab ", 200)), model.IntentTruncateMaxChars),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			full, truncated := firstUserIntent(tt.messages, model.IntentTruncateMaxChars)
+			if full != tt.wantFull {
+				t.Errorf("full = %q, want %q", full, tt.wantFull)
+			}
+			if truncated != tt.wantTruncated {
+				t.Errorf("truncated = %q, want %q", truncated, tt.wantTruncated)
+			}
+			// Truncated must always be single-line and <= max+1 (ellipsis) runes.
+			if strings.ContainsAny(truncated, "\n\t") {
+				t.Errorf("truncated %q contains newline/tab; want single line", truncated)
+			}
+		})
+	}
+}
+
+func TestHeadTruncateRuneBoundary(t *testing.T) {
+	// 250 multibyte runes (emoji + accented chars). Truncating to 200 runes must
+	// cut on a rune boundary — no U+FFFD replacement char, no split rune.
+	intent := strings.Repeat("é", 150) + strings.Repeat("🚀", 100) // 250 runes
+	messages := []model.AgentMessage{userMsg(intent)}
+
+	full, truncated := firstUserIntent(messages, model.IntentTruncateMaxChars)
+	if full != intent {
+		t.Errorf("full intent mismatch: got %d runes", len([]rune(full)))
+	}
+	if strings.ContainsRune(truncated, '�') {
+		t.Errorf("truncated contains U+FFFD replacement char (rune split): %q", truncated)
+	}
+	if !utf8.ValidString(truncated) {
+		t.Errorf("truncated is not valid UTF-8: %q", truncated)
+	}
+	// 200 content runes + 1 ellipsis rune = 201 runes.
+	if got := len([]rune(truncated)); got != model.IntentTruncateMaxChars+1 {
+		t.Errorf("truncated rune count = %d, want %d", got, model.IntentTruncateMaxChars+1)
+	}
+	if !strings.HasSuffix(truncated, "…") {
+		t.Errorf("truncated should end with ellipsis: %q", truncated)
+	}
+	// First 200 runes must be the original prefix, intact.
+	wantPrefix := string([]rune(intent)[:model.IntentTruncateMaxChars])
+	if !strings.HasPrefix(truncated, wantPrefix) {
+		t.Errorf("truncated prefix does not match original runes")
 	}
 }
