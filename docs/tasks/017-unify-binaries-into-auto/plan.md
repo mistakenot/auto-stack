@@ -73,7 +73,7 @@ needed). Phase 5 runs concurrently with 2–4. Phases 1, 3, 6 are barriers.
 
 ### Phase 2: Per-tool seam + rename  *(fan out: one agent per tool dir; depends on Phase 1)*
 Each agent owns exactly one tool dir end-to-end (disjoint paths ⇒ no conflicts). Per tool:
-- [ ] Step 2.x.a: Ensure a callable `*cobra.Command` constructor exists:
+- [x] Step 2.x.a: Ensure a callable `*cobra.Command` constructor exists:
   - search/graph/reflect/skill/ui/watch — already `NewRootCmd(app)` (no change).
   - env/config — rename `newRootCmd` → `NewRootCmd` (export); fix internal callers.
   - doc — create `auto-doc/internal/cli/root.go` `NewRootCmd()` and move the 12 `newXCmd()`
@@ -83,15 +83,15 @@ Each agent owns exactly one tool dir end-to-end (disjoint paths ⇒ no conflicts
     `run.go/zen.go/update.go` into one `func NewRootCmd() *cobra.Command` that declares the
     `--debug` persistent flag and all `run` flags locally and `AddCommand`s run/zen/update.
     Keep `Execute()` (delegates to `NewRootCmd()`) and `main.go` working (fixturegen `go run .`).
-- [ ] Step 2.x.b: Add `<tool>/rootcmd/rootcmd.go` (package `rootcmd`) exposing
+- [x] Step 2.x.b: Add `<tool>/rootcmd/rootcmd.go` (package `rootcmd`) exposing
       `func New(stdout, stderr io.Writer) *cobra.Command` that builds the app (2-arg
       `app.New(stdout,stderr)`; env/config use 3-arg with `os.Getwd()`) and returns the root cmd.
-- [ ] Step 2.x.c: Rename the root `Use:` from `auto<tool>` to the bare stem
+- [x] Step 2.x.c: Rename the root `Use:` from `auto<tool>` to the bare stem
       (`search`,`etl`,`doc`,…). Rewrite ALL shipped invocation strings in that tool's tree —
       `root.go`/`quickstart.go`/`docs.go`/`doctor.go` **and any other `internal/**/*.go` runtime/
       error/remediation string** — to the `auto <tool> …` form. (auto-search agent also:
       `internal/cochange/{cochange,repo}.go` hints `autoetl run --only git`→`auto etl run --only git`.)
-- [ ] Step 2.watch.d (auto-watch agent only): apply the daemon changes —
+- [x] Step 2.watch.d (auto-watch agent only): apply the daemon changes —
       `daemoninstall/template.go` `ExecStart={{.BinPath}} watch start`; `resolve.go:48` default
       BinPath `…/bin/auto`; `status.go:60` `+ " watch start"` and `:168/:176` insert `"watch"`
       before `"status"`. **Also rewrite all remediation/help invocation strings:**
@@ -102,10 +102,10 @@ Each agent owns exactly one tool dir end-to-end (disjoint paths ⇒ no conflicts
       (`defaultServiceBase="autowatch"`, `defaultDescription="autowatch daemon"`, `autowatch.service`)
       and the prose `"autowatch systemd service"`. Add/extend `daemoninstall/*_test.go` for the
       ExecStart + runtime-status `watch` infix (AC-5).
-- [ ] Step 2.x.e: Update that tool's own `*_test.go` expectations changed by the `Use`/help rename.
-- [ ] Step 2.x.f: Verify per tool: `cd <tool> && go build ./... && go test ./...` green;
+- [x] Step 2.x.e: Update that tool's own `*_test.go` expectations changed by the `Use`/help rename.
+- [x] Step 2.x.f: Verify per tool: `cd <tool> && go build ./... && go test ./...` green;
       `go run ./rootcmd`-equivalent not needed, but `go vet ./...` clean.
-- [ ] Step 2.Z: Commit (one per tool or grouped): `feat(017): phase 2 - <tool> seam + rename`
+- [x] Step 2.Z: Commit (one per tool or grouped): `feat(017): phase 2 - <tool> seam + rename`
 
 ### Phase 3: Wire the umbrella + integration tests  *(sequential; depends on all of Phase 2)*
 - [ ] Step 3.1: Fill `auto-cli/cmd/auto/main.go` — import the 10 `rootcmd` packages (aliased,
@@ -163,22 +163,22 @@ AUTHOR: All addressed (mirrors the two solution.md threads). Guard scope (Step 4
 - [ ] Step 4.6: Commit: `feat(017): phase 4 - single-binary build/install/release + stale-ref guard`
 
 ### Phase 5: Docs + skills sweep  *(fan out ~4; depends only on Phase 1 naming; runs alongside 2–4)*
-- [ ] Step 5.1: README.md — install/update block, status table, quickstart command blocks,
+- [x] Step 5.1: README.md — install/update block, status table, quickstart command blocks,
       mermaid node labels → `auto <tool>`; document `auto update` as canonical (per-tool variants equivalent).
-- [ ] Step 5.2: Root `CLAUDE.md` (Sub-Projects table, doc-index, quickstart pointers) + the 10
+- [x] Step 5.2: Root `CLAUDE.md` (Sub-Projects table, doc-index, quickstart pointers) + the 10
       `auto-*/CLAUDE.md` command docs → `auto <tool> …`.
-- [ ] Step 5.3: `docs/user-journey.md` and `docs/autostack-install-daemon.md` (daemon now under
+- [x] Step 5.3: `docs/user-journey.md` and `docs/autostack-install-daemon.md` (daemon now under
       `auto watch`; add the "post-upgrade: re-run `auto watch daemon install`" note).
-- [ ] Step 5.4: Skills — edit the **SOURCE** copies (NOT the generated `.agents/` mirror):
+- [x] Step 5.4: Skills — edit the **SOURCE** copies (NOT the generated `.agents/` mirror):
       `auto-reflect/skills/reflect-on-agent-sessions/SKILL.md` (30 `autosearch`→`auto search`),
       `skills/release/SKILL.md` (assets → single `auto-<suffix>`), `skills/self-improve/SKILL.md`
       (example refs); for `skill-reviewer`/`new-solution` locate their tracked source (under
       `.claude/skills/`) and edit there. Then **regenerate** the `.agents/` copies and stage them:
       `make skills-sync` (covers `skills/*`) **plus** `npx skills install "$(CURDIR)/auto-reflect/skills" -y`
       (skills-sync does NOT cover `auto-reflect/skills`). Confirm source and `.agents/` copies match.
-- [ ] Step 5.5: Verify: `scripts/check-no-stale-binary-refs.sh` exits 0 over the docs + ALL
+- [x] Step 5.5: Verify: `scripts/check-no-stale-binary-refs.sh` exits 0 over the docs + ALL
       tracked `**/SKILL.md` (source + `.agents/`) scope.
-- [ ] Step 5.6: Commit: `docs(017): phase 5 - sweep README/CLAUDE.md/docs/skills to auto <tool>`
+- [x] Step 5.6: Commit: `docs(017): phase 5 - sweep README/CLAUDE.md/docs/skills to auto <tool>`
 
 ### Phase 6: Verify end-to-end  *(sequential barrier; depends on 3, 4, 5)*
 - [ ] Step 6.1: `make check` (fmt-check + vet + lint + stale-ref guard) green across all PROJECTS.
