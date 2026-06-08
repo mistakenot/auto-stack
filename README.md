@@ -35,7 +35,7 @@ Custom install directory:
 INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/mistakenot/auto-stack/main/install.sh | bash
 ```
 
-The installer pulls pre-built binaries for `linux-amd64` and `darwin-arm64` from the latest [GitHub release](https://github.com/mistakenot/auto-stack/releases). Building from source requires Go 1.22+.
+The installer pulls pre-built binaries for `linux-amd64` and `darwin-arm64` from the latest [GitHub release](https://github.com/mistakenot/auto-stack/releases). Building from source requires Go 1.26+.
 
 Every binary ships with `update`:
 
@@ -59,6 +59,7 @@ Roughly ordered by where each tool sits in the pipeline — raw inputs at the to
 | **autoskill** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Author, lint, and sync reusable agent skills. Detects skill bloat and validates trigger conditions. |
 | **autowatch** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Cron-driven daemon that monitors repos and launches bash or Claude Code tasks on schedule or file events. |
 | **autoenv** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Template-based config generation with deterministic per-worktree port allocation. Stand up isolated dev envs for parallel agent branches. |
+| **autoui** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Local web dashboard over your session data — a single binary with an embedded no-build Preact SPA. `autoui serve` runs it on localhost. |
 | **autoconfig** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Validate and bootstrap agent configuration. Installs `prepare-commit-msg` hooks that link commits to sessions. |
 | **autoeval** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Scenario-replay evaluation harness. Grade agents against ground truth and compare planning strategies. |
 | **autoweb** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Safe web-research portal with pluggable backends (Exa, Parallel, OpenAI), dedupe, and Markdown conversion. |
@@ -130,10 +131,10 @@ Every commit produced inside a Claude Code session is linked back to that sessio
 
 ```bash
 # Files that change together with auth.go over the last 90 days
-autosearch co-change auth.go --decay-tau 90d --limit 10
+autosearch co-change auth.go --decay-tau 90d
 ```
 
-`co-change` reads the commits dataset and surfaces implicit coupling — useful for refactor impact analysis and finding hidden dependencies that don't show up in import graphs. Results are ranked by directional confidence weighted by lift, with a large-commit penalty and configurable time decay.
+`co-change` reads the commits dataset and surfaces implicit coupling — useful for refactor impact analysis and finding hidden dependencies that don't show up in import graphs. Results are ranked by directional confidence weighted by lift, with a large-commit penalty and configurable time decay. Output is budget-bounded compact text by default (`--budget` tunes the size); pass `--all` for every row or `--json` for the full envelope.
 
 ### 5. Map the code
 
@@ -142,7 +143,7 @@ autosearch co-change auth.go --decay-tau 90d --limit 10
 autograph code graph
 
 # Assemble a context pack for an LLM, budgeted to N tokens
-autograph code context src/auth/login.ts --max-tokens 8000
+autograph code context src/auth --file src/auth/login.ts --token-limit 8000
 ```
 
 `autograph` understands TypeScript (`tsconfig` path aliases, JSONC comments, dynamic `import()`, `require()`, re-exports) and Go (module-aware via `go.mod`). It also overlays `[autodoc()]` tags so you can see which docs cover which files.
@@ -158,7 +159,7 @@ autoreflect feedback add \
   --effective-at 2026-06-01
 
 # Record a rule for future sessions
-autoreflect rule create --comment "prefer sqlc over gorm for new queries"
+autoreflect rule create --content "prefer sqlc over gorm for new queries"
 
 # Look up rules that apply to the current task
 autoreflect lookup "database queries"
@@ -182,7 +183,7 @@ autowatch trigger add-task daily-2am nightly-etl
 autowatch trigger create --id new-prs --type file_created --glob ".github/pull_requests/*.md"
 autowatch trigger add-task new-prs review-pr
 
-autowatch daemon start
+autowatch start
 ```
 
 Triggers and tasks are defined separately and linked, so the same task can fan out across cron schedules and file-event watchers.
@@ -214,10 +215,13 @@ The PR bodies capture the full workflow narrative (problem, plan, decisions, tes
 - **Incremental partitioning** — weekly partitions for messages, monthly for sessions and commits; re-runs are cheap.
 - **Commit ↔ session linking** — `Session-Id:` git trailers (auto-installed) tie every commit to the agent transcript that produced it.
 - **bash exit code parsing** — tool-result exit codes are extracted so you can find sessions where the agent looped on failing commands.
+- **Per-tool-call timing** — `duration_ms`, `tool_use_id`, and an `interrupted` flag are captured per tool call, plus session-level turn-duration totals, so you can isolate slow calls and hangs.
+- **Thinking & structured output** — assistant thinking blocks are preserved as `thinking` rows, and the full tool-result envelope is stored in `tool_use_result_json` for structured queries over deferred-tool results.
+- **First-intent summaries** — each session records `first_user_intent`, the first meaningful user message after harness boilerplate is filtered out.
 
 ### Search & discovery
 - **SQLite FTS5 + BM25** — sub-second full-text search over months of session history.
-- **Rich filters** — `--since` / `--after` / `--before`, `--cwd`, `--remote`, `--role`, `--skill`, plus session-level `--min-tokens`, `--min-messages`, `--min-errors`, `--min-duration`, `--no-subagent` / `--subagent`, `--parent-session`, and `--sort-by recency|duration|tokens|messages|errors`.
+- **Rich filters** — `--since` / `--after` / `--before`, `--cwd`, `--remote`, `--role`, `--skill`, `--include-thinking`, plus message-level `--min-tool-duration` and `--interrupted` for hang diagnosis, session-level `--min-tokens`, `--min-messages`, `--min-errors`, `--min-duration`, `--no-subagent` / `--subagent`, `--parent-session`, and `--sort-by recency|duration|tool_duration|tokens|messages|errors`.
 - **Co-change queries** — find files frequently edited together across git history.
 - **Skill adoption tracking** — which skills are firing, which aren't, grouped by date and workspace.
 - **Stats grouping** — group results by tool, file, session, skill, or workspace.
@@ -362,4 +366,4 @@ Releases are cut by tagging a commit; the `release` GitHub Actions workflow buil
 
 ## License
 
-Private repository. See LICENSE for details.
+Private repository. All rights reserved.
