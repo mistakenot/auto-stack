@@ -174,12 +174,12 @@ The `content` field can be either a plain string or an array of content objects.
 
 | Field | Value | Source |
 |-------|-------|--------|
-| `role` | `"assistant"` | Line role |
-| `content` | `""` (empty) | **Thinking text not stored** |
-| `content_truncated` | `""` (empty) | **Thinking text not stored** |
+| `role` | `"thinking"` | Dedicated role for reasoning blocks |
+| `content` | `block.thinking` | Thinking text when present (often empty — Claude Code redacts it) |
+| `content_truncated` | truncated `content` | Populated when content is non-empty |
 | `tool_name` | `""` | Not a tool |
 
-**Data lost:** The thinking text itself. The block is recognized but its content is discarded. The `thinking` field is often empty in the raw JSONL anyway (redacted by Claude Code).
+`redacted_thinking` blocks are also preserved with `role="thinking"` and empty content.
 
 ## 4. Special Tool Behaviors
 
@@ -455,7 +455,7 @@ One row per content block in the source JSONL:
 | `text` | user or assistant | original role | Full text | empty | empty | Yes |
 | `tool_use` | assistant | `assistant` | **empty** | tool name | raw JSON | **No** (content empty) |
 | `tool_result` | user | `tool` | tool output | looked up | empty | Yes |
-| `thinking` | assistant | `assistant` | **empty** | empty | empty | **No** (discarded) |
+| `thinking` | assistant | `thinking` | thinking text (often empty) | empty | empty | Yes |
 
 ## 6. What Autosearch Can and Cannot Find
 
@@ -480,7 +480,7 @@ Note: `bash_command` and `tool_file_path` are stored as separate columns in the 
 
 1. **tool_use content is empty** — The `content` field for tool_use rows could be populated with a human-readable summary of the tool input (e.g., the question text for AskUserQuestion, the command for Bash, the file path for Read). This would make tool invocations searchable.
 
-2. **thinking blocks are discarded** — Could be stored in `content` when non-empty, though they're often redacted in the JSONL.
+2. **thinking blocks are now preserved** (SchemaVersion 6) — Emitted as `role="thinking"` messages. Content is stored when present, though Claude Code typically redacts it in the JSONL.
 
 3. **tool_input not indexed** — Autosearch could add `tool_input` to the FTS5 index, but the raw JSON would need pre-processing to be useful for text search.
 
