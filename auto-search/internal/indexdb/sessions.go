@@ -14,6 +14,7 @@ func InsertSession(tx *sql.Tx, partitionSourcePath string,
 	totalInputTokens, totalOutputTokens, totalTokens int64,
 	totalBytes, totalOutputBytes, totalInputBytes int64,
 	transcriptTruncated string,
+	firstUserIntent, firstUserIntentTruncated string,
 	schemaVersion int,
 ) error {
 	isSubagentInt := 0
@@ -27,15 +28,17 @@ func InsertSession(tx *sql.Tx, partitionSourcePath string,
 			source_path, first_message_at, last_message_at, total_turn_duration_ms,
 			total_input_tokens, total_output_tokens, total_tokens,
 			total_bytes, total_output_bytes, total_input_bytes,
-			transcript_truncated, schema_version
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			transcript_truncated, first_user_intent, first_user_intent_truncated,
+			schema_version
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		partitionSourcePath, sessionID, parentSessionID, hostID,
 		agent, subagentName, isSubagentInt, workspace, gitRemote, model,
 		sourcePath, firstMessageAt, lastMessageAt, totalTurnDurationMs,
 		totalInputTokens, totalOutputTokens, totalTokens,
 		totalBytes, totalOutputBytes, totalInputBytes,
-		transcriptTruncated, schemaVersion,
+		transcriptTruncated, firstUserIntent, firstUserIntentTruncated,
+		schemaVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("insert session %s: %w", sessionID, err)

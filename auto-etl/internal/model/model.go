@@ -2,10 +2,13 @@ package model
 
 import "time"
 
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 // Default truncation threshold for content_truncated (chars).
 const DefaultTruncateMaxChars = 4096
+
+// IntentTruncateMaxChars caps the single-line first-user-intent preview (runes).
+const IntentTruncateMaxChars = 200
 
 // Default transcript truncation cap (chars).
 const DefaultTranscriptMaxChars = 512 * 1024 // 512k
@@ -120,6 +123,16 @@ type AgentSession struct {
 
 	TranscriptFull      string `parquet:"transcript_full"`
 	TranscriptTruncated string `parquet:"transcript_truncated"`
+
+	// FirstUserIntent is the first "clean" user message in the session (the
+	// real intent), with harness-injected junk (slash-command caveats,
+	// <command-name>/<system-reminder> blocks, interrupt markers) skipped.
+	// Falls back to the slash-command invocation (e.g. "/execute-task 014")
+	// when no prose exists; empty when no user message qualifies.
+	FirstUserIntent string `parquet:"first_user_intent"`
+	// FirstUserIntentTruncated is FirstUserIntent collapsed to a single line
+	// and head-truncated to IntentTruncateMaxChars runes for previews.
+	FirstUserIntentTruncated string `parquet:"first_user_intent_truncated"`
 
 	Year          int32 `parquet:"year"`
 	Month         int32 `parquet:"month"`

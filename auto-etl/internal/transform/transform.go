@@ -379,31 +379,36 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 	// Build transcripts from messages
 	transcriptFull, transcriptTruncated := buildTranscripts(messages, cfg.TranscriptMaxChars)
 
+	// Derive the first "clean" user intent (skips harness/junk wrappers).
+	intentFull, intentTruncated := firstUserIntent(messages, model.IntentTruncateMaxChars)
+
 	session := model.AgentSession{
-		ID:                  raw.ID,
-		ParentSessionID:     raw.ParentSessionID,
-		HostID:              cfg.HostID,
-		Agent:               "claude",
-		SubagentName:        raw.SubagentName,
-		IsSubagent:          raw.IsSubagent,
-		Workspace:           raw.Workspace,
-		GitRemote:           gitRemote,
-		Model:               raw.Model,
-		SourcePath:          raw.SourcePath,
-		FirstMessageAt:      firstAt,
-		LastMessageAt:       lastAt,
-		TotalTurnDurationMs: totalTurnDurationMs,
-		TotalInputTokens:    totalInput,
-		TotalOutputTokens:   totalOutput,
-		TotalTokens:         totalTokens,
-		TotalBytes:          totalBytes,
-		TotalInputBytes:     totalInputBytes,
-		TotalOutputBytes:    totalOutputBytes,
-		TranscriptFull:      transcriptFull,
-		TranscriptTruncated: transcriptTruncated,
-		Year:                year,
-		Month:               month,
-		SchemaVersion:       int32(model.SchemaVersion),
+		ID:                       raw.ID,
+		ParentSessionID:          raw.ParentSessionID,
+		HostID:                   cfg.HostID,
+		Agent:                    "claude",
+		SubagentName:             raw.SubagentName,
+		IsSubagent:               raw.IsSubagent,
+		Workspace:                raw.Workspace,
+		GitRemote:                gitRemote,
+		Model:                    raw.Model,
+		SourcePath:               raw.SourcePath,
+		FirstMessageAt:           firstAt,
+		LastMessageAt:            lastAt,
+		TotalTurnDurationMs:      totalTurnDurationMs,
+		TotalInputTokens:         totalInput,
+		TotalOutputTokens:        totalOutput,
+		TotalTokens:              totalTokens,
+		TotalBytes:               totalBytes,
+		TotalInputBytes:          totalInputBytes,
+		TotalOutputBytes:         totalOutputBytes,
+		TranscriptFull:           transcriptFull,
+		TranscriptTruncated:      transcriptTruncated,
+		FirstUserIntent:          intentFull,
+		FirstUserIntentTruncated: intentTruncated,
+		Year:                     year,
+		Month:                    month,
+		SchemaVersion:            int32(model.SchemaVersion),
 	}
 
 	return messages, session
@@ -531,6 +536,118 @@ func MidTruncate(s string, maxChars int) string {
 
 	half := available / 2
 	return s[:half] + marker + s[len(s)-half:]
+}
+
+// junkPrefixes are user-message content prefixes that are not real intent:
+// slash-command caveats/wrappers and harness-injected blocks. Matched
+// case-sensitively — these are literal harness strings.
+var junkPrefixes = []string{
+	"<local-command-caveat>",
+	"<command-name>",
+	"<command-message>",
+	"<local-command-stdout>",
+	"<system-reminder>",
+	"[Request interrupted",
+}
+
+// isJunkIntent reports whether content begins with a known harness/junk prefix
+// (slash-command wrappers, caveats, reminders, interrupt markers) and is
+// therefore not a real user intent.
+func isJunkIntent(c string) bool {
+	for _, p := range junkPrefixes {
+		if strings.HasPrefix(c, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseSlashCommand extracts the slash-command invocation from a
+// <command-name>…</command-name> wrapper, appending the <command-args> value
+// when it is non-empty — e.g. "/execute-task 014". The command-name value
+// already carries its leading slash. Returns "" if no command-name is present.
+func parseSlashCommand(c string) string {
+	name := extractTag(c, "command-name")
+	if name == "" {
+		return ""
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if args := strings.TrimSpace(extractTag(c, "command-args")); args != "" {
+		return name + " " + args
+	}
+	return name
+}
+
+// extractTag returns the inner text of the first <tag>…</tag> pair in s, or ""
+// if the tag is not found. Simple string slicing on the known tags — no XML
+// parser.
+func extractTag(s, tag string) string {
+	openTag := "<" + tag + ">"
+	closeTag := "</" + tag + ">"
+	start := strings.Index(s, openTag)
+	if start < 0 {
+		return ""
+	}
+	start += len(openTag)
+	end := strings.Index(s[start:], closeTag)
+	if end < 0 {
+		return ""
+	}
+	return s[start : start+end]
+}
+
+// collapseWhitespace flattens all runs of whitespace into single spaces,
+// yielding a single-line preview.
+func collapseWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// headTruncate returns the first n runes of s plus an ellipsis when s is
+// longer. Cuts on a rune boundary ([]rune(s)[:n]) so a multibyte rune is never
+// split — distinct from MidTruncate, which cuts the middle on a byte boundary.
+func headTruncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
+// firstUserIntent returns the (full, truncated) intent for a session. It walks
+// user-role messages in order and returns the first whose content is real prose
+// (not a known junk/harness prefix). When no prose exists but a slash-command
+// invocation was seen, it falls back to that command (e.g. "/execute-task 014").
+// Returns ("", "") when no user message qualifies.
+func firstUserIntent(messages []model.AgentMessage, maxChars int) (full, truncated string) {
+	var firstCommand string
+	for i := range messages {
+		if messages[i].Role != string(model.RoleUser) {
+			continue
+		}
+		c := strings.TrimSpace(messages[i].Content)
+		if c == "" {
+			continue
+		}
+		if firstCommand == "" {
+			if cmd := parseSlashCommand(c); cmd != "" {
+				firstCommand = cmd // remember for fallback
+			}
+		}
+		if isJunkIntent(c) {
+			continue
+		}
+		full = c
+		truncated = headTruncate(collapseWhitespace(c), maxChars)
+		return full, truncated
+	}
+	// No clean prose — fall back to the slash command if we saw one.
+	if firstCommand != "" {
+		return firstCommand, firstCommand
+	}
+	return "", ""
 }
 
 // renderAskUserQuestion attempts to render AskUserQuestion tool input as

@@ -8,29 +8,31 @@ import (
 
 // SessionRow holds the full data for a single indexed session.
 type SessionRow struct {
-	DocID               int64
-	PartitionSourcePath string
-	SessionID           string
-	ParentSessionID     string
-	HostID              string
-	Agent               string
-	SubagentName        string
-	IsSubagent          bool
-	Workspace           string
-	GitRemote           string
-	Model               string
-	SourcePath          string
-	FirstMessageAt      int64
-	LastMessageAt       int64
-	TotalTurnDurationMs int64
-	TotalInputTokens    int64
-	TotalOutputTokens   int64
-	TotalTokens         int64
-	TotalBytes          int64
-	TotalOutputBytes    int64
-	TotalInputBytes     int64
-	TranscriptTruncated string
-	SchemaVersion       int
+	DocID                    int64
+	PartitionSourcePath      string
+	SessionID                string
+	ParentSessionID          string
+	HostID                   string
+	Agent                    string
+	SubagentName             string
+	IsSubagent               bool
+	Workspace                string
+	GitRemote                string
+	Model                    string
+	SourcePath               string
+	FirstMessageAt           int64
+	LastMessageAt            int64
+	TotalTurnDurationMs      int64
+	TotalInputTokens         int64
+	TotalOutputTokens        int64
+	TotalTokens              int64
+	TotalBytes               int64
+	TotalOutputBytes         int64
+	TotalInputBytes          int64
+	TranscriptTruncated      string
+	FirstUserIntent          string
+	FirstUserIntentTruncated string
+	SchemaVersion            int
 }
 
 // ListSessionsOpts holds optional filters for ListSessions.
@@ -80,6 +82,9 @@ type SessionListRow struct {
 	TotalTokens     int64  `json:"total_tokens"`
 	MessageCount    int    `json:"message_count"`
 	ErrorCount      int    `json:"error_count"`
+	// FirstUserIntentTruncated is the single-line, head-truncated first
+	// "clean" user message — a preview of session intent for list output.
+	FirstUserIntentTruncated string `json:"first_user_intent_truncated,omitempty"`
 }
 
 // ListSessions queries the sessions table directly (no FTS) with optional filters.
@@ -234,7 +239,8 @@ func ListSessions(db *sql.DB, opts *ListSessionsOpts) ([]SessionListRow, int, er
 			s.total_turn_duration_ms,
 			s.total_tokens,
 			COALESCE(mc.cnt, 0) AS message_count,
-			COALESCE(mc.err_cnt, 0) AS error_count
+			COALESCE(mc.err_cnt, 0) AS error_count,
+			s.first_user_intent_truncated
 		FROM sessions s
 		%s
 		%s%s
@@ -261,6 +267,7 @@ func ListSessions(db *sql.DB, opts *ListSessionsOpts) ([]SessionListRow, int, er
 			&r.ToolDurationMs,
 			&r.TotalTokens,
 			&r.MessageCount, &r.ErrorCount,
+			&r.FirstUserIntentTruncated,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan session list row: %w", err)
 		}
@@ -282,7 +289,8 @@ func GetSessionByID(db *sql.DB, sessionID string) (*SessionRow, error) {
 			first_message_at, last_message_at, total_turn_duration_ms,
 			total_input_tokens, total_output_tokens, total_tokens,
 			total_bytes, total_output_bytes, total_input_bytes,
-			transcript_truncated, schema_version
+			transcript_truncated, first_user_intent, first_user_intent_truncated,
+			schema_version
 		FROM sessions
 		WHERE session_id = ?
 	`, sessionID)
@@ -295,7 +303,8 @@ func GetSessionByID(db *sql.DB, sessionID string) (*SessionRow, error) {
 		&s.FirstMessageAt, &s.LastMessageAt, &s.TotalTurnDurationMs,
 		&s.TotalInputTokens, &s.TotalOutputTokens, &s.TotalTokens,
 		&s.TotalBytes, &s.TotalOutputBytes, &s.TotalInputBytes,
-		&s.TranscriptTruncated, &s.SchemaVersion,
+		&s.TranscriptTruncated, &s.FirstUserIntent, &s.FirstUserIntentTruncated,
+		&s.SchemaVersion,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("session not found: %s", sessionID)
