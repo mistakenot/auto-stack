@@ -297,6 +297,40 @@ A *session* may be the wrong unit — a **task episode** (sessions sharing `GitB
 what actually "succeeds." Define success at the episode level and attribute it down to constituent
 sessions.
 
+### 6.4 SWE-bench as a gold calibration anchor
+
+Our problem is that we have *no* clean `g_x(ŷ) ∈ {0,1}` — the §6.1 LFs *manufacture* one. SWE-bench is
+the opposite extreme: a curated benchmark whose success label is exact and external. Studying how it
+scores tells us both what a gold label looks like and how to validate our manufactured one.
+
+**How SWE-bench scores** (per instance):
+
+1. Each instance = a real GitHub issue + its merged PR, pinned to a `base_commit` in a per-instance
+   **Docker image**. It ships two named test sets derived from the PR:
+   - **`FAIL_TO_PASS`** — tests that fail at base and pass after the gold fix (verify the bug is fixed).
+   - **`PASS_TO_PASS`** — tests that pass before and must still pass after (regression guard).
+2. Apply the model's predicted patch (apply-failure → not resolved), then apply the gold `test_patch`
+   so the *official* tests are present, then run the tests; a per-framework log parser maps output to
+   per-test pass/fail.
+3. **`resolved` iff every `FAIL_TO_PASS` test passes AND every `PASS_TO_PASS` test passes** —
+   all-or-nothing, no partial credit. Score = `# resolved / total` (the "% Resolved" leaderboard
+   number; *Verified* = the 500 human-confirmed-solvable subset).
+
+**Why it matters for our design:**
+
+- **`FAIL_TO_PASS` + `PASS_TO_PASS` is exactly our progress/regression split (§7.3).** "Did you fix it"
+  *and* "did you avoid breaking things" — `FAIL_TO_PASS` going green is `P(t)` rising; a `PASS_TO_PASS`
+  flipping red is the regression dip / `E(t)`. SWE-bench independently validates that a single
+  "passed?" bit is insufficient; you need the regression guard too.
+- **It is the `V_oracle ≈ 1`, pre-curated extreme our sessions are not.** Real sessions are multi-goal,
+  have no curated test split, and often no checker at all — which is *why* the success label must be
+  manufactured (§6.1) rather than read off a harness. `LF_test` is the closest cheap proxy for SWE-
+  bench's exact criterion that we can compute on arbitrary sessions.
+- **It is the cleanest one-time validation anchor (§0).** Running a handful of our harness's sessions
+  *on* SWE-bench Verified instances yields ground-truth `resolved` bits — the independent success
+  signal to check whether our aggregate turn-score actually predicts real success, before we trust it
+  as an optimisation target. This is the gold end of the §8.2 three-tier hierarchy.
+
 ---
 
 ## 7. Progress curve from command reuse / near-reuse
