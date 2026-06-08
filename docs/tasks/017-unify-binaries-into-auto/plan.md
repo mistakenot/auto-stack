@@ -133,18 +133,18 @@ AUTHOR: Resolved per solution.md AC-2 (option a). Step 3.3 now: content assertio
 - [x] Step 3.5: Commit: `feat(017): phase 3 - umbrella main mounts 10 tools + integration tests`
 
 ### Phase 4: Build / install / release plumbing + CI guard  *(depends on Phase 3)*
-- [ ] Step 4.1: Makefile — add `auto-config` + `auto-cli` to `PROJECTS`; replace per-binary
+- [x] Step 4.1: Makefile — add `auto-config` + `auto-cli` to `PROJECTS`; replace per-binary
       `build-*`/`dist-*`/`install-*` with a single `auto` build (`cd auto-cli && go build
       -ldflags=… -o ../bin/auto ./cmd/auto`), dist (`…-o ../dist/auto-$(SUFFIX) ./cmd/auto`),
       and install (`cp bin/auto $(INSTALL_DIR)/`, keep "text file busy" handling for the running
       daemon). Keep `check/test/vet/lint/vulncheck` PROJECTS loops (now incl. config + cli).
-- [ ] Step 4.2: `install.sh` — `BINARIES="auto"`; download single `auto-<suffix>` asset; keep
+- [x] Step 4.2: `install.sh` — `BINARIES="auto"`; download single `auto-<suffix>` asset; keep
       running-binary replace logic.
-- [ ] Step 4.3: e2e — both scripts: `BINARIES="auto"`; per-tool checks become `auto <tool>
+- [x] Step 4.3: e2e — both scripts: `BINARIES="auto"`; per-tool checks become `auto <tool>
       --help`/`--version`; rewrite test-install.sh `init` block to `auto <tool> init`; **add an
       assertion that old names (autoetl, autosearch, …, autoui) are NOT present** (AC-3); this
       also closes the autoui gap.
-- [ ] Step 4.4: Create `scripts/check-no-stale-binary-refs.sh` per the (widened) Guard spec in
+- [x] Step 4.4: Create `scripts/check-no-stale-binary-refs.sh` per the (widened) Guard spec in
       solution.md — old-stem + whitespace + subcommand/flag pattern over **all tracked
       `auto-*/**/*.go` (except `*_test.go`/genstats/fixturegen) AND every tracked `**/SKILL.md`**
       plus README/CLAUDE.md/docs; exclude go.mod & `github.com/...` import paths, `[autodoc()]`,
@@ -158,9 +158,9 @@ REVIEW: See the solution.md threads on the daemoninstall/cochange remediation st
 AUTHOR: All addressed (mirrors the two solution.md threads). Guard scope (Step 4.4) widened to all tracked `auto-*/**/*.go` runtime strings + every tracked `**/SKILL.md`, with a curated service-identity retain-list. Sweep file lists expanded: Step 2.watch.d now enumerates daemoninstall/{install,restart,status,validate}.go + cli/{daemon,ops,task,root}.go (and the manager.go RETAIN); Step 2.x.c covers cochange/{cochange,repo}.go. Step 5.4 now edits the SOURCE skill copies (`skills/*`, `auto-reflect/skills/*`) + regenerates `.agents/`. So a missed hint now fails CI.
 -->
 
-- [ ] Step 4.5: Verify: `make build` produces only `bin/auto`; `make dist GOOS=linux GOARCH=amd64`
+- [x] Step 4.5: Verify: `make build` produces only `bin/auto`; `make dist GOOS=linux GOARCH=amd64`
       produces only `dist/auto-linux-amd64`; `make check` runs the guard and passes.
-- [ ] Step 4.6: Commit: `feat(017): phase 4 - single-binary build/install/release + stale-ref guard`
+- [x] Step 4.6: Commit: `feat(017): phase 4 - single-binary build/install/release + stale-ref guard`
 
 ### Phase 5: Docs + skills sweep  *(fan out ~4; depends only on Phase 1 naming; runs alongside 2–4)*
 - [x] Step 5.1: README.md — install/update block, status table, quickstart command blocks,
