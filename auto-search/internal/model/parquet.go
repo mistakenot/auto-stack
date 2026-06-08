@@ -41,6 +41,9 @@ type ParquetSessionRow struct {
 	// single line and head-truncated for previews.
 	FirstUserIntentTruncated string `parquet:"first_user_intent_truncated"`
 
+	PermissionMode string `parquet:"permission_mode,dict"`
+	Version        string `parquet:"version,dict"`
+
 	Year          int32 `parquet:"year"`
 	Month         int32 `parquet:"month"`
 	SchemaVersion int32 `parquet:"schema_version"`
@@ -83,6 +86,16 @@ type ParquetMessageRow struct {
 	InputTokens      int32 `parquet:"input_tokens"`
 	CacheInputTokens int32 `parquet:"cache_input_tokens"`
 	OutputTokens     int32 `parquet:"output_tokens"`
+
+	// ThinkingSignature is the opaque per-block token from thinking blocks.
+	// For normal thinking blocks: the signature string.
+	// For redacted_thinking blocks: the encrypted data payload.
+	ThinkingSignature string `parquet:"thinking_signature"`
+	StopReason        string `parquet:"stop_reason,dict"`
+	IsError           bool   `parquet:"is_error"`
+
+	CacheCreationInputTokens int64 `parquet:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64 `parquet:"cache_read_input_tokens"`
 
 	Workspace       string `parquet:"workspace,dict"`
 	GitRemote       string `parquet:"git_remote,dict"`

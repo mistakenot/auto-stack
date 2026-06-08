@@ -292,6 +292,7 @@ func insertSessionFromParquet(tx *sql.Tx, sourcePath string, r *model.ParquetSes
 		r.TotalBytes, r.TotalOutputBytes, r.TotalInputBytes,
 		r.TranscriptTruncated,
 		r.FirstUserIntent, r.FirstUserIntentTruncated,
+		r.PermissionMode, r.Version,
 		int(r.SchemaVersion),
 	)
 }
@@ -314,5 +315,7 @@ func insertMessageFromParquet(tx *sql.Tx, sourcePath string, r *model.ParquetMes
 		r.IsSubagent,
 		int(r.SourceLineIndex), int(r.SchemaVersion),
 		r.ToolUseResultJSON,
+		r.ThinkingSignature, r.StopReason, r.IsError,
+		r.CacheCreationInputTokens, r.CacheReadInputTokens,
 	)
 }

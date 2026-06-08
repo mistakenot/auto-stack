@@ -15,12 +15,14 @@ func InsertSession(tx *sql.Tx, partitionSourcePath string,
 	totalBytes, totalOutputBytes, totalInputBytes int64,
 	transcriptTruncated string,
 	firstUserIntent, firstUserIntentTruncated string,
+	permissionMode, version string,
 	schemaVersion int,
 ) error {
 	isSubagentInt := 0
 	if isSubagent {
 		isSubagentInt = 1
 	}
+	// 26 columns, 26 placeholders, 26 args.
 	_, err := tx.Exec(`
 		INSERT INTO sessions (
 			partition_source_path, session_id, parent_session_id, host_id,
@@ -29,8 +31,9 @@ func InsertSession(tx *sql.Tx, partitionSourcePath string,
 			total_input_tokens, total_output_tokens, total_tokens,
 			total_bytes, total_output_bytes, total_input_bytes,
 			transcript_truncated, first_user_intent, first_user_intent_truncated,
+			permission_mode, version,
 			schema_version
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		partitionSourcePath, sessionID, parentSessionID, hostID,
 		agent, subagentName, isSubagentInt, workspace, gitRemote, model,
@@ -38,6 +41,7 @@ func InsertSession(tx *sql.Tx, partitionSourcePath string,
 		totalInputTokens, totalOutputTokens, totalTokens,
 		totalBytes, totalOutputBytes, totalInputBytes,
 		transcriptTruncated, firstUserIntent, firstUserIntentTruncated,
+		permissionMode, version,
 		schemaVersion,
 	)
 	if err != nil {

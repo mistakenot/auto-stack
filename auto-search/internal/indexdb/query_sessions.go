@@ -32,6 +32,8 @@ type SessionRow struct {
 	TranscriptTruncated      string
 	FirstUserIntent          string
 	FirstUserIntentTruncated string
+	PermissionMode           string
+	Version                  string
 	SchemaVersion            int
 }
 
@@ -290,6 +292,7 @@ func GetSessionByID(db *sql.DB, sessionID string) (*SessionRow, error) {
 			total_input_tokens, total_output_tokens, total_tokens,
 			total_bytes, total_output_bytes, total_input_bytes,
 			transcript_truncated, first_user_intent, first_user_intent_truncated,
+			permission_mode, version,
 			schema_version
 		FROM sessions
 		WHERE session_id = ?
@@ -304,6 +307,7 @@ func GetSessionByID(db *sql.DB, sessionID string) (*SessionRow, error) {
 		&s.TotalInputTokens, &s.TotalOutputTokens, &s.TotalTokens,
 		&s.TotalBytes, &s.TotalOutputBytes, &s.TotalInputBytes,
 		&s.TranscriptTruncated, &s.FirstUserIntent, &s.FirstUserIntentTruncated,
+		&s.PermissionMode, &s.Version,
 		&s.SchemaVersion,
 	)
 	if err == sql.ErrNoRows {
@@ -326,6 +330,8 @@ func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
 			bash_command, bash_exit_code, skill_name,
 			tool_use_id, duration_ms, interrupted,
 			input_tokens, cache_input_tokens, output_tokens,
+			thinking_signature, stop_reason, is_error,
+			cache_creation_input_tokens, cache_read_input_tokens,
 			workspace, git_remote, git_branch, model,
 			parent_session_id, is_subagent, source_line_index, schema_version
 		FROM messages
@@ -340,7 +346,7 @@ func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
 	var msgs []MessageRow
 	for rows.Next() {
 		var m MessageRow
-		var isSubagentInt, interruptedInt int
+		var isSubagentInt, interruptedInt, isErrorInt int
 		if err := rows.Scan(
 			&m.DocID, &m.PartitionSourcePath, &m.MessageID, &m.SessionID, &m.HostID,
 			&m.MessageIndex, &m.Role, &m.Content, &m.ContentTruncated, &m.Timestamp,
@@ -349,6 +355,8 @@ func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
 			&m.BashCommand, &m.BashExitCode, &m.SkillName,
 			&m.ToolUseID, &m.DurationMs, &interruptedInt,
 			&m.InputTokens, &m.CacheInputTokens, &m.OutputTokens,
+			&m.ThinkingSignature, &m.StopReason, &isErrorInt,
+			&m.CacheCreationInputTokens, &m.CacheReadInputTokens,
 			&m.Workspace, &m.GitRemote, &m.GitBranch, &m.Model,
 			&m.ParentSessionID, &isSubagentInt, &m.SourceLineIndex, &m.SchemaVersion,
 		); err != nil {
@@ -356,6 +364,7 @@ func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
 		}
 		m.IsSubagent = isSubagentInt != 0
 		m.Interrupted = interruptedInt != 0
+		m.IsError = isErrorInt != 0
 		msgs = append(msgs, m)
 	}
 	return msgs, rows.Err()

@@ -28,6 +28,9 @@ func InsertMessage(tx *sql.Tx, partitionSourcePath string,
 	isSubagent bool,
 	sourceLineIndex, schemaVersion int,
 	toolUseResultJSON string,
+	thinkingSignature, stopReason string,
+	isError bool,
+	cacheCreationInputTokens, cacheReadInputTokens int64,
 ) error {
 	isSubagentInt := 0
 	if isSubagent {
@@ -37,6 +40,11 @@ func InsertMessage(tx *sql.Tx, partitionSourcePath string,
 	if interrupted {
 		interruptedInt = 1
 	}
+	isErrorInt := 0
+	if isError {
+		isErrorInt = 1
+	}
+	// 38 columns, 38 placeholders, 38 args.
 	_, err := tx.Exec(`
 		INSERT INTO messages (
 			partition_source_path, message_id, session_id, host_id,
@@ -48,8 +56,11 @@ func InsertMessage(tx *sql.Tx, partitionSourcePath string,
 			tool_use_id, duration_ms, interrupted,
 			input_tokens, cache_input_tokens, output_tokens,
 			workspace, git_remote, git_branch, model,
-			parent_session_id, is_subagent, source_line_index, schema_version
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			parent_session_id, is_subagent, source_line_index,
+			thinking_signature, stop_reason, is_error,
+			cache_creation_input_tokens, cache_read_input_tokens,
+			schema_version
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		partitionSourcePath, messageID, sessionID, hostID,
 		messageIndex, role, content, contentTruncated, timestamp,
@@ -60,7 +71,10 @@ func InsertMessage(tx *sql.Tx, partitionSourcePath string,
 		toolUseID, durationMs, interruptedInt,
 		inputTokens, cacheInputTokens, outputTokens,
 		workspace, gitRemote, gitBranch, model,
-		parentSessionID, isSubagentInt, sourceLineIndex, schemaVersion,
+		parentSessionID, isSubagentInt, sourceLineIndex,
+		thinkingSignature, stopReason, isErrorInt,
+		cacheCreationInputTokens, cacheReadInputTokens,
+		schemaVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("insert message %s: %w", messageID, err)

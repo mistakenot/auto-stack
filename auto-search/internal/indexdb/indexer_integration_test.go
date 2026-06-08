@@ -528,6 +528,7 @@ func TestInsertSessionTotalTurnDurationRoundtrip(t *testing.T) {
 		400, 200, 200,
 		"some transcript",
 		"Add a retry budget to the auth middleware", "Add a retry budget to the auth middleware",
+		"bypassPermissions", "2.1.168",
 		int(indexdb.SchemaVersion),
 	); err != nil {
 		t.Fatalf("InsertSession: %v", err)
