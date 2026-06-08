@@ -69,8 +69,8 @@ func newDaemonInstallCmd(application *app.App) *cobra.Command {
 			fmt.Fprintln(cmd.OutOrStdout(), "next:")
 			fmt.Fprintf(cmd.OutOrStdout(), "sudo systemctl status %s\n", result.Spec.ServiceName)
 			fmt.Fprintf(cmd.OutOrStdout(), "journalctl -u %s -f\n", result.Spec.ServiceName)
-			fmt.Fprintln(cmd.OutOrStdout(), "autowatch daemon status")
-			fmt.Fprintln(cmd.OutOrStdout(), "autowatch status")
+			fmt.Fprintln(cmd.OutOrStdout(), "auto watch daemon status")
+			fmt.Fprintln(cmd.OutOrStdout(), "auto watch status")
 			return nil
 		},
 	}
@@ -78,7 +78,7 @@ func newDaemonInstallCmd(application *app.App) *cobra.Command {
 	cmd.Flags().StringVar(&opts.RuntimeUser, "user", "", "runtime user for the service")
 	cmd.Flags().StringVar(&opts.HomeDir, "home", "", "home directory for the runtime user")
 	cmd.Flags().StringVar(&opts.WorkingDir, "working-dir", "", "working directory for the service")
-	cmd.Flags().StringVar(&opts.BinPath, "bin", "", "absolute path to the autowatch binary")
+	cmd.Flags().StringVar(&opts.BinPath, "bin", "", "absolute path to the auto binary")
 	cmd.Flags().StringVar(&opts.PathEnv, "path-env", "", "PATH environment for the service")
 	cmd.Flags().BoolVar(&opts.Enable, "enable", false, "enable the service at boot")
 	cmd.Flags().BoolVar(&opts.Start, "start", false, "start the service after installation")

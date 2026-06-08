@@ -38,7 +38,7 @@ func newStartCmd(application *app.App) *cobra.Command {
 			lock, err := daemon.AcquireLock(lockPath)
 			if err != nil {
 				if errors.Is(err, daemon.ErrDaemonAlreadyRunning) {
-					return &ExitError{Code: 1, Err: errors.New("autowatch daemon is already running; inspect autowatch status or stop the existing daemon")}
+					return &ExitError{Code: 1, Err: errors.New("autowatch daemon is already running; inspect auto watch status or stop the existing daemon")}
 				}
 				return &ExitError{Code: 1, Err: err}
 			}

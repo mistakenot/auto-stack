@@ -42,8 +42,8 @@ var zenKoans = []string{
 	"The fastest query is the one you never run.",
 }
 
-func init() {
-	rootCmd.AddCommand(zenCmd)
+func newZenCmd() *cobra.Command {
+	return zenCmd
 }
 
 var zenCmd = &cobra.Command{

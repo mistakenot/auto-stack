@@ -86,7 +86,7 @@ func ResolveRepo(inputPath, repoIDOverride string, repos []etlscan.GitRepoSlim) 
 			return res, nil
 		}
 	}
-	return ResolvedRepo{}, fmt.Errorf("%w: origin remote %q (normalized %q) has no match; run `autoetl run --only git`, or pass --repo-id <id>", ErrNoRepoMatch, remote, normalized)
+	return ResolvedRepo{}, fmt.Errorf("%w: origin remote %q (normalized %q) has no match; run `auto etl run --only git`, or pass --repo-id <id>", ErrNoRepoMatch, remote, normalized)
 }
 
 // dirForGit derives an existing directory to hand `git -C` from an absolute

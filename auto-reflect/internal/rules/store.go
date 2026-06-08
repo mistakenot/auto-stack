@@ -35,7 +35,7 @@ func (s *Service) Create(playbookPath string, in CreateInput) (CreateResult, []V
 	for _, existing := range playbook.Rules {
 		existingIDs[existing.ID] = struct{}{}
 		if existing.Content == normalized.Content && existing.Category == normalized.Category {
-			return CreateResult{}, nil, errors.New("duplicate rule: Run `autoreflect lookup` first or wait for a future rule update command")
+			return CreateResult{}, nil, errors.New("duplicate rule: Run `auto reflect lookup` first or wait for a future rule update command")
 		}
 	}
 

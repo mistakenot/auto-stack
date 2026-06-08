@@ -42,7 +42,7 @@ func Execute(ctx context.Context, stdout, stderr io.Writer) int {
 
 func NewRootCmd(application *app.App) *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:           "autoui",
+		Use:           "ui",
 		Short:         "Serve the auto-ui local web dashboard",
 		SilenceErrors: true,
 		SilenceUsage:  true,

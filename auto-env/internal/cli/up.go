@@ -30,7 +30,7 @@ func newUpCmd(application *app.App) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			info, err := worktree.Detect(application.CWD)
 			if err != nil {
-				return &ExitError{Code: 1, Err: errors.New("not a git repository: autoenv requires a git repository")}
+				return &ExitError{Code: 1, Err: errors.New("not a git repository: auto env requires a git repository")}
 			}
 			repoRoot := info.RepoRoot
 
@@ -119,7 +119,7 @@ func newUpCmd(application *app.App) *cobra.Command {
 			shCmd.Stdout = os.Stdout
 			shCmd.Stderr = os.Stderr
 			if err := shCmd.Run(); err != nil {
-				return &ExitError{Code: 1, Err: fmt.Errorf("up_command failed: %w (generated files left in place for debugging, run autoenv down to clean up)", err)}
+				return &ExitError{Code: 1, Err: fmt.Errorf("up_command failed: %w (generated files left in place for debugging, run auto env down to clean up)", err)}
 			}
 
 			reg, err := registry.Default()

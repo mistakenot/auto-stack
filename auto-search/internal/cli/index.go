@@ -22,13 +22,13 @@ func newIndexCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "index",
-		Short: "Build or update a local search index from autoetl parquet output",
+		Short: "Build or update a local search index from auto etl parquet output",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(input) == "" {
 				return &ExitError{
 					Code: 1,
-					Err:  errors.New("--input is required; run: autosearch init"),
+					Err:  errors.New("--input is required; run: auto search init"),
 				}
 			}
 

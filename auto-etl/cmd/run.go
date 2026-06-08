@@ -40,10 +40,8 @@ var validOnlyValues = map[string]bool{
 	"git":      true,
 }
 
-func init() {
-	home, _ := os.UserHomeDir()
-	defaultInput := filepath.Join(home, ".claude", "projects")
-	defaultOutput := filepath.Join(home, ".auto", "etl", "output")
+func newRunCmd() *cobra.Command {
+	defaultInput, defaultOutput := homeDefaults()
 
 	runCmd.Flags().StringVar(&inputDir, "input", defaultInput, "Input directory containing raw session data")
 	runCmd.Flags().StringVar(&outputDir, "output", defaultOutput, "Output directory for transformed parquet files")
@@ -52,7 +50,7 @@ func init() {
 	runCmd.Flags().StringSliceVar(&repoPathFlag, "repo-path", nil, "Explicit git repo paths to index (for --only git)")
 	runCmd.Flags().StringVar(&sinceFlag, "since", "", "Limit initial git history depth (e.g. 5m, 2h, 5d, 3w, 6mo, 1y)")
 
-	rootCmd.AddCommand(runCmd)
+	return runCmd
 }
 
 var runCmd = &cobra.Command{

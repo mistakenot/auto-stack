@@ -21,7 +21,7 @@ func newInitCmd(application *app.App) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			info, err := worktree.Detect(application.CWD)
 			if err != nil {
-				return &ExitError{Code: 1, Err: errors.New("not a git repository: autoenv requires a git repository")}
+				return &ExitError{Code: 1, Err: errors.New("not a git repository: auto env requires a git repository")}
 			}
 			repoRoot := info.RepoRoot
 
@@ -63,7 +63,7 @@ func newInitCmd(application *app.App) *cobra.Command {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Next steps:")
 			fmt.Fprintln(cmd.ErrOrStderr(), "  1. Edit .auto/env/config.json — set up_command and down_command")
 			fmt.Fprintln(cmd.ErrOrStderr(), "  2. Add template files to .auto/env/files/")
-			fmt.Fprintln(cmd.ErrOrStderr(), "  3. Run: autoenv up")
+			fmt.Fprintln(cmd.ErrOrStderr(), "  3. Run: auto env up")
 			return nil
 		},
 	}

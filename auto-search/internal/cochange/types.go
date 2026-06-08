@@ -1,6 +1,6 @@
 package cochange
 
-// JSON output structs for `autosearch co-change`. Field names and snake_case
+// JSON output structs for `auto search co-change`. Field names and snake_case
 // tags match requirements AC-4 (per-related-file) and AC-5 (metadata header)
 // exactly. Dates are emitted as ISO date strings (YYYY-MM-DD, UTC) — see
 // isoDate in cochange.go for the conversion from the engine's unix-ms int64s.

@@ -14,9 +14,9 @@ func newDocsCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			docs := strings.Join([]string{
-				"# autoui commands",
+				"# auto ui commands",
 				"",
-				"- `init`: initialize shared and autoui settings (~/.auto/ui/settings.json).",
+				"- `init`: initialize shared and auto ui settings (~/.auto/ui/settings.json).",
 				"- `doctor`: check settings validity and configured port, report as JSON.",
 				"- `quickstart`: show a minimal happy-path workflow.",
 				"- `docs`: show this command reference.",

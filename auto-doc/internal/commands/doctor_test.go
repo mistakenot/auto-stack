@@ -58,8 +58,8 @@ func TestDoctorFreshDir(t *testing.T) {
 	if !strings.Contains(output, "✗") {
 		t.Error("expected fail markers")
 	}
-	if !strings.Contains(output, "autodoc init") {
-		t.Error("expected remediation hint for autodoc init")
+	if !strings.Contains(output, "auto doc init") {
+		t.Error("expected remediation hint for auto doc init")
 	}
 }
 

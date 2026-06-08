@@ -14,7 +14,7 @@ func newDocsCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			docs := strings.Join([]string{
-				"# autograph commands",
+				"# auto graph commands",
 				"",
 				"- `init`: initialize shared and graph settings.",
 				"- `doctor`: check dependencies (ast-grep) and settings, report as JSON.",

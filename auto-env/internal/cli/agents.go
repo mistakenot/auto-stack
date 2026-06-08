@@ -9,15 +9,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const autoenvSnippet = `**autoenv** — Standalone dev environments for worktree branches. Run ` + "`autoenv quickstart`" + ` to learn how to stand up an isolated environment.`
+const autoenvSnippet = `**auto env** — Standalone dev environments for worktree branches. Run ` + "`auto env quickstart`" + ` to learn how to stand up an isolated environment.`
 
 var agentFiles = []string{"CLAUDE.md", "AGENTS.md", "GEMINI.md"}
 
 func newAgentsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "agents",
-		Short: "Register autoenv in local agent memory files",
-		Long:  "Appends a one-line description of autoenv to CLAUDE.md, AGENTS.md, and GEMINI.md if not already present. Idempotent and symlink-safe.",
+		Short: "Register auto env in local agent memory files",
+		Long:  "Appends a one-line description of auto env to CLAUDE.md, AGENTS.md, and GEMINI.md if not already present. Idempotent and symlink-safe.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cwd, err := os.Getwd()

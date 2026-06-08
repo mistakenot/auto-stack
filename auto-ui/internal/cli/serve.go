@@ -66,7 +66,7 @@ func newServeCmd(application *app.App) *cobra.Command {
 				_ = srv.Shutdown(shutdownCtx)
 			}()
 
-			fmt.Fprintf(application.Stderr, "autoui serving on http://localhost:%d (assets=%s)\n", port, web.Mode)
+			fmt.Fprintf(application.Stderr, "auto ui serving on http://localhost:%d (assets=%s)\n", port, web.Mode)
 			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				return &ExitError{Code: 1, Err: err}
 			}

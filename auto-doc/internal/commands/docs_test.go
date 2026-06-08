@@ -12,17 +12,17 @@ func TestDocsContainsAllCommands(t *testing.T) {
 	output := buf.String()
 
 	cmds := []string{
-		"autodoc init",
-		"autodoc tree",
-		"autodoc stale",
-		"autodoc fix",
-		"autodoc fixed",
-		"autodoc agents",
-		"autodoc search reindex",
-		"autodoc search keyword",
-		"autodoc doctor",
-		"autodoc quickstart",
-		"autodoc docs",
+		"auto doc init",
+		"auto doc tree",
+		"auto doc stale",
+		"auto doc fix",
+		"auto doc fixed",
+		"auto doc agents",
+		"auto doc search reindex",
+		"auto doc search keyword",
+		"auto doc doctor",
+		"auto doc quickstart",
+		"auto doc docs",
 		"--json",
 		"--project",
 	}

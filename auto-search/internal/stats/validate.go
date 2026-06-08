@@ -115,7 +115,7 @@ func normalizeScope(raw string) (string, error) {
 func normalizeGroupBy(scope, raw string) (string, error) {
 	groupBy := strings.ToLower(strings.TrimSpace(raw))
 	if groupBy == "" {
-		return "", errors.New("--group-by is required; run: autosearch stats --help")
+		return "", errors.New("--group-by is required; run: auto search stats --help")
 	}
 
 	if slices.Contains(validKeysForScope(scope), groupBy) {

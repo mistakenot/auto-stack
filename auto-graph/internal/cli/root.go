@@ -42,7 +42,7 @@ func Execute(ctx context.Context, stdout, stderr io.Writer) int {
 
 func NewRootCmd(application *app.App) *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:           "autograph",
+		Use:           "graph",
 		Short:         "Build and query code context graphs",
 		SilenceErrors: true,
 		SilenceUsage:  true,

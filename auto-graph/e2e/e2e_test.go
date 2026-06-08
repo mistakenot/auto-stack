@@ -825,7 +825,7 @@ func TestEdgeReferentialIntegrity(t *testing.T) {
 func TestVersion(t *testing.T) {
 	bin := buildBinary(t)
 	output := runAutograph(t, bin, "--version")
-	if !strings.Contains(output, "autograph version") {
+	if !strings.Contains(output, "graph version") {
 		t.Errorf("expected version output, got: %s", output)
 	}
 }

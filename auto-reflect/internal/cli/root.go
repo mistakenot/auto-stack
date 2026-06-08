@@ -44,7 +44,7 @@ func Execute(ctx context.Context, stdout, stderr io.Writer) int {
 
 func NewRootCmd(application *app.App) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "autoreflect",
+		Use:           "reflect",
 		Short:         "Persist and retrieve repository rules with feedback capture",
 		SilenceErrors: true,
 		SilenceUsage:  true,

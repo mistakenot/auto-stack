@@ -140,7 +140,7 @@ func (m *Manager) validateExecutable(pathValue string) error {
 		return remediationError(fmt.Sprintf("binary path %q is a directory", pathValue), "run make install first")
 	}
 	if info.Mode().Perm()&0o111 == 0 {
-		return remediationError(fmt.Sprintf("binary %q is not executable", pathValue), "run chmod +x on the autowatch binary or rerun make install")
+		return remediationError(fmt.Sprintf("binary %q is not executable", pathValue), "run chmod +x on the auto binary or rerun make install")
 	}
 	return nil
 }

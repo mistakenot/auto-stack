@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const autosearchSnippet = `**autosearch** — Search past coding agent sessions. Run ` + "`autosearch quickstart`" + ` to learn more.`
+const autosearchSnippet = `**auto search** — Search past coding agent sessions. Run ` + "`auto search quickstart`" + ` to learn more.`
 
 // agentFiles are the files to update, checked in order.
 var agentFiles = []string{"CLAUDE.md", "AGENTS.md", "GEMINI.md"}
@@ -17,8 +17,8 @@ var agentFiles = []string{"CLAUDE.md", "AGENTS.md", "GEMINI.md"}
 func newAgentsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "agents",
-		Short: "Register autosearch in local agent memory files",
-		Long:  "Appends a one-line description of autosearch to CLAUDE.md, AGENTS.md, and GEMINI.md if not already present. Idempotent and symlink-safe.",
+		Short: "Register auto search in local agent memory files",
+		Long:  "Appends a one-line description of auto search to CLAUDE.md, AGENTS.md, and GEMINI.md if not already present. Idempotent and symlink-safe.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cwd, err := os.Getwd()
@@ -59,7 +59,7 @@ func newAgentsCmd() *cobra.Command {
 	}
 }
 
-// ensureSnippet checks if the file contains the autosearch snippet.
+// ensureSnippet checks if the file contains the auto search snippet.
 // If not, it appends it to the end. Returns true if the file was modified.
 func ensureSnippet(path string) (bool, error) {
 	data, err := os.ReadFile(path)

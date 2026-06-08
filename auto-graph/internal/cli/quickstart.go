@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const quickstartMarkdown = `# autograph quickstart
+const quickstartMarkdown = `# auto graph quickstart
 
 Build and query code context graphs. Supports TypeScript (via ast-grep) and Go (via go/parser) import graphs.
 
@@ -16,7 +16,7 @@ For TypeScript projects, ensure ast-grep is installed:
 
 ` + "```" + `bash
 npm install -g @ast-grep/cli
-autograph doctor
+auto graph doctor
 ` + "```" + `
 
 For Go projects, no external dependencies are needed.
@@ -27,44 +27,44 @@ For Go projects, no external dependencies are needed.
 
 ` + "```" + `bash
 # Scan a TypeScript project and output the import graph as JSON (default)
-autograph code graph ./my-ts-project
+auto graph code graph ./my-ts-project
 
 # Output as Graphviz DOT
-autograph code graph ./my-ts-project --format=dot
+auto graph code graph ./my-ts-project --format=dot
 
 # Output as Mermaid
-autograph code graph ./my-ts-project --format=mermaid
+auto graph code graph ./my-ts-project --format=mermaid
 ` + "```" + `
 
 ### 2. Generate an import graph (Go)
 
 ` + "```" + `bash
 # Scan a Go project (auto-detected from go.mod)
-autograph code graph ./my-go-project
+auto graph code graph ./my-go-project
 
 # Explicit language override
-autograph code graph ./my-go-project --lang=go
+auto graph code graph ./my-go-project --lang=go
 
 # Output as DOT
-autograph code graph ./my-go-project --format=dot
+auto graph code graph ./my-go-project --format=dot
 ` + "```" + `
 
 ### 3. Specify language explicitly
 
 ` + "```" + `bash
 # Auto-detection uses go.mod or tsconfig.json presence; override with --lang
-autograph code graph ./my-project --lang=typescript
-autograph code graph ./my-project --lang=go
+auto graph code graph ./my-project --lang=typescript
+auto graph code graph ./my-project --lang=go
 ` + "```" + `
 
 ### 4. Pipe to other tools
 
 ` + "```" + `bash
 # Render DOT output with Graphviz
-autograph code graph ./my-project --format=dot | dot -Tpng -o graph.png
+auto graph code graph ./my-project --format=dot | dot -Tpng -o graph.png
 
 # Use jq to extract specific nodes
-autograph code graph ./my-project | jq '.nodes[] | select(.path | contains("utils"))'
+auto graph code graph ./my-project | jq '.nodes[] | select(.path | contains("utils"))'
 ` + "```" + `
 
 ## Output format
@@ -89,13 +89,13 @@ JSON output contains a graph with nodes for each file and edges for each import 
 
 ` + "```" + `bash
 # Select relevant files around a seed file, output as markdown (default)
-autograph code context ./my-project --token-limit 12000 --file src/App.tsx
+auto graph code context ./my-project --token-limit 12000 --file src/App.tsx
 
 # Multiple seed files, JSON output
-autograph code context ./my-project --token-limit 8000 --file src/App.tsx --file src/hooks/useAuth.ts --format=json
+auto graph code context ./my-project --token-limit 8000 --file src/App.tsx --file src/hooks/useAuth.ts --format=json
 ` + "```" + `
 
-Run ` + "`autograph <command> --help`" + ` for full flag details on any command.
+Run ` + "`auto graph <command> --help`" + ` for full flag details on any command.
 `
 
 func newQuickstartCmd() *cobra.Command {

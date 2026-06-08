@@ -19,7 +19,7 @@ type doctorCheck struct {
 func newDoctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
-		Short: "Check autograph configuration and dependencies",
+		Short: "Check auto graph configuration and dependencies",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			checks := runDoctorChecks()
@@ -66,14 +66,14 @@ func runDoctorChecks() []doctorCheck {
 			Check:   "shared_settings",
 			Status:  "fail",
 			Message: fmt.Sprintf("cannot determine shared settings path: %v", err),
-			Hint:    "run autograph init",
+			Hint:    "run auto graph init",
 		})
 	} else if _, err := config.LoadSharedSettings(sharedPath); err != nil {
 		checks = append(checks, doctorCheck{
 			Check:   "shared_settings",
 			Status:  "fail",
 			Message: fmt.Sprintf("shared settings invalid or missing: %v", err),
-			Hint:    "run autograph init",
+			Hint:    "run auto graph init",
 		})
 	} else {
 		checks = append(checks, doctorCheck{
@@ -90,14 +90,14 @@ func runDoctorChecks() []doctorCheck {
 			Check:   "graph_settings",
 			Status:  "fail",
 			Message: fmt.Sprintf("cannot determine graph settings path: %v", err),
-			Hint:    "run autograph init",
+			Hint:    "run auto graph init",
 		})
 	} else if _, err := config.LoadGraphSettings(graphPath); err != nil {
 		checks = append(checks, doctorCheck{
 			Check:   "graph_settings",
 			Status:  "fail",
 			Message: fmt.Sprintf("graph settings invalid or missing: %v", err),
-			Hint:    "run autograph init",
+			Hint:    "run auto graph init",
 		})
 	} else {
 		checks = append(checks, doctorCheck{

@@ -694,9 +694,9 @@ func TestSessionGet(t *testing.T) {
 	if strings.Contains(stdout, "…[truncated]…") {
 		t.Fatal("old truncation marker found; expected drill-down hint")
 	}
-	if strings.Contains(stdout, "autosearch message get") {
+	if strings.Contains(stdout, "auto search message get") {
 		// Long content from msg-003 should be truncated with hint.
-		if !strings.Contains(stdout, "autosearch message get msg-003") {
+		if !strings.Contains(stdout, "auto search message get msg-003") {
 			t.Fatal("expected truncation hint to reference msg-003")
 		}
 	}

@@ -138,8 +138,8 @@ func unitToMs(unit string) (int64, error) {
 // "1h", or "1500ms" and returns the equivalent number of milliseconds.
 //
 // This is a strict superset of ParseDurationMs that adds s and ms units.
-// It is used by --min-tool-duration on `autosearch search` and
-// `autosearch session list`, where typical values are seconds, not days.
+// It is used by --min-tool-duration on `auto search search` and
+// `auto search session list`, where typical values are seconds, not days.
 func ParseToolDurationMs(raw string) (int64, error) {
 	raw = strings.TrimSpace(raw)
 	matches := toolDurationPattern.FindStringSubmatch(raw)

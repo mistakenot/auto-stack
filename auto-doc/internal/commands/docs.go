@@ -10,7 +10,7 @@ func Docs(w io.Writer) {
 	fmt.Fprint(w, docsReference)
 }
 
-const docsReference = `# autodoc — Complete Command Reference
+const docsReference = `# auto doc — Complete Command Reference
 
 ## Global Flags
 
@@ -20,9 +20,9 @@ const docsReference = `# autodoc — Complete Command Reference
 
 ---
 
-## ` + "`autodoc init`" + `
+## ` + "`auto doc init`" + `
 
-Initialize global autodoc configuration.
+Initialize global auto doc configuration.
 
 **Creates:**
 - ` + "`~/.auto/doc/settings.json`" + ` — global config (supports ` + "`ignores`" + ` array)
@@ -38,7 +38,7 @@ Initialize global autodoc configuration.
 - Creates ` + "`.auto/doc/settings.json`" + ` with defaults (docsDir, agentFiles, parallelism, ignores)
 - Creates ` + "`.auto/doc/.gitignore`" + ` (tracks only settings.json)
 - Creates ` + "`docs/`" + ` directory if missing
-- Runs tree output and advises ` + "`autodoc fix`" + ` if stale files found
+- Runs tree output and advises ` + "`auto doc fix`" + ` if stale files found
 - Also runs global init if ` + "`~/.auto/doc/settings.json`" + ` doesn't exist
 
 **Idempotent:** Running twice does not overwrite existing configs.
@@ -47,7 +47,7 @@ Initialize global autodoc configuration.
 
 ---
 
-## ` + "`autodoc tree`" + `
+## ` + "`auto doc tree`" + `
 
 Pretty-print all discovered doc files with title and summary in a unified repo-root tree.
 
@@ -66,7 +66,7 @@ Pretty-print all discovered doc files with title and summary in a unified repo-r
 
 ---
 
-## ` + "`autodoc stale`" + `
+## ` + "`auto doc stale`" + `
 
 List files where the hash doesn't match content, or files missing required frontmatter fields.
 
@@ -85,13 +85,13 @@ List files where the hash doesn't match content, or files missing required front
 
 ---
 
-## ` + "`autodoc fix`" + `
+## ` + "`auto doc fix`" + `
 
 Scan for all documentation and code-link issues, output instructions for an AI agent to fix them.
 
 **What it checks:**
 - Missing frontmatter (no title/summary/hash)
-- Stale hash (content changed since last ` + "`autodoc fixed`" + `)
+- Stale hash (content changed since last ` + "`auto doc fixed`" + `)
 - Default/empty title
 - ` + "`[autodoc(...)]`" + ` code tag issues: doc hash mismatch, scope hash mismatch, both mismatch, orphaned tags, malformed tags
 
@@ -112,7 +112,7 @@ Scan for all documentation and code-link issues, output instructions for an AI a
 
 ---
 
-## ` + "`autodoc fixed <filepath>`" + `
+## ` + "`auto doc fixed <filepath>`" + `
 
 Recalculate and write the hash for a single doc file. Also updates the search index if one exists.
 
@@ -127,7 +127,7 @@ Recalculate and write the hash for a single doc file. Also updates the search in
 
 ---
 
-## ` + "`autodoc agents`" + `
+## ` + "`auto doc agents`" + `
 
 Insert auto-generated documentation indexes into agent memory files (AGENTS.md, CLAUDE.md).
 
@@ -143,7 +143,7 @@ Insert auto-generated documentation indexes into agent memory files (AGENTS.md, 
 
 ---
 
-## ` + "`autodoc search reindex`" + `
+## ` + "`auto doc search reindex`" + `
 
 Build or rebuild the full-text BM25 search index from all discovered docs.
 
@@ -157,7 +157,7 @@ Build or rebuild the full-text BM25 search index from all discovered docs.
 
 ---
 
-## ` + "`autodoc search keyword <query>`" + `
+## ` + "`auto doc search keyword <query>`" + `
 
 Run a BM25 keyword search against the index. Always returns JSON.
 
@@ -174,7 +174,7 @@ Run a BM25 keyword search against the index. Always returns JSON.
 
 ---
 
-## ` + "`autodoc doctor`" + `
+## ` + "`auto doc doctor`" + `
 
 Check configuration health and report problems with remediation hints.
 
@@ -191,7 +191,7 @@ Check configuration health and report problems with remediation hints.
 ` + "```json" + `
 [
   {"check": "global_config", "status": "pass", "message": "/home/user/.auto/doc/settings.json"},
-  {"check": "search_index", "status": "fail", "message": ".auto/doc/index not found. Run ` + "`" + `autodoc search reindex` + "`" + ` to create it."}
+  {"check": "search_index", "status": "fail", "message": ".auto/doc/index not found. Run ` + "`" + `auto doc search reindex` + "`" + ` to create it."}
 ]
 ` + "```" + `
 
@@ -199,13 +199,13 @@ Check configuration health and report problems with remediation hints.
 
 ---
 
-## ` + "`autodoc quickstart`" + `
+## ` + "`auto doc quickstart`" + `
 
-Output a concise end-to-end tutorial with examples. See ` + "`autodoc quickstart`" + ` for content.
+Output a concise end-to-end tutorial with examples. See ` + "`auto doc quickstart`" + ` for content.
 
 ---
 
-## ` + "`autodoc docs`" + `
+## ` + "`auto doc docs`" + `
 
 Output this complete command reference.
 

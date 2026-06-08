@@ -26,6 +26,6 @@ var updateCmd = &cobra.Command{
 	},
 }
 
-func init() {
-	rootCmd.AddCommand(updateCmd)
+func newUpdateCmd() *cobra.Command {
+	return updateCmd
 }

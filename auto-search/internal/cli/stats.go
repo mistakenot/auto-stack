@@ -41,7 +41,7 @@ func newStatsCmd() *cobra.Command {
 			}
 			db, err := indexdb.Open(dbPath)
 			if err != nil {
-				return &ExitError{Code: 1, Err: fmt.Errorf("open index: %w; run: autosearch index", err)}
+				return &ExitError{Code: 1, Err: fmt.Errorf("open index: %w; run: auto search index", err)}
 			}
 			defer func() { _ = db.Close() }()
 

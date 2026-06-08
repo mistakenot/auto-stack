@@ -40,7 +40,7 @@ func (m *Manager) Install(ctx context.Context, opts *InstallOptions) (InstallRes
 	default:
 		return InstallResult{}, remediationError(
 			fmt.Sprintf("failed to read existing unit %q: %v", spec.UnitPath, readErr),
-			"rerun with sudo autowatch daemon install",
+			"rerun with sudo auto watch daemon install",
 		)
 	}
 
@@ -53,22 +53,22 @@ func (m *Manager) Install(ctx context.Context, opts *InstallOptions) (InstallRes
 		if err := m.writeFileAtomic(spec.UnitPath, []byte(rendered), 0o644); err != nil {
 			return InstallResult{}, remediationError(
 				fmt.Sprintf("failed to write unit %q: %v", spec.UnitPath, err),
-				"rerun with sudo autowatch daemon install",
+				"rerun with sudo auto watch daemon install",
 			)
 		}
-		if err := m.runSystemctl(ctx, "rerun with sudo autowatch daemon install", "daemon-reload"); err != nil {
+		if err := m.runSystemctl(ctx, "rerun with sudo auto watch daemon install", "daemon-reload"); err != nil {
 			return InstallResult{}, err
 		}
 		result.CompletedActions = append(result.CompletedActions, "systemctl daemon-reload")
 	}
 	if opts.Enable {
-		if err := m.runSystemctl(ctx, "rerun with sudo autowatch daemon install --enable", "enable", spec.ServiceName); err != nil {
+		if err := m.runSystemctl(ctx, "rerun with sudo auto watch daemon install --enable", "enable", spec.ServiceName); err != nil {
 			return InstallResult{}, err
 		}
 		result.CompletedActions = append(result.CompletedActions, "systemctl enable "+spec.ServiceName)
 	}
 	if opts.Start {
-		if err := m.runSystemctl(ctx, "rerun with sudo autowatch daemon install --start", "start", spec.ServiceName); err != nil {
+		if err := m.runSystemctl(ctx, "rerun with sudo auto watch daemon install --start", "start", spec.ServiceName); err != nil {
 			return InstallResult{}, err
 		}
 		result.CompletedActions = append(result.CompletedActions, "systemctl start "+spec.ServiceName)

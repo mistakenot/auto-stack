@@ -250,7 +250,7 @@ func TestCoChangeCLIOutsideRepo(t *testing.T) {
 }
 
 // AC-10: missing parquet data -> non-zero exit with remediation naming
-// `autoetl run --only git`.
+// `auto etl run --only git`.
 func TestCoChangeCLIMissingParquet(t *testing.T) {
 	top := gitToplevel(t)
 	inputAbs := filepath.Join(top, "auto-etl/internal/git/extract.go")
@@ -270,8 +270,8 @@ func TestCoChangeCLIMissingParquet(t *testing.T) {
 	if strings.TrimSpace(stdout) != "" {
 		t.Errorf("stdout should be empty on error, got:\n%s", stdout)
 	}
-	if !strings.Contains(stderr, "autoetl run --only git") {
-		t.Errorf("stderr missing 'autoetl run --only git' remediation, got:\n%s", stderr)
+	if !strings.Contains(stderr, "auto etl run --only git") {
+		t.Errorf("stderr missing 'auto etl run --only git' remediation, got:\n%s", stderr)
 	}
 }
 
@@ -317,7 +317,7 @@ func TestCoChangeCLINoOriginRemote(t *testing.T) {
 }
 
 // AC-10: an origin remote that matches no indexed repo -> non-zero with
-// remediation naming --repo-id (and autoetl run). Uses a temp git repo whose
+// remediation naming --repo-id (and auto etl run). Uses a temp git repo whose
 // origin is a fabricated remote not present in the snapshot.
 func TestCoChangeCLINoRepoMatch(t *testing.T) {
 	root := snapshotFixtureRoot(t)

@@ -118,11 +118,11 @@ func TestQuickstartIncludesInitAndCoreCommands(t *testing.T) {
 		t.Fatalf("quickstart failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 	for _, needle := range []string{
-		"autoreflect init",
-		"autoreflect rule create",
-		"autoreflect lookup",
-		"autoreflect feedback add",
-		"autoreflect feedback list",
+		"auto reflect init",
+		"auto reflect rule create",
+		"auto reflect lookup",
+		"auto reflect feedback add",
+		"auto reflect feedback list",
 		"--context",
 	} {
 		if !strings.Contains(stdout, needle) {

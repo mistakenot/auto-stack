@@ -45,7 +45,7 @@ func (m *Manager) resolveSpec(opts *InstallOptions) (ServiceSpec, error) {
 	}
 	binPath := strings.TrimSpace(opts.BinPath)
 	if binPath == "" {
-		binPath = filepath.Join(homeDir, ".local", "bin", "autowatch")
+		binPath = filepath.Join(homeDir, ".local", "bin", "auto")
 	}
 	pathEnv := strings.TrimSpace(opts.PathEnv)
 	if pathEnv == "" {

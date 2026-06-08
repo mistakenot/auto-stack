@@ -10,28 +10,28 @@ func Quickstart(w io.Writer) {
 	fmt.Fprint(w, quickstartDoc)
 }
 
-const quickstartDoc = `# autodoc — Documentation Management for AI Agents
+const quickstartDoc = `# auto doc — Documentation Management for AI Agents
 
-Quick reference for all ` + "`autodoc`" + ` commands. Run ` + "`autodoc --help`" + ` for full details.
+Quick reference for all ` + "`auto doc`" + ` commands. Run ` + "`auto doc --help`" + ` for full details.
 
 ## Setup
 
-### ` + "`autodoc init`" + `
+### ` + "`auto doc init`" + `
 Initialize a project for autodoc. Creates ` + "`.auto/doc/settings.json`" + ` config and ` + "`docs/`" + ` directory.
 
 ` + "```" + `
-autodoc init
+auto doc init
 ` + "```" + `
 
 ## Viewing Documentation
 
-### ` + "`autodoc tree`" + `
+### ` + "`auto doc tree`" + `
 Pretty-print discovered doc files with title and summary in a single repo-root tree.
 Discovery scans recursively for directories named ` + "`docs`" + `, then recursively includes markdown files under each.
 Configured ` + "`docsDir`" + ` is still included as a compatibility root even if it is not named ` + "`docs`" + `.
 
 ` + "```" + `
-autodoc tree
+auto doc tree
 ` + "```" + `
 
 Output:
@@ -47,44 +47,44 @@ Output:
 
 ## Checking & Fixing
 
-### ` + "`autodoc stale`" + `
+### ` + "`auto doc stale`" + `
 List files where the hash doesn't match content, or files missing frontmatter.
 Exit code 0 = all clean, 1 = stale files found.
-Uses the same recursive discovery set and unified repo-root tree output as ` + "`autodoc tree`" + `.
+Uses the same recursive discovery set and unified repo-root tree output as ` + "`auto doc tree`" + `.
 
 ` + "```" + `
-autodoc stale
+auto doc stale
 ` + "```" + `
 
-### ` + "`autodoc fix`" + `
+### ` + "`auto doc fix`" + `
 Output instructions for an AI agent to fix all documentation issues (missing frontmatter, stale hashes, default titles).
 
 ` + "```" + `
-autodoc fix
+auto doc fix
 ` + "```" + `
 
-### ` + "`autodoc fixed <filepath>`" + `
+### ` + "`auto doc fixed <filepath>`" + `
 Recalculate and write the hash for a single doc file. Also updates the search index if one exists.
 
 ` + "```" + `
-autodoc fixed docs/api/auth.md
+auto doc fixed docs/api/auth.md
 ` + "```" + `
 
 ## Agent Integration
 
-### ` + "`autodoc agents`" + `
+### ` + "`auto doc agents`" + `
 Insert documentation indexes into agent memory files using marker comments for idempotent updates.
 Each discovered doc is assigned to the nearest ancestor directory that contains configured agent files.
 If both ` + "`AGENTS.md`" + ` and ` + "`CLAUDE.md`" + ` exist at that level (including symlinked pairs), both get the generated index block.
-If no ancestor owner exists, ` + "`autodoc agents`" + ` updates existing root agent files or creates root ` + "`AGENTS.md`" + `.
+If no ancestor owner exists, ` + "`auto doc agents`" + ` updates existing root agent files or creates root ` + "`AGENTS.md`" + `.
 
 ` + "```" + `
-autodoc agents
+auto doc agents
 ` + "```" + `
 
 ## Search
 
-### ` + "`autodoc search reindex`" + `
+### ` + "`auto doc search reindex`" + `
 Build or rebuild the full-text search index from all recursively discovered docs.
 Indexed paths are repo-relative and stale index entries are removed on reindex.
 Index is stored at ` + "`.auto/doc/index/`" + `.
@@ -92,18 +92,18 @@ Index is stored at ` + "`.auto/doc/index/`" + `.
 Note: docs inside git submodules are excluded by default.
 
 ` + "```" + `
-autodoc search reindex
+auto doc search reindex
 ` + "```" + `
 
-### ` + "`autodoc search keyword <query>`" + `
+### ` + "`auto doc search keyword <query>`" + `
 Run a BM25 keyword search. Returns JSON array sorted by relevance score.
 
 ` + "```" + `
-autodoc search keyword "authentication setup"
-autodoc search keyword "config"
-autodoc search keyword "database sql schema"
-autodoc search keyword "router middleware protection"
-autodoc search keyword "getting started installation"
+auto doc search keyword "authentication setup"
+auto doc search keyword "config"
+auto doc search keyword "database sql schema"
+auto doc search keyword "router middleware protection"
+auto doc search keyword "getting started installation"
 ` + "```" + `
 
 Output:
@@ -122,12 +122,12 @@ Output:
 ## Typical Workflow
 
 ` + "```" + `
-autodoc init                              # 1. Initialize project
-autodoc fix                               # 2. Get fix instructions
-autodoc fixed docs/getting-started.md     # 3. Fix individual files
-autodoc stale                             # 4. Verify all clean
-autodoc agents                            # 5. Update agent files
-autodoc search reindex                    # 6. Build search index
-autodoc search keyword "auth setup"       # 7. Search docs
+auto doc init                              # 1. Initialize project
+auto doc fix                               # 2. Get fix instructions
+auto doc fixed docs/getting-started.md     # 3. Fix individual files
+auto doc stale                             # 4. Verify all clean
+auto doc agents                            # 5. Update agent files
+auto doc search reindex                    # 6. Build search index
+auto doc search keyword "auth setup"       # 7. Search docs
 ` + "```" + `
 `

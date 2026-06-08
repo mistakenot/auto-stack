@@ -104,10 +104,10 @@ func TestAgentsIncludesSearchExamples(t *testing.T) {
 	}
 
 	content := string(data)
-	if !strings.Contains(content, "autodoc search keyword") {
+	if !strings.Contains(content, "auto doc search keyword") {
 		t.Error("missing search keyword example")
 	}
-	if !strings.Contains(content, "autodoc quickstart") {
+	if !strings.Contains(content, "auto doc quickstart") {
 		t.Error("missing quickstart instruction")
 	}
 }
