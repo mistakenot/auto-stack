@@ -10,7 +10,7 @@ import (
 )
 
 // SchemaVersion is bumped whenever the index layout changes, forcing a full rebuild.
-const SchemaVersion = 8
+const SchemaVersion = 9
 
 // schemaSQL contains the DDL for all base tables, indexes, and FTS virtual tables.
 const schemaSQL = `
@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   transcript_truncated TEXT NOT NULL,
   first_user_intent TEXT NOT NULL DEFAULT '',
   first_user_intent_truncated TEXT NOT NULL DEFAULT '',
+  permission_mode TEXT NOT NULL DEFAULT '',
+  version TEXT NOT NULL DEFAULT '',
   schema_version INTEGER NOT NULL
 );
 
@@ -90,6 +92,11 @@ CREATE TABLE IF NOT EXISTS messages (
   parent_session_id TEXT NOT NULL,
   is_subagent INTEGER NOT NULL,
   source_line_index INTEGER NOT NULL,
+  thinking_signature TEXT NOT NULL DEFAULT '',
+  stop_reason TEXT NOT NULL DEFAULT '',
+  is_error BOOLEAN NOT NULL DEFAULT 0,
+  cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
   schema_version INTEGER NOT NULL
 );
 

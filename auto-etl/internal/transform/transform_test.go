@@ -1360,3 +1360,459 @@ func TestHeadTruncateRuneBoundary(t *testing.T) {
 		t.Errorf("truncated prefix does not match original runes")
 	}
 }
+
+// --- Task 016: thinking, stop_reason, is_error, cache split, attributionSkill, permission_mode/version ---
+
+func TestTransformSession_ThinkingBlock(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:            "assistant",
+		Timestamp:       time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:       "parent-uuid-1234",
+		Cwd:             "/home/user/project",
+		SourceLineIndex: 1,
+		Message: parser.ParsedMessage{
+			Role: "assistant",
+			Content: json.RawMessage(`[
+				{"type":"thinking","thinking":"Let me reason about this carefully...","signature":"sig-abc"},
+				{"type":"text","text":"Here is my answer."}
+			]`),
+			Model: "claude-opus-4-6",
+			Usage: parser.ParsedUsage{InputTokens: 100, OutputTokens: 50},
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	var thinkingFound, textFound bool
+	for _, msg := range msgs {
+		if msg.Role == string(model.RoleThinking) {
+			thinkingFound = true
+			if msg.Content != "Let me reason about this carefully..." {
+				t.Errorf("thinking Content = %q", msg.Content)
+			}
+			if msg.ContentTruncated != "Let me reason about this carefully..." {
+				t.Errorf("thinking ContentTruncated = %q", msg.ContentTruncated)
+			}
+			if msg.ThinkingSignature != "sig-abc" {
+				t.Errorf("ThinkingSignature = %q, want sig-abc", msg.ThinkingSignature)
+			}
+		}
+		if msg.Role == string(model.RoleAssistant) && msg.Content == "Here is my answer." {
+			textFound = true
+		}
+	}
+	if !thinkingFound {
+		t.Error("no role=thinking message found")
+	}
+	if !textFound {
+		t.Error("no role=assistant text message found")
+	}
+}
+
+func TestTransformSession_RedactedThinkingBlock(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:            "assistant",
+		Timestamp:       time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:       "parent-uuid-1234",
+		Cwd:             "/home/user/project",
+		SourceLineIndex: 1,
+		Message: parser.ParsedMessage{
+			Role:    "assistant",
+			Content: json.RawMessage(`[{"type":"redacted_thinking","data":"encrypted-blob-xyz"}]`),
+			Model:   "claude-opus-4-6",
+			Usage:   parser.ParsedUsage{InputTokens: 50, OutputTokens: 20},
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	var found bool
+	for _, msg := range msgs {
+		if msg.Role == string(model.RoleThinking) {
+			found = true
+			if msg.Content != "[redacted]" {
+				t.Errorf("Content = %q, want [redacted]", msg.Content)
+			}
+			if msg.ThinkingSignature != "encrypted-blob-xyz" {
+				t.Errorf("ThinkingSignature = %q, want encrypted-blob-xyz", msg.ThinkingSignature)
+			}
+		}
+	}
+	if !found {
+		t.Error("no role=thinking marker row found for redacted_thinking")
+	}
+}
+
+func TestTransformSession_IsError(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines,
+		parser.ParsedLine{
+			Type:            "assistant",
+			Timestamp:       time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+			SessionID:       "parent-uuid-1234",
+			Cwd:             "/home/user/project",
+			SourceLineIndex: 1,
+			Message: parser.ParsedMessage{
+				Role:    "assistant",
+				Content: json.RawMessage(`[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"false"}}]`),
+				Model:   "claude-opus-4-6",
+			},
+		},
+		parser.ParsedLine{
+			Type:            "user",
+			Timestamp:       time.Date(2026, 3, 10, 10, 0, 6, 0, time.UTC),
+			SessionID:       "parent-uuid-1234",
+			Cwd:             "/home/user/project",
+			SourceLineIndex: 2,
+			Message: parser.ParsedMessage{
+				Role:    "user",
+				Content: json.RawMessage(`[{"type":"tool_result","tool_use_id":"tu1","is_error":true,"content":"\"command failed\""}]`),
+			},
+		},
+	)
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	var found bool
+	for _, msg := range msgs {
+		if msg.Role == "tool" && msg.ToolName == "Bash" {
+			found = true
+			if !msg.IsError {
+				t.Error("IsError = false, want true")
+			}
+		}
+	}
+	if !found {
+		t.Error("no tool_result message found")
+	}
+}
+
+func TestTransformSession_CacheSplitColumns(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:            "assistant",
+		Timestamp:       time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:       "parent-uuid-1234",
+		Cwd:             "/home/user/project",
+		SourceLineIndex: 1,
+		Message: parser.ParsedMessage{
+			Role:    "assistant",
+			Content: json.RawMessage(`"Some response"`),
+			Model:   "claude-opus-4-6",
+			Usage: parser.ParsedUsage{
+				InputTokens:              100,
+				OutputTokens:             50,
+				CacheCreationInputTokens: 200,
+				CacheReadInputTokens:     300,
+			},
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	// Find the assistant bare-string message (index 1, after the user "hello")
+	var found bool
+	for _, msg := range msgs {
+		if msg.Content == "Some response" {
+			found = true
+			// Combined sum must be preserved
+			if msg.CacheInputTokens != 500 {
+				t.Errorf("CacheInputTokens = %d, want 500 (200+300)", msg.CacheInputTokens)
+			}
+			// Split columns must also be set
+			if msg.CacheCreationInputTokens != 200 {
+				t.Errorf("CacheCreationInputTokens = %d, want 200", msg.CacheCreationInputTokens)
+			}
+			if msg.CacheReadInputTokens != 300 {
+				t.Errorf("CacheReadInputTokens = %d, want 300", msg.CacheReadInputTokens)
+			}
+		}
+	}
+	if !found {
+		t.Error("assistant response message not found")
+	}
+}
+
+func TestTransformSession_CacheSplitColumns_ContentBlocks(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:            "assistant",
+		Timestamp:       time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:       "parent-uuid-1234",
+		Cwd:             "/home/user/project",
+		SourceLineIndex: 1,
+		Message: parser.ParsedMessage{
+			Role:    "assistant",
+			Content: json.RawMessage(`[{"type":"text","text":"block response"}]`),
+			Model:   "claude-opus-4-6",
+			Usage: parser.ParsedUsage{
+				InputTokens:              50,
+				OutputTokens:             25,
+				CacheCreationInputTokens: 150,
+				CacheReadInputTokens:     250,
+			},
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	var found bool
+	for _, msg := range msgs {
+		if msg.Content == "block response" {
+			found = true
+			if msg.CacheInputTokens != 400 {
+				t.Errorf("CacheInputTokens = %d, want 400", msg.CacheInputTokens)
+			}
+			if msg.CacheCreationInputTokens != 150 {
+				t.Errorf("CacheCreationInputTokens = %d, want 150", msg.CacheCreationInputTokens)
+			}
+			if msg.CacheReadInputTokens != 250 {
+				t.Errorf("CacheReadInputTokens = %d, want 250", msg.CacheReadInputTokens)
+			}
+		}
+	}
+	if !found {
+		t.Error("block response message not found")
+	}
+}
+
+func TestTransformSession_StopReason(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:            "assistant",
+		Timestamp:       time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:       "parent-uuid-1234",
+		Cwd:             "/home/user/project",
+		SourceLineIndex: 1,
+		Message: parser.ParsedMessage{
+			Role:       "assistant",
+			Content:    json.RawMessage(`"end of turn"`),
+			Model:      "claude-opus-4-6",
+			StopReason: "end_turn",
+			Usage:      parser.ParsedUsage{InputTokens: 10, OutputTokens: 5},
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	var found bool
+	for _, msg := range msgs {
+		if msg.Content == "end of turn" {
+			found = true
+			if msg.StopReason != "end_turn" {
+				t.Errorf("StopReason = %q, want end_turn", msg.StopReason)
+			}
+		}
+	}
+	if !found {
+		t.Error("assistant message not found")
+	}
+}
+
+func TestTransformSession_StopReason_ContentBlocks(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:            "assistant",
+		Timestamp:       time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:       "parent-uuid-1234",
+		Cwd:             "/home/user/project",
+		SourceLineIndex: 1,
+		Message: parser.ParsedMessage{
+			Role:       "assistant",
+			Content:    json.RawMessage(`[{"type":"text","text":"answer"}]`),
+			Model:      "claude-opus-4-6",
+			StopReason: "tool_use",
+			Usage:      parser.ParsedUsage{InputTokens: 10, OutputTokens: 5},
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	var found bool
+	for _, msg := range msgs {
+		if msg.Content == "answer" {
+			found = true
+			if msg.StopReason != "tool_use" {
+				t.Errorf("StopReason = %q, want tool_use", msg.StopReason)
+			}
+		}
+	}
+	if !found {
+		t.Error("text block message not found")
+	}
+}
+
+func TestTransformSession_StopReason_NotOnUserRows(t *testing.T) {
+	// StopReason should only be set on assistant lines, not user lines
+	raw := makeParentSession() // user line with "hello"
+	msgs, _ := transformSession(&raw, testConfig())
+
+	for _, msg := range msgs {
+		if msg.Role == "user" && msg.StopReason != "" {
+			t.Errorf("user message has StopReason = %q, want empty", msg.StopReason)
+		}
+	}
+}
+
+func TestTransformSession_AttributionSkillFallback(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:             "assistant",
+		Timestamp:        time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:        "parent-uuid-1234",
+		Cwd:              "/home/user/project",
+		SourceLineIndex:  1,
+		AttributionSkill: "review-task",
+		Message: parser.ParsedMessage{
+			Role:    "assistant",
+			Content: json.RawMessage(`[{"type":"text","text":"reviewing..."}]`),
+			Model:   "claude-opus-4-6",
+			Usage:   parser.ParsedUsage{InputTokens: 10, OutputTokens: 5},
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	var found bool
+	for _, msg := range msgs {
+		if msg.Content == "reviewing..." {
+			found = true
+			if msg.SkillName != "review-task" {
+				t.Errorf("SkillName = %q, want review-task", msg.SkillName)
+			}
+		}
+	}
+	if !found {
+		t.Error("attributed message not found")
+	}
+}
+
+func TestTransformSession_AttributionSkillDoesNotOverrideSkillTool(t *testing.T) {
+	// When a Skill tool invocation already sets skill_name, attributionSkill
+	// should not override it.
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:             "assistant",
+		Timestamp:        time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:        "parent-uuid-1234",
+		Cwd:              "/home/user/project",
+		SourceLineIndex:  1,
+		AttributionSkill: "review-task",
+		Message: parser.ParsedMessage{
+			Role:    "assistant",
+			Content: json.RawMessage(`[{"type":"tool_use","id":"tu1","name":"Skill","input":{"skill":"contextual-commit"}}]`),
+			Model:   "claude-opus-4-6",
+			Usage:   parser.ParsedUsage{InputTokens: 10, OutputTokens: 5},
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	for _, msg := range msgs {
+		if msg.ToolName == "Skill" {
+			if msg.SkillName != "contextual-commit" {
+				t.Errorf("SkillName = %q, want contextual-commit (Skill tool takes precedence)", msg.SkillName)
+			}
+		}
+	}
+}
+
+func TestTransformSession_AttributionSkillBareString(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:             "assistant",
+		Timestamp:        time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:        "parent-uuid-1234",
+		Cwd:              "/home/user/project",
+		SourceLineIndex:  1,
+		AttributionSkill: "review-task",
+		Message: parser.ParsedMessage{
+			Role:    "assistant",
+			Content: json.RawMessage(`"bare string response"`),
+			Model:   "claude-opus-4-6",
+			Usage:   parser.ParsedUsage{InputTokens: 10, OutputTokens: 5},
+		},
+	})
+
+	msgs, _ := transformSession(&raw, testConfig())
+
+	var found bool
+	for _, msg := range msgs {
+		if msg.Content == "bare string response" {
+			found = true
+			if msg.SkillName != "review-task" {
+				t.Errorf("SkillName = %q, want review-task", msg.SkillName)
+			}
+		}
+	}
+	if !found {
+		t.Error("bare string response not found")
+	}
+}
+
+func TestTransformSession_PermissionModeAndVersion(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines[0].PermissionMode = "bypassPermissions"
+	raw.Lines[0].Version = "2.1.168"
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:           "assistant",
+		Timestamp:      time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:      "parent-uuid-1234",
+		Cwd:            "/home/user/project",
+		PermissionMode: "bypassPermissions",
+		Version:        "2.1.170",
+		Message: parser.ParsedMessage{
+			Role:    "assistant",
+			Content: json.RawMessage(`"ok"`),
+			Model:   "claude-opus-4-6",
+			Usage:   parser.ParsedUsage{InputTokens: 10, OutputTokens: 5},
+		},
+	})
+
+	_, session := transformSession(&raw, testConfig())
+
+	// Last-seen wins: Version should be 2.1.170
+	if session.Version != "2.1.170" {
+		t.Errorf("session.Version = %q, want 2.1.170 (last-seen wins)", session.Version)
+	}
+	if session.PermissionMode != "bypassPermissions" {
+		t.Errorf("session.PermissionMode = %q, want bypassPermissions", session.PermissionMode)
+	}
+}
+
+func TestTransformSession_ThinkingExcludedFromTranscript(t *testing.T) {
+	raw := makeParentSession()
+	raw.Lines = append(raw.Lines, parser.ParsedLine{
+		Type:            "assistant",
+		Timestamp:       time.Date(2026, 3, 10, 10, 0, 5, 0, time.UTC),
+		SessionID:       "parent-uuid-1234",
+		Cwd:             "/home/user/project",
+		SourceLineIndex: 1,
+		Message: parser.ParsedMessage{
+			Role: "assistant",
+			Content: json.RawMessage(`[
+				{"type":"thinking","thinking":"SECRET REASONING","signature":"sig"},
+				{"type":"text","text":"visible answer"}
+			]`),
+			Model: "claude-opus-4-6",
+			Usage: parser.ParsedUsage{InputTokens: 100, OutputTokens: 50},
+		},
+	})
+
+	_, session := transformSession(&raw, testConfig())
+
+	if strings.Contains(session.TranscriptFull, "SECRET REASONING") {
+		t.Error("TranscriptFull contains thinking text")
+	}
+	if strings.Contains(session.TranscriptTruncated, "SECRET REASONING") {
+		t.Error("TranscriptTruncated contains thinking text")
+	}
+	if !strings.Contains(session.TranscriptFull, "visible answer") {
+		t.Error("TranscriptFull should contain the text block")
+	}
+	if strings.Contains(session.TranscriptFull, "[thinking]:") {
+		t.Error("TranscriptFull contains [thinking]: prefix; thinking should be excluded from transcript")
+	}
+}

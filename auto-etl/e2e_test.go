@@ -151,13 +151,15 @@ func (s *stats) expectedSessions() int {
 }
 
 // expectedMessages: ETL emits one message per bare string content on
-// user/assistant/system lines, plus one per text/tool_use/tool_result
-// content block on those lines. Thinking blocks and unknown types are skipped.
+// user/assistant/system lines, plus one per text/tool_use/tool_result/thinking/
+// redacted_thinking content block on those lines. Unknown types are skipped.
 func (s *stats) expectedMessages() int {
 	return s.BareStringContents +
 		s.ContentBlocksByType["text"] +
 		s.ContentBlocksByType["tool_use"] +
-		s.ContentBlocksByType["tool_result"]
+		s.ContentBlocksByType["tool_result"] +
+		s.ContentBlocksByType["thinking"] +
+		s.ContentBlocksByType["redacted_thinking"]
 }
 
 // expectedSubagentSessions: count of subagent files that have processable lines.
@@ -252,6 +254,15 @@ func TestE2E_ToolUseBecomesAssistantRole(t *testing.T) {
 		t.Errorf("tool role count: got %d, want %d",
 			roleCounts["tool"], fixtureStats.ContentBlocksByType["tool_result"])
 	}
+
+	// Thinking blocks are now preserved as role="thinking" messages.
+	wantThinking := fixtureStats.ContentBlocksByType["thinking"] +
+		fixtureStats.ContentBlocksByType["redacted_thinking"]
+	if roleCounts["thinking"] != wantThinking {
+		t.Errorf("thinking role count: got %d, want %d",
+			roleCounts["thinking"], wantThinking)
+	}
+	t.Logf("role counts: %v (thinking blocks in fixture: %d)", roleCounts, wantThinking)
 
 	total := 0
 	for _, c := range roleCounts {
@@ -612,6 +623,127 @@ func TestE2E_MessageParentSessionIDConsistent(t *testing.T) {
 			t.Errorf("message %s: ParentSessionID=%q, session has %q",
 				m.ID, m.ParentSessionID, want)
 		}
+	}
+}
+
+// --- Task 016: synthetic fixture with thinking + attributionSkill ---
+
+func TestE2E_SyntheticThinkingAndAttribution(t *testing.T) {
+	// Build a minimal JSONL session with:
+	// - a user message
+	// - an assistant message with thinking + text blocks, attributionSkill, and stop_reason
+	// - an assistant tool_use + user tool_result with is_error=true
+	// Run the full pipeline and verify the output parquet.
+	inputDir := filepath.Join(t.TempDir(), "projects", "-test-project")
+	outputDir := filepath.Join(t.TempDir(), "output")
+	os.MkdirAll(inputDir, 0o755)
+
+	lines := []string{
+		`{"type":"user","sessionId":"synth-001","timestamp":"2026-06-01T10:00:00Z","cwd":"/tmp/test","version":"2.1.168","permissionMode":"bypassPermissions","message":{"role":"user","content":"What is 2+2?"}}`,
+		`{"type":"assistant","sessionId":"synth-001","timestamp":"2026-06-01T10:00:01Z","cwd":"/tmp/test","version":"2.1.168","permissionMode":"bypassPermissions","attributionSkill":"math-tutor","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Let me think... 2+2=4","signature":"sig-synth-001"},{"type":"text","text":"The answer is 4."}],"model":"claude-opus-4-6","stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":30,"cache_read_input_tokens":20}}}`,
+		`{"type":"assistant","sessionId":"synth-001","timestamp":"2026-06-01T10:00:02Z","cwd":"/tmp/test","version":"2.1.168","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"echo fail"}}],"model":"claude-opus-4-6","stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":5}}}`,
+		`{"type":"user","sessionId":"synth-001","timestamp":"2026-06-01T10:00:03Z","cwd":"/tmp/test","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","is_error":true,"content":"\"command failed\""}]}}`,
+	}
+
+	var data []byte
+	for _, l := range lines {
+		data = append(data, []byte(l+"\n")...)
+	}
+	if err := os.WriteFile(filepath.Join(inputDir, "synth-001.jsonl"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Build and run the pipeline
+	binDir := t.TempDir()
+	bin := filepath.Join(binDir, "auto-etl")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	run := exec.Command(bin, "run",
+		"--input", filepath.Dir(inputDir),
+		"--output", outputDir,
+		"--only", "sessions",
+	)
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pipeline: %v\n%s", err, out)
+	}
+
+	// Read messages
+	messages := readAllParquet[model.AgentMessage](t, outputDir, "messages")
+
+	roleCounts := make(map[string]int)
+	for _, m := range messages {
+		roleCounts[m.Role]++
+	}
+
+	// Expected: 1 user bare, 1 thinking, 1 text, 1 tool_use, 1 tool_result = 5
+	if len(messages) != 5 {
+		t.Errorf("message count = %d, want 5 (got roles: %v)", len(messages), roleCounts)
+	}
+	if roleCounts["thinking"] != 1 {
+		t.Errorf("thinking count = %d, want 1", roleCounts["thinking"])
+	}
+
+	// Verify thinking message fields
+	for _, m := range messages {
+		if m.Role == "thinking" {
+			if m.Content != "Let me think... 2+2=4" {
+				t.Errorf("thinking Content = %q", m.Content)
+			}
+			if m.ThinkingSignature != "sig-synth-001" {
+				t.Errorf("ThinkingSignature = %q", m.ThinkingSignature)
+			}
+			if m.StopReason != "end_turn" {
+				t.Errorf("thinking StopReason = %q, want end_turn", m.StopReason)
+			}
+			if m.SkillName != "math-tutor" {
+				t.Errorf("thinking SkillName = %q, want math-tutor", m.SkillName)
+			}
+			if m.CacheCreationInputTokens != 30 {
+				t.Errorf("CacheCreationInputTokens = %d, want 30", m.CacheCreationInputTokens)
+			}
+			if m.CacheReadInputTokens != 20 {
+				t.Errorf("CacheReadInputTokens = %d, want 20", m.CacheReadInputTokens)
+			}
+		}
+		if m.Role == "assistant" && m.Content == "The answer is 4." {
+			if m.SkillName != "math-tutor" {
+				t.Errorf("text SkillName = %q, want math-tutor", m.SkillName)
+			}
+		}
+		if m.Role == "tool" {
+			if !m.IsError {
+				t.Error("tool_result IsError = false, want true")
+			}
+		}
+	}
+
+	// Verify session fields
+	sessions := readAllParquet[model.AgentSession](t, outputDir, "sessions")
+	if len(sessions) != 1 {
+		t.Fatalf("session count = %d, want 1", len(sessions))
+	}
+	s := sessions[0]
+	if s.PermissionMode != "bypassPermissions" {
+		t.Errorf("session.PermissionMode = %q, want bypassPermissions", s.PermissionMode)
+	}
+	if s.Version != "2.1.168" {
+		t.Errorf("session.Version = %q, want 2.1.168", s.Version)
+	}
+	if s.SchemaVersion != 6 {
+		t.Errorf("session.SchemaVersion = %d, want 6", s.SchemaVersion)
+	}
+
+	// Transcript should not contain thinking text
+	if strings.Contains(s.TranscriptFull, "Let me think") {
+		t.Error("TranscriptFull contains thinking text")
+	}
+	if !strings.Contains(s.TranscriptFull, "The answer is 4.") {
+		t.Error("TranscriptFull should contain the visible answer")
 	}
 }
 

@@ -36,18 +36,23 @@ type MessageRow struct {
 	// durationMs nor a ts-diff fallback was available.
 	DurationMs int64
 	// Interrupted is true when Claude flagged the call as cancelled/stuck.
-	Interrupted      bool
-	InputTokens      int
-	CacheInputTokens int
-	OutputTokens     int
-	Workspace        string
-	GitRemote        string
-	GitBranch        string
-	Model            string
-	ParentSessionID  string
-	IsSubagent       bool
-	SourceLineIndex  int
-	SchemaVersion    int
+	Interrupted              bool
+	InputTokens              int
+	CacheInputTokens         int
+	OutputTokens             int
+	ThinkingSignature        string
+	StopReason               string
+	IsError                  bool
+	CacheCreationInputTokens int64
+	CacheReadInputTokens     int64
+	Workspace                string
+	GitRemote                string
+	GitBranch                string
+	Model                    string
+	ParentSessionID          string
+	IsSubagent               bool
+	SourceLineIndex          int
+	SchemaVersion            int
 }
 
 // GetMessageByID loads one message row by message_id.
@@ -60,6 +65,8 @@ func GetMessageByID(db *sql.DB, messageID string) (*MessageRow, error) {
 			bash_command, bash_exit_code, skill_name, tool_use_result_json,
 			tool_use_id, duration_ms, interrupted,
 			input_tokens, cache_input_tokens, output_tokens,
+			thinking_signature, stop_reason, is_error,
+			cache_creation_input_tokens, cache_read_input_tokens,
 			workspace, git_remote, git_branch, model,
 			parent_session_id, is_subagent, source_line_index, schema_version
 		FROM messages
@@ -67,7 +74,7 @@ func GetMessageByID(db *sql.DB, messageID string) (*MessageRow, error) {
 	`, messageID)
 
 	m := &MessageRow{}
-	var isSubagentInt, interruptedInt int
+	var isSubagentInt, interruptedInt, isErrorInt int
 	err := row.Scan(
 		&m.DocID, &m.PartitionSourcePath, &m.MessageID, &m.SessionID, &m.HostID,
 		&m.MessageIndex, &m.Role, &m.Content, &m.ContentTruncated, &m.Timestamp,
@@ -76,6 +83,8 @@ func GetMessageByID(db *sql.DB, messageID string) (*MessageRow, error) {
 		&m.BashCommand, &m.BashExitCode, &m.SkillName, &m.ToolUseResultJSON,
 		&m.ToolUseID, &m.DurationMs, &interruptedInt,
 		&m.InputTokens, &m.CacheInputTokens, &m.OutputTokens,
+		&m.ThinkingSignature, &m.StopReason, &isErrorInt,
+		&m.CacheCreationInputTokens, &m.CacheReadInputTokens,
 		&m.Workspace, &m.GitRemote, &m.GitBranch, &m.Model,
 		&m.ParentSessionID, &isSubagentInt, &m.SourceLineIndex, &m.SchemaVersion,
 	)
@@ -87,6 +96,7 @@ func GetMessageByID(db *sql.DB, messageID string) (*MessageRow, error) {
 	}
 	m.IsSubagent = isSubagentInt != 0
 	m.Interrupted = interruptedInt != 0
+	m.IsError = isErrorInt != 0
 	return m, nil
 }
 

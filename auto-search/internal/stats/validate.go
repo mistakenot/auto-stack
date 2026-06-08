@@ -180,9 +180,9 @@ func normalizeRole(raw string) (string, error) {
 		return "", nil
 	}
 	switch role {
-	case "user", "assistant", "tool":
+	case "user", "assistant", "tool", "thinking":
 		return role, nil
 	default:
-		return "", fmt.Errorf("invalid --role value %q; valid values: user, assistant, tool", raw)
+		return "", fmt.Errorf("invalid --role value %q; valid values: user, assistant, tool, thinking", raw)
 	}
 }

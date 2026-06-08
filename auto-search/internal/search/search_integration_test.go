@@ -35,8 +35,8 @@ func buildTestDB(t *testing.T) *sql.DB {
 	if result.SessionsIndexed != 3 {
 		t.Fatalf("expected 3 sessions, got %d", result.SessionsIndexed)
 	}
-	if result.MessagesIndexed != 12 {
-		t.Fatalf("expected 12 messages, got %d", result.MessagesIndexed)
+	if result.MessagesIndexed != 13 {
+		t.Fatalf("expected 13 messages, got %d", result.MessagesIndexed)
 	}
 
 	db, err := indexdb.Open(dbPath)
@@ -421,13 +421,13 @@ func TestSessionSearchBatchMessageCounts(t *testing.T) {
 		}
 	}
 
-	// Verify the sum of per-session counts equals the total indexed messages (12).
+	// Verify the sum of per-session counts equals the total indexed messages (13).
 	total := 0
 	for _, hit := range result.Hits {
 		total += hit.TotalMessages
 	}
-	if total != 12 {
-		t.Errorf("sum of TotalMessages across sessions = %d, want 12", total)
+	if total != 13 {
+		t.Errorf("sum of TotalMessages across sessions = %d, want 13", total)
 	}
 }
 
@@ -930,6 +930,161 @@ func TestCWDAndRemoteMutuallyExclusive(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected error for --cwd + --remote")
+	}
+}
+
+// --- Thinking message tests (Phase 3, task 016) ---
+
+func TestMessageSearchDefaultExcludesThinking(t *testing.T) {
+	db := buildTestDB(t)
+
+	// The thinking message (msg-002t) contains "authentication middleware"
+	// which also appears in non-thinking messages. Default search should
+	// NOT return the thinking message.
+	result, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "authentication middleware",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	for _, hit := range result.Hits {
+		if hit.MessageType == "thinking" {
+			t.Errorf("default search returned thinking message %s", hit.MessageID)
+		}
+	}
+}
+
+func TestMessageSearchRoleThinkingReturnsOnlyThinking(t *testing.T) {
+	db := buildTestDB(t)
+
+	// --role thinking should return only the thinking message(s).
+	result, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "authentication middleware",
+		Role:  "thinking",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	if result.Meta.TotalHits == 0 {
+		t.Fatal("expected at least 1 hit for role=thinking")
+	}
+	for _, hit := range result.Hits {
+		if hit.MessageType != "thinking" {
+			t.Errorf("expected messageType=thinking, got %q (messageId=%s)", hit.MessageType, hit.MessageID)
+		}
+	}
+	// Verify the specific thinking message is returned.
+	found := false
+	for _, hit := range result.Hits {
+		if hit.MessageID == "msg-002t" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected msg-002t in role=thinking results")
+	}
+}
+
+func TestMessageSearchIncludeThinkingIncludesThinking(t *testing.T) {
+	db := buildTestDB(t)
+
+	// --include-thinking should include thinking alongside other roles.
+	result, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:              db,
+		Query:           "authentication middleware",
+		IncludeThinking: true,
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+
+	// Should have more results than default (which excludes thinking).
+	defaultResult, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "authentication middleware",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages default: %v", err)
+	}
+	if result.Meta.TotalHits <= defaultResult.Meta.TotalHits {
+		t.Errorf("include-thinking hits (%d) should be more than default (%d)",
+			result.Meta.TotalHits, defaultResult.Meta.TotalHits)
+	}
+
+	// Verify a thinking message is present.
+	foundThinking := false
+	for _, hit := range result.Hits {
+		if hit.MessageType == "thinking" {
+			foundThinking = true
+			break
+		}
+	}
+	if !foundThinking {
+		t.Error("expected at least one thinking message in include-thinking results")
+	}
+}
+
+func TestMessageSearchNoFTSDefaultExcludesThinking(t *testing.T) {
+	db := buildTestDB(t)
+
+	// Structured-only search (no FTS query) should also exclude thinking
+	// by default. Use --session-id to trigger the structured path.
+	result, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:        db,
+		SessionID: "test-session-1",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	for _, hit := range result.Hits {
+		if hit.MessageType == "thinking" {
+			t.Errorf("default structured search returned thinking message %s", hit.MessageID)
+		}
+	}
+	// Session-1 has 9 messages but only 8 non-thinking.
+	if result.Meta.TotalHits != 8 {
+		t.Errorf("total hits = %d, want 8 (9 minus 1 thinking)", result.Meta.TotalHits)
+	}
+}
+
+func TestMessageSearchRoleThinkingAcceptedByNormalizeRole(t *testing.T) {
+	db := buildTestDB(t)
+
+	// "thinking" should be accepted as a valid role value, not rejected.
+	_, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "middleware",
+		Role:  "thinking",
+	})
+	if err != nil {
+		t.Fatalf("expected no error for role=thinking, got: %v", err)
+	}
+}
+
+func TestMessageSearchSkillFilterReturnsAttributedSession(t *testing.T) {
+	db := buildTestDB(t)
+
+	// msg-010 in test-session-3 has skill_name="review-task" set via
+	// attributionSkill fallback (not from Skill tool). --skill should find it.
+	result, err := search.SearchMessages(&search.MessageSearchOpts{
+		DB:    db,
+		Query: "CI",
+		Skill: "review-task",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	if result.Meta.TotalHits == 0 {
+		t.Fatal("expected at least 1 hit for --skill review-task")
+	}
+	// All hits should be from the session with the skill attribution.
+	for _, hit := range result.Hits {
+		if hit.SessionID != "test-session-3" {
+			t.Errorf("expected session_id=test-session-3, got %q", hit.SessionID)
+		}
 	}
 }
 

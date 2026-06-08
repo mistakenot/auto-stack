@@ -118,8 +118,8 @@ func TestFixturesReadable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadMessages: %v", err)
 		}
-		if len(messages) != 12 {
-			t.Fatalf("expected 12 messages, got %d", len(messages))
+		if len(messages) != 13 {
+			t.Fatalf("expected 13 messages, got %d", len(messages))
 		}
 
 		// Check roles are present
@@ -127,54 +127,63 @@ func TestFixturesReadable(t *testing.T) {
 		for _, m := range messages {
 			roles[m.Role] = true
 		}
-		for _, r := range []string{"user", "assistant", "tool", "system"} {
+		for _, r := range []string{"user", "assistant", "tool", "system", "thinking"} {
 			if !roles[r] {
 				t.Errorf("missing role %q in messages", r)
 			}
 		}
 
-		// Check Bash tool message
-		m5 := messages[4]
+		// Check thinking message (index 2 in the fixture array)
+		mt := messages[2]
+		if mt.Role != "thinking" {
+			t.Errorf("msg 2 Role = %q, want thinking", mt.Role)
+		}
+		if mt.ThinkingSignature != "sig_abc123" {
+			t.Errorf("msg 2 ThinkingSignature = %q, want sig_abc123", mt.ThinkingSignature)
+		}
+
+		// Check Bash tool message (shifted from index 4 to 5)
+		m5 := messages[5]
 		if m5.ToolName != "Bash" {
-			t.Errorf("msg 4 ToolName = %q, want %q", m5.ToolName, "Bash")
+			t.Errorf("msg 5 ToolName = %q, want %q", m5.ToolName, "Bash")
 		}
 		if m5.BashCommand != "go test ./pkg/auth/..." {
-			t.Errorf("msg 4 BashCommand = %q, want %q", m5.BashCommand, "go test ./pkg/auth/...")
+			t.Errorf("msg 5 BashCommand = %q, want %q", m5.BashCommand, "go test ./pkg/auth/...")
 		}
 
-		// Check Read tool message
-		m4 := messages[3]
+		// Check Read tool message (shifted from index 3 to 4)
+		m4 := messages[4]
 		if m4.ToolName != "Read" {
-			t.Errorf("msg 3 ToolName = %q, want %q", m4.ToolName, "Read")
+			t.Errorf("msg 4 ToolName = %q, want %q", m4.ToolName, "Read")
 		}
 		if m4.ToolFilePath != "/workspace/project-a/pkg/auth/middleware.go" {
-			t.Errorf("msg 3 ToolFilePath = %q", m4.ToolFilePath)
+			t.Errorf("msg 4 ToolFilePath = %q", m4.ToolFilePath)
 		}
 
-		// Check long content truncation
-		m3 := messages[2]
+		// Check long content truncation (shifted from index 2 to 3)
+		m3 := messages[3]
 		if len(m3.Content) <= 4096 {
-			t.Errorf("msg 2 Content should be >4096 chars, got %d", len(m3.Content))
+			t.Errorf("msg 3 Content should be >4096 chars, got %d", len(m3.Content))
 		}
 		if len(m3.ContentTruncated) >= len(m3.Content) {
-			t.Errorf("msg 2 ContentTruncated (%d) should be shorter than Content (%d)",
+			t.Errorf("msg 3 ContentTruncated (%d) should be shorter than Content (%d)",
 				len(m3.ContentTruncated), len(m3.Content))
 		}
 
-		// Check Skill tool messages
-		m11 := messages[10]
+		// Check Skill tool messages (shifted from indices 10,11 to 11,12)
+		m11 := messages[11]
 		if m11.ToolName != "Skill" {
-			t.Errorf("msg 10 ToolName = %q, want Skill", m11.ToolName)
+			t.Errorf("msg 11 ToolName = %q, want Skill", m11.ToolName)
 		}
 		if m11.SkillName != "contextual-commit" {
-			t.Errorf("msg 10 SkillName = %q, want contextual-commit", m11.SkillName)
+			t.Errorf("msg 11 SkillName = %q, want contextual-commit", m11.SkillName)
 		}
-		m12 := messages[11]
+		m12 := messages[12]
 		if m12.ToolName != "Skill" {
-			t.Errorf("msg 11 ToolName = %q, want Skill", m12.ToolName)
+			t.Errorf("msg 12 ToolName = %q, want Skill", m12.ToolName)
 		}
 		if m12.SkillName != "contextual-commit" {
-			t.Errorf("msg 11 SkillName = %q, want contextual-commit", m12.SkillName)
+			t.Errorf("msg 12 SkillName = %q, want contextual-commit", m12.SkillName)
 		}
 
 		// Check searchable content exists

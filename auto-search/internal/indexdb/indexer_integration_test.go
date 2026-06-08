@@ -40,8 +40,8 @@ func TestFullBuildFromFixtures(t *testing.T) {
 	if result.SessionsIndexed != 3 {
 		t.Errorf("sessions = %d, want 3", result.SessionsIndexed)
 	}
-	if result.MessagesIndexed != 12 {
-		t.Errorf("messages = %d, want 12", result.MessagesIndexed)
+	if result.MessagesIndexed != 13 {
+		t.Errorf("messages = %d, want 13", result.MessagesIndexed)
 	}
 	if result.FilesProcessed != 2 {
 		t.Errorf("files = %d, want 2", result.FilesProcessed)
@@ -61,8 +61,8 @@ func TestFullBuildFromFixtures(t *testing.T) {
 	if sessions != 3 {
 		t.Errorf("session rows = %d, want 3", sessions)
 	}
-	if messages != 12 {
-		t.Errorf("message rows = %d, want 12", messages)
+	if messages != 13 {
+		t.Errorf("message rows = %d, want 13", messages)
 	}
 	if indexState != 2 {
 		t.Errorf("index_state rows = %d, want 2", indexState)
@@ -178,8 +178,8 @@ func TestIncrementalUpdateIdempotent(t *testing.T) {
 	if sessions != 3 {
 		t.Errorf("session rows after 2nd run = %d, want 3", sessions)
 	}
-	if messages != 12 {
-		t.Errorf("message rows after 2nd run = %d, want 12", messages)
+	if messages != 13 {
+		t.Errorf("message rows after 2nd run = %d, want 13", messages)
 	}
 }
 
@@ -317,8 +317,8 @@ func TestNeighborMessageIDs(t *testing.T) {
 	if prev != "msg-001" {
 		t.Errorf("prev = %q, want msg-001", prev)
 	}
-	if next != "msg-003" {
-		t.Errorf("next = %q, want msg-003", next)
+	if next != "msg-002t" {
+		t.Errorf("next = %q, want msg-002t", next)
 	}
 }
 
@@ -338,12 +338,12 @@ func TestSessionMessages(t *testing.T) {
 	}
 	defer db.Close()
 
-	msgs, err := indexdb.SessionMessages(db, "test-session-1")
+	msgs, err := indexdb.SessionMessages(db, "test-session-1", true)
 	if err != nil {
 		t.Fatalf("SessionMessages: %v", err)
 	}
-	if len(msgs) != 8 {
-		t.Fatalf("expected 8 messages for test-session-1, got %d", len(msgs))
+	if len(msgs) != 9 {
+		t.Fatalf("expected 9 messages for test-session-1, got %d", len(msgs))
 	}
 	// Verify ordering.
 	for i := 1; i < len(msgs); i++ {
@@ -374,8 +374,8 @@ func TestCountSessionMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CountSessionMessages: %v", err)
 	}
-	if counts.Total != 8 {
-		t.Errorf("total = %d, want 8", counts.Total)
+	if counts.Total != 9 {
+		t.Errorf("total = %d, want 9", counts.Total)
 	}
 	if counts.Tool == 0 {
 		t.Error("expected tool message count > 0")
@@ -528,6 +528,7 @@ func TestInsertSessionTotalTurnDurationRoundtrip(t *testing.T) {
 		400, 200, 200,
 		"some transcript",
 		"Add a retry budget to the auth middleware", "Add a retry budget to the auth middleware",
+		"bypassPermissions", "2.1.168",
 		int(indexdb.SchemaVersion),
 	); err != nil {
 		t.Fatalf("InsertSession: %v", err)

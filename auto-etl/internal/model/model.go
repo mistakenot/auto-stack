@@ -2,7 +2,7 @@ package model
 
 import "time"
 
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 // Default truncation threshold for content_truncated (chars).
 const DefaultTruncateMaxChars = 4096
@@ -21,6 +21,7 @@ const (
 	RoleAssistant MessageRole = "assistant"
 	RoleTool      MessageRole = "tool"
 	RoleSystem    MessageRole = "system"
+	RoleThinking  MessageRole = "thinking"
 )
 
 // AgentMessage represents a single normalized message in a session.
@@ -75,6 +76,16 @@ type AgentMessage struct {
 	CacheInputTokens int32 `parquet:"cache_input_tokens"`
 	OutputTokens     int32 `parquet:"output_tokens"`
 
+	// ThinkingSignature is the opaque per-block token from thinking blocks.
+	// For normal thinking blocks: the signature string.
+	// For redacted_thinking blocks: the encrypted data payload.
+	ThinkingSignature string `parquet:"thinking_signature"`
+	StopReason        string `parquet:"stop_reason,dict"`
+	IsError           bool   `parquet:"is_error"`
+
+	CacheCreationInputTokens int64 `parquet:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64 `parquet:"cache_read_input_tokens"`
+
 	// Denormalized from session
 	Workspace       string `parquet:"workspace,dict"`
 	GitRemote       string `parquet:"git_remote,dict"`
@@ -102,6 +113,9 @@ type AgentSession struct {
 	GitRemote       string `parquet:"git_remote,dict"`
 	Model           string `parquet:"model,dict"`
 	SourcePath      string `parquet:"source_path"`
+
+	PermissionMode string `parquet:"permission_mode,dict"`
+	Version        string `parquet:"version,dict"`
 
 	// Unix milliseconds
 	FirstMessageAt int64 `parquet:"first_message_at"`
