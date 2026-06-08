@@ -20,7 +20,7 @@ If this doc conflicts with those files, treat the code as canonical.
 ## Schema Version
 
 - `schema_version` is set from `model.SchemaVersion`
-- Current value: `3`
+- Current value: `6`
 
 ## Output Datasets and Partitions
 
@@ -41,7 +41,7 @@ Represents one normalized message block in a session. For content arrays, each c
 | `session_id` | string | Session ID from parsed transcript |
 | `host_id` | string | Host identifier from `~/.auto/host.json`, fallback `os.Hostname()` |
 | `index` | int32 | Incrementing message index within transformed session |
-| `role` | string | One of `user`, `assistant`, `tool`, `system` |
+| `role` | string | One of `user`, `assistant`, `tool`, `system`, `thinking` |
 | `content` | string | Full unmodified text payload (never truncated) |
 | `content_truncated` | string | Same as content, mid-truncated at 4096 chars if over threshold |
 | `timestamp` | int64 | Unix milliseconds |
@@ -52,10 +52,16 @@ Represents one normalized message block in a session. For content arrays, each c
 | `tool_file_num_lines` | int32 | From Read tool input `limit` field (0 otherwise) |
 | `tool_file_total_lines` | int32 | Not reliably available; always 0 for now |
 | `bash_command` | string | Bash command extracted when `tool_name == "Bash"` |
+| `skill_name` | string | Skill name. Populated from `Skill` tool `input.skill`, or from `attributionSkill` on the JSONL line as fallback (when no Skill-tool skill is set). Covers all content blocks of the attributed turn. |
 | `tool_use_result_json` | string | Raw `toolUseResult` envelope (verbatim JSON) from the source JSONL line. Populated on `role=tool` rows whose source line carries the envelope (e.g. `AskUserQuestion` answers/annotations, deferred-tool results); empty string otherwise. Stored unmodified for `json_extract` querying. |
 | `input_tokens` | int32 | `usage.input_tokens` |
-| `cache_input_tokens` | int32 | `usage.cache_creation_input_tokens + usage.cache_read_input_tokens` |
+| `cache_input_tokens` | int32 | `usage.cache_creation_input_tokens + usage.cache_read_input_tokens` (combined sum, retained) |
 | `output_tokens` | int32 | `usage.output_tokens` |
+| `thinking_signature` | string | Opaque per-block token from thinking blocks. For normal `thinking` blocks: the signature string. For `redacted_thinking` blocks: the encrypted data payload. Empty for non-thinking rows. |
+| `stop_reason` | string | API stop reason from assistant message lines (e.g. `end_turn`, `tool_use`, `max_tokens`). Empty on non-assistant rows. |
+| `is_error` | bool | True when a `tool_result` block reports an error (`block.is_error`). False otherwise. |
+| `cache_creation_input_tokens` | int64 | `usage.cache_creation_input_tokens` — prompt-cache creation tokens (split component) |
+| `cache_read_input_tokens` | int64 | `usage.cache_read_input_tokens` — prompt-cache read tokens (split component) |
 | `workspace` | string | Session workspace (denormalized) |
 | `git_remote` | string | Git remote origin URL (denormalized from session) |
 | `git_branch` | string | From JSONL `gitBranch` field per message line |
@@ -84,6 +90,8 @@ One row per parsed session file transformed.
 | `git_remote` | string | Git remote origin URL, cached in `~/.auto/etl/settings.json` |
 | `model` | string | Session model from parsed transcript |
 | `source_path` | string | Source JSONL path |
+| `permission_mode` | string | Claude Code permission mode for the session (e.g. `default`, `bypassPermissions`). Last-seen value from top-level `permissionMode` field on message lines. |
+| `version` | string | Claude Code CLI version (e.g. `2.1.168`). Last-seen value from top-level `version` field on message lines. |
 | `first_message_at` | int64 | Earliest non-zero message timestamp (Unix ms) |
 | `last_message_at` | int64 | Latest non-zero message timestamp (Unix ms) |
 | `total_input_tokens` | int64 | Sum of input + cache input tokens |
@@ -92,8 +100,8 @@ One row per parsed session file transformed.
 | `total_bytes` | int64 | Total transformed text bytes |
 | `total_output_bytes` | int64 | Bytes counted from non-user text blocks |
 | `total_input_bytes` | int64 | Bytes counted from user text blocks |
-| `transcript_full` | string | All messages concatenated with `[role]:` or `[tool:Name]:` prefixes |
-| `transcript_truncated` | string | Same but per-message uses `content_truncated`, capped at 512k total |
+| `transcript_full` | string | All messages concatenated with `[role]:` or `[tool:Name]:` prefixes. Excludes `role="thinking"` rows. |
+| `transcript_truncated` | string | Same but per-message uses `content_truncated`, capped at 512k total. Excludes `role="thinking"` rows. |
 | `year` | int32 | Year of first non-zero timestamp found |
 | `month` | int32 | Month of first non-zero timestamp found |
 | `schema_version` | int32 | Schema version marker |

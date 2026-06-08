@@ -62,6 +62,7 @@ autosearch search "Exit code 1" --field tool_output
 # Filter by message role
 autosearch search "database is busy" --role tool
 autosearch search "undo that" --role user
+autosearch search "" --role thinking --since 7d   # thinking is excluded by default; --role thinking targets it directly
 
 # Find expected-slow tool calls (e.g. all Bash commands > 60s).
 autosearch search "" --tool-name Bash --min-tool-duration 60s --since 30d
@@ -75,6 +76,13 @@ autosearch search "" --session-id <session-id> --min-tool-duration 60s --text
 
 Tip: use ` + "`" + `--role tool` + "`" + ` for error hunting — errors and build output live in tool messages.
 Without it, results include agent commentary and prior search queries that mention the same terms.
+
+**Thinking blocks:** Agent reasoning (` + "`" + `role=thinking` + "`" + `) is excluded from default ` + "`" + `search` + "`" + ` and
+` + "`" + `session get` + "`" + ` output to keep results concise. Two ways to include them:
+- ` + "`" + `--role thinking` + "`" + ` — targets thinking messages only (both ` + "`" + `search` + "`" + ` and ` + "`" + `stats` + "`" + `)
+- ` + "`" + `--include-thinking` + "`" + ` — includes thinking alongside other roles (on ` + "`" + `search` + "`" + ` and ` + "`" + `session get` + "`" + `)
+
+` + "`" + `message get` + "`" + ` always returns the full content of any message, including thinking.
 
 Queries support AND, OR, NOT (uppercase), and quoted phrases:
 ` + "```" + `
@@ -111,6 +119,8 @@ autosearch session get <session_id>
 
 This renders the full conversation as markdown. Each message is tagged with its index,
 e.g. ` + "`" + `<user index=0>` + "`" + `, ` + "`" + `<agent index=1>` + "`" + `, ` + "`" + `<tool name="Bash" index=26>` + "`" + `.
+Thinking blocks are excluded by default; use ` + "`" + `--include-thinking` + "`" + ` to show them
+(rendered as ` + "`" + `<thinking index=N>` + "`" + `).
 
 ### 4. Drill into a specific message
 
@@ -385,7 +395,8 @@ autosearch search "error OR fail OR broken" --scope sessions --cwd /path/to/proj
 
 ` + "```" + `
 --scope             messages (default) or sessions
---role              user, assistant, or tool
+--role              user, assistant, tool, or thinking
+--include-thinking  include thinking messages in results (excluded by default)
 --field             all (default), content, tool_input, tool_output
 --tool-name         filter by tool name (Read, Write, Edit, Bash) [messages scope]
 --session-id        filter to a single session ID [messages scope]
@@ -416,7 +427,7 @@ autosearch search "error OR fail OR broken" --scope sessions --cwd /path/to/proj
 --min-count   minimum threshold for selected measure
 --limit       max buckets per page (default 20)
 --offset      skip N buckets for pagination
---role        role filter
+--role        role filter (user, assistant, tool, thinking)
 --field       all (default), content, tool_input, tool_output
 --cwd         filter by workspace path (mutually exclusive with --remote)
 --remote      filter by git remote URL

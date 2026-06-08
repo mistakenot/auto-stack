@@ -24,7 +24,7 @@ Each Claude Code session is stored as a `.jsonl` file under `~/.claude/projects/
 | `queue-operation` | No | Skipped | Background task enqueue/dequeue |
 | `last-prompt` | No | Skipped | Records final user prompt text |
 
-Only `user` and `assistant` lines carry the `message` field with role and content. These are the lines ETL processes.
+Only `user` and `assistant` lines carry the `message` field with role and content. These are the lines ETL processes. Message lines also carry top-level metadata fields (`version`, `permissionMode`, `attributionSkill`, `gitBranch`) that ETL extracts — see [section 6](#6-additional-preserved-fields-schemaversion-6).
 
 ## 2. Message Content: Bare String vs Content Array
 
@@ -150,8 +150,9 @@ The `content` field can be either a plain string or an array of content objects.
 | `tool_name` | `"Read"` | **Looked up** from the matching `tool_use` block via `tool_use_id` |
 | `tool_file_path` | `"/tmp/f.go"` | Copied from matching `tool_use` block |
 | `bash_command` | `""` or command | Copied from matching `tool_use` block |
+| `is_error` | `true`/`false` | `block.IsError` — true when the tool reported an error |
 
-**Data preserved:** Full tool output (file contents, command output, etc.), tool name, file metadata.
+**Data preserved:** Full tool output (file contents, command output, etc.), tool name, file metadata, error status.
 
 **How the lookup works:** ETL scans backward through preceding lines to find the `tool_use` block whose `id` matches this `tool_result`'s `tool_use_id`, then copies the tool name and metadata.
 
@@ -175,11 +176,14 @@ The `content` field can be either a plain string or an array of content objects.
 | Field | Value | Source |
 |-------|-------|--------|
 | `role` | `"thinking"` | Dedicated role for reasoning blocks |
-| `content` | `block.thinking` | Thinking text when present (often empty — Claude Code redacts it) |
-| `content_truncated` | truncated `content` | Populated when content is non-empty |
+| `content` | `block.thinking` | Full reasoning text — preserved unmodified |
+| `content_truncated` | truncated `content` | Mid-truncated at 4096 chars if over threshold |
+| `thinking_signature` | `block.signature` | Opaque per-block verification token |
 | `tool_name` | `""` | Not a tool |
 
-`redacted_thinking` blocks are also preserved with `role="thinking"` and empty content.
+`redacted_thinking` blocks are also preserved with `role="thinking"`, `content="[redacted]"` (marker), and `thinking_signature` carrying the encrypted `data` payload.
+
+**Data preserved:** Full reasoning text, thinking signature, and redacted-block data. Thinking rows are excluded from session transcripts but remain canonical in the `messages` dataset. Thinking is excluded from default `search` and `session get` output; use `--role thinking` or `--include-thinking` to access.
 
 ## 4. Special Tool Behaviors
 
@@ -455,9 +459,33 @@ One row per content block in the source JSONL:
 | `text` | user or assistant | original role | Full text | empty | empty | Yes |
 | `tool_use` | assistant | `assistant` | **empty** | tool name | raw JSON | **No** (content empty) |
 | `tool_result` | user | `tool` | tool output | looked up | empty | Yes |
-| `thinking` | assistant | `thinking` | thinking text (often empty) | empty | empty | Yes |
+| `thinking` | assistant | `thinking` | full reasoning text | empty | empty | Opt-in (`--role thinking` / `--include-thinking`) |
 
-## 6. What Autosearch Can and Cannot Find
+## 6. Additional Preserved Fields (SchemaVersion 6)
+
+Beyond per-block content, ETL extracts additional signal from the JSONL lines:
+
+### Message-level fields
+
+| Field | Type | Source | Notes |
+|-------|------|--------|-------|
+| `thinking_signature` | string | `block.signature` (thinking) or `block.data` (redacted_thinking) | Opaque per-block verification token |
+| `stop_reason` | string | `line.message.stop_reason` | API stop reason on assistant rows (e.g. `end_turn`, `tool_use`, `max_tokens`) |
+| `is_error` | bool | `block.is_error` on `tool_result` blocks | True when the tool reported an error |
+| `cache_creation_input_tokens` | int64 | `usage.cache_creation_input_tokens` | Prompt-cache creation tokens (split from the combined `cache_input_tokens` sum, which is also retained) |
+| `cache_read_input_tokens` | int64 | `usage.cache_read_input_tokens` | Prompt-cache read tokens (split from the combined sum) |
+| `skill_name` | string | `Skill` tool `input.skill`, **or** `line.attributionSkill` as fallback | Fallback populates `skill_name` from `attributionSkill` when no Skill-tool skill is set on the row. Covers all content blocks of the attributed turn (text, thinking, tool_use). |
+
+### Session-level fields
+
+| Field | Type | Source | Notes |
+|-------|------|--------|-------|
+| `permission_mode` | string | Top-level `permissionMode` field on message lines | Last-seen value; environment-level (e.g. `default`, `bypassPermissions`) |
+| `version` | string | Top-level `version` field on message lines | CLI version (e.g. `2.1.168`); last-seen value |
+
+Both `permission_mode` and `version` are read from the top-level fields on JSONL message lines (the scan loop decodes every line, so this also captures values from standalone `type:"permission-mode"` lines). They are set on the `AgentSession` record once per session.
+
+## 7. What Autosearch Can and Cannot Find
 
 Autosearch indexes `content_truncated` for full-text search (BM25). This means:
 
@@ -467,20 +495,20 @@ Autosearch indexes `content_truncated` for full-text search (BM25). This means:
 - Tool outputs (file contents, command output, error messages)
 - AskUserQuestion answers (the flat "User has answered..." string)
 
-**Not searchable via FTS:**
+**Not searchable via default FTS:**
 - Tool invocation inputs (questions asked via AskUserQuestion, bash commands in tool_use blocks, file content being written, Agent prompts)
-- Thinking block content
+- Thinking block content — indexed in FTS but excluded from default search results; use `--role thinking` or `--include-thinking` to include
 - Tool metadata (file paths, line numbers) — stored in separate fields, not in FTS index
 
 Note: `bash_command` and `tool_file_path` are stored as separate columns in the parquet/sqlite schema, so they could be made searchable with additional indexing, but aren't currently included in the FTS5 index.
 
 **Queryable via structured SQL (not FTS):** AskUserQuestion answers and per-question annotation notes are captured verbatim in the `tool_use_result_json` column (`SchemaVersion 3`). These are recoverable with `json_extract` over `$.answers` and `$.annotations.<question text>.notes` against either the parquet (DuckDB) or the SQLite index — see [section 4](#how-to-view-askuserquestion-data-today). This is a structured-query path, not full-text search: the column is deliberately **not** added to the FTS5 index, so FTS semantics are unchanged.
 
-## 7. Known Gaps and Potential Improvements
+## 8. Known Gaps and Potential Improvements
 
 1. **tool_use content is empty** — The `content` field for tool_use rows could be populated with a human-readable summary of the tool input (e.g., the question text for AskUserQuestion, the command for Bash, the file path for Read). This would make tool invocations searchable.
 
-2. **thinking blocks are now preserved** (SchemaVersion 6) — Emitted as `role="thinking"` messages. Content is stored when present, though Claude Code typically redacts it in the JSONL.
+2. **thinking blocks are fully preserved** (SchemaVersion 6) — Emitted as `role="thinking"` messages with full reasoning text and `thinking_signature`. Excluded from default search/session-get; use `--role thinking` or `--include-thinking`.
 
 3. **tool_input not indexed** — Autosearch could add `tool_input` to the FTS5 index, but the raw JSON would need pre-processing to be useful for text search.
 
