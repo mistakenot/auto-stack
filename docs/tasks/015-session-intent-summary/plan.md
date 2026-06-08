@@ -28,10 +28,10 @@ list` / `session describe` — following the `042857e` add-a-field-end-to-end pa
 - [Context](./context.md)
 
 ## How to Test
-- [ ] `auto-etl/internal/transform/transform_test.go` — unit: heuristic skips junk, falls back to slash command, head-truncates (AC-1/2/3)
-- [ ] `auto-search/internal/indexdb/indexer_integration_test.go` — integration: intent columns round-trip parquet→index (AC-4)
-- [ ] `auto-search/internal/cli/cli_integration_test.go` — integration: `session list` JSON carries `first_user_intent_truncated`, `session describe` carries full `firstUserIntent` (AC-5)
-- [ ] Manual: `autoetl transform --full` then `autosearch session list` shows readable intents; `duckdb` confirms columns populated
+- [x] `auto-etl/internal/transform/transform_test.go` — unit: heuristic skips junk, falls back to slash command, head-truncates (AC-1/2/3)
+- [x] `auto-search/internal/indexdb/indexer_integration_test.go` — integration: intent columns round-trip parquet→index (AC-4)
+- [x] `auto-search/internal/cli/cli_integration_test.go` — integration: `session list` JSON carries `first_user_intent_truncated`, `session describe` carries full `firstUserIntent` (AC-5)
+- [x] Manual: `autoetl transform --full` then `autosearch session list` shows readable intents; `duckdb` confirms columns populated
 
 ## Execution Sequence
 ```
@@ -89,19 +89,19 @@ field renamed to `first_user_intent_truncated` to match.
 - [x] Step 3.5: Commit: `feat(015): expose first-user-intent in session list + describe`
 
 ### Phase 4: Rollout + e2e verification (no commit)
-- [ ] Step 4.1: `autoetl transform --full` against `~/.claude/projects` → `~/.auto/etl/output`. **Verify**: completes; sessions parquet has the new columns (duckdb `DESCRIBE`).
-- [ ] Step 4.2: `autosearch index` (auto-rebuilds on schema-version 8 mismatch). **Verify**: rebuild runs; no errors.
-- [ ] Step 4.3: `autosearch session list --limit 20` and `autosearch session describe <id>` on a known caveat-started session. **Verify**: list shows readable truncated intents (no `<local-command-caveat>`/`<command-name>` leakage); describe shows the full `firstUserIntent`; slash-only session shows `/cmd args`.
-- [ ] Step 4.4: duckdb sanity: junk-prefix rate among `first_user_intent_truncated` ≈ 0; non-empty rate ≥ ~98%. **Verify**: matches the investigation baseline.
+- [x] Step 4.1: `autoetl transform --full` against `~/.claude/projects` → `~/.auto/etl/output`. **Verify**: completes; sessions parquet has the new columns (duckdb `DESCRIBE`).
+- [x] Step 4.2: `autosearch index` (auto-rebuilds on schema-version 8 mismatch). **Verify**: rebuild runs; no errors.
+- [x] Step 4.3: `autosearch session list --limit 20` and `autosearch session describe <id>` on a known caveat-started session. **Verify**: list shows readable truncated intents (no `<local-command-caveat>`/`<command-name>` leakage); describe shows the full `firstUserIntent`; slash-only session shows `/cmd args`.
+- [x] Step 4.4: duckdb sanity: junk-prefix rate among `first_user_intent_truncated` ≈ 0; non-empty rate ≥ ~98%. **Verify**: matches the investigation baseline.
 
 ## Success Criteria
-- [ ] `go build ./...` passes in both `auto-etl` and `auto-search`
-- [ ] AC-1: sessions parquet contains populated `first_user_intent` + `first_user_intent_truncated` (Phase 1 unit + Step 1.5 duckdb)
-- [ ] AC-2: junk first-messages skipped — unit tests for caveat/command/reminder/empty pass
-- [ ] AC-3: slash-only session yields `/cmd args`; no-message session yields empty — unit tests pass
-- [ ] AC-4: intent round-trips parquet→SQLite — `indexer_integration_test.go` passes
-- [ ] AC-5: `session list` JSON carries `first_user_intent_truncated`, `session describe` JSON carries full `firstUserIntent` — `cli_integration_test.go` passes
-- [ ] e2e: real `autosearch session list` shows readable intents with ~0 junk leakage (Phase 4)
+- [x] `go build ./...` passes in both `auto-etl` and `auto-search`
+- [x] AC-1: sessions parquet contains populated `first_user_intent` + `first_user_intent_truncated` (Phase 1 unit + Step 1.5 duckdb)
+- [x] AC-2: junk first-messages skipped — unit tests for caveat/command/reminder/empty pass
+- [x] AC-3: slash-only session yields `/cmd args`; no-message session yields empty — unit tests pass
+- [x] AC-4: intent round-trips parquet→SQLite — `indexer_integration_test.go` passes
+- [x] AC-5: `session list` JSON carries `first_user_intent_truncated`, `session describe` JSON carries full `firstUserIntent` — `cli_integration_test.go` passes
+- [x] e2e: real `autosearch session list` shows readable intents with ~0 junk leakage (Phase 4)
 
 ## Open Questions
 - (none — placement, storage shape, subagent handling, FTS, and slash-fallback format all resolved in requirements.md / solution.md)
