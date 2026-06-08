@@ -54,13 +54,13 @@ columns Phase 2 added.
 - [x] Step 1.6: Commit: `feat(015): auto-etl first-user-intent fields + heuristic`
 
 ### Phase 2: auto-search — index threading
-- [ ] Step 2.1: In `parquet.go`, add `FirstUserIntent` / `FirstUserIntentTruncated` to `ParquetSessionRow` with matching parquet tags. **Verify**: `go build ./...` in `auto-search`.
-- [ ] Step 2.2: In `schema.go`, add `first_user_intent TEXT NOT NULL DEFAULT ''` and `first_user_intent_truncated TEXT NOT NULL DEFAULT ''` to the `sessions` DDL; bump `SchemaVersion` 7→8. Leave `sessions_fts` untouched (display-only). **Verify**: `go build ./...`.
-- [ ] Step 2.3: In `sessions.go`, add two params to `InsertSession` and to the INSERT column list + placeholders (keep positional arg order consistent). **Verify**: `go build ./...`.
-- [ ] Step 2.4: In `indexer.go`, pass `r.FirstUserIntent`, `r.FirstUserIntentTruncated` from `insertSessionFromParquet`. **Verify**: `go build ./...`.
-- [ ] Step 2.5: In `query_sessions.go`: add `FirstUserIntent` + `FirstUserIntentTruncated` to `SessionRow`; add `FirstUserIntentTruncated string \`json:"first_user_intent_truncated,omitempty"\`` to `SessionListRow` (distinct key from the full-intent `describe` surface); update `ListSessions` SELECT to include `s.first_user_intent_truncated` and add to `Scan`; update `GetSessionByID` SELECT + `Scan` for both columns. **Verify**: `go build ./...`.
-- [ ] Step 2.6: Run existing index unit/integration tests to confirm no regressions from the schema bump. **Verify**: `go test ./internal/indexdb/...` passes.
-- [ ] Step 2.7: Commit: `feat(015): thread first-user-intent through auto-search index`
+- [x] Step 2.1: In `parquet.go`, add `FirstUserIntent` / `FirstUserIntentTruncated` to `ParquetSessionRow` with matching parquet tags. **Verify**: `go build ./...` in `auto-search`.
+- [x] Step 2.2: In `schema.go`, add `first_user_intent TEXT NOT NULL DEFAULT ''` and `first_user_intent_truncated TEXT NOT NULL DEFAULT ''` to the `sessions` DDL; bump `SchemaVersion` 7→8. Leave `sessions_fts` untouched (display-only). **Verify**: `go build ./...`.
+- [x] Step 2.3: In `sessions.go`, add two params to `InsertSession` and to the INSERT column list + placeholders (keep positional arg order consistent). **Verify**: `go build ./...`.
+- [x] Step 2.4: In `indexer.go`, pass `r.FirstUserIntent`, `r.FirstUserIntentTruncated` from `insertSessionFromParquet`. **Verify**: `go build ./...`.
+- [x] Step 2.5: In `query_sessions.go`: add `FirstUserIntent` + `FirstUserIntentTruncated` to `SessionRow`; add `FirstUserIntentTruncated string \`json:"first_user_intent_truncated,omitempty"\`` to `SessionListRow` (distinct key from the full-intent `describe` surface); update `ListSessions` SELECT to include `s.first_user_intent_truncated` and add to `Scan`; update `GetSessionByID` SELECT + `Scan` for both columns. **Verify**: `go build ./...`.
+- [x] Step 2.6: Run existing index unit/integration tests to confirm no regressions from the schema bump. **Verify**: `go test ./internal/indexdb/...` passes.
+- [x] Step 2.7: Commit: `feat(015): thread first-user-intent through auto-search index`
 
 ### Phase 3: auto-search — CLI exposure + fixtures + integration tests
 - [ ] Step 3.1: Two surfaces in `cli/session.go`: (a) `session list` — verify `SessionListRow` JSON carries `first_user_intent_truncated` (marshals directly; no edit needed after Step 2.5); (b) `session describe` (`newSessionDescribeCmd`, ~lines 232-305) — add `"firstUserIntent": sess.FirstUserIntent` to the `"session"` `map[string]any` literal (~lines 271-294). Do NOT touch `session get` (it is a transcript renderer with no JSON surface). **Verify**: build; `autosearch session describe <id>` JSON includes `firstUserIntent`.
