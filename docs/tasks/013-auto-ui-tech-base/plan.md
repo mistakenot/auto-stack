@@ -36,10 +36,10 @@ conformance run.
 - [Conformance script](./conformance.md)
 
 ## How to Test
-- [ ] `auto-ui/internal/server/server_test.go` — `GET /` returns 200 + HTML (AC-4); `GET /api/hello` returns JSON with `message` + `mode` (AC-3 server side)
-- [ ] `go build ./...` in `auto-ui` (default tags) and `go build -tags dev ./...` — both compile (AC-6)
-- [ ] `go vet ./...` in `auto-ui` clean
-- [ ] agent-browser conformance run per [conformance.md](./conformance.md) — AC-1, AC-2, AC-3 (UI), AC-5
+- [x] `auto-ui/internal/server/server_test.go` — `GET /` returns 200 + HTML (AC-4); `GET /api/hello` returns JSON with `message` + `mode` (AC-3 server side)
+- [x] `go build ./...` in `auto-ui` (default tags) and `go build -tags dev ./...` — both compile (AC-6)
+- [x] `go vet ./...` in `auto-ui` clean
+- [x] agent-browser conformance run per [conformance.md](./conformance.md) — AC-1, AC-2, AC-3 (UI), AC-5
 
 ## Execution Sequence
 ```
@@ -57,11 +57,11 @@ Phase 1 (scaffold) --> Phase 2 (web assets + tag split) --> Phase 3 (server + se
 ## Plan
 
 ### Phase 1: Scaffold package
-- [ ] Step 1.1: Run worktree discipline — `git fetch origin && git checkout main && git pull origin main`, then create branch `feat/013-auto-ui-tech-base`
-- [ ] Step 1.2: Scaffold via the `new-package` skill (name `ui`, binary `autoui`) — produces `cmd/autoui/main.go`, `internal/app/app.go`, `internal/cli/{root,init,doctor,quickstart,docs,update}.go`, `internal/config/settings.go`, `go.mod`, `CLAUDE.md`. If the skill is unavailable, hand-copy the auto-graph scaffold (commit `78d2616`).
-- [ ] Step 1.3: Set `go.mod` to `go 1.26.1`, cobra `v1.10.2`, `replace github.com/mistakenot/auto-shared => ../auto-shared`; run `go mod tidy`
-- [ ] Step 1.4: Edit `internal/config/settings.go` so the tool settings struct is `Settings{Port int}` (default 8080) under `~/.auto/ui/settings.json`; `validate()` rejects port <1 or >65535 with a `config.ValidationError`
-- [ ] Step 1.5: Point `doctor` checks at real conditions — settings file present/valid, and a "port" check (informational). `quickstart`/`docs` markdown mention `autoui serve`
+- [x] Step 1.1: Run worktree discipline — `git fetch origin && git checkout main && git pull origin main`, then create branch `feat/013-auto-ui-tech-base`
+- [x] Step 1.2: Scaffold via the `new-package` skill (name `ui`, binary `autoui`) — produces `cmd/autoui/main.go`, `internal/app/app.go`, `internal/cli/{root,init,doctor,quickstart,docs,update}.go`, `internal/config/settings.go`, `go.mod`, `CLAUDE.md`. If the skill is unavailable, hand-copy the auto-graph scaffold (commit `78d2616`).
+- [x] Step 1.3: Set `go.mod` to `go 1.26.1`, cobra `v1.10.2`, `replace github.com/mistakenot/auto-shared => ../auto-shared`; run `go mod tidy`
+- [x] Step 1.4: Edit `internal/config/settings.go` so the tool settings struct is `Settings{Port int}` (default 8080) under `~/.auto/ui/settings.json`; `validate()` rejects port <1 or >65535 with a `config.ValidationError`
+- [x] Step 1.5: Point `doctor` checks at real conditions — settings file present/valid, and a "port" check (informational). `quickstart`/`docs` markdown mention `autoui serve`
 
 <!-- RESOLVED(P3): doctor "port" check — clarify it's informational, not a "port free" probe
 REVIEW: solution.md (Files table, doctor.go line) describes the doctor check as "port free", but this step
@@ -76,35 +76,35 @@ the auto-graph doctor pattern (reports config/dependency status, not liveness). 
 said "informational" and is unchanged.
 -->
 
-- [ ] Step 1.6: Verify — `cd auto-ui && go build ./... && go vet ./...`; run `go run ./cmd/autoui --version` (prints version), `... quickstart` (prints markdown), `... doctor` (valid JSON array to stdout). **Note:** default-tag build will fail until Phase 2 creates `web/static` if `web` is imported; keep `serve`/`web` import out until Phase 2, OR create an empty `web/static/.gitkeep` placeholder now so `//go:embed` has a target.
-- [ ] Step 1.7: Commit: `feat(autoui): phase 1 - scaffold package with standard subcommands`
+- [x] Step 1.6: Verify — `cd auto-ui && go build ./... && go vet ./...`; run `go run ./cmd/autoui --version` (prints version), `... quickstart` (prints markdown), `... doctor` (valid JSON array to stdout). **Note:** default-tag build will fail until Phase 2 creates `web/static` if `web` is imported; keep `serve`/`web` import out until Phase 2, OR create an empty `web/static/.gitkeep` placeholder now so `//go:embed` has a target.
+- [x] Step 1.7: Commit: `feat(autoui): phase 1 - scaffold package with standard subcommands`
 
 ### Phase 2: Web assets + build-tag split  (depends on Phase 1)
-- [ ] Step 2.1: Create `web/static/index.html` with the import map (preact@10, preact/hooks, htm/preact, plus `react`/`react-dom` → `preact@10/compat` aliases), `<div id="app">`, `<script type="module" src="./app.js">`
-- [ ] Step 2.2: Create `web/static/router.js` — `parseHash()` → `{view, params}`, `setHash(view, params)`, `onRouteChange(cb)` over the `hashchange` event
-- [ ] Step 2.3: Create `web/static/app.js` — Preact+htm app: nav (Home/Dashboard) that calls `setHash`; Home shows a counter whose value is read from / written to `?n=`; Dashboard has a "fetch from go" button that GETs `/api/hello` and renders `message`; re-render on `onRouteChange`
-- [ ] Step 2.4: Create `web/embed_prod.go` (`//go:build !dev`): `//go:embed all:static`, `const Mode = "embed"`, `func FS() fs.FS` via `fs.Sub(content, "static")`
-- [ ] Step 2.5: Create `web/embed_dev.go` (`//go:build dev`): `const Mode = "disk"`, `func FS() fs.FS { return os.DirFS("web/static") }` (path is relative to module root — `serve` must be run from `auto-ui/`)
-- [ ] Step 2.6: Verify — `cd auto-ui && go build ./web/ && go build -tags dev ./web/` both compile; `gofmt -l web/*.go` clean. Sanity-check the import map URLs resolve (the conformance run is the real check).
-- [ ] Step 2.7: Commit: `feat(autoui): phase 2 - no-build SPA assets with dev/embed split`
+- [x] Step 2.1: Create `web/static/index.html` with the import map (preact@10, preact/hooks, htm/preact, plus `react`/`react-dom` → `preact@10/compat` aliases), `<div id="app">`, `<script type="module" src="./app.js">`
+- [x] Step 2.2: Create `web/static/router.js` — `parseHash()` → `{view, params}`, `setHash(view, params)`, `onRouteChange(cb)` over the `hashchange` event
+- [x] Step 2.3: Create `web/static/app.js` — Preact+htm app: nav (Home/Dashboard) that calls `setHash`; Home shows a counter whose value is read from / written to `?n=`; Dashboard has a "fetch from go" button that GETs `/api/hello` and renders `message`; re-render on `onRouteChange`
+- [x] Step 2.4: Create `web/embed_prod.go` (`//go:build !dev`): `//go:embed all:static`, `const Mode = "embed"`, `func FS() fs.FS` via `fs.Sub(content, "static")`
+- [x] Step 2.5: Create `web/embed_dev.go` (`//go:build dev`): `const Mode = "disk"`, `func FS() fs.FS { return os.DirFS("web/static") }` (path is relative to module root — `serve` must be run from `auto-ui/`)
+- [x] Step 2.6: Verify — `cd auto-ui && go build ./web/ && go build -tags dev ./web/` both compile; `gofmt -l web/*.go` clean. Sanity-check the import map URLs resolve (the conformance run is the real check).
+- [x] Step 2.7: Commit: `feat(autoui): phase 2 - no-build SPA assets with dev/embed split`
 
 ### Phase 3: HTTP server + serve command  (depends on Phase 2)
-- [ ] Step 3.1: Create `internal/server/server.go` — `New(fsys fs.FS, mode string) http.Handler`: mux with `/api/hello` (JSON `{message, mode}`, `Content-Type: application/json`) and `/` → `http.FileServer(http.FS(fsys))`
-- [ ] Step 3.2: Create `internal/cli/serve.go` — `serve` command: `--port` (default from settings, fallback 8080); build handler from `web.FS()`/`web.Mode`; start `http.Server`; goroutine `<-cmd.Context().Done()` → `srv.Shutdown`; log `serving on http://localhost:<port> (assets=<mode>)` to **stderr**; treat `http.ErrServerClosed` as clean exit
-- [ ] Step 3.3: Register `newServeCmd(application)` in `NewRootCmd` (root.go AddCommand)
-- [ ] Step 3.4: Verify — `cd auto-ui && go build ./... && go build -tags dev ./... && go vet ./...`. Manually: `go build -o /tmp/autoui ./cmd/autoui && /tmp/autoui serve --port 8099 &` then `curl -s localhost:8099/api/hello` returns JSON with `mode":"embed"`, `curl -s localhost:8099/` returns the HTML shell; `curl` a missing asset returns 404; kill the process and confirm graceful exit
-- [ ] Step 3.5: Commit: `feat(autoui): phase 3 - http server and serve command`
+- [x] Step 3.1: Create `internal/server/server.go` — `New(fsys fs.FS, mode string) http.Handler`: mux with `/api/hello` (JSON `{message, mode}`, `Content-Type: application/json`) and `/` → `http.FileServer(http.FS(fsys))`
+- [x] Step 3.2: Create `internal/cli/serve.go` — `serve` command: `--port` (default from settings, fallback 8080); build handler from `web.FS()`/`web.Mode`; start `http.Server`; goroutine `<-cmd.Context().Done()` → `srv.Shutdown`; log `serving on http://localhost:<port> (assets=<mode>)` to **stderr**; treat `http.ErrServerClosed` as clean exit
+- [x] Step 3.3: Register `newServeCmd(application)` in `NewRootCmd` (root.go AddCommand)
+- [x] Step 3.4: Verify — `cd auto-ui && go build ./... && go build -tags dev ./... && go vet ./...`. Manually: `go build -o /tmp/autoui ./cmd/autoui && /tmp/autoui serve --port 8099 &` then `curl -s localhost:8099/api/hello` returns JSON with `mode":"embed"`, `curl -s localhost:8099/` returns the HTML shell; `curl` a missing asset returns 404; kill the process and confirm graceful exit
+- [x] Step 3.5: Commit: `feat(autoui): phase 3 - http server and serve command`
 
 ### Phase 4: Go tests  (depends on Phase 3)
-- [ ] Step 4.1: Write `internal/server/server_test.go` using `httptest`: (a) `GET /api/hello` → 200, `Content-Type: application/json`, body decodes to a struct with non-empty `message` and `mode` (AC-3 server); (b) `GET /` → 200 with `text/html` body containing `id="app"` (AC-4); (c) `GET /nope.js` → 404. Build the handler with a small in-memory `fstest.MapFS` so the test does not depend on embed tags
-- [ ] Step 4.2: Verify — `cd auto-ui && go test ./...` passes; `go test -tags dev ./...` passes
-- [ ] Step 4.3: Commit: `feat(autoui): phase 4 - server contract tests`
+- [x] Step 4.1: Write `internal/server/server_test.go` using `httptest`: (a) `GET /api/hello` → 200, `Content-Type: application/json`, body decodes to a struct with non-empty `message` and `mode` (AC-3 server); (b) `GET /` → 200 with `text/html` body containing `id="app"` (AC-4); (c) `GET /nope.js` → 404. Build the handler with a small in-memory `fstest.MapFS` so the test does not depend on embed tags
+- [x] Step 4.2: Verify — `cd auto-ui && go test ./...` passes; `go test -tags dev ./...` passes
+- [x] Step 4.3: Commit: `feat(autoui): phase 4 - server contract tests`
 
 ### Phase 5: Monorepo wiring  (depends on Phase 3)
-- [ ] Step 5.1: `Makefile` — append `auto-ui` to `PROJECTS` (line 15); add `auto-ui_BIN := autoui` / `auto-ui_ENTRY := ./cmd/autoui`; add `build-ui`, `dist-ui`, `install-ui` targets mirroring `*-graph`; add `cp $(BUILD_DIR)/autoui $(INSTALL_DIR)/` to the aggregate install
-- [ ] Step 5.2: Root `CLAUDE.md` — add `| auto-ui/ | autoui | Early | Local web dashboard + server (self-contained no-build SPA) |` row between `auto-skill/` and `auto-watch/` (alphabetical)
-- [ ] Step 5.3: `auto-ui/CLAUDE.md` — fill in description + build/test (`go build ./cmd/autoui`, `go test ./...`, dev: `go run -tags dev ./cmd/autoui serve`)
-- [ ] Step 5.4: Verify — `make build-ui` produces `bin/autoui`; `./bin/autoui --version` works; `make build` (all) still succeeds; root `go vet`/pre-commit hook clean
+- [x] Step 5.1: `Makefile` — append `auto-ui` to `PROJECTS` (line 15); add `auto-ui_BIN := autoui` / `auto-ui_ENTRY := ./cmd/autoui`; add `build-ui`, `dist-ui`, `install-ui` targets mirroring `*-graph`; add `cp $(BUILD_DIR)/autoui $(INSTALL_DIR)/` to the aggregate install
+- [x] Step 5.2: Root `CLAUDE.md` — add `| auto-ui/ | autoui | Early | Local web dashboard + server (self-contained no-build SPA) |` row between `auto-skill/` and `auto-watch/` (alphabetical)
+- [x] Step 5.3: `auto-ui/CLAUDE.md` — fill in description + build/test (`go build ./cmd/autoui`, `go test ./...`, dev: `go run -tags dev ./cmd/autoui serve`)
+- [x] Step 5.4: Verify — `make build-ui` produces `bin/autoui`; `./bin/autoui --version` works; `make build` (all) still succeeds; root `go vet`/pre-commit hook clean
 
 <!-- RESOLVED(P3): wrong output path — binaries land in bin/, not build/
 REVIEW: The root Makefile sets `BUILD_DIR := bin` (Makefile:8), so `make build-ui` produces `bin/autoui`
@@ -114,23 +114,23 @@ AUTHOR: Confirmed `BUILD_DIR := bin` at Makefile:8. Updated Step 5.4 to `bin/aut
 --version`.
 -->
 
-- [ ] Step 5.5: Commit: `feat(autoui): phase 5 - makefile and docs registration`
+- [x] Step 5.5: Commit: `feat(autoui): phase 5 - makefile and docs registration`
 
 ### Phase 6: agent-browser conformance  (depends on Phases 2-5)
-- [ ] Step 6.1: Default-tag run — `go build -o /tmp/autoui ./cmd/autoui && /tmp/autoui serve --port 8080`; agent-browser loads `/` and asserts the shell renders (AC-1)
-- [ ] Step 6.2: Dev-tag run — from `auto-ui/`, `go run -tags dev ./cmd/autoui serve --port 8080`; agent-browser: Dashboard → click fetch → assert `/api/hello` message in DOM (AC-3 UI)
-- [ ] Step 6.3: agent-browser: Home → click `+` ×3 → assert `#/home?n=3`; reload → assert counter still 3 (AC-5)
-- [ ] Step 6.4: agent-browser: edit a label string in `web/static/app.js`, reload (no Go restart) → assert new label visible (AC-2); revert the edit
-- [ ] Step 6.5: Capture evidence (screenshots/log) into the task folder or PR description
-- [ ] Step 6.6: Commit any conformance notes: `test(autoui): phase 6 - agent-browser conformance evidence`
+- [x] Step 6.1: Default-tag run — `go build -o /tmp/autoui ./cmd/autoui && /tmp/autoui serve --port 8080`; agent-browser loads `/` and asserts the shell renders (AC-1)
+- [x] Step 6.2: Dev-tag run — from `auto-ui/`, `go run -tags dev ./cmd/autoui serve --port 8080`; agent-browser: Dashboard → click fetch → assert `/api/hello` message in DOM (AC-3 UI)
+- [x] Step 6.3: agent-browser: Home → click `+` ×3 → assert `#/home?n=3`; reload → assert counter still 3 (AC-5)
+- [x] Step 6.4: agent-browser: edit a label string in `web/static/app.js`, reload (no Go restart) → assert new label visible (AC-2); revert the edit
+- [x] Step 6.5: Capture evidence (screenshots/log) into the task folder or PR description
+- [x] Step 6.6: Commit any conformance notes: `test(autoui): phase 6 - agent-browser conformance evidence`
 
 ## Success Criteria
-- [ ] `cd auto-ui && go build ./...` and `go build -tags dev ./...` both succeed (AC-6)
-- [ ] `cd auto-ui && go test ./...` and `go test -tags dev ./...` pass (AC-3 server, AC-4)
-- [ ] `go vet ./...` clean; gofmt clean
-- [ ] `make build-ui` produces a runnable `autoui` binary; `make build` (all) unaffected (AC-6)
-- [ ] agent-browser conformance: shell renders from embedded binary (AC-1); fetch result renders (AC-3); counter+view restored from hash on reload (AC-5); dev-mode file edit visible on reload with no Go rebuild (AC-2)
-- [ ] auto-ui registered in root Makefile + CLAUDE.md sub-projects table (AC-6)
+- [x] `cd auto-ui && go build ./...` and `go build -tags dev ./...` both succeed (AC-6)
+- [x] `cd auto-ui && go test ./...` and `go test -tags dev ./...` pass (AC-3 server, AC-4)
+- [x] `go vet ./...` clean; gofmt clean
+- [x] `make build-ui` produces a runnable `autoui` binary; `make build` (all) unaffected (AC-6)
+- [x] agent-browser conformance: shell renders from embedded binary (AC-1); fetch result renders (AC-3); counter+view restored from hash on reload (AC-5); dev-mode file edit visible on reload with no Go rebuild (AC-2)
+- [x] auto-ui registered in root Makefile + CLAUDE.md sub-projects table (AC-6)
 
 ## Open Questions
 - (none — all resolved in requirements Q1–Q4)

@@ -1,6 +1,6 @@
-.PHONY: build build-etl build-doc build-watch build-search build-reflect build-skill build-graph build-env clean test vet fmt lint \
-       dist dist-doc dist-env dist-etl dist-watch dist-search dist-reflect dist-skill dist-graph vulncheck \
-       install install-doc install-env install-etl install-watch install-search install-reflect install-skill install-graph \
+.PHONY: build build-etl build-doc build-watch build-search build-reflect build-skill build-graph build-ui build-env clean test vet fmt lint \
+       dist dist-doc dist-env dist-etl dist-watch dist-search dist-reflect dist-skill dist-graph dist-ui vulncheck \
+       install install-doc install-env install-etl install-watch install-search install-reflect install-skill install-graph install-ui \
        install-hooks install-tools gen-stats check fmt-check test-install test-curl-install \
        fixtures verify-fixtures \
        fmt-staged vulncheck-if-deps-changed autodoc-fix skills-sync beads-sync pre-commit
@@ -12,7 +12,7 @@ FIXTURE_DIR := auto-search/testdata/fixtures/auto-stack-snapshot
 DIST_DIR  := dist
 INSTALL_DIR ?= $(HOME)/.local/bin
 
-PROJECTS := auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill auto-graph
+PROJECTS := auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill auto-graph auto-ui
 
 # Binary name and entry point per project
 auto-doc_BIN   := autodoc
@@ -31,6 +31,8 @@ auto-skill_BIN   := autoskill
 auto-skill_ENTRY := ./cmd/autoskill
 auto-graph_BIN   := autograph
 auto-graph_ENTRY := ./cmd/autograph
+auto-ui_BIN   := autoui
+auto-ui_ENTRY := ./cmd/autoui
 
 # Platform defaults (overridable for cross-compilation)
 GOOS   ?= $(shell go env GOOS)
@@ -68,6 +70,9 @@ build-skill:
 
 build-graph:
 	cd auto-graph && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autograph $(auto-graph_ENTRY)
+
+build-ui:
+	cd auto-ui && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autoui $(auto-ui_ENTRY)
 
 # --- Release cross-compile (produces dist/<binary>-<suffix>) ---
 
@@ -113,6 +118,11 @@ dist-graph:
 	@mkdir -p $(DIST_DIR)
 	cd auto-graph && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autograph-$(SUFFIX) $(auto-graph_ENTRY)
+
+dist-ui:
+	@mkdir -p $(DIST_DIR)
+	cd auto-ui && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autoui-$(SUFFIX) $(auto-ui_ENTRY)
 
 # --- Quality ---
 
@@ -209,6 +219,7 @@ install: build
 	cp $(BUILD_DIR)/autoreflect $(INSTALL_DIR)/
 	cp $(BUILD_DIR)/autoskill $(INSTALL_DIR)/
 	cp $(BUILD_DIR)/autograph $(INSTALL_DIR)/
+	cp $(BUILD_DIR)/autoui $(INSTALL_DIR)/
 	@echo "Installed to $(INSTALL_DIR)/"
 
 # Per-binary install (build + copy a single binary). Useful for fast iteration
@@ -248,6 +259,9 @@ install-skill: build-skill
 
 install-graph: build-graph
 	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autograph $(INSTALL_DIR)/ && echo "Installed autograph to $(INSTALL_DIR)/autograph"
+
+install-ui: build-ui
+	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autoui $(INSTALL_DIR)/ && echo "Installed autoui to $(INSTALL_DIR)/autoui"
 
 test-install:
 	./e2e/test-install.sh
