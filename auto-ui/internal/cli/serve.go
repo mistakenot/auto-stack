@@ -59,7 +59,11 @@ func newServeCmd(application *app.App) *cobra.Command {
 
 			go func() {
 				<-ctx.Done()
-				_ = srv.Shutdown(context.Background())
+				// Bounded deadline so SIGINT/SIGTERM always returns control to the
+				// shell even if a client holds a connection open.
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				_ = srv.Shutdown(shutdownCtx)
 			}()
 
 			fmt.Fprintf(application.Stderr, "autoui serving on http://localhost:%d (assets=%s)\n", port, web.Mode)
