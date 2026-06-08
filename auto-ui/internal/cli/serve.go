@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/mistakenot/auto-ui/internal/app"
 	"github.com/mistakenot/auto-ui/internal/config"
@@ -25,10 +26,16 @@ func newServeCmd(application *app.App) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// If --port was not set explicitly, fall back to the configured
 			// Settings.Port (precedence: flag > settings > built-in default 8080).
+			// A missing settings file is normal (pre-init); a present-but-invalid
+			// one is surfaced as a warning rather than silently ignored.
 			if !cmd.Flags().Changed("port") {
 				if p, err := config.UISettingsPath(); err == nil {
-					if s, err := config.LoadUISettings(p); err == nil && s.Port != 0 {
+					s, err := config.LoadUISettings(p)
+					switch {
+					case err == nil && s.Port != 0:
 						port = s.Port
+					case err != nil && !errors.Is(err, os.ErrNotExist):
+						fmt.Fprintf(application.Stderr, "warning: ignoring %s: %v (using port %d)\n", p, err, port)
 					}
 				}
 			}
@@ -40,8 +47,15 @@ func newServeCmd(application *app.App) *cobra.Command {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
+			// Bind to loopback only: auto-ui is a local-dev/internal tool, so it
+			// must not be reachable from the LAN. ReadHeaderTimeout guards against
+			// a stalled client holding the connection open indefinitely.
 			handler := server.New(web.FS(), web.Mode)
-			srv := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: handler}
+			srv := &http.Server{
+				Addr:              fmt.Sprintf("127.0.0.1:%d", port),
+				Handler:           handler,
+				ReadHeaderTimeout: 10 * time.Second,
+			}
 
 			go func() {
 				<-ctx.Done()

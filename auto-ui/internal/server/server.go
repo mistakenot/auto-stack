@@ -18,6 +18,11 @@ import (
 func New(fsys fs.FS, mode string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/hello", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"message": "hi from go",

@@ -58,6 +58,23 @@ func TestAPIHello(t *testing.T) {
 	}
 }
 
+// TestAPIHelloMethodNotAllowed asserts /api/hello rejects non-GET methods with
+// 405 and an Allow: GET header.
+func TestAPIHelloMethodNotAllowed(t *testing.T) {
+	handler := server.New(newTestFS(), "test")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/hello", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if allow := rec.Header().Get("Allow"); allow != http.MethodGet {
+		t.Errorf("Allow = %q, want %q", allow, http.MethodGet)
+	}
+}
+
 // TestServeIndex covers AC-4: GET / returns 200 with an HTML body containing
 // the SPA mount point.
 func TestServeIndex(t *testing.T) {

@@ -45,6 +45,7 @@ function Dashboard() {
     setError(null);
     try {
       const res = await fetch("/api/hello");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setResult(data);
     } catch (e) {
