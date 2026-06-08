@@ -63,7 +63,7 @@ columns Phase 2 added.
 - [x] Step 2.7: Commit: `feat(015): thread first-user-intent through auto-search index`
 
 ### Phase 3: auto-search — CLI exposure + fixtures + integration tests
-- [ ] Step 3.1: Two surfaces in `cli/session.go`: (a) `session list` — verify `SessionListRow` JSON carries `first_user_intent_truncated` (marshals directly; no edit needed after Step 2.5); (b) `session describe` (`newSessionDescribeCmd`, ~lines 232-305) — add `"firstUserIntent": sess.FirstUserIntent` to the `"session"` `map[string]any` literal (~lines 271-294). Do NOT touch `session get` (it is a transcript renderer with no JSON surface). **Verify**: build; `autosearch session describe <id>` JSON includes `firstUserIntent`.
+- [x] Step 3.1: Two surfaces in `cli/session.go`: (a) `session list` — verify `SessionListRow` JSON carries `first_user_intent_truncated` (marshals directly; no edit needed after Step 2.5); (b) `session describe` (`newSessionDescribeCmd`, ~lines 232-305) — add `"firstUserIntent": sess.FirstUserIntent` to the `"session"` `map[string]any` literal (~lines 271-294). Do NOT touch `session get` (it is a transcript renderer with no JSON surface). **Verify**: build; `autosearch session describe <id>` JSON includes `firstUserIntent`.
 
 <!-- RESOLVED(P1): `session get` does not emit SessionRow — this step needs a real edit
 REVIEW: Verified against cli/session.go: `session get` (newSessionGetCmd, lines 191-230)
@@ -83,10 +83,10 @@ untouched. Step 3.3 and the AC-5 success criterion now assert on `session descri
 field renamed to `first_user_intent_truncated` to match.
 -->
 
-- [ ] Step 3.2: Update `testutil/fixtures.go` so generated session fixtures set the two new columns (at least one caveat-derived intent + one slash-command fallback row). **Verify**: `go build ./...`.
-- [ ] Step 3.3: Add/extend integration tests: in `indexer_integration_test.go` assert intent round-trips parquet→index; in `cli_integration_test.go` assert `session list` JSON carries `first_user_intent_truncated` and `session describe` JSON carries the full `firstUserIntent`. **Verify**: `go test ./internal/indexdb/... ./internal/cli/...` passes.
-- [ ] Step 3.4: Run the full module test suite. **Verify**: `go test ./...` passes in `auto-search`.
-- [ ] Step 3.5: Commit: `feat(015): expose first-user-intent in session list + describe`
+- [x] Step 3.2: Update `testutil/fixtures.go` so generated session fixtures set the two new columns (at least one caveat-derived intent + one slash-command fallback row). **Verify**: `go build ./...`.
+- [x] Step 3.3: Add/extend integration tests: in `indexer_integration_test.go` assert intent round-trips parquet→index; in `cli_integration_test.go` assert `session list` JSON carries `first_user_intent_truncated` and `session describe` JSON carries the full `firstUserIntent`. **Verify**: `go test ./internal/indexdb/... ./internal/cli/...` passes.
+- [x] Step 3.4: Run the full module test suite. **Verify**: `go test ./...` passes in `auto-search`.
+- [x] Step 3.5: Commit: `feat(015): expose first-user-intent in session list + describe`
 
 ### Phase 4: Rollout + e2e verification (no commit)
 - [ ] Step 4.1: `autoetl transform --full` against `~/.claude/projects` → `~/.auto/etl/output`. **Verify**: completes; sessions parquet has the new columns (duckdb `DESCRIBE`).
