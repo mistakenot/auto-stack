@@ -181,23 +181,23 @@ AUTHOR: All addressed (mirrors the two solution.md threads). Guard scope (Step 4
 - [x] Step 5.6: Commit: `docs(017): phase 5 - sweep README/CLAUDE.md/docs/skills to auto <tool>`
 
 ### Phase 6: Verify end-to-end  *(sequential barrier; depends on 3, 4, 5)*
-- [ ] Step 6.1: `make check` (fmt-check + vet + lint + stale-ref guard) green across all PROJECTS.
-- [ ] Step 6.2: `make build` (single `auto`) + `make test` (all modules incl. auto-cli/auto-config) green.
-- [ ] Step 6.3: `make vulncheck` green.
-- [ ] Step 6.4: Run `e2e/test-install.sh` (local build path) — single `auto`, all `auto <tool>`
+- [x] Step 6.1: `make check` (fmt-check + vet + lint + stale-ref guard) green across all PROJECTS.
+- [x] Step 6.2: `make build` (single `auto`) + `make test` (all modules incl. auto-cli/auto-config) green.
+- [x] Step 6.3: `make vulncheck` green.
+- [x] Step 6.4: Run `e2e/test-install.sh` (local build path) — single `auto`, all `auto <tool>`
       invocations succeed, old names absent.
-- [ ] Step 6.5: Manual smoke: `bin/auto watch daemon install --dry-run` (or unit-test
+- [x] Step 6.5: Manual smoke: `bin/auto watch daemon install --dry-run` (or unit-test
       equivalent) shows `ExecStart=…/auto watch start`.
-- [ ] Step 6.6: Commit: `feat(017): phase 6 - full verification green` (or fold fixes into prior phases).
+- [x] Step 6.6: Commit: `feat(017): phase 6 - full verification green` (or fold fixes into prior phases).
 
 ## Success Criteria
-- [ ] `make build` yields exactly one binary `bin/auto`; `make dist` yields one `auto-<suffix>` per platform (AC-1, AC-3, AC-4)
-- [ ] `auto-cli/cmd/auto/main_test.go` green: all 10 stems `--help` exit 0 with `auto <tool>` usage; auto-etl run flags + persistent `--debug` intact; auto-doc 12 subcommands + `--json` intact (AC-1, AC-2)
-- [ ] `auto config` and `auto ui` are mounted and covered by e2e (AC-6)
-- [ ] daemon tests assert generated unit ExecStart **and** runtime status use `auto … watch …` (AC-5)
-- [ ] `scripts/check-no-stale-binary-refs.sh` exits 0; no shipped help/README/CLAUDE.md/skill references an unshipped binary name (`[autodoc()]` exempt) (AC-7)
-- [ ] `make check build test vulncheck` + e2e install scripts all green (AC-8)
-- [ ] No per-tool binary is built/installed; old names absent after install (AC-3)
+- [x] `make build` yields exactly one binary `bin/auto`; `make dist` yields one `auto-<suffix>` per platform (AC-1, AC-3, AC-4)
+- [x] `auto-cli/cmd/auto/main_test.go` green: all 10 stems `--help` exit 0 with `auto <tool>` usage; auto-etl run flags + persistent `--debug` intact; auto-doc 12 subcommands + `--json` intact (AC-1, AC-2)
+- [x] `auto config` and `auto ui` are mounted and covered by e2e (AC-6)
+- [x] daemon tests assert generated unit ExecStart **and** runtime status use `auto … watch …` (AC-5)
+- [x] `scripts/check-no-stale-binary-refs.sh` exits 0; no shipped help/README/CLAUDE.md/skill references an unshipped binary name (`[autodoc()]` exempt) (AC-7)
+- [x] `make check build test vulncheck` + e2e install scripts all green (AC-8)
+- [x] No per-tool binary is built/installed; old names absent after install (AC-3)
 
 ## Open Questions
 - (none — all resolved in requirements + solution; module strategy = go.work + wrapper pkgs)
