@@ -236,6 +236,63 @@ func newUpdateCmd(application *app.App) *cobra.Command {
 }
 ```
 
+## Resource Subcommands (noun + verb)
+
+Beyond the baseline commands, model a package's domain data as **resources**, and
+give each resource the same small, predictable set of verbs. The command is a
+noun (the resource), the subcommand is a verb (the action):
+
+```
+<tool> <resource> list        # enumerate / discover (cheap, no bodies)
+<tool> <resource> describe <id>  # metadata + summary for one item (cheap)
+<tool> <resource> get <id>       # full content of one item
+```
+
+This is the pattern validated in `autosearch` (`session list|describe|get`,
+`message get|describe`) and it generalizes to any package with addressable data
+(e.g. `autodoc doc list|get`, `autoetl session list`).
+
+### The verbs
+
+| Verb | Arg | Returns | Cost |
+|------|-----|---------|------|
+| `list` | filters (flags) | many items, **IDs + metadata only, no bodies** | cheap — safe to call broadly |
+| `describe <id>` | one ID | metadata, counts, and a short head+tail **summary** of one item | cheap |
+| `get <id>` | one ID | the **full** content of one item | scoped to one item |
+
+Plus a cross-cutting `search` for content-based discovery when you don't yet know
+the ID (returns IDs + snippets, never full bodies).
+
+### Design rules (progressive disclosure)
+
+These make the surface token-efficient for agents — start broad and cheap, drill
+to full detail only when needed. See
+`auto-search/docs/progressive-disclosure-audit.md` for the audit that established them.
+
+- **Stable, composable IDs.** A child ID embeds its parent: `message get <sessionId>-<index>`.
+  IDs returned by `list`/`search` are directly usable as `get`/`describe` args.
+- **Cheap rungs return no bodies.** `list` and `search` return identifiers and
+  metadata only. Bodies cost tokens — defer them to `get`.
+- **Truncate with a breadcrumb.** When a rung truncates content, print the exact
+  command to recover the full version, e.g.
+  `…[truncated — run: <tool> message get <id>]…`. The agent should never have to
+  guess the next rung.
+- **`get` is full-fidelity by default.** No flag required to get complete content;
+  `get` is the bottom of the ladder. If an even-more-raw form exists (e.g. the
+  source file on disk), expose its path in `describe`.
+- **`describe` summarizes; `get` reproduces.** `describe` is for "is this the
+  right item?" (metadata + a head+tail peek); `get` is for "give me everything."
+- **No silent fidelity loss.** If the full form of a resource isn't reachable
+  through any verb, that's a bug — document it and provide an escape hatch
+  (a `--full`/`--raw` flag or a `source_path` in `describe`).
+
+### Conventions carried over from the baseline
+
+- Default to JSON on stdout; offer `--text` for skim-friendly human output.
+- `list`/`search` return all items when no filters are given (see project CLAUDE.md).
+- Filters are flags (`--since`, `--cwd`, `--tool-name`, …), normalized and validated
+  against the same schema used for stored data.
+
 ## JSON Output
 
 Default output is JSON to stdout. Use 2-space indentation:

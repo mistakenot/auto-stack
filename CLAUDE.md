@@ -108,6 +108,8 @@ These are CLI command patterns that most tools will support:
 - `docs` full doc string, all functions the tool can do in one output.
 - `doctor` check configuration is ok, any problems we report back as json with detailed explanations of what is wrong.
 
+For commands that expose addressable domain data, use the resource-oriented pattern — a noun (resource) plus the verb triad `list` / `describe <id>` / `get <id>`, with `search` for ID-less discovery. Cheap rungs return IDs + metadata only; `get` is full-fidelity by default; truncated output prints the exact command to recover the full version. See `docs/auto-package-patterns.md` → "Resource Subcommands (noun + verb)".
+
 ## Shared data
 
 These tools are designed to work together. The way they do that primarilly is through shared data sources.
