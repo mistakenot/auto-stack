@@ -30,14 +30,14 @@ plumbing and all user-facing text to the `auto <tool>` form — executed as a **
 - [Context](./context.md)
 
 ## How to Test
-- [ ] `auto-cli/cmd/auto/main_test.go` — mounted-path integration: `auto etl run --help`
+- [x] `auto-cli/cmd/auto/main_test.go` — mounted-path integration: `auto etl run --help`
       lists `--input/--output/--full/--only/--repo-path/--since`; `auto etl` has persistent
       `--debug`; `auto doc --help` lists 12 subcommands + `--json`; all 10 stems `--help` exit 0
-- [ ] `auto-watch/internal/daemoninstall/*_test.go` — generated unit ExecStart `…/auto watch start`; runtime status args `[…/auto, watch, status, --json]`
-- [ ] existing `cd <tool> && go test ./...` (per-tool behaviour, all green under workspace)
-- [ ] `scripts/check-no-stale-binary-refs.sh` exits 0 on the swept tree
-- [ ] `e2e/test-install.sh` / `e2e/test-curl-install.sh` — single `auto` installs; `auto <tool> --help`/`--version`; old binary names absent
-- [ ] `make check build test vulncheck` green
+- [x] `auto-watch/internal/daemoninstall/*_test.go` — generated unit ExecStart `…/auto watch start`; runtime status args `[…/auto, watch, status, --json]`
+- [x] existing `cd <tool> && go test ./...` (per-tool behaviour, all green under workspace)
+- [x] `scripts/check-no-stale-binary-refs.sh` exits 0 on the swept tree
+- [x] `e2e/test-install.sh` / `e2e/test-curl-install.sh` — single `auto` installs; `auto <tool> --help`/`--version`; old binary names absent
+- [x] `make check build test vulncheck` green
 
 ## Execution Sequence
 ```
