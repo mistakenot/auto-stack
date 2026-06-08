@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const quickstartMarkdown = `# autowatch quickstart
+const quickstartMarkdown = `# auto watch quickstart
 
 Monitor repositories and run tasks automatically — on cron schedules or when new files appear.
 
