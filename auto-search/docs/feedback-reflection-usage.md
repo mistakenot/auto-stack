@@ -60,28 +60,42 @@ A reflection pass using autosearch added 2-3 genuinely new insights (e.g. file-l
 
 ## Concrete Improvements Needed
 
-### P0: Fix highlights
+> **Status review (2026-06-08):** 4 of 5 items shipped. Verified against the
+> `autosearch` CLI on `main`. Only the negative-filter (`--exclude`) item remains open.
+
+### P0: Fix highlights — ✅ DONE
 
 `--highlight` should return snippet text with `**` markers around matched terms. Currently returning null. Investigate whether this is a rendering bug or a search-layer issue.
 
-### P1: Uncapped count mode
+**Done:** `autosearch search <query> --highlight` returns snippets with `**term**`
+markers (e.g. `…starting from Scratch with the **database** migrations…`). No longer null.
+
+### P1: Uncapped count mode — ✅ DONE
 
 A `--count` flag (or separate mode) that returns total match counts without the 50-result cap. This enables frequency comparison between topics — the core use case for reflection.
 
-### P1: Role filtering
+**Done (different surface than a literal `--count` flag):** true uncapped frequency
+comes from the `autosearch stats` command (`--measure count`), and every `search`
+response now reports real totals in `_meta.total_hits` / `_meta.total_matches`
+regardless of how many hits are returned. `search --limit` is also configurable.
+
+### P1: Role filtering — ✅ DONE
 
 `--role user` / `--role assistant` / `--role tool` to filter out system noise and focus on actual human feedback or agent output.
 
-### P2: Structured metadata queries
+**Done:** `search` and `stats` both accept `--role user|assistant|tool|thinking`
+(thinking added in task 016; excluded by default).
+
+### P2: Structured metadata queries — ✅ DONE
 
 Queries against tool-call fields rather than free text:
 
 ```bash
 # Most-read files across sessions
-autosearch stats --group-by tool_file_path --tool-name Read --sort count
+autosearch stats --group-by tool_file_path --tool-name Read --measure count
 
 # Most-used bash commands
-autosearch stats --group-by bash_command --sort count
+autosearch stats --group-by bash_command --measure count
 
 # Files edited multiple times in a session (churn indicator)
 autosearch stats --group-by tool_file_path --tool-name Edit --min-count 3
@@ -89,7 +103,11 @@ autosearch stats --group-by tool_file_path --tool-name Edit --min-count 3
 
 This is a different capability from FTS — it's structured aggregation over the indexed columns. Likely belongs in a dedicated `autosearch stats` command rather than bolted onto `search`.
 
-### P2: Negative filters for noise reduction
+**Done:** the `autosearch stats` command exists with `--group-by`, `--tool-name`,
+`--measure {count,distinct_sessions,distinct_messages}`, and `--min-count`. (The
+original `--sort count` sketch became `--measure count`; ranking is by the measure.)
+
+### P2: Negative filters for noise reduction — ⬜ OPEN
 
 Ability to exclude known-noisy patterns:
 
@@ -97,3 +115,7 @@ Ability to exclude known-noisy patterns:
 # Find user corrections, excluding system rejection messages
 autosearch search '"don't" OR "stop" OR "wrong"' --role user --exclude "tool use was rejected"
 ```
+
+**Still open:** there is no `--exclude` flag (nor a query `NOT` operator) on `search`
+as of 2026-06-08. `--role` covers some of the system-noise case, but term-level
+exclusion is not yet implemented.

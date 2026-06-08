@@ -187,7 +187,10 @@ autosearch session list --subagent --min-errors 5 --sort-by errors --min-duratio
 ` + "```" + `
 
 Output includes ` + "`" + `duration_ms` + "`" + `, ` + "`" + `is_subagent` + "`" + `, ` + "`" + `parent_session_id` + "`" + `, ` + "`" + `subagent_name` + "`" + `,
-` + "`" + `message_count` + "`" + `, and ` + "`" + `error_count` + "`" + ` for each session.
+` + "`" + `message_count` + "`" + `, and ` + "`" + `error_count` + "`" + ` for each session. Each row also carries
+` + "`" + `first_user_intent_truncated` + "`" + ` — a single-line (~200 char) preview of the first real
+user message, with command caveats/wrappers skipped — so you can tell sessions apart at a
+glance (slash-command-only sessions fall back to the invocation, e.g. ` + "`" + `/execute-task 014` + "`" + `).
 
 ### 6. Get session metadata
 
@@ -196,7 +199,8 @@ autosearch session describe <session_id>
 ` + "```" + `
 
 Returns JSON with message counts (including ` + "`" + `userMessages` + "`" + ` for interactivity analysis),
-token usage, ` + "`" + `durationMs` + "`" + `, sub-agent relationship fields, and a transcript summary.
+token usage, ` + "`" + `durationMs` + "`" + `, sub-agent relationship fields, the full ` + "`" + `firstUserIntent` + "`" + `
+(untruncated first real user message), and a transcript summary.
 
 ### 7. List skills used across sessions
 
