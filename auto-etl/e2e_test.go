@@ -663,12 +663,6 @@ func TestE2E_SyntheticThinkingAndAttribution(t *testing.T) {
 	}
 
 	run := exec.Command(bin, "run",
-		"--input", filepath.Join(t.TempDir(), "projects"),
-		"--output", outputDir,
-		"--only", "sessions",
-	)
-	// Fix: input dir is the parent of the project dir
-	run = exec.Command(bin, "run",
 		"--input", filepath.Dir(inputDir),
 		"--output", outputDir,
 		"--only", "sessions",
