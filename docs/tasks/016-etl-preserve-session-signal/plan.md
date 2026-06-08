@@ -68,12 +68,12 @@ have no code dependency and may overlap Phase 3 if parallelized during execution
 - [x] Step 1.9: Commit: `feat(016): phase 1 - auto-etl preserves thinking + dropped signal (schema 5→6)`
 
 ### Phase 2: auto-search index plumbing + schema bump
-- [ ] Step 2.1: `model/parquet.go` — add the 5 message + 2 session mirror fields with matching parquet tags to `ParquetMessageRow`/`ParquetSessionRow`. Verify: `go build ./...` in auto-search passes.
-- [ ] Step 2.2: `indexdb/schema.go` — bump `SchemaVersion 8→9`; add `thinking_signature`,`stop_reason`,`is_error`,`cache_creation_input_tokens`,`cache_read_input_tokens` to the `messages` DDL and `permission_mode`,`version` to `sessions` DDL (all `NOT NULL DEFAULT`). Verify: `grep 'SchemaVersion = 9'`; build passes.
-- [ ] Step 2.3: `indexdb/messages.go` + `sessions.go` — extend `InsertMessage`/`InsertSession` signatures, INSERT column lists, `?` placeholders, and Exec args for the new columns. **Verify: placeholder count == column count == arg count for each (state the numbers); `grep -rn 'InsertMessage(' && grep -rn 'InsertSession('` shows every call-site updated.**
-- [ ] Step 2.4: `indexdb/indexer.go` — pass the new parquet fields through `insertMessageFromParquet`/`insertSessionFromParquet`. Update the `SessionMessages` SELECT/scan in `query_sessions.go` for the new columns. Verify: `go build ./...` passes; both Insert call-sites (incl. integration test) compile.
-- [ ] Step 2.5: Round-trip test — index a fixture parquet (regenerate fixtures so they carry the new columns) and read a row back with the new fields populated (not empty). Verify: `go test ./internal/indexdb/...` passes; a thinking row is retrievable with non-empty `thinking_signature`.
-- [ ] Step 2.6: Commit: `feat(016): phase 2 - auto-search indexes new columns (index schema 8→9)`
+- [x] Step 2.1: `model/parquet.go` — add the 5 message + 2 session mirror fields with matching parquet tags to `ParquetMessageRow`/`ParquetSessionRow`. Verify: `go build ./...` in auto-search passes.
+- [x] Step 2.2: `indexdb/schema.go` — bump `SchemaVersion 8→9`; add `thinking_signature`,`stop_reason`,`is_error`,`cache_creation_input_tokens`,`cache_read_input_tokens` to the `messages` DDL and `permission_mode`,`version` to `sessions` DDL (all `NOT NULL DEFAULT`). Verify: `grep 'SchemaVersion = 9'`; build passes.
+- [x] Step 2.3: `indexdb/messages.go` + `sessions.go` — extend `InsertMessage`/`InsertSession` signatures, INSERT column lists, `?` placeholders, and Exec args for the new columns. **Verify: placeholder count == column count == arg count for each (state the numbers); `grep -rn 'InsertMessage(' && grep -rn 'InsertSession('` shows every call-site updated.**
+- [x] Step 2.4: `indexdb/indexer.go` — pass the new parquet fields through `insertMessageFromParquet`/`insertSessionFromParquet`. Update the `SessionMessages` SELECT/scan in `query_sessions.go` for the new columns. Verify: `go build ./...` passes; both Insert call-sites (incl. integration test) compile.
+- [x] Step 2.5: Round-trip test — index a fixture parquet (regenerate fixtures so they carry the new columns) and read a row back with the new fields populated (not empty). Verify: `go test ./internal/indexdb/...` passes; a thinking row is retrievable with non-empty `thinking_signature`.
+- [x] Step 2.6: Commit: `feat(016): phase 2 - auto-search indexes new columns (index schema 8→9)`
 
 ### Phase 3: auto-search CLI surface + integration tests
 - [ ] Step 3.1: Add `thinking` to **both** `normalizeRole` copies —
