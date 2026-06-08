@@ -57,19 +57,19 @@ needed). Phase 5 runs concurrently with 2–4. Phases 1, 3, 6 are barriers.
 ## Plan
 
 ### Phase 1: Foundation — workspace + umbrella skeleton  *(sequential; blocks all)*
-- [ ] Step 1.1: Create `auto-cli/go.mod` (`module github.com/mistakenot/auto-cli`, `go 1.26.1`);
+- [x] Step 1.1: Create `auto-cli/go.mod` (`module github.com/mistakenot/auto-cli`, `go 1.26.1`);
       add `require` + `replace … => ../<dir>` for each of the 10 tool modules **using each
       module's real path** (auto-doc = `github.com/datadyne-io/autodoc => ../auto-doc`; the
       other 9 = `github.com/mistakenot/auto-<dir>`) and `auto-shared`. Template: `auto-graph/go.mod:6,16`.
-- [ ] Step 1.2: Create `go.work` at repo root with `go 1.26.1` and `use (…)` listing all 11
+- [x] Step 1.2: Create `go.work` at repo root with `go 1.26.1` and `use (…)` listing all 11
       existing module dirs + `./auto-cli`.
-- [ ] Step 1.3: Create a minimal compiling `auto-cli/cmd/auto/main.go` (root `auto` cobra cmd,
+- [x] Step 1.3: Create a minimal compiling `auto-cli/cmd/auto/main.go` (root `auto` cobra cmd,
       `Version = version.Version`, no tool subcommands yet) so the module builds.
-- [ ] Step 1.4: Verify: `cd auto-cli && go build ./...` succeeds; `go work sync` clean; from
+- [x] Step 1.4: Verify: `cd auto-cli && go build ./...` succeeds; `go work sync` clean; from
       repo root `go build ./auto-cli/cmd/auto` produces a runnable `auto --help` (exit 0).
-- [ ] Step 1.5: Verify no regression: `make check` still green for existing modules under the
+- [x] Step 1.5: Verify no regression: `make check` still green for existing modules under the
       new workspace (run `cd auto-search && go vet ./...` as a spot check — workspace transparent).
-- [ ] Step 1.6: Commit: `feat(017): phase 1 - go.work + auto-cli umbrella skeleton`
+- [x] Step 1.6: Commit: `feat(017): phase 1 - go.work + auto-cli umbrella skeleton`
 
 ### Phase 2: Per-tool seam + rename  *(fan out: one agent per tool dir; depends on Phase 1)*
 Each agent owns exactly one tool dir end-to-end (disjoint paths ⇒ no conflicts). Per tool:
