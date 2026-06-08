@@ -14,7 +14,7 @@ Create a new auto-stack release. The agent's only job is to tag and push — Git
 
 1. You push a semver tag (e.g. `v0.8.0`) to the repo.
 2. The `.github/workflows/release.yml` workflow triggers on `v*` tags.
-3. It cross-compiles all binaries for `linux-amd64` and `darwin-arm64`.
+3. It cross-compiles the single `auto` binary for `linux-amd64` and `darwin-arm64`.
 4. It creates (or updates) a GitHub Release with the binaries attached.
 5. Users install via `curl -fsSL https://raw.githubusercontent.com/mistakenot/auto-stack/main/install.sh | bash`.
 
@@ -81,9 +81,9 @@ gh run view <run-id> --log-failed
 gh release view "$VERSION" --json assets --jq '.assets[].name'
 ```
 
-Expected assets for each binary (`autodoc`, `autoetl`, `autosearch`, `autowatch`, `autoskill`):
-- `<binary>-linux-amd64`
-- `<binary>-darwin-arm64`
+Expected assets (the single `auto` binary, one per platform):
+- `auto-linux-amd64`
+- `auto-darwin-arm64`
 
 ## Important
 

@@ -6,8 +6,10 @@ Local web dashboard and HTTP server for the auto stack. Serves a self-contained,
 
 ```bash
 cd auto-ui
-go build ./cmd/autoui
+go build ./...
 ```
+
+The merged `auto` binary is built from the repo root with `make build` (the UI tool ships as `auto ui`).
 
 ## Test
 
@@ -25,25 +27,24 @@ go vet ./...
 
 ## Dev server
 
-Live-from-disk assets — edit `web/static/*` and reload the browser with no Go rebuild. Must be run from the `auto-ui/` module root (assets resolve relative to cwd):
+Live-from-disk assets — edit `web/static/*` and reload the browser with no Go rebuild. Build the `auto` binary with the `dev` tag, then run it from the `auto-ui/` module root (assets resolve relative to cwd):
 
 ```bash
-cd auto-ui
-go run -tags dev ./cmd/autoui serve
+go build -tags dev -o bin/auto ./auto-cli/cmd/auto   # from repo root
+cd auto-ui && ../bin/auto ui serve
 ```
 
 ## Embedded single binary
 
-Default build embeds `web/static/` via `//go:embed`, producing a self-contained binary:
+The default build of the merged `auto` binary embeds `web/static/` via `//go:embed`, producing a self-contained binary:
 
 ```bash
-cd auto-ui
-go build ./cmd/autoui && ./autoui serve
+make build && ./bin/auto ui serve
 ```
 
 ## Architecture
 
-- `cmd/autoui/` — entry point
+- `rootcmd/` — public seam mounted by the merged `auto` binary as `auto ui`
 - `internal/app/` — runtime context (stdout, stderr, cwd)
 - `internal/cli/` — Cobra commands (init, doctor, quickstart, docs, update, serve)
 - `internal/config/` — settings loading and validation (~/.auto/ui/settings.json)

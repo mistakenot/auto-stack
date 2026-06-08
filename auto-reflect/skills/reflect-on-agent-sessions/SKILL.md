@@ -1,7 +1,7 @@
 ---
 name: reflect-on-agent-sessions
 description: >-
-  Reflect over coding agent sessions using autosearch, find recurring workflow
+  Reflect over coding agent sessions using auto search, find recurring workflow
   problems, and produce a markdown report with reproducible query evidence and
   explicit reasoning for each issue.
 ---
@@ -41,10 +41,10 @@ If not, use a stable fallback such as `codex`.
 ## Standard Workflow
 
 1. Define the analysis window and workspace.
-2. Refresh index with `autosearch index`.
+2. Refresh index with `auto search index`.
 3. Run broad discovery searches to map failure patterns.
 4. Run focused searches per issue family to quantify impact.
-5. Validate representative incidents with `autosearch message describe`.
+5. Validate representative incidents with `auto search message describe`.
 6. Expand context around user-question signals before drawing conclusions.
 7. Write a markdown report with issue severity, evidence, reasoning, and remediation.
 
@@ -59,10 +59,10 @@ For each issue, always report:
 Use this pattern to compute from message hits:
 
 ```bash
-autosearch search '<query>' --scope messages --cwd <workspace> \
+auto search search '<query>' --scope messages --cwd <workspace> \
   | jq -r '.hits[].messageId' \
   | while read -r id; do
-      autosearch message describe "$id" | jq -c '.message | {id,sessionId,timestamp}'
+      auto search message describe "$id" | jq -c '.message | {id,sessionId,timestamp}'
     done \
   | jq -s '{
       times_seen: length,
@@ -81,28 +81,28 @@ If query results are capped (for example `total_hits` is 50), either:
 Run broad discovery first:
 
 ```bash
-autosearch search 'error OR fail OR timeout OR busy OR tool_use_error' --scope sessions --cwd <workspace> --since <window>
-autosearch search 'error OR fail OR timeout OR busy OR tool_use_error' --scope messages --cwd <workspace> --since <window> --highlight
+auto search search 'error OR fail OR timeout OR busy OR tool_use_error' --scope sessions --cwd <workspace> --since <window>
+auto search search 'error OR fail OR timeout OR busy OR tool_use_error' --scope messages --cwd <workspace> --since <window> --highlight
 ```
 
 Then run focused families:
 
 ```bash
 # DB / locking / sync contention
-autosearch search '"database is busy" OR "WAL frame salt mismatch" OR "database is locked"' --scope messages --cwd <workspace>
+auto search search '"database is busy" OR "WAL frame salt mismatch" OR "database is locked"' --scope messages --cwd <workspace>
 
 # Build / test breakage
-autosearch search '"--- FAIL:" OR "FAIL\t./... [setup failed]" OR "panic: runtime error" OR "undefined:" OR "imported and not used"' --scope messages --cwd <workspace>
+auto search search '"--- FAIL:" OR "FAIL\t./... [setup failed]" OR "panic: runtime error" OR "undefined:" OR "imported and not used"' --scope messages --cwd <workspace>
 
 # Tool or edit orchestration failures
-autosearch search '"tool_use_error" OR "File has not been read yet" OR "modified since read"' --scope messages --cwd <workspace>
+auto search search '"tool_use_error" OR "File has not been read yet" OR "modified since read"' --scope messages --cwd <workspace>
 
 # Environment/setup blockers
-autosearch search '"command not found" OR "Text file busy" OR "cannot create regular file" OR "Directory does not exist"' --scope messages --cwd <workspace>
+auto search search '"command not found" OR "Text file busy" OR "cannot create regular file" OR "Directory does not exist"' --scope messages --cwd <workspace>
 
 # User anti-signals (friction, correction, pushback)
-autosearch search '"no " OR "undo" OR "stop" OR "didn''t ask" OR "not what I asked" OR "wrong"' --scope messages --cwd <workspace> --highlight
-autosearch search '"why" OR "why did" OR "why are" OR "why would" OR "why didn''t"' --scope messages --cwd <workspace> --highlight
+auto search search '"no " OR "undo" OR "stop" OR "didn''t ask" OR "not what I asked" OR "wrong"' --scope messages --cwd <workspace> --highlight
+auto search search '"why" OR "why did" OR "why are" OR "why would" OR "why didn''t"' --scope messages --cwd <workspace> --highlight
 ```
 
 ## Tool Invocation Searches
@@ -116,16 +116,16 @@ Useful patterns:
 
 ```bash
 # Find what questions the agent asked the user (rendered as markdown)
-autosearch search '"## Question" Options' --scope messages --cwd <workspace> --highlight
+auto search search '"## Question" Options' --scope messages --cwd <workspace> --highlight
 
 # Find Agent subagent invocations by prompt content
-autosearch search "subagent_type Explore" --scope messages --cwd <workspace>
+auto search search "subagent_type Explore" --scope messages --cwd <workspace>
 
 # Find specific Bash commands the agent ran
-autosearch search "golangci-lint run" --scope messages --cwd <workspace>
+auto search search "golangci-lint run" --scope messages --cwd <workspace>
 
 # Find Edit tool changes to a specific file
-autosearch search "old_string" --scope messages --cwd <workspace>
+auto search search "old_string" --scope messages --cwd <workspace>
 ```
 
 Note: tool_use rows have `messageType: "assistant"` in search results. The corresponding tool_result (output) has `messageType: "tool"`. Both are now searchable for the same tool call.
@@ -145,11 +145,11 @@ Do not treat all string matches equally; apply this triage:
 Recommended queries:
 
 ```bash
-autosearch search '"no, " OR "no this is wrong" OR "didn''t ask" OR "undo" OR "stop"' --scope messages --cwd <workspace> --highlight
-autosearch search '"did we include"' --scope messages --cwd <workspace> --highlight
-autosearch search '"not found" OR "can''t find" OR "cannot find"' --scope messages --cwd <workspace> --highlight
-autosearch search '"Found it"' --scope messages --cwd <workspace> --highlight
-autosearch search '"## Question" OR "User has answered your questions"' --scope messages --cwd <workspace> --highlight
+auto search search '"no, " OR "no this is wrong" OR "didn''t ask" OR "undo" OR "stop"' --scope messages --cwd <workspace> --highlight
+auto search search '"did we include"' --scope messages --cwd <workspace> --highlight
+auto search search '"not found" OR "can''t find" OR "cannot find"' --scope messages --cwd <workspace> --highlight
+auto search search '"Found it"' --scope messages --cwd <workspace> --highlight
+auto search search '"## Question" OR "User has answered your questions"' --scope messages --cwd <workspace> --highlight
 ```
 
 ### Context-First Rule For User Questions (VITAL)
@@ -170,17 +170,17 @@ Minimum context retrieval pattern:
 
 ```bash
 # 1) Get metadata, including prev/next links
-autosearch message describe <message_id>
+auto search message describe <message_id>
 
 # 2) Read full message content
-autosearch message get <message_id>
+auto search message get <message_id>
 
 # 3) Read adjacent messages for immediate context
-autosearch message get <previousMessageId>
-autosearch message get <nextMessageId>
+auto search message get <previousMessageId>
+auto search message get <nextMessageId>
 
 # 4) If still ambiguous, read the full transcript
-autosearch session get <session_id>
+auto search session get <session_id>
 ```
 
 ### Conditional (use with guardrails)
@@ -211,7 +211,7 @@ If date filters (`--since`, `--after`, `--before`) look inconsistent, enforce an
 ```bash
 START_MS=<epoch_ms_start>
 END_MS=<epoch_ms_end>
-autosearch search '<query>' --scope sessions --cwd <workspace> \
+auto search search '<query>' --scope sessions --cwd <workspace> \
   | jq --argjson start "$START_MS" --argjson end "$END_MS" \
     '.hits | map(select(.lastMessageAt >= $start and .firstMessageAt < $end))'
 ```
@@ -238,8 +238,8 @@ Workspace: <workspace>
 - Context check: <one sentence on what surrounding context was reviewed>.
 - Transferability: <one sentence labeling `local-only` or `portable`, with reason>.
 - Search evidence:
-  - `<exact autosearch command>` — <one sentence describing why this query was used>.
-  - `<exact autosearch command>` — <one sentence describing what signal this query isolated>.
+  - `<exact auto search command>` — <one sentence describing why this query was used>.
+  - `<exact auto search command>` — <one sentence describing what signal this query isolated>.
 - Thought process:
   - <one sentence on how evidence was grouped into this issue>.
   - <one sentence on why severity was assigned>.
