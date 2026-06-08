@@ -102,9 +102,9 @@ solution.md P2 resolution.)
 - [x] Step 3.5: Commit: `feat(016): phase 3 - autosearch thinking surface (--role thinking, --include-thinking)`
 
 ### Phase 4: docs + rollout (rollout = no-commit human acceptance)
-- [ ] Step 4.1: `auto-etl/docs/claude-message-types-and-etl-mapping.md` — drop the disproven "Claude Code redacts it" claim; mark thinking actually preserved; add rows for `thinking_signature`,`stop_reason`,`permission_mode`,`version`,`is_error`,cache-split,`skill_name`. Verify: doc no longer lists these as "lost".
-- [ ] Step 4.2: `auto-etl/docs/reference/normalized-schema.md` — add new message/session columns, add `thinking` to the role enum, fix the stale `Current value`. `cli/quickstart.go` — document `--role thinking`, `--include-thinking`, and the opt-in default. Verify: `autosearch quickstart` output shows the new flags.
-- [ ] Step 4.3: Commit: `docs(016): phase 4 - update ETL mapping, schema reference, quickstart`
+- [x] Step 4.1: `auto-etl/docs/claude-message-types-and-etl-mapping.md` — drop the disproven "Claude Code redacts it" claim; mark thinking actually preserved; add rows for `thinking_signature`,`stop_reason`,`permission_mode`,`version`,`is_error`,cache-split,`skill_name`. Verify: doc no longer lists these as "lost".
+- [x] Step 4.2: `auto-etl/docs/reference/normalized-schema.md` — add new message/session columns, add `thinking` to the role enum, fix the stale `Current value`. `cli/quickstart.go` — document `--role thinking`, `--include-thinking`, and the opt-in default. Verify: `autosearch quickstart` output shows the new flags.
+- [x] Step 4.3: Commit: `docs(016): phase 4 - update ETL mapping, schema reference, quickstart`
 - [ ] Step 4.4: **Rollout (no commit)** — `cd auto-etl && go run . run --full --only sessions` then `cd auto-search && go run ./cmd/autosearch index`. Verify: index log reports a full rebuild (v9 mismatch); `autosearch search --role thinking --since 14d` returns thinking rows; `autosearch search --skill review-task` returns the `c9124cdf` session; `autosearch message get <thinking-id>` returns full reasoning.
 
 ## Success Criteria
