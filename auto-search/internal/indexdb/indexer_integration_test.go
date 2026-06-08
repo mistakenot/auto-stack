@@ -241,6 +241,25 @@ func TestQuerySessionByID(t *testing.T) {
 	if sess.Workspace != "/workspace/project-a" {
 		t.Errorf("workspace = %q", sess.Workspace)
 	}
+	// Intent (caveat-derived clean prose) must round-trip parquet -> index.
+	if sess.FirstUserIntent != "Help me debug the authentication middleware retry logic" {
+		t.Errorf("FirstUserIntent = %q, want the caveat-derived prose intent", sess.FirstUserIntent)
+	}
+	if sess.FirstUserIntentTruncated != "Help me debug the authentication middleware retry logic" {
+		t.Errorf("FirstUserIntentTruncated = %q", sess.FirstUserIntentTruncated)
+	}
+
+	// Slash-command fallback intent must round-trip for the no-clean-prose session.
+	sess3, err := indexdb.GetSessionByID(db, "test-session-3")
+	if err != nil {
+		t.Fatalf("GetSessionByID(test-session-3): %v", err)
+	}
+	if sess3.FirstUserIntent != "/execute-task 014" {
+		t.Errorf("test-session-3 FirstUserIntent = %q, want slash-command fallback", sess3.FirstUserIntent)
+	}
+	if sess3.FirstUserIntentTruncated != "/execute-task 014" {
+		t.Errorf("test-session-3 FirstUserIntentTruncated = %q", sess3.FirstUserIntentTruncated)
+	}
 }
 
 func TestQueryMessageByID(t *testing.T) {
@@ -508,7 +527,7 @@ func TestInsertSessionTotalTurnDurationRoundtrip(t *testing.T) {
 		10, 20, 30,
 		400, 200, 200,
 		"some transcript",
-		"", "",
+		"Add a retry budget to the auth middleware", "Add a retry budget to the auth middleware",
 		int(indexdb.SchemaVersion),
 	); err != nil {
 		t.Fatalf("InsertSession: %v", err)
@@ -523,5 +542,12 @@ func TestInsertSessionTotalTurnDurationRoundtrip(t *testing.T) {
 	}
 	if sess.TotalTurnDurationMs != 73000 {
 		t.Errorf("TotalTurnDurationMs = %d, want 73000", sess.TotalTurnDurationMs)
+	}
+	// Intent fields must round-trip through InsertSession -> GetSessionByID.
+	if sess.FirstUserIntent != "Add a retry budget to the auth middleware" {
+		t.Errorf("FirstUserIntent = %q", sess.FirstUserIntent)
+	}
+	if sess.FirstUserIntentTruncated != "Add a retry budget to the auth middleware" {
+		t.Errorf("FirstUserIntentTruncated = %q", sess.FirstUserIntentTruncated)
 	}
 }

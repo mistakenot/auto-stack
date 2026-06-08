@@ -1012,6 +1012,74 @@ func TestSessionDescribeNewFields(t *testing.T) {
 	}
 }
 
+// TestSessionListCarriesFirstUserIntentTruncated asserts that `session list`
+// JSON carries the truncated intent preview (AC-5).
+func TestSessionListCarriesFirstUserIntentTruncated(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "session", "list")
+	if code != 0 {
+		t.Fatalf("session list failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	sessions := out["sessions"].([]any)
+
+	// Caveat-derived clean prose intent on the parent session.
+	var foundParent, foundSlash bool
+	for _, s := range sessions {
+		sess := s.(map[string]any)
+		switch sess["session_id"] {
+		case "test-session-1":
+			foundParent = true
+			if sess["first_user_intent_truncated"] != "Help me debug the authentication middleware retry logic" {
+				t.Fatalf("test-session-1 first_user_intent_truncated = %v, want caveat-derived prose", sess["first_user_intent_truncated"])
+			}
+		case "test-session-3":
+			foundSlash = true
+			// Slash-command fallback row.
+			if sess["first_user_intent_truncated"] != "/execute-task 014" {
+				t.Fatalf("test-session-3 first_user_intent_truncated = %v, want slash-command fallback", sess["first_user_intent_truncated"])
+			}
+		}
+	}
+	if !foundParent {
+		t.Fatal("test-session-1 not found in session list output")
+	}
+	if !foundSlash {
+		t.Fatal("test-session-3 not found in session list output")
+	}
+}
+
+// TestSessionDescribeCarriesFirstUserIntent asserts that `session describe`
+// JSON carries the full (untruncated) firstUserIntent (AC-5).
+func TestSessionDescribeCarriesFirstUserIntent(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "session", "describe", "test-session-1")
+	if code != 0 {
+		t.Fatalf("session describe failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	session := out["session"].(map[string]any)
+
+	if session["firstUserIntent"] != "Help me debug the authentication middleware retry logic" {
+		t.Fatalf("firstUserIntent = %v, want the full caveat-derived prose intent", session["firstUserIntent"])
+	}
+
+	// Slash-command fallback session surfaces the parsed invocation.
+	stdout, stderr, code = runCLI(t, "session", "describe", "test-session-3")
+	if code != 0 {
+		t.Fatalf("session describe (test-session-3) failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	out = decodeJSON(t, stdout)
+	session = out["session"].(map[string]any)
+	if session["firstUserIntent"] != "/execute-task 014" {
+		t.Fatalf("test-session-3 firstUserIntent = %v, want slash-command fallback", session["firstUserIntent"])
+	}
+}
+
 func TestMessageGet(t *testing.T) {
 	setupIndexedFixtures(t)
 

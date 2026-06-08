@@ -270,6 +270,7 @@ func newSessionDescribeCmd() *cobra.Command {
 				},
 				"session": map[string]any{
 					"id":                  sess.SessionID,
+					"firstUserIntent":     sess.FirstUserIntent,
 					"parentSessionId":     sess.ParentSessionID,
 					"subagentName":        sess.SubagentName,
 					"isSubagent":          sess.IsSubagent,

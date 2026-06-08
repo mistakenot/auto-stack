@@ -63,9 +63,14 @@ func generateSessions(outputDir string) error {
 			TotalInputBytes:     8000,
 			TranscriptFull:      "User: Help me debug the authentication middleware retry logic\nAssistant: I'll investigate the auth middleware...",
 			TranscriptTruncated: "User: Help me debug the authentication middleware retry logic\nAssistant: I'll investigate the auth middleware. debugging authentication middleware retry logic",
-			Year:                2026,
-			Month:               3,
-			SchemaVersion:       1,
+			// Caveat-derived intent: the literal first user message was a
+			// <local-command-caveat>/<command-name> wrapper; the heuristic
+			// recovered this clean prose intent.
+			FirstUserIntent:          "Help me debug the authentication middleware retry logic",
+			FirstUserIntentTruncated: "Help me debug the authentication middleware retry logic",
+			Year:                     2026,
+			Month:                    3,
+			SchemaVersion:            1,
 		},
 		{
 			ID:                  "test-session-2",
@@ -88,9 +93,12 @@ func generateSessions(outputDir string) error {
 			TotalInputBytes:     4000,
 			TranscriptFull:      "User: Explore the auth module structure\nAssistant: Looking at the auth directory...",
 			TranscriptTruncated: "User: Explore the auth module structure\nAssistant: Looking at the auth directory...",
-			Year:                2026,
-			Month:               3,
-			SchemaVersion:       1,
+			// Subagent dispatch prompt is clean prose intent.
+			FirstUserIntent:          "Explore the auth module structure",
+			FirstUserIntentTruncated: "Explore the auth module structure",
+			Year:                     2026,
+			Month:                    3,
+			SchemaVersion:            1,
 		},
 		{
 			ID:                  "test-session-3",
@@ -113,9 +121,13 @@ func generateSessions(outputDir string) error {
 			TotalInputBytes:     6000,
 			TranscriptFull:      "User: Set up the CI pipeline\nAssistant: I'll configure the CI...",
 			TranscriptTruncated: "User: Set up the CI pipeline\nAssistant: I'll configure the CI...",
-			Year:                2026,
-			Month:               3,
-			SchemaVersion:       1,
+			// Slash-command fallback: no clean prose user message, so the
+			// heuristic fell back to the parsed slash-command invocation.
+			FirstUserIntent:          "/execute-task 014",
+			FirstUserIntentTruncated: "/execute-task 014",
+			Year:                     2026,
+			Month:                    3,
+			SchemaVersion:            1,
 		},
 	}
 
