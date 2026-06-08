@@ -43,15 +43,13 @@ var zenKoans = []string{
 }
 
 func newZenCmd() *cobra.Command {
-	return zenCmd
-}
-
-var zenCmd = &cobra.Command{
-	Use:    "zen",
-	Short:  "Print a random piece of ETL wisdom",
-	Hidden: true,
-	Run: func(cmd *cobra.Command, args []string) {
-		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(zenKoans))))
-		fmt.Println(zenKoans[n.Int64()])
-	},
+	return &cobra.Command{
+		Use:    "zen",
+		Short:  "Print a random piece of ETL wisdom",
+		Hidden: true,
+		Run: func(cmd *cobra.Command, args []string) {
+			n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(zenKoans))))
+			fmt.Println(zenKoans[n.Int64()])
+		},
+	}
 }

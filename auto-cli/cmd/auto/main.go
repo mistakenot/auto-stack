@@ -1,26 +1,81 @@
+// Command auto is the unified entry point for the autonomous coding stack.
+// Each tool is mounted as a subcommand (auto doc, auto search, auto etl, …).
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
+	doccmd "github.com/datadyne-io/autodoc/rootcmd"
+	configcmd "github.com/mistakenot/auto-config/rootcmd"
+	envcmd "github.com/mistakenot/auto-env/rootcmd"
+	etlcmd "github.com/mistakenot/auto-etl/rootcmd"
+	graphcmd "github.com/mistakenot/auto-graph/rootcmd"
+	reflectcmd "github.com/mistakenot/auto-reflect/rootcmd"
+	searchcmd "github.com/mistakenot/auto-search/rootcmd"
+	"github.com/mistakenot/auto-shared/update"
 	"github.com/mistakenot/auto-shared/version"
+	skillcmd "github.com/mistakenot/auto-skill/rootcmd"
+	uicmd "github.com/mistakenot/auto-ui/rootcmd"
+	watchcmd "github.com/mistakenot/auto-watch/rootcmd"
 	"github.com/spf13/cobra"
 )
 
-func newRootCmd() *cobra.Command {
+func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	root := &cobra.Command{
-		Use:     "auto",
-		Short:   "Autonomous coding stack",
-		Version: version.Version,
+		Use:           "auto",
+		Short:         "Autonomous coding stack",
+		Version:       version.Version,
+		SilenceErrors: true,
+		SilenceUsage:  true,
 	}
-	// Tool subcommands are mounted in Phase 3.
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+
+	root.AddCommand(
+		configcmd.New(stdout, stderr),
+		doccmd.New(stdout, stderr),
+		envcmd.New(stdout, stderr),
+		etlcmd.New(stdout, stderr),
+		graphcmd.New(stdout, stderr),
+		reflectcmd.New(stdout, stderr),
+		searchcmd.New(stdout, stderr),
+		skillcmd.New(stdout, stderr),
+		uicmd.New(stdout, stderr),
+		watchcmd.New(stdout, stderr),
+	)
+	root.AddCommand(newUpdateCmd())
+
 	return root
 }
 
+// newUpdateCmd is the canonical top-level update path for the merged binary.
+// The per-tool `auto <tool> update` subcommands are retained equivalents.
+func newUpdateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "update",
+		Short: "Check for and install the latest auto-stack release",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := update.Run(cmd.OutOrStdout(), cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
+			data, err := json.Marshal(result)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), string(data))
+			return nil
+		},
+	}
+}
+
 func main() {
-	root := newRootCmd()
+	root := newRootCmd(os.Stdout, os.Stderr)
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
