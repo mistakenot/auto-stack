@@ -108,12 +108,12 @@ Each agent owns exactly one tool dir end-to-end (disjoint paths ⇒ no conflicts
 - [x] Step 2.Z: Commit (one per tool or grouped): `feat(017): phase 2 - <tool> seam + rename`
 
 ### Phase 3: Wire the umbrella + integration tests  *(sequential; depends on all of Phase 2)*
-- [ ] Step 3.1: Fill `auto-cli/cmd/auto/main.go` — import the 10 `rootcmd` packages (aliased,
+- [x] Step 3.1: Fill `auto-cli/cmd/auto/main.go` — import the 10 `rootcmd` packages (aliased,
       e.g. `doccmd "github.com/datadyne-io/autodoc/rootcmd"`), `AddCommand` all 10, add a
       top-level `auto update` using `auto-shared/update.Run`. Set root `Short`/`Version`.
-- [ ] Step 3.2: `go work sync`; `cd auto-cli && go build ./cmd/auto`; run `auto --help` and
+- [x] Step 3.2: `go work sync`; `cd auto-cli && go build ./cmd/auto`; run `auto --help` and
       confirm all 10 stems + `update` are listed.
-- [ ] Step 3.3: Write `auto-cli/cmd/auto/main_test.go` using the `runCLI`/`SetOut(buf)` pattern
+- [x] Step 3.3: Write `auto-cli/cmd/auto/main_test.go` using the `runCLI`/`SetOut(buf)` pattern
       (`auto-search/internal/cli/cli_integration_test.go:90`). **Content assertions on `--help`
       only** (capturable); **executed commands by exit code only** (auto-doc/auto-etl write to the
       real os.Stdout, not the buffer — see solution.md AC-2 "Capture caveat"). Assert:
@@ -129,8 +129,8 @@ REVIEW: auto-doc hard-codes os.Stdout (cmd/autodoc/main.go, e.g. `commands.TreeO
 AUTHOR: Resolved per solution.md AC-2 (option a). Step 3.3 now: content assertions on `--help` only; `auto doc tree --json`/`auto doc tree` asserted by exit code 0, not JSON content. Added the `--repo-path` flag and moved zen/update to `--help` form. Output correctness for doc/etl stays in their in-module tests.
 -->
 
-- [ ] Step 3.4: Verify: `cd auto-cli && go test ./...` green (these are the AC-1/AC-2/AC-6 gates).
-- [ ] Step 3.5: Commit: `feat(017): phase 3 - umbrella main mounts 10 tools + integration tests`
+- [x] Step 3.4: Verify: `cd auto-cli && go test ./...` green (these are the AC-1/AC-2/AC-6 gates).
+- [x] Step 3.5: Commit: `feat(017): phase 3 - umbrella main mounts 10 tools + integration tests`
 
 ### Phase 4: Build / install / release plumbing + CI guard  *(depends on Phase 3)*
 - [ ] Step 4.1: Makefile — add `auto-config` + `auto-cli` to `PROJECTS`; replace per-binary
