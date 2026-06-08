@@ -321,7 +321,13 @@ func GetSessionByID(db *sql.DB, sessionID string) (*SessionRow, error) {
 }
 
 // SessionMessages loads all messages for a session ordered by message_index.
-func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
+// When includeThinking is false, role='thinking' messages are excluded from the
+// result set (they remain in the index and are reachable via message get).
+func SessionMessages(db *sql.DB, sessionID string, includeThinking bool) ([]MessageRow, error) {
+	whereClause := "WHERE session_id = ?"
+	if !includeThinking {
+		whereClause += " AND role != 'thinking'"
+	}
 	rows, err := db.Query(`
 		SELECT doc_id, partition_source_path, message_id, session_id, host_id,
 			message_index, role, content, content_truncated, timestamp,
@@ -335,7 +341,7 @@ func SessionMessages(db *sql.DB, sessionID string) ([]MessageRow, error) {
 			workspace, git_remote, git_branch, model,
 			parent_session_id, is_subagent, source_line_index, schema_version
 		FROM messages
-		WHERE session_id = ?
+		`+whereClause+`
 		ORDER BY message_index ASC
 	`, sessionID)
 	if err != nil {

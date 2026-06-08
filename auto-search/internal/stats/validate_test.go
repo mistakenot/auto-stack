@@ -105,6 +105,23 @@ func TestNormalizeAndValidateInvalidRole(t *testing.T) {
 	}
 }
 
+func TestNormalizeAndValidateThinkingRoleAccepted(t *testing.T) {
+	t.Parallel()
+
+	db := &sql.DB{}
+	got, err := normalizeAndValidate(&Request{
+		DB:      db,
+		GroupBy: "session_id",
+		Role:    "thinking",
+	})
+	if err != nil {
+		t.Fatalf("expected thinking role to be accepted, got error: %v", err)
+	}
+	if got.Role != "thinking" {
+		t.Fatalf("role = %q, want thinking", got.Role)
+	}
+}
+
 func TestNormalizeAndValidateConflictingFilters(t *testing.T) {
 	t.Parallel()
 

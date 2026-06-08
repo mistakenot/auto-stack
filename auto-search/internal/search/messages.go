@@ -84,6 +84,11 @@ type MessageSearchOpts struct {
 	// OnlyInterrupted, when true, restricts results to messages where
 	// interrupted=true (Claude's per-tool-call cancel/stuck flag).
 	OnlyInterrupted bool
+	// IncludeThinking, when true, includes role='thinking' messages in
+	// results. By default thinking messages are excluded from search to
+	// keep output clean and token-cheap. Use --role thinking to search
+	// only thinking messages (implies IncludeThinking).
+	IncludeThinking bool
 	Offset          int
 	PageSize        int
 	RequestID       string
@@ -142,6 +147,10 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 		return nil, errors.New("query must be non-empty unless at least one structured filter (--tool-name / --session-id / --min-tool-duration / --interrupted) is set")
 	}
 
+	// Default-exclude thinking messages unless the caller explicitly asked
+	// for them via --include-thinking or --role thinking.
+	excludeThinking := !opts.IncludeThinking && role != "thinking"
+
 	filters := normalizeFilters(opts.CWD, opts.Remote, opts.Skill, role, field, timeFilter.Canonical)
 
 	var hits []MessageHit
@@ -155,7 +164,7 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 		// without inventing a dummy FTS query.
 		hits, stats, err = execMessageSearchNoFTS(opts.DB, opts.CWD, opts.Remote, opts.Skill, role, field,
 			opts.ToolName, opts.SessionID, opts.MinToolDurationMs, opts.OnlyInterrupted,
-			timeFilter, offset, pageSize)
+			excludeThinking, timeFilter, offset, pageSize)
 		if err != nil {
 			return nil, err
 		}
@@ -171,7 +180,7 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 		exec := func(ftsExpr string) ([]MessageHit, matchStats, error) {
 			return execMessageSearch(opts.DB, ftsExpr, opts.CWD, opts.Remote, opts.Skill, role, field,
 				opts.ToolName, opts.SessionID, opts.MinToolDurationMs, opts.OnlyInterrupted,
-				timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
+				excludeThinking, timeFilter, terms, opts.Highlight, opts.Query, filters, offset, pageSize)
 		}
 
 		hits, stats, err = exec(fts)
@@ -223,7 +232,7 @@ func SearchMessages(opts *MessageSearchOpts) (*MessageSearchResult, error) {
 	}, nil
 }
 
-func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field, toolName, sessionID string, minToolDurationMs *int64, onlyInterrupted bool, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, matchStats, error) {
+func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field, toolName, sessionID string, minToolDurationMs *int64, onlyInterrupted, excludeThinking bool, timeFilter TimeFilter, terms []string, highlight bool, rawQuery, filters string, offset, pageSize int) ([]MessageHit, matchStats, error) {
 	zeroStats := matchStats{}
 
 	var preFilterConds []string
@@ -261,6 +270,9 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field, toolNam
 	if onlyInterrupted {
 		// Hits the idx_messages_interrupted index (added in PR 2).
 		preFilterConds = append(preFilterConds, "interrupted = 1")
+	}
+	if excludeThinking {
+		preFilterConds = append(preFilterConds, "role != 'thinking'")
 	}
 	switch field {
 	case searchFieldAll:
@@ -385,7 +397,7 @@ func execMessageSearch(db *sql.DB, fts, cwd, remote, skill, role, field, toolNam
 // timestamp ("most recent first"), so the most-interesting rows surface
 // first in --text output. No snippet highlighting is meaningful here
 // (there's no matched term), so snippet is just a truncated content view.
-func execMessageSearchNoFTS(db *sql.DB, cwd, remote, skill, role, field, toolName, sessionID string, minToolDurationMs *int64, onlyInterrupted bool, timeFilter TimeFilter, offset, pageSize int) ([]MessageHit, matchStats, error) {
+func execMessageSearchNoFTS(db *sql.DB, cwd, remote, skill, role, field, toolName, sessionID string, minToolDurationMs *int64, onlyInterrupted, excludeThinking bool, timeFilter TimeFilter, offset, pageSize int) ([]MessageHit, matchStats, error) {
 	zeroStats := matchStats{}
 
 	var conds []string
@@ -421,6 +433,9 @@ func execMessageSearchNoFTS(db *sql.DB, cwd, remote, skill, role, field, toolNam
 	}
 	if onlyInterrupted {
 		conds = append(conds, "m.interrupted = 1")
+	}
+	if excludeThinking {
+		conds = append(conds, "m.role != 'thinking'")
 	}
 	switch field {
 	case searchFieldAll, "":
@@ -650,10 +665,10 @@ func normalizeRole(role string) (string, error) {
 		return "", nil
 	}
 	switch normalized {
-	case "user", "assistant", "tool":
+	case "user", "assistant", "tool", "thinking":
 		return normalized, nil
 	default:
-		return "", fmt.Errorf("invalid --role value %q (use user, assistant, or tool)", role)
+		return "", fmt.Errorf("invalid --role value %q (use user, assistant, tool, or thinking)", role)
 	}
 }
 

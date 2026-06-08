@@ -29,6 +29,7 @@ func newSearchCmd() *cobra.Command {
 	var sessionID string
 	var minToolDuration string
 	var interrupted bool
+	var includeThinking bool
 	var offset int
 	var limit int
 	var requestID string
@@ -114,6 +115,7 @@ find slow or stuck tool calls:
 					SessionID:         sessionID,
 					MinToolDurationMs: minToolDurationMs,
 					OnlyInterrupted:   interrupted,
+					IncludeThinking:   includeThinking,
 					Offset:            offset,
 					PageSize:          limit,
 					RequestID:         requestID,
@@ -166,12 +168,13 @@ find slow or stuck tool calls:
 	cmd.Flags().StringVar(&cwd, "cwd", "", "workspace path filter")
 	cmd.Flags().StringVar(&remote, "remote", "", "git remote filter")
 	cmd.Flags().StringVar(&skill, "skill", "", "filter by skill name")
-	cmd.Flags().StringVar(&role, "role", "", "filter by message role (user, assistant, tool)")
+	cmd.Flags().StringVar(&role, "role", "", "filter by message role (user, assistant, tool, thinking)")
 	cmd.Flags().StringVar(&field, "field", "all", "filter searchable field: all, content, tool_input, tool_output")
 	cmd.Flags().StringVar(&toolName, "tool-name", "", "filter by tool name (e.g. Read, Write, Edit, Bash) — messages scope only")
 	cmd.Flags().StringVar(&sessionID, "session-id", "", "filter to a single session ID — messages scope only")
 	cmd.Flags().StringVar(&minToolDuration, "min-tool-duration", "", "include only tool calls with duration_ms >= this value (e.g. 60s, 5m, 1500ms) — messages scope only")
 	cmd.Flags().BoolVar(&interrupted, "interrupted", false, "include only tool calls Claude reported as interrupted — messages scope only")
+	cmd.Flags().BoolVar(&includeThinking, "include-thinking", false, "include thinking messages in results (excluded by default)")
 	cmd.Flags().IntVar(&offset, "offset", 0, "result offset for pagination (0-based)")
 	cmd.Flags().IntVar(&limit, "limit", 0, "max results to return (default 20)")
 	cmd.Flags().BoolVar(&highlight, "highlight", false, "highlight matched terms in snippets (no-op when query is empty)")

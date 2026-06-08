@@ -190,6 +190,7 @@ func newSessionListCmd() *cobra.Command {
 
 func newSessionGetCmd() *cobra.Command {
 	var index string
+	var includeThinking bool
 
 	cmd := &cobra.Command{
 		Use:   "get <session_id>",
@@ -206,7 +207,7 @@ func newSessionGetCmd() *cobra.Command {
 			}
 			defer func() { _ = db.Close() }()
 
-			msgs, err := indexdb.SessionMessages(db, args[0])
+			msgs, err := indexdb.SessionMessages(db, args[0], includeThinking)
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
@@ -226,6 +227,7 @@ func newSessionGetCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&index, "index", config.DefaultIndexName, "named index to query")
+	cmd.Flags().BoolVar(&includeThinking, "include-thinking", false, "include thinking messages in the transcript (excluded by default)")
 	return cmd
 }
 

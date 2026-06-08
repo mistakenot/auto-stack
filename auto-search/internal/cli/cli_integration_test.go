@@ -193,8 +193,8 @@ func TestIndexFullBuild(t *testing.T) {
 	if out["sessions_indexed"] != float64(3) {
 		t.Fatalf("sessions_indexed = %v, want 3", out["sessions_indexed"])
 	}
-	if out["messages_indexed"] != float64(12) {
-		t.Fatalf("messages_indexed = %v, want 12", out["messages_indexed"])
+	if out["messages_indexed"] != float64(13) {
+		t.Fatalf("messages_indexed = %v, want 13", out["messages_indexed"])
 	}
 
 	dbPath := filepath.Join(home, ".auto", "search", "default.sqlite")
@@ -1264,8 +1264,8 @@ func TestStatsMessagesSuccess(t *testing.T) {
 	if meta["group_by"] != "session_id" {
 		t.Fatalf("group_by = %v, want session_id", meta["group_by"])
 	}
-	if meta["total_matches"] != float64(12) {
-		t.Fatalf("total_matches = %v, want 12", meta["total_matches"])
+	if meta["total_matches"] != float64(13) {
+		t.Fatalf("total_matches = %v, want 13", meta["total_matches"])
 	}
 	buckets := out["buckets"].([]any)
 	if len(buckets) != 3 {
@@ -1447,5 +1447,134 @@ func TestIndexOnEmptyInputFails(t *testing.T) {
 	_, _, code := runCLI(t, "index", "--input", emptyDir)
 	if code == 0 {
 		t.Error("expected failure on empty input directory")
+	}
+}
+
+// --- Thinking surface tests (Phase 3, task 016) ---
+
+func TestSessionGetDefaultOmitsThinking(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "session", "get", "test-session-1")
+	if code != 0 {
+		t.Fatalf("session get failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	// Default session get should NOT contain thinking tags.
+	if strings.Contains(stdout, "<thinking") {
+		t.Fatal("default session get should not contain <thinking> tags")
+	}
+	// Should still contain the other roles.
+	if !strings.Contains(stdout, "<agent") {
+		t.Fatal("expected <agent> tag in session get output")
+	}
+	if !strings.Contains(stdout, "<user") {
+		t.Fatal("expected <user> tag in session get output")
+	}
+}
+
+func TestSessionGetIncludeThinkingRendersThinkingTags(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "session", "get", "test-session-1", "--include-thinking")
+	if code != 0 {
+		t.Fatalf("session get --include-thinking failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	// With --include-thinking, the output should contain <thinking index=N>.
+	if !strings.Contains(stdout, "<thinking") {
+		t.Fatal("expected <thinking> tag in session get --include-thinking output")
+	}
+	if !strings.Contains(stdout, "</thinking>") {
+		t.Fatal("expected </thinking> closing tag in session get --include-thinking output")
+	}
+	// Verify it includes the thinking content.
+	if !strings.Contains(stdout, "race condition") {
+		t.Fatal("expected thinking content (race condition) in --include-thinking output")
+	}
+}
+
+func TestMessageGetReturnsFullThinkingContent(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	// message get always returns full content, regardless of thinking status.
+	stdout, stderr, code := runCLI(t, "message", "get", "msg-002t")
+	if code != 0 {
+		t.Fatalf("message get failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	// The full thinking content should be present.
+	if !strings.Contains(stdout, "Let me analyze the authentication middleware") {
+		t.Fatal("expected full thinking content in message get output")
+	}
+	if !strings.Contains(stdout, "cache invalidation sequence") {
+		t.Fatal("expected full thinking content (cache invalidation) in message get output")
+	}
+}
+
+func TestSearchRoleThinkingCLI(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "search", "middleware", "--role", "thinking")
+	if code != 0 {
+		t.Fatalf("search --role thinking failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	hits := out["hits"].([]any)
+	if len(hits) == 0 {
+		t.Fatal("expected at least 1 hit for search --role thinking")
+	}
+	for _, raw := range hits {
+		hit := raw.(map[string]any)
+		if hit["messageType"] != "thinking" {
+			t.Errorf("expected messageType=thinking, got %v", hit["messageType"])
+		}
+	}
+}
+
+func TestSearchIncludeThinkingCLI(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "search", "authentication middleware", "--include-thinking")
+	if code != 0 {
+		t.Fatalf("search --include-thinking failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	hits := out["hits"].([]any)
+	foundThinking := false
+	for _, raw := range hits {
+		hit := raw.(map[string]any)
+		if hit["messageType"] == "thinking" {
+			foundThinking = true
+		}
+	}
+	if !foundThinking {
+		t.Fatal("expected at least one thinking message in --include-thinking results")
+	}
+}
+
+func TestSearchSkillFilterCLI(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	// msg-010 in test-session-3 has skill_name="review-task" from
+	// attributionSkill fallback. --skill should filter to it.
+	stdout, stderr, code := runCLI(t, "search", "CI", "--skill", "review-task")
+	if code != 0 {
+		t.Fatalf("search --skill failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	out := decodeJSON(t, stdout)
+	meta := out["_meta"].(map[string]any)
+	if meta["total_hits"].(float64) == 0 {
+		t.Fatal("expected at least 1 hit for --skill review-task")
+	}
+	hits := out["hits"].([]any)
+	for _, raw := range hits {
+		hit := raw.(map[string]any)
+		if hit["sessionId"] != "test-session-3" {
+			t.Errorf("expected sessionId=test-session-3, got %v", hit["sessionId"])
+		}
 	}
 }

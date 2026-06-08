@@ -30,7 +30,7 @@ func buildTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("FullBuild: %v", err)
 	}
-	if result.SessionsIndexed != 3 || result.MessagesIndexed != 12 {
+	if result.SessionsIndexed != 3 || result.MessagesIndexed != 13 {
 		t.Fatalf("unexpected fixture row counts: sessions=%d messages=%d", result.SessionsIndexed, result.MessagesIndexed)
 	}
 
@@ -54,8 +54,8 @@ func TestStatsMessagesSessionIDBaseline(t *testing.T) {
 		t.Fatalf("stats.Run: %v", err)
 	}
 
-	if resp.Meta.TotalMatches != 12 {
-		t.Fatalf("total_matches = %d, want 12", resp.Meta.TotalMatches)
+	if resp.Meta.TotalMatches != 13 {
+		t.Fatalf("total_matches = %d, want 13", resp.Meta.TotalMatches)
 	}
 	if resp.Meta.TotalBucketsUnfiltered != 3 {
 		t.Fatalf("total_buckets_unfiltered = %d, want 3", resp.Meta.TotalBucketsUnfiltered)
@@ -66,8 +66,8 @@ func TestStatsMessagesSessionIDBaseline(t *testing.T) {
 	if len(resp.Buckets) != 3 {
 		t.Fatalf("len(buckets) = %d, want 3", len(resp.Buckets))
 	}
-	if resp.Buckets[0].Key != "test-session-1" || resp.Buckets[0].Count != 8 {
-		t.Fatalf("bucket[0] = %+v, want key=test-session-1 count=8", resp.Buckets[0])
+	if resp.Buckets[0].Key != "test-session-1" || resp.Buckets[0].Count != 9 {
+		t.Fatalf("bucket[0] = %+v, want key=test-session-1 count=9", resp.Buckets[0])
 	}
 	if resp.Buckets[1].Key != "test-session-2" || resp.Buckets[1].Count != 2 {
 		t.Fatalf("bucket[1] = %+v, want key=test-session-2 count=2", resp.Buckets[1])
@@ -91,8 +91,8 @@ func TestStatsMessagesRoleCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stats.Run: %v", err)
 	}
-	if len(resp.Buckets) != 4 {
-		t.Fatalf("len(buckets) = %d, want 4", len(resp.Buckets))
+	if len(resp.Buckets) != 5 {
+		t.Fatalf("len(buckets) = %d, want 5", len(resp.Buckets))
 	}
 
 	got := map[string]int{}
@@ -104,6 +104,7 @@ func TestStatsMessagesRoleCounts(t *testing.T) {
 		"tool":      3,
 		"user":      3,
 		"system":    1,
+		"thinking":  1,
 	}
 	for key, count := range want {
 		if got[key] != count {
@@ -126,8 +127,8 @@ func TestStatsMessagesBashCommandNormalization(t *testing.T) {
 	if len(resp.Buckets) != 2 {
 		t.Fatalf("len(buckets) = %d, want 2", len(resp.Buckets))
 	}
-	if resp.Buckets[0].Key != "(none)" || resp.Buckets[0].Count != 11 {
-		t.Fatalf("bucket[0] = %+v, want key=(none) count=11", resp.Buckets[0])
+	if resp.Buckets[0].Key != "(none)" || resp.Buckets[0].Count != 12 {
+		t.Fatalf("bucket[0] = %+v, want key=(none) count=12", resp.Buckets[0])
 	}
 	if resp.Buckets[1].Key != "go test" || resp.Buckets[1].Count != 1 {
 		t.Fatalf("bucket[1] = %+v, want key=go test count=1", resp.Buckets[1])
@@ -148,8 +149,8 @@ func TestStatsSessionsWorkspaceDistinctMessages(t *testing.T) {
 	if len(resp.Buckets) != 2 {
 		t.Fatalf("len(buckets) = %d, want 2", len(resp.Buckets))
 	}
-	if resp.Buckets[0].Key != "/workspace/project-a" || resp.Buckets[0].Count != 2 || resp.Buckets[0].DistinctMessages != 10 {
-		t.Fatalf("bucket[0] = %+v, want workspace project-a count=2 distinct_messages=10", resp.Buckets[0])
+	if resp.Buckets[0].Key != "/workspace/project-a" || resp.Buckets[0].Count != 2 || resp.Buckets[0].DistinctMessages != 11 {
+		t.Fatalf("bucket[0] = %+v, want workspace project-a count=2 distinct_messages=11", resp.Buckets[0])
 	}
 	if resp.Buckets[0].SampleSessionID != "test-session-2" {
 		t.Fatalf("sample_session_id = %q, want test-session-2", resp.Buckets[0].SampleSessionID)
