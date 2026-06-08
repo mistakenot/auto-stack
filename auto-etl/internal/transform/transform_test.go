@@ -1812,8 +1812,7 @@ func TestTransformSession_ThinkingExcludedFromTranscript(t *testing.T) {
 	if !strings.Contains(session.TranscriptFull, "visible answer") {
 		t.Error("TranscriptFull should contain the text block")
 	}
-	if !strings.Contains(session.TranscriptFull, "[thinking]:") {
-		// Thinking should NOT appear in transcript at all
-		t.Log("Good: no [thinking]: prefix in transcript (thinking excluded)")
+	if strings.Contains(session.TranscriptFull, "[thinking]:") {
+		t.Error("TranscriptFull contains [thinking]: prefix; thinking should be excluded from transcript")
 	}
 }

@@ -83,6 +83,8 @@ Without it, results include agent commentary and prior search queries that menti
 - ` + "`" + `--include-thinking` + "`" + ` — includes thinking alongside other roles (on ` + "`" + `search` + "`" + ` and ` + "`" + `session get` + "`" + `)
 
 ` + "`" + `message get` + "`" + ` always returns the full content of any message, including thinking.
+` + "`" + `stats` + "`" + ` and ` + "`" + `session describe` + "`" + ` include thinking in aggregates (counts, role buckets) — the
+exclusion only applies to the ` + "`" + `search` + "`" + ` and ` + "`" + `session get` + "`" + ` result views.
 
 Queries support AND, OR, NOT (uppercase), and quoted phrases:
 ` + "```" + `
