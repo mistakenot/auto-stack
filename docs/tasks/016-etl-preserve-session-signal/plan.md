@@ -76,7 +76,7 @@ have no code dependency and may overlap Phase 3 if parallelized during execution
 - [x] Step 2.6: Commit: `feat(016): phase 2 - auto-search indexes new columns (index schema 8→9)`
 
 ### Phase 3: auto-search CLI surface + integration tests
-- [ ] Step 3.1: Add `thinking` to **both** `normalizeRole` copies —
+- [x] Step 3.1: Add `thinking` to **both** `normalizeRole` copies —
   `search/messages.go:647` and `stats/validate.go:177` (switch + error text in each;
   `grep -rn normalizeRole auto-search/internal/` to confirm both). In
   `search/messages.go` also add `IncludeThinking` to `MessageSearchOpts`; when not
@@ -96,10 +96,10 @@ AUTHOR: Resolved — Step 3.1 now names both `normalizeRole` copies and adds a v
 solution.md P2 resolution.)
 -->
 
-- [ ] Step 3.2: `cli/search.go` — add `--include-thinking` bool, thread to opts; update `--role` help to include `thinking`. `cli/session.go` — add `--include-thinking` to `session get`, pass to `SessionMessages` (optional `role!='thinking'`). Verify: `autosearch search --role thinking` and `autosearch session get <id> --include-thinking` run; default `session get` omits `<thinking>`.
-- [ ] Step 3.3: Integration tests — `messages_test.go` (`--role thinking`, opt-in default, `--skill <name>` now returns the skill-attributed session), `session_test.go` (`--include-thinking` renders `<thinking index=N>…</thinking>`; default omits; `message get` returns full thinking content). Verify: `go test ./...` in auto-search passes.
-- [ ] Step 3.4: Run `make check` (fmt+vet+lint) + `go build ./...` + `go test ./...` across both modules. Verify: all exit 0.
-- [ ] Step 3.5: Commit: `feat(016): phase 3 - autosearch thinking surface (--role thinking, --include-thinking)`
+- [x] Step 3.2: `cli/search.go` — add `--include-thinking` bool, thread to opts; update `--role` help to include `thinking`. `cli/session.go` — add `--include-thinking` to `session get`, pass to `SessionMessages` (optional `role!='thinking'`). Verify: `autosearch search --role thinking` and `autosearch session get <id> --include-thinking` run; default `session get` omits `<thinking>`.
+- [x] Step 3.3: Integration tests — `messages_test.go` (`--role thinking`, opt-in default, `--skill <name>` now returns the skill-attributed session), `session_test.go` (`--include-thinking` renders `<thinking index=N>…</thinking>`; default omits; `message get` returns full thinking content). Verify: `go test ./...` in auto-search passes.
+- [x] Step 3.4: Run `make check` (fmt+vet+lint) + `go build ./...` + `go test ./...` across both modules. Verify: all exit 0.
+- [x] Step 3.5: Commit: `feat(016): phase 3 - autosearch thinking surface (--role thinking, --include-thinking)`
 
 ### Phase 4: docs + rollout (rollout = no-commit human acceptance)
 - [ ] Step 4.1: `auto-etl/docs/claude-message-types-and-etl-mapping.md` — drop the disproven "Claude Code redacts it" claim; mark thinking actually preserved; add rows for `thinking_signature`,`stop_reason`,`permission_mode`,`version`,`is_error`,cache-split,`skill_name`. Verify: doc no longer lists these as "lost".
