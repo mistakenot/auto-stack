@@ -45,6 +45,13 @@ type ParsedLine struct {
 	// `interrupted` flag (stuck / cancelled). Present only on tool_result
 	// lines; absent on all others.
 	ToolUseResult ParsedToolUseResult
+	// Version is the Claude Code CLI version string (e.g. "2.1.168").
+	Version string
+	// PermissionMode is the permission mode for the session (e.g. "bypassPermissions").
+	PermissionMode string
+	// AttributionSkill is the skill name attributed to this assistant line
+	// (e.g. "review-task").
+	AttributionSkill string
 }
 
 // ParsedToolUseResult holds the fields we extract from the raw
@@ -70,10 +77,11 @@ type ParsedToolUseResult struct {
 
 // ParsedMessage holds the message payload from a JSONL line.
 type ParsedMessage struct {
-	Role    string
-	Content json.RawMessage
-	Model   string
-	Usage   ParsedUsage
+	Role       string
+	Content    json.RawMessage
+	Model      string
+	Usage      ParsedUsage
+	StopReason string
 }
 
 // ParsedUsage holds token usage information.
@@ -94,6 +102,9 @@ type ContentBlock struct {
 	Content   json.RawMessage `json:"content"`
 	ToolUseID string          `json:"tool_use_id"` // tool_result reference
 	IsError   bool            `json:"is_error"`    // tool_result error flag
+	Thinking  string          `json:"thinking"`    // reasoning text from thinking blocks
+	Signature string          `json:"signature"`   // opaque signature on thinking blocks
+	Data      string          `json:"data"`        // encrypted payload on redacted_thinking blocks
 }
 
 // rawLine is the JSON structure of a single JSONL line from Claude session files.
@@ -112,6 +123,15 @@ type rawLine struct {
 	// It can be either an object (most tools) or a bare string (Read-style
 	// tools), hence RawMessage + post-decode handling.
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
+	// Version is the Claude Code CLI version string (e.g. "2.1.168").
+	// Top-level field on message lines.
+	Version string `json:"version"`
+	// PermissionMode is the permission mode for the session (e.g. "bypassPermissions").
+	// Top-level field on message lines and standalone permission-mode lines.
+	PermissionMode string `json:"permissionMode"`
+	// AttributionSkill is the skill name attributed to this assistant line
+	// (e.g. "review-task"). Top-level field on assistant lines.
+	AttributionSkill string `json:"attributionSkill"`
 }
 
 // rawToolUseResult is the object-shaped subset of `toolUseResult` we
@@ -124,10 +144,11 @@ type rawToolUseResult struct {
 }
 
 type rawMessage struct {
-	Role    string          `json:"role"`
-	Content json.RawMessage `json:"content"`
-	Model   string          `json:"model"`
-	Usage   ParsedUsage     `json:"usage"`
+	Role       string          `json:"role"`
+	Content    json.RawMessage `json:"content"`
+	Model      string          `json:"model"`
+	Usage      ParsedUsage     `json:"usage"`
+	StopReason string          `json:"stop_reason"`
 }
 
 // ProgressFunc is called during processing with (current, total) counts.
@@ -234,11 +255,15 @@ func ParseSession(path string) (*ParsedSession, error) {
 			DurationMs:       line.DurationMs,
 			ToolUseResult:    parseToolUseResult(line.ToolUseResult),
 			ToolUseResultRaw: line.ToolUseResult,
+			Version:          line.Version,
+			PermissionMode:   line.PermissionMode,
+			AttributionSkill: line.AttributionSkill,
 			Message: ParsedMessage{
-				Role:    line.Message.Role,
-				Content: line.Message.Content,
-				Model:   line.Message.Model,
-				Usage:   line.Message.Usage,
+				Role:       line.Message.Role,
+				Content:    line.Message.Content,
+				Model:      line.Message.Model,
+				Usage:      line.Message.Usage,
+				StopReason: line.Message.StopReason,
 			},
 		}
 

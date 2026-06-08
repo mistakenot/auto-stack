@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -233,5 +235,101 @@ func TestParseSession_TurnDurationCaptured(t *testing.T) {
 	}
 	if got[1].DurationMs != 58601 {
 		t.Errorf("got[1].DurationMs = %d, want 58601", got[1].DurationMs)
+	}
+}
+
+// writeJSONL writes a temp JSONL file from raw JSON lines and returns the path.
+func writeJSONL(t *testing.T, lines ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	var data []byte
+	for _, l := range lines {
+		data = append(data, []byte(l+"\n")...)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	return path
+}
+
+func TestParseContentBlocks_ThinkingBlock(t *testing.T) {
+	raw := json.RawMessage(`[
+		{"type":"thinking","thinking":"Let me reason about this...","signature":"sig123"},
+		{"type":"text","text":"Here is my answer."}
+	]`)
+	text, blocks := ParseContentBlocks(raw)
+	if text != "" {
+		t.Errorf("expected empty text for array content, got %q", text)
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(blocks))
+	}
+	if blocks[0].Type != "thinking" {
+		t.Errorf("block[0].Type = %q, want thinking", blocks[0].Type)
+	}
+	if blocks[0].Thinking != "Let me reason about this..." {
+		t.Errorf("block[0].Thinking = %q", blocks[0].Thinking)
+	}
+	if blocks[0].Signature != "sig123" {
+		t.Errorf("block[0].Signature = %q, want sig123", blocks[0].Signature)
+	}
+	if blocks[1].Type != "text" {
+		t.Errorf("block[1].Type = %q, want text", blocks[1].Type)
+	}
+}
+
+func TestParseContentBlocks_RedactedThinkingBlock(t *testing.T) {
+	raw := json.RawMessage(`[
+		{"type":"redacted_thinking","data":"encrypted-blob-data"}
+	]`)
+	_, blocks := ParseContentBlocks(raw)
+	if len(blocks) != 1 {
+		t.Fatalf("expected 1 block, got %d", len(blocks))
+	}
+	if blocks[0].Type != "redacted_thinking" {
+		t.Errorf("Type = %q, want redacted_thinking", blocks[0].Type)
+	}
+	if blocks[0].Data != "encrypted-blob-data" {
+		t.Errorf("Data = %q, want encrypted-blob-data", blocks[0].Data)
+	}
+}
+
+func TestParseSession_StopReason(t *testing.T) {
+	path := writeJSONL(t,
+		`{"type":"assistant","sessionId":"s1","timestamp":"2026-01-01T00:00:00Z","message":{"role":"assistant","content":"hello","stop_reason":"end_turn","model":"claude-opus-4-6","usage":{"input_tokens":10,"output_tokens":5}}}`,
+	)
+	s, err := ParseSession(path)
+	if err != nil {
+		t.Fatalf("ParseSession: %v", err)
+	}
+	if len(s.Lines) != 1 {
+		t.Fatalf("Lines = %d, want 1", len(s.Lines))
+	}
+	if s.Lines[0].Message.StopReason != "end_turn" {
+		t.Errorf("StopReason = %q, want end_turn", s.Lines[0].Message.StopReason)
+	}
+}
+
+func TestParseSession_VersionPermissionModeAttributionSkill(t *testing.T) {
+	path := writeJSONL(t,
+		`{"type":"assistant","sessionId":"s1","timestamp":"2026-01-01T00:00:00Z","version":"2.1.168","permissionMode":"bypassPermissions","attributionSkill":"review-task","message":{"role":"assistant","content":"hello","model":"claude-opus-4-6","usage":{"input_tokens":10,"output_tokens":5}}}`,
+	)
+	s, err := ParseSession(path)
+	if err != nil {
+		t.Fatalf("ParseSession: %v", err)
+	}
+	if len(s.Lines) != 1 {
+		t.Fatalf("Lines = %d, want 1", len(s.Lines))
+	}
+	line := s.Lines[0]
+	if line.Version != "2.1.168" {
+		t.Errorf("Version = %q, want 2.1.168", line.Version)
+	}
+	if line.PermissionMode != "bypassPermissions" {
+		t.Errorf("PermissionMode = %q, want bypassPermissions", line.PermissionMode)
+	}
+	if line.AttributionSkill != "review-task" {
+		t.Errorf("AttributionSkill = %q, want review-task", line.AttributionSkill)
 	}
 }

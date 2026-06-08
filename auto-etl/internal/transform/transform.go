@@ -171,8 +171,20 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 	// turn work that belongs to a subagent. Safe today because Claude Code
 	// emits subagents to separate files, but this guards against future
 	// inlining of subagent turns into the parent transcript.
+	// Session-level accumulators: permission_mode, version, and turn_duration.
+	// permission_mode and version are environment-level and identical across a
+	// session's lines — not gated on IsSubagent (unlike turn_duration). The
+	// scan loop decodes every line into rawLine, so this captures the value
+	// from both message lines and standalone permission-mode lines. Last-seen wins.
+	var sessionPermissionMode, sessionVersion string
 	for i := range raw.Lines {
 		line := &raw.Lines[i]
+		if line.PermissionMode != "" {
+			sessionPermissionMode = line.PermissionMode
+		}
+		if line.Version != "" {
+			sessionVersion = line.Version
+		}
 		if line.IsSubagent {
 			continue
 		}
@@ -210,7 +222,15 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 			msg.ContentTruncated = MidTruncate(text, cfg.TruncateMaxChars)
 			msg.InputTokens = int32(u.InputTokens)
 			msg.CacheInputTokens = int32(u.CacheCreationInputTokens + u.CacheReadInputTokens)
+			msg.CacheCreationInputTokens = int64(u.CacheCreationInputTokens)
+			msg.CacheReadInputTokens = int64(u.CacheReadInputTokens)
 			msg.OutputTokens = int32(u.OutputTokens)
+			if line.Type == "assistant" {
+				msg.StopReason = line.Message.StopReason
+				if line.AttributionSkill != "" && msg.SkillName == "" {
+					msg.SkillName = line.AttributionSkill
+				}
+			}
 			totalBytes += int64(len(text))
 			if line.Type == "user" {
 				totalInputBytes += int64(len(text))
@@ -228,7 +248,12 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 			msg := makeBaseMessage(raw, line, msgIndex, tsMillis, cfg.HostID, gitRemote)
 			msg.InputTokens = int32(u.InputTokens)
 			msg.CacheInputTokens = int32(u.CacheCreationInputTokens + u.CacheReadInputTokens)
+			msg.CacheCreationInputTokens = int64(u.CacheCreationInputTokens)
+			msg.CacheReadInputTokens = int64(u.CacheReadInputTokens)
 			msg.OutputTokens = int32(u.OutputTokens)
+			if line.Type == "assistant" {
+				msg.StopReason = line.Message.StopReason
+			}
 
 			switch block.Type {
 			case "text":
@@ -303,6 +328,7 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 				msg.ToolFileStartLine = meta.FileStartLine
 				msg.ToolFileNumLines = meta.FileNumLines
 				msg.SkillName = meta.SkillName
+				msg.IsError = block.IsError
 				if len(line.ToolUseResultRaw) > 0 {
 					msg.ToolUseResultJSON = string(line.ToolUseResultRaw)
 				}
@@ -343,8 +369,33 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 					}
 				}
 
+			case "thinking":
+				msg.Role = string(model.RoleThinking)
+				msg.Content = block.Thinking
+				msg.ContentTruncated = MidTruncate(block.Thinking, cfg.TruncateMaxChars)
+				msg.ThinkingSignature = block.Signature
+				totalBytes += int64(len(block.Thinking))
+				totalOutputBytes += int64(len(block.Thinking))
+
+			case "redacted_thinking":
+				msg.Role = string(model.RoleThinking)
+				msg.Content = "[redacted]"
+				msg.ContentTruncated = "[redacted]"
+				msg.ThinkingSignature = block.Data
+				totalBytes += int64(len("[redacted]"))
+				totalOutputBytes += int64(len("[redacted]"))
+
 			default:
 				continue
+			}
+
+			// Skill name fallback: when the assistant line carries
+			// attributionSkill and no Skill-tool invocation has already
+			// set skill_name, populate it from the line-level attribution.
+			// Not gated on IsSubagent — subagent turns are genuinely
+			// driven by the attributing skill.
+			if line.Type == "assistant" && line.AttributionSkill != "" && msg.SkillName == "" {
+				msg.SkillName = line.AttributionSkill
 			}
 
 			messages = append(messages, msg)
@@ -393,6 +444,8 @@ func transformSession(raw *parser.ParsedSession, cfg Config) ([]model.AgentMessa
 		GitRemote:                gitRemote,
 		Model:                    raw.Model,
 		SourcePath:               raw.SourcePath,
+		PermissionMode:           sessionPermissionMode,
+		Version:                  sessionVersion,
 		FirstMessageAt:           firstAt,
 		LastMessageAt:            lastAt,
 		TotalTurnDurationMs:      totalTurnDurationMs,
@@ -486,11 +539,18 @@ func unmarshalToolResultContent(raw json.RawMessage) string {
 }
 
 // buildTranscripts concatenates message contents into session-level transcripts.
+// Thinking rows (role="thinking") are excluded — thinking content remains
+// canonical in the messages dataset but is not included in the derived
+// transcript view.
 func buildTranscripts(messages []model.AgentMessage, maxChars int) (full, truncated string) {
 	var fullParts []string
 	var truncParts []string
 
 	for i := range messages {
+		// Exclude thinking from transcripts.
+		if messages[i].Role == string(model.RoleThinking) {
+			continue
+		}
 		prefix := rolePrefix(messages[i].Role, messages[i].ToolName)
 
 		if messages[i].Content != "" {
