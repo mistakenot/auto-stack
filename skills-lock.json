@@ -69,7 +69,7 @@
     "new-solution": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "aa919d0b85518ad6111b31c0b8368e85df202e1c34131857beafc65539438d9a"
+      "computedHash": "acb5193c29b5429fb1a11ee3b3996e73b4efeb4e38b4b3a7632c1fe640cad0c8"
     },
     "new-task": {
       "source": "mistakenot/skills",
@@ -100,6 +100,11 @@
       "source": "/home/vscode/src/auto-stack/skills",
       "sourceType": "local",
       "computedHash": "53bb37624988b417ea2ec2f3c6daa8ba47821cec16d9ac3c21100ec8a87b58f0"
+    },
+    "request-claude-review": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "85867bce7ea5dba2e7155a4f8c20714c9a4abd54a22bf28b48dd78e63941374b"
     },
     "request-codex-review": {
       "source": "mistakenot/skills",
