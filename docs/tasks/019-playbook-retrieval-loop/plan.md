@@ -173,7 +173,7 @@ rule wording), requirements AC-5 (deltas array, one bump per invocation), and th
 
 ### Phase 3: `internal/loop` + loop CLI + legacy deletion
 
-- [ ] Step 3.1: Create `loop/service.go`: `Retrieve` (match → mint `rt-` ids → one `retrieval` event
+- [x] Step 3.1: Create `loop/service.go`: `Retrieve` (match → mint `rt-` ids → one `retrieval` event
       → predicate-only JSON), `Select` (resolve rt-ids from retrieval events; `r-`/`fb-` prefixed
       arg → targeted wrong-id-type error; mint `fb-` ids; one ordered `selection` event → content
       JSON), `Stats` (fold counts; all rules listed, `selection_rate` = 0 when surfaced == 0 — never
@@ -181,7 +181,7 @@ rule wording), requirements AC-5 (deltas array, one bump per invocation), and th
       **Verify**: `go build ./...`; unit tests — Select preserves input order; unknown rt-id and
       r- prefixed id produce distinct remediation messages; stats output containing a never-surfaced
       rule marshals to valid JSON with `selection_rate: 0`.
-- [ ] Step 3.2: Create `loop/feedback.go` + `SubmitFeedback`/`GateCheck`: payload schema, validation
+- [x] Step 3.2: Create `loop/feedback.go` + `SubmitFeedback`/`GateCheck`: payload schema, validation
       (outcome `success|partial|fail|abandoned`; rankings exactly cover outstanding fb-ids, ranks a
       permutation of 1..N, reasons non-empty; gap ⇒ report+moment non-empty); `--session` override;
       gate scope = session else host+worktree shards within `--since` (default 24h); no-rules
@@ -190,10 +190,10 @@ rule wording), requirements AC-5 (deltas array, one bump per invocation), and th
       ungrounded gap, bad outcome ⇒ structured errors; complete payload ⇒ event appended exactly
       once); gate scenario test: orphaned fb-ids older than window don't block; `--session` closes
       them with outcome `abandoned`.
-- [ ] Step 3.3: CLI: add `cli/retrieve.go`, `cli/select.go`, rewrite `cli/feedback.go` (JSON arg or
+- [x] Step 3.3: CLI: add `cli/retrieve.go`, `cli/select.go`, rewrite `cli/feedback.go` (JSON arg or
       `-` stdin), add `cli/gate.go`, `cli/stats.go`. Register in `root.go`.
       **Verify**: `go build ./...`.
-- [ ] Step 3.4: Delete legacy: `internal/feedback/` package, old annotation logic from CLI,
+- [x] Step 3.4: Delete legacy: `internal/feedback/` package, old annotation logic from CLI,
       `FeedbackPath()` from `store/paths.go`, `cmd/autoreflect/e2e_feedback_test.go` — **first
       relocating `TestMain` + `var testBinaryPath` (e2e_feedback_test.go:12-31) into
       `e2e_helpers_test.go`** so the `cmd/autoreflect` test package keeps compiling between Phase 3
@@ -217,18 +217,18 @@ of the same change, and its verify explicitly includes `go test ./cmd/...` compi
 builds e2e_loop_test.go on the already-working harness.
 -->
 
-- [ ] Step 3.5: Rewrite `cli/quickstart.go`: init → rule create → retrieve → select → feedback →
+- [x] Step 3.5: Rewrite `cli/quickstart.go`: init → rule create → retrieve → select → feedback →
       gate check, with explicit jq id-capture lines (e.g. `RT=$(auto reflect retrieve "..." | jq -r
       '.[0].retrieval_id')`).
       **Verify**: every command named in quickstart exists in `auto reflect --help` output (manual
       cross-check in test or by eye).
-- [ ] Step 3.6: Integration tests: full loop happy path (retrieve → select → incomplete feedback
+- [x] Step 3.6: Integration tests: full loop happy path (retrieve → select → incomplete feedback
       rejected → complete feedback accepted → gate closed); retrieval/selection/feedback events on
       disk with correct linkage rt→fb (AC-1, AC-2, AC-3, AC-3b); `stats` after two simulated
       sessions returns expected counts (AC-6).
       **Verify**: `go test ./internal/cli/...` passes.
-- [ ] Step 3.7: `gofmt -l .` empty; `go vet ./...` clean.
-- [ ] Step 3.8: Commit: `feat(019): phase 3 - retrieval loop, feedback gate, legacy removal`
+- [x] Step 3.7: `gofmt -l .` empty; `go vet ./...` clean.
+- [x] Step 3.8: Commit: `feat(019): phase 3 - retrieval loop, feedback gate, legacy removal`
 
 ### Phase 4: E2E, docs, quality gate
 
