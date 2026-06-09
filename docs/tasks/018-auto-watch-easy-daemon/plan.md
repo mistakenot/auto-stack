@@ -230,24 +230,24 @@ assertion to Step 4.3's verify (stub systemctl returning failure on restart → 
 - [x] Step 5.5: Commit: `docs(018): phase 5 - user-first daemon docs (doc + README + quickstart)`
 
 ### Phase 6: Verify end-to-end  *(sequential barrier; depends on 2,3,4,5)*
-- [ ] Step 6.1: `make check` (fmt-check + vet + lint + stale-ref guard) green.
-- [ ] Step 6.2: `make build` + `make test` green (incl. auto-watch daemoninstall + doctor tests).
-- [ ] Step 6.3: `make vulncheck` green (note: toolchain ≥ go1.26.4 per task 017).
-- [ ] Step 6.4: Manual smoke: `auto watch daemon install --print-unit` (user) shows
+- [x] Step 6.1: `make check` (fmt-check + vet + lint + stale-ref guard) green.
+- [x] Step 6.2: `make build` + `make test` green (incl. auto-watch daemoninstall + doctor tests).
+- [x] Step 6.3: `make vulncheck` green (note: toolchain ≥ go1.26.4 per task 017).
+- [x] Step 6.4: Manual smoke: `auto watch daemon install --print-unit` (user) shows
       `~/.config/systemd/user` + `WantedBy=default.target` + `ExecStart=…/auto watch start`;
       `--system --print-unit` shows `/etc/systemd/system` + `multi-user.target`; `auto watch doctor`
       runs and flags a crafted stale unit.
-- [ ] Step 6.5: Commit: `feat(018): phase 6 - full verification green` (or fold fixes into prior phases).
+- [x] Step 6.5: Commit: `feat(018): phase 6 - full verification green` (or fold fixes into prior phases).
 
 ## Success Criteria
-- [ ] `auto watch daemon install` (no flags), as a normal user, creates+enables+starts a `systemctl --user` unit, no sudo (AC-1)
-- [ ] `auto update` (→ install.sh) restarts an active user daemon with no sudo; system mode prints a hint (AC-2)
-- [ ] `auto watch daemon install --system` reproduces the system unit; `sudo "$(command -v auto)" …` documented + remediation emitted (AC-3)
-- [ ] re-running install is idempotent; `auto watch doctor` flags a missing/old `ExecStart` with remediation (AC-4)
-- [ ] documented one-command migration regenerates `…/autowatch start` → `…/auto watch start`, identity retained (AC-5)
-- [ ] user mode attempts `loginctl enable-linger` and reports clearly if it can't be set (AC-6)
-- [ ] README + daemon doc + quickstart show the no-sudo happy path and `--system` path; guard green (AC-7)
-- [ ] `make check build test vulncheck` green
+- [x] `auto watch daemon install` (no flags), as a normal user, creates+enables+starts a `systemctl --user` unit, no sudo (AC-1)
+- [x] `auto update` (→ install.sh) restarts an active user daemon with no sudo; system mode prints a hint (AC-2)
+- [x] `auto watch daemon install --system` reproduces the system unit; `sudo "$(command -v auto)" …` documented + remediation emitted (AC-3)
+- [x] re-running install is idempotent; `auto watch doctor` flags a missing/old `ExecStart` with remediation (AC-4)
+- [x] documented one-command migration regenerates `…/autowatch start` → `…/auto watch start`, identity retained (AC-5)
+- [x] user mode attempts `loginctl enable-linger` and reports clearly if it can't be set (AC-6)
+- [x] README + daemon doc + quickstart show the no-sudo happy path and `--system` path; guard green (AC-7)
+- [x] `make check build test vulncheck` green
 
 ## Open Questions
 - (none — all resolved in requirements; design settled in solution.md)
