@@ -25,6 +25,16 @@ func (e *ExitError) Error() string {
 	return e.Err.Error()
 }
 
+// ExitCode returns the process exit code this error represents. It lets the
+// unified `auto` dispatcher propagate non-1 codes (e.g. `gate check`'s 2)
+// instead of collapsing every failure to 1.
+func (e *ExitError) ExitCode() int {
+	if e == nil {
+		return 0
+	}
+	return e.Code
+}
+
 func Execute(ctx context.Context, stdout, stderr io.Writer) int {
 	application := app.New(stdout, stderr)
 	rootCmd := NewRootCmd(application)

@@ -3,9 +3,45 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
+
+// fakeExitErr implements the exitCoder interface to exercise exitCodeFor without
+// pulling an internal cli.ExitError (subcommand error types are internal).
+type fakeExitErr struct {
+	code int
+	msg  string
+}
+
+func (e *fakeExitErr) Error() string { return e.msg }
+func (e *fakeExitErr) ExitCode() int { return e.code }
+
+// TestExitCodeForPropagatesSubcommandCode asserts the dispatcher honors a
+// subcommand's declared exit code (e.g. `auto reflect gate check`'s 2) instead
+// of collapsing every failure to 1, and falls back to 1 otherwise.
+func TestExitCodeForPropagatesSubcommandCode(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"plain error falls back to 1", errors.New("boom"), 1},
+		{"exit code 2 propagates", &fakeExitErr{code: 2, msg: ""}, 2},
+		{"exit code 1 stays 1", &fakeExitErr{code: 1, msg: "bad input"}, 1},
+		{"zero code falls back to 1", &fakeExitErr{code: 0, msg: ""}, 1},
+		{"wrapped exit coder propagates", fmt.Errorf("context: %w", &fakeExitErr{code: 3, msg: "x"}), 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := exitCodeFor(tc.err); got != tc.want {
+				t.Errorf("exitCodeFor(%v) = %d, want %d", tc.err, got, tc.want)
+			}
+		})
+	}
+}
 
 // runAuto builds a fresh root `auto` command wired to a capture buffer and runs
 // it with the given args. Content assertions are reliable only for --help/usage

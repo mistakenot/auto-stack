@@ -593,3 +593,101 @@ func assertFileExists(t *testing.T, path string) {
 		t.Fatalf("expected %s to exist: %v", path, err)
 	}
 }
+
+func assertNotExists(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err == nil {
+		t.Fatalf("expected %s NOT to exist", path)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+}
+
+// TestInitProjectScopesToRepoLocal asserts `init --project` creates only the
+// repository-local state (events dir + playbook) and skips global settings.
+func TestInitProjectScopesToRepoLocal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := initGitRepo(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "seed\n")
+	gitAddCommit(t, repo, "seed")
+
+	stdout, stderr, code := runCLIAt(t, repo, "init", "--project")
+	if code != 0 {
+		t.Fatalf("init --project failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	// Repo-local state created.
+	assertFileExists(t, filepath.Join(repo, ".auto", "reflect", "playbook.json"))
+	assertFileExists(t, filepath.Join(repo, ".auto", "reflect", "events"))
+
+	// Global settings NOT created by --project.
+	assertNotExists(t, filepath.Join(home, ".auto", "settings.json"))
+	assertNotExists(t, filepath.Join(home, ".auto", "reflect", "settings.json"))
+}
+
+// TestInitProjectOutsideRepoFails asserts `init --project` errors when not in a
+// git repo (project-local setup has no repo to target).
+func TestInitProjectOutsideRepoFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cwd := t.TempDir() // not a git repo
+
+	stdout, stderr, code := runCLIAt(t, cwd, "init", "--project")
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for init --project outside a git repo\nstdout:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "git repo") {
+		t.Fatalf("expected remediation mentioning git repo, got:\n%s", stderr)
+	}
+}
+
+// TestFeedbackUngroundedGapRemediation asserts an ungrounded gap (gap present but
+// gap.moment missing) gets the gap-specific remediation, not the ranking hint.
+func TestFeedbackUngroundedGapRemediation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AUTO_SESSION_ID", "gap-remediation")
+	repo := initGitRepo(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	gitAddCommit(t, repo, "seed")
+
+	createTestRuleWith(t, repo,
+		"--use-when", "writing go cli flags with cobra",
+		"--content", "Use cobra StringSliceVar for repeatable flags",
+		"--causal-note", "manual parsing dropped values",
+		"--domain", "cli", "--type", "soft")
+
+	stdout, _, code := runCLIAt(t, repo, "retrieve", "writing go cli flags", "--domain", "cli")
+	if code != 0 {
+		t.Fatalf("retrieve failed:\n%s", stdout)
+	}
+	var retrieved []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &retrieved); err != nil {
+		t.Fatalf("decode retrieve: %v\nraw:\n%s", err, stdout)
+	}
+	rtID, _ := retrieved[0]["retrieval_id"].(string)
+
+	stdout, _, code = runCLIAt(t, repo, "select", rtID)
+	if code != 0 {
+		t.Fatalf("select failed:\n%s", stdout)
+	}
+	var selected []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &selected); err != nil {
+		t.Fatalf("decode select: %v\nraw:\n%s", err, stdout)
+	}
+	fbID, _ := selected[0]["feedback_id"].(string)
+
+	// Complete rankings, but the gap is present with an empty moment (ungrounded).
+	payload := fmt.Sprintf(`{"outcome":"success","summary":"did it","rankings":[{"feedback_id":%q,"rank":1,"reason":"used it"}],"gap":{"report":"needed a rule about X","moment":""}}`, fbID)
+	stdout, stderr, code := runCLIAt(t, repo, "feedback", payload)
+	if code == 0 {
+		t.Fatalf("expected ungrounded gap to be rejected\nstdout:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "gap.moment") {
+		t.Fatalf("expected gap-specific remediation mentioning gap.moment, got:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "rank exactly the outstanding feedback ids") {
+		t.Fatalf("ranking remediation should NOT appear for a rankings-complete payload, got:\n%s", stderr)
+	}
+}

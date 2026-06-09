@@ -13,36 +13,28 @@ import (
 )
 
 func newInitCmd(application *app.App) *cobra.Command {
-	return &cobra.Command{
+	var projectOnly bool
+
+	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Initialize shared, reflect, and repository-local state",
-		Args:  cobra.NoArgs,
+		Short: "Initialize auto reflect state (global + repository-local; use --project for repo-local only)",
+		Long: "Initialize auto reflect state. By default this sets up global settings " +
+			"(shared + reflect) and, when run inside a git repo, the repository-local " +
+			"state (events dir + playbook). Pass --project to set up only the " +
+			"repository-local state, following the cross-tool `init`/`init --project` convention.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sharedPath, _, sharedCreated, err := config.EnsureSharedSettings()
-			if err != nil {
-				return &ExitError{Code: 1, Err: err}
-			}
-			reflectPath, _, reflectCreated, err := config.EnsureReflectSettings()
-			if err != nil {
-				return &ExitError{Code: 1, Err: err}
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(), "Shared settings: %s\n", sharedPath)
-			if sharedCreated {
-				fmt.Fprintln(cmd.OutOrStdout(), "Created shared settings.json.")
-			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "Shared settings.json already exists.")
-			}
-
-			fmt.Fprintf(cmd.OutOrStdout(), "Reflect settings: %s\n", reflectPath)
-			if reflectCreated {
-				fmt.Fprintln(cmd.OutOrStdout(), "Created reflect settings.json.")
-			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "Reflect settings.json already exists.")
+			if !projectOnly {
+				if err := initGlobalSettings(cmd); err != nil {
+					return err
+				}
 			}
 
 			repoInfo, err := gitutil.DetectRepo(application.CWD)
 			if err != nil {
+				if projectOnly {
+					return &ExitError{Code: 1, Err: fmt.Errorf("init --project requires being inside a git repo: %w", err)}
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), "Project setup skipped: current directory is not inside a git repo.")
 				return nil //nolint:nilerr // intentionally skip project setup outside git repositories
 			}
@@ -73,6 +65,37 @@ func newInitCmd(application *app.App) *cobra.Command {
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&projectOnly, "project", false, "set up only repository-local state (events dir + playbook), skipping global settings")
+	return cmd
+}
+
+// initGlobalSettings creates the shared and reflect global settings files and
+// reports their state. Used by plain `init` (not `init --project`).
+func initGlobalSettings(cmd *cobra.Command) error {
+	sharedPath, _, sharedCreated, err := config.EnsureSharedSettings()
+	if err != nil {
+		return &ExitError{Code: 1, Err: err}
+	}
+	reflectPath, _, reflectCreated, err := config.EnsureReflectSettings()
+	if err != nil {
+		return &ExitError{Code: 1, Err: err}
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Shared settings: %s\n", sharedPath)
+	if sharedCreated {
+		fmt.Fprintln(cmd.OutOrStdout(), "Created shared settings.json.")
+	} else {
+		fmt.Fprintln(cmd.OutOrStdout(), "Shared settings.json already exists.")
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Reflect settings: %s\n", reflectPath)
+	if reflectCreated {
+		fmt.Fprintln(cmd.OutOrStdout(), "Created reflect settings.json.")
+	} else {
+		fmt.Fprintln(cmd.OutOrStdout(), "Reflect settings.json already exists.")
+	}
+	return nil
 }
 
 func ensurePlaybook(playbookPath string) (bool, error) {

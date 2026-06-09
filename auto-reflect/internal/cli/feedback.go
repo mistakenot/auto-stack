@@ -48,7 +48,7 @@ func newFeedbackCmd(application *app.App) *cobra.Command {
 			}
 			if len(validationErrs) > 0 {
 				writeValidationErrors(cmd.ErrOrStderr(), validationErrs)
-				fmt.Fprintln(cmd.ErrOrStderr(), "remediation: rank exactly the outstanding feedback ids; run `auto reflect gate check` to list them")
+				writeFeedbackRemediation(cmd.ErrOrStderr(), validationErrs)
 				return &ExitError{Code: 1}
 			}
 
@@ -66,6 +66,40 @@ func newFeedbackCmd(application *app.App) *cobra.Command {
 	cmd.Flags().StringVar(&session, "session", "", "session id to scope feedback to (overrides env detection; closes another session's loop)")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
 	return cmd
+}
+
+// writeFeedbackRemediation prints remediation hints targeted to the specific
+// validation failures present, so an ungrounded gap doesn't get the (off-topic)
+// ranking hint and vice versa.
+func writeFeedbackRemediation(stderr io.Writer, errs []loop.ValidationError) {
+	var rankings, gap, outcome, summary bool
+	for _, e := range errs {
+		switch {
+		case strings.HasPrefix(e.Field, "rankings"):
+			rankings = true
+		case strings.HasPrefix(e.Field, "gap"):
+			gap = true
+		case e.Field == "outcome":
+			outcome = true
+		case e.Field == "summary":
+			summary = true
+		}
+	}
+	if rankings {
+		fmt.Fprintln(stderr, "remediation: rank exactly the outstanding feedback ids; run `auto reflect gate check` to list them")
+	}
+	if gap {
+		fmt.Fprintln(stderr, "remediation: ground the gap — set gap.report and gap.moment (what you were doing when you needed it), or omit gap entirely")
+	}
+	if outcome {
+		fmt.Fprintln(stderr, "remediation: set outcome to one of success, partial, fail, abandoned")
+	}
+	if summary {
+		fmt.Fprintln(stderr, "remediation: provide a non-empty summary of the task outcome")
+	}
+	if !rankings && !gap && !outcome && !summary {
+		fmt.Fprintln(stderr, "remediation: run `auto reflect gate check` to list outstanding feedback ids")
+	}
 }
 
 // readFeedbackInput returns the raw feedback JSON, reading from stdin when the

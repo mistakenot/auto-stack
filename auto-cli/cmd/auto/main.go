@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -74,10 +75,29 @@ func newUpdateCmd() *cobra.Command {
 	}
 }
 
+// exitCoder is implemented by subcommand errors that carry a specific process
+// exit code (e.g. auto-reflect's *cli.ExitError). The dispatcher honors it so a
+// subcommand's real exit code survives instead of collapsing to 1.
+type exitCoder interface{ ExitCode() int }
+
+// exitCodeFor returns the exit code an error should map to: a subcommand's
+// declared non-zero code when available, otherwise 1.
+func exitCodeFor(err error) int {
+	var ec exitCoder
+	if errors.As(err, &ec) {
+		if code := ec.ExitCode(); code != 0 {
+			return code
+		}
+	}
+	return 1
+}
+
 func main() {
 	root := newRootCmd(os.Stdout, os.Stderr)
 	if err := root.ExecuteContext(context.Background()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		if msg := err.Error(); msg != "" {
+			fmt.Fprintln(os.Stderr, msg)
+		}
+		os.Exit(exitCodeFor(err))
 	}
 }

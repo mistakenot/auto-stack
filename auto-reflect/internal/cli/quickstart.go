@@ -16,7 +16,8 @@ feedback is submitted, so signal is never silently dropped.
 
 ` + "```" + `bash
 cd /path/to/your/repo
-auto reflect init
+auto reflect init            # global settings + this repo's local state
+# auto reflect init --project  # set up only this repo's local state (events dir + playbook)
 ` + "```" + `
 
 ## Author rules (event-sourced)
