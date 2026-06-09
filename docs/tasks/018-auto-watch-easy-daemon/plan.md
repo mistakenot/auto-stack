@@ -150,14 +150,14 @@ row already asserts the enable/start systemctl calls, so coverage is in place.
 - [x] Step 2.5: Commit: `feat(018): phase 2 - daemon install --system flag + scope-aware hints`
 
 ### Phase 3: Doctor — dangling ExecStart check  *(depends on Phase 1)*
-- [ ] Step 3.1: `doctor.go` — add `checkDaemonUnit`: locate the unit (user dir, then system), and if
+- [x] Step 3.1: `doctor.go` — add `checkDaemonUnit`: locate the unit (user dir, then system), and if
       present parse `ExecStart`, resolve the binary path, and verify it exists + is executable.
-- [ ] Step 3.2: Report a failing check with remediation `auto watch daemon install` when the binary is
+- [x] Step 3.2: Report a failing check with remediation `auto watch daemon install` when the binary is
       missing or the ExecStart still names the old `autowatch` binary; report `Status: "ok"` with an
       explanatory `Message` (e.g. "no daemon unit installed") when no unit is present, and `"ok"` when
       the unit is valid. Reuse daemoninstall unit-path/scope helpers from Phase 1. (Two-state
       `ok`/`fail` only — no new `"skip"` status.)
-- [ ] Step 3.3: Add `doctor` tests covering: missing-binary ExecStart → `fail` + remediation; valid
+- [x] Step 3.3: Add `doctor` tests covering: missing-binary ExecStart → `fail` + remediation; valid
       unit → `ok`; no unit installed → `ok` with the explanatory message.
 
 <!-- RESOLVED(P3): No "skip" status exists — use "ok" for the no-unit case
@@ -171,9 +171,9 @@ AUTHOR: Updated Steps 3.2/3.3 to use `Status: "ok"` + explanatory Message for th
 doctor checks.
 -->
 
-- [ ] Step 3.4: Verify: `cd auto-watch && go build ./... && go test ./...` green; `auto watch doctor`
+- [x] Step 3.4: Verify: `cd auto-watch && go build ./... && go test ./...` green; `auto watch doctor`
       runs and includes the new check.
-- [ ] Step 3.5: Commit: `feat(018): phase 3 - doctor detects dangling daemon ExecStart`
+- [x] Step 3.5: Commit: `feat(018): phase 3 - doctor detects dangling daemon ExecStart`
 
 ### Phase 4: install.sh restart hook + system reachability  *(independent; depends only on design)*
 - [ ] Step 4.1: `install.sh` — after the binary is replaced, if `systemctl` exists and
