@@ -315,6 +315,13 @@ Optional flags:
 - `--dry-run`
 - `--print-unit`
 
+> **`--user` / `--home` / `--working-dir` / `--path-env` are `--system`-scope knobs.** In the
+> default user scope these are derived from the invoking user, so you don't normally pass them.
+> In particular, overriding `--home` under user scope writes the unit to
+> `<custom-home>/.config/systemd/user/…`, but `systemctl --user` only reads `$HOME/.config/systemd/user`,
+> so the subsequent `enable`/`start` will fail. Use these overrides with `--system` (where you're
+> targeting a different runtime user), not with the no-sudo user default.
+
 ### Expected behavior
 
 - **default behavior installs the unit and enables + starts it**, then prints what changed —
