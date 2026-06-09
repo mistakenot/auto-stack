@@ -222,7 +222,7 @@ func checkDaemonUnitAt(
 // (the first token) from a systemd unit file. Empty strings indicate no
 // ExecStart line or no binary token.
 func parseExecStart(content string) (execStart, binPath string) {
-	for _, rawLine := range strings.Split(content, "\n") {
+	for rawLine := range strings.SplitSeq(content, "\n") {
 		line := strings.TrimSpace(rawLine)
 		if !strings.HasPrefix(line, "ExecStart=") {
 			continue
