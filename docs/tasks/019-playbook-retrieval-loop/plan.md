@@ -73,16 +73,16 @@ Strictly serial — each phase rewrites code the next compiles against, and prio
 
 ### Phase 1: `internal/events` — canonical store
 
-- [ ] Step 1.1: Create `events/model.go`: envelope struct, payload types (`rule_created`,
+- [x] Step 1.1: Create `events/model.go`: envelope struct, payload types (`rule_created`,
       `rule_edited`, `retrieval`, `selection`, `feedback`), `schema_version` const, event
       validation returning `[]config.ValidationError`.
       **Verify**: `cd auto-reflect && go build ./...`
-- [ ] Step 1.2: Create `events/shard.go`: shard filename from host (`auto-shared/config.EnsureHost()`),
+- [x] Step 1.2: Create `events/shard.go`: shard filename from host (`auto-shared/config.EnsureHost()`),
       UTC date, and wt8 = first 8 hex of SHA-256 of the worktree root (from the lenient repo-detect
       added in Step 1.3 — root resolves even on an unborn HEAD).
       **Verify**: unit test — two distinct root paths on same host+day yield distinct filenames; same
       path is stable across calls.
-- [ ] Step 1.3: Create `events/log.go`: `AppendEvent` opens shard `O_RDWR|O_CREATE`, takes
+- [x] Step 1.3: Create `events/log.go`: `AppendEvent` opens shard `O_RDWR|O_CREATE`, takes
       `flock(LOCK_EX)` (pattern from `store/jsonl.go:15-51`), reads last line → max `seq`, appends
       event with `seq+1`, syncs. Populates ts (RFC3339), host, session/agent (Step 1.4), sanitized
       git provenance via a new lenient detect added to `internal/gitutil` (root from `git rev-parse
@@ -93,14 +93,14 @@ Strictly serial — each phase rewrites code the next compiles against, and prio
       to one shard produce no gaps/duplicates; `ReadAll` order is deterministic across two runs;
       a remote URL with embedded token is stored credential-free; an append in a `git init`-only repo
       (no commits) succeeds with empty git provenance and a correctly-named shard.
-- [ ] Step 1.4: Create `events/session.go`: port `detectSessionID`/`detectAgent` from
+- [x] Step 1.4: Create `events/session.go`: port `detectSessionID`/`detectAgent` from
       `internal/feedback/service.go:258-276` (env order unchanged). Add `EventsDir()` to
       `store/paths.go` (keep `FeedbackPath` until Phase 3 so legacy code still compiles).
       **Verify**: `go build ./...` && `go test ./internal/events/...` passes; `go test ./...` still
       passes (legacy untouched).
-- [ ] Step 1.5: Run `gofmt -l .` (expect empty) and `go vet ./...` in auto-reflect.
+- [x] Step 1.5: Run `gofmt -l .` (expect empty) and `go vet ./...` in auto-reflect.
       **Verify**: both clean.
-- [ ] Step 1.6: Commit: `feat(019): phase 1 - event-sourced store (internal/events)`
+- [x] Step 1.6: Commit: `feat(019): phase 1 - event-sourced store (internal/events)`
 
 ### Phase 2: `internal/rules` as projection + rule CLI cutover
 
