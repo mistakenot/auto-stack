@@ -36,7 +36,7 @@ PATTERN="\\b(${STEMS})[[:space:]]+(${SUBCMDS}|--[a-z])"
 #    doc-identity frontmatter title and the backtick-wrapped `autostack <verb>`
 #    prose/headings the design doc legitimately discusses (copy-pasteable bash
 #    invocations are NOT backtick-wrapped, so they are still caught)
-ALLOW='Read when:|\[autodoc\(|autowatch\.service|defaultServiceBase|defaultDescription|--service-name autowatch|Description=autowatch|the autowatch daemon|autowatch systemd|autowatch daemon is already|stale .*autowatch|removed .*autowatch|`autostack |title: "autostack'
+ALLOW='Read when:|\[autodoc\(|autowatch\.service|defaultServiceBase|defaultDescription|--service-name autowatch|Description=autowatch|the autowatch daemon|autowatch systemd|autowatch daemon is already|stale .*autowatch|removed .*autowatch|old `autowatch` binary|\.\.\./autowatch start|`autostack |title: "autostack'
 
 # Scan scope: tracked shipped surface only (built from `git ls-files`).
 list_files() {

@@ -69,12 +69,39 @@ if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
     echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
 fi
 
-# Hint to restart any services that were running during upgrade. The merged
-# `auto` binary backs the `auto watch` daemon (systemd unit autowatch.service).
+# Restart any services that were running during upgrade. The merged `auto`
+# binary backs the `auto watch` daemon (systemd unit autowatch.service).
+#
+# Prefer the no-sudo user daemon: if a `systemctl --user` unit is active we can
+# restart it ourselves (the default `auto watch daemon install` is user scope).
+# Otherwise fall back to a printed hint — a system unit needs sudo, which this
+# user-level installer does not have.
 if [ -n "$RESTART_SERVICES" ]; then
     echo ""
     echo "The auto binary was running during install (likely the 'auto watch' daemon)."
-    echo "Restart it to pick up the new binary:"
-    echo "  sudo systemctl restart autowatch.service   # if managed by systemd"
-    echo "  # or: auto watch daemon restart"
+    # is-active --quiet under `if` is safe: a non-zero exit just skips the branch.
+    if command -v systemctl >/dev/null 2>&1 \
+        && systemctl --user is-active --quiet autowatch.service; then
+        # The binary is already replaced, so the restart MUST NOT abort the
+        # script under `set -euo pipefail`. A failed restart degrades to the
+        # manual-restart hint instead of failing `auto update`.
+        if systemctl --user restart autowatch.service; then
+            echo "  restarted auto watch (user) daemon"
+        else
+            echo "Could not restart the user daemon — restart it yourself:"
+            echo "  systemctl --user restart autowatch.service"
+            echo "  # or: auto watch daemon restart"
+        fi
+    else
+        # No active user unit: it may be a system-mode unit (needs sudo, which
+        # this user-level installer lacks) or not installed yet.
+        echo "Restart it to pick up the new binary:"
+        echo "  auto watch daemon restart                  # user daemon (no sudo)"
+        echo "  sudo systemctl restart autowatch.service   # if managed by system systemd"
+        echo ""
+        echo "Tip: 'auto watch daemon install' runs without sudo by default (user unit)."
+        echo "     System mode needs a sudo-reachable binary, e.g.:"
+        echo "       sudo \"\$(command -v auto)\" watch daemon install --system"
+        echo "       # or symlink once: sudo ln -sf \"\$HOME/.local/bin/auto\" /usr/local/bin/auto"
+    fi
 fi

@@ -23,16 +23,32 @@ Restart=always
 RestartSec=10
 
 [Install]
-WantedBy=multi-user.target
+WantedBy={{.WantedBy}}
 `
 
-func renderUnit(spec *ServiceSpec) (string, error) {
+// wantedByForScope returns the [Install] WantedBy target for a scope: system
+// units attach to multi-user.target; user units to default.target.
+func wantedByForScope(scope Scope) string {
+	if normalizeScope(scope) == ScopeSystem {
+		return "multi-user.target"
+	}
+	return "default.target"
+}
+
+func renderUnit(spec *ServiceSpec, scope Scope) (string, error) {
 	tpl, err := template.New("unit").Parse(unitTemplate)
 	if err != nil {
 		return "", err
 	}
+	data := struct {
+		*ServiceSpec
+		WantedBy string
+	}{
+		ServiceSpec: spec,
+		WantedBy:    wantedByForScope(scope),
+	}
 	var buf bytes.Buffer
-	if err := tpl.Execute(&buf, spec); err != nil {
+	if err := tpl.Execute(&buf, data); err != nil {
 		return "", err
 	}
 	return strings.TrimRight(buf.String(), "\n") + "\n", nil

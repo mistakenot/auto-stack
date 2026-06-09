@@ -82,10 +82,35 @@ auto watch start
 
 # Run a single tick then exit (useful for testing)
 auto watch start --once
+` + "```" + `
 
-# Install as a systemd user service
+### Run in the background (no sudo)
+
+` + "```" + `bash
+# Install a per-user systemd unit — writes ~/.config/systemd/user/autowatch.service,
+# then enables + starts it. No sudo required.
 auto watch daemon install
+
+# auto update keeps the daemon current: it re-runs the installer and
+# restarts an active user daemon for you.
+auto update
+
+# Roll a new binary onto a running daemon manually
 auto watch daemon restart
+` + "```" + `
+
+To survive logout / start at boot, the user unit needs linger:
+` + "```" + `bash
+loginctl enable-linger "$USER"   # may need a one-time: sudo loginctl enable-linger "$USER"
+` + "```" + `
+` + "`" + `auto watch daemon install` + "`" + ` attempts this for you and warns if it could not be set.
+
+### System-wide (headless / multi-user) — opt in
+
+A user unit needs an active user D-Bus session (` + "`" + `XDG_RUNTIME_DIR` + "`" + `). For headless or
+multi-user hosts, install a system unit instead:
+` + "```" + `bash
+sudo "$(command -v auto)" watch daemon install --system
 ` + "```" + `
 
 ## Managing tasks and triggers

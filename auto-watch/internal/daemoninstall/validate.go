@@ -9,7 +9,7 @@ import (
 
 var serviceBasePattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
-func (m *Manager) validateInstallSpec(spec *ServiceSpec) error {
+func (m *Manager) validateInstallSpec(scope Scope, spec *ServiceSpec) error {
 	if err := m.ensureSystemdAvailable(); err != nil {
 		return err
 	}
@@ -22,7 +22,7 @@ func (m *Manager) validateInstallSpec(spec *ServiceSpec) error {
 	if err := validateServiceName(spec.ServiceName); err != nil {
 		return err
 	}
-	if err := m.validateUnitPath(spec.UnitPath, spec.ServiceName); err != nil {
+	if err := m.validateUnitPath(scope, spec.HomeDir, spec.UnitPath, spec.ServiceName); err != nil {
 		return err
 	}
 	if err := m.validateDir(spec.HomeDir, "home directory", "rerun with --home <existing-absolute-path>"); err != nil {
@@ -40,14 +40,14 @@ func (m *Manager) validateInstallSpec(spec *ServiceSpec) error {
 	return nil
 }
 
-func (m *Manager) validateTarget(serviceName, unitPath string) error {
+func (m *Manager) validateTarget(scope Scope, home, serviceName, unitPath string) error {
 	if err := m.ensureSystemdAvailable(); err != nil {
 		return err
 	}
 	if err := validateServiceName(serviceName); err != nil {
 		return err
 	}
-	return m.validateUnitPath(unitPath, serviceName)
+	return m.validateUnitPath(scope, home, unitPath, serviceName)
 }
 
 func (m *Manager) ensureSystemdAvailable() error {
@@ -89,19 +89,20 @@ func normalizeServiceName(raw string) (string, error) {
 	return value + ".service", nil
 }
 
-func (m *Manager) validateUnitPath(unitPath, serviceName string) error {
+func (m *Manager) validateUnitPath(scope Scope, home, unitPath, serviceName string) error {
 	clean := filepath.Clean(strings.TrimSpace(unitPath))
 	if !filepath.IsAbs(clean) {
 		return remediationError("unit path must be absolute", "rerun with an absolute systemd unit path")
 	}
-	if filepath.Dir(clean) != filepath.Clean(m.unitDir) {
+	expectedDir := m.unitDirFor(scope, home)
+	if filepath.Dir(clean) != filepath.Clean(expectedDir) {
 		return remediationError(
-			"unit path must be directly under "+m.unitDir,
-			"rerun with a unit path under "+m.unitDir,
+			"unit path must be directly under "+expectedDir,
+			"rerun with a unit path under "+expectedDir,
 		)
 	}
 	if filepath.Ext(clean) != ".service" {
-		return remediationError("unit path must end with .service", "rerun with a unit path under "+m.unitDir)
+		return remediationError("unit path must end with .service", "rerun with a unit path under "+expectedDir)
 	}
 	if filepath.Base(clean) != serviceName {
 		return remediationError(

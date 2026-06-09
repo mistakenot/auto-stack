@@ -8,7 +8,9 @@ title: "autostack install-daemon"
 
 # `autostack install-daemon`
 
-This document describes the preferred production setup for running `auto watch` on a server, and how a future `auto watch daemon install` command should support that setup.
+This document describes how to run `auto watch` in the background. The default is a **no-sudo,
+per-user** systemd unit (`auto watch daemon install`); a **system-wide** unit (`--system`) is the
+opt-in for headless / multi-user hosts.
 
 > **Post-upgrade (merged `auto` binary):** the watch daemon now ships as the single `auto`
 > binary and the systemd unit invokes `ExecStart=…/auto watch start`. Deployments whose unit
@@ -20,24 +22,24 @@ The required behavior is:
 
 - the daemon must continue running when no SSH sessions are active
 - the daemon should start on boot
-- installing or updating the daemon may use `sudo`
 - the actual `autowatch` process must not run as `sudo` or root
 - binary installation and daemon restart remain separate explicit steps
 
-That means the correct service model is:
+There are two service models, both running the daemon as a normal non-root user:
 
-- a system `systemd` unit installed under `/etc/systemd/system/`
-- `User=` and `Group=` set to a normal non-root user
-- `ExecStart` pointing at that user's `auto` binary
+- **user scope (default, no sudo):** a `systemctl --user` unit under
+  `~/.config/systemd/user/autowatch.service`, owned and managed by the invoking user
+- **system scope (`--system`, requires root to install):** a unit under
+  `/etc/systemd/system/autowatch.service` with explicit `User=`/`Group=`
 
 ## Recommendation
 
-The best simple default is:
+The best simple default is the no-sudo user unit:
 
 1. install binaries into the target user's `~/.local/bin`
-2. install one system `systemd` unit for `autowatch`
-3. configure that unit to run as the target non-root user
-4. manage it with `sudo systemctl ...`
+2. run `auto watch daemon install` — writes one `systemctl --user` unit and enables + starts it
+3. for headless / multi-user hosts, opt into the system unit with
+   `sudo "$(command -v auto)" watch daemon install --system`
 
 This matches the current `autowatch` runtime model:
 
@@ -47,22 +49,37 @@ This matches the current `autowatch` runtime model:
 - the daemon already has a host-local lockfile
 - one daemon can manage multiple repos
 
-## Why System `systemd`
+## Why user `systemd` is the default
 
-This is the right default because it gives us:
+`auto watch daemon install` (no flags) installs a per-user `systemctl --user` unit. This is the
+right default because it needs **no sudo** — a normal user can install, enable, start, and inspect
+their own daemon, with standard logs via `journalctl --user -u autowatch` and restart-on-crash.
 
-- survives logout
-- starts at boot
-- restart on crash
-- standard logs via `journalctl`
-- explicit operator workflow via `systemctl`
-- no dependence on active login sessions
+`systemd` (either scope) is better than cron wrappers or manually launched tmux sessions: it gives
+us crash restart, structured logs, and an explicit `systemctl` lifecycle.
 
-This is better than:
+### Honest caveats for user scope
 
-- cron wrappers
-- `systemd --user` units tied to session behavior
-- manually launched tmux sessions
+Two conditions apply to the user unit. Be aware of them — the installer warns when they are not met
+rather than pretending they are.
+
+- **Survives logout / starts at boot requires linger.** A `systemctl --user` unit is normally tied
+  to your login session and is killed on logout (and does not start at boot). It only persists once
+  `loginctl enable-linger <user>` succeeds. `auto watch daemon install` attempts this for you and
+  warns if it could not be set — on a default systemd/polkit host a normal user enabling their own
+  linger often needs a one-time elevated `sudo loginctl enable-linger <user>`. Until linger is set,
+  do **not** assume the user daemon survives logout or starts at boot.
+- **Needs a user D-Bus session.** `systemctl --user` requires a running user bus (`XDG_RUNTIME_DIR`
+  pointing at `/run/user/<uid>`). Non-login or headless contexts (cron, raw SSH-exec, some CI) may
+  not have one; the installer reports a clear remediation instead of a raw "Failed to connect to
+  bus" error. In those contexts, use `--system`.
+
+### When to use `--system`
+
+Use the system unit (`sudo "$(command -v auto)" watch daemon install --system`) for headless or
+multi-user hosts where there is no reliable per-user login session: it is independent of any login
+session, starts at boot without linger, and lives under `/etc/systemd/system/`. Installing it
+requires root, but the daemon itself still runs as the configured non-root `User=`/`Group=`.
 
 ## Runtime User Model
 
@@ -93,32 +110,30 @@ Why:
 - some machines will have binaries installed but no daemon configured
 - operators may want to update binaries without bouncing the daemon immediately
 
-So the intended workflow is:
+So the intended workflow is, for the no-sudo user daemon:
 
 ```bash
-make install
-sudo systemctl try-restart autowatch.service
+auto update                 # pulls the new binary, restarts an active user daemon for you
 ```
 
-Or with future product commands:
+For first-time setup (user scope, no sudo):
 
 ```bash
-make install
-sudo auto watch daemon restart
+auto watch daemon install   # writes the user unit, enables + starts it
 ```
 
-For first-time setup:
+For the system daemon, the two steps stay explicit:
 
 ```bash
 make install
-sudo auto watch daemon install --enable --start
+sudo "$(command -v auto)" watch daemon restart   # roll the new binary onto the running system daemon
 ```
 
-For later updates:
+For first-time system setup:
 
 ```bash
 make install
-sudo auto watch daemon restart
+sudo "$(command -v auto)" watch daemon install --system
 ```
 
 ## Binary Update Behavior
@@ -272,46 +287,63 @@ Recommended behavior:
 
 That matters because the installer may be run via `sudo`, and in that case the current process user is `root` but the daemon must still run as the original non-root user.
 
-## Recommended CLI Shape
+## CLI Shape
 
-The simplest useful command shape is:
+The simplest useful command is the no-sudo user install:
 
 ```bash
-sudo auto watch daemon install \
-  --user alice \
-  --bin /home/alice/.local/bin/auto
+auto watch daemon install
 ```
 
-Recommended optional flags:
+For the system unit:
 
+```bash
+sudo "$(command -v auto)" watch daemon install --system
+```
+
+Optional flags:
+
+- `--system` — install a system-level unit (`/etc/systemd/system`, requires root); default is the no-sudo user unit
+- `--user alice` — runtime user for the service
+- `--bin /home/alice/.local/bin/auto` — absolute path to the `auto` binary
 - `--service-name autowatch`
 - `--home /home/alice`
 - `--working-dir /home/alice`
-- `--path /home/alice/.local/bin:/usr/local/bin:/usr/bin:/bin`
-- `--enable`
-- `--start`
+- `--path-env /home/alice/.local/bin:/usr/local/bin:/usr/bin:/bin`
+- `--enable` (default `true`; opt out with `--enable=false`)
+- `--start` (default `true`; opt out with `--start=false`)
 - `--dry-run`
 - `--print-unit`
 
+> **`--user` / `--home` / `--working-dir` / `--path-env` are `--system`-scope knobs.** In the
+> default user scope these are derived from the invoking user, so you don't normally pass them.
+> In particular, overriding `--home` under user scope writes the unit to
+> `<custom-home>/.config/systemd/user/…`, but `systemctl --user` only reads `$HOME/.config/systemd/user`,
+> so the subsequent `enable`/`start` will fail. Use these overrides with `--system` (where you're
+> targeting a different runtime user), not with the no-sudo user default.
+
 ### Expected behavior
 
-- default behavior installs the unit and prints what changed
+- **default behavior installs the unit and enables + starts it**, then prints what changed —
+  `--enable` and `--start` both default to `true`
+- opt out of either with `--enable=false` / `--start=false` (e.g. write the unit without starting it)
 - `--dry-run` prints the unit and intended actions without writing anything
 - `--print-unit` prints only the rendered unit content
-- `--enable` runs `systemctl enable`
-- `--start` runs `systemctl start`
-
-`--enable --start` together should be the normal path.
+- user scope writes `~/.config/systemd/user/autowatch.service` (`WantedBy=default.target`) and runs
+  `systemctl --user daemon-reload`/`enable`/`start`; `--system` writes
+  `/etc/systemd/system/autowatch.service` (`WantedBy=multi-user.target`)
 
 ## Separate Restart Command
 
 If we add daemon lifecycle commands under `autostack`, it should also include an explicit restart command for rolling out new binaries to a running daemon.
 
-Example:
+Example (user scope, no sudo):
 
 ```bash
-sudo auto watch daemon restart
+auto watch daemon restart
 ```
+
+System scope uses the sudo-reachable form `sudo "$(command -v auto)" watch daemon restart`.
 
 That command should:
 
@@ -799,7 +831,7 @@ Examples:
 
 - missing binary: `run make install first`
 - invalid runtime user: `rerun with --user <non-root-user>`
-- missing unit: `run sudo auto watch daemon install first`
+- missing unit: `run auto watch daemon install first` (system scope: `sudo "$(command -v auto)" watch daemon install --system`; an optional `sudo ln -sf <binpath> /usr/local/bin/auto` symlink makes `auto` sudo-reachable)
 - inactive service: `run sudo systemctl start autowatch.service`
 
 ### Makefile Interaction

@@ -45,6 +45,24 @@ auto update    # re-runs install.sh to pull the latest release
 
 `auto update` is the canonical update path. The per-tool variants (`auto etl update`, `auto search update`, …) are equivalent aliases.
 
+### Run `auto watch` in the background
+
+No sudo required — install a per-user systemd unit that enables + starts on install:
+
+```bash
+auto watch daemon install     # writes ~/.config/systemd/user/autowatch.service, enables + starts it
+```
+
+`auto update` keeps the daemon current: it pulls the new binary and restarts an active user daemon for you.
+
+For headless / multi-user hosts, opt into a system unit (requires root):
+
+```bash
+sudo "$(command -v auto)" watch daemon install --system
+```
+
+The user unit survives logout / starts at boot only after `loginctl enable-linger "$USER"` succeeds (install attempts this and warns if it can't — on a default host that may need a one-time `sudo loginctl enable-linger "$USER"`).
+
 ---
 
 ## The Tools

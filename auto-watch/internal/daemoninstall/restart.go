@@ -7,38 +7,43 @@ import (
 )
 
 func (m *Manager) Restart(ctx context.Context, opts RestartOptions) (RestartResult, error) {
-	serviceName, unitPath, err := m.resolveTarget(opts.ServiceName, opts.UnitPath)
+	scope := normalizeScope(opts.Scope)
+	home, err := m.unitDirHome(scope)
 	if err != nil {
 		return RestartResult{}, err
 	}
-	if err := m.validateTarget(serviceName, unitPath); err != nil {
+	serviceName, unitPath, err := m.resolveTarget(scope, home, opts.ServiceName, opts.UnitPath)
+	if err != nil {
+		return RestartResult{}, err
+	}
+	if err := m.validateTarget(scope, home, serviceName, unitPath); err != nil {
 		return RestartResult{}, err
 	}
 	if _, err := m.stat(unitPath); err != nil {
 		if os.IsNotExist(err) {
 			return RestartResult{}, remediationError(
 				fmt.Sprintf("unit %q is not installed", unitPath),
-				"run sudo auto watch daemon install first",
+				installRemediation(scope),
 			)
 		}
 		return RestartResult{}, remediationError(
 			fmt.Sprintf("failed to inspect unit %q: %v", unitPath, err),
-			"run sudo auto watch daemon install first",
+			installRemediation(scope),
 		)
 	}
 
-	running, err := m.readSystemctlState(ctx, "is-active", serviceName)
+	running, err := m.readSystemctlState(ctx, scope, "is-active", serviceName)
 	if err != nil {
 		return RestartResult{}, err
 	}
 	if !running {
 		return RestartResult{}, remediationError(
 			fmt.Sprintf("service %q is installed but not running", serviceName),
-			"run sudo systemctl start "+serviceName,
+			startRemediation(scope, serviceName),
 		)
 	}
 
-	if err := m.runSystemctl(ctx, "rerun with sudo auto watch daemon restart", "try-restart", serviceName); err != nil {
+	if err := m.runSystemctl(ctx, scope, restartRemediation(scope), "try-restart", serviceName); err != nil {
 		return RestartResult{}, err
 	}
 	return RestartResult{

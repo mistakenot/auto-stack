@@ -30,11 +30,11 @@ a doctor unit check, an install.sh restart hook for one-command update, and upda
 - [Context](./context.md)
 
 ## How to Test
-- [ ] `daemoninstall_test.go` — user install: unit path under `.config/systemd/user`, `systemctl --user daemon-reload/enable/start`, `WantedBy=default.target`, `ExecStart=<home>/.local/bin/auto watch start`, no sudo; `--system` parity (`/etc/systemd/system`, `multi-user.target`); enable-linger failure is non-fatal
-- [ ] `doctor_test.go` — `checkDaemonUnit` flags a unit whose `ExecStart` binary is missing/old (`autowatch`) with remediation `auto watch daemon install`; passes when valid
-- [ ] `install.sh` — `bash -n` clean; with a stub `systemctl` on PATH: user unit active → emits `systemctl --user restart autowatch.service`; not active → no restart (fresh install safe)
-- [ ] `scripts/check-no-stale-binary-refs.sh` — still green after doc/quickstart edits
-- [ ] `make check build test vulncheck` green; manual smoke: `auto watch daemon install --print-unit` (user) and `--system --print-unit` render the right unit
+- [x] `daemoninstall_test.go` — user install: unit path under `.config/systemd/user`, `systemctl --user daemon-reload/enable/start`, `WantedBy=default.target`, `ExecStart=<home>/.local/bin/auto watch start`, no sudo; `--system` parity (`/etc/systemd/system`, `multi-user.target`); enable-linger failure is non-fatal
+- [x] `doctor_test.go` — `checkDaemonUnit` flags a unit whose `ExecStart` binary is missing/old (`autowatch`) with remediation `auto watch daemon install`; passes when valid
+- [x] `install.sh` — `bash -n` clean; with a stub `systemctl` on PATH: user unit active → emits `systemctl --user restart autowatch.service`; not active → no restart (fresh install safe)
+- [x] `scripts/check-no-stale-binary-refs.sh` — still green after doc/quickstart edits
+- [x] `make check build test vulncheck` green; manual smoke: `auto watch daemon install --print-unit` (user) and `--system --print-unit` render the right unit
 
 ## Execution Sequence
 ```
@@ -53,19 +53,19 @@ verify each phase's files on disk before the next.**
 ## Plan
 
 ### Phase 1: Scope core — parameterize daemoninstall  *(sequential; blocks 2 & 3)*
-- [ ] Step 1.1: Add `Scope` type + constants (`ScopeUser`, `ScopeSystem`) in `spec.go`; add a `Scope`
+- [x] Step 1.1: Add `Scope` type + constants (`ScopeUser`, `ScopeSystem`) in `spec.go`; add a `Scope`
       field to `InstallOptions`/`RestartOptions`/`StatusOptions`; treat empty as `ScopeUser`.
-- [ ] Step 1.2: `manager.go` — derive the unit dir from scope (`system`→`/etc/systemd/system`,
+- [x] Step 1.2: `manager.go` — derive the unit dir from scope (`system`→`/etc/systemd/system`,
       `user`→`<home>/.config/systemd/user`) and add a helper that prefixes `--user` to systemctl
       args for user scope. Route all `runSystemctl`/status/restart calls through it.
-- [ ] Step 1.3: `resolve.go` — for user scope, set unit dir under the resolved home and default the
+- [x] Step 1.3: `resolve.go` — for user scope, set unit dir under the resolved home and default the
       runtime user to the current user (no `SUDO_USER` needed); keep system-scope behavior identical.
-- [ ] Step 1.3a: **Reorder resolution so home precedes the unit path.** In user scope the unit dir
+- [x] Step 1.3a: **Reorder resolution so home precedes the unit path.** In user scope the unit dir
       is `<home>/.config/systemd/user`, so `resolveSpec` must resolve the runtime user + `HomeDir`
       (via `currentUser()` — in user scope runtime user == invoking user) **before** building the
       unit path; today `resolveTarget` runs first (resolve.go:10) using the static `m.unitDir`.
       System scope keeps using `/etc/systemd/system` (no home dependency, order-independent).
-- [ ] Step 1.3b: **Give the read paths a unit dir too.** `Status` (status.go:14) and `Restart`
+- [x] Step 1.3b: **Give the read paths a unit dir too.** `Status` (status.go:14) and `Restart`
       (restart.go:10) currently call `resolveTarget` with no user/home resolution. Add a small
       scope-aware helper that, for user scope, resolves the current user's home → unit dir so these
       commands locate `<home>/.config/systemd/user/autowatch.service` (not the system path). The
@@ -90,12 +90,12 @@ BEFORE building the unit path in user scope; system scope stays order-independen
 and `Restart` resolve `<home>/.config/systemd/user/…` for user scope instead of the system path).
 -->
 
-- [ ] Step 1.4: `template.go` — render `WantedBy=default.target` for user scope, `multi-user.target`
+- [x] Step 1.4: `template.go` — render `WantedBy=default.target` for user scope, `multi-user.target`
       for system. `ExecStart={{.BinPath}} watch start` unchanged.
-- [ ] Step 1.5: `install.go` — ensure the user unit dir exists (mkdir) before write; use the
+- [x] Step 1.5: `install.go` — ensure the user unit dir exists (mkdir) before write; use the
       scope-aware systemctl; after a user-scope enable+start, best-effort `loginctl enable-linger
       <user>` via the Runner — on error, append a clear warning to the result, do NOT fail install.
-- [ ] Step 1.5a: **User-bus preflight (user scope).** `systemctl --user` needs `XDG_RUNTIME_DIR`
+- [x] Step 1.5a: **User-bus preflight (user scope).** `systemctl --user` needs `XDG_RUNTIME_DIR`
       + a running user bus. Before the user-scope systemctl calls, detect a missing bus (env unset
       or a probe like `systemctl --user is-system-running`/`show` failing to connect) and return a
       clear remediation ("no user D-Bus session — start a login session, run `loginctl enable-linger
@@ -103,19 +103,19 @@ and `Restart` resolve `<home>/.config/systemd/user/…` for user scope instead o
       `shell.ExecRunner` does NOT override `cmd.Env` (so it inherits `XDG_RUNTIME_DIR` /
       `DBUS_SESSION_BUS_ADDRESS`); if it sets `Env`, pass these through. Add a `fakeRunner` test for
       the missing-bus remediation path.
-- [ ] Step 1.6: `validate.go` — accept unit paths under `<home>/.config/systemd/user/` for user scope
+- [x] Step 1.6: `validate.go` — accept unit paths under `<home>/.config/systemd/user/` for user scope
       (keep `/etc/systemd/system/` for system).
-- [ ] Step 1.7: Update/extend `daemoninstall_test.go` with `fakeRunner`: user-scope install asserts
+- [x] Step 1.7: Update/extend `daemoninstall_test.go` with `fakeRunner`: user-scope install asserts
       unit dir, `systemctl --user daemon-reload/enable/start`, `WantedBy=default.target`, enable-linger
       attempted + non-fatal on failure; status/restart use `systemctl --user`; add a `--system` parity
       test and a regenerate-over-stale-unit test (`…/autowatch start` → `…/auto watch start`, identity retained).
-- [ ] Step 1.8: Verify: `cd auto-watch && go build ./... && go vet ./... && go test ./...` all green.
-- [ ] Step 1.9: Commit: `feat(018): phase 1 - scope-parameterized daemoninstall (user default)`
+- [x] Step 1.8: Verify: `cd auto-watch && go build ./... && go vet ./... && go test ./...` all green.
+- [x] Step 1.9: Commit: `feat(018): phase 1 - scope-parameterized daemoninstall (user default)`
 
 ### Phase 2: CLI surface — `--system` flag + scope-aware output  *(depends on Phase 1)*
-- [ ] Step 2.1: `cli/daemon.go` — add `--system` bool to `install` (and `restart`/`status` as needed);
+- [x] Step 2.1: `cli/daemon.go` — add `--system` bool to `install` (and `restart`/`status` as needed);
       default omitted = user scope; map to `opts.Scope`. Pass scope through to the Manager calls.
-- [ ] Step 2.1a: **Flip the install defaults so the unit is enabled+started by default** (both
+- [x] Step 2.1a: **Flip the install defaults so the unit is enabled+started by default** (both
       scopes): define `--enable`/`--start` with default **`true`** in cobra; users opt out with
       `--enable=false` / `--start=false`. This makes a no-flag `auto watch daemon install` write +
       `daemon-reload` + `enable` + `start` (AC-1). The existing documented `--enable --start`
@@ -140,24 +140,24 @@ the "Expected behavior" section (which currently says default only writes the un
 row already asserts the enable/start systemctl calls, so coverage is in place.
 -->
 
-- [ ] Step 2.2: Make printed hints scope-aware — user mode prints `systemctl --user status …` (no
+- [x] Step 2.2: Make printed hints scope-aware — user mode prints `systemctl --user status …` (no
       `sudo`); system mode keeps the `sudo systemctl …` hint.
-- [ ] Step 2.3: Update any `cli` tests broken by the new flag/output.
-- [ ] Step 2.4: Verify: `cd auto-watch && go build ./... && go test ./...` green; `auto watch daemon
+- [x] Step 2.3: Update any `cli` tests broken by the new flag/output.
+- [x] Step 2.4: Verify: `cd auto-watch && go build ./... && go test ./...` green; `auto watch daemon
       install --print-unit` (no flags) renders a user unit (dir `~/.config/systemd/user`,
       `WantedBy=default.target`, `ExecStart=<home>/.local/bin/auto watch start`) and exits 0;
       `auto watch daemon install --system --print-unit` renders the system unit.
-- [ ] Step 2.5: Commit: `feat(018): phase 2 - daemon install --system flag + scope-aware hints`
+- [x] Step 2.5: Commit: `feat(018): phase 2 - daemon install --system flag + scope-aware hints`
 
 ### Phase 3: Doctor — dangling ExecStart check  *(depends on Phase 1)*
-- [ ] Step 3.1: `doctor.go` — add `checkDaemonUnit`: locate the unit (user dir, then system), and if
+- [x] Step 3.1: `doctor.go` — add `checkDaemonUnit`: locate the unit (user dir, then system), and if
       present parse `ExecStart`, resolve the binary path, and verify it exists + is executable.
-- [ ] Step 3.2: Report a failing check with remediation `auto watch daemon install` when the binary is
+- [x] Step 3.2: Report a failing check with remediation `auto watch daemon install` when the binary is
       missing or the ExecStart still names the old `autowatch` binary; report `Status: "ok"` with an
       explanatory `Message` (e.g. "no daemon unit installed") when no unit is present, and `"ok"` when
       the unit is valid. Reuse daemoninstall unit-path/scope helpers from Phase 1. (Two-state
       `ok`/`fail` only — no new `"skip"` status.)
-- [ ] Step 3.3: Add `doctor` tests covering: missing-binary ExecStart → `fail` + remediation; valid
+- [x] Step 3.3: Add `doctor` tests covering: missing-binary ExecStart → `fail` + remediation; valid
       unit → `ok`; no unit installed → `ok` with the explanatory message.
 
 <!-- RESOLVED(P3): No "skip" status exists — use "ok" for the no-unit case
@@ -171,16 +171,16 @@ AUTHOR: Updated Steps 3.2/3.3 to use `Status: "ok"` + explanatory Message for th
 doctor checks.
 -->
 
-- [ ] Step 3.4: Verify: `cd auto-watch && go build ./... && go test ./...` green; `auto watch doctor`
+- [x] Step 3.4: Verify: `cd auto-watch && go build ./... && go test ./...` green; `auto watch doctor`
       runs and includes the new check.
-- [ ] Step 3.5: Commit: `feat(018): phase 3 - doctor detects dangling daemon ExecStart`
+- [x] Step 3.5: Commit: `feat(018): phase 3 - doctor detects dangling daemon ExecStart`
 
 ### Phase 4: install.sh restart hook + system reachability  *(independent; depends only on design)*
-- [ ] Step 4.1: `install.sh` — after the binary is replaced, if `systemctl` exists and
+- [x] Step 4.1: `install.sh` — after the binary is replaced, if `systemctl` exists and
       `systemctl --user is-active --quiet autowatch.service`, run `systemctl --user restart
       autowatch.service` (no sudo) and report it; otherwise keep the existing system-mode restart hint.
       Preserve the existing `fuser`/`RESTART_SERVICES` parent-PID logic.
-- [ ] Step 4.1a: **The restart must be failure-tolerant under `set -euo pipefail`** (install.sh:2).
+- [x] Step 4.1a: **The restart must be failure-tolerant under `set -euo pipefail`** (install.sh:2).
       The binary is already replaced (lines 43-57), so the `restart` call must NOT abort the script:
       run it as `if systemctl --user restart autowatch.service; then echo "restarted"; else echo
       "<print the manual restart hint>"; fi` (or `… || true` + warn). The `is-active --quiet` guard
@@ -201,18 +201,18 @@ manual-restart hint instead of aborting the already-successful binary update. Ad
 assertion to Step 4.3's verify (stub systemctl returning failure on restart → script still exits 0).
 -->
 
-- [ ] Step 4.2: System-mode reachability (AC-3): document/emit the `sudo "$(command -v auto)" watch
+- [x] Step 4.2: System-mode reachability (AC-3): document/emit the `sudo "$(command -v auto)" watch
       daemon install --system` form; have `auto watch daemon install --system` (when not root) print a
       remediation that includes the optional `sudo ln -sf <binpath> /usr/local/bin/auto`. (Doc + the
       Phase-2 hint; no user-run installer writes `/usr/local/bin`.)
-- [ ] Step 4.3: Verify: `bash -n install.sh` clean; with a stub `systemctl` shim on `PATH` returning
+- [x] Step 4.3: Verify: `bash -n install.sh` clean; with a stub `systemctl` shim on `PATH` returning
       "active" for `--user is-active autowatch.service`, install.sh emits the `systemctl --user restart`
       line; with "inactive", it does not (fresh-install safe); and with the stub failing the `restart`,
       install.sh still exits 0 and prints the manual-restart hint (set -euo pipefail tolerance).
-- [ ] Step 4.4: Commit: `feat(018): phase 4 - install.sh restarts user daemon on update`
+- [x] Step 4.4: Commit: `feat(018): phase 4 - install.sh restarts user daemon on update`
 
 ### Phase 5: Docs sweep  *(independent; depends only on design)*
-- [ ] Step 5.1: `docs/autostack-install-daemon.md` — rewrite the "Why System `systemd`" section to a
+- [x] Step 5.1: `docs/autostack-install-daemon.md` — rewrite the "Why System `systemd`" section to a
       user-first rationale: user scope is the no-sudo default; system mode is the headless/multi-user
       opt-in. **Be honest about conditions (do NOT overpromise):** state that user-scope
       survives-logout/starts-at-boot **only after `loginctl enable-linger <user>` succeeds**, which on
@@ -221,33 +221,33 @@ assertion to Step 4.3's verify (stub systemctl returning failure on restart → 
       contexts should use `--system`. Update the "Expected behavior" section to reflect that install
       now enables+starts by **default** (Step 2.1a). Update examples to `auto watch daemon install`
       (user) and `… --system` (system). Keep service-identity strings.
-- [ ] Step 5.2: `README.md` — add a "Run auto watch in the background" section: `auto watch daemon
+- [x] Step 5.2: `README.md` — add a "Run auto watch in the background" section: `auto watch daemon
       install` (no sudo), `auto update` keeps it current, and the `--system` opt-in note.
-- [ ] Step 5.3: `auto-watch/internal/cli/quickstart.go` — make the install/update wording accurately
+- [x] Step 5.3: `auto-watch/internal/cli/quickstart.go` — make the install/update wording accurately
       describe the user-level service (matches the new default) + the one-command update.
-- [ ] Step 5.4: Verify: `scripts/check-no-stale-binary-refs.sh` green; `cd auto-watch && go build ./...`
+- [x] Step 5.4: Verify: `scripts/check-no-stale-binary-refs.sh` green; `cd auto-watch && go build ./...`
       (quickstart.go compiles); docs examples eyeball-verified against the implemented flags.
-- [ ] Step 5.5: Commit: `docs(018): phase 5 - user-first daemon docs (doc + README + quickstart)`
+- [x] Step 5.5: Commit: `docs(018): phase 5 - user-first daemon docs (doc + README + quickstart)`
 
 ### Phase 6: Verify end-to-end  *(sequential barrier; depends on 2,3,4,5)*
-- [ ] Step 6.1: `make check` (fmt-check + vet + lint + stale-ref guard) green.
-- [ ] Step 6.2: `make build` + `make test` green (incl. auto-watch daemoninstall + doctor tests).
-- [ ] Step 6.3: `make vulncheck` green (note: toolchain ≥ go1.26.4 per task 017).
-- [ ] Step 6.4: Manual smoke: `auto watch daemon install --print-unit` (user) shows
+- [x] Step 6.1: `make check` (fmt-check + vet + lint + stale-ref guard) green.
+- [x] Step 6.2: `make build` + `make test` green (incl. auto-watch daemoninstall + doctor tests).
+- [x] Step 6.3: `make vulncheck` green (note: toolchain ≥ go1.26.4 per task 017).
+- [x] Step 6.4: Manual smoke: `auto watch daemon install --print-unit` (user) shows
       `~/.config/systemd/user` + `WantedBy=default.target` + `ExecStart=…/auto watch start`;
       `--system --print-unit` shows `/etc/systemd/system` + `multi-user.target`; `auto watch doctor`
       runs and flags a crafted stale unit.
-- [ ] Step 6.5: Commit: `feat(018): phase 6 - full verification green` (or fold fixes into prior phases).
+- [x] Step 6.5: Commit: `feat(018): phase 6 - full verification green` (or fold fixes into prior phases).
 
 ## Success Criteria
-- [ ] `auto watch daemon install` (no flags), as a normal user, creates+enables+starts a `systemctl --user` unit, no sudo (AC-1)
-- [ ] `auto update` (→ install.sh) restarts an active user daemon with no sudo; system mode prints a hint (AC-2)
-- [ ] `auto watch daemon install --system` reproduces the system unit; `sudo "$(command -v auto)" …` documented + remediation emitted (AC-3)
-- [ ] re-running install is idempotent; `auto watch doctor` flags a missing/old `ExecStart` with remediation (AC-4)
-- [ ] documented one-command migration regenerates `…/autowatch start` → `…/auto watch start`, identity retained (AC-5)
-- [ ] user mode attempts `loginctl enable-linger` and reports clearly if it can't be set (AC-6)
-- [ ] README + daemon doc + quickstart show the no-sudo happy path and `--system` path; guard green (AC-7)
-- [ ] `make check build test vulncheck` green
+- [x] `auto watch daemon install` (no flags), as a normal user, creates+enables+starts a `systemctl --user` unit, no sudo (AC-1)
+- [x] `auto update` (→ install.sh) restarts an active user daemon with no sudo; system mode prints a hint (AC-2)
+- [x] `auto watch daemon install --system` reproduces the system unit; `sudo "$(command -v auto)" …` documented + remediation emitted (AC-3)
+- [x] re-running install is idempotent; `auto watch doctor` flags a missing/old `ExecStart` with remediation (AC-4)
+- [x] documented one-command migration regenerates `…/autowatch start` → `…/auto watch start`, identity retained (AC-5)
+- [x] user mode attempts `loginctl enable-linger` and reports clearly if it can't be set (AC-6)
+- [x] README + daemon doc + quickstart show the no-sudo happy path and `--system` path; guard green (AC-7)
+- [x] `make check build test vulncheck` green
 
 ## Open Questions
 - (none — all resolved in requirements; design settled in solution.md)

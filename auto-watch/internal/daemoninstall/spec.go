@@ -1,5 +1,24 @@
 package daemoninstall
 
+// Scope selects whether the daemon is managed as a system-level systemd unit
+// (root, /etc/systemd/system, systemctl) or a user-level unit (no sudo,
+// ~/.config/systemd/user, systemctl --user). The empty value defaults to
+// ScopeUser.
+type Scope string
+
+const (
+	ScopeUser   Scope = "user"
+	ScopeSystem Scope = "system"
+)
+
+// normalizeScope treats the empty scope as ScopeUser.
+func normalizeScope(s Scope) Scope {
+	if s == ScopeSystem {
+		return ScopeSystem
+	}
+	return ScopeUser
+}
+
 type ServiceSpec struct {
 	ServiceName  string `json:"serviceName"`
 	Description  string `json:"description,omitempty"`
@@ -21,6 +40,7 @@ type InstallOptions struct {
 	PathEnv     string
 	Description string
 	UnitPath    string
+	Scope       Scope
 	Enable      bool
 	Start       bool
 	DryRun      bool
@@ -34,11 +54,13 @@ type InstallResult struct {
 	Changed          bool
 	PlannedActions   []string
 	CompletedActions []string
+	Warnings         []string
 }
 
 type RestartOptions struct {
 	ServiceName string
 	UnitPath    string
+	Scope       Scope
 }
 
 type RestartResult struct {
@@ -49,6 +71,7 @@ type RestartResult struct {
 type StatusOptions struct {
 	ServiceName string
 	UnitPath    string
+	Scope       Scope
 }
 
 type ServiceStatus struct {

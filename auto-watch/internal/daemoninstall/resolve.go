@@ -7,12 +7,12 @@ import (
 )
 
 func (m *Manager) resolveSpec(opts *InstallOptions) (ServiceSpec, error) {
-	serviceName, unitPath, err := m.resolveTarget(opts.ServiceName, opts.UnitPath)
-	if err != nil {
-		return ServiceSpec{}, err
-	}
+	scope := normalizeScope(opts.Scope)
 
-	runtimeUser, err := m.resolveRuntimeUser(strings.TrimSpace(opts.RuntimeUser))
+	// Resolve the runtime user and home BEFORE building the unit path: in user
+	// scope the unit dir is <home>/.config/systemd/user, so it depends on the
+	// resolved home directory. (System scope ignores home for the unit dir.)
+	runtimeUser, err := m.resolveRuntimeUser(scope, strings.TrimSpace(opts.RuntimeUser))
 	if err != nil {
 		return ServiceSpec{}, err
 	}
@@ -39,6 +39,12 @@ func (m *Manager) resolveSpec(opts *InstallOptions) (ServiceSpec, error) {
 	if homeDir == "" {
 		homeDir = account.HomeDir
 	}
+
+	serviceName, unitPath, err := m.resolveTarget(scope, homeDir, opts.ServiceName, opts.UnitPath)
+	if err != nil {
+		return ServiceSpec{}, err
+	}
+
 	workingDir := strings.TrimSpace(opts.WorkingDir)
 	if workingDir == "" {
 		workingDir = homeDir
@@ -69,21 +75,22 @@ func (m *Manager) resolveSpec(opts *InstallOptions) (ServiceSpec, error) {
 	}, nil
 }
 
-func (m *Manager) resolveTarget(rawServiceName, rawUnitPath string) (string, string, error) {
+func (m *Manager) resolveTarget(scope Scope, home, rawServiceName, rawUnitPath string) (string, string, error) {
 	serviceName, err := normalizeServiceName(rawServiceName)
 	if err != nil {
 		return "", "", err
 	}
 	unitPath := strings.TrimSpace(rawUnitPath)
 	if unitPath == "" {
-		unitPath = filepath.Join(m.unitDir, serviceName)
+		unitPath = filepath.Join(m.unitDirFor(scope, home), serviceName)
 	}
 	return serviceName, unitPath, nil
 }
 
-func (m *Manager) resolveRuntimeUser(explicit string) (string, error) {
+func (m *Manager) resolveRuntimeUser(scope Scope, explicit string) (string, error) {
 	candidate := strings.TrimSpace(explicit)
-	if candidate == "" {
+	// User scope runs as the invoking user — no SUDO_USER indirection.
+	if candidate == "" && normalizeScope(scope) == ScopeSystem {
 		candidate = strings.TrimSpace(m.getenv("SUDO_USER"))
 	}
 	if candidate == "" {
