@@ -38,10 +38,16 @@ RESTART_SERVICES=""
 for bin in $BINARIES; do
     URL="https://github.com/${REPO}/releases/download/${TAG}/${bin}-${SUFFIX}"
     echo "  ${bin}..."
-    # Remove before writing — a running binary (e.g. autowatch daemon) keeps its
-    # old inode open, so the delete succeeds and the new file gets a fresh inode.
+    # Remove before writing — a running binary (e.g. the auto watch daemon) keeps
+    # its old inode open, so the delete succeeds and the new file gets a fresh inode.
     if [ -f "${INSTALL_DIR}/${bin}" ]; then
-        if fuser "${INSTALL_DIR}/${bin}" >/dev/null 2>&1; then
+        # fuser lists every process with this file mapped — including the parent
+        # `auto update` process that is running this script (its own executable
+        # IS ${INSTALL_DIR}/auto). Drop this script's parent PID so we only flag a
+        # genuinely separate long-running user, e.g. the auto watch daemon.
+        in_use=$(fuser "${INSTALL_DIR}/${bin}" 2>/dev/null | tr ' ' '\n' \
+            | sed 's/[^0-9]//g' | grep -vx "$PPID" | grep -v '^$' || true)
+        if [ -n "$in_use" ]; then
             RESTART_SERVICES="${RESTART_SERVICES} ${bin}"
         fi
         rm -f "${INSTALL_DIR}/${bin}"
