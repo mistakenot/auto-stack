@@ -34,7 +34,7 @@ var (
 	}
 )
 
-// Env controls how autoskill resolves project/global paths.
+// Env controls how auto skill resolves project/global paths.
 type Env struct {
 	Root         string
 	RootOverride bool
@@ -157,12 +157,12 @@ func Create(env Env, opts CreateOptions) (CreateResult, error) {
 	info, err := os.Stat(skillsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return result, fmt.Errorf("skills directory does not exist at %s; run: autoskill init --project", displayPath(skillsDir))
+			return result, fmt.Errorf("skills directory does not exist at %s; run: auto skill init --project", displayPath(skillsDir))
 		}
 		return result, fmt.Errorf("stat %s: %w", displayPath(skillsDir), err)
 	}
 	if !info.IsDir() {
-		return result, fmt.Errorf("%s is not a directory; run: autoskill init --project", displayPath(skillsDir))
+		return result, fmt.Errorf("%s is not a directory; run: auto skill init --project", displayPath(skillsDir))
 	}
 
 	skillDir := filepath.Join(skillsDir, name)

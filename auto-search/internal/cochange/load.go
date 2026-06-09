@@ -1,4 +1,4 @@
-// Package cochange implements the engine behind `autosearch co-change`: it
+// Package cochange implements the engine behind `auto search co-change`: it
 // loads a repo's git parquet (commits, commit_files, git_refs) into an
 // ephemeral in-memory SQLite database and aggregates temporal coupling in SQL.
 //

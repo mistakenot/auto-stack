@@ -22,7 +22,9 @@ IMAGE="ubuntu:24.04"
 CONTAINER_NAME="autostack-install-test-$$"
 REPO="mistakenot/auto-stack"
 INSTALL_URL="https://raw.githubusercontent.com/${REPO}/main/install.sh"
-BINARIES="autodoc autoenv autoetl autograph autosearch autoreflect autoskill autowatch"
+BINARIES="auto"
+STEMS="config doc env etl graph reflect search skill ui watch"
+OLD_BINARIES="autodoc autoenv autoetl autograph autoreflect autosearch autoskill autoui autowatch autoconfig"
 BIN_DIR="/root/.local/bin"
 PROJECT_DIR="/root/src/testproject"
 
@@ -122,26 +124,42 @@ else
 fi
 
 echo ""
-echo "--- validating binaries ---"
-for bin in $BINARIES; do
-    BIN_PATH="$BIN_DIR/$bin"
-
-    if ! docker exec "$CONTAINER_NAME" test -x "$BIN_PATH"; then
-        echo "  FAIL: $bin not found or not executable at $BIN_PATH"
-        FAIL=1
-        continue
-    fi
-
+echo "--- validating binary ---"
+AUTO="$BIN_DIR/auto"
+if ! docker exec "$CONTAINER_NAME" test -x "$AUTO"; then
+    echo "  FAIL: auto not found or not executable at $AUTO"
+    FAIL=1
+else
     EXIT_CODE=0
-    docker exec "$CONTAINER_NAME" "$BIN_PATH" --help >/dev/null 2>&1 || EXIT_CODE=$?
+    docker exec "$CONTAINER_NAME" "$AUTO" --help >/dev/null 2>&1 || EXIT_CODE=$?
     if [ "$EXIT_CODE" -ge 126 ]; then
-        echo "  FAIL: $bin exited with $EXIT_CODE (crash or not found)"
+        echo "  FAIL: auto --help exited with $EXIT_CODE (crash)"
         FAIL=1
-        continue
+    else
+        echo "  OK: auto"
     fi
+fi
 
-    echo "  OK: $bin"
+echo "--- validating subcommands (auto <tool> --help) ---"
+for stem in $STEMS; do
+    EXIT_CODE=0
+    docker exec "$CONTAINER_NAME" "$AUTO" "$stem" --help >/dev/null 2>&1 || EXIT_CODE=$?
+    if [ "$EXIT_CODE" -ge 126 ]; then
+        echo "  FAIL: auto $stem --help exited with $EXIT_CODE"
+        FAIL=1
+    else
+        echo "  OK: auto $stem"
+    fi
 done
+
+echo "--- asserting old per-tool binaries are NOT installed (AC-3) ---"
+for old in $OLD_BINARIES; do
+    if docker exec "$CONTAINER_NAME" test -e "$BIN_DIR/$old"; then
+        echo "  FAIL: stale binary present: $BIN_DIR/$old"
+        FAIL=1
+    fi
+done
+echo "  OK: no old per-tool binaries installed"
 
 # ============================================================
 # Phase 2: Create a test project and run init
@@ -159,27 +177,27 @@ docker exec "$CONTAINER_NAME" bash -c "
 # Run global + project init for each tool that supports it.
 echo "--- running tool init ---"
 
-# autodoc: global init, then project init
-docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/autodoc init" 2>&1 | sed 's/^/  [autodoc] /'
-docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/autodoc init --project" 2>&1 | sed 's/^/  [autodoc] /'
+# auto doc: global init, then project init
+docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/auto doc init" 2>&1 | sed 's/^/  [auto doc] /'
+docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/auto doc init --project" 2>&1 | sed 's/^/  [auto doc] /'
 
-# autosearch: global init only (no project init)
-docker exec "$CONTAINER_NAME" bash -c "$BIN_DIR/autosearch init" 2>&1 | sed 's/^/  [autosearch] /'
+# auto search: global init only (no project init)
+docker exec "$CONTAINER_NAME" bash -c "$BIN_DIR/auto search init" 2>&1 | sed 's/^/  [auto search] /'
 
-# autowatch: global init then project init
-docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/autowatch init" 2>&1 | sed 's/^/  [autowatch] /'
+# auto watch: global init then project init
+docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/auto watch init" 2>&1 | sed 's/^/  [auto watch] /'
 
-# autoenv: project init only (no global state)
-docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/autoenv init" 2>&1 | sed 's/^/  [autoenv] /'
+# auto env: project init only (no global state)
+docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/auto env init" 2>&1 | sed 's/^/  [auto env] /'
 
-# autoetl: no init command
+# auto etl: no init command
 
-# autoskill: global init, then project init
-docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/autoskill init" 2>&1 | sed 's/^/  [autoskill] /'
-docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/autoskill init --project" 2>&1 | sed 's/^/  [autoskill] /'
+# auto skill: global init, then project init
+docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/auto skill init" 2>&1 | sed 's/^/  [auto skill] /'
+docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/auto skill init --project" 2>&1 | sed 's/^/  [auto skill] /'
 
-# autograph: global init only (no project init)
-docker exec "$CONTAINER_NAME" bash -c "$BIN_DIR/autograph init" 2>&1 | sed 's/^/  [autograph] /'
+# auto graph: global init only (no project init)
+docker exec "$CONTAINER_NAME" bash -c "$BIN_DIR/auto graph init" 2>&1 | sed 's/^/  [auto graph] /'
 
 # ============================================================
 # Phase 3: Validate ~/.auto global structure

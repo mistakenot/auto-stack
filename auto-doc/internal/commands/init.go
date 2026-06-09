@@ -134,7 +134,7 @@ func InitProject(w io.Writer, rootDir string) error {
 	// Check for stale
 	result := CheckStale(entries)
 	if result.HasStale {
-		fmt.Fprintf(w, "\n%d file(s) need attention. Run `autodoc fix` to see instructions.\n", len(result.StaleFiles))
+		fmt.Fprintf(w, "\n%d file(s) need attention. Run `auto doc fix` to see instructions.\n", len(result.StaleFiles))
 	}
 
 	return nil

@@ -23,7 +23,7 @@ func newDownCmd(application *app.App) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			info, err := worktree.Detect(application.CWD)
 			if err != nil {
-				return &ExitError{Code: 1, Err: errors.New("not a git repository: autoenv requires a git repository")}
+				return &ExitError{Code: 1, Err: errors.New("not a git repository: auto env requires a git repository")}
 			}
 			repoRoot := info.RepoRoot
 

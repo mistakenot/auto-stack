@@ -31,7 +31,7 @@ Read approved requirements, gather codebase context, explore approaches, write `
    - Search project documentation for relevant how-tos, concept docs, and architecture guides
    - Check for related rules or conventions that apply
    - Note any documented constraints or patterns the implementation must follow
-   - Run `autosearch quickstart` to discover available search tools, then use the best fit if useful
+   - Run `auto search quickstart` to discover available search tools, then use the best fit if useful
 
    Collect findings from both subagents before proceeding.
 

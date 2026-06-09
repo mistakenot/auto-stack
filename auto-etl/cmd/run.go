@@ -40,10 +40,69 @@ var validOnlyValues = map[string]bool{
 	"git":      true,
 }
 
-func init() {
-	home, _ := os.UserHomeDir()
-	defaultInput := filepath.Join(home, ".claude", "projects")
-	defaultOutput := filepath.Join(home, ".auto", "etl", "output")
+func newRunCmd() *cobra.Command {
+	defaultInput, defaultOutput := homeDefaults()
+
+	runCmd := &cobra.Command{
+		Use:   "run",
+		Short: "Run the ETL pipeline",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var runStart time.Time
+			if debug {
+				runStart = time.Now()
+			}
+
+			// Parse and validate --only flag
+			sources, err := parseOnlyFlag(onlyFlag)
+			if err != nil {
+				return err
+			}
+
+			if fullRun {
+				fmt.Printf("full rebuild: removing %s\n", outputDir)
+				if err := os.RemoveAll(outputDir); err != nil {
+					return fmt.Errorf("remove output dir: %w", err)
+				}
+			}
+
+			fmt.Printf("input:  %s\n", inputDir)
+			fmt.Printf("output: %s\n", outputDir)
+
+			remotes := loadRemotesCache()
+			hostID := loadHostID()
+
+			// Session ETL phase
+			if sources["sessions"] {
+				if err := runSessionETL(hostID, remotes); err != nil {
+					return err
+				}
+			}
+
+			// GitHub PR sync phase
+			if sources["github"] {
+				explicitGitHub := len(onlyFlag) > 0 && !sources["sessions"]
+				if err := runGitHubSync(cmd.Context(), hostID, remotes, explicitGitHub); err != nil {
+					return err
+				}
+			}
+
+			// Git history ETL phase
+			if sources["git"] {
+				if err := runGitETL(hostID, remotes, repoPathFlag, sinceFlag, fullRun); err != nil {
+					return err
+				}
+			}
+
+			// Persist updated remotes cache
+			saveRemotesCache(remotes)
+
+			if debug {
+				fmt.Fprintf(os.Stderr, "[debug] total: %s\n", time.Since(runStart))
+			}
+			fmt.Println("done")
+			return nil
+		},
+	}
 
 	runCmd.Flags().StringVar(&inputDir, "input", defaultInput, "Input directory containing raw session data")
 	runCmd.Flags().StringVar(&outputDir, "output", defaultOutput, "Output directory for transformed parquet files")
@@ -52,68 +111,7 @@ func init() {
 	runCmd.Flags().StringSliceVar(&repoPathFlag, "repo-path", nil, "Explicit git repo paths to index (for --only git)")
 	runCmd.Flags().StringVar(&sinceFlag, "since", "", "Limit initial git history depth (e.g. 5m, 2h, 5d, 3w, 6mo, 1y)")
 
-	rootCmd.AddCommand(runCmd)
-}
-
-var runCmd = &cobra.Command{
-	Use:   "run",
-	Short: "Run the ETL pipeline",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		var runStart time.Time
-		if debug {
-			runStart = time.Now()
-		}
-
-		// Parse and validate --only flag
-		sources, err := parseOnlyFlag(onlyFlag)
-		if err != nil {
-			return err
-		}
-
-		if fullRun {
-			fmt.Printf("full rebuild: removing %s\n", outputDir)
-			if err := os.RemoveAll(outputDir); err != nil {
-				return fmt.Errorf("remove output dir: %w", err)
-			}
-		}
-
-		fmt.Printf("input:  %s\n", inputDir)
-		fmt.Printf("output: %s\n", outputDir)
-
-		remotes := loadRemotesCache()
-		hostID := loadHostID()
-
-		// Session ETL phase
-		if sources["sessions"] {
-			if err := runSessionETL(hostID, remotes); err != nil {
-				return err
-			}
-		}
-
-		// GitHub PR sync phase
-		if sources["github"] {
-			explicitGitHub := len(onlyFlag) > 0 && !sources["sessions"]
-			if err := runGitHubSync(cmd.Context(), hostID, remotes, explicitGitHub); err != nil {
-				return err
-			}
-		}
-
-		// Git history ETL phase
-		if sources["git"] {
-			if err := runGitETL(hostID, remotes, repoPathFlag, sinceFlag, fullRun); err != nil {
-				return err
-			}
-		}
-
-		// Persist updated remotes cache
-		saveRemotesCache(remotes)
-
-		if debug {
-			fmt.Fprintf(os.Stderr, "[debug] total: %s\n", time.Since(runStart))
-		}
-		fmt.Println("done")
-		return nil
-	},
+	return runCmd
 }
 
 // parseOnlyFlag validates and normalizes the --only flag values.

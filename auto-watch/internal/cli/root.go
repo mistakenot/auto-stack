@@ -48,7 +48,7 @@ func Execute(ctx context.Context, stdout, stderr io.Writer) int {
 
 func NewRootCmd(application *app.App) *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:           "autowatch",
+		Use:           "watch",
 		Short:         "Monitor repo changes and run scheduled agent tasks",
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -99,7 +99,7 @@ func requireRepoRoot(cwd string) (string, error) {
 	if err != nil {
 		return "", &ExitError{
 			Code: 1,
-			Err:  errors.New("current directory is not inside a git repo; run autowatch init inside a repository"),
+			Err:  errors.New("current directory is not inside a git repo; run auto watch init inside a repository"),
 		}
 	}
 	return repoRoot, nil
@@ -114,7 +114,7 @@ func requireProjectConfig(cwd string) (string, model.ProjectConfig, error) {
 	if err != nil {
 		return "", model.ProjectConfig{}, &ExitError{
 			Code: 1,
-			Err:  fmt.Errorf("failed to load %s: %w; run autowatch init", config.ProjectConfigPath(repoRoot), err),
+			Err:  fmt.Errorf("failed to load %s: %w; run auto watch init", config.ProjectConfigPath(repoRoot), err),
 		}
 	}
 	return repoRoot, cfg, nil

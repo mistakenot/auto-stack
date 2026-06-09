@@ -42,7 +42,7 @@ func Execute(ctx context.Context, stdout, stderr io.Writer) int {
 
 func NewRootCmd(application *app.App) *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:           "autosearch",
+		Use:           "search",
 		Short:         "Search normalized coding-session history",
 		SilenceErrors: true,
 		SilenceUsage:  true,

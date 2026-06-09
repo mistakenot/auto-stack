@@ -69,7 +69,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 	}
 
 	cmd := &cobra.Command{
-		Use:           "autoskill",
+		Use:           "skill",
 		Short:         "Manage agent skills",
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -101,7 +101,7 @@ func newInitCmd(resolveEnv envResolver) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Initialize autoskill settings",
+		Short: "Initialize auto skill settings",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := resolveEnv()
@@ -360,7 +360,7 @@ func newLsCmd(resolveEnv envResolver) *cobra.Command {
 func newDoctorCmd(resolveEnv envResolver) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check autoskill configuration and project setup",
+		Short: "Check auto skill configuration and project setup",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := resolveEnv()
@@ -394,13 +394,13 @@ func newQuickstartCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			quickstart := strings.Join([]string{
-				"# autoskill quickstart",
+				"# auto skill quickstart",
 				"",
 				"```bash",
-				"autoskill init",
-				`autoskill create my-skill --description "Use when the user needs X. Prefer for Y."`,
-				"autoskill lint",
-				"autoskill ls --text",
+				"auto skill init",
+				`auto skill create my-skill --description "Use when the user needs X. Prefer for Y."`,
+				"auto skill lint",
+				"auto skill ls --text",
 				"```",
 				"",
 				skillAuthoringGuide,
@@ -418,9 +418,9 @@ func newDocsCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			docs := strings.Join([]string{
-				"# autoskill commands",
+				"# auto skill commands",
 				"",
-				"- `init`: initialize global (`autoskill init`) or project (`autoskill init --project`) settings.",
+				"- `init`: initialize global (`auto skill init`) or project (`auto skill init --project`) settings.",
 				"- `create <name> --description ...`: create a skill scaffold and lint it.",
 				"- `lint [path]`: validate skills and emit structured JSON diagnostics.",
 				"- `ls`: list skills in JSON (default) or text (`--text`).",
@@ -446,7 +446,7 @@ func doctorReport(env skill.Env) (map[string]any, error) {
 		"ok":      globalOK,
 		"path":    filepath.ToSlash(globalPath),
 		"message": boolMessage(globalOK, "global settings found", "global settings missing"),
-		"hint":    "run autoskill init",
+		"hint":    "run auto skill init",
 	})
 
 	projectPath := env.ProjectSettingsPath()
@@ -456,7 +456,7 @@ func doctorReport(env skill.Env) (map[string]any, error) {
 		"ok":      projectOK,
 		"path":    filepath.ToSlash(projectPath),
 		"message": boolMessage(projectOK, "project settings found", "project settings missing"),
-		"hint":    "run autoskill init --project",
+		"hint":    "run auto skill init --project",
 	})
 
 	skillsPath := env.SkillsDir()
@@ -466,7 +466,7 @@ func doctorReport(env skill.Env) (map[string]any, error) {
 		"ok":      skillsOK,
 		"path":    filepath.ToSlash(skillsPath),
 		"message": boolMessage(skillsOK, "skills directory found", "skills directory missing"),
-		"hint":    "run autoskill init --project",
+		"hint":    "run auto skill init --project",
 	})
 
 	ok := true

@@ -27,7 +27,7 @@ type Options struct {
 	RequestID string
 }
 
-// Run is the top-level entry point for `autosearch co-change`. It resolves the
+// Run is the top-level entry point for `auto search co-change`. It resolves the
 // repo from the input path, loads the repo's git parquet into an ephemeral
 // in-memory SQLite database, aggregates co-change coupling, scores in Go, and
 // assembles the AC-4/AC-5 JSON Result.
@@ -47,7 +47,7 @@ func Run(opts *Options) (*Result, error) {
 	// 1. Resolve repo. git_repositories is needed for origin-remote matching.
 	repoSources, err := etlscan.DiscoverDatasets(opts.InputRoot, []string{"git_repositories"})
 	if err != nil {
-		return nil, fmt.Errorf("%w: cannot read git datasets under %q; run `autoetl run --only git`", ErrMissingParquet, opts.InputRoot)
+		return nil, fmt.Errorf("%w: cannot read git datasets under %q; run `auto etl run --only git`", ErrMissingParquet, opts.InputRoot)
 	}
 	repos, err := readAllRepos(repoSources)
 	if err != nil {
@@ -62,10 +62,10 @@ func Run(opts *Options) (*Result, error) {
 	// 2. Discover + load the git datasets for the resolved repo.
 	gitSources, err := etlscan.DiscoverDatasets(opts.InputRoot, []string{"commits", "commit_files", "git_refs"})
 	if err != nil {
-		return nil, fmt.Errorf("%w: cannot read git datasets under %q; run `autoetl run --only git`", ErrMissingParquet, opts.InputRoot)
+		return nil, fmt.Errorf("%w: cannot read git datasets under %q; run `auto etl run --only git`", ErrMissingParquet, opts.InputRoot)
 	}
 	if !hasDataset(gitSources, "commits") || !hasDataset(gitSources, "commit_files") {
-		return nil, fmt.Errorf("%w: no commits/commit_files parquet under %q; run `autoetl run --only git`", ErrMissingParquet, opts.InputRoot)
+		return nil, fmt.Errorf("%w: no commits/commit_files parquet under %q; run `auto etl run --only git`", ErrMissingParquet, opts.InputRoot)
 	}
 
 	db, err := Load(gitSources, LoadParams{RepoID: resolved.RepoID, TauDays: tau, NoDecay: opts.NoDecay})

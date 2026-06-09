@@ -18,7 +18,7 @@ type doctorCheck struct {
 func newDoctorCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "doctor",
-		Short: "Check autoui configuration",
+		Short: "Check auto ui configuration",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			checks := runDoctorChecks()
@@ -49,7 +49,7 @@ func runDoctorChecks() []doctorCheck {
 			Check:   "ui_settings",
 			Status:  "fail",
 			Message: fmt.Sprintf("cannot determine ui settings path: %v", err),
-			Hint:    "run autoui init",
+			Hint:    "run auto ui init",
 		})
 		return checks
 	}
@@ -60,7 +60,7 @@ func runDoctorChecks() []doctorCheck {
 			Check:   "ui_settings",
 			Status:  "fail",
 			Message: fmt.Sprintf("ui settings invalid or missing: %v", err),
-			Hint:    "run autoui init",
+			Hint:    "run auto ui init",
 		})
 		return checks
 	}

@@ -42,16 +42,14 @@ var zenKoans = []string{
 	"The fastest query is the one you never run.",
 }
 
-func init() {
-	rootCmd.AddCommand(zenCmd)
-}
-
-var zenCmd = &cobra.Command{
-	Use:    "zen",
-	Short:  "Print a random piece of ETL wisdom",
-	Hidden: true,
-	Run: func(cmd *cobra.Command, args []string) {
-		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(zenKoans))))
-		fmt.Println(zenKoans[n.Int64()])
-	},
+func newZenCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "zen",
+		Short:  "Print a random piece of ETL wisdom",
+		Hidden: true,
+		Run: func(cmd *cobra.Command, args []string) {
+			n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(zenKoans))))
+			fmt.Println(zenKoans[n.Int64()])
+		},
+	}
 }

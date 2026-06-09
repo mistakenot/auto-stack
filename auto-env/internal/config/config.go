@@ -42,7 +42,7 @@ func Load(repoRoot string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, errors.New("config not found: run autoenv init")
+			return nil, errors.New("config not found: run auto env init")
 		}
 		return nil, fmt.Errorf("read config: %w", err)
 	}

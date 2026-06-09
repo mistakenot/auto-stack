@@ -50,7 +50,11 @@ func Run(stdout, stderr io.Writer) (*Result, error) {
 
 	fmt.Fprintf(stderr, "updating %s -> %s\n", current, latest)
 
-	if err := runInstallScript(stdout, stderr, latest); err != nil {
+	// install.sh's progress output is diagnostic, not payload: route it to
+	// stderr so callers can keep stdout as a pure JSON result (the CLAUDE.md
+	// JSON-mode stdout contract). The stdout param is retained for API
+	// compatibility with existing callers but carries no payload here.
+	if err := runInstallScript(stderr, stderr, latest); err != nil {
 		return nil, fmt.Errorf("install failed: %w", err)
 	}
 

@@ -45,13 +45,13 @@ Use --min-tool-duration and --interrupted (with --tool-name optional) to
 find slow or stuck tool calls:
 
   # All Bash calls slower than 60 seconds in the last 30 days.
-  autosearch search "" --tool-name Bash --min-tool-duration 60s --since 30d
+  auto search search "" --tool-name Bash --min-tool-duration 60s --since 30d
 
   # Every tool call Claude reported as interrupted.
-  autosearch search "" --interrupted
+  auto search search "" --interrupted
 
   # Scope a duration query to a single session.
-  autosearch search "" --session-id <session-id> --min-tool-duration 60s
+  auto search search "" --session-id <session-id> --min-tool-duration 60s
 `,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -91,7 +91,7 @@ find slow or stuck tool calls:
 			}
 			db, err := indexdb.Open(dbPath)
 			if err != nil {
-				return &ExitError{Code: 1, Err: fmt.Errorf("open index: %w; run: autosearch index", err)}
+				return &ExitError{Code: 1, Err: fmt.Errorf("open index: %w; run: auto search index", err)}
 			}
 			defer func() { _ = db.Close() }()
 

@@ -6,13 +6,13 @@ Auto Stack is a suite of CLI tools that capture, index, analyze, and learn from 
 
 ```mermaid
 flowchart LR
-    Agents([Coding agents<br/>Claude · Codex · Gemini]) -->|raw logs| ETL[autoetl<br/>normalize]
+    Agents([Coding agents<br/>Claude · Codex · Gemini]) -->|raw logs| ETL[auto etl<br/>normalize]
     Git([Git history]) -->|commits, diffs| ETL
-    ETL -->|Parquet| Search[autosearch<br/>FTS + analytics]
-    ETL -->|Parquet| Graph[autograph<br/>code + import graphs]
-    Search --> Reflect[autoreflect<br/>extract rules]
+    ETL -->|Parquet| Search[auto search<br/>FTS + analytics]
+    ETL -->|Parquet| Graph[auto graph<br/>code + import graphs]
+    Search --> Reflect[auto reflect<br/>extract rules]
     Graph --> Reflect
-    Reflect --> Skill[autoskill<br/>compile skills]
+    Reflect --> Skill[auto skill<br/>compile skills]
     Skill -.->|skills feed back<br/>into agents| Agents
 
     classDef active fill:#1f6feb,stroke:#1f6feb,color:#fff;
@@ -35,13 +35,15 @@ Custom install directory:
 INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/mistakenot/auto-stack/main/install.sh | bash
 ```
 
-The installer pulls pre-built binaries for `linux-amd64` and `darwin-arm64` from the latest [GitHub release](https://github.com/mistakenot/auto-stack/releases). Building from source requires Go 1.26+.
+The installer pulls the pre-built `auto` binary for `linux-amd64` and `darwin-arm64` from the latest [GitHub release](https://github.com/mistakenot/auto-stack/releases) — a single asset per platform. Building from source requires Go 1.26+.
 
-Every binary ships with `update`:
+`auto` ships with `update`:
 
 ```bash
-autoetl update    # re-runs install.sh to pull the latest release
+auto update    # re-runs install.sh to pull the latest release
 ```
+
+`auto update` is the canonical update path. The per-tool variants (`auto etl update`, `auto search update`, …) are equivalent aliases.
 
 ---
 
@@ -51,16 +53,16 @@ Roughly ordered by where each tool sits in the pipeline — raw inputs at the to
 
 | Tool | Status | What it does |
 |------|--------|-------------|
-| **autoetl** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Extracts session logs from Claude Code, Codex, and other agents — plus git history — into partitioned Parquet datasets. |
-| **autodoc** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Documentation management with two-way freshness tracking, BM25 search, and `[autodoc()]` source-tag linking. |
-| **autograph** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | File-level import graphs for TypeScript and Go. Doc-to-code overlays via `[autodoc()]` tags. Context-pack builder with token budgets. |
-| **autosearch** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | SQLite FTS5 index over messages, sessions, and commits. Co-change queries, stats grouping, skill adoption tracking. |
-| **autoreflect** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Capture session feedback, mine recurring patterns, and persist learned rules into project playbooks. |
-| **autoskill** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Author, lint, and sync reusable agent skills. Detects skill bloat and validates trigger conditions. |
-| **autowatch** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Cron-driven daemon that monitors repos and launches bash or Claude Code tasks on schedule or file events. |
-| **autoenv** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Template-based config generation with deterministic per-worktree port allocation. Stand up isolated dev envs for parallel agent branches. |
-| **autoui** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Local web dashboard over your session data — a single binary with an embedded no-build Preact SPA. `autoui serve` runs it on localhost. |
-| **autoconfig** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Validate and bootstrap agent configuration. Installs `prepare-commit-msg` hooks that link commits to sessions. |
+| **auto etl** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Extracts session logs from Claude Code, Codex, and other agents — plus git history — into partitioned Parquet datasets. |
+| **auto doc** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Documentation management with two-way freshness tracking, BM25 search, and `[autodoc()]` source-tag linking. |
+| **auto graph** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | File-level import graphs for TypeScript and Go. Doc-to-code overlays via `[autodoc()]` tags. Context-pack builder with token budgets. |
+| **auto search** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | SQLite FTS5 index over messages, sessions, and commits. Co-change queries, stats grouping, skill adoption tracking. |
+| **auto reflect** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Capture session feedback, mine recurring patterns, and persist learned rules into project playbooks. |
+| **auto skill** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Author, lint, and sync reusable agent skills. Detects skill bloat and validates trigger conditions. |
+| **auto watch** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Cron-driven daemon that monitors repos and launches bash or Claude Code tasks on schedule or file events. |
+| **auto env** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Template-based config generation with deterministic per-worktree port allocation. Stand up isolated dev envs for parallel agent branches. |
+| **auto ui** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Local web dashboard over your session data — a single binary with an embedded no-build Preact SPA. `auto ui serve` runs it on localhost. |
+| **auto config** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Validate and bootstrap agent configuration. Installs `prepare-commit-msg` hooks that link commits to sessions. |
 | **autoeval** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Scenario-replay evaluation harness. Grade agents against ground truth and compare planning strategies. |
 | **autoweb** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Safe web-research portal with pluggable backends (Exa, Parallel, OpenAI), dedupe, and Markdown conversion. |
 
@@ -75,7 +77,7 @@ The happy path from raw coding sessions to self-improving agents.
 After coding with Claude Code, Codex, or other agents, extract and normalize the session logs:
 
 ```bash
-autoetl run
+auto etl run
 ```
 
 This reads raw session logs (default: `~/.claude/projects`), normalizes them into Parquet datasets, and writes incremental output to `~/.auto/etl/output/`:
@@ -94,44 +96,44 @@ The same command also extracts git history (commits, diffs, branches, authors) s
 Build a full-text index over the normalized data:
 
 ```bash
-autosearch index
+auto search index
 ```
 
 ### 3. Search your history
 
 ```bash
 # Find error patterns across all sessions
-autosearch search "Exit code 1" --since 1w
+auto search search "Exit code 1" --since 1w
 
 # Sessions that touched auth code
-autosearch search "auth middleware" --scope sessions
+auto search search "auth middleware" --scope sessions
 
 # Sessions where the agent burned tokens hitting bash errors
-autosearch session list --since 2w --min-errors 5 --sort-by errors
+auto search session list --since 2w --min-errors 5 --sort-by errors
 
 # Drill into a specific session, or list the worst ones
-autosearch session get $SESSION_ID
-autosearch session list --since 1w --min-tokens 50000 --sort-by tokens
+auto search session get $SESSION_ID
+auto search session list --since 1w --min-tokens 50000 --sort-by tokens
 
 # Filter by workspace
-autosearch search "flaky test" --cwd /home/dev/my-project
+auto search search "flaky test" --cwd /home/dev/my-project
 
 # Group results by tool to find which tools fire most often
-autosearch stats --group-by tool_name --since 1w
+auto search stats --group-by tool_name --since 1w
 
 # Which skills are getting used (and which are dead weight)?
-autosearch skills --since 1w
+auto search skills --since 1w
 ```
 
 All commands output JSON by default. Use `--highlight` to bold matching terms in snippets.
 
 ### 4. Correlate sessions with commits
 
-Every commit produced inside a Claude Code session is linked back to that session via a `Session-Id:` trailer (installed by `autoconfig init`). You can drill from a commit to the agent transcript that produced it, or list every commit a given session shipped.
+Every commit produced inside a Claude Code session is linked back to that session via a `Session-Id:` trailer (installed by `auto config init`). You can drill from a commit to the agent transcript that produced it, or list every commit a given session shipped.
 
 ```bash
 # Files that change together with auth.go over the last 90 days
-autosearch co-change auth.go --decay-tau 90d
+auto search co-change auth.go --decay-tau 90d
 ```
 
 `co-change` reads the commits dataset and surfaces implicit coupling — useful for refactor impact analysis and finding hidden dependencies that don't show up in import graphs. Results are ranked by directional confidence weighted by lift, with a large-commit penalty and configurable time decay. Output is budget-bounded compact text by default (`--budget` tunes the size); pass `--all` for every row or `--json` for the full envelope.
@@ -140,57 +142,57 @@ autosearch co-change auth.go --decay-tau 90d
 
 ```bash
 # Build a file-level import graph for the current repo (TypeScript + Go)
-autograph code graph
+auto graph code graph
 
 # Assemble a context pack for an LLM, budgeted to N tokens
-autograph code context src/auth --file src/auth/login.ts --token-limit 8000
+auto graph code context src/auth --file src/auth/login.ts --token-limit 8000
 ```
 
-`autograph` understands TypeScript (`tsconfig` path aliases, JSONC comments, dynamic `import()`, `require()`, re-exports) and Go (module-aware via `go.mod`). It also overlays `[autodoc()]` tags so you can see which docs cover which files.
+`auto graph` understands TypeScript (`tsconfig` path aliases, JSONC comments, dynamic `import()`, `require()`, re-exports) and Go (module-aware via `go.mod`). It also overlays `[autodoc()]` tags so you can see which docs cover which files.
 
 ### 6. Reflect and improve
 
 ```bash
 # Capture feedback while it's fresh, optionally pinned to a file range
-autoreflect feedback add \
+auto reflect feedback add \
   --kind harmful \
   --comment "gorm caused N+1 on dashboard query" \
   --file internal/db/users.go --start 42 --end 80 \
   --effective-at 2026-06-01
 
 # Record a rule for future sessions
-autoreflect rule create --content "prefer sqlc over gorm for new queries"
+auto reflect rule create --content "prefer sqlc over gorm for new queries"
 
 # Look up rules that apply to the current task
-autoreflect lookup "database queries"
+auto reflect lookup "database queries"
 ```
 
-`autoreflect` persists rule memory across sessions, attaches feedback to specific lines, and feeds patterns back into project playbooks.
+`auto reflect` persists rule memory across sessions, attaches feedback to specific lines, and feeds patterns back into project playbooks.
 
 ### 7. Schedule the loop
 
-`autowatch` runs the whole pipeline on a cadence — daily ETL, on-change indexing, weekly reflection runs:
+`auto watch` runs the whole pipeline on a cadence — daily ETL, on-change indexing, weekly reflection runs:
 
 ```bash
 # Define a task (bash or Claude Code prompt)
-autowatch task create --id nightly-etl --bash "autoetl run && autosearch index"
+auto watch task create --id nightly-etl --bash "auto etl run && auto search index"
 
 # Wire it to a cron trigger
-autowatch trigger create --id daily-2am --cron "0 2 * * *"
-autowatch trigger add-task daily-2am nightly-etl
+auto watch trigger create --id daily-2am --cron "0 2 * * *"
+auto watch trigger add-task daily-2am nightly-etl
 
 # Or trigger on file events (glob-based, polled every 60s)
-autowatch trigger create --id new-prs --type file_created --glob ".github/pull_requests/*.md"
-autowatch trigger add-task new-prs review-pr
+auto watch trigger create --id new-prs --type file_created --glob ".github/pull_requests/*.md"
+auto watch trigger add-task new-prs review-pr
 
-autowatch start
+auto watch start
 ```
 
 Triggers and tasks are defined separately and linked, so the same task can fan out across cron schedules and file-event watchers.
 
 ### 8. Self-improve (automated)
 
-The self-improve pipeline ties it all together — it uses autosearch to find problems in your coding sessions, analyzes them against your codebase, and opens PRs to fix the top issues:
+The self-improve pipeline ties it all together — it uses `auto search` to find problems in your coding sessions, analyzes them against your codebase, and opens PRs to fix the top issues:
 
 ```bash
 prose run scripts/self-improve/index.md -- focus: "autosearch"
@@ -230,13 +232,13 @@ The PR bodies capture the full workflow narrative (problem, plan, decisions, tes
 - **TypeScript import graphs** — ast-grep-powered, handles static/dynamic imports, `require()`, re-exports, and `tsconfig` path aliases (with wildcard prefix+suffix, baseUrl probing, JSONC tolerance).
 - **Go import graphs** — native `go/parser` walk, module-aware via `go.mod`.
 - **Context packs** — deterministic, token-budgeted code bundles for LLM analysis.
-- **Doc-code overlay** — `autograph` and `autodoc graph` visualize which docs cover which files via `[autodoc()]` tags.
+- **Doc-code overlay** — `auto graph` and `auto doc graph` visualize which docs cover which files via `[autodoc()]` tags.
 
 ### Documentation
 - **Two-way freshness links** — `[autodoc()]` tags in source code and content hashes in doc frontmatter detect drift in both directions.
-- **BM25 doc search** — `autodoc search keyword <query>` searches every doc in the tree.
+- **BM25 doc search** — `auto doc search keyword <query>` searches every doc in the tree.
 - **`read_when` routing hints** — frontmatter tells agents when to pull a doc into context.
-- **Auto-generated indexes** — `autodoc fix` regenerates the documentation index in CLAUDE.md / AGENTS.md.
+- **Auto-generated indexes** — `auto doc fix` regenerates the documentation index in CLAUDE.md / AGENTS.md.
 
 ### Worktree environments
 - **Deterministic ports** — CRC32-hashed per-worktree port allocation; no collisions when running multiple agent branches in parallel.
@@ -245,8 +247,8 @@ The PR bodies capture the full workflow narrative (problem, plan, decisions, tes
 
 ### Skills, watch, reflect
 - **Skill linting & sync** — validate trigger metadata, schema, descriptions, total token cost.
-- **File-event triggers** — `autowatch` supports `file_created` with glob patterns alongside cron.
-- **Rule memory** — `autoreflect` persists learned rules with `--effective-at` timestamps for time-travel queries.
+- **File-event triggers** — `auto watch` supports `file_created` with glob patterns alongside cron.
+- **Rule memory** — `auto reflect` persists learned rules with `--effective-at` timestamps for time-travel queries.
 
 ---
 
@@ -256,17 +258,17 @@ All tools share a common data format and communicate through files, not APIs.
 
 ```mermaid
 flowchart TD
-    Raw[Raw logs<br/>~/.claude/projects, codex, git] --> Etl[autoetl]
+    Raw[Raw logs<br/>~/.claude/projects, codex, git] --> Etl[auto etl]
     Etl --> P1[messages.parquet]
     Etl --> P2[sessions.parquet]
     Etl --> P3[commits.parquet]
-    P1 --> Search[autosearch<br/>SQLite FTS5]
+    P1 --> Search[auto search<br/>SQLite FTS5]
     P2 --> Search
     P3 --> Search
-    P3 --> Graph[autograph<br/>code + doc graphs]
-    Search --> Reflect[autoreflect<br/>rules + playbooks]
+    P3 --> Graph[auto graph<br/>code + doc graphs]
+    Search --> Reflect[auto reflect<br/>rules + playbooks]
     Graph --> Reflect
-    Reflect --> Skill[autoskill<br/>skills]
+    Reflect --> Skill[auto skill<br/>skills]
 
     classDef storage fill:#21262d,stroke:#30363d,color:#c9d1d9;
     classDef tool fill:#1f6feb,stroke:#1f6feb,color:#fff;
@@ -326,8 +328,8 @@ Global config lives in `~/.auto/`. Each tool has its own subdirectory:
   etl/                   # raw session copies + Parquet output
   search/                # SQLite FTS indexes
   graph/                 # cached code graphs
-  docs/                  # autodoc settings
-  watch/                 # autowatch schedules + state.sqlite
+  docs/                  # auto doc settings
+  watch/                 # auto watch schedules + state.sqlite
   reflect/               # rule memory
   env/                   # environments.json registry
 ```
@@ -350,9 +352,9 @@ Most commands default to JSON for machine consumption. Date filters are uniform 
 ```bash
 git clone https://github.com/mistakenot/auto-stack.git
 cd auto-stack
-make install-hooks   # pre-commit hooks (gofmt, go vet, autodoc, beads sync)
+make install-hooks   # pre-commit hooks (gofmt, go vet, auto doc, beads sync)
 make install-tools   # golangci-lint, ast-grep, etc.
-make build           # build all binaries to ./bin/
+make build           # build the auto binary to ./bin/
 make install         # build and install to ~/.local/bin/
 make test            # run all tests
 make check           # fmt-check + vet + lint + test
@@ -360,7 +362,7 @@ make check           # fmt-check + vet + lint + test
 
 Each sub-project is an independent Go module with its own `go.mod`, sharing common utilities via the `auto-shared` module. See each sub-project's `CLAUDE.md` for build and test specifics.
 
-Releases are cut by tagging a commit; the `release` GitHub Actions workflow builds binaries for `linux-amd64` and `darwin-arm64` and publishes them. See [SECURITY.md](SECURITY.md) for vulnerability reporting.
+Releases are cut by tagging a commit; the `release` GitHub Actions workflow builds the `auto` binary for `linux-amd64` and `darwin-arm64` and publishes them. See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ---
 

@@ -6,8 +6,10 @@ Build and query code context graphs. Supports TypeScript and Go file-level impor
 
 ```bash
 cd auto-graph
-go build ./cmd/autograph/
+go build ./...
 ```
+
+The merged `auto` binary is built from the repo root with `make build` (the graph tool ships as `auto graph`).
 
 ## Test
 
@@ -27,11 +29,11 @@ go vet ./...
 
 - `ast-grep` must be installed for TypeScript scanning (`npm install -g @ast-grep/cli`)
 - Go scanning requires no external dependencies (uses stdlib `go/parser`)
-- Run `autograph doctor` to verify all dependencies are satisfied
+- Run `auto graph doctor` to verify all dependencies are satisfied
 
 ## Architecture
 
-- `cmd/autograph/` — entry point
+- `rootcmd/` — public seam mounted by the merged `auto` binary as `auto graph`
 - `internal/app/` — runtime context (stdout, stderr, cwd)
 - `internal/cli/` — Cobra commands (init, doctor, quickstart, docs, update, code graph, code context)
 - `internal/codegraph/` — reusable graph construction (Build, DetectLanguage, DiscoverFiles)

@@ -356,7 +356,7 @@ func TestQuickstartAndDocs(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("quickstart failed: code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "autoskill init") {
+	if !strings.Contains(stdout, "auto skill init") {
 		t.Fatalf("quickstart output missing expected command:\n%s", stdout)
 	}
 

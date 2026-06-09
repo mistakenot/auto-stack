@@ -10,7 +10,7 @@ title: "Auto Stack User Journey"
 
 An end to end showcase of what our desired end goal is, from setting up a new repository through to building a autonomous, self correcting coding system, using the full stack of tools we are building here.
 
-These tools are designed to be used by both humans and coding agents, but **agents are the primary users**. Command outputs default to JSON unless otherwise noted (e.g. `autodoc fix` outputs LLM-friendly markdown, `autosearch session get` outputs a markdown transcript). Human-readable text mode is available via flags where needed.
+These tools are designed to be used by both humans and coding agents, but **agents are the primary users**. Command outputs default to JSON unless otherwise noted (e.g. `auto doc fix` outputs LLM-friendly markdown, `auto search session get` outputs a markdown transcript). Human-readable text mode is available via flags where needed.
 
 Our first big milestone will be setting up a simple index-search-reflect workflow in this repository. Longer term milestones will include the newer tools like `autowatch` and `autograph`.
 
@@ -19,36 +19,36 @@ Our first big milestone will be setting up a simple index-search-reflect workflo
 ```bash
 # Creates a ./doc folder, with .auto/docs/settings.json file created
 # Note: init command on any tool does the same thing if ~/.auto doesn't exist - it creates ~/.auto/settings.json and sets it to { "host": "[current machine hostname"] }
-autodoc init
+auto doc init
 ```
 
 Now the user can start creating docs/requirements.md with the plan for the project. They also start creating other documentation files, going into depth on how the project will work. After working for a bit, their code agent runs
 
 ```bash
-autodoc fix
+auto doc fix
 ```
 
 This does a few things:
 - Makes sure all docs files in `./docs` have valid front matter, with `id`, `hash`, `title` and `summary` (initially empty, to be populated in next step)
 - Then it outputs a LLM friendly text instruction which highlites a few issues:
   - some docs don't have a non-empty `summary` value, tells the agent which files and how to fix
-  - tells the agent to run `autodoc fixed ./docs/file.md` once done
+  - tells the agent to run `auto doc fixed ./docs/file.md` once done
   - empty `id` are set to new random values for the docs that dont have it, 8 char hex.
 - The agent follows the instructions, setting summaries for the files that need it, one at a time.
 - Agent runs `fixed` against the files it updates. This updates the `hash` value for those docs to match `substr(hash(content), 8)` for those files.
-- The agent does this until `autodoc fix` returns no errors.
+- The agent does this until `auto doc fix` returns no errors.
 
 Eventually they start implementing the work and running claude code and codex. As the agents write files, they add `[autodoc(...)]` style links in code comment locations to indicate which doc contributes to understanding that file, class or function.
 
 The `[autodoc(...)]` comments take this form: `[autodoc($docId@$docHash, @codeBlockHash)]`. 
 - `docId` is the `id` value from the front matter of the doc.
 - `docHash` is the `hash` value from the front matter of the doc
-- `codeblockHash` is the hash of the indentation-scoped code block surrounding the tag. Scope is determined by collecting all subsequent lines at >= the tag line's indentation, stopping at the first shallower line (blank lines are transparent). If the tag is at column 0, scope extends to EOF. The autodoc tag itself is stripped before hashing.
+- `codeblockHash` is the hash of the indentation-scoped code block surrounding the tag. Scope is determined by collecting all subsequent lines at >= the tag line's indentation, stopping at the first shallower line (blank lines are transparent). If the tag is at column 0, scope extends to EOF. The auto doc tag itself is stripped before hashing.
 
 This way, `autodoc` can automatically detect drift between code and docs and raise it as an issue.
 
 
-After some further churn and work, the agent wants to commit. Before doing so, it runs `autodoc fix`. This does this:
+After some further churn and work, the agent wants to commit. Before doing so, it runs `auto doc fix`. This does this:
 - Runs the same checks as above
 - Also validates the `[autodoc(...)]` links in code.
 
@@ -60,7 +60,7 @@ It finds that some code blocks have changed since the doc was updated and flags 
 The agent works through the changes by:
 - Updating doc / code to be what they should be
 - Updating the code hash in the code file
-- Running `autodoc fixed ./` on the doc file if required
+- Running `auto doc fixed ./` on the doc file if required
 
 And keeps going until all errors are gone. We can now commit our work.
 
@@ -72,7 +72,7 @@ After a bunch of sessions, we decide to back up our coding agent history using `
 # Reads Claude Code session logs from ~/.claude/projects (default)
 # Normalizes into partitioned parquet under two datasets: messages, sessions
 # Incremental: only rewrites current time period, past partitions are immutable
-autoetl run --input ~/.claude/projects --output ~/.auto/etl/output
+auto etl run --input ~/.claude/projects --output ~/.auto/etl/output
 ```
 
 The output directory looks like this:
@@ -182,16 +182,16 @@ First, we need to index the files produced by `autoetl`...
 
 ```bash
 # creates ~/.auto/search/settings.json
-autosearch init
+auto search init
 
 # runs incremental index over parquet output path, defaults to ~/.auto/etl/output.
 # `--name` for output index defaults to `default`
 # stores its index + incremental state in a sqlite file in ~/.auto/search/default.sqlite
-autosearch index
+auto search index
 
 # or this, which uses a different output path instead and a different input dataset
 # stores its index + incremental state in a sqlite file in ~/.auto/search/s3index.sqlite
-autosearch index --name s3index --input s3://mybucket --key ~/.ssh/my_key
+auto search index --name s3index --input s3://mybucket --key ~/.ssh/my_key
 ```
 
 Autosearch creates these tables:
@@ -219,26 +219,26 @@ Query syntax is an app-level query language, not raw SQLite FTS syntax:
 # because most searches start by finding a specific moment in a session.
 
 # find messages containing "Exit code 0" — returns message-level hits
-autosearch search "Exit code 0"
+auto search search "Exit code 0"
 
 # same thing, explicit scope
-autosearch search "Exit code 0" --scope messages
+auto search search "Exit code 0" --scope messages
 
 # time filters work on both scopes — based on message timestamp for
 # messages, session start time for sessions
-autosearch search "Exit code 0" --since 5d
-autosearch search "Exit code 0" --after 2026-03-01 --before 2026-03-07
+auto search search "Exit code 0" --since 5d
+auto search search "Exit code 0" --after 2026-03-01 --before 2026-03-07
 
 # message-scope search runs over the `content_truncated` field
 #
 # --cwd filters to sessions from this workspace. Defaults to current
 # directory. Useful when you have sessions from many projects indexed.
-autosearch search "Exit code 0" --cwd /home/charlie/src/my-project-root
+auto search search "Exit code 0" --cwd /home/charlie/src/my-project-root
 
 # --remote filters by git remote instead of local path. Use this when
 # you want cross-host matching for the same repo, even if workspace
 # paths differ between machines.
-autosearch search "Exit code 0" --remote git@github.com:org/my-project.git
+auto search search "Exit code 0" --remote git@github.com:org/my-project.git
 
 # --cwd and --remote are mutually exclusive in v1. If you want to filter
 # by local path, use --cwd. If you want cross-host repo identity, use
@@ -246,12 +246,12 @@ autosearch search "Exit code 0" --remote git@github.com:org/my-project.git
 
 # --highlight wraps matching terms in **bold** markers in the snippet,
 # so the caller can see exactly which words matched without parsing offsets
-autosearch search "Exit code 0" --since 5d --highlight
+auto search search "Exit code 0" --since 5d --highlight
 
 # --request-id attaches a caller-chosen correlation ID echoed back in
 # the response _meta block. Agents firing multiple searches can match
 # results back to the originating query.
-autosearch search "Exit code 0" --request-id "reflect-run-42"
+auto search search "Exit code 0" --request-id "reflect-run-42"
 
 ### Session-level search (--scope sessions)
 # Searches full session transcripts (the `transcript_truncated` field).
@@ -261,29 +261,29 @@ autosearch search "Exit code 0" --request-id "reflect-run-42"
 # drills into individual messages.
 
 # rank sessions by relevance to "auth middleware e2e"
-autosearch search "auth middleware e2e" --scope sessions
+auto search search "auth middleware e2e" --scope sessions
 
 # find sessions from last 5 days about auth — good starting point for
 # a reflection agent that wants to review recent auth-related work
-autosearch search "auth middleware e2e" --scope sessions --since 5d
+auto search search "auth middleware e2e" --scope sessions --since 5d
 
 # cross-message patterns work naturally at session scope because the
 # full transcript is one document — "user asked about X AND agent hit Y"
 # would never match a single message but can match a session transcript
-autosearch search "flaky test AND retry" --scope sessions --since 1w
+auto search search "flaky test AND retry" --scope sessions --since 1w
 
 ### Semantic search (stretch goal, --mode semantic)
 # Uses vector embeddings instead of BM25. Finds conceptually related
 # content even without exact term overlap. Works with both scopes.
-autosearch search "Auth tests are failing" --mode semantic
-autosearch search "Auth tests are failing" --mode semantic --scope sessions
+auto search search "Auth tests are failing" --mode semantic
+auto search search "Auth tests are failing" --mode semantic --scope sessions
 
 ### Rule-based analysis (fix)
 # Bundled search rules that run multiple queries under the hood, similar
-# to `autodoc fix`. Returns LLM-friendly output saying what was found,
+# to `auto doc fix`. Returns LLM-friendly output saying what was found,
 # which rule flagged it, and what the agent should consider doing next.
 # likely a v2 feature after core indexing/search/retrieval is working.
-autosearch fix --since 5d
+auto search fix --since 5d
 ```
 
 ### Search response format
@@ -361,8 +361,8 @@ Search responses are a JSON object with a `hits` array and a `_meta` block. The 
 # - each message has XML wrappers, like <user id="$messageId" ts="2025-01-01T20:01:02">...</user>, <agent id="$messageId" ts=2025-01-01T20:01:04">...</agent>, etc
 # - if a single message is very long, it mid-truncates it
 # - subagents: we dont' include the full logs of the subagents, but make it clear when the agent started it/read the response, like <subagent_start  id="$messageId" sessionId="[subagent session id]">[subagent prompt]</subagent_start> and <subagent_output sessionId="..">...</subagent_output>
-# - calling `autosearch session $subAgentSessionId` returns a similar result for the subagent
-autosearch session get $sessionId
+# - calling `auto search session $subAgentSessionId` returns a similar result for the subagent
+auto search session get $sessionId
 
 # returns json object with top line stats and metadata:
 # - first message time / last message time
@@ -372,23 +372,23 @@ autosearch session get $sessionId
 # - transcript_summary is first N chars of the first message + last N chars of the last message with "..." in the middle
 # - machine-readable callers can pass --request-id and get a small `_meta`
 #   block back alongside the `session` object
-autosearch session describe $sessionId
+auto search session describe $sessionId
 
 # this returns the FULL message as text
-autosearch message get $messageId
+auto search message get $messageId
 
 # similar to above, returns top level metadata + preview of content (first N chars) as json
 # includes denormliased session data to - session id, first session message at, last session message at, etc.
 # - machine-readable callers can pass --request-id and get a small `_meta`
 #   block back alongside the `message` object
-autosearch message describe $messageId
+auto search message describe $messageId
 
 # finds other messages that are similar to the given message id
 # returns a search-style `_meta` + `hits` response rather than a single
 # describe object, so agents can rank and inspect multiple similar
 # messages. Hits include snippet text and neighboring message ids.
 # likely a v2 feature once semantic search exists.
-autosearch message similar $messageId
+auto search message similar $messageId
 ```
 
 Questions:
@@ -405,37 +405,37 @@ This forms the building blocks for a self-reflection loop, where we want to:
 
 1. User asks reflection agent "find why e2e tests are taking so long and not getting fixed"
 2. Agent observes the package.json command `npm run e2e` to start tests, and searches for matching sessions:
-   `autosearch search "npm run e2e" --scope sessions --since 2w`
+   `auto search search "npm run e2e" --scope sessions --since 2w`
 3. It gets 10 session hits ranked by BM25 relevance and notes the session ids.
 4. It starts by taking the session ids, and running a duckdb query to rank them by total token usage
 5. It takes the highest usage session id and drills into the messages:
-   `autosearch search "Exit code" --scope messages --cwd /home/charlie/src/my-project`
-6. It finds the specific error messages and pulls context with `autosearch session get $sessionId`
+   `auto search search "Exit code" --scope messages --cwd /home/charlie/src/my-project`
+6. It finds the specific error messages and pulls context with `auto search session get $sessionId`
 
 This is the smallest useful dogfood loop for `autoreflect` v1:
 
 1. use `autosearch` to find the sessions that contain the lesson
 2. inspect the transcripts and decide on one good repository rule
-3. use `autoreflect rule create` to write that rule into the repo playbook
-4. use `autoreflect lookup` later to retrieve that rule before doing similar work again
+3. use `auto reflect rule create` to write that rule into the repo playbook
+4. use `auto reflect lookup` later to retrieve that rule before doing similar work again
 
 Example commands:
 
 ```bash
 # find recent E2E-related sessions
-autosearch search "npm run e2e" --scope sessions --since 2w
+auto search search "npm run e2e" --scope sessions --since 2w
 
 # inspect the most relevant session
-autosearch session get $sessionId
+auto search session get $sessionId
 
 # drill into the failing messages if needed
-autosearch search "Exit code" --scope messages --cwd /home/charlie/src/my-project
+auto search search "Exit code" --scope messages --cwd /home/charlie/src/my-project
 
 # check whether a similar rule already exists
-autoreflect lookup "e2e flaky logs"
+auto reflect lookup "e2e flaky logs"
 
 # write the learned rule into project memory
-autoreflect rule create \
+auto reflect rule create \
   --content "Keep passing test logs short so failing E2E tests are easier to debug" \
   --category testing \
   --tag e2e \
@@ -443,7 +443,7 @@ autoreflect rule create \
   --tag flaky
 
 # later, before working on similar problems, retrieve matching rules
-autoreflect lookup "e2e flaky logs"
+auto reflect lookup "e2e flaky logs"
 ```
 
 Example initial playbook:
@@ -478,12 +478,12 @@ Example initial playbook:
   - calculate `lines_changed` / `tokens_used` to see which sessions are more efficient?
 
 - agent then starts basic, and looks for sessions that didn't go well
-  - `autosearch search "Exit code: 1" --scope sessions --since 1w`
+  - `auto search search "Exit code: 1" --scope sessions --since 1w`
   - Finds a session with bad exit codes
-  - `autosearch session get $sessionId` to pull pretty printed transcript
+  - `auto search session get $sessionId` to pull pretty printed transcript
   - finds flaky tests because the AI kept trying to use `playwright mcp` instead of `agent-browser`
-  - runs `autoreflect rule create --content "Prefer agent-browser over playwright mcp for flaky E2E debugging" --category testing --tag e2e --tag flaky --tag browser`
-  - later coding sessions use `autoreflect lookup "playwright flaky e2e"` to retrieve that rule
+  - runs `auto reflect rule create --content "Prefer agent-browser over playwright mcp for flaky E2E debugging" --category testing --tag e2e --tag flaky --tag browser`
+  - later coding sessions use `auto reflect lookup "playwright flaky e2e"` to retrieve that rule
   - future versions should check for similar rules first and support update/merge flows
 
   - next, looks for interview sessions (quick succession usage of question/answers / AskUserQuestion tool) that glean intel from the user
@@ -501,7 +501,7 @@ After getting more comfortable and finding our groove, I decide to automate a lo
 ```bash
 # Ran in the project dir, creates `.auto/watch/project.json` with empty configuration
 # Also adds the current dir to `~/.auto/watch/settings.json`
-autowatch init # (--project-id $name is optional, set to folder name otherwise, fails if it conflicts with global config)
+auto watch init # (--project-id $name is optional, set to folder name otherwise, fails if it conflicts with global config)
 ```
 
 The empty project config looks like:
@@ -519,15 +519,15 @@ First, lets automate etl.
 ```bash
 # this task would execute in the project directory via bash
 # saves this configuration under `.tasks` in `./.auto/watch/project.json`
-autowatch task create --id run-etl --bash "autoetl run"
+auto watch task create --id run-etl --bash "auto etl run"
 # this will run in the context of the current project directory, will look for this task
 #  and run it in process, blocking. useful for testing.
-autowatch task run --id run-etl
+auto watch task run --id run-etl
 
 # this trigger will go off once a day
-autowatch trigger create --id daily --cron "0 0 * * *"
+auto watch trigger create --id daily --cron "0 0 * * *"
 # associate the task with the trigger
-autowatch trigger add-task --trigger daily --task run-etl
+auto watch trigger add-task --trigger daily --task run-etl
 ```
 
 What about a claude code automation? Say we want to run a regression review agent once a day. The user creates a new claude skill called `/regression-review` and saves it in the project. This skill specifies what to do:
@@ -538,25 +538,25 @@ What about a claude code automation? Say we want to run a regression review agen
 Now to set up the automation:
 
 ```bash
-# Create a task which will run in the context of a claude code session. For claude tasks, autowatch will:
+# Create a task which will run in the context of a claude code session. For claude tasks, auto watch will:
 # - create a new git workspace from `main` / default branch
 # - start a claude code session, passing in the string as instruction.
-# - these are fire and forget, autowatch just tracks when it completes to show it as done but doesn't block on it.
-autowatch task create --id regression-review --claude "/regression-review on commits from last 24 hours"
+# - these are fire and forget, auto watch just tracks when it completes to show it as done but doesn't block on it.
+auto watch task create --id regression-review --claude "/regression-review on commits from last 24 hours"
 
 # Set up the automation, reusing existing trigger.
-autowatch trigger add-task --trigger daily --task regression-review
+auto watch trigger add-task --trigger daily --task regression-review
 ```
 
 ## Y. Automate work across the whole machine
 
-Some tasks, like `autoetl run` actually run across all sessions on a single host, so we decide to make these global tasks / triggers, instead of repo specific.
+Some tasks, like `auto etl run` actually run across all sessions on a single host, so we decide to make these global tasks / triggers, instead of repo specific.
 
 ```bash
 # All of these commands store their configuration in `~/.auto/watch/project.json` instead of the repo.
-autowatch task create --id run-etl --bash "autoetl run" --global
+auto watch task create --id run-etl --bash "auto etl run" --global
 
-autowatch trigger create --id daily --cron "0 0 * * *" --global
+auto watch trigger create --id daily --cron "0 0 * * *" --global
 
-autowatch trigger add-task --trigger daily --task run-etl --global
+auto watch trigger add-task --trigger daily --task run-etl --global
 ```

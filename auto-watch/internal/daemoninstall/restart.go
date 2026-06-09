@@ -18,12 +18,12 @@ func (m *Manager) Restart(ctx context.Context, opts RestartOptions) (RestartResu
 		if os.IsNotExist(err) {
 			return RestartResult{}, remediationError(
 				fmt.Sprintf("unit %q is not installed", unitPath),
-				"run sudo autowatch daemon install first",
+				"run sudo auto watch daemon install first",
 			)
 		}
 		return RestartResult{}, remediationError(
 			fmt.Sprintf("failed to inspect unit %q: %v", unitPath, err),
-			"run sudo autowatch daemon install first",
+			"run sudo auto watch daemon install first",
 		)
 	}
 
@@ -38,7 +38,7 @@ func (m *Manager) Restart(ctx context.Context, opts RestartOptions) (RestartResu
 		)
 	}
 
-	if err := m.runSystemctl(ctx, "rerun with sudo autowatch daemon restart", "try-restart", serviceName); err != nil {
+	if err := m.runSystemctl(ctx, "rerun with sudo auto watch daemon restart", "try-restart", serviceName); err != nil {
 		return RestartResult{}, err
 	}
 	return RestartResult{

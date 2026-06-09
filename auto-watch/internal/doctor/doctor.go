@@ -106,14 +106,14 @@ func checkGit(ctx context.Context) model.DoctorCheck {
 func checkSettings() model.DoctorCheck {
 	path, err := config.SettingsPath()
 	if err != nil {
-		return model.DoctorCheck{Name: "settings", Status: "fail", Message: err.Error(), Remediation: "run autowatch init"}
+		return model.DoctorCheck{Name: "settings", Status: "fail", Message: err.Error(), Remediation: "run auto watch init"}
 	}
 	if _, err := os.Stat(path); err != nil {
 		return model.DoctorCheck{
 			Name:        "settings",
 			Status:      "fail",
 			Message:     "global settings.json is missing",
-			Remediation: "run autowatch init",
+			Remediation: "run auto watch init",
 		}
 	}
 	cfg, err := config.LoadGlobalConfig(path)
@@ -122,7 +122,7 @@ func checkSettings() model.DoctorCheck {
 			Name:        "settings",
 			Status:      "fail",
 			Message:     "failed to load global settings",
-			Remediation: "fix ~/.auto/watch/settings.json or rerun autowatch init",
+			Remediation: "fix ~/.auto/watch/settings.json or rerun auto watch init",
 			Details:     err.Error(),
 		}
 	}
@@ -131,7 +131,7 @@ func checkSettings() model.DoctorCheck {
 			Name:        "settings",
 			Status:      "fail",
 			Message:     "global settings failed validation",
-			Remediation: "fix ~/.auto/watch/settings.json or rerun autowatch init",
+			Remediation: "fix ~/.auto/watch/settings.json or rerun auto watch init",
 			Details:     errs[0].Message,
 		}
 	}
@@ -149,7 +149,7 @@ func checkProjectConfig(repoRoot string) model.DoctorCheck {
 			Name:        "project_config",
 			Status:      "fail",
 			Message:     "failed to load project config",
-			Remediation: "fix .auto/watch/project.json or rerun autowatch init",
+			Remediation: "fix .auto/watch/project.json or rerun auto watch init",
 			Details:     err.Error(),
 		}
 	}

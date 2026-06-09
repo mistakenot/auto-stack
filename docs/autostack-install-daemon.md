@@ -8,7 +8,13 @@ title: "autostack install-daemon"
 
 # `autostack install-daemon`
 
-This document describes the preferred production setup for running `autowatch` on a server, and how a future `autostack install-daemon` command should support that setup.
+This document describes the preferred production setup for running `auto watch` on a server, and how a future `auto watch daemon install` command should support that setup.
+
+> **Post-upgrade (merged `auto` binary):** the watch daemon now ships as the single `auto`
+> binary and the systemd unit invokes `ExecStart=…/auto watch start`. Deployments whose unit
+> was generated before the merge have a stale `ExecStart=…/autowatch start` line that points at
+> the removed `autowatch` binary. After upgrading, run `auto watch daemon install` once to
+> regenerate the unit so it points at `…/auto watch start`.
 
 The required behavior is:
 
@@ -22,7 +28,7 @@ That means the correct service model is:
 
 - a system `systemd` unit installed under `/etc/systemd/system/`
 - `User=` and `Group=` set to a normal non-root user
-- `ExecStart` pointing at that user's `autowatch` binary
+- `ExecStart` pointing at that user's `auto` binary
 
 ## Recommendation
 
@@ -67,7 +73,7 @@ That means:
 - root is only for writing the unit, reloading `systemd`, enabling, starting, and restarting the service
 - the unit itself must set `User=<target-user>` and `Group=<target-user>`
 - `HOME` must be set explicitly to that user's home directory
-- the target user's `~/.local/bin/autowatch` should be the binary used by `ExecStart`
+- the target user's `~/.local/bin/auto` should be the binary used by `ExecStart`
 
 The daemon process must never run as root.
 
@@ -98,21 +104,21 @@ Or with future product commands:
 
 ```bash
 make install
-sudo autostack restart-daemon --service-name autowatch
+sudo auto watch daemon restart
 ```
 
 For first-time setup:
 
 ```bash
 make install
-sudo autostack install-daemon --enable --start
+sudo auto watch daemon install --enable --start
 ```
 
 For later updates:
 
 ```bash
 make install
-sudo autostack restart-daemon
+sudo auto watch daemon restart
 ```
 
 ## Binary Update Behavior
@@ -143,9 +149,7 @@ Example:
 
 ```text
 /home/alice/
-  .local/bin/autowatch
-  .local/bin/autodoc
-  .local/bin/autoetl
+  .local/bin/auto          # single merged binary (all tools are subcommands)
   .claude/...
   .auto/watch/...
   src/
@@ -181,19 +185,19 @@ This is better than one service per repo because:
 The intended setup flow is:
 
 ```bash
-which autowatch claude tmux git
-autowatch doctor
+which auto claude tmux git
+auto watch doctor
 ```
 
 For each repo:
 
 ```bash
 cd ~/src/my-repo
-autowatch init --project-id my-repo
-autowatch task create --id nightly-etl --bash "autoetl run"
-autowatch trigger create --id nightly --cron "0 2 * * *"
-autowatch trigger add-task --trigger nightly --task nightly-etl
-autowatch task run --id nightly-etl
+auto watch init --project-id my-repo
+auto watch task create --id nightly-etl --bash "auto etl run"
+auto watch trigger create --id nightly --cron "0 2 * * *"
+auto watch trigger add-task --trigger nightly --task nightly-etl
+auto watch task run --id nightly-etl
 ```
 
 Only after the foreground task path works should the daemon be installed and enabled.
@@ -215,7 +219,7 @@ Group=alice
 Environment=HOME=/home/alice
 Environment=PATH=/home/alice/.local/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=/home/alice
-ExecStart=/home/alice/.local/bin/autowatch start
+ExecStart=/home/alice/.local/bin/auto watch start
 Restart=always
 RestartSec=10
 
@@ -237,7 +241,7 @@ The command should be an installer for the system `systemd` unit, not a new proc
 It should:
 
 1. verify Linux + `systemd`
-2. verify that `autowatch` exists on `PATH` or at an explicit `--bin` path
+2. verify that `auto` exists on `PATH` or at an explicit `--bin` path
 3. determine the intended runtime user
 4. determine that user's home directory
 5. render a unit file with explicit `User`, `Group`, `HOME`, `PATH`, and `ExecStart`
@@ -273,9 +277,9 @@ That matters because the installer may be run via `sudo`, and in that case the c
 The simplest useful command shape is:
 
 ```bash
-sudo autostack install-daemon \
+sudo auto watch daemon install \
   --user alice \
-  --bin /home/alice/.local/bin/autowatch
+  --bin /home/alice/.local/bin/auto
 ```
 
 Recommended optional flags:
@@ -306,7 +310,7 @@ If we add daemon lifecycle commands under `autostack`, it should also include an
 Example:
 
 ```bash
-sudo autostack restart-daemon --service-name autowatch
+sudo auto watch daemon restart
 ```
 
 That command should:
@@ -329,7 +333,7 @@ If we add daemon lifecycle commands under `autostack`, we should also add a stat
 Example:
 
 ```bash
-autostack status
+auto watch daemon status
 ```
 
 That command should explicitly check whether the daemon is:
@@ -346,7 +350,7 @@ At minimum:
 2. whether `systemctl is-enabled autowatch.service` reports enabled
 3. whether `systemctl is-active autowatch.service` reports active
 
-If the service is active, it should then also read the richer runtime view from `autowatch status`.
+If the service is active, it should then also read the richer runtime view from `auto watch status`.
 
 ### Suggested output shape
 
@@ -360,7 +364,7 @@ service manager: systemd
 runtime user: alice
 ```
 
-If available, append the richer `autowatch status` summary after that.
+If available, append the richer `auto watch status` summary after that.
 
 JSON mode should separate install state from process state:
 
@@ -383,7 +387,7 @@ JSON mode should separate install state from process state:
 
 ### Why this matters
 
-`autowatch status` by itself only tells us about runtime state from the daemon's point of view.
+`auto watch status` by itself only tells us about runtime state from the daemon's point of view.
 
 That is not enough for daemon installation UX.
 
@@ -423,10 +427,10 @@ So the honest model is:
 
 Before writing the unit, the installer should check:
 
-- `autowatch doctor` passes or at least runs
+- `auto watch doctor` passes or at least runs
 - `tmux`, `git`, and `claude` are visible in the configured service `PATH`
 - the target home directory exists
-- the target bin path exists and contains `autowatch`
+- the target bin path exists and contains `auto`
 - the chosen runtime user exists
 - the chosen runtime user is not `root`
 
@@ -439,10 +443,10 @@ After installation, the operator should be able to run:
 ```bash
 sudo systemctl status autowatch
 journalctl -u autowatch -f
-autostack status
-autowatch status
-autowatch logs -n 50
-autowatch health
+auto watch daemon status
+auto watch status
+auto watch logs -n 50
+auto watch health
 ```
 
 These commands should be shown at the end of `autostack install-daemon`.
@@ -634,7 +638,7 @@ Preferred sources:
 
 - `os/user.Lookup` for user and home lookup
 - primary group from the same user lookup when available
-- default `BinPath = <home>/.local/bin/autowatch`
+- default `BinPath = <home>/.local/bin/auto`
 - default `WorkingDir = <home>`
 - default `UnitPath = /etc/systemd/system/<service>.service`
 
@@ -722,7 +726,7 @@ The algorithm should be:
 2. check whether the unit file exists
 3. call `systemctl is-enabled <service>`
 4. call `systemctl is-active <service>`
-5. if the service is active, call `autowatch status --json`
+5. if the service is active, call `auto watch status --json`
 6. return one combined payload that separates install state from runtime state
 
 The command should distinguish clearly between:
@@ -732,9 +736,9 @@ The command should distinguish clearly between:
 - installed and enabled but stopped
 - installed and running
 
-If `autowatch status --json` fails while the service is active, do not hide that. Return the installation state plus a runtime warning.
+If `auto watch status --json` fails while the service is active, do not hide that. Return the installation state plus a runtime warning.
 
-### Invoking `autowatch status`
+### Invoking `auto watch status`
 
 When the service is active, the status command should enrich output by running the runtime CLI.
 
@@ -795,7 +799,7 @@ Examples:
 
 - missing binary: `run make install first`
 - invalid runtime user: `rerun with --user <non-root-user>`
-- missing unit: `run sudo autostack install-daemon first`
+- missing unit: `run sudo auto watch daemon install first`
 - inactive service: `run sudo systemctl start autowatch.service`
 
 ### Makefile Interaction
@@ -908,7 +912,7 @@ Those later sections should cover at least:
 
 ## Summary
 
-If we add `autostack install-daemon`, it should be a thin, explicit installer for one system `systemd` unit that runs one `autowatch start` process as a normal non-root user.
+If we add `autostack install-daemon`, it should be a thin, explicit installer for one system `systemd` unit that runs one `auto watch start` process as a normal non-root user.
 
 That is the best match for the final requirements here:
 

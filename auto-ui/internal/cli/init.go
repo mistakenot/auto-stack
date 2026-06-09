@@ -10,7 +10,7 @@ import (
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Initialize shared and autoui settings",
+		Short: "Initialize shared and auto ui settings",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sharedPath, _, sharedCreated, err := config.EnsureSharedSettings()
@@ -30,7 +30,7 @@ func newInitCmd() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "UI settings: %s\n", uiPath)
 			if uiCreated {
-				fmt.Fprintln(cmd.OutOrStdout(), "Created autoui settings.json.")
+				fmt.Fprintln(cmd.OutOrStdout(), "Created auto ui settings.json.")
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), "Autoui settings.json already exists.")
 			}

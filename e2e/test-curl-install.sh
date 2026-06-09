@@ -14,7 +14,9 @@ IMAGE="ubuntu:24.04"
 CONTAINER_NAME="autostack-curl-install-test-$$"
 REPO="mistakenot/auto-stack"
 INSTALL_URL="https://raw.githubusercontent.com/${REPO}/main/install.sh"
-BINARIES="autodoc autoenv autoetl autograph autosearch autoreflect autoskill autowatch"
+BINARIES="auto"
+STEMS="config doc env etl graph reflect search skill ui watch"
+OLD_BINARIES="autodoc autoenv autoetl autograph autoreflect autosearch autoskill autoui autowatch autoconfig"
 BIN_DIR="/root/.local/bin"
 
 FAIL=0
@@ -65,27 +67,43 @@ fi
 # Phase 3: Validate every binary is installed and runs
 # ============================================================
 echo ""
-echo "--- validating binaries ---"
-for bin in $BINARIES; do
-    BIN_PATH="$BIN_DIR/$bin"
-
-    if ! docker exec "$CONTAINER_NAME" test -x "$BIN_PATH"; then
-        echo "  FAIL: $bin not found or not executable at $BIN_PATH"
-        FAIL=1
-        continue
-    fi
-
+echo "--- validating binary ---"
+AUTO="$BIN_DIR/auto"
+if ! docker exec "$CONTAINER_NAME" test -x "$AUTO"; then
+    echo "  FAIL: auto not found or not executable at $AUTO"
+    FAIL=1
+else
     EXIT_CODE=0
-    docker exec "$CONTAINER_NAME" "$BIN_PATH" --help >/dev/null 2>&1 || EXIT_CODE=$?
+    docker exec "$CONTAINER_NAME" "$AUTO" --help >/dev/null 2>&1 || EXIT_CODE=$?
     if [ "$EXIT_CODE" -ge 126 ]; then
-        echo "  FAIL: $bin --help exited with $EXIT_CODE (crash or not found)"
+        echo "  FAIL: auto --help exited with $EXIT_CODE (crash or not found)"
         FAIL=1
-        continue
+    else
+        VERSION=$( docker exec "$CONTAINER_NAME" "$AUTO" --version 2>/dev/null || true )
+        echo "  OK: auto ($VERSION)"
     fi
+fi
 
-    VERSION=$( docker exec "$CONTAINER_NAME" "$BIN_PATH" --version 2>/dev/null || true )
-    echo "  OK: $bin ($VERSION)"
+echo "--- validating subcommands (auto <tool> --version) ---"
+for stem in $STEMS; do
+    EXIT_CODE=0
+    docker exec "$CONTAINER_NAME" "$AUTO" "$stem" --help >/dev/null 2>&1 || EXIT_CODE=$?
+    if [ "$EXIT_CODE" -ge 126 ]; then
+        echo "  FAIL: auto $stem --help exited with $EXIT_CODE"
+        FAIL=1
+    else
+        echo "  OK: auto $stem"
+    fi
 done
+
+echo "--- asserting old per-tool binaries are NOT installed (AC-3) ---"
+for old in $OLD_BINARIES; do
+    if docker exec "$CONTAINER_NAME" test -e "$BIN_DIR/$old"; then
+        echo "  FAIL: stale binary present: $BIN_DIR/$old"
+        FAIL=1
+    fi
+done
+echo "  OK: no old per-tool binaries installed"
 
 # ============================================================
 # Phase 4: Validate PATH hint was printed (install script UX)

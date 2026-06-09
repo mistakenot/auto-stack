@@ -13,7 +13,7 @@ import (
 // Returns an error if the index doesn't exist.
 func SearchKeyword(w io.Writer, indexPath string, query string) error {
 	if !search.IndexExists(indexPath) {
-		return fmt.Errorf("index not found at %q: run 'autodoc search reindex' to build the index", indexPath)
+		return fmt.Errorf("index not found at %q: run 'auto doc search reindex' to build the index", indexPath)
 	}
 
 	idx, err := search.OpenIndex(indexPath)

@@ -1,7 +1,7 @@
 package model
 
-// ParquetSessionRow mirrors the autoetl AgentSession parquet schema.
-// Fields match the parquet column names used by autoetl.
+// ParquetSessionRow mirrors the auto-etl AgentSession parquet schema.
+// Fields match the parquet column names used by auto-etl.
 type ParquetSessionRow struct {
 	ID              string `parquet:"id"`
 	ParentSessionID string `parquet:"parent_session_id,dict"`
@@ -49,7 +49,7 @@ type ParquetSessionRow struct {
 	SchemaVersion int32 `parquet:"schema_version"`
 }
 
-// ParquetMessageRow mirrors the autoetl AgentMessage parquet schema.
+// ParquetMessageRow mirrors the auto-etl AgentMessage parquet schema.
 type ParquetMessageRow struct {
 	ID        string `parquet:"id"`
 	SessionID string `parquet:"session_id,dict"`

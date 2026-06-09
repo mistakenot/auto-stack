@@ -94,7 +94,7 @@ func TestInitAdvisesFixWhenStale(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "autodoc fix") {
+	if !strings.Contains(output, "auto doc fix") {
 		t.Error("missing fix advice")
 	}
 }

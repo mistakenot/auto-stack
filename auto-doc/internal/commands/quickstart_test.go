@@ -14,14 +14,14 @@ func TestQuickstart(t *testing.T) {
 	out := buf.String()
 
 	required := []string{
-		"autodoc init",
-		"autodoc tree",
-		"autodoc stale",
-		"autodoc fix",
-		"autodoc fixed",
-		"autodoc agents",
-		"autodoc search reindex",
-		"autodoc search keyword",
+		"auto doc init",
+		"auto doc tree",
+		"auto doc stale",
+		"auto doc fix",
+		"auto doc fixed",
+		"auto doc agents",
+		"auto doc search reindex",
+		"auto doc search keyword",
 	}
 	for _, s := range required {
 		if !strings.Contains(out, s) {
@@ -35,9 +35,9 @@ func TestQuickstartContainsSearchExamples(t *testing.T) {
 	commands.Quickstart(&buf)
 	out := buf.String()
 
-	count := strings.Count(out, "autodoc search keyword")
+	count := strings.Count(out, "auto doc search keyword")
 	if count < 3 {
-		t.Errorf("expected at least 3 'autodoc search keyword' examples, got %d", count)
+		t.Errorf("expected at least 3 'auto doc search keyword' examples, got %d", count)
 	}
 }
 

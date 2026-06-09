@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const autoskillSnippet = `**autoskill** — Author and lint reusable agent skills. Run ` + "`autoskill quickstart`" + ` to learn more.`
+const autoskillSnippet = `**auto skill** — Author and lint reusable agent skills. Run ` + "`auto skill quickstart`" + ` to learn more.`
 
 // agentFiles are the files to update, checked in order.
 var agentFiles = []string{"CLAUDE.md", "AGENTS.md", "GEMINI.md"}
@@ -17,8 +17,8 @@ var agentFiles = []string{"CLAUDE.md", "AGENTS.md", "GEMINI.md"}
 func newAgentsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "agents",
-		Short: "Register autoskill in local agent memory files",
-		Long:  "Appends a one-line description of autoskill to CLAUDE.md, AGENTS.md, and GEMINI.md if not already present. Idempotent and symlink-safe.",
+		Short: "Register auto skill in local agent memory files",
+		Long:  "Appends a one-line description of auto skill to CLAUDE.md, AGENTS.md, and GEMINI.md if not already present. Idempotent and symlink-safe.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cwd, err := os.Getwd()
@@ -58,7 +58,7 @@ func newAgentsCmd() *cobra.Command {
 	}
 }
 
-// ensureSkillSnippet checks if the file contains the autoskill snippet.
+// ensureSkillSnippet checks if the file contains the auto skill snippet.
 // If not, it appends it to the end. Returns true if the file was modified.
 func ensureSkillSnippet(path string) (bool, error) {
 	data, err := os.ReadFile(path)

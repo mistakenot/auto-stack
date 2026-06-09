@@ -1,7 +1,5 @@
-.PHONY: build build-etl build-doc build-watch build-search build-reflect build-skill build-graph build-ui build-env clean test vet fmt lint \
-       dist dist-doc dist-env dist-etl dist-watch dist-search dist-reflect dist-skill dist-graph dist-ui vulncheck \
-       install install-doc install-env install-etl install-watch install-search install-reflect install-skill install-graph install-ui \
-       install-hooks install-tools gen-stats check fmt-check test-install test-curl-install \
+.PHONY: build clean test vet fmt lint dist vulncheck install \
+       install-hooks install-tools gen-stats check fmt-check stale-refs test-install test-curl-install \
        fixtures verify-fixtures \
        fmt-staged vulncheck-if-deps-changed autodoc-fix skills-sync beads-sync pre-commit
 
@@ -12,27 +10,9 @@ FIXTURE_DIR := auto-search/testdata/fixtures/auto-stack-snapshot
 DIST_DIR  := dist
 INSTALL_DIR ?= $(HOME)/.local/bin
 
-PROJECTS := auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill auto-graph auto-ui
-
-# Binary name and entry point per project
-auto-doc_BIN   := autodoc
-auto-doc_ENTRY := ./cmd/autodoc
-auto-etl_BIN   := autoetl
-auto-etl_ENTRY := .
-auto-watch_BIN   := autowatch
-auto-watch_ENTRY := ./cmd/autowatch
-auto-search_BIN   := autosearch
-auto-search_ENTRY := ./cmd/autosearch
-auto-reflect_BIN   := autoreflect
-auto-reflect_ENTRY := ./cmd/autoreflect
-auto-env_BIN   := autoenv
-auto-env_ENTRY := ./cmd/autoenv
-auto-skill_BIN   := autoskill
-auto-skill_ENTRY := ./cmd/autoskill
-auto-graph_BIN   := autograph
-auto-graph_ENTRY := ./cmd/autograph
-auto-ui_BIN   := autoui
-auto-ui_ENTRY := ./cmd/autoui
+# All modules participate in the quality/test loops (fmt/vet/lint/vulncheck/test).
+# The single `auto` binary is built from the auto-cli umbrella module.
+PROJECTS := auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill auto-graph auto-ui auto-config auto-cli
 
 # Platform defaults (overridable for cross-compilation)
 GOOS   ?= $(shell go env GOOS)
@@ -42,87 +22,20 @@ SUFFIX ?= $(GOOS)-$(GOARCH)
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -s -w -X github.com/mistakenot/auto-shared/version.Version=$(VERSION)
 
-# --- Local build ---
+# --- Local build (single merged binary) ---
 
-build: $(addprefix build-,$(subst auto-,,$(PROJECTS)))
-	@echo "All binaries built in ./$(BUILD_DIR)/"
+build:
+	@mkdir -p $(BUILD_DIR)
+	cd auto-cli && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/auto ./cmd/auto
+	@echo "Built ./$(BUILD_DIR)/auto"
 
-build-env:
-	cd auto-env && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autoenv $(auto-env_ENTRY)
+# --- Release cross-compile (produces dist/auto-<suffix>) ---
 
-build-etl:
-	cd auto-etl && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autoetl $(auto-etl_ENTRY)
-
-build-doc:
-	cd auto-doc && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autodoc $(auto-doc_ENTRY)
-
-build-watch:
-	cd auto-watch && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autowatch $(auto-watch_ENTRY)
-
-build-search:
-	cd auto-search && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autosearch $(auto-search_ENTRY)
-
-build-reflect:
-	cd auto-reflect && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autoreflect $(auto-reflect_ENTRY)
-
-build-skill:
-	cd auto-skill && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autoskill $(auto-skill_ENTRY)
-
-build-graph:
-	cd auto-graph && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autograph $(auto-graph_ENTRY)
-
-build-ui:
-	cd auto-ui && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/autoui $(auto-ui_ENTRY)
-
-# --- Release cross-compile (produces dist/<binary>-<suffix>) ---
-
-dist: $(addprefix dist-,$(subst auto-,,$(PROJECTS)))
-	@echo "Release binaries in ./$(DIST_DIR)/"
-
-dist-env:
+dist:
 	@mkdir -p $(DIST_DIR)
-	cd auto-env && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autoenv-$(SUFFIX) $(auto-env_ENTRY)
-
-dist-doc:
-	@mkdir -p $(DIST_DIR)
-	cd auto-doc && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autodoc-$(SUFFIX) $(auto-doc_ENTRY)
-
-dist-etl:
-	@mkdir -p $(DIST_DIR)
-	cd auto-etl && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autoetl-$(SUFFIX) $(auto-etl_ENTRY)
-
-dist-watch:
-	@mkdir -p $(DIST_DIR)
-	cd auto-watch && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autowatch-$(SUFFIX) $(auto-watch_ENTRY)
-
-dist-search:
-	@mkdir -p $(DIST_DIR)
-	cd auto-search && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autosearch-$(SUFFIX) $(auto-search_ENTRY)
-
-dist-reflect:
-	@mkdir -p $(DIST_DIR)
-	cd auto-reflect && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autoreflect-$(SUFFIX) $(auto-reflect_ENTRY)
-
-dist-skill:
-	@mkdir -p $(DIST_DIR)
-	cd auto-skill && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autoskill-$(SUFFIX) $(auto-skill_ENTRY)
-
-dist-graph:
-	@mkdir -p $(DIST_DIR)
-	cd auto-graph && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autograph-$(SUFFIX) $(auto-graph_ENTRY)
-
-dist-ui:
-	@mkdir -p $(DIST_DIR)
-	cd auto-ui && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
-		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/autoui-$(SUFFIX) $(auto-ui_ENTRY)
+	cd auto-cli && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+		go build -ldflags="$(LDFLAGS)" -o ../$(DIST_DIR)/auto-$(SUFFIX) ./cmd/auto
+	@echo "Built ./$(DIST_DIR)/auto-$(SUFFIX)"
 
 # --- Quality ---
 
@@ -167,8 +80,13 @@ vulncheck:
 	done
 	@echo "All projects passed vulncheck"
 
-check: fmt-check vet lint
+check: fmt-check vet lint stale-refs
 	@echo "All checks passed"
+
+# AC-7 guard: fail if any shipped string still invokes an old per-tool binary
+# name (autodoc, autoetl, …) that no longer ships after the merge to `auto`.
+stale-refs:
+	./scripts/check-no-stale-binary-refs.sh
 
 # --- Test ---
 
@@ -199,69 +117,22 @@ verify-fixtures:
 
 # --- Install ---
 
+# Install the single merged binary. The `auto watch` daemon may be running, so
+# tolerate "text file busy" on overwrite (install.sh removes the old inode for
+# the curl path; here we surface a clear hint instead).
 install: build
-	@mkdir -p $(INSTALL_DIR)
-	cp $(BUILD_DIR)/autodoc $(INSTALL_DIR)/
-	cp $(BUILD_DIR)/autoenv $(INSTALL_DIR)/
-	cp $(BUILD_DIR)/autoetl $(INSTALL_DIR)/
-	@err=$$(mktemp); \
-	if ! cp $(BUILD_DIR)/autowatch $(INSTALL_DIR)/ 2>$$err; then \
-		if grep -qi "text file busy" $$err; then \
-			echo "autowatch install skipped: destination binary is busy (text file busy)"; \
-		else \
-			cat $$err >&2; \
-			rm -f $$err; \
-			exit 1; \
-		fi; \
-	fi; \
-	rm -f $$err
-	cp $(BUILD_DIR)/autosearch $(INSTALL_DIR)/
-	cp $(BUILD_DIR)/autoreflect $(INSTALL_DIR)/
-	cp $(BUILD_DIR)/autoskill $(INSTALL_DIR)/
-	cp $(BUILD_DIR)/autograph $(INSTALL_DIR)/
-	cp $(BUILD_DIR)/autoui $(INSTALL_DIR)/
-	@echo "Installed to $(INSTALL_DIR)/"
-
-# Per-binary install (build + copy a single binary). Useful for fast iteration
-# on one subproject.
-install-doc: build-doc
-	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autodoc $(INSTALL_DIR)/ && echo "Installed autodoc to $(INSTALL_DIR)/autodoc"
-
-install-env: build-env
-	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autoenv $(INSTALL_DIR)/ && echo "Installed autoenv to $(INSTALL_DIR)/autoenv"
-
-install-etl: build-etl
-	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autoetl $(INSTALL_DIR)/ && echo "Installed autoetl to $(INSTALL_DIR)/autoetl"
-
-# autowatch may be running; tolerate "text file busy" on overwrite.
-install-watch: build-watch
 	@mkdir -p $(INSTALL_DIR); \
 	err=$$(mktemp); \
-	if ! cp $(BUILD_DIR)/autowatch $(INSTALL_DIR)/ 2>$$err; then \
+	if ! cp $(BUILD_DIR)/auto $(INSTALL_DIR)/ 2>$$err; then \
 		if grep -qi "text file busy" $$err; then \
-			echo "autowatch install skipped: destination binary is busy (text file busy)"; \
+			echo "auto install skipped: destination binary is busy (text file busy). Stop the running 'auto watch' daemon and retry."; \
 		else \
 			cat $$err >&2; rm -f $$err; exit 1; \
 		fi; \
 	else \
-		echo "Installed autowatch to $(INSTALL_DIR)/autowatch"; \
+		echo "Installed auto to $(INSTALL_DIR)/auto"; \
 	fi; \
 	rm -f $$err
-
-install-search: build-search
-	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autosearch $(INSTALL_DIR)/ && echo "Installed autosearch to $(INSTALL_DIR)/autosearch"
-
-install-reflect: build-reflect
-	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autoreflect $(INSTALL_DIR)/ && echo "Installed autoreflect to $(INSTALL_DIR)/autoreflect"
-
-install-skill: build-skill
-	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autoskill $(INSTALL_DIR)/ && echo "Installed autoskill to $(INSTALL_DIR)/autoskill"
-
-install-graph: build-graph
-	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autograph $(INSTALL_DIR)/ && echo "Installed autograph to $(INSTALL_DIR)/autograph"
-
-install-ui: build-ui
-	@mkdir -p $(INSTALL_DIR) && cp $(BUILD_DIR)/autoui $(INSTALL_DIR)/ && echo "Installed autoui to $(INSTALL_DIR)/autoui"
 
 test-install:
 	./e2e/test-install.sh
@@ -340,11 +211,11 @@ vulncheck-if-deps-changed:
 # autodoc fix reports doc-code drift; a non-zero exit means it found issues that
 # need agent attention, not a hard build failure. Print honestly and continue.
 autodoc-fix:
-	@if command -v autodoc >/dev/null 2>&1; then \
-		if autodoc fix; then \
-			echo "pre-commit: autodoc fix — no issues"; \
+	@if command -v auto >/dev/null 2>&1; then \
+		if auto doc fix; then \
+			echo "pre-commit: auto doc fix — no issues"; \
 		else \
-			echo "pre-commit: autodoc fix found issues (informational; commit allowed)"; \
+			echo "pre-commit: auto doc fix found issues (informational; commit allowed)"; \
 		fi; \
 	fi
 

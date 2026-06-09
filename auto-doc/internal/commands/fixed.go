@@ -95,7 +95,7 @@ func rewriteMarkdownTagScopeHashes(filePath string) error {
 			continue
 		}
 		if tag.DocHash != target.Hash {
-			fmt.Fprintf(os.Stderr, "skipping scope hash rewrite for %s:%d: docHash stale, run 'autodoc fix' first\n", filePath, tag.Line)
+			fmt.Fprintf(os.Stderr, "skipping scope hash rewrite for %s:%d: docHash stale, run 'auto doc fix' first\n", filePath, tag.Line)
 			continue
 		}
 

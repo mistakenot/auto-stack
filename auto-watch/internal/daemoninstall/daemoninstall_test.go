@@ -72,7 +72,7 @@ func newTestRig(t *testing.T, runner shell.Runner) *testRig {
 			t.Fatal(err)
 		}
 	}
-	aliceBin := filepath.Join(aliceHome, ".local", "bin", "autowatch")
+	aliceBin := filepath.Join(aliceHome, ".local", "bin", "auto")
 	if err := os.MkdirAll(filepath.Dir(aliceBin), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +334,7 @@ func TestStatusReturnsInstalledAndRuntimeState(t *testing.T) {
 
 	runner.steps = append(runner.steps, runnerStep{
 		name:   "sudo",
-		args:   []string{"-u", "alice", "env", "HOME=" + rig.aliceHome, rig.aliceBin, "status", "--json"},
+		args:   []string{"-u", "alice", "env", "HOME=" + rig.aliceHome, rig.aliceBin, "watch", "status", "--json"},
 		stdout: `{"daemon_running":true,"trigger_counts":{"total":2},"health":{"status":"ok","issueCount":0}}`,
 	})
 
@@ -390,7 +390,7 @@ func TestStatusKeepsInstallStateWhenRuntimeCallFails(t *testing.T) {
 		{name: "systemctl", args: []string{"is-active", "autowatch.service"}, stdout: "active"},
 		{
 			name:   "env",
-			args:   []string{"HOME=" + rig.aliceHome, rig.aliceBin, "status", "--json"},
+			args:   []string{"HOME=" + rig.aliceHome, rig.aliceBin, "watch", "status", "--json"},
 			stderr: "boom",
 			err:    errors.New("exit status 1"),
 		},
@@ -410,4 +410,149 @@ func TestStatusKeepsInstallStateWhenRuntimeCallFails(t *testing.T) {
 		t.Fatalf("RuntimeWarning = %q", status.RuntimeWarning)
 	}
 	runner.AssertDone()
+}
+
+// TestDefaultBinPathIsMergedAutoBinary asserts the generated unit points at the
+// merged `auto` binary (AC-5: default BinPath ends in /bin/auto).
+func TestDefaultBinPathIsMergedAutoBinary(t *testing.T) {
+	rig := newTestRig(t, &fakeRunner{t: t})
+	rig.env["SUDO_USER"] = "alice"
+
+	spec, err := rig.manager.resolveSpec(&InstallOptions{})
+	if err != nil {
+		t.Fatalf("resolveSpec() error = %v", err)
+	}
+	want := filepath.Join(rig.aliceHome, ".local", "bin", "auto")
+	if spec.BinPath != want {
+		t.Fatalf("BinPath = %q want %q", spec.BinPath, want)
+	}
+}
+
+// TestGeneratedUnitExecStartUsesWatchStart asserts the rendered systemd unit
+// invokes `<BinPath> watch start` (AC-5: generated unit ExecStart).
+func TestGeneratedUnitExecStartUsesWatchStart(t *testing.T) {
+	rig := newTestRig(t, &fakeRunner{t: t})
+	rig.env["SUDO_USER"] = "alice"
+
+	spec, err := rig.manager.resolveSpec(&InstallOptions{})
+	if err != nil {
+		t.Fatalf("resolveSpec() error = %v", err)
+	}
+	unit, err := renderUnit(&spec)
+	if err != nil {
+		t.Fatalf("renderUnit() error = %v", err)
+	}
+	wantExec := "ExecStart=" + spec.BinPath + " watch start"
+	if !strings.Contains(unit, wantExec) {
+		t.Fatalf("rendered unit missing %q\n%s", wantExec, unit)
+	}
+	if !strings.HasSuffix(spec.BinPath, filepath.Join("bin", "auto")) {
+		t.Fatalf("BinPath = %q, expected to end in bin/auto", spec.BinPath)
+	}
+}
+
+// TestParsedExecStartReconstructsWatchStart asserts the status ExecStart field
+// reconstructed from a parsed unit is `<bin> watch start` (AC-5: reconstructed ExecStart).
+func TestParsedExecStartReconstructsWatchStart(t *testing.T) {
+	runner := &fakeRunner{
+		t: t,
+		steps: []runnerStep{
+			{name: "systemctl", args: []string{"is-enabled", "autowatch.service"}, stdout: "disabled"},
+			{name: "systemctl", args: []string{"is-active", "autowatch.service"}, stdout: "inactive"},
+		},
+	}
+	rig := newTestRig(t, runner)
+	rig.env["SUDO_USER"] = "alice"
+
+	spec, err := rig.manager.resolveSpec(&InstallOptions{})
+	if err != nil {
+		t.Fatalf("resolveSpec() error = %v", err)
+	}
+	unit, err := renderUnit(&spec)
+	if err != nil {
+		t.Fatalf("renderUnit() error = %v", err)
+	}
+	if err := os.WriteFile(spec.UnitPath, []byte(unit), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", spec.UnitPath, err)
+	}
+
+	status, err := rig.manager.Status(context.Background(), StatusOptions{})
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	want := spec.BinPath + " watch start"
+	if status.Daemon.ExecStart != want {
+		t.Fatalf("ExecStart = %q want %q", status.Daemon.ExecStart, want)
+	}
+	runner.AssertDone()
+}
+
+// TestRuntimeStatusShellOutUsesWatchInfix asserts both the env and sudo runtime
+// status invocations include the `watch` infix (AC-5: live-status path).
+func TestRuntimeStatusShellOutUsesWatchInfix(t *testing.T) {
+	cases := []struct {
+		name     string
+		asRoot   bool
+		command  string
+		wantArgs []string
+	}{
+		{
+			name:    "env_variant",
+			asRoot:  false,
+			command: "env",
+		},
+		{
+			name:    "sudo_variant",
+			asRoot:  true,
+			command: "sudo",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &fakeRunner{t: t}
+			rig := newTestRig(t, runner)
+			rig.env["SUDO_USER"] = "alice"
+			if tc.asRoot {
+				rig.manager.currentUser = func() (*user.User, error) { return &user.User{Username: "root", HomeDir: "/root", Gid: "0"}, nil }
+				rig.manager.geteuid = func() int { return 0 }
+			} else {
+				rig.manager.currentUser = func() (*user.User, error) { return rig.users["alice"], nil }
+				rig.manager.geteuid = func() int { return 1000 }
+			}
+
+			spec, err := rig.manager.resolveSpec(&InstallOptions{})
+			if err != nil {
+				t.Fatalf("resolveSpec() error = %v", err)
+			}
+			unit, err := renderUnit(&spec)
+			if err != nil {
+				t.Fatalf("renderUnit() error = %v", err)
+			}
+			if err := os.WriteFile(spec.UnitPath, []byte(unit), 0o644); err != nil {
+				t.Fatalf("WriteFile(%q) error = %v", spec.UnitPath, err)
+			}
+
+			var wantArgs []string
+			if tc.asRoot {
+				wantArgs = []string{"-u", "alice", "env", "HOME=" + rig.aliceHome, rig.aliceBin, "watch", "status", "--json"}
+			} else {
+				wantArgs = []string{"HOME=" + rig.aliceHome, rig.aliceBin, "watch", "status", "--json"}
+			}
+
+			runner.steps = []runnerStep{
+				{name: "systemctl", args: []string{"is-enabled", "autowatch.service"}, stdout: "enabled"},
+				{name: "systemctl", args: []string{"is-active", "autowatch.service"}, stdout: "active"},
+				{
+					name:   tc.command,
+					args:   wantArgs,
+					stdout: `{"daemon_running":true}`,
+				},
+			}
+
+			if _, err := rig.manager.Status(context.Background(), StatusOptions{}); err != nil {
+				t.Fatalf("Status() error = %v", err)
+			}
+			runner.AssertDone()
+		})
+	}
 }

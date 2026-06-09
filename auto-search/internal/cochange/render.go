@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-// Compact text renderer for `autosearch co-change` (AC-2 through AC-11). The
+// Compact text renderer for `auto search co-change` (AC-2 through AC-11). The
 // renderer consumes the same *Result the JSON encoder uses, so it stays
 // testable in isolation against synthetic fixtures. Output is UTF-8 with a
 // closed set of permitted non-ASCII glyphs only: → (header date separator),

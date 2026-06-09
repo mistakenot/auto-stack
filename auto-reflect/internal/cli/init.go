@@ -16,7 +16,7 @@ import (
 func newInitCmd(application *app.App) *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Initialize shared, autoreflect, and repository-local state",
+		Short: "Initialize shared, reflect, and repository-local state",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sharedPath, _, sharedCreated, err := config.EnsureSharedSettings()
@@ -37,9 +37,9 @@ func newInitCmd(application *app.App) *cobra.Command {
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Reflect settings: %s\n", reflectPath)
 			if reflectCreated {
-				fmt.Fprintln(cmd.OutOrStdout(), "Created autoreflect settings.json.")
+				fmt.Fprintln(cmd.OutOrStdout(), "Created reflect settings.json.")
 			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "Autoreflect settings.json already exists.")
+				fmt.Fprintln(cmd.OutOrStdout(), "Reflect settings.json already exists.")
 			}
 
 			repoInfo, err := gitutil.DetectRepo(application.CWD)

@@ -81,7 +81,7 @@ func newSessionListCmd() *cobra.Command {
 			}
 			db, err := indexdb.Open(dbPath)
 			if err != nil {
-				return &ExitError{Code: 1, Err: fmt.Errorf("open index: %w; run: autosearch index", err)}
+				return &ExitError{Code: 1, Err: fmt.Errorf("open index: %w; run: auto search index", err)}
 			}
 			defer func() { _ = db.Close() }()
 
@@ -203,7 +203,7 @@ func newSessionGetCmd() *cobra.Command {
 			}
 			db, err := indexdb.Open(dbPath)
 			if err != nil {
-				return &ExitError{Code: 1, Err: fmt.Errorf("open index: %w; run: autosearch index", err)}
+				return &ExitError{Code: 1, Err: fmt.Errorf("open index: %w; run: auto search index", err)}
 			}
 			defer func() { _ = db.Close() }()
 
@@ -248,7 +248,7 @@ func newSessionDescribeCmd() *cobra.Command {
 			}
 			db, err := indexdb.Open(dbPath)
 			if err != nil {
-				return &ExitError{Code: 1, Err: fmt.Errorf("open index: %w; run: autosearch index", err)}
+				return &ExitError{Code: 1, Err: fmt.Errorf("open index: %w; run: auto search index", err)}
 			}
 			defer func() { _ = db.Close() }()
 
@@ -395,7 +395,7 @@ func midTruncate(s string, maxLen int, messageID string) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	marker := fmt.Sprintf("\n…[truncated — run: autosearch message get %s]…\n", messageID)
+	marker := fmt.Sprintf("\n…[truncated — run: auto search message get %s]…\n", messageID)
 	half := (maxLen - len(marker)) / 2
 	half = max(half, 0)
 	return s[:half] + marker + s[len(s)-half:]

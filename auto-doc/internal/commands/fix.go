@@ -175,7 +175,7 @@ func writeDocFreshness(w io.Writer, parallelism int, issues []docIssue) {
 	fmt.Fprintln(w, "---")
 	fmt.Fprintln(w, "```")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Only set `title`, `summary`, and `read_when`. `autodoc fix` manages `id`, and hashes are managed by `autodoc fixed`.")
+	fmt.Fprintln(w, "Only set `title`, `summary`, and `read_when`. `auto doc fix` manages `id`, and hashes are managed by `auto doc fixed`.")
 	fmt.Fprintln(w)
 
 	numGroups := parallelism
@@ -216,15 +216,15 @@ func writeDocFreshness(w io.Writer, parallelism int, issues []docIssue) {
 			if iss.StaleHash && !iss.MissingFM && !iss.DefaultTitle && !iss.EmptySummary {
 				fmt.Fprintln(w, "- Review that `title` and `summary` still accurately reflect the content.")
 			}
-			fmt.Fprintf(w, "- Run `autodoc fixed %s`\n", fullPath)
+			fmt.Fprintf(w, "- Run `auto doc fixed %s`\n", fullPath)
 			fmt.Fprintln(w)
 		}
 	}
 
 	fmt.Fprintln(w, "## After All Groups Complete")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "1. Run `autodoc fix` again to check for remaining issues.")
-	fmt.Fprintln(w, "2. Run `autodoc agents` to update agent memory files.")
+	fmt.Fprintln(w, "1. Run `auto doc fix` again to check for remaining issues.")
+	fmt.Fprintln(w, "2. Run `auto doc agents` to update agent memory files.")
 	fmt.Fprintln(w)
 }
 
@@ -256,7 +256,7 @@ func writeLinkFreshness(w io.Writer, rootDir string, issues []linkcheck.LinkIssu
 			fmt.Fprintln(w, "  action: Read the source scope and the doc. If the doc is still accurate,")
 			fmt.Fprintf(w, "          update the tag to [autodoc"+"(%s@%s, %s)].\n", issue.Tag.DocId, issue.CurrentDocHash, issue.CurrentScopeHash)
 			fmt.Fprintln(w, "          If the doc needs updating, update the doc content first,")
-			fmt.Fprintln(w, "          then run `autodoc fixed <docPath>` to get the new doc hash,")
+			fmt.Fprintln(w, "          then run `auto doc fixed <docPath>` to get the new doc hash,")
 			fmt.Fprintln(w, "          then update the tag with both new hashes.")
 		case linkcheck.DocHashMismatch:
 			fmt.Fprintln(w, "LINK STALE: doc updated, source tag needs refresh")
@@ -275,7 +275,7 @@ func writeLinkFreshness(w io.Writer, rootDir string, issues []linkcheck.LinkIssu
 			fmt.Fprintf(w, "  current doc hash:   %s (was %s)\n", issue.CurrentDocHash, issue.Tag.DocHash)
 			fmt.Fprintf(w, "  current scope hash: %s (was %s)\n", issue.CurrentScopeHash, issue.Tag.ScopeHash)
 			fmt.Fprintln(w, "  action: Read both the source scope and the doc carefully.")
-			fmt.Fprintln(w, "          Update the doc if needed, then run `autodoc fixed <docPath>`.")
+			fmt.Fprintln(w, "          Update the doc if needed, then run `auto doc fixed <docPath>`.")
 			fmt.Fprintln(w, "          Update the tag with both current hashes.")
 		case linkcheck.OrphanedTag:
 			fmt.Fprintf(w, "LINK ORPHANED: doc not found for id %s\n", issue.Tag.DocId)

@@ -27,7 +27,7 @@ func Doctor(w io.Writer, rootDir string, jsonMode bool) (bool, error) {
 	if err != nil {
 		checks = append(checks, DoctorCheck{"global_config", "fail", "Cannot determine home directory"})
 	} else if _, err := os.Stat(globalPath); os.IsNotExist(err) {
-		checks = append(checks, DoctorCheck{"global_config", "fail", globalPath + " not found. Run `autodoc init` to create it."})
+		checks = append(checks, DoctorCheck{"global_config", "fail", globalPath + " not found. Run `auto doc init` to create it."})
 	} else {
 		checks = append(checks, DoctorCheck{"global_config", "pass", globalPath})
 	}
@@ -37,9 +37,9 @@ func Doctor(w io.Writer, rootDir string, jsonMode bool) (bool, error) {
 	if err != nil {
 		checks = append(checks, DoctorCheck{"host_config", "fail", "Cannot determine home directory"})
 	} else if _, err := os.Stat(hostPath); os.IsNotExist(err) {
-		checks = append(checks, DoctorCheck{"host_config", "fail", hostPath + " not found. Run `autodoc init` to create it."})
+		checks = append(checks, DoctorCheck{"host_config", "fail", hostPath + " not found. Run `auto doc init` to create it."})
 	} else if _, err := config.LoadHost(hostPath); err != nil {
-		checks = append(checks, DoctorCheck{"host_config", "fail", fmt.Sprintf("%s is invalid: %v. Run `autodoc init` to recreate it.", hostPath, err)})
+		checks = append(checks, DoctorCheck{"host_config", "fail", fmt.Sprintf("%s is invalid: %v. Run `auto doc init` to recreate it.", hostPath, err)})
 	} else {
 		checks = append(checks, DoctorCheck{"host_config", "pass", hostPath})
 	}
@@ -47,7 +47,7 @@ func Doctor(w io.Writer, rootDir string, jsonMode bool) (bool, error) {
 	// 3. Project config
 	projectPath := filepath.Join(rootDir, config.DefaultConfigDir, config.DefaultConfigFile)
 	if _, err := os.Stat(projectPath); os.IsNotExist(err) {
-		checks = append(checks, DoctorCheck{"project_config", "fail", projectPath + " not found. Run `autodoc init --project` to create it."})
+		checks = append(checks, DoctorCheck{"project_config", "fail", projectPath + " not found. Run `auto doc init --project` to create it."})
 	} else {
 		data, err := os.ReadFile(projectPath)
 		if err != nil {
@@ -70,7 +70,7 @@ func Doctor(w io.Writer, rootDir string, jsonMode bool) (bool, error) {
 	}
 	docsPath := filepath.Join(rootDir, cfg.DocsDir)
 	if _, err := os.Stat(docsPath); os.IsNotExist(err) {
-		checks = append(checks, DoctorCheck{"docs_dir", "fail", cfg.DocsDir + "/ not found. Run `autodoc init --project` to create it."})
+		checks = append(checks, DoctorCheck{"docs_dir", "fail", cfg.DocsDir + "/ not found. Run `auto doc init --project` to create it."})
 	} else {
 		checks = append(checks, DoctorCheck{"docs_dir", "pass", docsPath})
 	}
@@ -78,7 +78,7 @@ func Doctor(w io.Writer, rootDir string, jsonMode bool) (bool, error) {
 	// 5. Search index
 	indexPath := filepath.Join(rootDir, config.DefaultConfigDir, "index")
 	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-		checks = append(checks, DoctorCheck{"search_index", "fail", indexPath + " not found. Run `autodoc search reindex` to create it."})
+		checks = append(checks, DoctorCheck{"search_index", "fail", indexPath + " not found. Run `auto doc search reindex` to create it."})
 	} else {
 		checks = append(checks, DoctorCheck{"search_index", "pass", indexPath})
 	}

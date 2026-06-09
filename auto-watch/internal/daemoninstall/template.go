@@ -18,7 +18,7 @@ Group={{.RuntimeGroup}}
 Environment=HOME={{.HomeDir}}
 Environment=PATH={{.PathEnv}}
 WorkingDirectory={{.WorkingDir}}
-ExecStart={{.BinPath}} start
+ExecStart={{.BinPath}} watch start
 Restart=always
 RestartSec=10
 

@@ -211,7 +211,7 @@ func newTaskRemoveCmd(application *app.App) *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Removed task %s\n", taskID)
 			for triggerID, trigger := range cfg.Triggers {
 				if slices.Contains(trigger.Tasks, taskID) {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: trigger %s still references %s. run autowatch trigger remove-task --trigger %s --task %s\n", triggerID, taskID, triggerID, taskID)
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: trigger %s still references %s. run auto watch trigger remove-task --trigger %s --task %s\n", triggerID, taskID, triggerID, taskID)
 				}
 			}
 			return nil

@@ -37,14 +37,14 @@ func (m *Manager) Status(ctx context.Context, opts StatusOptions) (CombinedStatu
 		}
 		return CombinedStatus{}, remediationError(
 			fmt.Sprintf("failed to read unit %q: %v", unitPath, err),
-			"rerun with sudo autowatch daemon status",
+			"rerun with sudo auto watch daemon status",
 		)
 	}
 	parsed, err := parseInstalledUnit(serviceName, unitPath, string(unitBytes))
 	if err != nil {
 		return CombinedStatus{}, remediationError(
 			fmt.Sprintf("failed to parse unit %q: %v", unitPath, err),
-			"rerun sudo autowatch daemon install to rewrite the unit",
+			"rerun sudo auto watch daemon install to rewrite the unit",
 		)
 	}
 
@@ -57,7 +57,7 @@ func (m *Manager) Status(ctx context.Context, opts StatusOptions) (CombinedStatu
 		Group:       parsed.RuntimeGroup,
 		HomeDir:     parsed.HomeDir,
 		WorkingDir:  parsed.WorkingDir,
-		ExecStart:   parsed.BinPath + " start",
+		ExecStart:   parsed.BinPath + " watch start",
 	}
 
 	enabled, err := m.readSystemctlState(ctx, "is-enabled", serviceName)
@@ -154,7 +154,7 @@ func (m *Manager) readSystemctlState(ctx context.Context, subcommand, serviceNam
 	if err != nil {
 		return false, remediationError(
 			fmt.Sprintf("systemctl %s %s failed: %s", subcommand, serviceName, fallbackDetail(stdout, stderr, err)),
-			"rerun with sudo autowatch daemon status",
+			"rerun with sudo auto watch daemon status",
 		)
 	}
 	return false, remediationError(
@@ -165,7 +165,7 @@ func (m *Manager) readSystemctlState(ctx context.Context, subcommand, serviceNam
 
 func (m *Manager) readRuntimeStatus(ctx context.Context, spec *ServiceSpec) (map[string]any, string) {
 	command := "env"
-	args := []string{"HOME=" + spec.HomeDir, spec.BinPath, "status", "--json"}
+	args := []string{"HOME=" + spec.HomeDir, spec.BinPath, "watch", "status", "--json"}
 	current, _ := m.currentUser()
 	currentName := ""
 	if current != nil {
@@ -173,21 +173,21 @@ func (m *Manager) readRuntimeStatus(ctx context.Context, spec *ServiceSpec) (map
 	}
 	if m.geteuid() == 0 || currentName != spec.RuntimeUser {
 		command = "sudo"
-		args = []string{"-u", spec.RuntimeUser, "env", "HOME=" + spec.HomeDir, spec.BinPath, "status", "--json"}
+		args = []string{"-u", spec.RuntimeUser, "env", "HOME=" + spec.HomeDir, spec.BinPath, "watch", "status", "--json"}
 	}
 
 	stdout, stderr, err := m.Runner.Run(ctx, command, args...)
 	if err != nil {
 		return nil, remediationError(
 			"runtime status invocation failed: "+fallbackDetail(stdout, stderr, err),
-			fmt.Sprintf("run sudo -u %s env HOME=%s %s status --json", spec.RuntimeUser, spec.HomeDir, spec.BinPath),
+			fmt.Sprintf("run sudo -u %s env HOME=%s %s watch status --json", spec.RuntimeUser, spec.HomeDir, spec.BinPath),
 		).Error()
 	}
 	var payload map[string]any
 	if unmarshalErr := json.Unmarshal([]byte(stdout), &payload); unmarshalErr != nil {
 		return nil, remediationError(
 			fmt.Sprintf("runtime status returned invalid JSON: %v", unmarshalErr),
-			fmt.Sprintf("run sudo -u %s env HOME=%s %s status --json", spec.RuntimeUser, spec.HomeDir, spec.BinPath),
+			fmt.Sprintf("run sudo -u %s env HOME=%s %s watch status --json", spec.RuntimeUser, spec.HomeDir, spec.BinPath),
 		).Error()
 	}
 	return payload, ""

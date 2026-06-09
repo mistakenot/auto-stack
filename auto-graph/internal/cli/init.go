@@ -10,7 +10,7 @@ import (
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Initialize shared and autograph settings",
+		Short: "Initialize shared and auto graph settings",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sharedPath, _, sharedCreated, err := config.EnsureSharedSettings()
@@ -30,7 +30,7 @@ func newInitCmd() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Graph settings: %s\n", graphPath)
 			if graphCreated {
-				fmt.Fprintln(cmd.OutOrStdout(), "Created autograph settings.json.")
+				fmt.Fprintln(cmd.OutOrStdout(), "Created auto graph settings.json.")
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), "Autograph settings.json already exists.")
 			}

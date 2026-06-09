@@ -7,7 +7,7 @@
       "computedHash": "7d7e88df191f985c7199b42012e855b308e221fbc4dd85eea0c648e77f6d73bb"
     },
     "cass": {
-      "source": "/home/vscode/src/auto-stack/skills",
+      "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
       "sourceType": "local",
       "computedHash": "c0df9536088f8c6f87bc746c68b3398076b19a164ee2dae990eeabb97d6f4e3e"
     },
@@ -27,7 +27,7 @@
       "computedHash": "2a8ddf0bde3ae6b6ebcbdf2f03d9cf438d6b8a29d0caf6dc81e269ca689c8230"
     },
     "contextual-commit": {
-      "source": "/home/vscode/src/auto-stack/skills",
+      "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
       "sourceType": "local",
       "computedHash": "81b45872f2818e199e7fc8dc01accadd364e9bfe0015e91052390f8a62b70b0b"
     },
@@ -57,7 +57,7 @@
       "computedHash": "a93226f53ffa6a2599c89fb983f3aed00c843c04071a7aa59ee3365141619d25"
     },
     "new-package": {
-      "source": "/home/vscode/src/auto-stack/skills",
+      "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
       "sourceType": "local",
       "computedHash": "2775889614ee1c47986dbe1ed8c46dacab3e31cc89587b167117eb9d296898ad"
     },
@@ -82,24 +82,24 @@
       "computedHash": "cd4dcd087c2e0e60ab51eadd6b16bcd6133c846614dd84901062a6a2566f302b"
     },
     "readme-updater": {
-      "source": "/home/vscode/src/auto-stack/skills",
+      "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
       "sourceType": "local",
       "computedHash": "9971581934e58b58a3f9dba3ceec74e575966488876a17bf7ee658083a72078e"
     },
     "recall": {
-      "source": "/home/vscode/src/auto-stack/skills",
+      "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
       "sourceType": "local",
       "computedHash": "b12b1e8916baa48bf8374c6bc629f23acfb870d97e8a22ff629ef21face88317"
     },
     "reflect-on-agent-sessions": {
-      "source": "/home/vscode/src/auto-stack/auto-reflect",
+      "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/auto-reflect/skills",
       "sourceType": "local",
-      "computedHash": "054312a87024641f7b2dde57973c13a7ffea64a4adb93959fa26a111489e0e2d"
+      "computedHash": "02e900e1766bedd43af7ba3d087b41eaa7c81342d23321ac920a7b1588b803d8"
     },
     "release": {
-      "source": "/home/vscode/src/auto-stack/skills",
+      "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
       "sourceType": "local",
-      "computedHash": "53bb37624988b417ea2ec2f3c6daa8ba47821cec16d9ac3c21100ec8a87b58f0"
+      "computedHash": "53e2fdaca95630bbed7b72518c4b549f5d13d44b9fb3f8216bc7e58e960469c8"
     },
     "request-claude-review": {
       "source": "mistakenot/skills",
@@ -127,9 +127,9 @@
       "computedHash": "aa5ba259210a4187ad3a9d98b4e5fdd05d66e5438e62f3a56cff416e0b490968"
     },
     "self-improve": {
-      "source": "/home/vscode/src/auto-stack/skills",
+      "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
       "sourceType": "local",
-      "computedHash": "585255bff4359d1e26a70ab233e06f832ffe24c43dfe8a3b5ba5fc98cdbaf5db"
+      "computedHash": "00ad535a5df59e70af2d00d8e2d8e65a582794b0129b388fcfdc670326171f22"
     },
     "skill-reviewer": {
       "source": "mistakenot/skills",

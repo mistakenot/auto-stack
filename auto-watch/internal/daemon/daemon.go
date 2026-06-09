@@ -247,7 +247,7 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 					return err
 				}
 			}
-			message := "killed by autowatch clean --force"
+			message := "killed by auto watch clean --force"
 			if err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, message); err != nil {
 				return err
 			}

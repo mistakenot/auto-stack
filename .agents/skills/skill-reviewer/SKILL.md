@@ -17,10 +17,10 @@ python src/compile.py
 
 Abort if compilation fails -- fix errors first.
 
-### Step 2: Run autoskill lint
+### Step 2: Run auto skill lint
 
 ```bash
-autoskill lint
+auto skill lint
 ```
 
 Capture the output for the report.

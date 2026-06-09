@@ -33,7 +33,7 @@ func Execute(ctx context.Context, stdout, stderr io.Writer) int {
 	}
 
 	application := app.New(stdout, stderr, cwd)
-	rootCmd := newRootCmd(application)
+	rootCmd := NewRootCmd(application)
 
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		var exitErr *ExitError
@@ -49,9 +49,9 @@ func Execute(ctx context.Context, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func newRootCmd(application *app.App) *cobra.Command {
+func NewRootCmd(application *app.App) *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:           "autoenv",
+		Use:           "env",
 		Short:         "Template-based config file generation with per-worktree port allocation",
 		SilenceErrors: true,
 		SilenceUsage:  true,

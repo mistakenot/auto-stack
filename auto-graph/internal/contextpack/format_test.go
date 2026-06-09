@@ -160,7 +160,7 @@ func TestMarkdownNoGenericProse(t *testing.T) {
 
 	// Must not contain generic command tutorials or API references.
 	genericPhrases := []string{
-		"autograph code context",
+		"auto graph code context",
 		"--token-limit",
 		"--file",
 		"--format",
