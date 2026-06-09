@@ -32,12 +32,12 @@ func TestInitCreatesSettingsAndStateAndIsIdempotent(t *testing.T) {
 	sharedPath := filepath.Join(home, ".auto", "settings.json")
 	reflectSettingsPath := filepath.Join(home, ".auto", "reflect", "settings.json")
 	playbookPath := filepath.Join(repo, ".auto", "reflect", "playbook.json")
-	feedbackPath := filepath.Join(repo, ".auto", "reflect", "feedback.jsonl")
+	eventsDir := filepath.Join(repo, ".auto", "reflect", "events")
 
 	assertFileExists(t, sharedPath)
 	assertFileExists(t, reflectSettingsPath)
 	assertFileExists(t, playbookPath)
-	assertFileExists(t, feedbackPath)
+	assertFileExists(t, eventsDir)
 
 	playbookBytes, err := os.ReadFile(playbookPath)
 	if err != nil {
@@ -70,10 +70,6 @@ func TestInitCreatesSettingsAndStateAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read first playbook: %v", err)
 	}
-	firstFeedback, err := os.ReadFile(feedbackPath)
-	if err != nil {
-		t.Fatalf("read first feedback log: %v", err)
-	}
 
 	stdout, stderr, code = runCLIAt(t, repo, "init")
 	if code != 0 {
@@ -92,10 +88,6 @@ func TestInitCreatesSettingsAndStateAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read second playbook: %v", err)
 	}
-	secondFeedback, err := os.ReadFile(feedbackPath)
-	if err != nil {
-		t.Fatalf("read second feedback log: %v", err)
-	}
 
 	if !bytes.Equal(firstShared, secondShared) {
 		t.Fatalf("shared settings changed across repeated init runs\nfirst:\n%s\nsecond:\n%s", firstShared, secondShared)
@@ -105,9 +97,6 @@ func TestInitCreatesSettingsAndStateAndIsIdempotent(t *testing.T) {
 	}
 	if !bytes.Equal(firstPlaybook, secondPlaybook) {
 		t.Fatalf("playbook changed across repeated init runs\nfirst:\n%s\nsecond:\n%s", firstPlaybook, secondPlaybook)
-	}
-	if !bytes.Equal(firstFeedback, secondFeedback) {
-		t.Fatalf("feedback log changed across repeated init runs\nfirst:\n%s\nsecond:\n%s", firstFeedback, secondFeedback)
 	}
 }
 
@@ -120,10 +109,10 @@ func TestQuickstartIncludesInitAndCoreCommands(t *testing.T) {
 	for _, needle := range []string{
 		"auto reflect init",
 		"auto reflect rule create",
-		"auto reflect lookup",
-		"auto reflect feedback add",
-		"auto reflect feedback list",
-		"--context",
+		"auto reflect rule list",
+		"auto reflect rule get",
+		"auto reflect rebuild",
+		"--use-when",
 	} {
 		if !strings.Contains(stdout, needle) {
 			t.Fatalf("quickstart output missing %q\noutput:\n%s", needle, stdout)
@@ -317,42 +306,148 @@ func TestFeedbackAddInvalidSpan(t *testing.T) {
 	}
 }
 
-func TestRuleCreateAndLookup(t *testing.T) {
+func createTestRule(t *testing.T, repo string, extraArgs ...string) string {
+	t.Helper()
+	args := append([]string{
+		"rule", "create",
+		"--use-when", "writing flaky end-to-end tests",
+		"--content", "Keep passing test logs short",
+		"--causal-note", "noisy logs hid the real failure",
+		"--domain", "testing",
+		"--type", "soft",
+	}, extraArgs...)
+	stdout, stderr, code := runCLIAt(t, repo, args...)
+	if code != 0 {
+		t.Fatalf("rule create failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	var resp struct {
+		Rule struct {
+			ID string `json:"id"`
+		} `json:"rule"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
+		t.Fatalf("decode create json: %v\nraw:\n%s", err, stdout)
+	}
+	if resp.Rule.ID == "" {
+		t.Fatalf("create returned no rule id\nraw:\n%s", stdout)
+	}
+	return resp.Rule.ID
+}
+
+func TestRuleCreateListGetEditRoundTrip(t *testing.T) {
+	repo := initGitRepo(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	gitAddCommit(t, repo, "seed")
+
+	id := createTestRule(t, repo)
+
+	// list returns the rule with id/use_when/domain/rule_type.
+	stdout, stderr, code := runCLIAt(t, repo, "rule", "list")
+	if code != 0 {
+		t.Fatalf("rule list failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	var listResp struct {
+		Rules []map[string]any `json:"rules"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &listResp); err != nil {
+		t.Fatalf("decode list json: %v\nraw:\n%s", err, stdout)
+	}
+	if len(listResp.Rules) != 1 || listResp.Rules[0]["id"] != id {
+		t.Fatalf("list did not return created rule: %#v", listResp.Rules)
+	}
+
+	// get returns the full rule at version 1.
+	stdout, _, code = runCLIAt(t, repo, "rule", "get", id)
+	if code != 0 {
+		t.Fatalf("rule get failed: code=%d", code)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("decode get json: %v\nraw:\n%s", err, stdout)
+	}
+	if got["version"] != float64(1) {
+		t.Fatalf("expected version 1, got %v", got["version"])
+	}
+
+	// edit two fields in one invocation → single version bump to 2.
+	stdout, stderr, code = runCLIAt(t, repo, "rule", "edit", id,
+		"--lifecycle", "confirmed",
+		"--content", "Keep passing test logs short and quiet",
+	)
+	if code != 0 {
+		t.Fatalf("rule edit failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	var editResp struct {
+		Rule map[string]any `json:"rule"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &editResp); err != nil {
+		t.Fatalf("decode edit json: %v\nraw:\n%s", err, stdout)
+	}
+	if editResp.Rule["version"] != float64(2) {
+		t.Fatalf("expected one version bump to 2, got %v", editResp.Rule["version"])
+	}
+	if editResp.Rule["lifecycle"] != "confirmed" {
+		t.Fatalf("expected lifecycle confirmed, got %v", editResp.Rule["lifecycle"])
+	}
+	if editResp.Rule["content"] != "Keep passing test logs short and quiet" {
+		t.Fatalf("expected edited content, got %v", editResp.Rule["content"])
+	}
+}
+
+func TestRuleSnapshotDeleteRefoldsIdentical(t *testing.T) {
+	repo := initGitRepo(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	gitAddCommit(t, repo, "seed")
+
+	id := createTestRule(t, repo)
+	_, _, code := runCLIAt(t, repo, "rule", "edit", id, "--lifecycle", "confirmed")
+	if code != 0 {
+		t.Fatal("rule edit failed")
+	}
+
+	playbookPath := filepath.Join(repo, ".auto", "reflect", "playbook.json")
+	before, err := os.ReadFile(playbookPath)
+	if err != nil {
+		t.Fatalf("read playbook: %v", err)
+	}
+
+	if err := os.Remove(playbookPath); err != nil {
+		t.Fatalf("delete playbook: %v", err)
+	}
+
+	// Next read refolds from the event log to a byte-identical snapshot.
+	if _, _, code = runCLIAt(t, repo, "rule", "list"); code != 0 {
+		t.Fatal("rule list after delete failed")
+	}
+	after, err := os.ReadFile(playbookPath)
+	if err != nil {
+		t.Fatalf("read refolded playbook: %v", err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("refold not byte-identical\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestRuleCreateHardWithoutDomainFails(t *testing.T) {
 	repo := initGitRepo(t)
 	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
 	gitAddCommit(t, repo, "seed")
 
 	stdout, stderr, code := runCLIAt(t, repo,
 		"rule", "create",
-		"--content", "Keep logs short in flaky E2E tests",
-		"--category", "testing",
-		"--tag", "e2e",
-		"--tag", "flaky",
+		"--use-when", "always",
+		"--content", "this hard rule has no domain",
+		"--causal-note", "should be rejected",
+		"--type", "hard",
 	)
-	if code != 0 {
-		t.Fatalf("rule create failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for hard rule without domain\nstdout:\n%s", stdout)
 	}
-
-	playbookPath := filepath.Join(repo, ".auto", "reflect", "playbook.json")
-	if _, err := os.Stat(playbookPath); err != nil {
-		t.Fatalf("expected playbook file: %v", err)
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("expected empty stdout on validation error, got:\n%s", stdout)
 	}
-
-	stdout, stderr, code = runCLIAt(t, repo, "lookup", "flaky e2e logs")
-	if code != 0 {
-		t.Fatalf("lookup failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
-
-	var resp map[string]any
-	if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
-		t.Fatalf("decode lookup json: %v\nraw:\n%s", err, stdout)
-	}
-	rules, ok := resp["rules"].([]any)
-	if !ok {
-		t.Fatalf("rules missing or wrong type: %#v", resp["rules"])
-	}
-	if len(rules) < 1 {
-		t.Fatalf("expected at least one lookup rule, got %d", len(rules))
+	if !strings.Contains(stderr, "hard rules must declare at least one domain") || !strings.Contains(stderr, "--domain") {
+		t.Fatalf("expected remediation hint in stderr, got:\n%s", stderr)
 	}
 }
 

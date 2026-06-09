@@ -3,9 +3,11 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/mistakenot/auto-reflect/internal/app"
+	"github.com/mistakenot/auto-reflect/internal/events"
 	"github.com/mistakenot/auto-reflect/internal/gitutil"
 	"github.com/mistakenot/auto-reflect/internal/rules"
 	"github.com/mistakenot/auto-reflect/internal/store"
@@ -15,17 +17,31 @@ import (
 func newRuleCmd(application *app.App) *cobra.Command {
 	ruleCmd := &cobra.Command{
 		Use:   "rule",
-		Short: "Manage repository rules",
+		Short: "Manage repository rules (event-sourced)",
 	}
+	ruleCmd.AddCommand(
+		newRuleCreateCmd(application),
+		newRuleEditCmd(application),
+		newRuleListCmd(application),
+		newRuleGetCmd(application),
+	)
+	return ruleCmd
+}
 
-	var content string
-	var category string
-	var tags []string
-	var format string
+func newRuleCreateCmd(application *app.App) *cobra.Command {
+	var (
+		useWhen    string
+		content    string
+		causalNote string
+		domain     []string
+		ruleType   string
+		lifecycle  string
+		format     string
+	)
 
-	ruleCmd.AddCommand(&cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a rule",
+		Short: "Create a rule (appends a rule_created event and refolds the playbook)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			outputFormat, err := normalizeFormat(format)
@@ -33,118 +49,310 @@ func newRuleCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 
-			repo, err := gitutil.DetectRepo(application.CWD)
+			repo, err := gitutil.DetectRepoLenient(application.CWD)
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
 
-			service := rules.NewService()
-			result, validationErrs, createErr := service.Create(
-				store.PlaybookPath(repo.Root),
-				rules.CreateInput{Content: content, Category: category, Tags: tags},
-			)
-			if createErr != nil {
-				return &ExitError{Code: 1, Err: createErr}
+			id := rules.NewRuleID()
+			candidate := rules.Rule{
+				ID:         id,
+				Domain:     rules.NormalizeDomain(domain),
+				UseWhen:    strings.TrimSpace(useWhen),
+				Content:    strings.TrimSpace(content),
+				CausalNote: strings.TrimSpace(causalNote),
+				RuleType:   strings.ToLower(strings.TrimSpace(ruleType)),
+				Lifecycle:  strings.ToLower(strings.TrimSpace(lifecycle)),
+				Version:    1,
 			}
-			if len(validationErrs) > 0 {
+			if validationErrs := rules.ValidateRule("", 0, &candidate); len(validationErrs) > 0 {
 				writeValidationErrors(cmd.ErrOrStderr(), validationErrs)
 				return &ExitError{Code: 1}
 			}
 
-			displayPath := store.DisplayPath(application.CWD, result.Path)
-			if outputFormat == "text" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Created rule %s\n", result.Created.ID)
-				fmt.Fprintf(cmd.OutOrStdout(), "Category: %s\n", result.Created.Category)
-				fmt.Fprintf(cmd.OutOrStdout(), "Content: %s\n", result.Created.Content)
-				if len(result.Created.Tags) > 0 {
-					fmt.Fprintf(cmd.OutOrStdout(), "Tags: %s\n", strings.Join(result.Created.Tags, ", "))
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "Path: %s\n", displayPath)
-				return nil
+			payload := events.RuleCreatedPayload{
+				RuleID:     candidate.ID,
+				Domain:     candidate.Domain,
+				UseWhen:    candidate.UseWhen,
+				Content:    candidate.Content,
+				CausalNote: candidate.CausalNote,
+				RuleType:   candidate.RuleType,
+				Lifecycle:  candidate.Lifecycle,
+			}
+			if _, err := events.AppendEvent(application.CWD, events.TypeRuleCreated, payload, events.AppendOptions{}); err != nil {
+				return &ExitError{Code: 1, Err: err}
 			}
 
-			payload := map[string]any{
-				"created": true,
-				"scope":   "repo",
-				"path":    displayPath,
-				"rule":    result.Created,
+			created, err := refoldAndGet(repo.Root, candidate.ID)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
 			}
-			if err := writeJSON(cmd.OutOrStdout(), payload); err != nil {
+
+			if outputFormat == "text" {
+				printRuleText(cmd, "Created rule", created)
+				return nil
+			}
+			if err := writeJSON(cmd.OutOrStdout(), map[string]any{"created": true, "scope": "repo", "rule": created}); err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
 			return nil
 		},
-	})
+	}
 
-	createCmd := ruleCmd.Commands()[0]
-	createCmd.Flags().StringVar(&content, "content", "", "rule content")
-	createCmd.Flags().StringVar(&category, "category", "", "rule category")
-	createCmd.Flags().StringSliceVar(&tags, "tag", nil, "repeatable rule tag")
-	createCmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
-	_ = createCmd.MarkFlagRequired("content")
-	_ = createCmd.MarkFlagRequired("category")
-
-	return ruleCmd
+	cmd.Flags().StringVar(&useWhen, "use-when", "", "the situation in which the rule applies")
+	cmd.Flags().StringVar(&content, "content", "", "the rule guidance itself")
+	cmd.Flags().StringVar(&causalNote, "causal-note", "", "why this rule exists (the failure it prevents)")
+	cmd.Flags().StringSliceVar(&domain, "domain", nil, "domain tag(s); repeatable or comma-separated")
+	cmd.Flags().StringVar(&ruleType, "type", "soft", "rule type: hard|soft")
+	cmd.Flags().StringVar(&lifecycle, "lifecycle", "draft", "lifecycle: draft|confirmed|stale")
+	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
+	_ = cmd.MarkFlagRequired("use-when")
+	_ = cmd.MarkFlagRequired("content")
+	_ = cmd.MarkFlagRequired("causal-note")
+	return cmd
 }
 
-func newLookupCmd(application *app.App) *cobra.Command {
-	var limit int
-	var format string
+func newRuleEditCmd(application *app.App) *cobra.Command {
+	var (
+		useWhen    string
+		content    string
+		causalNote string
+		domain     []string
+		ruleType   string
+		lifecycle  string
+		format     string
+	)
 
 	cmd := &cobra.Command{
-		Use:   "lookup <query>",
-		Short: "Look up rules",
+		Use:   "edit <r-id>",
+		Short: "Edit a rule (appends ONE rule_edited event with all changed fields, one version bump)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			outputFormat, err := normalizeFormat(format)
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
-			if limit < 1 {
-				return &ExitError{Code: 1, Err: errors.New("invalid --limit: Use --limit <n> where n >= 1")}
-			}
 
-			repo, err := gitutil.DetectRepo(application.CWD)
+			repo, err := gitutil.DetectRepoLenient(application.CWD)
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
 
-			service := rules.NewService()
-			result, validationErrs, lookupErr := service.Lookup(store.PlaybookPath(repo.Root), args[0], limit)
-			if lookupErr != nil {
-				return &ExitError{Code: 1, Err: lookupErr}
+			// Refold first so we edit against the current folded state.
+			playbook, err := rules.Load(repo.Root, store.PlaybookPath(repo.Root))
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			current, ok := findRule(playbook, args[0])
+			if !ok {
+				return &ExitError{Code: 1, Err: fmt.Errorf("rule %q not found: run `auto reflect rule list` to see available ids", args[0])}
 			}
 
-			if outputFormat == "text" {
-				for i, rule := range result.Rules {
-					fmt.Fprintf(cmd.OutOrStdout(), "%d. [%s] (%s) %.2f\n", i+1, rule.ID, rule.Category, rule.MatchScore)
-					fmt.Fprintf(cmd.OutOrStdout(), "   %s\n", rule.Content)
-					if len(rule.Tags) > 0 {
-						fmt.Fprintf(cmd.OutOrStdout(), "   tags: %s\n", strings.Join(rule.Tags, ", "))
-					}
+			updated := current
+			var deltas []events.FieldDelta
+			flags := cmd.Flags()
+			if flags.Changed("use-when") {
+				newVal := strings.TrimSpace(useWhen)
+				if newVal != current.UseWhen {
+					deltas = append(deltas, events.FieldDelta{Field: rules.FieldUseWhen, Old: current.UseWhen, New: newVal})
+					updated.UseWhen = newVal
 				}
-			} else {
-				payload := map[string]any{
-					"query":    result.Query,
-					"keywords": result.Keywords,
-					"scope":    "repo",
-					"rules":    result.Rules,
+			}
+			if flags.Changed("content") {
+				newVal := strings.TrimSpace(content)
+				if newVal != current.Content {
+					deltas = append(deltas, events.FieldDelta{Field: rules.FieldContent, Old: current.Content, New: newVal})
+					updated.Content = newVal
 				}
-				if err := writeJSON(cmd.OutOrStdout(), payload); err != nil {
-					return &ExitError{Code: 1, Err: err}
+			}
+			if flags.Changed("causal-note") {
+				newVal := strings.TrimSpace(causalNote)
+				if newVal != current.CausalNote {
+					deltas = append(deltas, events.FieldDelta{Field: rules.FieldCausalNote, Old: current.CausalNote, New: newVal})
+					updated.CausalNote = newVal
+				}
+			}
+			if flags.Changed("domain") {
+				newVal := rules.NormalizeDomain(domain)
+				if !reflect.DeepEqual(newVal, current.Domain) {
+					deltas = append(deltas, events.FieldDelta{Field: rules.FieldDomain, Old: current.Domain, New: newVal})
+					updated.Domain = newVal
+				}
+			}
+			if flags.Changed("type") {
+				newVal := strings.ToLower(strings.TrimSpace(ruleType))
+				if newVal != current.RuleType {
+					deltas = append(deltas, events.FieldDelta{Field: rules.FieldRuleType, Old: current.RuleType, New: newVal})
+					updated.RuleType = newVal
+				}
+			}
+			if flags.Changed("lifecycle") {
+				newVal := strings.ToLower(strings.TrimSpace(lifecycle))
+				if newVal != current.Lifecycle {
+					deltas = append(deltas, events.FieldDelta{Field: rules.FieldLifecycle, Old: current.Lifecycle, New: newVal})
+					updated.Lifecycle = newVal
 				}
 			}
 
-			if len(validationErrs) > 0 {
+			if len(deltas) == 0 {
+				return &ExitError{Code: 1, Err: errors.New("no changes: pass at least one of --use-when --content --causal-note --domain --type --lifecycle with a new value")}
+			}
+
+			// Validate the post-edit rule so an edit can't violate invariants.
+			if validationErrs := rules.ValidateRule("", 0, &updated); len(validationErrs) > 0 {
 				writeValidationErrors(cmd.ErrOrStderr(), validationErrs)
 				return &ExitError{Code: 1}
 			}
 
+			payload := events.RuleEditedPayload{
+				RuleID:      current.ID,
+				FromVersion: current.Version,
+				ToVersion:   current.Version + 1,
+				Deltas:      deltas,
+			}
+			if _, err := events.AppendEvent(application.CWD, events.TypeRuleEdited, payload, events.AppendOptions{}); err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+
+			edited, err := refoldAndGet(repo.Root, current.ID)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+
+			if outputFormat == "text" {
+				printRuleText(cmd, "Edited rule", edited)
+				return nil
+			}
+			if err := writeJSON(cmd.OutOrStdout(), map[string]any{"edited": true, "scope": "repo", "rule": edited}); err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
 			return nil
 		},
 	}
 
-	cmd.Flags().IntVar(&limit, "limit", 10, "maximum number of matches to return")
+	cmd.Flags().StringVar(&useWhen, "use-when", "", "new use_when value")
+	cmd.Flags().StringVar(&content, "content", "", "new content value")
+	cmd.Flags().StringVar(&causalNote, "causal-note", "", "new causal_note value")
+	cmd.Flags().StringSliceVar(&domain, "domain", nil, "new domain tag list (replaces existing)")
+	cmd.Flags().StringVar(&ruleType, "type", "", "new rule type: hard|soft")
+	cmd.Flags().StringVar(&lifecycle, "lifecycle", "", "new lifecycle: draft|confirmed|stale")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
 	return cmd
+}
+
+func newRuleListCmd(application *app.App) *cobra.Command {
+	var format string
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List rules (id, use_when, domain, type)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			outputFormat, err := normalizeFormat(format)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			repo, err := gitutil.DetectRepoLenient(application.CWD)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			playbook, err := rules.Load(repo.Root, store.PlaybookPath(repo.Root))
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+
+			if outputFormat == "text" {
+				for _, r := range playbook.Rules {
+					fmt.Fprintf(cmd.OutOrStdout(), "%s [%s] (%s) %s\n", r.ID, r.RuleType, strings.Join(r.Domain, ","), r.UseWhen)
+				}
+				return nil
+			}
+
+			items := make([]map[string]any, 0, len(playbook.Rules))
+			for _, r := range playbook.Rules {
+				items = append(items, map[string]any{
+					"id":        r.ID,
+					"use_when":  r.UseWhen,
+					"domain":    r.Domain,
+					"rule_type": r.RuleType,
+				})
+			}
+			if err := writeJSON(cmd.OutOrStdout(), map[string]any{"scope": "repo", "rules": items}); err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
+	return cmd
+}
+
+func newRuleGetCmd(application *app.App) *cobra.Command {
+	var format string
+	cmd := &cobra.Command{
+		Use:   "get <r-id>",
+		Short: "Get the full rule by id",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			outputFormat, err := normalizeFormat(format)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			repo, err := gitutil.DetectRepoLenient(application.CWD)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			playbook, err := rules.Load(repo.Root, store.PlaybookPath(repo.Root))
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			rule, ok := findRule(playbook, args[0])
+			if !ok {
+				return &ExitError{Code: 1, Err: fmt.Errorf("rule %q not found: run `auto reflect rule list` to see available ids", args[0])}
+			}
+
+			if outputFormat == "text" {
+				printRuleText(cmd, "Rule", rule)
+				return nil
+			}
+			if err := writeJSON(cmd.OutOrStdout(), rule); err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
+	return cmd
+}
+
+func findRule(playbook rules.Playbook, id string) (rules.Rule, bool) {
+	for _, r := range playbook.Rules {
+		if r.ID == id {
+			return r, true
+		}
+	}
+	return rules.Rule{}, false
+}
+
+func refoldAndGet(repoRoot, id string) (rules.Rule, error) {
+	playbook, _, err := rules.Rebuild(repoRoot, store.PlaybookPath(repoRoot))
+	if err != nil {
+		return rules.Rule{}, err
+	}
+	rule, ok := findRule(playbook, id)
+	if !ok {
+		return rules.Rule{}, fmt.Errorf("rule %q not found after refold", id)
+	}
+	return rule, nil
+}
+
+func printRuleText(cmd *cobra.Command, header string, r rules.Rule) {
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "%s %s (v%d)\n", header, r.ID, r.Version)
+	fmt.Fprintf(out, "Type: %s  Lifecycle: %s\n", r.RuleType, r.Lifecycle)
+	if len(r.Domain) > 0 {
+		fmt.Fprintf(out, "Domain: %s\n", strings.Join(r.Domain, ", "))
+	}
+	fmt.Fprintf(out, "Use when: %s\n", r.UseWhen)
+	fmt.Fprintf(out, "Content: %s\n", r.Content)
+	fmt.Fprintf(out, "Causal note: %s\n", r.CausalNote)
 }

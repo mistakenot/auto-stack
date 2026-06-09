@@ -20,15 +20,23 @@ auto reflect init
 ## Rule memory workflow
 
 ` + "```" + `bash
-# Persist a reusable lesson into the local playbook.
+# Persist a reusable lesson into the local playbook (event-sourced).
 auto reflect rule create \
+  --use-when "writing flaky end-to-end tests" \
   --content "Keep passing test logs short so failing E2E tests are easy to debug" \
-  --category testing \
-  --tag e2e \
-  --tag logs
+  --causal-note "noisy passing logs hid the real failure during a debug session" \
+  --domain testing \
+  --type soft
 
-# Retrieve relevant rules later.
-auto reflect lookup "e2e logs flaky tests"
+# List rules, then fetch one in full.
+auto reflect rule list
+auto reflect rule get <r-id>
+
+# Edit a rule; all changed fields become one versioned edit.
+auto reflect rule edit <r-id> --lifecycle confirmed
+
+# Force a refold of the playbook snapshot from the event log.
+auto reflect rebuild
 ` + "```" + `
 
 ## Feedback workflow
@@ -68,8 +76,8 @@ auto reflect feedback list --kind harmful --file docs/
 
 ## Files created by auto reflect
 
-- ` + "`" + `.auto/reflect/playbook.json` + "`" + `: repository-local rule memory
-- ` + "`" + `.auto/reflect/feedback.jsonl` + "`" + `: append-only feedback event log
+- ` + "`" + `.auto/reflect/events/` + "`" + `: append-only canonical event log (sharded by host/day/worktree)
+- ` + "`" + `.auto/reflect/playbook.json` + "`" + `: folded rule snapshot (a disposable cache; rebuild any time)
 - ` + "`" + `~/.auto/reflect/settings.json` + "`" + `: global auto reflect settings
 `
 

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "folded_through": {
+    "hosta-2026-06-01-aaaaaaaa.jsonl": 6,
+    "hostb-2026-06-02-bbbbbbbb.jsonl": 2
+  },
+  "rules": [
+    {
+      "id": "r-00000001",
+      "domain": [
+        "go",
+        "cli"
+      ],
+      "use_when": "adding any new subcommand to the CLI",
+      "content": "register via newRootCmd AddCommand and add a quickstart line",
+      "causal_note": "forgot registration twice, command silently missing",
+      "rule_type": "soft",
+      "lifecycle": "confirmed",
+      "version": 4,
+      "created_at": "2026-06-01T10:00:00Z",
+      "updated_at": "2026-06-02T10:00:00Z"
+    },
+    {
+      "id": "r-00000002",
+      "domain": [
+        "testing"
+      ],
+      "use_when": "writing flaky end-to-end tests",
+      "content": "keep passing test logs short",
+      "causal_note": "noisy logs hid the real failure",
+      "rule_type": "hard",
+      "lifecycle": "confirmed",
+      "version": 1,
+      "created_at": "2026-06-01T13:00:00Z",
+      "updated_at": "2026-06-01T13:00:00Z"
+    }
+  ]
+}

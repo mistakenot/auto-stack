@@ -171,6 +171,13 @@ func maxSeqInFile(file *os.File) (int, error) {
 	return maxSeq, nil
 }
 
+// ShardedEvent pairs a decoded event with the shard filename it came from, so
+// callers (e.g. the rules fold) can track per-shard high-water marks.
+type ShardedEvent struct {
+	Shard string
+	Event Event
+}
+
 // shardedEvent pairs a decoded event with its shard filename for total ordering.
 type shardedEvent struct {
 	shard string
@@ -181,6 +188,33 @@ type shardedEvent struct {
 // shard, and returns the events in the deterministic total order (ts, shard
 // name, seq). A missing events directory yields an empty slice, not an error.
 func ReadAll(repoRoot string) ([]Event, error) {
+	collected, err := readAllSharded(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]Event, len(collected))
+	for i, c := range collected {
+		result[i] = c.event
+	}
+	return result, nil
+}
+
+// ReadAllSharded is ReadAll but preserves the originating shard name for each
+// event, in the same deterministic total order. Callers that fold rules use the
+// shard to advance per-shard folded_through high-water marks.
+func ReadAllSharded(repoRoot string) ([]ShardedEvent, error) {
+	collected, err := readAllSharded(repoRoot)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]ShardedEvent, len(collected))
+	for i, c := range collected {
+		result[i] = ShardedEvent{Shard: c.shard, Event: c.event}
+	}
+	return result, nil
+}
+
+func readAllSharded(repoRoot string) ([]shardedEvent, error) {
 	dir := store.EventsDir(repoRoot)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -221,11 +255,7 @@ func ReadAll(repoRoot string) ([]Event, error) {
 		return a.event.Seq < b.event.Seq
 	})
 
-	result := make([]Event, len(collected))
-	for i, c := range collected {
-		result[i] = c.event
-	}
-	return result, nil
+	return collected, nil
 }
 
 func newEventID() (string, error) {
