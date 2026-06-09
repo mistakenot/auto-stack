@@ -45,12 +45,20 @@ func (m *Manager) Status(ctx context.Context, opts StatusOptions) (CombinedStatu
 			statusRemediation(scope),
 		)
 	}
-	parsed, err := parseInstalledUnit(serviceName, unitPath, string(unitBytes))
+	parsed, err := parseInstalledUnit(scope, serviceName, unitPath, string(unitBytes))
 	if err != nil {
 		return CombinedStatus{}, remediationError(
 			fmt.Sprintf("failed to parse unit %q: %v", unitPath, err),
 			installRemediation(scope),
 		)
+	}
+	// User-scope units omit User=/Group=; the runtime user is the invoking
+	// user, so fill it for the runtime-status shell-out (no sudo -u wrap).
+	if normalizeScope(scope) != ScopeSystem && strings.TrimSpace(parsed.RuntimeUser) == "" {
+		if current, cerr := m.currentUser(); cerr == nil {
+			parsed.RuntimeUser = current.Username
+			parsed.RuntimeGroup = current.Username
+		}
 	}
 
 	result.Daemon = ServiceStatus{
@@ -86,7 +94,7 @@ func (m *Manager) Status(ctx context.Context, opts StatusOptions) (CombinedStatu
 	return result, nil
 }
 
-func parseInstalledUnit(serviceName, unitPath, content string) (ServiceSpec, error) {
+func parseInstalledUnit(scope Scope, serviceName, unitPath, content string) (ServiceSpec, error) {
 	spec := ServiceSpec{
 		ServiceName: serviceName,
 		UnitPath:    unitPath,
@@ -119,11 +127,16 @@ func parseInstalledUnit(serviceName, unitPath, content string) (ServiceSpec, err
 			}
 		}
 	}
-	if strings.TrimSpace(spec.RuntimeUser) == "" {
-		return ServiceSpec{}, errors.New("missing User field")
-	}
-	if strings.TrimSpace(spec.RuntimeGroup) == "" {
-		return ServiceSpec{}, errors.New("missing Group field")
+	// User=/Group= are system-scope only — a systemctl --user unit omits them
+	// (the user manager runs as the user already and rejects them). For user
+	// scope their absence is expected; Status() fills the invoking user.
+	if normalizeScope(scope) == ScopeSystem {
+		if strings.TrimSpace(spec.RuntimeUser) == "" {
+			return ServiceSpec{}, errors.New("missing User field")
+		}
+		if strings.TrimSpace(spec.RuntimeGroup) == "" {
+			return ServiceSpec{}, errors.New("missing Group field")
+		}
 	}
 	if strings.TrimSpace(spec.HomeDir) == "" {
 		return ServiceSpec{}, errors.New("missing HOME environment")

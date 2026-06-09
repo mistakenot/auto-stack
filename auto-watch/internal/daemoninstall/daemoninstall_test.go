@@ -193,7 +193,7 @@ func TestRenderUnitAndParseInstalledUnitRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("renderUnit() error = %v", err)
 	}
-	parsed, err := parseInstalledUnit(spec.ServiceName, spec.UnitPath, unit)
+	parsed, err := parseInstalledUnit(ScopeSystem, spec.ServiceName, spec.UnitPath, unit)
 	if err != nil {
 		t.Fatalf("parseInstalledUnit() error = %v", err)
 	}
@@ -610,6 +610,12 @@ func TestUserScopeInstallWritesUserUnitAndEnablesLinger(t *testing.T) {
 	}
 	if !strings.Contains(result.Unit, "WantedBy=default.target") {
 		t.Fatalf("unit missing WantedBy=default.target:\n%s", result.Unit)
+	}
+	// A systemctl --user unit must NOT carry User=/Group= — the user manager
+	// rejects them with status=216/GROUP ("Failed to determine supplementary
+	// groups"), so the daemon would never start. (Regression guard.)
+	if strings.Contains(result.Unit, "\nUser=") || strings.Contains(result.Unit, "\nGroup=") {
+		t.Fatalf("user-scope unit must omit User=/Group=:\n%s", result.Unit)
 	}
 	wantExec := "ExecStart=" + binPath + " watch start"
 	if !strings.Contains(result.Unit, wantExec) {
