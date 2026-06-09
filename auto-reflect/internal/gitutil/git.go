@@ -53,6 +53,35 @@ func DetectRepo(cwd string) (RepoInfo, error) {
 	}, nil
 }
 
+// DetectRepoLenient resolves the worktree root for event provenance without
+// hard-failing on a repository whose HEAD is unborn (freshly `git init`'d, no
+// commits). The root is resolved via `git rev-parse --show-toplevel`, which
+// works pre-commit; head, tree, and remote are left empty when they cannot be
+// resolved. Returns an error only when cwd is not inside a git repository at all.
+func DetectRepoLenient(cwd string) (RepoInfo, error) {
+	root, err := runGit(cwd, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return RepoInfo{}, errors.New("not a git repository: run this command inside a git repo")
+	}
+
+	info := RepoInfo{Root: root}
+
+	if head, err := runGit(root, "rev-parse", "HEAD"); err == nil {
+		info.Head = head
+	}
+	if tree, err := runGit(root, "rev-parse", "HEAD^{tree}"); err == nil {
+		info.Tree = tree
+	}
+	if remote, err := primaryRemote(root); err == nil {
+		info.Remote = normalizeRemote(remote)
+	}
+	if dirtyOut, err := runGit(root, "status", "--porcelain"); err == nil {
+		info.Dirty = strings.TrimSpace(dirtyOut) != ""
+	}
+
+	return info, nil
+}
+
 func HeadBlobSHA(repoRoot, repoRelativeFile string) (string, error) {
 	value, err := runGit(repoRoot, "rev-parse", "HEAD:"+repoRelativeFile)
 	if err != nil {

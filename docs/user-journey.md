@@ -417,7 +417,7 @@ This is the smallest useful dogfood loop for `autoreflect` v1:
 1. use `autosearch` to find the sessions that contain the lesson
 2. inspect the transcripts and decide on one good repository rule
 3. use `auto reflect rule create` to write that rule into the repo playbook
-4. use `auto reflect lookup` later to retrieve that rule before doing similar work again
+4. use `auto reflect retrieve` / `select` later to surface that rule before doing similar work again
 
 Example commands:
 
@@ -431,32 +431,38 @@ auto search session get $sessionId
 # drill into the failing messages if needed
 auto search search "Exit code" --scope messages --cwd /home/charlie/src/my-project
 
-# check whether a similar rule already exists
-auto reflect lookup "e2e flaky logs"
+# check what rules already apply to the task
+auto reflect retrieve "e2e flaky logs" --domain testing
 
 # write the learned rule into project memory
 auto reflect rule create \
+  --use-when "writing flaky end-to-end tests" \
   --content "Keep passing test logs short so failing E2E tests are easier to debug" \
-  --category testing \
-  --tag e2e \
-  --tag logs \
-  --tag flaky
+  --causal-note "noisy passing logs hid the real failure during a debug session" \
+  --domain testing \
+  --type soft
 
-# later, before working on similar problems, retrieve matching rules
-auto reflect lookup "e2e flaky logs"
+# later, before working on similar problems, surface matching rules and commit to an ordering
+RT=$(auto reflect retrieve "e2e flaky logs" --domain testing | jq -r '.[0].retrieval_id')
+auto reflect select "$RT"
 ```
 
-Example initial playbook:
+Example initial playbook (folded snapshot of the event log):
 
 ```json
 {
   "schema_version": 1,
+  "folded_through": {},
   "rules": [
     {
       "id": "r-1a2b3c4d",
+      "domain": ["testing"],
+      "use_when": "writing flaky end-to-end tests",
       "content": "Keep passing test logs short so failing E2E tests are easier to debug",
-      "category": "testing",
-      "tags": ["e2e", "logs", "flaky"],
+      "causal_note": "noisy passing logs hid the real failure during a debug session",
+      "rule_type": "soft",
+      "lifecycle": "draft",
+      "version": 1,
       "created_at": "2026-03-21T12:34:56Z",
       "updated_at": "2026-03-21T12:34:56Z"
     }
@@ -482,8 +488,8 @@ Example initial playbook:
   - Finds a session with bad exit codes
   - `auto search session get $sessionId` to pull pretty printed transcript
   - finds flaky tests because the AI kept trying to use `playwright mcp` instead of `agent-browser`
-  - runs `auto reflect rule create --content "Prefer agent-browser over playwright mcp for flaky E2E debugging" --category testing --tag e2e --tag flaky --tag browser`
-  - later coding sessions use `auto reflect lookup "playwright flaky e2e"` to retrieve that rule
+  - runs `auto reflect rule create --use-when "debugging flaky E2E tests" --content "Prefer agent-browser over playwright mcp for flaky E2E debugging" --causal-note "playwright mcp kept flaking" --domain testing --type soft`
+  - later coding sessions use `auto reflect retrieve "playwright flaky e2e" --domain testing` to surface that rule
   - future versions should check for similar rules first and support update/merge flows
 
   - next, looks for interview sessions (quick succession usage of question/answers / AskUserQuestion tool) that glean intel from the user

@@ -57,8 +57,12 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newInitCmd(application),
 		newQuickstartCmd(),
 		newRuleCmd(application),
-		newLookupCmd(application),
+		newRebuildCmd(application),
+		newRetrieveCmd(application),
+		newSelectCmd(application),
 		newFeedbackCmd(application),
+		newGateCmd(application),
+		newStatsCmd(application),
 	)
 
 	return cmd

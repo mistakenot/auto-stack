@@ -10,7 +10,7 @@ import (
 const (
 	stateDirName  = ".auto/reflect"
 	playbookFile  = "playbook.json"
-	feedbackFile  = "feedback.jsonl"
+	eventsDirName = "events"
 	dirPermission = 0o755
 )
 
@@ -29,8 +29,9 @@ func PlaybookPath(repoRoot string) string {
 	return filepath.Join(repoRoot, stateDirName, playbookFile)
 }
 
-func FeedbackPath(repoRoot string) string {
-	return filepath.Join(repoRoot, stateDirName, feedbackFile)
+// EventsDir returns the directory holding the append-only event shards.
+func EventsDir(repoRoot string) string {
+	return filepath.Join(repoRoot, stateDirName, eventsDirName)
 }
 
 func DisplayPath(cwd, absolute string) string {

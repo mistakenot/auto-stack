@@ -171,21 +171,24 @@ auto graph code context src/auth --file src/auth/login.ts --token-limit 8000
 ### 6. Reflect and improve
 
 ```bash
-# Capture feedback while it's fresh, optionally pinned to a file range
-auto reflect feedback add \
-  --kind harmful \
-  --comment "gorm caused N+1 on dashboard query" \
-  --file internal/db/users.go --start 42 --end 80 \
-  --effective-at 2026-06-01
-
 # Record a rule for future sessions
-auto reflect rule create --content "prefer sqlc over gorm for new queries"
+auto reflect rule create \
+  --use-when "writing new database queries" \
+  --content "prefer sqlc over gorm for new queries" \
+  --causal-note "gorm caused an N+1 on the dashboard query" \
+  --domain db --type soft
 
-# Look up rules that apply to the current task
-auto reflect lookup "database queries"
+# Run the retrieval loop: surface rules for a task, commit to an ordering,
+# then close the loop with feedback (a gate blocks until feedback is submitted).
+RT=$(auto reflect retrieve "database queries" --domain db | jq -r '.[0].retrieval_id')
+FB=$(auto reflect select "$RT" | jq -r '.[0].feedback_id')
+auto reflect feedback "{\"outcome\":\"success\",\"summary\":\"used sqlc\",\"rankings\":[{\"feedback_id\":\"$FB\",\"rank\":1,\"reason\":\"pointed me at sqlc\"}],\"gap\":null}"
+auto reflect gate check
 ```
 
-`auto reflect` persists rule memory across sessions, attaches feedback to specific lines, and feeds patterns back into project playbooks.
+`auto reflect` persists rule memory as an event-sourced log, surfaces rules through a
+retrieve/select/feedback loop, and feeds patterns back into project playbooks.
+Run `auto reflect quickstart` for the full walkthrough.
 
 ### 7. Schedule the loop
 

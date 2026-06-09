@@ -8,6 +8,13 @@ title: "Auto-Reflect V1 Requirements"
 
 # Auto-Reflect V1 Requirements
 
+> **Superseded by task 019 (playbook-retrieval-loop).** This document describes the
+> original v1 rule/`lookup` and `feedback add` surfaces. Those commands have been
+> removed: rules are now an event-sourced projection, and retrieval runs through the
+> `retrieve` → `select` → `feedback` → `gate check` loop. See
+> `docs/tasks/019-playbook-retrieval-loop/` and run `auto reflect quickstart` for the
+> current surface. Kept for historical context only.
+
 ## Purpose
 
 `autoreflect` exists to persist and retrieve learned repository rules for humans and coding agents in a deterministic, low-friction way.

@@ -7,13 +7,37 @@ import (
 )
 
 var (
-	idRegex        = regexp.MustCompile(idPattern)
-	tagRegex       = regexp.MustCompile(tagPattern)
-	categoryRegex  = regexp.MustCompile(catPattern)
-	timestampRegex = regexp.MustCompile(timePattern)
+	idRegex  = regexp.MustCompile(idPattern)
+	tagRegex = regexp.MustCompile(tagPattern)
 )
 
-func validateRule(path string, index int, rule *Rule) []ValidationError {
+// validRuleTypes / validLifecycles back the enum checks.
+var (
+	validRuleTypes  = map[string]struct{}{RuleTypeHard: {}, RuleTypeSoft: {}}
+	validLifecycles = map[string]struct{}{LifecycleDraft: {}, LifecycleConfirmed: {}, LifecycleStale: {}}
+)
+
+// NormalizeDomain trims and lowercases each entry, dropping empties. Order is
+// preserved. Duplicate detection is left to validation so duplicates surface as
+// errors rather than being silently collapsed.
+func NormalizeDomain(domain []string) []string {
+	out := make([]string, 0, len(domain))
+	for _, d := range domain {
+		normalized := strings.ToLower(strings.TrimSpace(d))
+		if normalized == "" {
+			continue
+		}
+		out = append(out, normalized)
+	}
+	return out
+}
+
+// ValidateRule checks a fully-formed Rule, returning structured errors. It
+// enforces the id format, domain tag format and dedupe, non-empty
+// use_when/content/causal_note, the rule_type and lifecycle enums, and the
+// invariant that a hard rule must declare at least one domain (otherwise it
+// would be unreachable by the domain-scoped hard-rule injection).
+func ValidateRule(path string, index int, rule *Rule) []ValidationError {
 	errs := make([]ValidationError, 0)
 	if rule == nil {
 		return append(errs, ValidationError{
@@ -35,8 +59,17 @@ func validateRule(path string, index int, rule *Rule) []ValidationError {
 		})
 	}
 
-	content := strings.TrimSpace(rule.Content)
-	if content == "" {
+	errs = append(errs, validateDomain(path, prefix, rule)...)
+
+	if strings.TrimSpace(rule.UseWhen) == "" {
+		errs = append(errs, ValidationError{
+			Code:    "required",
+			Path:    path,
+			Field:   prefix + ".use_when",
+			Message: "use_when is required",
+		})
+	}
+	if strings.TrimSpace(rule.Content) == "" {
 		errs = append(errs, ValidationError{
 			Code:    "required",
 			Path:    path,
@@ -44,35 +77,59 @@ func validateRule(path string, index int, rule *Rule) []ValidationError {
 			Message: "content is required",
 		})
 	}
-
-	category := strings.TrimSpace(rule.Category)
-	if category == "" {
+	if strings.TrimSpace(rule.CausalNote) == "" {
 		errs = append(errs, ValidationError{
 			Code:    "required",
 			Path:    path,
-			Field:   prefix + ".category",
-			Message: "category is required",
-		})
-	} else if !categoryRegex.MatchString(category) {
-		errs = append(errs, ValidationError{
-			Code:    "invalid_format",
-			Path:    path,
-			Field:   prefix + ".category",
-			Message: "category must match ^[a-z0-9]+(?:-[a-z0-9]+)*$",
-			Value:   rule.Category,
+			Field:   prefix + ".causal_note",
+			Message: "causal_note is required",
 		})
 	}
 
-	seenTags := make(map[string]struct{}, len(rule.Tags))
-	for i, tag := range rule.Tags {
-		field := fmt.Sprintf("%s.tags[%d]", prefix, i)
+	if _, ok := validRuleTypes[rule.RuleType]; !ok {
+		errs = append(errs, ValidationError{
+			Code:    "enum",
+			Path:    path,
+			Field:   prefix + ".rule_type",
+			Message: "rule_type must be one of hard, soft",
+			Value:   rule.RuleType,
+		})
+	}
+
+	if _, ok := validLifecycles[rule.Lifecycle]; !ok {
+		errs = append(errs, ValidationError{
+			Code:    "enum",
+			Path:    path,
+			Field:   prefix + ".lifecycle",
+			Message: "lifecycle must be one of draft, confirmed, stale",
+			Value:   rule.Lifecycle,
+		})
+	}
+
+	if rule.RuleType == RuleTypeHard && len(rule.Domain) == 0 {
+		errs = append(errs, ValidationError{
+			Code:    "required",
+			Path:    path,
+			Field:   prefix + ".domain",
+			Message: "hard rules must declare at least one domain: pass --domain <tag> so the rule can be surfaced",
+		})
+	}
+
+	return errs
+}
+
+func validateDomain(path, prefix string, rule *Rule) []ValidationError {
+	errs := make([]ValidationError, 0)
+	seen := make(map[string]struct{}, len(rule.Domain))
+	for i, tag := range rule.Domain {
+		field := fmt.Sprintf("%s.domain[%d]", prefix, i)
 		normalized := strings.TrimSpace(strings.ToLower(tag))
 		if normalized == "" {
 			errs = append(errs, ValidationError{
 				Code:    "required",
 				Path:    path,
 				Field:   field,
-				Message: "tag cannot be empty",
+				Message: "domain tag cannot be empty",
 			})
 			continue
 		}
@@ -81,100 +138,40 @@ func validateRule(path string, index int, rule *Rule) []ValidationError {
 				Code:    "invalid_format",
 				Path:    path,
 				Field:   field,
-				Message: "tag must match ^[a-z0-9]+(?:-[a-z0-9]+)*$",
+				Message: "domain tag must match ^[a-z0-9]+(?:-[a-z0-9]+)*$",
 				Value:   tag,
 			})
 			continue
 		}
-		if _, ok := seenTags[normalized]; ok {
+		if _, ok := seen[normalized]; ok {
 			errs = append(errs, ValidationError{
 				Code:    "duplicate",
 				Path:    path,
 				Field:   field,
-				Message: "duplicate tag after normalization",
+				Message: "duplicate domain tag after normalization",
 				Value:   normalized,
 			})
 			continue
 		}
-		seenTags[normalized] = struct{}{}
+		seen[normalized] = struct{}{}
 	}
-
-	if !timestampRegex.MatchString(strings.TrimSpace(rule.CreatedAt)) {
-		errs = append(errs, ValidationError{
-			Code:    "invalid_format",
-			Path:    path,
-			Field:   prefix + ".created_at",
-			Message: "created_at must be an RFC3339 UTC timestamp",
-			Value:   rule.CreatedAt,
-		})
-	}
-
-	if !timestampRegex.MatchString(strings.TrimSpace(rule.UpdatedAt)) {
-		errs = append(errs, ValidationError{
-			Code:    "invalid_format",
-			Path:    path,
-			Field:   prefix + ".updated_at",
-			Message: "updated_at must be an RFC3339 UTC timestamp",
-			Value:   rule.UpdatedAt,
-		})
-	}
-
 	return errs
 }
 
-func normalizeCreateInput(in CreateInput) (CreateInput, []ValidationError) {
-	out := CreateInput{
-		Content:  strings.TrimSpace(in.Content),
-		Category: strings.ToLower(strings.TrimSpace(in.Category)),
-		Tags:     make([]string, 0, len(in.Tags)),
-	}
-
+// ValidatePlaybook validates the schema version and every folded rule.
+func ValidatePlaybook(path string, playbook Playbook) []ValidationError {
 	errs := make([]ValidationError, 0)
-	if out.Content == "" {
-		errs = append(errs, ValidationError{Code: "required", Path: "", Field: "content", Message: "content is required"})
-	}
-	if out.Category == "" {
-		errs = append(errs, ValidationError{Code: "required", Path: "", Field: "category", Message: "category is required"})
-	} else if !categoryRegex.MatchString(out.Category) {
-		errs = append(errs, ValidationError{Code: "invalid_format", Path: "", Field: "category", Message: "category must match ^[a-z0-9]+(?:-[a-z0-9]+)*$", Value: in.Category})
-	}
-
-	seen := make(map[string]struct{}, len(in.Tags))
-	for i, raw := range in.Tags {
-		normalized := strings.ToLower(strings.TrimSpace(raw))
-		field := fmt.Sprintf("tags[%d]", i)
-		if normalized == "" {
-			errs = append(errs, ValidationError{Code: "required", Field: field, Message: "tag cannot be empty", Value: raw})
-			continue
-		}
-		if !tagRegex.MatchString(normalized) {
-			errs = append(errs, ValidationError{Code: "invalid_format", Field: field, Message: "tag must match ^[a-z0-9]+(?:-[a-z0-9]+)*$", Value: raw})
-			continue
-		}
-		if _, ok := seen[normalized]; ok {
-			errs = append(errs, ValidationError{Code: "duplicate", Field: field, Message: "duplicate tag after normalization", Value: normalized})
-			continue
-		}
-		seen[normalized] = struct{}{}
-		out.Tags = append(out.Tags, normalized)
-	}
-
-	return out, errs
-}
-
-func validatePlaybook(path string, playbook Playbook) []ValidationError {
-	errs := make([]ValidationError, 0)
-	if playbook.SchemaVersion != 1 {
+	if playbook.SchemaVersion != SchemaVersion {
 		errs = append(errs, ValidationError{
 			Code:    "invalid_schema_version",
 			Path:    path,
 			Field:   "schema_version",
-			Message: "schema_version must be 1",
+			Message: fmt.Sprintf("schema_version must be %d", SchemaVersion),
 			Value:   playbook.SchemaVersion,
 		})
 	}
 	for i := range playbook.Rules {
-		errs = append(errs, validateRule(path, i, &playbook.Rules[i])...)
+		errs = append(errs, ValidateRule(path, i, &playbook.Rules[i])...)
 	}
 	return errs
 }

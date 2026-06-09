@@ -8,7 +8,9 @@ import (
 
 const quickstartMarkdown = `# auto reflect quickstart
 
-Persist and retrieve repository-specific rules, then capture feedback events for what helped, harmed, or was missing.
+Persist repository-specific rules, then run the retrieval loop: surface rules for a task,
+commit to an ordering, do the work, and close the loop with feedback. A gate blocks until
+feedback is submitted, so signal is never silently dropped.
 
 ## Setup
 
@@ -17,59 +19,72 @@ cd /path/to/your/repo
 auto reflect init
 ` + "```" + `
 
-## Rule memory workflow
+## Author rules (event-sourced)
 
 ` + "```" + `bash
 # Persist a reusable lesson into the local playbook.
 auto reflect rule create \
+  --use-when "writing flaky end-to-end tests" \
   --content "Keep passing test logs short so failing E2E tests are easy to debug" \
-  --category testing \
-  --tag e2e \
-  --tag logs
+  --causal-note "noisy passing logs hid the real failure during a debug session" \
+  --domain testing \
+  --type soft
 
-# Retrieve relevant rules later.
-auto reflect lookup "e2e logs flaky tests"
+# List rules, then fetch one in full.
+auto reflect rule list
+auto reflect rule get <r-id>
+
+# Edit a rule; all changed fields become one versioned edit.
+auto reflect rule edit <r-id> --lifecycle confirmed
+
+# Force a refold of the playbook snapshot from the event log.
+auto reflect rebuild
 ` + "```" + `
 
-## Feedback workflow
+## Retrieval loop
+
+The loop mints ids you must thread from one step to the next. Capture them with jq.
 
 ` + "```" + `bash
-# Helpful annotation on a file span.
-auto reflect feedback add \
-  --kind helpful \
-  --file docs/setup.md \
-  --start 12 \
-  --end 18 \
-  --comment "this section avoided redoing the install flow" \
-  --effective-at 2026-05-01T10:00:00Z \
-  --context "installing auto reflect in a fresh repo"
+# 1. Retrieve predicates for your task (no content yet). Domain-matched hard rules
+#    are always surfaced (hard_injected). Capture the retrieval_ids:
+RT=$(auto reflect retrieve "add --json flag to auto env" --domain go,cli | jq -r '.[0].retrieval_id')
 
-# Missing context annotation (no file needed).
-auto reflect feedback add \
-  --kind missing \
-  --comment "missing docs for release rollback steps" \
-  --effective-at 2026-04-28 \
-  --context "writing release runbook automation"
+# 2. Select the rules you care about, most interesting first. This reveals content
+#    and mints a feedback_id per rule. Capture the feedback_id:
+FB=$(auto reflect select "$RT" | jq -r '.[0].feedback_id')
 
-# Harmful annotation with context to capture why it caused churn.
-auto reflect feedback add \
-  --kind harmful \
-  --file docs/quickstart.md \
-  --start 6 \
-  --end 9 \
-  --comment "outdated command led to repeated retries" \
-  --effective-at 2026-05-03T14:30:00Z \
-  --context "following first-time setup docs in CI container"
+# 3. ...do the coding task, using the rules...
 
-# Query recent feedback.
-auto reflect feedback list --since 14d
-auto reflect feedback list --kind harmful --file docs/
+# 4. Close the loop. rankings must cover EVERY outstanding feedback_id; rank is a
+#    permutation of 1..N; reason is required per id. gap is optional but when present
+#    both report and moment are required.
+auto reflect feedback "{
+  \"outcome\": \"success\",
+  \"summary\": \"shipped the flag\",
+  \"rankings\": [{\"feedback_id\": \"$FB\", \"rank\": 1, \"reason\": \"told me the exact flag pattern\"}],
+  \"gap\": null
+}"
+
+# You can also pipe the JSON document via stdin:
+echo "$PAYLOAD" | auto reflect feedback -
+
+# 5. Gate: skills/hooks call this. Exits 0 only when no feedback_ids are outstanding
+#    in scope (the detected session, else this host+worktree within a 24h lookback).
+auto reflect gate check
+` + "```" + `
+
+## Stats
+
+` + "```" + `bash
+# Per-rule surfaced / selected / selection_rate / feedback_count across all sessions.
+auto reflect stats
 ` + "```" + `
 
 ## Files created by auto reflect
 
-- ` + "`" + `.auto/reflect/playbook.json` + "`" + `: repository-local rule memory
-- ` + "`" + `.auto/reflect/feedback.jsonl` + "`" + `: append-only feedback event log
+- ` + "`" + `.auto/reflect/events/` + "`" + `: append-only canonical event log (sharded by host/day/worktree)
+- ` + "`" + `.auto/reflect/playbook.json` + "`" + `: folded rule snapshot (a disposable cache; rebuild any time)
 - ` + "`" + `~/.auto/reflect/settings.json` + "`" + `: global auto reflect settings
 `
 

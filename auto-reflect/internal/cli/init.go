@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/mistakenot/auto-reflect/internal/app"
 	"github.com/mistakenot/auto-reflect/internal/config"
@@ -53,29 +52,23 @@ func newInitCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 			playbookPath := store.PlaybookPath(repoInfo.Root)
-			feedbackPath := store.FeedbackPath(repoInfo.Root)
+			eventsDir := store.EventsDir(repoInfo.Root)
 
-			playbookCreated, err := ensurePlaybook(playbookPath)
-			if err != nil {
-				return &ExitError{Code: 1, Err: err}
+			if err := os.MkdirAll(eventsDir, 0o755); err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("create events directory: %w", err)}
 			}
-			feedbackCreated, err := ensureFeedbackLog(feedbackPath)
+			playbookCreated, err := ensurePlaybook(playbookPath)
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Project state dir: %s\n", store.DisplayPath(application.CWD, stateDir))
+			fmt.Fprintf(cmd.OutOrStdout(), "Events dir: %s\n", store.DisplayPath(application.CWD, eventsDir))
 			fmt.Fprintf(cmd.OutOrStdout(), "Playbook: %s\n", store.DisplayPath(application.CWD, playbookPath))
 			if playbookCreated {
 				fmt.Fprintln(cmd.OutOrStdout(), "Created playbook.json.")
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), "Playbook already exists.")
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Feedback log: %s\n", store.DisplayPath(application.CWD, feedbackPath))
-			if feedbackCreated {
-				fmt.Fprintln(cmd.OutOrStdout(), "Created feedback.jsonl.")
-			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "Feedback.jsonl already exists.")
 			}
 			return nil
 		},
@@ -90,30 +83,12 @@ func ensurePlaybook(playbookPath string) (bool, error) {
 	}
 
 	empty := rules.Playbook{
-		SchemaVersion: 1,
+		SchemaVersion: rules.SchemaVersion,
+		FoldedThrough: map[string]int{},
 		Rules:         []rules.Rule{},
 	}
 	if err := store.WriteJSONFile(playbookPath, empty); err != nil {
 		return false, fmt.Errorf("create playbook: %w", err)
-	}
-	return true, nil
-}
-
-func ensureFeedbackLog(feedbackPath string) (bool, error) {
-	if info, err := os.Stat(feedbackPath); err == nil {
-		if info.IsDir() {
-			return false, fmt.Errorf("feedback path is a directory: %s", feedbackPath)
-		}
-		return false, nil
-	} else if !os.IsNotExist(err) {
-		return false, fmt.Errorf("stat feedback log: %w", err)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(feedbackPath), 0o755); err != nil {
-		return false, fmt.Errorf("create feedback parent directory: %w", err)
-	}
-	if err := os.WriteFile(feedbackPath, []byte{}, 0o600); err != nil {
-		return false, fmt.Errorf("create feedback log: %w", err)
 	}
 	return true, nil
 }

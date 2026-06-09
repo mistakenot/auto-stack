@@ -9,6 +9,27 @@ import (
 	"testing"
 )
 
+var testBinaryPath string
+
+func TestMain(m *testing.M) {
+	binDir, err := os.MkdirTemp("", "autoreflect-e2e-bin-")
+	if err != nil {
+		panic(err)
+	}
+
+	testBinaryPath = filepath.Join(binDir, "autoreflect")
+	build := exec.Command("go", "build", "-o", testBinaryPath, "./cmd/autoreflect")
+	build.Dir = filepath.Join("..", "..")
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		panic("build failed: " + err.Error())
+	}
+
+	code := m.Run()
+	_ = os.RemoveAll(binDir)
+	os.Exit(code)
+}
+
 func runBinary(cwd string, args ...string) (stdout string, stderr string, err error) {
 	cmd := exec.Command(testBinaryPath, args...)
 	cmd.Dir = cwd

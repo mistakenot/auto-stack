@@ -10,6 +10,8 @@ auto-graph/autograph
 **/testdata/
 !auto-graph/testdata/
 !auto-graph/e2e/testdata/
+!auto-reflect/internal/rules/testdata/
+!auto-reflect/internal/rules/testdata/**
 
 # Credentials and secrets
 *.env
