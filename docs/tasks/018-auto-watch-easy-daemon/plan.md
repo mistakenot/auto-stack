@@ -30,11 +30,11 @@ a doctor unit check, an install.sh restart hook for one-command update, and upda
 - [Context](./context.md)
 
 ## How to Test
-- [ ] `daemoninstall_test.go` — user install: unit path under `.config/systemd/user`, `systemctl --user daemon-reload/enable/start`, `WantedBy=default.target`, `ExecStart=<home>/.local/bin/auto watch start`, no sudo; `--system` parity (`/etc/systemd/system`, `multi-user.target`); enable-linger failure is non-fatal
-- [ ] `doctor_test.go` — `checkDaemonUnit` flags a unit whose `ExecStart` binary is missing/old (`autowatch`) with remediation `auto watch daemon install`; passes when valid
-- [ ] `install.sh` — `bash -n` clean; with a stub `systemctl` on PATH: user unit active → emits `systemctl --user restart autowatch.service`; not active → no restart (fresh install safe)
-- [ ] `scripts/check-no-stale-binary-refs.sh` — still green after doc/quickstart edits
-- [ ] `make check build test vulncheck` green; manual smoke: `auto watch daemon install --print-unit` (user) and `--system --print-unit` render the right unit
+- [x] `daemoninstall_test.go` — user install: unit path under `.config/systemd/user`, `systemctl --user daemon-reload/enable/start`, `WantedBy=default.target`, `ExecStart=<home>/.local/bin/auto watch start`, no sudo; `--system` parity (`/etc/systemd/system`, `multi-user.target`); enable-linger failure is non-fatal
+- [x] `doctor_test.go` — `checkDaemonUnit` flags a unit whose `ExecStart` binary is missing/old (`autowatch`) with remediation `auto watch daemon install`; passes when valid
+- [x] `install.sh` — `bash -n` clean; with a stub `systemctl` on PATH: user unit active → emits `systemctl --user restart autowatch.service`; not active → no restart (fresh install safe)
+- [x] `scripts/check-no-stale-binary-refs.sh` — still green after doc/quickstart edits
+- [x] `make check build test vulncheck` green; manual smoke: `auto watch daemon install --print-unit` (user) and `--system --print-unit` render the right unit
 
 ## Execution Sequence
 ```
