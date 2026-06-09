@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,7 @@ func TestSetupGitHooks_FreshInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read hook: %v", err)
 	}
-	if string(content) != string(hookScript) {
+	if !bytes.Equal(content, hookScript) {
 		t.Error("hook content does not match embedded script")
 	}
 }
