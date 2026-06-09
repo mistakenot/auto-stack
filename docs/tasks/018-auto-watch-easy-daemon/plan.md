@@ -176,11 +176,11 @@ doctor checks.
 - [x] Step 3.5: Commit: `feat(018): phase 3 - doctor detects dangling daemon ExecStart`
 
 ### Phase 4: install.sh restart hook + system reachability  *(independent; depends only on design)*
-- [ ] Step 4.1: `install.sh` — after the binary is replaced, if `systemctl` exists and
+- [x] Step 4.1: `install.sh` — after the binary is replaced, if `systemctl` exists and
       `systemctl --user is-active --quiet autowatch.service`, run `systemctl --user restart
       autowatch.service` (no sudo) and report it; otherwise keep the existing system-mode restart hint.
       Preserve the existing `fuser`/`RESTART_SERVICES` parent-PID logic.
-- [ ] Step 4.1a: **The restart must be failure-tolerant under `set -euo pipefail`** (install.sh:2).
+- [x] Step 4.1a: **The restart must be failure-tolerant under `set -euo pipefail`** (install.sh:2).
       The binary is already replaced (lines 43-57), so the `restart` call must NOT abort the script:
       run it as `if systemctl --user restart autowatch.service; then echo "restarted"; else echo
       "<print the manual restart hint>"; fi` (or `… || true` + warn). The `is-active --quiet` guard
@@ -201,15 +201,15 @@ manual-restart hint instead of aborting the already-successful binary update. Ad
 assertion to Step 4.3's verify (stub systemctl returning failure on restart → script still exits 0).
 -->
 
-- [ ] Step 4.2: System-mode reachability (AC-3): document/emit the `sudo "$(command -v auto)" watch
+- [x] Step 4.2: System-mode reachability (AC-3): document/emit the `sudo "$(command -v auto)" watch
       daemon install --system` form; have `auto watch daemon install --system` (when not root) print a
       remediation that includes the optional `sudo ln -sf <binpath> /usr/local/bin/auto`. (Doc + the
       Phase-2 hint; no user-run installer writes `/usr/local/bin`.)
-- [ ] Step 4.3: Verify: `bash -n install.sh` clean; with a stub `systemctl` shim on `PATH` returning
+- [x] Step 4.3: Verify: `bash -n install.sh` clean; with a stub `systemctl` shim on `PATH` returning
       "active" for `--user is-active autowatch.service`, install.sh emits the `systemctl --user restart`
       line; with "inactive", it does not (fresh-install safe); and with the stub failing the `restart`,
       install.sh still exits 0 and prints the manual-restart hint (set -euo pipefail tolerance).
-- [ ] Step 4.4: Commit: `feat(018): phase 4 - install.sh restarts user daemon on update`
+- [x] Step 4.4: Commit: `feat(018): phase 4 - install.sh restarts user daemon on update`
 
 ### Phase 5: Docs sweep  *(independent; depends only on design)*
 - [ ] Step 5.1: `docs/autostack-install-daemon.md` — rewrite the "Why System `systemd`" section to a
