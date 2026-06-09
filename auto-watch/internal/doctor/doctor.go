@@ -4,11 +4,13 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/mistakenot/auto-watch/internal/config"
+	"github.com/mistakenot/auto-watch/internal/daemoninstall"
 	"github.com/mistakenot/auto-watch/internal/gitx"
 	"github.com/mistakenot/auto-watch/internal/model"
 )
@@ -19,6 +21,7 @@ func Run(ctx context.Context, cwd string) (string, []model.DoctorCheck) {
 		checkClaude(),
 		checkGit(ctx),
 		checkSettings(),
+		checkDaemonUnit(),
 	}
 	if repoRoot, err := gitx.FindRepoRoot(cwd); err == nil {
 		checks = append(checks, checkProjectConfig(repoRoot))
@@ -136,6 +139,102 @@ func checkSettings() model.DoctorCheck {
 		}
 	}
 	return model.DoctorCheck{Name: "settings", Status: "ok", Message: path}
+}
+
+// checkDaemonUnit locates the watch daemon systemd unit (user scope first, then
+// system scope) and verifies its ExecStart points at an existing, executable
+// binary that uses the current `auto watch start` form. No unit installed is a
+// passing state (the daemon is optional); a dangling or stale ExecStart fails.
+func checkDaemonUnit() model.DoctorCheck {
+	return checkDaemonUnitAt(daemoninstall.DefaultUnitPaths(), os.ReadFile, os.Stat)
+}
+
+func checkDaemonUnitAt(
+	unitPaths []string,
+	readFile func(string) ([]byte, error),
+	stat func(string) (os.FileInfo, error),
+) model.DoctorCheck {
+	const name = "daemon_unit"
+	const remediation = "auto watch daemon install"
+
+	unitPath := ""
+	var content []byte
+	for _, candidate := range unitPaths {
+		data, err := readFile(candidate)
+		if err != nil {
+			continue
+		}
+		unitPath = candidate
+		content = data
+		break
+	}
+	if unitPath == "" {
+		return model.DoctorCheck{Name: name, Status: "ok", Message: "no daemon unit installed"}
+	}
+
+	execStart, binPath := parseExecStart(string(content))
+	if execStart == "" || binPath == "" {
+		return model.DoctorCheck{
+			Name:        name,
+			Status:      "fail",
+			Message:     "daemon unit " + unitPath + " has no ExecStart binary",
+			Remediation: remediation,
+		}
+	}
+
+	// A stale unit installed before task 017 invokes the old `autowatch` binary
+	// directly (e.g. .../autowatch start) instead of the unified `auto` binary
+	// (.../auto watch start). Treat that as a failure even if the binary exists.
+	if filepath.Base(binPath) == "autowatch" {
+		return model.DoctorCheck{
+			Name:        name,
+			Status:      "fail",
+			Message:     "daemon unit " + unitPath + " references the old autowatch binary",
+			Remediation: remediation,
+			Details:     "ExecStart=" + execStart,
+		}
+	}
+
+	info, err := stat(binPath)
+	if err != nil || info.IsDir() {
+		return model.DoctorCheck{
+			Name:        name,
+			Status:      "fail",
+			Message:     "daemon unit " + unitPath + " ExecStart binary " + binPath + " is missing",
+			Remediation: remediation,
+			Details:     "ExecStart=" + execStart,
+		}
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		return model.DoctorCheck{
+			Name:        name,
+			Status:      "fail",
+			Message:     "daemon unit " + unitPath + " ExecStart binary " + binPath + " is not executable",
+			Remediation: remediation,
+			Details:     "ExecStart=" + execStart,
+		}
+	}
+
+	return model.DoctorCheck{Name: name, Status: "ok", Message: unitPath}
+}
+
+// parseExecStart returns the raw ExecStart value and the resolved binary path
+// (the first token) from a systemd unit file. Empty strings indicate no
+// ExecStart line or no binary token.
+func parseExecStart(content string) (execStart, binPath string) {
+	for _, rawLine := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if !strings.HasPrefix(line, "ExecStart=") {
+			continue
+		}
+		execStart = strings.TrimSpace(strings.TrimPrefix(line, "ExecStart="))
+		fields := strings.Fields(execStart)
+		if len(fields) > 0 {
+			binPath = filepath.Clean(fields[0])
+		}
+		return execStart, binPath
+	}
+	return "", ""
 }
 
 func checkProjectConfig(repoRoot string) model.DoctorCheck {
