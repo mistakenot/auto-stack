@@ -53,19 +53,19 @@ verify each phase's files on disk before the next.**
 ## Plan
 
 ### Phase 1: Scope core — parameterize daemoninstall  *(sequential; blocks 2 & 3)*
-- [ ] Step 1.1: Add `Scope` type + constants (`ScopeUser`, `ScopeSystem`) in `spec.go`; add a `Scope`
+- [x] Step 1.1: Add `Scope` type + constants (`ScopeUser`, `ScopeSystem`) in `spec.go`; add a `Scope`
       field to `InstallOptions`/`RestartOptions`/`StatusOptions`; treat empty as `ScopeUser`.
-- [ ] Step 1.2: `manager.go` — derive the unit dir from scope (`system`→`/etc/systemd/system`,
+- [x] Step 1.2: `manager.go` — derive the unit dir from scope (`system`→`/etc/systemd/system`,
       `user`→`<home>/.config/systemd/user`) and add a helper that prefixes `--user` to systemctl
       args for user scope. Route all `runSystemctl`/status/restart calls through it.
-- [ ] Step 1.3: `resolve.go` — for user scope, set unit dir under the resolved home and default the
+- [x] Step 1.3: `resolve.go` — for user scope, set unit dir under the resolved home and default the
       runtime user to the current user (no `SUDO_USER` needed); keep system-scope behavior identical.
-- [ ] Step 1.3a: **Reorder resolution so home precedes the unit path.** In user scope the unit dir
+- [x] Step 1.3a: **Reorder resolution so home precedes the unit path.** In user scope the unit dir
       is `<home>/.config/systemd/user`, so `resolveSpec` must resolve the runtime user + `HomeDir`
       (via `currentUser()` — in user scope runtime user == invoking user) **before** building the
       unit path; today `resolveTarget` runs first (resolve.go:10) using the static `m.unitDir`.
       System scope keeps using `/etc/systemd/system` (no home dependency, order-independent).
-- [ ] Step 1.3b: **Give the read paths a unit dir too.** `Status` (status.go:14) and `Restart`
+- [x] Step 1.3b: **Give the read paths a unit dir too.** `Status` (status.go:14) and `Restart`
       (restart.go:10) currently call `resolveTarget` with no user/home resolution. Add a small
       scope-aware helper that, for user scope, resolves the current user's home → unit dir so these
       commands locate `<home>/.config/systemd/user/autowatch.service` (not the system path). The
