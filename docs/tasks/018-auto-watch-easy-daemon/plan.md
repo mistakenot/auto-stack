@@ -113,9 +113,9 @@ and `Restart` resolve `<home>/.config/systemd/user/…` for user scope instead o
 - [x] Step 1.9: Commit: `feat(018): phase 1 - scope-parameterized daemoninstall (user default)`
 
 ### Phase 2: CLI surface — `--system` flag + scope-aware output  *(depends on Phase 1)*
-- [ ] Step 2.1: `cli/daemon.go` — add `--system` bool to `install` (and `restart`/`status` as needed);
+- [x] Step 2.1: `cli/daemon.go` — add `--system` bool to `install` (and `restart`/`status` as needed);
       default omitted = user scope; map to `opts.Scope`. Pass scope through to the Manager calls.
-- [ ] Step 2.1a: **Flip the install defaults so the unit is enabled+started by default** (both
+- [x] Step 2.1a: **Flip the install defaults so the unit is enabled+started by default** (both
       scopes): define `--enable`/`--start` with default **`true`** in cobra; users opt out with
       `--enable=false` / `--start=false`. This makes a no-flag `auto watch daemon install` write +
       `daemon-reload` + `enable` + `start` (AC-1). The existing documented `--enable --start`
@@ -140,14 +140,14 @@ the "Expected behavior" section (which currently says default only writes the un
 row already asserts the enable/start systemctl calls, so coverage is in place.
 -->
 
-- [ ] Step 2.2: Make printed hints scope-aware — user mode prints `systemctl --user status …` (no
+- [x] Step 2.2: Make printed hints scope-aware — user mode prints `systemctl --user status …` (no
       `sudo`); system mode keeps the `sudo systemctl …` hint.
-- [ ] Step 2.3: Update any `cli` tests broken by the new flag/output.
-- [ ] Step 2.4: Verify: `cd auto-watch && go build ./... && go test ./...` green; `auto watch daemon
+- [x] Step 2.3: Update any `cli` tests broken by the new flag/output.
+- [x] Step 2.4: Verify: `cd auto-watch && go build ./... && go test ./...` green; `auto watch daemon
       install --print-unit` (no flags) renders a user unit (dir `~/.config/systemd/user`,
       `WantedBy=default.target`, `ExecStart=<home>/.local/bin/auto watch start`) and exits 0;
       `auto watch daemon install --system --print-unit` renders the system unit.
-- [ ] Step 2.5: Commit: `feat(018): phase 2 - daemon install --system flag + scope-aware hints`
+- [x] Step 2.5: Commit: `feat(018): phase 2 - daemon install --system flag + scope-aware hints`
 
 ### Phase 3: Doctor — dangling ExecStart check  *(depends on Phase 1)*
 - [ ] Step 3.1: `doctor.go` — add `checkDaemonUnit`: locate the unit (user dir, then system), and if
