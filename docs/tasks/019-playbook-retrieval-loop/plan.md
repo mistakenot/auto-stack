@@ -51,12 +51,12 @@ legacy-feedback deletion, then e2e + docs + full quality gate.
 
 ## How to Test
 
-- [ ] `auto-reflect/internal/events/log_test.go` — seq allocation under lock, shard naming, read order
-- [ ] `auto-reflect/internal/rules/projection_test.go` — fold determinism, deltas, conflicts (AC-4, AC-5), golden-fixture fold (`internal/rules/testdata/events/` → `playbook.golden.json`; guards append-only schema stability)
-- [ ] `auto-reflect/internal/rules/match_test.go` — scoring, ANY-of filter, hard injection (AC-1)
-- [ ] `auto-reflect/internal/loop/feedback_test.go` — payload validation matrix (AC-3)
-- [ ] `auto-reflect/internal/cli/cli_integration_test.go` — full loop via `runCLIAt()` (AC-1/2/3/3b/4/6)
-- [ ] `auto-reflect/cmd/autoreflect/e2e_loop_test.go` — built binary, quickstart sequence (AC-7)
+- [x] `auto-reflect/internal/events/log_test.go` — seq allocation under lock, shard naming, read order
+- [x] `auto-reflect/internal/rules/projection_test.go` — fold determinism, deltas, conflicts (AC-4, AC-5), golden-fixture fold (`internal/rules/testdata/events/` → `playbook.golden.json`; guards append-only schema stability)
+- [x] `auto-reflect/internal/rules/match_test.go` — scoring, ANY-of filter, hard injection (AC-1)
+- [x] `auto-reflect/internal/loop/feedback_test.go` — payload validation matrix (AC-3)
+- [x] `auto-reflect/internal/cli/cli_integration_test.go` — full loop via `runCLIAt()` (AC-1/2/3/3b/4/6)
+- [x] `auto-reflect/cmd/autoreflect/e2e_loop_test.go` — built binary, quickstart sequence (AC-7)
 
 ## Execution Sequence
 
@@ -232,7 +232,7 @@ builds e2e_loop_test.go on the already-working harness.
 
 ### Phase 4: E2E, docs, quality gate
 
-- [ ] Step 4.1: Create `cmd/autoreflect/e2e_loop_test.go` on the existing TestMain/runBinary harness:
+- [x] Step 4.1: Create `cmd/autoreflect/e2e_loop_test.go` on the existing TestMain/runBinary harness:
       temp git repo (`initGitRepo` pattern **plus a seed commit**, matching the legacy
       `TestE2EFeedbackAddList` pattern at e2e_feedback_test.go:49-50), `init --project`, then follow
       the quickstart sequence parsing JSON output to thread minted rt-/fb- ids; assert events files
@@ -265,23 +265,23 @@ explicit no-commit degraded-path case. AC-7's "fresh repo" is thereby honest: it
 without a first commit.
 -->
 
-- [ ] Step 4.2: Docs sweep: mark `auto-reflect/docs/requirements.md` superseded (header note → task
+- [x] Step 4.2: Docs sweep: mark `auto-reflect/docs/requirements.md` superseded (header note → task
       019); check `auto-reflect/CLAUDE.md` and root docs index for stale command references
       (`auto reflect lookup`, `feedback add`); run `rg -n "reflect (lookup|feedback add)" --type md`
       and fix hits outside task-019 planning docs and historical design docs.
       **Verify**: rg returns only intentional historical references.
-- [ ] Step 4.3: Full gate from repo root: `golangci-lint cache clean` (017/018 lesson: cross-worktree
+- [x] Step 4.3: Full gate from repo root: `golangci-lint cache clean` (017/018 lesson: cross-worktree
       phantom findings), then `make check && make build && make test`.
       **Verify**: all three pass; `bin/auto reflect quickstart` prints the new walkthrough.
-- [ ] Step 4.4: Manual smoke in a scratch repo outside git (`.tmp/`): run the quickstart commands
+- [x] Step 4.4: Manual smoke in a scratch repo outside git (`.tmp/`): run the quickstart commands
       as printed, confirm JSON-only stdout (pipe through `jq .` at each step) and remediation text
       on a deliberately incomplete feedback payload.
       **Verify**: every step's stdout parses as JSON; errors appear on stderr only.
-- [ ] Step 4.5: Commit: `feat(019): phase 4 - e2e loop test + docs sweep`
+- [x] Step 4.5: Commit: `feat(019): phase 4 - e2e loop test + docs sweep`
 
 ## Success Criteria
 
-- [ ] `make check`, `make build`, `make test` pass from repo root (includes gofmt, vet, lint,
+- [x] `make check`, `make build`, `make test` pass from repo root (includes gofmt, vet, lint,
       stale-refs — note: `stale-refs` only catches old *binary stems* like `autoreflect …`, NOT
       deleted subcommands in correct `auto reflect …` form; the last criterion below is enforced
       solely by Step 4.2's `rg` sweep)
@@ -297,14 +297,14 @@ AUTHOR: Noted inline on the criterion: stale-refs covers binary stems only; the 
 criterion is enforced by Step 4.2's rg sweep, not by make check.
 -->
 
-- [ ] AC-1: `retrieve` returns predicates only; hard rules injected; `retrieval` event appended — integration + unit tests green
-- [ ] AC-2: `select` preserves order, mints fb-ids, appends ordered `selection` event — integration test green
-- [ ] AC-3/AC-3b: incomplete/ungrounded feedback rejected with structured errors + remediation; gate exits non-zero→zero around a complete submission; no-rules session passes — loop unit matrix + integration tests green
-- [ ] AC-4: snapshot deleted → refold byte-identical; events carry type/schema_version/ts/seq; two worktree-root paths ⇒ two shard files — projection/events unit tests green
-- [ ] AC-5: edit history v1→vN reconstructable from events — projection test green
-- [ ] AC-6: `stats` returns surfaced/selected/selection_rate per rule after ≥2 sessions — integration test green
-- [ ] AC-7: e2e_loop_test drives init→create→retrieve→select→feedback→gate via the built binary following quickstart — green
-- [ ] No references to deleted surfaces remain (`internal/feedback`, `reflect lookup`, `feedback add`) outside historical docs
+- [x] AC-1: `retrieve` returns predicates only; hard rules injected; `retrieval` event appended — integration + unit tests green
+- [x] AC-2: `select` preserves order, mints fb-ids, appends ordered `selection` event — integration test green
+- [x] AC-3/AC-3b: incomplete/ungrounded feedback rejected with structured errors + remediation; gate exits non-zero→zero around a complete submission; no-rules session passes — loop unit matrix + integration tests green
+- [x] AC-4: snapshot deleted → refold byte-identical; events carry type/schema_version/ts/seq; two worktree-root paths ⇒ two shard files — projection/events unit tests green
+- [x] AC-5: edit history v1→vN reconstructable from events — projection test green
+- [x] AC-6: `stats` returns surfaced/selected/selection_rate per rule after ≥2 sessions — integration test green
+- [x] AC-7: e2e_loop_test drives init→create→retrieve→select→feedback→gate via the built binary following quickstart — green
+- [x] No references to deleted surfaces remain (`internal/feedback`, `reflect lookup`, `feedback add`) outside historical docs
 
 ## Execution Notes (from 017/018 feedback)
 
