@@ -90,12 +90,12 @@ BEFORE building the unit path in user scope; system scope stays order-independen
 and `Restart` resolve `<home>/.config/systemd/user/…` for user scope instead of the system path).
 -->
 
-- [ ] Step 1.4: `template.go` — render `WantedBy=default.target` for user scope, `multi-user.target`
+- [x] Step 1.4: `template.go` — render `WantedBy=default.target` for user scope, `multi-user.target`
       for system. `ExecStart={{.BinPath}} watch start` unchanged.
-- [ ] Step 1.5: `install.go` — ensure the user unit dir exists (mkdir) before write; use the
+- [x] Step 1.5: `install.go` — ensure the user unit dir exists (mkdir) before write; use the
       scope-aware systemctl; after a user-scope enable+start, best-effort `loginctl enable-linger
       <user>` via the Runner — on error, append a clear warning to the result, do NOT fail install.
-- [ ] Step 1.5a: **User-bus preflight (user scope).** `systemctl --user` needs `XDG_RUNTIME_DIR`
+- [x] Step 1.5a: **User-bus preflight (user scope).** `systemctl --user` needs `XDG_RUNTIME_DIR`
       + a running user bus. Before the user-scope systemctl calls, detect a missing bus (env unset
       or a probe like `systemctl --user is-system-running`/`show` failing to connect) and return a
       clear remediation ("no user D-Bus session — start a login session, run `loginctl enable-linger
@@ -103,14 +103,14 @@ and `Restart` resolve `<home>/.config/systemd/user/…` for user scope instead o
       `shell.ExecRunner` does NOT override `cmd.Env` (so it inherits `XDG_RUNTIME_DIR` /
       `DBUS_SESSION_BUS_ADDRESS`); if it sets `Env`, pass these through. Add a `fakeRunner` test for
       the missing-bus remediation path.
-- [ ] Step 1.6: `validate.go` — accept unit paths under `<home>/.config/systemd/user/` for user scope
+- [x] Step 1.6: `validate.go` — accept unit paths under `<home>/.config/systemd/user/` for user scope
       (keep `/etc/systemd/system/` for system).
-- [ ] Step 1.7: Update/extend `daemoninstall_test.go` with `fakeRunner`: user-scope install asserts
+- [x] Step 1.7: Update/extend `daemoninstall_test.go` with `fakeRunner`: user-scope install asserts
       unit dir, `systemctl --user daemon-reload/enable/start`, `WantedBy=default.target`, enable-linger
       attempted + non-fatal on failure; status/restart use `systemctl --user`; add a `--system` parity
       test and a regenerate-over-stale-unit test (`…/autowatch start` → `…/auto watch start`, identity retained).
-- [ ] Step 1.8: Verify: `cd auto-watch && go build ./... && go vet ./... && go test ./...` all green.
-- [ ] Step 1.9: Commit: `feat(018): phase 1 - scope-parameterized daemoninstall (user default)`
+- [x] Step 1.8: Verify: `cd auto-watch && go build ./... && go vet ./... && go test ./...` all green.
+- [x] Step 1.9: Commit: `feat(018): phase 1 - scope-parameterized daemoninstall (user default)`
 
 ### Phase 2: CLI surface — `--system` flag + scope-aware output  *(depends on Phase 1)*
 - [ ] Step 2.1: `cli/daemon.go` — add `--system` bool to `install` (and `restart`/`status` as needed);
