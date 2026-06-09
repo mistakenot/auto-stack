@@ -13,8 +13,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+{{- if .IsSystem}}
 User={{.RuntimeUser}}
 Group={{.RuntimeGroup}}
+{{- end}}
 Environment=HOME={{.HomeDir}}
 Environment=PATH={{.PathEnv}}
 WorkingDirectory={{.WorkingDir}}
@@ -43,9 +45,14 @@ func renderUnit(spec *ServiceSpec, scope Scope) (string, error) {
 	data := struct {
 		*ServiceSpec
 		WantedBy string
+		IsSystem bool
 	}{
 		ServiceSpec: spec,
 		WantedBy:    wantedByForScope(scope),
+		// systemd's user manager runs as the user already and cannot apply
+		// User=/Group= (it fails with status=216/GROUP "Failed to determine
+		// supplementary groups"), so those directives are system-scope only.
+		IsSystem: normalizeScope(scope) == ScopeSystem,
 	}
 	var buf bytes.Buffer
 	if err := tpl.Execute(&buf, data); err != nil {
