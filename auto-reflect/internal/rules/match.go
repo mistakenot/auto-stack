@@ -65,18 +65,18 @@ func MatchRules(rules []Rule, intent string, domainFilter []string) []Match {
 
 	// Determine the candidate set under the ANY-of domain filter.
 	candidates := make([]Rule, 0, len(rules))
-	for _, r := range rules {
-		if len(filter) > 0 && !domainsIntersect(r.Domain, filter) {
+	for i := range rules {
+		if len(filter) > 0 && !domainsIntersect(rules[i].Domain, filter) {
 			continue
 		}
-		candidates = append(candidates, r)
+		candidates = append(candidates, rules[i])
 	}
 
 	maxRaw := float64(4 * len(keywords))
 	scored := make([]Match, 0, len(candidates))
 	inResults := make(map[string]int) // rule id -> index in scored
-	for _, r := range candidates {
-		raw := scoreRule(r, keywords)
+	for i := range candidates {
+		raw := scoreRule(&candidates[i], keywords)
 		if raw <= 0 {
 			continue
 		}
@@ -84,8 +84,8 @@ func MatchRules(rules []Rule, intent string, domainFilter []string) []Match {
 		if maxRaw > 0 {
 			score = raw / maxRaw
 		}
-		scored = append(scored, Match{Rule: r, MatchScore: score})
-		inResults[r.ID] = len(scored) - 1
+		scored = append(scored, Match{Rule: candidates[i], MatchScore: score})
+		inResults[candidates[i].ID] = len(scored) - 1
 	}
 
 	// Hard-rule injection set: --domain when provided, else intent keywords.
@@ -93,7 +93,8 @@ func MatchRules(rules []Rule, intent string, domainFilter []string) []Match {
 	if len(injectionSet) == 0 {
 		injectionSet = keywords
 	}
-	for _, r := range rules {
+	for i := range rules {
+		r := &rules[i]
 		if r.RuleType != RuleTypeHard {
 			continue
 		}
@@ -104,7 +105,7 @@ func MatchRules(rules []Rule, intent string, domainFilter []string) []Match {
 			scored[idx].HardInjected = true
 			continue
 		}
-		scored = append(scored, Match{Rule: r, MatchScore: 0, HardInjected: true})
+		scored = append(scored, Match{Rule: *r, MatchScore: 0, HardInjected: true})
 		inResults[r.ID] = len(scored) - 1
 	}
 
@@ -120,7 +121,7 @@ func MatchRules(rules []Rule, intent string, domainFilter []string) []Match {
 
 // scoreRule sums keyword hits: use_when substring = 3, any domain tag substring
 // = 1 (counted once per keyword).
-func scoreRule(r Rule, keywords []string) float64 {
+func scoreRule(r *Rule, keywords []string) float64 {
 	useWhen := strings.ToLower(r.UseWhen)
 	domain := make([]string, 0, len(r.Domain))
 	for _, d := range r.Domain {

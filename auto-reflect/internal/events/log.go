@@ -155,7 +155,7 @@ func maxSeqInFile(file *os.File) (int, error) {
 		return 0, fmt.Errorf("read events shard: %w", err)
 	}
 	maxSeq := 0
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -193,8 +193,8 @@ func ReadAll(repoRoot string) ([]Event, error) {
 		return nil, err
 	}
 	result := make([]Event, len(collected))
-	for i, c := range collected {
-		result[i] = c.event
+	for i := range collected {
+		result[i] = collected[i].event
 	}
 	return result, nil
 }
@@ -208,8 +208,8 @@ func ReadAllSharded(repoRoot string) ([]ShardedEvent, error) {
 		return nil, err
 	}
 	result := make([]ShardedEvent, len(collected))
-	for i, c := range collected {
-		result[i] = ShardedEvent{Shard: c.shard, Event: c.event}
+	for i := range collected {
+		result[i] = ShardedEvent{Shard: collected[i].shard, Event: collected[i].event}
 	}
 	return result, nil
 }

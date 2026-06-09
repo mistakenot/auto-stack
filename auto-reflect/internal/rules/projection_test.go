@@ -74,8 +74,14 @@ func TestFoldGoldenFixture(t *testing.T) {
 func TestFoldDeterministicAcrossRuns(t *testing.T) {
 	first := foldFixture(t)
 	second := foldFixture(t)
-	a, _ := json.Marshal(first.Playbook)
-	b, _ := json.Marshal(second.Playbook)
+	a, err := json.Marshal(first.Playbook)
+	if err != nil {
+		t.Fatalf("marshal first: %v", err)
+	}
+	b, err := json.Marshal(second.Playbook)
+	if err != nil {
+		t.Fatalf("marshal second: %v", err)
+	}
 	if !bytes.Equal(a, b) {
 		t.Fatalf("fold not deterministic across runs\nfirst:  %s\nsecond: %s", a, b)
 	}
@@ -146,9 +152,9 @@ func TestFoldedThroughCountsOnlyRuleEvents(t *testing.T) {
 
 func findRule(t *testing.T, pb Playbook, id string) Rule {
 	t.Helper()
-	for _, r := range pb.Rules {
-		if r.ID == id {
-			return r
+	for i := range pb.Rules {
+		if pb.Rules[i].ID == id {
+			return pb.Rules[i]
 		}
 	}
 	t.Fatalf("rule %s not found in playbook", id)

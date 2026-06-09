@@ -63,7 +63,8 @@ func (s *Service) Retrieve(intent string, domains []string, limit int) ([]Retrie
 
 	items := make([]events.RetrievalItem, 0, len(matches))
 	results := make([]RetrievedRule, 0, len(matches))
-	for _, m := range matches {
+	for i := range matches {
+		m := &matches[i]
 		rtID, err := newRetrievalID()
 		if err != nil {
 			return nil, err
@@ -132,8 +133,8 @@ func (s *Service) Select(orderedRetrievalIDs []string) ([]SelectedRule, error) {
 		return nil, err
 	}
 	ruleIndex := make(map[string]rules.Rule, len(playbook.Rules))
-	for _, r := range playbook.Rules {
-		ruleIndex[r.ID] = r
+	for i := range playbook.Rules {
+		ruleIndex[playbook.Rules[i].ID] = playbook.Rules[i]
 	}
 
 	items := make([]events.SelectionItem, 0, len(orderedRetrievalIDs))
@@ -212,7 +213,8 @@ func (s *Service) Stats() ([]RuleStats, error) {
 
 	// fb-id -> rule-id, so feedback can attribute to rules.
 	ruleByFeedback := map[string]string{}
-	for _, ev := range all {
+	for i := range all {
+		ev := &all[i]
 		switch ev.Type {
 		case events.TypeRetrieval:
 			var p events.RetrievalPayload
@@ -245,7 +247,8 @@ func (s *Service) Stats() ([]RuleStats, error) {
 	}
 
 	out := make([]RuleStats, 0, len(playbook.Rules))
-	for _, r := range playbook.Rules {
+	for i := range playbook.Rules {
+		r := &playbook.Rules[i]
 		s := surfaced[r.ID]
 		sel := selected[r.ID]
 		rate := 0.0
@@ -266,7 +269,8 @@ func (s *Service) Stats() ([]RuleStats, error) {
 // indexRetrievals returns a rt-id -> rule-id map across all retrieval events.
 func indexRetrievals(all []events.Event) map[string]string {
 	out := map[string]string{}
-	for _, ev := range all {
+	for i := range all {
+		ev := &all[i]
 		if ev.Type != events.TypeRetrieval {
 			continue
 		}
@@ -310,6 +314,7 @@ func newFeedbackID() (string, error) { return newPrefixedID("fb-") }
 func newPrefixedID(prefix string) (string, error) {
 	var buf [4]byte
 	if _, err := rand.Read(buf[:]); err != nil {
+		//nolint:nilerr // intentional fallback: degrade to a UnixNano-seeded id rather than failing id minting
 		return fmt.Sprintf("%s%08x", prefix, uint32(time.Now().UnixNano())), nil
 	}
 	return fmt.Sprintf("%s%02x%02x%02x%02x", prefix, buf[0], buf[1], buf[2], buf[3]), nil

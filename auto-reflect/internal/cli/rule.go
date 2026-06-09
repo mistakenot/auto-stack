@@ -89,7 +89,7 @@ func newRuleCreateCmd(application *app.App) *cobra.Command {
 			}
 
 			if outputFormat == "text" {
-				printRuleText(cmd, "Created rule", created)
+				printRuleText(cmd, "Created rule", &created)
 				return nil
 			}
 			if err := writeJSON(cmd.OutOrStdout(), map[string]any{"created": true, "scope": "repo", "rule": created}); err != nil {
@@ -220,7 +220,7 @@ func newRuleEditCmd(application *app.App) *cobra.Command {
 			}
 
 			if outputFormat == "text" {
-				printRuleText(cmd, "Edited rule", edited)
+				printRuleText(cmd, "Edited rule", &edited)
 				return nil
 			}
 			if err := writeJSON(cmd.OutOrStdout(), map[string]any{"edited": true, "scope": "repo", "rule": edited}); err != nil {
@@ -261,14 +261,16 @@ func newRuleListCmd(application *app.App) *cobra.Command {
 			}
 
 			if outputFormat == "text" {
-				for _, r := range playbook.Rules {
+				for i := range playbook.Rules {
+					r := &playbook.Rules[i]
 					fmt.Fprintf(cmd.OutOrStdout(), "%s [%s] (%s) %s\n", r.ID, r.RuleType, strings.Join(r.Domain, ","), r.UseWhen)
 				}
 				return nil
 			}
 
 			items := make([]map[string]any, 0, len(playbook.Rules))
-			for _, r := range playbook.Rules {
+			for i := range playbook.Rules {
+				r := &playbook.Rules[i]
 				items = append(items, map[string]any{
 					"id":        r.ID,
 					"use_when":  r.UseWhen,
@@ -311,7 +313,7 @@ func newRuleGetCmd(application *app.App) *cobra.Command {
 			}
 
 			if outputFormat == "text" {
-				printRuleText(cmd, "Rule", rule)
+				printRuleText(cmd, "Rule", &rule)
 				return nil
 			}
 			if err := writeJSON(cmd.OutOrStdout(), rule); err != nil {
@@ -325,9 +327,9 @@ func newRuleGetCmd(application *app.App) *cobra.Command {
 }
 
 func findRule(playbook rules.Playbook, id string) (rules.Rule, bool) {
-	for _, r := range playbook.Rules {
-		if r.ID == id {
-			return r, true
+	for i := range playbook.Rules {
+		if playbook.Rules[i].ID == id {
+			return playbook.Rules[i], true
 		}
 	}
 	return rules.Rule{}, false
@@ -345,7 +347,7 @@ func refoldAndGet(repoRoot, id string) (rules.Rule, error) {
 	return rule, nil
 }
 
-func printRuleText(cmd *cobra.Command, header string, r rules.Rule) {
+func printRuleText(cmd *cobra.Command, header string, r *rules.Rule) {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "%s %s (v%d)\n", header, r.ID, r.Version)
 	fmt.Fprintf(out, "Type: %s  Lifecycle: %s\n", r.RuleType, r.Lifecycle)

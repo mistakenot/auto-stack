@@ -11,9 +11,9 @@ func hardRule(id, useWhen string, domain ...string) Rule {
 }
 
 func findMatch(matches []Match, id string) (Match, bool) {
-	for _, m := range matches {
-		if m.Rule.ID == id {
-			return m, true
+	for i := range matches {
+		if matches[i].Rule.ID == id {
+			return matches[i], true
 		}
 	}
 	return Match{}, false

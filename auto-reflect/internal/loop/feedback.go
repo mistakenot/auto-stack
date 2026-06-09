@@ -257,7 +257,8 @@ func outstandingForScope(all []events.Event, sc scope) []string {
 
 	cutoff := time.Now().UTC().Add(-sc.lookback)
 	outstanding := make([]string, 0)
-	for _, ev := range all {
+	for i := range all {
+		ev := &all[i]
 		if ev.Type != events.TypeSelection {
 			continue
 		}
@@ -283,7 +284,7 @@ func outstandingForScope(all []events.Event, sc scope) []string {
 // id, scope is exact session match. Without one, scope is the host plus the
 // lookback window (shards are already this-worktree-only because ReadAll walks
 // the local worktree's events dir).
-func selectionInScope(ev events.Event, sc scope, cutoff time.Time) bool {
+func selectionInScope(ev *events.Event, sc scope, cutoff time.Time) bool {
 	if sc.sessionID != "" {
 		return ev.SessionID == sc.sessionID
 	}
@@ -302,7 +303,8 @@ func selectionInScope(ev events.Event, sc scope, cutoff time.Time) bool {
 // feedback event covering them.
 func coveredFeedbackIDs(all []events.Event) map[string]struct{} {
 	covered := make(map[string]struct{})
-	for _, ev := range all {
+	for i := range all {
+		ev := &all[i]
 		if ev.Type != events.TypeFeedback {
 			continue
 		}
@@ -347,6 +349,6 @@ func parseLookback(s string) (time.Duration, error) {
 }
 
 // decodePayload unmarshals an event's payload into dst.
-func decodePayload(ev events.Event, dst any) error {
+func decodePayload(ev *events.Event, dst any) error {
 	return json.Unmarshal(ev.Payload, dst)
 }

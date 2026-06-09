@@ -82,14 +82,12 @@ func TestAppendConcurrentNoGapsOrDuplicates(t *testing.T) {
 	const n = 10
 	var wg sync.WaitGroup
 	errs := make(chan error, n)
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range n {
+		wg.Go(func() {
 			if _, err := AppendEvent(root, TypeRuleCreated, samplePayload(), AppendOptions{}); err != nil {
 				errs <- err
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)
@@ -109,7 +107,7 @@ func TestAppendConcurrentNoGapsOrDuplicates(t *testing.T) {
 		seqs[i] = ev.Seq
 	}
 	sort.Ints(seqs)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if seqs[i] != i+1 {
 			t.Fatalf("seqs have gap/dup: %v", seqs)
 		}
@@ -119,7 +117,7 @@ func TestAppendConcurrentNoGapsOrDuplicates(t *testing.T) {
 func TestReadAllDeterministic(t *testing.T) {
 	root := newGitRepo(t)
 	base := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		_, err := AppendEvent(root, TypeRuleCreated, samplePayload(), AppendOptions{Now: base.Add(time.Duration(i) * time.Second)})
 		if err != nil {
 			t.Fatalf("append: %v", err)

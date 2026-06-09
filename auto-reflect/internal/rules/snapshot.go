@@ -59,7 +59,8 @@ func WriteSnapshot(path string, pb Playbook) error {
 // makes the snapshot look stale.
 func maxRuleSeqPerShard(sharded []events.ShardedEvent) map[string]int {
 	out := make(map[string]int)
-	for _, se := range sharded {
+	for i := range sharded {
+		se := &sharded[i]
 		if !events.IsRuleEvent(se.Event.Type) {
 			continue
 		}

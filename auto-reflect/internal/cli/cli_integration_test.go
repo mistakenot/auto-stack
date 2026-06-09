@@ -342,7 +342,7 @@ func TestLoopHappyPath(t *testing.T) {
 
 	// AC-3: complete feedback is accepted.
 	complete := fmt.Sprintf(`{"outcome":"success","summary":"did it","rankings":[{"feedback_id":%q,"rank":1,"reason":"used the rule"}]}`, fbID)
-	stdout, stderr, code = runCLIAt(t, repo, "feedback", complete)
+	_, stderr, code = runCLIAt(t, repo, "feedback", complete)
 	if code != 0 {
 		t.Fatalf("complete feedback rejected: code=%d\nstderr:\n%s", code, stderr)
 	}
@@ -370,7 +370,7 @@ func TestLoopStatsAfterTwoSessions(t *testing.T) {
 		"--causal-note", "needed for stats test",
 		"--domain", "go", "--type", "soft")
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		t.Setenv("AUTO_SESSION_ID", fmt.Sprintf("stats-session-%d", i))
 		stdout, _, code := runCLIAt(t, repo, "retrieve", "go cli flags topic stats")
 		if code != 0 {
@@ -445,7 +445,7 @@ func assertLoopEventsOnDisk(t *testing.T, repo, rtID, fbID string) {
 		if err != nil {
 			t.Fatalf("read shard: %v", err)
 		}
-		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
 			if line == "" {
 				continue
 			}

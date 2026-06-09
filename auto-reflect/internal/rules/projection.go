@@ -35,9 +35,9 @@ func Fold(sharded []events.ShardedEvent) FoldResult {
 	folded := make(map[string]int)
 	var conflicts []Conflict
 
-	for _, se := range sharded {
-		ev := se.Event
-		shard := se.Shard
+	for i := range sharded {
+		ev := sharded[i].Event
+		shard := sharded[i].Shard
 
 		switch ev.Type {
 		case events.TypeRuleCreated:

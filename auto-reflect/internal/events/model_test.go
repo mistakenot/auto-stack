@@ -18,7 +18,8 @@ func validEvent() Event {
 }
 
 func TestValidateAcceptsValidEvent(t *testing.T) {
-	if errs := Validate(validEvent()); len(errs) != 0 {
+	e := validEvent()
+	if errs := Validate(&e); len(errs) != 0 {
 		t.Fatalf("expected no errors, got %+v", errs)
 	}
 }
@@ -39,7 +40,7 @@ func TestValidateRejectsBadFields(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			e := validEvent()
 			mutate(&e)
-			if errs := Validate(e); len(errs) == 0 {
+			if errs := Validate(&e); len(errs) == 0 {
 				t.Fatalf("expected validation error for %q", name)
 			}
 		})

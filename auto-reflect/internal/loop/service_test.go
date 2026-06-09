@@ -49,7 +49,10 @@ func TestRetrieveReturnsPredicatesOnlyAndAppendsEvent(t *testing.T) {
 		t.Fatalf("expected rt- retrieval id, got %q", results[0].RetrievalID)
 	}
 	// Predicate-only: marshal and ensure no content/causal_note keys.
-	b, _ := json.Marshal(results[0])
+	b, err := json.Marshal(results[0])
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
 	if strings.Contains(string(b), "content") || strings.Contains(string(b), "causal_note") {
 		t.Fatalf("retrieve result leaked content: %s", b)
 	}
@@ -181,7 +184,7 @@ func TestStatsCountsAcrossSessions(t *testing.T) {
 	svc := NewService(repo)
 
 	// Two simulated sessions each retrieve + select the rule.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		retrieved, err := svc.Retrieve("go cli flags topic", nil, 0)
 		if err != nil {
 			t.Fatalf("retrieve: %v", err)

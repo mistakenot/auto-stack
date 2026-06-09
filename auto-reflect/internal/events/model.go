@@ -139,7 +139,7 @@ func IsRuleEvent(eventType string) bool {
 // Validate checks the structural integrity of an event envelope, returning
 // structured errors. The payload's domain-specific rules are validated by the
 // rules/loop packages that own each payload type.
-func Validate(e Event) []ValidationError {
+func Validate(e *Event) []ValidationError {
 	var errs []ValidationError
 
 	if e.ID == "" {
