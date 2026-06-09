@@ -104,21 +104,21 @@ Or with future product commands:
 
 ```bash
 make install
-sudo autostack restart-daemon --service-name autowatch
+sudo auto watch daemon restart
 ```
 
 For first-time setup:
 
 ```bash
 make install
-sudo autostack install-daemon --enable --start
+sudo auto watch daemon install --enable --start
 ```
 
 For later updates:
 
 ```bash
 make install
-sudo autostack restart-daemon
+sudo auto watch daemon restart
 ```
 
 ## Binary Update Behavior
@@ -277,7 +277,7 @@ That matters because the installer may be run via `sudo`, and in that case the c
 The simplest useful command shape is:
 
 ```bash
-sudo autostack install-daemon \
+sudo auto watch daemon install \
   --user alice \
   --bin /home/alice/.local/bin/auto
 ```
@@ -310,7 +310,7 @@ If we add daemon lifecycle commands under `autostack`, it should also include an
 Example:
 
 ```bash
-sudo autostack restart-daemon --service-name autowatch
+sudo auto watch daemon restart
 ```
 
 That command should:
@@ -333,7 +333,7 @@ If we add daemon lifecycle commands under `autostack`, we should also add a stat
 Example:
 
 ```bash
-autostack status
+auto watch daemon status
 ```
 
 That command should explicitly check whether the daemon is:
@@ -443,7 +443,7 @@ After installation, the operator should be able to run:
 ```bash
 sudo systemctl status autowatch
 journalctl -u autowatch -f
-autostack status
+auto watch daemon status
 auto watch status
 auto watch logs -n 50
 auto watch health
@@ -799,7 +799,7 @@ Examples:
 
 - missing binary: `run make install first`
 - invalid runtime user: `rerun with --user <non-root-user>`
-- missing unit: `run sudo autostack install-daemon first`
+- missing unit: `run sudo auto watch daemon install first`
 - inactive service: `run sudo systemctl start autowatch.service`
 
 ### Makefile Interaction

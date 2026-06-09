@@ -16,10 +16,13 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-STEMS='autodoc|autoenv|autoetl|autograph|autoreflect|autosearch|autoskill|autoui|autowatch|autoconfig'
+# `autostack` was never a shipped binary — it was a proposed host-ops umbrella,
+# subsumed by `auto watch daemon …` at the merge. It's listed so a future
+# copy-pasteable `autostack <verb>` invocation can't slip back into the docs.
+STEMS='autodoc|autoenv|autoetl|autograph|autoreflect|autosearch|autoskill|autoui|autowatch|autoconfig|autostack'
 
 # Subcommand/flag tokens that, following a stem, mark a real invocation.
-SUBCMDS='init|run|search|session|messages?|tree|stale|agents|fix|fixed|graph|quickstart|docs|doctor|update|serve|status|start|stop|task|trigger|logs|health|lookup|rule|create|up|down|code|context|lint|ls|index|stats|skills|clean|describe|get|list|co-?change|daemon'
+SUBCMDS='init|run|search|session|messages?|tree|stale|agents|fix|fixed|graph|quickstart|docs|doctor|update|serve|status|start|stop|task|trigger|logs|health|lookup|rule|create|up|down|code|context|lint|ls|index|stats|skills|clean|describe|get|list|co-?change|daemon|install-daemon|restart-daemon'
 
 PATTERN="\\b(${STEMS})[[:space:]]+(${SUBCMDS}|--[a-z])"
 
@@ -29,7 +32,11 @@ PATTERN="\\b(${STEMS})[[:space:]]+(${SUBCMDS}|--[a-z])"
 #  - systemd service identity: the unit name, service base/description, the
 #    --service-name value, Description= field, and the prose service phrases
 #  - the deliberate "post-upgrade" note that names the removed/stale autowatch unit
-ALLOW='Read when:|\[autodoc\(|autowatch\.service|defaultServiceBase|defaultDescription|--service-name autowatch|Description=autowatch|the autowatch daemon|autowatch systemd|autowatch daemon is already|stale .*autowatch|removed .*autowatch'
+#  - design-narrative references to the (never-built) `autostack` umbrella: the
+#    doc-identity frontmatter title and the backtick-wrapped `autostack <verb>`
+#    prose/headings the design doc legitimately discusses (copy-pasteable bash
+#    invocations are NOT backtick-wrapped, so they are still caught)
+ALLOW='Read when:|\[autodoc\(|autowatch\.service|defaultServiceBase|defaultDescription|--service-name autowatch|Description=autowatch|the autowatch daemon|autowatch systemd|autowatch daemon is already|stale .*autowatch|removed .*autowatch|`autostack |title: "autostack'
 
 # Scan scope: tracked shipped surface only (built from `git ls-files`).
 list_files() {
