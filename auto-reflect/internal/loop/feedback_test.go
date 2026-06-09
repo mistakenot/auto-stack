@@ -264,3 +264,34 @@ func completeFeedback(fb []string) FeedbackInput {
 		Rankings: rankings,
 	}
 }
+
+// TestParseLookback covers valid units and the trailing-garbage rejection that
+// fmt.Sscanf silently truncated (e.g. "5h2m" must not parse as 5m).
+func TestParseLookback(t *testing.T) {
+	valid := map[string]time.Duration{
+		"5m": 5 * time.Minute,
+		"2h": 2 * time.Hour,
+		"7d": 7 * 24 * time.Hour,
+		"1w": 7 * 24 * time.Hour,
+	}
+	for in, want := range valid {
+		got, err := parseLookback(in)
+		if err != nil {
+			t.Errorf("parseLookback(%q) unexpected error: %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("parseLookback(%q) = %v, want %v", in, got, want)
+		}
+	}
+
+	if got, err := parseLookback(""); err != nil || got != defaultGateLookback {
+		t.Errorf("parseLookback(\"\") = %v, %v; want %v, nil", got, err, defaultGateLookback)
+	}
+
+	for _, in := range []string{"5h2m", "5x2h", "abc", "h", "-5m", "5", "5z"} {
+		if _, err := parseLookback(in); err == nil {
+			t.Errorf("parseLookback(%q) = nil error; want rejection", in)
+		}
+	}
+}

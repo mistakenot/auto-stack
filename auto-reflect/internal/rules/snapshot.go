@@ -104,9 +104,11 @@ func Load(repoRoot, path string) (Playbook, error) {
 	}
 
 	result := Fold(sharded)
-	if err := WriteSnapshot(path, result.Playbook); err != nil {
-		return Playbook{}, err
-	}
+	// The snapshot is a disposable cache; the event log is canonical. A failed
+	// cache write (read-only fs, disk-full) must not block reads, and concurrent
+	// readers both refolding is harmless because WriteSnapshot is atomic-via-rename
+	// and the fold is deterministic. Best-effort write, always return the fold.
+	_ = WriteSnapshot(path, result.Playbook)
 	return result.Playbook, nil
 }
 

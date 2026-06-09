@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -330,8 +331,8 @@ func parseLookback(s string) (time.Duration, error) {
 	}
 	unit := s[len(s)-1]
 	numStr := s[:len(s)-1]
-	var n int
-	if _, err := fmt.Sscanf(numStr, "%d", &n); err != nil || n < 0 {
+	n, err := strconv.Atoi(numStr)
+	if err != nil || n < 0 {
 		return 0, &LoopError{Message: fmt.Sprintf("invalid --since %q: use a value like 5m, 2h, 7d, or 1w", s)}
 	}
 	switch unit {
