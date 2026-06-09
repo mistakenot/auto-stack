@@ -142,7 +142,7 @@ func TestResolveSpecUsesSUDOUserDefaults(t *testing.T) {
 	rig := newTestRig(t, &fakeRunner{t: t})
 	rig.env["SUDO_USER"] = "alice"
 
-	spec, err := rig.manager.resolveSpec(&InstallOptions{})
+	spec, err := rig.manager.resolveSpec(&InstallOptions{Scope: ScopeSystem})
 	if err != nil {
 		t.Fatalf("resolveSpec() error = %v", err)
 	}
@@ -175,7 +175,7 @@ func TestResolveSpecUsesSUDOUserDefaults(t *testing.T) {
 func TestResolveSpecRejectsRootRuntimeUser(t *testing.T) {
 	rig := newTestRig(t, &fakeRunner{t: t})
 
-	_, err := rig.manager.resolveSpec(&InstallOptions{RuntimeUser: "root"})
+	_, err := rig.manager.resolveSpec(&InstallOptions{Scope: ScopeSystem, RuntimeUser: "root"})
 	if err == nil || !strings.Contains(err.Error(), `runtime user cannot be "root"`) {
 		t.Fatalf("expected root rejection, got %v", err)
 	}
@@ -185,11 +185,11 @@ func TestRenderUnitAndParseInstalledUnitRoundTrip(t *testing.T) {
 	rig := newTestRig(t, &fakeRunner{t: t})
 	rig.env["SUDO_USER"] = "alice"
 
-	spec, err := rig.manager.resolveSpec(&InstallOptions{ServiceName: "nightly-watch"})
+	spec, err := rig.manager.resolveSpec(&InstallOptions{Scope: ScopeSystem, ServiceName: "nightly-watch"})
 	if err != nil {
 		t.Fatalf("resolveSpec() error = %v", err)
 	}
-	unit, err := renderUnit(&spec)
+	unit, err := renderUnit(&spec, ScopeSystem)
 	if err != nil {
 		t.Fatalf("renderUnit() error = %v", err)
 	}
@@ -223,7 +223,7 @@ func TestInstallWritesUnitAndRunsSystemctlActions(t *testing.T) {
 	rig := newTestRig(t, runner)
 	rig.env["SUDO_USER"] = "alice"
 
-	result, err := rig.manager.Install(context.Background(), &InstallOptions{Enable: true, Start: true})
+	result, err := rig.manager.Install(context.Background(), &InstallOptions{Scope: ScopeSystem, Enable: true, Start: true})
 	if err != nil {
 		t.Fatalf("Install() error = %v", err)
 	}
@@ -244,11 +244,11 @@ func TestInstallSkipsRewriteWhenUnitIsUnchanged(t *testing.T) {
 	rig := newTestRig(t, &fakeRunner{t: t})
 	rig.env["SUDO_USER"] = "alice"
 
-	spec, err := rig.manager.resolveSpec(&InstallOptions{})
+	spec, err := rig.manager.resolveSpec(&InstallOptions{Scope: ScopeSystem})
 	if err != nil {
 		t.Fatalf("resolveSpec() error = %v", err)
 	}
-	unit, err := renderUnit(&spec)
+	unit, err := renderUnit(&spec, ScopeSystem)
 	if err != nil {
 		t.Fatalf("renderUnit() error = %v", err)
 	}
@@ -261,7 +261,7 @@ func TestInstallSkipsRewriteWhenUnitIsUnchanged(t *testing.T) {
 		return nil
 	}
 
-	result, err := rig.manager.Install(context.Background(), &InstallOptions{})
+	result, err := rig.manager.Install(context.Background(), &InstallOptions{Scope: ScopeSystem})
 	if err != nil {
 		t.Fatalf("Install() error = %v", err)
 	}
@@ -284,11 +284,11 @@ func TestRestartUsesTryRestartForRunningService(t *testing.T) {
 	rig := newTestRig(t, runner)
 	rig.env["SUDO_USER"] = "alice"
 
-	spec, err := rig.manager.resolveSpec(&InstallOptions{})
+	spec, err := rig.manager.resolveSpec(&InstallOptions{Scope: ScopeSystem})
 	if err != nil {
 		t.Fatalf("resolveSpec() error = %v", err)
 	}
-	unit, err := renderUnit(&spec)
+	unit, err := renderUnit(&spec, ScopeSystem)
 	if err != nil {
 		t.Fatalf("renderUnit() error = %v", err)
 	}
@@ -296,7 +296,7 @@ func TestRestartUsesTryRestartForRunningService(t *testing.T) {
 		t.Fatalf("WriteFile(%q) error = %v", spec.UnitPath, err)
 	}
 
-	result, err := rig.manager.Restart(context.Background(), RestartOptions{})
+	result, err := rig.manager.Restart(context.Background(), RestartOptions{Scope: ScopeSystem})
 	if err != nil {
 		t.Fatalf("Restart() error = %v", err)
 	}
@@ -320,11 +320,11 @@ func TestStatusReturnsInstalledAndRuntimeState(t *testing.T) {
 	rig.manager.currentUser = func() (*user.User, error) { return &user.User{Username: "root", HomeDir: "/root", Gid: "0"}, nil }
 	rig.manager.geteuid = func() int { return 0 }
 
-	spec, err := rig.manager.resolveSpec(&InstallOptions{})
+	spec, err := rig.manager.resolveSpec(&InstallOptions{Scope: ScopeSystem})
 	if err != nil {
 		t.Fatalf("resolveSpec() error = %v", err)
 	}
-	unit, err := renderUnit(&spec)
+	unit, err := renderUnit(&spec, ScopeSystem)
 	if err != nil {
 		t.Fatalf("renderUnit() error = %v", err)
 	}
@@ -338,7 +338,7 @@ func TestStatusReturnsInstalledAndRuntimeState(t *testing.T) {
 		stdout: `{"daemon_running":true,"trigger_counts":{"total":2},"health":{"status":"ok","issueCount":0}}`,
 	})
 
-	status, err := rig.manager.Status(context.Background(), StatusOptions{})
+	status, err := rig.manager.Status(context.Background(), StatusOptions{Scope: ScopeSystem})
 	if err != nil {
 		t.Fatalf("Status() error = %v", err)
 	}
@@ -373,11 +373,11 @@ func TestStatusKeepsInstallStateWhenRuntimeCallFails(t *testing.T) {
 	rig.manager.currentUser = func() (*user.User, error) { return rig.users["alice"], nil }
 	rig.manager.geteuid = func() int { return 1000 }
 
-	spec, err := rig.manager.resolveSpec(&InstallOptions{})
+	spec, err := rig.manager.resolveSpec(&InstallOptions{Scope: ScopeSystem})
 	if err != nil {
 		t.Fatalf("resolveSpec() error = %v", err)
 	}
-	unit, err := renderUnit(&spec)
+	unit, err := renderUnit(&spec, ScopeSystem)
 	if err != nil {
 		t.Fatalf("renderUnit() error = %v", err)
 	}
@@ -396,7 +396,7 @@ func TestStatusKeepsInstallStateWhenRuntimeCallFails(t *testing.T) {
 		},
 	}
 
-	status, err := rig.manager.Status(context.Background(), StatusOptions{})
+	status, err := rig.manager.Status(context.Background(), StatusOptions{Scope: ScopeSystem})
 	if err != nil {
 		t.Fatalf("Status() error = %v", err)
 	}
@@ -418,7 +418,7 @@ func TestDefaultBinPathIsMergedAutoBinary(t *testing.T) {
 	rig := newTestRig(t, &fakeRunner{t: t})
 	rig.env["SUDO_USER"] = "alice"
 
-	spec, err := rig.manager.resolveSpec(&InstallOptions{})
+	spec, err := rig.manager.resolveSpec(&InstallOptions{Scope: ScopeSystem})
 	if err != nil {
 		t.Fatalf("resolveSpec() error = %v", err)
 	}
@@ -434,11 +434,11 @@ func TestGeneratedUnitExecStartUsesWatchStart(t *testing.T) {
 	rig := newTestRig(t, &fakeRunner{t: t})
 	rig.env["SUDO_USER"] = "alice"
 
-	spec, err := rig.manager.resolveSpec(&InstallOptions{})
+	spec, err := rig.manager.resolveSpec(&InstallOptions{Scope: ScopeSystem})
 	if err != nil {
 		t.Fatalf("resolveSpec() error = %v", err)
 	}
-	unit, err := renderUnit(&spec)
+	unit, err := renderUnit(&spec, ScopeSystem)
 	if err != nil {
 		t.Fatalf("renderUnit() error = %v", err)
 	}
@@ -464,11 +464,11 @@ func TestParsedExecStartReconstructsWatchStart(t *testing.T) {
 	rig := newTestRig(t, runner)
 	rig.env["SUDO_USER"] = "alice"
 
-	spec, err := rig.manager.resolveSpec(&InstallOptions{})
+	spec, err := rig.manager.resolveSpec(&InstallOptions{Scope: ScopeSystem})
 	if err != nil {
 		t.Fatalf("resolveSpec() error = %v", err)
 	}
-	unit, err := renderUnit(&spec)
+	unit, err := renderUnit(&spec, ScopeSystem)
 	if err != nil {
 		t.Fatalf("renderUnit() error = %v", err)
 	}
@@ -476,7 +476,7 @@ func TestParsedExecStartReconstructsWatchStart(t *testing.T) {
 		t.Fatalf("WriteFile(%q) error = %v", spec.UnitPath, err)
 	}
 
-	status, err := rig.manager.Status(context.Background(), StatusOptions{})
+	status, err := rig.manager.Status(context.Background(), StatusOptions{Scope: ScopeSystem})
 	if err != nil {
 		t.Fatalf("Status() error = %v", err)
 	}
@@ -520,11 +520,11 @@ func TestRuntimeStatusShellOutUsesWatchInfix(t *testing.T) {
 				rig.manager.geteuid = func() int { return 1000 }
 			}
 
-			spec, err := rig.manager.resolveSpec(&InstallOptions{})
+			spec, err := rig.manager.resolveSpec(&InstallOptions{Scope: ScopeSystem})
 			if err != nil {
 				t.Fatalf("resolveSpec() error = %v", err)
 			}
-			unit, err := renderUnit(&spec)
+			unit, err := renderUnit(&spec, ScopeSystem)
 			if err != nil {
 				t.Fatalf("renderUnit() error = %v", err)
 			}
@@ -549,10 +549,313 @@ func TestRuntimeStatusShellOutUsesWatchInfix(t *testing.T) {
 				},
 			}
 
-			if _, err := rig.manager.Status(context.Background(), StatusOptions{}); err != nil {
+			if _, err := rig.manager.Status(context.Background(), StatusOptions{Scope: ScopeSystem}); err != nil {
 				t.Fatalf("Status() error = %v", err)
 			}
 			runner.AssertDone()
 		})
 	}
+}
+
+// userScopeSetup makes the current (builder) user installable in user scope:
+// it creates the binary at <builderHome>/.local/bin/auto and sets a user-bus
+// environment so the user-bus preflight passes. It returns the builder home,
+// the user unit dir, and the resolved bin path.
+func userScopeSetup(t *testing.T, rig *testRig) (home, userUnitDir, binPath string) {
+	t.Helper()
+	home = rig.currentUser.HomeDir
+	binPath = filepath.Join(home, ".local", "bin", "auto")
+	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userUnitDir = filepath.Join(home, ".config", "systemd", "user")
+	rig.env["XDG_RUNTIME_DIR"] = "/run/user/1001"
+	return home, userUnitDir, binPath
+}
+
+// TestUserScopeInstallWritesUserUnitAndEnablesLinger covers the default
+// (no-flag) user install: bus preflight, unit under ~/.config/systemd/user,
+// systemctl --user daemon-reload/enable/start, WantedBy=default.target,
+// ExecStart=<home>/.local/bin/auto watch start, and a best-effort enable-linger.
+func TestUserScopeInstallWritesUserUnitAndEnablesLinger(t *testing.T) {
+	runner := &fakeRunner{
+		t: t,
+		steps: []runnerStep{
+			{name: "systemctl", args: []string{"--user", "is-system-running"}, stdout: "running"},
+			{name: "systemctl", args: []string{"--user", "daemon-reload"}},
+			{name: "systemctl", args: []string{"--user", "enable", "autowatch.service"}},
+			{name: "systemctl", args: []string{"--user", "start", "autowatch.service"}},
+			{name: "loginctl", args: []string{"enable-linger", "builder"}},
+		},
+	}
+	rig := newTestRig(t, runner)
+	_, userUnitDir, binPath := userScopeSetup(t, rig)
+
+	result, err := rig.manager.Install(context.Background(), &InstallOptions{Enable: true, Start: true})
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	wantUnitPath := filepath.Join(userUnitDir, "autowatch.service")
+	if result.Spec.UnitPath != wantUnitPath {
+		t.Fatalf("UnitPath = %q want %q", result.Spec.UnitPath, wantUnitPath)
+	}
+	if result.Spec.RuntimeUser != "builder" {
+		t.Fatalf("RuntimeUser = %q want builder", result.Spec.RuntimeUser)
+	}
+	if result.Spec.BinPath != binPath {
+		t.Fatalf("BinPath = %q want %q", result.Spec.BinPath, binPath)
+	}
+	if !strings.Contains(result.Unit, "WantedBy=default.target") {
+		t.Fatalf("unit missing WantedBy=default.target:\n%s", result.Unit)
+	}
+	wantExec := "ExecStart=" + binPath + " watch start"
+	if !strings.Contains(result.Unit, wantExec) {
+		t.Fatalf("unit missing %q:\n%s", wantExec, result.Unit)
+	}
+	// The unit dir must have been created and the file written there.
+	if _, err := os.Stat(wantUnitPath); err != nil {
+		t.Fatalf("expected unit file at %q: %v", wantUnitPath, err)
+	}
+	if len(result.Warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", result.Warnings)
+	}
+	runner.AssertDone()
+}
+
+// TestUserScopeInstallLingerFailureIsNonFatal asserts a failed enable-linger
+// surfaces a warning but does not fail the install.
+func TestUserScopeInstallLingerFailureIsNonFatal(t *testing.T) {
+	runner := &fakeRunner{
+		t: t,
+		steps: []runnerStep{
+			{name: "systemctl", args: []string{"--user", "is-system-running"}, stdout: "running"},
+			{name: "systemctl", args: []string{"--user", "daemon-reload"}},
+			{name: "systemctl", args: []string{"--user", "enable", "autowatch.service"}},
+			{name: "systemctl", args: []string{"--user", "start", "autowatch.service"}},
+			{name: "loginctl", args: []string{"enable-linger", "builder"}, stderr: "Could not enable linger: Access denied", err: errors.New("exit status 1")},
+		},
+	}
+	rig := newTestRig(t, runner)
+	userScopeSetup(t, rig)
+
+	result, err := rig.manager.Install(context.Background(), &InstallOptions{Enable: true, Start: true})
+	if err != nil {
+		t.Fatalf("Install() error = %v (linger failure must be non-fatal)", err)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatalf("expected a linger warning, got none")
+	}
+	if !strings.Contains(result.Warnings[0], "enable-linger") {
+		t.Fatalf("warning = %q, expected enable-linger remediation", result.Warnings[0])
+	}
+	runner.AssertDone()
+}
+
+// TestUserScopeInstallMissingBusRemediation covers Step 1.5a: with no
+// XDG_RUNTIME_DIR, the install returns a clear remediation and never touches
+// systemctl/the filesystem.
+func TestUserScopeInstallMissingBusRemediation(t *testing.T) {
+	runner := &fakeRunner{t: t} // no steps: any systemctl call would fail the test
+	rig := newTestRig(t, runner)
+	userScopeSetup(t, rig)
+	delete(rig.env, "XDG_RUNTIME_DIR")
+
+	_, err := rig.manager.Install(context.Background(), &InstallOptions{Enable: true, Start: true})
+	if err == nil {
+		t.Fatalf("expected missing-bus error, got nil")
+	}
+	if !strings.Contains(err.Error(), "user D-Bus session") {
+		t.Fatalf("error = %v, expected user D-Bus remediation", err)
+	}
+	if !strings.Contains(err.Error(), "--system") {
+		t.Fatalf("error = %v, expected --system fallback hint", err)
+	}
+	runner.AssertDone()
+}
+
+// TestUserScopeInstallProbeFailureRemediation covers the probe variant of
+// 1.5a: XDG_RUNTIME_DIR is set but the user manager is unreachable.
+func TestUserScopeInstallProbeFailureRemediation(t *testing.T) {
+	runner := &fakeRunner{
+		t: t,
+		steps: []runnerStep{
+			{name: "systemctl", args: []string{"--user", "is-system-running"}, stderr: "Failed to connect to bus: No such file or directory", err: errors.New("exit status 1")},
+		},
+	}
+	rig := newTestRig(t, runner)
+	userScopeSetup(t, rig)
+
+	_, err := rig.manager.Install(context.Background(), &InstallOptions{Enable: true, Start: true})
+	if err == nil || !strings.Contains(err.Error(), "user D-Bus session") {
+		t.Fatalf("expected user D-Bus remediation, got %v", err)
+	}
+	runner.AssertDone()
+}
+
+// TestUserScopeStatusUsesSystemctlUser asserts status drives systemctl --user
+// and locates the unit under ~/.config/systemd/user.
+func TestUserScopeStatusUsesSystemctlUser(t *testing.T) {
+	runner := &fakeRunner{
+		t: t,
+		steps: []runnerStep{
+			{name: "systemctl", args: []string{"--user", "is-enabled", "autowatch.service"}, stdout: "enabled"},
+			{name: "systemctl", args: []string{"--user", "is-active", "autowatch.service"}, stdout: "inactive"},
+		},
+	}
+	rig := newTestRig(t, runner)
+	_, userUnitDir, _ := userScopeSetup(t, rig)
+
+	// Write the unit where user scope expects it.
+	spec, err := rig.manager.resolveSpec(&InstallOptions{})
+	if err != nil {
+		t.Fatalf("resolveSpec() error = %v", err)
+	}
+	unit, err := renderUnit(&spec, ScopeUser)
+	if err != nil {
+		t.Fatalf("renderUnit() error = %v", err)
+	}
+	if err := os.MkdirAll(userUnitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(spec.UnitPath, []byte(unit), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", spec.UnitPath, err)
+	}
+
+	status, err := rig.manager.Status(context.Background(), StatusOptions{})
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if !status.Daemon.Installed || !status.Daemon.Enabled {
+		t.Fatalf("unexpected daemon status: %+v", status.Daemon)
+	}
+	if filepath.Dir(status.Daemon.UnitPath) != userUnitDir {
+		t.Fatalf("UnitPath = %q, expected dir %q", status.Daemon.UnitPath, userUnitDir)
+	}
+	runner.AssertDone()
+}
+
+// TestUserScopeRestartUsesSystemctlUser asserts restart drives systemctl --user.
+func TestUserScopeRestartUsesSystemctlUser(t *testing.T) {
+	runner := &fakeRunner{
+		t: t,
+		steps: []runnerStep{
+			{name: "systemctl", args: []string{"--user", "is-active", "autowatch.service"}, stdout: "active"},
+			{name: "systemctl", args: []string{"--user", "try-restart", "autowatch.service"}},
+		},
+	}
+	rig := newTestRig(t, runner)
+	_, userUnitDir, _ := userScopeSetup(t, rig)
+
+	spec, err := rig.manager.resolveSpec(&InstallOptions{})
+	if err != nil {
+		t.Fatalf("resolveSpec() error = %v", err)
+	}
+	unit, err := renderUnit(&spec, ScopeUser)
+	if err != nil {
+		t.Fatalf("renderUnit() error = %v", err)
+	}
+	if err := os.MkdirAll(userUnitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(spec.UnitPath, []byte(unit), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", spec.UnitPath, err)
+	}
+
+	result, err := rig.manager.Restart(context.Background(), RestartOptions{})
+	if err != nil {
+		t.Fatalf("Restart() error = %v", err)
+	}
+	if filepath.Dir(result.UnitPath) != userUnitDir {
+		t.Fatalf("UnitPath = %q, expected dir %q", result.UnitPath, userUnitDir)
+	}
+	runner.AssertDone()
+}
+
+// TestSystemScopeInstallParity is the explicit --system parity test: unit under
+// /etc/systemd/system (via the rig's overridable unitDir), bare systemctl (no
+// --user), and WantedBy=multi-user.target.
+func TestSystemScopeInstallParity(t *testing.T) {
+	runner := &fakeRunner{
+		t: t,
+		steps: []runnerStep{
+			{name: "systemctl", args: []string{"daemon-reload"}},
+			{name: "systemctl", args: []string{"enable", "autowatch.service"}},
+			{name: "systemctl", args: []string{"start", "autowatch.service"}},
+		},
+	}
+	rig := newTestRig(t, runner)
+	rig.env["SUDO_USER"] = "alice"
+
+	result, err := rig.manager.Install(context.Background(), &InstallOptions{Scope: ScopeSystem, Enable: true, Start: true})
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if filepath.Dir(result.Spec.UnitPath) != rig.unitDir {
+		t.Fatalf("UnitPath = %q, expected dir %q", result.Spec.UnitPath, rig.unitDir)
+	}
+	if !strings.Contains(result.Unit, "WantedBy=multi-user.target") {
+		t.Fatalf("unit missing WantedBy=multi-user.target:\n%s", result.Unit)
+	}
+	// No --user, no loginctl: the fakeRunner asserts the exact bare sequence.
+	runner.AssertDone()
+}
+
+// TestUserScopeRegenerateOverStaleUnit covers AC-5: an existing unit with a
+// stale ExecStart (`…/autowatch start`) is regenerated to `…/auto watch start`
+// while retaining the service identity (autowatch.service, description).
+func TestUserScopeRegenerateOverStaleUnit(t *testing.T) {
+	runner := &fakeRunner{
+		t: t,
+		steps: []runnerStep{
+			{name: "systemctl", args: []string{"--user", "is-system-running"}, stdout: "running"},
+			{name: "systemctl", args: []string{"--user", "daemon-reload"}},
+			{name: "systemctl", args: []string{"--user", "enable", "autowatch.service"}},
+			{name: "systemctl", args: []string{"--user", "start", "autowatch.service"}},
+			{name: "loginctl", args: []string{"enable-linger", "builder"}},
+		},
+	}
+	rig := newTestRig(t, runner)
+	_, userUnitDir, binPath := userScopeSetup(t, rig)
+
+	// Seed a stale unit pointing at the old standalone binary name.
+	staleExec := filepath.Join(filepath.Dir(binPath), "autowatch") + " start"
+	staleUnit := "[Unit]\nDescription=autowatch daemon\n\n[Service]\nExecStart=" + staleExec + "\n\n[Install]\nWantedBy=default.target\n"
+	if err := os.MkdirAll(userUnitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unitPath := filepath.Join(userUnitDir, "autowatch.service")
+	if err := os.WriteFile(unitPath, []byte(staleUnit), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := rig.manager.Install(context.Background(), &InstallOptions{Enable: true, Start: true})
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if !result.ExistingUnit {
+		t.Fatalf("expected ExistingUnit=true")
+	}
+	if !result.Changed {
+		t.Fatalf("expected Changed=true for a stale unit")
+	}
+	if result.Spec.ServiceName != "autowatch.service" {
+		t.Fatalf("ServiceName = %q, identity must be retained", result.Spec.ServiceName)
+	}
+	if result.Spec.Description != "autowatch daemon" {
+		t.Fatalf("Description = %q, identity must be retained", result.Spec.Description)
+	}
+	rewritten, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rewritten), "autowatch start") {
+		t.Fatalf("rewritten unit still references the old binary:\n%s", rewritten)
+	}
+	if !strings.Contains(string(rewritten), binPath+" watch start") {
+		t.Fatalf("rewritten unit missing %q:\n%s", binPath+" watch start", rewritten)
+	}
+	runner.AssertDone()
 }

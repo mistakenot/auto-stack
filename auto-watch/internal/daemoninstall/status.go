@@ -11,11 +11,16 @@ import (
 )
 
 func (m *Manager) Status(ctx context.Context, opts StatusOptions) (CombinedStatus, error) {
-	serviceName, unitPath, err := m.resolveTarget(opts.ServiceName, opts.UnitPath)
+	scope := normalizeScope(opts.Scope)
+	home, err := m.unitDirHome(scope)
 	if err != nil {
 		return CombinedStatus{}, err
 	}
-	if err := m.validateTarget(serviceName, unitPath); err != nil {
+	serviceName, unitPath, err := m.resolveTarget(scope, home, opts.ServiceName, opts.UnitPath)
+	if err != nil {
+		return CombinedStatus{}, err
+	}
+	if err := m.validateTarget(scope, home, serviceName, unitPath); err != nil {
 		return CombinedStatus{}, err
 	}
 
@@ -37,14 +42,14 @@ func (m *Manager) Status(ctx context.Context, opts StatusOptions) (CombinedStatu
 		}
 		return CombinedStatus{}, remediationError(
 			fmt.Sprintf("failed to read unit %q: %v", unitPath, err),
-			"rerun with sudo auto watch daemon status",
+			statusRemediation(scope),
 		)
 	}
 	parsed, err := parseInstalledUnit(serviceName, unitPath, string(unitBytes))
 	if err != nil {
 		return CombinedStatus{}, remediationError(
 			fmt.Sprintf("failed to parse unit %q: %v", unitPath, err),
-			"rerun sudo auto watch daemon install to rewrite the unit",
+			installRemediation(scope),
 		)
 	}
 
@@ -60,11 +65,11 @@ func (m *Manager) Status(ctx context.Context, opts StatusOptions) (CombinedStatu
 		ExecStart:   parsed.BinPath + " watch start",
 	}
 
-	enabled, err := m.readSystemctlState(ctx, "is-enabled", serviceName)
+	enabled, err := m.readSystemctlState(ctx, scope, "is-enabled", serviceName)
 	if err != nil {
 		return CombinedStatus{}, err
 	}
-	running, err := m.readSystemctlState(ctx, "is-active", serviceName)
+	running, err := m.readSystemctlState(ctx, scope, "is-active", serviceName)
 	if err != nil {
 		return CombinedStatus{}, err
 	}
@@ -129,8 +134,8 @@ func parseInstalledUnit(serviceName, unitPath, content string) (ServiceSpec, err
 	return spec, nil
 }
 
-func (m *Manager) readSystemctlState(ctx context.Context, subcommand, serviceName string) (bool, error) {
-	stdout, stderr, err := m.Runner.Run(ctx, "systemctl", subcommand, serviceName)
+func (m *Manager) readSystemctlState(ctx context.Context, scope Scope, subcommand, serviceName string) (bool, error) {
+	stdout, stderr, err := m.Runner.Run(ctx, "systemctl", systemctlArgs(scope, subcommand, serviceName)...)
 	state := strings.TrimSpace(stdout)
 	if state == "" {
 		state = strings.TrimSpace(stderr)
@@ -153,8 +158,8 @@ func (m *Manager) readSystemctlState(ctx context.Context, subcommand, serviceNam
 	}
 	if err != nil {
 		return false, remediationError(
-			fmt.Sprintf("systemctl %s %s failed: %s", subcommand, serviceName, fallbackDetail(stdout, stderr, err)),
-			"rerun with sudo auto watch daemon status",
+			fmt.Sprintf("systemctl %s failed: %s", strings.Join(systemctlArgs(scope, subcommand, serviceName), " "), fallbackDetail(stdout, stderr, err)),
+			statusRemediation(scope),
 		)
 	}
 	return false, remediationError(
