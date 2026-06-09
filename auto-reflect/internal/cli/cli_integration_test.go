@@ -5,12 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mistakenot/auto-reflect/internal/app"
 	"github.com/mistakenot/auto-reflect/internal/cli"
@@ -109,200 +109,17 @@ func TestQuickstartIncludesInitAndCoreCommands(t *testing.T) {
 	for _, needle := range []string{
 		"auto reflect init",
 		"auto reflect rule create",
-		"auto reflect rule list",
-		"auto reflect rule get",
-		"auto reflect rebuild",
+		"auto reflect retrieve",
+		"auto reflect select",
+		"auto reflect feedback",
+		"auto reflect gate check",
 		"--use-when",
+		"retrieval_id",
+		"feedback_id",
 	} {
 		if !strings.Contains(stdout, needle) {
 			t.Fatalf("quickstart output missing %q\noutput:\n%s", needle, stdout)
 		}
-	}
-}
-
-func TestFeedbackAddAndListJSON(t *testing.T) {
-	repo := initGitRepo(t)
-	writeFile(t, filepath.Join(repo, "docs", "auth.md"), "line one\nline two\nline three\n")
-	gitAddCommit(t, repo, "seed docs")
-
-	stdout, stderr, code := runCLIAt(t, repo,
-		"feedback", "add",
-		"--kind", "helpful",
-		"--file", "docs/auth.md",
-		"--start", "1",
-		"--end", "2",
-		"--comment", "clear guidance",
-		"--effective-at", "2026-05-01T10:00:00Z",
-	)
-	if code != 0 {
-		t.Fatalf("feedback add failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
-
-	var addResp map[string]any
-	if err := json.Unmarshal([]byte(stdout), &addResp); err != nil {
-		t.Fatalf("decode add response: %v\nraw:\n%s", err, stdout)
-	}
-	if addResp["created"] != true {
-		t.Fatalf("expected created=true, got %v", addResp["created"])
-	}
-
-	feedbackPath := filepath.Join(repo, ".auto", "reflect", "feedback.jsonl")
-	content, err := os.ReadFile(feedbackPath)
-	if err != nil {
-		t.Fatalf("read feedback log: %v", err)
-	}
-	if !strings.Contains(string(content), "\"git_tree_sha\"") {
-		t.Fatalf("expected git_tree_sha in event, got:\n%s", content)
-	}
-	if !strings.Contains(string(content), "\"content_snippet\"") {
-		t.Fatalf("expected content_snippet in event, got:\n%s", content)
-	}
-
-	stdout, stderr, code = runCLIAt(t, repo, "feedback", "list", "--kind", "helpful")
-	if code != 0 {
-		t.Fatalf("feedback list failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
-
-	var listResp map[string]any
-	if err := json.Unmarshal([]byte(stdout), &listResp); err != nil {
-		t.Fatalf("decode list response: %v\nraw:\n%s", err, stdout)
-	}
-	events, ok := listResp["events"].([]any)
-	if !ok {
-		t.Fatalf("events missing or wrong type: %#v", listResp["events"])
-	}
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
-	}
-}
-
-func TestFeedbackAddMissingAndContextAndTextMode(t *testing.T) {
-	repo := initGitRepo(t)
-	writeFile(t, filepath.Join(repo, "README.md"), "seed\n")
-	gitAddCommit(t, repo, "seed")
-
-	stdout, stderr, code := runCLIAt(t, repo,
-		"feedback", "add",
-		"--kind", "missing",
-		"--comment", "missing setup docs",
-		"--effective-at", "2026-05-01",
-		"--context", "while implementing init flow",
-		"--format", "text",
-	)
-	if code != 0 {
-		t.Fatalf("feedback add missing failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "Recorded missing feedback") {
-		t.Fatalf("expected text mode output, got:\n%s", stdout)
-	}
-
-	stdout, stderr, code = runCLIAt(t, repo, "feedback", "list", "--kind", "missing")
-	if code != 0 {
-		t.Fatalf("feedback list missing failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
-	var resp map[string]any
-	if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
-		t.Fatalf("decode json: %v\nraw:\n%s", err, stdout)
-	}
-	events := resp["events"].([]any)
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
-	}
-	event := events[0].(map[string]any)
-	subject := event["subject"].(map[string]any)
-	if subject["type"] != "missing_context" {
-		t.Fatalf("expected missing_context subject, got %v", subject["type"])
-	}
-	if event["context"] != "while implementing init flow" {
-		t.Fatalf("expected context in output, got %v", event["context"])
-	}
-}
-
-func TestFeedbackListFiltersAndWarningsOutput(t *testing.T) {
-	repo := initGitRepo(t)
-	writeFile(t, filepath.Join(repo, "docs", "auth.md"), "a1\na2\na3\n")
-	writeFile(t, filepath.Join(repo, "docs", "setup.md"), "s1\ns2\ns3\n")
-	gitAddCommit(t, repo, "seed docs")
-
-	_, _, code := runCLIAt(t, repo, "feedback", "add", "--kind", "helpful", "--file", "docs/auth.md", "--start", "1", "--comment", "auth line", "--effective-at", "2026-05-01")
-	if code != 0 {
-		t.Fatal("add auth event failed")
-	}
-	time.Sleep(1100 * time.Millisecond)
-	_, _, code = runCLIAt(t, repo, "feedback", "add", "--kind", "harmful", "--file", "docs/setup.md", "--start", "2", "--comment", "setup line", "--effective-at", "2026-05-02")
-	if code != 0 {
-		t.Fatal("add setup event failed")
-	}
-
-	stdout, stderr, code := runCLIAt(t, repo, "feedback", "list", "--file", "docs/auth", "--limit", "1", "--since", "7d")
-	if code != 0 {
-		t.Fatalf("filtered list failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
-	var filtered map[string]any
-	if err := json.Unmarshal([]byte(stdout), &filtered); err != nil {
-		t.Fatalf("decode filtered json: %v\nraw:\n%s", err, stdout)
-	}
-	events := filtered["events"].([]any)
-	if len(events) != 1 {
-		t.Fatalf("expected 1 filtered event, got %d", len(events))
-	}
-	event := events[0].(map[string]any)
-	subject := event["subject"].(map[string]any)
-	if subject["file"] != "docs/auth.md" {
-		t.Fatalf("expected auth file filter, got %v", subject["file"])
-	}
-
-	after := time.Now().UTC().Add(-24 * time.Hour).Format("2006-01-02")
-	before := time.Now().UTC().Add(24 * time.Hour).Format("2006-01-02")
-	stdout, stderr, code = runCLIAt(t, repo, "feedback", "list", "--after", after, "--before", before, "--format", "text")
-	if code != 0 {
-		t.Fatalf("range list failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "[") {
-		t.Fatalf("expected text list rows, got:\n%s", stdout)
-	}
-}
-
-func TestFeedbackJSONModeStdoutStderrSeparation(t *testing.T) {
-	repo := initGitRepo(t)
-	writeFile(t, filepath.Join(repo, "README.md"), "seed\n")
-	gitAddCommit(t, repo, "seed")
-
-	stdout, stderr, code := runCLIAt(t, repo,
-		"feedback", "add",
-		"--kind", "helpful",
-		"--start", "1",
-		"--comment", "bad",
-		"--effective-at", "2026-05-01",
-	)
-	if code == 0 {
-		t.Fatal("expected validation failure")
-	}
-	if strings.TrimSpace(stdout) != "" {
-		t.Fatalf("expected empty stdout on error, got:\n%s", stdout)
-	}
-	if !strings.Contains(stderr, "--file is required") {
-		t.Fatalf("expected structured validation stderr, got:\n%s", stderr)
-	}
-}
-
-func TestFeedbackAddInvalidSpan(t *testing.T) {
-	repo := initGitRepo(t)
-	writeFile(t, filepath.Join(repo, "README.md"), "x\n")
-	gitAddCommit(t, repo, "seed")
-
-	_, stderr, code := runCLIAt(t, repo,
-		"feedback", "add",
-		"--kind", "helpful",
-		"--start", "1",
-		"--comment", "bad flags",
-		"--effective-at", "2026-05-01",
-	)
-	if code == 0 {
-		t.Fatal("expected non-zero for invalid span flags")
-	}
-	if !strings.Contains(stderr, "--file is required") {
-		t.Fatalf("expected remediation hint in stderr, got:\n%s", stderr)
 	}
 }
 
@@ -341,7 +158,6 @@ func TestRuleCreateListGetEditRoundTrip(t *testing.T) {
 
 	id := createTestRule(t, repo)
 
-	// list returns the rule with id/use_when/domain/rule_type.
 	stdout, stderr, code := runCLIAt(t, repo, "rule", "list")
 	if code != 0 {
 		t.Fatalf("rule list failed: code=%d\nstderr:\n%s", code, stderr)
@@ -356,7 +172,6 @@ func TestRuleCreateListGetEditRoundTrip(t *testing.T) {
 		t.Fatalf("list did not return created rule: %#v", listResp.Rules)
 	}
 
-	// get returns the full rule at version 1.
 	stdout, _, code = runCLIAt(t, repo, "rule", "get", id)
 	if code != 0 {
 		t.Fatalf("rule get failed: code=%d", code)
@@ -369,7 +184,6 @@ func TestRuleCreateListGetEditRoundTrip(t *testing.T) {
 		t.Fatalf("expected version 1, got %v", got["version"])
 	}
 
-	// edit two fields in one invocation → single version bump to 2.
 	stdout, stderr, code = runCLIAt(t, repo, "rule", "edit", id,
 		"--lifecycle", "confirmed",
 		"--content", "Keep passing test logs short and quiet",
@@ -415,7 +229,6 @@ func TestRuleSnapshotDeleteRefoldsIdentical(t *testing.T) {
 		t.Fatalf("delete playbook: %v", err)
 	}
 
-	// Next read refolds from the event log to a byte-identical snapshot.
 	if _, _, code = runCLIAt(t, repo, "rule", "list"); code != 0 {
 		t.Fatal("rule list after delete failed")
 	}
@@ -448,6 +261,253 @@ func TestRuleCreateHardWithoutDomainFails(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "hard rules must declare at least one domain") || !strings.Contains(stderr, "--domain") {
 		t.Fatalf("expected remediation hint in stderr, got:\n%s", stderr)
+	}
+}
+
+// --- Retrieval loop integration (AC-1, AC-2, AC-3, AC-3b) ---
+
+func TestLoopHappyPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AUTO_SESSION_ID", "loop-happy")
+	repo := initGitRepo(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	gitAddCommit(t, repo, "seed")
+
+	hardID := createTestRuleWith(t, repo,
+		"--use-when", "writing go cli flags with cobra",
+		"--content", "Use cobra StringSliceVar for repeatable flags",
+		"--causal-note", "manual parsing dropped values",
+		"--domain", "cli", "--type", "hard")
+	_ = hardID
+
+	// AC-1: retrieve returns predicates only and appends a retrieval event.
+	stdout, stderr, code := runCLIAt(t, repo, "retrieve", "writing go cli flags", "--domain", "cli")
+	if code != 0 {
+		t.Fatalf("retrieve failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	var retrieved []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &retrieved); err != nil {
+		t.Fatalf("decode retrieve: %v\nraw:\n%s", err, stdout)
+	}
+	if len(retrieved) != 1 {
+		t.Fatalf("expected 1 retrieved rule, got %d", len(retrieved))
+	}
+	if _, leaked := retrieved[0]["content"]; leaked {
+		t.Fatalf("retrieve must not leak content: %#v", retrieved[0])
+	}
+	rtID, _ := retrieved[0]["retrieval_id"].(string)
+	if !strings.HasPrefix(rtID, "rt-") {
+		t.Fatalf("expected rt- id, got %q", rtID)
+	}
+
+	// AC-2: select preserves order, mints fb-ids, appends a selection event.
+	stdout, stderr, code = runCLIAt(t, repo, "select", rtID)
+	if code != 0 {
+		t.Fatalf("select failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	var selected []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &selected); err != nil {
+		t.Fatalf("decode select: %v\nraw:\n%s", err, stdout)
+	}
+	if len(selected) != 1 {
+		t.Fatalf("expected 1 selected, got %d", len(selected))
+	}
+	fbID, _ := selected[0]["feedback_id"].(string)
+	if !strings.HasPrefix(fbID, "fb-") {
+		t.Fatalf("expected fb- id, got %q", fbID)
+	}
+	if selected[0]["content"] == "" || selected[0]["content"] == nil {
+		t.Fatalf("select must reveal content: %#v", selected[0])
+	}
+
+	// AC-3b: gate is open before feedback.
+	_, _, code = runCLIAt(t, repo, "gate", "check")
+	if code == 0 {
+		t.Fatal("gate should be open (non-zero) before feedback")
+	}
+
+	// AC-3: incomplete feedback is rejected with remediation.
+	incomplete := `{"outcome":"success","summary":"did it","rankings":[]}`
+	stdout, stderr, code = runCLIAt(t, repo, "feedback", incomplete)
+	if code == 0 {
+		t.Fatalf("expected incomplete feedback to be rejected\nstdout:\n%s", stdout)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("expected empty stdout on rejected feedback, got:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "outstanding") && !strings.Contains(stderr, "missing") {
+		t.Fatalf("expected remediation about outstanding ids, got:\n%s", stderr)
+	}
+
+	// AC-3: complete feedback is accepted.
+	complete := fmt.Sprintf(`{"outcome":"success","summary":"did it","rankings":[{"feedback_id":%q,"rank":1,"reason":"used the rule"}]}`, fbID)
+	stdout, stderr, code = runCLIAt(t, repo, "feedback", complete)
+	if code != 0 {
+		t.Fatalf("complete feedback rejected: code=%d\nstderr:\n%s", code, stderr)
+	}
+
+	// Gate closed after complete feedback.
+	_, stderr, code = runCLIAt(t, repo, "gate", "check")
+	if code != 0 {
+		t.Fatalf("gate should be clean after feedback: code=%d\nstderr:\n%s", code, stderr)
+	}
+
+	// Assert events on disk with correct rt -> fb linkage.
+	assertLoopEventsOnDisk(t, repo, rtID, fbID)
+}
+
+func TestLoopStatsAfterTwoSessions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repo := initGitRepo(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	gitAddCommit(t, repo, "seed")
+
+	id := createTestRuleWith(t, repo,
+		"--use-when", "go cli flags topic stats",
+		"--content", "rule body for stats",
+		"--causal-note", "needed for stats test",
+		"--domain", "go", "--type", "soft")
+
+	for i := 0; i < 2; i++ {
+		t.Setenv("AUTO_SESSION_ID", fmt.Sprintf("stats-session-%d", i))
+		stdout, _, code := runCLIAt(t, repo, "retrieve", "go cli flags topic stats")
+		if code != 0 {
+			t.Fatalf("retrieve session %d failed", i)
+		}
+		var retrieved []map[string]any
+		if err := json.Unmarshal([]byte(stdout), &retrieved); err != nil {
+			t.Fatalf("decode retrieve: %v", err)
+		}
+		rtID := retrieved[0]["retrieval_id"].(string)
+		if _, _, code := runCLIAt(t, repo, "select", rtID); code != 0 {
+			t.Fatalf("select session %d failed", i)
+		}
+	}
+
+	stdout, stderr, code := runCLIAt(t, repo, "stats")
+	if code != 0 {
+		t.Fatalf("stats failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	var stats []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &stats); err != nil {
+		t.Fatalf("decode stats: %v\nraw:\n%s", err, stdout)
+	}
+	if len(stats) != 1 || stats[0]["rule_id"] != id {
+		t.Fatalf("unexpected stats: %#v", stats)
+	}
+	if stats[0]["surfaced"] != float64(2) || stats[0]["selected"] != float64(2) {
+		t.Fatalf("expected surfaced=2 selected=2, got %#v", stats[0])
+	}
+	if stats[0]["selection_rate"] != float64(1) {
+		t.Fatalf("expected selection_rate 1, got %v", stats[0]["selection_rate"])
+	}
+}
+
+func createTestRuleWith(t *testing.T, repo string, args ...string) string {
+	t.Helper()
+	full := append([]string{"rule", "create"}, args...)
+	stdout, stderr, code := runCLIAt(t, repo, full...)
+	if code != 0 {
+		t.Fatalf("rule create failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	var resp struct {
+		Rule struct {
+			ID string `json:"id"`
+		} `json:"rule"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
+		t.Fatalf("decode create: %v\nraw:\n%s", err, stdout)
+	}
+	return resp.Rule.ID
+}
+
+// assertLoopEventsOnDisk reads the event shards and verifies the retrieval and
+// selection events link rt-id -> fb-id, and a feedback event covers the fb-id.
+func assertLoopEventsOnDisk(t *testing.T, repo, rtID, fbID string) {
+	t.Helper()
+	eventsDir := filepath.Join(repo, ".auto", "reflect", "events")
+	entries, err := os.ReadDir(eventsDir)
+	if err != nil {
+		t.Fatalf("read events dir: %v", err)
+	}
+
+	var types []string
+	linkedRetrieval := false
+	linkedSelection := false
+	coveredFeedback := false
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(eventsDir, e.Name()))
+		if err != nil {
+			t.Fatalf("read shard: %v", err)
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			if line == "" {
+				continue
+			}
+			var env struct {
+				Type    string          `json:"type"`
+				Payload json.RawMessage `json:"payload"`
+			}
+			if err := json.Unmarshal([]byte(line), &env); err != nil {
+				t.Fatalf("decode event: %v\nline:\n%s", err, line)
+			}
+			types = append(types, env.Type)
+			switch env.Type {
+			case "retrieval":
+				var p struct {
+					Items []struct {
+						RetrievalID string `json:"retrieval_id"`
+						RuleID      string `json:"rule_id"`
+					} `json:"items"`
+				}
+				_ = json.Unmarshal(env.Payload, &p)
+				for _, it := range p.Items {
+					if it.RetrievalID == rtID {
+						linkedRetrieval = true
+					}
+				}
+			case "selection":
+				var p struct {
+					Items []struct {
+						FeedbackID  string `json:"feedback_id"`
+						RetrievalID string `json:"retrieval_id"`
+					} `json:"items"`
+				}
+				_ = json.Unmarshal(env.Payload, &p)
+				for _, it := range p.Items {
+					if it.RetrievalID == rtID && it.FeedbackID == fbID {
+						linkedSelection = true
+					}
+				}
+			case "feedback":
+				var p struct {
+					Rankings []struct {
+						FeedbackID string `json:"feedback_id"`
+					} `json:"rankings"`
+				}
+				_ = json.Unmarshal(env.Payload, &p)
+				for _, r := range p.Rankings {
+					if r.FeedbackID == fbID {
+						coveredFeedback = true
+					}
+				}
+			}
+		}
+	}
+
+	if !linkedRetrieval {
+		t.Fatalf("no retrieval event minted rt-id %q; types=%v", rtID, types)
+	}
+	if !linkedSelection {
+		t.Fatalf("no selection event linked rt-id %q to fb-id %q; types=%v", rtID, fbID, types)
+	}
+	if !coveredFeedback {
+		t.Fatalf("no feedback event covered fb-id %q; types=%v", fbID, types)
 	}
 }
 
