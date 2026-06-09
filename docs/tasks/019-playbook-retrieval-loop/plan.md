@@ -104,14 +104,14 @@ Strictly serial — each phase rewrites code the next compiles against, and prio
 
 ### Phase 2: `internal/rules` as projection + rule CLI cutover
 
-- [ ] Step 2.1: Rewrite `rules/model.go`: `Rule{ID, Domain []string, UseWhen, Content, CausalNote,
+- [x] Step 2.1: Rewrite `rules/model.go`: `Rule{ID, Domain []string, UseWhen, Content, CausalNote,
       RuleType, Lifecycle, Version, CreatedAt, UpdatedAt}`; `Playbook{SchemaVersion, FoldedThrough
       map[string]int, Rules}`; keep `r-` ID + tag regexes. Rewrite `rules/validate.go`: enums
       (`hard|soft`; `draft|confirmed|stale`), domain tags pattern + dedupe, non-empty
       use_when/content/causal_note, **hard ⇒ ≥1 domain**.
       **Verify**: `go build ./internal/rules/...` (cli will not build yet — that's Step 2.4's job;
       do NOT run `go build ./...` until then).
-- [ ] Step 2.2: Create `rules/projection.go` (`Fold`: apply rule events in `(ts, shard, seq)` order;
+- [x] Step 2.2: Create `rules/projection.go` (`Fold`: apply rule events in `(ts, shard, seq)` order;
       field deltas; from_version mismatch → apply anyway, version = current+1, append conflict entry)
       and `rules/snapshot.go` (atomic write via `store.WriteJSONFile`; staleness compares
       `FoldedThrough` against per-shard max **rule-event** seq only; `Rebuild` returns conflicts).
@@ -126,13 +126,13 @@ Strictly serial — each phase rewrites code the next compiles against, and prio
       `playbook.golden.json` byte-for-byte and is identical across two runs (AC-4); v1→v2→v3 history
       reconstructable (AC-5); the fixture's conflict pair produces exactly one conflict entry and a
       deterministic winner; non-rule events in the fixture do not change `FoldedThrough`.
-- [ ] Step 2.3: Create `rules/match.go`: normalize/dedupe keywords (port from old lookup.go), ANY-of
+- [x] Step 2.3: Create `rules/match.go`: normalize/dedupe keywords (port from old lookup.go), ANY-of
       `--domain` intersection filter, scoring use_when=3/domain=1 normalized, sort score DESC then ID
       ASC; hard injection against `--domain` list else intent keywords, `hard_injected` flag.
       **Verify**: `go test ./internal/rules/...` — table tests: hard rule surfaces with zero keyword
       score when domain matches intent keyword; ANY-of vs ALL-of pinned; no --domain + no intent
       overlap ⇒ hard rule absent.
-- [ ] Step 2.4: Cut over CLI: rewrite `cli/rule.go` (`create` flags `--use-when --content
+- [x] Step 2.4: Cut over CLI: rewrite `cli/rule.go` (`create` flags `--use-when --content
       --causal-note --domain --type [--lifecycle]` → `rule_created` event + refold; `edit <id>`
       field flags → ONE `rule_edited` event carrying `deltas: [{field, old, new}]` for all changed
       fields, one version bump per invocation; `list` (IDs + use_when + domain + type), `get <r-id>`
@@ -164,12 +164,12 @@ rule wording), requirements AC-5 (deltas array, one bump per invocation), and th
       **Verify**: `go build ./...` passes for the whole module again; `go test ./...` passes
       (legacy feedback tests still green, old rule/lookup integration tests rewritten or deleted
       for the new surface).
-- [ ] Step 2.5: Integration tests in `cli_integration_test.go`: create → list → get → edit round-trip;
+- [x] Step 2.5: Integration tests in `cli_integration_test.go`: create → list → get → edit round-trip;
       delete `playbook.json` → next `rule list` refolds to identical content (AC-4); `rule create`
       with hard type + no domain exits non-zero with remediation.
       **Verify**: `go test ./internal/cli/...` passes.
-- [ ] Step 2.6: `gofmt -l .` empty; `go vet ./...` clean.
-- [ ] Step 2.7: Commit: `feat(019): phase 2 - rules as event projection + rule CLI`
+- [x] Step 2.6: `gofmt -l .` empty; `go vet ./...` clean.
+- [x] Step 2.7: Commit: `feat(019): phase 2 - rules as event projection + rule CLI`
 
 ### Phase 3: `internal/loop` + loop CLI + legacy deletion
 
