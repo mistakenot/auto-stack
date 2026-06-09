@@ -212,7 +212,7 @@ assertion to Step 4.3's verify (stub systemctl returning failure on restart → 
 - [x] Step 4.4: Commit: `feat(018): phase 4 - install.sh restarts user daemon on update`
 
 ### Phase 5: Docs sweep  *(independent; depends only on design)*
-- [ ] Step 5.1: `docs/autostack-install-daemon.md` — rewrite the "Why System `systemd`" section to a
+- [x] Step 5.1: `docs/autostack-install-daemon.md` — rewrite the "Why System `systemd`" section to a
       user-first rationale: user scope is the no-sudo default; system mode is the headless/multi-user
       opt-in. **Be honest about conditions (do NOT overpromise):** state that user-scope
       survives-logout/starts-at-boot **only after `loginctl enable-linger <user>` succeeds**, which on
@@ -221,13 +221,13 @@ assertion to Step 4.3's verify (stub systemctl returning failure on restart → 
       contexts should use `--system`. Update the "Expected behavior" section to reflect that install
       now enables+starts by **default** (Step 2.1a). Update examples to `auto watch daemon install`
       (user) and `… --system` (system). Keep service-identity strings.
-- [ ] Step 5.2: `README.md` — add a "Run auto watch in the background" section: `auto watch daemon
+- [x] Step 5.2: `README.md` — add a "Run auto watch in the background" section: `auto watch daemon
       install` (no sudo), `auto update` keeps it current, and the `--system` opt-in note.
-- [ ] Step 5.3: `auto-watch/internal/cli/quickstart.go` — make the install/update wording accurately
+- [x] Step 5.3: `auto-watch/internal/cli/quickstart.go` — make the install/update wording accurately
       describe the user-level service (matches the new default) + the one-command update.
-- [ ] Step 5.4: Verify: `scripts/check-no-stale-binary-refs.sh` green; `cd auto-watch && go build ./...`
+- [x] Step 5.4: Verify: `scripts/check-no-stale-binary-refs.sh` green; `cd auto-watch && go build ./...`
       (quickstart.go compiles); docs examples eyeball-verified against the implemented flags.
-- [ ] Step 5.5: Commit: `docs(018): phase 5 - user-first daemon docs (doc + README + quickstart)`
+- [x] Step 5.5: Commit: `docs(018): phase 5 - user-first daemon docs (doc + README + quickstart)`
 
 ### Phase 6: Verify end-to-end  *(sequential barrier; depends on 2,3,4,5)*
 - [ ] Step 6.1: `make check` (fmt-check + vet + lint + stale-ref guard) green.
