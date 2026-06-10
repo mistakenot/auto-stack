@@ -12,9 +12,10 @@ import (
 
 func newRetrieveCmd(application *app.App) *cobra.Command {
 	var (
-		domain []string
-		limit  int
-		format string
+		domain   []string
+		limit    int
+		format   string
+		noDrafts bool
 	)
 
 	cmd := &cobra.Command{
@@ -31,7 +32,7 @@ func newRetrieveCmd(application *app.App) *cobra.Command {
 			}
 
 			svc := loop.NewService(application.CWD)
-			results, err := svc.Retrieve(args[0], domain, limit)
+			results, err := svc.Retrieve(args[0], domain, limit, !noDrafts)
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
@@ -51,10 +52,11 @@ func newRetrieveCmd(application *app.App) *cobra.Command {
 
 	cmd.Flags().StringSliceVar(&domain, "domain", nil, "domain tag(s); ANY-of filter, repeatable or comma-separated")
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum rules to surface (0 means all)")
+	cmd.Flags().BoolVar(&noDrafts, "no-drafts", false, "exclude draft rules (drafts are surfaced by default; stale rules are never surfaced)")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
 	return cmd
 }
 
 func printRetrievedText(cmd *cobra.Command, r loop.RetrievedRule) {
-	fmt.Fprintf(cmd.OutOrStdout(), "%s [%s] (%s) %s\n", r.RetrievalID, r.RuleType, strings.Join(r.Domain, ","), r.UseWhen)
+	fmt.Fprintf(cmd.OutOrStdout(), "%s [%s] (%s) %s  lifecycle=%s\n", r.RetrievalID, r.RuleType, strings.Join(r.Domain, ","), r.UseWhen, r.Lifecycle)
 }

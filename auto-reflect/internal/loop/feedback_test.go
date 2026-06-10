@@ -18,7 +18,7 @@ func setupTwoSelected(t *testing.T, repo, sessionID string) (*Service, []string)
 
 	t.Setenv("AUTO_SESSION_ID", sessionID)
 	svc := NewService(repo)
-	retrieved, err := svc.Retrieve("first second feedback topic", nil, 0)
+	retrieved, err := svc.Retrieve("first second feedback topic", nil, 0, true)
 	if err != nil {
 		t.Fatalf("retrieve: %v", err)
 	}

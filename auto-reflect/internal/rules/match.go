@@ -59,13 +59,20 @@ func normalizeDomainFilter(domains []string) []string {
 //     intent keywords; any hard rule whose domain intersects that set is included
 //     regardless of keyword score and flagged HardInjected. A hard rule already
 //     present in the scored results is flagged in place rather than duplicated.
-func MatchRules(rules []Rule, intent string, domainFilter []string) []Match {
+//   - lifecycle: stale rules are never surfaced (not even as hard injections);
+//     draft rules are surfaced only when includeDrafts is set. This filter applies
+//     to both the scored candidate set and the hard-injection set.
+func MatchRules(rules []Rule, intent string, domainFilter []string, includeDrafts bool) []Match {
 	keywords := NormalizeKeywords(intent)
 	filter := normalizeDomainFilter(domainFilter)
 
-	// Determine the candidate set under the ANY-of domain filter.
+	// Determine the candidate set under the ANY-of domain filter, excluding rules
+	// whose lifecycle makes them non-surfaceable (stale always; draft unless asked).
 	candidates := make([]Rule, 0, len(rules))
 	for i := range rules {
+		if !surfaceableLifecycle(rules[i].Lifecycle, includeDrafts) {
+			continue
+		}
 		if len(filter) > 0 && !domainsIntersect(rules[i].Domain, filter) {
 			continue
 		}
@@ -98,6 +105,9 @@ func MatchRules(rules []Rule, intent string, domainFilter []string) []Match {
 		if r.RuleType != RuleTypeHard {
 			continue
 		}
+		if !surfaceableLifecycle(r.Lifecycle, includeDrafts) {
+			continue
+		}
 		if !domainsIntersect(r.Domain, injectionSet) {
 			continue
 		}
@@ -117,6 +127,21 @@ func MatchRules(rules []Rule, intent string, domainFilter []string) []Match {
 	})
 
 	return scored
+}
+
+// surfaceableLifecycle reports whether a rule with the given lifecycle may be
+// surfaced by retrieval. Stale rules are never surfaceable; draft rules only when
+// includeDrafts is set. Any other value (confirmed, or an empty/legacy lifecycle)
+// is treated as surfaceable so unset rules are not accidentally hidden.
+func surfaceableLifecycle(lifecycle string, includeDrafts bool) bool {
+	switch lifecycle {
+	case LifecycleStale:
+		return false
+	case LifecycleDraft:
+		return includeDrafts
+	default:
+		return true
+	}
 }
 
 // scoreRule sums keyword hits: use_when substring = 3, any domain tag substring

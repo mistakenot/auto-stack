@@ -511,6 +511,97 @@ func assertLoopEventsOnDisk(t *testing.T, repo, rtID, fbID string) {
 	}
 }
 
+func TestRetrieveLifecycleFilteringAndRuleListFilter(t *testing.T) {
+	repo := initGitRepo(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	gitAddCommit(t, repo, "seed")
+
+	// Seed one rule per lifecycle, all sharing keywords so they'd score equally if
+	// lifecycle were ignored.
+	seed := func(lifecycle string) string {
+		return createTestRuleWith(t, repo,
+			"--use-when", "lifecycle retrieval "+lifecycle+" case",
+			"--content", "guidance for the "+lifecycle+" rule",
+			"--causal-note", "covers the "+lifecycle+" lifecycle path",
+			"--domain", "lifecycletest",
+			"--type", "soft",
+			"--lifecycle", lifecycle,
+		)
+	}
+	draftID := seed("draft")
+	_ = seed("confirmed")
+	_ = seed("stale")
+
+	type retrievedItem struct {
+		Lifecycle string `json:"lifecycle"`
+		Draft     bool   `json:"draft"`
+		UseWhen   string `json:"use_when"`
+	}
+
+	// Default retrieve: draft + confirmed surface, stale never does.
+	stdout, stderr, code := runCLIAt(t, repo, "retrieve", "lifecycle retrieval case")
+	if code != 0 {
+		t.Fatalf("retrieve failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	var def []retrievedItem
+	if err := json.Unmarshal([]byte(stdout), &def); err != nil {
+		t.Fatalf("decode retrieve json: %v\nraw:\n%s", err, stdout)
+	}
+	gotLifecycles := map[string]bool{}
+	for _, it := range def {
+		gotLifecycles[it.Lifecycle] = true
+		if it.Lifecycle == "stale" {
+			t.Fatalf("stale rule surfaced in default retrieve: %#v", def)
+		}
+		if (it.Lifecycle == "draft") != it.Draft {
+			t.Fatalf("draft flag inconsistent with lifecycle: %#v", it)
+		}
+	}
+	if !gotLifecycles["draft"] || !gotLifecycles["confirmed"] {
+		t.Fatalf("default retrieve should include draft and confirmed, got %#v", def)
+	}
+
+	// --no-drafts: confirmed only.
+	stdout, stderr, code = runCLIAt(t, repo, "retrieve", "lifecycle retrieval case", "--no-drafts")
+	if code != 0 {
+		t.Fatalf("retrieve --no-drafts failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	var noDraft []retrievedItem
+	if err := json.Unmarshal([]byte(stdout), &noDraft); err != nil {
+		t.Fatalf("decode --no-drafts json: %v\nraw:\n%s", err, stdout)
+	}
+	if len(noDraft) != 1 || noDraft[0].Lifecycle != "confirmed" {
+		t.Fatalf("--no-drafts should return only the confirmed rule, got %#v", noDraft)
+	}
+
+	// rule list --lifecycle draft: only the draft rule.
+	stdout, stderr, code = runCLIAt(t, repo, "rule", "list", "--lifecycle", "draft")
+	if code != 0 {
+		t.Fatalf("rule list --lifecycle draft failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	var listResp struct {
+		Rules []map[string]any `json:"rules"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &listResp); err != nil {
+		t.Fatalf("decode rule list json: %v\nraw:\n%s", err, stdout)
+	}
+	if len(listResp.Rules) != 1 || listResp.Rules[0]["id"] != draftID {
+		t.Fatalf("rule list --lifecycle draft should return only the draft rule, got %#v", listResp.Rules)
+	}
+	if listResp.Rules[0]["lifecycle"] != "draft" {
+		t.Fatalf("rule list item missing/incorrect lifecycle field: %#v", listResp.Rules[0])
+	}
+
+	// Invalid --lifecycle value fails fast with a remediation hint.
+	stdout, stderr, code = runCLIAt(t, repo, "rule", "list", "--lifecycle", "bogus")
+	if code != 1 {
+		t.Fatalf("expected exit 1 for bad --lifecycle, got %d\nstdout:\n%s", code, stdout)
+	}
+	if !strings.Contains(stderr, "draft") || !strings.Contains(stderr, "confirmed") || !strings.Contains(stderr, "stale") {
+		t.Fatalf("bad --lifecycle error should list valid values, got stderr:\n%s", stderr)
+	}
+}
+
 func runCLIAt(t *testing.T, cwd string, args ...string) (stdout string, stderr string, code int) {
 	t.Helper()
 
