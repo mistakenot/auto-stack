@@ -10,12 +10,13 @@ import (
 
 // Editable rule field names carried in rule_edited deltas.
 const (
-	FieldDomain     = "domain"
-	FieldUseWhen    = "use_when"
-	FieldContent    = "content"
-	FieldCausalNote = "causal_note"
-	FieldRuleType   = "rule_type"
-	FieldLifecycle  = "lifecycle"
+	FieldDomain         = "domain"
+	FieldUseWhen        = "use_when"
+	FieldContent        = "content"
+	FieldCausalNote     = "causal_note"
+	FieldRuleType       = "rule_type"
+	FieldLifecycle      = "lifecycle"
+	FieldObservationIDs = "observation_ids"
 )
 
 // FoldResult is the output of folding the event log: the projected playbook plus
@@ -51,16 +52,17 @@ func Fold(sharded []events.ShardedEvent) FoldResult {
 				continue
 			}
 			rule := &Rule{
-				ID:         p.RuleID,
-				Domain:     append([]string{}, p.Domain...),
-				UseWhen:    p.UseWhen,
-				Content:    p.Content,
-				CausalNote: p.CausalNote,
-				RuleType:   p.RuleType,
-				Lifecycle:  p.Lifecycle,
-				Version:    1,
-				CreatedAt:  ev.TS,
-				UpdatedAt:  ev.TS,
+				ID:             p.RuleID,
+				Domain:         append([]string{}, p.Domain...),
+				UseWhen:        p.UseWhen,
+				Content:        p.Content,
+				CausalNote:     p.CausalNote,
+				RuleType:       p.RuleType,
+				Lifecycle:      p.Lifecycle,
+				Version:        1,
+				CreatedAt:      ev.TS,
+				UpdatedAt:      ev.TS,
+				ObservationIDs: copyNonEmpty(p.ObservationIDs),
 			}
 			byID[p.RuleID] = rule
 			order = append(order, p.RuleID)
@@ -150,7 +152,18 @@ func applyDelta(rule *Rule, d events.FieldDelta) {
 		rule.RuleType = toString(d.New)
 	case FieldLifecycle:
 		rule.Lifecycle = toString(d.New)
+	case FieldObservationIDs:
+		rule.ObservationIDs = copyNonEmpty(toStringSlice(d.New))
 	}
+}
+
+// copyNonEmpty returns a copy of src, or nil when src is empty, so an absent
+// provenance list stays nil (and omitempty drops it) rather than becoming [].
+func copyNonEmpty(src []string) []string {
+	if len(src) == 0 {
+		return nil
+	}
+	return append([]string{}, src...)
 }
 
 func toString(v any) string {

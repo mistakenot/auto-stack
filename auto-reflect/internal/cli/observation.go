@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -137,11 +138,9 @@ func newObservationListCmd(application *app.App) *cobra.Command {
 			}
 
 			// consolidated indexes which observation ids a consolidation event
-			// already references. The consolidation event type does not exist in
-			// this slice, so the set is always empty and every observation is
-			// "unconsolidated". 1.4 flips this on by populating the set from
-			// referencing consolidation events; the --unconsolidated filter below
-			// then narrows the result without further changes here.
+			// already references, so --unconsolidated can drop them. Populated from
+			// consolidation events; observations never referenced by one remain
+			// unconsolidated.
 			consolidated := consolidatedObservationIDs(all)
 
 			matches := make([]observations.Observation, 0)
@@ -208,11 +207,24 @@ func newObservationListCmd(application *app.App) *cobra.Command {
 }
 
 // consolidatedObservationIDs returns the set of observation ids already
-// referenced by a consolidation event. Consolidation does not exist yet (1.4), so
-// this currently returns an empty set — every observation is unconsolidated. The
-// predicate is structured so 1.4 only needs to scan for its new event type here.
-func consolidatedObservationIDs(_ []events.Event) map[string]struct{} {
-	return map[string]struct{}{}
+// referenced by a consolidation event. An observation becomes "consolidated" once
+// any consolidation event (from `auto reflect consolidate`) lists its id; the
+// --unconsolidated filter uses this to drop already-promoted observations.
+func consolidatedObservationIDs(all []events.Event) map[string]struct{} {
+	out := map[string]struct{}{}
+	for i := range all {
+		if all[i].Type != events.TypeConsolidation {
+			continue
+		}
+		var p events.ConsolidationPayload
+		if json.Unmarshal(all[i].Payload, &p) != nil {
+			continue
+		}
+		for _, id := range p.ObservationIDs {
+			out[id] = struct{}{}
+		}
+	}
+	return out
 }
 
 // normalizeFilterTags trims, lowercases, and dedupes filter tags, dropping
