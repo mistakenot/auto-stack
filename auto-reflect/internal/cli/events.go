@@ -15,9 +15,7 @@ import (
 )
 
 // knownEventTypes is the set of event types the reader recognises, built from the
-// events.Type* constants defined on this branch. The `consolidation` type (1.4)
-// is intentionally absent here until it lands; the coordinator adds it to this
-// list at integration so `events list --type consolidation` validates.
+// events.Type* constants. Keep in sync with the type switch in events.Validate.
 var knownEventTypes = []string{
 	events.TypeRuleCreated,
 	events.TypeRuleEdited,
@@ -25,6 +23,7 @@ var knownEventTypes = []string{
 	events.TypeSelection,
 	events.TypeFeedback,
 	events.TypeObservation,
+	events.TypeConsolidation,
 }
 
 // eventView is the projected, list-friendly envelope plus a compact one-line

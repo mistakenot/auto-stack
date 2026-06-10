@@ -234,7 +234,12 @@ func (s *Service) Stats() (StatsReport, error) {
 	feedbackCount := map[string]int{}
 	rankDist := map[string]map[int]int{}
 	outcomeCounts := map[string]map[string]int{}
-	unconsolidated := 0
+	// observationIDs is the set of distinct observation ids seen; consolidatedIDs
+	// is the set referenced by any consolidation event. The unconsolidated backlog
+	// is the difference, computed after the fold so a consolidation event ordered
+	// before its observation (it never is, but be order-independent) still counts.
+	observationIDs := map[string]struct{}{}
+	consolidatedIDs := map[string]struct{}{}
 
 	// fb-id -> rule-id, so feedback can attribute to rules. Selection events
 	// precede their feedback in time order, so the mapping is populated by the
@@ -292,9 +297,22 @@ func (s *Service) Stats() (StatsReport, error) {
 			if decodePayload(ev, &p) != nil {
 				continue
 			}
-			// 1.4 wires the consolidation reference: once a `consolidation` event
-			// type exists, build the set of observation_ids it references and skip
-			// those here. Until then every observation counts as unconsolidated.
+			observationIDs[p.ObservationID] = struct{}{}
+		case events.TypeConsolidation:
+			var p events.ConsolidationPayload
+			if decodePayload(ev, &p) != nil {
+				continue
+			}
+			for _, id := range p.ObservationIDs {
+				consolidatedIDs[id] = struct{}{}
+			}
+		}
+	}
+
+	// An observation is unconsolidated until some consolidation event references it.
+	unconsolidated := 0
+	for id := range observationIDs {
+		if _, done := consolidatedIDs[id]; !done {
 			unconsolidated++
 		}
 	}
