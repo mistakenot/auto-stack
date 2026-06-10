@@ -86,7 +86,7 @@ func newConsolidateCmd(application *app.App) *cobra.Command {
 				skippedT: []skipped{},
 			}
 			for i := range doc.Deltas {
-				proc.process(doc.Deltas[i])
+				proc.process(&doc.Deltas[i])
 			}
 
 			// One refold after all writes so applied rules reflect the new state.
@@ -139,8 +139,8 @@ type consolidator struct {
 	conflicts []consolidate.Conflict
 }
 
-func (c *consolidator) skip(d consolidate.Delta, reason string) {
-	c.skippedT = append(c.skippedT, skipped{Delta: d, Reason: reason})
+func (c *consolidator) skip(d *consolidate.Delta, reason string) {
+	c.skippedT = append(c.skippedT, skipped{Delta: *d, Reason: reason})
 }
 
 func (c *consolidator) findRule(id string) (rules.Rule, bool) {
@@ -152,7 +152,7 @@ func (c *consolidator) findRule(id string) (rules.Rule, bool) {
 	return rules.Rule{}, false
 }
 
-func (c *consolidator) process(d consolidate.Delta) {
+func (c *consolidator) process(d *consolidate.Delta) {
 	switch strings.TrimSpace(d.Op) {
 	case consolidate.OpCreateDraft:
 		c.createDraft(d)
@@ -169,7 +169,7 @@ func (c *consolidator) process(d consolidate.Delta) {
 	}
 }
 
-func (c *consolidator) createDraft(d consolidate.Delta) {
+func (c *consolidator) createDraft(d *consolidate.Delta) {
 	cov := c.obIndex.Coverage(d.ObservationIDs)
 	if ok, reason := consolidate.EvidenceGate(cov, c.force); !ok {
 		c.skip(d, reason)
@@ -237,7 +237,7 @@ func (c *consolidator) createDraft(d consolidate.Delta) {
 	c.appliedT = append(c.appliedT, entry)
 }
 
-func (c *consolidator) attachEvidence(d consolidate.Delta) {
+func (c *consolidator) attachEvidence(d *consolidate.Delta) {
 	if strings.TrimSpace(d.RuleID) == "" {
 		c.skip(d, "attach-evidence requires rule_id")
 		return
@@ -257,7 +257,7 @@ func (c *consolidator) attachEvidence(d consolidate.Delta) {
 	}
 	cov := c.obIndex.Coverage(d.ObservationIDs)
 	if len(cov.Missing) > 0 {
-		c.skip(d, fmt.Sprintf("references unknown observation(s): %s", strings.Join(cov.Missing, ", ")))
+		c.skip(d, "references unknown observation(s): "+strings.Join(cov.Missing, ", "))
 		return
 	}
 	newProv := consolidate.UnionObservationIDs(current.ObservationIDs, d.ObservationIDs)
@@ -272,7 +272,7 @@ func (c *consolidator) attachEvidence(d consolidate.Delta) {
 		return
 	}
 	deltas := []events.FieldDelta{{Field: rules.FieldObservationIDs, Old: current.ObservationIDs, New: newProv}}
-	if err := c.appendRuleEdited(current, deltas); err != nil {
+	if err := c.appendRuleEdited(&current, deltas); err != nil {
 		c.skip(d, "write rule_edited failed: "+err.Error())
 		return
 	}
@@ -285,7 +285,7 @@ func (c *consolidator) attachEvidence(d consolidate.Delta) {
 	c.appliedT = append(c.appliedT, entry)
 }
 
-func (c *consolidator) merge(d consolidate.Delta) {
+func (c *consolidator) merge(d *consolidate.Delta) {
 	if len(d.RuleIDs) < 2 {
 		c.skip(d, "merge requires at least two rule_ids")
 		return
@@ -323,8 +323,8 @@ func (c *consolidator) merge(d consolidate.Delta) {
 	}
 
 	retired := make([]string, 0, len(others))
-	for _, o := range others {
-		retired = append(retired, o.ID)
+	for i := range others {
+		retired = append(retired, others[i].ID)
 	}
 	entry := applied{Op: consolidate.OpMerge, RuleID: survivor.ID, ObservationIDs: newProv, Note: "merged; retired " + strings.Join(retired, ", ")}
 	if c.dryRun {
@@ -340,12 +340,13 @@ func (c *consolidator) merge(d consolidate.Delta) {
 		deltas = append(deltas, events.FieldDelta{Field: rules.FieldObservationIDs, Old: survivor.ObservationIDs, New: newProv})
 	}
 	if len(deltas) > 0 {
-		if err := c.appendRuleEdited(survivor, deltas); err != nil {
+		if err := c.appendRuleEdited(&survivor, deltas); err != nil {
 			c.skip(d, "write rule_edited (survivor) failed: "+err.Error())
 			return
 		}
 	}
-	for _, o := range others {
+	for i := range others {
+		o := &others[i]
 		if o.Lifecycle == rules.LifecycleStale {
 			continue
 		}
@@ -365,7 +366,7 @@ func (c *consolidator) merge(d consolidate.Delta) {
 	c.appliedT = append(c.appliedT, entry)
 }
 
-func (c *consolidator) deprecate(d consolidate.Delta) {
+func (c *consolidator) deprecate(d *consolidate.Delta) {
 	if strings.TrimSpace(d.RuleID) == "" {
 		c.skip(d, "deprecate requires rule_id")
 		return
@@ -393,7 +394,7 @@ func (c *consolidator) deprecate(d consolidate.Delta) {
 		return
 	}
 	deltas := []events.FieldDelta{{Field: rules.FieldLifecycle, Old: current.Lifecycle, New: rules.LifecycleStale}}
-	if err := c.appendRuleEdited(current, deltas); err != nil {
+	if err := c.appendRuleEdited(&current, deltas); err != nil {
 		c.skip(d, "write rule_edited failed: "+err.Error())
 		return
 	}
@@ -402,7 +403,7 @@ func (c *consolidator) deprecate(d consolidate.Delta) {
 	c.appliedT = append(c.appliedT, entry)
 }
 
-func (c *consolidator) appendRuleEdited(current rules.Rule, deltas []events.FieldDelta) error {
+func (c *consolidator) appendRuleEdited(current *rules.Rule, deltas []events.FieldDelta) error {
 	payload := events.RuleEditedPayload{
 		RuleID:      current.ID,
 		FromVersion: current.Version,

@@ -110,7 +110,7 @@ func normalizeDomain(domain []string) []string {
 // severity enums, a non-empty subject, at least one non-empty evidence session,
 // quote/message counts within the session count (positional pairing), and the
 // domain tag format with dedupe.
-func (in Input) Validate() []ValidationError {
+func (in *Input) Validate() []ValidationError {
 	errs := make([]ValidationError, 0)
 
 	kind := strings.ToLower(strings.TrimSpace(in.Kind))
@@ -138,7 +138,7 @@ func (in Input) Validate() []ValidationError {
 	return errs
 }
 
-func (in Input) validateEvidence() []ValidationError {
+func (in *Input) validateEvidence() []ValidationError {
 	errs := make([]ValidationError, 0)
 
 	nonEmpty := 0
@@ -185,7 +185,7 @@ func validateDomainTags(domain []string) []ValidationError {
 // ObservationPayload under the given id. Callers must Validate first; Payload
 // assumes counts are already in range (extra quotes/messages are ignored). Quote
 // text is preserved verbatim (not trimmed) since it is a captured excerpt.
-func (in Input) Payload(id string) events.ObservationPayload {
+func (in *Input) Payload(id string) events.ObservationPayload {
 	evidence := make([]events.ObservationEvidence, 0, len(in.Sessions))
 	for i, s := range in.Sessions {
 		item := events.ObservationEvidence{SessionID: strings.TrimSpace(s)}
@@ -218,7 +218,7 @@ func (in Input) Payload(id string) events.ObservationPayload {
 // Project decodes an observation event and attaches the envelope fields (event
 // id, ts, session) to the payload for list output. It returns an error if the
 // event is not an observation or its payload does not decode.
-func Project(e events.Event) (Observation, error) {
+func Project(e *events.Event) (Observation, error) {
 	if e.Type != events.TypeObservation {
 		return Observation{}, fmt.Errorf("event %s is not an observation (type %q)", e.ID, e.Type)
 	}

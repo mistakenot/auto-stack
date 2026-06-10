@@ -8,6 +8,7 @@ package consolidate
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -69,10 +70,10 @@ func ParseDocument(raw []byte) (Document, error) {
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&doc); err != nil {
-		return Document{}, fmt.Errorf("invalid consolidation JSON: %v", err)
+		return Document{}, fmt.Errorf("invalid consolidation JSON: %w", err)
 	}
 	if len(doc.Deltas) == 0 {
-		return Document{}, fmt.Errorf("no deltas: supply {\"deltas\":[{\"op\":\"create-draft\",...}]}")
+		return Document{}, errors.New("no deltas: supply {\"deltas\":[{\"op\":\"create-draft\",...}]}")
 	}
 	return doc, nil
 }
@@ -150,7 +151,7 @@ func (idx ObservationIndex) Coverage(obIDs []string) Coverage {
 // not exist), even under --force.
 func EvidenceGate(cov Coverage, force bool) (ok bool, reason string) {
 	if len(cov.Missing) > 0 {
-		return false, fmt.Sprintf("references unknown observation(s): %s", strings.Join(cov.Missing, ", "))
+		return false, "references unknown observation(s): " + strings.Join(cov.Missing, ", ")
 	}
 	if force || cov.HighSeverity || len(cov.Sessions) >= EvidenceMinSessions {
 		return true, ""

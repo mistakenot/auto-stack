@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -308,7 +309,7 @@ func TestObservationDoesNotDirtyRuleProjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read playbook after: %v", err)
 	}
-	if string(before) != string(after) {
+	if !bytes.Equal(before, after) {
 		t.Fatalf("observation dirtied the rule projection\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 

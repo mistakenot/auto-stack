@@ -393,7 +393,7 @@ func newRulePromoteCmd(application *app.App) *cobra.Command {
 				}
 			}
 
-			updated, err := changeLifecycle(application.CWD, repo.Root, current, rules.LifecycleConfirmed)
+			updated, err := changeLifecycle(application.CWD, repo.Root, &current, rules.LifecycleConfirmed)
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
@@ -431,7 +431,7 @@ func newRuleRetireCmd(application *app.App) *cobra.Command {
 			if current.Lifecycle == rules.LifecycleStale {
 				return &ExitError{Code: 1, Err: fmt.Errorf("rule %s is already stale", current.ID)}
 			}
-			updated, err := changeLifecycle(application.CWD, repo.Root, current, rules.LifecycleStale)
+			updated, err := changeLifecycle(application.CWD, repo.Root, &current, rules.LifecycleStale)
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
@@ -445,7 +445,7 @@ func newRuleRetireCmd(application *app.App) *cobra.Command {
 // changeLifecycle appends one rule_edited event carrying a single lifecycle delta
 // (so promote/retire are one versioned event, reusing the edit/fold path) and
 // returns the refolded rule.
-func changeLifecycle(cwd, repoRoot string, current rules.Rule, lifecycle string) (rules.Rule, error) {
+func changeLifecycle(cwd, repoRoot string, current *rules.Rule, lifecycle string) (rules.Rule, error) {
 	payload := events.RuleEditedPayload{
 		RuleID:      current.ID,
 		FromVersion: current.Version,

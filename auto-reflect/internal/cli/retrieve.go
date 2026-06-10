@@ -38,8 +38,8 @@ func newRetrieveCmd(application *app.App) *cobra.Command {
 			}
 
 			if outputFormat == "text" {
-				for _, r := range results {
-					printRetrievedText(cmd, r)
+				for i := range results {
+					printRetrievedText(cmd, &results[i])
 				}
 				return nil
 			}
@@ -57,6 +57,6 @@ func newRetrieveCmd(application *app.App) *cobra.Command {
 	return cmd
 }
 
-func printRetrievedText(cmd *cobra.Command, r loop.RetrievedRule) {
+func printRetrievedText(cmd *cobra.Command, r *loop.RetrievedRule) {
 	fmt.Fprintf(cmd.OutOrStdout(), "%s [%s] (%s) %s  lifecycle=%s\n", r.RetrievalID, r.RuleType, strings.Join(r.Domain, ","), r.UseWhen, r.Lifecycle)
 }

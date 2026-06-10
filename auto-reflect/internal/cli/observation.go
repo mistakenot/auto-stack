@@ -2,7 +2,9 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -63,7 +65,7 @@ func newObservationAddCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 
-			obs, err := observations.Project(stored)
+			obs, err := observations.Project(&stored)
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
@@ -116,7 +118,7 @@ func newObservationListCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 			if limit < 0 {
-				return &ExitError{Code: 1, Err: fmt.Errorf("invalid --limit: use --limit <n> where n >= 0")}
+				return &ExitError{Code: 1, Err: errors.New("invalid --limit: use --limit <n> where n >= 0")}
 			}
 
 			window, err := timefilter.Parse(time.Now().UTC(), since, after, before)
@@ -149,7 +151,7 @@ func newObservationListCmd(application *app.App) *cobra.Command {
 				if e.Type != events.TypeObservation {
 					continue
 				}
-				obs, projErr := observations.Project(e)
+				obs, projErr := observations.Project(&e)
 				if projErr != nil {
 					return &ExitError{Code: 1, Err: projErr}
 				}
@@ -249,10 +251,8 @@ func normalizeFilterTags(tags []string) []string {
 
 func hasAnyDomain(have, want []string) bool {
 	for _, w := range want {
-		for _, h := range have {
-			if h == w {
-				return true
-			}
+		if slices.Contains(have, w) {
+			return true
 		}
 	}
 	return false
