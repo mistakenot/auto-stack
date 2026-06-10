@@ -48,6 +48,12 @@ make build && ./bin/auto ui serve
 - `internal/app/` — runtime context (stdout, stderr, cwd)
 - `internal/cli/` — Cobra commands (init, doctor, quickstart, docs, update, serve)
 - `internal/config/` — settings loading and validation (~/.auto/ui/settings.json)
-- `internal/server/` — HTTP handler: `/api/hello` plus static file server
+- `internal/server/` — HTTP handler: `/api/hello`, `/api/ws`, plus static file server
+  - `rpc.go` — transport-agnostic JSON-RPC 2.0 dispatcher (request/response + notifications)
+  - `ws.go` — `/api/ws` WebSocket handler (coder/websocket): per-connection session with a
+    single write pump, a 1s server-push `ping` notification, and a client-callable `ping` RPC
 - `web/` — build-tag split asset delivery (`embed_prod.go` embeds, `embed_dev.go` reads from disk)
 - `web/static/` — no-build Preact+htm SPA (index.html, app.js, router.js)
+  - `rpc.js` — singleton JSON-RPC 2.0 client over WebSocket (`call`/`on`/`onStatus`); derives
+    `wss://` vs `ws://` from the page origin so it works behind `tailscale serve` (HTTPS)
+  - `vendor/pico.min.css` — vendored Pico CSS v2 (embedded; offline-capable)
