@@ -1,5 +1,5 @@
 ---
-hash: "531fc664"
+hash: "afa1ffa9"
 id: "bc691476"
 read_when: "planning or sequencing sub-tasks for the reflect playbook loop epic"
 summary: "Epic plan for making the auto-reflect playbook loop usable by autonomous reflection agents: fix existing gaps first (session identity, lifecycle, observation capture, consolidation, signal readers, doc drift), then wire agent runs, then grow the improvement loop. Centered on a two-step Observe → Consolidate pipeline."
@@ -77,10 +77,10 @@ Known risks, with mitigations baked into the sub-tasks below:
 
 ## Current gaps (found 2026-06-10)
 
-1. **Session-ID detection mismatch.** `internal/events/session.go` looks for
-   `CLAUDE_SESSION_ID`; Claude Code actually exports `CLAUDE_CODE_SESSION_ID`. Detection
-   always returns empty in real sessions, so events can never be joined to ETL'd
-   transcripts and the gate falls back to host+worktree+24h scoping.
+1. **Session-ID detection mismatch.** *(fixed in PR #66 — see 1.1)* `internal/events/session.go`
+   looked for `CLAUDE_SESSION_ID`; Claude Code actually exports `CLAUDE_CODE_SESSION_ID`.
+   Detection always returned empty in real sessions, so events could never be joined to
+   ETL'd transcripts and the gate fell back to host+worktree+24h scoping.
 2. **Lifecycle is cosmetic.** `rule create` defaults to `draft`, but retrieval
    (`internal/rules/match.go`) never consumes lifecycle — draft and stale rules surface
    identically to confirmed ones. There is no discover → promote boundary.
@@ -100,11 +100,16 @@ Known risks, with mitigations baked into the sub-tasks below:
 
 Sequenced; each sub-task unblocks the ones after it.
 
-### 1.1 Fix session identity detection
+### 1.1 Fix session identity detection — ✅ done (PR #66, 2026-06-10)
 
 Detect `CLAUDE_CODE_SESSION_ID` (keep existing keys for codex/manual override; document
 precedence). Verify the detected ID matches the session UUID that `auto etl` / `auto search`
 index, so reflect events join to transcripts. Smallest task, unblocks everything downstream.
+
+Shipped: `CLAUDE_CODE_SESSION_ID` appended to the detection precedence list
+(`AUTO_SESSION_ID` stays the manual override), new `session_test.go` coverage, and the
+gate-fallback test now clears the new key so it doesn't pick up the real session ID when
+the suite runs inside Claude Code.
 
 ### 1.2 Make retrieval lifecycle-aware
 
@@ -239,17 +244,17 @@ Also deferred to this phase (build only when need is demonstrated):
 
 ## Sub-task index
 
-| # | Sub-task | Depends on |
-|---|----------|------------|
-| 1.1 | Fix session identity detection | — |
-| 1.2 | Lifecycle-aware retrieval | — |
-| 1.3 | Observation capture (Observe) | — |
-| 1.4 | Consolidation → rules (Consolidate) | 1.2, 1.3 |
-| 1.5 | Reader API over event log | 1.3 |
-| 1.6 | Release + doc sync | 1.1–1.5 |
-| 2.1 | Mining skill (sessions → observations) | 1.3, 1.6 |
-| 2.2 | Consolidation skill (observations → draft rules) | 1.4, 2.1 |
-| 2.3 | Review + promotion pass | 2.2 |
-| 2.4 | Harness wiring for live loop | 1.1, 1.6, 2.3 |
-| 2.5 | Scheduled reflection runs | 2.1, 2.2 |
-| 3.x | Loop growth (reviewer, aggregation, outcomes, scoring, …) | Phase 2 + data volume |
+| # | Sub-task | Depends on | Status |
+|---|----------|------------|--------|
+| 1.1 | Fix session identity detection | — | ✅ done (PR #66) |
+| 1.2 | Lifecycle-aware retrieval | — | |
+| 1.3 | Observation capture (Observe) | — | |
+| 1.4 | Consolidation → rules (Consolidate) | 1.2, 1.3 | |
+| 1.5 | Reader API over event log | 1.3 | |
+| 1.6 | Release + doc sync | 1.1–1.5 | |
+| 2.1 | Mining skill (sessions → observations) | 1.3, 1.6 | |
+| 2.2 | Consolidation skill (observations → draft rules) | 1.4, 2.1 | |
+| 2.3 | Review + promotion pass | 2.2 | |
+| 2.4 | Harness wiring for live loop | 1.1, 1.6, 2.3 | |
+| 2.5 | Scheduled reflection runs | 2.1, 2.2 | |
+| 3.x | Loop growth (reviewer, aggregation, outcomes, scoring, …) | Phase 2 + data volume | |
