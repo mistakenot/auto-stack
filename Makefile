@@ -1,6 +1,6 @@
 .PHONY: build clean test vet fmt lint dist vulncheck install \
        install-hooks install-tools gen-stats check fmt-check stale-refs test-install test-curl-install \
-       fixtures verify-fixtures \
+       fixtures verify-fixtures ui-serve \
        fmt-staged vulncheck-if-deps-changed autodoc-fix skills-sync beads-sync pre-commit
 
 BUILD_DIR := bin
@@ -28,6 +28,17 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	cd auto-cli && go build -ldflags="$(LDFLAGS)" -o ../$(BUILD_DIR)/auto ./cmd/auto
 	@echo "Built ./$(BUILD_DIR)/auto"
+
+# --- Local UI over Tailscale (tailnet-only, for examining the dashboard) ---
+# Serves `auto ui` locally and exposes it via `tailscale serve`. Defaults to dev
+# mode (live-from-disk assets) on an uncommon port. Override with PORT=/DEV=0.
+# Ctrl-C tears it down.
+
+UI_PORT ?= 8723
+UI_DEV  ?= 1
+
+ui-serve:
+	PORT=$(UI_PORT) DEV=$(UI_DEV) scripts/ui-tailscale-serve.sh
 
 # --- Release cross-compile (produces dist/auto-<suffix>) ---
 

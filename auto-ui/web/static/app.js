@@ -68,11 +68,12 @@ function App() {
   const { view, params } = parseHash();
   const body =
     view === "dashboard" ? html`<${Dashboard} />` : html`<${Home} params=${params} />`;
+  // <main class="container"> is Pico's centered, padded page wrapper.
   return html`
-    <div>
+    <main class="container">
       <${Nav} view=${view} />
       ${body}
-    </div>
+    </main>
   `;
 }
 
