@@ -207,6 +207,7 @@ func TestGateOrphansOlderThanWindowDoNotBlock(t *testing.T) {
 	t.Setenv("AUTO_SESSION_ID", "")
 	t.Setenv("CODEX_SESSION_ID", "")
 	t.Setenv("CLAUDE_SESSION_ID", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	svc := NewService(repo)
 
 	res, err := svc.GateCheck("", "")
