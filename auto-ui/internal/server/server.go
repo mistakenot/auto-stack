@@ -30,6 +30,10 @@ func New(fsys fs.FS, mode string) http.Handler {
 		})
 	})
 
+	// Bidirectional JSON-RPC 2.0 over WebSocket: client RPC calls + correlated
+	// responses, plus server->client push (a `ping` notification every second).
+	mux.HandleFunc("/api/ws", handleWS)
+
 	assets := http.FileServer(http.FS(fsys))
 	if mode == "disk" {
 		assets = noStore(assets)

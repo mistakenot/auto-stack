@@ -1,9 +1,10 @@
 // app.js — no-build Preact + htm app.
 // State lives in the URL hash: the active view and the Home counter (?n=).
 import { render } from "preact";
-import { useState } from "preact/hooks";
+import { useState, useEffect } from "preact/hooks";
 import { html } from "htm/preact";
 import { parseHash, setHash, onRouteChange } from "./router.js";
+import { call, on, onStatus } from "./rpc.js";
 
 // Nav switches views by rewriting the hash. Home carries its counter (?n=).
 function Nav({ view }) {
@@ -37,7 +38,10 @@ function Home({ params }) {
   `;
 }
 
-// Dashboard — fetches /api/hello from the Go server and renders the message.
+// Dashboard — exercises both transports against the Go server:
+//   /api/hello  — classic one-shot fetch
+//   /api/ws     — JSON-RPC over WebSocket: server-pushed `ping` notifications
+//                 (live, every 1s) and a client-initiated `ping` RPC call.
 function Dashboard() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -52,13 +56,65 @@ function Dashboard() {
       setError(String(e));
     }
   };
+
+  // WebSocket state: connection status, the latest server push, and the count
+  // of pushes received this session.
+  const [wsStatus, setWsStatus] = useState("connecting");
+  const [lastPush, setLastPush] = useState(null);
+  const [pushCount, setPushCount] = useState(0);
+  const [pong, setPong] = useState(null);
+
+  useEffect(() => {
+    // Server push (#3): subscribe to the `ping` notification stream.
+    const offPing = on("ping", (params) => {
+      setLastPush(params);
+      setPushCount((n) => n + 1);
+    });
+    const offStatus = onStatus(setWsStatus);
+    return () => {
+      offPing();
+      offStatus();
+    };
+  }, []);
+
+  // Client RPC (#1 + #2): call the `ping` method and show the correlated pong.
+  const sendPing = async () => {
+    try {
+      const res = await call("ping", { seq: pushCount });
+      setPong(res);
+    } catch (e) {
+      setPong({ error: String(e) });
+    }
+  };
+
   return html`
     <section>
       <h1>Dashboard</h1>
+
       <button onClick=${fetchGo}>fetch from go</button>
       ${result &&
       html`<p>go says: ${result.message} (mode=${result.mode})</p>`}
       ${error && html`<p style=${{ color: "red" }}>error: ${error}</p>`}
+
+      <hr />
+      <h2>WebSocket (JSON-RPC)</h2>
+      <p>
+        connection: <strong>${wsStatus}</strong>
+      </p>
+      <p>
+        server push: <strong>${pushCount}</strong> ping(s) received${lastPush
+          ? html` · latest seq ${lastPush.seq}`
+          : ""}
+      </p>
+      <p>
+        <button onClick=${sendPing} disabled=${wsStatus !== "open"}>
+          send ping RPC
+        </button>
+        ${pong &&
+        (pong.error
+          ? html` <span style=${{ color: "red" }}>${pong.error}</span>`
+          : html` <span>pong ✓ (seq ${pong.seq})</span>`)}
+      </p>
     </section>
   `;
 }
@@ -68,11 +124,12 @@ function App() {
   const { view, params } = parseHash();
   const body =
     view === "dashboard" ? html`<${Dashboard} />` : html`<${Home} params=${params} />`;
+  // <main class="container"> is Pico's centered, padded page wrapper.
   return html`
-    <div>
+    <main class="container">
       <${Nav} view=${view} />
       ${body}
-    </div>
+    </main>
   `;
 }
 
