@@ -27,7 +27,8 @@ func hasFieldCode(errs []ValidationError, field, code string) bool {
 }
 
 func TestValidateHappyPath(t *testing.T) {
-	if errs := validInput().Validate(); len(errs) != 0 {
+	in := validInput()
+	if errs := in.Validate(); len(errs) != 0 {
 		t.Fatalf("expected no errors, got %+v", errs)
 	}
 }
@@ -214,7 +215,7 @@ func TestProjectRoundTrip(t *testing.T) {
 		SessionID: "s1",
 		Payload:   raw,
 	}
-	obs, err := Project(e)
+	obs, err := Project(&e)
 	if err != nil {
 		t.Fatalf("project: %v", err)
 	}
@@ -227,7 +228,7 @@ func TestProjectRoundTrip(t *testing.T) {
 }
 
 func TestProjectRejectsNonObservation(t *testing.T) {
-	if _, err := Project(events.Event{ID: "ev-1", Type: events.TypeFeedback}); err == nil {
+	if _, err := Project(&events.Event{ID: "ev-1", Type: events.TypeFeedback}); err == nil {
 		t.Fatal("expected error projecting a non-observation event")
 	}
 }

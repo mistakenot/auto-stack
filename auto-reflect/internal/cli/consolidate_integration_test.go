@@ -43,8 +43,12 @@ func consolidateOK(t *testing.T, repo, doc string, flags ...string) consolidateR
 	return resp
 }
 
-func draftDoc(useWhen string, obIDs ...string) string {
-	ids, _ := json.Marshal(obIDs)
+func draftDoc(t *testing.T, useWhen string, obIDs ...string) string {
+	t.Helper()
+	ids, err := json.Marshal(obIDs)
+	if err != nil {
+		t.Fatalf("marshal observation ids: %v", err)
+	}
 	return fmt.Sprintf(`{"deltas":[{"op":"create-draft","use_when":%q,"content":"some durable guidance","causal_note":"a failure it prevents","domain":["consoldom"],"type":"soft","observation_ids":%s}]}`, useWhen, ids)
 }
 
@@ -74,7 +78,7 @@ func TestConsolidateCreateDraftGateDedupeDryRun(t *testing.T) {
 	ob2 := addObservation(t, repo, "--kind", "pattern", "--subject", "s2", "--evidence-session", "sess-2", "--domain", "consoldom").Observation.ObservationID
 
 	// (a) Two distinct sessions → create-draft accepted, no force.
-	resp := consolidateOK(t, repo, draftDoc("wiring a cobra command for consolidation", ob1, ob2))
+	resp := consolidateOK(t, repo, draftDoc(t, "wiring a cobra command for consolidation", ob1, ob2))
 	if len(resp.Applied) != 1 || len(resp.Skipped) != 0 {
 		t.Fatalf("two-session draft should be applied: %#v", resp)
 	}
@@ -87,7 +91,7 @@ func TestConsolidateCreateDraftGateDedupeDryRun(t *testing.T) {
 	}
 
 	// (b) One distinct session, no force → refused by the evidence gate.
-	single := draftDoc("an entirely separate predicate about logging output", ob1)
+	single := draftDoc(t, "an entirely separate predicate about logging output", ob1)
 	resp = consolidateOK(t, repo, single)
 	if len(resp.Applied) != 0 || len(resp.Skipped) != 1 {
 		t.Fatalf("single-session draft should be skipped: %#v", resp)
@@ -108,7 +112,7 @@ func TestConsolidateCreateDraftGateDedupeDryRun(t *testing.T) {
 	}
 
 	// (d) A new draft duplicating the confirmed rule's use_when → refused as a dup.
-	resp = consolidateOK(t, repo, draftDoc("wiring a cobra command for consolidation", ob1, ob2))
+	resp = consolidateOK(t, repo, draftDoc(t, "wiring a cobra command for consolidation", ob1, ob2))
 	if len(resp.Applied) != 0 || len(resp.Skipped) != 1 {
 		t.Fatalf("duplicate draft should be skipped: %#v", resp)
 	}
@@ -118,7 +122,7 @@ func TestConsolidateCreateDraftGateDedupeDryRun(t *testing.T) {
 
 	// (e) --dry-run computes but writes nothing.
 	before := countRules(t, repo)
-	resp = consolidateOK(t, repo, draftDoc("a totally fresh predicate about retry backoff", ob1, ob2), "--dry-run")
+	resp = consolidateOK(t, repo, draftDoc(t, "a totally fresh predicate about retry backoff", ob1, ob2), "--dry-run")
 	if !resp.DryRun || len(resp.Applied) != 1 {
 		t.Fatalf("dry-run should report one would-be apply: %#v", resp)
 	}
@@ -140,8 +144,8 @@ func TestConsolidatePromoteRetireAndUnconsolidated(t *testing.T) {
 	ob4 := addObservation(t, repo, "--kind", "pattern", "--subject", "s4", "--evidence-session", "sess-4", "--domain", "retiredom").Observation.ObservationID
 
 	// ruleA: two sessions; ruleC: one session via --force.
-	ruleA := consolidateOK(t, repo, draftDocDomain("retiring stale cobra wiring", "retiredom", ob1, ob2)).Applied[0].RuleID
-	ruleC := consolidateOK(t, repo, draftDocDomain("forcing a single session draft", "retiredom", ob3), "--force").Applied[0].RuleID
+	ruleA := consolidateOK(t, repo, draftDocDomain(t, "retiring stale cobra wiring", "retiredom", ob1, ob2)).Applied[0].RuleID
+	ruleC := consolidateOK(t, repo, draftDocDomain(t, "forcing a single session draft", "retiredom", ob3), "--force").Applied[0].RuleID
 
 	// promote gate: ruleC has one distinct session → refused without --force.
 	stdout, stderr, code := runCLIAt(t, repo, "rule", "promote", ruleC)
@@ -176,8 +180,12 @@ func TestConsolidatePromoteRetireAndUnconsolidated(t *testing.T) {
 	}
 }
 
-func draftDocDomain(useWhen, domain string, obIDs ...string) string {
-	ids, _ := json.Marshal(obIDs)
+func draftDocDomain(t *testing.T, useWhen, domain string, obIDs ...string) string {
+	t.Helper()
+	ids, err := json.Marshal(obIDs)
+	if err != nil {
+		t.Fatalf("marshal observation ids: %v", err)
+	}
 	return fmt.Sprintf(`{"deltas":[{"op":"create-draft","use_when":%q,"content":"durable guidance","causal_note":"a failure it prevents","domain":[%q],"type":"soft","observation_ids":%s}]}`, useWhen, domain, ids)
 }
 

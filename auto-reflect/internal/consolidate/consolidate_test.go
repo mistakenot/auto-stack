@@ -10,18 +10,22 @@ import (
 
 // obEvent builds an observation event with the given id, severity, and evidence
 // session ids, for feeding NewObservationIndex.
-func obEvent(id, severity string, sessions ...string) events.Event {
+func obEvent(t *testing.T, id, severity string, sessions ...string) events.Event {
+	t.Helper()
 	ev := make([]events.ObservationEvidence, 0, len(sessions))
 	for _, s := range sessions {
 		ev = append(ev, events.ObservationEvidence{SessionID: s})
 	}
-	payload, _ := json.Marshal(events.ObservationPayload{
+	payload, err := json.Marshal(events.ObservationPayload{
 		ObservationID: id,
 		Kind:          "pattern",
 		Subject:       "subject",
 		Evidence:      ev,
 		Severity:      severity,
 	})
+	if err != nil {
+		t.Fatalf("marshal observation payload: %v", err)
+	}
 	return events.Event{Type: events.TypeObservation, Payload: payload}
 }
 
@@ -43,9 +47,9 @@ func TestParseDocumentRejectsUnknownFieldsAndEmpty(t *testing.T) {
 
 func TestCoverageDistinctSessionsAndSeverity(t *testing.T) {
 	idx := NewObservationIndex([]events.Event{
-		obEvent("ob-00000001", "normal", "sess-a", "sess-a"), // duplicate session collapses
-		obEvent("ob-00000002", "normal", "sess-b"),
-		obEvent("ob-00000003", "high", "sess-c"),
+		obEvent(t, "ob-00000001", "normal", "sess-a", "sess-a"), // duplicate session collapses
+		obEvent(t, "ob-00000002", "normal", "sess-b"),
+		obEvent(t, "ob-00000003", "high", "sess-c"),
 	})
 
 	cov := idx.Coverage([]string{"ob-00000001", "ob-00000002"})

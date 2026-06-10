@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -69,7 +70,7 @@ func newEventsListCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 			if limit < 0 {
-				return &ExitError{Code: 1, Err: fmt.Errorf("invalid --limit: use --limit <n> where n >= 0")}
+				return &ExitError{Code: 1, Err: errors.New("invalid --limit: use --limit <n> where n >= 0")}
 			}
 
 			typeFilter, err := parseTypeFilter(types)
@@ -115,7 +116,7 @@ func newEventsListCmd(application *app.App) *cobra.Command {
 					Seq:       e.Seq,
 					SessionID: e.SessionID,
 					Agent:     e.Agent,
-					Summary:   summarizePayload(e),
+					Summary:   summarizePayload(&e),
 				})
 			}
 
@@ -184,7 +185,7 @@ func parseTypeFilter(types []string) (map[string]struct{}, error) {
 // event's payload, decoding the known payload shapes. An undecodable or unknown
 // payload yields an empty summary rather than an error: the reader never fails on
 // a single malformed record.
-func summarizePayload(e events.Event) string {
+func summarizePayload(e *events.Event) string {
 	switch e.Type {
 	case events.TypeRuleCreated:
 		var p events.RuleCreatedPayload
@@ -230,7 +231,7 @@ func summarizePayload(e events.Event) string {
 // decodeEventPayload unmarshals an event's raw payload into dst. It is a thin
 // wrapper kept local to the cli package so the reader does not reach into loop's
 // unexported decode helper.
-func decodeEventPayload(e events.Event, dst any) error {
+func decodeEventPayload(e *events.Event, dst any) error {
 	return json.Unmarshal(e.Payload, dst)
 }
 
