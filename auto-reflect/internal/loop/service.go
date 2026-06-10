@@ -40,12 +40,16 @@ type RetrievedRule struct {
 	UseWhen     string   `json:"use_when"`
 	Domain      []string `json:"domain"`
 	RuleType    string   `json:"rule_type"`
+	Lifecycle   string   `json:"lifecycle"`
+	Draft       bool     `json:"draft"`
 }
 
 // Retrieve matches rules against intent (optionally filtered by domains),
 // appends one retrieval event that mints an rt- id per match, and returns the
-// predicate-only view in match order. limit <= 0 means no limit.
-func (s *Service) Retrieve(intent string, domains []string, limit int) ([]RetrievedRule, error) {
+// predicate-only view in match order. limit <= 0 means no limit. includeDrafts
+// surfaces draft rules (flagged Draft) alongside confirmed ones; stale rules are
+// never surfaced regardless.
+func (s *Service) Retrieve(intent string, domains []string, limit int, includeDrafts bool) ([]RetrievedRule, error) {
 	repo, err := gitutil.DetectRepoLenient(s.cwd)
 	if err != nil {
 		return nil, err
@@ -56,7 +60,7 @@ func (s *Service) Retrieve(intent string, domains []string, limit int) ([]Retrie
 		return nil, err
 	}
 
-	matches := rules.MatchRules(playbook.Rules, intent, domains)
+	matches := rules.MatchRules(playbook.Rules, intent, domains, includeDrafts)
 	if limit > 0 && len(matches) > limit {
 		matches = matches[:limit]
 	}
@@ -81,6 +85,8 @@ func (s *Service) Retrieve(intent string, domains []string, limit int) ([]Retrie
 			UseWhen:     m.Rule.UseWhen,
 			Domain:      m.Rule.Domain,
 			RuleType:    m.Rule.RuleType,
+			Lifecycle:   m.Rule.Lifecycle,
+			Draft:       m.Rule.Lifecycle == rules.LifecycleDraft,
 		})
 	}
 

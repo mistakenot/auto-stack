@@ -38,7 +38,7 @@ func TestRetrieveReturnsPredicatesOnlyAndAppendsEvent(t *testing.T) {
 	seedRule(t, repo, "writing go cli flags", "use cobra StringSliceVar", "cli", rules.RuleTypeSoft)
 
 	svc := NewService(repo)
-	results, err := svc.Retrieve("writing go cli flags", nil, 0)
+	results, err := svc.Retrieve("writing go cli flags", nil, 0, true)
 	if err != nil {
 		t.Fatalf("retrieve: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestSelectPreservesInputOrder(t *testing.T) {
 	seedRule(t, repo, "gamma topic about go", "third content", "go", rules.RuleTypeSoft)
 
 	svc := NewService(repo)
-	retrieved, err := svc.Retrieve("alpha beta gamma topic about go", nil, 0)
+	retrieved, err := svc.Retrieve("alpha beta gamma topic about go", nil, 0, true)
 	if err != nil {
 		t.Fatalf("retrieve: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestStatsCountsAcrossSessions(t *testing.T) {
 
 	// Two simulated sessions each retrieve + select the rule.
 	for range 2 {
-		retrieved, err := svc.Retrieve("go cli flags topic", nil, 0)
+		retrieved, err := svc.Retrieve("go cli flags topic", nil, 0, true)
 		if err != nil {
 			t.Fatalf("retrieve: %v", err)
 		}

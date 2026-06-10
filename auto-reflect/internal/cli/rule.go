@@ -241,15 +241,25 @@ func newRuleEditCmd(application *app.App) *cobra.Command {
 }
 
 func newRuleListCmd(application *app.App) *cobra.Command {
-	var format string
+	var (
+		format    string
+		lifecycle string
+	)
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List rules (id, use_when, domain, type)",
+		Short: "List rules (id, use_when, domain, type, lifecycle)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			outputFormat, err := normalizeFormat(format)
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
+			}
+			lifecycleFilter := strings.ToLower(strings.TrimSpace(lifecycle))
+			switch lifecycleFilter {
+			case "", rules.LifecycleDraft, rules.LifecycleConfirmed, rules.LifecycleStale:
+				// ok: empty means no filter (list-returns-all).
+			default:
+				return &ExitError{Code: 1, Err: fmt.Errorf("invalid --lifecycle %q: use one of %s|%s|%s", lifecycle, rules.LifecycleDraft, rules.LifecycleConfirmed, rules.LifecycleStale)}
 			}
 			repo, err := gitutil.DetectRepoLenient(application.CWD)
 			if err != nil {
@@ -260,22 +270,29 @@ func newRuleListCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 
+			selected := make([]*rules.Rule, 0, len(playbook.Rules))
+			for i := range playbook.Rules {
+				if lifecycleFilter != "" && playbook.Rules[i].Lifecycle != lifecycleFilter {
+					continue
+				}
+				selected = append(selected, &playbook.Rules[i])
+			}
+
 			if outputFormat == "text" {
-				for i := range playbook.Rules {
-					r := &playbook.Rules[i]
-					fmt.Fprintf(cmd.OutOrStdout(), "%s [%s] (%s) %s\n", r.ID, r.RuleType, strings.Join(r.Domain, ","), r.UseWhen)
+				for _, r := range selected {
+					fmt.Fprintf(cmd.OutOrStdout(), "%s [%s] (%s) %s  lifecycle=%s\n", r.ID, r.RuleType, strings.Join(r.Domain, ","), r.UseWhen, r.Lifecycle)
 				}
 				return nil
 			}
 
-			items := make([]map[string]any, 0, len(playbook.Rules))
-			for i := range playbook.Rules {
-				r := &playbook.Rules[i]
+			items := make([]map[string]any, 0, len(selected))
+			for _, r := range selected {
 				items = append(items, map[string]any{
 					"id":        r.ID,
 					"use_when":  r.UseWhen,
 					"domain":    r.Domain,
 					"rule_type": r.RuleType,
+					"lifecycle": r.Lifecycle,
 				})
 			}
 			if err := writeJSON(cmd.OutOrStdout(), map[string]any{"scope": "repo", "rules": items}); err != nil {
@@ -284,6 +301,7 @@ func newRuleListCmd(application *app.App) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&lifecycle, "lifecycle", "", "filter by lifecycle: draft|confirmed|stale (default: all)")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
 	return cmd
 }
