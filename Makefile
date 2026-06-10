@@ -128,22 +128,35 @@ verify-fixtures:
 
 # --- Install ---
 
-# Install the single merged binary. The `auto watch` daemon may be running, so
-# tolerate "text file busy" on overwrite (install.sh removes the old inode for
-# the curl path; here we surface a clear hint instead).
+# Install the single merged binary. The `auto watch` daemon may be running and
+# holding the destination inode open, so mirror install.sh: remove the old inode
+# before writing (the running daemon keeps its copy, the new file gets a fresh
+# inode — no "text file busy"), then restart the daemon to pick up the new binary.
 install: build
 	@mkdir -p $(INSTALL_DIR); \
-	err=$$(mktemp); \
-	if ! cp $(BUILD_DIR)/auto $(INSTALL_DIR)/ 2>$$err; then \
-		if grep -qi "text file busy" $$err; then \
-			echo "auto install skipped: destination binary is busy (text file busy). Stop the running 'auto watch' daemon and retry."; \
-		else \
-			cat $$err >&2; rm -f $$err; exit 1; \
-		fi; \
-	else \
-		echo "Installed auto to $(INSTALL_DIR)/auto"; \
+	dest="$(INSTALL_DIR)/auto"; \
+	restart=""; \
+	if [ -f "$$dest" ]; then \
+		if fuser "$$dest" >/dev/null 2>&1; then restart=1; fi; \
+		rm -f "$$dest"; \
 	fi; \
-	rm -f $$err
+	cp $(BUILD_DIR)/auto "$$dest"; \
+	chmod +x "$$dest"; \
+	echo "Installed auto to $$dest"; \
+	if [ -n "$$restart" ]; then \
+		echo "auto binary was running during install (likely the 'auto watch' daemon)."; \
+		if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet autowatch.service; then \
+			if systemctl --user restart autowatch.service; then \
+				echo "  restarted auto watch (user) daemon"; \
+			else \
+				echo "  could not restart user daemon — run: systemctl --user restart autowatch.service"; \
+			fi; \
+		else \
+			echo "  restart it to pick up the new binary:"; \
+			echo "    auto watch daemon restart                  # user daemon (no sudo)"; \
+			echo "    sudo systemctl restart autowatch.service   # if managed by system systemd"; \
+		fi; \
+	fi
 
 test-install:
 	./e2e/test-install.sh

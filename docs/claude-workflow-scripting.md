@@ -1,5 +1,6 @@
 ---
 hash: "e7678a88"
+id: "934a8dfc"
 read_when: "understanding how Claude decomposes tasks into multi-agent workflows, or deciding whether auto-etl should ingest workflow scripts and run journals"
 summary: "Analysis of Claude Code Workflow .js orchestration scripts and run journals found under ~/.claude, revealing how Claude decomposes tasks into multi-agent harnesses — and that auto-etl ingests the subagent transcripts but not the scripts/journals that orchestrate them."
 title: "How Claude Scripts Tasks: Evidence from Workflow Artifacts"
