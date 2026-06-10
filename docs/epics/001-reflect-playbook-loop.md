@@ -1,5 +1,5 @@
 ---
-hash: "afa1ffa9"
+hash: "ff97ec9c"
 id: "bc691476"
 read_when: "planning or sequencing sub-tasks for the reflect playbook loop epic"
 summary: "Epic plan for making the auto-reflect playbook loop usable by autonomous reflection agents: fix existing gaps first (session identity, lifecycle, observation capture, consolidation, signal readers, doc drift), then wire agent runs, then grow the improvement loop. Centered on a two-step Observe → Consolidate pipeline."
@@ -111,13 +111,13 @@ Shipped: `CLAUDE_CODE_SESSION_ID` appended to the detection precedence list
 gate-fallback test now clears the new key so it doesn't pick up the real session ID when
 the suite runs inside Claude Code.
 
-### 1.2 Make retrieval lifecycle-aware
+### 1.2 Make retrieval lifecycle-aware — ✅ done (branch `feat/reflect-playbook-phase1`)
 
 `retrieve` excludes `stale` rules and either excludes or explicitly flags `draft` rules
 (flagged is preferred: implementers can opt in, and drafts need exposure to graduate).
 Decide and document the default. This turns `draft` into a real candidate state.
 
-### 1.3 Observation capture (the Observe step)
+### 1.3 Observation capture (the Observe step) — ✅ done (branch `feat/reflect-playbook-phase1`)
 
 Restore the working-memory tier as a new `observation` event type on the existing event
 log, plus a write surface (`auto reflect observe` or `observation add`) and a reader
@@ -137,7 +137,7 @@ deduped by session+subject so re-mining is idempotent. Phase-4a gap reports shou
 recorded as (or trivially mappable to) observations of kind `gap`, unifying the Stage-3
 gap-to-rule input with mining output.
 
-### 1.4 Consolidation → rules (the Consolidate step)
+### 1.4 Consolidation → rules (the Consolidate step) — ✅ done (branch `feat/reflect-playbook-phase1`)
 
 `auto reflect consolidate` turns clustered observations into playbook changes. The CLI
 side is deterministic: evidence threshold (≥ 2 distinct sessions; `--force` /
@@ -151,7 +151,7 @@ projection and `rule get` expose it. Add explicit `rule promote <r-id>` /
 `rule retire <r-id>` verbs; promote refuses (without `--force`) when the provenance chain
 covers < 2 distinct sessions.
 
-### 1.5 Reader API over the event log
+### 1.5 Reader API over the event log — ✅ done (branch `feat/reflect-playbook-phase1`)
 
 Expose loop signal without hand-parsing JSONL:
 
@@ -161,7 +161,7 @@ Expose loop signal without hand-parsing JSONL:
 - richer `stats`: per-rule rank distribution and outcome counts alongside
   surfaced/selected/selection_rate
 
-### 1.6 Release + doc sync
+### 1.6 Release + doc sync — ◑ doc sync done; release tag pending (user-triggered)
 
 Cut a release so the installed binary matches source; regenerate quickstarts; sweep
 root `CLAUDE.md` and any docs referencing removed commands (`lookup`,
@@ -247,11 +247,11 @@ Also deferred to this phase (build only when need is demonstrated):
 | # | Sub-task | Depends on | Status |
 |---|----------|------------|--------|
 | 1.1 | Fix session identity detection | — | ✅ done (PR #66) |
-| 1.2 | Lifecycle-aware retrieval | — | |
-| 1.3 | Observation capture (Observe) | — | |
-| 1.4 | Consolidation → rules (Consolidate) | 1.2, 1.3 | |
-| 1.5 | Reader API over event log | 1.3 | |
-| 1.6 | Release + doc sync | 1.1–1.5 | |
+| 1.2 | Lifecycle-aware retrieval | — | ✅ done |
+| 1.3 | Observation capture (Observe) | — | ✅ done |
+| 1.4 | Consolidation → rules (Consolidate) | 1.2, 1.3 | ✅ done |
+| 1.5 | Reader API over event log | 1.3 | ✅ done |
+| 1.6 | Release + doc sync | 1.1–1.5 | ◑ docs done; release pending |
 | 2.1 | Mining skill (sessions → observations) | 1.3, 1.6 | |
 | 2.2 | Consolidation skill (observations → draft rules) | 1.4, 2.1 | |
 | 2.3 | Review + promotion pass | 2.2 | |
