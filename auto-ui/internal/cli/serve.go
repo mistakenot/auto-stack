@@ -67,7 +67,14 @@ func newServeCmd(application *app.App) *cobra.Command {
 				BaseContext:       func(net.Listener) context.Context { return baseCtx },
 			}
 
+			// done is closed only after Shutdown finishes draining. We join on it
+			// before returning so the process can't exit mid-drain: Shutdown closes
+			// the listener (unblocking ListenAndServe with ErrServerClosed) and
+			// then drains in-flight connections, so without this join RunE could
+			// return — and cobra exit the process — while the drain is still running.
+			done := make(chan struct{})
 			go func() {
+				defer close(done)
 				<-ctx.Done()
 				// Cancel live WebSocket handlers first so they close promptly,
 				// then drain. The bounded deadline is a backstop so SIGINT/SIGTERM
@@ -82,6 +89,7 @@ func newServeCmd(application *app.App) *cobra.Command {
 			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				return &ExitError{Code: 1, Err: err}
 			}
+			<-done
 			return nil
 		},
 	}

@@ -40,7 +40,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	s := newSession(c)
+	s := newSession(c, cancel)
 	go s.writePump(ctx)
 	go s.pingLoop(ctx)
 
@@ -62,24 +62,31 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 // session owns a single WebSocket connection. coder/websocket connections are
 // not safe for concurrent writers, so EVERY outbound message — RPC responses
 // and server-push notifications alike — is funnelled through `out` and written
-// by the single writePump goroutine.
+// by the single writePump goroutine. cancel is the connection's context cancel:
+// calling it unwinds writePump, pingLoop, and readLoop, then handleWS closes.
 type session struct {
-	c   *websocket.Conn
-	out chan any
-	seq atomic.Int64 // monotonic ping sequence
+	c      *websocket.Conn
+	out    chan any
+	cancel context.CancelFunc
+	seq    atomic.Int64 // monotonic ping sequence
 }
 
-func newSession(c *websocket.Conn) *session {
-	return &session{c: c, out: make(chan any, outboundBuffer)}
+func newSession(c *websocket.Conn, cancel context.CancelFunc) *session {
+	return &session{c: c, out: make(chan any, outboundBuffer), cancel: cancel}
 }
 
-// enqueue offers a message to the write pump, dropping (and signalling) if the
-// client is too slow to drain the buffer. Returns false if ctx is done.
+// enqueue offers a message to the write pump. If the buffer is full the client
+// is too slow to keep up, so the connection is dropped (cancel) rather than
+// letting the ticker and RPC responses block server-side. Returns false when the
+// message was not — and will not be — sent (buffer full or ctx already done).
 func (s *session) enqueue(ctx context.Context, msg any) bool {
 	select {
 	case s.out <- msg:
 		return true
 	case <-ctx.Done():
+		return false
+	default:
+		s.cancel()
 		return false
 	}
 }
@@ -97,7 +104,8 @@ func (s *session) writePump(ctx context.Context) {
 			return
 		case msg := <-s.out:
 			if err := wsjson.Write(ctx, s.c, msg); err != nil {
-				return // connection gone; readLoop will observe it too
+				s.cancel() // connection gone; unwind pingLoop/readLoop promptly
+				return
 			}
 		}
 	}
