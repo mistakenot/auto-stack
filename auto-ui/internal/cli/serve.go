@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -47,6 +48,14 @@ func newServeCmd(application *app.App) *cobra.Command {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
+			// Every request context derives from baseCtx (via BaseContext below),
+			// so cancelling it on shutdown propagates into live WebSocket handlers:
+			// their r.Context() fires, the read loop's Read returns, and the
+			// connection closes. Without this, a streaming /api/ws connection never
+			// goes idle and srv.Shutdown would block until the deadline below.
+			baseCtx, cancelBase := context.WithCancel(context.Background())
+			defer cancelBase()
+
 			// Bind to loopback only: auto-ui is a local-dev/internal tool, so it
 			// must not be reachable from the LAN. ReadHeaderTimeout guards against
 			// a stalled client holding the connection open indefinitely.
@@ -55,12 +64,15 @@ func newServeCmd(application *app.App) *cobra.Command {
 				Addr:              fmt.Sprintf("127.0.0.1:%d", port),
 				Handler:           handler,
 				ReadHeaderTimeout: 10 * time.Second,
+				BaseContext:       func(net.Listener) context.Context { return baseCtx },
 			}
 
 			go func() {
 				<-ctx.Done()
-				// Bounded deadline so SIGINT/SIGTERM always returns control to the
-				// shell even if a client holds a connection open.
+				// Cancel live WebSocket handlers first so they close promptly,
+				// then drain. The bounded deadline is a backstop so SIGINT/SIGTERM
+				// always returns control to the shell even if a client misbehaves.
+				cancelBase()
 				shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				_ = srv.Shutdown(shutdownCtx)
