@@ -184,40 +184,61 @@ func (s *Service) Select(orderedRetrievalIDs []string) ([]SelectedRule, error) {
 	return results, nil
 }
 
-// RuleStats is the per-rule usage summary returned by Stats.
+// RuleStats is the per-rule usage summary returned by Stats. RankDistribution
+// maps each feedback rank to the number of times this rule received it;
+// OutcomeCounts maps each feedback outcome (success/partial/fail/abandoned) to
+// the number of feedback events covering this rule with that outcome. Both are
+// always non-nil so they marshal as {} rather than null.
 type RuleStats struct {
-	RuleID        string  `json:"rule_id"`
-	Surfaced      int     `json:"surfaced"`
-	Selected      int     `json:"selected"`
-	SelectionRate float64 `json:"selection_rate"`
-	FeedbackCount int     `json:"feedback_count"`
+	RuleID           string         `json:"rule_id"`
+	Surfaced         int            `json:"surfaced"`
+	Selected         int            `json:"selected"`
+	SelectionRate    float64        `json:"selection_rate"`
+	FeedbackCount    int            `json:"feedback_count"`
+	RankDistribution map[int]int    `json:"rank_distribution"`
+	OutcomeCounts    map[string]int `json:"outcome_counts"`
 }
 
-// Stats folds the event log into per-rule retrieval/selection/feedback counts.
-// Every rule in the playbook is listed (per the list-returns-all convention);
-// selection_rate is hard-defined to 0 when surfaced == 0 so it never marshals a
-// NaN that encoding/json would reject.
-func (s *Service) Stats() ([]RuleStats, error) {
+// StatsReport is the full stats projection: the repo-level unconsolidated
+// observation backlog plus the per-rule usage rows. Rules is always listed in
+// full (the list-returns-all convention).
+type StatsReport struct {
+	UnconsolidatedObservations int         `json:"unconsolidated_observations"`
+	Rules                      []RuleStats `json:"rules"`
+}
+
+// Stats folds the event log into the per-rule retrieval/selection/feedback
+// counts plus rank distribution, outcome counts, and the repo-level
+// unconsolidated-observation backlog. Every rule in the playbook is listed (per
+// the list-returns-all convention); selection_rate is hard-defined to 0 when
+// surfaced == 0 so it never marshals a NaN that encoding/json would reject. It is
+// a pure fold over events.ReadAll and writes no events.
+func (s *Service) Stats() (StatsReport, error) {
 	repo, err := gitutil.DetectRepoLenient(s.cwd)
 	if err != nil {
-		return nil, err
+		return StatsReport{}, err
 	}
 
 	playbook, err := rules.Load(repo.Root, store.PlaybookPath(repo.Root))
 	if err != nil {
-		return nil, err
+		return StatsReport{}, err
 	}
 
 	all, err := events.ReadAll(repo.Root)
 	if err != nil {
-		return nil, err
+		return StatsReport{}, err
 	}
 
 	surfaced := map[string]int{}
 	selected := map[string]int{}
 	feedbackCount := map[string]int{}
+	rankDist := map[string]map[int]int{}
+	outcomeCounts := map[string]map[string]int{}
+	unconsolidated := 0
 
-	// fb-id -> rule-id, so feedback can attribute to rules.
+	// fb-id -> rule-id, so feedback can attribute to rules. Selection events
+	// precede their feedback in time order, so the mapping is populated by the
+	// time a feedback event is folded.
 	ruleByFeedback := map[string]string{}
 	for i := range all {
 		ev := &all[i]
@@ -244,11 +265,37 @@ func (s *Service) Stats() ([]RuleStats, error) {
 			if decodePayload(ev, &p) != nil {
 				continue
 			}
+			// rank_distribution counts per ranking; outcome_counts counts each
+			// (feedback event, rule) once, so a rule ranked twice in one event
+			// still records a single outcome.
+			rulesInEvent := map[string]struct{}{}
 			for _, r := range p.Rankings {
-				if ruleID, ok := ruleByFeedback[r.FeedbackID]; ok {
-					feedbackCount[ruleID]++
+				ruleID, ok := ruleByFeedback[r.FeedbackID]
+				if !ok {
+					continue
 				}
+				feedbackCount[ruleID]++
+				if rankDist[ruleID] == nil {
+					rankDist[ruleID] = map[int]int{}
+				}
+				rankDist[ruleID][r.Rank]++
+				rulesInEvent[ruleID] = struct{}{}
 			}
+			for ruleID := range rulesInEvent {
+				if outcomeCounts[ruleID] == nil {
+					outcomeCounts[ruleID] = map[string]int{}
+				}
+				outcomeCounts[ruleID][p.Outcome]++
+			}
+		case events.TypeObservation:
+			var p events.ObservationPayload
+			if decodePayload(ev, &p) != nil {
+				continue
+			}
+			// 1.4 wires the consolidation reference: once a `consolidation` event
+			// type exists, build the set of observation_ids it references and skip
+			// those here. Until then every observation counts as unconsolidated.
+			unconsolidated++
 		}
 	}
 
@@ -261,15 +308,28 @@ func (s *Service) Stats() ([]RuleStats, error) {
 		if s > 0 {
 			rate = float64(sel) / float64(s)
 		}
+		ranks := rankDist[r.ID]
+		if ranks == nil {
+			ranks = map[int]int{}
+		}
+		outcomes := outcomeCounts[r.ID]
+		if outcomes == nil {
+			outcomes = map[string]int{}
+		}
 		out = append(out, RuleStats{
-			RuleID:        r.ID,
-			Surfaced:      s,
-			Selected:      sel,
-			SelectionRate: rate,
-			FeedbackCount: feedbackCount[r.ID],
+			RuleID:           r.ID,
+			Surfaced:         s,
+			Selected:         sel,
+			SelectionRate:    rate,
+			FeedbackCount:    feedbackCount[r.ID],
+			RankDistribution: ranks,
+			OutcomeCounts:    outcomes,
 		})
 	}
-	return out, nil
+	return StatsReport{
+		UnconsolidatedObservations: unconsolidated,
+		Rules:                      out,
+	}, nil
 }
 
 // indexRetrievals returns a rt-id -> rule-id map across all retrieval events.

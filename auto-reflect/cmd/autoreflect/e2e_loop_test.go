@@ -126,12 +126,15 @@ func TestE2ELoopQuickstart(t *testing.T) {
 	if statsErr != nil {
 		t.Fatalf("stats failed: %v\nstderr:\n%s", statsErr, statsStderr)
 	}
-	var stats []map[string]any
-	if jerr := json.Unmarshal([]byte(statsStdout), &stats); jerr != nil {
+	var statsReport struct {
+		UnconsolidatedObservations int              `json:"unconsolidated_observations"`
+		Rules                      []map[string]any `json:"rules"`
+	}
+	if jerr := json.Unmarshal([]byte(statsStdout), &statsReport); jerr != nil {
 		t.Fatalf("stats stdout not JSON: %v\nraw:\n%s", jerr, statsStdout)
 	}
-	if len(stats) != 1 || stats[0]["rule_id"] != ruleID {
-		t.Fatalf("expected stats for rule %s, got %#v", ruleID, stats)
+	if len(statsReport.Rules) != 1 || statsReport.Rules[0]["rule_id"] != ruleID {
+		t.Fatalf("expected stats for rule %s, got %#v", ruleID, statsReport)
 	}
 }
 

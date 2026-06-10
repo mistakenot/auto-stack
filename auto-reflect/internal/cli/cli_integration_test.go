@@ -390,10 +390,14 @@ func TestLoopStatsAfterTwoSessions(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("stats failed: code=%d\nstderr:\n%s", code, stderr)
 	}
-	var stats []map[string]any
-	if err := json.Unmarshal([]byte(stdout), &stats); err != nil {
+	var report struct {
+		UnconsolidatedObservations int              `json:"unconsolidated_observations"`
+		Rules                      []map[string]any `json:"rules"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
 		t.Fatalf("decode stats: %v\nraw:\n%s", err, stdout)
 	}
+	stats := report.Rules
 	if len(stats) != 1 || stats[0]["rule_id"] != id {
 		t.Fatalf("unexpected stats: %#v", stats)
 	}
