@@ -223,6 +223,12 @@ func summarizePayload(e *events.Event) string {
 			return ""
 		}
 		return fmt.Sprintf("%s/%s %q (%d evidence)", p.Kind, p.Severity, p.Subject, len(p.Evidence))
+	case events.TypeConsolidation:
+		var p events.ConsolidationPayload
+		if decodeEventPayload(e, &p) != nil {
+			return ""
+		}
+		return fmt.Sprintf("%s rule %s <- %d observation(s)", p.Op, p.RuleID, len(p.ObservationIDs))
 	default:
 		return ""
 	}
