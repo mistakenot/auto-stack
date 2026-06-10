@@ -20,6 +20,7 @@ const (
 	TypeRetrieval   = "retrieval"
 	TypeSelection   = "selection"
 	TypeFeedback    = "feedback"
+	TypeObservation = "observation"
 )
 
 var (
@@ -130,8 +131,32 @@ type FeedbackPayload struct {
 	Gap      *FeedbackGap      `json:"gap,omitempty"`
 }
 
+// ObservationEvidence links an observation to the session/message/quote it was
+// grounded in. SessionID is required; MessageID and Quote are optional refinements.
+type ObservationEvidence struct {
+	SessionID string `json:"session_id"`
+	MessageID string `json:"message_id,omitempty"`
+	Quote     string `json:"quote,omitempty"`
+}
+
+// ObservationPayload is the canonical working-memory record: a situated finding
+// (correction|pattern|gap|incident) backed by evidence, separate from the rules
+// it may later be consolidated into. This shape is a contract that consolidation
+// (1.4) and the reader API (1.5) depend on.
+type ObservationPayload struct {
+	ObservationID           string                `json:"observation_id"` // ob-[0-9a-f]{8}
+	Kind                    string                `json:"kind"`           // correction|pattern|gap|incident
+	Subject                 string                `json:"subject"`
+	Evidence                []ObservationEvidence `json:"evidence"`
+	Context                 string                `json:"context,omitempty"`
+	SuggestedGeneralization string                `json:"suggested_generalization,omitempty"`
+	Domain                  []string              `json:"domain,omitempty"`
+	Severity                string                `json:"severity"` // normal|high
+}
+
 // IsRuleEvent reports whether an event mutates the rule projection. Only these
-// events advance folded_through / dirty the snapshot.
+// events advance folded_through / dirty the snapshot. Observations are working
+// memory and deliberately excluded so they never dirty the rule projection.
 func IsRuleEvent(eventType string) bool {
 	return eventType == TypeRuleCreated || eventType == TypeRuleEdited
 }
@@ -149,11 +174,11 @@ func Validate(e *Event) []ValidationError {
 	}
 
 	switch e.Type {
-	case TypeRuleCreated, TypeRuleEdited, TypeRetrieval, TypeSelection, TypeFeedback:
+	case TypeRuleCreated, TypeRuleEdited, TypeRetrieval, TypeSelection, TypeFeedback, TypeObservation:
 	case "":
 		errs = append(errs, ValidationError{Code: "required", Field: "type", Message: "type is required"})
 	default:
-		errs = append(errs, ValidationError{Code: "enum", Field: "type", Message: "type must be one of rule_created, rule_edited, retrieval, selection, feedback", Value: e.Type})
+		errs = append(errs, ValidationError{Code: "enum", Field: "type", Message: "type must be one of rule_created, rule_edited, retrieval, selection, feedback, observation", Value: e.Type})
 	}
 	if e.Type != "" && !typePattern.MatchString(e.Type) {
 		errs = append(errs, ValidationError{Code: "format", Field: "type", Message: "type must match ^[a-z_]+$", Value: e.Type})
