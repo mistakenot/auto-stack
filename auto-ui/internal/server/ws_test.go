@@ -17,6 +17,18 @@ func wsURL(base string) string {
 	return "ws" + strings.TrimPrefix(base, "http") + "/api/ws"
 }
 
+// dialWS dials the test server's WebSocket endpoint, failing the test on error.
+// The handshake response needs no explicit Body close: coder/websocket
+// documents "You never need to close resp.Body yourself" (Dial manages it).
+func dialWS(ctx context.Context, t *testing.T, base string) *websocket.Conn {
+	t.Helper()
+	c, _, err := websocket.Dial(ctx, wsURL(base), nil) //nolint:bodyclose // resp.Body is managed by websocket.Dial (see its docs)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	return c
+}
+
 // readUntil reads messages until pred returns true for one, or the context
 // deadline fires. Server-push pings and RPC responses share the connection, so
 // tests filter the stream rather than assuming message order.
@@ -46,10 +58,7 @@ func TestWSServerPush(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
 
-	c, _, err := websocket.Dial(ctx, wsURL(srv.URL), nil)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
+	c := dialWS(ctx, t, srv.URL)
 	defer c.Close(websocket.StatusNormalClosure, "")
 
 	msg := readUntil(ctx, t, c, func(m map[string]any) bool {
@@ -71,10 +80,7 @@ func TestWSRequestResponse(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	c, _, err := websocket.Dial(ctx, wsURL(srv.URL), nil)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
+	c := dialWS(ctx, t, srv.URL)
 	defer c.Close(websocket.StatusNormalClosure, "")
 
 	req := []byte(`{"jsonrpc":"2.0","id":99,"method":"ping","params":{"seq":7}}`)

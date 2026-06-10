@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 )
 
 // JSON-RPC 2.0 envelope + dispatcher. This file is transport-agnostic (no
@@ -98,7 +99,8 @@ func (d *Dispatcher) dispatch(ctx context.Context, raw []byte) (*rpcResponse, bo
 		return nil, false // result/error are discarded for notifications
 	}
 	if err != nil {
-		if re, ok := err.(*rpcError); ok {
+		var re *rpcError
+		if errors.As(err, &re) {
 			return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: re}, true
 		}
 		return errResponse(req.ID, codeInternalError, "internal error", err.Error()), true
