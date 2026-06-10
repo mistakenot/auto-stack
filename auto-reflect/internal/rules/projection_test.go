@@ -150,6 +150,53 @@ func TestFoldedThroughCountsOnlyRuleEvents(t *testing.T) {
 	}
 }
 
+// shardedRuleEvent builds a single-shard ShardedEvent for an in-memory fold test.
+func shardedRuleEvent(seq int, ts, typ string, payload any) events.ShardedEvent {
+	raw, _ := json.Marshal(payload)
+	return events.ShardedEvent{
+		Shard: "host-2026-06-10-aaaaaaaa.jsonl",
+		Event: events.Event{Type: typ, Seq: seq, TS: ts, Payload: raw},
+	}
+}
+
+func TestFoldProvenanceFromCreateAndEdit(t *testing.T) {
+	// rule_created carries provenance; a later observation_ids edit replaces it.
+	result := Fold([]events.ShardedEvent{
+		shardedRuleEvent(1, "2026-06-10T10:00:00Z", events.TypeRuleCreated, events.RuleCreatedPayload{
+			RuleID: "r-aaaaaaaa", Domain: []string{"go"}, UseWhen: "x", Content: "c",
+			CausalNote: "n", RuleType: RuleTypeSoft, Lifecycle: LifecycleDraft,
+			ObservationIDs: []string{"ob-00000001", "ob-00000002"},
+		}),
+		shardedRuleEvent(2, "2026-06-10T11:00:00Z", events.TypeRuleEdited, events.RuleEditedPayload{
+			RuleID: "r-aaaaaaaa", FromVersion: 1, ToVersion: 2,
+			Deltas: []events.FieldDelta{{
+				Field: FieldObservationIDs,
+				Old:   []string{"ob-00000001", "ob-00000002"},
+				New:   []string{"ob-00000001", "ob-00000002", "ob-00000003"},
+			}},
+		}),
+	})
+	r := findRule(t, result.Playbook, "r-aaaaaaaa")
+	if len(r.ObservationIDs) != 3 || r.ObservationIDs[2] != "ob-00000003" {
+		t.Fatalf("provenance not folded from create+edit: %#v", r.ObservationIDs)
+	}
+}
+
+func TestFoldEmptyProvenanceStaysNil(t *testing.T) {
+	// A rule with no provenance must fold to a nil slice (omitempty drops it),
+	// not an empty [] that would noise up the golden snapshot diff.
+	result := Fold([]events.ShardedEvent{
+		shardedRuleEvent(1, "2026-06-10T10:00:00Z", events.TypeRuleCreated, events.RuleCreatedPayload{
+			RuleID: "r-bbbbbbbb", Domain: []string{"go"}, UseWhen: "x", Content: "c",
+			CausalNote: "n", RuleType: RuleTypeSoft, Lifecycle: LifecycleDraft,
+		}),
+	})
+	r := findRule(t, result.Playbook, "r-bbbbbbbb")
+	if r.ObservationIDs != nil {
+		t.Fatalf("expected nil provenance, got %#v", r.ObservationIDs)
+	}
+}
+
 func findRule(t *testing.T, pb Playbook, id string) Rule {
 	t.Helper()
 	for i := range pb.Rules {
