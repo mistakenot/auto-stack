@@ -93,8 +93,11 @@ func SaveProjects(path string, cfg ProjectsConfig) error {
 	return WriteJSONFileAtomic(path, cfg)
 }
 
-// EnsureProjects loads ~/.auto/projects.json, creating an empty registry if it
-// does not exist. Returns the path, the config, whether it was created, and any error.
+// EnsureProjects loads ~/.auto/projects.json, creating it if absent. On first
+// creation it seeds the registry from the legacy ~/.auto/watch/settings.json (if
+// present) and retires that file, so the migration happens no matter which
+// command first touches the registry — `auto init` and `auto watch init` behave
+// identically and in any order. Returns the path, config, created flag, and error.
 func EnsureProjects() (string, ProjectsConfig, bool, error) {
 	path, err := ProjectsConfigPath()
 	if err != nil {
@@ -109,11 +112,60 @@ func EnsureProjects() (string, ProjectsConfig, bool, error) {
 	} else if !os.IsNotExist(err) {
 		return "", ProjectsConfig{}, false, err
 	}
+
+	// New registry: seed from the legacy watch-owned file if it has projects.
 	cfg := ProjectsConfig{Projects: []ProjectRef{}}
+	legacyPath, migrated, ok, err := migrateLegacyRegistry()
+	if err != nil {
+		return "", ProjectsConfig{}, false, err
+	} else if ok {
+		cfg = migrated
+	}
 	if err := SaveProjects(path, cfg); err != nil {
 		return "", ProjectsConfig{}, false, err
 	}
+	// Retire the legacy file so an older binary still on PATH can't keep writing
+	// to it and silently diverge from the canonical registry.
+	if ok {
+		_ = os.Rename(legacyPath, legacyPath+".migrated")
+	}
 	return path, cfg, true, nil
+}
+
+// legacyWatchRegistryPath returns ~/.auto/watch/settings.json — where auto-watch
+// stored the project list before the registry moved to ~/.auto/projects.json.
+// This shim can be removed once all hosts have migrated.
+func legacyWatchRegistryPath() (string, error) {
+	autoDir, err := AutoDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(autoDir, "watch", "settings.json"), nil
+}
+
+// migrateLegacyRegistry reads the legacy watch registry, if present and
+// non-empty, returning its path and projects so EnsureProjects can seed the
+// shared registry and then retire the legacy file. A missing or empty legacy
+// file is not an error (ok=false).
+func migrateLegacyRegistry() (legacyPath string, cfg ProjectsConfig, ok bool, err error) {
+	legacyPath, err = legacyWatchRegistryPath()
+	if err != nil {
+		return "", ProjectsConfig{}, false, err
+	}
+	if _, statErr := os.Stat(legacyPath); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return legacyPath, ProjectsConfig{}, false, nil
+		}
+		return legacyPath, ProjectsConfig{}, false, statErr
+	}
+	cfg, err = LoadProjects(legacyPath)
+	if err != nil {
+		return legacyPath, ProjectsConfig{}, false, err
+	}
+	if len(cfg.Projects) == 0 {
+		return legacyPath, ProjectsConfig{}, false, nil
+	}
+	return legacyPath, cfg, true, nil
 }
 
 // UpsertProject replaces the entry whose cleaned path matches project, or
