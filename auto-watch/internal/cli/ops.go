@@ -192,7 +192,7 @@ func newStatusCmd(application *app.App) *cobra.Command {
 		Use:   "status",
 		Short: "Show daemon and project status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			settingsPath, err := config.SettingsPath()
+			settingsPath, err := config.ProjectsPath()
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}

@@ -107,7 +107,7 @@ func checkGit(ctx context.Context) model.DoctorCheck {
 }
 
 func checkSettings() model.DoctorCheck {
-	path, err := config.SettingsPath()
+	path, err := config.ProjectsPath()
 	if err != nil {
 		return model.DoctorCheck{Name: "settings", Status: "fail", Message: err.Error(), Remediation: "run auto watch init"}
 	}
@@ -115,7 +115,7 @@ func checkSettings() model.DoctorCheck {
 		return model.DoctorCheck{
 			Name:        "settings",
 			Status:      "fail",
-			Message:     "global settings.json is missing",
+			Message:     "project registry is missing",
 			Remediation: "run auto watch init",
 		}
 	}
@@ -124,8 +124,8 @@ func checkSettings() model.DoctorCheck {
 		return model.DoctorCheck{
 			Name:        "settings",
 			Status:      "fail",
-			Message:     "failed to load global settings",
-			Remediation: "fix ~/.auto/watch/settings.json or rerun auto watch init",
+			Message:     "failed to load project registry",
+			Remediation: "fix ~/.auto/projects.json or rerun auto watch init",
 			Details:     err.Error(),
 		}
 	}
@@ -133,8 +133,8 @@ func checkSettings() model.DoctorCheck {
 		return model.DoctorCheck{
 			Name:        "settings",
 			Status:      "fail",
-			Message:     "global settings failed validation",
-			Remediation: "fix ~/.auto/watch/settings.json or rerun auto watch init",
+			Message:     "project registry failed validation",
+			Remediation: "fix ~/.auto/projects.json or rerun auto watch init",
 			Details:     errs[0].Message,
 		}
 	}

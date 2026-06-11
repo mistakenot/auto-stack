@@ -53,3 +53,46 @@ func WriteJSONFile(path string, value any) error {
 	}
 	return nil
 }
+
+// WriteJSONFileAtomic writes a value as indented JSON via a temp file in the
+// same directory followed by an atomic rename, so a concurrent reader never
+// observes a partially-written file. Use it for files multiple processes may
+// write (e.g. the shared project registry).
+//
+// Note: rename makes each write atomic, but it does not serialize concurrent
+// read-modify-write cycles — two processes upserting at once can still lose an
+// update. A file lock (cf. auto-watch's daemon flock) would be needed for that;
+// the registry is low-contention enough that atomic writes are the priority.
+func WriteJSONFileAtomic(path string, value any) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create parent for %s: %w", path, err)
+	}
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", path, err)
+	}
+	data = append(data, '\n')
+
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp for %s: %w", path, err)
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp for %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp for %s: %w", path, err)
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return fmt.Errorf("chmod temp for %s: %w", path, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename temp into %s: %w", path, err)
+	}
+	return nil
+}

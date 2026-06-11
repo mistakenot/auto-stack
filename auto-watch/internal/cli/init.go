@@ -27,9 +27,9 @@ func newInitCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Global config: %s\n", settingsPath)
+			fmt.Fprintf(cmd.OutOrStdout(), "Project registry: %s\n", settingsPath)
 			if globalCreated {
-				fmt.Fprintln(cmd.OutOrStdout(), "Created global settings.json.")
+				fmt.Fprintln(cmd.OutOrStdout(), "Created ~/.auto/projects.json.")
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Host file: %s\n", hostPath)
 			if hostCreated {
