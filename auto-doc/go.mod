@@ -6,7 +6,7 @@ require (
 	github.com/blugelabs/bluge v0.2.2
 	github.com/mistakenot/auto-shared v0.0.0
 	github.com/spf13/cobra v1.10.2
-	github.com/yuin/goldmark v1.7.16
+	github.com/yuin/goldmark v1.8.2
 )
 
 replace github.com/mistakenot/auto-shared => ../auto-shared
