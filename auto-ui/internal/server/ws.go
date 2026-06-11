@@ -11,6 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/mistakenot/auto-shared/bus"
 )
 
 // pingInterval is how often the server pushes an unsolicited `ping` notification
@@ -22,41 +23,33 @@ const pingInterval = time.Second
 // RPC responses block server-side.
 const outboundBuffer = 16
 
-// handleWS upgrades an HTTP request to a WebSocket and runs the JSON-RPC session
-// over it. It is mounted at /api/ws.
+// handleWSWithHub returns an http.HandlerFunc that upgrades an HTTP request to a
+// WebSocket and runs the JSON-RPC session over it, using the shared dispatcher
+// and hub for broadcast delivery.
 //
 // Same-origin is the default Accept policy in coder/websocket; the SPA is served
 // from the same origin both on localhost and behind `tailscale serve`, so no
 // OriginPatterns override is needed.
-func handleWS(w http.ResponseWriter, r *http.Request) {
-	c, err := websocket.Accept(w, r, nil)
-	if err != nil {
-		// Accept already wrote an error response; just log for diagnostics.
-		log.Printf("ws: accept: %v", err)
-		return
-	}
-	// Scope every goroutine to the request: cancelled when the client
-	// disconnects or the read loop exits, so the ticker and write pump unwind.
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
-	s := newSession(c, cancel)
-	go s.writePump(ctx)
-	go s.pingLoop(ctx)
-
-	// dispatcher routes client->server RPC calls. `ping` is the POC method:
-	// echo the seq back as a pong so the client can correlate the response.
-	d := newDispatcher()
-	d.Register("ping", func(ctx context.Context, params json.RawMessage) (any, error) {
-		var p struct {
-			Seq int64 `json:"seq"`
+func handleWSWithHub(hub *bus.Hub, d *Dispatcher) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			log.Printf("ws: accept: %v", err)
+			return
 		}
-		_ = json.Unmarshal(params, &p) // params optional; zero seq is fine
-		return map[string]any{"pong": true, "seq": p.Seq}, nil
-	})
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
 
-	s.readLoop(ctx, d)
-	_ = c.Close(websocket.StatusNormalClosure, "")
+		s := newSession(c, ctx, cancel)
+		unsub := hub.Subscribe(s)
+		defer unsub()
+
+		go s.writePump(ctx)
+		go s.pingLoop(ctx)
+
+		s.readLoop(ctx, d)
+		_ = c.Close(websocket.StatusNormalClosure, "")
+	}
 }
 
 // session owns a single WebSocket connection. coder/websocket connections are
@@ -64,15 +57,25 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 // and server-push notifications alike — is funnelled through `out` and written
 // by the single writePump goroutine. cancel is the connection's context cancel:
 // calling it unwinds writePump, pingLoop, and readLoop, then handleWS closes.
+//
+// session implements bus.Sink so the hub can deliver broadcast events.
 type session struct {
 	c      *websocket.Conn
+	ctx    context.Context
 	out    chan any
 	cancel context.CancelFunc
 	seq    atomic.Int64 // monotonic ping sequence
 }
 
-func newSession(c *websocket.Conn, cancel context.CancelFunc) *session {
-	return &session{c: c, out: make(chan any, outboundBuffer), cancel: cancel}
+func newSession(c *websocket.Conn, ctx context.Context, cancel context.CancelFunc) *session {
+	return &session{c: c, ctx: ctx, out: make(chan any, outboundBuffer), cancel: cancel}
+}
+
+// Deliver implements bus.Sink. It enqueues the event as a JSON-RPC notification
+// on the session's outbound channel. If the client is too slow, the message is
+// dropped (and the connection cancelled) by enqueue's non-blocking default.
+func (s *session) Deliver(ev bus.Event) {
+	s.enqueue(s.ctx, ev.AsNotification())
 }
 
 // enqueue offers a message to the write pump. If the buffer is full the client

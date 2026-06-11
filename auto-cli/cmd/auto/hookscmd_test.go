@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mistakenot/auto-shared/bus"
 	sharedconfig "github.com/mistakenot/auto-shared/config"
 )
 
@@ -21,45 +22,91 @@ const claudePostToolUse = `{
   "tool_input": {"file_path": "/repos/widgets/docs/plan.md", "old_string": "a", "new_string": "b"}
 }`
 
-func TestBuildHookEventNormalizesAndMapsProject(t *testing.T) {
+func TestBuildBusEventNormalizesAndMapsProject(t *testing.T) {
 	registry := sharedconfig.ProjectsConfig{Projects: []sharedconfig.ProjectRef{
 		{ID: "widgets", Path: "/repos/widgets"},
 	}}
-	ev := buildHookEvent("claude", []byte(claudePostToolUse), registry)
+	ev := buildBusEvent("claude", []byte(claudePostToolUse), registry)
 
-	if ev.Agent != "claude" || ev.Event != "PostToolUse" || ev.Tool != "Edit" {
-		t.Fatalf("unexpected normalization: %+v", ev)
+	if ev.Source != "auto/hooks/claude" {
+		t.Errorf("source = %q, want auto/hooks/claude", ev.Source)
 	}
-	if ev.SessionID != "sess-123" {
-		t.Errorf("session id = %q", ev.SessionID)
+	if ev.Type != "agent.tool.post" {
+		t.Errorf("type = %q, want agent.tool.post", ev.Type)
 	}
-	if ev.Project != "widgets" {
-		t.Errorf("expected cwd mapped to project 'widgets', got %q", ev.Project)
+	if ev.Session != "sess-123" {
+		t.Errorf("session = %q, want sess-123", ev.Session)
 	}
-	if len(ev.Paths) != 1 || ev.Paths[0] != "/repos/widgets/docs/plan.md" {
-		t.Errorf("expected plan.md path extracted, got %v", ev.Paths)
+	if ev.Time == "" {
+		t.Error("expected time set")
 	}
-	if ev.Timestamp == "" {
-		t.Errorf("expected timestamp set")
+	if ev.SpecVersion != bus.SpecVersion {
+		t.Errorf("specversion = %q, want %q", ev.SpecVersion, bus.SpecVersion)
+	}
+
+	// Validate the envelope is structurally valid.
+	if errs := ev.Validate(); len(errs) > 0 {
+		t.Fatalf("envelope validation failed: %v", errs)
+	}
+
+	// Decode the ToolPost data payload.
+	tp, err := bus.DecodeData[bus.ToolPost](ev)
+	if err != nil {
+		t.Fatalf("decode ToolPost: %v", err)
+	}
+	if tp.Tool != "Edit" {
+		t.Errorf("tool = %q, want Edit", tp.Tool)
+	}
+	if tp.Event != "PostToolUse" {
+		t.Errorf("event = %q, want PostToolUse", tp.Event)
+	}
+	if tp.Raw == nil {
+		t.Error("expected raw tool_input preserved")
 	}
 }
 
-func TestBuildHookEventToleratesGarbage(t *testing.T) {
-	ev := buildHookEvent("codex", []byte("not json at all"), sharedconfig.ProjectsConfig{})
-	if ev.Agent != "codex" || ev.Timestamp == "" {
-		t.Fatalf("expected a usable event even for garbage input, got %+v", ev)
+func TestBuildBusEventToleratesGarbage(t *testing.T) {
+	ev := buildBusEvent("codex", []byte("not json at all"), sharedconfig.ProjectsConfig{})
+	if ev.Source != "auto/hooks/codex" {
+		t.Fatalf("expected source auto/hooks/codex for garbage input, got %q", ev.Source)
+	}
+	if ev.Time == "" {
+		t.Fatal("expected time set even for garbage input")
+	}
+	if errs := ev.Validate(); len(errs) > 0 {
+		t.Fatalf("even garbage input should produce a valid envelope: %v", errs)
 	}
 }
 
-func TestPostHookEventDelivers(t *testing.T) {
-	received := make(chan HookEvent, 1)
+func TestMapEventType(t *testing.T) {
+	tests := []struct {
+		event, tool, want string
+	}{
+		{"PostToolUse", "Edit", "agent.tool.post"},
+		{"PostToolUse", "", "agent.posttooluse"},
+		{"SessionStart", "", "agent.session.start"},
+		{"SessionEnd", "", "agent.session.end"},
+		{"PreToolUse", "", "agent.tool.pre"},
+		{"", "", "agent.unknown"},
+		{"CustomEvent", "", "agent.customevent"},
+	}
+	for _, tt := range tests {
+		got := mapEventType(tt.event, tt.tool)
+		if got != tt.want {
+			t.Errorf("mapEventType(%q, %q) = %q, want %q", tt.event, tt.tool, got, tt.want)
+		}
+	}
+}
+
+func TestPostBusEventDelivers(t *testing.T) {
+	received := make(chan bus.Notification, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/hooks" || r.Method != http.MethodPost {
+		if r.URL.Path != "/api/rpc" || r.Method != http.MethodPost {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		var ev HookEvent
-		_ = json.NewDecoder(r.Body).Decode(&ev)
-		received <- ev
+		var notif bus.Notification
+		_ = json.NewDecoder(r.Body).Decode(&notif)
+		received <- notif
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
@@ -67,15 +114,52 @@ func TestPostHookEventDelivers(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	port, _ := strconv.Atoi(u.Port())
 
-	postHookEvent(port, HookEvent{Agent: "claude", Project: "widgets", Tool: "Edit"})
+	// Build a realistic event with paths.
+	tp := bus.ToolPost{
+		Tool:  "Edit",
+		Event: "PostToolUse",
+		Paths: []bus.PathRef{{Rel: "docs/plan.md", Abs: "/repos/widgets/docs/plan.md"}},
+	}
+	ev, _ := bus.NewEvent("agent.tool.post", "auto/hooks/claude", tp)
+	ev.Project = "widgets"
+
+	postBusEvent(port, ev)
 
 	select {
-	case ev := <-received:
-		if ev.Project != "widgets" || ev.Tool != "Edit" {
-			t.Fatalf("server received wrong event: %+v", ev)
+	case notif := <-received:
+		// Verify it's a valid JSON-RPC notification wrapping a bus.Event.
+		if notif.JSONRPC != "2.0" {
+			t.Errorf("jsonrpc = %q, want 2.0", notif.JSONRPC)
+		}
+		if notif.Method != "agent.tool.post" {
+			t.Errorf("method = %q, want agent.tool.post", notif.Method)
+		}
+		if !strings.HasPrefix(notif.Params.Type, "agent.") {
+			t.Errorf("event type = %q, want agent.* prefix", notif.Params.Type)
+		}
+		if notif.Params.Project != "widgets" {
+			t.Errorf("project = %q, want widgets", notif.Params.Project)
+		}
+		if errs := notif.Params.Validate(); len(errs) > 0 {
+			t.Errorf("received event fails validation: %v", errs)
+		}
+
+		// Verify paths in the data payload.
+		tp2, err := bus.DecodeData[bus.ToolPost](notif.Params)
+		if err != nil {
+			t.Fatalf("decode ToolPost from received event: %v", err)
+		}
+		if len(tp2.Paths) != 1 {
+			t.Fatalf("expected 1 path, got %d", len(tp2.Paths))
+		}
+		if tp2.Paths[0].Rel != "docs/plan.md" {
+			t.Errorf("rel = %q, want docs/plan.md", tp2.Paths[0].Rel)
+		}
+		if tp2.Paths[0].Abs != "/repos/widgets/docs/plan.md" {
+			t.Errorf("abs = %q, want /repos/widgets/docs/plan.md", tp2.Paths[0].Abs)
 		}
 	default:
-		t.Fatal("server did not receive the hook event")
+		t.Fatal("server did not receive the bus event")
 	}
 }
 

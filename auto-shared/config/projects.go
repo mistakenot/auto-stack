@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/mistakenot/auto-shared/git"
 )
 
 const projectsFileName = "projects.json"
@@ -210,6 +212,26 @@ func (c ProjectsConfig) FindProjectByExactPath(dir string) *ProjectRef {
 	clean := filepath.Clean(dir)
 	for i := range c.Projects {
 		if filepath.Clean(c.Projects[i].Path) == clean {
+			return &c.Projects[i]
+		}
+	}
+	return nil
+}
+
+// FindProjectByRemote returns the registered project whose remote URL matches
+// the given remote after normalizing both sides via git.NormalizeRemoteURL, or
+// nil when no entry matches. This is the primary lookup for worktree paths,
+// which share a remote but not a path prefix with the registered main path.
+func (c ProjectsConfig) FindProjectByRemote(remote string) *ProjectRef {
+	norm := git.NormalizeRemoteURL(remote)
+	if norm == "" {
+		return nil
+	}
+	for i := range c.Projects {
+		if c.Projects[i].Remote == "" {
+			continue
+		}
+		if git.NormalizeRemoteURL(c.Projects[i].Remote) == norm {
 			return &c.Projects[i]
 		}
 	}

@@ -201,6 +201,74 @@ func names(entries []os.DirEntry) []string {
 	return out
 }
 
+func TestFindProjectByRemoteHit(t *testing.T) {
+	cfg := ProjectsConfig{Projects: []ProjectRef{
+		{ID: "alpha", Path: "/repos/alpha", Remote: "git@github.com:org/alpha.git"},
+		{ID: "beta", Path: "/repos/beta", Remote: "https://github.com/org/beta.git"},
+	}}
+	// SSH remote should match via normalization.
+	got := cfg.FindProjectByRemote("ssh://git@github.com/org/alpha.git")
+	if got == nil || got.ID != "alpha" {
+		t.Fatalf("expected alpha, got %+v", got)
+	}
+	// HTTPS remote should match.
+	got = cfg.FindProjectByRemote("https://github.com/org/beta")
+	if got == nil || got.ID != "beta" {
+		t.Fatalf("expected beta, got %+v", got)
+	}
+}
+
+func TestFindProjectByRemoteMiss(t *testing.T) {
+	cfg := ProjectsConfig{Projects: []ProjectRef{
+		{ID: "alpha", Path: "/repos/alpha", Remote: "https://github.com/org/alpha"},
+	}}
+	got := cfg.FindProjectByRemote("https://github.com/org/other-repo")
+	if got != nil {
+		t.Fatalf("expected nil for miss, got %+v", got)
+	}
+}
+
+func TestFindProjectByRemoteEmptyInput(t *testing.T) {
+	cfg := ProjectsConfig{Projects: []ProjectRef{
+		{ID: "alpha", Path: "/repos/alpha", Remote: "https://github.com/org/alpha"},
+	}}
+	got := cfg.FindProjectByRemote("")
+	if got != nil {
+		t.Fatalf("expected nil for empty remote, got %+v", got)
+	}
+}
+
+func TestFindProjectByRemoteNormalizesTokenBearingRemote(t *testing.T) {
+	// The stored remote may contain a PAT; the lookup remote may also contain one.
+	// Both sides should normalize, so a token-bearing stored remote matches a
+	// clean lookup remote and vice versa.
+	cfg := ProjectsConfig{Projects: []ProjectRef{
+		{ID: "alpha", Path: "/repos/alpha", Remote: "https://x-access-token:ghp_SECRET@github.com/org/alpha.git"},
+	}}
+	// Clean remote should match token-bearing stored remote.
+	got := cfg.FindProjectByRemote("https://github.com/org/alpha")
+	if got == nil || got.ID != "alpha" {
+		t.Fatalf("expected alpha via normalized match, got %+v", got)
+	}
+	// Token-bearing remote should also match.
+	got = cfg.FindProjectByRemote("https://x-access-token:ghp_OTHER@github.com/org/alpha.git")
+	if got == nil || got.ID != "alpha" {
+		t.Fatalf("expected alpha via token-bearing match, got %+v", got)
+	}
+}
+
+func TestFindProjectByRemoteSkipsEmptyRemote(t *testing.T) {
+	cfg := ProjectsConfig{Projects: []ProjectRef{
+		{ID: "local-only", Path: "/repos/local"},
+		{ID: "alpha", Path: "/repos/alpha", Remote: "https://github.com/org/alpha"},
+	}}
+	// Should not crash or match the project with empty remote.
+	got := cfg.FindProjectByRemote("https://github.com/org/alpha")
+	if got == nil || got.ID != "alpha" {
+		t.Fatalf("expected alpha, got %+v", got)
+	}
+}
+
 func TestLoadProjectsLenientUnknownFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "projects.json")
