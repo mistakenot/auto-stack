@@ -1,13 +1,20 @@
 {
-  "env": {
-    "GOMEMLIMIT": "1GiB"
-  },
   "hooks": {
-    "Notification": [
+    "PermissionRequest": [
       {
         "hooks": [
           {
-            "command": "auto hooks fire --agent claude",
+            "command": "auto hooks fire --agent codex",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "command": "auto hooks fire --agent codex",
             "type": "command"
           }
         ]
@@ -17,7 +24,7 @@
       {
         "hooks": [
           {
-            "command": "auto hooks fire --agent claude",
+            "command": "auto hooks fire --agent codex",
             "type": "command"
           }
         ]
@@ -27,7 +34,7 @@
       {
         "hooks": [
           {
-            "command": "auto hooks fire --agent claude",
+            "command": "auto hooks fire --agent codex",
             "type": "command"
           }
         ]
@@ -37,17 +44,7 @@
       {
         "hooks": [
           {
-            "command": "auto hooks fire --agent claude",
-            "type": "command"
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "command": "auto hooks fire --agent claude",
+            "command": "auto hooks fire --agent codex",
             "type": "command"
           }
         ]
@@ -57,7 +54,7 @@
       {
         "hooks": [
           {
-            "command": "auto hooks fire --agent claude",
+            "command": "auto hooks fire --agent codex",
             "type": "command"
           }
         ]
@@ -67,7 +64,17 @@
       {
         "hooks": [
           {
-            "command": "auto hooks fire --agent claude",
+            "command": "auto hooks fire --agent codex",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "command": "auto hooks fire --agent codex",
             "type": "command"
           }
         ]
@@ -77,7 +84,7 @@
       {
         "hooks": [
           {
-            "command": "auto hooks fire --agent claude",
+            "command": "auto hooks fire --agent codex",
             "type": "command"
           }
         ]
@@ -87,7 +94,7 @@
       {
         "hooks": [
           {
-            "command": "auto hooks fire --agent claude",
+            "command": "auto hooks fire --agent codex",
             "type": "command"
           }
         ]

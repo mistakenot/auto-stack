@@ -43,13 +43,15 @@ type HookEvent struct {
 	Timestamp string   `json:"ts"`
 }
 
-// newHooksCmd is the parent for agent hook adapters: `auto hooks fire`.
+// newHooksCmd is the parent for agent hook adapters: `auto hooks fire` (the
+// runtime adapter) and `auto hooks install` (wires fire into agent config).
 func newHooksCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "hooks",
 		Short: "Agent hook adapters (Claude Code, Codex)",
 	}
 	cmd.AddCommand(newHooksFireCmd())
+	cmd.AddCommand(newHooksInstallCmd())
 	return cmd
 }
 
