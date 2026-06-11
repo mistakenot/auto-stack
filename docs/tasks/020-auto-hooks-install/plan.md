@@ -49,15 +49,15 @@ Linear DAG: each phase depends on the previous. Single small command, no paralle
 - [x] Step 1.4: Commit: `feat(020): auto hooks install — wire fire hook into claude+codex config`
 
 ### Phase 2: Tests
-- [ ] Step 2.1: Create `auto-cli/cmd/auto/hooksinstallcmd_test.go` (package `main`). Helper: temp dir + `git init` (reuse the `gitInTest`/init-test pattern) + `t.Chdir(repo)`.
+- [x] Step 2.1: Create `auto-cli/cmd/auto/hooksinstallcmd_test.go` (package `main`). Helper: temp dir + `git init` (reuse the `gitInTest`/init-test pattern) + `t.Chdir(repo)`.
   - `TestInstallWritesBothAgents` (AC-1, AC-4): run `newHooksInstallCmd()` via `cmd.Execute()`; assert `.claude/settings.json` and `.codex/hooks.json` exist and each contains a `command` handler `auto hooks fire --agent <agent>` on every event in the respective constant list.
   - `TestInstallPreservesExistingKeysAndHooks` (AC-2): pre-seed `.claude/settings.json` with `{"env":{"GOMEMLIMIT":"1GiB"},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo existing","statusMessage":"hi","timeout":30,"args":["x"],"if":"Bash(git *)"}]}]}}`; run install; assert `env` survives, the `echo existing` handler is retained **with all four extra fields (`statusMessage`, `timeout`, `args`, `if`) intact** (proves lossless generic-tree merge), and the fire handler is added alongside it on `Stop`.
   - `TestInstallIdempotent` (AC-3): run install twice; assert exactly one fire handler per event and second run reports 0 added (e.g. assert via `installAgentHooks` return counts on a unit call).
   - `TestInstallRejectsNonRepo`: run in a non-git temp dir; assert error mentions git repository.
   - `TestInstallSummaryHasCodexTrustHint` (AC-6): capture `cmd.OutOrStdout()`; assert it mentions trusting `.codex/hooks.json` / `/hooks`.
   - Unit `TestInstallAgentHooksCounts`: call `installAgentHooks` directly on a temp path; first call `added==len(events), created==true`; second call `existing==len(events), added==0, created==false`.
-- [ ] Step 2.2: Run `cd auto-cli && go test ./cmd/auto/...` — all pass.
-- [ ] Step 2.3: Commit: `test(020): cover merge, idempotency, both agents, repo guard`
+- [x] Step 2.2: Run `cd auto-cli && go test ./cmd/auto/...` — all pass.
+- [x] Step 2.3: Commit: `test(020): cover merge, idempotency, both agents, repo guard`
 
 ### Phase 3: Dogfood verification (AC-5)
 - [ ] Step 3.1: Build: `make build` (produces `./bin/auto`).
