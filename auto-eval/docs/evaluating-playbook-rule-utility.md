@@ -1,5 +1,5 @@
 ---
-hash: "77255a4b"
+hash: "6183ff97"
 id: "eval-rule-utility"
 read_when: "designing evals that measure whether auto-reflect playbook rules actually improve agent runs, or building the auto-eval utility-scoring harness"
 summary: "Design notes on how to evaluate whether a learned playbook of rules causally improves coding-agent runs — separating good-artifact from causal-utility, the measurement-vs-causation axes, the eval ladder, the evidence-quote-as-oracle trick, the circularity trap of pivotal tasks, utility as a product of benefit and firing-cost, model-relativity and decay, units of analysis, harm as a worst-case, and a recommended first harness."
@@ -236,7 +236,52 @@ Infra already present: `auto env` worktrees for parallel isolated reruns, the
 `ntm`/sub-agent fan-out, ETL+search for replay and scoring, the event log for provenance.
 The harness is those plus a design-of-experiments layer and a per-task oracle.
 
-## 14. Sequencing for single-user scale
+## 14. From operator instinct to a hardened v1
+
+A natural operator instinct, stated plainly: *replay a real task from a previous commit of
+the repo, A/B a small tweak (add a rule), rerun the original execution prompt, and see how
+the outcome differs.* That instinct is essentially correct — it independently arrives at §13
+and at the compile → run → score model in `requirements.md`. It also gets the hardest thing
+right for free:
+
+**Same-task A/B breaks the difficulty confound.** Running both arms on the *same* task,
+differing only by the rule, randomizes away the "rules get used on hard tasks" confound (§1,
+Axis B) that makes observational utility untrustworthy. Most approaches can't; this one does
+by construction. The skeleton is right — what turns it into a *trustworthy* harness is the
+methodology around it:
+
+1. **Compare arms, not history.** The baseline is arm A (no rule), not what actually
+   happened. The original ran with a human steering it; a fresh solo replay of the execution
+   prompt is a different, easier task. Use history at most as a sanity sample, never as the
+   metric. (This one reframe removes most of the "fair counterfactual" worry.)
+2. **Replay only replayable tasks.** Autonomous prompt→PR runs replay cleanly; heavily
+   human-steered ones don't (trajectory loss). Filter to autonomous tasks, or add a
+   user-simulator to replay the *interaction* — at the cost of its own bias.
+3. **N, not 1.** A single A-vs-B difference is noise; LLM variance dwarfs a small rule's
+   effect. Run several **interleaved** reps per arm with a variance-aware comparison (§12).
+   Minimum-N is effect-size-dependent.
+4. **Objective scoring is the hard half.** "See the outcome" needs a real metric: the process
+   composite (§12) plus the evidence-quote oracle (§4) where one exists — not an LLM grading
+   vibes, which re-imports the bias removed elsewhere.
+5. **Prune answer leakage.** If the starting ref still contains the solution (the task's own
+   merged PR, or planning docs describing the fix), both arms cheat. The compile step must
+   reset to genuinely *before* and strip downstream artifacts — this is why `requirements.md`
+   makes compile hermetic.
+6. **Confirm the rule actually fires.** The intervention is *the agent seeing the rule*, not
+   the rule existing in the playbook. If retrieval doesn't surface it for the task, arm B ==
+   arm A and you measure nothing.
+7. **Whole-playbook first, per-rule later.** "One small tweak at a time" is the right unit
+   for *attribution* but too expensive to start with at single-user volume. Begin with
+   playbook-vs-none (one big, cheap, high-signal contrast), then drop to per-rule ablation to
+   explain which rules drove it.
+8. **Don't cherry-pick the tasks.** Selecting tasks where you expect the rule to help
+   re-imports the circularity of §6. Sample across task types.
+
+Net: the instinct is the correct v1 harness; these eight points harden it rather than replace
+it. The first three (compare arms, pick replayable tasks, run N) are the ones most often
+skipped and the ones that most determine whether the result means anything.
+
+## 15. Sequencing for single-user scale
 
 The design doc's reviewer notes warn: at ~10 sessions/day, in-vivo A/B and the contrastive
 loop won't reach significance before the 90-day confidence half-life decays the rule. So:
@@ -252,7 +297,7 @@ loop won't reach significance before the 90-day confidence half-life decays the 
    of *evidence* (occurrence). The stronger gate is *utility*: a draft graduates only after it
    passes its ablation. This turns evals from a side activity into the promotion mechanism.
 
-## 15. Open questions (unresolved)
+## 16. Open questions (unresolved)
 
 - **Is "replay the opening prompt" a fair counterfactual?** The original session's value came
   from its *whole trajectory*; a fresh replay re-runs only the initial prompt and loses the
