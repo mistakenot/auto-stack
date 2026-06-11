@@ -21,8 +21,8 @@ for every documented hook event, preserving existing keys and staying idempotent
 - [Context](./context.md)
 
 ## How to Test
-- [ ] `auto-cli/cmd/auto/hooksinstallcmd_test.go` — unit: `installAgentHooks` adds/merges/dedupes; cobra-e2e: `auto hooks install` writes both files in a temp git repo
-- [ ] Manual (AC-5): run `auto hooks install` in this repo; `cat .claude/settings.json`; pipe a sample payload to `auto hooks fire --agent claude`, assert exit 0
+- [x] `auto-cli/cmd/auto/hooksinstallcmd_test.go` — unit: `installAgentHooks` adds/merges/dedupes; cobra-e2e: `auto hooks install` writes both files in a temp git repo
+- [x] Manual (AC-5): run `auto hooks install` in this repo; `cat .claude/settings.json`; pipe a sample payload to `auto hooks fire --agent claude`, assert exit 0
 
 ## Execution Sequence
 ```
@@ -60,27 +60,27 @@ Linear DAG: each phase depends on the previous. Single small command, no paralle
 - [x] Step 2.3: Commit: `test(020): cover merge, idempotency, both agents, repo guard`
 
 ### Phase 3: Dogfood verification (AC-5)
-- [ ] Step 3.1: Build: `make build` (produces `./bin/auto`).
-- [ ] Step 3.2: Run `./bin/auto hooks install` in this repo. Verify: command exits 0 and prints a summary naming `.claude/settings.json` and `.codex/hooks.json`.
-- [ ] Step 3.3: Inspect `.claude/settings.json` — verify the original `env`/`GOMEMLIMIT` key is intact AND a `hooks` block now contains `auto hooks fire --agent claude` on each Claude event. Verify `.codex/hooks.json` was created with the codex events.
-- [ ] Step 3.4 (AC-5): Simulate a fired hook **through PATH resolution of the exact configured command** (not by calling `./bin/auto` directly). Put the built binary on PATH and run the bare command from the config: `export PATH="$(pwd)/bin:$PATH"; command -v auto` (verify it points at `$(pwd)/bin/auto`), then `echo '{"hook_event_name":"PostToolUse","cwd":"'$(pwd)'","tool_name":"Edit"}' | sh -c 'auto hooks fire --agent claude'` — verify exit 0. This proves the installed bare `auto hooks fire …` string resolves, which `./bin/auto …` would not.
-- [ ] Step 3.5 (AC-6): Verify the `auto hooks install` summary from Step 3.2 included the Codex trust remediation hint (mentions `.codex/hooks.json` must be trusted, e.g. via `/hooks`).
+- [x] Step 3.1: Build: `make build` (produces `./bin/auto`).
+- [x] Step 3.2: Run `./bin/auto hooks install` in this repo. Verify: command exits 0 and prints a summary naming `.claude/settings.json` and `.codex/hooks.json`.
+- [x] Step 3.3: Inspect `.claude/settings.json` — verify the original `env`/`GOMEMLIMIT` key is intact AND a `hooks` block now contains `auto hooks fire --agent claude` on each Claude event. Verify `.codex/hooks.json` was created with the codex events.
+- [x] Step 3.4 (AC-5): Simulate a fired hook **through PATH resolution of the exact configured command** (not by calling `./bin/auto` directly). Put the built binary on PATH and run the bare command from the config: `export PATH="$(pwd)/bin:$PATH"; command -v auto` (verify it points at `$(pwd)/bin/auto`), then `echo '{"hook_event_name":"PostToolUse","cwd":"'$(pwd)'","tool_name":"Edit"}' | sh -c 'auto hooks fire --agent claude'` — verify exit 0. This proves the installed bare `auto hooks fire …` string resolves, which `./bin/auto …` would not.
+- [x] Step 3.5 (AC-6): Verify the `auto hooks install` summary from Step 3.2 included the Codex trust remediation hint (mentions `.codex/hooks.json` must be trusted, e.g. via `/hooks`).
 
 <!-- RESOLVED(P2): AC-5 test bypasses the installed command string
 REVIEW: AC-5 requires proving the configured bare command `auto hooks fire --agent claude` resolves to the `auto` binary. Step 3.4 runs `./bin/auto hooks fire...` directly, so it would pass even when `auto` is not on PATH and the installed hook command would fail. Verify the command from the config itself, for example build `./bin/auto`, set `PATH="$(pwd)/bin:$PATH"` or otherwise ensure `command -v auto` is the expected binary, then pipe the sample payload through `sh -c 'auto hooks fire --agent claude'` or through the exact JSON `command` value.
 AUTHOR: Fixed. Step 3.4 now puts `$(pwd)/bin` on PATH, asserts `command -v auto` resolves to the built binary, and runs the sample payload through `sh -c 'auto hooks fire --agent claude'` — the exact bare command string the installer writes — so PATH resolution is actually exercised. Updated AC-5 in requirements.md to state the PATH precondition explicitly.
 -->
 
-- [ ] Step 3.6: Commit: `chore(020): install fire hooks in-repo (dogfood)` (includes updated `.claude/settings.json` and new `.codex/hooks.json`).
+- [x] Step 3.6: Commit: `chore(020): install fire hooks in-repo (dogfood)` (includes updated `.claude/settings.json` and new `.codex/hooks.json`).
 
 ## Success Criteria
-- [ ] `cd auto-cli && go build ./...` and `go vet ./...` pass; `gofmt -l cmd/auto` is empty.
-- [ ] `cd auto-cli && go test ./cmd/auto/...` passes, covering AC-1 through AC-4 and AC-6.
-- [ ] `auto hooks install` is a registered subcommand under `auto hooks` (visible in `--help`).
-- [ ] AC-2 verified: `.claude/settings.json`'s `env` key and any pre-existing hook (incl. extra handler fields `statusMessage`/`timeout`/`args`/`if`) survive a merge.
-- [ ] AC-3 verified: running install twice produces no duplicate fire handlers.
-- [ ] AC-5 verified: after in-repo install, with `$(pwd)/bin` on PATH, piping a sample payload through `sh -c 'auto hooks fire --agent claude'` (the exact configured command) exits 0.
-- [ ] AC-6 verified: install summary prints the Codex trust remediation hint.
+- [x] `cd auto-cli && go build ./...` and `go vet ./...` pass; `gofmt -l cmd/auto` is empty.
+- [x] `cd auto-cli && go test ./cmd/auto/...` passes, covering AC-1 through AC-4 and AC-6.
+- [x] `auto hooks install` is a registered subcommand under `auto hooks` (visible in `--help`).
+- [x] AC-2 verified: `.claude/settings.json`'s `env` key and any pre-existing hook (incl. extra handler fields `statusMessage`/`timeout`/`args`/`if`) survive a merge.
+- [x] AC-3 verified: running install twice produces no duplicate fire handlers.
+- [x] AC-5 verified: after in-repo install, with `$(pwd)/bin` on PATH, piping a sample payload through `sh -c 'auto hooks fire --agent claude'` (the exact configured command) exits 0.
+- [x] AC-6 verified: install summary prints the Codex trust remediation hint.
 
 ## Open Questions
 - (none — all resolved in requirements.md)
