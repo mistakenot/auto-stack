@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	sharedconfig "github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-ui/internal/app"
 	"github.com/mistakenot/auto-ui/internal/config"
 	"github.com/mistakenot/auto-ui/internal/server"
@@ -59,7 +60,17 @@ func newServeCmd(application *app.App) *cobra.Command {
 			// Bind to loopback only: auto-ui is a local-dev/internal tool, so it
 			// must not be reachable from the LAN. ReadHeaderTimeout guards against
 			// a stalled client holding the connection open indefinitely.
-			handler := server.New(web.FS(), web.Mode)
+			handler := server.New(web.FS(), web.Mode, server.WithRegistryProvider(func() sharedconfig.ProjectsConfig {
+				p, err := sharedconfig.ProjectsConfigPath()
+				if err != nil {
+					return sharedconfig.ProjectsConfig{}
+				}
+				cfg, err := sharedconfig.LoadProjects(p)
+				if err != nil {
+					return sharedconfig.ProjectsConfig{}
+				}
+				return cfg
+			}))
 			srv := &http.Server{
 				Addr:              fmt.Sprintf("127.0.0.1:%d", port),
 				Handler:           handler,
