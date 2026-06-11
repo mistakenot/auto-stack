@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>021: Auto Bus — unified event/RPC standard</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.2.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <pd-doc title="021: Auto Bus — unified event/RPC standard" status="draft" generated="2026-06-11">
+
+    <!-- ========================= OVERVIEW ========================= -->
+    <pd-tab name="Overview">
+
+      <pd-section id="problem" title="Problem">
+        <p>
+          Auto-stack components are growing <strong>ad-hoc, incompatible communication paths</strong>:
+          <code>auto hooks fire</code> POSTs a bespoke <code>HookEvent</code> to an auto-ui endpoint
+          that <em>doesn't exist</em>; <code>auto-watch</code> traps its events in SQLite; and
+          <code>auto-reflect</code> invented its own JSONL envelope. There is no shared standard for
+          push events or two-way RPC, and the web UI has no way to know when an agent changes
+          something it is rendering.
+        </p>
+      </pd-section>
+
+      <pd-section id="goal" title="Goal &amp; first use case">
+        <p>
+          Define one unified communication standard — the <strong>auto bus</strong> — for streaming
+          push events <em>and</em> two-way JSON-RPC over pluggable transports. Prove it with a single
+          end-to-end use case: <strong>the web UI renders a planning doc and live-reloads it the
+          moment a coding agent edits that file</strong>.
+        </p>
+        <ul>
+          <li><strong>Framing:</strong> JSON-RPC 2.0 everywhere. Requests/responses = RPC; notifications = events.</li>
+          <li><strong>Envelope:</strong> CloudEvents-shaped (shape only, no library dependency), strongly typed and validated.</li>
+          <li><strong>Topology:</strong> a <code>auto-shared/bus</code> package hosted inside the auto-ui server.</li>
+          <li><strong>Delivery:</strong> at-most-once, explicitly lossy — events are <em>invalidations, not state transfer</em>.</li>
+          <li><strong>Subscription:</strong> broadcast every event to all WS clients; filtering is client-side.</li>
+        </ul>
+      </pd-section>
+
+      <pd-section id="layering" title="Architecture — layered, pluggable">
+        <pd-mermaid caption="The four layers: transports carry JSON-RPC frames carry CloudEvents envelopes carry semantic types">
+flowchart TB
+  subgraph Semantics["Semantics — types &amp; methods"]
+    direction LR
+    S1[agent.tool.post] ~~~ S2[doc.changed] ~~~ S3[doc.get / doc.list]
+  end
+  subgraph Envelope["Envelope — CloudEvents-shaped"]
+    E1[type · source · id · time · data + project/session + remote/branch/worktree/commit]
+  end
+  subgraph Framing["Framing — JSON-RPC 2.0"]
+    F1[request/response = RPC] ~~~ F2[notification = event]
+  end
+  subgraph Bindings["Bindings — pluggable"]
+    B1[HTTP POST /api/rpc] ~~~ B2[WebSocket /api/ws] ~~~ B3[unix socket — future]
+  end
+  Semantics --> Envelope --> Framing --> Bindings
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="hub-topology" title="Topology — hub, not mesh">
+        <p>
+          The auto-ui server is the <strong>hub</strong>: the only long-lived process with a port.
+          Everything publishes <em>to</em> it; subscribers fan out <em>from</em> it. Components never
+          talk to each other directly — they only know the bus. The hub also <strong>enriches</strong>:
+          it derives higher-level events (<code>doc.changed</code>) from raw ones
+          (<code>agent.tool.post</code>) using the shared project registry.
+        </p>
+        <pd-mermaid caption="First use case — agent edit to live reload">
+sequenceDiagram
+  participant A as Coding agent
+  participant H as auto hooks fire
+  participant Hub as auto-ui hub (/api/rpc)
+  participant WS as WS clients
+  participant V as Doc view
+  A->>H: PostToolUse hook (Edit plan.md)
+  H->>H: resolve git provenance + rel/abs paths
+  H->>Hub: POST agent.tool.post (fire-and-forget, 150ms)
+  Hub->>WS: broadcast agent.tool.post
+  Hub->>Hub: derive doc.changed (docs/**/*.md match)
+  Hub->>WS: broadcast doc.changed
+  WS->>V: notification doc.changed
+  V->>Hub: doc.get {project, path, worktree}
+  Hub-->>V: raw markdown
+  V->>V: re-render (no manual refresh)
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="workspace-identity" title="Workspace identity — linking events to a workload">
+        <p>
+          Hooks fire from <strong>worktrees / branches at arbitrary paths</strong>, not the registered
+          main repo. A relative path alone is ambiguous (it exists in N worktrees); an absolute path
+          alone is unstable (machine-specific, recycled). So events carry a thin layer of
+          <strong>workspace provenance</strong>, captured once by the producer via git:
+        </p>
+        <table>
+          <thead><tr><th>Concern</th><th>Identifier</th><th>Carried as</th></tr></thead>
+          <tbody>
+            <tr><td>Which repo</td><td>normalized git remote (machine-independent)</td><td><code>remote</code></td></tr>
+            <tr><td>Which feature / workload</td><td><code>(remote, branch)</code></td><td><code>remote</code> + <code>branch</code></td></tr>
+            <tr><td>Which workspace (files, this host)</td><td>worktree root</td><td><code>worktree</code></td></tr>
+            <tr><td>Which logical document</td><td><code>(project, rel-path)</code></td><td><code>project</code> + <code>data.rel</code></td></tr>
+            <tr><td>Where is the actual file</td><td>absolute path</td><td><code>data.abs</code></td></tr>
+          </tbody>
+        </table>
+        <p>
+          Result: the live-reload loop is <strong>workspace-correct</strong>. An edit in worktree X
+          reloads the UI only if it's displaying worktree X. This also forces resolving
+          <code>project</code> <em>by remote</em> (a worktree path won't prefix-match main).
+        </p>
+      </pd-section>
+      <pd-thread anchor="workspace-identity" status="resolved" priority="p1" title="Durable workload key: (remote, branch) + worktree">
+        <pd-comment by="review">Hooks come from worktrees/branches in other locations. How do we link an event back to the feature/branch/workspace it belongs to? File events should probably carry both relative and absolute paths.</pd-comment>
+        <pd-comment by="author">Adopted: producer-captured git provenance — workload = (remote, branch), worktree root locates files, logical doc = (project, rel-path). File payloads carry both {rel, abs}. Confirmed over the two alternatives (worktree-path-only; session-centric/defer-to-ETL) because only this stays machine-independent and gives the live UI branch/workspace identity in real time.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="scope" title="Out of scope">
+        <ul>
+          <li><code>subscribe()</code> filtering RPC, unix-socket binding, headless <code>auto bus serve</code> — spec-documented future extensions only.</li>
+          <li>auto-watch daemon actually publishing to the bus — named second adopter, <strong>paper mapping only</strong>.</li>
+          <li>Durability, replay, ordering, acks — the bus is intentionally lossy.</li>
+          <li>Auth beyond loopback binding (Tailscale serve handles remote).</li>
+          <li>Cross-host workspace reconciliation; hub-side git enrichment (producer-captured in v1).</li>
+          <li>Rich doc browsing (index, search) — one minimal view proves the loop.</li>
+        </ul>
+      </pd-section>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <!-- ========================= SOLUTION ========================= -->
+    <pd-tab name="Solution">
+
+      <pd-section id="wire-format" title="Wire format — symmetric publish &amp; broadcast">
+        <p>
+          An <strong>event</strong> on the wire is a JSON-RPC <strong>notification</strong>, identical
+          inbound (publish) and outbound (broadcast). <code>method</code> = the dotted event type so
+          a client's <code>on("doc.changed", …)</code> works directly; broadcast-everything still
+          holds (every event reaches every client; <code>on</code> is just client-side interest).
+        </p>
+        <pd-code lang="json" caption="One event = one JSON-RPC notification (publish frame === broadcast frame)">
+{
+  "jsonrpc": "2.0",
+  "method": "agent.tool.post",
+  "params": {
+    "specversion": "1.0",
+    "type": "agent.tool.post",
+    "source": "auto/hooks/claude",
+    "id": "ev-9f3a1c20",
+    "time": "2026-06-11T10:22:03Z",
+    "project": "auto-stack",
+    "session": "sess-123",
+    "remote": "https://github.com/mistakenot/auto-stack",
+    "branch": "feat/021-auto-bus",
+    "worktree": "/home/vscode/wt/auto-stack-021",
+    "commit": "803b662",
+    "data": {
+      "tool": "Edit",
+      "event": "PostToolUse",
+      "paths": [
+        { "rel": "docs/tasks/021-auto-bus-standard/plan.md",
+          "abs": "/home/vscode/wt/auto-stack-021/docs/tasks/021-auto-bus-standard/plan.md" }
+      ],
+      "raw": {
+        "tool_name": "Edit",
+        "tool_input": { "file_path": "/home/vscode/wt/auto-stack-021/docs/tasks/021-auto-bus-standard/plan.md",
+                        "old_string": "…", "new_string": "…" }
+      }
+    }
+  }
+}
+        </pd-code>
+        <ul>
+          <li><strong>Publish:</strong> producer POSTs this exact frame to <code>/api/rpc</code> (fire-and-forget). Malformed → HTTP 400 + JSON-RPC error, <strong>not broadcast</strong>; valid → 204.</li>
+          <li><strong>RPC</strong> (<code>doc.list</code>/<code>doc.get</code>/<code>ping</code>) are normal id-bearing JSON-RPC requests over <code>/api/ws</code>.</li>
+        </ul>
+        <p>
+          <strong>Preserve-and-normalize payloads.</strong> For tool events, <code>data</code> carries
+          two layers: a <code>raw</code> object that preserves the agent's <em>original</em> tool
+          fields verbatim (no fidelity loss — each agent's <code>tool_input</code> schema differs),
+          plus normalized fields (<code>tool</code>, <code>event</code>, <code>paths[]</code>) that
+          copy the same values under one naming standard. Consumers code against the normalized
+          interface; the raw layer stays available for anything tool-specific. This is the same
+          discipline as the envelope itself — typed where we author, opaque where we carry.
+        </p>
+      </pd-section>
+      <pd-thread anchor="wire-format" status="resolved" priority="p2" title="Preserve original tool fields + normalize to a shared interface">
+        <pd-comment by="review">For the event payloads, we should preserve all the original coding-tool fields. If we want to normalize across tools we should add new fields that copy the values but normalize to a single naming standard — so even though each agent's version of FileEdited has a different schema, they all conform to the same interface.</pd-comment>
+        <pd-comment by="author">Adopted as a two-layer payload: <code>data.raw</code> preserves the agent's original fields verbatim (lossless), and normalized fields (<code>tool</code>, <code>event</code>, <code>paths[{rel,abs}]</code>) form the shared cross-tool interface consumers code against. Reflected in the wire-format example and the <code>ToolPost</code> struct (Solution tab). Fits the existing typing discipline: typed/normalized where we author, opaque <code>json.RawMessage</code> where we carry.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="envelope-type" title="The envelope — strongly typed, opaque payload">
+        <p>
+          Typing discipline: the <strong>envelope is strongly typed and validated</strong> (the stable
+          contract every component compiles against); <code>data</code> is <strong>opaque
+          (<code>json.RawMessage</code>) for ingested agent bodies</strong> and typed only where
+          <em>we</em> author it (hub-derived events, RPC results).
+        </p>
+        <pd-api kind="struct" name="bus.Event" lang="go" path="auto-shared/bus/event.go" caption="CloudEvents-shaped envelope (mirrors auto-reflect's typed-envelope + Validate pattern)">
+          <pd-member kind="field" sig="SpecVersion string `json:\"specversion\"`">Always &quot;1.0&quot;.</pd-member>
+          <pd-member kind="field" sig="Type string `json:\"type\"`">Dotted hierarchy: agent.tool.post, doc.changed, watch.task.started.</pd-member>
+          <pd-member kind="field" sig="Source string `json:\"source\"`">Producer: auto/hooks/claude, auto/ui/hub.</pd-member>
+          <pd-member kind="field" sig="ID, Time string">Unique id + RFC3339 UTC timestamp.</pd-member>
+          <pd-member kind="field" sig="Project, Session string `json:\",omitempty\"`">Registry project id + agent session id (CloudEvents extensions).</pd-member>
+          <pd-member kind="field" sig="Remote, Branch, Worktree, Commit string `json:\",omitempty\"`">Workspace provenance — flat top-level extension attributes, filterable without parsing data.</pd-member>
+          <pd-member kind="field" sig="Data json.RawMessage `json:\"data,omitempty\"`">Opaque round-trip, or typed-by-author.</pd-member>
+          <pd-member kind="method" sig="NewEvent(typ, source string, data any) (Event, error)">Sets specversion/id/time, marshals data.</pd-member>
+          <pd-member kind="method" sig="Validate() []ValidationError">Require specversion, dotted type, source, id, time; reuses config.ValidationError.</pd-member>
+          <pd-member kind="method" sig="AsNotification() any">→ {jsonrpc:&quot;2.0&quot;, method:Type, params:Event}.</pd-member>
+        </pd-api>
+        <pd-api kind="struct" name="bus payloads" lang="go" path="auto-shared/bus/payloads.go" caption="Typed payloads for events we author">
+          <pd-member kind="struct" sig="PathRef{ Rel, Abs string }">Repo-relative (stable logical identity) + absolute (locate the file).</pd-member>
+          <pd-member kind="struct" sig="ToolPost{ Tool, Event string; Paths []PathRef; Raw json.RawMessage }">data for agent.tool.post. Tool/Event/Paths are the normalized cross-tool interface; Raw preserves the agent's original tool fields verbatim (lossless passthrough).</pd-member>
+          <pd-member kind="struct" sig="DocChanged{ Project, Path, AbsPath, Worktree, Branch string }">data for doc.changed.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="hub-api" title="The hub — decoupled broadcast core">
+        <p>
+          The <code>Hub</code> lives in <code>auto-shared/bus</code> with <strong>zero auto-ui
+          imports</strong> — it operates on a <code>Sink</code> interface. auto-ui's WebSocket
+          <code>session</code> implements <code>Sink</code>, so the broadcast core stays reusable by a
+          future headless <code>auto bus serve</code>.
+        </p>
+        <pd-api kind="interface" name="bus.Hub + Sink" lang="go" path="auto-shared/bus/hub.go">
+          <pd-member kind="interface" sig="Sink interface { Deliver(Event) }">A connected subscriber (auto-ui session implements this).</pd-member>
+          <pd-member kind="constructor" sig="NewHub() *Hub">RWMutex-guarded subscriber set.</pd-member>
+          <pd-member kind="method" sig="Subscribe(s Sink) (cancel func())">Register on connect; cancel on teardown.</pd-member>
+          <pd-member kind="method" sig="Broadcast(ev Event)">Snapshot under RLock, Deliver outside the lock; slow sinks drop, never block.</pd-member>
+        </pd-api>
+        <pd-api kind="module" name="derivation &amp; lookups" lang="go" path="auto-shared/bus/derive.go">
+          <pd-member kind="method" sig="DeriveDocChanged(ev Event, reg config.ProjectsConfig) []Event">agent.tool.post + docs/**/*.md path + registered project → doc.changed events.</pd-member>
+          <pd-member kind="method" sig="config.FindProjectByRemote(remote string) *ProjectRef">NEW — resolve project for worktree paths (path won't prefix-match main).</pd-member>
+          <pd-member kind="method" sig="git.CurrentBranch(dir) / git.CurrentCommit(dir)">NEW — provenance helpers (RepoRoot/OriginRemote already exist).</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="files" title="File changes">
+        <pd-files>
+          <pd-file path="auto-shared/bus/event.go" change="add">Event envelope, SpecVersion, Validate(), AsNotification(), NewEvent ctor</pd-file>
+          <pd-file path="auto-shared/bus/payloads.go" change="add">PathRef, ToolPost, DocChanged + encode/decode helpers</pd-file>
+          <pd-file path="auto-shared/bus/hub.go" change="add">Sink interface, Hub (Subscribe/Broadcast) — decoupled from auto-ui</pd-file>
+          <pd-file path="auto-shared/bus/derive.go" change="add">DeriveDocChanged — docs/**/*.md matcher</pd-file>
+          <pd-file path="auto-shared/bus/event_test.go" change="add">Envelope validation, opaque round-trip, typed payload, AsNotification</pd-file>
+          <pd-file path="auto-shared/bus/hub_test.go" change="add">Fan-out, slow-sink drop, deregister</pd-file>
+          <pd-file path="auto-shared/bus/derive_test.go" change="add">docs/** match vs non-md / outside-docs / unregistered</pd-file>
+          <pd-file path="auto-shared/config/projects.go" change="edit">+ FindProjectByRemote(remote)</pd-file>
+          <pd-file path="auto-shared/git/detect.go" change="edit">+ CurrentBranch(dir), CurrentCommit(dir)</pd-file>
+          <pd-file path="auto-ui/internal/server/server.go" change="edit">Build Hub + shared Dispatcher; register doc.list/doc.get/ping; mount POST /api/rpc</pd-file>
+          <pd-file path="auto-ui/internal/server/ws.go" change="edit">session implements bus.Sink; hub register/deregister; use shared dispatcher</pd-file>
+          <pd-file path="auto-ui/internal/server/rpc_ingest.go" change="add">handleRPC: parse → validate → broadcast → derive → broadcast</pd-file>
+          <pd-file path="auto-ui/internal/server/docs.go" change="add">doc.list / doc.get (workspace-aware, docs/**/*.md, traversal guard)</pd-file>
+          <pd-file path="auto-cli/cmd/auto/hookscmd.go" change="edit">Emit bus.Event (provenance + rel/abs paths) to /api/rpc; drop /api/hooks</pd-file>
+          <pd-file path="auto-cli/cmd/auto/hookscmd_test.go" change="edit">Assert posted frame is a valid agent.* bus envelope</pd-file>
+          <pd-file path="auto-ui/web/static/index.html" change="edit">Add marked to importmap</pd-file>
+          <pd-file path="auto-ui/web/static/app.js" change="edit">DocView + nav link + render case + on(&quot;doc.changed&quot;) reload</pd-file>
+          <pd-file path="auto-ui/web/static/doc.js" change="add">Doc view module — doc.list picker, doc.get render, live reload</pd-file>
+          <pd-file path="docs/auto-bus-spec.md" change="add">The standard: envelope, framing, bindings, contract, type registry, watch.task.* paper map</pd-file>
+        </pd-files>
+        <pd-thread anchor="auto-shared/bus/hub.go" status="resolved" priority="p2" title="Why Hub in auto-shared, not auto-ui?">
+          <pd-comment by="review">session is an auto-ui type — won't the Hub be coupled to it?</pd-comment>
+          <pd-comment by="author">No — Hub operates on a bus.Sink interface (Deliver(Event)). auto-ui's session implements it. Hub keeps zero auto-ui imports, so a future headless `auto bus serve` reuses it unchanged.</pd-comment>
+        </pd-thread>
+      </pd-section>
+
+    </pd-tab>
+
+    <!-- ========================= PLAN ========================= -->
+    <pd-tab name="Plan">
+
+      <pd-section id="sequence" title="Execution sequence">
+        <pd-mermaid caption="Phases 2 &amp; 3 depend only on Phase 1 (disjoint modules) but dispatch serially in the shared worktree">
+flowchart LR
+  P1[Phase 1<br/>auto-shared/bus lib] --> P2[Phase 2<br/>auto-ui hub + /api/rpc]
+  P1 --> P3[Phase 3<br/>auto-cli producer]
+  P2 --> P4[Phase 4<br/>UI doc view]
+  P2 --> P5[Phase 5<br/>spec + e2e]
+  P3 --> P5
+  P4 --> P5
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="phases" title="Phases">
+        <pd-stepper>
+
+          <pd-phase n="1" title="Shared bus library + lookups" status="todo"
+            files="auto-shared/bus/event.go,auto-shared/bus/payloads.go,auto-shared/bus/hub.go,auto-shared/bus/derive.go,auto-shared/bus/event_test.go,auto-shared/bus/hub_test.go,auto-shared/bus/derive_test.go,auto-shared/config/projects.go,auto-shared/git/detect.go">
+            <p>Pure-Go, single module, no auto-ui dependency.</p>
+            <ul>
+              <li>git: add <code>CurrentBranch</code>, <code>CurrentCommit</code> (tolerate unborn HEAD / non-repo).</li>
+              <li>config: add <code>FindProjectByRemote</code> (normalize both sides, exact match).</li>
+              <li>bus: <code>Event</code> + <code>Validate</code> + <code>NewEvent</code> + <code>AsNotification</code>; <code>PathRef</code>/<code>ToolPost</code>/<code>DocChanged</code>; <code>Sink</code>+<code>Hub</code>; <code>DeriveDocChanged</code>.</li>
+              <li>Tests for envelope, hub fan-out/drop, derivation, FindProjectByRemote.</li>
+            </ul>
+            <p><strong>Verify:</strong> <code>cd auto-shared &amp;&amp; go build ./... &amp;&amp; go test ./...</code>; <code>gofmt -l .</code> empty.</p>
+            <p><strong>Commit:</strong> <code>feat(021): phase 1 — auto-shared/bus envelope, hub, derive + registry/git lookups</code></p>
+          </pd-phase>
+
+          <pd-phase n="2" title="auto-ui hub host + ingest + doc RPCs" status="todo"
+            files="auto-ui/internal/server/server.go,auto-ui/internal/server/ws.go,auto-ui/internal/server/rpc_ingest.go,auto-ui/internal/server/docs.go">
+            <p>The real refactor: hoist the per-connection dispatcher into a shared Hub + Dispatcher.</p>
+            <ul>
+              <li><code>server.New</code>: create <code>Hub</code> + shared <code>Dispatcher</code>, register <code>ping</code>/<code>doc.list</code>/<code>doc.get</code>, load registry, mount <code>POST /api/rpc</code>.</li>
+              <li><code>ws.go</code>: <code>session</code> gains stored ctx + <code>Deliver</code>; subscribe to hub on connect, <code>defer cancel()</code> on teardown; use the shared dispatcher.</li>
+              <li><code>rpc_ingest.go</code>: parse frame → <code>Validate</code> (400 on fail) → <code>Broadcast</code> → <code>DeriveDocChanged</code> → broadcast each.</li>
+              <li><code>docs.go</code>: workspace-aware <code>doc.list</code> (rel paths, no bodies) / <code>doc.get</code> (raw markdown, traversal guard).</li>
+            </ul>
+            <p><strong>Verify:</strong> <code>cd auto-ui &amp;&amp; go build ./... &amp;&amp; go test ./...</code>; existing ws/rpc tests still pass.</p>
+            <p><strong>Commit:</strong> <code>feat(021): phase 2 — hub broadcast, /api/rpc ingest, doc.changed derivation, doc.list/get</code></p>
+          </pd-phase>
+
+          <pd-phase n="3" title="Migrate auto hooks fire to the bus envelope" status="todo"
+            files="auto-cli/cmd/auto/hookscmd.go,auto-cli/cmd/auto/hookscmd_test.go">
+            <p>Producer side — emits the standard envelope with provenance.</p>
+            <ul>
+              <li>Build <code>bus.Event</code>: type from event-class (<code>agent.tool.post</code> …), <code>source=auto/hooks/&lt;agent&gt;</code>.</li>
+              <li>Provenance from cwd via git (best-effort, omit-on-error to protect the 150ms budget); project via <code>FindProjectByRemote</code> → <code>FindProjectByPath</code> fallback.</li>
+              <li>Paths become <code>[]PathRef{Rel,Abs}</code> packed into <code>ToolPost</code>.</li>
+              <li>POST <code>ev.AsNotification()</code> to <code>/api/rpc</code>; delete every <code>/api/hooks</code> reference.</li>
+            </ul>
+            <p><strong>Verify:</strong> <code>cd auto-cli &amp;&amp; go test ./...</code>; <code>grep -rn '/api/hooks'</code> → none.</p>
+            <p><strong>Commit:</strong> <code>feat(021): phase 3 — auto hooks fire publishes standard bus envelope to /api/rpc</code></p>
+          </pd-phase>
+
+          <pd-phase n="4" title="Live-reloading doc view (SPA)" status="todo"
+            files="auto-ui/web/static/index.html,auto-ui/web/static/app.js,auto-ui/web/static/doc.js">
+            <p>The consumer that proves the loop.</p>
+            <ul>
+              <li><code>index.html</code>: add <code>marked</code> to the importmap.</li>
+              <li><code>doc.js</code>: <code>DocView</code> — <code>doc.list</code> picker, <code>doc.get</code> + <code>marked.parse</code> render, <code>on("doc.changed")</code> → reload when {project,path,worktree} matches the open doc.</li>
+              <li><code>app.js</code>: import DocView, nav link, render case.</li>
+              <li>Manual smoke on the dev server (<code>-tags dev</code>, live assets).</li>
+            </ul>
+            <p><strong>Verify:</strong> open <code>#/doc?project=auto-stack&amp;path=docs/tasks/021-auto-bus-standard/plan.md</code> renders; no console errors.</p>
+            <p><strong>Commit:</strong> <code>feat(021): phase 4 — doc view with client-side markdown + live reload on doc.changed</code></p>
+          </pd-phase>
+
+          <pd-phase n="5" title="Spec doc + end-to-end dogfood" status="todo"
+            files="docs/auto-bus-spec.md">
+            <p>Write the standard down and prove AC-6 end to end.</p>
+            <ul>
+              <li><code>docs/auto-bus-spec.md</code>: envelope, framing/wire-format, both bindings (+ future extensions), at-most-once contract, type registry, <code>watch.task.*</code> paper map.</li>
+              <li>E2E: dev server + open doc view → simulate a hook fire on that file → browser reloads; fire on a <em>different</em> doc → open doc does <strong>not</strong> reload.</li>
+              <li><code>auto doc fix</code> to regenerate the CLAUDE.md index; full gate <code>make build &amp;&amp; make test &amp;&amp; make vet</code>.</li>
+            </ul>
+            <p><strong>Verify:</strong> both reload behaviors observed; all gates green.</p>
+            <p><strong>Commit:</strong> <code>feat(021): phase 5 — auto-bus spec + end-to-end live-reload dogfood</code></p>
+          </pd-phase>
+
+        </pd-stepper>
+      </pd-section>
+
+    </pd-tab>
+
+    <!-- ========================= ACCEPTANCE ========================= -->
+    <pd-tab name="Acceptance">
+
+      <pd-section id="ac" title="Acceptance criteria">
+
+        <pd-ac id="AC-1" title="Spec doc published" phases="5" tests="docs/auto-bus-spec.md (checklist)">
+          <ul>
+            <li>Given the repo docs tree</li>
+            <li>When <code>docs/auto-bus-spec.md</code> is read</li>
+            <li>Then it specifies JSON-RPC 2.0 framing, the CloudEvents envelope (+ project/session), both v1 bindings, the at-most-once contract, the dotted type registry, and the <code>watch.task.*</code> paper map</li>
+          </ul>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="Typed envelope, opaque payload" phases="1" tests="auto-shared/bus/event_test.go">
+          <ul>
+            <li>Envelope is a strongly typed struct that validates and serializes as a JSON-RPC notification</li>
+            <li><code>data</code> carried as opaque <code>json.RawMessage</code> → unknown bodies round-trip verbatim</li>
+            <li>Helpers construct typed payloads for hub-authored events</li>
+          </ul>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="Hub ingest + broadcast" phases="2" tests="auto-ui/internal/server/rpc_ingest_test.go,auto-shared/bus/hub_test.go">
+          <ul>
+            <li>POST to <code>/api/rpc</code> → every connected WS client receives the event</li>
+            <li>Slow clients dropped, never block the hub</li>
+            <li>Malformed frames → JSON-RPC error, not broadcast</li>
+          </ul>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Hooks publish the standard envelope" phases="3" tests="auto-cli/cmd/auto/hookscmd_test.go">
+          <ul>
+            <li><code>auto hooks fire --agent claude</code> POSTs a spec-compliant <code>agent.*</code> event to <code>/api/rpc</code></li>
+            <li>Fire-and-forget, 150ms budget, always exit 0</li>
+            <li>Legacy <code>/api/hooks</code> removed in the same change</li>
+          </ul>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="doc.changed derivation" phases="2" tests="auto-shared/bus/derive_test.go">
+          <ul>
+            <li>Given <code>agent.tool.post</code> with a <code>docs/**/*.md</code> path in a registered project</li>
+            <li>Then the hub broadcasts the raw event plus a derived <code>doc.changed {project, path}</code></li>
+            <li>Non-markdown, markdown outside <code>docs/</code>, and unregistered projects derive nothing</li>
+          </ul>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Live doc reload end-to-end" phases="4,5" tests="manual e2e (Phase 5)">
+          <ul>
+            <li>Given the doc view rendering a planning doc in a browser</li>
+            <li>When a simulated hook fire reports an Edit to that doc's path</li>
+            <li>Then the view re-fetches via <code>doc.get</code> and re-renders without manual refresh</li>
+            <li>And edits to <em>other</em> docs do not trigger a reload of the open doc</li>
+          </ul>
+        </pd-ac>
+
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
