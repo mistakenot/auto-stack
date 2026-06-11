@@ -36,7 +36,7 @@ func writeParquetFile[T any](t *testing.T, path string, rows []T) {
 	}
 }
 
-func writeEvent(t *testing.T, repoRoot string, ev events.Event) {
+func writeEvent(t *testing.T, repoRoot string, ev *events.Event) {
 	t.Helper()
 	dir := filepath.Join(repoRoot, ".auto", "reflect", "events")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -146,7 +146,10 @@ func TestFoldCoverage_VersionBump(t *testing.T) {
 }
 
 func TestFoldCoverage_IgnoresNonMined(t *testing.T) {
-	payload, _ := json.Marshal(events.RuleCreatedPayload{RuleID: "r1"})
+	payload, err := json.Marshal(events.RuleCreatedPayload{RuleID: "r1"})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
 	evs := []events.Event{
 		{
 			ID:            "ev-00000001",
@@ -326,7 +329,7 @@ func TestNext_FetchCmd(t *testing.T) {
 		t.Fatalf("Next: %v", err)
 	}
 	for _, item := range items {
-		want := fmt.Sprintf("auto search session get %s", item.SessionID)
+		want := "auto search session get " + item.SessionID
 		if item.FetchCmd != want {
 			t.Errorf("FetchCmd = %q, want %q", item.FetchCmd, want)
 		}
@@ -336,7 +339,8 @@ func TestNext_FetchCmd(t *testing.T) {
 func TestNext_ExcludesTerminal(t *testing.T) {
 	f := setupFixture(t)
 	// Mark top-1 as mined at current Version
-	writeEvent(t, f.RepoRoot, makeSessionMinedEvent(t, "top-1", Version, events.AckMined, 2, 1, "2026-01-01T00:00:00Z"))
+	ev := makeSessionMinedEvent(t, "top-1", Version, events.AckMined, 2, 1, "2026-01-01T00:00:00Z")
+	writeEvent(t, f.RepoRoot, &ev)
 
 	items, err := Next(f.RepoRoot, f.ETLRoot, NextOpts{All: true})
 	if err != nil {
@@ -352,7 +356,8 @@ func TestNext_ExcludesTerminal(t *testing.T) {
 func TestNext_FailedStaysInQueue(t *testing.T) {
 	f := setupFixture(t)
 	// Mark top-1 as failed — should still appear
-	writeEvent(t, f.RepoRoot, makeSessionMinedEvent(t, "top-1", Version, events.AckFailed, 0, 1, "2026-01-01T00:00:00Z"))
+	ev := makeSessionMinedEvent(t, "top-1", Version, events.AckFailed, 0, 1, "2026-01-01T00:00:00Z")
+	writeEvent(t, f.RepoRoot, &ev)
 
 	items, err := Next(f.RepoRoot, f.ETLRoot, NextOpts{All: true})
 	if err != nil {
@@ -455,7 +460,8 @@ func TestDescribe_SubagentSession(t *testing.T) {
 func TestDescribe_WithAckHistory(t *testing.T) {
 	f := setupFixture(t)
 	ts := time.Now().UTC().Format(time.RFC3339)
-	writeEvent(t, f.RepoRoot, makeSessionMinedEvent(t, "top-1", 1, events.AckMined, 2, 1, ts))
+	ev := makeSessionMinedEvent(t, "top-1", 1, events.AckMined, 2, 1, ts)
+	writeEvent(t, f.RepoRoot, &ev)
 
 	row, err := Describe(f.RepoRoot, f.ETLRoot, "top-1")
 	if err != nil {

@@ -77,7 +77,7 @@ func newInitCmd(application *app.App) *cobra.Command {
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
-			config.UpsertProjectRef(&globalCfg, model.ProjectRef{
+			config.UpsertProjectRef(&globalCfg, &model.ProjectRef{
 				ID:     projectCfg.ID,
 				Path:   repoRoot,
 				Remote: remote,

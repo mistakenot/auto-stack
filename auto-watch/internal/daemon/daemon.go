@@ -113,7 +113,7 @@ func (s *Service) Tick(ctx context.Context) error {
 	sort.Slice(projects, func(i, j int) bool { return projects[i].ID < projects[j].ID })
 
 	for _, project := range projects {
-		if err := s.tickProject(ctx, now, project); err != nil {
+		if err := s.tickProject(ctx, now, &project); err != nil {
 			if logErr := s.logEvent(ctx, &store.EventInput{
 				Timestamp: now,
 				Level:     "warn",
@@ -283,7 +283,7 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 	return nil
 }
 
-func (s *Service) tickProject(ctx context.Context, now time.Time, project model.ProjectRef) error {
+func (s *Service) tickProject(ctx context.Context, now time.Time, project *model.ProjectRef) error {
 	projectCfg, err := config.LoadProjectConfig(project.Path)
 	if err != nil {
 		return err

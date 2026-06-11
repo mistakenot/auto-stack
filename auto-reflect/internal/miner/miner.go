@@ -179,7 +179,7 @@ func Next(repoRoot, etlRoot string, opts NextOpts) ([]WorkItem, error) {
 			MessageCount:  sig.MessageCount,
 			PriorityScore: score,
 			Signals:       sig,
-			FetchCmd:      fmt.Sprintf("auto search session get %s", s.ID),
+			FetchCmd:      "auto search session get " + s.ID,
 		}
 
 		// Prior ack info
@@ -382,8 +382,8 @@ func normalizeRemote(raw string) string {
 	n := sharedgit.NormalizeRemoteURL(raw)
 	// Strip scheme prefix for a scheme-agnostic comparison key.
 	for _, prefix := range []string{"https://", "http://", "ssh://", "git://"} {
-		if strings.HasPrefix(n, prefix) {
-			return strings.TrimPrefix(n, prefix)
+		if after, ok := strings.CutPrefix(n, prefix); ok {
+			return after
 		}
 	}
 	return n

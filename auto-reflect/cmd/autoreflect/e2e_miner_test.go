@@ -444,7 +444,7 @@ func containsLine(text, substr string) bool {
 func splitLines(s string) func(func(string) bool) {
 	return func(yield func(string) bool) {
 		start := 0
-		for i := 0; i < len(s); i++ {
+		for i := range len(s) {
 			if s[i] == '\n' {
 				if !yield(s[start:i]) {
 					return

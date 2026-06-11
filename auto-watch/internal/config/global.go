@@ -23,8 +23,8 @@ func ValidateGlobalConfig(cfg model.GlobalConfig) []model.ValidationError {
 	return sharedconfig.ValidateProjects(cfg)
 }
 
-func UpsertProjectRef(cfg *model.GlobalConfig, project model.ProjectRef) {
-	sharedconfig.UpsertProject(cfg, project)
+func UpsertProjectRef(cfg *model.GlobalConfig, project *model.ProjectRef) {
+	sharedconfig.UpsertProject(cfg, *project)
 }
 
 // EnsureGlobalConfig loads or creates the shared project registry, delegating to
