@@ -229,10 +229,10 @@ func TestE2E_MinerStatus(t *testing.T) {
 		t.Fatalf("miner status failed: %v\nstderr:\n%s", err, statusStderr)
 	}
 	var status struct {
-		TotalSessions int     `json:"total_sessions"`
-		Mined         int     `json:"mined"`
-		Pending       int     `json:"pending"`
-		MinerVersion  int     `json:"miner_version"`
+		TotalSessions int      `json:"total_sessions"`
+		Mined         int      `json:"mined"`
+		Pending       int      `json:"pending"`
+		MinerVersion  int      `json:"miner_version"`
 		CoveragePct   *float64 `json:"coverage_pct"`
 	}
 	if jerr := json.Unmarshal([]byte(statusOut), &status); jerr != nil {
