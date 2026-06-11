@@ -33,10 +33,16 @@ Every observation needs at least one evidence session id.
 auto reflect observation add \
   --kind gap \
   --subject "no guidance on scoping go build to a module" \
-  --evidence-session "$CLAUDE_CODE_SESSION_ID" \
+  --evidence-session "$SID" \
+  --evidence-message "$SID-98" \
   --evidence-quote "go build ./... rebuilt everything and was slow" \
   --domain go \
   --severity normal            # kinds: correction|pattern|gap|incident; severity: normal|high
+
+# --evidence-message is optional: paste the messageId from an 'auto search' hit
+# (format {sessionId}-{index}). It pins the observation to the exact transcript
+# moment; --evidence-session alone is fine for a whole-session observation.
+# Repeat --evidence-session/-message/-quote (paired by position) to cite several moments.
 
 # List / filter observations. --unconsolidated shows only those not yet folded into a rule.
 auto reflect observation list --kind gap --domain go --since 14d --unconsolidated

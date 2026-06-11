@@ -69,7 +69,8 @@ Diagnostics and errors go to stderr; every hard error carries a remediation hint
 auto reflect observation add \
   --kind gap \
   --subject "no guidance on scoping go build to a module" \
-  --evidence-session "$CLAUDE_CODE_SESSION_ID" \
+  --evidence-session "$SID" \
+  --evidence-message "$SID-98" \
   --evidence-quote  "go build ./... rebuilt everything and was slow" \
   --domain go --severity normal        # kinds: correction|pattern|gap|incident
 
@@ -77,6 +78,13 @@ auto reflect observation list --kind gap --domain go --since 14d --unconsolidate
 ```
 
 `--unconsolidated` shows only observations not yet folded into a rule.
+
+**Evidence comes straight from `auto search`.** A reflecting agent mines sessions with
+`auto search`, and each message-scope hit returns a `sessionId` and a `messageId` (format
+`{sessionId}-{index}`). Pass those as `--evidence-session` and the optional `--evidence-message`
+to pin an observation to the exact transcript moment — the durable, drift-resistant anchor is
+the `--evidence-quote`. `--evidence-session` alone is fine for a whole-session observation;
+repeat the trio (paired by position) to cite several moments.
 
 ### 2. Consolidate — observations → rules
 
