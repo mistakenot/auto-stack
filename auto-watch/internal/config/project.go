@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	sharedconfig "github.com/mistakenot/auto-shared/config"
@@ -96,16 +95,10 @@ func EnsureWorktreeIgnore(repoRoot string) (string, bool, error) {
 	return path, true, nil
 }
 
+// NormalizeID delegates to the shared registry normalizer so all tools agree.
 func NormalizeID(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
+	return sharedconfig.NormalizeID(value)
 }
 
-func UpsertProjectRef(cfg *model.GlobalConfig, project model.ProjectRef) {
-	for i := range cfg.Projects {
-		if filepath.Clean(cfg.Projects[i].Path) == filepath.Clean(project.Path) {
-			cfg.Projects[i] = project
-			return
-		}
-	}
-	cfg.Projects = append(cfg.Projects, project)
-}
+// UpsertProjectRef adds or replaces a project in the registry. It lives in
+// global.go, delegating to the shared registry upsert.

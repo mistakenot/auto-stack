@@ -17,53 +17,8 @@ var (
 	cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 )
 
-func ValidateGlobalConfig(cfg model.GlobalConfig) []model.ValidationError {
-	errs := []model.ValidationError{}
-	seenIDs := map[string]string{}
-	seenPaths := map[string]string{}
-	for i, project := range cfg.Projects {
-		path := fmt.Sprintf("$.projects[%d]", i)
-		if !idPattern.MatchString(project.ID) {
-			errs = append(errs, model.ValidationError{
-				Code:    "invalid_project_id",
-				Path:    path,
-				Field:   "id",
-				Message: "project id must match ^[a-z0-9]+(?:-[a-z0-9]+)*$",
-				Value:   project.ID,
-			})
-		}
-		cleanPath := filepath.Clean(strings.TrimSpace(project.Path))
-		if cleanPath == "." || cleanPath == "" {
-			errs = append(errs, model.ValidationError{
-				Code:    "missing_project_path",
-				Path:    path,
-				Field:   "path",
-				Message: "project path is required",
-			})
-		}
-		if prior, ok := seenIDs[project.ID]; ok && filepath.Clean(prior) != cleanPath {
-			errs = append(errs, model.ValidationError{
-				Code:    "duplicate_project_id",
-				Path:    path,
-				Field:   "id",
-				Message: "project id is already registered for a different path",
-				Value:   project.ID,
-			})
-		}
-		if priorID, ok := seenPaths[cleanPath]; ok && priorID != project.ID {
-			errs = append(errs, model.ValidationError{
-				Code:    "duplicate_project_path",
-				Path:    path,
-				Field:   "path",
-				Message: "project path is already registered under a different project id",
-				Value:   project.Path,
-			})
-		}
-		seenIDs[project.ID] = cleanPath
-		seenPaths[cleanPath] = project.ID
-	}
-	return errs
-}
+// ValidateGlobalConfig validates the project registry. It lives in global.go,
+// delegating to the shared registry validator.
 
 func ValidateProjectConfig(cfg model.ProjectConfig) []model.ValidationError {
 	errs := []model.ValidationError{}

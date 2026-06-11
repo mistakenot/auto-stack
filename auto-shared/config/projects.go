@@ -1,0 +1,226 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+)
+
+const projectsFileName = "projects.json"
+
+// projectIDPattern is the canonical project-id format shared across all auto
+// tools: lowercase alphanumerics with single hyphen separators.
+var projectIDPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+// ProjectRef is a single project (git repository) registered on this host.
+// It is the canonical record every auto tool reads to learn what projects exist.
+type ProjectRef struct {
+	ID     string   `json:"id"`
+	Path   string   `json:"path"`
+	Remote string   `json:"remote,omitempty"`
+	Name   string   `json:"name,omitempty"`
+	Tools  []string `json:"tools,omitempty"`
+	// RegisteredAt is an RFC 3339 timestamp (string so omitempty suppresses the
+	// zero value, and so the JS UI can consume it directly).
+	RegisteredAt string `json:"registeredAt,omitempty"`
+}
+
+// ProjectsConfig is the host-level project registry stored at ~/.auto/projects.json.
+type ProjectsConfig struct {
+	Projects []ProjectRef `json:"projects"`
+}
+
+// ProjectsConfigPath returns the path to ~/.auto/projects.json.
+func ProjectsConfigPath() (string, error) {
+	autoDir, err := AutoDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(autoDir, projectsFileName), nil
+}
+
+// NormalizeID lowercases and trims a project id to its canonical form. It does
+// not coerce invalid characters — use it for user-supplied ids so that bad
+// input is caught by ValidateProjects rather than silently rewritten.
+func NormalizeID(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+// SlugifyID coerces an arbitrary string into a valid project id matching
+// ^[a-z0-9]+(?:-[a-z0-9]+)*$: lowercased, with each run of other characters
+// collapsed to a single hyphen and leading/trailing hyphens trimmed. Returns ""
+// when nothing usable remains. Use it for ids derived from directory names.
+func SlugifyID(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	prevHyphen := false
+	for _, r := range value {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			prevHyphen = false
+		case !prevHyphen:
+			b.WriteByte('-')
+			prevHyphen = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// LoadProjects reads the registry from path. A nil projects array is
+// normalized to an empty slice. Decoding is lenient (unknown fields ignored)
+// because the registry is shared and may gain fields over time.
+func LoadProjects(path string) (ProjectsConfig, error) {
+	var cfg ProjectsConfig
+	if err := DecodeJSONFile(path, &cfg); err != nil {
+		return cfg, err
+	}
+	if cfg.Projects == nil {
+		cfg.Projects = []ProjectRef{}
+	}
+	return cfg, nil
+}
+
+// SaveProjects writes the registry to path atomically (temp file + rename), so
+// a concurrent reader never sees a partial write. Creates parent dirs as needed.
+func SaveProjects(path string, cfg ProjectsConfig) error {
+	if cfg.Projects == nil {
+		cfg.Projects = []ProjectRef{}
+	}
+	return WriteJSONFileAtomic(path, cfg)
+}
+
+// EnsureProjects loads ~/.auto/projects.json, creating an empty registry if it
+// does not exist. Returns the path, the config, whether it was created, and any error.
+func EnsureProjects() (string, ProjectsConfig, bool, error) {
+	path, err := ProjectsConfigPath()
+	if err != nil {
+		return "", ProjectsConfig{}, false, err
+	}
+	if err := EnsureAutoDir(); err != nil {
+		return "", ProjectsConfig{}, false, err
+	}
+	if _, err := os.Stat(path); err == nil {
+		cfg, err := LoadProjects(path)
+		return path, cfg, false, err
+	} else if !os.IsNotExist(err) {
+		return "", ProjectsConfig{}, false, err
+	}
+	cfg := ProjectsConfig{Projects: []ProjectRef{}}
+	if err := SaveProjects(path, cfg); err != nil {
+		return "", ProjectsConfig{}, false, err
+	}
+	return path, cfg, true, nil
+}
+
+// UpsertProject replaces the entry whose cleaned path matches project, or
+// appends project when no existing entry shares its path. RegisteredAt is
+// defaulted to now (RFC 3339 UTC) when the caller leaves it blank, so every
+// writer records a timestamp without having to remember to set it.
+func UpsertProject(cfg *ProjectsConfig, project ProjectRef) {
+	if project.RegisteredAt == "" {
+		project.RegisteredAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	for i := range cfg.Projects {
+		if filepath.Clean(cfg.Projects[i].Path) == filepath.Clean(project.Path) {
+			cfg.Projects[i] = project
+			return
+		}
+	}
+	cfg.Projects = append(cfg.Projects, project)
+}
+
+// FindProjectByPath returns the registered project whose path is the longest
+// prefix of dir (i.e. dir is the project root or lives inside it), or nil.
+func (c ProjectsConfig) FindProjectByPath(dir string) *ProjectRef {
+	clean := filepath.Clean(dir)
+	var best *ProjectRef
+	bestLen := -1
+	for i := range c.Projects {
+		root := filepath.Clean(c.Projects[i].Path)
+		if clean == root || strings.HasPrefix(clean, root+string(filepath.Separator)) {
+			if len(root) > bestLen {
+				bestLen = len(root)
+				best = &c.Projects[i]
+			}
+		}
+	}
+	return best
+}
+
+// FindProjectByExactPath returns the registered project whose path equals dir
+// (after cleaning), or nil. Unlike FindProjectByPath it does not match parent
+// projects, so re-registration of a nested repo is not confused with its parent.
+func (c ProjectsConfig) FindProjectByExactPath(dir string) *ProjectRef {
+	clean := filepath.Clean(dir)
+	for i := range c.Projects {
+		if filepath.Clean(c.Projects[i].Path) == clean {
+			return &c.Projects[i]
+		}
+	}
+	return nil
+}
+
+// FindProjectByID returns the registered project with the given (normalized) id, or nil.
+func (c ProjectsConfig) FindProjectByID(id string) *ProjectRef {
+	id = NormalizeID(id)
+	for i := range c.Projects {
+		if c.Projects[i].ID == id {
+			return &c.Projects[i]
+		}
+	}
+	return nil
+}
+
+// ValidateProjects checks every entry's id format and the uniqueness of ids and
+// paths, returning structured errors (empty slice when valid).
+func ValidateProjects(cfg ProjectsConfig) []ValidationError {
+	errs := []ValidationError{}
+	seenIDs := map[string]string{}
+	seenPaths := map[string]string{}
+	for i, project := range cfg.Projects {
+		path := fmt.Sprintf("$.projects[%d]", i)
+		if !projectIDPattern.MatchString(project.ID) {
+			errs = append(errs, ValidationError{
+				Code:    "invalid_project_id",
+				Path:    path,
+				Field:   "id",
+				Message: "project id must match ^[a-z0-9]+(?:-[a-z0-9]+)*$",
+				Value:   project.ID,
+			})
+		}
+		cleanPath := filepath.Clean(strings.TrimSpace(project.Path))
+		if cleanPath == "." || cleanPath == "" {
+			errs = append(errs, ValidationError{
+				Code:    "missing_project_path",
+				Path:    path,
+				Field:   "path",
+				Message: "project path is required",
+			})
+		}
+		if prior, ok := seenIDs[project.ID]; ok && filepath.Clean(prior) != cleanPath {
+			errs = append(errs, ValidationError{
+				Code:    "duplicate_project_id",
+				Path:    path,
+				Field:   "id",
+				Message: "project id is already registered for a different path",
+				Value:   project.ID,
+			})
+		}
+		if priorID, ok := seenPaths[cleanPath]; ok && priorID != project.ID {
+			errs = append(errs, ValidationError{
+				Code:    "duplicate_project_path",
+				Path:    path,
+				Field:   "path",
+				Message: "project path is already registered under a different project id",
+				Value:   project.Path,
+			})
+		}
+		seenIDs[project.ID] = cleanPath
+		seenPaths[cleanPath] = project.ID
+	}
+	return errs
+}

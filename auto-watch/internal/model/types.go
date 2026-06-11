@@ -9,15 +9,11 @@ import (
 // ValidationError is an alias for the shared validation error type.
 type ValidationError = sharedconfig.ValidationError
 
-type GlobalConfig struct {
-	Projects []ProjectRef `json:"projects"`
-}
+// GlobalConfig and ProjectRef are aliases for the shared project registry types.
+// The registry is canonical at ~/.auto/projects.json and shared across all auto tools.
+type GlobalConfig = sharedconfig.ProjectsConfig
 
-type ProjectRef struct {
-	ID     string `json:"id"`
-	Path   string `json:"path"`
-	Remote string `json:"remote"`
-}
+type ProjectRef = sharedconfig.ProjectRef
 
 type ProjectConfig struct {
 	ID       string                `json:"id"`

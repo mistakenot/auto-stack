@@ -22,10 +22,10 @@ func TestInitCreatesGlobalAndProjectConfig(t *testing.T) {
 		t.Fatalf("init failed with code %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 
-	settingsPath := filepath.Join(env.Home, ".auto", "watch", "settings.json")
+	settingsPath := filepath.Join(env.Home, ".auto", "projects.json")
 	projectPath := filepath.Join(repoRoot, ".auto", "watch", "project.json")
 	if _, err := os.Stat(settingsPath); err != nil {
-		t.Fatalf("settings.json missing: %v", err)
+		t.Fatalf("project registry missing: %v", err)
 	}
 	if _, err := os.Stat(projectPath); err != nil {
 		t.Fatalf("project.json missing: %v", err)
@@ -43,7 +43,7 @@ func TestInitCreatesGlobalAndProjectConfig(t *testing.T) {
 		t.Fatalf("load global config: %v", err)
 	}
 	if len(cfg.Projects) != 1 || cfg.Projects[0].ID != "demo-project" {
-		t.Fatalf("unexpected projects in settings.json: %#v", cfg.Projects)
+		t.Fatalf("unexpected projects in registry: %#v", cfg.Projects)
 	}
 }
 

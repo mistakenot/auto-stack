@@ -97,7 +97,7 @@ func (s *Service) Tick(ctx context.Context) error {
 	}
 
 	now := s.Now()
-	settingsPath, err := config.SettingsPath()
+	settingsPath, err := config.ProjectsPath()
 	if err != nil {
 		return err
 	}

@@ -151,7 +151,7 @@ auto watch clean
 
 | File | Purpose |
 |------|---------|
-| ` + "`" + `~/.auto/watch/settings.json` + "`" + ` | Global config — registered projects |
+| ` + "`" + `~/.auto/projects.json` + "`" + ` | Project registry — registered projects, shared across all auto tools |
 | ` + "`" + `.auto/watch/project.json` + "`" + ` | Per-repo config — tasks and triggers |
 | ` + "`" + `~/.auto/watch/logs.sqlite` + "`" + ` | Event log and run state |
 
