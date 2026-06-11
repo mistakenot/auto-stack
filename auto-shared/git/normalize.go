@@ -6,7 +6,7 @@ package git
 
 import (
 	"crypto/sha256"
-	"fmt"
+	"encoding/hex"
 	"strings"
 )
 
@@ -20,15 +20,15 @@ func NormalizeRemoteURL(raw string) string {
 	}
 
 	// ssh://git@host/owner/repo.git → https://host/owner/repo
-	if strings.HasPrefix(raw, "ssh://") {
-		raw = strings.TrimPrefix(raw, "ssh://")
+	if after, ok := strings.CutPrefix(raw, "ssh://"); ok {
+		raw = after
 		raw = strings.TrimPrefix(raw, "git@")
 		raw = "https://" + raw
 	}
 
 	// git@host:owner/repo.git → https://host/owner/repo
-	if strings.HasPrefix(raw, "git@") {
-		raw = strings.TrimPrefix(raw, "git@")
+	if after, ok := strings.CutPrefix(raw, "git@"); ok {
+		raw = after
 		raw = "https://" + strings.Replace(raw, ":", "/", 1)
 	}
 
@@ -68,7 +68,7 @@ func NormalizeRemoteURL(raw string) string {
 // the SHA-256 hash of the normalized remote URL.
 func ComputeRepoID(normalizedRemote string) string {
 	h := sha256.Sum256([]byte(normalizedRemote))
-	return fmt.Sprintf("%x", h)[:16]
+	return hex.EncodeToString(h[:])[:16]
 }
 
 // ComputeRepoIDFromPath returns a stable 16-character hex identifier derived
@@ -76,5 +76,5 @@ func ComputeRepoID(normalizedRemote string) string {
 // remote exists.
 func ComputeRepoIDFromPath(absPath string) string {
 	h := sha256.Sum256([]byte(absPath))
-	return fmt.Sprintf("%x", h)[:16]
+	return hex.EncodeToString(h[:])[:16]
 }

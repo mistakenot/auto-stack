@@ -2,6 +2,7 @@ package update
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -82,7 +83,7 @@ func latestTag() (string, error) {
 		return "", err
 	}
 	if info.TagName == "" {
-		return "", fmt.Errorf("no tag_name in release response")
+		return "", errors.New("no tag_name in release response")
 	}
 	return info.TagName, nil
 }

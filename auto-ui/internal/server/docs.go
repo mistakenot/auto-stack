@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io/fs"
 	"os"
 	"path"
@@ -102,15 +102,15 @@ func resolveRoot(reg config.ProjectsConfig, project, worktree string) (string, e
 		if ref := reg.FindProjectByPath(worktree); ref != nil {
 			return filepath.Clean(worktree), nil
 		}
-		return "", fmt.Errorf("worktree not found in registry")
+		return "", errors.New("worktree not found in registry")
 	}
 	if project != "" {
 		if ref := reg.FindProjectByID(project); ref != nil {
 			return filepath.Clean(ref.Path), nil
 		}
-		return "", fmt.Errorf("project not found in registry")
+		return "", errors.New("project not found in registry")
 	}
-	return "", fmt.Errorf("project or worktree is required")
+	return "", errors.New("project or worktree is required")
 }
 
 // walkDocs walks the docs/ directory under root and returns entries for all

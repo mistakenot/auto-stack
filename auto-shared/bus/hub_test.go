@@ -134,25 +134,21 @@ func TestHubConcurrentSubscribeAndBroadcast(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Concurrent subscribers.
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			s := &collectSink{}
 			cancel := hub.Subscribe(s)
 			time.Sleep(time.Millisecond)
 			cancel()
-		}()
+		})
 	}
 
 	// Concurrent broadcasts.
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			ev, _ := NewEvent("agent.tool.post", "test", nil)
 			hub.Broadcast(ev)
-		}()
+		})
 	}
 
 	wg.Wait()
