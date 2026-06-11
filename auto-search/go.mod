@@ -6,7 +6,7 @@ require (
 	github.com/mistakenot/auto-shared v0.0.0
 	github.com/parquet-go/parquet-go v0.29.0
 	github.com/spf13/cobra v1.10.2
-	modernc.org/sqlite v1.47.0
+	modernc.org/sqlite v1.52.0
 )
 
 replace github.com/mistakenot/auto-shared => ../auto-shared
@@ -28,7 +28,7 @@ require (
 	github.com/twpayne/go-geom v1.6.1 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
-	modernc.org/libc v1.70.0 // indirect
+	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
