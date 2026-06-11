@@ -142,6 +142,23 @@ auto reflect events list --type feedback --since 7d
 auto reflect events list --type observation --type consolidation   # repeatable --type
 ` + "```" + `
 
+## Mining queue
+
+` + "```" + `bash
+# See which sessions are ready to mine (ranked by friction signals):
+auto reflect miner next --limit 5
+
+# After mining a session, record the outcome:
+auto reflect miner ack <session-id> --observations 3
+# (use --status empty|failed|skipped for non-standard outcomes)
+
+# Check mining coverage:
+auto reflect miner status
+
+# Inspect signals for any session:
+auto reflect miner describe <session-id>
+` + "```" + `
+
 ## Files created by auto reflect
 
 - ` + "`" + `.auto/reflect/events/` + "`" + `: append-only canonical event log (sharded by host/day/worktree)
