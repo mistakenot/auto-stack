@@ -3,6 +3,7 @@ package hooks
 import (
 	"bufio"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -63,7 +64,7 @@ func Ingest(rawDir string, state *HooksSyncState, fallbackHostID string) ([]mode
 
 		if fs.Offset > 0 {
 			if _, err := f.Seek(fs.Offset, io.SeekStart); err != nil {
-				f.Close()
+				_ = f.Close()
 				continue
 			}
 		}
@@ -92,7 +93,7 @@ func Ingest(rawDir string, state *HooksSyncState, fallbackHostID string) ([]mode
 			rows = append(rows, row)
 		}
 		fs.Offset = offset
-		f.Close()
+		_ = f.Close()
 	}
 
 	return rows, nil
@@ -151,7 +152,7 @@ func parseLine(line string, sourceFile string, lineOffset int64, fallbackHostID 
 	// Host-stable ID: sha256(hostID \x00 file \x00 offset).
 	idInput := fmt.Sprintf("%s\x00%s\x00%d", host, sourceFile, lineOffset)
 	hash := sha256.Sum256([]byte(idInput))
-	id := fmt.Sprintf("%x", hash[:16]) // 32 hex chars
+	id := hex.EncodeToString(hash[:16]) // 32 hex chars
 
 	return model.HookEventRow{
 		ID:            id,

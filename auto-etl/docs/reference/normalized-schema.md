@@ -12,6 +12,7 @@ This document describes the **current normalized output schema** produced by `au
 
 Source of truth in code:
 - `internal/model/model.go`
+- `internal/model/hooks.go`
 - `internal/transform/transform.go`
 - `internal/writer/writer.go`
 
@@ -24,10 +25,11 @@ If this doc conflicts with those files, treat the code as canonical.
 
 ## Output Datasets and Partitions
 
-`auto-etl` writes two parquet datasets:
+`auto-etl` writes three parquet datasets:
 
 - `messages/year=YYYY/week=WW/messages.parquet` (weekly)
 - `sessions/year=YYYY/month=MM/sessions.parquet` (monthly)
+- `hooks/year=YYYY/month=MM/hooks.parquet` (monthly, incremental read-merge-write)
 
 Current period partitions are regenerated; past partitions are skipped when the parquet file already exists.
 
@@ -105,6 +107,30 @@ One row per parsed session file transformed.
 | `year` | int32 | Year of first non-zero timestamp found |
 | `month` | int32 | Month of first non-zero timestamp found |
 | `schema_version` | int32 | Schema version marker |
+
+## `hooks` Dataset (`HookEventRow`)
+
+One row per hook event captured by `auto hooks fire`. Source: `~/.auto/hooks/raw/events-YYYY-MM-DD.jsonl`.
+
+Incremental ingestion via `--only hooks`. Sync state: `~/.auto/etl/hooks/sync-state.json` (per-file byte offset watermark).
+
+| Field | Type | Meaning / Population |
+|---|---|---|
+| `id` | string | `sha256(hostId + sourceFile + byteOffset)[:32hex]` -- position-stable, host-stable |
+| `host_id` | string | From envelope (producer-stamped), fallback to ETL host |
+| `agent` | string | `"claude"` or `"codex"` -- from envelope |
+| `event` | string | `hook_event_name` extracted from payload |
+| `session_id` | string | `session_id` extracted from payload |
+| `cwd` | string | Producer-resolved working directory (from envelope) |
+| `project` | string | Producer-resolved project ID (from envelope) |
+| `tool` | string | `tool_name` extracted from payload |
+| `paths_json` | string | JSON array of file paths from `tool_input` (sorted, deduped). Empty string if none. |
+| `captured_at` | int64 | Unix milliseconds from envelope `capturedAt` (RFC 3339 UTC) |
+| `raw_json` | string | Verbatim original hook payload (lossless) |
+| `source_file` | string | Raw log filename (e.g. `events-2026-06-11.jsonl`) |
+| `year` | int32 | From `captured_at` UTC |
+| `month` | int32 | From `captured_at` UTC |
+| `schema_version` | int32 | Currently `1` (independent of messages/sessions version) |
 
 ## Truncation Rules
 
