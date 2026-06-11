@@ -15,6 +15,7 @@ import (
 	"github.com/mistakenot/auto-shared/bus"
 	sharedconfig "github.com/mistakenot/auto-shared/config"
 	sharedgit "github.com/mistakenot/auto-shared/git"
+	"github.com/mistakenot/auto-shared/hooks"
 	"github.com/spf13/cobra"
 )
 
@@ -68,7 +69,40 @@ func newHooksFireCmd() *cobra.Command {
 				return nil
 			}
 
+			// Resolve cwd and project for the envelope.
+			var payload map[string]any
+			if len(bytes.TrimSpace(raw)) > 0 {
+				_ = json.Unmarshal(raw, &payload)
+			}
+			cwd := stringField(payload, "cwd")
+			if cwd == "" {
+				if wd, err := os.Getwd(); err == nil {
+					cwd = wd
+				}
+			}
+
 			registry := loadRegistryQuietly()
+
+			var project string
+			if cwd != "" {
+				if p := registry.FindProjectByPath(cwd); p != nil {
+					project = p.ID
+				}
+			}
+
+			// Durable append first — canonical record before the lossy live POST.
+			env := hooks.Envelope{
+				Agent:      agent,
+				CapturedAt: time.Now().UTC().Format(time.RFC3339),
+				HostID:     hostIDQuietly(),
+				Cwd:        cwd,
+				Project:    project,
+				Payload:    json.RawMessage(raw),
+			}
+			if err := hooks.Append(env); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "auto hooks fire: append log: %v\n", err)
+			}
+
 			ev := buildBusEvent(agent, raw, registry)
 			postBusEvent(uiPort(), ev)
 			return nil
@@ -270,6 +304,22 @@ func loadRegistryQuietly() sharedconfig.ProjectsConfig {
 		return sharedconfig.ProjectsConfig{}
 	}
 	return cfg
+}
+
+// hostIDQuietly returns the host identifier from ~/.auto/host.json, falling
+// back to os.Hostname(), then "unknown". It never returns an error — this runs
+// in the agent's hot path.
+func hostIDQuietly() string {
+	path, err := sharedconfig.HostConfigPath()
+	if err == nil {
+		if cfg, err := sharedconfig.LoadHost(path); err == nil {
+			return cfg.HostID
+		}
+	}
+	if h, err := os.Hostname(); err == nil {
+		return h
+	}
+	return "unknown"
 }
 
 // uiPort reads the configured auto-ui port from ~/.auto/ui/settings.json,

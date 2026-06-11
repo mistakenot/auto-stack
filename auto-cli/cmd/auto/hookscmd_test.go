@@ -1,17 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/mistakenot/auto-shared/bus"
 	sharedconfig "github.com/mistakenot/auto-shared/config"
+	"github.com/mistakenot/auto-shared/hooks"
 )
 
 const claudePostToolUse = `{
@@ -186,5 +190,107 @@ func TestFireRejectsInvalidAgent(t *testing.T) {
 	cmd.SetErr(io.Discard)
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected error for invalid --agent")
+	}
+}
+
+func TestFireWritesDurableLog(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cmd := newHooksFireCmd()
+	cmd.SetArgs([]string{"--agent", "claude"})
+	cmd.SetIn(strings.NewReader(claudePostToolUse))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("fire returned error: %v", err)
+	}
+
+	// Find the log file.
+	rawDir, err := hooks.RawDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(rawDir)
+	if err != nil {
+		t.Fatalf("raw dir not created: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log file, got %d", len(entries))
+	}
+
+	data, err := os.ReadFile(filepath.Join(rawDir, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var env hooks.Envelope
+	if err := json.Unmarshal(bytes.TrimSpace(data), &env); err != nil {
+		t.Fatalf("unmarshal envelope: %v", err)
+	}
+	if env.Agent != "claude" {
+		t.Errorf("agent = %q, want claude", env.Agent)
+	}
+	if env.CapturedAt == "" {
+		t.Error("capturedAt should be set")
+	}
+	if env.HostID == "" {
+		t.Error("hostId should be set")
+	}
+	// Verify payload is the verbatim input.
+	var gotPayload map[string]any
+	if err := json.Unmarshal(env.Payload, &gotPayload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if gotPayload["hook_event_name"] != "PostToolUse" {
+		t.Errorf("payload hook_event_name = %v, want PostToolUse", gotPayload["hook_event_name"])
+	}
+}
+
+func TestFireSwallowsLogFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Make the raw dir path a regular file so MkdirAll fails.
+	hooksDir := filepath.Join(home, ".auto", "hooks")
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rawFile := filepath.Join(hooksDir, "raw")
+	if err := os.WriteFile(rawFile, []byte("block"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up a test server to verify POST still fires.
+	var posted bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posted = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	// Write UI settings to point at the test server.
+	u, _ := url.Parse(srv.URL)
+	port, _ := strconv.Atoi(u.Port())
+	uiDir := filepath.Join(home, ".auto", "ui")
+	if err := os.MkdirAll(uiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	settingsJSON, _ := json.Marshal(map[string]int{"port": port})
+	if err := os.WriteFile(filepath.Join(uiDir, "settings.json"), settingsJSON, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newHooksFireCmd()
+	cmd.SetArgs([]string{"--agent", "claude"})
+	cmd.SetIn(strings.NewReader(claudePostToolUse))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected exit 0 even with log failure, got: %v", err)
+	}
+	if !posted {
+		t.Error("POST should still fire even when log append fails")
 	}
 }
