@@ -45,6 +45,20 @@ func TestFindProjectByPathLongestPrefix(t *testing.T) {
 	}
 }
 
+func TestFindProjectByExactPathIgnoresParent(t *testing.T) {
+	cfg := ProjectsConfig{Projects: []ProjectRef{
+		{ID: "outer", Path: "/repos"},
+		{ID: "inner", Path: "/repos/alpha"},
+	}}
+	// A nested path with no exact entry must NOT match the parent.
+	if got := cfg.FindProjectByExactPath("/repos/alpha/cmd"); got != nil {
+		t.Fatalf("expected no exact match for nested path, got %+v", got)
+	}
+	if got := cfg.FindProjectByExactPath("/repos/alpha"); got == nil || got.ID != "inner" {
+		t.Fatalf("expected exact match 'inner', got %+v", got)
+	}
+}
+
 func TestValidateProjectsCatchesBadIDAndDupes(t *testing.T) {
 	cfg := ProjectsConfig{Projects: []ProjectRef{
 		{ID: "Bad_ID", Path: "/repos/a"},
@@ -61,6 +75,25 @@ func TestValidateProjectsCatchesBadIDAndDupes(t *testing.T) {
 	}
 	if !codes["duplicate_project_id"] {
 		t.Errorf("expected duplicate_project_id error, got %+v", errs)
+	}
+}
+
+func TestSlugifyID(t *testing.T) {
+	cases := map[string]string{
+		"auto-stack":      "auto-stack",
+		"My_Repo.Name":    "my-repo-name",
+		"tmp.Jd3XQJCWKW":  "tmp-jd3xqjcwkw",
+		"  Trailing--  ":  "trailing",
+		"___":             "",
+		"Already-Valid-1": "already-valid-1",
+	}
+	for in, want := range cases {
+		if got := SlugifyID(in); got != want {
+			t.Errorf("SlugifyID(%q) = %q, want %q", in, got, want)
+		}
+		if want != "" && len(ValidateProjects(ProjectsConfig{Projects: []ProjectRef{{ID: SlugifyID(in), Path: "/x"}}})) != 0 {
+			t.Errorf("SlugifyID(%q)=%q did not produce a valid id", in, SlugifyID(in))
+		}
 	}
 }
 

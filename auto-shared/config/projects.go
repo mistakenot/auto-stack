@@ -42,9 +42,32 @@ func ProjectsConfigPath() (string, error) {
 	return filepath.Join(autoDir, projectsFileName), nil
 }
 
-// NormalizeID lowercases and trims a project id to its canonical form.
+// NormalizeID lowercases and trims a project id to its canonical form. It does
+// not coerce invalid characters — use it for user-supplied ids so that bad
+// input is caught by ValidateProjects rather than silently rewritten.
 func NormalizeID(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+// SlugifyID coerces an arbitrary string into a valid project id matching
+// ^[a-z0-9]+(?:-[a-z0-9]+)*$: lowercased, with each run of other characters
+// collapsed to a single hyphen and leading/trailing hyphens trimmed. Returns ""
+// when nothing usable remains. Use it for ids derived from directory names.
+func SlugifyID(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	prevHyphen := false
+	for _, r := range value {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			prevHyphen = false
+		case !prevHyphen:
+			b.WriteByte('-')
+			prevHyphen = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 // LoadProjects reads the registry from path. A nil projects array is
@@ -126,6 +149,19 @@ func (c ProjectsConfig) FindProjectByPath(dir string) *ProjectRef {
 		}
 	}
 	return best
+}
+
+// FindProjectByExactPath returns the registered project whose path equals dir
+// (after cleaning), or nil. Unlike FindProjectByPath it does not match parent
+// projects, so re-registration of a nested repo is not confused with its parent.
+func (c ProjectsConfig) FindProjectByExactPath(dir string) *ProjectRef {
+	clean := filepath.Clean(dir)
+	for i := range c.Projects {
+		if filepath.Clean(c.Projects[i].Path) == clean {
+			return &c.Projects[i]
+		}
+	}
+	return nil
 }
 
 // FindProjectByID returns the registered project with the given (normalized) id, or nil.
