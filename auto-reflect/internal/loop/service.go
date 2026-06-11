@@ -7,19 +7,22 @@ package loop
 import (
 	"crypto/rand"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/mistakenot/auto-shared/config"
+	sharedconfig "github.com/mistakenot/auto-shared/config"
 
+	"github.com/mistakenot/auto-reflect/internal/etlread"
 	"github.com/mistakenot/auto-reflect/internal/events"
 	"github.com/mistakenot/auto-reflect/internal/gitutil"
+	"github.com/mistakenot/auto-reflect/internal/miner"
 	"github.com/mistakenot/auto-reflect/internal/rules"
 	"github.com/mistakenot/auto-reflect/internal/store"
 )
 
 // ValidationError is the shared structured field-level error.
-type ValidationError = config.ValidationError
+type ValidationError = sharedconfig.ValidationError
 
 // Service exposes the retrieval loop operations for a single repository root.
 type Service struct {
@@ -204,6 +207,7 @@ type RuleStats struct {
 // full (the list-returns-all convention).
 type StatsReport struct {
 	UnconsolidatedObservations int         `json:"unconsolidated_observations"`
+	PendingToMine              *int        `json:"pending_to_mine"`
 	Rules                      []RuleStats `json:"rules"`
 }
 
@@ -353,10 +357,23 @@ func (s *Service) Stats() (StatsReport, error) {
 			OutcomeCounts:    outcomes,
 		})
 	}
-	return StatsReport{
+	report := StatsReport{
 		UnconsolidatedObservations: unconsolidated,
 		Rules:                      out,
-	}, nil
+	}
+
+	// Compute pending-to-mine from ETL parquet + event fold.
+	// Graceful degradation: null when ETL source is missing/empty.
+	autoDir, adErr := sharedconfig.AutoDir()
+	if adErr == nil {
+		etlDir := filepath.Join(autoDir, "etl", "output")
+		pending, src, err := miner.PendingCount(repo.Root, etlDir)
+		if err == nil && src == etlread.SourceOK {
+			report.PendingToMine = &pending
+		}
+	}
+
+	return report, nil
 }
 
 // indexRetrievals returns a rt-id -> rule-id map across all retrieval events.

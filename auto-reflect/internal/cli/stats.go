@@ -31,6 +31,11 @@ func newStatsCmd(application *app.App) *cobra.Command {
 
 			if outputFormat == "text" {
 				fmt.Fprintf(cmd.OutOrStdout(), "unconsolidated_observations=%d\n", report.UnconsolidatedObservations)
+				if report.PendingToMine != nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "pending_to_mine=%d\n", *report.PendingToMine)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "pending_to_mine=null\n")
+				}
 				for _, s := range report.Rules {
 					fmt.Fprintf(cmd.OutOrStdout(), "%s surfaced=%d selected=%d rate=%.2f feedback=%d ranks=%s outcomes=%s\n",
 						s.RuleID, s.Surfaced, s.Selected, s.SelectionRate, s.FeedbackCount,
