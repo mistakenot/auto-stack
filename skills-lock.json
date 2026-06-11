@@ -81,6 +81,11 @@
       "sourceType": "github",
       "computedHash": "cd4dcd087c2e0e60ab51eadd6b16bcd6133c846614dd84901062a6a2566f302b"
     },
+    "planning-doc": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "29ede7d3aa809853040d7b36f3758fbf1ac70144f80d18c7f50bb8cff3fbb3f0"
+    },
     "readme-updater": {
       "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
       "sourceType": "local",
