@@ -1,5 +1,5 @@
 ---
-hash: "ff97ec9c"
+hash: "20cb03ec"
 id: "bc691476"
 read_when: "planning or sequencing sub-tasks for the reflect playbook loop epic"
 summary: "Epic plan for making the auto-reflect playbook loop usable by autonomous reflection agents: fix existing gaps first (session identity, lifecycle, observation capture, consolidation, signal readers, doc drift), then wire agent runs, then grow the improvement loop. Centered on a two-step Observe → Consolidate pipeline."
@@ -7,6 +7,32 @@ title: "Epic: Reflect Playbook Loop — Observe, Consolidate, Wire, Grow"
 ---
 
 # Epic: Reflect Playbook Loop — Observe, Consolidate, Wire, Grow
+
+## Status (updated 2026-06-11)
+
+**Phase 1 is complete and on `main`.** All blocker sub-tasks shipped:
+
+- 1.1 session identity — PR #66
+- 1.2–1.6 (lifecycle retrieval, observation capture, consolidation + promote/retire, reader
+  API, doc sync) — PR #68 (squash `4009d3c`), incl. review hardening of the `merge` op and
+  `rule promote`.
+- **Only Phase 1 remainder:** cut a release so the installed `auto` binary picks up the new
+  surface (user-triggered/billed — see 1.6).
+
+**Validated end-to-end (informal dogfood, 2026-06-11).** Ran the full pipeline by hand as the
+reflecting engineer: a 5-agent discovery team mined this repo's 625 indexed sessions → 19
+evidence-linked observations → `consolidate` → 16 draft rules → promoted 4. Proved the
+observe → consolidate → promote → retrieve loop works on real data. (Output lives on the
+throwaway `experiment/reflect-dogfood` branch, intentionally not on main.) This is a manual
+preview of 2.1/2.2 — the *skills* that automate it are not built yet.
+
+**Eval design captured** in `auto-eval/docs/evaluating-playbook-rule-utility.md`: how to test
+whether playbook rules actually improve runs (the Phase-3 utility question). Groundwork, not
+yet built.
+
+**Next up:** Phase 2 — turn the manual dogfood into repeatable skills (2.1 mining, 2.2
+consolidation), add a human review/promotion pass (2.3), and wire `retrieve`/`gate` into live
+sessions (2.4) so the loop generates its own telemetry. Phase 3 stays dormant until volume.
 
 ## Goal
 
@@ -111,13 +137,13 @@ Shipped: `CLAUDE_CODE_SESSION_ID` appended to the detection precedence list
 gate-fallback test now clears the new key so it doesn't pick up the real session ID when
 the suite runs inside Claude Code.
 
-### 1.2 Make retrieval lifecycle-aware — ✅ done (branch `feat/reflect-playbook-phase1`)
+### 1.2 Make retrieval lifecycle-aware — ✅ done (merged to main, PR #68)
 
 `retrieve` excludes `stale` rules and either excludes or explicitly flags `draft` rules
 (flagged is preferred: implementers can opt in, and drafts need exposure to graduate).
 Decide and document the default. This turns `draft` into a real candidate state.
 
-### 1.3 Observation capture (the Observe step) — ✅ done (branch `feat/reflect-playbook-phase1`)
+### 1.3 Observation capture (the Observe step) — ✅ done (merged to main, PR #68)
 
 Restore the working-memory tier as a new `observation` event type on the existing event
 log, plus a write surface (`auto reflect observe` or `observation add`) and a reader
@@ -137,7 +163,7 @@ deduped by session+subject so re-mining is idempotent. Phase-4a gap reports shou
 recorded as (or trivially mappable to) observations of kind `gap`, unifying the Stage-3
 gap-to-rule input with mining output.
 
-### 1.4 Consolidation → rules (the Consolidate step) — ✅ done (branch `feat/reflect-playbook-phase1`)
+### 1.4 Consolidation → rules (the Consolidate step) — ✅ done (merged to main, PR #68)
 
 `auto reflect consolidate` turns clustered observations into playbook changes. The CLI
 side is deterministic: evidence threshold (≥ 2 distinct sessions; `--force` /
@@ -151,7 +177,7 @@ projection and `rule get` expose it. Add explicit `rule promote <r-id>` /
 `rule retire <r-id>` verbs; promote refuses (without `--force`) when the provenance chain
 covers < 2 distinct sessions.
 
-### 1.5 Reader API over the event log — ✅ done (branch `feat/reflect-playbook-phase1`)
+### 1.5 Reader API over the event log — ✅ done (merged to main, PR #68)
 
 Expose loop signal without hand-parsing JSONL:
 
@@ -161,7 +187,7 @@ Expose loop signal without hand-parsing JSONL:
 - richer `stats`: per-rule rank distribution and outcome counts alongside
   surfaced/selected/selection_rate
 
-### 1.6 Release + doc sync — ◑ doc sync done; release tag pending (user-triggered)
+### 1.6 Release + doc sync — ◑ doc sync done (PR #68); release tag pending (user-triggered)
 
 Cut a release so the installed binary matches source; regenerate quickstarts; sweep
 root `CLAUDE.md` and any docs referencing removed commands (`lookup`,
@@ -247,10 +273,10 @@ Also deferred to this phase (build only when need is demonstrated):
 | # | Sub-task | Depends on | Status |
 |---|----------|------------|--------|
 | 1.1 | Fix session identity detection | — | ✅ done (PR #66) |
-| 1.2 | Lifecycle-aware retrieval | — | ✅ done |
-| 1.3 | Observation capture (Observe) | — | ✅ done |
-| 1.4 | Consolidation → rules (Consolidate) | 1.2, 1.3 | ✅ done |
-| 1.5 | Reader API over event log | 1.3 | ✅ done |
+| 1.2 | Lifecycle-aware retrieval | — | ✅ done (#68) |
+| 1.3 | Observation capture (Observe) | — | ✅ done (#68) |
+| 1.4 | Consolidation → rules (Consolidate) | 1.2, 1.3 | ✅ done (#68) |
+| 1.5 | Reader API over event log | 1.3 | ✅ done (#68) |
 | 1.6 | Release + doc sync | 1.1–1.5 | ◑ docs done; release pending |
 | 2.1 | Mining skill (sessions → observations) | 1.3, 1.6 | |
 | 2.2 | Consolidation skill (observations → draft rules) | 1.4, 2.1 | |
