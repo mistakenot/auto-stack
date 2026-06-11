@@ -24,6 +24,7 @@ credentials.json
 *.pfx
 
 .claude/worktrees
+.claude/*.lock
 .prose
 
 # autoenv local runtime state
