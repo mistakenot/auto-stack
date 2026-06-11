@@ -44,6 +44,10 @@ type Rule struct {
 	Version    int      `json:"version"`
 	CreatedAt  string   `json:"created_at"`
 	UpdatedAt  string   `json:"updated_at"`
+	// ObservationIDs is the consolidation provenance: the observations this rule
+	// generalizes. Empty for rules created directly via `rule create`; populated
+	// by `consolidate`. Optional on legacy rules, so validation never requires it.
+	ObservationIDs []string `json:"observation_ids,omitempty"`
 }
 
 // Conflict records a from_version mismatch resolved during a fold. The losing

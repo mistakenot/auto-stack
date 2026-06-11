@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mistakenot/auto-reflect/internal/app"
+	"github.com/mistakenot/auto-reflect/internal/consolidate"
 	"github.com/mistakenot/auto-reflect/internal/events"
 	"github.com/mistakenot/auto-reflect/internal/gitutil"
 	"github.com/mistakenot/auto-reflect/internal/rules"
@@ -24,6 +25,8 @@ func newRuleCmd(application *app.App) *cobra.Command {
 		newRuleEditCmd(application),
 		newRuleListCmd(application),
 		newRuleGetCmd(application),
+		newRulePromoteCmd(application),
+		newRuleRetireCmd(application),
 	)
 	return ruleCmd
 }
@@ -241,15 +244,25 @@ func newRuleEditCmd(application *app.App) *cobra.Command {
 }
 
 func newRuleListCmd(application *app.App) *cobra.Command {
-	var format string
+	var (
+		format    string
+		lifecycle string
+	)
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List rules (id, use_when, domain, type)",
+		Short: "List rules (id, use_when, domain, type, lifecycle)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			outputFormat, err := normalizeFormat(format)
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
+			}
+			lifecycleFilter := strings.ToLower(strings.TrimSpace(lifecycle))
+			switch lifecycleFilter {
+			case "", rules.LifecycleDraft, rules.LifecycleConfirmed, rules.LifecycleStale:
+				// ok: empty means no filter (list-returns-all).
+			default:
+				return &ExitError{Code: 1, Err: fmt.Errorf("invalid --lifecycle %q: use one of %s|%s|%s", lifecycle, rules.LifecycleDraft, rules.LifecycleConfirmed, rules.LifecycleStale)}
 			}
 			repo, err := gitutil.DetectRepoLenient(application.CWD)
 			if err != nil {
@@ -260,22 +273,34 @@ func newRuleListCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 
+			selected := make([]*rules.Rule, 0, len(playbook.Rules))
+			for i := range playbook.Rules {
+				if lifecycleFilter != "" && playbook.Rules[i].Lifecycle != lifecycleFilter {
+					continue
+				}
+				selected = append(selected, &playbook.Rules[i])
+			}
+
 			if outputFormat == "text" {
-				for i := range playbook.Rules {
-					r := &playbook.Rules[i]
-					fmt.Fprintf(cmd.OutOrStdout(), "%s [%s] (%s) %s\n", r.ID, r.RuleType, strings.Join(r.Domain, ","), r.UseWhen)
+				for _, r := range selected {
+					line := fmt.Sprintf("%s [%s] (%s) %s  lifecycle=%s", r.ID, r.RuleType, strings.Join(r.Domain, ","), r.UseWhen, r.Lifecycle)
+					if len(r.ObservationIDs) > 0 {
+						line += fmt.Sprintf("  obs=%d", len(r.ObservationIDs))
+					}
+					fmt.Fprintln(cmd.OutOrStdout(), line)
 				}
 				return nil
 			}
 
-			items := make([]map[string]any, 0, len(playbook.Rules))
-			for i := range playbook.Rules {
-				r := &playbook.Rules[i]
+			items := make([]map[string]any, 0, len(selected))
+			for _, r := range selected {
 				items = append(items, map[string]any{
-					"id":        r.ID,
-					"use_when":  r.UseWhen,
-					"domain":    r.Domain,
-					"rule_type": r.RuleType,
+					"id":              r.ID,
+					"use_when":        r.UseWhen,
+					"domain":          r.Domain,
+					"rule_type":       r.RuleType,
+					"lifecycle":       r.Lifecycle,
+					"observation_ids": r.ObservationIDs,
 				})
 			}
 			if err := writeJSON(cmd.OutOrStdout(), map[string]any{"scope": "repo", "rules": items}); err != nil {
@@ -284,6 +309,7 @@ func newRuleListCmd(application *app.App) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&lifecycle, "lifecycle", "", "filter by lifecycle: draft|confirmed|stale (default: all)")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
 	return cmd
 }
@@ -326,6 +352,131 @@ func newRuleGetCmd(application *app.App) *cobra.Command {
 	return cmd
 }
 
+func newRulePromoteCmd(application *app.App) *cobra.Command {
+	var (
+		force  bool
+		format string
+	)
+	cmd := &cobra.Command{
+		Use:   "promote <r-id>",
+		Short: "Promote a draft rule to confirmed (gated on >=2 distinct evidence sessions)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			outputFormat, err := normalizeFormat(format)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			repo, err := gitutil.DetectRepoLenient(application.CWD)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			playbook, err := rules.Load(repo.Root, store.PlaybookPath(repo.Root))
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			current, ok := findRule(playbook, args[0])
+			if !ok {
+				return &ExitError{Code: 1, Err: fmt.Errorf("rule %q not found: run `auto reflect rule list` to see available ids", args[0])}
+			}
+			if current.Lifecycle == rules.LifecycleConfirmed {
+				return &ExitError{Code: 1, Err: fmt.Errorf("rule %s is already confirmed", current.ID)}
+			}
+			// Retire is terminal: a stale rule cannot be promoted straight to confirmed
+			// (even with --force), which would bypass the draft re-review path and revive
+			// a rule retired for being wrong. Recreate the intent via consolidate instead.
+			if current.Lifecycle == rules.LifecycleStale {
+				return &ExitError{Code: 1, Err: fmt.Errorf("rule %s is stale; retired rules cannot be promoted directly — recreate the intent via `auto reflect consolidate` (create-draft) if it still applies", current.ID)}
+			}
+
+			if !force {
+				all, rerr := events.ReadAll(repo.Root)
+				if rerr != nil {
+					return &ExitError{Code: 1, Err: rerr}
+				}
+				cov := consolidate.NewObservationIndex(all).Coverage(current.ObservationIDs)
+				if len(cov.Sessions) < consolidate.EvidenceMinSessions {
+					return &ExitError{Code: 1, Err: fmt.Errorf("rule %s provenance covers %d distinct session(s); promotion needs >=%d (attach more evidence with `auto reflect consolidate`, or pass --force)", current.ID, len(cov.Sessions), consolidate.EvidenceMinSessions)}
+				}
+			}
+
+			updated, err := changeLifecycle(application.CWD, repo.Root, &current, rules.LifecycleConfirmed)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			return writeRuleResult(cmd, outputFormat, "Promoted rule", "promoted", &updated)
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "promote even when provenance covers fewer than two distinct sessions")
+	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
+	return cmd
+}
+
+func newRuleRetireCmd(application *app.App) *cobra.Command {
+	var format string
+	cmd := &cobra.Command{
+		Use:   "retire <r-id>",
+		Short: "Retire a rule to stale (always allowed; stale rules never surface in retrieve)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			outputFormat, err := normalizeFormat(format)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			repo, err := gitutil.DetectRepoLenient(application.CWD)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			playbook, err := rules.Load(repo.Root, store.PlaybookPath(repo.Root))
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			current, ok := findRule(playbook, args[0])
+			if !ok {
+				return &ExitError{Code: 1, Err: fmt.Errorf("rule %q not found: run `auto reflect rule list` to see available ids", args[0])}
+			}
+			if current.Lifecycle == rules.LifecycleStale {
+				return &ExitError{Code: 1, Err: fmt.Errorf("rule %s is already stale", current.ID)}
+			}
+			updated, err := changeLifecycle(application.CWD, repo.Root, &current, rules.LifecycleStale)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			return writeRuleResult(cmd, outputFormat, "Retired rule", "retired", &updated)
+		},
+	}
+	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
+	return cmd
+}
+
+// changeLifecycle appends one rule_edited event carrying a single lifecycle delta
+// (so promote/retire are one versioned event, reusing the edit/fold path) and
+// returns the refolded rule.
+func changeLifecycle(cwd, repoRoot string, current *rules.Rule, lifecycle string) (rules.Rule, error) {
+	payload := events.RuleEditedPayload{
+		RuleID:      current.ID,
+		FromVersion: current.Version,
+		ToVersion:   current.Version + 1,
+		Deltas:      []events.FieldDelta{{Field: rules.FieldLifecycle, Old: current.Lifecycle, New: lifecycle}},
+	}
+	if _, err := events.AppendEvent(cwd, events.TypeRuleEdited, payload, events.AppendOptions{}); err != nil {
+		return rules.Rule{}, err
+	}
+	return refoldAndGet(repoRoot, current.ID)
+}
+
+// writeRuleResult emits a mutated rule in the chosen format, mirroring the
+// create/edit response envelope.
+func writeRuleResult(cmd *cobra.Command, outputFormat, textHeader, jsonVerb string, r *rules.Rule) error {
+	if outputFormat == "text" {
+		printRuleText(cmd, textHeader, r)
+		return nil
+	}
+	if err := writeJSON(cmd.OutOrStdout(), map[string]any{jsonVerb: true, "scope": "repo", "rule": r}); err != nil {
+		return &ExitError{Code: 1, Err: err}
+	}
+	return nil
+}
+
 func findRule(playbook rules.Playbook, id string) (rules.Rule, bool) {
 	for i := range playbook.Rules {
 		if playbook.Rules[i].ID == id {
@@ -357,4 +508,7 @@ func printRuleText(cmd *cobra.Command, header string, r *rules.Rule) {
 	fmt.Fprintf(out, "Use when: %s\n", r.UseWhen)
 	fmt.Fprintf(out, "Content: %s\n", r.Content)
 	fmt.Fprintf(out, "Causal note: %s\n", r.CausalNote)
+	if len(r.ObservationIDs) > 0 {
+		fmt.Fprintf(out, "Observations: %s\n", strings.Join(r.ObservationIDs, ", "))
+	}
 }
