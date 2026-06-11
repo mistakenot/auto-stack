@@ -27,6 +27,10 @@ const (
 	// rule_edited dirties the projection; this event is just the observation→rule
 	// provenance link that drives the `--unconsolidated` observation filter.
 	TypeConsolidation = "consolidation"
+
+	// TypeSessionMined records that the miner has processed a session, with
+	// the mining outcome (mined/empty/failed/skipped) and extracted signals.
+	TypeSessionMined = "session_mined"
 )
 
 var (
@@ -173,6 +177,36 @@ type ConsolidationPayload struct {
 	Op             string   `json:"op"`
 }
 
+// AckStatus is the mining outcome for a session.
+type AckStatus string
+
+const (
+	AckMined   AckStatus = "mined"
+	AckEmpty   AckStatus = "empty"
+	AckFailed  AckStatus = "failed"
+	AckSkipped AckStatus = "skipped"
+)
+
+// Signals holds the deterministic signal breakdown computed at mining time.
+type Signals struct {
+	MessageCount       int     `json:"message_count"`
+	CorrectionDensity  float64 `json:"correction_density"`
+	ToolErrorCount     int     `json:"tool_error_count"`
+	FailureMarkerCount int     `json:"failure_marker_count"`
+	AskUserCount       int     `json:"ask_user_question_count"`
+	LengthFloorApplied bool    `json:"length_floor_applied"`
+}
+
+// SessionMinedPayload records mining coverage for a session.
+type SessionMinedPayload struct {
+	SessionID     string    `json:"session_id"`
+	MinerVersion  int       `json:"miner_version"`
+	Status        AckStatus `json:"status"`
+	Observations  int       `json:"observations"`
+	PriorityScore float64   `json:"priority_score"`
+	Signals       Signals   `json:"signals"`
+}
+
 // IsRuleEvent reports whether an event mutates the rule projection. Only these
 // events advance folded_through / dirty the snapshot. Observations are working
 // memory and deliberately excluded so they never dirty the rule projection.
@@ -193,11 +227,11 @@ func Validate(e *Event) []ValidationError {
 	}
 
 	switch e.Type {
-	case TypeRuleCreated, TypeRuleEdited, TypeRetrieval, TypeSelection, TypeFeedback, TypeObservation, TypeConsolidation:
+	case TypeRuleCreated, TypeRuleEdited, TypeRetrieval, TypeSelection, TypeFeedback, TypeObservation, TypeConsolidation, TypeSessionMined:
 	case "":
 		errs = append(errs, ValidationError{Code: "required", Field: "type", Message: "type is required"})
 	default:
-		errs = append(errs, ValidationError{Code: "enum", Field: "type", Message: "type must be one of rule_created, rule_edited, retrieval, selection, feedback, observation, consolidation", Value: e.Type})
+		errs = append(errs, ValidationError{Code: "enum", Field: "type", Message: "type must be one of rule_created, rule_edited, retrieval, selection, feedback, observation, consolidation, session_mined", Value: e.Type})
 	}
 	if e.Type != "" && !typePattern.MatchString(e.Type) {
 		errs = append(errs, ValidationError{Code: "format", Field: "type", Message: "type must match ^[a-z_]+$", Value: e.Type})
