@@ -29,7 +29,6 @@ func WatchDir() (string, error) {
 	return filepath.Join(autoDir, watchDirName), nil
 }
 
-
 func HostPath() (string, error) {
 	return sharedconfig.HostConfigPath()
 }
