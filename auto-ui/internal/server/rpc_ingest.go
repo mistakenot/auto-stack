@@ -30,17 +30,17 @@ func handleRPC(hub *bus.Hub, regProvider func() config.ProjectsConfig) http.Hand
 		}
 
 		if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-			writeRPCError(w, http.StatusUnsupportedMediaType, codeParseError, "Content-Type must be application/json")
+			writeRPCError(w, http.StatusUnsupportedMediaType, codeInvalidRequest, "Content-Type must be application/json")
 			return
 		}
 		if origin := r.Header.Get("Origin"); origin != "" {
-			writeRPCError(w, http.StatusForbidden, codeParseError, "cross-origin requests are not accepted")
+			writeRPCError(w, http.StatusForbidden, codeInvalidRequest, "cross-origin requests are not accepted")
 			return
 		}
 
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1 MiB cap
 		if err != nil {
-			writeRPCError(w, http.StatusBadRequest, codeParseError, "read body failed")
+			writeRPCError(w, http.StatusBadRequest, codeInternalError, "read body failed")
 			return
 		}
 
@@ -56,7 +56,7 @@ func handleRPC(hub *bus.Hub, regProvider func() config.ProjectsConfig) http.Hand
 		}
 
 		if frame.JSONRPC != "2.0" {
-			writeRPCError(w, http.StatusBadRequest, codeParseError, "jsonrpc must be \"2.0\"")
+			writeRPCError(w, http.StatusBadRequest, codeInvalidRequest, "jsonrpc must be \"2.0\"")
 			return
 		}
 
@@ -64,7 +64,7 @@ func handleRPC(hub *bus.Hub, regProvider func() config.ProjectsConfig) http.Hand
 		ev := frame.Params
 
 		if errs := ev.Validate(); len(errs) > 0 {
-			writeRPCError(w, http.StatusBadRequest, codeParseError, "envelope validation failed")
+			writeRPCError(w, http.StatusBadRequest, codeInvalidParams, "envelope validation failed")
 			return
 		}
 
@@ -73,8 +73,9 @@ func handleRPC(hub *bus.Hub, regProvider func() config.ProjectsConfig) http.Hand
 
 		// Derive doc.changed events and broadcast each.
 		reg := regProvider()
-		for _, d := range bus.DeriveDocChanged(ev, reg) {
-			hub.Broadcast(d)
+		derived := bus.DeriveDocChanged(ev, reg)
+		for i := range derived {
+			hub.Broadcast(derived[i])
 		}
 
 		w.WriteHeader(http.StatusNoContent)
@@ -90,5 +91,9 @@ func writeRPCError(w http.ResponseWriter, httpStatus, code int, msg string) {
 		ID:      json.RawMessage("null"),
 		Error:   &rpcError{Code: code, Message: msg},
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	b, err := json.Marshal(resp)
+	if err != nil {
+		return // fixed-shape error response; marshal failure is not expected
+	}
+	_, _ = w.Write(b)
 }

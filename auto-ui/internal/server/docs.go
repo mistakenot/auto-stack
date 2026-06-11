@@ -131,7 +131,7 @@ func walkDocs(root string) ([]docEntry, error) {
 		}
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
-			return nil // skip silently
+			return nil //nolint:nilerr // intentional: skip entries we can't relativize, continue the walk
 		}
 		// Normalize to forward slashes for consistency.
 		rel = filepath.ToSlash(rel)

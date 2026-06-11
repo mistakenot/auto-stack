@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
@@ -19,7 +18,7 @@ var knownToolDirs = []string{"doc", "env", "etl", "graph", "reflect", "search", 
 // config (~/.auto, host.json, the project registry). `auto init --project`
 // additionally registers the current git repository in the registry so every
 // auto tool — and the UI — knows the project exists.
-func newInitCmd(stdout, stderr io.Writer) *cobra.Command {
+func newInitCmd() *cobra.Command {
 	var project bool
 	var projectID string
 	var projectName string

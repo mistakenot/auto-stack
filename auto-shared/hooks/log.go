@@ -66,7 +66,7 @@ func Append(env Envelope) error {
 	if err != nil {
 		return fmt.Errorf("open hook log %s: %w", logPath, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	line = append(line, '\n')
 	if _, err := f.Write(line); err != nil {

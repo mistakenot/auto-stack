@@ -48,7 +48,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		uicmd.New(stdout, stderr),
 		watchcmd.New(stdout, stderr),
 	)
-	root.AddCommand(newInitCmd(stdout, stderr))
+	root.AddCommand(newInitCmd())
 	root.AddCommand(newHooksCmd())
 	root.AddCommand(newUpdateCmd())
 

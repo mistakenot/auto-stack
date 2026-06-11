@@ -66,14 +66,20 @@ func docsTestServer(t *testing.T, root string) *httptest.Server {
 // rpcCall sends a JSON-RPC request over WS and reads the correlated response.
 func rpcCall(ctx context.Context, t *testing.T, c *websocket.Conn, id int, method string, params any) map[string]any {
 	t.Helper()
-	raw, _ := json.Marshal(params)
+	raw, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
 	req := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
 		"method":  method,
 		"params":  json.RawMessage(raw),
 	}
-	reqBytes, _ := json.Marshal(req)
+	reqBytes, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal req: %v", err)
+	}
 	if err := c.Write(ctx, websocket.MessageText, reqBytes); err != nil {
 		t.Fatalf("write %s: %v", method, err)
 	}

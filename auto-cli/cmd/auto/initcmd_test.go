@@ -32,7 +32,7 @@ func TestInitProjectRegistersWithoutCredentials(t *testing.T) {
 	}
 	t.Chdir(repo)
 
-	cmd := newInitCmd(io.Discard, io.Discard)
+	cmd := newInitCmd()
 	cmd.SetArgs([]string{"--project", "--id", "widgets", "--name", "Widgets"})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
@@ -78,7 +78,7 @@ func TestInitProjectRejectsBadExplicitID(t *testing.T) {
 	gitInTest(t, repo, "init")
 	t.Chdir(repo)
 
-	cmd := newInitCmd(io.Discard, io.Discard)
+	cmd := newInitCmd()
 	cmd.SetArgs([]string{"--project", "--id", "Bad_ID"})
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)

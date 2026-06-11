@@ -276,7 +276,10 @@ func TestFireSwallowsLogFailure(t *testing.T) {
 	if err := os.MkdirAll(uiDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	settingsJSON, _ := json.Marshal(map[string]int{"port": port})
+	settingsJSON, err := json.Marshal(map[string]int{"port": port})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(uiDir, "settings.json"), settingsJSON, 0o644); err != nil {
 		t.Fatal(err)
 	}

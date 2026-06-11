@@ -48,6 +48,10 @@ linters:
         - style
         - opinionated
         - experimental
+      disabled-checks:
+        - hugeParam  # event/config value-objects (bus.Event, ProjectRef, Envelope) are passed by value
+                     # intentionally — value semantics isolate fan-out sinks; the perf cost is negligible
+                     # for these sizes and pointer-everywhere harms safety/readability.
 
     gosec:
       excludes:
@@ -60,6 +64,8 @@ linters:
         - G201  # fmt.Sprintf SQL is safe — all user values are parameterized
         - G202  # SQL concatenation is safe — joins CTEs/placeholders, not user input
         - G306  # 0644 files are standard for CLI tools
+        - G302  # 0644 perms on config/log files are standard for CLI tools (same intent as G306)
+        - G107  # http.Get with a variable URL is the self-updater fetching a release asset — intentional
         - G401  # md5 used for content hashing, not crypto
         - G501  # md5 import — same as G401
         - G703  # path traversal via taint — false positives in CLI tools

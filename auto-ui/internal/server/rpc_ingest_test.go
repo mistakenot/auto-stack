@@ -143,7 +143,10 @@ func TestRPCIngestNonDocNoDerived(t *testing.T) {
 	// POST a valid event with a non-docs path.
 	ev := validToolPostEvent(t, "src/main.go")
 	frame := bus.Notification{JSONRPC: "2.0", Method: ev.Type, Params: ev}
-	body, _ := json.Marshal(frame)
+	body, err := json.Marshal(frame)
+	if err != nil {
+		t.Fatalf("marshal frame: %v", err)
+	}
 
 	resp := postRPC(t, srv, body)
 	resp.Body.Close()
