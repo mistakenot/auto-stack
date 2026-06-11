@@ -9,12 +9,11 @@ import (
 )
 
 const (
-	watchDirName     = "watch"
-	settingsFileName = "settings.json"
-	projectFileName  = "project.json"
-	lockFileName     = "daemon.lock"
-	pidFileName      = "daemon.pid.json"
-	dbFileName       = "logs.sqlite"
+	watchDirName    = "watch"
+	projectFileName = "project.json"
+	lockFileName    = "daemon.lock"
+	pidFileName     = "daemon.pid.json"
+	dbFileName      = "logs.sqlite"
 )
 
 // AutoDir returns ~/.auto, delegating to the shared config package.
@@ -30,13 +29,6 @@ func WatchDir() (string, error) {
 	return filepath.Join(autoDir, watchDirName), nil
 }
 
-func SettingsPath() (string, error) {
-	dir, err := WatchDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, settingsFileName), nil
-}
 
 func HostPath() (string, error) {
 	return sharedconfig.HostConfigPath()

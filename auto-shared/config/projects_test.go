@@ -118,6 +118,53 @@ func TestSaveLoadProjectsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestEnsureProjectsMigratesLegacyRegistry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Seed the legacy watch-owned registry, as an un-migrated host would have.
+	legacy := filepath.Join(home, ".auto", "watch", "settings.json")
+	if err := WriteJSONFile(legacy, ProjectsConfig{Projects: []ProjectRef{
+		{ID: "auto-stack", Path: "/repos/auto-stack", Remote: "git@x:auto-stack.git"},
+	}}); err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+
+	// EnsureProjects is what `auto init` calls — it must migrate, not start empty.
+	path, cfg, created, err := EnsureProjects()
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if !created {
+		t.Fatalf("expected registry created on first ensure")
+	}
+	if len(cfg.Projects) != 1 || cfg.Projects[0].ID != "auto-stack" {
+		t.Fatalf("expected legacy project migrated, got %#v", cfg.Projects)
+	}
+	if want := filepath.Join(home, ".auto", "projects.json"); path != want {
+		t.Fatalf("registry path = %s, want %s", path, want)
+	}
+	// Legacy file must be retired.
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("expected legacy file renamed away, stat err = %v", err)
+	}
+	if _, err := os.Stat(legacy + ".migrated"); err != nil {
+		t.Errorf("expected legacy file renamed to .migrated, got %v", err)
+	}
+}
+
+func TestEnsureProjectsNoLegacyStartsEmpty(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	_, cfg, created, err := EnsureProjects()
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if !created || len(cfg.Projects) != 0 {
+		t.Fatalf("expected empty created registry, got created=%v projects=%#v", created, cfg.Projects)
+	}
+}
+
 func TestUpsertProjectDefaultsRegisteredAt(t *testing.T) {
 	cfg := ProjectsConfig{}
 	UpsertProject(&cfg, ProjectRef{ID: "alpha", Path: "/repos/alpha"})
