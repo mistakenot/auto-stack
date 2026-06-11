@@ -1,5 +1,5 @@
 ---
-hash: "20cb03ec"
+hash: "983d19ba"
 id: "bc691476"
 read_when: "planning or sequencing sub-tasks for the reflect playbook loop epic"
 summary: "Epic plan for making the auto-reflect playbook loop usable by autonomous reflection agents: fix existing gaps first (session identity, lifecycle, observation capture, consolidation, signal readers, doc drift), then wire agent runs, then grow the improvement loop. Centered on a two-step Observe → Consolidate pipeline."
@@ -26,7 +26,7 @@ observe → consolidate → promote → retrieve loop works on real data. (Outpu
 throwaway `experiment/reflect-dogfood` branch, intentionally not on main.) This is a manual
 preview of 2.1/2.2 — the *skills* that automate it are not built yet.
 
-**Eval design captured** in `auto-eval/docs/evaluating-playbook-rule-utility.md`: how to test
+**Eval design captured** in [`auto-eval/docs/evaluating-playbook-rule-utility.md`](../../auto-eval/docs/evaluating-playbook-rule-utility.md): how to test
 whether playbook rules actually improve runs (the Phase-3 utility question). Groundwork, not
 yet built.
 
@@ -58,8 +58,9 @@ different owners and different quality bars:
    observation IDs as provenance. LLM judgment proposes; deterministic CLI gates
    (thresholds, dedupe, conflict checks) decide what persists.
 
-Why (synthesized from `cass-memory-system-analysis.md`, `decision-mining.md`,
-`research-april-2026.md`):
+Why (synthesized from [`cass-memory-system-analysis.md`](../../auto-reflect/docs/cass-memory-system-analysis.md),
+[`decision-mining.md`](../../auto-reflect/docs/decision-mining.md),
+[`research-april-2026.md`](../../auto-reflect/docs/research-april-2026.md)):
 
 - **The middle memory tier is what's missing.** CMS's shape is episodic (raw logs) →
   working (diary/observations) → procedural (rules). Auto-stack has the episodic tier
@@ -94,12 +95,12 @@ Known risks, with mitigations baked into the sub-tasks below:
   retrieve → select → feedback → gate loop + basic stats), but a gap analysis (2026-06-10)
   found blockers that make the loop unusable for autonomous runs today.
 - Design references:
-  - `auto-reflect/docs/self-improving-playbook-retrieval.md` (V2 design + reviewer notes)
-  - `auto-reflect/docs/decision-mining.md` (mining pipeline)
-  - `auto-reflect/docs/cass-memory-system-analysis.md` (three-tier memory, delta model,
+  - [`auto-reflect/docs/self-improving-playbook-retrieval.md`](../../auto-reflect/docs/self-improving-playbook-retrieval.md) (V2 design + reviewer notes)
+  - [`auto-reflect/docs/decision-mining.md`](../../auto-reflect/docs/decision-mining.md) (mining pipeline)
+  - [`auto-reflect/docs/cass-memory-system-analysis.md`](../../auto-reflect/docs/cass-memory-system-analysis.md) (three-tier memory, delta model,
     deterministic curation)
-  - `auto-reflect/docs/trauma-candidate-promotion-pattern.md` (discover → promote boundary)
-  - `auto-reflect/docs/research-april-2026.md` (evidence thresholds, lifecycle discipline)
+  - [`auto-reflect/docs/trauma-candidate-promotion-pattern.md`](../../auto-reflect/docs/trauma-candidate-promotion-pattern.md) (discover → promote boundary)
+  - [`auto-reflect/docs/research-april-2026.md`](../../auto-reflect/docs/research-april-2026.md) (evidence thresholds, lifecycle discipline)
 
 ## Current gaps (found 2026-06-10)
 
@@ -242,7 +243,7 @@ precondition and stays dormant below it. Sequence within this phase per the desi
    (`auto search session get`); the highest-value upgrade after the basics. Requires 1.1.
 2. **Signal aggregation** — `compliance_rate`, `expectation_gap`, `missed_rate` folded
    from the event log; triage stays manual at first.
-3. **Outcome instrumentation** — the Layer-1 objective composite from `docs/signals.md`
+3. **Outcome instrumentation** — the Layer-1 objective composite from [`docs/signals.md`](../signals.md)
    + `auto search` primitives.
 4. **Scoring and decay** — asymmetric helpful/harmful scoring (harmful ×4) and
    confidence decay with revalidation (90-day half-life), per the CMS analysis; feeds
