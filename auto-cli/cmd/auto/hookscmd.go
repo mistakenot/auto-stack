@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
+	"strings"
 	"time"
 
+	"github.com/mistakenot/auto-shared/bus"
 	sharedconfig "github.com/mistakenot/auto-shared/config"
+	sharedgit "github.com/mistakenot/auto-shared/git"
 	"github.com/spf13/cobra"
 )
 
@@ -29,20 +31,6 @@ const defaultUIPort = 8080
 // few KB; this is generous headroom while still guarding against a runaway pipe.
 const maxHookPayloadBytes = 1 << 20 // 1 MiB
 
-// HookEvent is the normalized, agent-agnostic event the UI consumes. It is
-// intentionally small: the live signal is lossy-but-fast, and the canonical
-// record is reconstructed later from transcripts by auto-etl.
-type HookEvent struct {
-	Agent     string   `json:"agent"`
-	Event     string   `json:"event,omitempty"`
-	SessionID string   `json:"sessionId,omitempty"`
-	Project   string   `json:"project,omitempty"`
-	Cwd       string   `json:"cwd,omitempty"`
-	Tool      string   `json:"tool,omitempty"`
-	Paths     []string `json:"paths,omitempty"`
-	Timestamp string   `json:"ts"`
-}
-
 // newHooksCmd is the parent for agent hook adapters: `auto hooks fire` (the
 // runtime adapter) and `auto hooks install` (wires fire into agent config).
 func newHooksCmd() *cobra.Command {
@@ -56,9 +44,10 @@ func newHooksCmd() *cobra.Command {
 }
 
 // newHooksFireCmd implements `auto hooks fire --agent <claude|codex>`. It reads a
-// hook payload on stdin, normalizes it, maps the cwd to a registered project, and
-// best-effort POSTs the event to the running auto-ui server. It ALWAYS exits 0
-// for any runtime condition (bad payload, UI down) so it cannot disrupt the agent.
+// hook payload on stdin, normalizes it into a bus.Event with workspace provenance,
+// and best-effort POSTs the event to the running auto-ui server at /api/rpc.
+// It ALWAYS exits 0 for any runtime condition (bad payload, UI down) so it cannot
+// disrupt the agent.
 func newHooksFireCmd() *cobra.Command {
 	var agent string
 	cmd := &cobra.Command{
@@ -80,8 +69,8 @@ func newHooksFireCmd() *cobra.Command {
 			}
 
 			registry := loadRegistryQuietly()
-			ev := buildHookEvent(agent, raw, registry)
-			postHookEvent(uiPort(), ev)
+			ev := buildBusEvent(agent, raw, registry)
+			postBusEvent(uiPort(), ev)
 			return nil
 		},
 	}
@@ -90,58 +79,170 @@ func newHooksFireCmd() *cobra.Command {
 	return cmd
 }
 
-// buildHookEvent normalizes a raw hook payload into a HookEvent. Parsing is
-// lenient: unknown or missing fields are tolerated. The cwd is resolved to a
-// registered project id via the registry when possible.
-func buildHookEvent(agent string, raw []byte, registry sharedconfig.ProjectsConfig) HookEvent {
-	ev := HookEvent{Agent: agent, Timestamp: time.Now().UTC().Format(time.RFC3339)}
+// mapEventType maps a hook_event_name (and optional tool_name) to a dotted bus
+// event type. The default is agent.<lower(event)>; tool events get agent.tool.post.
+func mapEventType(hookEvent, tool string) string {
+	lower := strings.ToLower(hookEvent)
+	switch lower {
+	case "posttooluse":
+		if tool != "" {
+			return "agent.tool.post"
+		}
+		return "agent.posttooluse"
+	case "sessionstart":
+		return "agent.session.start"
+	case "sessionend", "sessionstop":
+		return "agent.session.end"
+	case "pretooluse":
+		return "agent.tool.pre"
+	default:
+		if lower == "" {
+			return "agent.unknown"
+		}
+		return "agent." + lower
+	}
+}
 
+// buildBusEvent normalizes a raw hook payload into a bus.Event with workspace
+// provenance. Parsing is lenient: unknown or missing fields are tolerated. Git
+// provenance and project resolution are best-effort (omitted on error, never fail).
+func buildBusEvent(agent string, raw []byte, registry sharedconfig.ProjectsConfig) bus.Event {
 	var payload map[string]any
 	if len(bytes.TrimSpace(raw)) > 0 {
 		_ = json.Unmarshal(raw, &payload) // tolerate non-JSON / partial payloads
 	}
 
-	ev.Event = stringField(payload, "hook_event_name")
-	ev.SessionID = stringField(payload, "session_id")
-	ev.Tool = stringField(payload, "tool_name")
-	ev.Cwd = stringField(payload, "cwd")
-	if ev.Cwd == "" {
-		if wd, err := os.Getwd(); err == nil {
-			ev.Cwd = wd
-		}
-	}
-	ev.Paths = extractPaths(payload)
+	hookEvent := stringField(payload, "hook_event_name")
+	tool := stringField(payload, "tool_name")
+	eventType := mapEventType(hookEvent, tool)
+	source := "auto/hooks/" + agent
 
-	if ev.Cwd != "" {
-		if p := registry.FindProjectByPath(ev.Cwd); p != nil {
-			ev.Project = p.ID
+	// Build the ToolPost data payload with normalized + raw fields.
+	paths := extractPathRefs(payload)
+	tp := bus.ToolPost{
+		Tool:  tool,
+		Event: hookEvent,
+		Paths: paths,
+	}
+	// Preserve the agent's original tool_input verbatim in Raw.
+	if input, ok := payload["tool_input"]; ok {
+		if rawInput, err := json.Marshal(input); err == nil {
+			tp.Raw = rawInput
 		}
 	}
+
+	ev, err := bus.NewEvent(eventType, source, tp)
+	if err != nil {
+		// Marshal failure shouldn't happen for ToolPost, but degrade gracefully.
+		ev, _ = bus.NewEvent(eventType, source, nil)
+	}
+
+	// Session ID from the payload.
+	ev.Session = stringField(payload, "session_id")
+
+	// Resolve cwd from the payload, falling back to the hook process cwd.
+	cwd := stringField(payload, "cwd")
+	if cwd == "" {
+		if wd, err := os.Getwd(); err == nil {
+			cwd = wd
+		}
+	}
+
+	// Best-effort git provenance from the payload cwd.
+	if cwd != "" {
+		root, branch, commit, err := sharedgit.Provenance(cwd)
+		if err == nil && root != "" {
+			ev.Worktree = root
+			ev.Branch = branch
+			ev.Commit = commit
+
+			// Resolve paths relative to the repo root now that we have it.
+			paths = resolvePathRefs(payload, cwd, root)
+			tp.Paths = paths
+			if newData, err := json.Marshal(tp); err == nil {
+				ev.Data = newData
+			}
+		}
+
+		// Normalized remote — never emit the raw origin URL (may contain a PAT).
+		rawRemote, _ := sharedgit.OriginRemote(cwd)
+		if rawRemote != "" {
+			ev.Remote = sharedgit.NormalizeRemoteURL(rawRemote)
+		}
+
+		// Resolve project: by remote first (handles worktrees), then by path.
+		if ev.Remote != "" {
+			if p := registry.FindProjectByRemote(ev.Remote); p != nil {
+				ev.Project = p.ID
+			}
+		}
+		if ev.Project == "" {
+			root := ev.Worktree
+			if root == "" {
+				root = cwd
+			}
+			if p := registry.FindProjectByPath(root); p != nil {
+				ev.Project = p.ID
+			}
+		}
+	}
+
 	return ev
 }
 
-// extractPaths pulls file paths a tool touched out of the payload's tool_input,
-// so the UI knows which document changed. Best-effort over the common keys.
-func extractPaths(payload map[string]any) []string {
+// extractPathRefs pulls file paths from the payload's tool_input as PathRef
+// values. At this stage only Abs may be set (if the tool provides absolute
+// paths); Rel is populated later by resolvePathRefs once the repo root is known.
+func extractPathRefs(payload map[string]any) []bus.PathRef {
 	input, ok := payload["tool_input"].(map[string]any)
 	if !ok {
 		return nil
 	}
 	seen := map[string]struct{}{}
+	var refs []bus.PathRef
 	for _, key := range []string{"file_path", "notebook_path", "path"} {
 		if v, ok := input[key].(string); ok && v != "" {
+			if _, dup := seen[v]; dup {
+				continue
+			}
 			seen[v] = struct{}{}
+			refs = append(refs, bus.PathRef{Abs: v})
 		}
 	}
-	if len(seen) == 0 {
+	return refs
+}
+
+// resolvePathRefs resolves each tool path against the payload cwd and computes
+// Rel from the repo root. Claude's file_path is usually absolute; Codex may
+// provide relative paths — both are handled.
+func resolvePathRefs(payload map[string]any, cwd, root string) []bus.PathRef {
+	input, ok := payload["tool_input"].(map[string]any)
+	if !ok {
 		return nil
 	}
-	paths := make([]string, 0, len(seen))
-	for p := range seen {
-		paths = append(paths, p)
+	seen := map[string]struct{}{}
+	var refs []bus.PathRef
+	for _, key := range []string{"file_path", "notebook_path", "path"} {
+		p, ok := input[key].(string)
+		if !ok || p == "" {
+			continue
+		}
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+
+		abs := p
+		if !filepath.IsAbs(p) {
+			abs = filepath.Join(cwd, p)
+		}
+		rel, err := filepath.Rel(root, abs)
+		if err != nil {
+			rel = ""
+		}
+		refs = append(refs, bus.PathRef{Rel: rel, Abs: abs})
 	}
-	sort.Strings(paths)
-	return paths
+	return refs
 }
 
 func stringField(payload map[string]any, key string) string {
@@ -190,17 +291,18 @@ func uiPort() int {
 	return settings.Port
 }
 
-// postHookEvent best-effort POSTs the event to the auto-ui server on loopback.
-// All failures (UI down, timeout, marshal) are swallowed: the live channel is
-// optional, and the hook must not delay or fail the agent.
-func postHookEvent(port int, ev HookEvent) {
-	body, err := json.Marshal(ev)
+// postBusEvent best-effort POSTs the event as a JSON-RPC notification to the
+// auto-ui server's /api/rpc endpoint on loopback. All failures (UI down,
+// timeout, marshal) are swallowed: the live channel is optional, and the hook
+// must not delay or fail the agent.
+func postBusEvent(port int, ev bus.Event) {
+	body, err := json.Marshal(ev.AsNotification())
 	if err != nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), hookPostTimeout)
 	defer cancel()
-	url := fmt.Sprintf("http://127.0.0.1:%d/api/hooks", port)
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/rpc", port)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return
