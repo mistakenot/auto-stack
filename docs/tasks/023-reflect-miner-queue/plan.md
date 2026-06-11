@@ -34,12 +34,12 @@ events with status + score snapshot) on the existing append-only reflect event l
 - [Context](./context.md)
 
 ## How to Test
-- [ ] `auto-shared/model` — compiles; `auto-etl` + `auto-search` suites stay green after re-point
-- [ ] `auto-reflect/internal/etlread/read_test.go` — reads fixture parquet; `MsgSignalRow` projection excludes `content`; `ResolveSource` distinguishes missing/empty/ok
-- [ ] `auto-reflect/internal/events/model.go` validation test — `session_mined` accepted; bad payloads rejected
-- [ ] `auto-reflect/internal/miner/{miner,score}_test.go` — fold (terminal vs `failed` retryable; version bump), scope, dedupe, deterministic score + length-floor, `prior_ack`/`remined`
-- [ ] `auto-reflect/internal/cli/miner_test.go` — `ack --status` round-trip; `describe`/`signals` write nothing; source-state errors + exit codes
-- [ ] `auto-reflect/cmd/autoreflect/e2e_miner_test.go` — full `next → ack → status` against a fixture `~/.auto/etl/output`; `describe`; `--all`/`--since`
+- [x] `auto-shared/model` — compiles; `auto-etl` + `auto-search` suites stay green after re-point
+- [x] `auto-reflect/internal/etlread/read_test.go` — reads fixture parquet; `MsgSignalRow` projection excludes `content`; `ResolveSource` distinguishes missing/empty/ok
+- [x] `auto-reflect/internal/events/model.go` validation test — `session_mined` accepted; bad payloads rejected
+- [x] `auto-reflect/internal/miner/{miner,score}_test.go` — fold (terminal vs `failed` retryable; version bump), scope, dedupe, deterministic score + length-floor, `prior_ack`/`remined`
+- [x] `auto-reflect/internal/cli/miner_test.go` — `ack --status` round-trip; `describe`/`signals` write nothing; source-state errors + exit codes
+- [x] `auto-reflect/cmd/autoreflect/e2e_miner_test.go` — full `next → ack → status` against a fixture `~/.auto/etl/output`; `describe`; `--all`/`--since`
 
 ## Execution Sequence
 ```
@@ -56,64 +56,64 @@ worktree and verify on disk before proceeding (017/018 lesson).
 ## Plan
 
 ### Phase 1: Extract canonical parquet schema into `auto-shared/model`
-- [ ] Step 1.1: Create `auto-shared/model/schema.go` — move `AgentSession`, `AgentMessage`,
+- [x] Step 1.1: Create `auto-shared/model/schema.go` — move `AgentSession`, `AgentMessage`,
       `MessageRole` + role consts, `SchemaVersion`, `DefaultTruncateMaxChars`,
       `IntentTruncateMaxChars`, `DefaultTranscriptMaxChars`, `PartitionKey`, `WeekPartition`,
       `MonthPartition` verbatim from `auto-etl/internal/model/model.go` (parquet tags **unchanged**).
   - verify: `cd auto-shared && go build ./model/` passes.
-- [ ] Step 1.2: Add `github.com/parquet-go/parquet-go v0.29.0` to `auto-shared/go.mod`; `go mod tidy`
+- [x] Step 1.2: Add `github.com/parquet-go/parquet-go v0.29.0` to `auto-shared/go.mod`; `go mod tidy`
       in auto-shared (creates go.sum).
   - verify: `cd auto-shared && go build ./... && go vet ./...` pass; go.sum present.
-- [ ] Step 1.3: In `auto-etl/internal/model/model.go` delete the moved decls; keep git/github types
+- [x] Step 1.3: In `auto-etl/internal/model/model.go` delete the moved decls; keep git/github types
       and `TransformedRows` (have it reference `sharedmodel.AgentSession/AgentMessage`). Re-point
       `internal/transform/transform.go` and `internal/writer/writer.go` (+ their `_test.go` and
       `auto-etl/e2e_test.go`) to import `github.com/mistakenot/auto-shared/model`.
   - verify: `cd auto-etl && go build ./... && go test ./...` pass (writer/transform/e2e green —
       proves the move is behaviour-preserving, partitions still readable).
-- [ ] Step 1.4: Delete `auto-search/internal/model/parquet.go`; re-point
+- [x] Step 1.4: Delete `auto-search/internal/model/parquet.go`; re-point
       `etlscan/parquet_{sessions,messages}.go`, `indexdb/indexer.go`, `testutil/fixtures.go`,
       `testutil/stats_fixtures.go` to `sharedmodel.AgentSession/AgentMessage`.
   - verify: `cd auto-search && go build ./... && go test ./...` pass.
-- [ ] Step 1.5: `gofmt -l` + `go vet ./...` in all three modules; then `make build && make test`.
+- [x] Step 1.5: `gofmt -l` + `go vet ./...` in all three modules; then `make build && make test`.
   - verify: all green — the workspace compiles end-to-end with one schema source of truth.
-- [ ] Step 1.6: Commit: `feat(023): phase 1 — hoist parquet schema into auto-shared/model`
+- [x] Step 1.6: Commit: `feat(023): phase 1 — hoist parquet schema into auto-shared/model`
 
 ### Phase 2: ETL read layer + `session_mined` event type (auto-reflect)
-- [ ] Step 2.1: Add `parquet-go` to `auto-reflect/go.mod`; create
+- [x] Step 2.1: Add `parquet-go` to `auto-reflect/go.mod`; create
       `auto-reflect/internal/etlread/read.go` porting auto-search's read pattern:
       `Discover(root)`, `ReadSessions(path) []sharedmodel.AgentSession`, and
       `ReadMessageSignals(path) []MsgSignalRow` (narrow projection — never reads `content`).
       Resolve the ETL root via `sharedconfig.AutoDir()` → `~/.auto/etl/output`.
   - verify: `cd auto-reflect && go build ./internal/etlread/` passes.
-- [ ] Step 2.2: Add `ResolveSource(etlRoot) (SourceState, error)` (AC-8) distinguishing
+- [x] Step 2.2: Add `ResolveSource(etlRoot) (SourceState, error)` (AC-8) distinguishing
       `SourceMissing` (dir absent / stat fails) from `SourceEmpty` (present, zero parquet sources)
       from `SourceOK`.
   - verify: `read_test.go` — fixture dirs prove all three states; projection read on a fixture
       parquet returns rows with empty `Content` (column excluded). `go test ./internal/etlread/`.
-- [ ] Step 2.3: In `auto-reflect/internal/events/model.go` add `TypeSessionMined = "session_mined"`,
+- [x] Step 2.3: In `auto-reflect/internal/events/model.go` add `TypeSessionMined = "session_mined"`,
       `type AckStatus string` (+ `mined/empty/failed/skipped` consts), `SessionMinedPayload`
       (`session_id, miner_version, status, observations, priority_score, signals`), and a
       `Validate` switch case for the new type.
   - verify: validation unit test — well-formed `session_mined` passes; bad status / missing
       session_id rejected. `go test ./internal/events/`.
-- [ ] Step 2.4: `gofmt -l` + `go vet`; `cd auto-reflect && go build ./... && go test ./...`.
+- [x] Step 2.4: `gofmt -l` + `go vet`; `cd auto-reflect && go build ./... && go test ./...`.
   - verify: all green.
-- [ ] Step 2.5: Commit: `feat(023): phase 2 — etlread reader + session_mined event type`
+- [x] Step 2.5: Commit: `feat(023): phase 2 — etlread reader + session_mined event type`
 
 ### Phase 3: Miner service — coverage fold + scoring + queue assembly
-- [ ] Step 3.1: `auto-reflect/internal/miner/score.go` — `Signals` struct (labelled, unitful) and a
+- [x] Step 3.1: `auto-reflect/internal/miner/score.go` — `Signals` struct (labelled, unitful) and a
       deterministic `Score(sig Signals) float64` from fixed weights over correction density,
       `tool_error_count`, failure markers, AskUserQuestion count; normalize by message count with a
       **length floor** (`length_floor_applied`) so short noisy sessions don't inflate; guard
       divide-by-zero (cochange `safeDiv` pattern).
   - verify: `score_test.go` — identical inputs → identical score; floor caps a 5-msg session;
       no NaN/Inf. `go test ./internal/miner/`.
-- [ ] Step 3.2: `auto-reflect/internal/miner/miner.go` — `const Version = 1`;
+- [x] Step 3.2: `auto-reflect/internal/miner/miner.go` — `const Version = 1`;
       `FoldCoverage(evs) map[string]minedState` where a session is **terminal at V** only with a
       `mined/empty/skipped` ack at V (`failed` recorded but never terminal — stays retryable).
   - verify: `miner_test.go` — `failed`-only session stays pending; `mined@v1` excluded at v1,
       reappears when `Version`→2; quality mean counts `mined` only (AC-2, AC-4, AC-9).
-- [ ] Step 3.3: `Next(repoRoot, etlRoot, opts) ([]WorkItem, error)` — read sessions, filter to
+- [x] Step 3.3: `Next(repoRoot, etlRoot, opts) ([]WorkItem, error)` — read sessions, filter to
       top-level (`is_subagent=false`) scoped by **normalized `git_remote`** matching the current repo
       (worktree-stable; `Workspace` path-prefix fallback when no remote; `--all` widens),
       exclude terminal-at-current-version, score the survivors via a `ReadMessageSignals` pass,
@@ -125,17 +125,17 @@ worktree and verify on disk before proceeding (017/018 lesson).
       queue; `--all` widens; no duplicate IDs; every
       item has `fetch_cmd`; re-mined item has non-null `prior_ack`+`remined=true`
       (AC-1, AC-1b, AC-1c, AC-10).
-- [ ] Step 3.4: `Describe(repoRoot, etlRoot, id)` + `SignalsFor(repoRoot, etlRoot, ids)` (AC-11) —
+- [x] Step 3.4: `Describe(repoRoot, etlRoot, id)` + `SignalsFor(repoRoot, etlRoot, ids)` (AC-11) —
       compute signals + full ack history for any session regardless of ack/subagent state; **no
       writes**.
   - verify: `miner_test.go` — returns signals for an acked session and a subagent session that
       `Next` would exclude; no event appended (AC-11).
-- [ ] Step 3.5: `gofmt -l` + `go vet`; `cd auto-reflect && go build ./... && go test ./...`.
+- [x] Step 3.5: `gofmt -l` + `go vet`; `cd auto-reflect && go build ./... && go test ./...`.
   - verify: all green.
-- [ ] Step 3.6: Commit: `feat(023): phase 3 — miner fold, scoring, next/describe/signals`
+- [x] Step 3.6: Commit: `feat(023): phase 3 — miner fold, scoring, next/describe/signals`
 
 ### Phase 4: Miner CLI + source-state contract + wiring
-- [ ] Step 4.1: `auto-reflect/internal/cli/miner.go` — `newMinerCmd` (parent) with `next`, `ack`,
+- [x] Step 4.1: `auto-reflect/internal/cli/miner.go` — `newMinerCmd` (parent) with `next`, `ack`,
       `status`, `describe`, `signals`; `--format json|text` (default json), `--limit`, `--all`,
       `--include-subagents`, `--since`. `ack` takes `<id> --status mined|empty|failed|skipped`
       (default mined) + `--observations N`, scores the session for the snapshot, appends via
@@ -143,26 +143,26 @@ worktree and verify on disk before proceeding (017/018 lesson).
   - verify: `cli/miner_test.go` — `ack --status` writes one `session_mined` event with the
       snapshot; re-ack appends a second (history). `next`/`status` emit parseable JSON on stdout
       (AC-3, AC-6).
-- [ ] Step 4.2: Source-state contract (AC-8): `next`/`status` call `ResolveSource` first — missing/
+- [x] Step 4.2: Source-state contract (AC-8): `next`/`status` call `ResolveSource` first — missing/
       unreadable → stderr error with `run auto etl run` hint + **non-zero exit**; `coverage_pct` is
       JSON `null` when `total_sessions==0`; empty `next` (exit 0, `[]`) writes a stderr hint
       distinguishing *drained, try --all* from *source empty*. Document the exit contract in help.
   - verify: `cli/miner_test.go` — missing source → exit≠0 + stderr; empty source → `coverage_pct:
       null`; empty workspace → exit 0 + drained hint on stderr.
-- [ ] Step 4.3: `status` honors `--all` symmetrically with `next`; `--since` honored for windowed
+- [x] Step 4.3: `status` honors `--all` symmetrically with `next`; `--since` honored for windowed
       counts (or rejected with a clear error). Add `describe`/`signals` output (read-only).
   - verify: `cli/miner_test.go` — `status --all` aggregates across workspaces; `--since` not
       silently ignored.
-- [ ] Step 4.4: Wire `newMinerCmd(application)` into `cli/root.go`; mention `miner` in
+- [x] Step 4.4: Wire `newMinerCmd(application)` into `cli/root.go`; mention `miner` in
       `cli/quickstart.go` (and the top-level reflect quickstart text).
   - verify: `auto reflect miner --help` lists all subcommands; `quickstart` output contains
       `miner`. `cd auto-reflect && go build ./...`.
-- [ ] Step 4.5: `gofmt -l` + `go vet`; `cd auto-reflect && go test ./...`.
+- [x] Step 4.5: `gofmt -l` + `go vet`; `cd auto-reflect && go test ./...`.
   - verify: all green.
-- [ ] Step 4.6: Commit: `feat(023): phase 4 — miner CLI, source-state contract, wiring`
+- [x] Step 4.6: Commit: `feat(023): phase 4 — miner CLI, source-state contract, wiring`
 
 ### Phase 5: `reflect stats` backlog + docs + e2e dogfood
-- [ ] Step 5.1: Add `PendingToMine *int` to `StatsReport` (`loop/service.go`) computed via
+- [x] Step 5.1: Add `PendingToMine *int` to `StatsReport` (`loop/service.go`) computed via
       `miner.PendingCount(repoRoot, etlRoot, scope)` which reads the parquet session universe **and**
       folds events (never-mined sessions emit no events, so the fold alone can't see them;
       `loop`→`miner`→`etlread`, one-way). When the ETL source is missing/empty the field is `null`
@@ -176,32 +176,32 @@ AUTHOR: Step rewritten — `pending_to_mine` is now `*int` computed via `miner.P
 
   - verify: `service_test.go` / stats integration — `pending_to_mine` correct against a fixture
       event log + parquet; **`null` (and stats exits 0) when no ETL output exists**.
-- [ ] Step 5.2: `auto-reflect/cmd/autoreflect/e2e_miner_test.go` — build a fixture `~/.auto/etl/output`
+- [x] Step 5.2: `auto-reflect/cmd/autoreflect/e2e_miner_test.go` — build a fixture `~/.auto/etl/output`
       (reuse auto-search `testutil` fixture writer via the shared model), run `next` (assert ranked,
       content-free, deduped, `fetch_cmd`), `ack --status mined --observations 2`, re-run `next`
       (session excluded), `status` (counts + `coverage_pct`), `describe <id>` (no write), and the
       source-missing/empty cases.
   - verify: `cd auto-reflect && go test ./cmd/autoreflect/ -run Miner` passes (AC-1..AC-11 end-to-end).
-- [ ] Step 5.3: Real-binary dogfood: `make build`; against this repo's own
+- [x] Step 5.3: Real-binary dogfood: `make build`; against this repo's own
       `~/.auto/etl/output`, run `./bin/auto reflect miner next --limit 5`, `ack` one, `status`,
       `describe <id>`; confirm a `session_mined` line landed in `.auto/reflect/events/` and the
       acked session drops from `next`.
   - verify: capture before/after `next` — the acked ID disappears; the event file has one new line.
-- [ ] Step 5.4: Update `auto-etl/docs/reference/normalized-schema.md` with the `auto-shared/model`
+- [x] Step 5.4: Update `auto-etl/docs/reference/normalized-schema.md` with the `auto-shared/model`
       relocation note; run `auto doc fix` (informational) and address any flagged `[autodoc()]` link.
   - verify: `auto doc stale` reports no new stale entries for touched docs.
-- [ ] Step 5.5: Repo-wide gates: `make check && make build && make test`.
+- [x] Step 5.5: Repo-wide gates: `make check && make build && make test`.
   - verify: all pass.
-- [ ] Step 5.6: Commit: `feat(023): phase 5 — reflect stats backlog, docs, e2e dogfood`
+- [x] Step 5.6: Commit: `feat(023): phase 5 — reflect stats backlog, docs, e2e dogfood`
 
 ## Success Criteria
-- [ ] `cd auto-shared && go test ./...` passes; `auto-etl` + `auto-search` suites stay green after the schema move (Phase 1)
-- [ ] `cd auto-reflect && go test ./...` passes: etlread projection + ResolveSource (AC-8), event validation (AC-7), fold terminal-vs-retryable + version bump (AC-2/AC-4/AC-9), score determinism + floor (AC-5), Next scope/dedupe/markers (AC-1/1b/1c/10), describe/signals read-only (AC-11), CLI source-state + ack-status (AC-3/AC-8)
-- [ ] `auto reflect miner next` returns ranked, content-free JSON with `fetch_cmd`, `prior_ack`, `signals`; `status` reports counts + `coverage_pct` (null over empty source); `reflect stats` shows `pending_to_mine` (AC-6)
-- [ ] Re-mine: bumping `miner.Version` re-opens previously-acked sessions with no migration (AC-4)
-- [ ] `make check && make build && make test` all green
-- [ ] Manual dogfood on this repo's `~/.auto/etl/output`: `next → ack → next` excludes the acked session; one `session_mined` line appended to `.auto/reflect/events/`
-- [ ] One schema source of truth: no `ParquetSessionRow`/`ParquetMessageRow` remain in auto-search; auto-etl + auto-search import `auto-shared/model`
+- [x] `cd auto-shared && go test ./...` passes; `auto-etl` + `auto-search` suites stay green after the schema move (Phase 1)
+- [x] `cd auto-reflect && go test ./...` passes: etlread projection + ResolveSource (AC-8), event validation (AC-7), fold terminal-vs-retryable + version bump (AC-2/AC-4/AC-9), score determinism + floor (AC-5), Next scope/dedupe/markers (AC-1/1b/1c/10), describe/signals read-only (AC-11), CLI source-state + ack-status (AC-3/AC-8)
+- [x] `auto reflect miner next` returns ranked, content-free JSON with `fetch_cmd`, `prior_ack`, `signals`; `status` reports counts + `coverage_pct` (null over empty source); `reflect stats` shows `pending_to_mine` (AC-6)
+- [x] Re-mine: bumping `miner.Version` re-opens previously-acked sessions with no migration (AC-4)
+- [x] `make check && make build && make test` all green
+- [x] Manual dogfood on this repo's `~/.auto/etl/output`: `next → ack → next` excludes the acked session; one `session_mined` line appended to `.auto/reflect/events/`
+- [x] One schema source of truth: no `ParquetSessionRow`/`ParquetMessageRow` remain in auto-search; auto-etl + auto-search import `auto-shared/model`
 
 ## Open Questions
 - (none — all requirements Open Questions resolved, incl. Q4 → option B; sim findings folded into AC-8–AC-11)
