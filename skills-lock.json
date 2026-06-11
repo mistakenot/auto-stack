@@ -46,6 +46,11 @@
       "sourceType": "github",
       "computedHash": "302fbb8364ef637cc75d8989b681d77f35462edab7391149da4a0ec5790c0d8b"
     },
+    "fan-out-user-simulation": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "computedHash": "d757d5d7d7fd3637a656c63efee3763d88062bf312208cde654aeb0aea454dac"
+    },
     "generate-10-ideas": {
       "source": "mistakenot/skills",
       "sourceType": "github",
