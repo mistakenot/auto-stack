@@ -313,7 +313,36 @@ func (c *consolidator) merge(d *consolidate.Delta) {
 	survivor := resolved[0]
 	others := resolved[1:]
 	newUseWhen := strings.TrimSpace(d.IntoUseWhen)
+
+	// Validate any extra observation_ids against the index, mirroring attach-evidence,
+	// so a typo'd/fabricated id can't silently bloat the survivor's provenance.
+	if cov := c.obIndex.Coverage(d.ObservationIDs); len(cov.Missing) > 0 {
+		c.skip(d, "references unknown observation(s): "+strings.Join(cov.Missing, ", "))
+		return
+	}
+
+	// Provenance unions the survivor, every retired rule, and the delta's ids, so no
+	// evidence is stranded on a rule merge retires to stale (which would also understate
+	// the survivor's session coverage at promotion time).
 	newProv := consolidate.UnionObservationIDs(survivor.ObservationIDs, d.ObservationIDs)
+	for i := range others {
+		newProv = consolidate.UnionObservationIDs(newProv, others[i].ObservationIDs)
+	}
+
+	// Dedupe gate: refuse if the combined use_when strongly matches a live rule OUTSIDE
+	// the merge set, mirroring create-draft. The merged rules themselves are excluded so
+	// they can't trivially match against their own (soon-to-be-retired) predicates.
+	candidates := make([]rules.Rule, 0, len(c.rules))
+	for i := range c.rules {
+		if _, inSet := inMerge[c.rules[i].ID]; inSet {
+			continue
+		}
+		candidates = append(candidates, c.rules[i])
+	}
+	if dup, isDup := consolidate.DetectDuplicate(candidates, newUseWhen, survivor.Domain); isDup {
+		c.skip(d, fmt.Sprintf("merged use_when duplicates existing rule %s (score %.2f); use attach-evidence or a more specific into_use_when", dup.RuleID, dup.Score))
+		return
+	}
 
 	// Conflicts: existing live rules outside the merge set that oppose the survivor.
 	for _, cf := range consolidate.DetectConflicts(c.rules, survivor.Domain, survivor.Content) {

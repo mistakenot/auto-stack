@@ -381,6 +381,12 @@ func newRulePromoteCmd(application *app.App) *cobra.Command {
 			if current.Lifecycle == rules.LifecycleConfirmed {
 				return &ExitError{Code: 1, Err: fmt.Errorf("rule %s is already confirmed", current.ID)}
 			}
+			// Retire is terminal: a stale rule cannot be promoted straight to confirmed
+			// (even with --force), which would bypass the draft re-review path and revive
+			// a rule retired for being wrong. Recreate the intent via consolidate instead.
+			if current.Lifecycle == rules.LifecycleStale {
+				return &ExitError{Code: 1, Err: fmt.Errorf("rule %s is stale; retired rules cannot be promoted directly — recreate the intent via `auto reflect consolidate` (create-draft) if it still applies", current.ID)}
+			}
 
 			if !force {
 				all, rerr := events.ReadAll(repo.Root)

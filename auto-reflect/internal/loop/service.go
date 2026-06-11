@@ -297,6 +297,11 @@ func (s *Service) Stats() (StatsReport, error) {
 			if decodePayload(ev, &p) != nil {
 				continue
 			}
+			// Skip a decoded-but-empty id: no consolidation event can ever reference
+			// "", so it would otherwise inflate the backlog by one with no way to drain.
+			if p.ObservationID == "" {
+				continue
+			}
 			observationIDs[p.ObservationID] = struct{}{}
 		case events.TypeConsolidation:
 			var p events.ConsolidationPayload
@@ -310,6 +315,10 @@ func (s *Service) Stats() (StatsReport, error) {
 	}
 
 	// An observation is unconsolidated until some consolidation event references it.
+	// We iterate observed ids and subtract the consolidated set: a consolidation event
+	// referencing an id that was never recorded as an observation contributes nothing
+	// (it can't appear in observationIDs), which is the intended backlog semantics — do
+	// not "fix" this to count the union of the two sets.
 	unconsolidated := 0
 	for id := range observationIDs {
 		if _, done := consolidatedIDs[id]; !done {

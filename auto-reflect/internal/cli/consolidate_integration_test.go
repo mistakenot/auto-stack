@@ -3,6 +3,7 @@ package cli_test
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -172,11 +173,83 @@ func TestConsolidatePromoteRetireAndUnconsolidated(t *testing.T) {
 		t.Fatal("stale ruleA must not be surfaced by retrieve")
 	}
 
+	// retire is terminal: a stale rule cannot be promoted back to confirmed, even
+	// with --force, since that would bypass the draft re-review path.
+	if _, stderr, code := runCLIAt(t, repo, "rule", "promote", ruleA); code == 0 || !strings.Contains(stderr, "stale") {
+		t.Fatalf("promote of a stale rule should be refused with a stale hint: code=%d stderr=%q", code, stderr)
+	}
+	if _, _, code := runCLIAt(t, repo, "rule", "promote", ruleA, "--force"); code == 0 {
+		t.Fatal("--force must not revive a stale rule to confirmed")
+	}
+
 	// --unconsolidated: ob1/ob2 (ruleA) and ob3 (ruleC) are consolidated; only ob4
 	// remains.
 	unconsolidated := listObservations(t, repo, "--unconsolidated")
 	if len(unconsolidated.Observations) != 1 || unconsolidated.Observations[0].ObservationID != ob4 {
 		t.Fatalf("only ob4 should remain unconsolidated, got %#v", unconsolidated.Observations)
+	}
+}
+
+func mergeDoc(t *testing.T, intoUseWhen string, ruleIDs []string, obIDs ...string) string {
+	t.Helper()
+	rids, err := json.Marshal(ruleIDs)
+	if err != nil {
+		t.Fatalf("marshal rule ids: %v", err)
+	}
+	oids, err := json.Marshal(obIDs)
+	if err != nil {
+		t.Fatalf("marshal observation ids: %v", err)
+	}
+	return fmt.Sprintf(`{"deltas":[{"op":"merge","rule_ids":%s,"into_use_when":%q,"observation_ids":%s}]}`, rids, intoUseWhen, oids)
+}
+
+func TestConsolidateMerge(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AUTO_SESSION_ID", "consolidate-merge")
+	repo := initGitRepo(t)
+	gitAddCommitSeed(t, repo)
+
+	// Two single-session drafts with DISJOINT provenance.
+	ob1 := addObservation(t, repo, "--kind", "pattern", "--subject", "s1", "--evidence-session", "msess-1", "--domain", "mergedom").Observation.ObservationID
+	ob2 := addObservation(t, repo, "--kind", "pattern", "--subject", "s2", "--evidence-session", "msess-2", "--domain", "mergedom").Observation.ObservationID
+	ruleA := consolidateOK(t, repo, draftDocDomain(t, "handling retry backoff in the worker", "mergedom", ob1), "--force").Applied[0].RuleID
+	ruleB := consolidateOK(t, repo, draftDocDomain(t, "handling retry jitter in the worker", "mergedom", ob2), "--force").Applied[0].RuleID
+
+	// (a) unknown observation id in the merge delta → skipped (mirrors attach-evidence).
+	resp := consolidateOK(t, repo, mergeDoc(t, "handling retry policy in the worker", []string{ruleA, ruleB}, "ob-deadbeef"))
+	if len(resp.Applied) != 0 || len(resp.Skipped) != 1 || !strings.Contains(resp.Skipped[0].Reason, "unknown observation") {
+		t.Fatalf("merge with an unknown observation id should be skipped: %#v", resp)
+	}
+
+	// (b) happy path: survivor stays live, other goes stale, provenance is the UNION
+	// of both rules' ids (no stranding) so the merged rule covers both sessions.
+	resp = consolidateOK(t, repo, mergeDoc(t, "handling retry policy in the worker", []string{ruleA, ruleB}))
+	if len(resp.Applied) != 1 || resp.Applied[0].RuleID != ruleA {
+		t.Fatalf("merge should apply with ruleA as survivor: %#v", resp)
+	}
+	prov := resp.Applied[0].ObservationIDs
+	if len(prov) != 2 || !slices.Contains(prov, ob1) || !slices.Contains(prov, ob2) {
+		t.Fatalf("survivor provenance must union both rules' observation ids, got %#v", prov)
+	}
+	// ruleB is retired to stale → no longer surfaced.
+	if retrieveSurfaces(t, repo, "handling retry jitter in the worker", "mergedom") {
+		t.Fatal("merged-away ruleB must be stale (not surfaced)")
+	}
+	// Survivor now has two distinct sessions of provenance → promotes without --force.
+	if _, _, code := runCLIAt(t, repo, "rule", "promote", ruleA); code != 0 {
+		t.Fatalf("merged survivor should promote (2 unioned sessions) without --force, code=%d", code)
+	}
+
+	// (c) dedupe gate: a second pair merged into a use_when that duplicates the now-live
+	// survivor is refused.
+	ob3 := addObservation(t, repo, "--kind", "pattern", "--subject", "s3", "--evidence-session", "msess-3", "--domain", "mergedom").Observation.ObservationID
+	ob4 := addObservation(t, repo, "--kind", "pattern", "--subject", "s4", "--evidence-session", "msess-4", "--domain", "mergedom").Observation.ObservationID
+	ruleC := consolidateOK(t, repo, draftDocDomain(t, "draining the worker queue on shutdown", "mergedom", ob3), "--force").Applied[0].RuleID
+	ruleD := consolidateOK(t, repo, draftDocDomain(t, "flushing the worker queue on shutdown", "mergedom", ob4), "--force").Applied[0].RuleID
+	resp = consolidateOK(t, repo, mergeDoc(t, "handling retry policy in the worker", []string{ruleC, ruleD}))
+	if len(resp.Applied) != 0 || len(resp.Skipped) != 1 || !strings.Contains(resp.Skipped[0].Reason, ruleA) {
+		t.Fatalf("merge into a duplicate use_when should be skipped naming the live rule: %#v", resp)
 	}
 }
 

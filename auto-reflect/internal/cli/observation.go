@@ -223,6 +223,9 @@ func consolidatedObservationIDs(all []events.Event) map[string]struct{} {
 			continue
 		}
 		for _, id := range p.ObservationIDs {
+			if id == "" {
+				continue
+			}
 			out[id] = struct{}{}
 		}
 	}
