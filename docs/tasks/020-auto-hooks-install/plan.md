@@ -33,7 +33,7 @@ Linear DAG: each phase depends on the previous. Single small command, no paralle
 ## Plan
 
 ### Phase 1: Implement the install command
-- [ ] Step 1.1: Create `auto-cli/cmd/auto/hooksinstallcmd.go` (package `main`) with:
+- [x] Step 1.1: Create `auto-cli/cmd/auto/hooksinstallcmd.go` (package `main`) with:
   - `claudeHookEvents = []string{"PreToolUse","PostToolUse","UserPromptSubmit","Notification","Stop","SubagentStop","SessionStart","SessionEnd","PreCompact"}`.
   - `codexHookEvents = []string{"SessionStart","SubagentStart","PreToolUse","PermissionRequest","PostToolUse","PreCompact","PostCompact","UserPromptSubmit","SubagentStop","Stop"}`.
   - `installAgentHooks(path, command string, events []string) (added, existing int, created bool, err error)` — operates on a **generic `map[string]any` tree** (NO typed `hookHandler`/`hookGroup` parse structs — those would drop existing fields like `timeout`/`statusMessage`/`args`/`if`/`commandWindows` and violate AC-2):
@@ -43,10 +43,10 @@ Linear DAG: each phase depends on the previous. Single small command, no paralle
     - Write the whole `map[string]any` via `sharedconfig.WriteJSONFileAtomic(path, doc)` (encoding/json sorts keys → deterministic; all untouched nodes round-trip losslessly).
   - `newHooksInstallCmd()`: `Args: cobra.NoArgs`; resolve `cwd, _ := os.Getwd()` then `sharedgit.RepoRoot(cwd)` — on error return `fmt.Errorf("auto hooks install requires a git repository: %w (run 'git init' or cd into a repo)", err)`. Call `installAgentHooks` for claude (`<root>/.claude/settings.json`, `auto hooks fire --agent claude`) and codex (`<root>/.codex/hooks.json`, `auto hooks fire --agent codex`). Print a per-file text summary to `cmd.OutOrStdout()` (created vs merged, added/already-present counts) **and a Codex trust remediation line** (AC-6): note that `.codex/hooks.json` hooks must be trusted via `/hooks` in Codex before they fire. Return any error.
   - Verify: `cd auto-cli && go build ./...` compiles clean.
-- [ ] Step 1.2: Edit `auto-cli/cmd/auto/hookscmd.go:52` — add `cmd.AddCommand(newHooksInstallCmd())` in `newHooksCmd()`. Update the `newHooksCmd` doc comment to mention `install`.
+- [x] Step 1.2: Edit `auto-cli/cmd/auto/hookscmd.go:52` — add `cmd.AddCommand(newHooksInstallCmd())` in `newHooksCmd()`. Update the `newHooksCmd` doc comment to mention `install`.
   - Verify: `cd auto-cli && go build ./... && go run ./cmd/auto hooks install --help` shows the install subcommand.
-- [ ] Step 1.3: `cd auto-cli && go vet ./... && gofmt -l cmd/auto` (no output = formatted).
-- [ ] Step 1.4: Commit: `feat(020): auto hooks install — wire fire hook into claude+codex config`
+- [x] Step 1.3: `cd auto-cli && go vet ./... && gofmt -l cmd/auto` (no output = formatted).
+- [x] Step 1.4: Commit: `feat(020): auto hooks install — wire fire hook into claude+codex config`
 
 ### Phase 2: Tests
 - [ ] Step 2.1: Create `auto-cli/cmd/auto/hooksinstallcmd_test.go` (package `main`). Helper: temp dir + `git init` (reuse the `gitInTest`/init-test pattern) + `t.Chdir(repo)`.
