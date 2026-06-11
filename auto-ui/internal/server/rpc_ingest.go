@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/mistakenot/auto-shared/bus"
 	"github.com/mistakenot/auto-shared/config"
@@ -25,6 +26,15 @@ func handleRPC(hub *bus.Hub, regProvider func() config.ProjectsConfig) http.Hand
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
 			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+			writeRPCError(w, http.StatusUnsupportedMediaType, codeParseError, "Content-Type must be application/json")
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" {
+			writeRPCError(w, http.StatusForbidden, codeParseError, "cross-origin requests are not accepted")
 			return
 		}
 

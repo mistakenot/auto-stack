@@ -82,7 +82,9 @@ func (e Event) Validate() []ValidationError {
 	if e.Time == "" {
 		errs = append(errs, ValidationError{Code: "required", Field: "time", Message: "time is required"})
 	} else if _, err := time.Parse(time.RFC3339, e.Time); err != nil {
-		errs = append(errs, ValidationError{Code: "format", Field: "time", Message: "time must be RFC 3339", Value: e.Time})
+		if _, err2 := time.Parse(time.RFC3339Nano, e.Time); err2 != nil {
+			errs = append(errs, ValidationError{Code: "format", Field: "time", Message: "time must be RFC 3339", Value: e.Time})
+		}
 	}
 	return errs
 }

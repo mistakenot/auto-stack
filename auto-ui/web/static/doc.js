@@ -4,6 +4,7 @@
 import { useState, useEffect, useRef } from "preact/hooks";
 import { html } from "htm/preact";
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { call, on } from "./rpc.js";
 import { setHash } from "./router.js";
 
@@ -110,7 +111,7 @@ export function DocView({ params }) {
           ${loading && html`<p>Loading...</p>`}
           ${!loading &&
           path &&
-          html`<div dangerouslySetInnerHTML=${{ __html: marked.parse(markdown) }} />`}
+          html`<div dangerouslySetInnerHTML=${{ __html: DOMPurify.sanitize(marked.parse(markdown)) }} />`}
           ${!loading &&
           !path &&
           html`<p><em>Select a document from the list.</em></p>`}
