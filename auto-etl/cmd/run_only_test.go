@@ -9,7 +9,7 @@ func TestParseOnlyFlag_Default(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sources["sessions"] || !sources["github"] || !sources["git"] {
+	if !sources["sessions"] || !sources["github"] || !sources["git"] || !sources["hooks"] {
 		t.Errorf("default should enable all: %v", sources)
 	}
 }
@@ -96,13 +96,13 @@ func TestParseOnlyFlag_GitAndSessions(t *testing.T) {
 	}
 }
 
-func TestParseOnlyFlag_AllThree(t *testing.T) {
-	sources, err := parseOnlyFlag([]string{"sessions", "github", "git"})
+func TestParseOnlyFlag_AllFour(t *testing.T) {
+	sources, err := parseOnlyFlag([]string{"sessions", "github", "git", "hooks"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sources["sessions"] || !sources["github"] || !sources["git"] {
-		t.Errorf("all three should be enabled: %v", sources)
+	if !sources["sessions"] || !sources["github"] || !sources["git"] || !sources["hooks"] {
+		t.Errorf("all four should be enabled: %v", sources)
 	}
 }
 
@@ -113,5 +113,51 @@ func TestParseOnlyFlag_DuplicatesDedupe(t *testing.T) {
 	}
 	if !sources["sessions"] {
 		t.Error("sessions should be enabled")
+	}
+}
+
+func TestParseOnlyFlag_Hooks(t *testing.T) {
+	sources, err := parseOnlyFlag([]string{"hooks"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sources["hooks"] {
+		t.Error("hooks should be enabled")
+	}
+	if sources["sessions"] {
+		t.Error("sessions should not be enabled")
+	}
+}
+
+func TestParseOnlyFlag_HooksCaseInsensitive(t *testing.T) {
+	sources, err := parseOnlyFlag([]string{"HOOKS"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sources["hooks"] {
+		t.Error("HOOKS should normalize to hooks")
+	}
+}
+
+func TestParseOnlyFlag_DefaultIncludesHooks(t *testing.T) {
+	sources, err := parseOnlyFlag(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sources["hooks"] {
+		t.Error("default should include hooks")
+	}
+}
+
+func TestParseOnlyFlag_HooksAndGit(t *testing.T) {
+	sources, err := parseOnlyFlag([]string{"hooks", "git"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sources["hooks"] || !sources["git"] {
+		t.Errorf("hooks and git should be enabled: %v", sources)
+	}
+	if sources["sessions"] {
+		t.Error("sessions should not be enabled")
 	}
 }

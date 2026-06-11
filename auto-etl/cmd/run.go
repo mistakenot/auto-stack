@@ -16,11 +16,13 @@ import (
 
 	gitextract "github.com/mistakenot/auto-etl/internal/git"
 	ghclient "github.com/mistakenot/auto-etl/internal/github"
+	hooksingest "github.com/mistakenot/auto-etl/internal/hooks"
 	"github.com/mistakenot/auto-etl/internal/parser"
 	"github.com/mistakenot/auto-etl/internal/progress"
 	"github.com/mistakenot/auto-etl/internal/transform"
 	"github.com/mistakenot/auto-etl/internal/writer"
 	sharedgit "github.com/mistakenot/auto-shared/git"
+	sharedhooks "github.com/mistakenot/auto-shared/hooks"
 	"github.com/spf13/cobra"
 )
 
@@ -38,6 +40,7 @@ var validOnlyValues = map[string]bool{
 	"sessions": true,
 	"github":   true,
 	"git":      true,
+	"hooks":    true,
 }
 
 func newRunCmd() *cobra.Command {
@@ -93,6 +96,13 @@ func newRunCmd() *cobra.Command {
 				}
 			}
 
+			// Hooks ETL phase
+			if sources["hooks"] {
+				if err := runHooksETL(hostID); err != nil {
+					return err
+				}
+			}
+
 			// Persist updated remotes cache
 			saveRemotesCache(remotes)
 
@@ -107,7 +117,7 @@ func newRunCmd() *cobra.Command {
 	runCmd.Flags().StringVar(&inputDir, "input", defaultInput, "Input directory containing raw session data")
 	runCmd.Flags().StringVar(&outputDir, "output", defaultOutput, "Output directory for transformed parquet files")
 	runCmd.Flags().BoolVar(&fullRun, "full", false, "Delete output directory before running (full rebuild)")
-	runCmd.Flags().StringSliceVar(&onlyFlag, "only", nil, "Run only specified ETL sources (sessions, github, git). Default: all.")
+	runCmd.Flags().StringSliceVar(&onlyFlag, "only", nil, "Run only specified ETL sources (sessions, github, git, hooks). Default: all.")
 	runCmd.Flags().StringSliceVar(&repoPathFlag, "repo-path", nil, "Explicit git repo paths to index (for --only git)")
 	runCmd.Flags().StringVar(&sinceFlag, "since", "", "Limit initial git history depth (e.g. 5m, 2h, 5d, 3w, 6mo, 1y)")
 
@@ -119,7 +129,7 @@ func newRunCmd() *cobra.Command {
 func parseOnlyFlag(values []string) (map[string]bool, error) {
 	if len(values) == 0 {
 		// Default: run all
-		return map[string]bool{"sessions": true, "github": true, "git": true}, nil
+		return map[string]bool{"sessions": true, "github": true, "git": true, "hooks": true}, nil
 	}
 
 	sources := make(map[string]bool)
@@ -451,5 +461,41 @@ func runGitETL(hostID string, remotes map[string]string, explicitPaths []string,
 		fmt.Fprintf(os.Stderr, "[debug] git ETL: %s\n", time.Since(phaseStart))
 	}
 
+	return nil
+}
+
+func runHooksETL(hostID string) error {
+	var phaseStart time.Time
+	if debug {
+		phaseStart = time.Now()
+	}
+
+	statePath := hooksingest.HooksSyncStatePath()
+	state := hooksingest.LoadHooksSyncState(statePath)
+
+	rawDir, err := sharedhooks.RawDir()
+	if err != nil {
+		return fmt.Errorf("hooks raw dir: %w", err)
+	}
+
+	rows, err := hooksingest.Ingest(rawDir, state, hostID)
+	if err != nil {
+		return fmt.Errorf("hooks ingest: %w", err)
+	}
+
+	if len(rows) > 0 {
+		if err := writer.WriteHooks(outputDir, rows); err != nil {
+			return fmt.Errorf("write hooks: %w", err)
+		}
+	}
+
+	if err := state.Save(statePath); err != nil {
+		return fmt.Errorf("save hooks sync state: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "hooks ETL: %d events ingested\n", len(rows))
+	if debug {
+		fmt.Fprintf(os.Stderr, "[debug] hooks ETL: %s\n", time.Since(phaseStart))
+	}
 	return nil
 }
