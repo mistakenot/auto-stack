@@ -1,5 +1,5 @@
 ---
-hash: "04e7d1af"
+hash: "2b6ffc21"
 id: "7b3e9d04"
 read_when: "planning or sequencing sub-tasks for the planning-docs dashboard epic"
 summary: "Epic plan for turning auto-ui into a multi-project planning-docs explorer: a default-landing dashboard that lists every registered project, browses each project's whole docs/ tree, renders markdown inline and self-contained HTML in an iframe, switches projects seamlessly, and live-refreshes both the open doc and the nav tree when an agent edits files. Most plumbing (JSON-RPC/WS, doc.list/doc.get, bus doc.changed, markdown render, project registry) already exists; the epic assembles and extends it rather than building from scratch."
@@ -8,11 +8,17 @@ title: "Epic: Planning Docs Dashboard — Browse, Render, Live, Switch"
 
 # Epic: Planning Docs Dashboard — Browse, Render, Live, Switch
 
-## Status (updated 2026-06-11)
+## Status (updated 2026-06-13)
 
-**Planning — nothing shipped yet.** This epic is freshly scoped. The headline finding from
-grounding it against the codebase: **most of the plumbing already exists in `auto-ui`**, so
-this is an assemble-and-extend epic, not a greenfield build.
+**Phase 1 (backend) shipped.** Sub-tasks 1.1–1.7 are complete (task 024): `project.list` RPC,
+widened doc discovery (`.md`+`.html`) with a parameterized `cleanDocPath`, the `/api/doc/raw`
+HTML route, the `.html` `doc.changed` derivation widening, the agent harness flags
+(`--port 0`/`--ready-file`/`--projects` + `AUTO_UI_PORT`/`AUTO_PROJECTS_PATH`), the `auto ui emit`
+helper, and the gated `/api/debug/recent` server event buffer — each with per-AC tests. The
+remaining work is the frontend explorer (Phase 2) and live updates (Phase 3).
+
+This epic is otherwise an assemble-and-extend build: **most of the plumbing already exists in
+`auto-ui`**, not a greenfield build.
 
 Already in place (do not rebuild):
 
@@ -53,9 +59,8 @@ adjusted to stop implying open-doc refresh currently works.
 - Project registry — `~/.auto/projects.json`, `auto-shared/config/projects.go`
   (`FindProjectByID`, `FindProjectByPath`); `resolveRoot` already accepts a `project` param.
 
-**Next up:** Phase 1 — backend enumeration (a `project.list` RPC, widen doc discovery beyond
-`.md`, a raw-bytes HTTP route for HTML docs, and a one-line `.html` derivation widening now that
-task 021 is merged), the precondition for the explorer UI.
+**Next up:** Phase 2 — the frontend explorer (project switcher, doc tree, content pane, explorer
+as the default landing view), built on the Phase 1 backend now in place.
 
 ## Goal
 
@@ -426,13 +431,13 @@ on the SPA with the dev build; (b) `/api/hello` (returns `{mode}`) doubles as th
 
 | #   | Sub-task                                   | Depends on   | Status |
 |-----|--------------------------------------------|--------------|--------|
-| 1.1 | `project.list` RPC                         | —            |        |
-| 1.2 | Widen doc discovery to whole `docs/` tree  | —            |        |
-| 1.3 | Raw-bytes HTTP route for HTML docs         | —            |        |
-| 1.4 | Widen `doc.changed` derivation to `.html`  | —            |        |
-| 1.5 | Validation launch + isolation harness      | —            |        |
-| 1.6 | Synthetic event-emit helper                | —            |        |
-| 1.7 | Server-side debug event buffer (gated)     | —            |        |
+| 1.1 | `project.list` RPC                         | —            | done   |
+| 1.2 | Widen doc discovery to whole `docs/` tree  | —            | done   |
+| 1.3 | Raw-bytes HTTP route for HTML docs         | —            | done   |
+| 1.4 | Widen `doc.changed` derivation to `.html`  | —            | done   |
+| 1.5 | Validation launch + isolation harness      | —            | done   |
+| 1.6 | Synthetic event-emit helper                | —            | done   |
+| 1.7 | Server-side debug event buffer (gated)     | —            | done   |
 | 2.1 | Project switcher                           | 1.1          |        |
 | 2.2 | Doc tree / navigation pane                 | 1.2          |        |
 | 2.3 | Content pane + explorer as default view    | 1.2, 1.3, 2.2|        |

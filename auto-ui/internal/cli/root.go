@@ -58,6 +58,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newDocsCmd(),
 		newUpdateCmd(),
 		newServeCmd(application),
+		newEmitCmd(application),
 	)
 
 	return rootCmd

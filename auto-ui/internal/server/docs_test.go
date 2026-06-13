@@ -35,6 +35,7 @@ func setupDocsFixture(t *testing.T) string {
 	files := map[string]string{
 		filepath.Join(root, "docs", "readme.md"):          "# Readme\nTop-level doc.",
 		filepath.Join(root, "docs", "tasks", "plan.md"):   "# Plan\nTask plan.",
+		filepath.Join(root, "docs", "tasks", "page.html"): "<!doctype html><h1>Page</h1>",
 		filepath.Join(root, "docs", "tasks", "notes.txt"): "not a markdown file",
 		filepath.Join(root, "src", "main.go"):             "package main",
 		filepath.Join(root, ".env"):                       "SECRET=hunter2",
@@ -90,7 +91,8 @@ func rpcCall(ctx context.Context, t *testing.T, c *websocket.Conn, id int, metho
 	})
 }
 
-// TestDocListHappy verifies doc.list returns docs/**/*.md files only.
+// TestDocListHappy verifies doc.list returns docs/**/*.md and docs/**/*.html
+// files, each tagged with the correct type.
 func TestDocListHappy(t *testing.T) {
 	root := setupDocsFixture(t)
 	srv := docsTestServer(t, root)
@@ -113,26 +115,31 @@ func TestDocListHappy(t *testing.T) {
 		t.Fatalf("doc.list result not an array: %T %v", resp["result"], resp["result"])
 	}
 
-	// Should have exactly 2 .md files: docs/readme.md and docs/tasks/plan.md.
-	if len(result) != 2 {
-		t.Fatalf("doc.list returned %d entries, want 2: %v", len(result), result)
+	// Should have exactly 3 doc files: docs/readme.md, docs/tasks/plan.md (markdown),
+	// and docs/tasks/page.html (html). notes.txt is excluded.
+	if len(result) != 3 {
+		t.Fatalf("doc.list returned %d entries, want 3: %v", len(result), result)
 	}
 
-	paths := map[string]bool{}
+	types := map[string]string{}
 	for _, entry := range result {
 		e, ok := entry.(map[string]any)
 		if !ok {
 			t.Fatalf("entry not a map: %v", entry)
 		}
 		p, _ := e["path"].(string)
-		paths[p] = true
+		ty, _ := e["type"].(string)
+		types[p] = ty
 	}
 
-	if !paths["docs/readme.md"] {
-		t.Errorf("doc.list missing docs/readme.md, got %v", paths)
+	if types["docs/readme.md"] != "markdown" {
+		t.Errorf("docs/readme.md type = %q, want markdown (entries: %v)", types["docs/readme.md"], types)
 	}
-	if !paths["docs/tasks/plan.md"] {
-		t.Errorf("doc.list missing docs/tasks/plan.md, got %v", paths)
+	if types["docs/tasks/plan.md"] != "markdown" {
+		t.Errorf("docs/tasks/plan.md type = %q, want markdown (entries: %v)", types["docs/tasks/plan.md"], types)
+	}
+	if types["docs/tasks/page.html"] != "html" {
+		t.Errorf("docs/tasks/page.html type = %q, want html (entries: %v)", types["docs/tasks/page.html"], types)
 	}
 }
 
@@ -223,6 +230,33 @@ func TestDocGetHappy(t *testing.T) {
 	md, _ := result["markdown"].(string)
 	if md != "# Readme\nTop-level doc." {
 		t.Errorf("markdown = %q, want readme content", md)
+	}
+}
+
+// TestDocGetRejectsHTML verifies doc.get refuses .html paths — HTML must ride
+// the raw route, never the markdown-inline path.
+func TestDocGetRejectsHTML(t *testing.T) {
+	root := setupDocsFixture(t)
+	srv := docsTestServer(t, root)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c := dialWS(ctx, t, srv.URL)
+	defer c.Close(websocket.StatusNormalClosure, "")
+
+	resp := rpcCall(ctx, t, c, 1, "doc.get", map[string]string{
+		"project": "test-proj",
+		"path":    "docs/tasks/page.html",
+	})
+
+	if resp["error"] == nil {
+		t.Fatalf("expected error for .html path, got result %v", resp["result"])
+	}
+	errObj, _ := resp["error"].(map[string]any)
+	if msg, _ := errObj["message"].(string); msg != "invalid path" {
+		t.Errorf("error message = %q, want %q", msg, "invalid path")
 	}
 }
 

@@ -66,9 +66,9 @@ func cleanRel(rel string) string {
 	return cleaned
 }
 
-// isDocPath returns true when rel is a markdown file under docs/.
+// isDocPath returns true when rel is a markdown or html file under docs/.
 func isDocPath(rel string) bool {
-	return strings.HasPrefix(rel, "docs/") && strings.HasSuffix(rel, ".md")
+	return strings.HasPrefix(rel, "docs/") && (strings.HasSuffix(rel, ".md") || strings.HasSuffix(rel, ".html"))
 }
 
 // newDerived creates a derived event carrying the same provenance as the source

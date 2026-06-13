@@ -60,6 +60,43 @@ func TestDeriveDocChangedFromDocsMd(t *testing.T) {
 	}
 }
 
+func TestDeriveDocChangedFromDocsHtml(t *testing.T) {
+	reg := testRegistry()
+	ev := toolPostEvent("auto-stack", []PathRef{
+		{Rel: "docs/tasks/021/artifacts/x.html", Abs: "/repos/auto-stack/docs/tasks/021/artifacts/x.html"},
+	})
+
+	derived := DeriveDocChanged(ev, reg)
+	if len(derived) != 1 {
+		t.Fatalf("expected 1 derived event, got %d", len(derived))
+	}
+	if derived[0].Type != "doc.changed" {
+		t.Errorf("type = %q, want doc.changed", derived[0].Type)
+	}
+
+	dc, err := DecodeData[DocChanged](derived[0])
+	if err != nil {
+		t.Fatalf("DecodeData: %v", err)
+	}
+	if dc.Path != "docs/tasks/021/artifacts/x.html" {
+		t.Errorf("path = %q, want docs/tasks/021/artifacts/x.html", dc.Path)
+	}
+	if dc.AbsPath != "/repos/auto-stack/docs/tasks/021/artifacts/x.html" {
+		t.Errorf("abs_path = %q, want /repos/auto-stack/docs/tasks/021/artifacts/x.html", dc.AbsPath)
+	}
+}
+
+func TestDeriveDocChangedOutsideDocsHtmlIgnored(t *testing.T) {
+	// A non-docs/ .html path must derive nothing.
+	reg := testRegistry()
+	ev := toolPostEvent("auto-stack", []PathRef{
+		{Rel: "web/x.html", Abs: "/repos/auto-stack/web/x.html"},
+	})
+	if derived := DeriveDocChanged(ev, reg); len(derived) != 0 {
+		t.Errorf("expected no derived events for non-docs/ .html, got %d", len(derived))
+	}
+}
+
 func TestDeriveDocChangedTopLevelDocsDir(t *testing.T) {
 	// docs/foo.md (directly under docs/, no subdir) must also match.
 	reg := testRegistry()
