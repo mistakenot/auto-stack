@@ -75,12 +75,12 @@ Phase 5 (1.4 isDocPath, auto-shared/bus) ─────────────
 - [x] Step 3.5: Commit: `feat(024): phase 3 — raw-bytes /api/doc/raw route for HTML docs`
 
 ### Phase 4: Server-side debug event buffer (AC-7) — depends on Phases 2–3
-- [ ] Step 4.1: Create `debug.go`: a `debugBuffer` (mutex + fixed-cap ring, e.g. N=100) with `record(bus.Event)` and `recent() []bus.Event`; plus `handleDebugRecent(b *debugBuffer, enabled bool) http.HandlerFunc` returning JSON when `enabled`, else `http.NotFound` (404).
-- [ ] Step 4.2: Add `WithDebug(enabled bool) Option` and an `options.debug bool` field in `server.go`; when set, construct the buffer, pass it into `handleRPC`, and mount `mux.HandleFunc("/api/debug/recent", handleDebugRecent(buf, o.debug))`.
-- [ ] Step 4.3: In `rpc_ingest.go`, after `hub.Broadcast(ev)` and each derived broadcast, call `buf.record(...)` when the buffer is non-nil (raw + each derived event).
-- [ ] Step 4.4: Write `debug_test.go` — with `WithDebug(true)`, POST a valid `agent.tool.post` for a `docs/**/*.md` path, then `GET /api/debug/recent` shows the raw event **and** one derived `doc.changed`; default server (no `WithDebug`) returns 404.
-- [ ] Step 4.5: Verify: `cd auto-ui && go build ./... && go test ./internal/server/` green; existing `rpc_ingest_test.go` still passes.
-- [ ] Step 4.6: Commit: `feat(024): phase 4 — gated /api/debug/recent server event buffer`
+- [x] Step 4.1: Create `debug.go`: a `debugBuffer` (mutex + fixed-cap ring, e.g. N=100) with `record(bus.Event)` and `recent() []bus.Event`; plus `handleDebugRecent(b *debugBuffer, enabled bool) http.HandlerFunc` returning JSON when `enabled`, else `http.NotFound` (404).
+- [x] Step 4.2: Add `WithDebug(enabled bool) Option` and an `options.debug bool` field in `server.go`; when set, construct the buffer, pass it into `handleRPC`, and mount `mux.HandleFunc("/api/debug/recent", handleDebugRecent(buf, o.debug))`.
+- [x] Step 4.3: In `rpc_ingest.go`, after `hub.Broadcast(ev)` and each derived broadcast, call `buf.record(...)` when the buffer is non-nil (raw + each derived event).
+- [x] Step 4.4: Write `debug_test.go` — with `WithDebug(true)`, POST a valid `agent.tool.post` for a `docs/**/*.md` path, then `GET /api/debug/recent` shows the raw event **and** one derived `doc.changed`; default server (no `WithDebug`) returns 404.
+- [x] Step 4.5: Verify: `cd auto-ui && go build ./... && go test ./internal/server/` green; existing `rpc_ingest_test.go` still passes.
+- [x] Step 4.6: Commit: `feat(024): phase 4 — gated /api/debug/recent server event buffer`
 
 ### Phase 5: Widen `doc.changed` derivation to `.html` (AC-4) — independent (parallel)
 - [ ] Step 5.1: In `auto-shared/bus/derive.go:70-72`, change `isDocPath` to `strings.HasPrefix(rel,"docs/") && (strings.HasSuffix(rel,".md") || strings.HasSuffix(rel,".html"))`.
