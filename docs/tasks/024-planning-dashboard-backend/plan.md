@@ -68,11 +68,11 @@ Phase 5 (1.4 isDocPath, auto-shared/bus) ─────────────
 - [x] Step 2.6: Commit: `feat(024): phase 2 — project.list RPC`
 
 ### Phase 3: Raw-bytes HTTP route (AC-3) — depends on Phase 1
-- [ ] Step 3.1: Create `raw.go` with `handleDocRaw(reg func() config.ProjectsConfig) http.HandlerFunc`: GET-only; parse `project`/`path`/`worktree`; `resolveRoot`; `cleanDocPath(path, ".html")`; on success `w.Header().Set("Content-Type","text/html; charset=utf-8")` and write the file bytes; reject invalid/`.md`/traversal/missing with the right HTTP status.
-- [ ] Step 3.2: Mount in `server.go` before the `/` catch-all (after `server.go:79`): `mux.HandleFunc("/api/doc/raw", handleDocRaw(o.regProvider))`.
-- [ ] Step 3.3: Write `raw_test.go` (httptest) — a fixture `docs/.../x.html` returns 200, `Content-Type: text/html`, verbatim bytes; a `.md` path is rejected; `../etc/passwd` rejected; missing `path` → 4xx; `worktree` param resolves to the worktree root.
-- [ ] Step 3.4: Verify: `cd auto-ui && go build ./... && go test ./internal/server/`; `curl` parity noted in commit body if run manually.
-- [ ] Step 3.5: Commit: `feat(024): phase 3 — raw-bytes /api/doc/raw route for HTML docs`
+- [x] Step 3.1: Create `raw.go` with `handleDocRaw(reg func() config.ProjectsConfig) http.HandlerFunc`: GET-only; parse `project`/`path`/`worktree`; `resolveRoot`; `cleanDocPath(path, ".html")`; on success `w.Header().Set("Content-Type","text/html; charset=utf-8")` and write the file bytes; reject invalid/`.md`/traversal/missing with the right HTTP status.
+- [x] Step 3.2: Mount in `server.go` before the `/` catch-all (after `server.go:79`): `mux.HandleFunc("/api/doc/raw", handleDocRaw(o.regProvider))`.
+- [x] Step 3.3: Write `raw_test.go` (httptest) — a fixture `docs/.../x.html` returns 200, `Content-Type: text/html`, verbatim bytes; a `.md` path is rejected; `../etc/passwd` rejected; missing `path` → 4xx; `worktree` param resolves to the worktree root.
+- [x] Step 3.4: Verify: `cd auto-ui && go build ./... && go test ./internal/server/`; `curl` parity noted in commit body if run manually.
+- [x] Step 3.5: Commit: `feat(024): phase 3 — raw-bytes /api/doc/raw route for HTML docs`
 
 ### Phase 4: Server-side debug event buffer (AC-7) — depends on Phases 2–3
 - [ ] Step 4.1: Create `debug.go`: a `debugBuffer` (mutex + fixed-cap ring, e.g. N=100) with `record(bus.Event)` and `recent() []bus.Event`; plus `handleDebugRecent(b *debugBuffer, enabled bool) http.HandlerFunc` returning JSON when `enabled`, else `http.NotFound` (404).
