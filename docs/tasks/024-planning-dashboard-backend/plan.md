@@ -52,12 +52,12 @@ Phase 5 (1.4 isDocPath, auto-shared/bus) ─────────────
 ## Plan
 
 ### Phase 1: Doc discovery + parameterized validation (AC-2)
-- [ ] Step 1.1: Add `Type string \`json:"type"\`` to `docEntry` (`docs.go:16-19`).
-- [ ] Step 1.2: Change `cleanDocPath(p)` → `cleanDocPath(p string, allowed ...string)`; replace the hard-coded `.md` suffix check (`docs.go:169`) with membership in `allowed`; keep the `docs/`-prefix + `..` traversal guard. Update `docGetHandler` (`docs.go:73`) to call `cleanDocPath(p.Path, ".md")`.
-- [ ] Step 1.3: Change `walkDocs` (`docs.go:118-151`) to accept `.md` **and** `.html`, setting `Type` to `markdown`/`html`; keep the empty-`docs/` → `[]` behavior.
-- [ ] Step 1.4: Write `docs_test.go` cases — a `docs/` tree with a `.md` and a `.html` lists both with correct `type`; `doc.get` on a `.html` path returns an "invalid path" error; `../` traversal still rejected.
-- [ ] Step 1.5: Verify: `cd auto-ui && go build ./... && go test ./internal/server/`; assert `doc.list` includes the `.html` entry and `doc.get(".../x.html")` errors.
-- [ ] Step 1.6: Commit: `feat(024): phase 1 — widen doc discovery + parameterize cleanDocPath`
+- [x] Step 1.1: Add `Type string \`json:"type"\`` to `docEntry` (`docs.go:16-19`).
+- [x] Step 1.2: Change `cleanDocPath(p)` → `cleanDocPath(p string, allowed ...string)`; replace the hard-coded `.md` suffix check (`docs.go:169`) with membership in `allowed`; keep the `docs/`-prefix + `..` traversal guard. Update `docGetHandler` (`docs.go:73`) to call `cleanDocPath(p.Path, ".md")`.
+- [x] Step 1.3: Change `walkDocs` (`docs.go:118-151`) to accept `.md` **and** `.html`, setting `Type` to `markdown`/`html`; keep the empty-`docs/` → `[]` behavior.
+- [x] Step 1.4: Write `docs_test.go` cases — a `docs/` tree with a `.md` and a `.html` lists both with correct `type`; `doc.get` on a `.html` path returns an "invalid path" error; `../` traversal still rejected.
+- [x] Step 1.5: Verify: `cd auto-ui && go build ./... && go test ./internal/server/`; assert `doc.list` includes the `.html` entry and `doc.get(".../x.html")` errors.
+- [x] Step 1.6: Commit: `feat(024): phase 1 — widen doc discovery + parameterize cleanDocPath`
 
 ### Phase 2: `project.list` RPC (AC-1)
 - [ ] Step 2.1: Create `project.go` with `projectListHandler(reg func() config.ProjectsConfig) Handler` returning `[]map[string]string{{"id","name","path","remote"}}` (or a typed struct); empty registry → `[]`. **Apply `git.NormalizeRemoteURL(ref.Remote)` (`github.com/mistakenot/auto-shared/git`) to the `remote` field before emitting** — `project.list` is a UI boundary and must never leak a credentialed remote.
