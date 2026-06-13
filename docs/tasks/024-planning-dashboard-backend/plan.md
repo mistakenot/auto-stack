@@ -83,10 +83,10 @@ Phase 5 (1.4 isDocPath, auto-shared/bus) ─────────────
 - [x] Step 4.6: Commit: `feat(024): phase 4 — gated /api/debug/recent server event buffer`
 
 ### Phase 5: Widen `doc.changed` derivation to `.html` (AC-4) — independent (parallel)
-- [ ] Step 5.1: In `auto-shared/bus/derive.go:70-72`, change `isDocPath` to `strings.HasPrefix(rel,"docs/") && (strings.HasSuffix(rel,".md") || strings.HasSuffix(rel,".html"))`.
-- [ ] Step 5.2: Add `derive_test.go` cases — `docs/tasks/021/artifacts/x.html` emits one `doc.changed`; a non-`docs/` `.html` (e.g. `web/x.html`) emits none; the existing `.md` test still passes.
-- [ ] Step 5.3: Verify: `cd auto-shared && go build ./... && go test ./bus/` green.
-- [ ] Step 5.4: Commit: `feat(024): phase 5 — derive doc.changed for docs/**/*.html`
+- [x] Step 5.1: In `auto-shared/bus/derive.go:70-72`, change `isDocPath` to `strings.HasPrefix(rel,"docs/") && (strings.HasSuffix(rel,".md") || strings.HasSuffix(rel,".html"))`.
+- [x] Step 5.2: Add `derive_test.go` cases — `docs/tasks/021/artifacts/x.html` emits one `doc.changed`; a non-`docs/` `.html` (e.g. `web/x.html`) emits none; the existing `.md` test still passes.
+- [x] Step 5.3: Verify: `cd auto-shared && go build ./... && go test ./bus/` green.
+- [x] Step 5.4: Commit: `feat(024): phase 5 — derive doc.changed for docs/**/*.html`
 
 ### Phase 6: Harness launch + isolation (AC-5) — depends on Phase 4
 - [ ] Step 6.1: In `serve.go`, resolve the port with `AUTO_UI_PORT` as a precedence rung (explicit `--port` flag > `AUTO_UI_PORT` > settings.json > 8080), and accept `--port 0`.
