@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -322,9 +323,16 @@ func hostIDQuietly() string {
 	return "unknown"
 }
 
-// uiPort reads the configured auto-ui port from ~/.auto/ui/settings.json,
-// falling back to the built-in default when unavailable.
+// uiPort resolves the auto-ui port with precedence: AUTO_UI_PORT env >
+// ~/.auto/ui/settings.json > built-in default. AUTO_UI_PORT lets an agent
+// harness point hooks at an isolated server instance (e.g. one bound to an
+// OS-assigned port).
 func uiPort() int {
+	if v := os.Getenv("AUTO_UI_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
 	autoDir, err := sharedconfig.AutoDir()
 	if err != nil {
 		return defaultUIPort

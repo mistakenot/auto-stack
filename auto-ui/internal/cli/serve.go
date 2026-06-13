@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -21,17 +22,25 @@ import (
 
 func newServeCmd(application *app.App) *cobra.Command {
 	var port int
+	var readyFile string
+	var projectsPath string
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Serve the auto-ui dashboard locally",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// If --port was not set explicitly, fall back to the configured
-			// Settings.Port (precedence: flag > settings > built-in default 8080).
+			// Resolve the listen port with precedence:
+			//   explicit --port flag > AUTO_UI_PORT env > settings.json > 8080.
+			// --port 0 is a valid explicit value (OS-assigned port), so we key
+			// off cmd.Flags().Changed("port") rather than a zero check.
 			// A missing settings file is normal (pre-init); a present-but-invalid
 			// one is surfaced as a warning rather than silently ignored.
 			if !cmd.Flags().Changed("port") {
-				if p, err := config.UISettingsPath(); err == nil {
+				if v := os.Getenv("AUTO_UI_PORT"); v != "" {
+					if n, err := strconv.Atoi(v); err == nil && n > 0 {
+						port = n
+					}
+				} else if p, err := config.UISettingsPath(); err == nil {
 					s, err := config.LoadUISettings(p)
 					switch {
 					case err == nil && s.Port != 0:
@@ -40,6 +49,14 @@ func newServeCmd(application *app.App) *cobra.Command {
 						fmt.Fprintf(application.Stderr, "warning: ignoring %s: %v (using port %d)\n", p, err, port)
 					}
 				}
+			}
+
+			// Resolve the projects registry path: --projects flag > AUTO_PROJECTS_PATH
+			// env. When set, the registry provider loads from this path instead of
+			// the default ~/.auto/projects.json — this isolates an agent harness from
+			// the host's real registry.
+			if projectsPath == "" {
+				projectsPath = os.Getenv("AUTO_PROJECTS_PATH")
 			}
 
 			// Cancel on SIGINT/SIGTERM so the server shuts down gracefully.
@@ -60,17 +77,24 @@ func newServeCmd(application *app.App) *cobra.Command {
 			// Bind to loopback only: auto-ui is a local-dev/internal tool, so it
 			// must not be reachable from the LAN. ReadHeaderTimeout guards against
 			// a stalled client holding the connection open indefinitely.
-			handler := server.New(web.FS(), web.Mode, server.WithRegistryProvider(func() sharedconfig.ProjectsConfig {
-				p, err := sharedconfig.ProjectsConfigPath()
-				if err != nil {
-					return sharedconfig.ProjectsConfig{}
-				}
-				cfg, err := sharedconfig.LoadProjects(p)
-				if err != nil {
-					return sharedconfig.ProjectsConfig{}
-				}
-				return cfg
-			}))
+			handler := server.New(web.FS(), web.Mode,
+				server.WithRegistryProvider(func() sharedconfig.ProjectsConfig {
+					p := projectsPath
+					if p == "" {
+						var err error
+						p, err = sharedconfig.ProjectsConfigPath()
+						if err != nil {
+							return sharedconfig.ProjectsConfig{}
+						}
+					}
+					cfg, err := sharedconfig.LoadProjects(p)
+					if err != nil {
+						return sharedconfig.ProjectsConfig{}
+					}
+					return cfg
+				}),
+				server.WithDebug(os.Getenv("AUTO_UI_DEBUG") == "1"),
+			)
 			srv := &http.Server{
 				Addr:              fmt.Sprintf("127.0.0.1:%d", port),
 				Handler:           handler,
@@ -96,14 +120,33 @@ func newServeCmd(application *app.App) *cobra.Command {
 				_ = srv.Shutdown(shutdownCtx)
 			}()
 
-			fmt.Fprintf(application.Stderr, "auto ui serving on http://localhost:%d (assets=%s)\n", port, web.Mode)
-			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			// Bind the listener explicitly so we can discover the real port when
+			// --port 0 asks the OS to assign one, and so a harness can learn the
+			// bound address via --ready-file before issuing requests.
+			ln, err := net.Listen("tcp", srv.Addr)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			boundAddr := ln.Addr().String()
+
+			if readyFile != "" {
+				line := fmt.Sprintf("{\"addr\":%q}\n", boundAddr)
+				if err := os.WriteFile(readyFile, []byte(line), 0o644); err != nil {
+					_ = ln.Close()
+					return &ExitError{Code: 1, Err: fmt.Errorf("writing ready file %s: %w", readyFile, err)}
+				}
+			}
+
+			fmt.Fprintf(application.Stderr, "auto ui serving on http://%s (assets=%s)\n", boundAddr, web.Mode)
+			if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				return &ExitError{Code: 1, Err: err}
 			}
 			<-done
 			return nil
 		},
 	}
-	cmd.Flags().IntVar(&port, "port", 8080, "port to serve on (overrides settings.json)")
+	cmd.Flags().IntVar(&port, "port", 8080, "port to serve on (overrides settings.json; 0 = OS-assigned)")
+	cmd.Flags().StringVar(&readyFile, "ready-file", "", "after binding, write {\"addr\":...} JSON to this path")
+	cmd.Flags().StringVar(&projectsPath, "projects", "", "path to projects.json registry (overrides AUTO_PROJECTS_PATH / default)")
 	return cmd
 }

@@ -297,3 +297,45 @@ func TestFireSwallowsLogFailure(t *testing.T) {
 		t.Error("POST should still fire even when log append fails")
 	}
 }
+
+// TestUIPortHonorsEnv covers AC-5 (hook side): uiPort() resolves AUTO_UI_PORT
+// before reading ~/.auto/ui/settings.json, lets an agent harness point hooks at
+// an isolated server, and ignores absent/invalid/non-positive values.
+func TestUIPortHonorsEnv(t *testing.T) {
+	// Redirect HOME so the settings.json fallback resolves to an empty dir; any
+	// non-default result must therefore come from AUTO_UI_PORT.
+	t.Setenv("HOME", t.TempDir())
+
+	t.Run("valid env wins over default", func(t *testing.T) {
+		t.Setenv("AUTO_UI_PORT", "54321")
+		if got := uiPort(); got != 54321 {
+			t.Errorf("uiPort() = %d, want 54321", got)
+		}
+	})
+
+	t.Run("settings.json used when env unset", func(t *testing.T) {
+		t.Setenv("AUTO_UI_PORT", "")
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		uiDir := filepath.Join(home, ".auto", "ui")
+		if err := os.MkdirAll(uiDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(uiDir, "settings.json"), []byte(`{"port":7777}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := uiPort(); got != 7777 {
+			t.Errorf("uiPort() = %d, want 7777 (from settings.json)", got)
+		}
+	})
+
+	t.Run("invalid env falls through to default", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		for _, v := range []string{"", "abc", "0", "-5"} {
+			t.Setenv("AUTO_UI_PORT", v)
+			if got := uiPort(); got != defaultUIPort {
+				t.Errorf("uiPort() with AUTO_UI_PORT=%q = %d, want default %d", v, got, defaultUIPort)
+			}
+		}
+	})
+}
