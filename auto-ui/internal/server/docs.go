@@ -17,6 +17,7 @@ import (
 type docEntry struct {
 	ID   string `json:"id"`
 	Path string `json:"path"`
+	Type string `json:"type"`
 }
 
 // docListHandler returns a JSON-RPC Handler for the "doc.list" method.
@@ -69,7 +70,7 @@ func docGetHandler(regProvider func() config.ProjectsConfig) Handler {
 		}
 
 		// Clean and validate the requested path.
-		cleaned := cleanDocPath(p.Path)
+		cleaned := cleanDocPath(p.Path, ".md")
 		if cleaned == "" {
 			return nil, &rpcError{Code: codeParseError, Message: "invalid path"}
 		}
@@ -114,7 +115,8 @@ func resolveRoot(reg config.ProjectsConfig, project, worktree string) (string, e
 }
 
 // walkDocs walks the docs/ directory under root and returns entries for all
-// *.md files found there (at any depth).
+// *.md and *.html files found there (at any depth). Each entry is tagged with a
+// Type of "markdown" or "html".
 func walkDocs(root string) ([]docEntry, error) {
 	docsDir := filepath.Join(root, "docs")
 	entries := []docEntry{}
@@ -126,7 +128,13 @@ func walkDocs(root string) ([]docEntry, error) {
 		if d.IsDir() {
 			return nil
 		}
-		if !strings.HasSuffix(d.Name(), ".md") {
+		var docType string
+		switch {
+		case strings.HasSuffix(d.Name(), ".md"):
+			docType = "markdown"
+		case strings.HasSuffix(d.Name(), ".html"):
+			docType = "html"
+		default:
 			return nil
 		}
 		rel, err := filepath.Rel(root, p)
@@ -138,6 +146,7 @@ func walkDocs(root string) ([]docEntry, error) {
 		entries = append(entries, docEntry{
 			ID:   rel,
 			Path: rel,
+			Type: docType,
 		})
 		return nil
 	})
@@ -150,9 +159,9 @@ func walkDocs(root string) ([]docEntry, error) {
 	return entries, nil
 }
 
-// cleanDocPath validates and cleans a path for doc.get. It returns "" if the
-// path is invalid (traversal, outside docs/, not .md).
-func cleanDocPath(p string) string {
+// cleanDocPath validates and cleans a path for doc operations. It returns "" if
+// the path is invalid (traversal, outside docs/, or extension not in allowed).
+func cleanDocPath(p string, allowed ...string) string {
 	// Use path.Clean (forward-slash) for the logical path.
 	cleaned := path.Clean(p)
 
@@ -165,8 +174,20 @@ func cleanDocPath(p string) string {
 	cleaned = strings.TrimPrefix(cleaned, "./")
 	cleaned = strings.TrimPrefix(cleaned, "/")
 
-	// Must be under docs/ and a .md file.
-	if !strings.HasPrefix(cleaned, "docs/") || !strings.HasSuffix(cleaned, ".md") {
+	// Must be under docs/.
+	if !strings.HasPrefix(cleaned, "docs/") {
+		return ""
+	}
+
+	// Must have an allowed extension.
+	ext := false
+	for _, a := range allowed {
+		if strings.HasSuffix(cleaned, a) {
+			ext = true
+			break
+		}
+	}
+	if !ext {
 		return ""
 	}
 
