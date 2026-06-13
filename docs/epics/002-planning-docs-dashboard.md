@@ -1,5 +1,5 @@
 ---
-hash: "a1c4f7e2"
+hash: "04e7d1af"
 id: "7b3e9d04"
 read_when: "planning or sequencing sub-tasks for the planning-docs dashboard epic"
 summary: "Epic plan for turning auto-ui into a multi-project planning-docs explorer: a default-landing dashboard that lists every registered project, browses each project's whole docs/ tree, renders markdown inline and self-contained HTML in an iframe, switches projects seamlessly, and live-refreshes both the open doc and the nav tree when an agent edits files. Most plumbing (JSON-RPC/WS, doc.list/doc.get, bus doc.changed, markdown render, project registry) already exists; the epic assembles and extends it rather than building from scratch."
@@ -246,6 +246,37 @@ before merge). Added `worktree` to the raw route (here, resolved via `FindProjec
 -->
 
 
+### 1.5 Validation launch + isolation harness
+
+Make `auto ui serve` drivable by an agent harness non-destructively:
+- `--port 0` (OS-assigned) plus `--ready-file <path>` that writes the bound
+  `127.0.0.1:NNNN` (or a JSON `{"addr":…}` line on stdout) so the agent reads the real
+  port instead of scraping the stderr banner. Default stays 8080.
+- Honor `AUTO_UI_PORT` in **both** `serve` and `auto hooks fire`'s `uiPort()` so a harness
+  can pin the producer and the test server to the same ephemeral port (otherwise real
+  hooks post to the settings default and miss the test instance).
+- `--projects <path>` (or `AUTO_PROJECTS_PATH`) to point `resolveRoot` at an isolated
+  fixture registry + temp `docs/` tree, leaving the user's real `~/.auto/projects.json`
+  untouched (CLAUDE.md: populate disk, run as a user, clean up).
+
+### 1.6 Synthetic event-emit helper
+
+A one-shot command that builds a valid `agent.tool.post` envelope and POSTs it to
+`/api/rpc`, e.g. `auto ui emit --project <id> --path docs/.../plan.md [--worktree …]` — so
+triggering a `doc.changed` is a single deterministic call, not hand-assembled JSON that
+silently derives nothing when a precondition (registered project, `docs/**` path, RFC3339
+`time`) is missed. Document the companion real-edit recipe (`auto hooks fire` with a canned
+PostToolUse payload) and the **Origin rule**: the ingest rejects any request carrying an
+`Origin` header, so triggers must come from the CLI (no Origin), never a browser `fetch`
+(always Origin) — agents *trigger via CLI, observe via browser*.
+
+### 1.7 Server-side debug event buffer (gated)
+
+Behind `AUTO_UI_DEBUG=1`, expose `GET /api/debug/recent` returning the last N broadcast
+events (raw + derived). Lets an agent confirm the **server half** — "my POST derived one
+`doc.changed`" — independently of any connected browser, isolating server-derivation bugs
+from client-match bugs. Returns 404 in normal operation.
+
 ## Phase 2 — Frontend: the explorer (default view)
 
 Depends on Phase 1. Built on the existing SPA + `rpc.js`. This is where the dashboard becomes
@@ -264,14 +295,53 @@ projects seamlessly in one dashboard" is this sub-task.
 A collapsible tree built from `doc.list` for the active project, grouped client-side by path
 prefix (Tasks → `NNN-slug` → files; Epics; Research; Reference; Experiments; Spikes; root docs).
 Selecting a doc routes to it (updates the hash, loads the content pane). Two-pane layout:
-tree on the left, content on the right.
+tree on the left, content on the right. **Observability (acceptance):** each node carries
+`data-testid`, `data-doc-path`, `data-doc-type`, and the tree root carries `data-doc-count`,
+so a harness can assert the tree and detect new docs without scraping rendered text.
 
 ### 2.3 Content pane + make explorer the default
 
 Render by type: markdown via the existing `marked`+`dompurify` path (generalize `DocView`),
 HTML via an `<iframe src="/api/doc/raw?…">` with an "open in new tab" fallback link. Make the
 explorer the **landing view** in `app.js`, retiring the demo `Home`/`Dashboard` pages (keep the
-`ping`/WS demo only if it still earns its place as a connection indicator).
+`ping`/WS demo only if it still earns its place as a connection indicator). **Observability
+(acceptance):** the content pane carries `data-revision` (increments on every re-fetch) +
+`data-last-updated`, the iframe carries a `data-testid` and an observable cache-bust nonce in its
+`src`, and the key controls (refresh button, project switcher, connection indicator) carry
+`data-testid` — so a harness asserts re-render/reload via attributes, not text diffs.
+
+### 2.4 Client debug surface for observation (gated)
+
+Behind `AUTO_UI_DEBUG=1` (query param or settings), expose `window.__autoui` from `rpc.js`: an
+ordered ring buffer of every received notification (with payload) plus counters, so an agent can
+`agent-browser eval "JSON.stringify(window.__autoui.events.slice(-5))"` and assert *exactly*
+which `doc.changed` arrived and whether the match fired — turning liveness validation from DOM
+inference into a direct assertion. The single highest-value observation hook; pairs with the
+`data-testid`/`data-revision` attributes in 2.1–2.3 and 3.1.
+
+### 2.5 `/debug` page — a rendered diagnostics view
+
+A dedicated `#/debug` route in the SPA that renders, in one screenshot-able place, everything an
+agent (or a human) needs to debug the dashboard. Where 2.4 is the *programmatic* tap (`eval` into
+a global), this is the *rendered* counterpart: `agent-browser snapshot`/`screenshot`/`get text`
+on one page yields the whole picture, no internal-global poking. It shows:
+- **Connection** — WS status (connecting/open/closed), reconnect count, `/api/hello` mode
+  (embed/disk) + bound port.
+- **Event log** — live, reverse-chronological list of received WS notifications (type, time,
+  project, path, expandable raw payload); backfilled from `window.__autoui` when `AUTO_UI_DEBUG`
+  is on, and appended live from mount regardless.
+- **Error log** — centralizes client errors that are otherwise scattered per-view: failed
+  `doc.get`/`doc.list`, parse/sanitize failures, iframe load errors, plus `window.onerror` /
+  `unhandledrejection` captured into a global sink.
+- **Current state** — active project, open doc path/type, content `data-revision`, tree
+  `data-doc-count`, last-updated.
+- **RPC console** (optional) — buttons to invoke `ping`/`doc.list`/`doc.get` over the existing WS
+  (these are *not* Origin-guarded, unlike the `/api/rpc` ingest) and show the raw response.
+
+Rows carry `data-testid` so the page is assertable, not just viewable. The page subscribes to the
+live WS itself, so it is useful even with `AUTO_UI_DEBUG` off (it just lacks the pre-mount history
+and the server-side `/api/debug/recent` cross-check). Read-only diagnostics on a trusted host, so
+the route is always reachable; the *gated* parts are the buffers it surfaces (2.4 / 1.7).
 
 ## Phase 3 — Live updates
 
@@ -287,6 +357,8 @@ Add the missing e2e/integration coverage (`rpc_ingest_test.go` asserts only `par
 pane to the corrected subscription, matching on `{project, path}` (and `worktree` when present):
 an open **markdown** doc re-fetches and re-renders on edit, and an open **HTML** doc reloads its
 iframe (cache-bust the `src`). HTML liveness depends on 1.4 widening derivation to `.html`.
+**Validation (acceptance):** assert liveness via `window.__autoui` (2.4) + the content pane's
+`data-revision` / the iframe `src` nonce — not by diffing rendered text.
 
 ### 3.2 Live nav-tree refresh
 
@@ -305,6 +377,35 @@ Deferred until the core loop is in daily use; each is independently droppable:
 - Breadcrumbs, recently-viewed list, keyboard navigation between docs.
 - Remember last-open project/doc across sessions (beyond the URL hash).
 - Rendering niceties: mermaid in markdown, sticky doc-section TOC, dark mode.
+
+## Validation & instrumentation (cross-cutting)
+
+Agents must be able to validate this dashboard end-to-end themselves. The tool is
+**`agent-browser`** (confirmed working headless on this host: `open`/`get`/`eval`/`snapshot`/
+`screenshot`), driving the served SPA and introspecting it via `eval`. The loop is: **launch**
+(1.5) → **open** in agent-browser → **trigger** a `doc.changed` via the CLI emit helper (1.6) →
+**observe** the effect → assert via the injected taps. Two complementary observation surfaces: the
+**`/debug` page** (2.5) renders everything in one screenshot-able view (`snapshot`/`get text`),
+while **`window.__autoui`** (2.4) is the programmatic ring buffer for precise `eval` assertions.
+
+The hard part is observation: when a doc re-fetches, the DOM can look identical, so liveness must
+be *made observable*. All debug surfaces are gated behind a single `AUTO_UI_DEBUG=1` flag so
+production stays clean. Required observable hooks, by sub-task (acceptance criteria, not extras):
+
+| Observable hook | Lands in | Why |
+|---|---|---|
+| `--ready-file` / `--port 0` / `AUTO_UI_PORT` / `--projects` | 1.5 | deterministic, isolated launch |
+| `auto ui emit` + the Origin "trigger-via-CLI" rule | 1.6 | one-call deterministic trigger |
+| `GET /api/debug/recent` server ring buffer | 1.7 | confirm the server half independently |
+| `window.__autoui` WS event ring buffer | 2.4 | assert which notification arrived (`eval`) |
+| `/debug` page (events + errors + state) | 2.5 | one screenshot-able diagnostics view (`snapshot`) |
+| `data-testid` (+ `data-project`/`data-doc-path`/`data-doc-type`) | 2.1–2.3 | stable selectors for agent-browser |
+| `data-revision` + `data-last-updated` (content), `data-doc-count` (tree) | 2.3, 2.2 | "did it re-render?" without diffing text |
+| observable iframe cache-bust nonce in `src` | 2.3 / 3.1 | confirm HTML iframe reload via `get attr src` |
+
+Two operational notes for harness authors: (a) the disk-vs-embed asset split is a **build tag**
+(`-tags dev`), not a runtime flag — validate the shipped artifact with the embed build, iterate
+on the SPA with the dev build; (b) `/api/hello` (returns `{mode}`) doubles as the readiness probe.
 
 ## Out of scope
 
@@ -329,14 +430,26 @@ Deferred until the core loop is in daily use; each is independently droppable:
 | 1.2 | Widen doc discovery to whole `docs/` tree  | —            |        |
 | 1.3 | Raw-bytes HTTP route for HTML docs         | —            |        |
 | 1.4 | Widen `doc.changed` derivation to `.html`  | —            |        |
+| 1.5 | Validation launch + isolation harness      | —            |        |
+| 1.6 | Synthetic event-emit helper                | —            |        |
+| 1.7 | Server-side debug event buffer (gated)     | —            |        |
 | 2.1 | Project switcher                           | 1.1          |        |
 | 2.2 | Doc tree / navigation pane                 | 1.2          |        |
 | 2.3 | Content pane + explorer as default view    | 1.2, 1.3, 2.2|        |
+| 2.4 | Client debug surface (`window.__autoui`)   | —            |        |
+| 2.5 | `/debug` page (events + errors + state)    | 2.4          |        |
 | 3.1 | Open-doc live refresh in explorer          | 2.3, 1.4     |        |
 | 3.2 | Live nav-tree refresh                      | 2.2, 2.3, 1.4|        |
 | 4.x | Polish (search, breadcrumbs, mermaid, …)   | Phase 3      |        |
 
 ## Implementation order (sketch)
+
+> The validation-harness sub-tasks interleave with these feature steps so each *Validate* line is
+> actually runnable. Land **1.5** (launch + `--ready-file`/`AUTO_UI_PORT`/`--projects`) and **1.6**
+> (`auto ui emit`) early in Phase 1 — before the first browser-validated step (6) — and **2.4**
+> (`window.__autoui`) with 2.3, so the liveness checks in steps 9–10 assert on received
+> notifications rather than DOM diffs. **1.7** (server debug buffer) can land any time in Phase 1.
+> All debug surfaces are gated behind `AUTO_UI_DEBUG=1`.
 
 1. **3.1a — fix the `doc.changed` client match first** (pull the one-line `doc.js` fix +
    `params.data.path` e2e coverage forward out of 3.1): smallest change, de-risks the whole
