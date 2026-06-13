@@ -21,7 +21,10 @@ import (
 // feedback on errors.
 //
 // Valid frames receive 204 No Content (fire-and-forget).
-func handleRPC(hub *bus.Hub, regProvider func() config.ProjectsConfig) http.HandlerFunc {
+//
+// When buf is non-nil (debug mode), every raw and derived event is recorded
+// into the ring buffer for inspection via /api/debug/recent.
+func handleRPC(hub *bus.Hub, regProvider func() config.ProjectsConfig, buf *debugBuffer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
@@ -70,12 +73,18 @@ func handleRPC(hub *bus.Hub, regProvider func() config.ProjectsConfig) http.Hand
 
 		// Broadcast the raw event to all connected clients.
 		hub.Broadcast(ev)
+		if buf != nil {
+			buf.record(ev)
+		}
 
 		// Derive doc.changed events and broadcast each.
 		reg := regProvider()
 		derived := bus.DeriveDocChanged(ev, reg)
 		for i := range derived {
 			hub.Broadcast(derived[i])
+			if buf != nil {
+				buf.record(derived[i])
+			}
 		}
 
 		w.WriteHeader(http.StatusNoContent)

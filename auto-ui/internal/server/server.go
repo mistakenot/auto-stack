@@ -15,6 +15,7 @@ type Option func(*options)
 
 type options struct {
 	regProvider func() config.ProjectsConfig
+	debug       bool
 }
 
 // WithRegistryProvider sets the function New uses to obtain the project
@@ -23,6 +24,14 @@ type options struct {
 // empty registry, keeping unit tests hermetic.
 func WithRegistryProvider(fn func() config.ProjectsConfig) Option {
 	return func(o *options) { o.regProvider = fn }
+}
+
+// WithDebug enables the in-memory debug event buffer and the gated
+// GET /api/debug/recent route, which exposes the last N raw and derived events
+// that passed through the ingest handler. It is off by default; serve.go enables
+// it from AUTO_UI_DEBUG so server tests stay hermetic.
+func WithDebug(enabled bool) Option {
+	return func(o *options) { o.debug = enabled }
 }
 
 // New builds the autoui HTTP handler: a JSON /api/hello endpoint, a WebSocket
@@ -44,6 +53,13 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 	}
 
 	hub := bus.NewHub()
+
+	// In debug mode, record raw + derived ingest events into a ring buffer
+	// exposed via /api/debug/recent.
+	var buf *debugBuffer
+	if o.debug {
+		buf = &debugBuffer{}
+	}
 
 	// Shared dispatcher routes client->server RPC calls over WebSocket.
 	d := newDispatcher()
@@ -77,10 +93,13 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 	mux.HandleFunc("/api/ws", handleWSWithHub(hub, d))
 
 	// POST /api/rpc: fire-and-forget ingest of bus events.
-	mux.HandleFunc("/api/rpc", handleRPC(hub, o.regProvider))
+	mux.HandleFunc("/api/rpc", handleRPC(hub, o.regProvider, buf))
 
 	// GET /api/doc/raw: verbatim HTML doc bytes (text/html), .html only.
 	mux.HandleFunc("/api/doc/raw", handleDocRaw(o.regProvider))
+
+	// GET /api/debug/recent: last N ingest events (gated by WithDebug).
+	mux.HandleFunc("/api/debug/recent", handleDebugRecent(buf, o.debug))
 
 	assets := http.FileServer(http.FS(fsys))
 	if mode == "disk" {
