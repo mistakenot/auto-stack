@@ -6,14 +6,18 @@ import { render } from "preact";
 import { html } from "htm/preact";
 import { parseHash, setHash, onRouteChange } from "./router.js";
 import { Explorer } from "./explorer.js";
+import { Debug } from "./debug.js";
 
 // App derives the current view from the hash and renders the matching view.
 // The explorer is the default: empty/legacy views fall through to it (and the
 // hash is normalized to #/explore on mount — see normalizeHash).
 function App() {
   const { view, params } = parseHash();
-  // #/explore is the default; future routes (e.g. #/debug) slot in here.
-  const body = html`<${Explorer} params=${params} />`;
+  // #/explore is the default; #/debug is the read-only diagnostics page.
+  const body =
+    view === "debug"
+      ? html`<${Debug} />`
+      : html`<${Explorer} params=${params} />`;
   // <main class="container"> is Pico's centered, padded page wrapper.
   return html`
     <main class="container">
