@@ -6,6 +6,7 @@ import { html } from "htm/preact";
 import { parseHash, setHash, onRouteChange } from "./router.js";
 import { call, on, onStatus } from "./rpc.js";
 import { DocView } from "./doc.js";
+import { Explorer } from "./explorer.js";
 
 // Nav switches views by rewriting the hash. Home carries its counter (?n=).
 function Nav({ view }) {
@@ -125,11 +126,13 @@ function Dashboard() {
 function App() {
   const { view, params } = parseHash();
   const body =
-    view === "doc"
-      ? html`<${DocView} params=${params} />`
-      : view === "dashboard"
-        ? html`<${Dashboard} />`
-        : html`<${Home} params=${params} />`;
+    view === "explore"
+      ? html`<${Explorer} params=${params} />`
+      : view === "doc"
+        ? html`<${DocView} params=${params} />`
+        : view === "dashboard"
+          ? html`<${Dashboard} />`
+          : html`<${Home} params=${params} />`;
   // <main class="container"> is Pico's centered, padded page wrapper.
   return html`
     <main class="container">
