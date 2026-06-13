@@ -79,6 +79,9 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 	// POST /api/rpc: fire-and-forget ingest of bus events.
 	mux.HandleFunc("/api/rpc", handleRPC(hub, o.regProvider))
 
+	// GET /api/doc/raw: verbatim HTML doc bytes (text/html), .html only.
+	mux.HandleFunc("/api/doc/raw", handleDocRaw(o.regProvider))
+
 	assets := http.FileServer(http.FS(fsys))
 	if mode == "disk" {
 		assets = noStore(assets)
