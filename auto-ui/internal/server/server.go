@@ -56,6 +56,7 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 	})
 	d.Register("doc.list", docListHandler(o.regProvider))
 	d.Register("doc.get", docGetHandler(o.regProvider))
+	d.Register("project.list", projectListHandler(o.regProvider))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/hello", func(w http.ResponseWriter, r *http.Request) {
