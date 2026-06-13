@@ -60,12 +60,12 @@ Phase 5 (1.4 isDocPath, auto-shared/bus) ─────────────
 - [x] Step 1.6: Commit: `feat(024): phase 1 — widen doc discovery + parameterize cleanDocPath`
 
 ### Phase 2: `project.list` RPC (AC-1)
-- [ ] Step 2.1: Create `project.go` with `projectListHandler(reg func() config.ProjectsConfig) Handler` returning `[]map[string]string{{"id","name","path","remote"}}` (or a typed struct); empty registry → `[]`. **Apply `git.NormalizeRemoteURL(ref.Remote)` (`github.com/mistakenot/auto-shared/git`) to the `remote` field before emitting** — `project.list` is a UI boundary and must never leak a credentialed remote.
-- [ ] Step 2.2: Register it in `server.go` beside `doc.get` (`server.go:58`): `d.Register("project.list", projectListHandler(o.regProvider))`.
-- [ ] Step 2.3: Write `project_test.go` — fixture registry of 2 projects returns 2 entries with all four fields; empty registry returns `[]` (length 0), not an RPC error.
-- [ ] Step 2.4: Add a `project_test.go` case asserting a fixture entry whose stored `remote` carries credentials (e.g. `https://user:token@github.com/owner/repo.git`) is emitted in credential-free normalized form (no `@`/token; e.g. `https://github.com/owner/repo`).
-- [ ] Step 2.5: Verify: `cd auto-ui && go build ./... && go test ./internal/server/` green.
-- [ ] Step 2.6: Commit: `feat(024): phase 2 — project.list RPC`
+- [x] Step 2.1: Create `project.go` with `projectListHandler(reg func() config.ProjectsConfig) Handler` returning `[]map[string]string{{"id","name","path","remote"}}` (or a typed struct); empty registry → `[]`. **Apply `git.NormalizeRemoteURL(ref.Remote)` (`github.com/mistakenot/auto-shared/git`) to the `remote` field before emitting** — `project.list` is a UI boundary and must never leak a credentialed remote.
+- [x] Step 2.2: Register it in `server.go` beside `doc.get` (`server.go:58`): `d.Register("project.list", projectListHandler(o.regProvider))`.
+- [x] Step 2.3: Write `project_test.go` — fixture registry of 2 projects returns 2 entries with all four fields; empty registry returns `[]` (length 0), not an RPC error.
+- [x] Step 2.4: Add a `project_test.go` case asserting a fixture entry whose stored `remote` carries credentials (e.g. `https://user:token@github.com/owner/repo.git`) is emitted in credential-free normalized form (no `@`/token; e.g. `https://github.com/owner/repo`).
+- [x] Step 2.5: Verify: `cd auto-ui && go build ./... && go test ./internal/server/` green.
+- [x] Step 2.6: Commit: `feat(024): phase 2 — project.list RPC`
 
 ### Phase 3: Raw-bytes HTTP route (AC-3) — depends on Phase 1
 - [ ] Step 3.1: Create `raw.go` with `handleDocRaw(reg func() config.ProjectsConfig) http.HandlerFunc`: GET-only; parse `project`/`path`/`worktree`; `resolveRoot`; `cleanDocPath(path, ".html")`; on success `w.Header().Set("Content-Type","text/html; charset=utf-8")` and write the file bytes; reject invalid/`.md`/traversal/missing with the right HTTP status.
