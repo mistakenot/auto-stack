@@ -1,5 +1,5 @@
 ---
-hash: "9a9f0df2"
+hash: "e83653ff"
 id: "5f4be445"
 read_when: "designing automated skill optimization loops for autoskill"
 summary: "Technical implementation notes from SkillOpt (arXiv:2605.23904), focused on what to adopt in auto-skill."

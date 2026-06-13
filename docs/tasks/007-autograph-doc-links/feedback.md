@@ -1,3 +1,11 @@
+---
+hash: "434196f6"
+id: "c71e3281"
+read_when: "implementing doc link scanning in autograph or debugging edge-type filtering"
+summary: "Post-implementation reflections on autograph doc links, covering cross-module internal/ visibility, unfiltered edge iteration, linkscan git dependency, and triple-backtick collision."
+title: "Feedback: Task 007 — Autograph Doc Links"
+---
+
 # Feedback: Task 007
 
 ## Problems faced

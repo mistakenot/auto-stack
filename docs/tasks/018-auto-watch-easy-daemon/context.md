@@ -1,3 +1,11 @@
+---
+hash: "c1e38354"
+id: "96c53fff"
+read_when: "implementing user-scope systemd daemon support in auto-watch or locating the Manager, Runner, and template extension points"
+summary: "Codebase context for the user-first daemon install task, with precise file/line references for the daemoninstall package, CLI flags, update flow, doctor checks, and the system-vs-user scope design tension to resolve."
+title: "Context: Auto Watch Easy Daemon (Task 018)"
+---
+
 # Context: Task 018
 
 Verified codebase facts grounding the no-sudo `auto watch` daemon design. See [solution.md](solution.md).

@@ -1,3 +1,11 @@
+---
+hash: "6b9c37f4"
+id: "4f5af672"
+read_when: "implementing git history ETL or designing a new incremental ETL source in auto-etl"
+summary: "Design for ingesting git repository history into auto-etl parquet: five row structs, git shell extraction, incremental sync-state, repo discovery, URL normalization, and CLI wiring."
+title: "Solution: Task 002 — Git History ETL"
+---
+
 # Solution: Task 002 — Git History ETL
 
 ## Approach

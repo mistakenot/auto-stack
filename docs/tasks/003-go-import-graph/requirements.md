@@ -1,3 +1,11 @@
+---
+hash: "60f5f6f3"
+id: "8b314ab2"
+read_when: "implementing Go import graph scanning in auto-graph or extending autograph to a new language"
+summary: "Requirements for adding Go language support to autograph: stdlib-based go/parser scanner, module-path resolver via go.mod, language auto-detection, all Go import styles, and e2e test fixtures."
+title: "Requirements: Task 003 — Go Import Graph"
+---
+
 # Task 003: Go Import Graph
 
 ## Background

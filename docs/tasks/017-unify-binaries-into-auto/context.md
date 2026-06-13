@@ -1,3 +1,11 @@
+---
+hash: "393facbf"
+id: "206c93d2"
+read_when: "implementing the unified auto binary or adding a new tool to the auto-cli umbrella module"
+summary: "Verified codebase context for merging 10 tool binaries into a single auto binary: go.work feasibility, public command-tree constructors per tool, and the three non-standard tools that need normalization."
+title: "Context: Task 017 — Unify Binaries into Auto"
+---
+
 # Context: Task 017
 
 Verified codebase facts grounding the binary-merge design. See [solution.md](solution.md).

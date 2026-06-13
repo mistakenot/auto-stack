@@ -1,3 +1,11 @@
+---
+hash: "ff9d9e0d"
+id: "7a5073c1"
+read_when: "implementing auto-graph TypeScript scanner or scaffolding a new auto-* package following the task 001 pattern"
+summary: "Verified codebase context for implementing the TypeScript import graph tool in auto-graph, covering key files, patterns, and scaffolding sequence."
+title: "Context: Task 001 — TypeScript Import Graph"
+---
+
 # Context: Task 001
 
 Codebase context for implementing the TypeScript import graph tool in `auto-graph`. See [solution.md](./solution.md) for the full design.

@@ -1,3 +1,11 @@
+---
+hash: "f56218b4"
+id: "20fb55b3"
+read_when: "implementing structured tool output capture in auto-etl or understanding the tool_use_result_json schema requirements"
+summary: "Requirements for capturing the JSONL toolUseResult envelope verbatim into a new tool_use_result_json column in the messages parquet, mirroring it in the SQLite index, and making AskUserQuestion picked/recommended analytics queryable without regex."
+title: "Requirements: Structured Tool Output (Task 012)"
+---
+
 # Task 012: Structured Tool Output
 
 <!-- REJECTED(P1): Planning docs are incomplete

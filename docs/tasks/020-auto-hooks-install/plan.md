@@ -1,3 +1,11 @@
+---
+hash: "6bebadeb"
+id: "6821afa4"
+read_when: "implementing or reviewing the auto hooks install command plan and hook-merging logic"
+summary: "Implementation plan for the auto hooks install subcommand: merging fire hook commands into .claude/settings.json and .codex/hooks.json idempotently for all documented hook events."
+title: "Plan: Task 020 — Auto Hooks Install"
+---
+
 # Plan: Task 020
 
 ## Summary

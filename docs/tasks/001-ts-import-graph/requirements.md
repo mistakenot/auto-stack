@@ -1,3 +1,11 @@
+---
+hash: "be79b1c1"
+id: "6d8ecad5"
+read_when: "implementing or reviewing the TypeScript import graph feature in autograph"
+summary: "Acceptance criteria for the autograph TypeScript import graph feature, covering ast-grep scanning, tsconfig path alias resolution, and AC-1 through AC-9."
+title: "Task 001: TypeScript Import Graph Requirements"
+---
+
 # Task 001: TypeScript Import Graph
 
 ## Background

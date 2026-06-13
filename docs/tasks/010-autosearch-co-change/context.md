@@ -1,3 +1,11 @@
+---
+hash: "0820f3ff"
+id: "a5094922"
+read_when: "implementing or reviewing the autosearch co-change command codebase context"
+summary: "Verified codebase facts grounding the autosearch co-change command implementation: CLI patterns, parquet discovery, git parquet schema, and SQLite query approach."
+title: "Context: Task 010 — Autosearch Co-Change Query"
+---
+
 # Context: Task 010 — Autosearch Co-Change Query
 
 Verified codebase facts grounding the implementation of `autosearch co-change`. See [solution.md](./solution.md) for the design and [requirements.md](./requirements.md) for ACs.

@@ -1,3 +1,11 @@
+---
+hash: "ce0df480"
+id: "6e30ecc9"
+read_when: "designing preference inference systems or evaluating alternatives to cosine similarity for embedding-based retrieval"
+summary: "Phase 4 spike testing per-dimension binary classifiers and active learning as alternatives to cosine similarity for preference inference from embeddings, achieving 4.17 questions to full sign recovery."
+title: "Spike: Alternatives to Cosine Similarity (Phase 4)"
+---
+
 # Spike: Alternatives to Cosine Similarity (Phase 4)
 
 Phase 3 produced a sharp negative result: with synthetic data having known 8-dim latent structure, linear-probe R² = 0.28 (signal exists in the embedding) but cosine similarity ρ ≈ 0 (signal NOT in cosine geometry). The original orthogonal-questioning framework, which assumed cosine distance tracked decision distance, failed.

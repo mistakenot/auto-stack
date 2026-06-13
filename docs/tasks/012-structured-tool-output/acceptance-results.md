@@ -1,3 +1,11 @@
+---
+hash: "07dc0e68"
+id: "050fb445"
+read_when: "reviewing acceptance test results for structured tool output or understanding why the 73.8% rate corrects the prior 55.7% regex baseline"
+summary: "Human acceptance test results for task 012: 16,167 rows with tool_use_result_json populated, 73.8% recommended-acceptance rate (correcting the 55.7% regex baseline), and confirmation that the structured column finds all 61 AskUserQuestion calls with recommendations."
+title: "Acceptance Results: Structured Tool Output (Task 012)"
+---
+
 # Task 012 — Human-Acceptance Results (Phase 3 backfill)
 
 Run on 2026-06-01 with worktree-built binaries (`autoetl`, `autosearch` from branch `task/012-structured-tool-output`).

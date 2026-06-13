@@ -1,3 +1,11 @@
+---
+hash: "203ff4ce"
+id: "142aa87c"
+read_when: "reviewing auto bus standard implementation lessons or understanding CloudEvents envelope and JSON-RPC security considerations"
+summary: "Post-implementation feedback for the auto bus standard task: worktree rebase conflict with untracked planning docs, registry hermeticity in tests, and security fixes for XSS, DNS-rebinding, and timestamp parsing."
+title: "Feedback: Task 021 — Auto Bus Standard"
+---
+
 # Feedback: Task 021
 
 ## Problems faced

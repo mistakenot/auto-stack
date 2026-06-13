@@ -1,3 +1,11 @@
+---
+hash: "63ab3cf5"
+id: "0fd10597"
+read_when: "implementing commit-to-session linkage in auto-etl or auto-search"
+summary: "Verified codebase context for linking git commits to coding sessions, covering the Commit struct, parseTrailers, messages parquet schema, and auto-config patterns."
+title: "Context: Task 008 — Commit-Session Link"
+---
+
 # Context: Task 008
 
 Codebase context for the commit-to-session link implementation. See [solution.md](./solution.md) for the design.

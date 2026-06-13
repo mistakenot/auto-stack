@@ -1,3 +1,11 @@
+---
+hash: "ea8df0eb"
+id: "90c0333c"
+read_when: "implementing or reviewing the structured tool output ETL pipeline changes"
+summary: "Code-level context for threading tool_use_result_json through the ETL parser, transform pipeline, parquet model, and autosearch describe surface."
+title: "Context: Task 012 — Structured Tool Output"
+---
+
 # Context: Task 012 — Structured Tool Output
 
 Code-level context for implementing the `tool_use_result_json` column. See [solution.md](./solution.md) for the design rationale and [requirements.md](./requirements.md) for ACs.

@@ -1,3 +1,11 @@
+---
+hash: "58e21064"
+id: "41a6d2d5"
+read_when: "implementing or reviewing the autosearch co-change compact output format requirements"
+summary: "Requirements for making autosearch co-change output compact by default: token-budget cap, directory-tree-distance annotations, continuous inverse-fan-out weighting, and --json flag for verbose detail."
+title: "Requirements: Task 011 — Autosearch Co-Change Compact Output"
+---
+
 # Task 011: Autosearch Co-Change Compact Output
 
 ## Problem

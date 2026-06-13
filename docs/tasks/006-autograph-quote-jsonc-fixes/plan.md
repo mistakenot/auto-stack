@@ -1,3 +1,11 @@
+---
+hash: "90cfda84"
+id: "d552eb28"
+read_when: "implementing ast-grep single-quote patterns or JSONC tsconfig parsing in autograph"
+summary: "Three-phase plan to fix ast-grep single-quote pattern sensitivity and add JSONC-tolerant tsconfig parsing with a stripJSONC helper and warning writer."
+title: "Plan: Task 006 — Autograph Quote and JSONC Fixes"
+---
+
 # Plan: Task 006
 
 ## Summary

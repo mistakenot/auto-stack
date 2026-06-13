@@ -1,3 +1,11 @@
+---
+hash: "c29ea519"
+id: "0862adc9"
+read_when: "implementing or reviewing the auto-ui technical base requirements and SPA architecture"
+summary: "Requirements for the auto-ui package: a Go binary serving a no-build Preact+htm SPA with hash-based routing, embed mode, dev mode hot-reload, and a REST/WebSocket API."
+title: "Requirements: Task 013 — Auto UI Tech Base"
+---
+
 # Task 013: auto-ui-tech-base
 
 ## Problem

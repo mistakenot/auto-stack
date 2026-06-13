@@ -1,3 +1,11 @@
+---
+hash: "169fa73f"
+id: "11e31df5"
+read_when: "evaluating model-based testing with Quint for Go ETL merge logic, or continuing the quint-sync-protocol experiment"
+summary: "Experiment verifying that Quint MBT traces can drive Go conformance tests against the CRDT merge implementation; ITF trace generation, Go parser, and test harness all built and validated in a throwaway worktree."
+title: "Quint Sync Protocol Phase 2: Model-Based Testing"
+---
+
 # Phase 2: Model-Based Testing — Verifying Go Against Quint
 
 Phase 1 (the [tech spike](SPIKE-REPORT.md)) proved that Quint can model our CRDT merge semantics and catch bugs like tombstone resurrection in <100ms. This phase answers the next question: **can we use Quint's model-based testing (MBT) to automatically verify that a real Go implementation faithfully matches the formal specification?**

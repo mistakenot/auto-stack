@@ -1,3 +1,11 @@
+---
+hash: "9da17358"
+id: "2e9e11a2"
+read_when: "evaluating question-policy strategies for requirements elicitation or understanding why regret-aware gating fails on small corpora"
+summary: "Validation of whether a regret-aware question policy beats confidence-only baseline, finding WRC reduction threshold FAIL and DA non-inferiority FAIL on the AND-gate formulation."
+title: "Structured Compiler: Assumption 2 — Regret-Aware Question Policy"
+---
+
 # Assumption 2 — Regret-Aware Question Policy
 
 **Verdict: PARTIAL**

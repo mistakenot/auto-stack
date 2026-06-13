@@ -1,3 +1,11 @@
+---
+hash: "c340b4b0"
+id: "d887098e"
+read_when: "implementing or troubleshooting the auto watch daemon install command"
+summary: "Requirements for making auto watch daemon install work without sudo using a user-level systemctl --user service, with single-command updates, optional --system mode, idempotent/self-healing install, and accurate docs."
+title: "Requirements: Task 018 — Auto Watch Easy Daemon"
+---
+
 # Task 018: auto-watch-easy-daemon
 
 ## Problem

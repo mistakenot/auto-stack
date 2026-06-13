@@ -1,3 +1,11 @@
+---
+hash: "c89bb5de"
+id: "c321acda"
+read_when: "implementing the co-change query feature or reviewing the phase sequence for git parquet integration and in-memory SQLite aggregation"
+summary: "Phased implementation plan for the autosearch co-change command: remote normalisation to auto-shared, slim git parquet readers, in-memory SQLite aggregation, weighted scoring, repo resolution, CLI flags, fixture generation with privacy guard, and full test coverage."
+title: "Plan: Autosearch Co-Change Query (Task 010)"
+---
+
 # Plan: Task 010 — Autosearch Co-Change Query
 
 ## Summary

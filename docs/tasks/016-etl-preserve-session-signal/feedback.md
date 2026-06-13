@@ -1,3 +1,11 @@
+---
+hash: "b844925d"
+id: "b88336df"
+read_when: "reviewing lessons from the ETL session signal preservation implementation or debugging schema version bump patterns"
+summary: "Post-implementation feedback for task 016: two bugs found (ineffectual assignment, inverted test assertion) and reflections on the dual schema version bump pattern and positional Insert signature pitfalls."
+title: "Feedback: Task 016 — ETL Preserve Session Signal"
+---
+
 # Feedback: Task 016
 
 ## Problems faced

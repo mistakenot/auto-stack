@@ -1,3 +1,11 @@
+---
+hash: "0358003d"
+id: "dc8b4827"
+read_when: "implementing session intent extraction in auto-etl or understanding the junk-skip heuristic and intent field requirements"
+summary: "Requirements for surfacing a human-readable first_user_intent field on ETL session records, skipping junk first messages with a deterministic skip-list heuristic, and exposing the intent in autosearch session list and session describe."
+title: "Requirements: Session Intent Summary (Task 015)"
+---
+
 # Task 015: session-intent-summary
 
 ## Problem

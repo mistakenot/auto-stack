@@ -1,3 +1,11 @@
+---
+hash: "98dbb609"
+id: "6590f497"
+read_when: "reviewing lessons from the git history ETL task or understanding credential stripping and date convention requirements"
+summary: "Post-task feedback from implementing git history ETL: PAT token leak in remote URLs, --since unit convention conflict between months and minutes, and CI format check failure from skipping gofmt."
+title: "Feedback: Git History ETL (Task 002)"
+---
+
 # Feedback: Task 002
 
 ## Problems faced

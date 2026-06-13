@@ -1,3 +1,11 @@
+---
+hash: "1e0ce32a"
+id: "553893bc"
+read_when: "implementing or reviewing the autosearch co-change query engine and scoring algorithm"
+summary: "Design for the autosearch co-change command: per-query ephemeral SQLite engine over parquet, repo resolution via git remote, weighted co-occurrence scoring with time decay and large-commit penalty."
+title: "Solution: Task 010 — Autosearch Co-Change Query"
+---
+
 # Solution: Task 010 — Autosearch Co-Change Query
 
 ## Engine decision (revises requirements)

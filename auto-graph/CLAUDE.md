@@ -52,5 +52,5 @@ go vet ./...
 
 **auto-graph/docs**
 
-- [context-pack-ab-findings.md](auto-graph/docs/context-pack-ab-findings.md)
+- [Context Pack A/B Findings](auto-graph/docs/context-pack-ab-findings.md): A/B evaluation comparing autograph static code graph against an agent-assembled context bundle, identifying five graph traversal problems that caused it to score 46/110 vs 92/110 for the agent team. Read when: improving autograph context pack traversal logic or understanding why graph-based context selection underperforms agent-assembled bundles
 <!-- autodoc: end -->

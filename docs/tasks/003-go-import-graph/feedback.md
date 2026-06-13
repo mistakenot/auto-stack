@@ -1,3 +1,11 @@
+---
+hash: "b97c031c"
+id: "75a13911"
+read_when: "implementing Go import graph features or debugging autograph's Go scanner"
+summary: "Post-implementation reflections on the Go import graph feature, covering scanner/walker skip-list asymmetry, naive go.mod parsing, and other gotchas encountered."
+title: "Feedback: Task 003 — Go Import Graph"
+---
+
 # Feedback: Task 003
 
 ## Problems faced

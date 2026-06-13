@@ -1,3 +1,11 @@
+---
+hash: "ac6df8e1"
+id: "8b3a8339"
+read_when: "implementing or understanding the auto reflect retrieval loop, event log structure, or snapshot projection mechanics"
+summary: "Command-to-event-to-projection flow diagram for the reflect retrieval loop: retrieve, select, feedback, gate check commands mapped to the append-only event log, snapshot folding, and read surfaces."
+title: "Retrieval Loop Flow (Task 019)"
+---
+
 # Artifact: Retrieval Loop Flow (Task 019)
 
 Command → event → projection flow. Events are canonical; everything right of the log is derived.

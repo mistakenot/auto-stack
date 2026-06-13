@@ -1,3 +1,11 @@
+---
+hash: "ac439320"
+id: "4e4c1449"
+read_when: "implementing the TypeScript import graph feature or reviewing the phase-by-phase build sequence for auto-graph"
+summary: "Phased implementation plan for scaffolding auto-graph and building the TypeScript import graph command using ast-grep, covering six phases from package scaffold through E2E tests and Makefile integration."
+title: "Plan: TypeScript Import Graph (Task 001)"
+---
+
 # Plan: Task 001
 
 ## Summary

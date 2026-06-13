@@ -1,3 +1,11 @@
+---
+hash: "1f5eaa3e"
+id: "7b8a3064"
+read_when: "implementing commit-to-session linking in auto-etl or setting up the prepare-commit-msg hook"
+summary: "Implementation plan for linking git commits to agent sessions: add session_id to the Commit parquet row via trailer extraction and fallback message matching, plus a new auto-config package with prepare-commit-msg hook installation."
+title: "Plan: Task 008 — Commit-Session Link"
+---
+
 # Plan: Task 008
 
 ## Summary

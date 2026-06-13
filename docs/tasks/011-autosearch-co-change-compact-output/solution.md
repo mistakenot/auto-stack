@@ -1,3 +1,11 @@
+---
+hash: "0a2540b5"
+id: "7cf8239a"
+read_when: "implementing compact text rendering for autosearch co-change or understanding the render.go budget truncation design"
+summary: "Solution for compact co-change text output: remove binary large-commit cutoff, add a text renderer with budget truncation and boring-first trim, normalize score display, and add --text flag to the CLI."
+title: "Solution: Task 011 — Autosearch Co-Change Compact Output"
+---
+
 # Solution: Task 011
 
 <!-- REJECTED(P1): Missing context and execution plan docs

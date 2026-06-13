@@ -1,3 +1,11 @@
+---
+hash: "76bb5b44"
+id: "11201f9f"
+read_when: "implementing auto hooks install or locating the hookscmd registration point and JSON merge patterns"
+summary: "Codebase context for the auto hooks install command, with precise references for hookscmd.go, JSON config helpers, git.RepoRoot, the agent hook shapes for Claude and Codex, and the test harness pattern."
+title: "Context: Auto Hooks Install (Task 020)"
+---
+
 # Context: Task 020
 
 Verified codebase facts grounding the `auto hooks install` design. See

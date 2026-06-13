@@ -1,3 +1,11 @@
+---
+hash: "ae6ec843"
+id: "e9a37562"
+read_when: "implementing or reviewing the hook event log feature and understanding where hook payloads are produced in auto-cli"
+summary: "Verified codebase facts for implementing the durable hook event log: producer side in auto-cli hookscmd.go where verbatim raw bytes are available, and key file locations for the append path."
+title: "Context: Task 022 — Hook Event Log"
+---
+
 # Context: Task 022
 
 Verified codebase facts grounding the hook-event-log design. See [solution.md](./solution.md).

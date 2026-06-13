@@ -1,3 +1,11 @@
+---
+hash: "5a1605c6"
+id: "f69fcdab"
+read_when: "implementing git history ETL in auto-etl or understanding its phase structure"
+summary: "Five-phase implementation plan for adding git history ETL to auto-etl: model structs, normalization, extraction, writer, and CLI wiring."
+title: "Plan: Task 002 — Git History ETL"
+---
+
 # Plan: Task 002
 
 ## Summary

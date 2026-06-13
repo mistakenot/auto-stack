@@ -1,3 +1,11 @@
+---
+hash: "de36a9ee"
+id: "6bd4937a"
+read_when: "implementing hooks installation or debugging .codex/.claude directory creation issues"
+summary: "Post-implementation reflections on the auto hooks install task: stray .codex file shadowing, pre-existing gofmt drift on main, and the generic map merge design for lossless field preservation."
+title: "Feedback: Task 020 — Auto Hooks Install"
+---
+
 # Feedback: Task 020
 
 ## Problems faced

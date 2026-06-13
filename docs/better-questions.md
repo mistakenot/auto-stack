@@ -1,3 +1,11 @@
+---
+hash: "56d07c2d"
+id: "c5335fe2"
+read_when: "designing agent question-asking systems or building decision-pattern learning pipelines"
+summary: "Framework for teaching agents to learn from past decision patterns and ask better, more targeted questions using a four-stage decision maturity pipeline."
+title: "Ask Better Questions"
+---
+
 # Ask better questions
 
 How to go from "i have an idea" -> fully mapped out requirements quicker?

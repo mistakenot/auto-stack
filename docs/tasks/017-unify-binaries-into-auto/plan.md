@@ -1,3 +1,11 @@
+---
+hash: "34dac9fe"
+id: "75003aa6"
+read_when: "implementing the auto binary unification or understanding the go.work workspace structure"
+summary: "Six-phase plan to merge 10 separate tool binaries into one auto binary via a go.work workspace, per-tool rootcmd wrappers, auto-cli umbrella module, and stale-ref guard."
+title: "Plan: Task 017 — Unify Binaries into Auto"
+---
+
 # Plan: Task 017
 
 ## Summary

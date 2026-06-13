@@ -1,5 +1,5 @@
 ---
-hash: "46dc24a4"
+hash: "c8b90d4d"
 id: "a7c3e1f0"
 read_when: "creating a new package in the auto-stack monorepo"
 summary: "Reference patterns and conventions shared across all auto-* packages in the auto-stack monorepo. Used as the blueprint when creating new packages."

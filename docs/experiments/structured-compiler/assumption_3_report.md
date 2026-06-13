@@ -1,3 +1,11 @@
+---
+hash: "a1679137"
+id: "bf69a693"
+read_when: "evaluating incremental decision graph recompilation, understanding structured compiler safety metrics, or planning full-recompile vs incremental modes"
+summary: "Experiment report validating that incremental recompilation of decision graphs is safe (IR=1.0, SDLR=0.0) with 69% token savings, while noting interface-mutation over-invalidation as a known conservative trade-off."
+title: "Structured Compiler Assumption 3 Report — Incremental Recompilation Is Sound"
+---
+
 # Assumption 3 Report — Incremental Recompilation Is Sound
 
 **Verdict:** PARTIAL — safety thresholds met; ship full-recompile mode first

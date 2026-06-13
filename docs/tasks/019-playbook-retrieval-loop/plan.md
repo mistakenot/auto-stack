@@ -1,3 +1,11 @@
+---
+hash: "24e94ffd"
+id: "498d6133"
+read_when: "implementing the auto-reflect playbook retrieval loop or reviewing its phase structure"
+summary: "Four-phase serial implementation plan for the auto-reflect event-sourced playbook retrieval loop: events package, rules projection and CLI cutover, loop package with feedback gate, and E2E tests."
+title: "Plan: Task 019 — Playbook Retrieval Loop"
+---
+
 # Plan: Task 019
 
 ## Summary

@@ -1,5 +1,5 @@
 ---
-hash: "25b4aad9"
+hash: "96f13aea"
 id: "394677e5"
 read_when: "implementing daemon installation or systemd service management"
 summary: "Design and implementation spec for installing and managing the autowatch daemon as a system systemd service running as a non-root user."

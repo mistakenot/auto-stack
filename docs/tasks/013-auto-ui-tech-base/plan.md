@@ -1,3 +1,11 @@
+---
+hash: "e239c92d"
+id: "e804ec66"
+read_when: "implementing or reviewing the auto-ui tech foundation scaffolding"
+summary: "Six-phase plan to scaffold the auto-ui package: Preact+htm SPA, embedded static assets, HTTP server, JSON-RPC dispatcher, WebSocket transport, and agent-browser conformance testing."
+title: "Plan: Task 013 — Auto UI Tech Base"
+---
+
 # Plan: Task 013
 
 ## Summary

@@ -1,3 +1,11 @@
+---
+hash: "3f4112b4"
+id: "21b06aa7"
+read_when: "implementing TypeScript path alias or re-export resolution in autograph"
+summary: "Acceptance criteria (AC-1 through AC-5) for adding TypeScript path alias and barrel-file re-export resolution to autograph code graph."
+title: "Task 005: Code Graph Alias and Re-export Resolution Requirements"
+---
+
 # Task 005: Code Graph Alias and Re-export Resolution
 
 ## Problem

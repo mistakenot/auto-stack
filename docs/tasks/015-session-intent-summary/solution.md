@@ -1,3 +1,11 @@
+---
+hash: "fb90274d"
+id: "95f73b7d"
+read_when: "implementing session intent summary extraction or understanding the first_user_intent field design"
+summary: "Deterministic junk-skip heuristic with slash-command fallback and headTruncate on rune boundary, adding first_user_intent and first_user_intent_raw parquet fields to AgentSession."
+title: "Solution: Task 015 — Session Intent Summary"
+---
+
 # Solution: Task 015
 
 ## Approach

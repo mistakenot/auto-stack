@@ -1,3 +1,11 @@
+---
+hash: "7aa661b1"
+id: "1abde83c"
+read_when: "evaluating decision intelligence approaches, understanding orthogonal questioning experiment results, or designing session-based ML spikes"
+summary: "Four-spike experimental validation of the requirement-vector-space framework for orthogonal questioning, with findings from real session data showing partial geometry structure and a pivot to sparse-support recovery."
+title: "Spike: Orthogonal Questioning Validation Experiments"
+---
+
 # Spike: Orthogonal Questioning Validation Experiments
 
 Validate the three core technical risks of the requirement-vector-space framework before investing in production infrastructure.

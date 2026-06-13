@@ -1,5 +1,5 @@
 ---
-hash: ""
+hash: "38ab7d20"
 id: "58fd2f1d"
 read_when: "designing session-quality signals or scoring agent traces by feedback quality"
 summary: "Distillation of the Effective Feedback Compute (EFC) scaling-law paper into a concrete scoring spec for auto-reflect, mapping the paper's deterministic gate tables to our parquet schema, and naming the success-label gap as the blocker."

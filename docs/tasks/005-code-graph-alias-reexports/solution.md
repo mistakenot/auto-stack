@@ -1,3 +1,11 @@
+---
+hash: "130c1b9a"
+id: "fcfb2401"
+read_when: "implementing TypeScript alias resolution fixes or understanding re-export scanning improvements in auto-graph"
+summary: "Design for fixing TypeScript path alias resolution and re-export edge detection in auto-graph: hardened path mapping, baseUrl probing, unresolved alias diagnostics to stderr."
+title: "Solution: Task 005 — Code Graph Alias Re-exports"
+---
+
 # Solution: Task 005
 
 ## Approach

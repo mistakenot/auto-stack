@@ -1,3 +1,11 @@
+---
+hash: "a1e583e0"
+id: "577b1a40"
+read_when: "implementing hook event logging or the hooks ETL ingest pipeline"
+summary: "Implementation plan for a durable daily-partitioned JSONL hook log written by auto hooks fire, and a new incremental hooks ETL source that ingests it into monthly-partitioned parquet using the proven git-ETL watermark pattern."
+title: "Plan: Task 022 — Hook Event Log"
+---
+
 # Plan: Task 022
 
 ## Summary

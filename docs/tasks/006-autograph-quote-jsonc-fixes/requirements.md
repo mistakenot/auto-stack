@@ -1,3 +1,11 @@
+---
+hash: "98aa071b"
+id: "1c92d183"
+read_when: "implementing or reviewing the autograph quote-style and JSONC tsconfig fix requirements"
+summary: "Requirements for fixing two silent edge-dropping bugs in autograph: single-quote insensitivity in ast-grep re-export patterns, and strict JSON parsing of JSONC tsconfig.json files."
+title: "Requirements: Task 006 — Autograph Quote-Style and JSONC Fixes"
+---
+
 # Task 006: Autograph Quote-Style and JSONC Fixes
 
 ## Problem

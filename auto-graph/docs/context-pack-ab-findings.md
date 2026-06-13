@@ -1,3 +1,11 @@
+---
+hash: "9343d2a3"
+id: "e3001352"
+read_when: "improving autograph context pack traversal logic or understanding why graph-based context selection underperforms agent-assembled bundles"
+summary: "A/B evaluation comparing autograph static code graph against an agent-assembled context bundle, identifying five graph traversal problems that caused it to score 46/110 vs 92/110 for the agent team."
+title: "Context Pack A/B Findings"
+---
+
 # Context Pack A/B Findings
 
 Results from an automated A/B evaluation comparing `autograph code context` (static graph) against an agent-assembled context bundle. Run 2026-05-26 against `auto-etl`.

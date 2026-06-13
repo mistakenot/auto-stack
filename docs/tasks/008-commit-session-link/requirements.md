@@ -1,3 +1,11 @@
+---
+hash: "d16321c6"
+id: "56d26d3f"
+read_when: "implementing commit-to-session linking in auto-etl or reviewing the two-tier session ID extraction requirements"
+summary: "Requirements for adding session_id to the commits parquet table via Session-Id git trailers (authoritative) or bash-command regex fallback, plus a prepare-commit-msg hook installed by autoconfig init --project."
+title: "Requirements: Commit-to-Session Link (Task 008)"
+---
+
 # Task 008: Commit-to-Session Link
 
 ## Problem

@@ -1,3 +1,11 @@
+---
+hash: "1eb11531"
+id: "d90a09ec"
+read_when: "designing question-selection systems, building agent decision intelligence, or extending the auto-reflect planning loop"
+summary: "Five advanced extensions to the better-questions framework — decision frontier compiler, regret ledger, workflow wind tunnel, workflow genome compiler, and ghost user critic — plus a rigorous addendum on orthogonal questioning as Bayesian posterior collapse over user intent."
+title: "Better Questions: Five Deep Extensions"
+---
+
 codex
 
 # Better Questions: Five Deep Extensions

@@ -1,3 +1,11 @@
+---
+hash: "0647a119"
+id: "de02d674"
+read_when: "looking for past experiment results, setting up a new experiment, or understanding the experiment folder conventions"
+summary: "Index and conventions for research-style experiments run against auto-stack, covering orthogonal questioning, co-change query latency, formal verification, and structured compiler investigations."
+title: "Experiments Index"
+---
+
 # Experiments
 
 Long-lived writeups for research-style experiments run against auto-stack. Code, data, embeddings, and plots live in `.tmp/experiments/<name>/`; the markdown findings live here and are checked into git.

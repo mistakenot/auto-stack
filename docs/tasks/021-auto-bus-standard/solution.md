@@ -1,3 +1,11 @@
+---
+hash: "0cddab69"
+id: "49e918ca"
+read_when: "implementing the auto-bus standard envelope, hub, or doc live-reload view"
+summary: "CloudEvents-shaped bus envelope in auto-shared/bus, workspace provenance capture at the hook producer, Hub fan-out in auto-ui, doc.changed derivation, and live-reload doc view."
+title: "Solution: Task 021 — Auto Bus Standard"
+---
+
 # Solution: Task 021
 
 ## Approach

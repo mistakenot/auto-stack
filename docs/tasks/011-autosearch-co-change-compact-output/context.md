@@ -1,3 +1,11 @@
+---
+hash: "2fe3e3ff"
+id: "9ac4d724"
+read_when: "implementing compact text output for autosearch co-change or modifying the co-change engine types"
+summary: "Verified codebase context for the compact text-mode rewrite of autosearch co-change: key files for CLI dispatcher, engine types, large-commit cutoff plumbing, and scoring path with exact line numbers."
+title: "Context: Task 011 — Autosearch Co-Change Compact Output"
+---
+
 # Context: Task 011
 
 Codebase context for the compact text-mode rewrite of `autosearch co-change`. Pairs with [solution.md](./solution.md) and [requirements.md](./requirements.md).

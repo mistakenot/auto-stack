@@ -1,3 +1,11 @@
+---
+hash: "ff4f46dd"
+id: "ec39495f"
+read_when: "implementing the hooks install command or understanding the lossless generic JSON merge approach for agent hook configs"
+summary: "Solution for auto hooks install: generic map[string]any JSON merge for both Claude (.claude/settings.json) and Codex (.codex/hooks.json) hook configs, preserving all existing fields including unknown handler fields like timeout and statusMessage."
+title: "Solution: Auto Hooks Install (Task 020)"
+---
+
 # Solution: Task 020
 
 ## Approach

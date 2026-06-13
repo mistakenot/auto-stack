@@ -1,3 +1,11 @@
+---
+hash: "795a56fa"
+id: "61f6f377"
+read_when: "implementing the ETL session signal preservation feature or understanding the producer/consumer schema changes"
+summary: "Two-module solution for preserving dropped session signals: auto-etl captures thinking blocks, stop_reason, is_error, cache split tokens, and skill/permission fields; auto-search surfaces them via schema bump and index rebuild."
+title: "Solution: Task 016 — ETL Preserve Session Signal"
+---
+
 # Solution: Task 016
 
 ## Approach

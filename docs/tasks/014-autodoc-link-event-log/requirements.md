@@ -1,3 +1,11 @@
+---
+hash: "031610f4"
+id: "6ebe23b0"
+read_when: "implementing the autodoc link event log or understanding the markerless anchor design and migration requirements"
+summary: "Requirements for replacing autodoc's inline hash-bearing tags with a markerless append-only link event log in .auto/doc/links.jsonl, covering typed anchors, CLI authoring, migration cutover, and freshness detection without file rewrites."
+title: "Requirements: Autodoc Link Event Log (Task 014)"
+---
+
 # Task 014: autodoc-link-event-log
 
 ## Problem

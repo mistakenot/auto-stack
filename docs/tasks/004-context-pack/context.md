@@ -1,3 +1,11 @@
+---
+hash: "f9387a17"
+id: "33859bc4"
+read_when: "implementing the autograph context-pack feature or understanding its codebase dependencies"
+summary: "Verified codebase context for the context-pack task, covering runCodeGraph extraction, import metadata merging, and key file references in autograph."
+title: "Context: Task 004 — Context Pack"
+---
+
 # Context: Task 004
 
 This file records verified implementation context for [solution.md](./solution.md).

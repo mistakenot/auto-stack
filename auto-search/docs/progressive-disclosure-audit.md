@@ -1,5 +1,5 @@
 ---
-hash: ""
+hash: "390f5503"
 id: "db2ed535"
 read_when: "improving autosearch progressive disclosure, deciding what session data to capture/surface, or fixing ETL information loss for thinking blocks / skill attribution / full-session retrieval"
 summary: "Audit of autosearch progressive disclosure against a real Claude session: the search→session→message drill-down ladder works for message text and tool I/O, but thinking blocks, skill attribution, permission mode, and full-session transcript are dropped or unreachable. Includes a prioritized fix list."

@@ -1,3 +1,11 @@
+---
+hash: "5b88f008"
+id: "d841f23a"
+read_when: "implementing session intent summary extraction in auto-etl"
+summary: "Verified codebase context for first_user_intent fields in auto-etl, covering AgentSession struct, transform pipeline paths, and query_sessions function signatures."
+title: "Context: Task 015 — Session Intent Summary"
+---
+
 # Context: Task 015
 
 Verified codebase facts grounding the intent-summary design. See [solution.md](solution.md).

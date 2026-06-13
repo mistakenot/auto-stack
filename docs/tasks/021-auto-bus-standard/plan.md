@@ -1,3 +1,11 @@
+---
+hash: "a69a6079"
+id: "cd572ce6"
+read_when: "implementing the auto-bus event system, adding new event types, or wiring hooks fire to the bus"
+summary: "Implementation plan for the auto-bus standard: auto-shared/bus package (CloudEvents envelope, Hub broadcast, doc.changed derivation), auto-ui POST /api/rpc ingest, WebSocket broadcast, doc.list/get RPCs, hooks fire migration, live-reload doc view, and spec."
+title: "Plan: Task 021 — Auto Bus Standard"
+---
+
 # Plan: Task 021
 
 ## Summary

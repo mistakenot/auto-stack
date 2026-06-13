@@ -1,3 +1,11 @@
+---
+hash: "96fddbb7"
+id: "54fd358b"
+read_when: "evaluating embedding-based user preference recovery methods or understanding why cosine-geometry orthogonal questioning fails"
+summary: "Experiment using synthetic data with known latent structure to test whether embedding formats can recover user preference vectors, finding cosine geometry fails while linear probes extract partial signal."
+title: "Spike: Synthetic Latent-Space Recovery (Phase 3)"
+---
+
 # Spike: Synthetic Latent-Space Recovery (Phase 3)
 
 Phase 1 said the geometric framework didn't fit the real data. Phase 2 said the data wasn't the problem — the *representation* was, since two alternative representations (project-identity residualization, raw Q&A units) produced real structural improvements. But Phase 2 still left a confound: with real data we can never fully tell whether a format is winning because it preserves geometric structure, or because it leaks session identity, or because of dataset-specific quirks.

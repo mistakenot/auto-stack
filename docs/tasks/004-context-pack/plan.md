@@ -1,3 +1,11 @@
+---
+hash: "8650545e"
+id: "0ea257df"
+read_when: "implementing the autograph context pack feature or understanding the codegraph/contextpack package layout"
+summary: "Implementation plan for autograph code context: extracting reusable graph construction, adding context-pack model/builder/validator/token-estimator/renderer, and a new autograph code context command with markdown and JSON output."
+title: "Plan: Task 004 — Context Pack"
+---
+
 # Plan: Task 004
 
 ## Summary

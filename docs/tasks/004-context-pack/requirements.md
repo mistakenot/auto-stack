@@ -1,3 +1,11 @@
+---
+hash: "3463c128"
+id: "6bc460f9"
+read_when: "implementing the context-pack command or reviewing token budgeting and file prioritization requirements for autograph"
+summary: "Requirements for the autograph context-pack command: token-budgeted context bundle around seed files using the import graph, with markdown default output, JSON option, prioritized file selection, and agent-oriented guidance."
+title: "Requirements: Context Pack (Task 004)"
+---
+
 # Task 004: Context Pack
 
 ## Problem

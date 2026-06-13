@@ -1,3 +1,11 @@
+---
+hash: "4e488b4b"
+id: "31b073f9"
+read_when: "implementing auto hooks install or extending the hook event allowlist"
+summary: "Requirements for auto hooks install: automatically wiring auto hooks fire as a command hook for a curated telemetry-safe allowlist of Claude Code and Codex events, merging idempotently into existing project-local hook config."
+title: "Requirements: Task 020 — Auto Hooks Install"
+---
+
 # Task 020: auto-hooks-install
 
 ## Problem

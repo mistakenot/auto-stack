@@ -1,3 +1,11 @@
+---
+hash: "cd191ea6"
+id: "06d170e6"
+read_when: "implementing TypeScript alias hardening in auto-graph or reviewing the phase sequence for resolver and scanner coverage"
+summary: "Phased implementation plan for hardening alias resolution and re-export detection in auto-graph, covering fixture creation, resolver wildcard/exact/baseUrl semantics, CLI diagnostics for unresolved aliases, and full regression testing."
+title: "Plan: TypeScript Alias Resolution and Re-Export Hardening (Task 005)"
+---
+
 # Plan: Task 005
 
 ## Summary

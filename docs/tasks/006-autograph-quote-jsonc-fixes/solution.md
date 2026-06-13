@@ -1,3 +1,11 @@
+---
+hash: "04ffe0dc"
+id: "33289d96"
+read_when: "implementing quote-agnostic ast-grep scanning or JSONC-tolerant tsconfig loading in auto-graph"
+summary: "Solution for fixing ast-grep single-quote pattern support and JSONC tsconfig parsing: duplicate four quote-dependent patterns, add stripJSONC helper, add stderr warning on parse failure, and add e2e and unit test fixtures."
+title: "Solution: Task 006 — Autograph Quote and JSONC Fixes"
+---
+
 # Solution: Task 006
 
 ## Approach

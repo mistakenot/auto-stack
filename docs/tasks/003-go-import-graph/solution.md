@@ -1,3 +1,10 @@
+---
+hash: "1f679d60"
+id: "18f984e6"
+read_when: "implementing Go scanner/resolver or extending auto-graph language dispatch"
+summary: "Solution design for adding Go language support to auto-graph via GoScanner (using go/parser), GoResolver (reading go.mod), package-directory expansion in buildGraph, and language detection from go.mod vs tsconfig.json."
+title: "Solution: Go Import Graph (Task 003)"
+---
 # Solution: Task 003
 
 <!-- REJECTED(P1): Missing required planning docs

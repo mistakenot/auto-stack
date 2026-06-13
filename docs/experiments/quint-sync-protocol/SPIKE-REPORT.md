@@ -1,3 +1,11 @@
+---
+hash: "5b0058f0"
+id: "447366df"
+read_when: "implementing or verifying the auto-etl CRDT merge protocol using formal specification tools"
+summary: "Spike validating Quint as a tool for specifying and model-checking the auto-etl CRDT merge protocol; all 6 assumptions verified with a GO verdict."
+title: "Tech Spike Report: Quint for ETL Sync Protocol Verification"
+---
+
 # Tech Spike Report: Quint for ETL Sync Protocol Verification
 
 **Date:** 2026-06-02

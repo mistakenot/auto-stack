@@ -1,3 +1,11 @@
+---
+hash: "9b4f48c8"
+id: "57ecc6a4"
+read_when: "continuing the orthogonal questioning experiment or evaluating embedding input format choices for decision data"
+summary: "Phase 2 spikes testing richer input formats and project-identity factoring for decision embeddings; turn-window (F4) improved pairwise correlation 7x, Spike 8 factoring dropped n_90 to 26, and raw Q&A embedding (Spike 9) dropped n_90 to 23."
+title: "Orthogonal Questioning Phase 2: Context-Rich Embedding Inputs"
+---
+
 # Spike: Context-Rich Embedding Inputs (Phase 2)
 
 Phase 1 ([orthogonal-questioning-validation.md](orthogonal-questioning-validation.md)) tested whether bare embeddings of 2-5 word `decision_value` strings carry enough signal to support the orthogonal-questioning framework. The dominant negative finding wasn't about the math — it was about the data: LLM-extracted decision values are short, paraphrased differently each session, and embedding them strips out the context that gives the decision its meaning.

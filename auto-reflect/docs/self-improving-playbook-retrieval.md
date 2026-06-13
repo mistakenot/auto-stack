@@ -1,7 +1,9 @@
 ---
-description: Design for a self-improving playbook/rulebook retrieval system that captures bidirectional feedback signal to tune rules over time, synthesized with lessons from 12+ arXiv papers
-tags: [research, agentic-engineering, playbooks, retrieval, self-improving, auto-reflect]
-date: 2026-06-09
+hash: "6df84843"
+id: "d0f44004"
+read_when: "designing or implementing the auto-reflect playbook retrieval and self-improvement loop"
+summary: "V2 design for auto-reflect's playbook retrieval loop: 5-phase task lifecycle, probe injection, fresh-reviewer reflection, and bidirectional feedback signal captured in an append-only event log."
+title: "Self-Improving Playbook Retrieval System"
 ---
 
 # Self-Improving Playbook Retrieval System (v2)

@@ -1,3 +1,11 @@
+---
+hash: "44764cf6"
+id: "2714cfdb"
+read_when: "implementing thinking block preservation or any of the dropped ETL signal fields in auto-etl and auto-search"
+summary: "Phased implementation plan for preserving thinking blocks, stop_reason, is_error, cache token split, permission_mode, skill_name attribution, and other dropped ETL signals, with schema bumps and autosearch CLI opt-in for thinking content."
+title: "Plan: ETL Preserve Session Signal (Task 016)"
+---
+
 # Plan: Task 016
 
 ## Summary

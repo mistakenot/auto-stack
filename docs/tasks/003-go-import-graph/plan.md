@@ -1,3 +1,11 @@
+---
+hash: "9bad68bc"
+id: "ccb94288"
+read_when: "implementing or reviewing the autograph Go import graph feature plan"
+summary: "Implementation plan for adding Go language support to autograph's code graph command: Go scanner using go/parser, Go resolver using go.mod, test fixtures, and e2e tests."
+title: "Plan: Task 003 — Go Import Graph"
+---
+
 # Plan: Task 003
 
 ## Summary

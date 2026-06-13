@@ -1,3 +1,11 @@
+---
+hash: "1a236026"
+id: "40b4b523"
+read_when: "implementing or reviewing the ETL session signal preservation feature with producer/consumer file locations"
+summary: "Verified codebase facts for implementing dropped session signal capture in auto-etl and surfacing it in auto-search: thinking blocks, stop_reason, is_error, cache split tokens, skill attribution, and permission mode."
+title: "Context: Task 016 — ETL Preserve Session Signal"
+---
+
 # Context: Task 016
 
 Verified codebase facts grounding [solution.md](./solution.md) — where each dropped

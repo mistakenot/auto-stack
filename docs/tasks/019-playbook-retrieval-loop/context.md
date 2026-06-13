@@ -1,3 +1,11 @@
+---
+hash: "c43d5293"
+id: "01c33e72"
+read_when: "reviewing the playbook retrieval loop task context or understanding why plan.md was absent at solution review"
+summary: "Codebase context for the playbook retrieval loop task, noting that plan.md is intentionally absent at this review stage and open design questions were resolved before /new-plan."
+title: "Context: Task 019 — Playbook Retrieval Loop"
+---
+
 # Context: Task 019
 
 <!-- REJECTED(P2): plan.md is missing — planning is incomplete

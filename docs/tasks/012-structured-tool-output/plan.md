@@ -1,3 +1,11 @@
+---
+hash: "809a30da"
+id: "9d1de815"
+read_when: "implementing structured tool output in auto-etl/auto-search or adding tool_use_result_json to the pipeline"
+summary: "Implementation plan for threading a new tool_use_result_json column from JSONL through auto-etl parquet, autosearch SQLite, and message describe JSON output, with dual schema version bumps and corpus backfill."
+title: "Plan: Task 012 — Structured Tool Output"
+---
+
 # Plan: Task 012 — Structured Tool Output
 
 ## Summary

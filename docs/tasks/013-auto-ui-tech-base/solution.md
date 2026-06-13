@@ -1,3 +1,11 @@
+---
+hash: "810daee9"
+id: "d87cf7e1"
+read_when: "implementing auto-ui or understanding the embedded no-build SPA architecture"
+summary: "Solution for scaffolding auto-ui: full auto-* package layout, build-tag split for embedded/dev static assets, Go HTTP server with JSON API and Preact+htm SPA, hash-based routing, and monorepo wiring."
+title: "Solution: Task 013 — Auto UI Tech Base"
+---
+
 # Solution: Task 013
 
 ## Approach

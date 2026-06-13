@@ -1,3 +1,11 @@
+---
+hash: "a07a367d"
+id: "ebb709fa"
+read_when: "reviewing commit-session link implementation lessons or understanding parquet partition path and remote URL normalization pitfalls"
+summary: "Post-implementation feedback for the commit session link task: filepath.Glob recursion bug, remote URL normalization mismatch, and git-common-dir vs git-dir hook path issue."
+title: "Feedback: Task 008 — Commit Session Link"
+---
+
 # Feedback: Task 008
 
 ## Problems faced

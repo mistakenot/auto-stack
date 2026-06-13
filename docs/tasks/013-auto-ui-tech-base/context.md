@@ -1,3 +1,11 @@
+---
+hash: "33f447e4"
+id: "9e1a14a0"
+read_when: "implementing auto-ui or scaffolding a new auto-* package following the auto-graph conventions"
+summary: "Verified codebase context for scaffolding auto-ui: exact signatures for auto-shared dependencies, reference package patterns from auto-graph, embed precedent, and server/SPA integration points."
+title: "Context: Task 013 — Auto UI Tech Base"
+---
+
 # Context: Task 013
 
 Verified codebase facts grounding the implementation of `auto-ui/` (a new auto-* package serving a

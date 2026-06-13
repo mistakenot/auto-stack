@@ -1,3 +1,11 @@
+---
+hash: "ab543228"
+id: "4da5d7ed"
+read_when: "implementing autodoc doc-link enrichment in autograph or wiring auto-doc into the context pack"
+summary: "Implementation plan for adding autodoc doc-link awareness to autograph: public scan/doctree APIs, doclink enrichment layer, --no-docs flag on CLI commands, and doc candidate priorities in context pack builder."
+title: "Plan: Task 007 — Autograph Doc Links"
+---
+
 # Plan: Task 007
 
 ## Summary

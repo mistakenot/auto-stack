@@ -1,3 +1,11 @@
+---
+hash: "a66a62af"
+id: "3d658c24"
+read_when: "reviewing lessons from the TypeScript import graph implementation or debugging ast-grep scanner issues"
+summary: "Post-implementation feedback for task 001: three problems encountered (ast-grep tsx mode, re-export pattern, PR base mismatch) and reflections on the coordinator-subagent pattern and ast-grep gotchas."
+title: "Feedback: Task 001 — TypeScript Import Graph"
+---
+
 # Feedback: Task 001
 
 ## Problems faced

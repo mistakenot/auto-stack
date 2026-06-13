@@ -1,3 +1,11 @@
+---
+hash: "ddf8800f"
+id: "7fde2095"
+read_when: "reviewing structured tool output implementation lessons or understanding json_extract SQLite/DuckDB compatibility"
+summary: "Post-implementation feedback for the structured tool output task: autoetl run flag clarification, baseline metric validation methodology, and json_extract vs json_extract_string SQLite/DuckDB difference."
+title: "Feedback: Task 012 — Structured Tool Output"
+---
+
 # Feedback: Task 012
 
 ## Problems faced

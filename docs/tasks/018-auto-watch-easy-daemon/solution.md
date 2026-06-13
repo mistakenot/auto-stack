@@ -1,3 +1,11 @@
+---
+hash: "46e05a67"
+id: "95e88f58"
+read_when: "implementing user-scope daemon installation in auto-watch or understanding the Scope parameter design and XDG_RUNTIME_DIR requirement"
+summary: "Solution for defaulting auto watch daemon install to user-scope systemd, adding --system opt-in, wiring loginctl enable-linger for boot persistence, extending install.sh for one-command update, and adding doctor unit checks."
+title: "Solution: Auto Watch Easy Daemon (Task 018)"
+---
+
 # Solution: Task 018
 
 ## Approach

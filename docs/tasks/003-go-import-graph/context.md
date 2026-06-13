@@ -1,3 +1,11 @@
+---
+hash: "530af901"
+id: "2112c5eb"
+read_when: "implementing Go language support in auto-graph or locating specific extension points in the existing TypeScript implementation"
+summary: "Codebase context for adding Go language support to auto-graph, with precise file and line references for the scanner interface, resolver interface, language dispatch, graph building, and E2E fixture patterns."
+title: "Context: Go Import Graph (Task 003)"
+---
+
 # Context: Task 003
 
 Codebase context for adding Go language support to `auto-graph`. See [solution.md](./solution.md) for the full design.

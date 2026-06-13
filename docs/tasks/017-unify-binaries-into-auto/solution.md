@@ -1,3 +1,11 @@
+---
+hash: "b8ee1555"
+id: "716c9303"
+read_when: "implementing the unified auto binary, adding a new rootcmd seam, or normalizing a tool's command structure"
+summary: "Solution for merging 10 tool binaries into one auto binary via go.work workspace and thin rootcmd public seam per tool, with normalization of three non-standard tools and rename of root Use: values."
+title: "Solution: Task 017 — Unify Binaries into Auto"
+---
+
 # Solution: Task 017
 
 ## Approach

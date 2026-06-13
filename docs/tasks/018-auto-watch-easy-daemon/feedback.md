@@ -1,3 +1,11 @@
+---
+hash: "c6b15909"
+id: "6f8fd0e0"
+read_when: "implementing systemd daemon installation in auto-watch or debugging worktree subagent isolation"
+summary: "Post-implementation reflections on the autowatch easy daemon: subagent main-worktree leaks, golangci-lint cross-worktree cache pollution, and scope-switch pattern for user-level systemd."
+title: "Feedback: Task 018 — Auto Watch Easy Daemon"
+---
+
 # Feedback: Task 018
 
 ## Problems faced

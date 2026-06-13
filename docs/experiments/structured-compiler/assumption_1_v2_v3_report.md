@@ -1,3 +1,11 @@
+---
+hash: "bb7ba1be"
+id: "4d6f9efc"
+read_when: "evaluating Q&A augmentation strategies for structured compiler experiments or interpreting assumption 1 results"
+summary: "Follow-up spike on Q&A augmentation for the structured compiler: v3 (augment-not-replace) lifts task_folder CDR from 0.72 to 0.84, with contamination caveats noted."
+title: "Assumption 1 — Q&A Augmentation Report (v2 + v3)"
+---
+
 # Assumption 1 — Q&A Augmentation Report (v2 + v3)
 
 **Spike:** Structured Compiler — Assumption 1 follow-up.

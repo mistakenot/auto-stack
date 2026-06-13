@@ -1,3 +1,11 @@
+---
+hash: "9dead44b"
+id: "9fa9c4c9"
+read_when: "implementing or reviewing the auto-reflect playbook retrieval loop requirements and rule schema"
+summary: "Requirements for implementing the auto-reflect v2 playbook retrieval loop: enriched rule schema with lifecycle tracking, append-only event log, and two-phase retrieve/feedback loop for self-improving rules."
+title: "Requirements: Task 019 — Playbook Retrieval Loop"
+---
+
 # Task 019: playbook-retrieval-loop
 
 Distilled from `auto-reflect/docs/self-improving-playbook-retrieval.md` (v2 design). This task is

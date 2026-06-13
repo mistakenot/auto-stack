@@ -1,3 +1,11 @@
+---
+hash: "f284119e"
+id: "5c4ffedf"
+read_when: "reviewing lessons from the co-change implementation or debugging co-change scoring correctness"
+summary: "Post-implementation feedback for task 010 (autosearch co-change): four problems found including pre-existing lint debt masking CI, Wn large-commit filter bug, and lessons about asserting shared denominators in tests."
+title: "Feedback: Task 010 — Autosearch Co-Change"
+---
+
 # Feedback: Task 010
 
 `autosearch co-change <path>` — read git parquet into ephemeral in-memory SQLite,

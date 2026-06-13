@@ -1,3 +1,11 @@
+---
+hash: "92e2e53f"
+id: "575d70f4"
+read_when: "running or extending the auto-ui conformance test suite or verifying SPA routing and fetch behavior"
+summary: "Browser-driven conformance test plan for the auto-ui tech base: agent-browser drives a real browser to verify rendering, routing, fetch, hash-based state, and hot-reload acceptance criteria."
+title: "Conformance Script: Task 013 — Auto UI Tech Base"
+---
+
 # Conformance Script: Task 013 (agent-browser)
 
 Browser-driven conformance for the auto-ui tech base. A Go test cannot exercise a no-build,

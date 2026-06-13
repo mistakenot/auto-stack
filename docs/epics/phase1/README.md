@@ -1,3 +1,11 @@
+---
+hash: "c2c7260b"
+id: "06ea4dba"
+read_when: "coordinating or reviewing the reflect-playbook Phase 1 implementation across multiple workers"
+summary: "Coordinator README for the reflect-playbook Phase 1 integration branch: sub-task assignments, round scheduling, worker rules, and merge checklist for tasks 1.2–1.6."
+title: "Phase 1 Implementation — Orchestration"
+---
+
 # Phase 1 implementation — orchestration
 
 Implements Phase 1 (1.2–1.6) of `docs/epics/001-reflect-playbook-loop.md` on a single

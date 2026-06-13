@@ -1,3 +1,11 @@
+---
+hash: "06bfe957"
+id: "a4827708"
+read_when: "implementing or reviewing the reflect miner queue feature and understanding the event log and parquet schema touchpoints"
+summary: "Verified codebase facts for implementing the reflect miner queue: event log type constants, envelope schema, ETL parquet reader locations, and reflect stats command surface."
+title: "Context: Task 023 — Reflect Miner Queue"
+---
+
 # Context: Task 023 — reflect-miner-queue
 
 Verified codebase facts grounding [solution.md](solution.md): where the reflect event log, ETL

@@ -1,3 +1,11 @@
+---
+hash: "ec03d998"
+id: "279296f8"
+read_when: "implementing session intent extraction in auto-etl or adding new session-level derived fields to the pipeline"
+summary: "Implementation plan for computing a session intent field from the first real user message in auto-etl and threading it through auto-search into session list/describe output."
+title: "Plan: Task 015 — Session Intent Summary"
+---
+
 # Plan: Task 015
 
 ## Summary

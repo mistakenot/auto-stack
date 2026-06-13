@@ -1,3 +1,11 @@
+---
+hash: "b2b4c658"
+id: "51db0d59"
+read_when: "implementing or reviewing git history ETL requirements and acceptance criteria"
+summary: "Requirements and acceptance criteria for extracting git commit history into five parquet datasets (git_repositories, git_refs, commits, commit_files, commit_hunks) via auto-etl."
+title: "Requirements: Task 002 — Git History ETL"
+---
+
 # Task 002: Git History ETL
 
 ## Problem

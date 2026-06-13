@@ -1,3 +1,11 @@
+---
+hash: "cbf51fb5"
+id: "ca7e6234"
+read_when: "designing ETL merge semantics, verifying CRDT properties for multi-host sync, or understanding the formal correctness model for auto-etl"
+summary: "Literate Quint specification proving CRDT-based merge semantics for the auto-etl pipeline: commutativity, associativity, idempotency, monotonicity, and safe concurrent-writer model."
+title: "ETL Merge Protocol — Formal Specification"
+---
+
 # ETL Merge Protocol — Formal Specification
 
 This is a literate Quint specification that models the merge semantics

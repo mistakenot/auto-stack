@@ -1,3 +1,11 @@
+---
+hash: "420f3aae"
+id: "81b586d8"
+read_when: "implementing or reviewing the autograph context-pack solution design"
+summary: "Design for the autograph code context command using a token-budgeted dependency neighborhood, a reusable internal/codegraph package, and merged import metadata."
+title: "Solution: Task 004 — Context Pack"
+---
+
 # Solution: Task 004
 
 ## Approach

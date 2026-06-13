@@ -1,3 +1,11 @@
+---
+hash: "ac5afa86"
+id: "ebd52db4"
+read_when: "implementing TypeScript path alias resolution or fixing re-export scanning in auto-graph"
+summary: "Verified codebase context for implementing TypeScript path alias resolution and re-export scanning fixes in auto-graph, with key file locations and resolver/scanner code references."
+title: "Context: Task 005 — Code Graph Alias Re-exports"
+---
+
 # Context: Task 005
 
 This file captures verified codebase context for implementing [solution.md](./solution.md).

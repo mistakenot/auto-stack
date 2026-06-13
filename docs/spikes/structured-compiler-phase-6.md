@@ -1,3 +1,11 @@
+---
+hash: "556ece82"
+id: "093c5bd8"
+read_when: "planning or reviewing Phase 6 validation experiments for the structured compiler spike"
+summary: "Plan for three parallel Phase 6 experiments to validate the rich-input and Q&A regime for the structured compiler, following the STOP-for-thin-input verdict from Phase 5."
+title: "Structured Compiler Phase 6: Decision-Grade Validation Plan"
+---
+
 # Phase 6: Decision-Grade Validation of the Rich-Input + Q&A Regime
 
 Phase 5 + 5b (A1.v2 / A1.v3) updated the spike's verdict from blanket STOP to **STOP for thin-input, KEEP EXPLORING for rich-input + Q&A**. Before any product work, three loose ends need to be tied off. This document plans Phase 6 and writes them up as three self-contained experiments.

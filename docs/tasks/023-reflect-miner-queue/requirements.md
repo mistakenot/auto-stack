@@ -1,3 +1,11 @@
+---
+hash: "732e4dd4"
+id: "12ec6c50"
+read_when: "implementing the reflect miner queue or understanding session priority scoring, ack versioning, and coverage tracking requirements"
+summary: "Requirements for the auto reflect miner command group: a deterministic work-queue with priority scoring over coding sessions, append-only coverage tracking via the reflect event log, GitRemote-scoped session filtering, and status visibility."
+title: "Requirements: Reflect Miner Queue (Task 023)"
+---
+
 # Task 023: reflect-miner-queue
 
 ## Problem

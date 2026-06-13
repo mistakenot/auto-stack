@@ -1,3 +1,11 @@
+---
+hash: "f53f4150"
+id: "cd9c4fd2"
+read_when: "reviewing lessons from the alias re-exports implementation or debugging autograph e2e test output capture"
+summary: "Post-implementation feedback for task 005: two problems found (e2e stdout/stderr mixing, zero-length wildcard capture) and reflections on the clean resolver interface and the value of e2e binary invocation testing."
+title: "Feedback: Task 005 — Code Graph Alias Re-exports"
+---
+
 # Feedback: Task 005
 
 ## Problems faced

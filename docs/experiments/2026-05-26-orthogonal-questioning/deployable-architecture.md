@@ -1,3 +1,11 @@
+---
+hash: "8ec79c7c"
+id: "ef64725a"
+read_when: "designing a production preference-recovery system or evaluating per-dimension classifiers vs cosine-geometry approaches for user preference modeling"
+summary: "Practical guidance for taking the orthogonal-questioning experiment findings into production using per-dimension binary classifiers and active learning over user preference data."
+title: "Deployable Architecture: Per-Dimension Classifiers + Active Learning"
+---
+
 # Deployable Architecture
 
 Practical guidance for taking the orthogonal-questioning experiment's findings into production. Companion to the [experiment synthesis README](README.md).

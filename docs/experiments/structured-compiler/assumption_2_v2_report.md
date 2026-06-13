@@ -1,3 +1,11 @@
+---
+hash: "fbef98ff"
+id: "0812e142"
+read_when: "evaluating labeling strategies and smooth gate designs for structured compiler assumption 2"
+summary: "Partial verdict on the two-labeler split and smooth expected-regret gate: regret_score identical to confidence_only on the test set; corpus too thin to distinguish."
+title: "Assumption 2 v2 — Clean Labeler and Smooth Gate"
+---
+
 # Assumption 2 v2 — Clean Labeler + Smooth Gate
 
 **Verdict: PARTIAL**

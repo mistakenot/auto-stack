@@ -1,3 +1,11 @@
+---
+hash: "a0c3d023"
+id: "15aefb47"
+read_when: "understanding the structured compiler evaluation dataset or adding cases to the corpus"
+summary: "Summary of the 40-case structured compiler evaluation corpus: task type breakdown (17 go_cli_feature, 6 docs_skill, etc.), corrections per case distribution, and sources (task folders, git commits, autosearch sessions)."
+title: "Structured Compiler Eval Corpus — Phase 0 Summary"
+---
+
 # Structured-Compiler Eval Corpus — Phase 0 Summary
 
 ## Counts

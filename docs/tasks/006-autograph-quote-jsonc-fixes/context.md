@@ -1,3 +1,11 @@
+---
+hash: "98a84480"
+id: "3e535930"
+read_when: "fixing ast-grep quote-sensitive patterns or adding JSONC tsconfig support in auto-graph"
+summary: "Verified codebase context for fixing ast-grep quote sensitivity and JSONC tsconfig parsing in autograph: key file locations, pattern line numbers, and extraction regex signatures."
+title: "Context: Task 006 — Autograph Quote and JSONC Fixes"
+---
+
 # Context: Task 006
 
 Codebase context for fixing ast-grep quote sensitivity and JSONC tsconfig parsing in autograph. See [solution.md](./solution.md).

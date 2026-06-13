@@ -1,3 +1,11 @@
+---
+hash: "c356e0c1"
+id: "aac69f2a"
+read_when: "reviewing the complete structured compiler experiment results, understanding the final product recommendation, or applying the methodology lessons to a future spike"
+summary: "Final synthesis across all eight structured compiler experiments, covering schema utilization, regret-aware question policy, and incremental recompile safety — recommending a scoped planning-doc enricher and abandoning the general-purpose compiler framing."
+title: "Structured Compiler Spike — Final Synthesis"
+---
+
 # Structured Compiler Spike — Final Synthesis
 
 **Date:** 2026-05-27 (updated through Phase 6: A1.v4 clean twin, A1.v5 schema surgery, A2.v2 clean labeler + smooth gate)

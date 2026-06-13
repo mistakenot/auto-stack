@@ -1,3 +1,11 @@
+---
+hash: "fc8c7a78"
+id: "59ff2cd3"
+read_when: "implementing structured tool output storage in the auto-etl parquet schema"
+summary: "Design for capturing tool use result envelopes as one raw JSON parquet column, with a message describe surface to retrieve it without FTS or typed AUQ fields."
+title: "Solution: Task 012 — Structured Tool Output"
+---
+
 # Solution: Task 012 — Structured Tool Output
 
 ## Approach

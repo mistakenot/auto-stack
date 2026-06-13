@@ -1,3 +1,11 @@
+---
+hash: "0bcb41d3"
+id: "281ccb11"
+read_when: "reviewing lessons from the binary unification task or understanding the rootcmd.New() seam pattern and concurrent subagent isolation requirements"
+summary: "Post-task feedback from unifying separate tool binaries into the auto umbrella: concurrent subagent write leaks into main worktree, non-re-entrant init() refactor causing panic, hallucinated docs-sweep agent, and go.work sync version rewriting."
+title: "Feedback: Unify Binaries into Auto (Task 017)"
+---
+
 # Feedback: Task 017
 
 ## Problems faced

@@ -1,3 +1,11 @@
+---
+hash: "e732dfeb"
+id: "8d731c73"
+read_when: "designing AI decision intelligence systems, orthogonal questioning frameworks, or session-based learning pipelines"
+summary: "Deep exploration of five advanced approaches to AI decision intelligence — decision compiler, causal DAG, spec mining, git archaeology, and session gym — grounded in auto-stack infrastructure and session data."
+title: "Decision Intelligence: Five Novel Directions"
+---
+
 # Decision Intelligence: Five Novel Directions
 
 *Deep exploration of where better-questions.md can go — written after studying 670+ sessions of user history, the full auto-stack codebase, and adjacent academic research.*

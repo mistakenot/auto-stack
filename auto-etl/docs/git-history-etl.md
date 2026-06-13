@@ -1,3 +1,11 @@
+---
+hash: "eadf7217"
+id: "573606cd"
+read_when: "implementing git ETL ingestion, designing commit/file/hunk parquet schemas, or adding git history to auto-search"
+summary: "Spec for extending auto-etl to index git commit history as first-class parquet datasets alongside coding agent sessions, enabling cross-referencing with session data."
+title: "Git History ETL"
+---
+
 # Git History ETL
 
 Extend auto-etl to index git commit history as a first-class data source alongside coding agent sessions. Git history provides ground truth about what code actually shipped, enabling cross-referencing with session data to measure agent effectiveness, detect codebase health patterns, and drive reflect/analysis workflows.

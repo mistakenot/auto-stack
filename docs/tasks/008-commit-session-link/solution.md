@@ -1,3 +1,11 @@
+---
+hash: "0e8b3405"
+id: "1b40987f"
+read_when: "implementing commit-to-session linkage or reviewing the solution design for task 008"
+summary: "Three-workstream design for commit-session linking: git trailer extraction, fallback parquet session matcher, and hook installation via auto-config."
+title: "Solution: Task 008 — Commit-Session Link"
+---
+
 # Solution: Task 008
 
 ## Approach

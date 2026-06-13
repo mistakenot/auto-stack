@@ -1,3 +1,11 @@
+---
+hash: "7bc07a10"
+id: "891a00d7"
+read_when: "implementing or reviewing the auto binary unification requirements and migration scope"
+summary: "Requirements for merging all auto-stack tool binaries into a single `auto` binary with subcommands, including autoconfig and autoui, with a hard cutover from per-tool binaries."
+title: "Requirements: Task 017 — Unify Binaries into Auto"
+---
+
 # Task 017: Unify binaries into a single `auto` command
 
 ## Problem

@@ -1,3 +1,11 @@
+---
+hash: "880e3625"
+id: "8ef298b4"
+read_when: "implementing the auto-reflect miner queue or the shared parquet schema extraction"
+summary: "Design for auto-reflect miner queue: shared-model extraction to auto-shared/model, session_mined event type, priority scoring from message signals, and miner next/ack/status/describe CLI."
+title: "Solution: Task 023 — Reflect Miner Queue"
+---
+
 # Solution: Task 023 — reflect-miner-queue
 
 ## Approach

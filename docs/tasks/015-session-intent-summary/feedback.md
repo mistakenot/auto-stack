@@ -1,3 +1,11 @@
+---
+hash: "b8ec2387"
+id: "3a412fc4"
+read_when: "reviewing session intent summary implementation lessons or understanding auto-search schema migration pitfalls"
+summary: "Post-implementation feedback for the session intent summary task: wrong CLI subcommand reference, InsertSession signature breakage at call sites, and stale parquet fixtures after schema changes."
+title: "Feedback: Task 015 — Session Intent Summary"
+---
+
 # Feedback: Task 015
 
 ## Problems faced

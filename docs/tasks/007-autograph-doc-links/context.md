@@ -1,3 +1,11 @@
+---
+hash: "0b4bb9a9"
+id: "e1b173ee"
+read_when: "implementing autodoc tag integration in autograph or locating extension points for cross-module doc-link enrichment"
+summary: "Codebase context for integrating autodoc [autodoc()] tags into autograph's graph and context pack, with precise file/line references for the graph model, build pipeline, context pack builder, CLI commands, format renderers, and autodoc packages."
+title: "Context: Autograph Doc Links (Task 007)"
+---
+
 # Context: Task 007
 
 Codebase facts for integrating autodoc's `[autodoc()]` tags into autograph's graph and context pack. See [solution.md](./solution.md) for the design.

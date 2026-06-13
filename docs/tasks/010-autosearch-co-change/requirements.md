@@ -1,3 +1,11 @@
+---
+hash: "38c5490d"
+id: "b25bc182"
+read_when: "implementing or reviewing the autosearch co-change query feature"
+summary: "Requirements for the auto-search co-change command: lift-weighted confidence scoring, time decay, in-process SQLite engine, and AC-1 through AC-20."
+title: "Task 010: Autosearch Co-Change Query Requirements"
+---
+
 # Task 010: Autosearch Co-Change Query
 
 <!-- REJECTED(P1): Missing planning documents

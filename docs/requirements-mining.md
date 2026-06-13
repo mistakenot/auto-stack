@@ -1,3 +1,11 @@
+---
+hash: "74a206d1"
+id: "4a835a58"
+read_when: "designing requirement extraction or requirements playbook systems from agent session history"
+summary: "Concept for building a reusable requirements playbook by mining past agent sessions to extract standards and rules for fleshing out future task requirements."
+title: "Requirements Mining"
+---
+
 # Requirements mining
 
 Requirements mining it the task of extracting a set of reusable rules and standards to be used by the AI when fleshing out requirements for future tasks.

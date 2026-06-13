@@ -1,5 +1,5 @@
 ---
-hash: "a0595943"
+hash: "9d41bbca"
 id: "b4e2d831"
 read_when: "prioritizing autosearch improvements based on reflection workflow needs"
 summary: "Field feedback from using autosearch for session reflection: what worked, what didn't, and concrete improvements needed."

@@ -1,3 +1,11 @@
+---
+hash: "f9ee742d"
+id: "4b444239"
+read_when: "implementing the reflect miner queue or understanding the auto-shared/model schema relocation"
+summary: "Implementation plan for hoisting the parquet schema into auto-shared/model, then building a miner command group in auto-reflect that reads session parquet, ranks unmined sessions by text signals, and tracks coverage via session_mined events."
+title: "Plan: Task 023 — Reflect Miner Queue"
+---
+
 # Plan: Task 023 — reflect-miner-queue
 
 ## Summary

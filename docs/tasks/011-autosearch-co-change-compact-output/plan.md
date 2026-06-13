@@ -1,3 +1,11 @@
+---
+hash: "3db795f0"
+id: "94b93e23"
+read_when: "implementing compact text output for the autosearch co-change command"
+summary: "Five-phase plan: remove large-commit cutoff, add compact text renderer, flip CLI default to text, rewrite quickstart co-change section, and add E2E scenario fixtures."
+title: "Plan: Task 011 — Co-Change Compact Output"
+---
+
 # Plan: Task 011
 
 ## Summary

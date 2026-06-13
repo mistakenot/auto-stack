@@ -1,3 +1,11 @@
+---
+hash: "e55717be"
+id: "18df6974"
+read_when: "implementing the auto-reflect event store, rule lifecycle, or retrieve/gate commands"
+summary: "Solution for the auto-reflect playbook retrieval loop: append-only JSONL event store sharded by host+day+worktree, rule lifecycle commands, gate check, retrieve, and observation capture commands."
+title: "Solution: Task 019 — Playbook Retrieval Loop"
+---
+
 # Solution: Task 019
 
 ## Approach

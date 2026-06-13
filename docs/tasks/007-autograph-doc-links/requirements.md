@@ -1,3 +1,11 @@
+---
+hash: "b6361ace"
+id: "1e8dd1dd"
+read_when: "implementing doc-link nodes and edges in autograph or extending autograph to surface documentation alongside code"
+summary: "Requirements for including autodoc-linked documentation as nodes and edges in autograph code graphs and context bundles, with opt-out flag, zero-config behavior, and support for both JSON/DOT/Mermaid graph formats."
+title: "Requirements: Task 007 — Autograph Doc Links"
+---
+
 # Task 007: Autograph Doc Links
 
 ## Problem

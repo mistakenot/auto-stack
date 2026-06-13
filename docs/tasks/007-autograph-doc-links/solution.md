@@ -1,3 +1,10 @@
+---
+hash: "2e90b7aa"
+id: "0d6e85a4"
+read_when: "implementing doc-link graph enrichment in autograph or understanding the cross-module autodoc dependency approach"
+summary: "Solution design for integrating autodoc [autodoc()] tags into the autograph graph: thin public API wrappers in auto-doc/pkg/, a doclink enrichment package, separate doc adjacency maps in the context pack builder, and DOT/Mermaid shape differentiation for doc nodes."
+title: "Solution: Autograph Doc Links (Task 007)"
+---
 # Solution: Task 007
 
 <!-- REJECTED(P1): Required planning docs are missing

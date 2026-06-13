@@ -1,5 +1,5 @@
 ---
-hash: "36af2aca"
+hash: "84930253"
 id: "a41ab3e6"
 read_when: "querying normalized parquet data or understanding auto-etl output schema"
 summary: "Canonical reference for auto-etl normalized parquet datasets, fields, partitions, and population rules."

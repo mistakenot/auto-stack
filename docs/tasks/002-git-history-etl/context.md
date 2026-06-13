@@ -1,3 +1,11 @@
+---
+hash: "d1328579"
+id: "98a95cc9"
+read_when: "implementing git history ETL in auto-etl or understanding the writer/model pattern for new ETL sources"
+summary: "Verified codebase reference for implementing git history ETL: key files for model, writer, sync state, transform utilities, and CLI with exact line numbers and struct signatures."
+title: "Context: Task 002 — Git History ETL"
+---
+
 # Context: Task 002
 
 Codebase reference for the git history ETL implementation. See [solution.md](./solution.md) for the design.

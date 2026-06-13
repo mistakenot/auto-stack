@@ -1,3 +1,11 @@
+---
+hash: "b7df1f26"
+id: "2bd7f6da"
+read_when: "reviewing lessons from the auto-ui tech base task or understanding browser-layer defects invisible to Go tests"
+summary: "Post-task feedback from building the auto-ui SPA tech base: blank page from missing htm specifier in import map, stale assets without Cache-Control no-store, go run child outliving parent, pkill pattern collision, and graceful shutdown dead code."
+title: "Feedback: Auto UI Tech Base (Task 013)"
+---
+
 # Feedback: Task 013
 
 ## Problems faced

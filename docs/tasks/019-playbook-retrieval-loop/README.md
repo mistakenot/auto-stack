@@ -1,3 +1,11 @@
+---
+hash: "25eb60dd"
+id: "ebe86543"
+read_when: "understanding the auto-reflect playbook retrieval loop CLI surface or designing its API"
+summary: "Artifact visualizing the final auto-reflect CLI surface for the playbook retrieval loop: rule authoring, retrieve/select/feedback/gate workflow, storage model, and stats."
+title: "Auto Reflect Mock README — Task 019 API Preview"
+---
+
 # auto reflect — mock README (task 019 API preview)
 
 > **Artifact, not shipped docs.** This is a visualization of the final CLI surface as designed in

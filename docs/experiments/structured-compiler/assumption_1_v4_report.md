@@ -1,3 +1,11 @@
+---
+hash: "1064d2c9"
+id: "8ed68415"
+read_when: "evaluating structured compiler experiment results, understanding contamination effects in LLM evaluation, or planning Phase 6.2 schema surgery"
+summary: "Experiment report for Phase 6.1 of the structured compiler spike: verifies that removing ground-truth contamination from the user-twin yields a real but modest task_folder CDR lift (0.72→0.80) while confirming thin-input gains were contamination-borne."
+title: "Structured Compiler Assumption 1 — v4: Contamination-Clean User-Twin"
+---
+
 # Assumption 1 — v4: Contamination-Clean User-Twin
 
 **Spike:** Structured Compiler — Phase 6.1.

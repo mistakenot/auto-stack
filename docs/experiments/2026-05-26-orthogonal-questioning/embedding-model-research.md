@@ -1,3 +1,11 @@
+---
+hash: "d24aa950"
+id: "2ab9c7d0"
+read_when: "selecting or evaluating embedding models for semantic similarity or question-answering systems"
+summary: "Background research on text-embedding-3-small and text-embedding-3-large, HyDE, and enrichment formats to validate embedding model selection for the orthogonal-questioning experiment."
+title: "Embedding Model Research Notes"
+---
+
 # Embedding Model Research Notes
 
 Background research conducted between Phase 1 and Phase 2 to validate model selection. Filed alongside the experiment so the rationale is durable.

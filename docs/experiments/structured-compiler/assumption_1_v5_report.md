@@ -1,3 +1,11 @@
+---
+hash: "fbb41128"
+id: "53639ef8"
+read_when: "reviewing structured compiler assumption validation results or understanding why the v5 schema surgery was abandoned"
+summary: "v5 schema surgery experiment results for the structured compiler: removing decision_candidates/blast_radius and adding verbatim qualifiers/axis_priorities — verdict ABANDON, as NRS dropped 0.25 and CDR dropped 0.118 against v3 baseline."
+title: "Structured Compiler Assumption 1 — v5 Schema Surgery Report"
+---
+
 # Assumption 1 Validation Report — v5 (Schema Surgery)
 
 **Spike:** Structured Compiler — Phase 6.2.

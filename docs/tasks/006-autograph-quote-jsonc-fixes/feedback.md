@@ -1,3 +1,11 @@
+---
+hash: "bdb59500"
+id: "68cc9e94"
+read_when: "reviewing lessons from the quote/JSONC fix task or understanding canonical import kind names and JSONC stripping edge cases"
+summary: "Post-task feedback from the autograph quote/JSONC fix task: golden file kind-name mismatch after canonicalization, single-pass stripJSONC rewrite to prevent string content corruption, and parallel phase dispatch lessons."
+title: "Feedback: Quote and JSONC Fixes (Task 006)"
+---
+
 # Feedback: Task 006
 
 ## Problems faced

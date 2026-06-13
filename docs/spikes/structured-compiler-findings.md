@@ -1,3 +1,11 @@
+---
+hash: "7c42d037"
+id: "8def8248"
+read_when: "reviewing the structured compiler product decision or understanding why the general-purpose requirements compiler was not built"
+summary: "Product decision record for the structured requirements compiler: the general-purpose compile-from-prompt surface does not ship, A3 incremental recompile is reusable infrastructure, and only the scoped planning-doc enricher delivers measurable value."
+title: "Structured Compiler Spike — Consolidated Findings"
+---
+
 # Structured Compiler Spike — Consolidated Findings
 
 **Date:** 2026-05-27

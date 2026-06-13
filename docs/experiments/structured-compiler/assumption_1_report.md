@@ -1,3 +1,11 @@
+---
+hash: "82284e32"
+id: "9279df9a"
+read_when: "evaluating structured requirements compiler results or understanding why input richness dominates schema-based nuance preservation"
+summary: "Validation results for whether a hybrid structured schema can preserve acceptance-critical nuance, finding CDR 0.36 overall (FAIL) but 0.72 on rich-input task_folder cases (conditional pass)."
+title: "Structured Compiler: Assumption 1 Validation Report"
+---
+
 # Assumption 1 Validation Report
 
 **Spike:** Structured Compiler — Assumption 1 (hybrid structured state can preserve acceptance-critical nuance).

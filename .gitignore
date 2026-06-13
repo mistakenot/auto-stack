@@ -2,6 +2,7 @@
 bin/
 dist/
 auto-graph/autograph
+auto-cli/auto
 
 # bv (beads viewer) local config and caches
 .bv/

@@ -1,3 +1,11 @@
+---
+hash: "c8a7cecd"
+id: "81fbe013"
+read_when: "implementing the auto-bus standard, extending bus event types, or understanding the wire format and delivery guarantees"
+summary: "Requirements for the unified auto-bus communication standard: CloudEvents-shaped envelope, JSON-RPC 2.0 framing, HTTP and WebSocket transports, at-most-once delivery, doc.changed derivation, live doc reload, and hooks fire migration to the standard envelope."
+title: "Requirements: Auto Bus Standard (Task 021)"
+---
+
 # Task 021: auto-bus-standard
 
 ## Problem

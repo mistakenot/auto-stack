@@ -1,5 +1,5 @@
 ---
-hash: ""
+hash: "b7849053"
 id: "d3f66cde"
 read_when: "designing ETL merge semantics, hardening the pipeline, or planning S3 backend support"
 summary: "Research on CRDT-based merge models, event-sourced pipelines, concurrent writer safety, schema evolution, and property-based testing for the autoetl output store"

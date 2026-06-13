@@ -1,3 +1,11 @@
+---
+hash: "7f451053"
+id: "cc925c31"
+read_when: "reviewing lessons from the playbook retrieval loop implementation or implementing a new auto-reflect feature"
+summary: "Post-implementation feedback for task 019: three problems (lint debt, nonexistent CLI flag in plan, exit code normalization) and reflections on worktree shard key design and the need to run make check every phase."
+title: "Feedback: Task 019 — Playbook Retrieval Loop"
+---
+
 # Feedback: Task 019
 
 ## Problems faced

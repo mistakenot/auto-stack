@@ -1,5 +1,5 @@
 ---
-hash: "c4317f81"
+hash: "5e3534eb"
 id: "290481dd"
 read_when: "modifying auto-etl message transformation logic or understanding ETL field population"
 summary: "Technical reference for Claude Code JSONL message types, content block types, and how each maps to auto-etl normalized parquet fields — including what data is preserved and what is lost"

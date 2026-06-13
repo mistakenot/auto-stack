@@ -1,3 +1,11 @@
+---
+hash: "05b0cb27"
+id: "3f56f4c4"
+read_when: "reviewing lessons from the co-change compact output task or understanding approxTokens, treeDistance, or fixturegen package constraints"
+summary: "Post-task feedback from the co-change compact output task: cross-phase compile coupling when deleting struct fields, tree-distance d-label arithmetic, empirical budget fixture tuning, and a multi-line subject bug caught by review."
+title: "Feedback: Co-Change Compact Output (Task 011)"
+---
+
 # Feedback: Task 011
 
 ## Problems faced

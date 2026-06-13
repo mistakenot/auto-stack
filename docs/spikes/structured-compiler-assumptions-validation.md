@@ -1,3 +1,11 @@
+---
+hash: "58bbe5b4"
+id: "219e7879"
+read_when: "implementing or reviewing structured compiler assumption validation experiments"
+summary: "Experiment design for validating the three highest-risk assumptions behind a structured requirements compiler using Python experiments in .tmp/experiments/structured-compiler/ against the auto-stack session history."
+title: "Spike: Structured Compiler Assumptions Validation"
+---
+
 # Spike: Structured Compiler Assumptions Validation
 
 Validate the three highest-risk assumptions behind a structured requirements compiler before building production infrastructure.

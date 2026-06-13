@@ -1,3 +1,11 @@
+---
+hash: "f1eae3f9"
+id: "26cfe816"
+read_when: "designing question-selection or requirement-collapse systems, or reviewing orthogonal questioning experiment results"
+summary: "Four-phase experiment testing whether a coding agent can compress question-asking from ~15 to ~3 by treating user requirements as a vector space; cosine geometry failed but per-dimension classifiers with active learning achieved sign recovery in ~4 questions."
+title: "Orthogonal Questioning — Experiment Synthesis"
+---
+
 # Orthogonal Questioning — Experiment Synthesis
 
 *Started 2026-05-26. Concluded 2026-05-27. Total OpenAI spend: under $2 of a $30 budget.*

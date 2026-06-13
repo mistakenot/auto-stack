@@ -1,3 +1,11 @@
+---
+hash: "67af6926"
+id: "ac16a222"
+read_when: "implementing the hook event log or understanding the durable capture and ETL ingestion requirements for agent hook payloads"
+summary: "Requirements for adding a durable append-only JSONL hook event log to auto hooks fire, plus an auto-etl hooks source that ingests the log into a normalized parquet dataset with raw_json preservation."
+title: "Requirements: Hook Event Log (Task 022)"
+---
+
 # Task 022: hook-event-log
 
 ## Problem

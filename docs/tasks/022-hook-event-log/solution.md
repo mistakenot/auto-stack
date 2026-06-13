@@ -1,3 +1,11 @@
+---
+hash: "724e5d2c"
+id: "4763e61a"
+read_when: "implementing durable hook event logging or the auto-etl hooks ingest pipeline"
+summary: "Durable hook event log design: auto-shared/hooks envelope format, append-first producer, incremental ETL consumer with watermark sync-state, and monthly merge-by-ID parquet writer."
+title: "Solution: Task 022 — Hook Event Log"
+---
+
 # Solution: Task 022
 
 ## Approach

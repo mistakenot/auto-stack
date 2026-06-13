@@ -1,3 +1,11 @@
+---
+hash: "c2c4512d"
+id: "a60fcbc8"
+read_when: "designing or running a new multi-phase experiment in docs/experiments/"
+summary: "Distilled good patterns and anti-patterns for running multi-phase ML/data experiments, including decision matrices, cache-first design, honesty hooks, synthetic ground truth, and dispatch/end-of-experiment checklists."
+title: "Experiment Patterns and Anti-Patterns"
+---
+
 # Experiment Patterns and Anti-Patterns
 
 Distilled from running multi-phase experiments in this folder. The intent is to make future experiments faster, more honest, and easier to interrogate after the fact. Update this file as new lessons emerge.

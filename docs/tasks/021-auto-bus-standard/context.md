@@ -1,3 +1,11 @@
+---
+hash: "47d8e929"
+id: "0940b912"
+read_when: "implementing the auto-bus standard or understanding its codebase dependencies"
+summary: "Verified codebase facts grounding the auto-bus implementation: auto-ui JSON-RPC/WebSocket transport, auto-shared/git provenance helpers, auto-cli hook producer, and SPA consumer signatures."
+title: "Context: Task 021 — Auto Bus Standard"
+---
+
 # Context: Task 021
 
 Verified codebase facts (signatures, line refs, gaps) grounding [plan.md](plan.md) and [solution.md](solution.md). All paths confirmed to exist as of this writing unless marked **MISSING**.

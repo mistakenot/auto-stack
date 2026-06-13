@@ -1,5 +1,5 @@
 ---
-hash: "a42d3d65"
+hash: "32472f85"
 id: "9a31f8c7"
 read_when: "adding symbol-aware code context and navigation features to autoskill"
 summary: "Technical notes on SCIP (scip-code.org) with practical adoption guidance for auto-skill."

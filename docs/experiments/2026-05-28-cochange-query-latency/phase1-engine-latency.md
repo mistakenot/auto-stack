@@ -1,3 +1,11 @@
+---
+hash: "ea0afe1b"
+id: "3c606818"
+read_when: "evaluating autosearch co-change engine performance, choosing between SQLite and duckdb for parquet queries, or understanding co-change query latency scaling"
+summary: "Performance spike comparing modernc SQLite vs duckdb for the autosearch co-change query engine, with measurements showing pure-Go SQLite is fast enough at typical repo scale and confirming column projection prunes 98.6% of parquet bytes."
+title: "Phase 1 — Co-change Query Latency & Engine Comparison"
+---
+
 # Phase 1 — Co-change query latency & engine comparison
 
 **Date:** 2026-05-28

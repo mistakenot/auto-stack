@@ -1,3 +1,11 @@
+---
+hash: "4d800650"
+id: "0e51062f"
+read_when: "reviewing context pack implementation lessons or understanding import-kind normalization between scanner and builder"
+summary: "Post-implementation feedback for the context pack task: scanner/builder import-kind mismatch, budget enforcement against partial packs, and merge conflict from stale worktree."
+title: "Feedback: Task 004 — Context Pack"
+---
+
 # Feedback: Task 004
 
 ## Problems faced

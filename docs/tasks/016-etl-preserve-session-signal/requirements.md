@@ -1,3 +1,11 @@
+---
+hash: "cdab6b1a"
+id: "2518bf12"
+read_when: "adding or reviewing session signal preservation fields in auto-etl parquet output"
+summary: "Requirements to stop auto-etl silently dropping signal: thinking blocks, skill attribution, stop_reason, permission mode, and cache token split (AC-1 through AC-6)."
+title: "Task 016: ETL Preserve Session Signal Requirements"
+---
+
 # Task 016: ETL Preserve Session Signal
 
 ## Problem

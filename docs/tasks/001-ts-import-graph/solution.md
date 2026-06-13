@@ -1,3 +1,11 @@
+---
+hash: "36d7ad53"
+id: "20a6e247"
+read_when: "implementing or reviewing the autograph TypeScript code graph command design"
+summary: "Design for implementing TypeScript import graph support in auto-graph: ast-grep scanner, tsconfig resolver, language-agnostic graph model, output formatters, and test fixture strategy."
+title: "Solution: Task 001 — TypeScript Import Graph"
+---
+
 # Solution: Task 001
 
 <!-- REJECTED(P1): Missing context and execution plan docs

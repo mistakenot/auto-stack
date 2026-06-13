@@ -1,3 +1,11 @@
+---
+hash: "ae074c6c"
+id: "ce396db3"
+read_when: "implementing or reviewing the auto-watch daemon scope parameterization and user-level systemd install plan"
+summary: "Implementation plan for parameterizing the auto-watch daemon installer with user/system scope, adding no-sudo user-level install with enable-linger, doctor unit check, and install.sh restart hook."
+title: "Plan: Task 018 — Auto Watch Easy Daemon"
+---
+
 # Plan: Task 018
 
 ## Summary
