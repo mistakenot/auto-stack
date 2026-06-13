@@ -89,14 +89,14 @@ Phase 5 (1.4 isDocPath, auto-shared/bus) ─────────────
 - [x] Step 5.4: Commit: `feat(024): phase 5 — derive doc.changed for docs/**/*.html`
 
 ### Phase 6: Harness launch + isolation (AC-5) — depends on Phase 4
-- [ ] Step 6.1: In `serve.go`, resolve the port with `AUTO_UI_PORT` as a precedence rung (explicit `--port` flag > `AUTO_UI_PORT` > settings.json > 8080), and accept `--port 0`.
-- [ ] Step 6.2: Replace `srv.ListenAndServe()` (`serve.go:100`) with `ln, err := net.Listen("tcp", srv.Addr)` then `srv.Serve(ln)`; after a successful `Listen`, if `--ready-file` is set, write `{"addr":"<ln.Addr().String()>"}\n` to that path (and keep the stderr banner using the real bound port).
-- [ ] Step 6.3: Add `--projects <path>` flag + `AUTO_PROJECTS_PATH` env; in the registry-provider closure (`serve.go:63-73`) load from the resolved path instead of `ProjectsConfigPath()` when provided.
-- [ ] Step 6.4: Pass `server.WithDebug(os.Getenv("AUTO_UI_DEBUG") == "1")` into `server.New` in `serve.go`.
-- [ ] Step 6.5: In `auto-cli/cmd/auto/hookscmd.go`, make `uiPort()` (`:325`) return `AUTO_UI_PORT` (parsed, >0) before reading settings.json.
-- [ ] Step 6.6: Write `serve_test.go` — run the command with `--port 0 --ready-file <tmp> --projects <fixture>`; read the ready-file, assert it is JSON `{"addr":...}` with a real `127.0.0.1:NNNN`; hit `/api/hello` on that port; assert `--projects` isolates from `~/.auto`. Write `hookscmd_test.go` asserting `uiPort()` honors `AUTO_UI_PORT`. Use `t.Setenv` for env isolation.
-- [ ] Step 6.7: Verify: `cd auto-ui && go build ./... && go test ./...` and `cd auto-cli && go test ./...` green; manual smoke: `AUTO_UI_PORT=… auto ui serve --port 0 --ready-file /tmp/r.json` writes the JSON line.
-- [ ] Step 6.8: Commit: `feat(024): phase 6 — agent harness launch (--port 0, --ready-file, AUTO_UI_PORT, --projects)`
+- [x] Step 6.1: In `serve.go`, resolve the port with `AUTO_UI_PORT` as a precedence rung (explicit `--port` flag > `AUTO_UI_PORT` > settings.json > 8080), and accept `--port 0`.
+- [x] Step 6.2: Replace `srv.ListenAndServe()` (`serve.go:100`) with `ln, err := net.Listen("tcp", srv.Addr)` then `srv.Serve(ln)`; after a successful `Listen`, if `--ready-file` is set, write `{"addr":"<ln.Addr().String()>"}\n` to that path (and keep the stderr banner using the real bound port).
+- [x] Step 6.3: Add `--projects <path>` flag + `AUTO_PROJECTS_PATH` env; in the registry-provider closure (`serve.go:63-73`) load from the resolved path instead of `ProjectsConfigPath()` when provided.
+- [x] Step 6.4: Pass `server.WithDebug(os.Getenv("AUTO_UI_DEBUG") == "1")` into `server.New` in `serve.go`.
+- [x] Step 6.5: In `auto-cli/cmd/auto/hookscmd.go`, make `uiPort()` (`:325`) return `AUTO_UI_PORT` (parsed, >0) before reading settings.json.
+- [x] Step 6.6: Write `serve_test.go` — run the command with `--port 0 --ready-file <tmp> --projects <fixture>`; read the ready-file, assert it is JSON `{"addr":...}` with a real `127.0.0.1:NNNN`; hit `/api/hello` on that port; assert `--projects` isolates from `~/.auto`. Write `hookscmd_test.go` asserting `uiPort()` honors `AUTO_UI_PORT`. Use `t.Setenv` for env isolation.
+- [x] Step 6.7: Verify: `cd auto-ui && go build ./... && go test ./...` and `cd auto-cli && go test ./...` green; manual smoke: `AUTO_UI_PORT=… auto ui serve --port 0 --ready-file /tmp/r.json` writes the JSON line.
+- [x] Step 6.8: Commit: `feat(024): phase 6 — agent harness launch (--port 0, --ready-file, AUTO_UI_PORT, --projects)`
 
 ### Phase 7: Synthetic emit helper (AC-6) — depends on Phase 4
 
