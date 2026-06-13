@@ -139,11 +139,11 @@ solution's step-7 outline (solution.md) used `paths:[{rel,abs}]` generically and
 - [x] Step 7.5: Commit: `feat(024): phase 7 — auto ui emit synthetic event helper`
 
 ### Phase 8: Docs + full verification — depends on all
-- [ ] Step 8.1: Update `quickstart.go` and cli `docs.go`: document `auto ui emit`, the Origin "trigger-via-CLI / observe-via-browser" rule, the harness flags (`--port 0`, `--ready-file`, `--projects`), `AUTO_UI_PORT`/`AUTO_PROJECTS_PATH`/`AUTO_UI_DEBUG`, and `/api/doc/raw` + `/api/debug/recent`.
-- [ ] Step 8.2: Run `make check` (fmt-check, vet, lint, stale-refs) and fix any findings.
-- [ ] Step 8.3: Run module tests: `cd auto-ui && go test ./...`, `cd auto-shared && go test ./...`, `cd auto-cli && go test ./...` — all green.
-- [ ] Step 8.4: Update the epic sub-task index (`docs/epics/002-planning-docs-dashboard.md`) marking 1.1–1.7 status, and tick this plan's checkboxes.
-- [ ] Step 8.5: Commit: `docs(024): document harness + emit; mark epic Phase 1 sub-tasks`
+- [x] Step 8.1: Update `quickstart.go` and cli `docs.go`: document `auto ui emit`, the Origin "trigger-via-CLI / observe-via-browser" rule, the harness flags (`--port 0`, `--ready-file`, `--projects`), `AUTO_UI_PORT`/`AUTO_PROJECTS_PATH`/`AUTO_UI_DEBUG`, and `/api/doc/raw` + `/api/debug/recent`.
+- [x] Step 8.2: Run `make check` (fmt-check, vet, lint, stale-refs) and fix any findings.
+- [x] Step 8.3: Run module tests: `cd auto-ui && go test ./...`, `cd auto-shared && go test ./...`, `cd auto-cli && go test ./...` — all green.
+- [x] Step 8.4: Update the epic sub-task index (`docs/epics/002-planning-docs-dashboard.md`) marking 1.1–1.7 status, and tick this plan's checkboxes.
+- [x] Step 8.5: Commit: `docs(024): document harness + emit; mark epic Phase 1 sub-tasks`
 
 ## Success Criteria
 - [x] AC-1: `project.list` returns `{id,name,path,remote}` per registered project with `remote` normalized (no credentials); empty registry → `[]` (verified by `project_test.go`).
