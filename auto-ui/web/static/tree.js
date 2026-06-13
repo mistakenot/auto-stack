@@ -1,0 +1,235 @@
+// tree.js — the planning-docs nav tree. Fetches the flat doc.list for a project
+// and groups it CLIENT-SIDE by path prefix (the backend stays generic) into a
+// collapsible tree. Each leaf routes to a doc via onSelect(path, type).
+//
+// Grouping (pure string parsing on path, always under docs/):
+//   docs/tasks/NNN-slug/<file>  -> Tasks       -> NNN-slug   -> file
+//   docs/epics/<file> | phase*/  -> Epics       -> (phase dir)
+//   docs/research/<file>         -> Research
+//   docs/reference/<file>        -> Reference
+//   docs/experiments/<dir>/<f>   -> Experiments -> experiment dir
+//   docs/spikes/<file>           -> Spikes
+//   docs/<file> (direct child)   -> Root docs
+//   docs/<other>/...             -> generic group named after that segment
+import { useState, useEffect, useRef } from "preact/hooks";
+import { html } from "htm/preact";
+import { call, onStatus, whenOpen, recordError } from "./rpc.js";
+import { setUIState } from "./uistate.js";
+
+// Stable display order for the known top-level groups; unknown segments are
+// appended afterwards in discovery order.
+const GROUP_ORDER = [
+  "Tasks",
+  "Epics",
+  "Research",
+  "Reference",
+  "Experiments",
+  "Spikes",
+  "Root docs",
+];
+
+// groupDocs turns a flat [{id, path, type}] list into an ordered tree:
+//   [{ name, subgroups: [{ name, leaves: [{path, type}] }], leaves: [...] }]
+// Groups with a sub-grouping (Tasks/Experiments/Epics-phases) put files under
+// subgroups; flat groups put files directly in leaves.
+function groupDocs(docs) {
+  const groups = new Map(); // name -> { name, subgroups: Map, leaves: [] }
+
+  const group = (name) => {
+    if (!groups.has(name)) {
+      groups.set(name, { name, subgroups: new Map(), leaves: [] });
+    }
+    return groups.get(name);
+  };
+  const sub = (g, name) => {
+    if (!g.subgroups.has(name)) g.subgroups.set(name, { name, leaves: [] });
+    return g.subgroups.get(name);
+  };
+
+  for (const d of docs) {
+    const leaf = { path: d.path, type: d.type };
+    // Strip the leading docs/ segment; everything is rooted there.
+    const rel = d.path.replace(/^docs\//, "");
+    const seg = rel.split("/");
+    const head = seg[0];
+
+    if (head === "tasks" && seg.length >= 3) {
+      sub(group("Tasks"), seg[1]).leaves.push(leaf);
+    } else if (head === "epics") {
+      const g = group("Epics");
+      if (seg.length >= 3 && seg[1].startsWith("phase")) {
+        sub(g, seg[1]).leaves.push(leaf);
+      } else {
+        g.leaves.push(leaf);
+      }
+    } else if (head === "research") {
+      group("Research").leaves.push(leaf);
+    } else if (head === "reference") {
+      group("Reference").leaves.push(leaf);
+    } else if (head === "experiments" && seg.length >= 3) {
+      sub(group("Experiments"), seg[1]).leaves.push(leaf);
+    } else if (head === "experiments") {
+      group("Experiments").leaves.push(leaf);
+    } else if (head === "spikes") {
+      group("Spikes").leaves.push(leaf);
+    } else if (seg.length === 1) {
+      group("Root docs").leaves.push(leaf);
+    } else {
+      // Unknown first segment after docs/ -> a generic group named for it.
+      group(head).leaves.push(leaf);
+    }
+  }
+
+  // Materialize in a stable order: known groups first, then any extras.
+  const names = [...groups.keys()];
+  names.sort((a, b) => {
+    const ia = GROUP_ORDER.indexOf(a);
+    const ib = GROUP_ORDER.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+
+  return names.map((name) => {
+    const g = groups.get(name);
+    const subNames = [...g.subgroups.keys()].sort((a, b) => a.localeCompare(b));
+    return {
+      name: g.name,
+      subgroups: subNames.map((n) => g.subgroups.get(n)),
+      leaves: g.leaves,
+    };
+  });
+}
+
+// Leaf renders one selectable doc node carrying the acceptance attributes.
+function Leaf({ leaf, selected, onSelect }) {
+  const isSel = leaf.path === selected;
+  return html`
+    <li style=${{ marginBottom: "0.15rem" }}>
+      <a
+        href="#"
+        data-testid="doc-node"
+        data-doc-path=${leaf.path}
+        data-doc-type=${leaf.type}
+        onClick=${(e) => {
+          e.preventDefault();
+          onSelect(leaf.path, leaf.type);
+        }}
+        style=${{ fontWeight: isSel ? "bold" : "normal" }}
+      >
+        ${leaf.path.split("/").pop()}
+      </a>
+    </li>
+  `;
+}
+
+// Collapsible holds a label with open/closed state and renders children when
+// open. Default open; clicking the label toggles.
+function Collapsible({ label, children }) {
+  const [open, setOpen] = useState(true);
+  return html`
+    <li style=${{ marginBottom: "0.2rem" }}>
+      <a
+        href="#"
+        onClick=${(e) => {
+          e.preventDefault();
+          setOpen(!open);
+        }}
+        style=${{ fontWeight: "600" }}
+      >
+        ${open ? "▾" : "▸"} ${label}
+      </a>
+      ${open &&
+      html`<ul style=${{ listStyle: "none", paddingLeft: "1rem", margin: "0.2rem 0" }}>
+        ${children}
+      </ul>`}
+    </li>
+  `;
+}
+
+export function DocTree({ project, worktree, selected, onSelect }) {
+  const [docs, setDocs] = useState([]);
+  const [error, setError] = useState(null);
+
+  // Fetch the flat doc.list. Gate on whenOpen() so a cold load doesn't reject
+  // "not connected" before the socket is open. Omit an empty worktree.
+  const fetchList = async () => {
+    setError(null);
+    try {
+      await whenOpen();
+      const params = {};
+      if (project) params.project = project;
+      if (worktree) params.worktree = worktree;
+      const res = (await call("doc.list", params)) || [];
+      setDocs(res);
+      setUIState({ docCount: res.length });
+    } catch (e) {
+      recordError("doc.list", e);
+      setError("doc.list failed: " + (e && e.message ? e.message : String(e)));
+    }
+  };
+
+  // Re-fetch on mount and whenever project/worktree change.
+  useEffect(() => {
+    fetchList();
+  }, [project, worktree]);
+
+  // Reconnect self-heal: re-list on a FRESH transition to "open" (i.e. after we
+  // were not open). Track the previous status so the initial "open" — already
+  // handled by the mount fetch — doesn't double-fetch.
+  const prevStatus = useRef(null);
+  useEffect(() => {
+    const off = onStatus((s) => {
+      const was = prevStatus.current;
+      prevStatus.current = s;
+      if (s === "open" && was !== null && was !== "open") fetchList();
+    });
+    return off;
+  }, [project, worktree]);
+
+  const groups = groupDocs(docs);
+
+  return html`
+    <nav data-doc-count=${docs.length}>
+      ${error && html`<p style=${{ color: "red" }}><small>${error}</small></p>`}
+      ${docs.length === 0 &&
+      !error &&
+      html`<p><small>No docs found.</small></p>`}
+      <ul style=${{ listStyle: "none", padding: 0, margin: 0 }}>
+        ${groups.map(
+          (g) => html`
+            <${Collapsible} key=${g.name} label=${g.name}>
+              ${g.subgroups.map(
+                (sg) => html`
+                  <${Collapsible} key=${sg.name} label=${sg.name}>
+                    ${sg.leaves.map(
+                      (leaf) => html`
+                        <${Leaf}
+                          key=${leaf.path}
+                          leaf=${leaf}
+                          selected=${selected}
+                          onSelect=${onSelect}
+                        />
+                      `
+                    )}
+                  <//>
+                `
+              )}
+              ${g.leaves.map(
+                (leaf) => html`
+                  <${Leaf}
+                    key=${leaf.path}
+                    leaf=${leaf}
+                    selected=${selected}
+                    onSelect=${onSelect}
+                  />
+                `
+              )}
+            <//>
+          `
+        )}
+      </ul>
+    </nav>
+  `;
+}
