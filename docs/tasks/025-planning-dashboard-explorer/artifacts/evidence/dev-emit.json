@@ -1,0 +1,2 @@
+{"emitted":true,"id":"918df51641387912","path":"docs/tasks/001-demo/plan.md","port":40217,"project":"proj-a","status":204,"type":"agent.tool.post","worktree":""}
+emitted agent.tool.post for docs/tasks/001-demo/plan.md (project=proj-a) to http://127.0.0.1:40217/api/rpc -> HTTP 204

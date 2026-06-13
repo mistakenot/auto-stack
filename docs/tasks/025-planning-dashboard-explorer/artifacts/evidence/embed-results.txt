@@ -1,0 +1,51 @@
+================ embed conformance (2026-06-13T23:18:36Z) ================
+ADDR=127.0.0.1:34435 EADDR=127.0.0.1:40869
+---- AC-1 project switcher ----
+PASS  AC-1 switcher lists proj-a,proj-b :: "proj-a,proj-b"
+PASS  AC-1 cold-load tree populated (no reload) :: true
+PASS  AC-1 switch updates hash project=proj-b :: contains[project=proj-b]
+PASS  AC-1 content pane cleared on switch :: true
+PASS  AC-1 reload restores selected project :: "proj-a"
+PASS  AC-1 empty registry shows no-projects empty-state :: true
+PASS  AC-1 empty registry is not an error :: false
+---- AC-2 doc tree ----
+PASS  AC-2 tree has Tasks group :: true
+PASS  AC-2 tree has Epics group :: true
+PASS  AC-2 tree has Research group :: true
+PASS  AC-2 tree has 001-demo subgroup under Tasks :: true
+AC-2 data-doc-count=5  doc.list.length=5
+PASS  AC-2 data-doc-count == doc.list length :: 5
+PASS  AC-2 plan.md leaf data-doc-type :: "markdown"
+PASS  AC-2 select node updates hash path= :: contains[path=docs%2Ftasks%2F001-demo%2Fplan.md]
+---- AC-3 content pane ----
+PASS  AC-3 markdown renders <strong>markdown</strong> :: true
+PASS  AC-3 content pane has data-last-updated :: true
+AC-3 markdown data-revision="1"
+PASS  AC-3 iframe src has /api/doc/raw :: contains[/api/doc/raw]
+PASS  AC-3 iframe src has v= nonce :: contains[v=]
+PASS  AC-3 iframe src has correct path :: contains[path=docs%2Ftasks%2F001-demo%2Fartifacts%2Fdoc.html]
+PASS  AC-3 open-in-new-tab link present :: true
+AC-3 refresh revision "2"->"3" nonce "1"->"2"
+PASS  AC-3 refresh bumps data-revision :: true
+PASS  AC-3 refresh changes iframe v= nonce :: true
+PASS  AC-3 bare / lands on #/explore :: contains[#/explore]
+PASS  AC-3 no Home/Dashboard text :: true
+PASS  AC-3 conn-indicator reads open :: "open"
+---- AC-4 window.__autoui ----
+PASS  AC-4 __autoui object with ?debug=1 :: "object"
+PASS  AC-4 __autoui undefined without ?debug=1 :: "undefined"
+emit output: {"emitted":true,"id":"fcf35653fc94e31f","path":"docs/tasks/001-demo/plan.md","port":34435,"project":"proj-a","status":204,"type":"agent.tool.post","worktree":""}
+emitted agent.tool.post for docs/tasks/001-demo/plan.md (project=proj-a) to http://127.0.0.1:34435/api/rpc -> HTTP 204
+PASS  AC-4 emit captured as buffered doc.changed (>=1) :: true
+AC-4 last doc.changed: "[{\"t\":1781392748244,\"method\":\"doc.changed\",\"params\":{\"specversion\":\"1.0\",\"type\":\"doc.changed\",\"source\":\"auto/bus/derive\",\"id\":\"8f71077012e4a2da\",\"time\":\"2026-06-13T23:19:08Z\",\"project\":\"proj-a\",\"data\":{\"project\":\"proj-a\",\"path\":\"docs/tasks/001-demo/plan.md\",\"abs_path\":\"\",\"worktree\":\"\",\"branch\":\"\"}}}]"
+---- AC-5 /debug page ----
+PASS  AC-5 section debug-connection present :: true
+PASS  AC-5 section debug-event-log present :: true
+PASS  AC-5 section debug-error-log present :: true
+PASS  AC-5 section debug-current-state present :: true
+PASS  AC-5 connection shows connected :: contains[connected]
+PASS  AC-5 connection shows mode :: contains[embed]
+PASS  AC-5 event log gains doc.changed row :: true
+PASS  AC-5 error log captures forced bad doc.get :: true
+
+================ embed SUMMARY: PASS=36 FAIL=0 ================

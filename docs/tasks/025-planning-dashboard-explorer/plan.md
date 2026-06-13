@@ -47,13 +47,13 @@ run. **No Go code changes**; all backend endpoints come from task 024.
 - [Conformance harness](./artifacts/conformance.md)
 
 ## How to Test
-- [ ] `node --check` passes on every edited/added `.js` file.
-- [ ] `artifacts/conformance.md` AC-1 — switcher lists fixture projects; switch re-lists + updates hash; reload restores; empty registry → empty-state.
-- [ ] `artifacts/conformance.md` AC-2 — tree groups (Tasks/Epics/Research/…); `data-doc-count` == `doc.list` length; selecting a node updates hash + loads pane.
-- [ ] `artifacts/conformance.md` AC-3 — md renders inline; html renders in iframe (`src` has `/api/doc/raw…&v=`); open-in-new-tab present; refresh bumps `data-revision` + nonce; explorer is the landing view; no Home/Dashboard.
-- [ ] `artifacts/conformance.md` AC-4 — `window.__autoui` is object with `?debug=1`, undefined without; `auto ui emit` → buffered `doc.changed` visible via `eval`.
-- [ ] `artifacts/conformance.md` AC-5 — `#/debug` shows the four sections (rows have `data-testid`); a forced bad `doc.get` appears in the error log.
-- [ ] Conformance re-run on **embed** build AND **dev** (`-tags dev`) build.
+- [x] `node --check` passes on every edited/added `.js` file.
+- [x] `artifacts/conformance.md` AC-1 — switcher lists fixture projects; switch re-lists + updates hash; reload restores; empty registry → empty-state.
+- [x] `artifacts/conformance.md` AC-2 — tree groups (Tasks/Epics/Research/…); `data-doc-count` == `doc.list` length; selecting a node updates hash + loads pane.
+- [x] `artifacts/conformance.md` AC-3 — md renders inline; html renders in iframe (`src` has `/api/doc/raw…&v=`); open-in-new-tab present; refresh bumps `data-revision` + nonce; explorer is the landing view; no Home/Dashboard.
+- [x] `artifacts/conformance.md` AC-4 — `window.__autoui` is object with `?debug=1`, undefined without; `auto ui emit` → buffered `doc.changed` visible via `eval`.
+- [x] `artifacts/conformance.md` AC-5 — `#/debug` shows the four sections (rows have `data-testid`); a forced bad `doc.get` appears in the error log.
+- [x] Conformance re-run on **embed** build AND **dev** (`-tags dev`) build. (36/36 each — `artifacts/evidence/`.)
 
 ## Execution Sequence
 ```
@@ -111,19 +111,19 @@ Phase 2 (tree+content)┘
 - [x] Step 5.4: Commit: `feat(025): phase 5 — /debug diagnostics page`
 
 ### Phase 6: Docs + conformance artifact + full acceptance run — depends on all
-- [ ] Step 6.1: Fill in `artifacts/conformance.md` (skeleton from planning) with the exact agent-browser commands, the fixture-registry + `docs/` tree setup, and the AC-1..AC-5 assertions; include the **fixture builder** (temp dir + `projects.json` + sample `.md`/`.html` docs) and cleanup.
-- [ ] Step 6.2: Run the full conformance suite against the **embed** build (`go build` default) — all AC-1..AC-5 pass; capture evidence (screenshots / `eval` outputs) under `artifacts/evidence/`.
-- [ ] Step 6.3: Run the full conformance suite against the **dev** build (`-tags dev`, served from `auto-ui/`) — confirms `Cache-Control: no-store` + disk serving still work end-to-end (013 feedback).
-- [ ] Step 6.4: Update `auto-ui/CLAUDE.md` (explorer/tree/content/debug views, `?debug=1` gate, `window.__autoui`, the `/debug` route). Mark epic `docs/epics/002-planning-docs-dashboard.md` sub-tasks 2.1–2.5 status and tick this plan's boxes.
-- [ ] Step 6.5: `node --check` on all `.js`; `gofmt`/`make check` (no Go changed, but run the repo gate for stale-refs/format on the docs). Commit: `docs(025): conformance harness, CLAUDE.md, mark epic Phase 2 sub-tasks`
+- [x] Step 6.1: Fill in `artifacts/conformance.md` (skeleton from planning) with the exact agent-browser commands, the fixture-registry + `docs/` tree setup (lowercase ids), and the AC-1..AC-5 assertions; include the **fixture builder** (temp dir + `projects.json` + sample `.md`/`.html` docs) and cleanup.
+- [x] Step 6.2: Run the full conformance suite against the **embed** build (`go build` default) — all AC-1..AC-5 pass (36/36); capture evidence (screenshots / `eval` outputs) under `artifacts/evidence/`.
+- [x] Step 6.3: Run the full conformance suite against the **dev** build (`-tags dev`, served from `auto-ui/`) — 36/36; confirmed `Cache-Control: no-store` + disk serving (`mode=disk`) end-to-end (013 feedback). See `artifacts/evidence/dev-build.md`.
+- [x] Step 6.4: Update `auto-ui/CLAUDE.md` (explorer/tree/content/debug views, `?debug=1` gate, `window.__autoui`, the `/debug` route). Mark epic `docs/epics/002-planning-docs-dashboard.md` sub-tasks 2.1–2.5 status and tick this plan's boxes.
+- [x] Step 6.5: `node --check` on all `.js`; `gofmt`/`make check` (no Go changed, but run the repo gate for stale-refs/format on the docs). Commit: `docs(025): conformance harness, CLAUDE.md, mark epic Phase 2 sub-tasks`
 
 ## Success Criteria
-- [ ] AC-1: `project.list`-backed switcher lists every project; switching re-lists + updates the hash; direct `#/explore?project=` URL restores; empty registry → empty-state, not error (conformance AC-1).
-- [ ] AC-2: tree groups the whole `docs/` tree client-side by prefix; leaves carry `data-doc-path`/`-type`; root `data-doc-count` == `doc.list` length; selection routes + loads (conformance AC-2).
-- [ ] AC-3: markdown renders inline, HTML renders in `<iframe src=/api/doc/raw…&v=nonce>` + open-in-new-tab; content pane carries `data-revision`/`-last-updated`; explorer is the default landing view; demo pages gone; connection indicator present (conformance AC-3).
-- [ ] AC-4: `window.__autoui` exposed only under `?debug=1`/localStorage; records every notification with payload; `auto ui emit` event is captured even though no view re-renders (conformance AC-4).
-- [ ] AC-5: `#/debug` renders connection/event-log/error-log/current-state with `data-testid` rows; live-subscribed from mount; captures a forced error (conformance AC-5).
-- [ ] Conformance passes on **both** embed and dev builds; `node --check` clean; no Go code changed (only `//go:embed`-ed assets + docs); import map unchanged; no `doc.changed` subscription added to any view.
+- [x] AC-1: `project.list`-backed switcher lists every project; switching re-lists + updates the hash; direct `#/explore?project=` URL restores; empty registry → empty-state, not error (conformance AC-1).
+- [x] AC-2: tree groups the whole `docs/` tree client-side by prefix; leaves carry `data-doc-path`/`-type`; root `data-doc-count` == `doc.list` length; selection routes + loads (conformance AC-2).
+- [x] AC-3: markdown renders inline, HTML renders in `<iframe src=/api/doc/raw…&v=nonce>` + open-in-new-tab; content pane carries `data-revision`/`-last-updated`; explorer is the default landing view; demo pages gone; connection indicator present (conformance AC-3).
+- [x] AC-4: `window.__autoui` exposed only under `?debug=1`/localStorage; records every notification with payload; `auto ui emit` event is captured even though no view re-renders (conformance AC-4).
+- [x] AC-5: `#/debug` renders connection/event-log/error-log/current-state with `data-testid` rows; live-subscribed from mount; captures a forced error (conformance AC-5).
+- [x] Conformance passes on **both** embed and dev builds; `node --check` clean; no Go code changed (only `//go:embed`-ed assets + docs); import map unchanged; no `doc.changed` subscription added to any view.
 
 ## Open Questions
 - (none — requirements Open Questions resolved: static explorer only, Phase 3 liveness → task 026; small connection indicator kept.)
