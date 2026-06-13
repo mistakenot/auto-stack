@@ -30,13 +30,13 @@ agent harness flags, and the `auto ui emit` helper — shipped as one PR.
 - [Context](./context.md)
 
 ## How to Test
-- [ ] `auto-ui/internal/server/docs_test.go` — AC-2: `.html` discovery + `type`; `doc.get` rejects `.html`; traversal rejected
-- [ ] `auto-ui/internal/server/project_test.go` — AC-1: `project.list` returns entries; empty registry → `[]`; credentialed `remote` emitted credential-free (normalized)
-- [ ] `auto-ui/internal/server/raw_test.go` — AC-3: serves verbatim `.html` as `text/html`; rejects `.md`/traversal; `worktree` resolves
-- [ ] `auto-ui/internal/server/debug_test.go` — AC-7: enabled returns raw+derived; disabled → 404
-- [ ] `auto-shared/bus/derive_test.go` — AC-4: `docs/**/*.html` derives; non-`docs/` `.html` does not; `.md` unchanged
-- [ ] `auto-ui/internal/cli/serve_test.go` + `auto-cli/cmd/auto/hookscmd_test.go` — AC-5: `--port 0`+`--ready-file` JSON; `AUTO_UI_PORT` both sides; `--projects` isolation
-- [ ] `auto-ui/internal/cli/emit_test.go` — AC-6: envelope POST (no Origin) → one derived `doc.changed`; Origin-bearing request rejected
+- [x] `auto-ui/internal/server/docs_test.go` — AC-2: `.html` discovery + `type`; `doc.get` rejects `.html`; traversal rejected
+- [x] `auto-ui/internal/server/project_test.go` — AC-1: `project.list` returns entries; empty registry → `[]`; credentialed `remote` emitted credential-free (normalized)
+- [x] `auto-ui/internal/server/raw_test.go` — AC-3: serves verbatim `.html` as `text/html`; rejects `.md`/traversal; `worktree` resolves
+- [x] `auto-ui/internal/server/debug_test.go` — AC-7: enabled returns raw+derived; disabled → 404
+- [x] `auto-shared/bus/derive_test.go` — AC-4: `docs/**/*.html` derives; non-`docs/` `.html` does not; `.md` unchanged
+- [x] `auto-ui/internal/cli/serve_test.go` + `auto-cli/cmd/auto/hookscmd_test.go` — AC-5: `--port 0`+`--ready-file` JSON; `AUTO_UI_PORT` both sides; `--projects` isolation
+- [x] `auto-ui/internal/cli/emit_test.go` — AC-6: envelope POST (no Origin) → one derived `doc.changed`; Origin-bearing request rejected
 
 ## Execution Sequence
 ```
@@ -146,15 +146,15 @@ solution's step-7 outline (solution.md) used `paths:[{rel,abs}]` generically and
 - [ ] Step 8.5: Commit: `docs(024): document harness + emit; mark epic Phase 1 sub-tasks`
 
 ## Success Criteria
-- [ ] AC-1: `project.list` returns `{id,name,path,remote}` per registered project with `remote` normalized (no credentials); empty registry → `[]` (verified by `project_test.go`).
-- [ ] AC-2: `doc.list` returns `.md`+`.html` entries with `type`; `doc.get` still rejects `.html`; traversal still rejected (`docs_test.go`).
-- [ ] AC-3: `GET /api/doc/raw` serves verbatim `.html` as `text/html`; `.md`/traversal rejected; `worktree` resolves (`raw_test.go`).
-- [ ] AC-4: `docs/**/*.html` derives `doc.changed`; non-`docs/` `.html` does not; `.md` unchanged (`derive_test.go`).
-- [ ] AC-5: `--port 0` + `--ready-file` writes `{"addr":...}` with the real bound port; `AUTO_UI_PORT` honored by `serve` **and** `uiPort()`; `--projects`/`AUTO_PROJECTS_PATH` isolates the registry (`serve_test.go`, `hookscmd_test.go`).
-- [ ] AC-6: `auto ui emit` POSTs a valid envelope with no Origin → exactly one derived `doc.changed` (confirmed via `/api/debug/recent`); Origin-bearing requests rejected (`emit_test.go`).
-- [ ] AC-7: `GET /api/debug/recent` returns raw+derived events under `AUTO_UI_DEBUG=1`, 404 otherwise (`debug_test.go`).
-- [ ] `make check` passes; `auto-ui`, `auto-shared`, `auto-cli` tests all green.
-- [ ] No change to `auto-shared/bus` beyond the one-line `isDocPath` widening; no new file watcher; no envelope/wire-shape change.
+- [x] AC-1: `project.list` returns `{id,name,path,remote}` per registered project with `remote` normalized (no credentials); empty registry → `[]` (verified by `project_test.go`).
+- [x] AC-2: `doc.list` returns `.md`+`.html` entries with `type`; `doc.get` still rejects `.html`; traversal still rejected (`docs_test.go`).
+- [x] AC-3: `GET /api/doc/raw` serves verbatim `.html` as `text/html`; `.md`/traversal rejected; `worktree` resolves (`raw_test.go`).
+- [x] AC-4: `docs/**/*.html` derives `doc.changed`; non-`docs/` `.html` does not; `.md` unchanged (`derive_test.go`).
+- [x] AC-5: `--port 0` + `--ready-file` writes `{"addr":...}` with the real bound port; `AUTO_UI_PORT` honored by `serve` **and** `uiPort()`; `--projects`/`AUTO_PROJECTS_PATH` isolates the registry (`serve_test.go`, `hookscmd_test.go`).
+- [x] AC-6: `auto ui emit` POSTs a valid envelope with no Origin → exactly one derived `doc.changed` (confirmed via `/api/debug/recent`); Origin-bearing requests rejected (`emit_test.go`).
+- [x] AC-7: `GET /api/debug/recent` returns raw+derived events under `AUTO_UI_DEBUG=1`, 404 otherwise (`debug_test.go`).
+- [x] `make check` passes; `auto-ui`, `auto-shared`, `auto-cli` tests all green.
+- [x] No change to `auto-shared/bus` beyond the one-line `isDocPath` widening; no new file watcher; no envelope/wire-shape change.
 
 ## Open Questions
 - (none — both requirements Open Questions resolved: `--ready-file` writes `{"addr":...}`; ships as one PR)
