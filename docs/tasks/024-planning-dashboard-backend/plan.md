@@ -111,7 +111,7 @@ observes derivation via the Phase 4 debug buffer; it never touches `.html`. The 
 DAG already places Phase 5 as fully independent, so no DAG change is needed.
 -->
 
-- [ ] Step 7.1: Create `emit.go`: `auto ui emit --project <id> --path <docs/...> [--worktree …]` builds an `agent.tool.post` via `bus.NewEvent` (RFC3339 `time`, `ToolPost{paths:[{rel:path, abs:absPath}]}`, `source:"auto/ui/emit"`), sets `ev.Project`/`ev.Worktree`, and POSTs `ev.AsNotification()` to `http://127.0.0.1:<port>/api/rpc` with `Content-Type: application/json` and **no `Origin` header**; port via `--port`/`AUTO_UI_PORT`. JSON payload to stdout, diagnostics to stderr; non-zero exit on POST failure. **`abs` resolution (no registry load):** when `--worktree` is given, `absPath = filepath.Join(worktree, path)`; otherwise leave `absPath` empty. emit does **not** take `--projects`/`AUTO_PROJECTS_PATH` — derivation ignores `abs` (see thread).
+- [x] Step 7.1: Create `emit.go`: `auto ui emit --project <id> --path <docs/...> [--worktree …]` builds an `agent.tool.post` via `bus.NewEvent` (RFC3339 `time`, `ToolPost{paths:[{rel:path, abs:absPath}]}`, `source:"auto/ui/emit"`), sets `ev.Project`/`ev.Worktree`, and POSTs `ev.AsNotification()` to `http://127.0.0.1:<port>/api/rpc` with `Content-Type: application/json` and **no `Origin` header**; port via `--port`/`AUTO_UI_PORT`. JSON payload to stdout, diagnostics to stderr; non-zero exit on POST failure. **`abs` resolution (no registry load):** when `--worktree` is given, `absPath = filepath.Join(worktree, path)`; otherwise leave `absPath` empty. emit does **not** take `--projects`/`AUTO_PROJECTS_PATH` — derivation ignores `abs` (see thread).
 
 <!-- RESOLVED(P2): emit's `root` for `abs:filepath.Join(root,path)` is undefined — and the server doesn't need it
 REVIEW: This step writes `abs:filepath.Join(root,path)` but never says where `root` comes from in
@@ -133,10 +133,10 @@ AUTHOR: Adopted the recommendation. Step 7.1 now pins `abs = filepath.Join(workt
 solution's step-7 outline (solution.md) used `paths:[{rel,abs}]` generically and stays consistent.
 -->
 
-- [ ] Step 7.2: Register the command in `root.go` (alongside `serve`).
-- [ ] Step 7.3: Write `emit_test.go` (e2e) — start `httptest`/served instance with `WithDebug(true)` + fixture registry; run emit for a `docs/**/*.md` path; assert HTTP 204 and that `/api/debug/recent` shows one derived `doc.changed`. Add a negative assertion that a request carrying an `Origin` header is rejected with 403 (documents the rule).
-- [ ] Step 7.4: Verify: `cd auto-ui && go build ./... && go test ./...` green.
-- [ ] Step 7.5: Commit: `feat(024): phase 7 — auto ui emit synthetic event helper`
+- [x] Step 7.2: Register the command in `root.go` (alongside `serve`).
+- [x] Step 7.3: Write `emit_test.go` (e2e) — start `httptest`/served instance with `WithDebug(true)` + fixture registry; run emit for a `docs/**/*.md` path; assert HTTP 204 and that `/api/debug/recent` shows one derived `doc.changed`. Add a negative assertion that a request carrying an `Origin` header is rejected with 403 (documents the rule).
+- [x] Step 7.4: Verify: `cd auto-ui && go build ./... && go test ./...` green.
+- [x] Step 7.5: Commit: `feat(024): phase 7 — auto ui emit synthetic event helper`
 
 ### Phase 8: Docs + full verification — depends on all
 - [ ] Step 8.1: Update `quickstart.go` and cli `docs.go`: document `auto ui emit`, the Origin "trigger-via-CLI / observe-via-browser" rule, the harness flags (`--port 0`, `--ready-file`, `--projects`), `AUTO_UI_PORT`/`AUTO_PROJECTS_PATH`/`AUTO_UI_DEBUG`, and `/api/doc/raw` + `/api/debug/recent`.
