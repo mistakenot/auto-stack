@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>022: Hook Event Log</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.3.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="022: Hook Event Log" status="approved" pr="pending" generated="2026-06-14">
+
+    <!-- ===================== OVERVIEW ===================== -->
+    <pd-tab name="Overview">
+
+      <pd-section id="problem" title="Problem">
+        <md>
+`auto hooks fire` (task 020) is the single point every Claude/Codex hook flows
+through, but the only thing it does with a payload is **best-effort POST** a
+small normalized `HookEvent` to auto-ui — a live, explicitly-lossy signal. If
+the UI is down (the common case), the event is **gone**.
+
+There is no durable record of hook activity for auto-etl to ingest, so the
+rich, high-frequency hook stream — *every tool call, prompt, session
+start/stop across every agent* — is never captured into the canonical parquet
+datasets that auto-search and auto-reflect build on. `PostToolUse` alone
+dominates the volume and carries the most signal.
+        </md>
+      </pd-section>
+
+      <pd-section id="shape" title="Solution at a glance">
+        <md>
+Two halves coupled by **a file format, never code at runtime** — consistent
+with the monorepo rule "the tool binaries don't depend on each other; they
+depend on a common data / file format."
+
+1. **Producer** — `auto hooks fire` appends every payload **verbatim** to a
+   daily-partitioned JSONL log (`~/.auto/hooks/raw/events-YYYY-MM-DD.jsonl`),
+   wrapped in a thin capture envelope, **before** the existing best-effort POST.
+2. **Consumer** — `auto etl run` learns a new incremental `hooks` source that
+   reads the JSONL, normalizes a stable column set, preserves `raw_json`, and
+   writes a monthly-partitioned `hooks` parquet dataset.
+
+The format contract lives in a new `auto-shared/hooks` package both binaries
+import — for the `Envelope` type, the path layout, **and the shared
+`Extract*` normalizers** so producer and consumer cannot drift.
+        </md>
+        <pd-mermaid caption="Fire → durable log → ETL → parquet (durable path is independent of the lossy live POST)">
+flowchart LR
+  A[Claude / Codex<br/>hook] -->|stdin payload| F[auto hooks fire]
+  F -->|1. append verbatim| L[(events-YYYY-MM-DD.jsonl<br/>~/.auto/hooks/raw)]
+  F -.->|2. best-effort POST<br/>150ms, lossy| UI[auto-ui bus]
+  L -->|incremental<br/>byte-offset watermark| E[auto etl run<br/>--only hooks]
+  E -->|normalize + raw_json<br/>merge-by-id| P[(hooks parquet<br/>year=YYYY/month=MM)]
+  P --> S[auto-search / auto-reflect<br/>follow-on tasks]
+</pd-mermaid>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md>
+- **Durable capture** — append every payload to an append-only log, *in
+  addition to and independent of* the UI POST. Writing the log must never break
+  the agent: stay within the hot-path budget, swallow every failure, exit 0.
+- **Lossless on disk** — each line preserves the agent's *original* payload
+  **verbatim**, wrapped only in what the payload can't reliably supply: agent
+  (`claude`/`codex`), capture timestamp, host id, and the two
+  producer-authoritative resolutions (`cwd`, `project`).
+- **ETL ingestion** — a new `hooks` source reads the log(s) into a partitioned
+  `hooks` parquet dataset. Incremental (no re-ingest / no duplicates) and
+  non-destructive (never mutates the raw JSONL).
+- **Normalize-and-preserve** — pull a small, stable set of normalized columns
+  out of the payload **plus a `raw_json` column** holding the full original.
+  Queryable today, survives schema churn tomorrow.
+        </md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Resolved decisions">
+        <md>
+Every open question and every review thread was resolved before execution. The
+log below is generated from the resolved threads across all tabs.
+        </md>
+        <pd-decisions></pd-decisions>
+      </pd-section>
+
+      <pd-section id="related" title="Related tasks">
+        <md>
+- **Task 020 (auto-hooks-install)** — wired `auto hooks fire` onto a
+  telemetry-safe event allowlist (Claude 9 events, Codex 10). Those are the
+  payloads this log captures; `PostToolUse` dominates volume.
+- **Task 021 (auto-bus-standard)** — owns the live, lossy CloudEvents bus the
+  UI POST migrates to. Task 022 is **deliberately independent** (Q4): the log
+  is the durable/offline path, the bus is the live path.
+- **Task 002 (git-history-etl)** — the structural precedent. This task mirrors
+  its Model → State → Ingest → Writer → CLI/E2E spine and reuses its
+  watermark + `mergeByID` writer helpers.
+        </md>
+      </pd-section>
+
+    </pd-tab>
+
+    <!-- ===================== SOLUTION ===================== -->
+    <pd-tab name="Solution">
+
+      <pd-section id="files" title="File changes">
+        <md>
+Built on a shared contract package and the proven git-ETL watermark/merge
+pattern — no new `go.mod`/`go.work` edits required (`auto-shared/hooks` is a
+new sub-package of an already-required module).
+        </md>
+        <pd-files>
+          <pd-file path="auto-shared/hooks/log.go" change="add">Envelope; RawDir/LogPath(t); Append; Extract* normalizers</pd-file>
+          <pd-file path="auto-shared/hooks/log_test.go" change="add">Append round-trip, path layout, UTC day, extractor cases</pd-file>
+          <pd-file path="auto-cli/cmd/auto/hookscmd.go" change="edit">Append envelope (cwd+project) before POST; hostIDQuietly(); delegate to hooks.Extract*</pd-file>
+          <pd-file path="auto-cli/cmd/auto/hookscmd_test.go" change="edit">Log-written; failure-swallowed-still-exits-0-and-POSTs</pd-file>
+          <pd-file path="auto-etl/internal/model/hooks.go" change="add">HookEventRow parquet struct (schema_version = 1)</pd-file>
+          <pd-file path="auto-etl/internal/hooks/state.go" change="add">HooksSyncState (per-file byte offset); load/save atomic, lenient</pd-file>
+          <pd-file path="auto-etl/internal/hooks/state_test.go" change="add">Save/load round-trip, corrupt-tolerant</pd-file>
+          <pd-file path="auto-etl/internal/hooks/ingest.go" change="add">Discover events-*.jsonl, seek-from-offset, ReadBytes('\n'), parse → rows</pd-file>
+          <pd-file path="auto-etl/internal/hooks/ingest_test.go" change="add">Incremental, lenient, partial-line, large-line</pd-file>
+          <pd-file path="auto-etl/internal/writer/hooks.go" change="add">WriteHooks: monthly read-merge-write by ID</pd-file>
+          <pd-file path="auto-etl/internal/writer/hooks_test.go" change="add">Merge dedup + raw_json round-trip</pd-file>
+          <pd-file path="auto-etl/cmd/run.go" change="edit">validOnlyValues + runHooksETL phase + help text</pd-file>
+          <pd-file path="auto-etl/cmd/run_only_test.go" change="edit">parseOnlyFlag accepts/normalizes "hooks"</pd-file>
+          <pd-file path="auto-etl/docs/reference/normalized-schema.md" change="edit">Document the hooks dataset</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="contract" title="Shared contract — auto-shared/hooks">
+        <md>
+The envelope stores only fields the raw payload **can't reliably supply at ETL
+time**: `agent`, `capturedAt`, `hostId`, and the two host/registry-relative
+resolutions only the producer can do correctly — `cwd` (`Getwd()` fallback)
+and `project` (resolved against the *producer's* local `~/.auto/projects.json`).
+Both are producer-authoritative because raw data "can be from multiple hosts",
+so re-resolving at ETL risks a wrong/empty value. Everything purely
+payload-internal — event name, session id, tool, paths — is left to ETL, which
+re-extracts via the **same shared `Extract*` functions** the producer uses.
+        </md>
+        <pd-api kind="module" name="auto-shared/hooks" lang="go" path="auto-shared/hooks/log.go" caption="One implementation, imported by both binaries">
+          <pd-member kind="type" sig="Envelope{ Agent, CapturedAt, HostID, Cwd, Project string; Payload json.RawMessage }">Thin capture wrapper; Payload is the verbatim hook stdin. cwd/project are producer-resolved.</pd-member>
+          <pd-member kind="func" sig="RawDir() (string, error)">~/.auto/hooks/raw (built on sharedconfig.AutoDir()).</pd-member>
+          <pd-member kind="func" sig="LogPath(t time.Time) (string, error)">.../events-2006-01-02.jsonl — caller passes time.Now().UTC() so the filename day equals the UTC CapturedAt day.</pd-member>
+          <pd-member kind="func" sig="Append(env Envelope) error">MkdirAll + OpenFile(O_APPEND|O_CREATE|O_WRONLY) + a single f.Write of line+\n. NOT a bufio.Writer.</pd-member>
+          <pd-member kind="func" sig="ExtractEventName(payload map[string]any) string">hook_event_name. Lenient: typed-miss → zero value.</pd-member>
+          <pd-member kind="func" sig="ExtractSessionID(payload map[string]any) string">session_id.</pd-member>
+          <pd-member kind="func" sig="ExtractTool(payload map[string]any) string">tool_name.</pd-member>
+          <pd-member kind="func" sig="ExtractPaths(payload map[string]any) []string">tool_input → file_path/notebook_path/path, sorted + deduped.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-thread anchor="contract" status="resolved" priority="p2" title="Project resolution rationale contradicted the cwd-in-envelope argument">
+        <pd-comment by="review">The cwd-in-envelope justification ("ETL host's working dir differs") applies identically to `project`, which was deferred to ETL. In a multi-host setup the ETL host's registry may not contain the producer's project → wrong/empty column. Either store producer-resolved project in the envelope too, or document it as best-effort single-host.</pd-comment>
+        <pd-comment by="author">Took option (a). `project` has the identical multi-host hazard as `cwd`, so the Envelope now carries a producer-resolved `Project` field (single authoritative resolver). ETL copies it straight from the envelope and only derives the purely payload-internal fields (event/session/tool/paths).</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="contract" status="resolved" priority="p2" title="Extract* helpers must be shared, not re-implemented in package main">
+        <pd-comment by="review">`extractPaths`/`stringField`/`buildHookEvent` live in auto-cli's `package main`, which auto-etl cannot import. "ETL reuses this logic" is actually re-implementation → the two drift. Hoist the normalizers into auto-shared/hooks so both genuinely share one implementation.</pd-comment>
+        <pd-comment by="author">Took the hoist. The Extract* normalizers move into auto-shared/hooks; buildHookEvent delegates to them and the ETL ingest calls the same functions — one implementation, no package-main import.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="row" title="Parquet model — HookEventRow">
+        <md>
+Normalized dict columns + `raw_json` + provenance, keyed by a position-stable,
+**host-stable** `id`. Both the `id` prefix and the `host_id` column derive from
+the **envelope's** HostID (producer-stamped, never empty) so the same
+`(file, offset)` line yields the same `id` no matter which host ingests it —
+host-stable ids keep the merge idempotent across a shared dataset.
+        </md>
+        <pd-code lang="go" path="auto-etl/internal/model/hooks.go" caption="schema_version starts at 1, independent of messages/sessions (SchemaVersion 6)">
+type HookEventRow struct {
+    ID         string `parquet:"id"`               // sha256(envelope.HostID\x00file\x00offset) — host-stable
+    HostID     string `parquet:"host_id,dict"`
+    Agent      string `parquet:"agent,dict"`
+    Event      string `parquet:"event,dict"`       // hook_event_name
+    SessionID  string `parquet:"session_id,dict"`
+    Cwd        string `parquet:"cwd"`
+    Project    string `parquet:"project,dict"`     // copied from envelope (producer-resolved)
+    Tool       string `parquet:"tool,dict"`        // tool_name
+    PathsJSON  string `parquet:"paths_json"`       // JSON array, "" if none
+    CapturedAt int64  `parquet:"captured_at"`      // Unix ms
+    RawJSON    string `parquet:"raw_json"`         // verbatim payload
+    SourceFile string `parquet:"source_file,dict"` // events-YYYY-MM-DD.jsonl
+    Year          int32 `parquet:"year"`
+    Month         int32 `parquet:"month"`
+    SchemaVersion int32 `parquet:"schema_version"`
+}
+</pd-code>
+      </pd-section>
+
+      <pd-thread anchor="row" status="resolved" priority="p3" title="Row id host source must match the host_id column source">
+        <pd-comment by="review">`id` was fed the ETL-process hostID while the `host_id` column was envelope-resolved — they can disagree, and the same immutable (file,offset) line ingested on two hosts yields two ids → duplicate rows. Derive both from the envelope's HostID.</pd-comment>
+        <pd-comment by="author">Adopted. Both the id prefix and the host_id column now derive from the envelope's HostID. Ingest's signature drops the registry entirely and keeps the ETL host id only as `fallbackHostID` for the rare empty-envelope line.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="producer" title="Producer — durable append, then POST">
+        <md>
+Durable capture is the *primary* job, so the append runs **first**, then the
+best-effort `postHookEvent`. Capturing to disk before notifying guarantees the
+canonical record even if the process is later killed; the POST that follows
+stays bounded at 150ms.
+
+The interleave guarantee is the **Linux one**: a single `write()` to a regular
+file holds the inode lock for the whole call, so concurrent agents' lines don't
+interleave even at the ~1 MiB payload bound (POSIX's 4 KiB `PIPE_BUF` rule
+covers only pipes and is not the relevant guarantee). Implementation is pinned
+to one `OpenFile(O_APPEND|O_CREATE|O_WRONLY)` + one `f.Write` — not a buffered
+writer that could flush in chunks. The append has no explicit timeout: it's
+local-disk I/O assumed sub-millisecond; a pathological NFS/contended home dir
+blocking the hot path is a known, accepted v1 limitation.
+        </md>
+      </pd-section>
+
+      <pd-thread anchor="producer" status="resolved" priority="p3" title="O_APPEND atomicity overstated for 1 MiB payloads">
+        <pd-comment by="review">POSIX's interleave-safe O_APPEND guarantee is only firm up to PIPE_BUF (4 KiB), but lines can be ~1 MiB. Restate as the Linux single-write()-holds-inode-lock guarantee, and ensure it's really ONE Write call.</pd-comment>
+        <pd-comment by="author">Restated as the Linux inode-lock guarantee (valid at the ~1 MiB bound), noting PIPE_BUF covers only pipes. Pinned the implementation to a single OpenFile + single f.Write, explicitly not a bufio.Writer.</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="producer" status="resolved" priority="p3" title="Durable append has no time bound, unlike the 150ms POST">
+        <pd-comment by="review">The POST is protected by a 150ms timeout; the synchronous append has error-swallowing but no deadline — a slow/contended disk blocks the agent's critical path unbounded. Acknowledge it's assumed fast, or bound it. Also document the ordering rationale.</pd-comment>
+        <pd-comment by="author">Documented the append as unbounded local-disk I/O assumed sub-ms, with a contended/NFS home dir as a known accepted v1 limitation. Chose append-first ordering (not POST-first): durable capture is canonical and the entire point of the task, the POST is lossy/optional, so we guarantee the disk record before the live notify.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="ingest" title="Consumer — incremental ingest">
+        <md>
+List `events-*.jsonl` sorted; per file, skip if `offset >= size`, else seek to
+the watermark and read **whole lines only** with `bufio.Reader.ReadBytes('\n')`
+— **not** a default `bufio.Scanner`, whose 64 KiB token cap would error/drop
+the ~1 MiB envelope lines (`ReadBytes` has no cap). A trailing chunk returned
+with `io.EOF` and **no** `\n` is an in-flight partial append: discard it and do
+**not** advance the offset past it.
+
+Each `Envelope` parses leniently into a `HookEventRow` (malformed payload → row
+with `raw_json` + whatever the extractors recovered, never aborts). Project
+comes from the envelope, so `Ingest` needs neither the registry nor the
+ETL-process host id except as an empty-envelope fallback.
+        </md>
+        <pd-api kind="package" name="auto-etl/internal/hooks" lang="go" path="auto-etl/internal/hooks" caption="Watermark + ingest, a direct analog of internal/git">
+          <pd-member kind="func" sig="Ingest(rawDir string, state *HooksSyncState, fallbackHostID string) ([]model.HookEventRow, error)">Seek-from-offset, ReadBytes whole lines, lenient parse → rows. No registry param.</pd-member>
+          <pd-member kind="type" sig="HooksSyncState{ SchemaVersion int; Files map[string]*FileState }">Per-file byte offset; key is the log filename.</pd-member>
+          <pd-member kind="func" sig="HooksSyncStatePath() string">~/.auto/etl/hooks/sync-state.json.</pd-member>
+          <pd-member kind="func" sig="LoadHooksSyncState(path string) *HooksSyncState">Lenient: missing/corrupt → empty, nil-map guard.</pd-member>
+          <pd-member kind="method" sig="(*HooksSyncState).Save(path string) error">Atomic temp+rename.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-thread anchor="ingest" status="resolved" priority="p2" title="A default bufio.Scanner will break on 1 MiB lines">
+        <pd-comment by="review">Envelope lines can be ~1 MiB; a default bufio.Scanner caps tokens at 64 KB and returns ErrTooLong → drops large PostToolUse events or aborts the run (violating AC-6). Call out the buffer sizing so the implementer doesn't reach for the default Scanner.</pd-comment>
+        <pd-comment by="author">Mandated bufio.Reader.ReadBytes('\n') (no token cap), citing the parser.go:206-207 precedent and noting even its 1 MiB buffer is marginally too small once the envelope wraps a 1 MiB payload. ReadBytes also makes the partial-trailing-line handling exact.</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="ingest" status="resolved" priority="p2" title="registry param to Ingest is dead after project-in-envelope">
+        <pd-comment by="review">With project copied from the envelope, the `registry` argument is never used inside Ingest — misleading dead wiring (Go won't flag an unused param). Drop it and remove the registry load from runHooksETL.</pd-comment>
+        <pd-comment by="author">Dropped. Signature is now Ingest(rawDir, state, fallbackHostID); runHooksETL no longer loads a registry. Consistent with the host-stable-id fix.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="writer" title="Consumer — monthly merge-by-ID writer">
+        <md>
+`WriteHooks` groups rows by **month** and, per partition,
+`readExistingParquet` → `mergeByID` (incoming wins) → `writeParquet` — mirroring
+the git datasets exactly. The daily *raw* files already provide rotation, so
+the parquet layer need not also be daily. The phase ordering is
+**write-parquet before save-watermark**, so a crash between the two re-reads but
+never duplicates (host-stable ids dedup on the next run).
+        </md>
+      </pd-section>
+
+      <pd-section id="rejected" title="Rejected alternatives">
+        <md>
+- **Separate envelope + extractors per binary (no shared package)** — risks the
+  wrapper *and* extraction logic drifting. Chose a shared `auto-shared/hooks`
+  contract owning both.
+- **Store task 021's CloudEvents bus envelope** — couples to 021 landing first
+  and ties the durable record to a still-evolving live wire format. Rejected per
+  Q4 (independent).
+- **Per-line content-hash dedup** — requires reading the whole dataset and risks
+  dropping legitimately identical events (two identical `SessionStart`). Chose
+  the byte-offset watermark + position-based `id`.
+- **Daily parquet partitions** — more, smaller files and a deviation from every
+  existing dataset. Monthly + merge matches git/sessions and reuses `mergeByID`.
+- **Full-regen of the current partition** — wrong for a watermark source that
+  only sees new lines; it would drop earlier rows. Use git-style
+  read-merge-write.
+- **Write the log from auto-ui** — the UI is the component most likely to be
+  down, the exact loss this task fixes. The producer is the only guaranteed
+  capture point.
+        </md>
+      </pd-section>
+
+    </pd-tab>
+
+    <!-- ===================== PLAN ===================== -->
+    <pd-tab name="Plan">
+
+      <pd-section id="sequence" title="Execution sequence">
+        <md>
+Phases 2 and 3 run in parallel after Phase 1. Phase 4 needs Phase 3. Phase 5
+needs Phases 2 **and** 4.
+        </md>
+        <pd-mermaid caption="Phase dependency graph">
+flowchart LR
+  P1[Phase 1<br/>shared contract] --> P2[Phase 2<br/>producer]
+  P1 --> P3[Phase 3<br/>consumer core]
+  P3 --> P4[Phase 4<br/>consumer wiring]
+  P2 --> P5[Phase 5<br/>E2E + docs]
+  P4 --> P5
+</pd-mermaid>
+      </pd-section>
+
+      <pd-section id="phases" title="Phases">
+        <pd-stepper>
+          <pd-phase n="1" title="Shared contract — auto-shared/hooks" files="auto-shared/hooks/log.go,auto-shared/hooks/log_test.go" status="done">
+            <md>
+Foundation imported by both producer and consumer; defines the file format and
+the single normalization implementation.
+
+- `Envelope` struct (Agent, CapturedAt RFC3339-UTC, HostID, Cwd/Project
+  omitempty, Payload json.RawMessage).
+- Path helpers: `RawDir()` → `<AutoDir>/hooks/raw`; `LogPath(t)` →
+  `events-2006-01-02.jsonl` (caller passes `time.Now().UTC()`).
+- `Append(env)`: MkdirAll, marshal one line, OpenFile(O_APPEND|O_CREATE|O_WRONLY),
+  single `f.Write(line+"\n")`. No bufio.Writer.
+- The `Extract*` normalizers moved out of hookscmd.go (event/session/tool/paths),
+  lenient on typed-miss.
+- Build + test + gofmt + vet clean → commit `feat(022): phase 1`.
+            </md>
+          </pd-phase>
+          <pd-phase n="2" title="Producer — durable append in auto hooks fire" files="auto-cli/cmd/auto/hookscmd.go,auto-cli/cmd/auto/hookscmd_test.go" status="done">
+            <md>
+Depends on Phase 1. Capture to disk **first**, then the existing best-effort POST.
+
+- `hostIDQuietly()` mirroring ETL's loadHostID (never errors).
+- `buildHookEvent`/`extractPaths` delegate to `hooks.Extract*` (remove the
+  duplicated local extractPaths).
+- In the fire RunE: build `Envelope{Agent, CapturedAt, HostID, Cwd, Project,
+  Payload: raw}` and `hooks.Append(env)` **before** postHookEvent. Swallow append
+  errors to stderr; still exit 0; still POST.
+- Tests: `TestFireWritesDurableLog` (AC-1), `TestFireSwallowsLogFailure` (AC-2).
+- Build + test + gofmt + vet → commit `feat(022): phase 2`.
+            </md>
+          </pd-phase>
+          <pd-phase n="3" title="Consumer core — model, state, ingest, writer" files="auto-etl/internal/model/hooks.go,auto-etl/internal/hooks/state.go,auto-etl/internal/hooks/state_test.go,auto-etl/internal/hooks/ingest.go,auto-etl/internal/hooks/ingest_test.go,auto-etl/internal/writer/hooks.go,auto-etl/internal/writer/hooks_test.go" status="done">
+            <md>
+Depends on Phase 1. Independent of Phase 2.
+
+- `model/hooks.go`: `HookEventRow` + `HookSchemaVersion = 1`.
+- `hooks/state.go`: `HooksSyncState` (per-file offset), load (lenient) / save
+  (temp+rename) — analog of git/state.go.
+- `hooks/ingest.go`: `Ingest(rawDir, state, fallbackHostID)` — list sorted,
+  seek-from-offset, `ReadBytes('\n')` whole lines, lenient parse → rows;
+  host-stable id `sha256(envelope.HostID\x00name\x00offset)`; partial trailing
+  line discarded without advancing.
+- `writer/hooks.go`: `WriteHooks` groups by {Year,Month}, readExistingParquet →
+  mergeByID → writeParquet.
+- Tests: incremental / re-ingest dedup / appended-line / garbage line (AC-6) /
+  >64 KiB line / partial trailing line; writer dedup + raw_json round-trip.
+- Build + test + gofmt + vet → commit `feat(022): phase 3`.
+            </md>
+          </pd-phase>
+          <pd-phase n="4" title="Consumer wiring — auto etl run --only hooks" files="auto-etl/cmd/run.go,auto-etl/cmd/run_only_test.go" status="done">
+            <md>
+Depends on Phase 3.
+
+- `run.go`: add `"hooks": true` to validOnlyValues, the parseOnlyFlag default
+  all-true map, and the `--only` help string.
+- `runHooksETL(hostID)`: load state → ingest (no registry; hostID is only the
+  empty-envelope fallback) → if rows, WriteHooks → **then** save state. Missing
+  rawDir is a clean no-op.
+- Wire the phase gate after the git gate.
+- `run_only_test.go`: `--only hooks` valid, normalizes case, default includes
+  hooks, invalid still rejected (AC-5).
+- Build + test + gofmt + vet → commit `feat(022): phase 4`.
+            </md>
+          </pd-phase>
+          <pd-phase n="5" title="End-to-end, dogfood, and docs" files="auto-etl/docs/reference/normalized-schema.md" status="done">
+            <md>
+Depends on Phases 2 and 4.
+
+- E2E: seed `events-<today>.jsonl` with a normal PostToolUse + a garbage line,
+  ingest+write to a temp dir, read parquet back, assert columns + raw_json for
+  both (AC-3, AC-6).
+- Real-binary dogfood: `make build`; pipe a sample payload to
+  `auto hooks fire --agent claude`; `auto etl run --only hooks`; assert parquet
+  exists; run again → no duplicate rows (AC-1, AC-3, AC-4, AC-5).
+- Document the `hooks` dataset in normalized-schema.md (columns, partition path,
+  raw-log source, watermark path).
+- `make check && make build && make test` → commit `feat(022): phase 5`.
+            </md>
+          </pd-phase>
+        </pd-stepper>
+      </pd-section>
+
+    </pd-tab>
+
+    <!-- ===================== ACCEPTANCE ===================== -->
+    <pd-tab name="Acceptance">
+
+      <pd-section id="ac" title="Acceptance criteria">
+        <md>All six criteria are covered by the test plan below; every box in the plan is checked.</md>
+
+        <pd-ac id="AC-1" title="Durable hook log written on every fire" phases="2" tests="auto-shared/hooks/log_test.go, auto-cli/cmd/auto/hookscmd_test.go">
+          <md>
+- **Given** a hook payload piped to `auto hooks fire --agent claude` (or `codex`)
+- **When** the command runs, regardless of whether auto-ui is reachable
+- **Then** a line is appended to that day's `events-YYYY-MM-DD.jsonl` containing
+  the original payload verbatim plus a capture envelope (agent, capture ts,
+  host id); the command still exits 0 and never blocks beyond the hot-path budget
+          </md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="Log failures never disrupt the agent" phases="2" tests="auto-cli/cmd/auto/hookscmd_test.go">
+          <md>
+- **Given** the log path is unwritable (directory missing / permission denied)
+- **When** `auto hooks fire` runs
+- **Then** the error is swallowed (stderr at most), the command exits 0, and the
+  UI POST still happens
+          </md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="New hooks ETL source and parquet dataset" phases="3,4,5" tests="auto-etl/internal/hooks/ingest_test.go, auto-etl/internal/writer/hooks_test.go">
+          <md>
+- **Given** a hook event log with N lines
+- **When** `auto etl run --only hooks` is invoked
+- **Then** a time-partitioned `hooks` parquet dataset is written with one row per
+  line: normalized columns (capture ts, agent, event, session, cwd, project,
+  tool, paths[], host) **plus** a `raw_json` column with the verbatim payload
+          </md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Incremental, idempotent ingestion" phases="3,4" tests="auto-etl/internal/hooks/state_test.go, auto-etl/internal/hooks/ingest_test.go">
+          <md>
+- **Given** `--only hooks` has already ingested the current log, with a per-file
+  byte-offset watermark in the ETL sync-state
+- **When** it is run again
+- **Then** fully-consumed files are skipped and the current day's file resumes
+  from its watermark; no new lines → no duplicate rows; appended lines → only the
+  post-watermark lines ingested
+          </md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="--only validation includes hooks" phases="4" tests="auto-etl/cmd/run_only_test.go">
+          <md>
+- **Given** the `auto etl run --only` flag
+- **When** `--only hooks` is passed (alone or combined)
+- **Then** it validates and runs the hooks source; the default run includes hooks
+  alongside sessions/github/git; help text lists `hooks`
+          </md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Lenient parsing" phases="3,5" tests="auto-etl/internal/hooks/ingest_test.go">
+          <md>
+- **Given** a log line whose raw payload is malformed or has an evolved shape
+- **When** the hooks source ingests it
+- **Then** the row is still written with `raw_json` intact and whatever
+  normalized fields could be extracted; ingestion does not abort the run
+          </md>
+        </pd-ac>
+      </pd-section>
+
+      <pd-section id="oos" title="Out of scope">
+        <md>
+- Changing the live UI POST path or the `HookEvent` wire shape (task 021 owns the
+  bus envelope).
+- auto-search indexing of the `hooks` dataset and auto-reflect consumption
+  (follow-on tasks once the table exists).
+- Log rotation/retention/compaction beyond daily file naming — the log is
+  append-only and immutable; pruning is later.
+- Backfilling hook events from existing transcripts — capture is forward-only.
+- `auto hooks install` changes (task 020 already wires fire onto the events).
+- Configurable log path (fixed at `~/.auto/hooks/raw/` for v1) and parquet-list
+  typing of `paths` (stored as a JSON string, matching the `*_json` convention).
+        </md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
