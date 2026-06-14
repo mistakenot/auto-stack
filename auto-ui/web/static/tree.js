@@ -20,6 +20,45 @@ import { setUIState } from "./uistate.js";
 // How many Tasks entries the tree shows before the "show more" toggle.
 const TASKS_DEFAULT_LIMIT = 10;
 
+// How long a touched node stays in its flash cycle (ms). Must be >= the CSS
+// `flash-touch` animation so the .flash class isn't pulled mid-animation.
+const FLASH_MS = 1200;
+
+// flashTokensForPath maps a changed doc path to the set of node tokens that
+// should flash: the leaf itself plus its ancestor chain (task-root subgroup and
+// top-level group). Mirrors the grouping in groupDocs so the tokens line up with
+// the `group:`/`sub:`/`leaf:` tokens the renderer computes per node. The group is
+// included so a collapsed group still signals "something under me just changed".
+function flashTokensForPath(path) {
+  if (!path) return [];
+  const rel = path.replace(/^docs\//, "");
+  const seg = rel.split("/");
+  const head = seg[0];
+  const tokens = ["leaf:" + path];
+
+  if (head === "tasks" && seg.length >= 3) {
+    tokens.push("group:Tasks", "sub:Tasks/" + seg[1]);
+  } else if (head === "epics") {
+    tokens.push("group:Epics");
+    if (seg.length >= 3 && seg[1].startsWith("phase")) tokens.push("sub:Epics/" + seg[1]);
+  } else if (head === "research") {
+    tokens.push("group:Research");
+  } else if (head === "reference") {
+    tokens.push("group:Reference");
+  } else if (head === "experiments" && seg.length >= 3) {
+    tokens.push("group:Experiments", "sub:Experiments/" + seg[1]);
+  } else if (head === "experiments") {
+    tokens.push("group:Experiments");
+  } else if (head === "spikes") {
+    tokens.push("group:Spikes");
+  } else if (seg.length === 1) {
+    tokens.push("group:Root docs");
+  } else {
+    tokens.push("group:" + head);
+  }
+  return tokens;
+}
+
 // taskId pulls the leading integer out of a "NNN-slug" task folder name (e.g.
 // "023-reflect-miner-queue" -> 23). Unnumbered names return -1 so they sink to
 // the bottom of the descending sort.
@@ -124,7 +163,7 @@ function groupDocs(docs) {
 
 // Leaf renders one selectable doc node carrying the acceptance attributes. The
 // row's left padding encodes its depth (group=1, subgroup=2 levels of indent).
-function Leaf({ leaf, selected, onSelect, depth }) {
+function Leaf({ leaf, selected, onSelect, depth, flashId }) {
   const isSel = leaf.path === selected;
   return html`
     <li>
@@ -141,7 +180,7 @@ function Leaf({ leaf, selected, onSelect, depth }) {
         }}
       >
         <span class=${"ftype ftype-" + (leaf.type || "markdown")}></span>
-        <span class="label">${leaf.path.split("/").pop()}</span>
+        <span class=${"label" + (flashId ? " flash" : "")} key=${"lbl" + (flashId || 0)}>${leaf.path.split("/").pop()}</span>
       </a>
     </li>
   `;
@@ -151,7 +190,7 @@ function Leaf({ leaf, selected, onSelect, depth }) {
 // open. Folded by default; `defaultOpen` (set when the group holds the selected
 // doc) starts it expanded so a deep-linked file stays visible. Clicking toggles.
 // `kind` selects group vs subgroup styling; `depth` drives indentation.
-function Collapsible({ label, kind, depth, defaultOpen, children }) {
+function Collapsible({ label, kind, depth, defaultOpen, flashId, children }) {
   const [open, setOpen] = useState(!!defaultOpen);
   return html`
     <li>
@@ -162,7 +201,7 @@ function Collapsible({ label, kind, depth, defaultOpen, children }) {
         onClick=${() => setOpen(!open)}
       >
         <span class=${"caret" + (open ? " open" : "")}>▸</span>
-        <span class="label">${label}</span>
+        <span class=${"label" + (flashId ? " flash" : "")} key=${"lbl" + (flashId || 0)}>${label}</span>
       </button>
       ${open && html`<ul>${children}</ul>`}
     </li>
@@ -173,7 +212,7 @@ function Collapsible({ label, kind, depth, defaultOpen, children }) {
 // is set (the Tasks group), only the first `limit` subgroups show by default,
 // with a "show N more" toggle. The cap is overridden when the selected doc lives
 // in an otherwise-hidden subgroup, so a deep-link stays visible.
-function GroupBody({ group, selected, onSelect, subHasSelected, limit }) {
+function GroupBody({ group, selected, onSelect, subHasSelected, limit, flashes }) {
   const [showAll, setShowAll] = useState(false);
   const subs = group.subgroups;
   const selIdx = subs.findIndex(subHasSelected);
@@ -183,10 +222,24 @@ function GroupBody({ group, selected, onSelect, subHasSelected, limit }) {
   return html`
     ${capped.map(
       (sg) => html`
-        <${Collapsible} key=${sg.name} label=${sg.name} kind="sub" depth=${1} defaultOpen=${subHasSelected(sg)}>
+        <${Collapsible}
+          key=${sg.name}
+          label=${sg.name}
+          kind="sub"
+          depth=${1}
+          defaultOpen=${subHasSelected(sg)}
+          flashId=${flashes["sub:" + group.name + "/" + sg.name]}
+        >
           ${sg.leaves.map(
             (leaf) => html`
-              <${Leaf} key=${leaf.path} leaf=${leaf} selected=${selected} onSelect=${onSelect} depth=${2} />
+              <${Leaf}
+                key=${leaf.path}
+                leaf=${leaf}
+                selected=${selected}
+                onSelect=${onSelect}
+                depth=${2}
+                flashId=${flashes["leaf:" + leaf.path]}
+              />
             `
           )}
         <//>
@@ -207,7 +260,14 @@ function GroupBody({ group, selected, onSelect, subHasSelected, limit }) {
     `}
     ${group.leaves.map(
       (leaf) => html`
-        <${Leaf} key=${leaf.path} leaf=${leaf} selected=${selected} onSelect=${onSelect} depth=${1} />
+        <${Leaf}
+          key=${leaf.path}
+          leaf=${leaf}
+          selected=${selected}
+          onSelect=${onSelect}
+          depth=${1}
+          flashId=${flashes["leaf:" + leaf.path]}
+        />
       `
     )}
   `;
@@ -216,6 +276,35 @@ function GroupBody({ group, selected, onSelect, subHasSelected, limit }) {
 export function DocTree({ project, worktree, selected, onSelect }) {
   const [docs, setDocs] = useState([]);
   const [error, setError] = useState(null);
+
+  // Touch-flash state (live doc.changed): a map of node token -> monotonic flash
+  // id. The id drives a key-remount on each node's label span so a CSS animation
+  // (re)plays on every touch, and lets a stale clear-timer skip a superseded flash.
+  const [flashes, setFlashes] = useState({});
+  const flashSeq = useRef(0);
+
+  // triggerFlash brightens the touched leaf + its ancestor chain, then schedules
+  // them to fade back. Only stable setters/refs are touched, so the handler that
+  // closes over this never goes stale.
+  const triggerFlash = (path) => {
+    const tokens = flashTokensForPath(path);
+    if (tokens.length === 0) return;
+    flashSeq.current += 1;
+    const id = flashSeq.current;
+    setFlashes((prev) => {
+      const next = { ...prev };
+      for (const t of tokens) next[t] = id;
+      return next;
+    });
+    setTimeout(() => {
+      setFlashes((prev) => {
+        const next = { ...prev };
+        // Only clear our own flash — a newer touch (different id) keeps running.
+        for (const t of tokens) if (next[t] === id) delete next[t];
+        return next;
+      });
+    }, FLASH_MS);
+  };
 
   // Fetch the flat doc.list. Gate on whenOpen() so a cold load doesn't reject
   // "not connected" before the socket is open. Omit an empty worktree.
@@ -261,17 +350,19 @@ export function DocTree({ project, worktree, selected, onSelect }) {
     knownPaths.current = new Set(docs.map((d) => d.path));
   }, [docs]);
 
-  // A doc.changed for the active project carrying a path the tree does NOT yet
-  // know about (a newly created doc) triggers exactly one re-list so the new node
-  // appears. Known-path edits need no re-list — the open-doc refresh (content.js)
-  // handles those and the tree is already correct. The re-list also reconciles
-  // any concurrent deletions against fresh server truth.
+  // A doc.changed for the active project flashes the touched node + its ancestors
+  // (a live "this file was just touched" cue). A path the tree does NOT yet know
+  // about (a newly created doc) additionally triggers exactly one re-list so the
+  // new node appears. Known-path edits need no re-list — the open-doc refresh
+  // (content.js) handles those and the tree is already correct. The re-list also
+  // reconciles any concurrent deletions against fresh server truth.
   useEffect(() => {
     const off = on("doc.changed", (ev) => {
       const c = parseDocChanged(ev);
       if (c.project !== project) return;
-      if (!c.path || knownPaths.current.has(c.path)) return;
-      fetchList();
+      if (!c.path) return;
+      triggerFlash(c.path);
+      if (!knownPaths.current.has(c.path)) fetchList();
     });
     return off;
   }, [project, worktree]);
@@ -296,13 +387,21 @@ export function DocTree({ project, worktree, selected, onSelect }) {
         <ul>
           ${groups.map(
             (g) => html`
-              <${Collapsible} key=${g.name} label=${g.name} kind="group" depth=${0} defaultOpen=${groupHasSelected(g)}>
+              <${Collapsible}
+                key=${g.name}
+                label=${g.name}
+                kind="group"
+                depth=${0}
+                defaultOpen=${groupHasSelected(g)}
+                flashId=${flashes["group:" + g.name]}
+              >
                 <${GroupBody}
                   group=${g}
                   selected=${selected}
                   onSelect=${onSelect}
                   subHasSelected=${subHasSelected}
                   limit=${g.name === "Tasks" ? TASKS_DEFAULT_LIMIT : 0}
+                  flashes=${flashes}
                 />
               <//>
             `

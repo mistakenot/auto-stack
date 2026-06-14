@@ -26,6 +26,7 @@
   --rail-dim:     #8b8273;
   --rail-faint:   #645d52;
   --rail-line:    #36322c;
+  --flash:        #f5ead6;  /* touch-flash highlight on the dark rail */
 
   /* accent — terracotta, the single sharp color */
   --accent:       #c75b39;
@@ -298,6 +299,17 @@ body {
   letter-spacing: 0.02em;
 }
 .row-more:hover .more-label { color: var(--accent-soft); }
+
+/* touch-flash: a live doc.changed brightens the touched leaf + its ancestor
+   chain, then eases back to each node's own base color. Bright is instant (held
+   briefly), then 18%→100% interpolates to the underlying (un-animated) color, so
+   every node fades back to its correct base without naming it here. Re-triggered
+   per touch by a key-remount of the label span in tree.js. */
+@keyframes flash-touch {
+  0%  { color: var(--flash); }
+  18% { color: var(--flash); }
+}
+.tree .label.flash { animation: flash-touch 1.1s ease; }
 
 .tree-msg { color: var(--rail-faint); font-size: 0.74rem; padding: 0.6rem 0.7rem; }
 .tree-msg.err { color: var(--err); }
