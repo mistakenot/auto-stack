@@ -15,7 +15,15 @@ widened doc discovery (`.md`+`.html`) with a parameterized `cleanDocPath`, the `
 HTML route, the `.html` `doc.changed` derivation widening, the agent harness flags
 (`--port 0`/`--ready-file`/`--projects` + `AUTO_UI_PORT`/`AUTO_PROJECTS_PATH`), the `auto ui emit`
 helper, and the gated `/api/debug/recent` server event buffer — each with per-AC tests. The
-remaining work is the frontend explorer (Phase 2) and live updates (Phase 3).
+remaining work is live updates (Phase 3).
+
+**Phase 2 (frontend explorer) shipped.** Sub-tasks 2.1–2.5 are complete (task 025): the
+project switcher, the client-grouped doc tree, the type-aware content pane (markdown inline / HTML
+iframe), the explorer-as-default-landing cutover (demo `Home`/`Dashboard`/`Doc` retired), the gated
+`window.__autoui` ring, and the `/debug` diagnostics page — validated by an agent-browser
+conformance harness on **both** the embed and dev builds (36/36 each;
+`docs/tasks/025-planning-dashboard-explorer/artifacts/conformance.md`). No Go changes — all of Phase
+2 is `//go:embed`-ed `web/static/*`.
 
 This epic is otherwise an assemble-and-extend build: **most of the plumbing already exists in
 `auto-ui`**, not a greenfield build.
@@ -59,8 +67,8 @@ adjusted to stop implying open-doc refresh currently works.
 - Project registry — `~/.auto/projects.json`, `auto-shared/config/projects.go`
   (`FindProjectByID`, `FindProjectByPath`); `resolveRoot` already accepts a `project` param.
 
-**Next up:** Phase 2 — the frontend explorer (project switcher, doc tree, content pane, explorer
-as the default landing view), built on the Phase 1 backend now in place.
+**Next up:** Phase 3 — live updates (open-doc live refresh + the broken `doc.changed` client match
+fix, and live nav-tree refresh), built on the Phase 1 backend and Phase 2 explorer now in place.
 
 ## Goal
 
@@ -438,11 +446,11 @@ on the SPA with the dev build; (b) `/api/hello` (returns `{mode}`) doubles as th
 | 1.5 | Validation launch + isolation harness      | —            | done   |
 | 1.6 | Synthetic event-emit helper                | —            | done   |
 | 1.7 | Server-side debug event buffer (gated)     | —            | done   |
-| 2.1 | Project switcher                           | 1.1          |        |
-| 2.2 | Doc tree / navigation pane                 | 1.2          |        |
-| 2.3 | Content pane + explorer as default view    | 1.2, 1.3, 2.2|        |
-| 2.4 | Client debug surface (`window.__autoui`)   | —            |        |
-| 2.5 | `/debug` page (events + errors + state)    | 2.4          |        |
+| 2.1 | Project switcher                           | 1.1          | done   |
+| 2.2 | Doc tree / navigation pane                 | 1.2          | done   |
+| 2.3 | Content pane + explorer as default view    | 1.2, 1.3, 2.2| done   |
+| 2.4 | Client debug surface (`window.__autoui`)   | —            | done   |
+| 2.5 | `/debug` page (events + errors + state)    | 2.4          | done   |
 | 3.1 | Open-doc live refresh in explorer          | 2.3, 1.4     |        |
 | 3.2 | Live nav-tree refresh                      | 2.2, 2.3, 1.4|        |
 | 4.x | Polish (search, breadcrumbs, mermaid, …)   | Phase 3      |        |

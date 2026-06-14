@@ -22,10 +22,84 @@ let ws = null;
 let status = "connecting"; // "connecting" | "open" | "closed"
 let nextId = 1;
 let backoff = 500; // reconnect delay, grows to a cap on repeated failures
+let reconnects = 0; // number of reconnect cycles, surfaced via reconnectCount()
 
 const pending = new Map(); // id -> { resolve, reject }
 const notifyHandlers = new Map(); // method -> Set<handler>
 const statusHandlers = new Set();
+
+// --- Observability (AC-4 / AC-5 substrate) --------------------------------
+//
+// A bounded ring records every received server notification so the /debug page
+// can backfill pre-mount history even for events no view subscribed to. It is
+// exposed as window.__autoui ONLY when debug is enabled; the ring itself always
+// records, so the buffer carries history regardless of the gate.
+const MAX_EVENTS = 200;
+const events = []; // [{ t, method, params }], newest pushed at the end
+const counters = new Map(); // method -> count
+
+function recordEvent(method, params) {
+  events.push({ t: Date.now(), method, params });
+  if (events.length > MAX_EVENTS) events.shift();
+  counters.set(method, (counters.get(method) || 0) + 1);
+}
+
+// An always-on bounded error ring captures failures that flow through rpc.js
+// (call() rejects, window.onerror, unhandledrejection) plus any explicit
+// recordError() calls from views (e.g. content.js markdown/iframe failures).
+const MAX_ERRORS = 100;
+const errors = []; // [{ t, source, message }]
+
+// stringifyErr coerces an arbitrary thrown value into a readable message.
+function stringifyErr(err) {
+  if (err == null) return String(err);
+  if (err instanceof Error) return err.message || err.toString();
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+// recordError appends to the bounded error ring. Exported so views can record
+// failures that never reach rpc.js (content.js markdown parse / iframe load).
+export function recordError(source, err) {
+  errors.push({ t: Date.now(), source, message: stringifyErr(err) });
+  if (errors.length > MAX_ERRORS) errors.shift();
+}
+
+// recentErrors returns the live error ring (newest at the end).
+export function recentErrors() {
+  return errors;
+}
+
+// debugEnabled is true when the page opts into debug instrumentation via the
+// ?debug=1 query param or a localStorage flag. localStorage access can throw in
+// some contexts (sandboxed iframes, disabled storage), so guard it.
+function debugEnabled() {
+  if (new URLSearchParams(location.search).get("debug") === "1") return true;
+  try {
+    return localStorage.getItem("autouiDebug") === "1";
+  } catch {
+    return false;
+  }
+}
+
+// Expose the live ring/counter objects under window.__autoui only when debug is
+// on. Live references mean later pushes are visible to anything that read the
+// object once. Production (debug off) never gets the property assigned.
+if (debugEnabled()) {
+  window.__autoui = { events, counters, max: MAX_EVENTS };
+}
+
+// Capture uncaught errors and rejections once at module init.
+window.onerror = (message, source, lineno, colno, error) => {
+  recordError("window.onerror", error || message);
+};
+window.addEventListener("unhandledrejection", (ev) => {
+  recordError("unhandledrejection", ev.reason);
+});
 
 function setStatus(next) {
   status = next;
@@ -59,6 +133,9 @@ function connect() {
       return;
     }
     if (msg.method) {
+      // Record on the SAME path that fans out to on() handlers, so the ring
+      // captures notifications no view subscribes to.
+      recordEvent(msg.method, msg.params);
       const hs = notifyHandlers.get(msg.method);
       if (hs) for (const h of hs) h(msg.params);
     }
@@ -66,6 +143,7 @@ function connect() {
 
   const reconnect = () => {
     if (status === "closed" && ws !== sock) return; // already replaced
+    reconnects++;
     setStatus("closed");
     // Fail any in-flight calls so callers don't hang forever.
     for (const [id, { reject }] of pending) {
@@ -85,12 +163,18 @@ function connect() {
 // JSON-RPC error / disconnect).
 export function call(method, params) {
   return new Promise((resolve, reject) => {
+    // Wrap reject so every RPC failure is recorded in the error ring, tagged
+    // with the method that failed.
+    const fail = (err) => {
+      recordError("rpc:" + method, err);
+      reject(err);
+    };
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      reject(new Error("not connected"));
+      fail(new Error("not connected"));
       return;
     }
     const id = nextId++;
-    pending.set(id, { resolve, reject });
+    pending.set(id, { resolve, reject: fail });
     ws.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
   });
 }
@@ -107,6 +191,31 @@ export function onStatus(handler) {
   statusHandlers.add(handler);
   handler(status);
   return () => statusHandlers.delete(handler);
+}
+
+// reconnectCount returns how many reconnect cycles have occurred.
+export function reconnectCount() {
+  return reconnects;
+}
+
+// connInfo returns the current connection snapshot for the /debug page.
+export function connInfo() {
+  return { status, reconnects };
+}
+
+// whenOpen resolves once the socket is open: immediately if already open, else
+// on the next status transition to "open". Mount-time fetches await this so a
+// cold load doesn't reject with "not connected".
+export function whenOpen() {
+  if (status === "open") return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsub = onStatus((s) => {
+      if (s === "open") {
+        unsub();
+        resolve();
+      }
+    });
+  });
 }
 
 connect();
