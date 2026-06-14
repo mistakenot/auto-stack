@@ -13,7 +13,8 @@
 //   docs/<other>/...             -> generic group named after that segment
 import { useState, useEffect, useRef } from "preact/hooks";
 import { html } from "htm/preact";
-import { call, onStatus, whenOpen, recordError } from "./rpc.js";
+import { call, on, onStatus, whenOpen, recordError } from "./rpc.js";
+import { parseDocChanged } from "./docevents.js";
 import { setUIState } from "./uistate.js";
 
 // Stable display order for the known top-level groups; unknown segments are
@@ -184,6 +185,29 @@ export function DocTree({ project, worktree, selected, onSelect }) {
       const was = prevStatus.current;
       prevStatus.current = s;
       if (s === "open" && was !== null && was !== "open") fetchList();
+    });
+    return off;
+  }, [project, worktree]);
+
+  // Live nav-tree refresh (026). Keep a ref snapshot of the known paths so the
+  // doc.changed handler — registered once per {project,worktree} — can test
+  // membership without re-subscribing on every fetch.
+  const knownPaths = useRef(new Set());
+  useEffect(() => {
+    knownPaths.current = new Set(docs.map((d) => d.path));
+  }, [docs]);
+
+  // A doc.changed for the active project carrying a path the tree does NOT yet
+  // know about (a newly created doc) triggers exactly one re-list so the new node
+  // appears. Known-path edits need no re-list — the open-doc refresh (content.js)
+  // handles those and the tree is already correct. The re-list also reconciles
+  // any concurrent deletions against fresh server truth.
+  useEffect(() => {
+    const off = on("doc.changed", (ev) => {
+      const c = parseDocChanged(ev);
+      if (c.project !== project) return;
+      if (!c.path || knownPaths.current.has(c.path)) return;
+      fetchList();
     });
     return off;
   }, [project, worktree]);
