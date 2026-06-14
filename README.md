@@ -79,10 +79,82 @@ Roughly ordered by where each tool sits in the pipeline — raw inputs at the to
 | **auto skill** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Author, lint, and sync reusable agent skills. Detects skill bloat and validates trigger conditions. |
 | **auto watch** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Cron-driven daemon that monitors repos and launches bash or Claude Code tasks on schedule or file events. |
 | **auto env** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Template-based config generation with deterministic per-worktree port allocation. Stand up isolated dev envs for parallel agent branches. |
-| **auto ui** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Local web dashboard over your session data — a single binary with an embedded no-build Preact SPA. `auto ui serve` runs it on localhost. |
+| **auto ui** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Local web dashboard — a multi-project planning-docs explorer that browses each registered project's `docs/` tree and live-refreshes as agents edit files. Single binary with an embedded no-build Preact SPA. |
+| **auto hooks** | ![Active](https://img.shields.io/badge/status-active-brightgreen) | Wire agent hooks into Claude Code and Codex (`auto hooks install`) and forward each hook payload onto the auto event bus (`auto hooks fire`) — the signal that drives live dashboard updates. |
 | **auto config** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Validate and bootstrap agent configuration. Installs `prepare-commit-msg` hooks that link commits to sessions. |
 | **autoeval** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Scenario-replay evaluation harness. Grade agents against ground truth and compare planning strategies. |
 | **autoweb** | ![Coming Soon](https://img.shields.io/badge/status-coming%20soon-yellow) | Safe web-research portal with pluggable backends (Exa, Parallel, OpenAI), dedupe, and Markdown conversion. |
+
+---
+
+## Live Planning Dashboard
+
+`auto ui` serves a local web dashboard that browses planning docs across every
+registered project — pick a project, walk its `docs/` tree, read markdown
+rendered inline and self-contained HTML docs in an iframe — and refreshes the
+open doc *and* the nav tree the moment an agent edits a file.
+
+Liveness rides the auto event bus. When an agent writes a file, its Claude/Codex
+hook fires `auto hooks fire`, which posts the payload to the running dashboard;
+the server derives a `doc.changed` event and fans it out over WebSocket, so the
+browser re-renders without polling or a manual reload.
+
+```mermaid
+flowchart LR
+    Edit([Agent edits a doc]) --> Hook[Claude / Codex hook]
+    Hook -->|stdin payload| Fire[auto hooks fire]
+    Fire -->|POST /api/rpc| UI[auto ui serve]
+    UI -->|derive doc.changed| Bus[(auto bus)]
+    Bus -->|WebSocket| Dash[Dashboard<br/>live refresh]
+
+    classDef active fill:#1f6feb,stroke:#1f6feb,color:#fff;
+    classDef io fill:#21262d,stroke:#30363d,color:#c9d1d9;
+    class Fire,UI,Bus active;
+    class Edit,Hook,Dash io;
+```
+
+### Set it up on a new machine
+
+Assumes `auto` is already installed (see [Install](#install)).
+
+```bash
+# 1. Initialize host-level config (creates ~/.auto, including the project registry)
+auto init
+
+# 2. Register each repo you want to browse — run inside the repo
+cd ~/src/my-project
+auto init --project                 # adds this repo to ~/.auto/projects.json
+                                    # (override with --id / --name if desired)
+
+# 3. Wire the live-update hooks into the repo's agent config
+auto hooks install                  # merges `auto hooks fire` into
+                                    # .claude/settings.json and .codex/hooks.json
+
+# 4. Start the dashboard
+auto ui serve                       # http://127.0.0.1:8080 (override with --port)
+```
+
+Open <http://127.0.0.1:8080> — the explorer lists every registered project and
+its `docs/` tree, and the connection indicator turns green once the WebSocket is
+live. Repeat steps 2–3 in any other repo you want to appear in the switcher.
+
+**Reach it from other devices (optional)** — proxy the local server over your
+tailnet:
+
+```bash
+tailscale serve --bg --https=8443 http://127.0.0.1:8080
+```
+
+**Verify liveness without an agent** — emit a synthetic change while a doc is
+open in the browser; the pane should refresh on its own:
+
+```bash
+auto ui emit --project my-project --path docs/tasks/001-foo/plan.md
+```
+
+> If you serve on a non-default port, set `AUTO_UI_PORT` so `auto hooks fire`
+> posts to the same instance (it defaults to `8080`). Check configuration any
+> time with `auto ui doctor`.
 
 ---
 
@@ -265,6 +337,17 @@ The PR bodies capture the full workflow narrative (problem, plan, decisions, tes
 - **Deterministic ports** — CRC32-hashed per-worktree port allocation; no collisions when running multiple agent branches in parallel.
 - **Template-driven configs** — render `.env`, `process-compose.yaml`, etc. with per-worktree variables.
 - **Central registry** — `~/.auto/env/environments.json` (flock-protected) tracks every active worktree env for status and cleanup from anywhere.
+
+### Web dashboard & live updates
+- **Planning-docs explorer** — `auto ui serve` lands on a multi-project explorer: a file-tree rail over every registered project's `docs/` tree, markdown rendered inline and self-contained HTML docs in an iframe.
+- **Live refresh** — the open doc re-renders and the nav tree reconciles the moment an agent edits a file — no polling, no manual reload.
+- **No build step** — a single Go binary with an embedded Preact + htm SPA (`//go:embed`); no bundler, runs offline.
+- **`/debug` diagnostics** — a screenshot-able `#/debug` page surfacing WebSocket status, the live event log, and client errors.
+
+### Hooks & event bus
+- **One-command hook wiring** — `auto hooks install` idempotently merges `auto hooks fire` into project-local Claude (`.claude/settings.json`) and Codex (`.codex/hooks.json`) configs.
+- **CloudEvents-shaped bus** — `auto hooks fire` normalizes each hook payload and posts it over JSON-RPC 2.0; the dashboard derives typed events (e.g. `doc.changed`) and broadcasts them over WebSocket.
+- **Durable hook log** — every fired hook is appended to a daily-partitioned JSONL log for later ingestion by `auto etl` into a queryable Parquet dataset.
 
 ### Skills, watch, reflect
 - **Skill linting & sync** — validate trigger metadata, schema, descriptions, total token cost.
