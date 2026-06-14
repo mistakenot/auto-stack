@@ -131,16 +131,16 @@ expansion) now carry an explicit confirm-or-extract step rather than assuming th
 
 ### Phase 4: Backend `params.data.path` assertion (AC-1 backend)
 > Independent — can run from the start.
-- [ ] Step 4.1: Extend `TestRPCIngestBroadcastAndDerive` in
+- [x] Step 4.1: Extend `TestRPCIngestBroadcastAndDerive` in
   `auto-ui/internal/server/rpc_ingest_test.go` (the `doc.changed` block, ~lines 111-120) to assert
   the derived notification carries `params.data.path` equal to the emitted `docs/**` path (read
   `docParams["data"].(map[string]any)["path"]`), in addition to the existing `params.type` assertion.
   - *Verify:* `cd auto-ui && go test ./internal/server/ -run TestRPCIngestBroadcastAndDerive -v`
     passes and fails if the `data.path` assertion is removed/wrong (sanity-check by temporarily
     breaking the expected value).
-- [ ] Step 4.2: Run the full server test suite + lint.
+- [x] Step 4.2: Run the full server test suite + lint.
   - *Verify:* `cd auto-ui && go test ./... && gofmt -l internal/server/ && go vet ./...` clean.
-- [ ] Step 4.3: Commit: `test(026): phase 4 - pin doc.changed params.data.path wire shape`
+- [x] Step 4.3: Commit: `test(026): phase 4 - pin doc.changed params.data.path wire shape`
 
 ### Phase 5: Conformance, docs, epic status, verdict (AC-1 e2e, AC-2, AC-3, AC-4, AC-5)
 > Depends on Phases 1–4.
