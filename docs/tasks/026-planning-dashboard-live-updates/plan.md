@@ -31,9 +31,9 @@ and the surfaces it relies on (`window.__autoui`, `data-revision`, iframe `v=` n
 - [Context](./context.md)
 
 ## How to Test
-- [ ] `auto-ui/internal/server/rpc_ingest_test.go` — `go test ./...` asserts `params.data.path` (AC-1 backend half)
-- [ ] `docs/tasks/026-.../artifacts/conformance.md` — agent-browser e2e for AC-1 (client match), AC-2 (open-doc md/html refresh + non-match no-op), AC-3 (tree grows + expand preserved), AC-5 (full loop, embed + dev builds)
-- [ ] `feedback.md` — records the AC-4 deletion/create-signal verdict (decision record, no automated test)
+- [x] `auto-ui/internal/server/rpc_ingest_test.go` — `go test ./...` asserts `params.data.path` (AC-1 backend half)
+- [x] `docs/tasks/026-.../artifacts/conformance.md` — agent-browser e2e for AC-1 (client match), AC-2 (open-doc md/html refresh + non-match no-op), AC-3 (tree grows + expand preserved), AC-5 (full loop, embed + dev builds)
+- [x] `feedback.md` — records the AC-4 deletion/create-signal verdict (decision record, no automated test)
 
 ## Execution Sequence
 ```
@@ -48,17 +48,17 @@ last (it validates the whole stack end-to-end).
 ## Plan
 
 ### Phase 1: Shared `doc.changed` helper (the wire-shape fix)
-- [ ] Step 1.1: Create `auto-ui/web/static/docevents.js` exporting `parseDocChanged(ev)` →
+- [x] Step 1.1: Create `auto-ui/web/static/docevents.js` exporting `parseDocChanged(ev)` →
   `{project, path, worktree, branch}` reading **`ev.data.path`** (data-first, envelope fallback for
   project/worktree/branch) and `matchesDoc(ev, target)` (match `{project, path}`; worktree matches
   any when missing on either side). No new import-map specifier (pure JS, no deps).
   - *Verify:* file parses as an ES module (`node --check auto-ui/web/static/docevents.js`);
     `parseDocChanged({type:"doc.changed", project:"p", worktree:"w", data:{path:"docs/x.md", worktree:"w"}}).path === "docs/x.md"`; `parseDocChanged({path:"docs/x.md"}).path === undefined` (top-level `path` is NOT read — proves the bug can't recur).
-- [ ] Step 1.2: Commit: `feat(026): phase 1 - shared doc.changed envelope helper`
+- [x] Step 1.2: Commit: `feat(026): phase 1 - shared doc.changed envelope helper`
 
 ### Phase 2: Open-doc live refresh in `content.js` (AC-2)
 > Depends on Phase 1.
-- [ ] Step 2.0: **Content-pane seam check (mirrors Step 3.2).** Confirm 025's `content.js` exposes a
+- [x] Step 2.0: **Content-pane seam check (mirrors Step 3.2).** Confirm 025's `content.js` exposes a
   single reusable refresh action covering **both** markdown re-fetch (`doc.get` + re-render) **and**
   the HTML iframe `v=<nonce>` bump — i.e. the callback the `data-testid` refresh button's onClick
   already invokes. If 025 inlines those paths inside the button's JSX handler (or splits md re-fetch
@@ -67,7 +67,7 @@ last (it validates the whole stack end-to-end).
   seam, then subscribe" if needed.
   - *Verify:* `content.js` has one callable refresh action invokable outside the button JSX; both the
     markdown re-fetch and the HTML nonce-bump route through it.
-- [ ] Step 2.1: In `content.js`, add a `useEffect` (keyed on `[project, path, worktree]`) that
+- [x] Step 2.1: In `content.js`, add a `useEffect` (keyed on `[project, path, worktree]`) that
   `on("doc.changed", ev => { if (!matchesDoc(ev, openRef.current)) return; refresh(); })` and returns
   the unsubscribe. Use the existing `openRef`-style current-value ref (mirror retired `doc.js:55-68`)
   so the handler sees current props. `refresh()` is the **existing** action 025's refresh button
@@ -99,14 +99,16 @@ broadened **Step 3.1** to flag `reloadDocList()`/`knownPaths` as 025 surfaces to
 expansion) now carry an explicit confirm-or-extract step rather than assuming the surface is frozen.
 -->
 
-- [ ] Step 2.2: `gofmt`/build sanity for the module (no Go change) — run `go build ./...` in
+- [x] Step 2.2: `gofmt`/build sanity for the module (no Go change) — run `go build ./...` in
   `auto-ui` to confirm embed still builds with the new `.js` (`//go:embed all:static` picks it up).
   - *Verify:* `cd auto-ui && go build ./...` succeeds; `go build -tags dev ./...` succeeds.
-- [ ] Step 2.3: Commit: `feat(026): phase 2 - open-doc live refresh in content pane`
+- [x] Step 2.3: Commit: `feat(026): phase 2 - open-doc live refresh in content pane`
+  - *Note (impl):* keyed on `[project, path, worktree, effType]` with an inline `target` object instead
+    of an `openRef` ref — the effect re-subscribes on target change so `refresh()` is never stale; no ref needed.
 
 ### Phase 3: Live nav-tree refresh in `tree.js` (AC-3)
 > Depends on Phase 1. Independent of Phase 2.
-- [ ] Step 3.1: In `tree.js`, add a `useEffect` (keyed on `[activeProject, worktree]`) that
+- [x] Step 3.1: In `tree.js`, add a `useEffect` (keyed on `[activeProject, worktree]`) that
   `on("doc.changed", ev => {...})`: read `parseDocChanged(ev)`; ignore if `project !== activeProject`;
   ignore if the path is already in the current known-path set; otherwise re-run the list fetch
   (`doc.list` + regroup). Maintain a `knownPaths` ref/set derived from the current `doc.list` result.
@@ -117,32 +119,32 @@ expansion) now carry an explicit confirm-or-extract step rather than assuming th
   - *Verify:* `node --check auto-ui/web/static/tree.js`; a `doc.changed` for an unseen path in the
     active project triggers exactly one `doc.list` re-fetch; a `doc.changed` for a known path or a
     different project triggers none.
-- [ ] Step 3.2: **Expansion-state coupling check.** Confirm 025's `tree.js` keys expand/collapse by
+- [x] Step 3.2: **Expansion-state coupling check.** Confirm 025's `tree.js` keys expand/collapse by
   stable group/node **path/prefix** (not array index). If it does, reconcile preserves state for
   free. If it keys by index, refactor expansion to a path-keyed map so a re-list does not collapse
   open groups (AC-3 requirement).
   - *Verify:* after a re-list triggered by a new doc, a previously-expanded group remains expanded
     (asserted in Phase 5 conformance via `data-testid` on the group's expanded state).
-- [ ] Step 3.3: Build sanity: `cd auto-ui && go build ./... && go build -tags dev ./...`.
+- [x] Step 3.3: Build sanity: `cd auto-ui && go build ./... && go build -tags dev ./...`.
   - *Verify:* both builds succeed.
-- [ ] Step 3.4: Commit: `feat(026): phase 3 - live nav-tree refresh on unseen path`
+- [x] Step 3.4: Commit: `feat(026): phase 3 - live nav-tree refresh on unseen path`
 
 ### Phase 4: Backend `params.data.path` assertion (AC-1 backend)
 > Independent — can run from the start.
-- [ ] Step 4.1: Extend `TestRPCIngestBroadcastAndDerive` in
+- [x] Step 4.1: Extend `TestRPCIngestBroadcastAndDerive` in
   `auto-ui/internal/server/rpc_ingest_test.go` (the `doc.changed` block, ~lines 111-120) to assert
   the derived notification carries `params.data.path` equal to the emitted `docs/**` path (read
   `docParams["data"].(map[string]any)["path"]`), in addition to the existing `params.type` assertion.
   - *Verify:* `cd auto-ui && go test ./internal/server/ -run TestRPCIngestBroadcastAndDerive -v`
     passes and fails if the `data.path` assertion is removed/wrong (sanity-check by temporarily
     breaking the expected value).
-- [ ] Step 4.2: Run the full server test suite + lint.
+- [x] Step 4.2: Run the full server test suite + lint.
   - *Verify:* `cd auto-ui && go test ./... && gofmt -l internal/server/ && go vet ./...` clean.
-- [ ] Step 4.3: Commit: `test(026): phase 4 - pin doc.changed params.data.path wire shape`
+- [x] Step 4.3: Commit: `test(026): phase 4 - pin doc.changed params.data.path wire shape`
 
 ### Phase 5: Conformance, docs, epic status, verdict (AC-1 e2e, AC-2, AC-3, AC-4, AC-5)
 > Depends on Phases 1–4.
-- [ ] Step 5.1: Write `docs/tasks/026-.../artifacts/conformance.md` (model on
+- [x] Step 5.1: Write `docs/tasks/026-.../artifacts/conformance.md` (model on
   `docs/tasks/025-.../artifacts/conformance.md`). Steps: launch isolated
   (`auto ui serve --port 0 --ready-file <tmp> --projects <fixture>`, `AUTO_UI_DEBUG=1`); build a
   fixture project with a `docs/` tree (≥1 markdown + ≥1 self-contained HTML planning doc, plus
@@ -184,31 +186,31 @@ fixture files.
   - *Verify:* run the conformance script end-to-end against a live `auto ui serve`; capture
     `eval`/`get attr`/screenshot evidence into the artifacts folder; every assertion passes on both
     builds.
-- [ ] Step 5.2: Record the **AC-4 verdict** in `feedback.md`: `doc.changed` covers the create case
+- [x] Step 5.2: Record the **AC-4 verdict** in `feedback.md`: `doc.changed` covers the create case
   (new doc's first write emits `doc.changed` for an unseen path → tree re-list); deletions reconcile
   on the next re-list/navigation; an explicit `doc.created`/`doc.removed` derivation is **not**
   warranted for v1.
   - *Verify:* `feedback.md` contains the verdict with the create-case reasoning.
-- [ ] Step 5.3: Update `auto-ui/CLAUDE.md` (liveness wiring + `params.data.path` gotcha +
+- [x] Step 5.3: Update `auto-ui/CLAUDE.md` (liveness wiring + `params.data.path` gotcha +
   `docevents.js`) and mark sub-tasks **3.1 / 3.2 = done** in
   `docs/epics/002-planning-docs-dashboard.md` (Status section + sub-task index table).
   - *Verify:* epic sub-task index rows 3.1/3.2 show `done`; CLAUDE.md documents the helper and gotcha.
-- [ ] Step 5.4: Commit: `feat(026): phase 5 - liveness conformance, docs, epic status`
+- [x] Step 5.4: Commit: `feat(026): phase 5 - liveness conformance, docs, epic status`
 
 ## Success Criteria
-- [ ] `cd auto-ui && go build ./... && go build -tags dev ./...` both succeed (new `.js` embeds cleanly).
-- [ ] `cd auto-ui && go test ./...` passes, including the extended `rpc_ingest_test.go` asserting
+- [x] `cd auto-ui && go build ./... && go build -tags dev ./...` both succeed (new `.js` embeds cleanly).
+- [x] `cd auto-ui && go test ./...` passes, including the extended `rpc_ingest_test.go` asserting
   `params.data.path` (AC-1 backend).
-- [ ] `node --check` passes for `docevents.js`, `content.js`, `tree.js`; no new import-map specifier added.
-- [ ] Conformance (agent-browser, **both** embed + dev builds) passes every assertion:
+- [x] `node --check` passes for `docevents.js`, `content.js`, `tree.js`; no new import-map specifier added.
+- [x] Conformance (agent-browser, **both** embed + dev builds) passes every assertion:
   - AC-1: the client reads `ev.data.path` and the match fires (via `window.__autoui` + `data-revision`).
   - AC-2: open **markdown** re-renders (`data-revision++`), open **HTML** reloads (iframe `v=` nonce
     changes), and a non-matching `doc.changed` causes **no** bump.
   - AC-3: an unseen-path `doc.changed` grows tree `data-doc-count` + adds the leaf with no reload, and
     a previously-expanded group stays expanded across the reconcile.
-- [ ] AC-4 verdict recorded in `feedback.md` (reuse `doc.changed`; no bus edit).
-- [ ] Epic sub-tasks 3.1 / 3.2 marked done; `auto-ui/CLAUDE.md` updated.
-- [ ] No new server route, no bus/derive change, no file watcher, no new runtime dependency.
+- [x] AC-4 verdict recorded in `feedback.md` (reuse `doc.changed`; no bus edit).
+- [x] Epic sub-tasks 3.1 / 3.2 marked done; `auto-ui/CLAUDE.md` updated.
+- [x] No new server route, no bus/derive change, no file watcher, no new runtime dependency.
 
 ## Open Questions
 - (none — requirements' two open questions are resolved: deletions reuse `doc.changed`; open-doc

@@ -118,6 +118,17 @@ func TestRPCIngestBroadcastAndDerive(t *testing.T) {
 	if docParams["type"] != "doc.changed" {
 		t.Errorf("params.type = %v, want doc.changed", docParams["type"])
 	}
+
+	// AC-1 (026): the client reads the changed path from params.data.path (the
+	// full event envelope under params, data payload under data). Pin that shape
+	// so the wire contract the explorer's liveness depends on can't silently regress.
+	docData, ok := docParams["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("doc.changed params.data missing or wrong type: %v", docParams["data"])
+	}
+	if docData["path"] != "docs/tasks/test.md" {
+		t.Errorf("params.data.path = %v, want docs/tasks/test.md", docData["path"])
+	}
 }
 
 // TestRPCIngestNonDocNoDerived verifies that a valid agent.tool.post with a
