@@ -59,6 +59,16 @@ function flashTokensForPath(path) {
   return tokens;
 }
 
+// expandTokensForPath returns the ancestor group/subgroup tokens that must be
+// OPENED to reveal a doc at `path`. The leaf needs no token — it renders whenever
+// its enclosing subgroup/group is open. Derived from flashTokensForPath so the
+// reveal targets line up exactly with the nodes the renderer keys on.
+function expandTokensForPath(path) {
+  return flashTokensForPath(path).filter(
+    (t) => t.startsWith("group:") || t.startsWith("sub:")
+  );
+}
+
 // taskId pulls the leading integer out of a "NNN-slug" task folder name (e.g.
 // "023-reflect-miner-queue" -> 23). Unnumbered names return -1 so they sink to
 // the bottom of the descending sort.
@@ -190,8 +200,14 @@ function Leaf({ leaf, selected, onSelect, depth, flashId }) {
 // open. Folded by default; `defaultOpen` (set when the group holds the selected
 // doc) starts it expanded so a deep-linked file stays visible. Clicking toggles.
 // `kind` selects group vs subgroup styling; `depth` drives indentation.
-function Collapsible({ label, kind, depth, defaultOpen, flashId, children }) {
+function Collapsible({ label, kind, depth, defaultOpen, forceOpen, flashId, children }) {
   const [open, setOpen] = useState(!!defaultOpen);
+  // Live "reveal": when a new doc is created under this node, forceOpen flips to
+  // true and we open. Acts on forceOpen's rising edge only (deps=[forceOpen]), so
+  // the user can still collapse the node again afterward.
+  useEffect(() => {
+    if (forceOpen) setOpen(true);
+  }, [forceOpen]);
   return html`
     <li>
       <button
@@ -212,11 +228,14 @@ function Collapsible({ label, kind, depth, defaultOpen, flashId, children }) {
 // is set (the Tasks group), only the first `limit` subgroups show by default,
 // with a "show N more" toggle. The cap is overridden when the selected doc lives
 // in an otherwise-hidden subgroup, so a deep-link stays visible.
-function GroupBody({ group, selected, onSelect, subHasSelected, limit, flashes }) {
+function GroupBody({ group, selected, onSelect, subHasSelected, limit, flashes, expanded }) {
   const [showAll, setShowAll] = useState(false);
   const subs = group.subgroups;
   const selIdx = subs.findIndex(subHasSelected);
-  const forceAll = limit > 0 && selIdx >= limit;
+  // Reveal past the cap: a just-created subgroup (forceOpen) beyond the limit must
+  // be shown too, or the new node would re-list invisibly behind "show N more".
+  const revealIdx = subs.findIndex((sg) => expanded && expanded.has("sub:" + group.name + "/" + sg.name));
+  const forceAll = limit > 0 && (selIdx >= limit || revealIdx >= limit);
   const capped = limit > 0 && !showAll && !forceAll ? subs.slice(0, limit) : subs;
   const hidden = subs.length - capped.length;
   return html`
@@ -228,6 +247,7 @@ function GroupBody({ group, selected, onSelect, subHasSelected, limit, flashes }
           kind="sub"
           depth=${1}
           defaultOpen=${subHasSelected(sg)}
+          forceOpen=${expanded && expanded.has("sub:" + group.name + "/" + sg.name)}
           flashId=${flashes["sub:" + group.name + "/" + sg.name]}
         >
           ${sg.leaves.map(
@@ -282,6 +302,11 @@ export function DocTree({ project, worktree, selected, onSelect }) {
   // (re)plays on every touch, and lets a stale clear-timer skip a superseded flash.
   const [flashes, setFlashes] = useState({});
   const flashSeq = useRef(0);
+
+  // Force-open tokens (group:/sub:) for groups that must auto-expand to REVEAL a
+  // newly-created doc. Without this, a new file re-lists into a collapsed group
+  // and the user sees nothing change. Sticky once set; the user can re-collapse.
+  const [expanded, setExpanded] = useState(() => new Set());
 
   // triggerFlash brightens the touched leaf + its ancestor chain, then schedules
   // them to fade back. Only stable setters/refs are touched, so the handler that
@@ -362,7 +387,19 @@ export function DocTree({ project, worktree, selected, onSelect }) {
       if (c.project !== project) return;
       if (!c.path) return;
       triggerFlash(c.path);
-      if (!knownPaths.current.has(c.path)) fetchList();
+      if (!knownPaths.current.has(c.path)) {
+        // New doc: open its ancestor group + subgroup BEFORE the re-list so the
+        // freshly-mounted node is visible instead of hidden in a folded group.
+        const toOpen = expandTokensForPath(c.path);
+        if (toOpen.length) {
+          setExpanded((prev) => {
+            const next = new Set(prev);
+            for (const t of toOpen) next.add(t);
+            return next;
+          });
+        }
+        fetchList();
+      }
     });
     return off;
   }, [project, worktree]);
@@ -393,6 +430,7 @@ export function DocTree({ project, worktree, selected, onSelect }) {
                 kind="group"
                 depth=${0}
                 defaultOpen=${groupHasSelected(g)}
+                forceOpen=${expanded.has("group:" + g.name)}
                 flashId=${flashes["group:" + g.name]}
               >
                 <${GroupBody}
@@ -402,6 +440,7 @@ export function DocTree({ project, worktree, selected, onSelect }) {
                   subHasSelected=${subHasSelected}
                   limit=${g.name === "Tasks" ? TASKS_DEFAULT_LIMIT : 0}
                   flashes=${flashes}
+                  expanded=${expanded}
                 />
               <//>
             `
