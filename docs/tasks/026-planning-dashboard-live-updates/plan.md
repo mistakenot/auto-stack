@@ -48,13 +48,13 @@ last (it validates the whole stack end-to-end).
 ## Plan
 
 ### Phase 1: Shared `doc.changed` helper (the wire-shape fix)
-- [ ] Step 1.1: Create `auto-ui/web/static/docevents.js` exporting `parseDocChanged(ev)` →
+- [x] Step 1.1: Create `auto-ui/web/static/docevents.js` exporting `parseDocChanged(ev)` →
   `{project, path, worktree, branch}` reading **`ev.data.path`** (data-first, envelope fallback for
   project/worktree/branch) and `matchesDoc(ev, target)` (match `{project, path}`; worktree matches
   any when missing on either side). No new import-map specifier (pure JS, no deps).
   - *Verify:* file parses as an ES module (`node --check auto-ui/web/static/docevents.js`);
     `parseDocChanged({type:"doc.changed", project:"p", worktree:"w", data:{path:"docs/x.md", worktree:"w"}}).path === "docs/x.md"`; `parseDocChanged({path:"docs/x.md"}).path === undefined` (top-level `path` is NOT read — proves the bug can't recur).
-- [ ] Step 1.2: Commit: `feat(026): phase 1 - shared doc.changed envelope helper`
+- [x] Step 1.2: Commit: `feat(026): phase 1 - shared doc.changed envelope helper`
 
 ### Phase 2: Open-doc live refresh in `content.js` (AC-2)
 > Depends on Phase 1.
