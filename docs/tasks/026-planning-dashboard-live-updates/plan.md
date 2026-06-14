@@ -108,7 +108,7 @@ expansion) now carry an explicit confirm-or-extract step rather than assuming th
 
 ### Phase 3: Live nav-tree refresh in `tree.js` (AC-3)
 > Depends on Phase 1. Independent of Phase 2.
-- [ ] Step 3.1: In `tree.js`, add a `useEffect` (keyed on `[activeProject, worktree]`) that
+- [x] Step 3.1: In `tree.js`, add a `useEffect` (keyed on `[activeProject, worktree]`) that
   `on("doc.changed", ev => {...})`: read `parseDocChanged(ev)`; ignore if `project !== activeProject`;
   ignore if the path is already in the current known-path set; otherwise re-run the list fetch
   (`doc.list` + regroup). Maintain a `knownPaths` ref/set derived from the current `doc.list` result.
@@ -119,15 +119,15 @@ expansion) now carry an explicit confirm-or-extract step rather than assuming th
   - *Verify:* `node --check auto-ui/web/static/tree.js`; a `doc.changed` for an unseen path in the
     active project triggers exactly one `doc.list` re-fetch; a `doc.changed` for a known path or a
     different project triggers none.
-- [ ] Step 3.2: **Expansion-state coupling check.** Confirm 025's `tree.js` keys expand/collapse by
+- [x] Step 3.2: **Expansion-state coupling check.** Confirm 025's `tree.js` keys expand/collapse by
   stable group/node **path/prefix** (not array index). If it does, reconcile preserves state for
   free. If it keys by index, refactor expansion to a path-keyed map so a re-list does not collapse
   open groups (AC-3 requirement).
   - *Verify:* after a re-list triggered by a new doc, a previously-expanded group remains expanded
     (asserted in Phase 5 conformance via `data-testid` on the group's expanded state).
-- [ ] Step 3.3: Build sanity: `cd auto-ui && go build ./... && go build -tags dev ./...`.
+- [x] Step 3.3: Build sanity: `cd auto-ui && go build ./... && go build -tags dev ./...`.
   - *Verify:* both builds succeed.
-- [ ] Step 3.4: Commit: `feat(026): phase 3 - live nav-tree refresh on unseen path`
+- [x] Step 3.4: Commit: `feat(026): phase 3 - live nav-tree refresh on unseen path`
 
 ### Phase 4: Backend `params.data.path` assertion (AC-1 backend)
 > Independent — can run from the start.
