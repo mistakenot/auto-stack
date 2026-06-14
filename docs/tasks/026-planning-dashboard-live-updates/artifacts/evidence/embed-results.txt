@@ -1,0 +1,39 @@
+================ embed conformance (2026-06-14T09:29:22.099Z) ================
+ADDR=127.0.0.1:46877 PORT=46877 BIN=/tmp/auto-026-embed
+---- AC-1/AC-2 markdown live auto-refresh ----
+AC-1 markdown data-revision before emit = "1"
+emit md: {"emitted":true,"id":"39467441659a8fc5","path":"docs/tasks/001-demo/plan.md","port":46877,"project":"proj-a","status":204,"type":"agent.tool.post","worktree":""}
+PASS  AC-1 doc.changed captured in __autoui (>=1) :: 1
+AC-2 markdown data-revision "1" -> "2"
+PASS  AC-2 markdown auto-refresh increments data-revision :: 1->2
+AC-1 last doc.changed payload captured -> embed-doc-changed-event.json
+---- AC-2 HTML live reload (iframe cache-bust) ----
+AC-2 html iframe src before = /api/doc/raw?project=proj-a&path=docs%2Ftasks%2F001-demo%2Fartifacts%2Fdoc.html&v=1
+AC-2 html nonce before = 1
+emit html: {"emitted":true,"id":"f19204d138a835ed","path":"docs/tasks/001-demo/artifacts/doc.html","port":46877,"project":"proj-a","status":204,"type":"agent.tool.post","worktree":""}
+AC-2 html nonce 1 -> 2
+PASS  AC-2 HTML live reload changes iframe v= nonce :: 1->2
+---- AC-2 non-matching doc.changed is a no-op for the open doc ----
+AC-2 non-match open-doc data-revision before = "5"
+emit unrelated: {"emitted":true,"id":"294d45ddcf79e1f3","path":"docs/tasks/001-demo/requirements.md","port":46877,"project":"proj-a","status":204,"type":"agent.tool.post","worktree":""}
+AC-2 non-match open-doc data-revision after = "5"
+PASS  AC-2 non-matching event leaves open-doc data-revision unchanged :: 5==5
+---- AC-3 live nav-tree growth + expansion preserved ----
+AC-3 nav data-doc-count before = "6"
+AC-3 002-second leaf rendered before (Tasks+subgroup expanded) = true
+AC-3 Tasks group re-expanded after toggle cycle, 001-demo leaf present = true
+AC-3 wrote new fixture file docs/tasks/099-new/plan.md on disk
+emit new: {"emitted":true,"id":"7e15487ce4ed11b5","path":"docs/tasks/099-new/plan.md","port":46877,"project":"proj-a","status":204,"type":"agent.tool.post","worktree":""}
+AC-3 nav data-doc-count "6" -> "7"
+PASS  AC-3 nav data-doc-count grew on unseen-path doc.changed :: 6->7
+PASS  AC-3 new leaf [data-doc-path=docs/tasks/099-new/plan.md] appeared :: true
+PASS  AC-3 previously-expanded Tasks group still expanded after reconcile :: true
+AC-3 /api/debug/recent contains 099-new path = true
+PASS  AC-3 server /api/debug/recent recorded the new-path doc.changed :: true
+screenshot -> embed-liveness.png
+
+================ embed SUMMARY: PASS=8 FAIL=0 ================
+
+---- server mode / cache-control ----
+/api/hello -> {"message":"hi from go","mode":"embed"}
+app.js -> <none>

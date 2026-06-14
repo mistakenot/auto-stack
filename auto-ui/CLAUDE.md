@@ -84,13 +84,40 @@ The explorer is composed from four `web/static/` modules:
   renders **by type**: markdown via `call("doc.get")` + `marked`/`dompurify` inline; HTML via an
   `<iframe src="/api/doc/raw?…&v=<nonce>" data-testid="doc-iframe">` (never through `doc.get`) plus
   an "open in new tab" link. The `article` root carries `data-revision` + `data-last-updated`; a
-  `data-testid="doc-refresh"` button re-fetches markdown / bumps the iframe nonce. It is **static** —
-  no `doc.changed` subscription (liveness is task 026); markdown parse/sanitize and iframe-load
-  failures are reported via `recordError`.
+  `data-testid="doc-refresh"` button re-fetches markdown / bumps the iframe nonce. It is **live** (task
+  026): a `doc.changed` subscription matching the open doc auto-applies the same refresh (see
+  "Live updates" below). Markdown parse/sanitize and iframe-load failures are reported via
+  `recordError`.
 - `uistate.js` — a tiny module-level cross-route snapshot
   (`{project, path, type, revision, docCount, lastUpdated}` + `setUIState(patch)`). Explorer/tree/
   content write to it; `/debug` reads it (the explorer components are unmounted on `#/debug`, so the
   DOM can't be read cross-route). It is **not** a reactive store.
+
+## Live updates (task 026)
+
+The explorer refreshes itself when an agent edits a planning doc — no polling, no file watcher. The
+only signal is the existing bus `doc.changed` notification: agent edit → hook → `agent.tool.post` →
+`/api/rpc` ingest → `bus.DeriveDocChanged` → a `doc.changed` on the WS. Two views subscribe:
+
+- `content.js` — a `doc.changed` matching the **open** doc's `{project, path}` (and `worktree` when
+  present) auto-applies the refresh action: markdown re-runs `doc.get` + re-renders
+  (`data-revision++`), HTML bumps the iframe `v=<nonce>` (cache-busted reload, no `doc.get`). A
+  non-matching event is a no-op.
+- `tree.js` — a `doc.changed` for the **active project** carrying a path the tree does **not** yet
+  know (a newly created doc) triggers exactly one `doc.list` re-list + regroup, so the new node
+  appears (`data-doc-count` grows). Known-path edits need no re-list (content.js handles those).
+  Expansion state survives the reconcile because `Collapsible` is keyed by stable group name.
+
+- `docevents.js` — the **single source of truth** for reading the notification:
+  `parseDocChanged(ev)` + `matchesDoc(ev, target)`, imported by both views.
+
+**THE GOTCHA:** the changed path is at **`ev.data.path`** (== `params.data.path` on the wire), NOT
+top-level `ev.path`. `Event.AsNotification` (`auto-shared/bus/event.go`) puts the whole event
+envelope under JSON-RPC `params`; the envelope carries top-level `project`/`worktree` but `path`/
+`abs_path`/`branch` live under `data`. The retired `doc.js` read `ev.path` (always `undefined`), so
+its live refresh never fired — reading `ev.data.path` (via `docevents.js`) is the fix.
+`rpc_ingest_test.go`'s `TestRPCIngestBroadcastAndDerive` pins `params.data.path` so the shape can't
+silently regress.
 
 ## Debug surfaces
 
@@ -106,4 +133,6 @@ The explorer is composed from four `web/static/` modules:
   The route is always reachable; only the pre-mount event backfill depends on `?debug=1`.
 
 Acceptance for the explorer is browser-driven (frontend-only) — see
-`docs/tasks/025-planning-dashboard-explorer/artifacts/conformance.md` and its `evidence/`.
+`docs/tasks/025-planning-dashboard-explorer/artifacts/conformance.md` (static explorer) and
+`docs/tasks/026-planning-dashboard-live-updates/artifacts/conformance.md` (liveness), each with its
+own `evidence/`.

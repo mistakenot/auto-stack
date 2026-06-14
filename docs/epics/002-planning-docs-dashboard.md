@@ -1,5 +1,5 @@
 ---
-hash: "2b6ffc21"
+hash: "bff72ebb"
 id: "7b3e9d04"
 read_when: "planning or sequencing sub-tasks for the planning-docs dashboard epic"
 summary: "Epic plan for turning auto-ui into a multi-project planning-docs explorer: a default-landing dashboard that lists every registered project, browses each project's whole docs/ tree, renders markdown inline and self-contained HTML in an iframe, switches projects seamlessly, and live-refreshes both the open doc and the nav tree when an agent edits files. Most plumbing (JSON-RPC/WS, doc.list/doc.get, bus doc.changed, markdown render, project registry) already exists; the epic assembles and extends it rather than building from scratch."
@@ -67,8 +67,21 @@ adjusted to stop implying open-doc refresh currently works.
 - Project registry — `~/.auto/projects.json`, `auto-shared/config/projects.go`
   (`FindProjectByID`, `FindProjectByPath`); `resolveRoot` already accepts a `project` param.
 
-**Next up:** Phase 3 — live updates (open-doc live refresh + the broken `doc.changed` client match
-fix, and live nav-tree refresh), built on the Phase 1 backend and Phase 2 explorer now in place.
+**Phase 3 (live updates) shipped.** Sub-tasks 3.1–3.2 are complete (task 026): the broken
+`doc.changed` client match is fixed at its single source (`web/static/docevents.js` reads
+**`ev.data.path`**, never `ev.path`), the content pane (`content.js`) auto-refreshes an open
+markdown doc (`data-revision++`) and reloads an open HTML iframe (`v=` nonce bump) on a matching
+`doc.changed`, and the nav tree (`tree.js`) re-lists + reconciles when a `doc.changed` carries an
+unseen path — expansion state survives the reconcile. A backend assertion in `rpc_ingest_test.go`
+pins `params.data.path` so the wire shape can't silently regress. Validated by an agent-browser
+liveness conformance harness on **both** the embed and dev builds (8/8 each;
+`docs/tasks/026-planning-dashboard-live-updates/artifacts/conformance.md`). AC-4 verdict: reuse
+`doc.changed` only (covers create+edit); deletions reconcile on the next re-list — no
+`doc.created`/`doc.removed` bus change for v1. The only Go change is the test assertion; the rest is
+`//go:embed`-ed `web/static/*`.
+
+**Next up:** Phase 4 polish (optional) — cross-doc search, breadcrumbs, recently-viewed, mermaid,
+dark mode — built only if daily use demands it.
 
 ## Goal
 
@@ -451,8 +464,8 @@ on the SPA with the dev build; (b) `/api/hello` (returns `{mode}`) doubles as th
 | 2.3 | Content pane + explorer as default view    | 1.2, 1.3, 2.2| done   |
 | 2.4 | Client debug surface (`window.__autoui`)   | —            | done   |
 | 2.5 | `/debug` page (events + errors + state)    | 2.4          | done   |
-| 3.1 | Open-doc live refresh in explorer          | 2.3, 1.4     |        |
-| 3.2 | Live nav-tree refresh                      | 2.2, 2.3, 1.4|        |
+| 3.1 | Open-doc live refresh in explorer          | 2.3, 1.4     | done   |
+| 3.2 | Live nav-tree refresh                      | 2.2, 2.3, 1.4| done   |
 | 4.x | Polish (search, breadcrumbs, mermaid, …)   | Phase 3      |        |
 
 ## Implementation order (sketch)
