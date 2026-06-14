@@ -31,9 +31,9 @@ and the surfaces it relies on (`window.__autoui`, `data-revision`, iframe `v=` n
 - [Context](./context.md)
 
 ## How to Test
-- [ ] `auto-ui/internal/server/rpc_ingest_test.go` — `go test ./...` asserts `params.data.path` (AC-1 backend half)
-- [ ] `docs/tasks/026-.../artifacts/conformance.md` — agent-browser e2e for AC-1 (client match), AC-2 (open-doc md/html refresh + non-match no-op), AC-3 (tree grows + expand preserved), AC-5 (full loop, embed + dev builds)
-- [ ] `feedback.md` — records the AC-4 deletion/create-signal verdict (decision record, no automated test)
+- [x] `auto-ui/internal/server/rpc_ingest_test.go` — `go test ./...` asserts `params.data.path` (AC-1 backend half)
+- [x] `docs/tasks/026-.../artifacts/conformance.md` — agent-browser e2e for AC-1 (client match), AC-2 (open-doc md/html refresh + non-match no-op), AC-3 (tree grows + expand preserved), AC-5 (full loop, embed + dev builds)
+- [x] `feedback.md` — records the AC-4 deletion/create-signal verdict (decision record, no automated test)
 
 ## Execution Sequence
 ```
@@ -144,7 +144,7 @@ expansion) now carry an explicit confirm-or-extract step rather than assuming th
 
 ### Phase 5: Conformance, docs, epic status, verdict (AC-1 e2e, AC-2, AC-3, AC-4, AC-5)
 > Depends on Phases 1–4.
-- [ ] Step 5.1: Write `docs/tasks/026-.../artifacts/conformance.md` (model on
+- [x] Step 5.1: Write `docs/tasks/026-.../artifacts/conformance.md` (model on
   `docs/tasks/025-.../artifacts/conformance.md`). Steps: launch isolated
   (`auto ui serve --port 0 --ready-file <tmp> --projects <fixture>`, `AUTO_UI_DEBUG=1`); build a
   fixture project with a `docs/` tree (≥1 markdown + ≥1 self-contained HTML planning doc, plus
@@ -186,31 +186,31 @@ fixture files.
   - *Verify:* run the conformance script end-to-end against a live `auto ui serve`; capture
     `eval`/`get attr`/screenshot evidence into the artifacts folder; every assertion passes on both
     builds.
-- [ ] Step 5.2: Record the **AC-4 verdict** in `feedback.md`: `doc.changed` covers the create case
+- [x] Step 5.2: Record the **AC-4 verdict** in `feedback.md`: `doc.changed` covers the create case
   (new doc's first write emits `doc.changed` for an unseen path → tree re-list); deletions reconcile
   on the next re-list/navigation; an explicit `doc.created`/`doc.removed` derivation is **not**
   warranted for v1.
   - *Verify:* `feedback.md` contains the verdict with the create-case reasoning.
-- [ ] Step 5.3: Update `auto-ui/CLAUDE.md` (liveness wiring + `params.data.path` gotcha +
+- [x] Step 5.3: Update `auto-ui/CLAUDE.md` (liveness wiring + `params.data.path` gotcha +
   `docevents.js`) and mark sub-tasks **3.1 / 3.2 = done** in
   `docs/epics/002-planning-docs-dashboard.md` (Status section + sub-task index table).
   - *Verify:* epic sub-task index rows 3.1/3.2 show `done`; CLAUDE.md documents the helper and gotcha.
-- [ ] Step 5.4: Commit: `feat(026): phase 5 - liveness conformance, docs, epic status`
+- [x] Step 5.4: Commit: `feat(026): phase 5 - liveness conformance, docs, epic status`
 
 ## Success Criteria
-- [ ] `cd auto-ui && go build ./... && go build -tags dev ./...` both succeed (new `.js` embeds cleanly).
-- [ ] `cd auto-ui && go test ./...` passes, including the extended `rpc_ingest_test.go` asserting
+- [x] `cd auto-ui && go build ./... && go build -tags dev ./...` both succeed (new `.js` embeds cleanly).
+- [x] `cd auto-ui && go test ./...` passes, including the extended `rpc_ingest_test.go` asserting
   `params.data.path` (AC-1 backend).
-- [ ] `node --check` passes for `docevents.js`, `content.js`, `tree.js`; no new import-map specifier added.
-- [ ] Conformance (agent-browser, **both** embed + dev builds) passes every assertion:
+- [x] `node --check` passes for `docevents.js`, `content.js`, `tree.js`; no new import-map specifier added.
+- [x] Conformance (agent-browser, **both** embed + dev builds) passes every assertion:
   - AC-1: the client reads `ev.data.path` and the match fires (via `window.__autoui` + `data-revision`).
   - AC-2: open **markdown** re-renders (`data-revision++`), open **HTML** reloads (iframe `v=` nonce
     changes), and a non-matching `doc.changed` causes **no** bump.
   - AC-3: an unseen-path `doc.changed` grows tree `data-doc-count` + adds the leaf with no reload, and
     a previously-expanded group stays expanded across the reconcile.
-- [ ] AC-4 verdict recorded in `feedback.md` (reuse `doc.changed`; no bus edit).
-- [ ] Epic sub-tasks 3.1 / 3.2 marked done; `auto-ui/CLAUDE.md` updated.
-- [ ] No new server route, no bus/derive change, no file watcher, no new runtime dependency.
+- [x] AC-4 verdict recorded in `feedback.md` (reuse `doc.changed`; no bus edit).
+- [x] Epic sub-tasks 3.1 / 3.2 marked done; `auto-ui/CLAUDE.md` updated.
+- [x] No new server route, no bus/derive change, no file watcher, no new runtime dependency.
 
 ## Open Questions
 - (none — requirements' two open questions are resolved: deletions reuse `doc.changed`; open-doc
