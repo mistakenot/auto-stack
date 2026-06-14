@@ -58,7 +58,7 @@ last (it validates the whole stack end-to-end).
 
 ### Phase 2: Open-doc live refresh in `content.js` (AC-2)
 > Depends on Phase 1.
-- [ ] Step 2.0: **Content-pane seam check (mirrors Step 3.2).** Confirm 025's `content.js` exposes a
+- [x] Step 2.0: **Content-pane seam check (mirrors Step 3.2).** Confirm 025's `content.js` exposes a
   single reusable refresh action covering **both** markdown re-fetch (`doc.get` + re-render) **and**
   the HTML iframe `v=<nonce>` bump — i.e. the callback the `data-testid` refresh button's onClick
   already invokes. If 025 inlines those paths inside the button's JSX handler (or splits md re-fetch
@@ -67,7 +67,7 @@ last (it validates the whole stack end-to-end).
   seam, then subscribe" if needed.
   - *Verify:* `content.js` has one callable refresh action invokable outside the button JSX; both the
     markdown re-fetch and the HTML nonce-bump route through it.
-- [ ] Step 2.1: In `content.js`, add a `useEffect` (keyed on `[project, path, worktree]`) that
+- [x] Step 2.1: In `content.js`, add a `useEffect` (keyed on `[project, path, worktree]`) that
   `on("doc.changed", ev => { if (!matchesDoc(ev, openRef.current)) return; refresh(); })` and returns
   the unsubscribe. Use the existing `openRef`-style current-value ref (mirror retired `doc.js:55-68`)
   so the handler sees current props. `refresh()` is the **existing** action 025's refresh button
@@ -99,10 +99,12 @@ broadened **Step 3.1** to flag `reloadDocList()`/`knownPaths` as 025 surfaces to
 expansion) now carry an explicit confirm-or-extract step rather than assuming the surface is frozen.
 -->
 
-- [ ] Step 2.2: `gofmt`/build sanity for the module (no Go change) — run `go build ./...` in
+- [x] Step 2.2: `gofmt`/build sanity for the module (no Go change) — run `go build ./...` in
   `auto-ui` to confirm embed still builds with the new `.js` (`//go:embed all:static` picks it up).
   - *Verify:* `cd auto-ui && go build ./...` succeeds; `go build -tags dev ./...` succeeds.
-- [ ] Step 2.3: Commit: `feat(026): phase 2 - open-doc live refresh in content pane`
+- [x] Step 2.3: Commit: `feat(026): phase 2 - open-doc live refresh in content pane`
+  - *Note (impl):* keyed on `[project, path, worktree, effType]` with an inline `target` object instead
+    of an `openRef` ref — the effect re-subscribes on target change so `refresh()` is never stale; no ref needed.
 
 ### Phase 3: Live nav-tree refresh in `tree.js` (AC-3)
 > Depends on Phase 1. Independent of Phase 2.
