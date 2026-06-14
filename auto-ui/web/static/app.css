@@ -290,6 +290,15 @@ body {
   background: var(--accent);
 }
 
+/* "show N more" toggle row (Tasks group beyond the default cap) */
+.row-more .more-label {
+  font-size: 0.66rem;
+  font-style: italic;
+  color: var(--rail-faint);
+  letter-spacing: 0.02em;
+}
+.row-more:hover .more-label { color: var(--accent-soft); }
+
 .tree-msg { color: var(--rail-faint); font-size: 0.74rem; padding: 0.6rem 0.7rem; }
 .tree-msg.err { color: var(--err); }
 
@@ -501,7 +510,9 @@ body {
   text-align: left;
 }
 .prose th { background: var(--paper-sunk); font-weight: 600; }
-.prose tr:nth-child(even) td { background: var(--paper-raised); }
+/* alternating row striping: bright (near-white paper) / dark (sunk paper) */
+.prose tbody tr:nth-child(odd) td { background: var(--paper-raised); }
+.prose tbody tr:nth-child(even) td { background: var(--paper-sunk); }
 
 .prose hr { border: 0; border-top: 1px solid var(--line-strong); margin: 2rem 0; }
 .prose img { max-width: 100%; border-radius: 8px; }

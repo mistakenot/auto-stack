@@ -17,6 +17,17 @@ import { call, on, onStatus, whenOpen, recordError } from "./rpc.js";
 import { parseDocChanged } from "./docevents.js";
 import { setUIState } from "./uistate.js";
 
+// How many Tasks entries the tree shows before the "show more" toggle.
+const TASKS_DEFAULT_LIMIT = 10;
+
+// taskId pulls the leading integer out of a "NNN-slug" task folder name (e.g.
+// "023-reflect-miner-queue" -> 23). Unnumbered names return -1 so they sink to
+// the bottom of the descending sort.
+function taskId(name) {
+  const m = name.match(/^(\d+)/);
+  return m ? parseInt(m[1], 10) : -1;
+}
+
 // Stable display order for the known top-level groups; unknown segments are
 // appended afterwards in discovery order.
 const GROUP_ORDER = [
@@ -94,7 +105,15 @@ function groupDocs(docs) {
 
   return names.map((name) => {
     const g = groups.get(name);
-    const subNames = [...g.subgroups.keys()].sort((a, b) => a.localeCompare(b));
+    // Tasks sort by biggest task id first (newest), unnumbered names last;
+    // every other group keeps a plain alphabetical order.
+    const subNames =
+      name === "Tasks"
+        ? [...g.subgroups.keys()].sort((a, b) => {
+            const d = taskId(b) - taskId(a);
+            return d !== 0 ? d : a.localeCompare(b);
+          })
+        : [...g.subgroups.keys()].sort((a, b) => a.localeCompare(b));
     return {
       name: g.name,
       subgroups: subNames.map((n) => g.subgroups.get(n)),
@@ -147,6 +166,50 @@ function Collapsible({ label, kind, depth, defaultOpen, children }) {
       </button>
       ${open && html`<ul>${children}</ul>`}
     </li>
+  `;
+}
+
+// GroupBody renders a group's subgroups (then its direct leaves). When `limit`
+// is set (the Tasks group), only the first `limit` subgroups show by default,
+// with a "show N more" toggle. The cap is overridden when the selected doc lives
+// in an otherwise-hidden subgroup, so a deep-link stays visible.
+function GroupBody({ group, selected, onSelect, subHasSelected, limit }) {
+  const [showAll, setShowAll] = useState(false);
+  const subs = group.subgroups;
+  const selIdx = subs.findIndex(subHasSelected);
+  const forceAll = limit > 0 && selIdx >= limit;
+  const capped = limit > 0 && !showAll && !forceAll ? subs.slice(0, limit) : subs;
+  const hidden = subs.length - capped.length;
+  return html`
+    ${capped.map(
+      (sg) => html`
+        <${Collapsible} key=${sg.name} label=${sg.name} kind="sub" depth=${1} defaultOpen=${subHasSelected(sg)}>
+          ${sg.leaves.map(
+            (leaf) => html`
+              <${Leaf} key=${leaf.path} leaf=${leaf} selected=${selected} onSelect=${onSelect} depth=${2} />
+            `
+          )}
+        <//>
+      `
+    )}
+    ${hidden > 0 &&
+    html`
+      <li>
+        <button
+          type="button"
+          class="row row-more"
+          style=${{ paddingLeft: 0.45 + 1 * 0.78 + "rem" }}
+          onClick=${() => setShowAll(true)}
+        >
+          <span class="more-label">show ${hidden} more…</span>
+        </button>
+      </li>
+    `}
+    ${group.leaves.map(
+      (leaf) => html`
+        <${Leaf} key=${leaf.path} leaf=${leaf} selected=${selected} onSelect=${onSelect} depth=${1} />
+      `
+    )}
   `;
 }
 
@@ -234,34 +297,13 @@ export function DocTree({ project, worktree, selected, onSelect }) {
           ${groups.map(
             (g) => html`
               <${Collapsible} key=${g.name} label=${g.name} kind="group" depth=${0} defaultOpen=${groupHasSelected(g)}>
-                ${g.subgroups.map(
-                  (sg) => html`
-                    <${Collapsible} key=${sg.name} label=${sg.name} kind="sub" depth=${1} defaultOpen=${subHasSelected(sg)}>
-                      ${sg.leaves.map(
-                        (leaf) => html`
-                          <${Leaf}
-                            key=${leaf.path}
-                            leaf=${leaf}
-                            selected=${selected}
-                            onSelect=${onSelect}
-                            depth=${2}
-                          />
-                        `
-                      )}
-                    <//>
-                  `
-                )}
-                ${g.leaves.map(
-                  (leaf) => html`
-                    <${Leaf}
-                      key=${leaf.path}
-                      leaf=${leaf}
-                      selected=${selected}
-                      onSelect=${onSelect}
-                      depth=${1}
-                    />
-                  `
-                )}
+                <${GroupBody}
+                  group=${g}
+                  selected=${selected}
+                  onSelect=${onSelect}
+                  subHasSelected=${subHasSelected}
+                  limit=${g.name === "Tasks" ? TASKS_DEFAULT_LIMIT : 0}
+                />
               <//>
             `
           )}
