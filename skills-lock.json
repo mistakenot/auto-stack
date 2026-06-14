@@ -51,6 +51,11 @@
       "sourceType": "github",
       "computedHash": "d757d5d7d7fd3637a656c63efee3763d88062bf312208cde654aeb0aea454dac"
     },
+    "frontend-design": {
+      "source": "anthropics/claude-code",
+      "sourceType": "github",
+      "computedHash": "e8118284a6365753790d44bb2758a6032b3af27fa84696428d9233f2be0f4e78"
+    },
     "generate-10-ideas": {
       "source": "mistakenot/skills",
       "sourceType": "github",
