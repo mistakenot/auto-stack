@@ -9,7 +9,8 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import { html } from "htm/preact";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { call, whenOpen, recordError } from "./rpc.js";
+import { call, on, whenOpen, recordError } from "./rpc.js";
+import { matchesDoc } from "./docevents.js";
 import { setUIState } from "./uistate.js";
 
 // resolveType derives the effective type: an explicit type wins, else fall back
@@ -98,6 +99,19 @@ export function DocContent({ project, path, type, worktree }) {
   // pane reflects the active doc even though there's no fetch.
   useEffect(() => {
     if (effType === "html" && path) bump();
+    // eslint-disable-next-line
+  }, [project, path, worktree, effType]);
+
+  // Live refresh (026): when a doc.changed matching THIS open doc arrives, apply
+  // immediately — markdown re-fetches + re-renders, html bumps the iframe nonce.
+  // Re-subscribes when the open target changes so refresh() never goes stale.
+  useEffect(() => {
+    const target = { project, path, worktree };
+    const off = on("doc.changed", (ev) => {
+      if (!matchesDoc(ev, target)) return;
+      refresh();
+    });
+    return off;
     // eslint-disable-next-line
   }, [project, path, worktree, effType]);
 
