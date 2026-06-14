@@ -13,17 +13,12 @@ import { Debug } from "./debug.js";
 // hash is normalized to #/explore on mount — see normalizeHash).
 function App() {
   const { view, params } = parseHash();
-  // #/explore is the default; #/debug is the read-only diagnostics page.
-  const body =
-    view === "debug"
-      ? html`<${Debug} />`
-      : html`<${Explorer} params=${params} />`;
-  // <main class="container"> is Pico's centered, padded page wrapper.
-  return html`
-    <main class="container">
-      ${body}
-    </main>
-  `;
+  // #/debug keeps Pico's centered container; the explorer owns the full viewport
+  // (it renders its own full-height app shell — see explorer.js / app.css).
+  if (view === "debug") {
+    return html`<main class="container"><${Debug} /></main>`;
+  }
+  return html`<${Explorer} params=${params} />`;
 }
 
 // normalizeHash redirects bare/legacy landings to #/explore so the URL reflects

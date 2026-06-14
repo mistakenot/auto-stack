@@ -30,32 +30,19 @@ export function ConnIndicator() {
     return off;
   }, []);
 
-  // Map the raw rpc.js status to a label + dot color.
+  // Map the raw rpc.js status to a human label (the dot color is CSS-driven off
+  // data-conn-status — see .conn in app.css).
   const label =
     status === "open"
       ? "connected"
       : status === "closed"
         ? "closed"
         : "reconnecting";
-  const color =
-    status === "open" ? "#2ecc40" : status === "closed" ? "#ff4136" : "#ff851b";
 
   return html`
-    <span
-      data-testid="conn-indicator"
-      data-conn-status=${status}
-      style=${{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}
-    >
-      <span
-        style=${{
-          display: "inline-block",
-          width: "0.6rem",
-          height: "0.6rem",
-          borderRadius: "50%",
-          background: color,
-        }}
-      ></span>
-      <small>${label}</small>
+    <span class="conn" data-testid="conn-indicator" data-conn-status=${status}>
+      <span class="conn-dot"></span>
+      <span>${label}</span>
     </span>
   `;
 }
@@ -125,84 +112,80 @@ export function Explorer({ params }) {
     setHash("explore", new URLSearchParams(next));
   };
 
-  const header = html`
-    <header
-      style=${{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: "1rem",
-        marginBottom: "0.75rem",
-      }}
-    >
-      <div style=${{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-        <strong>auto-ui</strong>
-        ${projects.length > 0 &&
-        html`
-          <select
-            data-testid="project-switcher"
-            value=${activeProject}
-            onChange=${(e) => onPickProject(e.target.value)}
-          >
-            ${projects.map(
-              (p) => html`
-                <option key=${p.id} value=${p.id} data-project=${p.id}>
-                  ${p.name}
-                </option>
-              `
-            )}
-          </select>
-        `}
+  // The topbar is constant across states (error / empty / populated) so the app
+  // shell never collapses — only the workbench body below it changes.
+  const topbar = html`
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <span class="brand-name">auto<span class="dot">·</span>docs</span>
+        <span class="brand-sub">planning explorer</span>
       </div>
+      <div class="topbar-spacer"></div>
+      ${projects.length > 0 &&
+      html`
+        <select
+          class="switcher"
+          data-testid="project-switcher"
+          value=${activeProject}
+          onChange=${(e) => onPickProject(e.target.value)}
+        >
+          ${projects.map(
+            (p) => html`
+              <option key=${p.id} value=${p.id} data-project=${p.id}>
+                ${p.name || p.id}
+              </option>
+            `
+          )}
+        </select>
+      `}
       <${ConnIndicator} />
     </header>
   `;
 
+  // shell wraps the topbar + a body region; body varies by state.
+  const shell = (body) => html`<div class="shell">${topbar}${body}</div>`;
+
   // Inline error (e.g. project.list failed) — not the empty-state.
   if (error) {
-    return html`
-      <section>
-        ${header}
-        <p style=${{ color: "red" }}>${error}</p>
-      </section>
-    `;
+    return shell(html`
+      <div class="workbench">
+        <article class="editor"><div class="pane-error">${error}</div></article>
+      </div>
+    `);
   }
 
   // Empty registry -> a friendly empty-state, NOT an error.
   if (loaded && projects.length === 0) {
-    return html`
-      <section>
-        ${header}
-        <p data-testid="no-projects">
-          <em>No projects registered. Add one to the project registry to get started.</em>
-        </p>
-      </section>
-    `;
+    return shell(html`
+      <div class="workbench">
+        <article class="editor">
+          <div class="placeholder" data-testid="no-projects">
+            <span class="ph-mark"></span>
+            <span class="ph-text">no projects registered</span>
+            <span class="ph-hint">add one to the project registry to get started</span>
+          </div>
+        </article>
+      </div>
+    `);
   }
 
   const type = deriveType(path);
 
-  return html`
-    <section>
-      ${header}
-      <div style=${{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
-        <div style=${{ flex: "0 0 18rem", minWidth: "14rem" }}>
-          <${DocTree}
-            project=${activeProject}
-            worktree=${worktree}
-            selected=${path}
-            onSelect=${(p) => onSelectDoc(p)}
-          />
-        </div>
-        <div style=${{ flex: "1 1 auto", minWidth: 0 }}>
-          <${DocContent}
-            project=${activeProject}
-            path=${path}
-            type=${type}
-            worktree=${worktree}
-          />
-        </div>
-      </div>
-    </section>
-  `;
+  return shell(html`
+    <div class="workbench">
+      <${DocTree}
+        project=${activeProject}
+        worktree=${worktree}
+        selected=${path}
+        onSelect=${(p) => onSelectDoc(p)}
+      />
+      <${DocContent}
+        project=${activeProject}
+        path=${path}
+        type=${type}
+        worktree=${worktree}
+      />
+    </div>
+  `);
 }

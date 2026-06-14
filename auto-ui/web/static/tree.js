@@ -103,48 +103,49 @@ function groupDocs(docs) {
   });
 }
 
-// Leaf renders one selectable doc node carrying the acceptance attributes.
-function Leaf({ leaf, selected, onSelect }) {
+// Leaf renders one selectable doc node carrying the acceptance attributes. The
+// row's left padding encodes its depth (group=1, subgroup=2 levels of indent).
+function Leaf({ leaf, selected, onSelect, depth }) {
   const isSel = leaf.path === selected;
   return html`
-    <li style=${{ marginBottom: "0.15rem" }}>
+    <li>
       <a
         href="#"
+        class=${"row leaf" + (isSel ? " active" : "")}
         data-testid="doc-node"
         data-doc-path=${leaf.path}
         data-doc-type=${leaf.type}
+        style=${{ paddingLeft: 0.45 + depth * 0.78 + "rem" }}
         onClick=${(e) => {
           e.preventDefault();
           onSelect(leaf.path, leaf.type);
         }}
-        style=${{ fontWeight: isSel ? "bold" : "normal" }}
       >
-        ${leaf.path.split("/").pop()}
+        <span class=${"ftype ftype-" + (leaf.type || "markdown")}></span>
+        <span class="label">${leaf.path.split("/").pop()}</span>
       </a>
     </li>
   `;
 }
 
 // Collapsible holds a label with open/closed state and renders children when
-// open. Default open; clicking the label toggles.
-function Collapsible({ label, children }) {
-  const [open, setOpen] = useState(true);
+// open. Folded by default; `defaultOpen` (set when the group holds the selected
+// doc) starts it expanded so a deep-linked file stays visible. Clicking toggles.
+// `kind` selects group vs subgroup styling; `depth` drives indentation.
+function Collapsible({ label, kind, depth, defaultOpen, children }) {
+  const [open, setOpen] = useState(!!defaultOpen);
   return html`
-    <li style=${{ marginBottom: "0.2rem" }}>
-      <a
-        href="#"
-        onClick=${(e) => {
-          e.preventDefault();
-          setOpen(!open);
-        }}
-        style=${{ fontWeight: "600" }}
+    <li>
+      <button
+        type="button"
+        class=${"row row-" + kind}
+        style=${{ paddingLeft: 0.45 + depth * 0.78 + "rem" }}
+        onClick=${() => setOpen(!open)}
       >
-        ${open ? "▾" : "▸"} ${label}
-      </a>
-      ${open &&
-      html`<ul style=${{ listStyle: "none", paddingLeft: "1rem", margin: "0.2rem 0" }}>
-        ${children}
-      </ul>`}
+        <span class=${"caret" + (open ? " open" : "")}>▸</span>
+        <span class="label">${label}</span>
+      </button>
+      ${open && html`<ul>${children}</ul>`}
     </li>
   `;
 }
@@ -214,46 +215,58 @@ export function DocTree({ project, worktree, selected, onSelect }) {
 
   const groups = groupDocs(docs);
 
+  // Folded-by-default, but keep the path to the open doc expanded so a deep-link
+  // (or a freshly selected file) stays visible on mount.
+  const subHasSelected = (sg) => sg.leaves.some((l) => l.path === selected);
+  const groupHasSelected = (g) =>
+    g.leaves.some((l) => l.path === selected) || g.subgroups.some(subHasSelected);
+
   return html`
-    <nav data-doc-count=${docs.length}>
-      ${error && html`<p style=${{ color: "red" }}><small>${error}</small></p>`}
-      ${docs.length === 0 &&
-      !error &&
-      html`<p><small>No docs found.</small></p>`}
-      <ul style=${{ listStyle: "none", padding: 0, margin: 0 }}>
-        ${groups.map(
-          (g) => html`
-            <${Collapsible} key=${g.name} label=${g.name}>
-              ${g.subgroups.map(
-                (sg) => html`
-                  <${Collapsible} key=${sg.name} label=${sg.name}>
-                    ${sg.leaves.map(
-                      (leaf) => html`
-                        <${Leaf}
-                          key=${leaf.path}
-                          leaf=${leaf}
-                          selected=${selected}
-                          onSelect=${onSelect}
-                        />
-                      `
-                    )}
-                  <//>
-                `
-              )}
-              ${g.leaves.map(
-                (leaf) => html`
-                  <${Leaf}
-                    key=${leaf.path}
-                    leaf=${leaf}
-                    selected=${selected}
-                    onSelect=${onSelect}
-                  />
-                `
-              )}
-            <//>
-          `
-        )}
-      </ul>
-    </nav>
+    <aside class="sidebar">
+      <div class="rail-head">
+        <span class="rail-title">Explorer</span>
+        <span class="rail-count">${docs.length}</span>
+      </div>
+      <nav class="tree" data-doc-count=${docs.length}>
+        ${error && html`<p class="tree-msg err">${error}</p>`}
+        ${docs.length === 0 && !error && html`<p class="tree-msg">No docs found.</p>`}
+        <ul>
+          ${groups.map(
+            (g) => html`
+              <${Collapsible} key=${g.name} label=${g.name} kind="group" depth=${0} defaultOpen=${groupHasSelected(g)}>
+                ${g.subgroups.map(
+                  (sg) => html`
+                    <${Collapsible} key=${sg.name} label=${sg.name} kind="sub" depth=${1} defaultOpen=${subHasSelected(sg)}>
+                      ${sg.leaves.map(
+                        (leaf) => html`
+                          <${Leaf}
+                            key=${leaf.path}
+                            leaf=${leaf}
+                            selected=${selected}
+                            onSelect=${onSelect}
+                            depth=${2}
+                          />
+                        `
+                      )}
+                    <//>
+                  `
+                )}
+                ${g.leaves.map(
+                  (leaf) => html`
+                    <${Leaf}
+                      key=${leaf.path}
+                      leaf=${leaf}
+                      selected=${selected}
+                      onSelect=${onSelect}
+                      depth=${1}
+                    />
+                  `
+                )}
+              <//>
+            `
+          )}
+        </ul>
+      </nav>
+    </aside>
   `;
 }

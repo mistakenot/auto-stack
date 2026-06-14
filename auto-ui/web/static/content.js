@@ -32,6 +32,26 @@ function rawURL(project, path, worktree, nonce) {
   return "/api/doc/raw?" + qs.toString();
 }
 
+// splitFrontmatter peels a leading YAML frontmatter block (--- … ---) off the
+// markdown so it isn't rendered as raw text. Returns { meta: [{k,v}], body }.
+// Best-effort flat `key: value` parse — nested YAML keys are shown by key only.
+function splitFrontmatter(md) {
+  if (!md.startsWith("---")) return { meta: [], body: md };
+  const close = md.indexOf("\n---", 3);
+  if (close === -1) return { meta: [], body: md };
+  const block = md.slice(3, close);
+  const rest = md.slice(close + 4).replace(/^\r?\n/, "");
+  const meta = [];
+  for (const line of block.split("\n")) {
+    const m = line.match(/^([A-Za-z0-9_.-]+):\s*(.*)$/);
+    if (!m) continue;
+    let v = m[2].trim().replace(/^["']|["']$/g, "");
+    if (v.length > 60) v = v.slice(0, 57) + "…";
+    meta.push({ k: m[1], v });
+  }
+  return { meta, body: rest };
+}
+
 export function DocContent({ project, path, type, worktree }) {
   const [markdown, setMarkdown] = useState("");
   const [error, setError] = useState(null);
@@ -115,54 +135,84 @@ export function DocContent({ project, path, type, worktree }) {
     // eslint-disable-next-line
   }, [project, path, worktree, effType]);
 
-  // sanitizeMarkdown wraps parse + sanitize in try/catch; failures are recorded
-  // and surfaced inline rather than crashing the pane.
-  const renderMarkdown = () => {
+  // sanitizeMarkdown peels frontmatter, then wraps parse + sanitize in try/catch;
+  // failures are recorded and surfaced inline rather than crashing the pane.
+  const renderMarkdown = (body) => {
     try {
-      return DOMPurify.sanitize(marked.parse(markdown));
+      return DOMPurify.sanitize(marked.parse(body));
     } catch (e) {
       recordError("markdown", e);
       return '<p style="color:red">Failed to render markdown.</p>';
     }
   };
 
-  // Empty path -> placeholder.
+  // Empty path -> placeholder (still carries the data-revision / -last-updated hooks).
   if (!path) {
     return html`
-      <article data-revision=${revision.current} data-last-updated=${lastUpdated}>
-        <p><em>Select a document.</em></p>
+      <article class="editor" data-revision=${revision.current} data-last-updated=${lastUpdated}>
+        <div class="canvas">
+          <div class="placeholder">
+            <span class="ph-mark"></span>
+            <span class="ph-text">no document open</span>
+            <span class="ph-hint">choose a doc from the explorer on the left</span>
+          </div>
+        </div>
       </article>
     `;
   }
 
   const url = rawURL(project, path, worktree, nonce);
+  const fileName = path.split("/").pop();
+  const dirPart = path.slice(0, path.length - fileName.length);
+  const fm = effType === "markdown" ? splitFrontmatter(markdown) : null;
+
+  // toolbar — breadcrumb path + filename on the left, actions on the right.
+  const toolbar = html`
+    <div class="toolbar">
+      <div class="crumb">
+        <span class="crumb-path">${dirPart}</span>
+        <span class="crumb-name">${fileName}</span>
+      </div>
+      <div class="toolbar-spacer"></div>
+      ${lastUpdated &&
+      html`<span class="stamp">rev ${revision.current} · ${lastUpdated.slice(11, 19)}</span>`}
+      ${effType === "html" &&
+      html`<a class="tbtn" target="_blank" rel="noopener" href=${url}>open ↗</a>`}
+      <button class="tbtn" data-testid="doc-refresh" onClick=${refresh}>↻ refresh</button>
+    </div>
+  `;
 
   return html`
-    <article data-revision=${revision.current} data-last-updated=${lastUpdated}>
-      <div style=${{ marginBottom: "0.5rem" }}>
-        <button data-testid="doc-refresh" onClick=${refresh}>Refresh</button>
-      </div>
-      ${error && html`<p style=${{ color: "red" }}>${error}</p>`}
+    <article class="editor" data-revision=${revision.current} data-last-updated=${lastUpdated}>
+      ${toolbar}
+      ${error && html`<div class="pane-error">${error}</div>`}
       ${effType === "html"
         ? html`
-            <div>
-              <p>
-                <a target="_blank" rel="noopener" href=${url}>open in new tab</a>
-              </p>
+            <div class="canvas is-html">
               <iframe
+                class="doc-iframe"
                 data-testid="doc-iframe"
                 src=${url}
                 onError=${() => recordError("iframe", "iframe load failed: " + path)}
-                style=${{ width: "100%", height: "75vh", border: "1px solid #ccc" }}
               ></iframe>
             </div>
           `
         : html`
-            ${loading && html`<p>Loading...</p>`}
-            ${!loading &&
-            html`<div
-              dangerouslySetInnerHTML=${{ __html: renderMarkdown() }}
-            />`}
+            <div class="canvas">
+              ${loading && html`<div class="loading">Loading…</div>`}
+              ${!loading &&
+              html`
+                ${fm.meta.length > 0 &&
+                html`<div class="frontmatter">
+                  <div class="fm-inner">
+                    ${fm.meta.map(
+                      (m) => html`<span class="fm-tag" key=${m.k}><b>${m.k}</b> ${m.v}</span>`
+                    )}
+                  </div>
+                </div>`}
+                <div class="prose" dangerouslySetInnerHTML=${{ __html: renderMarkdown(fm.body) }} />
+              `}
+            </div>
           `}
     </article>
   `;
