@@ -1,0 +1,1533 @@
+baseline:
+  recorded: 2026-06-15
+  summary: |
+    Senior engineer (10+ years), comfortable across backend/CLI tooling, data/ETL/analytics,
+    and frontend. A power user of AI coding agents for 1+ year who is actively BUILDING agent
+    infrastructure, not just using it. The auto-stack monorepo is his workbench: a suite of Go
+    tools that ETL coding-agent session histories into parquet, index them, and run a
+    reflect/playbook self-improvement loop.
+  domains:
+    - backend / CLI tooling
+    - data / ETL / analytics
+    - frontend / UI
+    - AI agents / LLM application design
+  languages:
+    - Go
+    - Python
+    - TypeScript / JavaScript
+  tools:
+    - Claude Code / coding agents
+    - DuckDB / SQLite / parquet
+    - git worktrees
+  ai_experience: |
+    1+ year, power-user level. Builds multi-agent orchestration harnesses, coordinator-subagent
+    workflows, and agent decision-intelligence tooling himself. Comfortable with prompt design,
+    skills, and agent evaluation.
+  frontier: |
+    Three active learning edges, all set to a LOW recording bar:
+    (1) multi-agent orchestration — workflow scripting, coordinator-subagent patterns,
+        fan-out/verify harnesses, worktree isolation;
+    (2) agent decision intelligence — mining sessions for patterns, orthogonal questioning,
+        requirement compilers, reflect/playbook loops;
+    (3) formal methods / eval rigor — model checking (Quint), hypothesis-driven experiments,
+        eval corpora, ground-truth design, scaling-law-style scoring.
+    Explicitly OUT of scope (already in toolkit, do not record): standard Go/CLI patterns,
+    basic git/PR/worktree mechanics, standard data modeling, conventional prompting.
+
+mining:
+  last_run: 2026-06-15T00:00:00Z
+  last_commit: 53ac267
+  ranges_mined:
+    - from_commit: aa506aa
+      to_commit: 53ac267
+      from_date: 2026-04-06
+      to_date: 2026-06-15
+      entries_added: 48
+      mined_at: 2026-06-15T00:00:00Z
+
+learnings:
+  - id: L001
+    title: "Bus events are invalidations, not state transfer"
+    date_discovered: 2026-06-11
+    date_recorded: 2026-06-15
+    category: architecture
+    commits: []
+    prs: [75]
+    related_learnings: [L003, L004]
+    problem: |
+      A real-time event bus broadcasts changes to many connected clients over a lossy,
+      at-most-once channel (clients disconnect, buffers fill, the UI may be down). If events
+      carry the new state, out-of-order arrival produces stale-data races and every payload
+      balloons.
+    solution: |
+      Make every event a pure invalidation that names WHAT changed but never carries the new
+      content. A `doc.changed` event says "this document changed"; the client must then call the
+      `doc.get` RPC to fetch current state. Events stay tiny, ordering races vanish (the re-fetch
+      always reads the latest), and reconnecting clients recover by re-fetching rather than
+      needing replay. The bus deliberately offers no durability, ordering, acks, or dedup — the
+      canonical record lives in ETL/SQLite; the live bus is "explicitly lossy."
+    evidence: |
+      auto-bus-spec.md: "Events are invalidations, not state transfer. A `doc.changed` event tells
+      the client 'this document changed' -- it does not carry the new content... This keeps events
+      small and avoids stale-data races when events arrive out of order."
+      "Replay | None. Clients that reconnect must re-fetch state via RPC."
+    takeaway: |
+      On a lossy push channel, separate the notification (small, fire-and-forget) from the state
+      read (pull, full-fidelity). Invalidation + pull beats state-in-event for ordering safety and
+      payload size, and lets you keep at-most-once delivery without a durability layer.
+
+  - id: L002
+    title: "Two-tier typing: strongly-typed envelope, opaque verbatim payload, thin normalized shim"
+    date_discovered: 2026-06-11
+    date_recorded: 2026-06-15
+    category: architecture
+    commits: []
+    prs: [75, 76]
+    related_learnings: [L005]
+    problem: |
+      A bus carries events from many heterogeneous producers (Claude, Codex, future agents), each
+      with its own complex, evolving per-tool schema. You want a stable contract every consumer
+      compiles against, but you cannot afford to model or version every producer's payload, and
+      you must not lose fidelity.
+    solution: |
+      Split typing into two tiers. The envelope (metadata + provenance) is a validated Go struct —
+      the compile-time contract every component shares. The data payload is "typed where authored,
+      opaque where carried": events the bus derives itself use typed structs, but ingested agent
+      bodies stay `json.RawMessage` and round-trip verbatim. For tool events the payload is itself
+      two-layer — a small set of NORMALIZED cross-tool fields (`tool`, `event`, `paths[]`) every
+      consumer codes against, plus a `raw` field preserving the agent's original `tool_input`
+      byte-for-byte.
+    evidence: |
+      auto-bus-spec.md: "Envelope: strongly typed... Data payload: typed where authored, opaque
+      where carried. Ingested agent hook bodies stay opaque (json.RawMessage)... they round-trip
+      verbatim because per-agent/per-tool schemas are complex and the bus is lossy."
+      "Normalized fields... present a single cross-tool interface... Raw field (raw,
+      json.RawMessage) preserves the agent's original tool_input verbatim."
+    takeaway: |
+      When integrating many evolving external schemas, freeze a typed envelope plus a thin
+      normalized projection for the fields you actually branch on, and carry everything else as an
+      opaque verbatim blob. You get a stable compile-time contract and zero fidelity loss without
+      versioning foreign schemas.
+
+  - id: L003
+    title: "Append-first durability: persist the canonical record before the lossy live signal"
+    date_discovered: 2026-06-11
+    date_recorded: 2026-06-15
+    category: architecture
+    commits: []
+    prs: [76]
+    related_learnings: [L001, L004, L005]
+    problem: |
+      A hook producer both (a) POSTs a live event to a UI (the component most likely to be down)
+      and (b) must durably capture the event. If you POST first, or capture from the UI, the exact
+      failure you're trying to fix — losing the record when the UI is down — recurs.
+    solution: |
+      In the producer, append the verbatim envelope to disk FIRST, then do the lossy/optional POST.
+      The append is a single `os.OpenFile(O_APPEND|O_CREATE|O_WRONLY)` + one `f.Write` of the
+      pre-marshaled line — never a buffered writer that could flush in chunks — relying on the
+      Linux guarantee that a single `write()` to a regular file holds the inode lock for the whole
+      call, so concurrent agents' ~1 MiB lines never interleave. All errors are swallowed and the
+      command still exits 0 so it can't disrupt the agent's critical path.
+    evidence: |
+      022-hook-event-log/solution.md: "durable capture is the primary job, so append first, then
+      postHookEvent (the POST is the lossy/optional live signal; capturing to disk before notifying
+      guarantees the canonical record even if the process is later killed)."
+      "a single write() to a regular file holds the inode lock for the whole call, so concurrent
+      agents' lines don't interleave even at the ~1 MiB payload bound."
+    takeaway: |
+      Order side effects by durability: persist the canonical record before emitting the optional
+      live signal, and locate the durable write at the most-available point in the pipeline (the
+      producer), not the most-likely-to-be-down consumer. Use one atomic append() per record, not
+      a buffered writer, to get interleave-safety for free.
+
+  - id: L004
+    title: "Position-based row IDs + byte-offset watermark give crash-safe, host-stable incremental ETL"
+    date_discovered: 2026-06-11
+    date_recorded: 2026-06-15
+    category: architecture
+    commits: []
+    prs: [76]
+    related_learnings: [L003, L005, L007]
+    problem: |
+      Incrementally ingesting an append-only log into parquet must (a) never re-process old bytes,
+      (b) never duplicate rows if the process crashes between writing parquet and saving progress,
+      and (c) stay idempotent even when the same immutable log is ingested by more than one host
+      into a shared dataset.
+    solution: |
+      Track a per-file BYTE-OFFSET watermark in sync-state JSON; on each run, seek past it and read
+      only new whole lines. Derive each row's `id` from its physical position —
+      `sha256(hostID \x00 file \x00 offset)` — and write with merge-by-ID (incoming wins) into
+      monthly partitions. Position-based IDs mean a crash that re-reads a window produces the SAME
+      IDs, so the merge dedups instead of duplicating — no scanning the existing dataset for
+      content-hash dedup (which would also wrongly drop legitimately identical events). The host in
+      the ID comes from the ENVELOPE's producer-stamped HostID, not the ingesting host, so a
+      (file, offset) line yields one stable ID regardless of which host ETLs it. Save the watermark
+      AFTER the parquet write so a crash re-reads rather than skips.
+    evidence: |
+      022-hook-event-log/solution.md: "a position-based row id (file+offset) then gives crash-safe
+      idempotency without content collisions... the row id and the host_id column both use the
+      envelope's HostID... so a given (file, offset) line yields the same id no matter which host
+      ingests it."
+    takeaway: |
+      For incremental log→table ETL, make row identity a deterministic function of immutable source
+      position (file+offset) and stamp provenance from the PRODUCER, not the processor. Pair with a
+      byte-offset watermark and merge-by-ID writes for crash idempotency and multi-host
+      re-ingestion safety without ever reading the existing dataset to dedup.
+
+  - id: L005
+    title: "Producer-authoritative provenance: resolve host-relative fields where the host context is correct"
+    date_discovered: 2026-06-11
+    date_recorded: 2026-06-15
+    category: architecture
+    commits: []
+    prs: [75, 76]
+    related_learnings: [L002, L004]
+    problem: |
+      In a multi-host pipeline, some fields can be derived later at processing time and some cannot.
+      If the ETL host re-derives a field like the working directory or the project (resolved against
+      a local registry), it reads ITS OWN cwd/registry — which can differ from the producer's,
+      yielding a wrong or empty value.
+    solution: |
+      Draw the line by WHO can resolve a field correctly. The envelope stores only what the raw
+      payload can't reliably supply at ETL time AND that only the producer's host context can
+      resolve: agent, timestamp, host id, cwd (producer's `os.Getwd()`), and project (resolved
+      against the producer's local `~/.auto/projects.json`). Fields derivable purely from the
+      verbatim payload — event name, session id, tool, paths — are left for ETL to re-extract via
+      SHARED extractor functions so producer and consumer can't drift. A review caught that
+      `project` has the IDENTICAL multi-host hazard as `cwd` and must also be producer-resolved. The
+      same rule drives the bus requirement that `remote` be credential-stripped by the producer
+      before it enters the envelope, since the bus broadcasts every event.
+    evidence: |
+      022-hook-event-log/solution.md: "Both are producer-authoritative because raw data 'can be from
+      multiple hosts'... re-resolving either at ETL time risks a wrong/empty value... project has the
+      identical multi-host hazard as cwd."
+    takeaway: |
+      Partition derived fields by RESOLUTION AUTHORITY: capture host-relative or registry-relative
+      values at the producer (single authoritative resolver) and defer only payload-internal fields
+      to the consumer, behind one shared extractor so they can't drift. The test for "store vs.
+      re-derive" is whether the processing host has the context to compute the field correctly.
+
+  - id: L006
+    title: "Observe→Consolidate: a middle memory tier where the LLM extracts and deterministic code promotes"
+    date_discovered: 2026-06-10
+    date_recorded: 2026-06-15
+    category: ai-prompting
+    commits: []
+    prs: [68]
+    related_learnings: [L007, L046]
+    problem: |
+      Mining agent sessions directly into playbook rules fails two ways: a single anecdote locks in
+      the wrong abstraction level (over-specific or over-general), and every re-run of the miner
+      regenerates near-duplicate rules. Good generalization needs multiple examples that one-shot
+      rule creation can't see.
+    solution: |
+      Insert a working-memory tier between raw logs and rules, splitting capture from generalization
+      into two steps with different owners and bars. Step 1 (Observe): agents append situated,
+      evidence-linked OBSERVATIONS — low bar, no generalization, deduped by session+subject so
+      re-mining is idempotent. Step 2 (Consolidate): a later pass clusters observations and drafts a
+      rule only when a cluster crosses an evidence threshold (≥2-3 distinct sessions), carrying
+      observation IDs as provenance. The invariant: "LLM extracts, deterministic logic promotes" —
+      the model proposes reviewable deltas (create/merge/deprecate/attach-evidence); deterministic
+      CLI gates (thresholds, dedupe, conflict checks) decide what persists. Never a silent write.
+    evidence: |
+      epics/001-reflect-playbook-loop.md: "Capture is cheap; generalization is hard... a
+      consolidator looking at 3 observations with shared context picks the right altitude."
+      "LLM extracts, deterministic logic promotes... Consolidation output is a reviewable delta...
+      never a silent playbook write."
+    takeaway: |
+      Don't let an LLM write directly to durable procedural memory. Stage a cheap append-only
+      observation tier, then gate generalization on a deterministic evidence threshold computed
+      across multiple observations. Let the model propose deltas and let deterministic code decide
+      persistence — this fixes both wrong-altitude abstraction and re-run duplicate explosion.
+
+  - id: L007
+    title: "Event-sourced playbook: a committed snapshot folded from a worktree-sharded append-only log"
+    date_discovered: 2026-06-09
+    date_recorded: 2026-06-15
+    category: architecture
+    commits: []
+    prs: [64]
+    related_learnings: [L004, L006, L009]
+    problem: |
+      A self-improving agent playbook needs a human-reviewable, git-committed rule file AND a
+      high-traffic stream of loop telemetry (retrieve/select/feedback). Naively committing both
+      means every loop invocation rewrites the committed file (churn), and parallel same-host
+      worktrees appending to one log collide on the file tail at git merge.
+    solution: |
+      Make the JSONL event log canonical and `playbook.json` a deterministic FOLD of it. Two moves
+      make it work in git: (1) Shard the log by host+day+WORKTREE
+      (`<host>-<date>-<wt8>.jsonl`, wt8 = `sha256(worktree root)[:8]`) so parallel checkouts write
+      DIFFERENT paths and merges are always a union — host+day alone is insufficient because
+      same-host same-day worktrees still collide. (2) Compute snapshot staleness ONLY over
+      rule-affecting events: `folded_through` records the last RULE seq per shard, so high-volume
+      retrieve/select/feedback appends never dirty the committed snapshot. Folds apply in
+      deterministic total order `(ts, shard, seq)` with last-writer-wins; the losing edit stays in
+      the log and `rebuild` surfaces conflicts to stderr.
+    evidence: |
+      019-playbook-retrieval-loop/solution.md: "shard key changed to host+day+worktree...
+      distinct across parallel checkouts, so merge-back never collides on a path."
+      "folded_through now records the seq of the last rule_created/rule_edited event per shard...
+      Non-rule events never trigger a refold or snapshot rewrite."
+    takeaway: |
+      To event-source state that must live in git: shard the log by the unit of concurrency (the
+      worktree, not just host+day) so appends never share a path, and scope snapshot-staleness to
+      only the event types that change the projection so chatty side-channel events don't churn the
+      committed file. Conflict-free merge semantics fall out of the partition, not the diff tool.
+
+  - id: L008
+    title: "Pick the multi-agent topology from task epistemics, not task size"
+    date_discovered: 2026-06-09
+    date_recorded: 2026-06-15
+    category: workflow
+    commits: []
+    prs: []
+    related_learnings: [L010, L043, L044]
+    problem: |
+      When an agent decomposes a large task into a multi-agent harness, how should it pick the
+      control-flow shape — linear phases vs fan-out/verify/synthesize? Intuition says "bigger task
+      → more parallelism," which mis-predicts the right structure.
+    solution: |
+      Choose topology by what is KNOWN vs UNCERTAIN, not by size. "I know the steps, parallelize
+      them" → linear phase pipeline. "Answers are uncertain and must be filtered" → fan-out →
+      adversarial verify → synthesize. Keep all deterministic work (dedup, ranking, budget
+      accounting, vote-counting) in plain code; invoke subagents only for irreducibly model-shaped
+      work (decompose, search, extract, refute, synthesize). Enum schemas are the contract that lets
+      judgment (agent) and logic (script) divide cleanly: because subagents are forced into enums,
+      the orchestrator ranks with deterministic code instead of asking a model to "pick the best."
+    evidence: |
+      claude-workflow-scripting.md: "Claude picks its control-flow topology from the task's
+      epistemics, not its size." / "Task shape, not task size, decides the harness." / "Don't spend
+      a subagent on what a sort can do." Observed fan-out spanned 11→105 subagents "set entirely by
+      task shape rather than nominal difficulty."
+    takeaway: |
+      Design agent harnesses around uncertainty, not volume. Linear when you know the steps;
+      fan-out-verify-synthesize when answers must be filtered. Push every sort/dedup/count into code
+      and reserve model calls for genuinely judgment-bearing steps, using enum schemas as the
+      agent/code interface.
+
+  - id: L009
+    title: "Concurrent subagents sharing one worktree leak writes into the MAIN worktree"
+    date_discovered: 2026-06-09
+    date_recorded: 2026-06-15
+    category: workflow
+    commits: []
+    prs: [59, 60, 64, 75]
+    related_learnings: [L007, L010]
+    problem: |
+      When a coordinator fans out many subagents to edit the same git worktree at once, roughly half
+      their file writes "vanish" from the task worktree — and reappear as uncommitted changes in a
+      DIFFERENT (main) worktree. New files in new directories are worst affected. Each agent reports
+      success, the build looks plausible, and the loss is only discovered when someone notices
+      untracked changes on main.
+    solution: |
+      Dispatch phases SERIALLY when subagents share a worktree, and verify each agent's files
+      actually landed on disk (and that the main worktree is clean via `git -C <main> status`)
+      before dispatching the next. If you need parallelism, give each subagent its own
+      `isolation: worktree` — but note those branch from origin/main and won't see uncommitted
+      foundation (e.g. a new go.work). Serial dispatch turns the catastrophic half-lost mess into
+      recoverable one-off leaks.
+    evidence: |
+      017 feedback: "dispatched 14 subagents editing one shared worktree at once; ~half their writes
+      'vanished'... found as uncommitted changes in the main worktree... redo the 7 affected tools
+      serially, verifying each agent's files landed on disk before the next."
+      019 feedback: "zero leaks into the main worktree across 4 phases, unlike 017/018."
+    takeaway: |
+      Never fan out concurrent subagents that write to one shared worktree. Go serial and verify
+      files-on-disk + main-worktree-clean after every phase, or give each agent a true isolated
+      worktree. "Agent reported success" never equals "files on disk."
+
+  - id: L010
+    title: "Never trust a worker's exit signal — ground truth is the filesystem and its notes file"
+    date_discovered: 2026-06-09
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: [59]
+    related_learnings: [L009, L044, L043]
+    problem: |
+      A dispatched sub-agent's final chat reply is an unreliable completion signal. Sub-agents
+      fail-AFTER-succeeding (write all deliverables, then error on the final report), hallucinate
+      that work is done, or truncate caveats. Blindly re-dispatching a dead agent re-fails; trusting
+      a "already done" claim ships untouched files.
+    solution: |
+      Treat the chat reply as a hint, never proof. A subagent's output is checkpointed in the
+      WORKTREE FILES, not the session — when an agent dies, inspect the worktree and have the
+      coordinator finish from there (build/test/commit) rather than restarting. Require every worker
+      to emit two artifacts: a machine file (`*_results.json`) and a human narrative (`*_notes.md`),
+      and verify completion by reading them. Make "die and resume" the default execution mode
+      (SQLite/JSONL checkpoint per unit of work). Always re-verify any "done"/"build passed" claim
+      with your own grep.
+    evidence: |
+      010 feedback: "Two transient API 500s killed the Phase 3 subagent... Retrying the subagent
+      failed again. The coordinator finished it directly... subagent output is checkpointed in the
+      worktree files, not the agent session."
+      experiment PATTERNS.md: "A worker returned 'API Error: Overloaded' but had written every
+      deliverable before failing... always check the filesystem before believing a worker's exit
+      signal."
+    takeaway: |
+      In any orchestrator/worker system, ground completion on durable artifacts (a results file + a
+      notes file) and independent verification, never on the worker's self-report. Design every
+      worker to be idempotently resumable so a mid-run failure is finished from its on-disk
+      checkpoint, not re-run from scratch.
+
+  - id: L011
+    title: "Front-load design review to the solution/plan stage — design bugs survive the test suite"
+    date_discovered: 2026-06-09
+    date_recorded: 2026-06-15
+    category: workflow
+    commits: []
+    prs: [44, 64]
+    related_learnings: [L007, L027]
+    problem: |
+      The hardest correctness bugs in these agent-built tasks were design-level, not coding-level: a
+      sharding key that collides on git-merge, a fold-conflict semantics flaw, a SQL aggregation
+      that collapses into one self-join, multi-field edits that must be a single event. These pass
+      tests while being wrong, and fixing them after code is written means re-architecting a phase
+      mid-flight.
+    solution: |
+      Run a rigorous review at the SOLUTION/PLAN stage (before any code). Embedded RESOLVED comments
+      in the planning docs are more authoritative than the prose steps — Codex/Claude pre-review
+      repeatedly caught wiring hazards and design flaws IN THE PLAN, so the phase breakdown stayed
+      stable and no phase had to be re-architected.
+    evidence: |
+      019 feedback: "Six P1–P3 design issues (sharding key, seq allocation, snapshot staleness, gate
+      scope, fold conflicts...) were all caught and resolved... before any code was written."
+      011 feedback: "the embedded RESOLVED comments in plan.md were the authoritative corrections,
+      more trustworthy than the prose steps."
+    takeaway: |
+      Front-load design review to the solution/plan stage in an agentic pipeline. Design-level bugs
+      survive the test suite; catching them before code keeps the phase DAG stable and is far
+      cheaper than mid-flight re-architecture. Treat RESOLVED planning-doc comments as authoritative
+      over prose.
+
+  - id: L012
+    title: "Agent-authored plans hallucinate CLI surfaces — verify subcommands and flags with --help first"
+    date_discovered: 2026-06-09
+    date_recorded: 2026-06-15
+    category: ai-prompting
+    commits: []
+    prs: [57, 58, 64]
+    related_learnings: [L010, L011]
+    problem: |
+      Planning docs repeatedly referenced CLI surfaces that don't exist: `autoetl transform` (the
+      real command is `autoetl run --only sessions`), and an `init --project` flag on auto-reflect
+      that was never implemented. Subagents either failed e2e/rollout steps or had to adapt
+      mid-execution. The plan prose was written against an ASSUMED surface, not the real binary.
+    solution: |
+      Confirm every subcommand and flag with `--help` BEFORE it lands in a plan or rollout script.
+      Capture the verified CLI surface in context.md's gotchas section — task 016 explicitly
+      credited "no autoetl transform subcommand" in context.md with preventing the mistake from
+      recurring.
+    evidence: |
+      015 feedback: "autoetl transform doesn't exist... the real subcommand is autoetl run --full
+      --only sessions... confirm subcommands with --help before scripting them."
+      019 feedback: "Plan referenced a nonexistent init --project flag... Verify CLI surfaces with
+      --help before writing them into a plan (Task 015 lesson, also recurred)."
+    takeaway: |
+      An agent-authored plan will confidently invent commands and flags. Verify the real CLI surface
+      with --help before it lands in a plan, and record the verified surface in context so the
+      hallucination doesn't recur across tasks.
+
+  - id: L013
+    title: "Run the FULL lint gate every phase — first-failure-abort hides repo-wide debt"
+    date_discovered: 2026-06-09
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: [44, 59, 64]
+    related_learnings: [L014]
+    problem: |
+      Per-phase verify gates that only run gofmt/go vet/go test let real golangci-lint findings
+      (rangeValCopy, hugeParam, modernize, ineffassign) silently accumulate across phases of
+      committed code, dumping cleanup on the final phase. Worse, `make lint` stops at the FIRST
+      failing sub-project, so a single gofmt-debt project masks dozens of downstream issues across
+      the monorepo — a green `fmt-check` is not a green `check`. This lesson was recorded in
+      context.md and recurred anyway because plans omitted `make check` from verify steps.
+    solution: |
+      Put a module-level `golangci-lint run` (or full `make check`) in EVERY phase's verify step,
+      not just the final one. When CI is red, confirm which step fails and remember the per-project
+      loop hides later debt — fixing the first failing project can expose a much larger backlog
+      underneath.
+    evidence: |
+      010 feedback: "make lint stops at the first failing project. CI had been red for many commits
+      on gofmt debt, which masked everything downstream... a green fmt-check is not a green check."
+      019 feedback: "27 golangci-lint findings accumulate... This is the exact 017/018 lesson already
+      recorded in context.md... it recurred anyway."
+    takeaway: |
+      Bake the real lint gate into every phase of an agent-built task. Cheap fmt/vet/test gates give
+      false confidence, and any tool that aborts on the first failing module will hide repo-wide
+      debt until you fix the blocker.
+
+  - id: L014
+    title: "golangci-lint shared cache pollutes across sibling worktrees — clean the cache, don't bypass"
+    date_discovered: 2026-06-09
+    date_recorded: 2026-06-15
+    category: tooling
+    commits: []
+    prs: [59, 60]
+    related_learnings: [L013]
+    problem: |
+      In a multi-worktree workflow, `make check` reports phantom lint findings whose file paths point
+      at a SIBLING worktree that may no longer exist (e.g. `../017-unify-binaries-into-auto/...`).
+      The branch under test is clean; the failures are stale entries in the shared golangci-lint
+      cache, recurring whenever a sibling worktree is removed mid-stream.
+    solution: |
+      Diagnose by the file path: if a lint finding points at a removed or sibling worktree, it's
+      cache pollution, not your code. Run `golangci-lint cache clean` to clear it — do NOT reach for
+      `--no-verify` to bypass the hook (that's guard-blocked and hides real failures).
+    evidence: |
+      018 feedback: "golangci-lint cross-worktree cache pollution (again)... pointing at
+      ../017-unify-binaries-into-auto/… — a worktree that no longer exists. golangci-lint cache clean
+      cleared them... The tell is the file path."
+    takeaway: |
+      When parallel worktrees share a lint/build cache, expect phantom findings pinned to deleted
+      sibling paths. Diagnose by the path, clear the cache, never bypass the gate.
+
+  - id: L015
+    title: "Browser/runtime/network defects are invisible to a green Go build — trust the conformance run"
+    date_discovered: 2026-06-08
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: [56, 75]
+    related_learnings: [L027]
+    problem: |
+      For a no-build browser frontend, every defect lived OUTSIDE the Go toolchain and the build was
+      green the whole time: a blank page from a missing transitive bare specifier in the esm.sh
+      import map, stale assets from a missing `Cache-Control: no-store`, a go-run child outliving its
+      parent and holding the port. Relatedly, e2e CLI tests using `CombinedOutput` mixed new stderr
+      diagnostics into JSON stdout (invisible to unit tests that use separate buffers), and a
+      security review caught XSS/DNS-rebinding no functional test exercised.
+    solution: |
+      For browser frontends, treat the agent-browser CONFORMANCE run (not the Go test suite) as the
+      real test of rendering/routing/fetch; the server-vs-browser split (curl works, browser
+      doesn't) is the key diagnostic. For CLIs, capture stdout/stderr SEPARATELY in e2e tests and
+      re-check capture whenever you add stderr diagnostics. Add a dedicated security review for any
+      network-facing surface.
+    evidence: |
+      013 feedback: "every defect in this task was invisible to the Go toolchain — they lived in the
+      browser/runtime layer... The build was green the whole time. Trust the conformance run over the
+      test suite for the frontend."
+      021 feedback: "Security review caught XSS via unsanitized marked.parse output,
+      DNS-rebinding/CSRF on the /api/rpc endpoint."
+    takeaway: |
+      A green Go build proves nothing about the browser/runtime/network layer. Drive a real browser
+      conformance run for frontends, separate stdout/stderr in e2e CLI tests, and add an explicit
+      security review for any network-facing endpoint.
+
+  - id: L016
+    title: "EFC — grade agent traces on feedback quality (product of 4 bounded factors), not on spend"
+    date_discovered: 2026-06-08
+    date_recorded: 2026-06-15
+    category: ai-prompting
+    commits: []
+    prs: []
+    related_learnings: [L017, L018, L019]
+    problem: |
+      To know if a coding harness is getting better or worse, you need to grade an execution trace.
+      Token count, wall time, and tool-call count barely correlate with success, so optimizing
+      against spend is meaningless.
+    solution: |
+      Score each feedback event with Effective Feedback Compute: EFC = κ · I · V · R · M (κ=10),
+      where I=informativeness, V=validity (a deterministic checker fired), R=non-redundant
+      relevance, M=memory retention. The PRODUCT form makes it a bottleneck — feedback that is
+      invalid OR redundant OR forgotten scores ≈0. Normalize by task demand
+      D = L · H_tool · S_state · (1+N_obs) · (1−V_oracle) so scores compare across difficulties (the
+      (1−V_oracle) term means well-tested tasks need less feedback). Keep two layers distinct:
+      per-turn score, and an aggregate trace grade validated ONCE against an independent success
+      signal (PR merged, tests green) — never against itself. A no-training variant uses deterministic
+      gate lookup tables over execution status plus a retry penalty 1/(1+0.35·A).
+    evidence: |
+      efc-scaling-laws.md: "Raw tokens / tool calls explain little: R² = 0.33 / 0.42... EFC-based
+      coordinates reach R² = 0.94; demand-normalized Oracle-EFC/D_task reaches 0.99."
+      "Matched-budget intervention: holding token/tool/wall/cost identical, improving only feedback
+      quality raised success from 0.27 → 0.90."
+    takeaway: |
+      Grade agents on feedback conversion, not compute spent. The product-of-bounded-factors form
+      bakes in the bottleneck intuition (one zero factor kills the event). Normalize by task demand
+      or you punish agents for hard tasks. Validate the aggregate grade exactly once against an
+      external success label, then optimize against it.
+
+  - id: L017
+    title: "Two-curve progress/thrash diagnosis over normalized command signatures"
+    date_discovered: 2026-06-08
+    date_recorded: 2026-06-15
+    category: debugging
+    commits: []
+    prs: []
+    related_learnings: [L016]
+    problem: |
+      Raw edit-count heat maps ("this file was edited 5 times") conflate two opposite situations: an
+      agent climbing toward a fix vs. an agent stuck thrashing. You need a per-session, streamable
+      signal that distinguishes them and can interrupt a stuck agent live.
+    solution: |
+      Normalize each event to a command signature `sig = (verb_class, normalized_target)` via a
+      ladder (exact hash → strip volatile args → verb-class bucket → target path → embedding
+      cluster). Group by signature, order by index, read the sequence of status-quality Q. Build TWO
+      curves (never one monotone score): Progress P(t) = cumulative resolved-subgoal mass; Thrash
+      E(t) = cumulative redundant-retry mass. The RELATIONSHIP is the marker — P rises/E flat =
+      healthy; P flat/E rises = thrash alert; P rises-then-falls/E rises = regression spiral. A
+      LEADING indicator: signature-novelty rate falling toward 0 while P stays flat predicts thrash
+      BEFORE E blows up, computable streaming. Pitfalls: Reads get no Q (score only by retention);
+      nonzero exit ≠ failure for some verbs (grep exit 1 = no match).
+    evidence: |
+      efc-scaling-laws.md: "5 edits that climb the severity ladder... are good feedback
+      (G_t = 1.35 on the pass transition), while 5 edits stuck at the same failure are thrash
+      (G_t^nr = 0.16). Edit-count alone conflates these."
+      "Falling novelty + flat P predicts thrash before E blows up... the signal auto-watch could
+      compute streaming to interrupt a stuck agent live."
+    takeaway: |
+      To detect stuck agents, never trust a single monotone counter — track progress and thrash as
+      two separate curves keyed on normalized command signatures, and read the trend of outcome
+      severity within each signature group. Falling signature-novelty with flat progress is a leading
+      thrash indicator you can act on mid-session.
+
+  - id: L018
+    title: "Weak-supervision labeling functions manufacture a session-success label — with mandatory independence"
+    date_discovered: 2026-06-08
+    date_recorded: 2026-06-15
+    category: ai-prompting
+    commits: []
+    prs: []
+    related_learnings: [L016, L019, L028]
+    problem: |
+      Real agent sessions have no success/failure label, so any trace-quality metric is descriptive,
+      not predictive. PR-merge is coarse and lagged, tests-green is missing on many sessions, "user
+      said thanks" is noisy — no single signal works.
+    solution: |
+      Don't look for one signal. Write many cheap, independently-wrong labeling functions (LFs) each
+      emitting {success, fail, abstain} + confidence, then combine into a soft label s∈[0,1].
+      Candidate LFs: LF_test (last test exited 0), LF_pr (branch → merged PR), LF_revert (later
+      session reverts these edits), LF_sentiment, LF_no_reprompt, LF_clean_exit. Three rules: (1)
+      Independence is MANDATORY — the validation label must use signals OUTSIDE the feedback
+      structure the metric scores, or R² is circular; (2) graded not binary (s = resolved_subgoal_mass
+      / total); (3) a small (~50–100) hand-labeled calibration set to estimate each LF's precision
+      and learn weights. Define success at the EPISODE level (sessions sharing branch+workspace), not
+      per-session. Use SWE-bench (all-or-nothing FAIL_TO_PASS + PASS_TO_PASS) as the gold one-time
+      anchor.
+    evidence: |
+      efc-scaling-laws.md: "Independence from EFC is mandatory... if we validate EFC against a label
+      derived from the same severity-trend EFC scores, the R² is circular and meaningless."
+      "resolved iff every FAIL_TO_PASS test passes AND every PASS_TO_PASS test passes — all-or-nothing."
+    takeaway: |
+      When you lack ground-truth labels, manufacture a soft label from a panel of cheap,
+      independently-wrong labeling functions rather than chasing one perfect signal. The load-bearing
+      constraint: the validation label must draw on signals orthogonal to whatever metric you're
+      validating, or you measure nothing.
+
+  - id: L019
+    title: "Three-tier labeling hierarchy and the confident-but-wrong trap"
+    date_discovered: 2026-06-08
+    date_recorded: 2026-06-15
+    category: ai-prompting
+    commits: []
+    prs: []
+    related_learnings: [L016, L018]
+    problem: |
+      You need a classifier that scores tool outputs into an ordinal outcome quality, generalizing
+      across languages/ecosystems. Hand-coded verb/regex gates rot when a new ecosystem appears.
+      Human labeling is the gold standard but doesn't scale.
+    solution: |
+      Three tiers, each calibrating the one below: Tier 1 = exit codes as distant supervision
+      (millions, free, noisy); Tier 2 = Haiku LLM-as-judge (thousands, cheap, biased — labels the
+      no-exit-code/ambiguous slice); Tier 3 = human (hundreds, ground truth). Get "uncertain" out of
+      the LLM via self-consistency variance (score 3–5× at temperature) and disagreement
+      triangulation (exit-code vs Haiku); routing score = variance × disagreement. THE TRAP: do not
+      send the human ONLY uncertain cases — the dangerous failure mode is confident-but-wrong. Split
+      the human budget ~70% disagreement/uncertain (active learning) + ~30% reserved random/confident
+      (unbiased eval). The random slice is non-negotiable. Model output as ~5 anchored ordinal bands,
+      not a 0–9 scale. Prove portability with leave-one-ECOSYSTEM-out, not random split. Distill to a
+      pure-Go lexical classifier for runtime; Haiku is build-time only.
+    evidence: |
+      efc-scaling-laws.md: "Do not send the human only the uncertain cases. The dangerous LLM failure
+      mode is confident-but-wrong... If the human never sees Haiku's confident outputs, those blind
+      spots go uncaught and the measured accuracy is inflated."
+      "The honest test is leave-one-ecosystem-out... hold out ecosystems, not natural languages."
+    takeaway: |
+      Active learning routes uncertain cases to humans, but uncertainty sampling alone inflates
+      accuracy because it never audits confident-but-wrong predictions. Always reserve a
+      random/confident slice (~30%) of the human budget for unbiased eval. For cross-domain
+      robustness, leave-one-ecosystem-out beats random-split.
+
+  - id: L020
+    title: "Positional Insert signatures + dual schema-version bumps are the error-prone seam of ETL changes"
+    date_discovered: 2026-06-08
+    date_recorded: 2026-06-15
+    category: architecture
+    commits: []
+    prs: [49, 57, 58]
+    related_learnings: [L021]
+    problem: |
+      Adding a field end-to-end through the auto-etl/auto-search pipeline repeatedly snagged on two
+      things: (1) positional `InsertMessage`/`InsertSession` signatures where column count,
+      placeholder count, and arg count must all match — the compiler does NOT catch order drift, and
+      adding a positional param breaks call sites silently; (2) the new column only reaches an
+      existing index after bumping BOTH schema versions (etl `model.SchemaVersion` AND search
+      `indexdb.SchemaVersion`), forcing a full rebuild. Static checked-in parquet fixtures predate
+      new columns and fail round-trip tests with empty values, not schema errors.
+    solution: |
+      Follow the established "add-a-field-end-to-end" precedent commit verbatim (parquet row → DDL →
+      InsertX → indexer → query row → CLI). Explicitly count and STATE the column/placeholder/arg
+      numbers in the plan (e.g. 38/38/38). Grep for all (usually 2) Insert call sites before changing
+      the signature. Bump both schema versions, and regenerate static parquet fixtures.
+    evidence: |
+      016 feedback: "The positional InsertMessage/InsertSession plumbing is the most error-prone
+      part -- column count, placeholder count, and arg count must all match, and the compiler doesn't
+      catch order drift. Explicitly counting and stating the numbers (38/38/38, 26/26/26) in the plan
+      was valuable."
+    takeaway: |
+      For pipelines with positional row inserts and versioned indexes, pin an exemplar commit, state
+      the column/arg counts explicitly in the plan, grep all call sites before signature changes,
+      bump every schema version, and regenerate fixtures — the compiler won't save you.
+
+  - id: L021
+    title: "When deleting a shared struct field, fold ALL references into one phase — compile coupling ignores file ownership"
+    date_discovered: 2026-06-02
+    date_recorded: 2026-06-15
+    category: workflow
+    commits: []
+    prs: [48]
+    related_learnings: [L020]
+    problem: |
+      Plans that assign files to phases ("this file is owned by Phase 3") break when a phase deletes a
+      struct field whose references live in another phase's files. Deleting the field broke
+      `go build ./...` immediately, forcing the earlier phase to touch a file the plan said it didn't
+      own just to keep the build gate green.
+    solution: |
+      Before a phase deletes or renames a shared struct field, grep the whole module for every
+      reference FIRST and fold all of them into that single phase — regardless of which phase the
+      plan says "owns" those files. Don't trust a plan's file-to-phase mapping to respect compile
+      coupling.
+    evidence: |
+      011 feedback: "Phase 1 removed ParamsUsed.Limit and Options.Limit, but the --limit flag
+      registration and one literal lived in cli/cochange.go (a Phase 3 file)... When you delete a
+      struct field, every reference must go in the same phase regardless of which phase 'owns' the
+      file."
+    takeaway: |
+      Phase boundaries in a multi-agent plan are about logical ownership, but the compiler enforces
+      physical coupling. Any field deletion/rename must carry all its references in one phase; grep
+      the module before assigning.
+
+  - id: L022
+    title: "Verify CRDT merge convergence in Quint by encoding the four algebraic laws as boolean invariants"
+    date_discovered: 2026-06-04
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: []
+    related_learnings: [L023, L024]
+    problem: |
+      An ETL pipeline needs a multi-host merge protocol (G-Set for immutable messages, LWW-Register
+      for mutable sessions) that converges regardless of merge order. You want to PROVE convergence
+      before writing Go, not discover divergence in production.
+    solution: |
+      Encode the four CRDT convergence laws directly as pure boolean functions over the merge
+      operation and check them as invariants under random simulation: Commutativity
+      merge(A,B)==merge(B,A); Associativity merge(merge(A,B),C)==merge(A,merge(B,C)); Idempotency
+      merge(A,A)==A; Monotonicity aIds.subseteq(mergedIds) (merge never loses an ID). Plus
+      domain invariants: tombstone dominance (deleted in either input → deleted, via max(deleted_at))
+      and schema-upgrade correctness (merged version ≥ both). The design trick for soft-delete: make
+      the tombstone field a max()-merged lattice that propagates ORTHOGONALLY to the content winner —
+      max() is itself commutative/associative/idempotent, so the whole merge stays convergent.
+    evidence: |
+      quint-sync-protocol/SPIKE-REPORT.md: "All 11 invariants... pass with 1000 random traces in
+      741ms."
+      etl_merge.md: "The max(schema_version) merge rule composes correctly with the CRDT properties
+      because max is commutative, associative, and idempotent."
+    takeaway: |
+      CRDT convergence is fully captured by four short algebraic laws that translate one-to-one into
+      model-checker invariants. For soft-delete, make the tombstone field a max()-merged lattice that
+      propagates orthogonally to the content winner — max() inherits all the CRDT laws, so the merge
+      stays convergent.
+
+  - id: L023
+    title: "Random-trace simulation beats exhaustive model checking for finding planted CRDT bugs"
+    date_discovered: 2026-06-04
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: []
+    related_learnings: [L022, L024]
+    problem: |
+      When formally specifying a protocol you must choose between `quint run` (statistical simulation
+      over random traces) and `quint verify` (Apalache exhaustive model checking). Folklore says
+      exhaustive verification is the rigorous choice.
+    solution: |
+      For this class of bug, simulation was the primary workflow and found every planted bug in under
+      100ms, while the exhaustive checker did not scale to compound invariants. The unsafe in-place-
+      write hazard was found in 59ms; the tombstone-resurrection bug (a merge omitting max(deleted_at))
+      in 63ms with a precise 2-record counterexample. Apalache verified a SIMPLIFIED partial-sync
+      property exhaustively in 35s but "chokes on compound invariants with nested set operations
+      across 3 stores." Quint's Rust evaluator runs ~1350–26000 traces/sec. State-space management is
+      the real constraint: 2 IDs × 2 versions × 2 delete states = 8 records is tractable.
+    evidence: |
+      SPIKE-REPORT.md: "quint run (simulation) is the primary workflow, not quint verify. The
+      simulator found every bug we planted in under 100ms." / "verified partial sync exhaustively in
+      35s but chokes on compound invariants with nested set operations across 3 stores."
+    takeaway: |
+      For bug-finding on protocols with rich compound invariants, random-trace simulation at thousands
+      of traces/sec finds planted bugs in tens of milliseconds and dominates exhaustive checking,
+      which doesn't scale past simple properties. Reserve exhaustive checking for narrow, simplified
+      properties; use simulation as the default discovery loop.
+
+  - id: L024
+    title: "Model-based testing: drive Go conformance tests from Quint-generated ITF traces to measure spec-vs-code drift"
+    date_discovered: 2026-06-04
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: []
+    related_learnings: [L022, L023]
+    problem: |
+      A formal spec proves the merge LOGIC is correct, but the Go implementation must faithfully
+      reproduce it. How do you continuously verify a real Go implementation matches a spec without
+      hand-authoring test cases — and quantify the gap when it doesn't?
+    solution: |
+      Use `quint run --mbt --out-itf` to emit 500+ ITF traces, each a sequence of states plus
+      `mbt::actionTaken`/`mbt::nondetPicks` metadata telling a Go harness which action to replay. A
+      small Go ITF decoder parses the format (quirk: integers are `{"#bigint":"123"}` and must be
+      unwrapped). The harness replays each trace step, applies the Go merge, and diffs Go state vs
+      Quint state, reporting (trace, step, variable, expected, got). Run against TWO implementations:
+      a spec-aligned reference (must pass 100% — validates the harness itself) and the naive
+      production merge (expected to diverge — quantifies the gap). On divergence, resync Go to the
+      expected state before the next step so each divergence is measured independently.
+    evidence: |
+      phase2-mbt-verification.md: "spec-aligned merge matches Quint perfectly (0 divergences / 5200
+      steps), while the current naive 'incoming wins' merge diverges on 100% of traces (3889
+      divergences)." Cost: "$0.00... ~8 seconds for 500 traces."
+    takeaway: |
+      MBT closes the spec-to-code gap mechanically: generate traces from the spec, replay them
+      against the implementation, diff state per step. Always validate the harness against a
+      known-good reference first, then measure drift against the real implementation. The same
+      pipeline becomes a near-zero-cost CI gate.
+
+  - id: L025
+    title: "Isolated-phase analysis with a reviewer who re-runs every query swung a headline metric 15 points"
+    date_discovered: 2026-06-01
+    date_recorded: 2026-06-15
+    category: workflow
+    commits: []
+    prs: []
+    related_learnings: [L010, L046]
+    problem: |
+      A self-improvement investigation needed trustworthy findings: a headline acceptance-rate
+      metric, root-cause claims with file:line citations, and a build plan. A single analyst pass
+      anchors on early assumptions (e.g. "we need a schema change to compute these metrics") and on
+      project-local sampling bias.
+    solution: |
+      Run the investigation as a pipeline of ISOLATED subagents (Preflight → Explorer → Analyst →
+      Reviewer → Consolidator → Implementation), where each phase sees ONLY the previous phase's
+      written artifact — forcing independent re-derivation, not shared-context agreement. A dedicated
+      Reviewer re-ran every query from scratch and caught four plan-reshaping errors: the headline
+      rate was 55.7% corpus-wide, not the 71% the analyst reported from a project-local subset (a
+      15-point sampling-bias swing); all 5 metrics were already computable today; a needed CLI
+      feature already existed on an abandoned branch; the lean fix was one column, not seven.
+    evidence: |
+      askuserquestion-analytics.md: "The reviewer's 4 corrections — including a 15-point swing in the
+      headline acceptance-rate number and the existence of pre-written prior art — reshaped the
+      entire phased plan. Single-pass analysis would have shipped wrong recommendations."
+      "Abandoned branches are a code reservoir... roughly half of Phase A's work, already tested."
+    takeaway: |
+      For high-stakes analysis, structure agents as isolated phases that hand off only written
+      artifacts, with a dedicated reviewer that re-runs every query from scratch — shared context
+      breeds shared blind spots. Always check what subset a headline number was computed over, and
+      mine abandoned branches before greenfielding: stalled work often contains tested code.
+
+  - id: L026
+    title: "Column projection, not engine choice, dominates on-demand parquet query latency"
+    date_discovered: 2026-05-29
+    date_recorded: 2026-06-15
+    category: performance
+    commits: []
+    prs: []
+    related_learnings: []
+    problem: |
+      A co-change CLI reads git-history parquet on demand and aggregates in an ephemeral in-memory
+      engine. Should it use pure-Go modernc SQLite (cgo-free binary) or shell out to duckdb? And does
+      the per-query no-index model survive at scale?
+    solution: |
+      Benchmark with the EXACT shipping libraries on real data at two scales with a correctness gate.
+      Findings: at typical repo scale the engine is ~3% of wall-clock and the parquet read is ~97%.
+      The load-bearing lever is COLUMN PROJECTION — reading only the 5 needed columns (not the diff
+      text) reads 1.35% of bytes (6 MB vs 453 MB). The engines CROSS OVER: modernc SQLite wins 6.4×
+      at 1.8k rows but LOSES 3.1× at 61.7k because of its per-row insert + index-build tax; duckdb has
+      a flat ~55ms startup. SQLite crosses 1s at ~130k rows. The cheapest scaling fix is NOT duckdb —
+      it's a pure-Go map group-by (the scoring is already <0.2ms; SQL buys notation, not speed),
+      preserving the no-cgo property.
+    evidence: |
+      cochange-query-latency/phase1-engine-latency.md: "the parquet read is ~97%... I/O dominates
+      34:1." / "slim reads 1.35% of bytes (6.10 MB vs 453 MB)" / "1,855 rows: Engine A 9.9ms vs duckdb
+      63.6ms... 61,753 rows: A 467ms vs duckdb 152ms... crosses 1s at ~130k cf rows."
+    takeaway: |
+      For on-demand parquet analytics, column projection (not engine choice) is the dominant lever —
+      it pruned 98.6% of bytes here, and I/O then dwarfs aggregation 34:1. Pure-Go SQLite beats duckdb
+      at small scale but loses past ~130k rows; if you ever cross that, a pure-Go map group-by beats
+      both and keeps the cgo-free binary, so the duckdb dependency is never warranted.
+
+  - id: L027
+    title: "Tests that use identical formats on both sides of a comparison validate the test, not production"
+    date_discovered: 2026-06-02
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: [39, 43, 44, 48]
+    related_learnings: [L011, L015]
+    problem: |
+      Across multiple ETL/graph tasks, agent-written code passed every test yet was a no-op or wrong
+      in production, because the tests constructed both sides of a comparison from the same synthetic
+      format: a scanner→builder import-kind contract validated by synthetic edges that never touched
+      the real scanner; a glob that silently matched zero files because tests used flat dirs not
+      nested partitions; a remote-URL filter that rejected every row because tests pre-normalized both
+      sides; a shared denominator that was wrong but broke no ordering test; a multi-line-subject bug
+      no single-line fixture could trigger.
+    solution: |
+      Test the production data FLOW, not the happy path of the fixture. Use production-realistic
+      formats (nested partition paths, raw SSH URLs, real scanner output, multi-line commit bodies),
+      drive integration tests through the actual scanner/binary, and assert ABSOLUTE values of shared
+      denominators — not just downstream rankings.
+    evidence: |
+      004 feedback: "synthetic tests and generated goldens formed a closed loop that never touched the
+      real scanner."
+      010 feedback: "a quantity used only as a shared denominator can be wrong without breaking any
+      ordering test — assert its absolute value, not just downstream ranks."
+    takeaway: |
+      When agents generate both code and its tests, closed-loop synthetic fixtures will pass while
+      production silently breaks. Force at least one test through real production-shaped data and
+      assert absolute quantities, not just relative order.
+
+  - id: L028
+    title: "A no-leak user-twin is the default for any RAG/elicitation experiment — contamination faked thin-input gains entirely"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: []
+    related_learnings: [L029, L030, L032, L018]
+    problem: |
+      Testing whether adding elicited clarifying Q&A to a requirements extractor lifts decision recall
+      (CDR). The "user-twin" that answered the elicited questions was allowed to see the ground-truth
+      materials — the same materials the CDR judge uses — so the answer→extract→judge chain is partly
+      self-fulfilling. The headline v3 result (task_folder CDR 0.72 → 0.84) was suspect.
+    solution: |
+      Run a contamination-clean variant: the twin sees ONLY the same input the baseline extractor
+      sees, is forbidden to extrapolate, and any answer it can't ground becomes "not decided yet." The
+      clean run decomposed the lift: task_folder (rich, n=8) 0.72 → 0.84 (contaminated) → 0.80 (clean)
+      — ~2/3 real, ~1/3 contamination; autosearch_corrections (thin, n=26) 0.23 → 0.30 (contaminated)
+      → 0.23 (clean) — the thin-input lift was 100% contamination. The diagnostic that proves the
+      guard works: the twin's "unsure" rate rose from 64% to 85%.
+    evidence: |
+      assumption_1_v4_report.md: "The thin-input v3 lift was contamination... With the clean twin, CDR
+      drops back to baseline (0.228 vs 0.227). Δ(v4 − v3) = −0.069 with p(v4 > v3) = 0.04." / "The
+      contamination-clean twin says 'not decided yet' 85% of the time, vs 64% for the contaminated
+      twin."
+    takeaway: |
+      Any elicitation/RAG experiment where a simulated user answers questions and the judge grades
+      against the same corpus will leak unless the answerer is structurally denied the outcome. Make
+      the no-leak twin the DEFAULT arm. The diagnostic that proves the guard works is the unsure rate:
+      if it doesn't rise sharply when you mask the ground truth, your twin was fabricating answers.
+
+  - id: L029
+    title: "Ex-ante labelers still leak via the model's own training-data priors"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: []
+    related_learnings: [L028]
+    problem: |
+      To measure "what would the planner have believed before seeing the outcome?", the experiment
+      split labeling into an ex_ante_labeler (sees only initial prompt + planning docs) and an
+      oracle_labeler (sees corrections + final artifacts), with separate prompts and cache namespaces
+      so explicit context leakage is impossible by construction. Is that enough for a clean ex-ante
+      confidence?
+    solution: |
+      No. A 5-axis spot-check found 3 of 5 axes where the ex-ante labeler's top candidate matched the
+      ground-truth value WITH NO in-context evidence naming it — gpt-4o-mini simply "knows" the
+      idiomatic answer (e.g. "both unit and e2e tests", "outcome_based"). This is PRIOR-KNOWLEDGE
+      leakage: the model anchors on training-data idioms (JSON-by-default, CLI conventions),
+      compressing the gap any "ask smarter" policy could exploit.
+    evidence: |
+      assumption_2_v2_report.md: "Summary: 3 / 5 sampled axes have ex-ante top candidate == ground
+      truth." / "Even 'ex-ante' labelers leak via the model's training-data priors... Methodological
+      splits address explicit leakage; they don't address prior-knowledge leakage."
+    takeaway: |
+      Prompt-level splits eliminate explicit context leakage but not the LLM's own priors over
+      idiomatic answers. For tight ex-ante measurement on tasks that match common idioms, use a
+      weaker-priors labeler model or hold the domain conventions out of its context too. Always
+      spot-check: does the labeler pick the GT value when the input text never named it?
+
+  - id: L030
+    title: "Input richness, not schema design, dominates requirements extraction — gate the Q&A loop on sparsity"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: ai-prompting
+    commits: []
+    prs: []
+    related_learnings: [L028, L031]
+    problem: |
+      Testing whether a structured schema can preserve acceptance-critical nuance when compiling a
+      requirements draft. A single go/no-go threshold (CDR ≥ 0.90) would have produced a flat FAIL and
+      hidden the real signal.
+    solution: |
+      Stratify the eval corpus by input source. Input richness dominated everything, and Q&A
+      elicitation HURTS some regimes: task_folder (rich, n=8) 0.72 → 0.80 with clean Q&A; git_commit
+      (terse-but-structured, n=6) 0.45 → 0.33 — Q&A REGRESSED it, generic axes drowning out tight
+      on-topic signal; autosearch_corrections (one paragraph, n=26) flat at 0.23 — no elicitation can
+      synthesize information that doesn't exist. The mechanism of the real task_folder lift was
+      ATTENTIONAL PRIMING: the extractor re-reads the SAME docs with the Q&A in the input slot, which
+      surfaces decisions a flat read missed.
+    evidence: |
+      summary.md: "Q&A actively HURTS terse-but-structured input... Adding 6-7 generic-axis questions
+      can drown out tight, on-topic signal." / "the Q&A just told the extractor where to look."
+    takeaway: |
+      Before redesigning a schema/prompt, stratify by input quality — the lever is often the input
+      contract, not the structure. A clarifying-question loop is not universally safe: gate it on
+      whether existing input is sparse-with-gaps (elicit) vs dense-and-focused (don't). Q&A works as an
+      attentional cue over existing rich context, not as a way to manufacture missing information.
+
+  - id: L031
+    title: "Spike recommendations are hypotheses — the 'dead' schema field was load-bearing (form vs effect)"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: []
+    related_learnings: [L030]
+    problem: |
+      A baseline report confidently recommended schema surgery: drop `decision_candidates` (used in
+      only 13/40 cases — "essentially dead"), retire `blast_radius` (always medium/high — "no
+      signal"), and require `qualifiers` to carry verbatim source spans (to lift NRS). These read like
+      obvious cleanups. The next experiment actually implemented and measured them.
+    solution: |
+      Two of three failed, and the "deadest" field was load-bearing. Dropping decision_candidates
+      BROKE CDR by −0.118 overall (p<0.001) and −0.32 on task_folder: the judge reads a
+      "committed-with-options" decision as PRESENT but a "TBD; candidates: …" soft_preference as
+      undecided — the bucket was inert on thin cases but carried decision-grade structure on rich
+      ones. Verbatim qualifiers worked perfectly in FORM (100% character-exact substrings) but did NOT
+      lift NRS (Δ=−0.25), because NRS judges against materials the extractor never sees. Verdict:
+      ABANDON the surgery.
+    evidence: |
+      assumption_1_v5_report.md: "Dropping decision_candidates BROKE CDR by 0.12 (paired p<0.001)...
+      The 'obvious cleanup' had load-bearing semantics." / "The verbatim instruction WORKED... but it
+      is not the lever that lifts NRS."
+    takeaway: |
+      A field that is rarely populated is not the same as a field that is unimportant — usage frequency
+      can hide concentrated, load-bearing value on the cases that matter. Treat every "drop the dead
+      field" recommendation as a hypothesis and A/B it. And separate FORM success (the instruction was
+      obeyed) from EFFECT success (the metric moved); they routinely diverge.
+
+  - id: L032
+    title: "A pre-registered train/test split is mandatory even on tiny corpora — a 40% train win was exactly 0.000 on test"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: []
+    related_learnings: [L043, L028]
+    problem: |
+      Testing whether a "regret-aware" question policy (ask only when expected_regret =
+      (1−confidence)×regret_if_wrong > τ) beats a confidence-only baseline. The v2 fixed methodology
+      with a two-labeler split, a smooth gate, and a pre-registered 70/30 split with τ tuned only on
+      train.
+    solution: |
+      The split was the central finding. On train (n=28) the smooth gate looked like a clear win — WRC
+      0.032 vs 0.054 (40% reduction). On held-out test (n=12), regret_score and confidence_only were
+      IDENTICAL: WRC 0.333 for both, paired Δ-WRC = exactly 0.000. They differ in WHICH axes they ask
+      about but land on identical correctness outcomes. A τ-sensitivity sweep stayed flat at 0.333 — so
+      the train win was either overfit or the corpus was too thin (~3-4 high-regret axes) to detect
+      anything. Honest verdict: null on test, expand corpus before concluding.
+    evidence: |
+      assumption_2_v2_report.md: "Train: clear win (40% WRC reduction). Test: identical to
+      confidence_only. Paired Δ-WRC = 0.000."
+    takeaway: |
+      A pre-registered train/test split is mandatory even on tiny corpora — without it, the original
+      no-split version reported a misleading "win." When train shows a big lift and held-out shows
+      exactly zero, you cannot ship: it's either overfit τ-tuning or a corpus too thin to distinguish.
+
+  - id: L033
+    title: "Caching metrics: gate the safety pair and efficiency pair separately so a 'failed' threshold can still pass"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: architecture
+    commits: []
+    prs: []
+    related_learnings: []
+    problem: |
+      Testing whether incremental recompilation of a decision dependency graph is sound: when an
+      upstream decision flips, can the walker invalidate exactly the affected downstream decisions
+      without leaving stale values or over-invalidating? Across 120 mutation runs, one threshold —
+      Invalidation Precision (IP ≥ 0.80) — failed at mean 0.814 with CI lower bound 0.763.
+    solution: |
+      Split the four metrics into a SAFETY pair (Invalidation Recall, Stale Decision Leak Rate) and an
+      EFFICIENCY pair (Invalidation Precision, Recompute Savings), and pass/fail them separately.
+      Safety was perfect: IR=1.000 across all 120 runs, SDLR=0.000 — zero stale leaks ever. The IP
+      shortfall concentrated entirely in `interface` mutations: the walker correctly flags downstream
+      decisions, but the recompile LLM judges their values don't actually change — wasted tokens, not
+      wrong output. Verdict: bankable infra, ship full-recompile first, enable incremental for clean
+      mutation types.
+    evidence: |
+      assumption_3_report.md: "IR=1.00, SDLR=0.00 → safe. IP=0.81 mean clears but CI lower bound 0.76
+      misses 0.80." / "The IP shortfall is conservative over-invalidation, not a safety bug. It costs
+      tokens; it does not cost correctness."
+    takeaway: |
+      Design caching/invalidation metrics as a safety pair vs an efficiency pair and gate them
+      independently — a missed efficiency threshold (over-invalidation) is acceptable if the safety
+      pair (recall + leak rate) is clean, because over-invalidation only wastes compute while
+      under-invalidation corrupts output.
+
+  - id: L034
+    title: "SQLite-cached, prompt-hash-keyed LLM calls + clone-and-modify scripts = $2 reproducible multi-phase spikes"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: tooling
+    commits: []
+    prs: []
+    related_learnings: [L043]
+    problem: |
+      A multi-phase LLM experiment that iterates heavily (8 experiments across 6 phases, each
+      re-extracting/regenerating/rescoring 40 cases against multiple judge models) risks runaway API
+      cost and irreproducible results as variants accumulate.
+    solution: |
+      Two reusable moves kept the whole spike at $2.22 with decision-grade reproducibility: (1) Cache
+      every LLM call in SQLite keyed by prompt hash — re-runs cost $0, and the cache invalidates
+      automatically when the prompt changes; ground-truth-only judges hit cross-cache reuse (~30%
+      saved). (2) Clone-and-modify scripts rather than branching flags
+      (`build_structured_state.py` → `build_structured_state_v5.py`): each variant is a copy with a
+      diff, so the version-control diff between variants IS the design rationale and historic results
+      stay reproducible because the old script is frozen.
+    evidence: |
+      structured-compiler/summary.md: "Total spike spend was $2.22 across 8 experiments because
+      re-runs cost zero. Cache invalidation by changing the prompt is the right default."
+      "Clone-and-modify scripts, not branching flags... The diff in version-control history is the
+      design rationale."
+    takeaway: |
+      For any iterative LLM experiment, default to a SQLite cache keyed by prompt hash (free re-runs,
+      auto-invalidation on prompt edit) and preserve the cache files alongside the report. Prefer
+      cloning the script per variant over mode flags — frozen copies keep historic numbers reproducible
+      and turn the git diff into the experiment's design log.
+
+  - id: L035
+    title: "Embeddings encode preference signal but NOT in their cosine geometry"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: ai-prompting
+    commits: []
+    prs: []
+    related_learnings: [L036, L037, L042]
+    problem: |
+      A proposed system wanted to compress requirements-gathering by treating user preferences as a
+      vector in embedding space, then using cosine similarity / PCA over decision-text embeddings to
+      find "similar" decisions. The whole family — nearest-neighbour retrieval, GP with a cosine
+      kernel, PCA-basis question ordering — depends on "decisions close in decision-space are close in
+      embedding cosine-space."
+    solution: |
+      Build a synthetic dataset with a KNOWN 8-dimensional latent preference structure (900 decisions
+      in 8 text styles) so ground truth is controlled. Then separate two questions: can a LEARNED
+      probe recover the latent vector vs can the embedding GEOMETRY recover it. A linear regression
+      probe reached R²=0.28; pairwise cosine similarity reached Spearman ρ≈0 across all 8 formats.
+      Mahalanobis distance roughly doubled cosine's ρ (0.074 vs 0.042) — still useless. The information
+      is in the embedding but not in the cosine geometry, because a generic encoder is isotropic w.r.t.
+      your task (thousands of irrelevant directions weighted equally); a supervised projection picks
+      out the directions that matter.
+    evidence: |
+      phase3-synthetic.md: "Linear probe (M1) gets R² = 0.28. Pairwise cosine similarity (M3) gets
+      Spearman ρ ≈ 0 across all formats. The information is in the embedding but it is not in the
+      cosine geometry." (Rules out nearest-neighbour retrieval, PCA basis, GP cosine kernel, UCB/EI
+      over embedding distance.)
+    takeaway: |
+      Before building any retrieval/RAG/k-NN/GP system on "embedding distance ≈ task distance," test
+      that assumption directly with a learned probe vs the geometry on ground-truth data. The signal an
+      embedding CONTAINS and the signal its cosine geometry EXPOSES are different quantities; a
+      supervised projection can succeed exactly where cosine/PCA fails.
+
+  - id: L036
+    title: "Binarizing to signs + per-dimension classifiers redistribute a fixed information ceiling into usable predictions"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: ai-prompting
+    commits: []
+    prs: []
+    related_learnings: [L035, L037]
+    problem: |
+      A linear probe could only recover ~28% of variance (R²=0.28) of a user's continuous preference
+      vector from decision-text embeddings — well below the 0.6 "usable" bar. The naive read is "the
+      embedding is garbage for this task."
+    solution: |
+      The R²=0.28 ceiling is a property of the embedding, not the analyzer (joint ridge, bilinear,
+      Mahalanobis all reproduce it). But three transforms redistribute the SAME fixed signal into a
+      more usable form: (1) Binarize the continuous target to SIGNS — the same noisy prediction is
+      right ~76% of the time per dimension when you only ask for +/- rather than magnitude. (2) Train
+      one binary classifier PER latent dimension instead of one joint probe — a joint probe averages
+      legible and invisible dimensions and hides the structure; per-dim classifiers expose exactly
+      which axes are recoverable. (3) Add active learning over per-dim uncertainty. The entire model is
+      6-10 dot products and a sigmoid (~36 KB).
+    evidence: |
+      phase4-alternatives.md: "A noisy 8-dim continuous prediction at R² = 0.28 looks like garbage; the
+      same noisy prediction binarized to signs is right ~76% of the time per dimension." / "Per-dimension
+      modeling separates the legible from the invisible. A joint probe averages over both and hides the
+      structure."
+    takeaway: |
+      When a continuous regression off an embedding plateaus at low R², don't abandon it — reframe the
+      target. Binarizing to signs and modeling each dimension separately can turn an apparently useless
+      0.28 R² into ~76% per-axis accuracy, because you stop demanding precision the signal doesn't have
+      and stop letting recoverable dimensions get averaged against unrecoverable ones.
+
+  - id: L037
+    title: "Active learning over per-dim classifiers recovered the '3-5 questions' thesis the cosine framework lost"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: ai-prompting
+    commits: []
+    prs: []
+    related_learnings: [L035, L036, L038, L041]
+    problem: |
+      The original "orthogonal questioning" thesis claimed an agent could collapse ~15 upfront
+      requirements questions to 3-5 by exploiting the geometry of decision embeddings. Earlier phases
+      killed the geometric mechanism. Was the 3-5 budget itself wrong, or just the mechanism?
+    solution: |
+      With per-dim binary sign classifiers, an active-learning simulation that asks about whichever
+      dimension the classifier is most uncertain about reached PERFECT sign recovery across all 8
+      latent dimensions in 4.17 questions on average — right in the 3-5 range. The budget cardinality
+      was correct; the mechanism (cosine geometry) and the recovery target (continuous vector) were
+      wrong. Crucially, linguistic legibility varies by dimension: 6 of 8 dims hit ≥0.7 accuracy and
+      are inferable from a single decision; 2 dims (schema rigidity, API explicitness) sit below 0.7
+      because natural language has no distinct vocabulary for them — those become a guaranteed minimum
+      "always ask explicitly" budget.
+    evidence: |
+      phase4-alternatives.md: "Active-learning questions to full sign recovery: never converged
+      [Phase 3] → 4.17 [Phase 4]." / "The original '3-5 questions' thesis was right about the cardinality
+      of the question budget. It was wrong about the mechanism."
+    takeaway: |
+      A bold compression claim can be right about the budget and wrong about the method. Separate "how
+      few questions are theoretically needed" from "what mechanism achieves it." Also: some preference
+      axes are linguistically illegible, so model their irreducible question cost explicitly rather than
+      pretending inference will cover them.
+
+  - id: L038
+    title: "Sparse-support recovery (which dimensions are even alive) is the lever, not orthogonal question ordering"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: ai-prompting
+    commits: []
+    prs: []
+    related_learnings: [L037]
+    problem: |
+      The orthogonal-questioning thesis framed requirement-gathering as "collapse a ~30-50-dimensional
+      preference space with 3 orthogonal questions," assuming most dimensions are live and the
+      challenge is the ORDER in which you probe them.
+    solution: |
+      The simulation's pre-flight measured actual deviation-from-default per session and found that on
+      average only 6.2 of 30 decision dimensions carry a non-default value — the other ~24 are silent.
+      This caps the whole problem: the Oracle strategy averages 6.1 questions because it never asks
+      about the ~24 silent dims, while every ordering strategy burns questions on dead dimensions.
+      Orthogonal-PCA gave a real but small ~27% lift over frequency, but the gap to Oracle dwarfed the
+      gap from Random. The reframing: the lever is not orthogonality-between-questions, it's correctly
+      identifying which dimensions are even ALIVE in this session — a sparse-support / classification
+      problem solvable before asking anything.
+    evidence: |
+      phase1-validation.md: "mean 6.2 of 30 dimensions carry a non-default value... The lever isn't
+      orthogonality between questions — it's correctly identifying which dimensions are even alive in
+      this session. That's a different problem (sparse support recovery)."
+    takeaway: |
+      Before optimizing the order or geometry of a search, measure how SPARSE the target actually is. If
+      most dimensions are inert per instance, the entire problem is identifying the active support, not
+      sequencing probes — and an upfront classifier that predicts "which decisions are even in play"
+      beats any clever question-ordering heuristic.
+
+  - id: L039
+    title: "Terse natural prose beats structured scaffolding as embedding input; PCA compression is not a recoverability proxy"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: ai-prompting
+    commits: []
+    prs: []
+    related_learnings: [L035]
+    problem: |
+      Intuitively, giving an embedding model more structured, multi-field input (type, value, rejected
+      alternatives, reasoning, scope, consequences) should help it recover the latent meaning of a
+      decision better than a bare phrase. The synthetic experiment rendered each decision in 8 formats.
+    solution: |
+      Across all four recovery metrics, S8 (raw natural user-voice, no labels, no template) beat the
+      multi-field structured composite, the reasoning-rich format, and the Q&A+alternatives format. The
+      scaffolding consumed tokens without adding signal. Separately, S3 (plain Q&A) had the cleanest PCA
+      scree plot yet S8 had the best probe R² — so optimizing for low effective dimensionality via PCA
+      is NOT a proxy for recoverability. And upgrading text-embedding-3-small → -3-large added only
+      0.011 to ρ with 95% identical rankings — the bottleneck was the data, not encoder capacity.
+    evidence: |
+      phase3-synthetic.md: "Natural prose beats structured composition... Adding structural scaffolding
+      consumed token budget without adding signal. If you ever do construct structured inputs, keep them
+      terse." / "PCA spectrum compression is not a proxy for recoverability."
+    takeaway: |
+      When embedding text for downstream learning, prefer terse natural prose over elaborate structured
+      templates — scaffolding burns tokens without improving recoverability. Don't use PCA effective-
+      dimensionality as your optimization target for a prediction task, and don't reach for a bigger
+      embedding model before confirming the encoder is the bottleneck.
+
+  - id: L040
+    title: "A correlation gain can be session-identity leakage, not real structure — validate against the downstream task"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: debugging
+    commits: []
+    prs: []
+    related_learnings: [L035]
+    problem: |
+      Enriching an embedding's input with surrounding context made a key correlation metric jump
+      dramatically (positive-pair Spearman ρ went 0.063 → 0.453, a 7× lift). This looked like a clear
+      win. But when the full geometric battery was re-run on the same inputs, every downstream metric
+      stayed flat or worse.
+    solution: |
+      The gain was an artifact: the "turn-window" format included 2 preceding turns, and ~70% of those
+      strings were near-duplicates across all decisions in the same session. So "pairs that co-occur in
+      a session" trivially also "embed to nearly the same vector," mechanically inflating the
+      correlation without revealing decision structure. Diagnosis came from re-running the actual
+      geometric tests (n_90 stayed at 40, Procrustes 0.98, simulation savings DROPPED 27%→25%) rather
+      than trusting the headline correlation. The same paraphrase-noise pattern explained Phase 1's
+      "chaotic dimensions": an LLM extractor paraphrased the same decision differently each session.
+    evidence: |
+      phase2-context.md: "The correlation gain was session-identity leakage: when 70% of F4 strings are
+      duplicates across decisions in the same session, 'pairs that co-occur' trivially also 'embed to the
+      same vector.'"
+    takeaway: |
+      A correlation metric improving is not evidence your representation improved — duplicated/shared
+      context can inflate it via identity leakage. Always validate against the actual downstream task,
+      not the proxy metric. And LLM-extractor paraphrase noise will masquerade as genuine variance unless
+      you canonicalize first.
+
+  - id: L041
+    title: "Benchmark even a validated ML approach against the dumbest baseline — classifiers lose to 20 templates for a solo dev"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: architecture
+    commits: []
+    prs: []
+    related_learnings: [L037]
+    problem: |
+      After proving per-dim classifiers + active learning could compress requirements questions to
+      ~3-5, the impulse is to ship the ML system. The author instead forced an honest cost-benefit
+      comparison against 20 hand-curated task templates.
+    solution: |
+      At the project's scale (~670 sessions, one user), 20 templates probably match the classifier on
+      cost-effectiveness and beat it on inspectability — the marginal gain is only ~1-2 questions per
+      task at ~1 week of ML effort vs half a day of writing. The classifier wins only on three
+      scale-gated axes: combinatorial coverage (6 binary dims = 64 profiles covered for free),
+      personalization (per-user priors), and drift handling. The recommended architecture is a hybrid:
+      templates as base layer (~70% coverage), a per-user override table, and the classifier as the
+      novel-task fallback. Roadmap: ship templates, instrument "template didn't fit" events, build the
+      classifier only when those accumulate.
+    evidence: |
+      deployable-architecture.md: "For one user at auto-stack's current scale (~670 sessions), 20
+      well-curated task templates probably match the classifier approach on cost-effectiveness, and
+      might beat it on inspectability." / "build the classifier only when those events accumulate. Let
+      the data tell you when the simpler solution is breaking down."
+    takeaway: |
+      Even a validated ML approach should be benchmarked against the dumbest baseline (static templates)
+      before shipping. Classifiers/personalization pay off only at multi-user, many-task-type, or
+      drift-prone scale; for a solo user the gain is 1-2 questions for ~10× the effort. Instrument the
+      simple solution's failure mode and let accumulated failures trigger the upgrade.
+
+  - id: L042
+    title: "Isolate one confound per phase; inject synthetic ground truth to settle 'is the structure even there?'"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: []
+    related_learnings: [L035, L043, L028]
+    problem: |
+      When a hypothesis fails on real data, you can't tell why: is the data too noisy, is the input
+      representation throwing away signal, or is the core mechanism fundamentally wrong? Each diagnosis
+      implies a completely different next step, and confounds in real data make it impossible to
+      isolate.
+    solution: |
+      Structure the experiment as phases that each strip away ONE confound. Phase 1: test on real mined
+      data (failed). Phase 2: hold data constant and vary ONLY the input representation across 6 formats
+      ("the representation was wrong, not the math"). Phase 3 — the decisive move: generate SYNTHETIC
+      data with known ground-truth latent structure, so "is the structure even there?" is no longer a
+      confound; test if any format lets cosine recover it (none did). Phase 4: keep the winning synthetic
+      format, swap the analyzer, show the relaxed thesis is deployable. Each phase's verdict was a
+      different actionable diagnosis. Total cost across all four: under $2.
+    evidence: |
+      orthogonal-questioning/README.md: "Phase 1 and 2 always had the 'is the structure even there?'
+      confound. Phase 3 doesn't — we build the structure, so we know it's there." / "The framework
+      hypothesis was extensively tested for under the price of lunch."
+    takeaway: |
+      When a hypothesis fails, design experiments that each isolate one possible cause. The
+      highest-leverage move is injecting synthetic ground truth: building the structure INTO the data
+      removes the "maybe noise is hiding it" confound and converts a vague negative into a sharp
+      mechanistic one. Embedding/LLM experiments are cheap enough ($2) that this rigor costs almost
+      nothing.
+
+  - id: L043
+    title: "Pre-registered go/no-go decision matrix + per-metric thresholds + a 'what would have changed our mind' coda"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: []
+    related_learnings: [L032, L042, L044, L010]
+    problem: |
+      Agent-run experiments produce partial/ambiguous results that devolve into endless post-hoc
+      interpretation, and an agent eager to please will rationalize a fail into a pass.
+    solution: |
+      Before running anything, write a decision matrix mapping every outcome COMBINATION across
+      sub-tests to a concrete verdict ("Pivot scope. Restrict to subset." / "Pivot model."), and
+      pre-register per-metric pass/fail thresholds. Then a result of 0.276 against a 0.3 threshold is a
+      non-negotiable fail. End every writeup with a counterfactual coda: "if these numbers had come back
+      differently we would have done Z instead" — exactly where post-hoc rationalization gets caught.
+      Keep hypothesis and result in the same doc forever. A negative result, cheaply and reproducibly
+      obtained, is itself the deliverable.
+    evidence: |
+      experiment-designer skill + PATTERNS.md: "If a metric came in at 0.276 and the threshold was 0.3,
+      that's a fail — note it as such." / "'what would have changed our mind' coda... Forces
+      counterfactual reasoning, which is where post-hoc rationalization gets caught." /
+      structured-compiler: "The negative result is the deliverable."
+    takeaway: |
+      Formalize experiments by pre-committing the verdict for every outcome before seeing data, and force
+      a counterfactual at the end. This neutralizes both ambiguity and the agent's bias toward a
+      favorable read — and makes a well-evidenced "no" a shippable result.
+
+  - id: L044
+    title: "Honesty hooks — prompt workers for what they think you DON'T want to hear, and separate reporting from interpretation"
+    date_discovered: 2026-05-27
+    date_recorded: 2026-06-15
+    category: ai-prompting
+    commits: []
+    prs: []
+    related_learnings: [L010, L043, L008]
+    problem: |
+      Sub-agent workers report what they think the orchestrator wants, suppressing the caveats, red
+      flags, and surprises that are the most valuable signal — sycophancy at the agent boundary.
+    solution: |
+      Add explicit "honesty hook" instructions to worker prompts that demand the unwelcome information:
+      "Report what actually happened, not what should have happened"; "If a stage looks expensive, scale
+      the dataset DOWN rather than skipping a metric"; "Document caveats, surprises, and red flags
+      downstream spikes should know about." Pair with a producer/consumer split: "Do not interpret
+      results — just report them. The orchestrator will interpret." A structured ask ("verdict + numbers
+      + caveats + methodology + paths") yields far better reports than "summarize what you found."
+    evidence: |
+      PATTERNS.md: "Workers will report what they think you want unless you explicitly ask for what they
+      think you don't want." / "Spike 5's worker proactively flagged the session-identity leakage that
+      became Spike 7's headline finding — directly because the prompt asked for caveats."
+    takeaway: |
+      Counteract agent sycophancy by explicitly soliciting the bad news in the prompt and separating
+      reporting from interpretation. The highest-value findings are the ones the worker would otherwise
+      have smoothed over.
+
+  - id: L045
+    title: "Contextual commits — a typed action-line grammar that preserves WHY (especially rejected alternatives)"
+    date_discovered: 2026-04-13
+    date_recorded: 2026-06-15
+    category: workflow
+    commits: []
+    prs: []
+    related_learnings: [L046, L006]
+    problem: |
+      Conventional commits record WHAT changed but lose WHY — the intent, the decisions, and especially
+      the approaches considered and rejected. For agents this context evaporates when the session ends,
+      so a future agent re-proposes dead ends.
+    solution: |
+      Extend Conventional Commits with a typed, scoped grammar in the commit body:
+      `intent`/`decision`/`rejected`/`constraint`/`learned`, each as `action-type(scope): description`.
+      `rejected` is the highest-value type — it stops future agents re-proposing the same dead end (and a
+      rejection without a reason is useless). `intent` must be in the user's voice. Enforce an
+      anti-fabrication rule: when committing a diff you didn't author, only write action lines clearly
+      evidenced by the diff — `decision` is inferable, but `intent`/`rejected`/`constraint`/`learned` are
+      not, because "what was NOT chosen is invisible in what WAS committed." Designed to survive
+      squash-merge (bodies concatenate into a chronological typed trail) and to be machine-parsed by the
+      ETL/search pipeline.
+    evidence: |
+      contextual-commit/SKILL.md: "[rejected] is the highest-value action type — it prevents future
+      sessions from re-proposing the same thing." / "what was NOT chosen is invisible in what WAS
+      committed."
+    takeaway: |
+      Make commit bodies a structured, queryable record of intent and especially rejected alternatives,
+      with strict rules against fabricating reasoning you can't see in the diff. The git log becomes a
+      durable, machine-readable memory that prevents future re-litigation of settled decisions.
+
+  - id: L046
+    title: "Self-improve pipeline — observe before recommend, tier findings, and use an adversarial re-running reviewer"
+    date_discovered: 2026-04-13
+    date_recorded: 2026-06-15
+    category: workflow
+    commits: []
+    prs: []
+    related_learnings: [L025, L045, L006]
+    problem: |
+      A naive "improve this tool" agent loop conflates observation with recommendation, weights trivial
+      bugs equally with systemic gaps, and trusts a single analyst's read. Early runs also drifted into
+      critiquing agent behavior and repo ergonomics instead of the tool itself.
+    solution: |
+      A typed multi-service pipeline with four enforced disciplines. (1) Bifurcate every finding into
+      STRUCTURAL (systemic, traced to code) vs TACTICAL (specific bugs), order structural first — the
+      findings report, not the PRs, is the primary deliverable. (2) The explorer is forbidden from
+      suggesting anything: "only observed problems... never suggestions." (3) An independent reviewer
+      RE-RUNS the analyst's queries rather than reviewing the prose, rating each finding
+      confirmed/partial/unsubstantiated and flagging "feature requests disguised as bug fixes." (4)
+      Deliberately refocused after run 1 (from "why agents fail" to "where the tool breaks"); a
+      plan-reviewer stage was removed in favor of rich PR bodies as the durable, re-ingestible record.
+    evidence: |
+      scripts/self-improve: "The findings report is the primary deliverable — PRs are secondary." /
+      "output contains only observed problems with the tool's functionality, never suggestions." /
+      reviewer: "independently verify the claimed pattern by running your own autosearch queries... do
+      not simply agree with the analyst."
+    takeaway: |
+      Build self-improvement loops so observation is structurally separated from recommendation, findings
+      are tiered (systemic-before-tactical), and a second agent independently reproduces the evidence
+      rather than agreeing with the first. Prefer durable git artifacts (PR bodies) over intermediate
+      handoff files that get stranded in isolated worktrees.
+
+  - id: L047
+    title: "Build a throwaway REAL feature to generate authentic test data for your own pipeline"
+    date_discovered: 2026-04-09
+    date_recorded: 2026-06-15
+    category: testing
+    commits: []
+    prs: [1, 2]
+    related_learnings: []
+    problem: |
+      A new ETL pipeline that ingests GitHub PR feedback has nothing to ingest until real PRs with review
+      activity exist — a cold-start problem for validating the data path end-to-end.
+    solution: |
+      Ship a deliberately trivial, hidden feature (an `autoetl zen` easter-egg command printing random
+      ETL "koans," hidden from help) purely so it can be opened as a real PR and reviewed — manufacturing
+      authentic PR/review data to exercise the GitHub-PR-feedback ETL pipeline through the real product
+      surface, not a synthetic fixture.
+    evidence: |
+      Commit "add hidden 'autoetl zen' easter egg command... Used as a test PR for validating the GitHub
+      PR feedback ETL pipeline." Lands one PR after "add GitHub PR feedback ETL pipeline" — consumer
+      built, then a throwaway PR created to feed it.
+    takeaway: |
+      For pipelines that ingest activity from a real system, the most faithful test harness can be a
+      minimal real action through that system (a genuine PR, issue, or commit) rather than a mocked
+      fixture — dogfood the data source by deliberately producing a real event.
+
+  - id: L048
+    title: "Baseline-relative novelty filter with an asymmetric (low-at-the-frontier) bar"
+    date_discovered: 2026-06-15
+    date_recorded: 2026-06-15
+    category: ai-prompting
+    commits: [53ac267]
+    prs: []
+    related_learnings: [L046]
+    problem: |
+      An agent mining git/PRs/transcripts for "learnings" has no absolute notion of interesting — without
+      calibration the diary fills with noise (basics the user already knows) and misses the increments
+      the user actually cares about at their learning edge.
+    solution: |
+      Establish the user's baseline once via interview, then make novelty user-relative and deliberately
+      ASYMMETRIC: HIGH bar inside known expertise, but a LOW bar near the user's stated frontier, because
+      those incremental entries are the ones they value most. Original work (a framework/model/taxonomy
+      the user invented) is always recorded — frontier-pushing by definition. Mine story arcs
+      (tried → wall → replaced) as the richest target, read whole files not diffs (a +200-line diff is a
+      signal to read everything), and enrich git history with session transcripts that capture the
+      process. Default toward inclusion.
+    evidence: |
+      learning-diary/SKILL.md: "if the topic touches the user's frontier... set a low bar — these are the
+      entries the user cares about most." / "Story arcs... capture the journey, not just the destination."
+      / "A diff showing '+200 lines' is a signal to read the whole file."
+    takeaway: |
+      When filtering for "interesting," anchor to a per-user baseline and invert the usual bar: be strict
+      on known ground, generous at the learning frontier, and always keep original inventions. The richest
+      mining targets are failed-then-replaced arcs, and the unit of reading is the whole file, not the
+      diff.
