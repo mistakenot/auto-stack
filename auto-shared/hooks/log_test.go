@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,6 +91,41 @@ func TestAppendRoundTrip(t *testing.T) {
 	}
 	if got2.Agent != env2.Agent {
 		t.Errorf("line 2 agent = %q, want %q", got2.Agent, env2.Agent)
+	}
+}
+
+func TestEnvelopeEnvRoundTrip(t *testing.T) {
+	env := hooks.Envelope{
+		Agent:      "claude",
+		CapturedAt: "2026-06-15T10:00:00Z",
+		HostID:     "host-1",
+		Env: map[string]string{
+			"NTM_SPAWN_BATCH_ID": "spawn-123",
+			"tmux_session":       "auto-stack",
+			"tmux_pane_index":    "1",
+		},
+		Payload: json.RawMessage(`{"hook_event_name":"PostToolUse"}`),
+	}
+	b, err := json.Marshal(env)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got hooks.Envelope
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Env["tmux_session"] != "auto-stack" || got.Env["NTM_SPAWN_BATCH_ID"] != "spawn-123" {
+		t.Errorf("Env round-trip lost data: %v", got.Env)
+	}
+}
+
+func TestEnvelopeEnvOmittedWhenEmpty(t *testing.T) {
+	b, err := json.Marshal(hooks.Envelope{Agent: "claude", Payload: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), `"env"`) {
+		t.Errorf("empty Env should be omitted, got %s", b)
 	}
 }
 

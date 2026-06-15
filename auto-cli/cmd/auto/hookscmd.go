@@ -91,6 +91,11 @@ func newHooksFireCmd() *cobra.Command {
 				}
 			}
 
+			// Capture orchestrator/terminal context once (NTM_*/TMUX_* env plus
+			// tmux session+pane targeting) and attach it to both sinks so a
+			// future reply can be addressed back to the originating pane.
+			hookCtx := hooks.CaptureContext()
+
 			// Durable append first — canonical record before the lossy live POST.
 			env := hooks.Envelope{
 				Agent:      agent,
@@ -98,6 +103,7 @@ func newHooksFireCmd() *cobra.Command {
 				HostID:     hostIDQuietly(),
 				Cwd:        cwd,
 				Project:    project,
+				Env:        hookCtx,
 				Payload:    json.RawMessage(raw),
 			}
 			if err := hooks.Append(env); err != nil {
@@ -105,6 +111,7 @@ func newHooksFireCmd() *cobra.Command {
 			}
 
 			ev := buildBusEvent(agent, raw, registry)
+			ev.Env = hookCtx
 			postBusEvent(uiPort(), ev)
 			return nil
 		},

@@ -26,18 +26,22 @@ var dottedType = regexp.MustCompile(`^[a-z0-9]+(\.[a-z0-9]+)+$`)
 // Event is the canonical bus envelope. It is strongly typed and validated;
 // the Data payload is opaque and typed only where the bus authors it.
 type Event struct {
-	SpecVersion string          `json:"specversion"`
-	Type        string          `json:"type"`
-	Source      string          `json:"source"`
-	ID          string          `json:"id"`
-	Time        string          `json:"time"`
-	Project     string          `json:"project,omitempty"`
-	Session     string          `json:"session,omitempty"`
-	Remote      string          `json:"remote,omitempty"`
-	Branch      string          `json:"branch,omitempty"`
-	Worktree    string          `json:"worktree,omitempty"`
-	Commit      string          `json:"commit,omitempty"`
-	Data        json.RawMessage `json:"data,omitempty"`
+	SpecVersion string `json:"specversion"`
+	Type        string `json:"type"`
+	Source      string `json:"source"`
+	ID          string `json:"id"`
+	Time        string `json:"time"`
+	Project     string `json:"project,omitempty"`
+	Session     string `json:"session,omitempty"`
+	Remote      string `json:"remote,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	Worktree    string `json:"worktree,omitempty"`
+	Commit      string `json:"commit,omitempty"`
+	// Env carries optional terminal/orchestrator context captured from the
+	// hook process environment (NTM_*/TMUX_* variables). It is omitted when no
+	// such variables are present, and never participates in envelope validation.
+	Env  map[string]string `json:"env,omitempty"`
+	Data json.RawMessage   `json:"data,omitempty"`
 }
 
 // NewEvent constructs an Event with the given type, source, and data payload.

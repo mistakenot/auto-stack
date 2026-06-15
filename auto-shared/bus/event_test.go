@@ -2,8 +2,42 @@ package bus
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
+
+func TestEventEnvSerialization(t *testing.T) {
+	ev, err := NewEvent("agent.tool.post", "auto/hooks/claude", nil)
+	if err != nil {
+		t.Fatalf("NewEvent: %v", err)
+	}
+
+	// Omitted when empty so events without terminal context stay lean.
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), `"env"`) {
+		t.Errorf("empty Env should be omitted, got %s", b)
+	}
+
+	// Present and round-trips when populated, and does not break validation.
+	ev.Env = map[string]string{"tmux_session": "auto-stack", "tmux_pane_index": "1"}
+	if errs := ev.Validate(); len(errs) != 0 {
+		t.Errorf("Env should not affect validation, got %v", errs)
+	}
+	b, err = json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal with env: %v", err)
+	}
+	var got Event
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Env["tmux_session"] != "auto-stack" || got.Env["tmux_pane_index"] != "1" {
+		t.Errorf("Env round-trip lost data: %v", got.Env)
+	}
+}
 
 func TestNewEventSetsDefaults(t *testing.T) {
 	ev, err := NewEvent("agent.tool.post", "auto/hooks/claude", map[string]string{"key": "val"})
