@@ -12,6 +12,16 @@ import (
 	"github.com/mistakenot/auto-ui/internal/server"
 )
 
+// localReq builds a request whose RemoteAddr is loopback, matching real
+// loopback-bound traffic so the loopback-only guard (see loopback_test.go)
+// admits it. httptest.NewRequest defaults RemoteAddr to a non-loopback
+// TEST-NET-1 address (192.0.2.1), which the guard correctly 403s.
+func localReq(method, target string) *http.Request {
+	req := httptest.NewRequest(method, target, nil)
+	req.RemoteAddr = "127.0.0.1:55555"
+	return req
+}
+
 // newTestFS returns an in-memory filesystem with an index.html that mimics the
 // SPA shell, so the server tests do not depend on build tags or the real embed.
 func newTestFS() fstest.MapFS {
@@ -27,7 +37,7 @@ func newTestFS() fstest.MapFS {
 func TestAPIHello(t *testing.T) {
 	handler := server.New(newTestFS(), "test")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/hello", nil)
+	req := localReq(http.MethodGet, "/api/hello")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -63,7 +73,7 @@ func TestAPIHello(t *testing.T) {
 func TestAPIHelloMethodNotAllowed(t *testing.T) {
 	handler := server.New(newTestFS(), "test")
 
-	req := httptest.NewRequest(http.MethodPost, "/api/hello", nil)
+	req := localReq(http.MethodPost, "/api/hello")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -80,7 +90,7 @@ func TestAPIHelloMethodNotAllowed(t *testing.T) {
 func TestServeIndex(t *testing.T) {
 	handler := server.New(newTestFS(), "test")
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := localReq(http.MethodGet, "/")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -105,7 +115,7 @@ func TestServeIndex(t *testing.T) {
 func TestMissingAsset(t *testing.T) {
 	handler := server.New(newTestFS(), "test")
 
-	req := httptest.NewRequest(http.MethodGet, "/nope.js", nil)
+	req := localReq(http.MethodGet, "/nope.js")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -127,7 +137,7 @@ func TestCacheControlByMode(t *testing.T) {
 	}
 	for _, tt := range tests {
 		handler := server.New(newTestFS(), tt.mode)
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req := localReq(http.MethodGet, "/")
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 

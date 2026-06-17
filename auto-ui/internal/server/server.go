@@ -106,7 +106,11 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 		assets = noStore(assets)
 	}
 	mux.Handle("/", assets) // GET / -> index.html
-	return mux
+
+	// Defense-in-depth: refuse any peer that is not loopback, even though we
+	// also bind to 127.0.0.1. See loopbackOnly for why this is safe behind
+	// `tailscale serve`.
+	return loopbackOnly(mux)
 }
 
 // noStore wraps h to disable browser caching of static assets (dev only).
