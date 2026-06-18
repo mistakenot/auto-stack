@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>003: Multi-Host Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.6.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <pd-doc title="003: Multi-Host Architecture" status="draft" pr="pending" generated="2026-06-18">
+
+    <script type="application/json" id="pd-meta">
+    {
+      "id": "003",
+      "name": "multi-host-architecture",
+      "kind": "epic",
+      "status": "planning",
+      "created": "2026-06-18"
+    }
+    </script>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- TAB 1: VISION                                          -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <pd-tab name="Vision">
+
+      <pd-cli title="zsh &mdash; one dashboard, every host" caption="The user experience this epic delivers">
+        <pd-cmd note="start the UI (requires autowatch running)" status="done">auto ui serve</pd-cmd>
+        <pd-out>listening on 127.0.0.1:8080</pd-out>
+
+        <pd-cmd note="register a remote autowatch backend" status="todo">auto ui backends add tcp://gpu-box:9400</pd-cmd>
+        <pd-out>&#10003; connected to gpu-box-charlie (3 projects)</pd-out>
+
+        <pd-cmd note="browse all projects from all hosts in the dashboard" status="todo">open http://localhost:8080</pd-cmd>
+        <pd-out>[browser: flat project list &mdash; laptop projects, GPU box projects, CI projects &mdash; each tagged with its host]</pd-out>
+
+        <pd-cmd note="dispatch a task to a remote host" status="todo">auto ui &gt; select project on gpu-box &gt; dispatch task</pd-cmd>
+        <pd-out>[autowatch on gpu-box picks up the task immediately via wake-on-demand, runs it in tmux]</pd-out>
+
+        <pd-cmd note="hooks fire locally, relay through autowatch" status="todo">auto hooks fire &mdash;event agent.tool.post ...</pd-cmd>
+        <pd-out>[event flows: hook &rarr; local autowatch (HTTP) &rarr; auto-ui (JSON-RPC push) &rarr; browser (WebSocket)]</pd-out>
+      </pd-cli>
+
+      <pd-section id="why-now" title="Why now">
+        <md><script type="text/plain">
+The auto-ui + bus architecture is single-host, broadcast-everything. Three real scenarios demand multi-project/multi-host support:
+
+1. **Same user, multiple projects** &mdash; one developer works across several repos on one machine.
+2. **Same host, different users** &mdash; shared dev server where each user runs their own autowatch.
+3. **Different hosts entirely** &mdash; distributed team, CI boxes, GPU machines, laptops.
+
+Epic 002 built the planning-docs dashboard &mdash; browse, render, live-update. But auto-ui reads files directly from the local filesystem, can't see other users' projects, and can't reach other hosts. This epic inverts the architecture: **autowatch becomes the per-user authority** (filesystem access, task dispatch, event production), and **auto-ui becomes a stateless proxy** that connects to one or more autowatch backends and renders whatever they serve.
+
+The pieces are closer than they look. The project registry, bus envelope, doc RPCs, and client-side event filtering all exist. The main gap is an RPC surface on autowatch and a proxy layer in auto-ui.
+        </script></md>
+      </pd-section>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- TAB 2: GUARD RAILS                                     -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <pd-tab name="Guard Rails">
+
+      <pd-section id="functional-rails" title="Functional">
+        <md><script type="text/plain">
+- **GR-F1: Full doc parity.** Every doc operation available in auto-ui today (list, get, raw HTML serve, doc.changed live refresh) must work identically when proxied through autowatch. No feature regression.
+- **GR-F2: Task dispatch parity.** `task.dispatch` through autowatch must produce the same SQLite record, tmux session, and reap lifecycle as the current CLI-driven flow.
+- **GR-F3: Event fidelity.** Bus events relayed from autowatch to auto-ui must arrive with all envelope fields intact, including the new `Host` field. No field loss in the relay hop.
+- **GR-F4: Hook compatibility.** `auto hooks fire` must continue to work for existing single-host setups. The retarget from auto-ui to autowatch must be transparent to hook authors.
+- **GR-F5: Project registry is authoritative.** Each autowatch serves projects from its own `~/.auto/projects.json`. auto-ui never modifies a remote registry &mdash; read-only aggregation.
+- **GR-F6: No fallback mode.** auto-ui requires at least one reachable autowatch backend. This is a documented prerequisite, not a degraded mode to handle.
+- **GR-F8: Host-scoped project identity.** The UI identity for any project is the tuple `(hostId, projectId)`. Every proxied RPC, raw-doc URL, event filter, and SPA hash route must carry both. `project.list` responses include `host` so the SPA can disambiguate projects with the same id on different backends.
+- **GR-F7: Logs are first-class events.** Log lines from autowatch are structured bus events (control plane), broadcast upstream through the same event relay as data plane events. Upstream consumers (auto-ui, browser, agents) can filter or ignore them. An agent debugging a stuck event watches the unified stream and sees the full hop-by-hop trace without tailing log files or SSH-ing into remote nodes.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="nonfunctional-rails" title="Non-functional">
+        <md><script type="text/plain">
+- **GR-N1: Zero new runtime dependencies.** Reuse Go stdlib and already-imported libraries. No new binaries, no FFI, no sidecar processes.
+- **GR-N2: Network-layer auth only.** No application-layer authentication in v1. Cross-host security is the network's responsibility (tailscale, WireGuard, SSH tunnel). The existing loopback guard on auto-ui's browser-facing HTTP stays.
+- **GR-N3: Transport-agnostic RPC.** JSON-RPC 2.0 handlers must not reference the transport. The `Listener`/`Dialer` abstraction lets unix, TCP, and future transports (WebSocket, iroh) be swapped without touching method handlers.
+- **GR-N4: Deterministic host identity.** `hostId` is read from `~/.auto/host.json` (format: `$hostname-$user`). Events, RPC routing, and UI grouping all key on this single identity. Fallback to `os.Hostname()` if config is missing; `auto doctor` flags it.
+- **GR-N5: Client-side event filtering.** Server-side filtering is not required. auto-ui broadcasts all events to all browser clients; the SPA filters by project/host as it does today.
+- **GR-N6: Two-tier conformance harness.** *In-process*: the transport abstraction enables wiring autowatch and auto-ui together via `net.Pipe()` in a single Go test process &mdash; no subprocess spawning, no port allocation, no timing sensitivity. This is the fast inner loop. *Binary*: a Go test helper launches real autowatch + auto-ui subprocesses with `--ready-file` coordination and temp home directories, returning RPC client handles. Both tiers expose the same RPC client interface, so test scenarios are written once and run against both.
+- **GR-N7: API-first testing.** Every user action in the SPA must be replicable at the RPC/HTTP layer. ~90% of E2E coverage runs at the API level (JSON-RPC calls, HTTP hook injection, push notification assertions). Browser tests are a thin smoke layer (~10%) covering only SPA load, WS connection, and rendering &mdash; never primary coverage.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- TAB 3: ARCHITECTURE & SEAMS                            -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <pd-tab name="Architecture">
+
+      <pd-section id="architecture-overview" title="Target architecture">
+        <pd-mermaid caption="End-state: auto-ui as stateless proxy, autowatch as per-user authority">
+flowchart TB
+    subgraph Browser
+        SPA["SPA (Preact+htm)"]
+    end
+
+    subgraph "auto-ui (stateless proxy)"
+        HTTP["HTTP server\n/api/ws, /api/doc/raw"]
+        Proxy["RPC proxy\n(routes by hostId)"]
+        Hub["Event hub\n(broadcast to browsers)"]
+    end
+
+    subgraph "Host A &mdash; autowatch (this user)"
+        RPC_A["JSON-RPC listener\n(TCP / unix socket)"]
+        Hook_A["HTTP hook endpoint"]
+        Tick_A["Tick loop + wake channel"]
+        SQLite_A["SQLite store"]
+        FS_A["Filesystem\n(docs, projects)"]
+    end
+
+    subgraph "Host B &mdash; autowatch (remote user)"
+        RPC_B["JSON-RPC listener\n(TCP)"]
+        Hook_B["HTTP hook endpoint"]
+        Tick_B["Tick loop + wake channel"]
+        SQLite_B["SQLite store"]
+        FS_B["Filesystem\n(docs, projects)"]
+    end
+
+    SPA <-->|WebSocket| HTTP
+    HTTP --> Proxy
+    Proxy <-->|"TCP JSON-RPC"| RPC_A
+    Proxy <-->|"TCP JSON-RPC"| RPC_B
+
+    RPC_A --> Tick_A
+    RPC_A --> SQLite_A
+    RPC_A --> FS_A
+    Hook_A -->|"HTTP POST"| RPC_A
+
+    RPC_B --> Tick_B
+    RPC_B --> SQLite_B
+    RPC_B --> FS_B
+    Hook_B -->|"HTTP POST"| RPC_B
+
+    RPC_A -->|"push notifications"| Hub
+    RPC_B -->|"push notifications"| Hub
+    Hub -->|"WS broadcast"| SPA
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="seams" title="Load-bearing seams">
+        <md><script type="text/plain">
+These are the contracts tasks must not break:
+
+1. **Transport interface** (`auto-shared/transport`). `Listener` / `Dialer` / `Conn` &mdash; the abstraction between JSON-RPC handlers and the wire. Every transport implementation (unix, TCP, future WS/iroh) satisfies this interface. RPC method handlers never import a transport package.
+
+2. **JSON-RPC 2.0 method contract.** The RPC surface is a fixed set of methods (`doc.list`, `doc.get`, `task.dispatch`, `project.list`, `bus.subscribe`, etc.) with stable request/response schemas. auto-ui's proxy attaches `hostId` to every forwarded RPC; autowatch implements the handlers. The UI identity for any project is `(hostId, projectId)` &mdash; both are required in every proxied call, URL, and event match (GR-F8). New methods can be added without changing the proxy.
+
+3. **bus.Event envelope** (`auto-shared/bus/event.go`). The CloudEvents-shaped envelope gains a `Host` field but is otherwise unchanged. All event producers (hooks, autowatch, derive functions) must populate `Host`. All consumers (auto-ui hub, SPA filters) must handle it.
+
+4. **Backends config** (`~/.auto/ui/backends.json`). auto-ui's list of autowatch endpoints, keyed by hostId. The proxy layer reads this at startup and on SIGHUP. Each entry is a transport URI (`unix:///...`, `tcp://host:port`).
+
+5. **Hook ingestion contract.** Hooks POST to autowatch's HTTP endpoint (same payload shape as today's `/api/rpc` on auto-ui). Autowatch ingests, derives, and relays. The hook producer (`auto hooks fire`) targets autowatch instead of auto-ui.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="seams" status="resolved" priority="p1" title="Project identity is not host-scoped">
+        <pd-comment by="review">The routing contract says the proxy routes by `hostId`, and GR-N4 says host identity keys RPC routing/UI grouping, but the RPC examples and Task 9 still treat `project` alone as the selected identity. Current `project.list` returns `{id,name,path,remote}` and the SPA URL/event matching use `project` only, so two backends with project id `auto-stack` would collide in the flat list, proxied RPC routing, raw-doc URLs, and `doc.changed` matching. The epic needs an explicit guard rail/decision that the UI identity is `(hostId, projectId)` or a stable composite id, and that every proxied RPC, raw-doc URL, event filter, and hash route carries host identity.</pd-comment>
+        <pd-comment by="author">Valid. Added GR-F8: the UI identity for any project is the tuple `(hostId, projectId)`. auto-ui's proxy attaches `hostId` when forwarding RPCs; `project.list` responses include `host`; the SPA hash, raw-doc URLs, and event matching all carry both. Updated seam #2 (method contract) and Task 9 accordingly.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="scenario-mapping" title="Per-scenario transport mapping">
+        <md><script type="text/plain">
+| Scenario | Transport | Backend URI | Notes |
+|---|---|---|---|
+| Same user, multiple projects | Unix socket | `unix:///run/user/$UID/auto-watch.sock` | auto-ui and autowatch share a user; all projects in one registry |
+| Same host, different users | Loopback TCP | `tcp://127.0.0.1:$PORT` | XDG_RUNTIME_DIR is mode 0700 so cross-user unix sockets don't work; loopback TCP with network-layer auth |
+| Different hosts | TCP | `tcp://hostname:9400` | Security via network layer (tailscale, WireGuard, SSH tunnel) |
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="scenario-mapping" status="resolved" priority="p2" title="Same-host multi-user socket path is probably not reachable">
+        <pd-comment by="review">The same-host/different-users row assumes another user's socket under `/run/user/$OTHER_UID` can be reached via shared group permissions. On typical systemd systems the per-user runtime directory itself is not group-traversable, so group permissions on `auto-watch.sock` do not make `unix:///run/user/$OTHER_UID/auto-watch.sock` usable by another user. This scenario needs a different guard rail, such as a shared runtime directory with explicit ownership/mode, or loopback TCP plus the same network-layer security story.</pd-comment>
+        <pd-comment by="author">Correct &mdash; XDG_RUNTIME_DIR is mode 0700. Updated the scenario mapping: same-host/different-users uses loopback TCP (`tcp://127.0.0.1:$PORT`), same network-layer-only security story as cross-host. Unix sockets are only for same-user.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="event-planes" title="Event type namespace: data plane vs control plane">
+        <md><script type="text/plain">
+Bus event types follow a **data plane / control plane split** &mdash; the same separation distributed systems use to keep business traffic and infrastructure traffic independently manageable.
+
+| Plane | Prefix | Examples | Flows by default |
+|---|---|---|---|
+| **Data** | domain noun | `doc.changed`, `agent.tool.post`, `watch.task.started`, `watch.task.completed`, `watch.task.failed` | Always |
+| **Control** | `ctl.*` | `ctl.log.info`, `ctl.log.warn`, `ctl.log.error`, `ctl.connect`, `ctl.disconnect`, `ctl.health` | Opt-in via `--ctl-events` flag on autowatch |
+
+Data plane events are the business events that drive the UI (doc refresh, task status). Control plane events are infrastructure observability &mdash; log lines, connection lifecycle, health checks. Both share the same `bus.Event` envelope and flow through the same relay, but control plane events are gated behind a CLI flag so they don't add noise in normal operation.
+
+An agent debugging event flow enables `--ctl-events` and sees the full trace: hook received &rarr; event ingested &rarr; derivation fired &rarr; relayed upstream &rarr; broadcast to browser. All in one stream, all keyed by event ID.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="event-planes" status="resolved" priority="p2" title="Task lifecycle data-plane events are undefined">
+        <pd-comment by="review">The data/control split does not say where autowatch task lifecycle events live. This section uses `task.started`/`task.completed` as data-plane examples, while `docs/auto-bus-spec.md` maps the current daemon events to `watch.task.started`, `watch.task.completed`, and `watch.task.failed` as a future adopter. The breakdown registers only `ctl.*` in Task 1 and hook/doc relay in Task 6, so remote task dispatch has no defined live status event stream. Decide whether task lifecycle events are `watch.task.*` or `task.*`, keep `ctl.log.*` for infrastructure logs only, and add the data-plane task-event mapping to the breakdown.</pd-comment>
+        <pd-comment by="author">Good catch. Task lifecycle events are data plane: `watch.task.started`, `watch.task.completed`, `watch.task.failed` per the existing bus spec. Updated the data plane examples in the event-planes section and added task lifecycle event emission to Task 5's scope.</pd-comment>
+      </pd-thread>
+
+      <pd-decision id="D-1" title="TCP + JSON-RPC for backend, WebSocket stays browser-only" status="accepted" by="author"
+        summary="Two protocols: TCP+JSON-RPC between daemons, WebSocket between auto-ui and browser.">
+        <md><script type="text/plain">
+**Context:** Need a protocol for autowatch &harr; auto-ui communication. Options: WebSocket everywhere, TCP + JSON-RPC, or gRPC.
+
+**Decision:** TCP + JSON-RPC 2.0 for daemon-to-daemon. WebSocket stays only for the auto-ui &harr; browser hop (already exists).
+
+**Alternatives:**
+- WebSocket everywhere &mdash; adds HTTP upgrade overhead for daemon-to-daemon; main advantage (browser compat) isn't needed between backends.
+- gRPC &mdash; adds protobuf dependency, code generation step; overkill for this scale.
+
+**Consequences:** Two protocols in the stack (TCP JSON-RPC + WebSocket), but each serves its natural audience. auto-ui bridges the two. The transport abstraction means WebSocket can be added as a backend transport later if reverse-proxy constraints demand it.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-2" title="auto-ui delegates entirely to autowatch" status="accepted" by="author"
+        summary="auto-ui does zero filesystem reads; autowatch is the sole authority for docs, projects, and tasks.">
+        <md><script type="text/plain">
+**Context:** auto-ui currently reads docs directly from the filesystem. With autowatch serving doc RPCs, there's a question of whether auto-ui keeps its direct-read path.
+
+**Decision:** Full cut-over. auto-ui removes all direct filesystem reads and delegates entirely to autowatch. auto-ui requires a running autowatch to function. No fallback mode.
+
+**Alternatives:**
+- Additive (both paths) &mdash; auto-ui keeps direct reads for local projects, proxies for remote. More resilient but maintains two code paths indefinitely.
+- In-process fallback &mdash; auto-ui embeds doc-reading as a local backend. Defeats the clean separation.
+
+**Consequences:** `auto ui serve` has a hard dependency on autowatch. Users must run `auto watch start` first (or use systemd). Documented as a prerequisite. The payoff is one code path for all scenarios and a clean proxy architecture.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-3" title="Hooks post to autowatch, not auto-ui" status="accepted" by="author"
+        summary="Hook events flow through autowatch (durable, always-local) then relay to auto-ui.">
+        <md><script type="text/plain">
+**Context:** Hooks currently HTTP POST to auto-ui's `/api/rpc`. In the new architecture, autowatch is the per-user daemon that's always running.
+
+**Decision:** `auto hooks fire` retargets to autowatch's HTTP endpoint. Autowatch ingests, runs derivations (doc.changed), stores durably, and pushes events to connected auto-ui instances as JSON-RPC notifications.
+
+**Alternatives:**
+- Keep hooks posting to auto-ui &mdash; events are lost when auto-ui isn't running; no durability.
+- Post to both &mdash; complex, duplicates derivation logic.
+
+**Consequences:** Events survive auto-ui restarts. Autowatch needs an HTTP listener alongside its TCP JSON-RPC listener. The derivation logic (DeriveDocChanged etc.) moves to or is shared with autowatch.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-4" title="Separate backends config, not per-project" status="accepted" by="author"
+        summary="auto-ui discovers backends from its own config, fetches projects from each backend at connect time.">
+        <md><script type="text/plain">
+**Context:** auto-ui needs to know which autowatch instances exist. Options: annotate each project in projects.json with a backend URI, or keep a separate backends list.
+
+**Decision:** auto-ui has its own backends config (`~/.auto/ui/backends.json`), managed via `auto ui backends add/remove`. Projects are fetched FROM each backend (`project.list` RPC) at connect time.
+
+**Alternatives:**
+- Backend field on ProjectRef &mdash; couples project registration to transport; every `auto init --project` needs backend awareness.
+- Both &mdash; unnecessary complexity.
+
+**Consequences:** Adding a remote host is one command (`auto ui backends add tcp://host:port`). auto-ui merges project lists from all connected backends. ProjectRef stays unchanged.
+        </script></md>
+      </pd-decision>
+
+    </pd-tab>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- TAB 4: BREAKDOWN                                       -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <pd-tab name="Breakdown">
+
+      <pd-section id="breakdown-overview" title="Task dependency graph">
+        <pd-mermaid caption="Deployment order &mdash; each task is independently deployable">
+flowchart LR
+    T1["Task 1\nHost field +\nctl.* types"]
+    T2["Task 2\nTransport +\nconformance"]
+    T3["Task 3\nAutowatch\nRPC + HTTP listener"]
+    T4["Task 4\nAutowatch\ndoc + project RPCs"]
+    T5["Task 5\nAutowatch\ntask RPCs"]
+    T6["Task 6\nAutowatch event\ningest + relay"]
+    T7["Task 7\nauto-ui proxy\n+ backends config"]
+    T8["Task 8\nauto-ui event\naggregation"]
+    T9["Task 9\nMulti-host SPA"]
+    T10["Task 10\nHook retarget\nto autowatch-only"]
+
+    T1 --> T6
+    T2 --> T3
+    T3 --> T4
+    T3 --> T5
+    T3 --> T6
+    T4 --> T7
+    T5 --> T7
+    T6 --> T8
+    T7 --> T8
+    T7 --> T9
+    T8 --> T9
+    T8 --> T10
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="task-1" title="Task 1: Host field + control plane event types">
+        <md><script type="text/plain">
+**Advances:** GR-F3 (event fidelity), GR-F7 (logs as events), GR-N4 (deterministic host identity)
+
+Two foundational changes to the bus:
+
+1. Add a non-optional `Host string` field to the bus event envelope. Wire the hook producer to attach `hostId` from `~/.auto/host.json` (it already reads it; just not propagated to the event). Update `auto init` to prompt for hostId with `$hostname-$user` as the suggested default. `auto doctor` flags missing hostId config AND legacy hostname-only values (no `-` separator). `auto init` re-prompts with the new format when it detects a legacy value &mdash; no silent rewrite.
+
+2. Register the `ctl.*` event type namespace for control plane events (`ctl.log.info`, `ctl.log.warn`, `ctl.log.error`, `ctl.connect`, `ctl.disconnect`, `ctl.health`). Add a shared `ctl.LogEvent` data payload type. These events share the same `bus.Event` envelope as data plane events.
+
+Trivial, unblocks everything downstream that needs host-aware routing and structured observability.
+
+**Depends on:** nothing
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="task-1" status="resolved" priority="p2" title="Host identity migration is missing">
+        <pd-comment by="review">Task 1 says the hostId format is `$hostname-$user`, but existing `EnsureHost()` creates `~/.auto/host.json` with `hostId` equal to hostname only, and `LoadHost()` only requires a non-empty value. That is enough to collide in the "same host, different users" scenario. Add migration/validation scope here: how old hostname-only hostIds are detected, whether `auto init` rewrites or prompts, and what `auto doctor` flags beyond a missing file.</pd-comment>
+        <pd-comment by="author">Valid. Added migration scope to Task 1: `auto doctor` flags a hostId that doesn't contain `-` (likely hostname-only legacy). `auto init` re-prompts with `$hostname-$user` as suggested default when the existing value looks legacy. No silent rewrite &mdash; always prompts. Updated the task description.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="task-2" title="Task 2: Transport abstraction + conformance harness">
+        <md><script type="text/plain">
+**Advances:** GR-N3 (transport-agnostic RPC), GR-N6 (conformance harness), GR-N7 (API-first testing)
+
+Two things that go together:
+
+1. Define `Listener` / `Dialer` / `Conn` interfaces in `auto-shared/transport`. Implement `transport/unix` (unix domain socket) and `transport/tcp`. JSON-RPC 2.0 framing sits on top of `Conn` &mdash; method handlers never see the transport.
+
+2. Build the conformance harness scaffold: a reusable test scenario interface with fake/stub RPC adapters wired via `net.Pipe()`. Each subsequent task plugs its real component into the harness (Task 3 plugs the real autowatch listener, Task 7 plugs the real auto-ui proxy, etc.). The full in-process wiring of real autowatch + real auto-ui completes when both exist.
+
+Foundation for all RPC and testing work. No user-visible behavior change yet.
+
+**Depends on:** nothing
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="task-2" status="resolved" priority="p2" title="Conformance harness completion is sequenced before the components exist">
+        <pd-comment by="review">Task 2 promises an in-process harness that wires autowatch's RPC listener to auto-ui's proxy via `net.Pipe()`, but the autowatch listener is introduced in Task 3 and the auto-ui proxy is introduced in Task 7. GR-N6 also requires the binary harness, while Task 2 only scopes the in-process tier. As written, Task 2 cannot independently complete GR-N6. Scope this task as shared transport plus a reusable scenario interface/fake adapters, then add the real autowatch adapter in Task 3 and the real auto-ui proxy/binary adapters in Task 7 or Task 8.</pd-comment>
+        <pd-comment by="author">Fair point. Rescoped Task 2 to: transport interfaces + implementations + a reusable test scenario interface with fake/stub adapters. Each subsequent task plugs its real component into the harness. The in-process wiring of real autowatch + real auto-ui happens when both exist (Task 7+). Updated the task description.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="task-3" title="Task 3: Autowatch JSON-RPC listener + wake channel">
+        <md><script type="text/plain">
+**Advances:** GR-N3 (transport-agnostic), GR-F7 (logs as events), GR-N6 (conformance harness)
+
+Add a JSON-RPC listener to the autowatch daemon alongside the existing tick loop. The listener accepts connections over the transport abstraction (unix socket by default, TCP when configured). RPC handlers (task.dispatch, doc.list, etc.) operate directly &mdash; they don't queue work for the tick loop.
+
+Also add a small HTTP endpoint for hook ingestion (same payload shape as auto-ui's current `/api/rpc`). This is the local hook target for Task 6.
+
+Core RPC dispatch: method routing, request/response, and push notification support over persistent connections. When `--ctl-events` is set, autowatch emits `ctl.log.*` events for significant operations (event ingested, derivation fired, RPC served, connection opened/closed) into the same event stream as data plane events.
+
+Support `--rpc-addr tcp://127.0.0.1:0` (OS-assigned port) and `--ready-file <path>` (writes `{"addr":"..."}` once listening) so the binary E2E harness can launch multiple autowatch instances without port collisions.
+
+**Depends on:** Task 2 (transport abstraction + conformance harness)
+        </script></md>
+      </pd-section>
+
+      <pd-section id="task-4" title="Task 4: Autowatch serves doc + project RPCs">
+        <md><script type="text/plain">
+**Advances:** GR-F1 (full doc parity), GR-F5 (registry authoritative)
+
+Implement `doc.list`, `doc.get`, `doc.raw`, and `project.list` RPC methods on autowatch. These read from the local filesystem and project registry &mdash; the same operations auto-ui does today, now served over JSON-RPC. `doc.raw` returns raw file bytes with content type, matching the current `/api/doc/raw` HTTP route (auto-ui's proxy translates the HTTP GET into this RPC call). Add `daemon.status` for health checks.
+
+The doc-reading logic can be reimplemented in autowatch (it's small) or extracted to a shared library. The key constraint is full parity with auto-ui's current behavior: same path validation, same traversal guards, same response shape.
+
+**Depends on:** Task 3 (RPC listener)
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="task-4" status="resolved" priority="p2" title="Raw HTML doc parity has no backend method">
+        <pd-comment by="review">GR-F1 includes raw HTML serve, and Task 7 says `/api/doc/raw` is proxied through autowatch, but Task 4 only implements `doc.list`, `doc.get`, and `project.list`. In the current auto-ui code, HTML docs are served by the separate `/api/doc/raw` HTTP route and are deliberately not returned by `doc.get`. Add an autowatch `doc.raw`/raw-bytes RPC or an explicit autowatch raw HTTP endpoint to Task 4; otherwise the clean cut-over breaks HTML planning docs.</pd-comment>
+        <pd-comment by="author">Correct. Added `doc.raw` RPC method to Task 4's scope &mdash; returns raw file bytes with content type, matching the current `/api/doc/raw` HTTP route. auto-ui's proxy translates the HTTP GET into this RPC call. Updated the task description.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="task-5" title="Task 5: Autowatch serves task RPCs">
+        <md><script type="text/plain">
+**Advances:** GR-F2 (task dispatch parity)
+
+Implement `task.dispatch`, `task.cancel`, `task.status`, `task.output`, and `task.list` RPC methods. These wire into the existing SQLite store and tmux runner. `task.dispatch` inserts into SQLite and starts the worker directly (same dispatch primitive the tick loop uses) &mdash; it does NOT signal the tick loop. The tick loop handles cron-triggered runs and reaping; RPC-dispatched runs handle their own lifecycle. Emit `watch.task.started`, `watch.task.completed`, and `watch.task.failed` data-plane events per the bus spec.
+
+**Depends on:** Task 3 (RPC listener)
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="task-5" status="resolved" priority="p2" title="Task dispatch execution model is contradictory">
+        <pd-comment by="review">Task 3 says RPC handlers operate directly and do not queue work for the tick loop, but Task 5 says `task.dispatch` inserts a pending run and signals the wake channel for pickup. Those are different execution models. The existing daemon reserves runs and starts workers inside trigger evaluation, so task dispatch parity likely needs a shared dispatch primitive and a clear decision: does RPC dispatch start the worker immediately, or does it enqueue and wake the daemon loop? Without that, Task 5 is under-scoped for independent deployment.</pd-comment>
+        <pd-comment by="author">Valid contradiction &mdash; leftover from the wake channel concept we already removed. Fixed: `task.dispatch` RPC inserts into SQLite and starts the worker directly (same dispatch primitive the tick loop uses). It does NOT signal the tick loop. The tick loop handles cron-triggered runs and reaping; RPC-dispatched runs handle their own lifecycle. Updated Task 5 description.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="task-6" title="Task 6: Autowatch event ingest + relay plumbing">
+        <md><script type="text/plain">
+**Advances:** GR-F3 (event fidelity), GR-F7 (logs as events), D-3 (hooks post to autowatch)
+
+Build autowatch's event pipeline: HTTP ingest endpoint accepts hook events, runs bus derivations (DeriveDocChanged, etc.), attaches `hostId`, and pushes events as JSON-RPC notifications to all connected upstream clients. Implement `bus.subscribe` &mdash; when auto-ui connects, it subscribes; autowatch pushes all events over the persistent TCP connection as they occur.
+
+**Hooks keep posting to auto-ui in parallel** during this phase &mdash; no retarget yet. Autowatch's ingest is additive. The actual hook retarget to autowatch-only happens in Task 10 (after auto-ui subscribes to autowatch in Task 8).
+
+**Depends on:** Task 1 (Host field), Task 3 (RPC listener + HTTP endpoint)
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="task-6" status="resolved" priority="p1" title="Hook retarget breaks live refresh before auto-ui subscribes">
+        <pd-comment by="review">Task 6 retargets `auto hooks fire` away from auto-ui before Task 8 teaches auto-ui to subscribe to autowatch. In that intermediate deployed state, the current auto-ui no longer receives `/api/rpc` hook events and therefore no longer derives/broadcasts `doc.changed`, while the new autowatch relay has no auto-ui subscriber yet. That violates GR-F4's transparent single-host compatibility and the "each task is independently deployable" claim. Split this into autowatch ingest/relay plumbing first and delay hook retarget until auto-ui subscription is deployed, or include an explicit temporary compatibility bridge/dual-post with a removal point.</pd-comment>
+        <pd-comment by="author">Valid — real sequencing gap. Split Task 6 into two parts: Task 6a builds autowatch's ingest + derivation + relay plumbing (hooks can POST to autowatch, events relay to subscribers), but hooks KEEP posting to auto-ui as well. Task 6b (after Task 8) retargets `auto hooks fire` to autowatch-only and removes auto-ui's `/api/rpc` ingest. Updated the task description and dependency graph.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="task-7" title="Task 7: auto-ui proxy layer + backends config">
+        <md><script type="text/plain">
+**Advances:** GR-F1 (doc parity), GR-F6 (no fallback), D-2 (full cut-over), D-4 (separate backends config)
+
+The big cut-over. auto-ui removes all direct filesystem reads and gains a proxy layer that routes RPCs to autowatch backends by hostId.
+
+- `~/.auto/ui/backends.json` stores the backend list (hostId &rarr; transport URI).
+- `auto ui backends add/remove/list` CLI commands to manage it.
+- On startup, auto-ui connects to each backend via the transport abstraction.
+- All `doc.list`, `doc.get`, `project.list`, `task.*` calls are proxied to the appropriate backend.
+- `/api/doc/raw` proxied through autowatch (autowatch serves raw file bytes).
+- auto-ui's own doc-reading, project-loading, and file-serving code is removed.
+
+This is a clean break: auto-ui cannot function without at least one reachable autowatch backend.
+
+**Depends on:** Task 4 (doc RPCs), Task 5 (task RPCs)
+        </script></md>
+      </pd-section>
+
+      <pd-section id="task-8" title="Task 8: auto-ui event aggregation">
+        <md><script type="text/plain">
+**Advances:** GR-F3 (event fidelity), GR-N5 (client-side filtering)
+
+auto-ui subscribes to each connected autowatch backend for bus events (`bus.subscribe`). Incoming events from all backends are merged into the existing Hub and broadcast to all browser WebSocket clients. Events carry the `Host` field from Task 1; the SPA's existing client-side filtering handles the rest (filtering by project, ignoring irrelevant hosts).
+
+**Depends on:** Task 6 (event relay), Task 7 (proxy layer)
+        </script></md>
+      </pd-section>
+
+      <pd-section id="task-9" title="Task 9: Multi-host SPA">
+        <md><script type="text/plain">
+**Advances:** Vision (one dashboard, every host)
+
+Update the SPA explorer to handle projects from multiple backends/hosts:
+
+- The project list is a flat list aggregated from all connected backends, each tagged with its host.
+- The project switcher shows host as a badge/tag, not a hierarchy.
+- Selecting a project from a remote host works identically to a local one (all operations route through the proxy).
+- The SPA hash, event matching, and all RPC calls carry `(hostId, projectId)` per GR-F8.
+- The existing doc tree, content pane, and live-update wiring work unchanged &mdash; they already operate on project-scoped RPC calls.
+- Connection status indicator shows per-backend health.
+
+**Depends on:** Task 7 (proxy layer), Task 8 (event aggregation)
+        </script></md>
+      </pd-section>
+
+      <pd-section id="task-10" title="Task 10: Hook retarget to autowatch-only">
+        <md><script type="text/plain">
+**Advances:** GR-F4 (hook compatibility), D-3 (hooks post to autowatch)
+
+Now that auto-ui subscribes to autowatch (Task 8), retarget `auto hooks fire` to POST to autowatch's HTTP endpoint **only** &mdash; remove the dual-post to auto-ui. Remove auto-ui's `/api/rpc` ingest endpoint (it's no longer needed; all events flow through autowatch). This is safe because auto-ui already receives events via the autowatch relay.
+
+**Depends on:** Task 8 (auto-ui event aggregation)
+        </script></md>
+      </pd-section>
+
+      <pd-section id="task-summary" title="Summary">
+        <md><script type="text/plain">
+| # | Task | Depends on | Advances |
+|---|---|---|---|
+| 1 | Host field + control plane event types | &mdash; | GR-F3, GR-F7, GR-F8, GR-N4 |
+| 2 | Transport abstraction + conformance harness | &mdash; | GR-N3, GR-N6, GR-N7 |
+| 3 | Autowatch RPC listener | 2 | GR-N3, GR-F7, GR-N6 |
+| 4 | Autowatch doc + project RPCs | 3 | GR-F1, GR-F5 |
+| 5 | Autowatch task RPCs | 3 | GR-F2 |
+| 6 | Autowatch event ingest + relay plumbing | 1, 3 | GR-F3, GR-F7 |
+| 7 | auto-ui proxy + backends config | 4, 5 | GR-F1, GR-F6, GR-F8 |
+| 8 | auto-ui event aggregation | 6, 7 | GR-F3, GR-N5 |
+| 9 | Multi-host SPA | 7, 8 | Vision, GR-F8 |
+| 10 | Hook retarget to autowatch-only | 8 | GR-F4 |
+
+**Parallelism:** Tasks 1 and 2 have no dependencies and can start in parallel. Tasks 4 and 5 can run in parallel after Task 3. Tasks 4+5 vs Task 6 can also run in parallel (different dependency chains converge at Task 7).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- TAB 5: DECISIONS                                       -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <pd-tab name="Decisions">
+
+      <pd-section id="decisions-log" title="Decision log">
+        <md><script type="text/plain">
+All architectural decisions recorded during epic planning. Each decision is anchored in the Architecture tab with full rationale; this log provides the at-a-glance summary.
+        </script></md>
+        <pd-decisions title="Epic decisions"></pd-decisions>
+      </pd-section>
+
+      <pd-decision id="D-5" title="Autowatch is the RPC home, not a new daemon" status="accepted" by="author"
+        summary="Autowatch already has filesystem access, project awareness, daemon lifecycle, and task dispatch. One daemon per user.">
+        <md><script type="text/plain">
+**Context:** Adding a JSON-RPC listener is a significant expansion of autowatch's responsibilities. Considered a separate `auto-rpc` daemon or embedding in auto-ui.
+
+**Decision:** Autowatch. It already runs as a systemd-managed daemon with filesystem access, project registry awareness, task dispatch, and a stable lifecycle. Adding RPC alongside the tick loop keeps one daemon per user.
+
+**Alternatives:**
+- New `auto-rpc` daemon &mdash; two daemons per user, duplicates project/filesystem access.
+- Embed in auto-ui &mdash; couples the UI server to the API surface; auto-ui should be stateless.
+
+**Consequences:** Autowatch grows from ~4 responsibilities to ~6. The RPC listener is additive (tick loop continues unchanged). Wake channel bridges the two concerns cleanly.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-6" title="Flat project list, not host hierarchy" status="accepted" by="author"
+        summary="SPA shows all projects from all hosts in a flat list with host badges. No host-level navigation.">
+        <md><script type="text/plain">
+**Context:** With projects from multiple hosts, the landing page could group by host or show a flat list.
+
+**Decision:** Flat project list with a host badge/tag per project. No host-level hierarchy or dropdown.
+
+**Alternatives:**
+- Host &rarr; Projects hierarchy &mdash; matches the "my laptop vs GPU box" mental model but adds a navigation level.
+- Host filter dropdown &mdash; minimal UI change but hides projects behind a filter.
+
+**Consequences:** All projects are visible at once. Works well with few hosts (1&ndash;5); may need search/filter if the list grows large (Phase 4 of epic 002 already plans a filter box).
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-7" title="Clean break migration, no transition period" status="accepted" by="author"
+        summary="One task removes auto-ui's direct file reading and adds the autowatch proxy. No feature flag, no dual mode.">
+        <md><script type="text/plain">
+**Context:** Cutting auto-ui over from direct filesystem reads to autowatch delegation is a breaking change in the deployment model.
+
+**Decision:** Clean break. Task 7 removes direct reads and adds the proxy in a single deployable change. No feature flag, no transition period.
+
+**Alternatives:**
+- Feature flag transition &mdash; a config option switches between direct-read and proxy during transition. More complexity, deferred cleanup.
+- Sequential tasks &mdash; first add proxy path alongside direct reads, then remove direct reads. Natural rollback point but maintains two code paths.
+
+**Consequences:** Users must have autowatch running before upgrading auto-ui. The upgrade path is: install new auto binary &rarr; ensure `auto watch start` runs (systemd) &rarr; `auto ui serve` works. Clear, documented, no ambiguity.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-8" title="Network-layer auth only for cross-host" status="accepted" by="author"
+        summary="No application-layer auth. Cross-host security is the network's job (tailscale, WireGuard, SSH tunnel).">
+        <md><script type="text/plain">
+**Context:** Cross-host TCP connections need some form of security. Options: application-layer tokens, mutual TLS, or rely on the network.
+
+**Decision:** Network-layer auth only. Autowatch binds TCP on a port; cross-host encryption and authentication are the network's responsibility. The existing loopback guard on auto-ui's browser-facing HTTP stays.
+
+**Alternatives:**
+- Shared-secret bearer token &mdash; simple app-layer auth, but adds key management and rotation.
+- mTLS &mdash; strong auth but heavy setup for a dev tool.
+
+**Consequences:** Cross-host requires a VPN or tunnel. Acceptable for the target user (dev teams with tailscale or similar). Application-layer auth can be added as a guard rail in a future epic if demand appears.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-9" title="Data plane / control plane event split" status="accepted" by="author"
+        summary="Bus events split into data plane (business events, always flow) and control plane (logs/health, opt-in via --ctl-events).">
+        <md><script type="text/plain">
+**Context:** Log lines from autowatch should be first-class bus events so agents can debug the full event chain without tailing log files. But emitting every log line as an event would be noisy in normal operation.
+
+**Decision:** Event types follow a data/control plane split. Data plane events (domain nouns: `doc.changed`, `task.started`) always flow. Control plane events (`ctl.log.*`, `ctl.connect`, `ctl.health`) are gated behind a `--ctl-events` CLI flag on autowatch. Both share the same `bus.Event` envelope and relay path.
+
+**Alternatives:**
+- Separate debug ring buffer per node &mdash; works but requires per-node probing and a separate protocol.
+- Always emit all events &mdash; noisy; wastes bandwidth and browser memory in normal operation.
+
+**Consequences:** Debugging a multi-node event chain is: enable `--ctl-events`, watch the unified stream, filter by event ID. The auto-ui `/debug` page becomes a real-time cross-cluster view for free. The `ctl.*` prefix keeps the type registry clean and makes filtering trivial.
+        </script></md>
+      </pd-decision>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>

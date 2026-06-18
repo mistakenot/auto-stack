@@ -165,8 +165,13 @@ func newAgentsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// The agent index excludes ephemeral planning trees (tasks,
+			// experiments, ...) on top of the normal discovery ignores. These
+			// extra patterns apply ONLY here, so tree/stale/fix/search still
+			// track those docs for freshness.
+			indexIgnores := append(append([]string{}, cfg.Ignores...), cfg.AgentIndexIgnores...)
 			if fileFlag != "" {
-				if err := commands.AgentsToFile(cwd, cfg.DocsDir, fileFlag, cfg.Ignores); err != nil {
+				if err := commands.AgentsToFile(cwd, cfg.DocsDir, fileFlag, indexIgnores); err != nil {
 					return err
 				}
 				if jsonOutput {
@@ -175,7 +180,7 @@ func newAgentsCmd() *cobra.Command {
 				fmt.Printf("Updated %s\n", fileFlag)
 				return nil
 			}
-			updatedFiles, err := commands.AgentsWithResult(cwd, cfg.DocsDir, cfg.AgentFiles, cfg.Ignores)
+			updatedFiles, err := commands.AgentsWithResult(cwd, cfg.DocsDir, cfg.AgentFiles, indexIgnores)
 			if err != nil {
 				return err
 			}

@@ -2,7 +2,7 @@
 
 ## Branch Naming
 
-Use `task/$ID-$NAME` format with dashes. Never use `+` in branch names -- it breaks some review tools.
+Use `task/$ID-$NAME` format with dashes.
 
 ## Worktree Isolation
 

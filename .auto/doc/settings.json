@@ -9,7 +9,6 @@
     "docs/improvement-opportunities-*.md",
     "docs/stack-probe-findings-*.md",
     "docs/self-improve-*.md",
-    "docs/gemini-session-analysis.md",
-    "docs/tasks/*"
+    "docs/gemini-session-analysis.md"
   ]
 }

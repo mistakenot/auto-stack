@@ -24,9 +24,10 @@ Before writing anything, apply these checks:
 3. **Determine task ID** -- scan `docs/tasks/` for existing folders. Assign the next 3-digit sequential ID (e.g. if `042-*` exists, next is `043`). If `docs/tasks/` doesn't exist, start at `001`.
 4. **Derive task name** -- create a short kebab-case name from the user's description (e.g. `add-team-settings`).
 5. **Create task folder** -- `mkdir -p docs/tasks/$ID-$NAME`
-6. **Write requirements.md** -- use the template and rules below. Fill in Problem, Goals, and Acceptance Criteria from user input. Add Out of Scope based on reasonable boundaries. List any unresolved questions in Open Questions.
-7. **Resolve Open Questions** -- for each open question, ask the user interactively (use `AskUserQuestion` tool if available). Update the doc with answers as they come in. Repeat until all questions are resolved or the user defers them.
-8. **Hard-stop** -- present the completed requirements.md to the user. Do NOT proceed to solution stage. Tell them: "Review requirements.md. When ready, run `/new-solution` to continue."
+6. **Check for epic** -- if the user mentions an epic or the task clearly belongs to one, ask which epic file it belongs to (path relative from repo root). If the task is part of an epic, include `epic:` in YAML frontmatter on requirements.md. If not, omit frontmatter entirely.
+7. **Write requirements.md** -- use the template and rules below. Fill in Problem, Goals, and Acceptance Criteria from user input. Add Out of Scope based on reasonable boundaries. List any unresolved questions in Open Questions.
+8. **Resolve Open Questions** -- assume there are latent requirements in the user's head that they haven't communicated in their prompt. Proactively surface unstated assumptions, clarify ambiguity, and resolve Open Questions by asking the user interactively (use `AskUserQuestion` tool if available). Update the doc with answers as they come in. Repeat until all questions are resolved or the user defers them.
+9. **Hard-stop** -- present the completed requirements.md to the user. Do NOT proceed to solution stage. Tell them: "Review requirements.md. When ready, run `/new-solution` to continue."
 
 ## Requirements Template and Rules
 

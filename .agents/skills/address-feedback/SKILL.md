@@ -109,6 +109,10 @@ Report:
 - Any threads where you disagreed with the reviewer and why
 - Whether typecheck/tests passed
 
+## Notes
+
+- When Codex finds no issues, `chatgpt-codex-connector[bot]` adds a +1 (thumbs-up) reaction to the PR itself — not a comment or review thread. If you see no unresolved threads but the PR has this reaction, there's nothing to address.
+
 ## Rules
 
 - Every thread gets a response (never silently skip)

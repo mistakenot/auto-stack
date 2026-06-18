@@ -44,11 +44,13 @@ echo "claude exit code: $CLAUDE_EXIT"
 
 ### Step 2: Check for Comments
 
-Count review comments Claude left in the task docs:
+Count review comments Claude left in the task docs (check both markdown and HTML formats):
 
 ```bash
-COMMENT_COUNT=$(rg -n "<!-- (UNRESOLVED|RESOLVED|REJECTED)\(P[123]\):" "$TASK_DIR"/*.md | wc -l)
-echo "review comment count: $COMMENT_COUNT"
+MD_COUNT=$(rg -cn "<!-- (UNRESOLVED|RESOLVED|REJECTED)\(P[123]\):" "$TASK_DIR"/*.md 2>/dev/null | awk -F: '{s+=$2}END{print s+0}')
+HTML_COUNT=$(rg -cn "<pd-thread " "$TASK_DIR"/*.html 2>/dev/null | awk -F: '{s+=$2}END{print s+0}')
+COMMENT_COUNT=$((MD_COUNT + HTML_COUNT))
+echo "review comment count: $COMMENT_COUNT (md=$MD_COUNT html=$HTML_COUNT)"
 ```
 
 ### Step 3: Handle Failure
@@ -76,10 +78,12 @@ Do NOT resolve feedback by manually editing or deleting comment threads. Comment
 
 ### Step 5: Verify Resolution
 
-Confirm that `resolve-comments` ran by checking for author replies:
+Confirm that `resolve-comments` ran by checking for author replies (both formats):
 
 ```bash
-AUTHOR_REPLY_COUNT=$(rg -n "AUTHOR:" "$TASK_DIR"/*.md | wc -l)
+MD_REPLIES=$(rg -cn "AUTHOR:" "$TASK_DIR"/*.md 2>/dev/null | awk -F: '{s+=$2}END{print s+0}')
+HTML_REPLIES=$(rg -cn 'by="author"' "$TASK_DIR"/*.html 2>/dev/null | awk -F: '{s+=$2}END{print s+0}')
+AUTHOR_REPLY_COUNT=$((MD_REPLIES + HTML_REPLIES))
 echo "author reply count: $AUTHOR_REPLY_COUNT"
 if [ "$AUTHOR_REPLY_COUNT" -eq 0 ]; then
     echo "resolve-comments was not applied; run /resolve-comments $TASK_ID"
@@ -96,4 +100,6 @@ Summarize:
 
 ## Comment Format
 
-See [references/review-format.md](references/review-format.md) for comment syntax, priority levels, and rules.
+Determine the format from the file extension:
+- **Markdown files** (`.md`): See [references/review-format.md](references/review-format.md)
+- **HTML files** (`.html`): See [references/review-format-html.md](references/review-format-html.md)

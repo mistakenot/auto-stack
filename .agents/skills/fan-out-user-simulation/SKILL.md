@@ -7,17 +7,13 @@ description: "Fans out a diverse cohort of simulated user personas 'using' the p
 
 Discover what to build next by watching a diverse cohort of fictional users try to get real jobs done with the product. This is Wizard-of-Oz prototyping turned inward: each simulated user interacts with the product, and the simulation *invents plausible product responses* on the fly. The product responses are fake — the value is in the behavioral trace: where users succeed, where they struggle, where they abandon, and what they reach for that doesn't exist yet.
 
-Why this beats a single brainstorm:
-
-- **Convergence is evidence.** Simulants run in isolation. When 3+ of them independently invent the same missing feature, that is a demand signal no single brainstorm can produce.
-- **Friction is a churn signal.** A simulant who rage-quits at step 4 tells you about a real user who will silently leave.
-- **Personas escape the builder's box.** A tired maintainer imagines features for themselves. A cohort spanning newcomers, power users, skeptics, and adjacent-domain visitors imagines features for a market.
+Why this beats a single brainstorm: simulants run in isolation, so convergence (3+ independently inventing the same feature) is a demand signal. Friction and abandonment are churn signals. And a diverse cohort escapes the builder's box — imagining features for a market, not just for the maintainer.
 
 ## Roles: one orchestrator, many leaf simulants
 
-This skill is run by **the orchestrator** — the top-level agent in the conversation, the one that can spawn sub-agents. The orchestrator does everything in the Process below: builds the brief, chooses the axis, designs the cohort, fans out, and synthesises.
+**The orchestrator** (you) runs the full process below: brief, axis, cohort, fan-out, verify, synthesise.
 
-The **simulants are leaf sub-agents.** The orchestrator passes each one a complete, self-contained prompt (the brief, its own persona card, the trace format, and the report format). A simulant never reads or invokes this skill, and never spawns sub-agents of its own — it just plays its persona and returns its report. This keeps the fan-out exactly one level deep: it prevents runaway recursion (a simulant re-triggering the whole simulation) and avoids the nested-spawn limits some environments impose on sub-agents. If you find yourself running this skill *as* a sub-agent, you are the orchestrator for that run — spawn the simulants directly from where you are; do not add another layer.
+**Simulants are leaf sub-agents.** Each receives a complete self-contained prompt (brief, persona card, trace format, report format). A simulant never reads this skill or spawns sub-agents — it plays its persona and returns its report. This keeps fan-out one level deep. If you are running this skill *as* a sub-agent, you are the orchestrator for that run — spawn simulants directly; do not add another layer.
 
 ## Process
 
@@ -138,7 +134,18 @@ With all reports in hand:
 6. **Collect the friction log** across simulants — pain in *existing* functionality is the quick-wins list.
 7. **Collect churn signals** — every abandonment, with its moment and cause.
 
-### 7. Write the report
+### 7. Verify against the real codebase
+
+Simulant claims are hypotheses. Before they reach the report, verify them against the actual codebase.
+
+Collect every distinct claim — something *broken* (friction, bugs) or *missing* (feature gaps). Deduplicate across simulants. Spawn **one verifier sub-agent per claim, all in parallel**. Each receives the claim, the simulant quote(s), and instructions to search the codebase (read files, grep symbols, check CLI help, inspect routes/configs). Each returns:
+
+- **Verdict:** confirmed | partially confirmed | refuted
+- **Evidence:** file paths, code snippets, or absence-of-match
+
+After all verifiers complete: drop refuted claims entirely — they don't appear in the report. Keep confirmed and partially-confirmed claims with the verifier's evidence attached. Re-rank surviving recommendations and friction items. If every claim in a cluster is refuted, the cluster drops. Refuted wildcards drop too.
+
+### 8. Write the report
 
 Write the full synthesis to `./simulations/<YYYY-MM-DD>-<focus-slug>.md`:
 
@@ -157,13 +164,17 @@ Write the full synthesis to `./simulations/<YYYY-MM-DD>-<focus-slug>.md`:
 **Convergence:** [k]/[N] simulants — [their names]
 **Kano:** table-stakes | performance | delighter
 **Horizon:** [when this matters]
+**Verified:** confirmed | partially confirmed — [verifier evidence summary]
 **Evidence:** "[verbatim trace quotes]"
 
 ## Wildcards
-[one-off ideas worth a look, each with its evidence quote]
+[one-off ideas worth a look, each with its evidence quote and verification verdict]
 
-## Friction log (exists today, hurts today)
-[ranked quick wins]
+## Friction log (exists today, hurts today — verified)
+[ranked quick wins, each with verifier evidence confirming the issue]
+
+## Dropped claims (refuted by verification)
+[claims verifiers found incorrect, with brief refutation reason]
 
 ## Churn signals
 [each abandonment: who, at what moment, why]

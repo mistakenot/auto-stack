@@ -19,23 +19,43 @@ var DefaultAgentFiles = []string{"AGENTS.md", "CLAUDE.md"}
 
 const DefaultParallelism = 4
 
+// DefaultAgentIndexIgnores are glob patterns excluded from the generated
+// agent-file documentation index (AGENTS.md / CLAUDE.md) by default. These
+// cover ephemeral, high-churn planning trees that bloat the index without
+// being durable reference docs. They are applied ONLY to the agent index:
+// discovery, freshness (`stale`/`fix`), and search still see these docs, so
+// they remain freshness-tracked. Override by setting `agentIndexIgnores` in
+// settings.json (use `[]` to disable).
+var DefaultAgentIndexIgnores = []string{
+	"docs/tasks/*",
+	"docs/experiments/*",
+	"docs/epics/*",
+	"docs/spikes/*",
+}
+
 type Config struct {
 	DocsDir     string   `json:"docsDir"`
 	AgentFiles  []string `json:"agentFiles"`
 	Parallelism int      `json:"parallelism"`
 	Ignores     []string `json:"ignores"`
+	// AgentIndexIgnores are extra exclude patterns applied only when rendering
+	// the agent-file documentation index. nil means "use defaults"; an explicit
+	// (possibly empty) list overrides them.
+	AgentIndexIgnores []string `json:"agentIndexIgnores"`
 }
 
 // GlobalConfig holds fields that make sense at the machine level.
 type GlobalConfig struct {
-	Ignores []string `json:"ignores"`
+	Ignores           []string `json:"ignores"`
+	AgentIndexIgnores []string `json:"agentIndexIgnores"`
 }
 
 func Load(path string) (*Config, error) {
 	cfg := &Config{
-		DocsDir:     DefaultDocsDir,
-		AgentFiles:  DefaultAgentFiles,
-		Parallelism: DefaultParallelism,
+		DocsDir:           DefaultDocsDir,
+		AgentFiles:        DefaultAgentFiles,
+		Parallelism:       DefaultParallelism,
+		AgentIndexIgnores: DefaultAgentIndexIgnores,
 	}
 
 	if path == "" {
@@ -100,6 +120,7 @@ func LoadWithGlobal(projectPath string) (*Config, error) {
 		return nil, err
 	}
 	cfg.Ignores = unionStrings(cfg.Ignores, global.Ignores)
+	cfg.AgentIndexIgnores = unionStrings(cfg.AgentIndexIgnores, global.AgentIndexIgnores)
 	return cfg, nil
 }
 

@@ -1,59 +1,91 @@
 ---
 role: dependency-resolution
 summary: |
-  How OpenProse resolves `use` statement dependencies. Defines the git-native
-  resolution algorithm, the `prose install` command, the lockfile format,
-  and the `.deps/` directory structure. GitHub is the registry.
+  How OpenProse resolves git-native dependencies from `use` statements,
+  service references, and pattern references. Defines the resolution
+  algorithm, the `prose install` command, the lockfile format, and the `<openprose-root>/deps/`
+  directory structure.
 see-also:
   - prose.md: VM execution semantics (loads resolved deps at runtime)
-  - forme.md: Wiring semantics (resolves service components from .deps/)
+  - forme.md: Wiring semantics (resolves services and systems from <openprose-root>/deps/)
   - SKILL.md: Command routing for `prose install`
 ---
 
 # Dependency Resolution
 
-OpenProse uses a git-native dependency model. `use` statements in programs reference GitHub repositories. There is no registry server — GitHub IS the registry. Dependencies are cloned into `.deps/`, pinned in `prose.lock`, and resolved from disk at runtime.
+OpenProse uses a git-native dependency model. `use` statements, dependency-like
+service names, and `pattern:` references can point at any explicit git host.
+Dependencies are cloned into `<openprose-root>/deps/`, pinned in `<openprose-root>/prose.lock`, and resolved from
+disk at runtime.
 
 ---
 
 ## `use` Statement Parsing
 
-A `use` statement resolves to a GitHub repository and a path within it.
+A `use` statement names an explicit git host, owner, repo, and path. The
+canonical form is `host/owner/repo/path`:
 
 ```prose
-use "openprose/std/evals/inspector"
+use "github.com/openprose/prose/packages/std/evals/inspector"
 ```
 
 Parsed as:
 
-| Component | Value |
-|-----------|-------|
+| Field | Value |
+|-------|-------|
+| Host | `github.com` |
 | Owner | `openprose` |
-| Repo | `std` |
-| Path | `evals/inspector` |
-| GitHub URL | `github.com/openprose/std` |
-| Local clone | `.deps/openprose/std/` |
-| Resolved file | `.deps/openprose/std/evals/inspector.md` |
+| Repo | `prose` |
+| Path | `packages/std/evals/inspector` |
+| Clone URL | host-specific URL for `github.com/openprose/prose` |
+| Local clone | `<openprose-root>/deps/github.com/openprose/prose/` |
+| Resolved file | `<openprose-root>/deps/github.com/openprose/prose/packages/std/evals/inspector.prose.md` |
 
-The first two segments of the `use` path are always `owner/repo`. Everything after is a path within the cloned repository.
+The first path segment is the host (must contain a dot — `github.com`,
+`gitlab.com`, `codeberg.org`, `git.company.com`). The next two segments are
+always `owner/repo`. Everything after is a path within the cloned
+repository.
 
-### `std/` Shorthand
+Any git host works. Nothing in the resolver privileges GitHub — it's the
+common case, not a default.
 
-`std/` expands to `openprose/std/`:
+### `std/` and `co/` Shorthands
+
+The OpenProse monorepo hosts two packages. Both get shorthands:
+
+- `std/` → `github.com/openprose/prose/packages/std/`
+- `co/` → `github.com/openprose/prose/packages/co/`
 
 ```prose
 use "std/evals/inspector"
 # equivalent to:
-use "openprose/std/evals/inspector"
+use "github.com/openprose/prose/packages/std/evals/inspector"
+
+use "co/systems/company-repo-checker"
+# equivalent to:
+use "github.com/openprose/prose/packages/co/systems/company-repo-checker"
 ```
+
+Both shorthands resolve into the same clone of `openprose/prose` under
+`<openprose-root>/deps/github.com/openprose/prose/`; `packages/std/` and `packages/co/` are
+sibling subdirectories inside that clone.
+
+### Bare `owner/repo` Form
+
+Identifiers without a host prefix (e.g. `use "alice/research"`) are reserved
+for the OpenProse registry — eventually hosted at `p.prose.md`. That
+registry isn't open for publication yet, so the bare form doesn't resolve
+today. Write the host explicitly (`github.com/alice/research`) or use the
+`std/` shorthand. When the registry opens, the bare form gains a defined
+resolution without breaking systems that wrote explicit hosts.
 
 ### File Extension Resolution
 
-If the `use` path includes an explicit extension (`.md` or `.prose`), use it. If no extension, prefer `.md`:
+If the `use` path includes an explicit `.prose.md` extension, use it. If no extension, prefer `.prose.md`:
 
 ```prose
-use "alice/tools/formatter"
-# resolves to: .deps/alice/tools/formatter.md
+use "github.com/alice/tools/formatter"
+# resolves to: <openprose-root>/deps/github.com/alice/tools/formatter.prose.md
 ```
 
 ### Aliasing
@@ -61,12 +93,13 @@ use "alice/tools/formatter"
 `use` statements support `as` aliases in execution blocks:
 
 ```prose
-use "alice/research-pipeline" as research
+use "github.com/alice/research-pipeline" as research
 
-let result = research(topic: "quantum computing")
+let result = call research
+  topic: "quantum computing"
 ```
 
-In `services:` lists, use the full path — aliases are for execution blocks only.
+In `### Services`, use the full path — aliases are for execution blocks only.
 
 ---
 
@@ -74,34 +107,38 @@ In `services:` lists, use the full path — aliases are for execution blocks onl
 
 When the VM or Forme encounters a `use` path at runtime:
 
-1. Expand `std/` shorthand to `openprose/std/` if applicable
-2. Parse `owner/repo` from the first two segments
-3. Check `.deps/{owner}/{repo}/` exists on disk
+1. Expand `std/` and `co/` shorthands to
+   `github.com/openprose/prose/packages/{std|co}/` if applicable
+2. Parse `{host}/{owner}/{repo}` from the first three segments
+3. Check `<openprose-root>/deps/{host}/{owner}/{repo}/` exists on disk
 4. If not found, error immediately (see Error Handling below)
 5. Resolve the remaining path segments within the cloned repo
 6. Return the absolute file path
 
-**No network calls during resolution.** All dependencies must be pre-installed via `prose install`. The VM reads from `.deps/` on disk only.
+**No network calls during resolution.** All dependencies must be pre-installed via `prose install`. The VM reads from `<openprose-root>/deps/` on disk only.
 
 ---
 
 ## `prose install`
 
-Scans the project for `use` statements and clones missing dependencies.
+Scans the project for dependency references and clones missing dependencies.
 
 ### Algorithm
 
-1. **Scan** all `.md` and `.prose` files in the project for `use` statements
-2. **Parse** each `use` path to extract `owner/repo` pairs
-3. **Expand** `std/` shorthand to `openprose/std/`
-4. For each unique `owner/repo`:
-   a. If `.deps/{owner}/{repo}/` does not exist, full clone: `git clone github.com/{owner}/{repo} .deps/{owner}/{repo}/`
-   b. If `prose.lock` has a pinned SHA for this repo, checkout: `git checkout {sha}`
+1. **Scan** all `*.prose.md` files under `<openprose-root>/src/` for:
+   - `use "host/owner/repo/path"` statements
+   - service names in `### Services` that start with `std/`, `co/`, or `host/owner/repo/`
+   - `pattern:` references that start with `std/`, `co/`, or `host/owner/repo/`
+2. **Expand** `std/` and `co/` shorthands to `github.com/openprose/prose/packages/{std|co}/`
+3. **Parse** each expanded dependency path to extract `{host, owner, repo}` triples (the first segment is the host if it contains a dot)
+4. For each unique `{host, owner, repo}`:
+   a. If `<openprose-root>/deps/{host}/{owner}/{repo}/` does not exist, clone the repository using the host's normal git URL into `<openprose-root>/deps/{host}/{owner}/{repo}/`
+   b. If `<openprose-root>/prose.lock` has a pinned SHA for this repo, checkout: `git checkout {sha}`
    c. If no pinned SHA exists (new dependency), use HEAD and record the SHA
-5. **Scan transitive dependencies** — scan all `.md` and `.prose` files within newly cloned repos in `.deps/` for their own `use` statements
+5. **Scan transitive dependencies** — scan all `*.prose.md` files within newly cloned repos in `<openprose-root>/deps/` for their own `use` statements
 6. **Cycle detection** — if a newly discovered dependency is already in the resolved set, skip it. If scanning reveals a cycle (A requires B requires A), error: `[Error] Circular dependency detected: A → B → A`
 7. **Repeat** from step 2 with any newly discovered dependencies until no new deps are found
-8. **Write** `prose.lock` with all resolved SHAs (direct and transitive, flat list)
+8. **Write** `<openprose-root>/prose.lock` with all resolved `{host, owner, repo, sha}` entries (direct and transitive, flat list)
 
 ### Transitive Resolution (Multi-Pass)
 
@@ -109,28 +146,33 @@ Dependencies can themselves have dependencies. `prose install` resolves transiti
 
 ```
 Pass 1: Scan project files → find direct deps → clone them
-Pass 2: Scan .deps/ for new use statements → find transitive deps → clone them
+Pass 2: Scan <openprose-root>/deps/ for new use statements → find transitive deps → clone them
 Pass 3: Scan newly cloned transitive deps → find more → clone
 ...repeat until stable (no new deps discovered)
 ```
 
 If a cycle is detected at any pass, `prose install` errors immediately and lists the cycle path. Cycles indicate a design problem in the dependency graph — they cannot be auto-resolved.
 
-All dependencies — direct and transitive — are pinned in the flat `prose.lock`.
+All dependencies — direct and transitive — are pinned in the flat `<openprose-root>/prose.lock`.
 
 ### Version Conflict Resolution
 
 If two dependencies require the same repo at different commits, `prose install` auto-resolves to the **newer SHA** (by commit date) and emits a warning:
+
+This is a convenience policy, not proof that the newer dependency fits every
+caller. Treat the warning as review-required: inspect the affected dependency,
+run relevant tests, and commit the resulting `<openprose-root>/prose.lock` only when the newer
+version is acceptable.
 
 ```
 [Warning] Version conflict for alice/utils:
   Required by: your-project (a1b2c3d)
   Required by: bob/toolkit (f6e5d4c)
   Resolved to: f6e5d4c (newer, 2026-04-01)
-  Override: manually edit prose.lock if needed
+  Override: manually edit <openprose-root>/prose.lock if needed
 ```
 
-This is not an error. The user can override by editing `prose.lock` directly.
+This is not an error. The user can override by editing `<openprose-root>/prose.lock` directly.
 
 ### Private Repositories
 
@@ -144,99 +186,112 @@ Bumps all pinned SHAs to the latest HEAD of their default branch.
 
 ### Algorithm
 
-1. For each `owner/repo` in `prose.lock`:
-   a. Run `git fetch` in `.deps/{owner}/{repo}/`
+1. For each `host/owner/repo` in `<openprose-root>/prose.lock`:
+   a. Run `git fetch` in `<openprose-root>/deps/{host}/{owner}/{repo}/`
    b. Get the latest HEAD SHA
    c. Run `git checkout {new-sha}`
 2. **Re-scan** for transitive dependencies (new versions may add or remove `use` statements)
-3. **Rewrite** `prose.lock` with updated SHAs
+3. **Rewrite** `<openprose-root>/prose.lock` with updated SHAs
 
 ---
 
-## `prose.lock` Format
+## `<openprose-root>/prose.lock` Format
 
-Plaintext. One line per dependency. Format: `owner/repo sha`.
+Plaintext. One line per dependency. Format: `host/owner/repo sha`.
 
 ```
-# prose.lock — pinned dependency versions
+# <openprose-root>/prose.lock — pinned dependency versions
 # Do not edit unless you know what you're doing
-openprose/std a1b2c3d4e5f6
-alice/research f6e5d4c3b2a1
-alice/utils 9c8d7e6f5a4b
+github.com/openprose/prose a1b2c3d4e5f6
+github.com/alice/research f6e5d4c3b2a1
+gitlab.com/bob/utils 9c8d7e6f5a4b
 ```
 
 Rules:
 - One dependency per line
-- Format: `{owner}/{repo} {sha}` (space-separated)
+- Format: `{host}/{owner}/{repo} {sha}` (space-separated)
 - Comments start with `#`
 - Direct and transitive dependencies listed flat — no nesting, no hierarchy markers
-- URL is derivable: `github.com/{owner}/{repo}`
+- Host is explicit — no default is assumed, so any git provider works uniformly
 - Order does not matter (but `prose install` writes them sorted alphabetically)
 
-`prose.lock` is **committed to git**. It ensures reproducible builds — anyone cloning the project gets the same dependency versions.
+`<openprose-root>/prose.lock` is **committed to git**. It ensures reproducible builds — anyone cloning the project gets the same dependency versions.
 
 ---
 
-## `.deps/` Directory Structure
+## `<openprose-root>/deps/` Directory Structure
 
 ```
-.deps/
-├── openprose/
-│   └── std/                          # Full clone of github.com/openprose/std
-│       ├── evals/
-│       │   ├── inspector.md
-│       │   ├── vm-improver.md
-│       │   ├── program-improver.md
-│       │   ├── cost-analyzer.md
-│       │   ├── calibrator.md
-│       │   ├── profiler.md
-│       │   └── error-forensics.md
-│       └── memory/
-│           ├── user-memory.md
-│           └── project-memory.md
-├── alice/
-│   └── research-pipeline/            # Full clone of github.com/alice/research-pipeline
-│       └── ...
-└── bob/
-    └── toolkit/                      # Transitive dep, also a full clone
-        └── ...
+<openprose-root>/deps/
+├── github.com/
+│   ├── openprose/
+│   │   └── prose/                       # Full clone of github.com/openprose/prose
+│   │       ├── packages/
+│   │       │   ├── std/                 # Standard library (resolved by `std/` shorthand)
+│   │       │   │   ├── evals/
+│   │       │   │   │   ├── inspector.prose.md
+│   │       │   │   │   ├── contract-grader.prose.md
+│   │       │   │   │   └── regression-tracker.prose.md
+│   │       │   │   └── memory/
+│   │       │   │       ├── user-memory.prose.md
+│   │       │   │       └── project-memory.prose.md
+│   │       │   └── co/                  # Company-as-prose (resolved by `co/` shorthand)
+│   │       │       └── systems/
+│   │       │           └── company-repo-checker/
+│   │       │               └── index.prose.md
+│   │       └── ...
+│   ├── alice/
+│   │   └── research-pipeline/           # Full clone of github.com/alice/research-pipeline
+│   │       └── ...
+│   └── bob/
+│       └── toolkit/                     # Transitive dep, also a full clone
+│           └── ...
+└── gitlab.com/
+    └── team/
+        └── repo/                        # Any git host works; host is part of the path
 ```
 
-**`.deps/` MUST be in `.gitignore`.** It is a cache, fully reproducible from `prose.lock` via `prose install`.
+**`<openprose-root>/deps/` MUST be in `.gitignore`.** It is a cache, fully reproducible from `<openprose-root>/prose.lock` via `prose install`.
 
-Each entry under `.deps/` is a full git clone (or shallow clone) of the corresponding GitHub repository, checked out to the SHA pinned in `prose.lock`.
+Each entry under `<openprose-root>/deps/` is a full git clone (or shallow clone) of the
+corresponding repository, checked out to the SHA pinned in `<openprose-root>/prose.lock`. The
+host is part of the cache key so repos with the same `owner/repo` name on
+different hosts do not collide.
 
 ---
 
 ## Runtime Behavior
 
-At execution time, the VM and Forme resolve `use` paths by reading from `.deps/` on disk.
+At execution time, the VM and Forme resolve `use` paths by reading from `<openprose-root>/deps/` on disk.
 
 - **No git operations** during execution
 - **No network calls** during execution
 - **No auto-install** — `prose run` does not run `prose install` implicitly
 
-If a dependency is missing or `.deps/` does not exist:
+If a dependency is missing or `<openprose-root>/deps/` does not exist:
 
 ```
-[Error] Dependency not found: openprose/std
+[Error] Dependency not found: github.com/openprose/prose
   Run `prose install` to install dependencies.
 ```
 
-If `prose.lock` exists but `.deps/` is missing or incomplete, the same error applies. The user must run `prose install`.
+If `<openprose-root>/prose.lock` exists but `<openprose-root>/deps/` is missing or incomplete, the same error applies. The user must run `prose install`.
 
 ---
 
 ## Interaction with Forme
 
-When Forme resolves a service listed in `services:`, it checks `.deps/` as part of its resolution order (see `forme.md`, Step 2):
+When Forme resolves a service listed in `### Services`, it checks `<openprose-root>/deps/` as part of its resolution order (see `forme.md`, Step 2):
 
-1. Same directory as the entry point: `./researcher.md`
-2. A subdirectory matching the name: `./researcher/index.md`
-3. **`.deps/` directory:** `.deps/{owner}/{repo}/{path}.md`
-4. Registry shorthand (if contains `/`): fetch from `https://p.prose.md/{path}` (legacy)
+1. Same directory as the system file: `./researcher.prose.md`
+2. A subdirectory matching the name: `./researcher/index.prose.md`
+3. **`<openprose-root>/deps/` directory:** first
+   `<openprose-root>/deps/{host}/{owner}/{repo}/{path}.prose.md`, then
+   `<openprose-root>/deps/{host}/{owner}/{repo}/{path}/index.prose.md`
+4. Bare `owner/repo` identifiers: reserved for the OpenProse registry (future home at `p.prose.md`); inert today
 
-A service name like `std/evals/inspector` in a `services:` list resolves to `.deps/openprose/std/evals/inspector.md` after `std/` shorthand expansion.
+A service or system reference like `std/evals/inspector` in `### Services` resolves to `<openprose-root>/deps/github.com/openprose/prose/packages/std/evals/inspector.prose.md` after `std/` shorthand expansion.
+A directory-root system reference like `co/systems/company-repo-checker` resolves to `<openprose-root>/deps/github.com/openprose/prose/packages/co/systems/company-repo-checker/index.prose.md`.
 
 ---
 
@@ -244,37 +299,38 @@ A service name like `std/evals/inspector` in a `services:` list resolves to `.de
 
 When the VM encounters a `use` statement during execution:
 
-1. Expand shorthand (`std/` → `openprose/std/`)
-2. Parse `owner/repo` and remaining path
-3. Read the program from `.deps/{owner}/{repo}/{path}.md`
-4. Parse the imported program's contract (requires/ensures)
+1. Expand shorthand (`std/` → `github.com/openprose/prose/packages/std/`; `co/` → `github.com/openprose/prose/packages/co/`)
+2. Parse `{host}/{owner}/{repo}` and remaining path
+3. Read the service or system from `<openprose-root>/deps/{host}/{owner}/{repo}/{path}.prose.md`, or from `<openprose-root>/deps/{host}/{owner}/{repo}/{path}/index.prose.md` when the dependency is a directory-root system
+4. Parse the imported service or system contract (`### Requires` / `### Ensures`)
 5. Register the import (with alias if `as` was used)
 
-This replaces the v0 behavior of fetching from `p.prose.md` at runtime. Programs resolved from `.deps/` are already on disk — no fetch needed.
-
-### Backward Compatibility with v0
-
-The v0 VM gains an additional resolution step for `use` statements:
-
-1. If the path matches `owner/repo/...`, check `.deps/owner/repo/...` first
-2. If found in `.deps/`, load from disk (no network)
-3. If not found, fall back to `https://p.prose.md/{path}` (existing behavior)
-
-Existing v0 programs without `.deps/` continue to work via the p.prose.md fallback.
+Runtime resolution is disk-only. If a `use` path is missing from `<openprose-root>/deps/`, the
+VM errors and tells the caller to run `prose install`.
 
 ---
 
 ## Interaction with p.prose.md
 
-The registry at `p.prose.md` shifts to a **discovery-only** role:
+`p.prose.md` is reserved as the future home of the OpenProse registry.
+Publication there isn't open yet — no identifier actually resolves via
+`p.prose.md` today. When it opens, the bare `owner/repo` form gains a
+defined resolution and `p.prose.md` takes on a discovery role (search,
+docs, install counts, eval scores, and supported runtimes).
 
 | Use case | Resolution |
 |----------|------------|
-| `use "owner/repo/path"` in a program | Git-native via `.deps/` (requires `prose install`) |
-| `prose run handle/slug` at the CLI | Still resolves via `https://p.prose.md/{path}` |
-| Browsing/searching for programs | `p.prose.md` website |
+| `use "github.com/owner/repo/path"` in a system | `<openprose-root>/deps/github.com/owner/repo/`; error if missing |
+| `use "std/..."` or `use "co/..."` in a system | Expands to `github.com/openprose/prose/packages/{std\|co}/...` then resolves as above |
+| `prose run github.com/owner/repo/path` at the CLI | Same algorithm as `use` |
+| `prose run github.com/owner/repo/path@{version}` | That specific pinned version in `<openprose-root>/deps/`; error if missing |
+| `prose run ... --offline` | `<openprose-root>/deps/` only; error on miss |
+| `use "alice/research"` / `prose run alice/research` | Reserved for the OpenProse registry; inert today |
+| Browsing/searching for systems | Not yet available; `p.prose.md` will host this |
 
-`use` statements resolve via git. The CLI `prose run handle/slug` shorthand can still use p.prose.md as a convenience for ad-hoc execution.
+`use` and `prose run` share one resolution algorithm. `prose install` is the
+explicit "get me every declared dependency at its pinned SHA" command. Neither
+`use` nor `prose run` auto-fetches a missing dependency during execution.
 
 ---
 
@@ -282,12 +338,12 @@ The registry at `p.prose.md` shifts to a **discovery-only** role:
 
 | Concept | Detail |
 |---------|--------|
-| Registry | GitHub (no custom registry server) |
+| Package identity | Any git host, named explicitly (`github.com/...`, `gitlab.com/...`); bare `owner/repo` reserved for future `p.prose.md` |
 | Install command | `prose install` (explicit, not auto) |
 | Update command | `prose install --update` |
-| Lockfile | `prose.lock` (plaintext, committed) |
-| Cache directory | `.deps/` (gitignored) |
-| Shorthand | `std/` → `openprose/std/` |
+| Lockfile | `<openprose-root>/prose.lock` (plaintext, committed) |
+| Cache directory | `<openprose-root>/deps/{host}/{owner}/{repo}/` (gitignored) |
+| Shorthands | `std/` → `github.com/openprose/prose/packages/std/`; `co/` → `github.com/openprose/prose/packages/co/` |
 | Clone strategy | Full clone (supports SHA checkout without refetch) |
 | Transitive deps | Multi-pass scan until stable (errors on cycles) |
 | Version conflicts | Auto-resolve to newer SHA with warning |

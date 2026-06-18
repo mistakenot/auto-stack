@@ -1,6 +1,6 @@
 ---
 name: review-task
-description: "Reviews task planning documents (requirements.md, solution.md, context.md, plan.md) and leaves structured inline comments flagging problems and improvements. Use when 'review task docs', 'review the plan', 'review task 042', 'check the planning docs', or a task ID/folder for doc review. Not applicable for code review of implementation changes."
+description: "Reviews task planning documents (markdown or HTML) and leaves structured inline comments flagging problems and improvements. Use when 'review task docs', 'review the plan', 'review task 042', 'check the planning docs', or a task ID/folder for doc review. Not applicable for code review of implementation changes."
 ---
 
 # Review Task Docs
@@ -55,6 +55,7 @@ For each doc, verify claims against the actual codebase:
 - File paths are consistent across solution.md, context.md, and plan.md
 - Types/interfaces in context.md match what solution.md proposes to use
 - The approach in solution.md matches the plan steps in plan.md
+- If any doc has `epic:` frontmatter, all four docs must have the same `epic:` value. If requirements.md has no `epic:`, none of the others should either.
 
 ### Step 4: Leave Comments
 
@@ -66,7 +67,9 @@ Use tools (grep, glob, read, bash) to gather evidence before commenting. Comment
 
 Only comment on actual problems, genuine ambiguities, or missing information. Do not comment on formatting, correct content, or style preferences.
 
-**If no issues are found:** insert a single clean-review comment at the top of `plan.md` (below the title):
+**If no issues are found:** insert a single clean-review comment so the calling agent can distinguish a successful clean review from a failed review that produced no output.
+
+For markdown task folders, insert at the top of `plan.md` (below the title):
 
 ```markdown
 <!-- RESOLVED(P3): Review complete — no issues found
@@ -74,7 +77,13 @@ REVIEW: All planning documents reviewed against the codebase. No problems, incon
 -->
 ```
 
-This ensures the calling agent can distinguish a successful clean review from a failed review that produced no output.
+For HTML planning docs, insert after the first `<pd-section>`:
+
+```html
+<pd-thread anchor="first-section-id" status="resolved" priority="p3" title="Review complete — no issues found">
+  <pd-comment by="review">All planning documents reviewed against the codebase. No problems, inconsistencies, or missing information detected.</pd-comment>
+</pd-thread>
+```
 
 ### Step 5: Summary
 
@@ -85,4 +94,6 @@ After leaving all comments, provide:
 
 ## Comment Format
 
-See [references/review-format.md](references/review-format.md) for comment syntax, priority levels, and rules.
+Determine the format from the file extension:
+- **Markdown files** (`.md`): See [references/review-format.md](references/review-format.md)
+- **HTML files** (`.html`): See [references/review-format-html.md](references/review-format-html.md)

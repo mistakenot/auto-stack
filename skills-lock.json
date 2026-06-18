@@ -4,7 +4,32 @@
     "address-feedback": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "7d7e88df191f985c7199b42012e855b308e221fbc4dd85eea0c648e77f6d73bb"
+      "skillPath": "skills/address-feedback/SKILL.md",
+      "computedHash": "be2c3a4b43ea8f1dbe1d9886b7ccf76728f9d3699d37c1c2eb0d8870c2f62fea"
+    },
+    "beta-new-epic": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "skillPath": "skills/beta-new-epic/SKILL.md",
+      "computedHash": "208e7944061f1f55d2b35c5a1b3c4ec05f1a59761c57a8926d439b5ad303b6c0"
+    },
+    "beta-new-plan": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "skillPath": "skills/beta-new-plan/SKILL.md",
+      "computedHash": "48236bc3083664c87e837d1c6fcb0fcc8b00bd5f28789753c95a4673671a9c9e"
+    },
+    "beta-new-solution": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "skillPath": "skills/beta-new-solution/SKILL.md",
+      "computedHash": "38974a4b23499794c51f20512703e5fa677b0bee84af9bf77857ee0a0599e8bf"
+    },
+    "beta-new-task": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "skillPath": "skills/beta-new-task/SKILL.md",
+      "computedHash": "9375147ea9f0d19101f0c14f57b1e8e9b493027a09dde1cb7173518ccc7ff679"
     },
     "cass": {
       "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
@@ -14,17 +39,20 @@
     "code-review": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "128eba85c95dc4fbdcbe42d3c27b3f6cd4e1ea4355a38e3bb9964de504d3feb7"
+      "skillPath": "skills/code-review/SKILL.md",
+      "computedHash": "d9f1110f751e0711cc86d1471de2bfd67be7ebc72d6f20fc9297e52d122092b9"
     },
     "commit-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "4ad57cbf3a26c6cd4edc031f40aa1e3433b0deaddfbf1a0ca13379694dcdcd06"
+      "skillPath": "skills/commit-task/SKILL.md",
+      "computedHash": "f8cc2be287c25bec0529260723f5c5f956d70532973154a6c8084eead0ef4802"
     },
     "complete-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "2a8ddf0bde3ae6b6ebcbdf2f03d9cf438d6b8a29d0caf6dc81e269ca689c8230"
+      "skillPath": "skills/complete-task/SKILL.md",
+      "computedHash": "5d7a253506c2d5240e96c424adddd6a4a70aa07e490564109003ccd50b7a8223"
     },
     "contextual-commit": {
       "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
@@ -34,41 +62,43 @@
     "delegate-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "5c0a9eb51293bb0258849baf29882de9be05355706a1d5218eed29070c0772f8"
+      "skillPath": "skills/delegate-task/SKILL.md",
+      "computedHash": "357259afaec29ad66b9ca60f04f3f71c26341547e68c11c697621e7a6e299822"
     },
     "execute-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "1266568ca51fc2f298c7ac02b0c2645f81118010c5e3e5d95ffe79b18449eabe"
-    },
-    "executor-status-check": {
-      "source": "mistakenot/skills",
-      "sourceType": "github",
-      "computedHash": "302fbb8364ef637cc75d8989b681d77f35462edab7391149da4a0ec5790c0d8b"
+      "skillPath": "skills/execute-task/SKILL.md",
+      "computedHash": "7c383bdcc2ecbc1bbbf60f58872c012d2099b0e8d7b924537b246c48e5028524"
     },
     "fan-out-user-simulation": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "d757d5d7d7fd3637a656c63efee3763d88062bf312208cde654aeb0aea454dac"
+      "skillPath": "skills/fan-out-user-simulation/SKILL.md",
+      "computedHash": "4d4bfbd1c8d89e476ca5422e0480287b08a2153a187a9afeaafdd24de2b8266e"
     },
     "frontend-design": {
       "source": "anthropics/claude-code",
       "sourceType": "github",
-      "computedHash": "e8118284a6365753790d44bb2758a6032b3af27fa84696428d9233f2be0f4e78"
+      "skillPath": "plugins/frontend-design/skills/frontend-design/SKILL.md",
+      "computedHash": "3e0be122a3db8206b6d0d6b07cca898b5c75fb9b7b2101abe143fb2851734d2e"
     },
     "generate-10-ideas": {
       "source": "mistakenot/skills",
       "sourceType": "github",
+      "skillPath": "skills/generate-10-ideas/SKILL.md",
       "computedHash": "558772747f16e0d0789de99ad1da0c8199b33fb06e93024282543aa1d8b6d4bd"
     },
     "improve-claude-md": {
       "source": "humanlayer/skills",
       "sourceType": "github",
+      "skillPath": "plugins/improve-claude-md/skills/improve-claude-md/SKILL.md",
       "computedHash": "a93226f53ffa6a2599c89fb983f3aed00c843c04071a7aa59ee3365141619d25"
     },
     "learning-diary": {
       "source": "mistakenot/skills",
       "sourceType": "github",
+      "skillPath": "skills/learning-diary/SKILL.md",
       "computedHash": "f522661a0db31d31ca3c33a2926408dcb4d384993aa65e99dbe2ef0a00d304ec"
     },
     "new-package": {
@@ -79,27 +109,32 @@
     "new-plan": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "8f08d26055baf6abbda4f3aefbec1b272fc7ab55826de674773bcfdf58de14bf"
+      "skillPath": "skills/new-plan/SKILL.md",
+      "computedHash": "198ab7907df51aa61510690c8d35f825ab9abaceb8803928276c095e2183a0c0"
     },
     "new-solution": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "acb5193c29b5429fb1a11ee3b3996e73b4efeb4e38b4b3a7632c1fe640cad0c8"
+      "skillPath": "skills/new-solution/SKILL.md",
+      "computedHash": "5ccc8bd5bc04509cae63f8c9a078edb17ccc2dbc384ee5250d7565a91ffca693"
     },
     "new-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "12f293ed4be76f2b96ece00c10ada784e13f3ba504ce75f699c51ce119a6e64a"
+      "skillPath": "skills/new-task/SKILL.md",
+      "computedHash": "040e5d814f574e58d4bd599e87a69c91b6e452ca556ebeaec9b021bedcd9736f"
     },
     "open-prose": {
       "source": "openprose/prose",
       "sourceType": "github",
-      "computedHash": "cd4dcd087c2e0e60ab51eadd6b16bcd6133c846614dd84901062a6a2566f302b"
+      "skillPath": "skills/open-prose/SKILL.md",
+      "computedHash": "50571032a1387b3a0abc79951fa79fd9a39fcdb3d477e6c727d15e8035d19bee"
     },
     "planning-doc": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "29ede7d3aa809853040d7b36f3758fbf1ac70144f80d18c7f50bb8cff3fbb3f0"
+      "skillPath": "skills/planning-doc/SKILL.md",
+      "computedHash": "4cd4af380a73b62bc38d134e97fa11de006d823112a4bde71e6022ea3e3379bd"
     },
     "readme-updater": {
       "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
@@ -124,27 +159,26 @@
     "request-claude-review": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "85867bce7ea5dba2e7155a4f8c20714c9a4abd54a22bf28b48dd78e63941374b"
+      "skillPath": "skills/request-claude-review/SKILL.md",
+      "computedHash": "614d4fc02ec17b0c676567e8072d78524a5bf465e4794986a609ac3ccf946f0d"
     },
     "request-codex-review": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "cfae379430298143d5c00d343a813abdc30adbc8f9a1953b806a51ad92003bcc"
+      "skillPath": "skills/request-codex-review/SKILL.md",
+      "computedHash": "1a0b41ddaae9fa68959c266bd57408a3451eaf9bce2772a25ad936a9619acd19"
     },
     "resolve-comments": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "e08fc14b72345df39ec8c01a823ceef122418ca5cd0dea7b20f6ec9ce348423c"
-    },
-    "review-resolve": {
-      "source": "mistakenot/skills",
-      "sourceType": "github",
-      "computedHash": "f48f6336862626c170eca8c83806288a6ffe124ac52389f35708987e3c08fee1"
+      "skillPath": "skills/resolve-comments/SKILL.md",
+      "computedHash": "5e947c73ad93d566c7a6b88fe63028b44101a62919c5921144c425730e973421"
     },
     "review-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "aa5ba259210a4187ad3a9d98b4e5fdd05d66e5438e62f3a56cff416e0b490968"
+      "skillPath": "skills/review-task/SKILL.md",
+      "computedHash": "cc6612915c61a80cf397bb8b2a34dcfeca1f89a2f99b4584a8dbb04011cd7986"
     },
     "self-improve": {
       "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
@@ -154,16 +188,25 @@
     "skill-reviewer": {
       "source": "mistakenot/skills",
       "sourceType": "github",
+      "skillPath": ".agents/skills/skill-reviewer/SKILL.md",
       "computedHash": "e89868280407c4403b99af0d3ab48d57c5ace8d30b206cc1af911deb0c318bbe"
+    },
+    "status-report": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "skillPath": "skills/status-report/SKILL.md",
+      "computedHash": "e50b68a91016f215702c2c12a1502cb29c66659fee709f21c163d7a560f75a76"
     },
     "task-feedback-analyser": {
       "source": "mistakenot/skills",
       "sourceType": "github",
-      "computedHash": "bcdc5f6b1748b5fc7033e885fb3a2c3856d2ed3b72716de04bf20d8d36e6e3d5"
+      "skillPath": "skills/task-feedback-analyser/SKILL.md",
+      "computedHash": "ab3666e1508c5f6668896d82ad3743f44709dff4c71a844ce0c8a66a731be485"
     },
     "tech-spike": {
       "source": "mistakenot/skills",
       "sourceType": "github",
+      "skillPath": "skills/tech-spike/SKILL.md",
       "computedHash": "94f583dda121121249d8e9f1d98a9702b5d15785dfb2f63395a05e5426d49feb"
     }
   }

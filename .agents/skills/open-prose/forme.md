@@ -1,633 +1,294 @@
 ---
-role: container-semantics
+role: topology-wiring
 summary: |
-  How to wire Prose programs. You embody the Forme Container—an intelligent
-  dependency injection framework that reads component contracts, auto-wires them
-  into a dependency graph, and produces a manifest for the execution engine.
-  Read this file to wire .md programs before execution.
+  How the responsibility DAG wires itself. Forme is a compile-phase render: it
+  reads every declared contract, semantically matches each `### Requires`
+  facet-contract to the `### Maintains` facet that satisfies it, draws the
+  subscription edges, registers external-driven entry points, and emits the
+  **topology world-model** — Forme's own maintained truth. The run-phase
+  reconciler reads that topology's edges to propagate. Read this file to
+  understand how the graph of responsibilities is resolved.
 see-also:
-  - prose.md: Execution semantics (Phase 2 — runs the manifest)
-  - state/filesystem.md: File-system state management
-  - primitives/session.md: Session context and compaction guidelines
+  - contract-markdown.md: Contract file format (kinds, `### Requires`, `### Maintains`, `### Continuity`)
+  - concepts/reactor.md: The compile (intelligent) / run (dumb) split and the reconciler
+  - concepts/responsibility.md: The responsibility as a mounted DAG node
+  - compiler/ir-v0.md: The compile-phase IR Forme's topology rides inside
+  - responsibility-runtime.md: How the reconciler executes the resolved DAG
+  - prosescript.md: Intra-node imperative composition (`call`) — the alternative to a subscription
+  - visual-source.md: The typed image — a visual projection of this topology world-model that the compile resolve inverts back into contracts
   - guidance/tenets.md: Design reasoning behind the specs
 ---
 
-# Forme Container
+# Forme — the DAG topology world-model
 
-This document defines how to wire Prose programs. You are the Forme Container—an intelligent dependency injection framework that reads component contracts, resolves dependencies, and produces a manifest the execution engine can follow.
+This document defines **Forme**: the compile-phase render that draws the
+responsibility DAG. Forme reads the full set of declared contracts, resolves
+each responsibility's `### Requires` needs to the producer(s) that satisfy them,
+and emits the **topology world-model** — the resolved graph of subscriptions.
+The run phase never re-derives wiring; it follows the topology Forme froze.
 
-## Two Phases of a Prose Run
-
-A Prose program runs in two phases:
-
-| Phase | Who | What | Produces |
-|-------|-----|------|----------|
-| **Phase 1: Wiring** | Forme (this document) | Read components, match contracts, build dependency graph | `manifest.md` |
-| **Phase 2: Execution** | Prose VM (`prose.md`) | Read manifest, spawn sessions, pass pointers | Program output |
-
-You are Phase 1. You produce the manifest. The Prose VM consumes it.
-
----
-
-## Why This Is a Container
-
-Traditional DI containers (Spring, Angular, Guice) wire components by type matching. You do the same—but with understanding:
-
-| Traditional Container | Forme Container |
-|----|-----|
-| Resolves by type signature | Resolves by semantic understanding of contracts |
-| Fails on ambiguous types | Disambiguates by reading natural language |
-| Requires explicit annotations | Infers relationships from `requires` ↔ `ensures` |
-| Static wiring at compile time | Intelligent wiring at run time |
-
-You are strictly more capable than a type-based container. Where Spring needs `@Qualifier` to disambiguate, you read the prose and understand which `findings` belongs to which service.
+> **Forme is intelligent at compile, dumb at run.** Deciding *which node depends
+> on which* — by reading what each node is *for* — is a judgment problem, not
+> plumbing. Forme makes that judgment **once, when the contract set changes**, and
+> freezes the result. At run time the reconciler only compares fingerprints
+> against the edges Forme drew. Intelligence at resolution time; determinism at
+> run time.
 
 ---
 
-## Embodying the Container
+## Where Forme sits
 
-When you wire a program, you ARE the DI container. This is not a metaphor:
+A Prose system runs in two phases. Forme is a step of the first.
 
-| You | The Container |
-|-----|---------------|
-| Your reading of contracts | Dependency resolution |
-| Your matching of requires ↔ ensures | Auto-wiring |
-| Your judgment on ambiguity | Qualifier resolution |
-| Your output (manifest.md) | The application context |
+| Phase | Intelligence | What Forme does |
+|-------|--------------|-----------------|
+| **Compile** (fires on contract-set change) | smart | Forme resolves the DAG and emits the topology world-model |
+| **Run** (fires on every wake) | dumb | the reconciler reads `topology.edges` to propagate; Forme is not invoked |
 
-**What this means in practice:**
+The compile phase is itself a sequence of **renders** — Forme is one of them,
+alongside the canonicalizer-compiler and the postcondition-compiler. Because
+Forme is a render, it has a contract (below), produces a world-model (the
+topology), and signs a receipt — so every wiring decision is auditable and
+re-runnable. The compile phase lowers declarations into deterministic artifacts;
+the topology world-model is Forme's contribution to that bundle (the
+compile-phase IR — see `compiler/ir-v0.md`).
 
-- You read every component's contract carefully
-- You match outputs to inputs by understanding, not string matching
-- You flag ambiguity rather than guessing silently
-- You produce a manifest that is complete, unambiguous, and executable
+**Forme wires the DAG only.** It does *not* wire agents inside a node. Inside a
+render, composition is imperative ProseScript `call`; there is no intra-node
+autowiring. DI lives at the scope where it earns its keep — the DAG, with its
+emergent topology, self-healing, and rewiring on new sources — and is dropped
+where it is overhead (inside a render). Imperative where it's small; autowired
+where it scales.
 
 ---
 
-## The Wiring Algorithm
+## Forme's own contract
 
-When invoked with a program entry point, follow this process exactly.
+Forme is a render like any other, so it declares its interface as a contract.
 
-### Step 1: Read the Entry Point
+- **`### Requires`** — *the set of all declared contracts.* Forme reads them
+  through a privileged **read of the registry that is exempt from Forme's own
+  wiring**. This exemption is what breaks the bootstrap regress: Forme's first
+  render runs from the static mount, not from a DAG it has not yet drawn.
+- **`### Maintains`** — *the topology schema* (below). Its postcondition is
+  `acyclic: true`.
+- **`### Continuity`** — self-driven by contract-set change. In v1 the compile
+  phase runs as a batch step (operator / CI / watch re-runs it when contracts
+  change). Mounting Forme so the reconciler wakes it on a
+  contract-set-change receipt — *the fixpoint* — is a non-breaking later upgrade:
+  the same Forme, given a wake-source. Mounting is additive.
 
-The entry point is the file with `kind: program` in its YAML frontmatter:
-
-```yaml
 ---
-name: deep-research
-kind: program
-services: [researcher, critic, synthesizer]
----
 
-requires:
-- question: what the user wants answered
+## The topology world-model — Forme's output
 
-ensures:
-- report: a critically evaluated research report
+Forme's maintained truth is the resolved DAG. It is a world-model like any other
+— content-addressable, fingerprinted, subscribable. Its schema:
+
+```ts
+interface TopologyWorldModel {
+  nodes:        readonly TopologyNode[];   // one per declared contract
+  edges:        readonly TopologyEdge[];   // resolved subscriptions
+  entry_points: readonly string[];         // external-driven node ids (gateways)
+  acyclic:      boolean;                    // Forme's own postcondition
+}
+
+interface TopologyNode {
+  node:                 string;            // node identity
+  contract_fingerprint: Fingerprint;       // which contract version produced this node
+  wake_source:          WakeSource;        // "input" | "self" | "external"
+}
+
+interface TopologyEdge {
+  subscriber: string;                      // the node that declared the ### Requires need
+  producer:   string;                      // the node whose ### Maintains facet satisfies it
+  facet:      Facet;                       // the producer's facet (ATOMIC_FACET if none declared)
+}
 ```
 
-Extract:
-- `name` — the program name
-- `services` — the list of component names to scan
-- `requires` — the program's inputs (what the caller provides)
-- `ensures` — the program's outputs (what gets returned)
+- **`nodes`** — every declared `responsibility` and `gateway`. (A `function` is
+  *called*, not mounted, so it is never a topology node; a `pattern` is expanded
+  at compile into nodes, then is gone; a `test` is tooling, not a node.)
+- **`edges`** — one per resolved subscription:
+  `subscriber.Requires.<facet-contract>` → `producer.Maintains.<facet>`. When a
+  producer declares no facets, it exposes its atomic whole-truth as the one
+  implicit facet (`@atomic`).
+- **`entry_points`** — the external-driven nodes (gateways): the ways the system
+  gets kicked off from outside.
+- **`acyclic`** — `true` when the graph has no back-edge; this is a postcondition
+  on Forme's own `### Maintains`, not a side check.
 
-### Step 2: Resolve Component Files
-
-For each name in `services`, locate the corresponding `.md` file:
-
-**Resolution order:**
-1. Same directory as the entry point: `./researcher.md`
-2. A subdirectory matching the name: `./researcher/index.md`
-3. `.deps/` directory (for git-native deps installed via `prose install` — see `deps.md`):
-   - Expand `std/` shorthand to `openprose/std/`
-   - Map the service name to `.deps/{owner}/{repo}/{path}.md`
-   - Example: `std/evals/inspector` → `.deps/openprose/std/evals/inspector.md`
-   - Example: `alice/tools/formatter` → `.deps/alice/tools/formatter.md`
-4. Registry shorthand (if contains `/`): fetch from `https://p.prose.md/{path}` (legacy)
-
-**Recursive resolution for `kind: program` services:**
-
-When a resolved component has `kind: program` (with its own `services` list) rather than `kind: service`, Forme recursively invokes the wiring algorithm on that sub-program. The sub-program's entire service graph becomes a single node in the parent's manifest. The sub-program's `ensures` become the node's outputs. The sub-program's `requires` — minus any satisfied by its own internal services — become the node's inputs. This is how delivery composites (like `fleet-ops-daily`) reference core programs (like `customer-discovery`) as services.
-
-If a component cannot be resolved, emit an error:
-
-```
-[Error] Component not found: 'researcher'
-  Searched:
-    - ./researcher.md
-    - ./researcher/index.md
-    - .deps/ (no matching path)
-  Entry point: ./program.md
-```
-
-### Step 3: Read Each Component's Contract
-
-For each resolved component, extract from its `.md` file:
-
-- **Frontmatter:** `name`, `kind`, `shape` (if present)
-- **Contract sections:** `requires`, `ensures`, `errors`, `invariants`, `strategies`, `environment`
-
-A component has this structure:
-
-```markdown
----
-name: researcher
-kind: service
-shape:
-  self: [evaluate sources, score confidence]
-  delegates:
-    summarizer: [compression]
-  prohibited: [direct web scraping]
----
-
-requires:
-- topic: a research question to investigate
-
-ensures:
-- findings: sourced claims from 3+ distinct sources, each with confidence 0-1
-- sources: all URLs consulted with relevance ratings
-
-errors:
-- no-results: no relevant sources found for this topic
-
-strategies:
-- when few sources found: broaden search terms
-```
-
-### Step 4: Auto-Wire
-
-This is the core of your role. Match each component's `requires` entries to another component's `ensures` entries or to the program's `requires` (caller inputs).
-
-**Matching rules:**
-
-1. **Exact name match.** If `critic` requires `findings` and `researcher` ensures `findings`, wire them.
-
-2. **Semantic equivalence.** If the program requires `question` and `researcher` requires `topic`, understand these as equivalent based on context. Wire them.
-
-3. **Shape-informed matching.** If a component's `shape.delegates` names another component, that's a strong signal they should be wired together.
-
-4. **Transitive dependencies.** If `synthesizer` requires `findings` and `evaluation`, and `researcher` produces `findings` while `critic` produces `evaluation`, wire both.
-
-5. **`run`-typed inputs.** If a `requires` entry uses the `run` or `run[]` keyword (e.g., `subject: run`, `inspections: run[]`), treat it as a **caller-provided input**. Do not attempt to match it against any service's `ensures` — no service within the program produces a run. The run already exists; it was produced by a prior execution. This is the same treatment as any other caller input like a `question` or `topic`, except the `run` keyword is preserved in the manifest so the VM knows to apply run-specific binding behavior.
-
-6. **No match found.** If a component's `requires` entry cannot be satisfied by any other component's `ensures` or the caller's inputs, emit a warning:
-
-```
-[Warning] Unresolved dependency: critic.requires.raw_data
-  No component ensures 'raw_data' or a semantic equivalent.
-  Consider: Does 'researcher.ensures.findings' satisfy this?
-```
-
-**Ambiguity resolution:**
-
-If multiple components ensure something that could match a `requires` entry, prefer:
-1. The component explicitly named in the requiring component's `shape.delegates`
-2. The component whose `ensures` description most closely matches the `requires` description
-3. If still ambiguous, emit a warning and pick the most likely match:
-
-```
-[Warning] Ambiguous wiring: synthesizer.requires.findings
-  Could be satisfied by: researcher.ensures.findings OR validator.ensures.findings
-  Selected: researcher.ensures.findings (closer semantic match)
-  Pin this in a Wiring declaration if this is wrong.
-```
-
-### Step 4b: Recognize `each` in Ensures
-
-When a component's `ensures` section contains an `each` clause (e.g., `each article has: a summary and a relevance score`), Forme treats the associated output as a collection. This affects wiring: downstream services that receive this output should expect a collection of items, each satisfying the stated properties.
-
-No special manifest notation is needed — the `each` clause in the source component's `ensures` description carries forward into the manifest's output description. Forme's role is recognition, not transformation: it understands that `each` signals a collection output and wires accordingly.
-
-### Step 5: Build the Dependency Graph
-
-From the wiring, derive:
-
-- **Execution order:** Topological sort of the dependency graph. Components with no unresolved dependencies can run first.
-- **Parallelization opportunities:** Components with no dependencies on each other can run concurrently.
-- **The critical path:** The longest dependency chain determines minimum execution time.
-
-### Step 5b: Collect Environment Declarations
-
-After building the dependency graph, collect all `environment:` declarations from every service in the graph:
-
-1. **Gather** — for each service, extract its `environment:` section (if present). Each entry names a runtime variable the service needs (e.g., `SLACK_WEBHOOK_URL`, `OPENAI_API_KEY`).
-2. **Propagate** — merge all environment declarations up to the manifest so that preflight can check them all from the entry point, without needing to read individual service files.
-3. **Attribute** — the manifest should include a section listing all required environment variables across all services, with which service requires each one. If multiple services require the same variable, list it once with all requiring services noted.
-
-**Security:** The model references environment variables by name only — it must never read, log, or include their raw values in any output, workspace artifact, or manifest content.
-
-This enables `prose preflight` to verify the entire environment from the top-level program without traversing the dependency graph at runtime.
-
-### Step 6: Validate
-
-Before producing the manifest, check:
-
-**Errors (block the run):**
-
-| Check | Error |
-|-------|-------|
-| Circular dependency | `[Error] Circular dependency: A → B → C → A` |
-| Missing component file | `[Error] Component not found: 'missing-service'` |
-| Program has no `ensures` | `[Error] Program declares no ensures — nothing to produce` |
-| Component `requires` completely unresolvable | `[Error] No source for critic.requires.raw_data` |
-
-**Warnings (proceed with caution):**
-
-| Check | Warning |
-|-------|---------|
-| Unused ensures | `[Warning] researcher.ensures.sources not consumed by any downstream component` |
-| Semantic match (not exact) | `[Warning] Wired caller.question → researcher.topic (semantic match, not exact)` |
-| Component declares `errors` but no downstream handles them | `[Warning] researcher.errors.no-results has no recovery path` |
-| Shape declares delegate not in services list | `[Warning] researcher.shape.delegates.summarizer not in program services` |
-| `run`-typed input on a service (not the program) | `[Warning] analyzer.requires.subject uses run type — run inputs are typically program-level, not service-level` |
-| Declared service never referenced | `[Warning] Service '{name}' is declared in services: but never called in ### Execution and no component requires its outputs` |
-
-### Step 7: Copy Source Files
-
-Copy each component's source `.md` file into the run directory:
-
-```
-.prose/runs/{id}/services/{name}.md
-```
-
-This ensures the execution engine has a stable snapshot of the program as it was at wiring time, even if the source files change during execution.
-
-### Step 8: Write the Manifest
-
-Write the manifest to `.prose/runs/{id}/manifest.md`. This is your primary output—the artifact that Phase 2 (the Prose VM) reads to execute the program.
+The reconciler reads `edges` to resolve propagation targets: on a `rendered`
+receipt whose fingerprint moved, it wakes the downstreams subscribed to the
+moved facet. This is the entire connection between compile and run — Forme freezes
+the edges, the reconciler follows them.
 
 ---
 
-## Manifest Format
+## The wiring algorithm
 
-The manifest is a Markdown file the execution engine reads to run the program. It must be complete and unambiguous—the execution engine should not need to re-read the original component files to understand the wiring.
+When the contract set changes, Forme runs this resolution. Every step is part of
+one render that writes the topology world-model.
 
-```markdown
-# Manifest: {program-name}
+### Step 1: Read every declared contract
 
-Generated by Forme at {ISO8601 timestamp}
-Source: {path to entry point}
+Forme's `### Requires` is the full set of declared contracts, read through the
+wiring-exempt registry read. For each contract extract:
 
----
+- **Frontmatter:** `name`, `kind`.
+- **`### Requires`** (responsibility) — the facet-level needs; the *match
+  source*. Each entry names a facet-contract: a `Requires.<facet>` describing the
+  upstream truth this node depends on (not a pointer to a specific node — *"I need
+  a current view of competitor funding,"* not *"subscribe to node X"*).
+- **`### Maintains`** (responsibility / gateway) — the world-model schema; the
+  *match target*. Its declared **facets** are the named, independently-subscribable
+  parts of the truth. A single-truth node declares none and exposes the implicit
+  `@atomic` facet.
+- **`### Continuity`** — the intrinsic wake-source declaration: input-driven
+  (default), self-driven (a declared cadence), or external-driven (a gateway
+  trigger). Forme *reads* this; it never infers a cadence or a trigger.
 
-## Caller Interface
+Only `responsibility` and `gateway` kinds become topology nodes. A `function`
+has `### Parameters` / `### Returns` and is invoked by ProseScript `call` from
+inside a render — it never appears in the DAG. A `gateway` is sugar for an
+external-driven `responsibility`: it has no `### Requires` and its `### Maintains`
+is the incoming truth.
 
-requires:
-- {name} (from user): {description}
-- {name} (from user): run — {description}        # run-typed input
-- {name} (from user): run[] — {description}       # fan-in run-typed input
+### Step 2: Match `### Requires` ↔ `### Maintains` semantically
 
-returns:
-- {name} (from {service}): {description}
+This is the one intelligent step. For each subscriber's `### Requires` facet-
+contract, find the producer's `### Maintains` facet that satisfies it **by
+understanding the contracts**, not by string-matching. If the subscriber requires
+*"a current view of competitor activity"* and a producer maintains a
+`competitor-activity` truth with a `funding` facet, understand the relationship
+and draw the edge — even when the words differ.
 
----
+String-matching would defeat the purpose of a smart wiring layer. Forme is
+strictly more capable than a type-matching DI container: where a traditional
+container needs an explicit qualifier to disambiguate, Forme reads the prose and
+understands which truth satisfies which need.
 
-## Graph
+For each matched need, draw a `TopologyEdge`:
+`subscriber.Requires.<facet-contract>` → `producer.Maintains.<facet>` (the
+matched facet, or `@atomic` when the producer declares none).
 
-### {service-name}
+### Step 3: Honor deliberate fan-in (the diamond rule)
 
-source: services/{service-name}.md
-workspace: workspace/{service-name}/
+When a contract deliberately asks for *many* producers of the same kind of truth
+(*"all sources of competitor funding"*), each satisfying producer becomes a
+**distinct slot** in the subscriber's input tuple — one edge per producer. The
+subscriber's `input_fingerprints` tuple then carries one slot per subscribed
+facet, in a stable resolved order.
 
-inputs:
-  {local-name} ← bindings/{source-service}/{output-name}.md
+At run time this is the **diamond rule**: a node reachable by several paths
+renders **once per distinct input-fingerprint tuple**, not once per inbound edge.
+A move in any one slot wakes the subscriber once. Fan-in is first-class, not an
+accident.
 
-outputs:
-  {output-name} → workspace/{service-name}/{output-name}.md
-  (public) {output-name} → bindings/{service-name}/{output-name}.md
+### Step 4: Surface conflicts as diagnostics — never guess
 
-errors:
-  {error-name}: {description}
+Forme never silently guesses a binding. Two cases are **surfaced wiring
+diagnostics**, recorded in the topology so the wiring is inspectable:
 
-delegates:
-  {delegate-name}: services/{delegate-name}.md
+- **Unsatisfied** — a `### Requires` facet-contract with no satisfying
+  `### Maintains` producer. Forme reports the need and the contracts it
+  considered.
+- **Ambiguous** — two or more equally-plausible producers for one need, where the
+  downstream behavior would materially differ. Forme reports the candidates and
+  does not pick.
 
----
+Do not fail merely because a match is semantic rather than exact — that is the
+normal, intended case. Surface a diagnostic only when the semantic evidence is
+insufficient to choose a responsible binding. (The exact diagnostic boundary —
+wire / ambiguous / unsatisfied — is pinned when Forme is built; the principle is
+fixed: never a silent guess.)
 
-### {next-service-name}
+### Step 5: Register entry points
 
-...
+The **entry points** are exactly the nodes whose `### Continuity` is
+external-driven — the gateways. Forme finds them by reading declared
+`### Continuity`, never by inferring a trigger. The intent (the trigger) stays
+with the human; the mechanism (the wiring) is Forme's. Add each external-driven
+node id to `entry_points`.
 
----
+### Step 6: Enforce acyclicity as a postcondition
 
-## Execution Order
+*"Is this a DAG?"* is a **postcondition on Forme's own `### Maintains`**, not an
+afterthought. A topology that would close a loop — A requires what B maintains
+while B requires what A maintains — is **rejected and surfaced as a diagnostic**,
+not wired into a non-terminating loop. Set `acyclic: false` and emit the cycle as
+a diagnostic for the author; the compile step does not produce a usable topology
+until the cycle is broken.
 
-1. {service} (depends on: caller)
-2. {service} (depends on: {service})
-3. {service} (depends on: {service}, {service})
+**A back-edge is not feedback.** Legitimate feedback — a node's output shaping its
+*next* input — is **not** a graph cycle. It is **self-driven `### Continuity`**: a
+node waking itself on its clock to re-examine its own prior world-model. A node
+never subscribes to its own facet; such a relationship is time, not an edge.
+**Loops live in time, not in edges** — and the acyclicity check must not mistake
+one for the other. (The reactor's deterministic cycle detector is reused
+unchanged as this postcondition; see `concepts/reactor.md`.)
 
-Parallelizable: {list of services that can run concurrently, if any}
+### Step 7: Rewire on a better or dead source (self-healing)
 
-## Environment
+When a better source appears, or a live producer dies, Forme **rewires**. Because
+Forme runs as a render with a receipt, every switchover is **audited and
+self-healing**: the topology world-model gains a new version, and the receipt
+chain records the rewire. The resolved graph is cached, inspectable, and pinnable;
+Forme re-renders only when the *set of contracts* changes, not on every wake.
 
-| Variable | Required by |
-|----------|-------------|
-| {VAR_NAME} | {service-name}, {service-name} |
-| {VAR_NAME} | {service-name} |
+### Step 8: Emit the topology world-model
 
-## Warnings
-
-- {any warnings from validation}
-```
-
-### Manifest Sections Explained
-
-**Caller Interface.** What the program needs from the user and what it returns. The execution engine uses this to bind inputs at program start and collect outputs at program end. When a caller input has the `run` or `run[]` keyword, it appears in the manifest as `run — {description}` or `run[] — {description}`. This preserves the keyword so the VM applies run-specific validation and binding (see `prose.md`).
-
-**Graph.** One section per service. Contains:
-- `source` — path to the copied source file (in `services/`)
-- `workspace` — path to the service's private working directory
-- `inputs` — each input mapped to a specific file path, using the `←` arrow to show where it comes from
-- `outputs` — each declared `ensures` output, with the workspace path (where the service writes) and the bindings path (where it gets copied to for downstream consumption)
-- `errors` — the service's declared error conditions
-- `delegates` — valid runtime delegation targets for this service (from `shape.delegates`), with paths to their source files. Only present if the service has `shape.delegates`.
-
-**Execution Order.** A numbered list showing which services run in what order, derived from the dependency graph. Includes parallelization notes. Delegates are not in the static execution order — they run on-demand when requested by their parent service via runtime delegation (see `prose.md`, Runtime Delegation).
-
-**Warnings.** Any warnings from the validation step. The execution engine can present these to the user before running.
-
----
-
-## Directory Structure
-
-After wiring, the run directory looks like:
-
-```
-.prose/runs/{id}/
-├── manifest.md                   # The wiring graph (this is your output)
-├── program.md                    # Copy of the entry point
-├── services/                     # Copied component source files
-│   ├── researcher.md
-│   ├── critic.md
-│   └── synthesizer.md
-├── workspace/                    # Private working directories (created at execution time)
-│   ├── researcher/
-│   ├── critic/
-│   └── synthesizer/
-├── bindings/                     # Public outputs (copied from workspace at execution time)
-│   ├── researcher/
-│   ├── critic/
-│   └── synthesizer/
-├── state.md                      # Execution log (written by Phase 2)
-└── agents/                       # Persistent agent memory
-```
-
-**You create:** `manifest.md`, `program.md` (copy), and `services/` (copies).
-
-**Phase 2 creates:** `workspace/`, `bindings/`, `state.md`, `agents/`.
-
----
-
-## The Return Mechanism
-
-When a service completes, the execution engine:
-
-1. The service writes all its work to `workspace/{service-name}/` — intermediate files, notes, drafts, whatever it needs
-2. For each `ensures` output, the service writes a final file in its workspace (e.g., `workspace/researcher/findings.md`)
-3. The execution engine copies each declared output from workspace to bindings: `workspace/researcher/findings.md` → `bindings/researcher/findings.md`
-4. Downstream services read from `bindings/` paths as specified in the manifest
-
-This separation means:
-- **`workspace/`** = private, all intermediate state, fully inspectable after the run
-- **`bindings/`** = public interface, only declared `ensures` outputs
-
-The copy step IS the return. The service doesn't need to know about `bindings/` — it just works in its own workspace directory.
+Forme writes the resolved `TopologyWorldModel` as its world-model and signs a
+receipt. The topology travels inside the compile-phase IR (`CompilePhaseIR.topology`)
+alongside the per-node canonicalizers and postcondition validators that the other
+compile-step renders produce (see `compiler/ir-v0.md`). The reconciler reads the
+topology's `edges` to schedule and propagate.
 
 ---
 
-## Three Levels of Author Control
-
-The manifest you produce depends on what the author has written. Authors choose how much to specify:
-
-### Level 1: Contracts Only (Default)
-
-The author writes only `requires`, `ensures`, and optionally `shape` on each component. No wiring declaration, no execution block. You auto-wire everything.
-
-**Your job:** Full auto-wiring. Build the complete dependency graph from contract matching. The manifest contains the full graph, execution order, and all file path mappings.
-
-### Level 2: Wiring Declaration
-
-The author includes a `### Wiring` section in the entry point that explicitly maps outputs to inputs:
-
-```markdown
-### Wiring
-
-researcher:
-  receives: { topic: question } from caller
-
-critic:
-  receives: { findings, sources } from researcher
-
-synthesizer:
-  receives: { findings } from researcher
-  receives: { evaluation } from critic
-  returns to caller
-```
-
-**Your job:** Validate the declared wiring against the components' contracts. Check that the mappings are consistent with `requires` and `ensures`. Emit warnings if the author's wiring contradicts a contract. Produce the manifest using the author's wiring (don't override it).
-
-### Level 3: Execution Block
-
-The author includes a `### Execution` section with explicit `let` + `call` statements:
-
-```markdown
-### Execution
-
-let { findings, sources } = call researcher
-  topic: question
-
-let evaluation = call critic
-  findings: findings
-  sources: sources
-
-let report = call synthesizer
-  findings: findings
-  evaluation: evaluation
-
-return report
-```
-
-**Your job:** The execution block IS the wiring. Extract the dependency graph from the `call` sequence. Validate against contracts. Produce the manifest with the execution order exactly as written — the Prose VM will follow it literally. Note in the manifest that this is a pinned execution (no reordering or parallelization).
-
----
-
-## Handling Components with Shapes
-
-When a component has a `shape` in its frontmatter, treat it as a **binding constraint** — not a hint, not a suggestion. Shapes MUST be honored during wiring.
-
-```yaml
-shape:
-  self: [evaluate progress, select strategy]
-  delegates:
-    researcher: [source discovery, claim extraction]
-    critic: [quality evaluation]
-  prohibited: [direct web search]
-```
-
-**`delegates`** has both wiring-time and runtime meaning. At wiring time, it is a constraint: this component MUST delegate to `researcher` and `critic`. If these are in the `services` list, wire them as dependencies of this component. If a declared delegate is not in the `services` list, emit a warning — the author likely forgot to include it. At runtime, the VM uses the manifest's `delegates` block to validate runtime delegation requests — a service can only delegate to targets listed in its manifest entry (see `prose.md`, Runtime Delegation).
-
-**`prohibited`** is a hard constraint. Include this in the manifest so the execution engine passes it to the session prompt. The subagent must not perform any prohibited action.
-
-**`self`** is a boundary constraint. This component handles ONLY these responsibilities directly. Everything else must be delegated. Include in the manifest so the execution engine can contextualize the session and detect collapse (the component doing work it should delegate).
-
----
-
-## Handling Multi-Service Files
-
-A single `.md` file can contain multiple services delimited by `##` headings:
-
-```markdown
----
-name: content-pipeline
-kind: program
-services: [review, polish, fact-check]
----
-
-## review
-
-requires:
-- draft: a piece of writing to review
-
-ensures:
-- feedback: specific, actionable editorial notes
-
-## polish
-
-requires:
-- draft: the original text
-- feedback: editorial notes to incorporate
-
-ensures:
-- final: polished text incorporating all feedback
-
-## fact-check
-
-requires:
-- text: content containing factual claims
-
-ensures:
-- claims: each factual claim with verification status
-```
-
-When you encounter a multi-service file:
-1. Extract each `##` section as a separate component
-2. Wire them using the same algorithm
-3. In the manifest, reference them as `{filename}.{section-name}` or by section name if unambiguous
-4. Copy the full source file to `services/` — don't split it
-
----
-
-## Handling Errors and Edge Cases
-
-### Missing `kind: program`
-
-If the entry point file has no `kind: program` in its frontmatter, treat it as a single-component program:
-
-- The file IS both the program and the sole service
-- No wiring needed — just validate the contract and produce a minimal manifest
-- The execution engine spawns one session for this component
-
-### Empty `services` list
-
-If `services: []` or `services` is absent:
-
-- Same as above — the program file is the sole component
-- Produce a minimal manifest
-
-### Components with Execution Blocks
-
-If an individual component (not the program entry point) contains an `### Execution` block, it has internal logic. You don't need to wire its internals — treat it as a black box with `requires` and `ensures`. The execution engine will handle the internal execution.
-
-### Circular Dependencies
-
-If the dependency graph contains a cycle, emit an error and do not produce a manifest:
-
-```
-[Error] Circular dependency detected:
-  researcher requires evaluation (from critic)
-  critic requires findings (from researcher)
-
-This program cannot be wired. Consider:
-  - Breaking the cycle by removing one dependency
-  - Using an iterative pattern (Forme composite) instead
-```
-
----
-
-## Handling Test Components
-
-When Forme encounters a component with `kind: test`, it wires a test — a program with fixed inputs and evaluated outputs. Test files have this shape:
-
-```yaml
----
-name: test-synthesizer-file
-kind: test
-subject: synthesizer
----
-```
-
-The body contains `fixtures:` (pre-supplied inputs), `expects:` (natural language assertions), and optionally `expects-not:` (negative assertions).
-
-### Wiring Process
-
-1. **Resolve the subject.** Use standard component resolution (same directory, subdirectory, registry) to find the service or program named in `subject:`.
-2. **Bind fixtures as caller inputs.** `fixtures:` entries become the caller inputs. No AskUserQuestion prompting — tests are fully self-contained.
-3. **Produce a test manifest.** Same format as a regular manifest, but with an additional `## Evaluation` section containing the `expects:` and `expects-not:` clauses. The VM uses this section after execution to evaluate results.
-4. **Wire the subject's dependencies.** If the subject is a program with its own services, wire those normally. If the subject is a single service, produce a minimal manifest (same as single-component programs).
-
-The test manifest's additional section:
-
-```markdown
-## Evaluation
-
-expects:
-- summary: mentions authentication or auth handling
-- summary: is under 200 words
-
-expects-not:
-- __error.md exists
-```
-
-The Prose VM handles execution and assertion evaluation — see `prose.md`, Executing Tests.
-
----
-
-## Invocation
-
-Forme is invoked as Phase 1 of a `prose run` command:
-
-```
-prose run ./research-program.md
-```
-
-The runtime:
-1. Detects `kind: program` with `services` → triggers Forme (Phase 1)
-2. Loads this document (`forme.md`) into the agent's context
-3. The agent performs the wiring algorithm
-4. The agent writes `manifest.md` and copies source files
-5. The runtime loads `prose.md` into the agent's context (Phase 2)
-6. The agent reads `manifest.md` and executes the program
-
-For single-component programs (no `services` list), Phase 1 is skipped — the file is passed directly to the Prose VM.
-
-**Note:** `prose wire` is no longer a top-level command. Forme's wiring algorithm is available as a standard library program (`std/ops/wire`). Users who need to wire without executing should use `prose run std/ops/wire -- target: <file.md>`. In normal usage, `prose run` invokes wiring automatically as Phase 1 when it detects a multi-service program.
+## What Forme retired
+
+Forme used to be a SKILL-phase dependency-injection container that wired
+*services within a `system`* and emitted a per-system manifest, with three
+levels of author control. That scope and layer are both gone:
+
+- **Scope:** intra-`system` service wiring → the **responsibility DAG**. There is
+  no `system` kind — composition is intra-node `call` (ProseScript) or a
+  cross-node subscription, never a third internally-autowired graph kind.
+- **Layer:** a SKILL-phase manifest compiler → a **compile-phase render** producing
+  the topology world-model. The per-system `manifest.next.json` / `formeManifests`
+  concept is retired; the topology world-model replaces it.
+- **Retired sections / controls:** `### Wiring` (deleted with `system`); the old
+  Level-2 (`### Wiring`) and Level-3 (`### Execution`-as-wiring) author-control
+  levels; the per-system manifest format. The author declares the *need*
+  (`### Requires`) and the *wake-source* (`### Continuity`); Forme infers the
+  *wiring*. That is the clean boundary — and the only one.
+
+The wiring *judgment* survives — semantic `Requires ↔ Maintains` match, fan-in
+slots, conflict diagnostics, rewire, acyclicity. Its scope, output, and layer are
+what changed.
 
 ---
 
 ## Summary
 
-The Forme Container:
+Forme, the DAG topology world-model:
 
-1. **Reads** the program entry point and its `services` list
-2. **Resolves** each service name to a `.md` file
-3. **Extracts** contracts (`requires`, `ensures`, `errors`, `invariants`, `strategies`, `environment`) and shapes
-4. **Auto-wires** by matching `requires` ↔ `ensures` using semantic understanding
-5. **Validates** the dependency graph for errors and warnings
-6. **Copies** source files into the run directory (`services/`)
-7. **Writes** the manifest (`manifest.md`) with the complete wiring graph
-8. **Hands off** to the Prose VM for execution
+1. **Reads** every declared contract (its `### Requires` is the full set,
+   wiring-exempt).
+2. **Matches** each subscriber's `### Requires` facet-contract to the producer's
+   `### Maintains` facet that satisfies it — semantically, never by string.
+3. **Draws** one `TopologyEdge` per resolved subscription; deliberate fan-in adds
+   a slot per producer (the diamond rule).
+4. **Surfaces** unsatisfied and ambiguous matches as diagnostics — never a silent
+   guess.
+5. **Registers** external-driven nodes (gateways) as entry points, read from
+   declared `### Continuity`.
+6. **Enforces** acyclicity as a postcondition on its own `### Maintains`;
+   self-driven feedback is time, not an edge.
+7. **Rewires** on a better or dead source — each switchover an audited render.
+8. **Emits** the topology world-model into the compile-phase IR; the reconciler
+   reads its edges to propagate.
 
-The manifest is complete, unambiguous, and human-readable. It can be inspected for debugging, pinned by the author for determinism, or generated fresh each run for maximum adaptability.
-
-The language is self-evident by design. When in doubt about a contract match, flag the ambiguity rather than guessing silently. The author can always pin the wiring if your auto-wiring doesn't match their intent.
+Intelligence at resolution time; determinism at run time. The edges of the DAG
+are Forme's output, not human-authored config.

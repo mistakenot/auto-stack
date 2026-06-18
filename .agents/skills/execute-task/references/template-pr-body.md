@@ -14,8 +14,9 @@ gh pr create --title "feat($ID): $NAME" --body "$(cat <<'EOF'
 ## Issues encountered
 - [Bullet list or "None"]
 
-## How to test
-[Copy from plan.md]
+## Verification
+- [ ] [Each test, typecheck, lint, or proof step the agent ran]
+- [ ] [Only checked if it ran to completion and passed]
 
 ## Links
 - Task docs: docs/tasks/$ID-$NAME/

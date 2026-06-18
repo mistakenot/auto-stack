@@ -36,6 +36,36 @@ func TestAgentsCreatesFileWhenNoneExist(t *testing.T) {
 	}
 }
 
+func TestAgentsIndexIgnoresExcludeFromIndex(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.WriteDoc("core.md", "Core Doc", "A durable reference", "# Core")
+	ws.WriteDoc("tasks/042-thing/plan.md", "Task Plan", "An ephemeral plan", "# Plan")
+	ws.WriteDoc("experiments/spike/notes.md", "Spike Notes", "An experiment log", "# Notes")
+
+	// Mirror the CLI: discovery ignores are empty, agent-index ignores carry
+	// the planning-tree excludes.
+	indexIgnores := []string{"docs/tasks/*", "docs/experiments/*"}
+	if err := Agents(ws.Dir, "docs", []string{"CLAUDE.md"}, indexIgnores); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(ws.Path("CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "core.md") {
+		t.Error("core doc should appear in the agent index")
+	}
+	if strings.Contains(content, "tasks/042-thing/plan.md") {
+		t.Error("task doc should be excluded from the agent index")
+	}
+	if strings.Contains(content, "experiments/spike/notes.md") {
+		t.Error("experiment doc should be excluded from the agent index")
+	}
+}
+
 func TestAgentsAppendsToExistingFile(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
 	ws.WriteDoc("test.md", "Test", "A test", "# Test")

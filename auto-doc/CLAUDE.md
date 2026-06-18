@@ -20,16 +20,18 @@ By default, `auto doc` discovers docs recursively across the repo:
   "docsDir": "./docs",
   "agentFiles": ["AGENTS.md", "CLAUDE.md"],
   "parallelism": 4,
-  "ignores": []
+  "ignores": [],
+  "agentIndexIgnores": ["docs/tasks/*", "docs/experiments/*", "docs/epics/*", "docs/spikes/*"]
 }
 ```
 
-| Key           | Default                        | Description                          |
-|---------------|--------------------------------|--------------------------------------|
-| `docsDir`     | `"./docs"`                     | Compatibility docs root to always include |
-| `agentFiles`  | `["AGENTS.md", "CLAUDE.md"]`   | Agent memory files to update         |
-| `parallelism` | `4`                            | Number of parallel groups for `fix`  |
-| `ignores`     | `[]`                           | Glob patterns matched against repo-relative doc paths and filenames |
+| Key                 | Default                                                          | Description                          |
+|---------------------|------------------------------------------------------------------|--------------------------------------|
+| `docsDir`           | `"./docs"`                                                       | Compatibility docs root to always include |
+| `agentFiles`        | `["AGENTS.md", "CLAUDE.md"]`                                     | Agent memory files to update         |
+| `parallelism`       | `4`                                                              | Number of parallel groups for `fix`  |
+| `ignores`           | `[]`                                                             | Glob patterns excluded from **all** commands (discovery, `tree`, `stale`, `fix`, `search`, agent index). Use for docs that should never be tracked. |
+| `agentIndexIgnores` | `["docs/tasks/*", "docs/experiments/*", "docs/epics/*", "docs/spikes/*"]` | Glob patterns excluded from the **agent index only** (`agents`). These ephemeral planning trees stay freshness-tracked by `tree`/`stale`/`fix` but don't bloat `CLAUDE.md`/`AGENTS.md`. Omit the key for defaults; set `[]` to disable. |
 
 ---
 

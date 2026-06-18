@@ -1,6 +1,10 @@
 # Requirements Template
 
 ```markdown
+---
+epic: path/to/epic.md  # optional — only if this task belongs to an epic
+---
+
 # Task $ID: $NAME
 
 ## Problem
@@ -30,3 +34,4 @@
 - ~1 page max; split larger work into multiple tasks
 - ACs use Given/When/Then or casual bullets (match team preference)
 - Open Questions must be resolved before moving to solution stage
+- If the task belongs to an epic, include `epic:` in YAML frontmatter with the path to the epic file relative from the repo root. Omit frontmatter entirely if no epic.

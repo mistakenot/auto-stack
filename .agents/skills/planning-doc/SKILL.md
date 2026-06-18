@@ -17,17 +17,19 @@ rendering.
 
 ## Step 1: Fetch the component reference
 
-The component library evolves independently of this skill. Always fetch the
-current reference before authoring:
+The component library is versioned with this skill. Fetch the reference for the
+exact release this skill targets — an immutable tag, so it never drifts or
+serves a stale cache:
 
 ```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/mistakenot/skills@main/pd-components/dist/llms.txt
+curl -fsSL https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.6.0/pd-components/dist/llms.txt
 ```
 
 It contains the page boilerplate, the release tag to pin, every component with
 attributes and examples, the authoring rules, and the comment-merge protocol.
 Follow it exactly — in particular, import the bundle pinned to the release tag
-it names, never `@main`.
+it names (`pd-v0.6.0`), never `@main`. To move to a newer component
+release, update this skill (`npx skills install …`) — the new tag rides along.
 
 If the fetch fails (offline/sandboxed): inside the skills repo itself, read
 `pd-components/dist/llms.txt`; elsewhere, fall back to the cheat sheet at the
@@ -61,6 +63,13 @@ Authoring rules that matter most (full set in llms.txt):
   mirrors the markdown workflow: the artifact stays current and readable,
   while every decision survives in its thread (and surfaces automatically in
   `<pd-decisions>`).
+- Record an architectural decision you made yourself — one not dictated by the
+  requirements or an existing repo pattern — as a `<pd-decision>` (rationale +
+  alternatives + consequences), not buried in prose. It feeds `<pd-decisions>`
+  alongside resolved threads.
+- Preserve `<script type="application/json" id="pd-meta">` blocks when editing
+  existing docs. Never modify, move, or delete the pd-meta block — it tracks
+  task lifecycle state managed by the planning workflow.
 
 ## Step 3: Iterate
 
@@ -89,9 +98,10 @@ Reviewers comment in the browser and paste back an export block delimited by
 
 Classic scripts in head (never `type="module"`):
 `https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4` and
-`https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.2.0/pd-components/dist/pd.min.js` (defer).
+`https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.6.0/pd-components/dist/pd.min.js` (defer).
 
-- `<pd-doc title status generated>` shell · `<pd-tab name>` page
+- `<pd-doc title status pr generated>` shell · `<pd-tab name>` page
+  pr: `"pending"` → placeholder; a URL → clickable badge. Update when PR opens.
 - `<pd-section id title>` titled/anchorable section, freeform body
 - `<pd-thread anchor status{unresolved|resolved|rejected} priority{p1|p2|p3} title>`
   with `<pd-comment by{review|author|name}>` children — append-only
@@ -104,4 +114,5 @@ Classic scripts in head (never `type="module"`):
 - `<pd-api kind name lang path>` + `<pd-member kind sig>note</pd-member>` —
   API/outline: signatures + comments only, generic `kind` badges
 - `<pd-ac id title phases tests>` acceptance-criteria card
+- `<pd-decision id title status{accepted|proposed|superseded} by summary>` authored ADR block
 - `<pd-decisions>` auto decision log · `<pd-wire label h>` / `<pd-note>` wireframes

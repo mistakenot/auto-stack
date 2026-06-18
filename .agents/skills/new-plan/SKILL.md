@@ -11,30 +11,18 @@ Read requirements + solution, gather codebase context, write `context.md` and `p
 
 ## Process
 
-### Phase 1: Context Gathering
+### Phase 1: Enrich Context
 
-Spawn 3 parallel subagents to gather context. Each returns structured findings.
-
-**CB1 (Code):**
-- Search files, functions, types, and patterns relevant to the task
-- Check file paths mentioned in solution.md -- verify they exist, note current signatures and structure
-- Find similar implementations in the codebase for pattern reference
-
-**CB2 (Docs):**
-- Search project documentation for relevant how-tos, concept docs, and architecture guides
-- Check for related rules or conventions that apply
-- Note any documented constraints or patterns the implementation must follow
+`context.md` already exists from the solution stage (code + docs findings). Enrich it with historical context by spawning a subagent:
 
 **CB3 (History):**
 - Search git commits for related changes
 - Check `docs/tasks/` for related completed tasks
 - Note relevant decisions or patterns from past work
 
-### Phase 2: Write context.md
+Merge findings into the existing `context.md` -- append a **Related Tasks** section if one doesn't exist, or update it. Also verify that file paths from solution.md and existing context.md still hold (flag any that have drifted). Ensure context.md has `epic:` frontmatter if requirements.md does.
 
-Combine findings from all 3 subagents into `context.md` using the template below. Include only verified facts -- paths, snippets, descriptions grounded in actual code.
-
-### Phase 3: Write plan.md
+### Phase 2: Write plan.md
 
 Using requirements.md, solution.md, and the freshly written context.md:
 
@@ -44,7 +32,8 @@ Using requirements.md, solution.md, and the freshly written context.md:
 4. Every step must have an explicit verify check (not just "run typecheck" but "verify: typecheck passes, new route returns 200")
 5. End each phase with a commit step and verification (typecheck, tests, lint)
 6. Define success criteria that map back to acceptance criteria
-7. Create artifact files if needed (architecture diagrams, sequence diagrams for complex flows)
+7. If requirements.md has `epic:` frontmatter, copy it to plan.md
+8. Create artifact files if needed (architecture diagrams, sequence diagrams for complex flows)
 
 Strong success criteria let subagents loop independently. Weak criteria ("make it work") cause confusion and wasted cycles. Each step should be verifiable without human judgement.
 

@@ -93,6 +93,44 @@ func TestLoadDefaultIgnoresEmpty(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultAgentIndexIgnores(t *testing.T) {
+	// Absent file → built-in defaults apply.
+	cfg, err := Load("nonexistent-file.json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.AgentIndexIgnores) != len(DefaultAgentIndexIgnores) {
+		t.Fatalf("AgentIndexIgnores = %v, want defaults %v", cfg.AgentIndexIgnores, DefaultAgentIndexIgnores)
+	}
+	found := false
+	for _, p := range cfg.AgentIndexIgnores {
+		if p == "docs/tasks/*" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("AgentIndexIgnores = %v, want it to contain docs/tasks/*", cfg.AgentIndexIgnores)
+	}
+}
+
+func TestLoadAgentIndexIgnoresOverride(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "docs.json")
+	// An explicit (here empty) list overrides the built-in defaults.
+	content := `{"agentIndexIgnores": []}`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.AgentIndexIgnores) != 0 {
+		t.Errorf("AgentIndexIgnores = %v, want empty override", cfg.AgentIndexIgnores)
+	}
+}
+
 func TestLoadDefaultFilename(t *testing.T) {
 	if DefaultConfigFile != "settings.json" {
 		t.Errorf("DefaultConfigFile = %q, want %q", DefaultConfigFile, "settings.json")

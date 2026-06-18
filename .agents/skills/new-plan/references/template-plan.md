@@ -1,6 +1,11 @@
 # Plan Template
 
 ```markdown
+---
+status: draft   # lifecycle: draft → pending → executing → complete
+epic: path/to/epic.md  # optional — only if this task belongs to an epic
+---
+
 # Plan: Task $ID
 
 ## Summary
@@ -71,3 +76,4 @@ Phase 1 (DB) --> Phase 2 (Backend) --> Phase 4 (E2E)
 - Every phase includes verification (typecheck, tests, lint)
 - Execution Sequence shows the dependency DAG for parallel dispatch
 - Checkboxes track progress and enable session resumption
+- If requirements.md has `epic:` frontmatter, copy it to this file's frontmatter. Omit frontmatter if no epic.
