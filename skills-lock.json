@@ -31,6 +31,12 @@
       "skillPath": "skills/beta-new-task/SKILL.md",
       "computedHash": "9375147ea9f0d19101f0c14f57b1e8e9b493027a09dde1cb7173518ccc7ff679"
     },
+    "borrow-from-oss": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "skillPath": "skills/borrow-from-oss/SKILL.md",
+      "computedHash": "3746c128a46d70f83e2b594243019f77fdc6c42b711767de67232c39798c251c"
+    },
     "cass": {
       "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
       "sourceType": "local",
