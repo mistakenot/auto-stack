@@ -1,25 +1,16 @@
-// content.js — the type-aware document pane. Generalizes doc.js's render,
-// dispatching on the entry's type (or the path's .md/.html suffix):
-//   markdown -> doc.get + marked/dompurify, rendered inline
+// content.js — the type-aware document pane (presentational). The store owns the
+// open-doc view-model and every side-effect (the doc.get fetch, the cache-bust
+// nonce, the revision/last-updated bumps, and the live doc.changed refresh); this
+// component just reads selectOpenDoc(state) and renders by type:
+//   markdown -> the store's fetched markdown, via marked/dompurify, rendered inline
 //   html     -> an <iframe src=/api/doc/raw?...&v=<nonce>> (never via doc.get)
-// The pane carries data-revision / data-last-updated; a refresh button forces a
-// re-fetch (markdown) or bumps the iframe cache-bust nonce (html). There is NO
-// doc.changed subscription here — this is the static explorer (liveness is 026).
-import { useState, useEffect, useRef } from "preact/hooks";
+// The pane carries data-revision / data-last-updated; the refresh button dispatches
+// the store's refreshOpenDoc action (re-fetch markdown / bump the iframe nonce).
 import { html } from "htm/preact";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { call, on, whenOpen, recordError } from "./rpc.js";
-import { matchesDoc } from "./docevents.js";
-import { setUIState } from "./uistate.js";
-
-// resolveType derives the effective type: an explicit type wins, else fall back
-// to the path suffix.
-function resolveType(type, path) {
-  if (type === "markdown" || type === "html") return type;
-  if (path.endsWith(".html")) return "html";
-  return "markdown"; // default / .md
-}
+import { recordError } from "./rpc.js";
+import { useStore, selectOpenDoc, refreshOpenDoc } from "./store.js";
 
 // rawURL builds the /api/doc/raw target for an html doc, URL-encoding path and
 // worktree and appending the cache-bust nonce. Omits an empty worktree.
@@ -53,87 +44,19 @@ function splitFrontmatter(md) {
 }
 
 export function DocContent({ project, path, type, worktree }) {
-  const [markdown, setMarkdown] = useState("");
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
+  // The open-doc view-model is owned by the store (fetched/refreshed by its
+  // route→selection orchestration + the single doc.changed subscription). Read
+  // the whole slice; it re-renders only when the open doc actually changes.
+  const od = useStore(selectOpenDoc);
+  const { markdown, revision, lastUpdated, nonce, loading, error } = od;
 
-  // Monotonic cache-bust nonce: incremented on every (re-)fetch / refresh so the
-  // iframe v= changes and the browser re-requests. Starts non-zero.
-  const [nonce, setNonce] = useState(1);
+  // The store derives the effective type from the open path; fall back to the
+  // suffix of the prop path so the empty-pane / pre-fetch render is consistent.
+  const effType =
+    od.type || (path && path.endsWith(".html") ? "html" : "markdown");
 
-  // Revision counter — bumped on each (re-)fetch/nonce-bump and surfaced via
-  // data-revision. A ref so closures always see the latest value.
-  const revision = useRef(0);
-  const [lastUpdated, setLastUpdated] = useState("");
-
-  const effType = resolveType(type, path);
-
-  // bump records one (re-)fetch/render: advance revision + last-updated and push
-  // the snapshot into uiState for the /debug current-state section.
-  const bump = () => {
-    revision.current += 1;
-    const now = new Date().toISOString();
-    setLastUpdated(now);
-    setUIState({ path, type: effType, revision: revision.current, lastUpdated: now });
-  };
-
-  // fetchMarkdown loads + renders the markdown body, recording any parse/sanitize
-  // failure via recordError (these never reach rpc.js).
-  const fetchMarkdown = async () => {
-    if (!path || !project) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await whenOpen();
-      const params = { project, path };
-      if (worktree) params.worktree = worktree;
-      const res = await call("doc.get", params);
-      setMarkdown(res && res.markdown ? res.markdown : "");
-      setLoading(false);
-      bump();
-    } catch (e) {
-      recordError("markdown", e);
-      setError("doc.get failed: " + (e && e.message ? e.message : String(e)));
-      setLoading(false);
-    }
-  };
-
-  // For html docs there is no fetch — bumping the nonce re-points the iframe.
-  const refresh = () => {
-    if (effType === "html") {
-      setNonce((n) => n + 1);
-      bump();
-    } else {
-      fetchMarkdown();
-    }
-  };
-
-  // (Re-)fetch markdown when the markdown target changes. For html docs the
-  // initial render already bumps revision (below), so this effect is markdown-only.
-  useEffect(() => {
-    if (effType === "markdown") fetchMarkdown();
-    // eslint-disable-next-line
-  }, [project, path, worktree, effType]);
-
-  // For html docs, bump revision/last-updated once when the target changes so the
-  // pane reflects the active doc even though there's no fetch.
-  useEffect(() => {
-    if (effType === "html" && path) bump();
-    // eslint-disable-next-line
-  }, [project, path, worktree, effType]);
-
-  // Live refresh (026): when a doc.changed matching THIS open doc arrives, apply
-  // immediately — markdown re-fetches + re-renders, html bumps the iframe nonce.
-  // Re-subscribes when the open target changes so refresh() never goes stale.
-  useEffect(() => {
-    const target = { project, path, worktree };
-    const off = on("doc.changed", (ev) => {
-      if (!matchesDoc(ev, target)) return;
-      refresh();
-    });
-    return off;
-    // eslint-disable-next-line
-  }, [project, path, worktree, effType]);
+  // refresh dispatches the store action (markdown re-fetch / html nonce bump).
+  const refresh = () => refreshOpenDoc();
 
   // sanitizeMarkdown peels frontmatter, then wraps parse + sanitize in try/catch;
   // failures are recorded and surfaced inline rather than crashing the pane.
@@ -149,7 +72,7 @@ export function DocContent({ project, path, type, worktree }) {
   // Empty path -> placeholder (still carries the data-revision / -last-updated hooks).
   if (!path) {
     return html`
-      <article class="editor" data-revision=${revision.current} data-last-updated=${lastUpdated}>
+      <article class="editor" data-revision=${revision} data-last-updated=${lastUpdated}>
         <div class="canvas">
           <div class="placeholder">
             <span class="ph-mark"></span>
@@ -175,7 +98,7 @@ export function DocContent({ project, path, type, worktree }) {
       </div>
       <div class="toolbar-spacer"></div>
       ${lastUpdated &&
-      html`<span class="stamp">rev ${revision.current} · ${lastUpdated.slice(11, 19)}</span>`}
+      html`<span class="stamp">rev ${revision} · ${lastUpdated.slice(11, 19)}</span>`}
       ${effType === "html" &&
       html`<a class="tbtn" target="_blank" rel="noopener" href=${url}>open ↗</a>`}
       <button class="tbtn" data-testid="doc-refresh" onClick=${refresh}>↻ refresh</button>
@@ -183,7 +106,7 @@ export function DocContent({ project, path, type, worktree }) {
   `;
 
   return html`
-    <article class="editor" data-revision=${revision.current} data-last-updated=${lastUpdated}>
+    <article class="editor" data-revision=${revision} data-last-updated=${lastUpdated}>
       ${toolbar}
       ${error && html`<div class="pane-error">${error}</div>`}
       ${effType === "html"

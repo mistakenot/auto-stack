@@ -236,8 +236,8 @@ export function selectOpenDoc(state) {
   return state.openDoc;
 }
 
-// selectDebugSnapshot replaces the deleted uiState mirror for the /debug
-// current-state section: {project, path, type, revision, docCount, lastUpdated}.
+// selectDebugSnapshot replaces the deleted cross-route snapshot mirror for the
+// /debug current-state section: {project, path, type, revision, docCount, lastUpdated}.
 export function selectDebugSnapshot(state) {
   const project = selectActiveProject(state);
   const docs = selectDocs(state, project);
@@ -314,11 +314,27 @@ function resolveType(path) {
 
 // fetchProjects loads project.list once, gated on whenOpen() so a cold load
 // doesn't reject "not connected". Mirrors explorer.js's fetchProjects.
+//
+// Cold-load ordering: the initial syncFromHash() runs before project.list
+// resolves, so when the hash carries NO project the active project is still ""
+// (no projects loaded yet) and the dependent doc.list is skipped. The OLD
+// explorer re-listed reactively once project.list landed (tree.js keyed its fetch
+// on the resolved activeProject prop). To preserve that "switcher AND tree
+// populate without a reload" behaviour (025 AC-1), kick the dependent fetches for
+// the now-resolvable active project here, but ONLY when the hash has no explicit
+// project — an explicit-project hash already listed via syncFromHash.
 async function fetchProjects() {
   try {
     await whenOpen();
     const res = (await call("project.list")) || [];
     dispatch({ type: "projects/set", projects: res });
+    if (!getState().selection.project) {
+      const active = selectActiveProject(getState());
+      if (active) {
+        fetchDocs(active);
+        fetchOpenDoc();
+      }
+    }
   } catch {
     // project.list errors are recorded at the rpc.js layer (call() rejects feed
     // recordError); the store leaves projects empty.
