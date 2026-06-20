@@ -127,7 +127,11 @@ func (p *Peer) Serve(ctx context.Context) error {
 	err := p.readLoop(ctx)
 	close(ctxDone)
 
-	// Signal the write pump to drain and exit, then wait for it.
+	// Signal the write pump to drain remaining messages and exit, then wait
+	// for it. This order is safe: when readLoop exits on EOF the remote closed
+	// (writes fail immediately); on decode error the remote is still reading
+	// (pump can write); on ctx cancel the watcher already called shutdown
+	// (conn closed). The pump never blocks indefinitely in Encode.
 	close(p.stop)
 	<-p.pumpDone
 
@@ -174,7 +178,7 @@ func (p *Peer) readLoop(ctx context.Context) error {
 
 		switch kind {
 		case kindRequest:
-			p.handleRequest(ctx, raw)
+			go p.handleRequest(ctx, raw)
 		case kindNotification:
 			p.handleNotification(raw)
 		case kindResponse:

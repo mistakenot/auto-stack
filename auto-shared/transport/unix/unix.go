@@ -63,13 +63,12 @@ func (l *Listener) Addr() net.Addr {
 	return l.ln.Addr()
 }
 
-// Close stops the listener and removes the owned socket file.
+// Close stops the listener. Go's net.UnixListener unlinks the socket on close,
+// so no extra os.Remove is needed.
 func (l *Listener) Close() error {
 	var closeErr error
 	l.once.Do(func() {
 		closeErr = l.ln.Close()
-		// Best-effort removal of the socket we own.
-		os.Remove(l.path)
 	})
 	return closeErr
 }
