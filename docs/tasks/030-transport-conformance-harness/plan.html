@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>030: transport-conformance-harness</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "030",
+    "name": "transport-conformance-harness",
+    "status": "planning",
+    "created": "2026-06-20"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="030: transport-conformance-harness" status="draft" pr="pending" generated="2026-06-20">
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Epic 003 (multi-host architecture) inverts the stack: autowatch becomes the per-user RPC authority and auto-ui a stateless proxy. Every downstream task (3–10) needs daemons to talk over **different wires depending on the scenario** — a unix socket for same-user, loopback TCP for same-host/different-user, TCP for cross-host — without the RPC method handlers knowing or caring which.
+
+Today there is no such abstraction. The only JSON-RPC in the tree lives in `auto-ui/internal/server/` (`rpc.go`, `rpc_ingest.go`), welded to `net/http` handlers and the browser-facing `/api/rpc` endpoint. There is no shared `Listener`/`Dialer`/`Conn` seam, no transport-agnostic JSON-RPC framing for persistent daemon-to-daemon connections, and no way to wire two components together in-process for a fast test.
+
+Without this foundation, each RPC task would reinvent its own connection plumbing and test scaffolding, and the load-bearing "RPC handlers never import a transport" contract (GR-N3) would be impossible to enforce.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **Transport interfaces** — define `Listener` / `Dialer` / `Conn` in a new `auto-shared/transport` package, decoupled from any concrete wire. This is seam #1 of the epic. RPC method handlers operate on decoded messages and **never import a transport package** (GR-N3).
+- **Two implementations** — `transport/unix` (unix domain socket) and `transport/tcp`. TCP supports an OS-assigned port (`tcp://127.0.0.1:0`) so the future binary harness can launch many instances without port collisions.
+- **JSON-RPC 2.0 framing on top of `Conn`** — a codec that carries requests, responses, **and notifications** over a single persistent, full-duplex connection. Server→client push (notifications with no `id`) must be supported from day one, because `bus.subscribe` (Task 6) relays events over the same connection. Method dispatch operates on decoded messages, not raw bytes.
+- **Reusable conformance-harness scaffold** — a test scenario interface plus fake/stub RPC adapters wired via `net.Pipe()`. Each later task plugs its real component in (Task 3 the real autowatch listener, Task 7 the real auto-ui proxy). This task proves the scaffold by running the same fake scenario over `net.Pipe`, unix, and tcp and getting identical results (GR-N6 in-process tier, GR-N7 API-first).
+- **Zero new runtime dependencies** (GR-N1) — Go stdlib and already-imported libraries only. `auto-shared` is currently stdlib-only; keep it that way.
+- **No user-visible behavior change** — this is pure foundation. Nothing ships a new CLI surface or alters existing event/UI behavior.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Real RPC components** — autowatch's JSON-RPC listener (Task 3), doc/project RPCs (Task 4), task RPCs (Task 5), event ingest/relay (Task 6), auto-ui proxy + backends config (Task 7). They plug into this scaffold later; this task ships only the transport + framing + harness skeleton.
+- **Retiring auto-ui's existing JSON-RPC** — the HTTP-bound structs in `auto-ui/internal/server/` and the `/api/rpc` ingest endpoint stay untouched; removal happens in Task 10.
+- **Future transports** — WebSocket and iroh are deferred. The point of the interface is that they can be added later without touching handlers.
+- **Application-layer auth** — cross-host security is the network's job (GR-N2); no tokens/mTLS here.
+- **The binary-tier harness running real binaries** — there is no RPC binary to launch yet (see Open Questions for whether the launcher *skeleton* lands now or in Task 3).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [ ] **Framing format on `Conn`** — newline-delimited JSON (NDJSON), LSP-style `Content-Length` headers, or 4-byte length-prefix?
+- [ ] **Shared codec ownership** — does this task introduce a single shared JSON-RPC message/codec package, and where (`auto-shared/transport` vs a sibling `auto-shared/rpc`)? Does it reconcile auto-ui's existing structs now, or leave them until the Task 7/10 cut-over?
+- [ ] **Binary-tier harness in this task** — land the subprocess + `--ready-file` launcher *skeleton* now (un-exercised, no real binary), or defer the entire binary tier to Task 3 where the first real RPC binary exists?
+- [ ] **`Conn` duplex confirmation** — confirm `Conn` must be full-duplex (server pushes notifications to client) so the framing supports id-less notifications immediately, rather than retrofitting in Task 6.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
