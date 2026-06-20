@@ -9,6 +9,12 @@ Monitor all executor panes in a tmux session using `ntm` and report status.
 
 > Part of the task planning workflow. See [references/workflow-overview.md](references/workflow-overview.md) for the full pipeline.
 
+> **Mixed agent types.** Panes may run Claude Code, Codex, or OpenCode, whose
+> identification and `/clear` behaviour differ — and `.type` is unreliable for
+> OpenCode (resolve by `.command`). The `ntm grep … --cc` in Step 2 only covers
+> Claude panes. See [references/delegating-to-agents.md](references/delegating-to-agents.md)
+> for reliable agent identification and per-agent quirks.
+
 ## Input
 
 Optional tmux session name (defaults to `$PROJECT--execute`).

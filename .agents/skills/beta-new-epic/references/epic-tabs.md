@@ -2,24 +2,27 @@
 
 The tabs of `epic.html`, in order. One skill (`beta-new-epic`) authors them all. Each tab stays at epic altitude (see [epic-overview.md](epic-overview.md)): direction and constraints, never files, code, or intra-task phases.
 
-For each element below, the **component to prefer** is named by purpose. Use the exact tag from the `llms.txt` that `planning-doc` fetched; if that version doesn't carry it, improvise within the altitude (a diagram, a grouped list, a card) and note nothing is lost — the experience still reads. Never substitute a task-level component (file tree, phase stepper, code outline, code snippet).
+For each element below, the **component to prefer** is named. Use the exact tag and attributes from the `llms.txt` that `planning-doc` fetched; if that version doesn't carry it, improvise within the altitude (a diagram, a grouped list, a card) and note nothing is lost — the experience still reads. Never substitute a task-level component (file tree, phase stepper, code outline, code snippet).
+
+**The epic components share one id-keyed graph.** Give each journey/transcript an `id`; give each guard rail an `id`; then a task names what it `delivers` (journey/cli ids) and `honors` (guard-rail ids). That wiring is what makes the derived views work — `pd-outcome` flags any guard rail no task honors or journey no task delivers, and selecting a guard rail lights up every task bound by it. Author the ids deliberately.
 
 ## 1. Vision — the headline
 
 The user-facing final shape. Lead the whole doc with it. *What does success look like from the user's seat?*
 
-- **For a CLI / dev tool / API**: the clearest statement is the commands a user runs and the output they get back, with light comments — reach for the **terminal-transcript component** (`pd-cli`).
-- **For an app / service / multi-actor flow**: a light-touch **user journey** from intent to outcome — reach for the **user-journey component** (`pd-journey`).
+- Open the tab with **`pd-outcome`** — the derived scan strip (journeys, guard rails, tasks, coverage gaps). Zero authoring; it reads the doc.
+- **For a CLI / dev tool / API**: the commands a user runs and the output they get back, with light comments — use **`pd-cli`** (with `pd-cmd` / `pd-out`). Give it an `id`.
+- **For an app / service / multi-actor flow**: a light-touch user journey from intent to outcome — use **`pd-journey`** (with `pd-leg`). Give it an `id`.
 - Add a short **"why now"** in prose. One paragraph, not a background essay.
-- Show delivery status on journey/transcript steps where the component supports it, so the reader sees how much of the experience is real today versus still coming — progress measured in user-visible capability.
+- Set `status` (done/active/todo) on journey legs and CLI commands, so the reader sees how much of the experience is real today versus still coming — progress measured in user-visible capability.
 
 Do **not** open with architecture or a component diagram. The experience comes first.
 
 ## 2. Guard rails — the inherited constraints
 
-The requirements every task must honor, split into **functional** (must-do behaviors, compatibility, data integrity, correctness invariants) and **non-functional** (performance, security, cost, accessibility, operability, observability). State measurable targets where they exist (e.g. a latency budget, a compatibility promise). Give each a stable id so a breakdown task can reference which rails it must respect.
+The requirements every task must honor, split into **functional** (must-do behaviors, compatibility, data integrity, correctness invariants) and **non-functional** (performance, security, cost, accessibility, operability, observability). State measurable targets where they exist (e.g. a latency budget, a compatibility promise).
 
-No dedicated component exists yet — improvise with a clear list grouped functional vs non-functional. Keep each rail to a sentence; it's a constraint, not a design.
+Use **`pd-guardrail`** — one per rail, with a stable `id`, a `kind` (functional, or a non-functional kind like performance/security/cost/reliability/operability), an optional `metric` for the measurable target, and a short `title`. `pd-outcome` groups them functional vs non-functional automatically. Keep each rail to a sentence; it's a constraint, not a design.
 
 ## 3. Architecture & seams — at the boundary level
 
@@ -39,7 +42,7 @@ The decomposition into tasks. This is the bridge to `beta-new-task`. For each ta
 - It advances a named **Vision outcome** or **guard rail** — say which.
 - Give a short statement of intent and, once planned, a link to its task doc and current status. Do **not** list files or implementation steps — that is the task planner's remit.
 
-No dedicated component exists yet — improvise: a **diagram** (`pd-mermaid`) for the dependency/sequence, plus a card or list per task. Keep the ordering legible; the staircase of deployable increments is the point.
+Use **`pd-task`** — one per task, with `id`, `title`, `status`, `depends-on` (other task ids), `delivers` (journey/cli ids), `honors` (guard-rail ids), the `deployable` flag (and `gated` if behind a feature flag), and `href` to its task doc once planned. Body is the one-line intent. Then drop a **`pd-breakdown`** at the top of the section — it derives the dependency DAG (the deployable staircase) from the cards. Keep the ordering legible; that staircase is the point.
 
 ## 5. Decisions — the strategic bets
 

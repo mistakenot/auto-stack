@@ -11,19 +11,19 @@
       "source": "mistakenot/skills",
       "sourceType": "github",
       "skillPath": "skills/beta-new-epic/SKILL.md",
-      "computedHash": "208e7944061f1f55d2b35c5a1b3c4ec05f1a59761c57a8926d439b5ad303b6c0"
+      "computedHash": "90b6087a5adf7721e62fbed0a568acf79d867e838e9712001894c9828b4044ae"
     },
     "beta-new-plan": {
       "source": "mistakenot/skills",
       "sourceType": "github",
       "skillPath": "skills/beta-new-plan/SKILL.md",
-      "computedHash": "48236bc3083664c87e837d1c6fcb0fcc8b00bd5f28789753c95a4673671a9c9e"
+      "computedHash": "7b5b5b6ff637b2411e6b6c62cdddee31ba1ef3843f59fc80d6ce33f7b0e79816"
     },
     "beta-new-solution": {
       "source": "mistakenot/skills",
       "sourceType": "github",
       "skillPath": "skills/beta-new-solution/SKILL.md",
-      "computedHash": "38974a4b23499794c51f20512703e5fa677b0bee84af9bf77857ee0a0599e8bf"
+      "computedHash": "e4e0263f607b66baf6d114a2d0f75d6a5f3bca8b12288feab7d3ddde327c0d6d"
     },
     "beta-new-task": {
       "source": "mistakenot/skills",
@@ -69,7 +69,7 @@
       "source": "mistakenot/skills",
       "sourceType": "github",
       "skillPath": "skills/delegate-task/SKILL.md",
-      "computedHash": "357259afaec29ad66b9ca60f04f3f71c26341547e68c11c697621e7a6e299822"
+      "computedHash": "7b7f83b09313bbd4334a865d2cba53e40127713ab0bec797357d987cbd5e442f"
     },
     "execute-task": {
       "source": "mistakenot/skills",
@@ -116,7 +116,7 @@
       "source": "mistakenot/skills",
       "sourceType": "github",
       "skillPath": "skills/new-plan/SKILL.md",
-      "computedHash": "198ab7907df51aa61510690c8d35f825ab9abaceb8803928276c095e2183a0c0"
+      "computedHash": "32b46132e049471d6baeeb6a13329c1a3f905fd472b7150dd174f173a1c7bf71"
     },
     "new-solution": {
       "source": "mistakenot/skills",
@@ -140,7 +140,7 @@
       "source": "mistakenot/skills",
       "sourceType": "github",
       "skillPath": "skills/planning-doc/SKILL.md",
-      "computedHash": "4cd4af380a73b62bc38d134e97fa11de006d823112a4bde71e6022ea3e3379bd"
+      "computedHash": "394c954c5beff1bb2555510d1edee443aeb627b03d6471bf48dd318ba0c3e7e4"
     },
     "readme-updater": {
       "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
@@ -166,25 +166,25 @@
       "source": "mistakenot/skills",
       "sourceType": "github",
       "skillPath": "skills/request-claude-review/SKILL.md",
-      "computedHash": "614d4fc02ec17b0c676567e8072d78524a5bf465e4794986a609ac3ccf946f0d"
+      "computedHash": "12fe60dc3ff5f81f1473e4c891df41eea0617f98a4c5469c68679344e08b1878"
     },
     "request-codex-review": {
       "source": "mistakenot/skills",
       "sourceType": "github",
       "skillPath": "skills/request-codex-review/SKILL.md",
-      "computedHash": "1a0b41ddaae9fa68959c266bd57408a3451eaf9bce2772a25ad936a9619acd19"
+      "computedHash": "fdef619297959aed36d5157f24eb41c5eed8f9977a64b7912d0c0d10b1790bd6"
     },
     "resolve-comments": {
       "source": "mistakenot/skills",
       "sourceType": "github",
       "skillPath": "skills/resolve-comments/SKILL.md",
-      "computedHash": "5e947c73ad93d566c7a6b88fe63028b44101a62919c5921144c425730e973421"
+      "computedHash": "d1529ec9ccba857ba9c55b6cd7621991d04c4f6ba774c6bc06b3338800ec912b"
     },
     "review-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",
       "skillPath": "skills/review-task/SKILL.md",
-      "computedHash": "cc6612915c61a80cf397bb8b2a34dcfeca1f89a2f99b4584a8dbb04011cd7986"
+      "computedHash": "5107e74f0e427f2fe79a1d8a5110c997886fef637908ece6b1224924f8d76a9b"
     },
     "self-improve": {
       "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
@@ -201,7 +201,7 @@
       "source": "mistakenot/skills",
       "sourceType": "github",
       "skillPath": "skills/status-report/SKILL.md",
-      "computedHash": "e50b68a91016f215702c2c12a1502cb29c66659fee709f21c163d7a560f75a76"
+      "computedHash": "33a3c99f45116282d45c48905de39751dacb077f254eb6c6b1e254c37988b304"
     },
     "task-feedback-analyser": {
       "source": "mistakenot/skills",

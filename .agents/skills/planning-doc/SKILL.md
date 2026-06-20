@@ -22,13 +22,13 @@ exact release this skill targets — an immutable tag, so it never drifts or
 serves a stale cache:
 
 ```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.6.0/pd-components/dist/llms.txt
+curl -fsSL https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/llms.txt
 ```
 
 It contains the page boilerplate, the release tag to pin, every component with
 attributes and examples, the authoring rules, and the comment-merge protocol.
 Follow it exactly — in particular, import the bundle pinned to the release tag
-it names (`pd-v0.6.0`), never `@main`. To move to a newer component
+it names (`pd-v0.8.0`), never `@main`. To move to a newer component
 release, update this skill (`npx skills install …`) — the new tag rides along.
 
 If the fetch fails (offline/sandboxed): inside the skills repo itself, read
@@ -52,6 +52,8 @@ bottom of this skill and flag to the user that the reference may be stale.
 4. Save as `<topic>.html` where the user keeps planning artifacts (for task
    workflows: the task folder's `artifacts/`; otherwise ask or use `docs/`).
    Tell the user to open it in a browser; it works from file:// directly.
+5. Lint it before handing off — see Step 4. Always run the linter after writing
+   or editing a doc that has phases and a file tree.
 
 Authoring rules that matter most (full set in llms.txt):
 
@@ -76,7 +78,36 @@ Authoring rules that matter most (full set in llms.txt):
 When the user asks for changes, edit the HTML in place — do not regenerate
 the whole file (that would orphan threads and churn the diff). Keep section
 ids stable so existing threads and deep links keep pointing at the right
-content.
+content. Re-run the linter (Step 4) after editing.
+
+## Step 4: Lint before handing off
+
+After writing or editing any doc with phases and a file tree, lint it and fix
+what it reports before telling the user it's ready. The same consistency checks
+the doc runs in the browser are available as a headless CLI — no browser, no
+paste-back round-trip, and it bundles its own HTML parser (no `npm install`):
+
+```bash
+node "$CLAUDE_SKILL_DIR/scripts/pd-lint.mjs" path/to/plan.html
+```
+
+(Use the absolute path to this skill's `scripts/pd-lint.mjs`.) It prints JSON and
+exits non-zero when a file has issues. The checks are derived from attributes the
+doc already carries — no extra authoring:
+
+- **unplanned-file** — a `<pd-file>` in the tree that no `<pd-phase files>` touches
+- **untracked-file** — a phase touches a file missing from the `<pd-files>` tree
+- **missing-dep** — a `depends-on` points at a phase `n` that doesn't exist
+- **dependency-cycle** — phases form a `depends-on` cycle
+
+Single file → bare result object; multiple files → `{ ok, fileCount, results }`.
+Example output:
+
+```json
+{ "file": "plan.html", "ok": false, "issueCount": 1,
+  "issues": [{ "code": "untracked-file",
+    "message": "Phase 2 touches src/x.ts, which is missing from the file tree." }] }
+```
 
 ## Merging reviewer comments
 
@@ -98,7 +129,7 @@ Reviewers comment in the browser and paste back an export block delimited by
 
 Classic scripts in head (never `type="module"`):
 `https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4` and
-`https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.6.0/pd-components/dist/pd.min.js` (defer).
+`https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js` (defer).
 
 - `<pd-doc title status pr generated>` shell · `<pd-tab name>` page
   pr: `"pending"` → placeholder; a URL → clickable badge. Update when PR opens.

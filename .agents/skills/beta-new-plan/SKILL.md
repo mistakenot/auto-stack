@@ -23,26 +23,28 @@ Read plan.html and context.md, enrich context with git history, write the Plan t
 
    Merge findings into `context.md` -- append a **Related Tasks** section if one doesn't exist, or update it. Verify that file paths from the Solution tab and existing context.md still hold (flag any that have drifted).
 
+3. **Impact analysis** -- run an impact analysis on the proposed file changes (each file + one-sentence change summary); fold flagged files into the changes list and any data, permission, or integration concerns into the Verification tab as acceptance criteria.
+
 ### Phase 2: Write Plan Tab
 
-3. **Design execution phases** -- using the Requirements, Verification, and Solution tabs plus context.md:
+4. **Design execution phases** -- using the Requirements, Verification, and Solution tabs plus context.md:
    - Break the solution into atomic phases (each phase = one subagent during execution)
    - Define the execution DAG -- which phases depend on which
    - List concrete steps within each phase
    - Every step must have an explicit verify check
    - End each phase with a commit step and verification (typecheck, tests, lint)
 
-4. **Write Plan tab** -- insert `<pd-tab name="Plan">` into plan.html after the Solution tab.
+5. **Write Plan tab** -- insert `<pd-tab name="Plan">` into plan.html after the Solution tab.
 
    See [references/tab-plan.md](references/tab-plan.md) for the tab structure and rules.
 
 ### Phase 3: Backfill Traceability
 
-5. **Backfill pd-ac cards** -- go back to the Verification tab and update each `<pd-ac>` card:
+6. **Backfill pd-ac cards** -- go back to the Verification tab and update each `<pd-ac>` card:
    - Set `phases` to the comma-separated phase numbers that cover this acceptance criterion (e.g. `phases="1,2"`)
    - Set `tests` to the comma-separated test file paths from the solution (e.g. `tests="src/feature.test.ts"`)
    - This links acceptance criteria to the phases that implement them and the tests that verify them
 
 ### Phase 4: Hard-stop
 
-6. **Hard-stop** -- present the Plan tab to the user. Tell them: "Review the Plan tab. The beta workflow's planning phase is now complete. Commit the task folder (`docs/tasks/$ID-$NAME/`) manually when ready -- `/commit-task` and `/review-task` do not yet support the beta HTML format."
+7. **Hard-stop** -- present the Plan tab to the user. Tell them: "Review the Plan tab. The beta workflow's planning phase is now complete. Commit the task folder (`docs/tasks/$ID-$NAME/`) manually when ready -- `/commit-task` and `/review-task` do not yet support the beta HTML format."

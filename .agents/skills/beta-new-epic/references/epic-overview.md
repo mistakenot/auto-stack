@@ -21,7 +21,7 @@ An epic describes **direction and constraints**, not construction. The decomposi
 
 ## Components: prefer the specific one, improvise within the altitude
 
-`planning-doc` and its `llms.txt` define the available components. For each element, reach for the most specific component the fetched `llms.txt` offers (see [epic-tabs.md](epic-tabs.md) for the mapping). Where no component fits the epic-level need, **improvise with the best available primitive** — a diagram, a list, a card — while holding the altitude.
+`planning-doc` and its `llms.txt` define the available components. The epic family — `pd-outcome`, `pd-cli`, `pd-journey`, `pd-guardrail`, `pd-task` + `pd-breakdown` — is built for this altitude; [epic-tabs.md](epic-tabs.md) maps each tab to its component. Reach for the most specific one the fetched `llms.txt` offers. Where no component fits the epic-level need, **improvise with the best available primitive** — a diagram, a list, a card — while holding the altitude.
 
 Two hard "don'ts":
 - **Never force a task-level component into an epic.** The file tree, the phase stepper, code outlines, and code snippets all pull the reader down to construction detail. They don't belong here.
@@ -36,8 +36,7 @@ The breakdown is the bridge to the task workflow:
 
 ## Conventions
 
-- Epic folder: `docs/epics/$ID-$NAME/` (3-digit ID, kebab-case name).
-- Artifact: `epic.html` (single file — no separate context file at epic level).
+- Artifact: a single file `docs/epics/epic-$ID-$NAME.html` (3-digit ID, kebab-case name) — no per-epic folder and no separate context file at epic level. The next ID is the highest existing `epic-*.html` number in `docs/epics/` + 1.
 - `pd-meta`: `id`, `name`, `kind: "epic"`, `status` (`planning` → `active` → `complete`), `created`.
 - `pd-doc status` (draft/in-review/approved) tracks document review state, separate from the `pd-meta` lifecycle.
 - Planning happens on `main`. The epic hard-stops for review before any task is planned.

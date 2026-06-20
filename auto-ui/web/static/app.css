@@ -440,7 +440,7 @@ body {
   margin: 0 auto;
   padding: 2.6rem 3rem 5rem;
   font-family: var(--font-read);
-  font-size: 1.0rem;
+  font-size: 0.8rem;
   font-weight: 500;          /* Newsreader 400 reads thin on warm paper */
   line-height: 1.68;
   color: #14110c;            /* darker than --ink for body legibility */
@@ -465,15 +465,15 @@ body {
   margin: 2.2rem 0 0.8rem;
 }
 .prose h1 {
-  font-size: 1.62rem;
+  font-size: 1.3rem;
   letter-spacing: -0.01em;
   padding-bottom: 0.4rem;
   border-bottom: 2px solid var(--accent);
   display: inline-block;
 }
-.prose h2 { font-size: 1.26rem; }
-.prose h3 { font-size: 1.05rem; }
-.prose h4 { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); }
+.prose h2 { font-size: 1.0rem; }
+.prose h3 { font-size: 0.84rem; }
+.prose h4 { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-soft); }
 
 .prose p { margin: 0 0 1.1rem; }
 .prose a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-soft); }
@@ -481,7 +481,7 @@ body {
 
 .prose code {
   font-family: var(--font-mono);
-  font-size: 0.84em;
+  font-size: 0.67em;
   background: var(--paper-sunk);
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -496,7 +496,7 @@ body {
   margin: 0 0 1.3rem;
   border: 1px solid var(--rail-line);
 }
-.prose pre code { background: none; border: 0; padding: 0; color: inherit; font-size: 0.82rem; line-height: 1.6; }
+.prose pre code { background: none; border: 0; padding: 0; color: inherit; font-size: 0.66rem; line-height: 1.6; }
 
 .prose blockquote {
   margin: 0 0 1.2rem;
@@ -514,7 +514,7 @@ body {
   border-collapse: collapse;
   margin: 0 0 1.3rem;
   font-family: var(--font-ui);
-  font-size: 0.92rem;
+  font-size: 0.74rem;
 }
 .prose th, .prose td {
   border: 1px solid var(--line-strong);

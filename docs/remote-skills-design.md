@@ -73,10 +73,16 @@ just customization taken to its conclusion.
 .agents/skills/<name>/                               # generic style (default target; covers the .agents ecosystem)
 ```
 
+<!-- RESOLVED(P1): Project target configuration has no persisted schema
+REVIEW: `init --project` later asks for targets, `auto_update`, default version, and commit-vs-gitignore policy, but the per-project layout contains only `skills.yaml` and `lock.json`, and the shown `skills.yaml` schema has no target or commit-policy fields. The only settings file shown is global, even though these choices are project-specific. Define one authoritative project settings location/schema (and reconcile it with the current `.auto/skill/settings.json` path) or two developers can run `sync` against different target sets from the same checkout.
+AUTHOR: `skills.yaml` (checked in) is now the single authoritative project config — added top-level `targets:` and `commit_targets:` keys (see the schema). `~/.auto/skills/settings.json` holds machine-only defaults (cache location, default `--jobs`); every project-affecting choice lives in the committed `skills.yaml`, so a shared checkout always syncs the same target set. The old `.auto/skill/` (singular) path is gone — all paths use `.auto/skills/`.
+-->
+
 > Output targets are **derived**: `sync` regenerates them, so they can be
 > gitignored and rebuilt (like a build artifact) or committed for zero-setup
-> checkouts. Either way `sync` prunes only the skills it previously managed there
-> (tracked) — it never deletes foreign skills you placed in those dirs by hand.
+> checkouts. Either way `sync` prunes only the skills it **stamped**
+> (`metadata.auto_skill`) — never foreign/ad-hoc skills you placed there by hand
+> (those are surfaced for `adopt`). See **Managed vs. ad-hoc skills**.
 
 ## Global git cache
 
@@ -86,23 +92,91 @@ the user's existing git auth, hits no REST rate limits, and handles every git
 host with one code path — deleting the need for a GitHub-API client and a
 provider abstraction (`I009`'s GitHub specifics and `I011` both drop out).
 
-- **Layout:** `~/.auto/skills/upstream/<host>/<owner>/<repo>.git`, a **bare**
-  clone per repo.
-- **Cheap clone:** `--filter=blob:none` (blobless) + sparse, so history/trees are
-  fetched but only needed blobs are realized.
+- **Layout / identity:** `~/.auto/skills/upstream/<host>/<repo-path>.git`, a
+  **bare** clone per repo, where `<repo-path>` is the *full ordered path* (so
+  nested GitLab subgroups like `acme/platform/skills` work — see Source formats).
+  The key is the **canonical repo identity**: lowercased host + full path, with
+  scheme/userinfo/port/`.git` stripped — so HTTPS and SSH forms of one repo share
+  a cache by design. On reuse the bare repo's configured `origin` is verified
+  against the canonical fetch URL; a genuine mismatch (distinct remotes that would
+  collide) gets a short URL-hash suffix to disambiguate.
+
+<!-- RESOLVED(P2): Cache key can alias distinct remotes
+REVIEW: The cache is called content-addressed, but `<host>/<owner>/<repo>` is repository-addressed and omits scheme, port, and the exact remote identity. HTTPS and SSH forms intentionally collapse, while self-hosted URLs or rewritten remotes can collide at the same path; whichever URL cloned first then controls later fetches. Specify a canonical repository identity, validate an existing cache's configured remote before reuse, and use a collision-resistant key when distinct remotes cannot safely share objects.
+AUTHOR: Key is now the canonical repo identity (lowercased host + full path); reuse verifies the bare repo's `origin` against the canonical URL and appends a URL hash to disambiguate genuine collisions. Full path also fixes nested groups.
+-->
+
+- **Bare blobless clone:** `git clone --bare --filter=blob:none` (no `--sparse` —
+  sparse-checkout needs a worktree a bare repo doesn't have). Trees/history come
+  down; blobs are fetched on demand.
+- **Realizing blobs (online):** after resolving the commit, `add`/`sync`/`update`
+  fetch the objects reachable for that commit so extraction has every blob locally;
+  after this step the resolved commit is **fully present** (objects, not just ref).
+- **Offline guarantee:** `sync --check` / `doctor` run with promisor/lazy fetch
+  **disabled** (`GIT_NO_LAZY_FETCH=1`). A missing object never triggers the
+  network — they report an *incomplete cache* (remediation: `run auto skill sync`).
+  "Commit present" means "objects present."
+
+<!-- RESOLVED(P1): Bare sparse clone is invalid and partial blobs break offline checks
+REVIEW: `git clone --bare --sparse` fails because sparse-checkout requires a worktree; sparse has no useful meaning for this bare cache. Separately, `--filter=blob:none` leaves promised blobs absent, and `git archive` may lazily fetch them. That contradicts the later guarantees that `doctor`/`sync --check` are offline and that a present commit means the cache satisfies a pinned dependency. Define how required blobs are materialized during online operations and how offline commands disable promisor fetches and report an incomplete cache.
+AUTHOR: Dropped `--sparse` (invalid on bare). Cache is bare + blobless; online ops explicitly realize the resolved commit's objects before extraction; offline ops set `GIT_NO_LAZY_FETCH=1` and report an incomplete cache rather than lazily fetching. "Present" now means objects present.
+-->
+
 - **Extract without a checkout:** `git -C <cache> archive <sha>:<subpath>` streams
-  the skill subtree at an exact commit — no working tree to manage.
+  the skill subtree at an exact commit — no working tree. Extraction is
+  **validated before any write**: symlink and special entries (devices,
+  gitlinks/submodules) are rejected (never followed), and file-count + total
+  uncompressed-size limits guard against hostile repos.
+
+<!-- RESOLVED(P1): Archive extraction does not define symlink and resource safety
+REVIEW: A git tree cannot contain `..` path components, but it can contain symlink entries whose targets escape the extraction/output root. Copying the archived subtree or later following a side-file link can therefore read or write outside the intended directory. The design also has no file-count or expanded-size limits for untrusted repos. Require safe archive-entry validation (including rejecting or explicitly preserving-without-following symlinks and special entries) plus resource limits before extraction/copy.
+AUTHOR: Extraction now validates every archive entry before writing: symlinks/devices/gitlinks are rejected (never followed), with file-count and total-size limits against hostile repos.
+-->
+
 - **Update:** `git fetch` the cache; resolve `ref` → commit SHA. Freshness is the
   native primitive, not a tree-SHA hack.
+- **Transport safety:** every `url` — from `add` and from the checked-in lock that
+  `sync` consumes — is validated against an **allow-list of schemes** (`https`,
+  `ssh`, `git`, `file`). Remote-helper / option-style URLs (`ext::`, `fd::`,
+  anything starting with `-`) are rejected, and git args are always passed after
+  `--`. A lock that introduces a **new host or local path** requires explicit
+  approval (`auto skill trust <host>` or re-`add`) before `sync` will fetch it — so
+  checking out a tampered lock cannot silently connect or run a helper.
+
+<!-- RESOLVED(P1): A checked-in lock can drive unsafe git transports
+REVIEW: The no-RCE claim is too broad because `sync` consumes a checked-in `url` and invokes git, while the source model allows generic git transports. Git can dispatch remote helpers/protocols, and post-checkout hooks are explicitly encouraged to run `sync`; a malicious lock change could therefore trigger connections or helper execution merely by checking out a branch. Define a strict allowed-scheme/protocol policy, reject option-like and helper-style URLs (for example `ext::`), pass arguments after `--`, and require explicit trust/approval for newly introduced hosts or local paths.
+AUTHOR: Added a scheme allow-list (https/ssh/git/file), rejection of helper/option-style URLs, args-after-`--`, and a trusted-hosts gate — a lock that adds a new host/local path needs explicit `trust`/re-`add` before sync fetches it. Closes the post-checkout-hook vector.
+-->
+
 - **Public vs private:** identical commands. Public → anonymous HTTPS clone, no
-  token. Private → `git` transparently uses the user's ssh key / credential
-  helper / `gh`; our code never touches credentials.
+  token. Private → `git` transparently uses the user's ssh key / credential helper
+  / `gh`; our code never touches credentials.
+- **Credential hygiene:** credential-bearing URLs (`https://user:token@host/…`,
+  token query params) are **rejected at parse**; only a sanitized canonical URL is
+  stored in the lock. Auth comes from the user's git config, never the source
+  string.
+
+<!-- RESOLVED(P1): Source URLs can leak credentials into the checked-in lock
+REVIEW: The accepted HTTPS URL surface does not forbid userinfo or token-bearing query parameters, yet `url` is copied into checked-in `lock.json`. An input such as `https://user:token@host/repo` would violate the claim that the tool never touches credentials and can commit a secret. Reject credential-bearing URLs and persist a sanitized canonical display URL separately from any fetch URL/credential-helper state.
+AUTHOR: Credential-bearing URLs are now rejected at parse; the lock stores only a sanitized canonical URL. Auth is delegated to git's credential machinery, never persisted.
+-->
+
 - **Privacy:** the cache holds private content on the user's disk (fine — never
-  sync `~/.auto/skills/upstream/` anywhere). The checked-in lock references
-  private sources by URL + SHA only, never content, so committing it leaks
-  nothing but the dependency edge.
-- **No RCE:** clone / `archive` / checkout never run remote hooks or code.
-- **GC:** `auto skill cache prune` drops repos no lockfile references (or LRU).
+  sync `~/.auto/skills/upstream/` anywhere). The lock references private sources by
+  sanitized URL + SHA only, never content.
+- **No RCE:** clone / `archive` / checkout never run remote hooks or code (together
+  with the transport allow-list above).
+- **GC / prune:** `auto skill cache prune` defaults to **eviction** by age/size
+  (LRU) — always safe, since anything evicted is re-fetched on next `sync`.
+  `--unreferenced` additionally drops repos no *known* project references, where
+  "known" = project roots recorded in `~/.auto/skills/registry.json` (written by
+  `init`/`sync`). Prune never claims a global reference-completeness it can't have.
+
+<!-- RESOLVED(P2): Global cache pruning cannot know all project references
+REVIEW: The cache is global, but no global registry of project roots/lockfiles is designed. `cache prune` therefore cannot determine that a repo has "no lockfile references" outside the current project, and LRU is a materially different policy that can evict dependencies needed for offline reproducibility. Specify reference discovery/registration and stale-project handling, or define prune honestly as cache eviction independent of lock references.
+AUTHOR: Prune is now two honest modes — default age/size eviction (safe, re-fetchable) and `--unreferenced` against a project registry that `init`/`sync` maintain. No false "no references anywhere" claim.
+-->
+
 - **Concurrency:** a file lock around fetch/extract per cached repo; extraction
   always targets immutable/ephemeral output, never a shared mutable checkout.
 
@@ -137,15 +211,20 @@ Spec forms (bare strings resolved best-effort: tag → branch → commit-prefix;
 |---|---|---|
 | `latest` (default) | newest commit on default branch | yes |
 | `branch:<name>` | newest commit on that branch | yes |
-| `<tag>` | the commit the tag points to | only if the tag is repointed (warn) |
+| `<tag>` | the commit the tag resolves to (annotated tags peeled) | re-resolved on explicit `update` only (force-moves warned); never floated by `sync` |
 | `<sha>` | that commit | never (reported as pinned) |
+
+<!-- RESOLVED(P2): Tag movement policy contradicts the pinned-version contract
+REVIEW: This table says a repointed tag moves on `update`, while the next section says tag specs are always respected and never float, and the quickstart says updates leave tags pinned. Those behaviors produce different commits after the same command. Decide whether a tag is an immutable resolution after `add` or a ref that is re-resolved, and specify annotated-tag peeling and force-move handling accordingly.
+AUTHOR: Settled: a `<tag>` is pinned to its resolved commit in the lock and is **re-resolved only by explicit `update`** (annotated tags peeled to the commit; a force-moved tag advances with a warning). `auto_update` sync floats `latest`/`branch:` only — never tags. The auto_update text and quickstart now state this consistently.
+-->
 
 ### `latest` is live by default (`auto_update`)
 
 By **default `auto_update: true`**: every `sync` re-resolves `latest` and
 `branch:` specs to current upstream HEAD *before* rendering — you're always on the
-newest version without thinking about it. Pinned specs (`<tag>`, `<sha>`) are
-always respected and never float.
+newest version without thinking about it. A `<sha>` never floats; a `<tag>` floats
+only on explicit `update` (peeled, force-move warned), never on `sync`.
 
 ```yaml
 auto_update: true            # default — sync floats latest/branch: to HEAD before rendering
@@ -155,11 +234,24 @@ The lock still records the commit each `sync` resolved to, so a render stays
 auditable, `skill_version` stays meaningful, and tag/commit-pinned skills
 reproduce exactly. `add` / `update` also resolve and write the commit.
 
+<!-- RESOLVED(P1): Default sync violates the lock-reproducing CLI contract
+REVIEW: With `auto_update: true`, ordinary `sync` fetches floating refs, advances `commit`, and rewrites the checked-in lock. The CLI table later describes `sync` as `npm ci`, says it realizes the lock exactly, and says it does not move the lock; the hooks section also proposes running it automatically after checkout. Beyond the contradiction, this makes unreviewed upstream prompt/script changes enter agent discovery paths during a routine sync. Separate reproducible `sync` from explicit `update` (or rename/document the mutating operation and make the lock/supply-chain review semantics explicit).
+AUTHOR: Reconciled the contract rather than the default (always-latest stays the chosen default). `sync` now has TWO documented modes keyed on `auto_update`: OFF = pure `npm ci` (reproduce the locked commit, no fetch, lock unchanged); ON (default) = `update`-then-`ci` (float `latest`/`branch:` first, advance + rewrite the lock, then render). The CLI table, command note, and hooks section now say this explicitly, and the supply-chain implication is called out below. Teams that want reproducibility + change review set `auto_update: false`.
+-->
+
+**Supply-chain note.** Because the default `auto_update: true` makes `sync` pull
+the newest upstream into agent discovery paths, **unreviewed** upstream
+prompt/skill changes can land on a routine sync. That's the freshness trade-off of
+the default. Mitigations already in the design: the transport allow-list +
+trusted-hosts gate (a *new* host/path needs explicit `trust`), and `lint` running
+on rendered output. Teams that need to review upstream changes before they reach
+agents set `auto_update: false` and advance deliberately with `auto skill update`.
+
 **Want reproducible-by-lock instead?** Two composable options:
 
 - set `auto_update: false` — then `sync` reproduces the locked commit (it does
-  *not* float) and only `auto skill update` advances it. This is npm's `ci` vs
-  `update` split, for teams that want deterministic checkouts.
+  *not* float or fetch) and only `auto skill update` advances it. This is npm's
+  `ci` vs `update` split, for teams that want deterministic checkouts.
 - or pin individual skills to a `<tag>`/`<sha>` while everything else floats.
 
 ### Freshness visibility
@@ -181,17 +273,42 @@ Substitution is limited to two value types — no scripts, no code execution
    autodoc `hash`/`id` metadata never leaks into the skill, and can't collide with
    the skill's own frontmatter); set `strip_frontmatter: false` to keep it.
 
-A template declares what's customizable via `customize:` frontmatter (with
-`required` / `default`); `skills.yaml` supplies the values. Lint checks that every
-required var has a value, every supplied value maps to a declared var (warn on
-unknown), and the **rendered** output still fits the token budget (a whole-file
-include is the usual budget-buster).
+A template declares what's customizable via `customize:` frontmatter; `skills.yaml`
+supplies the values. The exact contract:
+
+- **`customize:` schema** — `customize: { <var>: { required: bool (default
+  false), default: <string>, description: <string> } }`; referenced in the body as
+  `{{ var }}`.
+- **Engine** — Go `text/template`, fixed `{{ }}` delimiters, **data-only** (no
+  function calls or pipelines). Values substitute as **raw text** (no HTML/shell
+  escaping — skills are prose, not an injection sink).
+- **Resolution rules** — an **undeclared** placeholder → hard error; a declared var
+  with no value and no `default` → hard error if `required`, else the empty string;
+  a literal `{{` in body content is written `{{ "{{" }}`.
+- **Versioned** — the renderer's behavior carries a `render_version` (recorded in
+  the lock/stamp), so a future engine change is a detectable bump, not silent drift.
+- **Lint** checks every required var has a value, every supplied value maps to a
+  declared var (warn on unknown), and the **rendered** output fits the token budget
+  (a whole-file include is the usual budget-buster).
+
+<!-- RESOLVED(P2): Template evaluation semantics are not specified
+REVIEW: Deterministic rendering needs more than naming `{{handlebars}}`: the document does not define the `customize:` schema, whether placeholders are escaped or raw, how optional values without defaults behave, whether undeclared placeholders are errors, or how literal braces in code examples are represented. Different Go template libraries and escaping modes produce different bytes. Specify a minimal grammar and exact failure/substitution rules, and version that renderer behavior.
+AUTHOR: Specified the full contract above: `customize:` schema, Go `text/template` data-only with `{{ }}`, raw (unescaped) substitution, hard-error on undeclared/required-missing, `{{ "{{" }}` for literal braces, and a `render_version` so engine changes are a detectable bump. Determinism is now pinned.
+-->
 
 Deliberate non-features (each protects determinism):
 - **No interpolation in literals** (no `${ENV}`, no value→value refs).
 - **No globs in file-refs** (one ref → one file or one section).
-- **File-refs resolve inside the repo only** (`isSubpathSafe`, `I004`).
+- **File-refs resolve inside the repo only** — containment is enforced on the
+  **fully symlink-resolved** real path (not just lexical `..`/absolute cleaning,
+  `I004`); a ref that *is* or *traverses* a symlink leaving `--root` is **rejected**
+  (TOCTOU-safe open where practical). Same repo → same bytes on every machine.
 - **Referenced content is inserted raw**, never re-templated (no recursion/cycles).
+
+<!-- RESOLVED(P1): Lexical containment does not contain symlinked file references
+REVIEW: `isSubpathSafe`-style path cleaning only rejects `..`/absolute escapes. A checked-in path such as `docs/runbook.md` can be a symlink to a file outside `--root`, causing `sync` to inline secrets or host-local content and making the same lock render differently across machines. Define symlink policy and enforce containment on the resolved path (with TOCTOU-safe opening where practical), or reject symlinks in file-ref components.
+AUTHOR: Containment is now enforced on the fully symlink-resolved real path; a file-ref that is or traverses a symlink out of `--root` is rejected (TOCTOU-safe open where practical). Lexical cleaning alone is no longer trusted.
+-->
 
 ### Why file-refs matter here
 
@@ -264,19 +381,47 @@ the matched heading fails loud at `sync`/`lint`.
 
 ## Deterministic hashing (`skill_version`)
 
-One composite hash collapses three freshness signals (upstream changed, a
-referenced doc changed, a replacement value changed):
+`skill_version` is the digest of the **entire rendered output tree** — the exact
+bytes `sync` writes to a target — not just the SKILL.md template. It is the single
+integrity value used for both freshness and tamper detection.
 
 ```
+# render the skill into an in-memory tree, canonicalize each file, then:
 skill_version = sha256(canonical_json({
-  "template": sha256(normalize(template_bytes_at_commit)),
-  "literals": <sorted-key map of name → value>,
-  "files":    <sorted-key map of name → content_hash>   # extracted-section hash
+  "render_version": <int>,                   # renderer/stamp schema version
+  "files": [                                 # sorted by path; EVERY emitted file
+    { "path": <rel>, "mode": "100644"|"100755", "sha256": <hex of EMITTED bytes> },
+    ...
+  ]
 }))
 
-normalize = LF line endings + strip trailing whitespace per line
-          + exactly one trailing newline
+per-file canonicalization (applied at render, before write AND hash):
+  LF line endings + strip trailing whitespace per line + exactly one trailing newline
 ```
+
+- **Every emitted file is hashed** — `SKILL.md` plus `references/`, `scripts/`,
+  `assets/` — by path, mode, and the **exact bytes written**. An upstream script or
+  reference change now moves the version.
+- **Hash == emitted bytes.** Canonicalization happens *during render*, and the hash
+  is taken over those final bytes — so two inputs that differ only in stripped
+  whitespace either render identically (same hash, correct) or differently
+  (different hash). Never "same version, different bytes."
+- The provenance stamp is added **after** this digest and **excluded** from it (no
+  self-reference) — `metadata.auto_skill` is stripped/ignored when hashing.
+- **Uniform across authored and vendored.** A vendored input is `template@commit +
+  replacements + resolved file-refs`; an authored input is its own tree under
+  `./skills/<name>/`. Both reduce to "hash the rendered output tree," so authored
+  and vendored skills share one deterministic version definition.
+
+<!-- RESOLVED(P1): Supporting files are absent from the skill version
+REVIEW: Skills explicitly include `references/`, `scripts/`, and `assets/`, and `git archive` extracts the whole skill subtree, but `skill_version` hashes only the SKILL.md template and replacements. An upstream script or reference can change while the composite hash remains identical; phase C will then skip the existing target and `sync --check` can report it current. Hash every emitted path (path, mode/type, and bytes) or define a full rendered-tree digest in addition to the SKILL.md render hash.
+AUTHOR: Redefined `skill_version` as a digest of the **entire rendered output tree** — every emitted file (SKILL.md + references/scripts/assets) by path, mode, and exact bytes. An upstream side-file change now moves the version, so phase C won't skip it and `--check` won't report it current.
+-->
+
+<!-- RESOLVED(P1): Template normalization allows one version to identify different output bytes
+REVIEW: The version hash strips trailing whitespace and normalizes newlines from the template, but render is defined over `template_bytes_at_commit` and nowhere says those normalized bytes are what gets emitted. Two commits that differ only in stripped whitespace can therefore have the same `skill_version` while producing different target files; incremental sync would retain whichever bytes were written first. Hash the exact canonical bytes that are emitted (or render from the normalized representation) and define output canonicalization explicitly.
+AUTHOR: The hash is now taken over the **exact emitted bytes** after a defined per-file canonicalization that is applied at render time (so emitted == hashed). Whitespace-only differences either vanish (same output) or change the hash; no "same version, different bytes" gap remains.
+-->
 
 Uses:
 - **`doctor` / `sync --check` (offline):** recompute from cache + current
@@ -289,8 +434,10 @@ Both are fixed by `sync`: re-resolve → `git archive` → render → rewrite th
 ## `skills.yaml` schema
 
 ```yaml
-# .auto/skills/skills.yaml
+# .auto/skills/skills.yaml  — the authoritative, checked-in project config
 auto_update: true            # default; sync floats latest/branch: before render. set false to pin to the lock
+targets: [claude, agents]    # output target styles sync writes to (default)
+commit_targets: false        # default: targets are gitignored + regenerated. true = commit them
 
 shared:
   version: latest            # optional default version policy
@@ -314,7 +461,14 @@ skills:
 
 Effective replacements for a skill = `shared.replacements` merged with
 `skills.<name>.replacements` (skill wins). Type-by-shape: scalar = literal;
-mapping with `file:` = file-ref.
+mapping with `file:` = file-ref. **Literals are strings** — a non-string YAML
+scalar (number, bool, null, date) must be quoted and is carried, rendered, and
+hashed as its exact string form (one serialization for both render and hash).
+
+<!-- RESOLVED(P2): YAML scalar literals have no canonical type or rendering
+REVIEW: YAML scalars include strings, booleans, integers, floats, null, and tagged/timestamp-like values, while a literal is described as being inlined "verbatim." After YAML parsing the original lexical form and quoting are not generally preserved, and canonical JSON may distinguish values differently from the template renderer. Restrict literals to strings or define accepted scalar types plus one canonical serialization used for both rendering and hashing.
+AUTHOR: Literals are now restricted to strings — non-string scalars must be quoted and are treated as their exact string form for both rendering and hashing. Removes YAML type-coercion ambiguity.
+-->
 
 ## `lock.json` schema
 
@@ -350,6 +504,19 @@ mapping with `file:` = file-ref.
 
 - `commit` (resolved) + `ref`/`version_spec` (intent) make renders replayable and
   tell `update` what may move.
+- **Intent reconciliation:** when `skills.yaml`'s `version` differs from the lock's
+  `version_spec`, the lock is *stale-by-intent*. With `auto_update: true`, the next
+  `sync` re-resolves the new spec and rewrites the lock entry; with `auto_update:
+  false`, `sync --check`/`doctor` report the mismatch ("intent changed — run `auto
+  skill update <name>`") and `update` reconciles. `sync` never silently keeps a
+  commit that contradicts a changed spec, so config and lock can't diverge
+  indefinitely.
+
+<!-- RESOLVED(P1): Editing authoritative version intent has no defined reconciliation path
+REVIEW: `skills.yaml` is declared authoritative intent and `lock.version_spec` is a copy, but the design never defines what happens when a user edits `skills.<name>.version`, especially with `auto_update: false`. `sync` is described as not moving the lock, while `update` is described as advancing only floating specs. Define the mismatch state and the command that resolves a changed tag/branch/commit intent; otherwise config and lock can disagree indefinitely or different implementations can silently choose different commits.
+AUTHOR: Defined the stale-by-intent state and its resolver: `auto_update: true` reconciles on the next `sync`; `auto_update: false` surfaces the mismatch via `--check`/`doctor` and reconciles via `auto skill update <name>`. `sync` never keeps a commit that contradicts a changed spec.
+-->
+
 - `replacements.files[].path` is the **dependency edge** — build the reverse index
   (`file → skills`) from it so `sync` knows what to re-render when a doc changes
   (and what `auto-watch` would key on). `content_hash` then decides whether the
@@ -365,7 +532,7 @@ Mental model — three load-bearing verbs on the install/ci/update pattern:
 | Verb | Analogy | Does | Moves lock? | Network |
 |---|---|---|---|---|
 | `add <source>` | `npm install <pkg>` | add a new upstream dep | yes | yes |
-| `sync` | `npm ci` | realize the lock exactly: render at locked commit, re-render on value/doc change, export | no (only derived hashes) | only on cache miss |
+| `sync` | `npm ci` (auto_update off) / `update`+`ci` (on, default) | off: reproduce the locked commit + render; on: float `latest`/`branch:` first, then render | only when `auto_update` floats | fetches floating refs when `auto_update` on |
 | `update [name]` | `npm update` | advance floating specs to latest, re-render | yes | yes |
 
 ```
@@ -386,6 +553,8 @@ auto skill
                                   flags: --skill <name>..|'*', --path <dir>.., --list, --full-depth,
                                          --version <spec>, --as <name>, --no-sync
   remove <name>                 remove a skill (authored dir, or vendored + lock entry)
+  adopt  [name...]              move ad-hoc skills from targets into ./skills/ (git mv)
+                                  flags: --all, -y
   update [name...] [--check]    advance locked commits to latest ref, re-render
   sync [--check] [--target t...] [--jobs n]  reconcile lock+values → cache → render → write to targets
 
@@ -419,25 +588,38 @@ Command notes:
   within a source**) → `git archive` each chosen skill's subpath → write lock +
   `skills.yaml` stub → (unless `--no-sync`) render into every output target.
   `--skill` picks specific skills (default all), `--path` restricts where to look,
-  `--list` previews without adding, `--as` renames on collision.
+  `--list` previews without adding, `--as` renames a **single** selected skill
+  (hard error if combined with a multi-skill add — rename the rest in `skills.yaml`).
+
+<!-- RESOLVED(P2): Singular alias is undefined for a multi-skill add
+REVIEW: `--skill` is repeatable and defaults to importing every discovered skill, while `--as` supplies one local name. The quickstart demonstrates two selected skills together with one `--as`, but does not say which entry is renamed or how the other is named. Either restrict `--as` to exactly one selected/discovered skill or define a per-skill mapping surface.
+AUTHOR: `--as` is now valid only when exactly one skill is selected/discovered; pairing it with a multi-skill add is a hard error. Multi-skill imports keep their (validated) upstream names. Fixed the quickstart that paired `--as` with two `--skill`s.
+-->
+
 - **`sync`** — read lock+values; ensure each locked commit is cached; resolve
   replacements (literals + section extraction + hashes); recompute `skill_version`;
   then for every output target write **both** the rendered vendored skills and the
   authored `./skills/**` skills (authored shadows vendored on a name clash),
-  pruning only the skills it previously managed there. `--check` = dry-run, exit
+  pruning only its own **stamped** skills that are no longer desired (managed
+  orphans); foreign/ad-hoc skills are left untouched for `adopt`. `--check` = dry-run, exit
   non-zero if any target is stale vs lock/values/docs (CI gate). `--target` scopes
   which targets to write. By default (`auto_update: true`) floats `latest`/`branch:`
   to HEAD first; set `auto_update: false` to reproduce the locked commit instead.
-- **`doctor`** — offline: recompute `skill_version` for every locked skill, flag
-  mismatches with the hint `run auto skill sync`.
+- **`doctor`** — offline: recompute `skill_version` for every locked skill and flag
+  mismatches (hint: `run auto skill sync`); also lists managed orphans (pruned next
+  `sync`) and foreign/ad-hoc skills (candidates for `adopt`).
+- **`adopt`** — move foreign (un-stamped) skills found in targets into `./skills/`
+  (`git mv`) so they become authored + managed; the next `sync` re-renders them.
+  See **Managed vs. ad-hoc skills**.
 - **`list`/`describe`/`get`** — cheap→full per the resource convention; truncated
   output prints the exact command to recover the full version.
 
 ### Source formats
 
-`add` normalizes every surface form to one descriptor — `<host>/<owner>/<repo>`
-(+ optional ref + subpath) — which is also the cache path
-(`~/.auto/skills/upstream/<host>/<owner>/<repo>.git`) and the lock `source` field.
+`add` normalizes every surface form to one descriptor — `<host>/<repo-path>`
+(+ optional ref + subpath), where `<repo-path>` is the **full ordered path** (so
+nested groups nest correctly) — which is also the cache path
+(`~/.auto/skills/upstream/<host>/<repo-path>.git`) and the lock `source` field.
 These all resolve to `github.com/mistakenot/skills`:
 
 | Input | Notes |
@@ -448,12 +630,40 @@ These all resolve to `github.com/mistakenot/skills`:
 | `git@github.com:mistakenot/skills.git` | SSH |
 | `https://github.com/mistakenot/skills/tree/<ref>/<subpath>` | browser deep link → sets ref + subpath |
 
+Credential-bearing URLs (userinfo / token query params) are **rejected at parse**
+(see Global git cache → Credential hygiene); only a sanitized canonical URL is kept.
+
+<!-- RESOLVED(P2): Deep-link parsing is ambiguous for refs containing slashes
+REVIEW: Git branch and tag names can contain `/`, so `/tree/<ref>/<subpath>` cannot be split by position without knowing which prefix resolves as a ref. The stated normalization can misparse `tree/feature/x/skills/foo` as ref `feature`. Define a longest-resolving-ref algorithm (and its network/error behavior), or require explicit `--version`/`--path` when the deep link is ambiguous.
+AUTHOR: `/tree/<ref>/<subpath>` is now split by a **longest-resolving-ref** algorithm — candidate prefixes are checked against the repo's refs (via `ls-remote`/after clone) and the longest that resolves wins; the remainder is the subpath. If nothing resolves (offline or genuinely ambiguous), `add` errors and requires explicit `--version` + `--path`.
+-->
+
 Other hosts use the same rules: `gitlab.com/acme/group/skills`,
-`https://gitlab.com/...`, any `git@host:…` / `ssh://…` URL (generic git fallback),
-or a local path (`./skills-repo`, `/abs/path` — copied, not cached). Normalization:
-scheme inferred when omitted; trailing `.git`/`/` stripped; host lowercased
-(owner/repo preserved); a `/tree/<ref>/<subpath>` (GitHub) or `/-/tree/...`
-(GitLab) segment splits into ref + subpath.
+`https://gitlab.com/...`, any `git@host:…` / `ssh://…` URL (generic git fallback).
+Normalization: scheme inferred when omitted; trailing `.git`/`/` stripped; host
+lowercased (path preserved); the full repo path is an **ordered sequence** (no
+owner/repo assumption); a `/tree/<ref>/<subpath>` (GitHub) or `/-/tree/...`
+(GitLab) segment splits via the longest-resolving-ref rule above.
+
+<!-- RESOLVED(P2): Repository identity assumes one owner level
+REVIEW: The normalized descriptor and cache layout are `<host>/<owner>/<repo>`, but GitLab and many self-hosted forges support arbitrarily nested groups. Treating `acme/platform/skills` as owner/repo is ambiguous and can collide with other paths or produce the wrong clone URL. Model the full repository path as an ordered sequence and encode it safely in both cache paths and source IDs.
+AUTHOR: Descriptor and cache layout are now `<host>/<repo-path>` with the full ordered path, so nested GitLab subgroups (`acme/platform/skills`) map correctly and don't collide. Matches the cache-identity fix above.
+-->
+
+**Local sources** (`./skills-repo`, `/abs/path`) are handled separately, since the
+vendored model needs a git commit:
+
+- a **git repo** → resolved to a commit like any source and tracked in the lock,
+  but flagged `local: true` — its `url` is a machine path, so it is **not portable**
+  to another checkout (`sync`/`update` elsewhere report it missing).
+- a **non-git directory** → not vendored; `add` **imports** it (copies the skills
+  into `./skills/` as authored), since there's no commit to pin. This is the
+  reproducible path for ad-hoc local skills.
+
+<!-- RESOLVED(P1): Local sources cannot satisfy the commit-based lock model
+REVIEW: Local paths are copied and not cached, yet every vendored lock entry requires a git `commit`, `ref`, and archive-at-SHA source of truth. A local directory may not be a git repo, can change after `add`, and may not exist on another checkout, so update, sync, migration, and reproducibility semantics are undefined. Either exclude local paths from the vendored/lock model, snapshot them into a content-addressed store with a tree digest, or require a git repository and define how its identity is made portable.
+AUTHOR: Split local handling: a local **git repo** is pinned to a commit and locked with `local: true` (non-portable, reported missing on other checkouts); a **non-git dir** is *imported* into `./skills/` as an authored skill rather than vendored. Either way the commit-based lock invariant holds.
+-->
 
 ### Skill discovery within a source
 
@@ -487,6 +697,17 @@ targets never produce triplicate installs.
   selection). Pass it multiple times to import several skills
   (`--skill release --skill changelog`), or `'*'` for all. Names with spaces must
   be quoted.
+- **Invalid upstream names** — a discovered skill whose name doesn't satisfy the
+  enforced schema (`^[a-z0-9]+(-[a-z0-9]+)*$`) is **not silently normalized**:
+  `--list` flags it "needs `--as`", and import is **rejected** unless a valid
+  `--as <name>` is supplied. We never advertise a name `lint`/`sync` would later
+  refuse, and never create an unsafe output directory from upstream text.
+
+<!-- RESOLVED(P2): Remote-name handling conflicts with the enforced skill schema
+REVIEW: Current auto-skill validation requires `^[a-z0-9]+(?:-[a-z0-9]+)*$`, so quoting a discovered name with spaces cannot make it a valid local skill name or safe output directory. Define whether invalid upstream names are rejected with `--as` remediation or deterministically normalized, including collision handling; do not advertise names that later lint/sync cannot accept.
+AUTHOR: Invalid upstream names are rejected (not silently slugified) with `--as` remediation; `--list` marks them "needs --as". A name lint/sync can't accept is never advertised or installed; `--as` (single-skill only) supplies the valid one.
+-->
+
 - **`--list`** prints what was discovered and exits — preview before choosing.
 - **No `--skill` given → import all** (the default; same behavior in a TTY and in
   `-y` / non-interactive runs — no selection prompt). Use `--list` to preview or
@@ -525,6 +746,155 @@ the defaults. This replaces vercel's 70-agent registry with a small set of outpu
 rendered output is per-project and per-target, so vercel's symlink-to-canonical
 model doesn't apply. A `--global` variant (writing to `~/.claude/skills/` etc.)
 can follow later.
+
+## Sync performance (parallel fetch)
+
+`sync`'s bottleneck is the network — exactly where `npx skills` is slow. The
+pipeline is structured in three phases so the slow part is fully parallel:
+
+**A. Plan (no network).** Read lock + `skills.yaml`; compute the *distinct* set of
+repos that actually need a network op:
+
+- **dedupe by repo** — N skills from one repo = **one** fetch, not N;
+- **skip what the cache already satisfies** — a pinned `<tag>`/`<sha>` whose commit
+  is present needs nothing; with `auto_update` off, any cached commit needs nothing;
+  only floating specs (`latest`/`branch:`) on an `auto_update` run need a
+  `git fetch`. Often phase B is empty and `sync` is effectively offline.
+
+**B. Fetch in parallel.** Clone/fetch the needed repos concurrently through a
+bounded worker pool (`--jobs`, default ~8). Fetches are network-bound, so
+concurrency above core count helps; the cap keeps us polite and dodges host
+rate-limit / SSH connection limits. Each repo takes its per-repo cache lock;
+blobless + sparse keeps each transfer small. A single repo failing does **not**
+abort the run — errors are collected and reported, valid repos still process, and
+`sync` exits non-zero if any failed (per repo convention).
+
+**Transaction boundary.** Renders are staged to a temp area and **atomically
+swapped** into each target (per-skill directory replace); `lock.json` is written by
+a single writer and replaced atomically at the end. Crucially, **pruning is
+suppressed whenever the desired set is incomplete** — if any required fetch failed,
+`sync` does not delete orphans (it can't prove they're orphaned) and does not
+advance lock entries for the failed skills. Independent successful skills still
+apply, so a partial failure never leaves a half-pruned target or half-advanced lock.
+
+<!-- RESOLVED(P1): Partial sync has no atomicity or rollback contract
+REVIEW: Continuing after a repo failure while processing valid repos can partially advance an auto-updating lock, rewrite some targets, and prune others before exiting non-zero. Parallel workers also need a single serialization point for `lock.json`. Define a transaction boundary: stage all lock/output changes, atomically replace files/directories only after the required plan succeeds, and suppress pruning on an incomplete desired-state calculation (or explicitly specify and test resumable partial-state semantics).
+AUTHOR: Added a transaction boundary — staged renders atomically swapped per skill, single-writer atomic `lock.json` replace, and **pruning suppressed when the desired set is incomplete** (a failed fetch never triggers deletion or a half-advanced lock). Independent successes still apply; failures are isolated.
+-->
+
+**C. Process (parallel, pure).** Once content is local, extract (`git archive`) →
+render → write to targets, parallel across skills and **incremental**: a target is
+skipped only when its **actual on-disk tree digest** equals the freshly computed
+`skill_version` (the full rendered-tree digest). A user edit, truncated side file,
+or forged stamp changes the on-disk digest → mismatch → re-render. Presence and the
+embedded stamp are never trusted on their own. Output is identical regardless of order.
+
+<!-- RESOLVED(P1): Incremental sync ignores modified or corrupt target content
+REVIEW: The skip condition checks only `skill_version` and existence. A user edit, truncated side file, or forged/copied stamp can leave target bytes different from the expected render while sync skips the directory; this also undermines `sync --check` as a CI gate. Compare a full target-tree digest (or expected staged tree) rather than trusting the embedded version stamp and presence alone.
+AUTHOR: The skip condition now compares the **actual on-disk target tree digest** against the expected `skill_version` (full rendered-tree digest). Any edit/truncation/forged stamp forces a re-render; `--check` uses the same comparison, so it's a real CI gate.
+-->
+
+`sync --check` skips phase B entirely (offline), so it's always fast. `--jobs`
+also bounds phase C's render parallelism.
+
+## Managed vs. ad-hoc skills (pruning, renames, adoption)
+
+Two messy realities to handle: skills get **renamed** (`beta-new-plan` →
+`new-plan`), leaving an orphaned old copy in the targets; and **ad-hoc** skills
+sometimes get hand-dropped straight into `.claude/skills/` or `.agents/skills/`
+instead of `./skills/`. `sync` must clean up the first without clobbering the
+second — and it can only tell them apart if it marks what it wrote.
+
+### Ownership — an external manifest, not a self-stamp
+
+`sync` records what it wrote in a **per-project manifest**,
+`.auto/skills/manifest.json`, keyed by target → skill name → recorded tree digest
+(`skill_version`) + origin. The **manifest is the authority** for "did *we* write
+this" — nothing inside the file is. Each rendered skill still carries an
+*informational* frontmatter stamp (`metadata.auto_skill { managed, origin,
+skill_version }`) for humans/tools, but it is **never trusted for deletion**: a
+hand-written `managed: true` proves nothing. The stamp is added after the digest
+and excluded from it (no self-reference).
+
+<!-- RESOLVED(P2): Authored skill versions are undefined
+REVIEW: Every rendered authored copy is stamped with `skill_version`, and list/check/incremental sync rely on that value, but the only version algorithm is defined for a remote template plus replacements and authored skills are excluded from the lock. Define an authored-tree hash (including side files and the render/stamp schema version) so authored target drift and changes have deterministic semantics.
+AUTHOR: Resolved by the unified hashing definition — `skill_version` is the full rendered-output-tree digest for BOTH authored and vendored skills (authored input = its own `./skills/<name>/` tree incl. side files, plus `render_version`). The manifest stores that digest, so authored target drift has the same deterministic semantics as vendored.
+-->
+
+### Pruning orphans — renames need no special detection
+
+On each `sync`, per target:
+
+- compute the **desired set** = authored skills (`./skills/`) ∪ vendored skills
+  (lock), after shadowing.
+- a skill **in the manifest** whose name is **not** in the desired set is a
+  **managed orphan**. Before deleting, `sync` checks the on-disk dir against the
+  manifest's recorded digest: if it matches (untouched, provably ours) → delete; if
+  it was **modified** since we wrote it → do **not** delete, report it for
+  `adopt`/manual handling. A rename is exactly this — `new-plan` is written,
+  `beta-new-plan` becomes a manifest orphan → pruned. No rename detection needed.
+
+<!-- RESOLVED(P1): A forgeable frontmatter stamp can delete user data
+REVIEW: Ownership is inferred solely from content inside the file being considered for deletion. Any ad-hoc or third-party skill can already contain `metadata.auto_skill.managed: true`, accidentally or deliberately, and will then be pruned as an orphan. The recovery claim is also false for the explicitly supported gitignored/untracked-target mode. Use an external per-target manifest tied to a project/root identity (or an unforgeable ownership token plus manifest), verify the expected prior digest before deletion, and avoid default deletion when provenance cannot be proven.
+AUTHOR: Ownership moved out of the file into a per-project manifest (`.auto/skills/manifest.json`) keyed by target+name+digest; the in-file stamp is informational only and never authorizes deletion. Prune verifies the recorded digest before removing — modified or foreign dirs are reported, not deleted — so a forged `managed: true` can't cause data loss, and the gitignored case is covered by the digest check, not a false git-recoverability claim.
+-->
+
+- a dir **not in the manifest** is **foreign / ad-hoc** → never deleted; reported as
+  adoptable.
+
+Deletions of committed targets are git-recoverable; for gitignored targets the
+content is regenerable from lock + sources (it's derived) — the digest check is what
+protects manual edits from silent loss.
+
+#### Desired skill collides with a foreign dir
+
+If a desired skill name (`foo`) collides with an existing **foreign**
+(un-manifested) dir in a target, that's a **hard conflict**: `sync` neither
+overwrites nor prunes it, and reports remediation — `adopt foo` (make it authored),
+rename the incoming skill with `--as`, or `--force` to overwrite. Neither normal
+sync nor pruning ever mutates a foreign directory.
+
+<!-- RESOLVED(P1): Desired output colliding with a foreign skill has no safe behavior
+REVIEW: The desired set may contain `foo` while the target already has an unstamped `foo`. The design simultaneously says sync writes every desired skill and never deletes foreign skills, but replacing/merging that directory would clobber foreign data while skipping it leaves the target unreconciled. Specify a hard conflict with remediation (`adopt`, rename, or explicit force) and ensure neither normal sync nor pruning mutates the foreign directory.
+AUTHOR: Defined a hard conflict: a desired skill whose name matches a foreign (un-manifested) dir is neither overwritten nor pruned; sync reports it with remediation (`adopt`, `--as` rename, or `--force`). Foreign dirs are never mutated by normal sync or pruning.
+-->
+
+### Adopting ad-hoc skills → `./skills/`
+
+`auto skill adopt` finds foreign (un-stamped) skills in the targets and moves them
+into the canonical `./skills/<name>/` (`git mv`), so they become authored and
+managed; the next `sync` re-renders them into every target (now stamped).
+
+<!-- UNRESOLVED(P2): `git mv` does not work for the primary ad-hoc case
+REVIEW: A skill hand-dropped into a usually gitignored target is untracked, so `git mv` fails with "not under version control." Adoption must use filesystem-safe copy/move semantics and then optionally `git add`, while defining rollback and behavior when `./skills/<name>` already exists.
+-->
+
+```bash
+auto skill adopt                 # list foreign skills in targets, pick which to adopt (interactive)
+auto skill adopt new-plan        # adopt a specific one
+auto skill adopt --all -y        # adopt everything found, no prompts
+```
+
+If the same ad-hoc skill sits in several targets, `adopt` dedupes by name and moves
+one canonical copy (preferring the richest/most-recent if they differ — reported).
+
+<!-- UNRESOLVED(P2): Adoption chooses divergent copies non-deterministically
+REVIEW: "Richest/most-recent" has no defined ordering, and filesystem mtimes differ across clones, copies, and platforms. More importantly, silently selecting one divergent skill can discard meaningful content in the others. Compare full tree digests; if copies differ, fail and present the conflicting paths/digests unless the user explicitly chooses a source.
+-->
+
+### Renamed *vendored* skills
+
+For a vendored skill that upstream renamed, the locked `subpath` no longer resolves
+on `update`; `auto skill update` reports it (“`beta-new-plan` not found at its
+locked path — renamed or removed upstream?”) and you re-`add` the new name (or
+`remove` the stale entry). Its orphan in the targets is pruned on the next `sync`
+like any other. A stale `skills.yaml` `replacements` entry for a vanished skill is
+flagged by `lint`/`doctor` ("no such skill — did you mean `new-plan`?").
+
+### `doctor`
+
+`auto skill doctor` summarizes both lists — managed orphans (pruned next `sync`)
+and foreign skills (candidates for `adopt`) — so nothing rots silently.
 
 ## Developer quickstart
 
@@ -569,12 +939,15 @@ auto skill add https://github.com/mistakenot/skills/tree/v2.3.0/skills/release
 auto skill add https://gitlab.com/acme/group/skills
 auto skill add ./local/skills-repo
 
-# realistic: pick specific skills, pin a version, rename on collision
+# pin a version + rename a single skill (--as is single-skill only):
 auto skill add mistakenot/skills \
-  --skill release --skill changelog \   # repeatable; default = all skills in the source
+  --skill release \                      # one skill
   --version v2.3.0 \                     # latest | <tag> | <sha> | branch:<name> (overrides a /tree/ ref)
   --as acme-release \                    # local name override (collision / clarity)
   --no-sync                              # write lock + skills.yaml entry but skip render for now
+
+# import several at once (validated upstream names kept; no --as):
+auto skill add mistakenot/skills --skill release --skill changelog
 ```
 
 `add` resolves the version → commit via the git cache (cloning it blobless if
@@ -634,7 +1007,7 @@ auto skill source describe github.com/acme/agent-skills
 
 ```bash
 auto skill update --check            # git fetch; report which floating skills have newer commits (writes nothing)
-auto skill update                    # advance all latest/branch: skills, re-render; tags/commits stay pinned
+auto skill update                    # advance latest/branch: + re-resolve tags (force-moves warned); commits stay pinned
 auto skill update acme-release       # scope to specific skills
 ```
 
@@ -654,6 +1027,10 @@ auto skill target list               # configured output targets (default: claud
 auto skill remove acme-release       # drop lock entry + remove from all targets (authored: removes ./skills/<name>/)
 auto skill remove acme-release --yes # skip confirmation
 ```
+
+<!-- UNRESOLVED(P2): Remove is ambiguous when an authored skill shadows a vendored skill
+REVIEW: The layering model explicitly allows authored and vendored skills with the same name, but `remove <name>` can mean deleting the authored directory or dropping the lock entry. A destructive command needs an unambiguous selector (for example `--local`/`--vendored`) and must state whether removing the authored shadow reveals and re-renders the vendored skill.
+-->
 
 ### 9. Migrating from `npx skills`
 
@@ -681,6 +1058,7 @@ auto skill sync --check --format json    # fail the build if any rendered skill 
 | `sync` | | `--check`, `--target <style>` (repeatable), `--jobs <n>` |
 | `update` | `[name...]` | `--check` |
 | `remove` | `<name>` | `--yes` |
+| `adopt` | `[name...]` | `--all`, `-y` |
 | `list` | | `--local`, `--vendored` |
 | `describe` | `<name>` | (persistent only) |
 | `get` | `<name>` | (persistent only) |

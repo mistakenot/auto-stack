@@ -41,24 +41,26 @@ Read approved requirements, gather codebase context, write `context.md`, then ad
 
    See [references/template-context.md](references/template-context.md) for the template and rules.
 
+5. **Impact analysis** -- run an impact analysis on the proposed file changes (each file + one-sentence change summary); fold flagged files into the changes list and any data, permission, or integration concerns into the Verification tab as acceptance criteria.
+
 ### Stage 2: Verification Tab
 
-5. **Scan for verification strategies** -- check available project skills for testing, verification, and assurance strategies. Load any matched skills.
-6. **Write Verification tab** -- using the context and requirements, design the verification strategy. Insert `<pd-tab name="Verification">` into plan.html after the Requirements tab.
+6. **Scan for verification strategies** -- check available project skills for testing, verification, and assurance strategies. Load any matched skills.
+7. **Write Verification tab** -- using the context and requirements, design the verification strategy. Insert `<pd-tab name="Verification">` into plan.html after the Requirements tab.
 
    See [references/tab-verification.md](references/tab-verification.md) for the tab structure and rules.
 
-7. **Hard-stop (gate 1)** -- present the Verification tab to the user. Tell them: "Review the Verification tab. When ready, confirm to proceed to Solution design."
+8. **Hard-stop (gate 1)** -- present the Verification tab to the user. Tell them: "Review the Verification tab. When ready, confirm to proceed to Solution design."
 
 ### Stage 3: Solution Tab
 
-8. **Assess complexity** (informed by context):
+9. **Assess complexity** (informed by context):
    - **Straightforward** (one obvious approach): go directly to step 10.
    - **Ambiguous** (multiple viable approaches): go to step 9.
-9. **Explore options** -- spawn parallel subagents, one per candidate approach. Each subagent investigates feasibility using the gathered context. Collect results. Present a comparison table with pros/cons for each option. Wait for the user to pick.
-10. **Write Solution tab** -- design the solution and insert `<pd-tab name="Solution">` into plan.html after the Verification tab.
+10. **Explore options** -- spawn parallel subagents, one per candidate approach. Each subagent investigates feasibility using the gathered context. Collect results. Present a comparison table with pros/cons for each option. Wait for the user to pick.
+11. **Write Solution tab** -- design the solution and insert `<pd-tab name="Solution">` into plan.html after the Verification tab.
 
     See [references/tab-solution.md](references/tab-solution.md) for the tab structure and rules.
 
-11. **Validate assumptions** -- review every design decision and identify any that were NOT clearly dictated by (a) the requirements or (b) pre-established patterns in the repository. Surface uncertain decisions with the user (use `AskUserQuestion` tool). Update plan.html with their answers.
-12. **Hard-stop (gate 2)** -- present the completed Solution tab to the user. Do NOT proceed to the plan stage. Tell them: "Review the Solution tab. When ready, run `/beta-new-plan` to continue."
+12. **Validate assumptions** -- review every design decision and identify any that were NOT clearly dictated by (a) the requirements or (b) pre-established patterns in the repository. Surface uncertain decisions with the user (use `AskUserQuestion` tool). Update plan.html with their answers.
+13. **Hard-stop (gate 2)** -- present the completed Solution tab to the user. Do NOT proceed to the plan stage. Tell them: "Review the Solution tab. When ready, run `/beta-new-plan` to continue."

@@ -22,6 +22,8 @@ Read requirements + solution, gather codebase context, write `context.md` and `p
 
 Merge findings into the existing `context.md` -- append a **Related Tasks** section if one doesn't exist, or update it. Also verify that file paths from solution.md and existing context.md still hold (flag any that have drifted). Ensure context.md has `epic:` frontmatter if requirements.md does.
 
+Run an impact analysis on the proposed file changes (each file + one-sentence change summary); fold flagged files into the changes list and any data, permission, or integration concerns into plan.md as acceptance criteria.
+
 ### Phase 2: Write plan.md
 
 Using requirements.md, solution.md, and the freshly written context.md:

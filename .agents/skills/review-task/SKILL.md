@@ -17,33 +17,47 @@ The user provides a task ID (e.g. `042`) or a task folder name (e.g. `042-add-te
 
 ### Step 1: Load Context
 
-1. Find the task folder under `docs/tasks/` matching the provided ID
-2. Read ALL docs: `requirements.md`, `solution.md`, `context.md`, `plan.md`
-3. Read any project docs referenced by the task docs (linked concept docs, how-to guides)
+1. Find the task folder under `docs/tasks/` matching the provided ID.
+2. Identify the doc layout and read **every** planning doc present. A folder uses one layout or the other, not both:
+   - **Markdown task** — `requirements.md`, `solution.md`, `context.md`, `plan.md`.
+   - **HTML task (beta)** — `plan.html` + `context.md`. `plan.html` is a single self-contained file with one `<pd-tab>` per stage: **Requirements**, **Verification**, **Solution**, **Plan**. Read the full HTML source; sections carry stable kebab-case `id`s that you anchor comments to.
+   - **HTML epic** — `epic.html`. Review it the same way, treating its direction / guard-rail / task-breakdown tabs as the units to verify.
+3. Read any project docs referenced by the task docs (linked concept docs, how-to guides).
 
 ### Step 2: Codebase Verification
 
-For each doc, verify claims against the actual codebase:
+Verify each concern against the actual codebase. The same concerns live in different places depending on layout:
 
-**requirements.md**
+| Concern | Markdown file | HTML location (`plan.html`) |
+| --- | --- | --- |
+| Problem, goals, scope | requirements.md | Requirements tab |
+| Acceptance criteria & test coverage | requirements.md (ACs) + solution.md (coverage table) | Verification tab (`<pd-ac>` cards) |
+| Approach & file changes | solution.md | Solution tab (`<pd-files>`, `<pd-api>`) |
+| Codebase snippets / references | context.md | context.md |
+| Execution sequence | plan.md | Plan tab (`<pd-stepper>` / `<pd-phase>`) |
+
+**Requirements / scope** (requirements.md · Requirements tab)
 - Are acceptance criteria testable and unambiguous?
 - Do referenced features/pages actually exist?
 - Are there implicit dependencies not mentioned?
 - Does "Out of Scope" make sense, or will the task be incomplete without those items?
 
-**solution.md**
-- Do listed file paths exist (for `~` modified files) or make sense as new files (`+`)?
+**Solution & approach** (solution.md · Solution tab)
+- Do listed file paths exist (for `~`/`edit` modified files) or make sense as new files (`+`/`add`)?
 - Do referenced types, functions, and services have the described signatures?
 - Does the approach match established project patterns?
 - Are there security concerns -- auth, tenant isolation, input validation?
-- Does the test coverage table cover all acceptance criteria?
 
-**context.md**
+**Verification & test coverage** (solution.md coverage table · Verification tab)
+- Does the test coverage cover all acceptance criteria?
+- For HTML: does each `<pd-ac>` carry accurate `phases`/`tests` traceability chips, not placeholders?
+
+**Context** (context.md)
 - Are code snippets accurate to the current state of the files?
 - Are line number references correct?
 - Are important related files or patterns missing?
 
-**plan.md**
+**Plan** (plan.md · Plan tab)
 - Will the execution sequence work? Are phase dependencies correct?
 - Are commands correct (test paths, npm scripts, workspace flags)?
 - Do success criteria verify all acceptance criteria?
@@ -51,21 +65,24 @@ For each doc, verify claims against the actual codebase:
 
 ### Step 3: Cross-Document Consistency
 
-- Every AC in requirements.md maps to test coverage in solution.md and plan steps in plan.md
-- File paths are consistent across solution.md, context.md, and plan.md
-- Types/interfaces in context.md match what solution.md proposes to use
-- The approach in solution.md matches the plan steps in plan.md
-- If any doc has `epic:` frontmatter, all four docs must have the same `epic:` value. If requirements.md has no `epic:`, none of the others should either.
+- Every acceptance criterion traces to test coverage **and** to plan steps. (Markdown: solution.md coverage table + plan.md steps. HTML: each `<pd-ac>`'s `tests`/`phases` chips → matching `<pd-phase>` in the Plan tab.)
+- File paths are consistent across approach, context, and plan. (Markdown: solution.md / context.md / plan.md. HTML: Solution-tab `<pd-files>` vs Plan-tab `<pd-phase files>`.)
+- Types/interfaces in context.md match what the solution proposes to use.
+- The approach (solution) matches the execution sequence (plan).
+- Epic linkage is consistent. (Markdown: if any doc has `epic:` frontmatter, all four must share the same value; if requirements.md has none, none should. HTML: if the task claims an epic, the `pd-meta` block / epic reference must agree across the doc.)
 
 ### Step 4: Leave Comments
 
-Insert comments directly into the task docs using the Edit tool. Place each comment directly below the content it addresses, with a blank line above and below.
-
-**You are a reviewer. Your only edit action is inserting comment blocks.** Do NOT change the author's content -- describe issues in comments, and the author resolves them.
+You are a reviewer. **Your only edit action is inserting comment threads.** Do NOT change the author's content -- describe issues in comments, and the author resolves them.
 
 Use tools (grep, glob, read, bash) to gather evidence before commenting. Comments backed by "I checked the file and the signature is actually X" are far more valuable than "this might be wrong."
 
 Only comment on actual problems, genuine ambiguities, or missing information. Do not comment on formatting, correct content, or style preferences.
+
+Match the comment syntax to the file you are editing -- see the **Comment Format** section below. In both layouts threads are **append-only**: never edit or delete an existing comment.
+
+- **Markdown docs**: insert the comment block directly below the content it addresses, with a blank line above and below.
+- **HTML docs**: insert a `<pd-thread>` directly after the anchored element, with its `anchor` set to that element's `id` (or a `<pd-file>`'s `path`), inside the relevant tab. This keeps the doc compatible with the planning-doc workflow, which renders threads in place and surfaces resolved ones in `<pd-decisions>`.
 
 **If no issues are found:** insert a single clean-review comment so the calling agent can distinguish a successful clean review from a failed review that produced no output.
 
