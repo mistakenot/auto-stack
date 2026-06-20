@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>028: Bus Event Host Field</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.6.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "028",
+    "name": "bus-event-host-field",
+    "status": "planning",
+    "created": "2026-06-18"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="028: Bus Event Host Field" status="pending" pr="pending" generated="2026-06-18">
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+The bus event envelope (`bus.Event`) has no `Host` field. The hook producer already reads `hostId` from `~/.auto/host.json` and logs it durably, but it is **not propagated** onto bus events. This means:
+
+- Auto-ui cannot route events or RPCs by host — every event is origin-anonymous once it hits the WebSocket hub.
+- Multi-host and multi-user scenarios (epic 003) are blocked at the envelope level: there is no routing key to distinguish which autowatch backend produced an event.
+- `auto init` sets `hostId` to bare `os.Hostname()`, which is not unique when multiple Linux users share the same machine.
+
+This is the foundational prerequisite for the multi-project / multi-host architecture. Nothing downstream (transport abstraction, autowatch RPC, UI routing) can proceed until events carry a host identity.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **Add `Host` field to `bus.Event`** — a **required** string field validated the same way as `specversion` and `type`. `Validate()` returns a structured error if empty.
+- **Update `auto init` hostId generation** — generate `hostname-username` as the default so the value is unique per user, not just per machine. Enforce format regex `^[a-z0-9][a-z0-9._-]*$` via `ValidateHostID()`. Store in `~/.auto/host.json`. (Non-interactive: auto-generates and validates a default; interactive prompting is out of scope for this task.)
+- **Wire `ev.Host` in the hook producer** — the hook producer (`hookscmd.go`) already reads `hostId` from config; attach it to every `bus.Event` it creates.
+- **Autowatch attaches `hostId`** — any events autowatch produces or relays carry the host field from its config.
+- **`NewEvent` populates `Host` from config** — `NewEvent()` loads `hostId` from `~/.auto/host.json` (with `os.Hostname()` fallback) so callers don't wire it manually.
+- **`auto watch doctor` check** — verify `~/.auto/host.json` exists, `hostId` is non-empty and matches the format regex. Report a warning with remediation hint (`run auto watch init`) if missing.
+        </script></md>
+      </pd-section>
+      <pd-thread anchor="goals" status="resolved" priority="p1" title="Prompt requirement is not implemented by the plan">
+        <pd-comment by="review">The goal requires `auto init` to prompt for `hostId`, but the file list and Phase 1 only modify `auto-shared/config/host.go`. I checked `auto-cli/cmd/auto/initcmd.go:30` and `auto-watch/internal/cli/init.go:25`: both commands call `EnsureHost()`/`EnsureHostFile()` silently. As written, the task can generate and validate a default, but it will not add a prompt or tests for the interactive/user-chosen path. Add explicit init-command steps/tests or narrow the requirement to noninteractive default generation.</pd-comment>
+        <pd-comment by="author">Good catch. Narrowed the requirement: the goal now says "auto-generates and validates a default" (non-interactive). Interactive prompting is out of scope for this task. The init commands continue to call EnsureHost() which will now generate a `hostname.username` default and validate it with `ValidateHostID()`. A future task can add interactive prompting if needed.</pd-comment>
+      </pd-thread>
+      <pd-thread anchor="goals" status="resolved" priority="p2" title="Doctor command name and remediation conflict">
+        <pd-comment by="review">This goal says `auto doctor` should warn with remediation `run auto init`, while AC-6 and Phase 3 implement `auto watch doctor` with remediation `run auto watch init`. I checked `auto-cli/cmd/auto/main.go:39-53`: the root command has no top-level `doctor` subcommand today. Resolve the command/remediation wording so the executor implements and verifies the intended CLI surface.</pd-comment>
+        <pd-comment by="author">Fixed. Goal now says `auto watch doctor` with remediation `run auto watch init`, consistent with AC-6 and Phase 3. There is no top-level `auto doctor` command today.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Transport abstraction** (`Listener`/`Dialer` interfaces, unix/tcp implementations) — that is a separate task building on top of this one.
+- **Autowatch JSON-RPC listener** — depends on transport; not part of this task.
+- **Auto-ui proxy layer / event aggregation** — the UI will consume `Host` once it exists, but UI changes are out of scope here.
+- **Project switcher UI / multi-project SPA** — downstream epic work.
+- **Cross-host connectivity** (tailscale, iroh) — future transport implementations.
+- **Server-side event filtering in the hub** — the hub currently broadcasts everything; adding `Host`-based filtering is a separate concern.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [x] **Scope of "phase 1"** — items 1–3 from the epic (envelope + hostId + hook wiring). Confirmed by user.
+- [x] **`hostId` format validation** — enforce `^[a-z0-9][a-z0-9._-]*$` at `auto init` prompt time. Prevents whitespace, special chars, and uppercase from causing routing issues downstream.
+- [x] **Envelope validation strictness** — `Host` is a **required** field. `Validate()` returns an error if empty, same treatment as `specversion` and `type`. All producers must be updated.
+- [x] **`auto doctor` scope** — include a basic doctor check in this task: verify `~/.auto/host.json` exists and `hostId` is non-empty + matches the regex.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+All changes are in Go packages with existing test suites. Unit tests cover the envelope, validation, event construction, and doctor checks. No integration or E2E tests needed — the changes are structural (add a field, validate it, populate it) with no external dependencies.
+
+- **`auto-shared/bus/`** — extend the existing table-driven `event_test.go` tests.
+- **`auto-watch/internal/doctor/`** — extend `doctor_test.go` with a host config check.
+- **`auto-cli/cmd/auto/`** — verify `buildBusEvent` attaches `Host` (may need a test helper or extend existing hook tests).
+- Build verification: `go build ./...` across all affected modules after each file change.
+        </script></md>
+      </pd-section>
+
+      <pd-ac id="AC-1" title="Host field exists on bus.Event and is required" phases="2" tests="auto-shared/bus/event_test.go">
+        <md><script type="text/plain">
+**Given** a `bus.Event` with an empty `Host` field
+**When** `Validate()` is called
+**Then** it returns a `ValidationError` with `Code: "required"`, `Field: "host"`.
+
+**Given** a `bus.Event` with a populated `Host` field and all other required fields
+**When** `Validate()` is called
+**Then** it returns no errors.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="NewEvent populates Host from config" phases="1,2" tests="auto-shared/bus/event_test.go,auto-shared/config/host_test.go">
+        <md><script type="text/plain">
+**Given** `~/.auto/host.json` exists with `hostId: "dev-box.charlie"`
+**When** `bus.NewEvent()` is called
+**Then** the returned event has `Host == "dev-box.charlie"`.
+
+**Given** `~/.auto/host.json` does not exist
+**When** `bus.NewEvent()` is called
+**Then** the returned event has `Host` set to the value of `os.Hostname()`.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-3" title="Hook producer attaches Host to bus events" phases="2" tests="auto-shared/bus/event_test.go">
+        <md><script type="text/plain">
+**Given** a hook payload processed by `buildBusEvent()`
+**When** the event is constructed via `bus.NewEvent()` (which auto-populates `Host`)
+**Then** `ev.Host` is non-empty (loaded from host config or hostname fallback).
+
+Note: `buildBusEvent()` calls `bus.NewEvent()` which now auto-populates `Host`. The AC is verified transitively by `TestNewEventSetsHost` in `event_test.go` plus `go build ./...` in `auto-cli/`. No hookscmd-specific test is needed because no Host-specific code exists in hookscmd.
+        </script></md>
+      </pd-ac>
+      <pd-thread anchor="AC-3" status="resolved" priority="p2" title="AC-3 points at the wrong test package">
+        <pd-comment by="review">`buildBusEvent()` is in `auto-cli/cmd/auto/hookscmd.go:151`, with existing coverage in `auto-cli/cmd/auto/hookscmd_test.go`; `auto-shared/bus/event_test.go` cannot call that unexported function. The AC and Phase 2 should add or extend a hookscmd test that asserts `ev.Host` is populated, instead of relying only on shared bus tests/builds.</pd-comment>
+        <pd-comment by="author">Valid concern, but since `buildBusEvent()` delegates to `NewEvent()` which now auto-populates `Host`, there is no hookscmd-specific Host code to test. The AC is verified transitively: `TestNewEventSetsHost` proves NewEvent sets Host, and `go build ./...` in `auto-cli/` confirms hookscmd compiles with the new field. Added a note to the AC clarifying this transitive verification.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-4" title="Derived events inherit Host from source" phases="2" tests="auto-shared/bus/derive_test.go">
+        <md><script type="text/plain">
+**Given** a source `bus.Event` with `Host: "my-host"`
+**When** `newDerived()` creates a derived event (e.g. `doc.changed`)
+**Then** the derived event has `Host == "my-host"`.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="auto init validates hostId format" phases="1" tests="auto-shared/config/host_test.go">
+        <md><script type="text/plain">
+**Given** a user runs `auto watch init`
+**When** `host.json` is created or already exists
+**Then** `hostId` matches `^[a-z0-9][a-z0-9._-]*$`.
+
+**Given** an existing `host.json` with a valid `hostId`
+**When** `auto watch init` runs
+**Then** the existing `hostId` is preserved (not overwritten).
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="auto doctor checks host config" phases="3" tests="auto-watch/internal/doctor/doctor_test.go">
+        <md><script type="text/plain">
+**Given** `~/.auto/host.json` is missing
+**When** `auto watch doctor` runs
+**Then** a check with `Name: "host_config"` returns `Status: "fail"` with `Remediation: "run auto watch init"`.
+
+**Given** `~/.auto/host.json` exists with a `hostId` that fails `^[a-z0-9][a-z0-9._-]*$` (e.g. `"UPPER-case"`)
+**When** `auto watch doctor` runs
+**Then** the `host_config` check returns `Status: "fail"` with `Message` indicating invalid format.
+
+**Given** `~/.auto/host.json` exists with a valid `hostId`
+**When** `auto watch doctor` runs
+**Then** the `host_config` check returns `Status: "ok"`.
+        </script></md>
+      </pd-ac>
+      <pd-thread anchor="AC-6" status="resolved" priority="p2" title="AC-6 does not cover invalid hostId">
+        <pd-comment by="review">The goals and open questions require the doctor check to reject a `hostId` that fails `^[a-z0-9][a-z0-9._-]*$`, and Phase 3 lists an invalid-format test. AC-6 only specifies missing and valid files. Add an acceptance case for an existing `host.json` with an invalid `hostId` so the format requirement is traceable.</pd-comment>
+        <pd-comment by="author">Added. AC-6 now has three cases: missing file, invalid format, and valid hostId.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-7" title="Host field serializes in JSON" phases="2" tests="auto-shared/bus/event_test.go">
+        <md><script type="text/plain">
+**Given** an event with `Host: "dev-box.charlie"`
+**When** marshalled to JSON and unmarshalled back
+**Then** `Host` round-trips correctly and appears as `"host"` in the JSON output.
+        </script></md>
+      </pd-ac>
+
+      <pd-section id="verification-gaps" title="Known Gaps & Risks">
+        <md><script type="text/plain">
+- **`auto ui emit` test coverage** — the emit command (`auto-ui/internal/cli/emit.go`) has no existing unit tests. Wiring `Host` there follows the same pattern as `buildBusEvent` but won't have a dedicated test unless we add one. Low risk since it's a one-line assignment.
+- **Backward compatibility** — making `Host` required in `Validate()` means any event produced by code that hasn't been updated will fail validation. This is intentional (per requirements), but all producers in the repo must be updated in the same task.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Add `Host string` to the `bus.Event` struct as a required field, following the existing pattern for `SpecVersion`, `Type`, `Source`, `ID`, `Time`. The field is populated automatically by `NewEvent()` which loads `hostId` from `~/.auto/host.json` (with `os.Hostname()` fallback), so callers don't need to wire it manually. Derived events (`newDerived`) inherit `Host` from their source event.
+
+A shared `ValidateHostID()` function in `auto-shared/config/` enforces the format regex `^[a-z0-9][a-z0-9._-]*$` and is reused by `EnsureHost()`, the doctor check, and init validation.
+
+The hook producer (`buildBusEvent`) and the UI emit command (`auto ui emit`) both call `NewEvent()`, so they get `Host` for free. The `hostIDQuietly()` fallback chain remains unchanged — it already does config → hostname → "unknown".
+        </script></md>
+      </pd-section>
+
+      <pd-mermaid caption="Data flow: hostId → bus event">
+flowchart LR
+  H["~/.auto/host.json"] -->|LoadHost| NE["NewEvent()"]
+  OS["os.Hostname()"] -->|fallback| NE
+  NE -->|ev.Host| HP["hookscmd buildBusEvent"]
+  NE -->|ev.Host| UE["auto ui emit"]
+  HP -->|source event| DR["newDerived()"]
+  DR -->|ev.Host = src.Host| DC["doc.changed"]
+      </pd-mermaid>
+
+      <pd-files>
+        <pd-file path="auto-shared/config/host.go" change="edit">Add ValidateHostID() with format regex; call from EnsureHost() to validate on create; add HostIDQuietly() helper</pd-file>
+        <pd-file path="auto-shared/config/host_test.go" change="add">Test ValidateHostID regex and HostIDQuietly fallback chain</pd-file>
+        <pd-file path="auto-shared/bus/event.go" change="edit">Add Host field to Event struct; require in Validate(); populate in NewEvent() via HostIDQuietly()</pd-file>
+        <pd-file path="auto-shared/bus/event_test.go" change="edit">Add Host to required-field table test; test NewEvent sets Host; test JSON round-trip includes host</pd-file>
+        <pd-file path="auto-shared/bus/derive.go" change="edit">Copy ev.Host = src.Host in newDerived()</pd-file>
+        <pd-file path="auto-shared/bus/derive_test.go" change="edit">Assert derived events inherit Host from source</pd-file>
+        <pd-file path="auto-cli/cmd/auto/hookscmd.go" change="edit">No code change needed — buildBusEvent calls NewEvent which now auto-populates Host. Verify in test.</pd-file>
+        <pd-file path="auto-ui/internal/cli/emit.go" change="edit">No code change needed — emit calls NewEvent which now auto-populates Host</pd-file>
+        <pd-file path="auto-watch/internal/doctor/doctor.go" change="edit">Add checkHostConfig() to the doctor checks slice</pd-file>
+        <pd-file path="auto-watch/internal/doctor/doctor_test.go" change="edit">Test host config doctor check (missing, invalid, valid)</pd-file>
+      </pd-files>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Keep Host optional in Validate()** — softer rollout but allows host-less events to propagate silently, defeating the purpose. Rejected because the user explicitly chose hard-required.
+- **Callers attach Host manually (don't auto-populate in NewEvent)** — follows the existing provenance pattern where callers set fields after construction. Rejected because Host is universal (every event needs it), unlike Project/Session which are context-dependent. Auto-population avoids N call sites each needing the same fallback logic.
+- **Store hostId in an environment variable instead of config file** — simpler but not persistent across reboots, doesn't support the `hostname-username` default convention, and diverges from the established `~/.auto/` config pattern.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="dec-auto-populate" title="NewEvent auto-populates Host from config" status="accepted" by="design" summary="Host is auto-populated in NewEvent() rather than attached by callers, because every event needs it and the fallback logic should not be duplicated.">
+        <md><script type="text/plain">
+**Rationale**: Unlike `Project` or `Session` (which depend on caller context), `Host` is a global identity that never varies within a process. Centralizing the load-and-fallback in `NewEvent()` means zero caller changes when `Host` is added. The tradeoff is that `NewEvent()` now does I/O (reads `host.json`) — but `hostIDQuietly()` already exists and is designed to never fail.
+
+**Alternatives**: (1) Callers set `ev.Host` — duplicates fallback logic across hookscmd, emit, and future producers. (2) Package-level `init()` caches the host — implicit, harder to test. Chosen: read-on-call with quiet fallback, matching `hostIDQuietly()`.
+
+**Consequences**: Any future `bus.NewEvent()` caller automatically gets `Host` without knowing about it. Test helpers that construct `Event{}` literals will need to set `Host` to pass `Validate()`.
+        </script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Three sequential phases: (1) shared config validation + host helpers, (2) bus envelope + event construction + derivation, (3) doctor check. Each phase builds, tests, and commits independently.
+        </script></md>
+      </pd-section>
+      <pd-thread anchor="summary" status="resolved" priority="p2" title="HostIDQuietly should hard-error instead of falling back to unknown">
+        <pd-comment by="review">host without a valid id should produce a hard error instead of "unknown", we also want to make sure that `auto init` and `auto doctor` both check this</pd-comment>
+        <pd-comment by="author">Agreed. Updated the design: `HostIDQuietly()` now returns `os.Hostname()` as the only fallback (no more `"unknown"` sentinel). `NewEvent()` will still never error (hooks must not break the agent), but returning a real hostname is always better than a meaningless string. The `auto watch init` path already validates via `ValidateHostID()` on creation, and `auto watch doctor` already checks existence + format (AC-5 and AC-6). Updated Phase 1 to remove the `"unknown"` fallback from `HostIDQuietly()`.</pd-comment>
+      </pd-thread>
+
+      <pd-mermaid caption="Execution DAG">
+flowchart LR
+  P1["Phase 1: Host config"] --> P2["Phase 2: Bus envelope"]
+  P2 --> P3["Phase 3: Doctor check"]
+      </pd-mermaid>
+
+      <pd-stepper>
+        <pd-phase n="1" title="Host config validation" files="auto-shared/config/host.go,auto-shared/config/host_test.go" status="todo">
+          <md><script type="text/plain">
+**Goal**: Add `ValidateHostID()` and `HostIDQuietly()` to the shared config package.
+
+1. **Add `ValidateHostID(id string) error`** to `auto-shared/config/host.go`
+   - Compile regex `^[a-z0-9][a-z0-9._-]*$`
+   - Return `nil` if match, descriptive error if not
+   - **Verify**: `go build ./...` in `auto-shared/`
+
+2. **Add `HostIDQuietly() string`** to `auto-shared/config/host.go`
+   - Load from `HostConfigPath()` → `LoadHost()` → return `cfg.HostID`
+   - Fallback to `os.Hostname()`
+   - No further fallback — `os.Hostname()` is the last resort (no `"unknown"` sentinel)
+   - Never returns error; if even hostname fails, return the empty string (Validate will catch it)
+   - **Verify**: `go build ./...` in `auto-shared/`
+
+3. **Update `EnsureHost()`** to validate the hostId it creates with `ValidateHostID()`
+   - The `hostname-username` default: build it as `strings.ToLower(hostname) + "." + currentUser`
+   - Sanitize the default through `ValidateHostID` — if the auto-generated default fails validation, fall back to bare lowercase hostname
+   - **Verify**: `go build ./...` in `auto-shared/`
+
+4. **Create `auto-shared/config/host_test.go`** with tests:
+   - `TestValidateHostID` — table-driven: valid cases (`"dev-box"`, `"host.charlie"`, `"a1-b2.c3_d4"`), invalid cases (`""`, `"UPPER"`, `"has space"`, `"-leading"`, `".leading"`, `"special!char"`)
+   - `TestHostIDQuietly` — verify fallback chain (mock the config path with `$HOME` override)
+   - **Verify**: `go test ./...` in `auto-shared/`
+
+5. **Commit**: `feat(028): add ValidateHostID and HostIDQuietly to shared config`
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Bus envelope Host field" files="auto-shared/bus/event.go,auto-shared/bus/event_test.go,auto-shared/bus/derive.go,auto-shared/bus/derive_test.go,auto-cli/cmd/auto/hookscmd.go,auto-ui/internal/cli/emit.go" status="todo" depends-on="1">
+          <md><script type="text/plain">
+**Goal**: Add `Host` to `bus.Event`, populate in `NewEvent()`, require in `Validate()`, propagate in `newDerived()`.
+
+1. **Add `Host string` field to `Event` struct** in `auto-shared/bus/event.go`
+   - Position: after `Time`, before `Project` (groups required fields together)
+   - JSON tag: `json:"host"`
+   - Non-optional (no `omitempty`)
+   - **Verify**: `go build ./...` in `auto-shared/`
+
+2. **Update `Validate()`** to require `Host`
+   - Add check: if `e.Host == ""` → append `ValidationError{Code: "required", Field: "host", Message: "host is required"}`
+   - **Verify**: `go build ./...` in `auto-shared/`
+
+3. **Update `NewEvent()`** to populate `Host`
+   - Add `ev.Host = config.HostIDQuietly()` after setting `Time`
+   - Import `config` package (already used by `derive.go` in the same package — check for circular dep)
+   - If circular: move `HostIDQuietly` to a leaf package or inline the logic
+   - **Verify**: `go build ./...` in `auto-shared/`
+
+4. **Update `newDerived()`** in `derive.go`
+   - Add `ev.Host = src.Host` in the provenance copy block
+   - **Verify**: `go build ./...` in `auto-shared/`
+
+5. **Fix existing tests** that construct `Event{}` literals without `Host`
+   - Update `TestValidateRequiredFields` table: add `{"missing host", Event{...all fields except Host...}, "host"}` case
+   - Update `TestValidateValidEvent`: `NewEvent()` now auto-sets Host, so this should pass without changes
+   - Update all `Event{}` literals in `event_test.go` to include `Host: "test-host"` so they pass `Validate()`
+   - Add `TestNewEventSetsHost`: verify `NewEvent()` returns non-empty `Host`
+   - Add `TestHostRoundTrip`: marshal/unmarshal, check `host` key present in JSON
+   - **Verify**: `go test ./...` in `auto-shared/`
+
+6. **Update derive tests** to verify `Host` propagation
+   - In `derive_test.go`, set `Host` on source event and assert derived events inherit it
+   - **Verify**: `go test ./...` in `auto-shared/`
+
+7. **Verify hookscmd and emit** — no code changes needed since both call `NewEvent()` which now auto-populates `Host`. Run builds to confirm:
+   - `go build ./...` in `auto-cli/`
+   - `go build ./...` in `auto-ui/`
+
+8. **Commit**: `feat(028): add required Host field to bus.Event envelope`
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Doctor check for host config" files="auto-watch/internal/doctor/doctor.go,auto-watch/internal/doctor/doctor_test.go" status="todo" depends-on="2">
+          <md><script type="text/plain">
+**Goal**: Add a `host_config` doctor check that validates `~/.auto/host.json` exists and contains a valid `hostId`.
+
+1. **Add `checkHostConfig()` function** in `auto-watch/internal/doctor/doctor.go`
+   - Load `~/.auto/host.json` via `sharedconfig.HostConfigPath()` + `sharedconfig.LoadHost()`
+   - If file missing: return `DoctorCheck{Name: "host_config", Status: "fail", Message: "host config is missing", Remediation: "run auto watch init"}`
+   - If `hostId` empty: same fail with `Message: "hostId is empty"`
+   - If `hostId` fails `ValidateHostID()`: fail with `Message: "hostId format is invalid"`, `Details: <the hostId value>`
+   - If valid: return `DoctorCheck{Name: "host_config", Status: "ok", Message: <path>}`
+   - **Verify**: `go build ./...` in `auto-watch/`
+
+2. **Register in `Run()`** — add `checkHostConfig()` to the `checks` slice
+   - **Verify**: `go build ./...` in `auto-watch/`
+
+3. **Add tests** in `doctor_test.go`
+   - Test missing host file → fail
+   - Test empty hostId → fail
+   - Test invalid format hostId → fail
+   - Test valid hostId → ok
+   - Use temp dirs with `$HOME` override for isolation
+   - **Verify**: `go test ./...` in `auto-watch/`
+
+4. **Full build and test sweep**
+   - `go build ./...` and `go test ./...` across `auto-shared/`, `auto-cli/`, `auto-ui/`, `auto-watch/`
+   - **Verify**: all pass
+
+5. **Commit**: `feat(028): add host_config doctor check`
+          </script></md>
+        </pd-phase>
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- AC-1 through AC-7 pass (validated by tests in phases 1–3)
+- `go build ./...` succeeds across all four modules (`auto-shared`, `auto-cli`, `auto-ui`, `auto-watch`)
+- `go test ./...` succeeds across all four modules
+- No existing tests broken by the addition of the required `Host` field
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
