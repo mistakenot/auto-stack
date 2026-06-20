@@ -12,12 +12,13 @@
   {
     "id": "030",
     "name": "transport-conformance-harness",
+    "epic": "003-multi-host-architecture",
     "status": "planning",
     "created": "2026-06-20"
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="030: transport-conformance-harness" status="draft" pr="pending" generated="2026-06-20">
+  <pd-doc title="030: transport-conformance-harness" status="pending" pr="pending" generated="2026-06-20">
 
     <pd-tab name="Requirements">
 
@@ -31,11 +32,16 @@ Without this foundation, each RPC task would reinvent its own connection plumbin
         </script></md>
       </pd-section>
 
+      <pd-thread anchor="problem" status="resolved" priority="p2" title="Epic linkage is absent from task metadata">
+        <pd-comment by="review">This task explicitly implements Epic 003, but its <code>pd-meta</code> block has no <code>epic</code> field. The established beta-task metadata shape is visible in <code>docs/tasks/027-plan-status-executor-liveness/plan.html</code> (<code>"epic": "002-planning-docs-dashboard"</code>). Add the corresponding <code>003-multi-host-architecture</code> value so task discovery and epic traceability do not depend on prose.</pd-comment>
+        <pd-comment by="author">Done. Added <code>"epic": "003-multi-host-architecture"</code> to the <code>pd-meta</code> block, matching the 027 shape.</pd-comment>
+      </pd-thread>
+
       <pd-section id="goals" title="Goals">
         <md><script type="text/plain">
 - **Transport interfaces** — define `Listener` / `Dialer` / `Conn` in a new `auto-shared/transport` package, decoupled from any concrete wire. This is seam #1 of the epic. RPC method handlers operate on decoded messages and **never import a transport package** (GR-N3).
 - **Two implementations** — `transport/unix` (unix domain socket) and `transport/tcp`. TCP supports an OS-assigned port (`tcp://127.0.0.1:0`) so the future binary harness can launch many instances without port collisions.
-- **JSON-RPC 2.0 framing on top of `Conn`** — a codec that carries requests, responses, **and notifications** over a single persistent, full-duplex connection. Server→client push (notifications with no `id`) must be supported from day one, because `bus.subscribe` (Task 6) relays events over the same connection. Method dispatch operates on decoded messages, not raw bytes.
+- **JSON-RPC 2.0 framing on top of `Conn`** — an **NDJSON** codec in a new `auto-shared/rpc` package (kept separate from the pure-wire `transport` package) that carries requests, responses, **and notifications** over a single persistent, full-duplex connection. Server→client push (notifications with no `id`) is supported from day one, because `bus.subscribe` (Task 6) relays events over the same connection. Method dispatch operates on decoded messages, not raw bytes.
 - **Reusable conformance-harness scaffold** — a test scenario interface plus fake/stub RPC adapters wired via `net.Pipe()`. Each later task plugs its real component in (Task 3 the real autowatch listener, Task 7 the real auto-ui proxy). This task proves the scaffold by running the same fake scenario over `net.Pipe`, unix, and tcp and getting identical results (GR-N6 in-process tier, GR-N7 API-first).
 - **Zero new runtime dependencies** (GR-N1) — Go stdlib and already-imported libraries only. `auto-shared` is currently stdlib-only; keep it that way.
 - **No user-visible behavior change** — this is pure foundation. Nothing ships a new CLI surface or alters existing event/UI behavior.
@@ -54,12 +60,329 @@ Without this foundation, each RPC task would reinvent its own connection plumbin
 
       <pd-section id="open-questions" title="Open Questions">
         <md><script type="text/plain">
-- [ ] **Framing format on `Conn`** — newline-delimited JSON (NDJSON), LSP-style `Content-Length` headers, or 4-byte length-prefix?
-- [ ] **Shared codec ownership** — does this task introduce a single shared JSON-RPC message/codec package, and where (`auto-shared/transport` vs a sibling `auto-shared/rpc`)? Does it reconcile auto-ui's existing structs now, or leave them until the Task 7/10 cut-over?
-- [ ] **Binary-tier harness in this task** — land the subprocess + `--ready-file` launcher *skeleton* now (un-exercised, no real binary), or defer the entire binary tier to Task 3 where the first real RPC binary exists?
-- [ ] **`Conn` duplex confirmation** — confirm `Conn` must be full-duplex (server pushes notifications to client) so the framing supports id-less notifications immediately, rather than retrofitting in Task 6.
+- [x] **Framing format on `Conn`** — **NDJSON** (one JSON message per line). Streams directly with stdlib `json.Decoder`/`Encoder`, human-readable on the wire, zero deps. Right fit for our scale.
+- [x] **Shared codec ownership** — codec + JSON-RPC message types live in a **new `auto-shared/rpc` package**; `auto-shared/transport` stays pure wire (`Listener`/`Dialer`/`Conn` only). auto-ui's existing HTTP-bound structs are **left untouched** until the Task 10 cut-over — no reconciliation churn now.
+- [x] **Binary-tier harness in this task** — **deferred to Task 3.** No RPC binary exists to launch yet, so this task ships only the in-process (`net.Pipe`) tier + scaffold; the real subprocess + `--ready-file` launcher lands in Task 3 where autowatch first speaks RPC.
+- [x] **`Conn` duplex confirmation** — **confirmed full-duplex.** The framing supports id-less notifications and server→client push from day one, so `bus.subscribe` (Task 6) relays events over the same persistent connection with no later retrofit.
         </script></md>
       </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Pure-library task, so verification is **Go unit + integration tests, run with `-race`** — no browser, no subprocess (the binary tier is Task 3). This *is* the GR-N7 API-first layer: the conformance harness exercises the RPC surface directly.
+
+- **`auto-shared/transport`** — table-driven tests roundtripping bytes over `unix` and `tcp` (incl. OS-assigned `:0`), plus listener close/accept-unblock and teardown idioms mirrored from `auto-ui/internal/cli/serve.go`.
+- **`auto-shared/rpc`** — codec tests (NDJSON frame encode/decode, id round-trip, notification-has-no-id) and peer tests (dispatch, error mapping, duplex push) using `net.Pipe()`.
+- **`auto-shared/rpc/conformance`** — the reusable harness: one scenario interface + fake/stub adapters with observable counters, run identically over `net.Pipe`, `unix`, and `tcp`. Lives in non-`_test` files so Task 3/7 can import it from their tests.
+- **Structural gates** — a test (or `go vet`-style check) asserting `rpc` does not import `transport` and vice-versa (GR-N3), and `git diff --quiet -- auto-shared/go.mod` (GR-N1, no new deps).
+- **Discipline** — `go build ./...` + `go test -race ./...` in `auto-shared` green after each file (CLAUDE.md Go build discipline). All pre-existing `auto-ui` JSON-RPC tests must still pass **unmodified** (this task adds packages; it touches nothing in auto-ui).
+
+Harness rule carried from task 029 feedback: **a poll-to-settle is not an assertion** — every AC checks an actual observable (a received frame, an error code, a counter delta), never just that something quiesced.
+        </script></md>
+      </pd-section>
+
+      <pd-ac id="AC-1" title="Transport interfaces + unix/tcp implementations roundtrip" phases="1" tests="auto-shared/transport/transport_test.go">
+        <md><script type="text/plain">
+**Given** a `Listener` obtained from `transport/unix` (socket path) or `transport/tcp` (incl. `127.0.0.1:0`),
+**When** a `Dialer` connects and bytes are written both directions,
+**Then** the bytes arrive intact, `Listener.Addr()` reports the real bound address (resolved port for `:0`), and `Listener.Close()` unblocks a pending `Accept()` cleanly. Both implementations satisfy the same `Listener`/`Dialer`/`Conn` interfaces; `Conn` is a `net.Conn`.
+
+**Unix stale-socket safety** — `transport/unix` must: (a) **reject** a path that exists but is not a socket; (b) when the path is an existing socket, **probe** it (dial) and refuse to bind if a live server answers (`address in use`); (c) **unlink and bind** only a confirmed-stale socket (dial fails); (d) **remove the owned socket on `Close()`**. AC-1 covers all four cases (active-socket, stale-socket, non-socket, close-cleanup).
+        </script></md>
+      </pd-ac>
+
+      <pd-thread anchor="AC-1" status="resolved" priority="p1" title="Unix stale-socket cleanup can delete a live listener">
+        <pd-comment by="review">Phase 1 says to “unlink stale socket first,” but it does not define how staleness is established. Unconditionally removing an existing path can unlink another live server's socket (the old listener keeps running but new clients can no longer reach it), and it can also delete a non-socket file. Specify safe behavior: reject non-socket paths, probe an existing socket before removal, remove only a confirmed stale socket, and remove the owned socket on <code>Close</code>. Add active-socket, stale-socket, non-socket, and close-cleanup cases to AC-1.</pd-comment>
+        <pd-comment by="author">Fixed. Phase 1 step 2 now specifies the exact algorithm: <code>Lstat</code> → reject non-socket; if socket, short <code>Dial</code> probe → <code>address in use</code> when a live server answers, else <code>Remove</code>+<code>Listen</code> (confirmed stale); <code>Close()</code> unlinks the owned socket. AC-1 gained all four cases (active / stale / non-socket / close-cleanup), and the File Changes note for <code>unix.go</code> reflects it.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-2" title="NDJSON JSON-RPC codec frames requests, responses, notifications" phases="2" tests="auto-shared/rpc/codec_test.go">
+        <md><script type="text/plain">
+**Given** the NDJSON codec over any `io.ReadWriteCloser`,
+**When** request, response, and notification frames are encoded and decoded,
+**Then** each frame is exactly one newline-terminated JSON object; `id` round-trips unchanged for both numeric and string ids (`json.RawMessage`); a notification carries no `id`; error codes match the standard set (`-32700/-32600/-32601/-32602/-32603`) mirrored from `auto-ui/internal/server/rpc.go`.
+
+**Response result/error presence** — because `Response.Result` is `json.RawMessage`: a response with `result:null` decodes with a **non-nil** `Result` (raw `null`) and is distinct from a frame with **no** result member (nil); the classifier accepts a response carrying **exactly one** of `result`/`error` and rejects one carrying **both or neither**. Tests cover null-result, error-result, both→reject, neither→reject.
+        </script></md>
+      </pd-ac>
+
+      <pd-thread anchor="AC-2" status="resolved" priority="p1" title="Response model loses the presence of result: null">
+        <pd-comment by="review">The proposed <code>Response{Result any, Error *Error}</code> plus a frame classifier based on presence of <code>Result</code>/<code>Error</code> cannot distinguish a valid <code>{"id":1,"result":null}</code> response from a frame with no result member: both unmarshal to a nil interface. JSON-RPC requires a response to contain exactly one of <code>result</code> or <code>error</code>, and <code>null</code> is a valid result. Define a presence-preserving union (for example raw fields plus explicit presence flags/custom unmarshal) and test null-result, error-result exclusivity, and neither/both-invalid cases.</pd-comment>
+        <pd-comment by="author">Fixed. <code>Response.Result</code> is now <code>json.RawMessage</code> (not <code>any</code>): a present <code>result:null</code> decodes to the non-nil raw bytes <code>null</code>, while an absent result stays nil — presence is preserved without custom unmarshal (<code>omitempty</code> keeps exactly one member on the wire). Added a <code>classify()</code> that requires a response to carry exactly one of result/error (both/neither → invalid). AC-2, the Phase 2 steps, the api-outline, and the Approach all updated; tests now cover null-result, error-result, both→reject, neither→reject.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-3" title="Peer dispatches requests and maps errors correctly" phases="3" tests="auto-shared/rpc/peer_test.go">
+        <md><script type="text/plain">
+**Given** a peer with registered handlers (`func(ctx, params json.RawMessage) (any, error)`),
+**When** it receives requests over `net.Pipe`,
+**Then** a known method returns its result; a handler-returned `*Error` passes through with its code/data (`errors.As`) — including a handler that returns `InvalidParams` so **-32602** has behavioral coverage; any other error becomes `-32603`; an unknown method returns `-32601`; malformed JSON returns `-32700`; a decoded-but-invalid request envelope (missing/non-`"2.0"` `jsonrpc`, or missing/non-string `method`) returns **-32600**; and a **notification** (no `id`) produces **no response** on the wire. Every advertised standard code has a behavioral test, not just a constant.
+        </script></md>
+      </pd-ac>
+
+      <pd-thread anchor="AC-3" status="resolved" priority="p2" title="Invalid Request is declared but never specified or tested">
+        <pd-comment by="review">The plan exports <code>InvalidRequest=-32600</code> and calls the codec JSON-RPC 2.0, but AC-3 and Phase 3 cover only parse error, method-not-found, handler errors, and notifications. There is no behavior for a decoded but invalid envelope such as missing/wrong <code>jsonrpc</code>, missing/non-string <code>method</code>, or a response containing both/neither <code>result</code> and <code>error</code>. Add envelope validation and <code>-32600</code> cases; also exercise <code>-32602</code> via a handler-returned <code>*Error</code> so every advertised standard code has behavioral coverage rather than constant-only coverage.</pd-comment>
+        <pd-comment by="author">Fixed. The <code>classify()</code> validator (Phase 2) rejects bad envelopes, and Phase 3's <code>Serve</code> maps an invalid request envelope (non-<code>"2.0"</code> <code>jsonrpc</code>, missing/non-string <code>method</code>) to <code>-32600</code>. AC-3 now requires a behavioral test for <em>every</em> standard code, including <code>-32600</code> (invalid envelope) and <code>-32602</code> (handler returning <code>InvalidParams</code> via <code>*Error</code>) — no constant-only coverage.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-4" title="Full-duplex server push is race-free and lossy-safe" phases="3" tests="auto-shared/rpc/peer_test.go">
+        <md><script type="text/plain">
+**Given** a connected peer,
+**When** the server pushes id-less notifications concurrently with the client issuing requests,
+**Then** under `go test -race` there are no data races (a single write-pump goroutine owns all writes, mirroring `auto-ui/internal/server/ws.go`), and when the per-connection outbound buffer fills the connection is dropped without ever blocking the producer (at-most-once / lossy per `auto-bus-spec.md` §5).
+
+**Terminal-shutdown unblocking** — every pending `Call` returns **promptly** (not on an unrelated caller deadline) on each terminal path: (a) `Serve` hits EOF/decode error, (b) `Serve`'s context is cancelled, (c) the write-pump drops the connection on overflow, (d) explicit `Close()`. After shutdown, `Call`/`Notify` return `ErrClosed`, a per-`Call` `ctx` cancellation removes only that waiter, and the pending-map is empty (no leak). Tests assert each path with a bounded timeout.
+        </script></md>
+      </pd-ac>
+
+      <pd-thread anchor="AC-4" status="resolved" priority="p1" title="Peer termination does not unblock pending calls">
+        <pd-comment by="review">AC-4 requires queue overflow to drop the connection, while <code>Call</code> waits on an id-keyed response channel. The API/plan never says how all pending waiters are failed when the write pump closes the connection, <code>Serve</code> exits on EOF/decode error, or its context is cancelled; without a terminal-state fan-out, calls can hang until unrelated caller deadlines and pending-map entries can leak. Define single-owner shutdown semantics, removal on per-call cancellation, post-shutdown <code>Call</code>/<code>Notify</code> errors, and tests proving every pending call returns promptly on each terminal path.</pd-comment>
+        <pd-comment by="author">Fixed. Added single-owner terminal shutdown: a <code>sync.Once</code>-guarded <code>Close()</code> (exposed on the Peer + a new <code>ErrClosed</code> sentinel) is triggered by <code>Serve</code> returning, write-pump overflow, or explicit call; it closes the conn, stops the pump, and fans <code>ErrClosed</code> to <em>every</em> pending waiter. Per-<code>Call</code> <code>ctx</code> cancellation removes only that waiter; post-shutdown <code>Call</code>/<code>Notify</code> return <code>ErrClosed</code>. AC-4 now asserts every pending Call returns within a bounded timeout on all four terminal paths (Serve EOF, ctx cancel, overflow-drop, explicit Close) with an empty pending-map. Reflected in the Approach, the Peer api-outline, and Phase 3.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-5" title="Notification frame is byte-compatible with bus.Event.AsNotification()" phases="2" tests="auto-shared/rpc/codec_test.go">
+        <md><script type="text/plain">
+**Given** a `bus.Event` (with `Host`) serialized via `bus.Event.AsNotification()` (`auto-shared/bus/event.go:101-118`),
+**When** that JSON is decoded by the rpc codec as a notification,
+**Then** `method` == the event type and `params` is the full envelope with no field loss — so Task 6 relays events over this channel with zero reshaping.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="One scenario runs identically over net.Pipe, unix, and tcp" phases="4" tests="auto-shared/rpc/conformance/conformance_test.go">
+        <md><script type="text/plain">
+**Given** the reusable `Scenario` + `Fixture`/`FixtureFactory` seam in `auto-shared/rpc/conformance`,
+**When** one scenario is replayed via `RunAcrossFixtures` against the in-process `FakeFixtures()` (a `FakeServer` over `net.Pipe`, `unix`, and `tcp`),
+**Then** all fixtures produce identical results, and assertions read real observables — the `Fixture`'s `Observations` (e.g. `DispatchCount`) and counting conn/listener reads/writes — never poll-to-settle. The `Scenario` interface takes only a `Fixture` (no hard-coded fake), so Task 3 plugs a real-autowatch fixture (and later a binary-subprocess fixture) into the **same** scenarios by implementing `Fixture`. The package is importable (non-`_test`) by downstream tasks.
+        </script></md>
+      </pd-ac>
+
+      <pd-thread anchor="AC-6" status="resolved" priority="p1" title="Scenario API cannot accept downstream real components">
+        <pd-comment by="review">The stated purpose is for Tasks 3 and 7 to plug real autowatch/auto-ui components into the same scenarios, but <code>Scenario.Run(..., srv *FakeServer)</code> hard-codes a fake and <code>RunAcrossTransports</code> constructs both peers internally. A Task 3 listener or future binary runner cannot substitute its server lifecycle/observables through this API. Separate scenario assertions from environment construction: introduce a runner/fixture interface that supplies the shared <code>RPCClient</code> plus transport-neutral observables/cleanup, and make fake, real in-process, and later binary runners implementations of that seam.</pd-comment>
+        <pd-comment by="author">Fixed by introducing the requested seam. <code>Scenario.Run(t, f Fixture)</code> now takes a <code>Fixture</code> — <code>{ Client() RPCClient; Obs() Observations; Close() error }</code> — with no fake in the signature. <code>FixtureFactory</code> builds environments; <code>RunAcrossFixtures(t, s, factories...)</code> replays a scenario against any set. This task ships <code>FakeFixtures()</code> (FakeServer over net.Pipe/unix/tcp); Task 3 plugs a real-autowatch fixture (and later a binary-subprocess fixture) into the same scenarios by implementing <code>Fixture</code>, no scenario rewrite. <code>Observations</code> is the transport-/impl-neutral observable surface. Updated Approach §3, the api-outline, AC-6, File Changes, and Phase 4.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-7" title="GR-N3 layering and GR-N1 zero-deps are enforced by tests" phases="4" tests="auto-shared/rpc/layering_test.go">
+        <md><script type="text/plain">
+**Given** the new packages,
+**When** the layering/dependency checks run,
+**Then** the gate enforces an explicit allowed graph **recursively over subtrees**: no package in the core `rpc` subtree (`auto-shared/rpc`, **excluding** `auto-shared/rpc/conformance`) imports any package in the `transport` subtree (`auto-shared/transport`, `.../unix`, `.../tcp`), and no `transport` package imports any `rpc` package — with `auto-shared/rpc/conformance` as the **single explicit exception** allowed to import both (GR-N3). The check uses `go list -json`/import parsing so a forbidden import added under `transport/unix` or `transport/tcp` is caught. And `auto-shared/go.mod` has no `require` block — no new deps (GR-N1). `go build ./...` and `go test -race ./...` pass in `auto-shared`.
+        </script></md>
+      </pd-ac>
+
+      <pd-thread anchor="AC-7" status="resolved" priority="p2" title="Layering gate scope conflicts with the intentional conformance import">
+        <pd-comment by="review">AC-7 says <code>auto-shared/rpc</code> does not import transport, while <code>auto-shared/rpc/conformance</code> intentionally imports both; Phase 4's suggested “parse the source dir” can also miss a forbidden import added under <code>transport/unix</code> or <code>transport/tcp</code>. Define the exact allowed graph and make the gate recursive: core <code>rpc</code> and the complete transport subtree must not cross-import, with <code>rpc/conformance</code> as the single explicit exception. Otherwise the test either fails by design or passes while violating the documented subtree constraint.</pd-comment>
+        <pd-comment by="author">Fixed. AC-7 and Phase 4 now define the exact allowed graph and a <strong>recursive subtree</strong> gate driven by <code>go list -json ./...</code>: no package in the <code>rpc</code> subtree <em>except</em> <code>rpc/conformance</code> may import any package in the <code>transport</code> subtree (incl. <code>transport/unix</code>, <code>transport/tcp</code>), and no <code>transport</code> package may import any <code>rpc</code> package; <code>rpc/conformance</code> is the single explicit exception allowed to import both. This catches a forbidden import added anywhere under the subtrees.</pd-comment>
+      </pd-thread>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Three new **library subpackages inside the existing `auto-shared` module** — no new binary, no `go.mod`, stdlib-only.
+
+**1. `auto-shared/transport`** — the wire seam. Defines `Listener` / `Dialer` / `Conn` interfaces (where `Conn` *is* a `net.Conn`), plus URI dispatchers `Listen(uri)` / `Dial(ctx, uri)` that switch on scheme (`unix://`, `tcp://`). Two implementations as subpackages: `transport/unix` (Unix domain socket) and `transport/tcp` (loopback/host TCP, including OS-assigned `:0`). Each wraps stdlib `net` and returns plain `net.Conn`. The implementations do **not** import the parent package (they satisfy the interface structurally), so there is no cycle; the parent's URI dispatcher imports the children.
+
+**2. `auto-shared/rpc`** — the protocol seam, transport-agnostic. `Request`/`Response`/`Error` types and the standard error-code constants mirror `auto-ui/internal/server/rpc.go` exactly (so Task 10 can later collapse the two). `Response.Result` is `json.RawMessage` so a present `result:null` is distinguishable from an absent result, and a frame classifier rejects envelopes that aren't a valid request/notification/response (→ `InvalidRequest`/`ParseError`). An NDJSON codec (`json.Encoder`/`json.Decoder` straight over an `io.ReadWriteCloser` — one JSON object per line) is the entire framing layer. A single **symmetric `Peer`** drives a connection: it can `Register` handlers, `Call` (request→awaited response), and `Notify` (id-less server→client push), with one `Serve` read-loop and one write-pump goroutine that owns all writes (mirrors `auto-ui/internal/server/ws.go`: bounded outbound buffer, drop-and-close on overflow, never block the producer — the at-most-once/lossy contract from `auto-bus-spec.md` §5). **Shutdown is single-owner and terminal:** when `Serve` returns (EOF/decode error/ctx cancel) or the write-pump drops the connection on overflow, the Peer enters a closed state once, fails every pending `Call` with `ErrClosed`, and makes subsequent `Call`/`Notify` return `ErrClosed`; a per-`Call` context cancellation removes only that waiter. `rpc` operates only on `net.Conn`/`io`; it never imports `transport`.
+
+**3. `auto-shared/rpc/conformance`** — the reusable harness (non-`_test` so Task 3/7 import it). Scenario *assertions* are separated from environment *construction*: a `Scenario` is written once against a `Fixture` (which supplies an `RPCClient` + transport-/implementation-neutral `Observations` + `Close`), and `RunAcrossFixtures` replays it against any set of `FixtureFactory`s. This task ships `FakeFixtures()` — a `FakeServer`-backed fixture over `net.Pipe`, `unix`, and `tcp`. Task 3 plugs a real-autowatch fixture (and later a binary-subprocess fixture) into the *same* scenarios by implementing `Fixture`, with no scenario rewrite. Fake adapters (`FakeServer`, counting `Conn`/`Listener`) expose observable counters so assertions check real outcomes, not poll-to-settle. This package is the only place `transport` and `rpc` meet — keeping the GR-N3 layering clean and testable.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="api-outline" title="API outline (end state)">
+
+        <pd-api kind="package" name="auto-shared/transport" lang="go" path="auto-shared/transport/transport.go">
+          <pd-member kind="interface" sig="type Conn = net.Conn">Type alias — every transport yields a standard duplex net.Conn.</pd-member>
+          <pd-member kind="interface" sig="type Listener interface { Accept() (net.Conn, error); Addr() net.Addr; Close() error }">Accept blocks until a Conn arrives or Close unblocks it.</pd-member>
+          <pd-member kind="interface" sig="type Dialer interface { Dial(ctx context.Context) (net.Conn, error) }"></pd-member>
+          <pd-member kind="func" sig="func Listen(uri string) (Listener, error)">Scheme dispatch: unix:// → unix.Listen, tcp:// → tcp.Listen.</pd-member>
+          <pd-member kind="func" sig="func Dial(ctx context.Context, uri string) (net.Conn, error)">Scheme dispatch to the matching implementation.</pd-member>
+        </pd-api>
+
+        <pd-api kind="package" name="auto-shared/rpc" lang="go" path="auto-shared/rpc/message.go">
+          <pd-member kind="struct" sig="type Request struct { JSONRPC string; ID json.RawMessage; Method string; Params json.RawMessage }">Notification when ID is absent.</pd-member>
+          <pd-member kind="struct" sig="type Response struct { JSONRPC string; ID json.RawMessage; Result json.RawMessage `json:&quot;result,omitempty&quot;`; Error *Error `json:&quot;error,omitempty&quot;` }">`Result` is `json.RawMessage` (not `any`) so a present `result:null` (non-nil raw bytes `null`) is distinguishable from an absent result (nil) — a response must carry exactly one of result/error.</pd-member>
+          <pd-member kind="struct" sig="type Error struct { Code int; Message string; Data any }">Implements error; carries JSON-RPC code/data.</pd-member>
+          <pd-member kind="const" sig="ParseError=-32700, InvalidRequest=-32600, MethodNotFound=-32601, InvalidParams=-32602, InternalError=-32603">Mirrors auto-ui/internal/server/rpc.go.</pd-member>
+          <pd-member kind="func" sig="func classify(raw json.RawMessage) (kind, error)">Frame classifier: request (id+method), notification (method, no id), response (id + exactly one of result/error). Rejects ambiguous/both/neither.</pd-member>
+          <pd-member kind="type" sig="type Handler func(ctx context.Context, params json.RawMessage) (any, error)">Return *Error to set a specific code; any other error → InternalError.</pd-member>
+        </pd-api>
+
+        <pd-api kind="struct" name="rpc.Peer" lang="go" path="auto-shared/rpc/peer.go">
+          <pd-member kind="constructor" sig="func NewPeer(conn io.ReadWriteCloser, opts ...Option) *Peer">opts: WithHandler, WithOnNotify, WithBufferSize.</pd-member>
+          <pd-member kind="method" sig="func (p *Peer) Register(method string, h Handler)">Registered before Serve; method table read-only during dispatch.</pd-member>
+          <pd-member kind="method" sig="func (p *Peer) Serve(ctx context.Context) error">Read-loop: decode frames, dispatch requests, route responses to Call waiters, deliver notifications to OnNotify. On return it triggers terminal shutdown (once).</pd-member>
+          <pd-member kind="method" sig="func (p *Peer) Call(ctx context.Context, method string, params any) (json.RawMessage, error)">Sends a request, awaits the id-matched response; returns on response, ctx cancel (waiter removed), or ErrClosed on terminal shutdown.</pd-member>
+          <pd-member kind="method" sig="func (p *Peer) Notify(method string, params any) error">Sends an id-less notification (push); drop-on-full, never blocks; ErrClosed after shutdown.</pd-member>
+          <pd-member kind="method" sig="func (p *Peer) Close() error">Idempotent terminal shutdown: closes the conn, stops the write-pump, fails all pending Calls with ErrClosed.</pd-member>
+          <pd-member kind="var" sig="var ErrClosed = errors.New(&quot;rpc: peer closed&quot;)">Returned to every pending/subsequent Call and Notify once the peer is closed.</pd-member>
+        </pd-api>
+
+        <pd-api kind="package" name="auto-shared/rpc/conformance" lang="go" path="auto-shared/rpc/conformance/conformance.go">
+          <pd-member kind="interface" sig="type RPCClient interface { Call(ctx context.Context, method string, params any) (json.RawMessage, error); Notify(method string, params any) error; Notifications() <-chan rpc.Request }">The minimal surface a Scenario drives. `*rpc.Peer` satisfies it directly (a thin notifications adapter exposes its OnNotify stream as a channel).</pd-member>
+          <pd-member kind="interface" sig="type Observations interface { DispatchCount(method string) int }">Transport- and implementation-neutral observables a Scenario may assert. Any runner (fake, real, binary) supplies its own.</pd-member>
+          <pd-member kind="interface" sig="type Fixture interface { Client() RPCClient; Obs() Observations; Close() error }">A connected RPC environment — decouples scenario assertions from how the environment is built/observed/torn down. This is the seam Task 3 (real autowatch) and the Task 3 binary runner implement.</pd-member>
+          <pd-member kind="type" sig="type FixtureFactory func(t testing.TB) Fixture">Builds one Fixture; named so failures report which environment.</pd-member>
+          <pd-member kind="interface" sig="type Scenario interface { Name() string; Run(t testing.TB, f Fixture) }">Written once; asserts only through Fixture (RPCClient + Observations). No fake hard-coded.</pd-member>
+          <pd-member kind="func" sig="func RunAcrossFixtures(t testing.TB, s Scenario, factories ...FixtureFactory)">Runs s against each factory; asserts identical results across all of them.</pd-member>
+          <pd-member kind="func" sig="func FakeFixtures() []FixtureFactory">The in-process tier: a FakeServer-backed fixture over each of net.Pipe, unix, and tcp. Task 3 appends a real-autowatch factory to the same call.</pd-member>
+          <pd-member kind="struct" sig="type FakeServer struct { ... }">Canned handlers + per-method dispatch counters; implements Observations.</pd-member>
+          <pd-member kind="struct" sig="type CountingConn / CountingListener">net.Conn / transport.Listener wrappers exposing read/write/accept counters.</pd-member>
+        </pd-api>
+
+      </pd-section>
+
+      <pd-thread anchor="api-outline" status="resolved" priority="p2" title="RPCClient.Call gives ctx the wrong type">
+        <pd-comment by="review">The outlined signature <code>Call(ctx, method string, params any)</code> declares both <code>ctx</code> and <code>method</code> as strings in Go, so it does not match <code>rpc.Peer.Call(ctx context.Context, method string, params any)</code> and cannot carry cancellation/deadlines. Change the interface signature to name <code>context.Context</code> explicitly and include the concrete Peer-to-RPCClient notification adapter in the file/API plan.</pd-comment>
+        <pd-comment by="author">Fixed. <code>RPCClient.Call</code> is now <code>Call(ctx context.Context, method string, params any)</code>, matching <code>rpc.Peer.Call</code>. The api-outline and Phase 4 (fakes.go) now call out the thin <code>*rpc.Peer</code>→<code>RPCClient</code> adapter that exposes the peer's notification stream as <code>Notifications() &lt;-chan rpc.Request</code>.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-shared/transport/transport.go" change="add">Listener/Dialer/Conn interfaces + Listen(uri)/Dial(ctx,uri) scheme dispatch.</pd-file>
+          <pd-file path="auto-shared/transport/unix/unix.go" change="add">Unix domain socket Listener + Dialer; safe stale-socket handling (reject non-socket, probe-before-unlink, unlink owned socket on Close).</pd-file>
+          <pd-file path="auto-shared/transport/tcp/tcp.go" change="add">TCP Listener + Dialer; supports 127.0.0.1:0 and Addr() port discovery.</pd-file>
+          <pd-file path="auto-shared/transport/transport_test.go" change="add">AC-1: roundtrip + Close-unblocks-Accept over unix and tcp (incl :0); unix active/stale/non-socket/close-cleanup cases.</pd-file>
+          <pd-file path="auto-shared/rpc/message.go" change="add">Request/Response/Error types (Result json.RawMessage), error-code constants, frame classifier with envelope validation (mirror auto-ui).</pd-file>
+          <pd-file path="auto-shared/rpc/codec.go" change="add">NDJSON encode/decode over io.ReadWriteCloser (json.Encoder/Decoder).</pd-file>
+          <pd-file path="auto-shared/rpc/peer.go" change="add">Symmetric Peer: Register/Call/Notify/Serve + Close; single write-pump (drop-on-full); terminal shutdown fans ErrClosed to all pending Calls.</pd-file>
+          <pd-file path="auto-shared/rpc/codec_test.go" change="add">AC-2 framing incl. result:null vs absent, result/error exclusivity + AC-5 byte-compat with bus.Event.AsNotification().</pd-file>
+          <pd-file path="auto-shared/rpc/peer_test.go" change="add">AC-3 dispatch/error-mapping (incl. -32600 envelope + -32602) + AC-4 duplex push & terminal-shutdown unblocking under -race.</pd-file>
+          <pd-file path="auto-shared/rpc/layering_test.go" change="add">AC-7: recursive import gate — core rpc subtree ↮ full transport subtree; rpc/conformance is the sole exception; deps unchanged.</pd-file>
+          <pd-file path="auto-shared/rpc/conformance/conformance.go" change="add">Fixture/FixtureFactory/Observations/RPCClient/Scenario seam + RunAcrossFixtures.</pd-file>
+          <pd-file path="auto-shared/rpc/conformance/fakes.go" change="add">FakeServer (impl Observations) + FakeFixtures() over net.Pipe/unix/tcp + CountingConn/CountingListener.</pd-file>
+          <pd-file path="auto-shared/rpc/conformance/conformance_test.go" change="add">AC-6: self-test the harness via RunAcrossFixtures(FakeFixtures()...) asserting on Observations.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-decision id="D-30-1" title="One symmetric Peer, not separate Client/Server" status="accepted" by="author"
+        summary="A single Peer type does Register + Call + Notify; both daemon ends are duplex, so one type is the minimal implementation.">
+        <md><script type="text/plain">
+**Context:** The connection is full-duplex — auto-ui issues `Call`s and receives pushed event notifications; autowatch dispatches handler calls and pushes notifications. We could ship a `Client` (Call + receive) and a `Server` (Register + push) as separate types, or one symmetric `Peer` that does all four.
+
+**Decision:** One symmetric `Peer`. Each end constructs a `Peer` over its `net.Conn`, registers whatever handlers it serves, and calls/notifies as needed. The read-loop and write-pump are identical on both ends.
+
+**Alternatives:**
+- Separate `Client`/`Server` — clearer role names, but duplicates the read-loop/write-pump/codec on both sides and forces an awkward split when an end needs both roles. More code, no real safety gain.
+
+**Consequences:** Slightly more general than strictly required today, but it's *less* code than two types and maps directly onto the duplex wire. Roles are expressed by which methods an end uses, not by the type.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-30-2" title="Conn is a net.Conn; transport meets rpc only in the harness" status="accepted" by="author"
+        summary="transport yields plain net.Conn; rpc consumes io.ReadWriteCloser. Neither imports the other; net.Pipe wires rpc with no transport at all.">
+        <md><script type="text/plain">
+**Context:** GR-N3 requires the protocol layer and the wire layer to be independent. We must also wire them together in the in-process harness via `net.Pipe()`.
+
+**Decision:** `transport.Conn` is a type alias for `net.Conn`. `transport.Listen/Dial` return `net.Conn`. `rpc.NewPeer` accepts an `io.ReadWriteCloser`. Because `net.Pipe()` returns `net.Conn` (which satisfies `io.ReadWriteCloser`), the in-process tier wires two `Peer`s with zero transport involvement. `rpc` never imports `transport`; `transport` never imports `rpc`; they are composed only in `rpc/conformance` and (later) in autowatch/auto-ui.
+
+**Alternatives:**
+- A bespoke `Conn` interface — adds a type the stdlib already provides and forces adapters around `net.Pipe`/`net.Conn` for no benefit.
+
+**Consequences:** Future transports (WebSocket, iroh) implement the `Listener`/`Dialer` interfaces and expose a `net.Conn` adapter; nothing in `rpc` changes. The layering is enforceable by `layering_test.go` (AC-7).
+        </script></md>
+      </pd-decision>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **A standalone `auto-rpc` binary/module** (cobra, `cmd/`, own `go.mod`) — over-built. There is no user-facing command here; it's a library consumed by autowatch and auto-ui. A subpackage of `auto-shared` keeps GR-N1 trivially true and matches `bus`/`config`/`git`.
+- **`Content-Length` / length-prefix framing** — rejected in Requirements. NDJSON streams natively with stdlib `json.Decoder`, is human-readable on the wire, and is enough for our scale.
+- **Reusing/relocating auto-ui's `rpc*.go` structs now** — rejected in Requirements; leave auto-ui untouched until the Task 10 cut-over. We mirror the shapes so the later merge is mechanical.
+- **Building the binary-tier harness here** — deferred to Task 3 (no RPC binary exists to launch yet); this task ships only the in-process tier.
+- **unix/tcp as files in one package** vs subpackages — chose subpackages (`transport/unix`, `transport/tcp`) to match the epic seam naming and keep each wire implementation self-contained; the parent does scheme dispatch.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions">
+        <pd-decisions></pd-decisions>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Four atomic phases: ship the wire layer (`transport` + unix/tcp) and the protocol layer (`rpc` codec) independently, then the duplex `Peer` on top of the codec, then the `conformance` harness that wires both layers and the layering/deps gate. Every phase commits code + tests together with `go build ./...` and `go test -race ./...` green in `auto-shared` (no new `go.mod`, stdlib-only).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution sequence">
+        <pd-mermaid caption="Phase DAG — P1 and P2 are independent and can run in parallel">
+flowchart LR
+    P1["P1\ntransport +\nunix/tcp"]
+    P2["P2\nrpc message +\nNDJSON codec"]
+    P3["P3\nrpc Peer\n(duplex)"]
+    P4["P4\nconformance\nharness + gates"]
+
+    P2 --> P3
+    P1 --> P4
+    P3 --> P4
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="Transport layer (unix + tcp)" status="todo"
+          files="auto-shared/transport/transport.go,auto-shared/transport/unix/unix.go,auto-shared/transport/tcp/tcp.go,auto-shared/transport/transport_test.go">
+          <md><script type="text/plain">
+1. `transport.go` — define `type Conn = net.Conn`, `Listener` (`Accept`/`Addr`/`Close`) and `Dialer` (`Dial(ctx)`) interfaces, and `Listen(uri)` / `Dial(ctx, uri)` that parse the scheme (`unix://`, `tcp://`) and delegate. Unknown scheme → clear error. **Verify:** `go build ./...` in `auto-shared`.
+2. `transport/unix/unix.go` — `Listen(path)` with **safe stale-socket handling**: if `path` exists, `os.Lstat` it → error if not a socket (`ModeSocket`); if it is a socket, attempt a short `net.Dial("unix", path)` → if it connects, return `address in use` (live server); if dial fails, treat as stale, `os.Remove` then `net.Listen("unix", path)`. The listener's `Close()` removes the socket it owns. `Dialer.Dial` = `net.Dial("unix", path)`. Concrete types; do **not** import the parent package. **Verify:** `go build ./...`.
+3. `transport/tcp/tcp.go` — `Listen(addr)` (`net.Listen("tcp", addr)`, support `127.0.0.1:0`, expose resolved `Addr()`) and `Dialer.Dial` (`net.Dialer{}.DialContext`). **Verify:** `go build ./...`.
+4. `transport_test.go` — table-driven over `{unix, tcp, tcp-:0}`: dial, write both directions, assert bytes intact; assert `Addr()` reports the resolved port for `:0`; assert `Listener.Close()` unblocks a pending `Accept()`. Unix-specific cases: (a) second `Listen` on a path with a live server → error; (b) stale socket (server closed without unlink) → reused; (c) non-socket file at path → error; (d) socket removed after `Close()`. Use `t.TempDir()` for the socket path (hermetic). **Verify (AC-1):** `go test -race ./transport/...`.
+5. **Commit:** `feat(030): transport abstraction + unix/tcp implementations`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="RPC message types + NDJSON codec" status="todo"
+          files="auto-shared/rpc/message.go,auto-shared/rpc/codec.go,auto-shared/rpc/codec_test.go">
+          <md><script type="text/plain">
+1. `message.go` — `Request{JSONRPC,ID json.RawMessage,Method,Params json.RawMessage}`; `Response{JSONRPC,ID,Result json.RawMessage \`json:"result,omitempty"\`,Error *Error \`json:"error,omitempty"\`}` (`Result` is `json.RawMessage` so a present `result:null` is non-nil and distinguishable from absent; `omitempty` on the nil `*Error`/nil raw keeps exactly one member on the wire); `Error{Code,Message,Data any}` with `func (e *Error) Error() string`; error-code constants (`ParseError=-32700` … `InternalError=-32603`) mirrored verbatim from `auto-ui/internal/server/rpc.go`. A `classify(raw)` that decides request / notification / response and **validates the envelope**: `jsonrpc` must be `"2.0"`, a request needs a string `method`, a response must carry exactly one of `result`/`error` (both or neither → invalid). **Verify:** `go build ./...`.
+2. `codec.go` — `Encoder`/`Decoder` wrapping `json.NewEncoder`/`json.NewDecoder` over an `io.Writer`/`io.Reader`: one JSON object per `Encode` (NDJSON), `Decode` reads one frame and runs it through `classify`. **Verify:** `go build ./...`.
+3. `codec_test.go` — encode/decode round-trip for request, response, and notification; assert numeric AND string `id` survive unchanged; assert a notification has no `id` and is exactly one newline-terminated line; assert `result:null` decodes non-nil vs absent-result nil, and that both-members / neither-member responses are rejected (AC-2). Decode `bus.Event.AsNotification()` JSON through the codec and assert `method==ev.Type` and `params` equals the full envelope incl. `Host` (AC-5). **Verify (AC-2, AC-5):** `go test -race ./rpc/`.
+4. **Commit:** `feat(030): NDJSON JSON-RPC codec + message types`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Symmetric duplex Peer" status="todo" depends-on="2"
+          files="auto-shared/rpc/peer.go,auto-shared/rpc/peer_test.go">
+          <md><script type="text/plain">
+1. `peer.go` — `Peer` over an `io.ReadWriteCloser`, constructed with `NewPeer(conn, opts...)` (`WithHandler`, `WithOnNotify`, `WithBufferSize`). `Register(method, Handler)`; `Serve(ctx)` runs the read-loop (decode → if request: validate envelope (`-32600` on bad), dispatch to handler, enqueue response; if response: deliver to the id-matched pending `Call`; if notification: hand to `OnNotify`); `Call(ctx, method, params)` registers a pending waiter keyed by a monotonically-increasing id and blocks on it (honouring `ctx` — on `ctx.Done` it removes its own waiter and returns); `Notify(method, params)` enqueues an id-less frame. One `writePump` goroutine owns every `Encode` via a bounded channel — on overflow, drop the frame and close the conn (mirror `auto-ui/internal/server/ws.go`; never block the producer). **Terminal shutdown** is single-owner via `sync.Once`-guarded `Close()`: triggered by `Serve` returning (EOF/decode error/ctx cancel), by write-pump overflow, or by an explicit `Close()`; it closes the conn, stops the write-pump, and fails **every** pending waiter with `ErrClosed`; afterwards `Call`/`Notify` return `ErrClosed`. Handler error mapping: `*Error` passes through (`errors.As`), any other error → `InternalError`, unknown method → `MethodNotFound`, malformed JSON → `ParseError`, invalid envelope → `InvalidRequest`; a notification never produces a response. **Verify:** `go build ./...`.
+2. `peer_test.go` — over `net.Pipe()`: AC-3 dispatch + every error-mapping case (known result, `*Error` passthrough incl. a handler returning `InvalidParams`→`-32602`, plain error→`-32603`, unknown→`-32601`, bad JSON→`-32700`, invalid envelope→`-32600`, notification→no response). AC-4: server `Notify`s concurrently with client `Call`s under `-race` (no races); a deliberately-stalled reader triggers drop-and-close without blocking the writer; and **every pending `Call` returns promptly** (bounded timeout) on each terminal path — Serve EOF, ctx cancel, overflow-drop, explicit `Close()` — with post-shutdown `Call`/`Notify`→`ErrClosed`, per-`Call` ctx-cancel removing only that waiter, and an empty pending-map (no leak). **Verify (AC-3, AC-4):** `go test -race ./rpc/`.
+3. **Commit:** `feat(030): duplex JSON-RPC peer (call + push)`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="Conformance harness + layering gate" status="todo" depends-on="1,3"
+          files="auto-shared/rpc/conformance/conformance.go,auto-shared/rpc/conformance/fakes.go,auto-shared/rpc/conformance/conformance_test.go,auto-shared/rpc/layering_test.go">
+          <md><script type="text/plain">
+1. `conformance/conformance.go` — the seam: `RPCClient` interface (`Call(ctx context.Context, ...)`, `Notify`, `Notifications() <-chan rpc.Request`); `Observations` interface (`DispatchCount(method) int`); `Fixture` interface (`Client() RPCClient`, `Obs() Observations`, `Close() error`); `FixtureFactory func(testing.TB) Fixture`; `Scenario` interface (`Name()`, `Run(t, f Fixture)` — **no fake hard-coded**); `RunAcrossFixtures(t, s, factories...)` runs `s` against each factory and asserts identical results. Imports both `transport` and `rpc` — the single allowed exception. **Verify:** `go build ./...`.
+2. `conformance/fakes.go` — `FakeServer` (canned handlers on a `Peer`, per-method dispatch counts; implements `Observations`); a thin `*rpc.Peer`→`RPCClient` adapter exposing its notification stream; `CountingConn` (wraps `net.Conn`, counts reads/writes); `CountingListener` (wraps `transport.Listener`, counts accepts); `FakeFixtures()` returning a `FixtureFactory` per transport `{net.Pipe, unix (t.TempDir socket), tcp 127.0.0.1:0}` — each stands up a FakeServer peer + client peer over a `CountingConn` and tears down on `Close`. **Verify:** `go build ./...`.
+3. `conformance/conformance_test.go` — a sample `Scenario` (a `Call` returning a canned result + an asserted server push) driven through `RunAcrossFixtures(t, s, FakeFixtures()...)`; assert identical results across fixtures and assert via `Obs()`/conn counters — never poll-to-settle (AC-6).
+4. `rpc/layering_test.go` — use `go list -json ./...` (run in `auto-shared`) to read each package's `Imports`, then assert the allowed graph **recursively**: no package in the `rpc` subtree except `rpc/conformance` imports any `transport` package, and no `transport` package imports any `rpc` package; `rpc/conformance` may import both. Assert `auto-shared/go.mod` has no `require` block (AC-7). **Verify (AC-6, AC-7):** `go test -race ./...` in `auto-shared`; confirm `git diff --quiet -- auto-shared/go.mod`.
+5. **Regression gate** — run the existing auto-ui suite unmodified: `cd auto-ui && go build ./... && go vet ./... && go test ./...` (per `auto-ui/CLAUDE.md`); confirm all green before committing.
+6. **Commit:** `feat(030): in-process conformance harness + layering gate`.
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success criteria">
+        <md><script type="text/plain">
+- **AC-1** passes after Phase 1; **AC-2 + AC-5** after Phase 2; **AC-3 + AC-4** after Phase 3; **AC-6 + AC-7** after Phase 4.
+- `go build ./...` and `go test -race ./...` green in `auto-shared`; `git diff --quiet -- auto-shared/go.mod` (no new deps).
+- **Executed in Phase 4 step 5:** `cd auto-ui && go build ./... && go vet ./... && go test ./...` all green — pre-existing auto-ui JSON-RPC tests pass unmodified (this task adds packages only).
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="success-criteria" status="resolved" priority="p2" title="auto-ui regression gate has no execution step">
+        <pd-comment by="review">The test strategy and success criteria require all existing auto-ui JSON-RPC tests to remain green, but no phase runs an auto-ui command; Phase 4 stops after <code>go test -race ./...</code> in <code>auto-shared</code>. Add the exact <code>cd auto-ui &amp;&amp; go test ./...</code> regression step (and any project-standard build/vet gate required by <code>auto-ui/CLAUDE.md</code>) before the final commit so this criterion is actually executed.</pd-comment>
+        <pd-comment by="author">Fixed. Phase 4 now has an explicit step 5 regression gate — <code>cd auto-ui &amp;&amp; go build ./... &amp;&amp; go vet ./... &amp;&amp; go test ./...</code> — run before the final commit, and the success criteria reference that executed step rather than asserting the outcome abstractly.</pd-comment>
+      </pd-thread>
 
     </pd-tab>
 
