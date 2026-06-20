@@ -26,6 +26,7 @@ let reconnects = 0; // number of reconnect cycles, surfaced via reconnectCount()
 
 const pending = new Map(); // id -> { resolve, reject }
 const notifyHandlers = new Map(); // method -> Set<handler>
+const anyHandlers = new Set(); // handlers that receive ALL notifications (liveness etc.)
 const statusHandlers = new Set();
 
 // --- Observability (AC-4 / AC-5 substrate) --------------------------------
@@ -136,6 +137,8 @@ function connect() {
       // Record on the SAME path that fans out to on() handlers, so the ring
       // captures notifications no view subscribes to.
       recordEvent(msg.method, msg.params);
+      // Fan out to anyHandlers (transport-level wildcard, e.g. liveness tracking).
+      for (const h of anyHandlers) h({ method: msg.method, params: msg.params });
       const hs = notifyHandlers.get(msg.method);
       if (hs) for (const h of hs) h(msg.params);
     }
@@ -184,6 +187,14 @@ export function on(method, handler) {
   if (!notifyHandlers.has(method)) notifyHandlers.set(method, new Set());
   notifyHandlers.get(method).add(handler);
   return () => notifyHandlers.get(method)?.delete(handler);
+}
+
+// onAny subscribes to ALL server-push notifications (any method). The handler
+// receives {method, params}. Returns an unsubscribe fn. Transport-level only —
+// the liveness subscription that consumes this lives in store.js.
+export function onAny(handler) {
+  anyHandlers.add(handler);
+  return () => anyHandlers.delete(handler);
 }
 
 // onStatus subscribes to connection-state changes and fires once with current.

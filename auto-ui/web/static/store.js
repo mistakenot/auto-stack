@@ -15,7 +15,7 @@
 // the views over. See docs/tasks/029-auto-ui-state-refactor/plan.html.
 import { useState, useEffect } from "preact/hooks";
 import { setHash, onRouteChange, parseHash } from "./router.js";
-import { call, on, onStatus, whenOpen, connInfo } from "./rpc.js";
+import { call, on, onAny, onStatus, whenOpen, connInfo } from "./rpc.js";
 import { parseDocChanged, matchesDoc } from "./docevents.js";
 
 // --- Normalised state (single source of truth) ----------------------------
@@ -42,6 +42,7 @@ function initialState() {
     },
     lastDocChanged: { path: "", seq: 0 }, // signal: drives tree flash/expand
     events: [], // [{t, method, params}] — recent doc.changed + ping, for /debug
+    liveness: { byKey: {}, now: 0 },
   };
 }
 
@@ -154,6 +155,24 @@ export function reducer(state, action) {
       };
     }
 
+    case "liveness/note": {
+      const { project, branch, t } = action;
+      const key = project + "\0" + branch;
+      return {
+        ...state,
+        liveness: { ...state.liveness, byKey: { ...state.liveness.byKey, [key]: t } },
+      };
+    }
+
+    case "liveness/tick": {
+      // Return SAME state ref when nothing is tracked → no re-render on idle dashboard
+      if (Object.keys(state.liveness.byKey).length === 0) return state;
+      return {
+        ...state,
+        liveness: { ...state.liveness, now: action.now },
+      };
+    }
+
     case "events/append": {
       const next = state.events.concat([action.event]);
       if (next.length > MAX_EVENTS) next.splice(0, next.length - MAX_EVENTS);
@@ -249,6 +268,28 @@ export function selectDocs(state, project, worktree) {
 
 export function selectOpenDoc(state) {
   return state.openDoc;
+}
+
+const ACTIVE_WINDOW_MS = 120_000;
+
+// selectLiveness returns { ageMs, active } for a (project, branch) pair, or null.
+// Null when branch is missing/shared (main/master). Debug override via ?liveWindowMs=N.
+export function selectLiveness(state, project, branch) {
+  if (!branch || branch === "main" || branch === "master") return null;
+  const key = project + "\0" + branch;
+  const lastSeen = state.liveness.byKey[key];
+  if (lastSeen === undefined) return null;
+  const ageMs = state.liveness.now - lastSeen;
+  const windowMs = _liveWindowOverride || ACTIVE_WINDOW_MS;
+  return { ageMs, active: ageMs <= windowMs };
+}
+
+let _liveWindowOverride = 0;
+// Allow conformance tests to override the active window via ?liveWindowMs=N (debug only)
+if (typeof window !== "undefined" && window.__autoui) {
+  const p = new URLSearchParams(location.search);
+  const ov = parseInt(p.get("liveWindowMs"), 10);
+  if (ov > 0) _liveWindowOverride = ov;
 }
 
 // selectDebugSnapshot replaces the deleted cross-route snapshot mirror for the
@@ -539,6 +580,9 @@ export function initStore() {
         // New doc under the active project: force a re-list so the new node
         // appears (cache invalidation by doc.changed — D-7).
         fetchDocs(active, { force: true });
+      } else if (c.path.endsWith(".html")) {
+        // Known .html plan changed: re-list to pick up pd-meta changes (e.g. planning→executing).
+        fetchDocs(active, { force: true });
       }
     }
 
@@ -557,6 +601,20 @@ export function initStore() {
       event: { t: Date.now(), method: "ping", params },
     });
   });
+
+  // Liveness: subscribe to all bus notifications and record (project, branch) receipt time.
+  // Subscription lives here in store.js — the 029 grep gate forbids it elsewhere.
+  onAny(({ method, params }) => {
+    if (params && params.branch && params.project) {
+      const b = params.branch;
+      if (b !== "main" && b !== "master") {
+        dispatch({ type: "liveness/note", project: params.project, branch: b, t: Date.now() });
+      }
+    }
+  });
+
+  // 1s tick drives the "Ns ago" / "Nm ago" display.
+  setInterval(() => dispatch({ type: "liveness/tick", now: Date.now() }), 1000);
 
   // Initial load: mirror the hash and kick off project.list + dependent fetches.
   fetchProjects();
