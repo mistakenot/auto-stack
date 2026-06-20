@@ -487,7 +487,7 @@ the only oracle for the client layer).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="Wire into walkDocs + server tests" files="auto-ui/internal/server/docs.go,auto-ui/internal/server/docs_test.go,auto-ui/internal/server/rpc_ingest_test.go" status="todo" depends-on="1">
+        <pd-phase n="2" title="Wire into walkDocs + server tests" files="auto-ui/internal/server/docs.go,auto-ui/internal/server/docs_test.go,auto-ui/internal/server/rpc_ingest_test.go" status="done" depends-on="1">
           <md><script type="text/plain">
 1. `docs.go`: add `Meta *PlanMeta \`json:"meta,omitempty"\`` to `docEntry`.
 2. In `walkDocs`, for `.html` entries: `os.Open` + `io.LimitReader(f, maxMetaPrefixBytes)` →
@@ -528,7 +528,7 @@ the only oracle for the client layer).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="Tree rendering" files="auto-ui/web/static/tree.js,auto-ui/web/static/app.css" status="todo" depends-on="3">
+        <pd-phase n="4" title="Tree rendering" files="auto-ui/web/static/tree.js,auto-ui/web/static/app.css" status="done" depends-on="3">
           <md><script type="text/plain">
 1. `tree.js` `groupDocs`: carry `meta` onto each leaf object (`{id, path, type, meta}`).
 2. Thread the active `project` down from `DocTree` to `Leaf`. In `Leaf`, between the icon and label
