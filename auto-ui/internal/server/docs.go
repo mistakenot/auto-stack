@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -15,9 +16,10 @@ import (
 
 // docEntry is a single doc file returned by doc.list.
 type docEntry struct {
-	ID   string `json:"id"`
-	Path string `json:"path"`
-	Type string `json:"type"`
+	ID   string    `json:"id"`
+	Path string    `json:"path"`
+	Type string    `json:"type"`
+	Meta *PlanMeta `json:"meta,omitempty"`
 }
 
 // docListHandler returns a JSON-RPC Handler for the "doc.list" method.
@@ -143,10 +145,21 @@ func walkDocs(root string) ([]docEntry, error) {
 		}
 		// Normalize to forward slashes for consistency.
 		rel = filepath.ToSlash(rel)
+
+		// Extract lifecycle metadata from HTML planning documents.
+		var meta *PlanMeta
+		if docType == "html" {
+			if f, err := os.Open(p); err == nil {
+				meta = ExtractPlanMeta(io.LimitReader(f, MaxMetaPrefixBytes))
+				_ = f.Close() // read-only; close error is not actionable
+			}
+		}
+
 		entries = append(entries, docEntry{
 			ID:   rel,
 			Path: rel,
 			Type: docType,
+			Meta: meta,
 		})
 		return nil
 	})

@@ -129,6 +129,12 @@ func TestRPCIngestBroadcastAndDerive(t *testing.T) {
 	if docData["path"] != "docs/tasks/test.md" {
 		t.Errorf("params.data.path = %v, want docs/tasks/test.md", docData["path"])
 	}
+
+	// 027 liveness wire-shape guard: raw broadcast events carry top-level params.branch
+	// (the liveness join key). This pin ensures the wire contract can't silently regress.
+	if params["branch"] != "main" {
+		t.Errorf("params.branch = %v, want main", params["branch"])
+	}
 }
 
 // TestRPCIngestNonDocNoDerived verifies that a valid agent.tool.post with a
