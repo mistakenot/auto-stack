@@ -45,6 +45,62 @@
   Also almost added an HTML comment inside an `htm` template literal to explain the key —
   pulled it out to a JS comment since htm comment handling is a runtime risk Go can't see.
 
+## Conformance testing — what I did
+
+This was a **behaviour-preserving refactor of a no-build SPA**, so the verification spine
+was *regression*, run in the browser, because the Go toolchain is structurally blind to
+this layer (013 lesson). The strategy had three layers and a handful of reusable tactics.
+
+### Strategy: three layers, regression-first
+1. **Existing 025/026 harnesses re-run UNEDITED** as the behaviour-preserving oracle. If a
+   harness needed editing to pass, the refactor had changed behaviour — a fail. Both ran on
+   the `embed` **and** `-tags dev` builds. (025 static explorer; 026 liveness + reveal +
+   `reveal-harness.sh`.)
+2. **A new `state-harness.sh`** that only asserts what the refactor *adds* (AC-3..AC-8) —
+   single store source, deleted mirror, single subscription, no new dep, warm cache,
+   cross-route survival.
+3. **`go test ./...`** as necessary-but-not-sufficient (backend untouched; `rpc_ingest_test.go`
+   still pins `params.data.path`).
+
+### Tactics built into `state-harness.sh`
+- **Assert machine-readable state, never rendered text.** Every assertion reads `data-*`
+  attributes (`data-doc-count`, `data-revision`, `data-doc-path`/`-type`, `data-conn-status`)
+  or `window.__autoui` counters via headless `agent-browser eval` — because a re-fetch can
+  leave the DOM textually identical while the underlying state changed.
+- **Separate "received" from "rendered" observables.** Used
+  `window.__autoui.counters.get('doc.changed')` (a `Map` — `.get()`, not bracket index) only
+  to *gate* the ~3s async-propagation poll; it fires once per event at the rpc dispatch layer,
+  so it cannot prove subscriber count. The actual outcome is always asserted on the DOM.
+- **Grep-as-evidence for structural invariants.** Single-subscription proof is
+  `grep -rl 'on("doc.changed"' web/static` matching only `store.js`; "presentational views"
+  proof is zero `call(`/data-fetching `useState` in explorer/tree/content; the only `call(`
+  sites live in the store. No runtime probe can show these, so the grep *is* the AC.
+- **Importmap-diff as the dependency gate.** AC-6 = `git diff --quiet -- index.html` — a
+  mechanical proof that no new esm.sh entry / vendored package crept in.
+- **A store-level `doc.list` call counter** (`window.__autoui.store.docListCalls`) as the
+  *only* valid observable for "warm cache, no redundant fetch" — explicitly **not**
+  `/api/debug/recent` (that's the server ingest buffer, not client WS calls) and not
+  `window.__autoui` (received notifications, not outbound calls).
+- **Delta, not absolute, with bounded polling.** `data-revision` isn't deterministic across
+  opens, so assertions record-before / compare-after, and poll up to ~3s after each
+  `auto ui emit` (events propagate async over WS).
+- **Dual-build, every assertion.** Run on `embed` (baked-in assets) and `-tags dev`
+  (disk-served) because asset-delivery mode is itself a defect surface Go can't see.
+- **Hermetic fixtures.** Lowercase-kebab project ids (025 registry rule), temp registry via
+  `auto ui serve --projects <fixture> --port 0 --ready-file`, two projects with *different*
+  doc counts (proj-a=4, proj-b=1) so a switch is observable; never touches `~/.auto`.
+
+### The key meta-lesson (and the harness gap it exposed)
+A harness can be **green without proving the thing it names**. AC-8 originally polled
+`data-doc-count` to *settle* but only `check`-asserted the store-driven call counter — which
+is identical whether or not the component re-renders. So it passed at 20/20 while the tree
+could render a stale project's docs (the P1 review bug). The fix was to add real assertions
+that the *rendered* `data-doc-count` equals the switched project's count (1 after A→B, 4
+after B→A). **A poll-to-settle is not an assertion.** After hardening, the harness is 22/22
+on both builds, and the new checks would now fail loudly if the stale-selector regression
+returned. This same harness is what caught the AC-4 path regression during Phase 3 — concrete
+evidence the browser oracle earns its keep over a green Go suite.
+
 ## Useful context
 
 - **025/026 conformance harnesses are the regression spine.** Re-running them *unedited*
