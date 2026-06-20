@@ -1,0 +1,937 @@
+profile:
+  recorded: 2026-06-18
+  project: |
+    auto-env (`auto env`) — a Go CLI that gives worktree-based coding agents
+    isolated development environments. It generates concrete config from a
+    Process Compose template, allocating a free port per discovered `${PORT_*}`
+    token so parallel worktrees never collide. It orchestrates existing tools
+    (Process Compose for the runtime, Docker for stateful services, git for
+    worktree detection) rather than reinventing them.
+  architecture: |
+    Go + Cobra. Internal packages:
+      - port      — allocates/derives a port per `${PORT_*}` token (currently
+                    deterministic by slot; does NOT bind-probe for liveness)
+      - template  — discovers `${PORT_*}` tokens, substitutes `${BRANCH}`,
+                    `${BRANCH_SLUG}`, `${NAME}`; unresolved var = hard error
+      - manifest  — newline-delimited list of the files an env generated
+      - registry  — JSON state per env: repo_root, branch, branch_slug, slot,
+                    ports map, files
+      - worktree  — git worktree detection (repo root, branch, slot)
+      - cli       — commands: up / down / status / init / agents / quickstart
+    State is file-based JSON (registry + manifest), NOT SQLite. Commands default
+    to JSON on stdout (strictly parseable payload; diagnostics to stderr). Repo
+    convention: every hard error carries a concrete remediation hint; list/read
+    commands return all valid items even when some are invalid; prefer minimal
+    runtime deps (reuse embedded pure-Go libs over new binaries/SDKs).
+  stack: [Go, Cobra, Process Compose, Docker, git]
+  goals: |
+    - Parallel worktree development without port conflicts.
+    - First-class support for autonomous coding agents (Claude Code, Codex,
+      opencode) — agent-agnostic by default, optional per-agent integrations.
+    - Orchestrate existing tools; stay thin.
+    Active backlog (from requirements.md): `doctor`, `ls`, `prune`,
+    `restart <svc>`, `reload` (re-render + apply without teardown), `logs`;
+    config-hash drift detection; stale-state recovery (Process Compose died but
+    state says running — detect via socket reachability); timeout/partial-failure
+    behavior on `up`; concurrent-`up` race safety; Claude Code Worktree/Session
+    hooks; `autoenv mcp` server exposing status/logs/restart; AGENTS.md
+    scaffolding; optional Caddy per-branch host mapping.
+  non_goals: |
+    - Multi-user / multi-machine / distributed operation.
+    - Replacing Process Compose or Docker Compose.
+    - Production deployment workflows.
+    - Hosted services, auth/account/org/team, public ingress (Cloudflare
+      tunnels), TLS/DNS provisioning, web dashboards.
+
+sources:
+  - repo: hack-dance/hack
+    url: https://github.com/hack-dance/hack
+    added: 2026-06-18
+    why: |
+      Hack is a mature local-first per-repo/worktree dev runtime (TypeScript/Bun):
+      `hack up/down/restart`, deterministic port/hostname allocation, env
+      overlays + secrets, lifecycle processes, stale-state doctor, tmux/zellij
+      sessions, an MCP server, and per-agent (Claude/Codex/Cursor) scaffolding.
+      It is the closest sibling to auto-env's roadmap — nearly every auto-env
+      backlog item maps onto something Hack already ships. We borrow PATTERNS
+      (their stack is TS, ours is Go), not code.
+    last_investigated_commit: 7da1cc258171c7e2cafe9f1902b593dec325e970
+    last_investigated_at: 2026-06-18T00:00:00Z
+    investigations:
+      - from_commit: null
+        to_commit: 7da1cc258171c7e2cafe9f1902b593dec325e970
+        investigated_at: 2026-06-18T00:00:00Z
+        ideas_added: 24
+
+ideas:
+  # newest first; this baseline batch is ordered by score descending.
+
+  - id: I001
+    title: "Bind-probe port liveness before allocating/launching"
+    source: hack-dance/hack
+    commits: []
+    files: [src/lib/project-lifecycle-singleton.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/lib/project-lifecycle-singleton.ts
+    discovered: 2026-06-18
+    status: shortlisted
+    change_type: additive
+    area: port
+    effort: S
+    impact: high
+    risk: low
+    confidence: high
+    dependencies: none (stdlib net)
+    score: 10
+    summary: |
+      Hack probes whether a TCP port is actually free by attempting to bind a
+      listener on 127.0.0.1 and catching EADDRINUSE (inspectTcpPortState →
+      free/occupied/error; inspectListeningTcpPorts maps a set to its occupied
+      subset). A real liveness check, not arithmetic.
+    application: |
+      auto-env's port.Allocate (internal/port/port.go) derives a port from the
+      slot but never verifies it is free — a deterministic slot can still collide
+      with an unrelated process. Add port.Probe(p) using
+      net.Listen("tcp","127.0.0.1:<p>") + immediate Close (treat
+      address-in-use as occupied), and call it in cli/up.go to fail fast (or hunt
+      the next free slot) with a clear remediation hint BEFORE rendering a config
+      that points at an occupied port. Directly serves the no-port-conflict goal.
+    evidence: |
+      TS: Bun.listen({hostname:'127.0.0.1',port}); listener.stop() => free; catch
+      EADDRINUSE => occupied. Go equivalent: ln,err := net.Listen("tcp",addr); if
+      err != nil { /* in use */ } else { ln.Close() }.
+
+  - id: I002
+    title: "Config-drift detection via input-file digests in state"
+    source: hack-dance/hack
+    commits: []
+    files: [docs/env.md, src/lib/project-env-config.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/lib/project-env-config.ts
+    discovered: 2026-06-18
+    status: shortlisted
+    change_type: additive
+    area: registry + manifest + cli (status)
+    effort: S
+    impact: medium
+    risk: low
+    confidence: medium
+    dependencies: none (crypto/sha256)
+    score: 7
+    summary: |
+      Hack records a digest of every input file alongside materialized output
+      (.env.state.json). A status/doctor check recomputes the digests and reports
+      exactly which inputs changed (or vanished) since materialization, each with
+      the recovery command to run.
+    application: |
+      This is auto-env's "config-hash drift detection" backlog item. Store a
+      sha256 of the source template(s) + resolved port/branch inputs in each
+      registry entry (internal/registry), then have `auto env status`
+      (cli/status.go) report "generated config is stale — N source files changed
+      since `auto env up`, run `auto env reload`" instead of trusting the on-disk
+      manifest blindly. Fits the existing manifest/registry model with no new
+      subsystem.
+    evidence: |
+      buildProjectEnvStateDigests over resolved.files; collectProjectEnv
+      MaterializationIssues diffs state.inputs vs current digests → "N env input
+      files changed since materialization" + "(run: hack env materialize)".
+
+  - id: I003
+    title: "Deterministic runtime-state truth table (pid x socket x state-file)"
+    source: hack-dance/hack
+    commits: []
+    files: [src/daemon/status.ts, src/daemon/process.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/daemon/status.ts
+    discovered: 2026-06-18
+    status: shortlisted
+    change_type: additive
+    area: registry (stale-state recovery) + cli (status/up)
+    effort: M
+    impact: high
+    risk: low
+    confidence: high
+    dependencies: none (syscall.Kill, net.DialTimeout)
+    score: 6
+    summary: |
+      buildDaemonStatusReport is a PURE function that crosses three independent
+      observations — recorded PID alive (process.kill(pid,0)), API/socket
+      reachable, state file present — into one of {running, starting,
+      incompatible, stale, stopped} plus a concrete nextStep. "stale" is split by
+      reason (pid_not_running vs socket_only). Observation (readDaemonStatus) is
+      kept separate from classification, so the truth table is trivially
+      table-testable with no I/O.
+    application: |
+      auto-env's registry can say a slot is "running" while Process Compose has
+      died. Add a pure StatusOf(observed) → {Running, Stale(reason), Dead}
+      classifier crossing (a) PID liveness via syscall.Kill(pid,0),
+      (b) Process Compose unix-socket reachability via net.DialTimeout, and
+      (c) registry-entry presence. This is the stated "stale-state recovery
+      via socket reachability" item. Surface in `auto env status`; have
+      `auto env up` auto-clean a stale entry before re-provisioning. Keep probe
+      and classifier in separate funcs (internal/registry/status.go) so the table
+      is unit-tested.
+    evidence: |
+      src/daemon/status.ts buildDaemonStatusReport → status + staleReason +
+      nextStep; src/daemon/process.ts isProcessRunning via process.kill(pid,0);
+      readDaemonStatus isolates the I/O probe from classification.
+
+  - id: I004
+    title: "`prune` reaper: probe each entry, attach a reason, confirm, remove + teardown"
+    source: hack-dance/hack
+    commits: []
+    files: [src/lib/project-runtime-hygiene.ts, src/commands/projects.ts, src/lib/projects-registry.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/lib/project-runtime-hygiene.ts
+    discovered: 2026-06-18
+    status: shortlisted
+    change_type: additive
+    area: registry + cli (new prune command)
+    effort: M
+    impact: high
+    risk: low
+    confidence: high
+    dependencies: registry; worktree git detection
+    score: 6
+    summary: |
+      `hack projects prune` separates detection from action: findMissingRegistry
+      Entries (rows whose project dir / compose file is gone) and findOrphan
+      RuntimeProjects (running containers whose working dir is gone), each
+      carrying a structured `reason`. handlePrune lists candidates with reasons,
+      asks ONE confirmation, then removeProjectsById (set-membership filter under
+      a lock, atomic write) plus stops the orphaned runtime, and reports counts.
+      Detection is cheap pathExists — no Docker calls needed to decide.
+    application: |
+      auto-env's `prune` backlog item, almost verbatim. The reap predicate
+      differs: orphaned when the worktree path is missing OR its git branch is
+      gone (`git show-ref --verify refs/heads/<branch>` fails). Mirror the shape
+      in cli/prune.go: scan registry entries, attach a reason per orphan, dry-run
+      report by default, require --yes (or confirm) to delete the JSON entry AND
+      tear down its Process Compose/Docker env AND release the port slot. Keep
+      registry rewrites atomic (temp file + rename). Two agents surfaced this
+      independently.
+    evidence: |
+      project-runtime-hygiene.ts findMissingRegistryEntries / findOrphanRuntime
+      Projects (reason strings + containerIds); commands/projects.ts handlePrune
+      (candidate table, one confirm, remove + stop + report); projects-registry.ts
+      removeProjectsById.
+
+  - id: I005
+    title: "MCP server as a thin shell-out wrapper over the existing CLI"
+    source: hack-dance/hack
+    commits: []
+    files: [src/mcp/server.ts, src/commands/mcp.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/mcp/server.ts
+    discovered: 2026-06-18
+    status: shortlisted
+    change_type: additive
+    area: cli (new mcp command) + new internal/mcp
+    effort: M
+    impact: high
+    risk: low
+    confidence: high
+    dependencies: a Go MCP SDK (one new runtime dep — weigh vs minimal-deps rule)
+    score: 6
+    summary: |
+      Hack's MCP server reimplements no logic: each tool shells out to the same
+      `hack` CLI with `--json`, parses stdout, and returns a uniform
+      {ok, command, exitCode, stdout, stderr, data} payload. resolveHack
+      Invocation finds the binary; one buildToolResult/buildToolError wraps every
+      result identically.
+    application: |
+      auto-env's backlog wants `autoenv mcp` exposing status/logs/restart.
+      Implement it the same way: `auto env mcp serve` spawns `auto env status`
+      / up / down / restart as subprocesses and wraps their JSON. Since auto-env
+      already emits JSON on stdout with diagnostics on stderr, the wrapper is
+      trivial and no business logic leaks into the MCP layer — the CLI stays the
+      single source of truth. NOTE the dep tension: an MCP SDK is a new runtime
+      dependency; check whether a minimal pure-Go stdio JSON-RPC loop suffices
+      before pulling one in.
+    evidence: |
+      src/mcp/server.ts registerTool('hack.project.status', …) → runHackCommand
+      ({args:['ps','--json']}); buildToolResult sets ok=exitCode===0 and packs
+      stdout/stderr/data uniformly; commands/mcp.ts wires mcp serve|install|print.
+
+  - id: I006
+    title: "Uniform doctor check framework: typed result + timed runner + tri-state severity"
+    source: hack-dance/hack
+    commits: []
+    files: [src/commands/doctor.ts, src/commands/doctor-utils.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/commands/doctor.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: cli (new doctor command) + new internal/doctor
+    effort: M
+    impact: high
+    risk: low
+    confidence: high
+    dependencies: none
+    score: 6
+    summary: |
+      Every diagnostic is a uniform record (name, status ok|warn|error, message,
+      and a copy-pasteable remediation hint embedded in the message). A single
+      runCheck wrapper records duration and races each check against a per-check
+      timeout, downgrading a hang to a warn rather than blocking the command;
+      thrown errors are caught → status=error. The command aggregates results and
+      exits non-zero if any error. Checks are data, not control flow.
+    application: |
+      Build a Go `Check struct { Name; Status; Message; Remediation; DurationMs }`
+      and a runCheck(ctx,name,fn,timeout) using context.WithTimeout + a goroutine
+      (auto-env shells out to docker/process-compose, which can hang). Each
+      concern becomes a check fn: docker present + daemon reachable,
+      process-compose present, registry JSON parseable, port-allocation
+      consistent, template renderable, worktree git state. Emit []Check as the
+      JSON payload to stdout; exit non-zero on any error. This is the backbone the
+      backlog `doctor` command needs and satisfies the auto-stack-wide "every tool
+      has a doctor reporting problems as JSON" convention. Give each Check a
+      structured Remediation field (cleaner than embedding in the message for JSON
+      consumers) — auto-env's CLAUDE.md already mandates a remediation hint per
+      hard error.
+    evidence: |
+      doctor.ts CheckResult/TimedCheckResult interfaces; runCheck wrapper with
+      Promise.race timeout + catch→error; per-check remediation strings e.g.
+      "Missing (run: hack global install)", "Not found (run: hack doctor --fix)";
+      final hasError → exit 1.
+
+  - id: I007
+    title: "Singleton fixed-port policy: start | adopt-healthy | fail-on-partial"
+    source: hack-dance/hack
+    commits: []
+    files: [src/lib/project-lifecycle-singleton.ts, docs/lifecycle.md]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/lib/project-lifecycle-singleton.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: port + registry + cli (up/down)
+    effort: M
+    impact: high
+    risk: medium
+    confidence: high
+    dependencies: bind-probe helper (see I001)
+    score: 6
+    summary: |
+      resolveLifecycleSingletonDecision is a pure function over (expected ports,
+      occupied ports, onConflict) → start | adopt | fail. All expected ports free
+      → start; ALL already listening + opt-in → adopt (skip launch, and DON'T
+      tear it down on `down`); only SOME occupied → fail-fast (never create a
+      partial competing stack). Occupancy is a real bind probe, not lsof parsing.
+    application: |
+      auto-env's per-worktree ports are dynamic, but some env dependencies are
+      genuinely shared singletons (one Docker Postgres/Redis, a shared tunnel)
+      that should not get a per-slot port. Add an optional fixed-port declaration
+      in the template/config and an adopt/fail decision in cli/up.go: full set
+      already healthy + opt-in → adopt (mark the registry entry not-owned so
+      `down` never kills it); partial occupancy → fail fast with the offending
+      ports. Also doubles as idempotency/recovery for a slot's own block. Lands as
+      internal/port/singleton.go (pure, table-tested). risk: medium — adopting a
+      process you didn't start needs careful ownership tracking.
+    evidence: |
+      resolveLifecycleSingletonDecision: occupied=0 → start; missing>0 → fail
+      (partial); onConflict='adopt' & all occupied → adopt ("leave running on
+      down"); else fail. docs/lifecycle.md "Why singleton exists". Two agents
+      flagged this independently.
+
+  - id: I008
+    title: "Per-agent config from one source: marker-fenced, idempotent, removable"
+    source: hack-dance/hack
+    commits: []
+    files: [src/mcp/agent-docs.ts, src/mcp/install.ts, src/agents/codex-skill.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/mcp/agent-docs.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: structural-rebuild
+    area: cli (agents) + new internal/agentcfg
+    effort: M
+    impact: high
+    risk: low
+    confidence: high
+    dependencies: replaces existing agents.go logic
+    score: 6
+    summary: |
+      All per-agent setup is driven from one renderer plus per-target path
+      resolvers. agent-docs.ts upserts a snippet into AGENTS.md/CLAUDE.md fenced
+      by `<!-- hack:agent-docs:start/end -->` markers (regex replace-in-place,
+      never duplicate-append); install.ts writes MCP entries into
+      .claude/settings.json, .cursor/mcp.json (JSON merge) and .codex/config.toml
+      (TOML block) from one buildEntry; codex-skill.ts writes a SKILL.md. Every
+      op returns {target, status: created|updated|noop|removed|error, path} and
+      has matching check/remove functions.
+    application: |
+      auto-env's current cli/agents.go does a raw substring-append into
+      CLAUDE/AGENTS/GEMINI with no markers — re-running after the snippet text
+      changes leaves a stale copy forever, and there's no remove path. Rebuild it
+      the Hack way: fence the auto-env block with `<!-- autoenv:start/end -->`,
+      replace-in-place on re-run, add check/remove, and return a structured
+      per-target status. Then extend the same one-source pattern to emit MCP/hook
+      config blocks per target. Serves the AGENTS.md-scaffolding backlog and fixes
+      a real idempotency bug.
+    evidence: |
+      agent-docs.ts DOC_MARKER_START/END + upsertSnippet regex replace;
+      resolveUpsertStatus → created|updated|noop. install.ts resolveConfigPath
+      switch(target); installCodexConfig guarded by hasCodexServerBlock. Contrast:
+      auto-env cli/agents.go ~line 67 strings.Contains append-only, no
+      markers/remove.
+
+  - id: I009
+    title: "Claude Code hooks installer that JSON-merges into settings.json"
+    source: hack-dance/hack
+    commits: []
+    files: [src/agents/claude.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/agents/claude.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: cli (agents/init) + new internal/agentcfg
+    effort: M
+    impact: high
+    risk: low
+    confidence: high
+    dependencies: a status/prime command whose stdout is the injected context
+    score: 6
+    summary: |
+      claude.ts installs SessionStart/PreCompact hooks into .claude/settings.json
+      by surgical merge: read JSON, walk hooks[event] arrays, push
+      {type:command, command:'hack agent prime'} only when that exact command is
+      absent (upsert/has/remove all idempotent). User scope → ~/.claude/
+      settings.json; project scope → .claude/settings.local.json.
+    application: |
+      auto-env's backlog names a SessionStart hook for context injection (port
+      map, URLs) and Worktree hooks shipped with init. Register a hook whose
+      command is `auto env status` (already emits the JSON port map) so a fresh
+      Claude session is primed with the worktree's ports/URLs. The reusable core
+      is the careful array-merge that never duplicates and is fully removable —
+      essential because auto-env must coexist with the user's other hooks in the
+      same settings.json. Pairs with I008.
+    evidence: |
+      claude.ts HOOK_EVENTS=['SessionStart','PreCompact']; upsertHooks loops
+      events with eventHasCommand guard; createHook → {matcher:'',hooks:[{type:
+      'command',command}]}; project scope writes settings.local.json.
+
+  - id: I010
+    title: "Aggregated read-model for `ls`: registry ⨝ runtime ⨝ branches → derived status"
+    source: hack-dance/hack
+    commits: []
+    files: [src/lib/project-views.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/lib/project-views.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: cli (new ls command) + registry
+    effort: M
+    impact: high
+    risk: low
+    confidence: medium
+    dependencies: registry; runtime/process-compose state lookup
+    score: 6
+    summary: |
+      buildProjectViews joins three independent signals per project — registry
+      entry, live runtime (running counts), discovered branch instances — into one
+      stable read model. Branch instances are detected purely by naming convention
+      (`<base>--<branch>` sliced back into {branch, runtime}). Status is a pure
+      function of (dir exists?, runtime reachable?, running>0) →
+      running|stopped|missing|unknown. Serialization is snake_cased for JSON.
+    application: |
+      auto-env's `ls` backlog item: list known envs with live state. Borrow the
+      "join registry + runtime + derive status as a pure function" shape and the
+      status enum as the JSON contract (cli/ls.go). The runtime-probe half needs
+      reimplementation against Process Compose (socket reachability, reuse the
+      I003 classifier) rather than docker-compose. confidence medium: our runtime
+      differs from theirs.
+    evidence: |
+      project-views.ts buildProjectViews; collectBranchRuntime (`<base>--` prefix
+      slice); resolveProjectStatus (running|stopped|missing|unknown);
+      serializeProjectView snake_case JSON.
+
+  - id: I011
+    title: "Lock-guarded atomic JSON registry with stale-lock steal + parse-tolerant reads"
+    source: hack-dance/hack
+    commits: []
+    files: [src/lib/projects-registry.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/lib/projects-registry.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: registry
+    effort: M
+    impact: medium
+    risk: low
+    confidence: high
+    dependencies: none (os/syscall)
+    score: 4
+    summary: |
+      Every mutation runs under withRegistryLock: acquire an exclusive lockfile
+      via O_CREAT|O_EXCL, retry with backoff on EEXIST, treat a lock older than
+      30s (mtime) as stale and steal it, time out after 2s. Writes go to
+      <path>.tmp then rename() (atomic). Reads are crash-tolerant: any JSON parse
+      failure or schema-version mismatch yields an empty registry rather than an
+      error, and per-entry parse failures are skipped individually (rest survive).
+    application: |
+      auto-env's registry is file-based JSON mutated by concurrent `up`/`down`
+      across parallel worktrees and autonomous agents — exactly the race this
+      guards. An O_EXCL lockfile + stale-mtime steal + temp-file+rename gives
+      safe concurrent writes with zero new deps (pure os/syscall) in
+      internal/registry. The parse-tolerant read (drop bad rows, keep good ones,
+      version-gate) matches the repo rule "return available valid results even
+      when some items are invalid". Serves the concurrent-`up` safety backlog.
+    evidence: |
+      projects-registry.ts withRegistryLock/acquireRegistryLock/isLockStale,
+      writeRegistryAtomic (temp+rename), readProjectsRegistry/parseRegistry
+      tolerant fallback.
+
+  - id: I012
+    title: "Transactional lifecycle starter with abort() rollback on partial up-failure"
+    source: hack-dance/hack
+    commits: []
+    files: [src/commands/project.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/commands/project.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: cli (up) + registry
+    effort: M
+    impact: medium
+    risk: low
+    confidence: high
+    dependencies: up flow + registry write
+    score: 4
+    summary: |
+      createLifecycleProcessStarter wraps startup as a transaction: startMany()
+      starts processes in order; finalize() persists state ONLY if something
+      started; abort() (in catch) kills the partial session AND removes the state
+      entry. The up flow also removes the runtime-state entry when compose up
+      returns non-zero. Net: the state file never claims "running" after a
+      failed/partial up.
+    application: |
+      auto-env's backlog calls out "timeout behavior on up (leave partial state,
+      report failures)" + concurrent-up safety. Mirror try/finalize/abort in
+      cli/up.go: write the registry entry only after Process Compose/Docker
+      confirm healthy; on failure/timeout run a compensating teardown (free the
+      slot, stop what started) and either remove the entry or mark it "partial"
+      so I003's classifier treats it as stale, not running. The borrowable rule is
+      "never leave a bare running claim after a failed up", not the exact
+      kill-everything choice.
+    evidence: |
+      project.ts createLifecycleProcessStarter finalize()/abort() (abort kills
+      session + removeLifecycleStateEntry); startLifecycleProcesses catch →
+      starter.abort(); runRestartUpPhase removes runtime-state entry on non-zero
+      up code.
+
+  - id: I013
+    title: "Declarative prerequisite matrix: command → required checks → policy (block/guide/warn)"
+    source: hack-dance/hack
+    commits: []
+    files: [src/cli/prerequisites.ts, docs/guides/prerequisite-detection-matrix.md]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/cli/prerequisites.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: cli (preflight) + internal/doctor
+    effort: M
+    impact: medium
+    risk: low
+    confidence: medium
+    dependencies: shares check definitions with the doctor framework (I006)
+    score: 4
+    summary: |
+      Check definitions (stable id, detection method, guidance) are separated from
+      contracts that map each command to the checks it needs plus a per-check
+      policy: block (hard fail), guide (redirect to setup), or warn (proceed
+      degraded). e.g. up/down/restart require docker_cli+docker_daemon as "guide";
+      status/projects only "warn" so inventory still works offline.
+    application: |
+      auto-env's `up` genuinely needs process-compose + docker before it can
+      stand anything up; `status`/`down` should degrade gracefully (still read the
+      registry JSON when docker is down — matches "list/read commands return all
+      items"). Model a []PrerequisiteRule{Command, CheckID, Policy} table and a
+      small preflight runner each Cobra command calls. block/guide/warn maps onto
+      auto-env's fail-fast-on-misuse vs return-available-results conventions. Best
+      done after I006 so detectors are shared. Drop Hack's mux/DNS check ids.
+    evidence: |
+      cli/prerequisites.ts PREREQUISITE_CHECKS + COMMAND_PREREQUISITE_CONTRACTS
+      with onMissing policy; inventory diagnostics use onMissing:'warn' so status
+      works when Docker is unavailable.
+
+  - id: I014
+    title: "doctor --fix: plan-then-apply safe remediation with idempotent ensure-steps"
+    source: hack-dance/hack
+    commits: []
+    files: [src/commands/doctor.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/commands/doctor.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: internal/doctor (fix) + cli (doctor)
+    effort: M
+    impact: medium
+    risk: medium
+    confidence: medium
+    dependencies: requires the doctor framework (I006)
+    score: 4
+    summary: |
+      `--fix` prints a numbered remediation plan first, then runs idempotent
+      ensure*/maybe* functions — each checks current state, acts only on drift,
+      and emits a note describing exactly what it did. Only safe, reversible,
+      deterministic repairs auto-apply; risky ones stay manual. It re-runs
+      detection afterward and tells the user to re-run doctor.
+    application: |
+      auto-env's safe auto-fixes are narrow but real: recreate a missing/stale
+      registry entry, re-render a drifted config from template, prune entries for
+      gone worktrees, recreate a missing project dir. Implement each as idempotent
+      ensureX() → FixAction{Name, Changed, Detail}; collect into a JSON action log
+      on stdout (skip Hack's interactive confirm prompts, or gate them behind an
+      explicit text mode — honor auto-env's JSON-stdout discipline). Keep
+      destructive ops out of --fix. risk medium: auto-mutation needs care.
+    evidence: |
+      doctor.ts runDoctorFix: buildDoctorRemediationPlanLines (plan first);
+      idempotent ensureIngressNetwork/ensureLoggingNetwork; writeWithPrompt
+      IfDifferent no-ops when identical; "Re-run: hack doctor" after fix.
+
+  - id: I015
+    title: "crash-capture: bundle runtime diagnostics into a timestamped dir for triage"
+    source: hack-dance/hack
+    commits: []
+    files: [src/commands/crash-capture.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/commands/crash-capture.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: internal/doctor (capture) + cli
+    effort: M
+    impact: medium
+    risk: low
+    confidence: medium
+    dependencies: doctor checks + a shell-exec helper
+    score: 4
+    summary: |
+      On a runtime failure Hack snapshots a fixed set of best-effort commands
+      (docker version/info/ps -a/system df, network inspect, hack status/logs/
+      doctor) into .tmp/crash-capture-<ts>/: one .log per command (with exit code,
+      size-bounded), plus metadata.json, commands.json, summary.json and a
+      README.txt listing failed commands + an ordered recovery flow. Every command
+      is optional so capture never aborts.
+    application: |
+      auto-env orchestrates docker + process-compose + git and targets autonomous
+      agents who can't watch a terminal. When `auto env up` fails, an
+      `auto env capture` (or auto-trigger on failure) that dumps `docker ps -a`,
+      `process-compose process list`, the registry JSON, allocated ports, the
+      rendered config, and recent process-compose logs into a bounded directory
+      gives an agent one self-contained artifact to reason over. Borrow the
+      structure: per-command file + exit code, size bound, machine-readable
+      summary.json, ordered README. Serves the support-autonomous-agents goal.
+      Drop the macOS `log show`/OrbStack bits.
+    evidence: |
+      crash-capture.ts createCaptureRoot (timestamped dir); buildBaseCapture
+      Commands (fixed best-effort set, all optional); serializeCommandOutput
+      (exit_code + boundTextSize cap); writeJsonFile metadata/commands/summary +
+      renderCrashCaptureReadme.
+
+  - id: I016
+    title: "Recovery-guidance taxonomy: transient vs config-repair vs manual + verify step"
+    source: hack-dance/hack
+    commits: []
+    files: [src/commands/recovery-guidance.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/commands/recovery-guidance.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: cli (doctor/status)
+    effort: S
+    impact: low
+    risk: low
+    confidence: medium
+    dependencies: rides on doctor/status check results
+    score: 3
+    summary: |
+      buildDoctorRecoveryGuidance buckets each actionable failure into temporary
+      Breakage (a re-run fixes it), configurationRepair (needs a fix command), or
+      manual followUp, then always appends verify + capture steps. Gives a
+      deterministic "is this a restart problem or a repair problem" decision tree
+      instead of a flat error list.
+    application: |
+      Layer this over auto-env's doctor/status output (cli/doctor.go): label each
+      failed check transient (re-run `auto env up`/`restart`), config-repair
+      (`auto env reload`), or manual, and tail with a verify step
+      (`auto env status`). Pure mapping function, table-testable. Low impact:
+      agent-ergonomics polish, not a stated goal; only worth it once I006 lands.
+    evidence: |
+      recovery-guidance.ts buildDoctorRecoveryGuidance (temporaryBreakage/
+      configurationRepair/followUp + verify/capture); buildRecoveryWorkflowLines
+      (numbered classify→fix→verify→capture).
+
+  - id: I017
+    title: "Worktree-shared secret key chain (checkout key → shared key under git common dir → env)"
+    source: hack-dance/hack
+    commits: []
+    files: [src/lib/project-env-config.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/lib/project-env-config.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: new internal/secrets (keyed off worktree)
+    effort: M
+    impact: medium
+    risk: low
+    confidence: medium
+    dependencies: none (crypto/aes GCM in stdlib)
+    score: 3
+    summary: |
+      Secret values stored as v1:iv:tag:ct (AES-256-GCM, key=sha256(keytext)).
+      The key is resolved local-first: checkout-local .hack.secret.key → shared
+      key under the git common dir (so all linked worktrees decrypt the same
+      committed secrets without copying gitignored files) → primary-worktree
+      inherited key → HACK_ENV_SECRET_KEY. The key is only required when a secret
+      entry actually exists. chmod 0600 + auto-gitignore.
+    application: |
+      Only relevant if auto-env env overlays ever hold secrets. The
+      shared-key-under-git-common-dir trick is the right worktree pattern: sibling
+      worktrees share one key located via `git rev-parse --git-common-dir` rather
+      than each copying an untracked file — serves parallel-worktree isolation
+      with no per-worktree secret setup. Would land as internal/secrets using
+      crypto/aes GCM, with worktree.CommonDir() feeding the lookup. Off the current
+      backlog (no secrets feature yet), hence low score.
+    evidence: |
+      resolveProjectEnvSharedKeyPath (commonDir != worktreeDir → commonDir/
+      .hack.secret.key); resolveProjectEnvKey order local→shared→inherited→env;
+      required computed from hasSecretEntries; crypto aes-256-gcm,
+      key=sha256(keytext), "v1:base64(iv):base64(tag):base64(ct)".
+
+  - id: I018
+    title: "Git-common-dir worktree identity (stable repo-family ID)"
+    source: hack-dance/hack
+    commits: []
+    files: [src/lib/git-worktree.ts, src/lib/projects-registry.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/lib/git-worktree.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: worktree + registry
+    effort: S
+    impact: low
+    risk: low
+    confidence: high
+    dependencies: none
+    score: 3
+    summary: |
+      Hack distinguishes `git rev-parse --git-dir` (per-worktree) from
+      `--git-common-dir` (shared across all linked worktrees of one repo), uses
+      --path-format=absolute, realpaths the result, and derives the primary
+      checkout root by stripping a trailing /.git. The common dir is the canonical
+      "is this the same repo?" key when reconciling registry entries
+      (isSameRepositoryFamily).
+    application: |
+      auto-env keys the registry on repo_root + branch. Adding a git_common_dir
+      field (resolved once via `git -C <root> rev-parse --path-format=absolute
+      --git-common-dir`, then realpath'd) gives a stable id that survives a
+      worktree being moved/renamed, and lets `ls`/`prune` group all worktrees of
+      one repo. Cheap. Low impact: today's repo_root+branch key already works; this
+      is robustness insurance that becomes useful once ls/prune land.
+    evidence: |
+      git-worktree.ts resolveGitWorktreeDir/resolveGitRepositoryIdentity/
+      resolveGitPrimaryWorktreeRoot; projects-registry.ts isSameRepositoryFamily
+      (name collision = "same project, moved" only if common-dirs match).
+
+  - id: I019
+    title: "Deterministic branch-slug normalization + idempotent hostname rewrite"
+    source: hack-dance/hack
+    commits: []
+    files: [src/lib/project.ts, src/commands/branch.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/lib/project.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: registry (branch_slug) + template
+    effort: S
+    impact: low
+    risk: low
+    confidence: high
+    dependencies: none
+    score: 3
+    summary: |
+      sanitizeBranchSlug/sanitizeProjectSlug: lowercase, trim, replace _/space//
+      with -, strip everything outside [a-z0-9-], collapse repeated -, trim
+      leading/trailing -, fall back to a literal default if empty. The hostname
+      rewrite is idempotent: it injects the branch segment only if absent
+      (prefix === branch || prefix.endsWith('.'+branch)), so re-running is a
+      no-op.
+    application: |
+      auto-env already has branch_slug in the registry; adopt this exact
+      normalization so the slug is deterministic and DNS/hostname-safe, and reuse
+      the inject-only-if-absent guard for the (backlog) Caddy per-branch host
+      mapping so repeated `up` calls don't double-inject. Low impact: slug already
+      exists and Caddy routing is a soft non-goal (out-of-scope-via-shell-hook).
+    evidence: |
+      project.ts sanitizeBranchSlug/sanitizeProjectSlug; branch.ts applyBranch
+      ToHost/rewriteHostForBranch (idempotent); architecture.md
+      "api.myapp.hack → api.<branch>.myapp.hack".
+
+  - id: I020
+    title: "Compose-derived service→host map by reading Caddy labels"
+    source: hack-dance/hack
+    commits: []
+    files: [src/lib/project-views.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/lib/project-views.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: manifest + cli (status)
+    effort: M
+    impact: medium
+    risk: low
+    confidence: medium
+    dependencies: compose file parsing (yaml)
+    score: 3
+    summary: |
+      readComposeServiceHosts parses the compose YAML and, for each service,
+      reads its `caddy` label (handling both the map and key=value[] list forms),
+      splits on comma, and builds a {service:[hosts]} map. Only services carrying a
+      Caddy label are considered routable — "not every compose service is
+      routable". The label is the single source of truth for which host a service
+      answers on.
+    application: |
+      auto-env orchestrates Compose and (backlog) Caddy. Rather than inventing a
+      parallel host registry, derive routable services + hostnames directly from
+      the compose labels at up/status time, then feed them into the status JSON
+      and the Caddy host-mapping append/remove. Keeps the compose file
+      authoritative, avoids drift. The dual map-vs-list label parser is a reusable
+      helper. confidence/impact medium: auto-env may prefer naming-convention port
+      ranges over Caddy labels, and Caddy is a soft non-goal.
+    evidence: |
+      project-views.ts readComposeServiceHosts; extractLabelValue (both label
+      encodings); serviceHosts surfaced in serializeProjectView.
+
+  - id: I021
+    title: "NDJSON streaming envelope for session capture/tail (poll-and-diff)"
+    source: hack-dance/hack
+    commits: []
+    files: [src/commands/session-utils.ts, src/commands/session.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/commands/session-utils.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: new internal/mux (depends on I023)
+    effort: S
+    impact: low
+    risk: low
+    confidence: medium
+    dependencies: a session subsystem (I023)
+    score: 3
+    summary: |
+      session-utils.ts emits a typed NDJSON event stream (start/log/error/end,
+      each with ts + context) for capture/tail/panes. tail works by diffing
+      successive `tmux capture-pane` snapshots (diffNewLines) and emitting only
+      the appended suffix — a poll-and-diff tail needing no streaming pty. Output
+      is `--json` (NDJSON) XOR `--pretty`.
+    application: |
+      If auto-env adds sessions (I023), this gives agents a parseable way to watch
+      a workspace without a TTY — fits "JSON by default, stdout strictly
+      parseable". The poll-and-diff tail (capture-pane -S -N, diff vs previous,
+      emit suffix) is the reusable trick: simple, robust, no pty plumbing. Low
+      impact: only matters after sessions land.
+    evidence: |
+      session-utils.ts buildSessionStreamLogEvent/writeSessionStreamEvent (NDJSON
+      per event); diffNewLines (appended suffix); session.ts streamTailOutput
+      polls capturePane every intervalMs and emits the diff; json XOR pretty.
+
+  - id: I022
+    title: "Layered env-overlay model (default → overlay → local → overlay.local)"
+    source: hack-dance/hack
+    commits: []
+    files: [docs/env.md, src/lib/project-env-config.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/docs/env.md
+    discovered: 2026-06-18
+    status: candidate
+    change_type: structural-rebuild
+    area: template + config (new env-overlay subsystem)
+    effort: L
+    impact: medium
+    risk: low
+    confidence: medium
+    dependencies: a YAML lib (gopkg.in/yaml.v3)
+    score: 2
+    summary: |
+      Canonical project env is a set of YAML files merged in fixed precedence:
+      default < <overlay> < local < <overlay>.local, with values split by scope
+      (global, per-service, host). Committed files hold shared config;
+      *.local.yaml are gitignored worktree overrides that win. Merge is
+      last-writer-wins per key; service scope overrides global.
+    application: |
+      auto-env does single-file template substitution today. The "committed base +
+      gitignored per-worktree overlay that wins" pattern maps onto the
+      worktree-isolation goal: a base template plus a per-worktree overlay the
+      agent/user can tweak without dirtying tracked files, feeding internal/
+      template before ${PORT_*}/${BRANCH} substitution. Borrow the precedence
+      ladder + global/per-service scope split; SKIP their host-scope/compose
+      rewrite (serves Docker-host duality, a non-goal). Honest: a real new
+      subsystem — only build it if multi-file env config is actually wanted.
+    evidence: |
+      env.md merge order default → --env overlay → local → overlay.local, then
+      values.global then values.<service>; mergeProjectEnvConfigLayers
+      Object.assign per scope; *.local.yaml auto-added to .git/info/exclude.
+
+  - id: I023
+    title: "Mux backend abstraction (tmux/zellij behind one interface) for agent workspaces"
+    source: hack-dance/hack
+    commits: []
+    files: [src/mux/mux-backend.ts, src/mux/tmux-backend.ts, src/mux/session-names.ts, src/mux/mux-config.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/mux/mux-backend.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: new internal/mux + cli (session)
+    effort: L
+    impact: medium
+    risk: medium
+    confidence: medium
+    dependencies: tmux/zellij on host; worktree slot (auto-env already has it)
+    score: 2
+    summary: |
+      One MuxBackend interface (list/create/kill/execInSession/sendInput +
+      available flag), implemented for tmux and zellij by shelling out and parsing
+      tab-separated list output. A resolver picks a backend from `mux:
+      auto|tmux|zellij|none` config with env override. Create injects env vars
+      (tmux `-e KEY=VAL`, zellij ZELLIJ_SESSION_NAME) at the workspace root so
+      every shell inherits the per-worktree environment. Names are deterministic:
+      `<project>--<suffix>` with a next-numeric helper.
+    application: |
+      auto-env already computes a per-worktree env and a stable Slot. A
+      `auto env session start` could create a tmux/zellij workspace at the
+      worktree root with allocated ports injected as env vars — a persistent,
+      port-isolated workspace surviving SSH/terminal restarts. Borrow the
+      interface + shell-out parsing + env-injection-on-create; our Slot maps onto
+      their deterministic suffix. Scoped L/medium: a genuinely new subsystem,
+      adjacent to (not yet in) the stated backlog.
+    evidence: |
+      mux-backend.ts MuxBackend interface; tmux-backend.ts createSession `-e
+      KEY=VAL` + listSessions parse; mux-config.ts resolveSessionsMuxMode (env >
+      project > global > auto); session-names.ts buildSessionName base--suffix +
+      getNextNumericSessionSuffix.
+
+  - id: I024
+    title: "Init scaffolding from repo signals (infer services + ports from dev scripts)"
+    source: hack-dance/hack
+    commits: []
+    files: [src/init/discovery.ts, src/init/heuristics.ts, src/init/compose.ts]
+    permalink: https://github.com/hack-dance/hack/blob/7da1cc258171c7e2cafe9f1902b593dec325e970/src/init/heuristics.ts
+    discovered: 2026-06-18
+    status: candidate
+    change_type: additive
+    area: cli (init) + template
+    effort: M
+    impact: low
+    risk: low
+    confidence: medium
+    dependencies: template + port packages
+    score: 2
+    summary: |
+      discovery.ts walks workspace globs to find packages, then scores dev-ish
+      scripts (dev=100, dev:*=80, start=40…) into service candidates. heuristics.ts
+      infers a port from the script command via regex (--port N, -p N, PORT=N) or a
+      name-based default, and guesses http vs internal role. compose.ts emits a
+      starter compose from the guesses.
+    application: |
+      auto-env `init` could scan the repo and emit a starter template
+      pre-populated with discovered services and ${PORT_*} placeholders, inferring
+      counts/names from dev scripts and detected port flags. The reusable nugget is
+      the port-inference regex set + dev-script scoring (cli/init.go). Low impact:
+      a nicety for init, off the stated backlog, and the workspace-discovery half
+      is Node-ecosystem-specific (keep the regex/scoring, drop the rest).
+    evidence: |
+      discovery.ts scoreDevScript + buildServiceCandidates; heuristics.ts
+      inferPortFromScript (regex set), guessDefaultPort, guessRole.
