@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>009: skill-git-cache-trust</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "009",
+    "name": "skill-git-cache-trust",
+    "epic": "004-remote-skill-management",
+    "depends-on": "032-skill-project-schemas",
+    "status": "planning",
+    "created": "2026-06-20"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="009: skill-git-cache-trust" status="draft" pr="pending" generated="2026-06-20">
+
+    <pd-tab name="Requirements">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Epic 004 (remote-skill-management) replaces the `npx skills` shell-out with a native Go pipeline. Task T1 (032) settled the checked-in **schemas** (`skills.yaml` / `lock.json` / `manifest.json`) — but nothing yet **fetches** anything. There is no place on disk to clone upstream repos, no policy on *which* transports/endpoints are allowed, no credential hygiene on the URLs that reach `git`, and no machine-local approval boundary. Every later task — `add` (T3), native `sync`/render (T4) — assumes a trusted, content-addressed cache it can read commits out of, and a trust gate that decides whether a fetch may run at all.
+
+T2 is the **security-critical fetch substrate**: a global, content-addressed git cache (bare blobless clones keyed by canonical repo identity), `git archive` extraction that validates every entry before any write, a transport allow-list, credential rejection at parse, machine-local `trust.json`, and the `cache`/`trust` CLI sub-resources. It is the boundary that closes the post-checkout-hook RCE vector and guarantees offline freshness checks are honest. It delivers the cache subsystem and its commands **only** — no source parsing, no rendering, no sync pipeline.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **Content-addressed global git cache** — `~/.auto/skills/upstream/<host>/<repo-path>.git`, a **bare** `git clone --filter=blob:none` per repo. The key is the **canonical repo identity** (lowercased host + full ordered path, scheme/userinfo/port/`.git` stripped) so HTTPS and SSH forms of one repo share a cache. On reuse, the bare repo's configured `origin` is verified against the canonical fetch URL; a genuine mismatch gets a short URL-hash suffix to disambiguate (reuse `git.ComputeRepoID`). Cache identity is the load-bearing seam T3/T4 build behind. (Cache identity seam; honors design "Cache identity".)
+- **Safe path encoding + containment** (G-extract-safe) — each decoded path component is validated/percent-encoded before becoming a directory name (`.`/`..`/empty, `/`, `\`, control chars, platform-reserved names like `CON`/`NUL`/trailing dot-space); a post-join `isSubpathSafe` check confirms the result stays under `~/.auto/skills/upstream/` before any write.
+- **Bare blobless clone + realize-blobs-online** — `--filter=blob:none` brings trees/history; blobs are fetched on demand. Online ops (the cache's `Realize(commit)`) fetch the resolved commit's reachable objects so extraction has every blob locally; afterwards the commit is **fully present** (objects, not just ref).
+- **Offline check is honest** (G-offline-check) — a `CommitPresent(commit)` / cache-status path runs git with `GIT_NO_LAZY_FETCH=1`. A missing object reports an *incomplete cache* (remediation: `run auto skill sync`), never a silent network fetch. "Commit present" means objects present, checked against the actual on-disk objects.
+- **Extract without checkout, validated before any write** (G-extract-safe) — `git -C <cache> archive <sha>:<subpath>` streams the subtree (no working tree); every archive entry is validated **before** the first write: symlinks / devices / gitlinks / submodules rejected (never followed), plus file-count and total-uncompressed-size limits against hostile repos. The extraction target is immutable/ephemeral output, never a shared mutable checkout.
+- **Transport allow-list** (G-transport) — every `url` (from `add` and from the checked-in lock `sync` consumes) is validated against a scheme allow-list (`https`, `ssh`, `git`, `file`). Remote-helper / option-style URLs (`ext::`, `fd::`, anything starting `-`) are rejected; git invocations always pass args after `--`.
+- **Credential hygiene** (G-cred-hygiene) — credential-bearing URLs (userinfo `user:token@`, token query params) are **rejected at parse**; only a sanitized canonical URL is produced/stored. Auth is delegated to the user's git credential machinery; our code never touches credentials. This URL parse+canonicalize primitive is what T3's source parser reuses.
+- **Machine-local trust** (G-transport) — effective approval lives in `~/.auto/skills/trust.json`, never in the repo. The approved identity is a **canonical endpoint**: `scheme://host:port` for remote sources, or a canonical absolute path for `file:`/local sources — approving `https://github.com` does not authorize `git://github.com`, another port, or arbitrary local reads. `trust list/add/remove` manage it. A fetch runs only if its endpoint is approved.
+- **Bootstrap + fail-closed** — on first encounter of a requested-but-unapproved endpoint, an interactive (TTY) flow prompts `Approve <endpoint>? [y/N]` and records the approval. In CI / `-y` / non-TTY it **fails closed**, listing the endpoints to approve, unless `--trust-requested` / `AUTO_SKILL_TRUST_REQUESTED=1` explicitly opts into trusting `skills.yaml`'s `trusted_hosts` for that run. `skills.yaml trusted_hosts` only *requests* trust; it never self-authorizes.
+- **`cache list / path / prune`** — `list` (cached repos + sizes + last-fetch), `path <id>` (print on-disk cache path for a canonical identity), `prune` defaulting to safe age/size LRU eviction (`--max-age 90d`, `--max-size 5g`, `--dry-run`) — always safe since evicted repos are re-fetched on next sync. `--unreferenced` additionally drops repos no *known* project references, where "known" = project paths in `~/.auto/projects.json`. Prune never claims a reference-completeness it can't have.
+- **Per-repo file-lock concurrency** — a file lock around fetch/extract per cached repo (reuse the `syscall.Flock` pattern already in `auto-env`/`auto-reflect`), so concurrent `sync --jobs` workers never corrupt a shared bare repo.
+- **JSON-default I/O** (G-json-default) — `cache`/`trust` commands default to JSON on stdout, diagnostics on stderr, `--format text` for humans. Listings return valid results even when some entries are invalid, exiting non-zero if any error occurred.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Source-form parsing, skill discovery, `add`** (T3) — T2 exposes the URL parse/canonicalize/transport-validate primitive and the cache's `Resolve`/`Realize`/`Extract` API, but does **not** normalize `owner/repo`/deep-link/local source forms, discover skills within a repo, or write lock entries. T3 consumes this cache.
+- **Native `sync` + render** (T4) — no rendering, no `text/template`, no `manifest.json` writing, no target writes, no journal, no `--jobs` worker pool orchestration. T2 provides the thread-safe per-repo cache the pool will call; the pool itself is T4.
+- **The three schemas** (T1 / 032) — `skills.yaml` / `lock.json` / `manifest.json` types, `validate()`, the `init` wizard, and the lock's own `credentials_in_url` schema check are 032. T2 *depends on* 032's `Lock`/`LockEntry` types and `Env` plural paths; it does not redefine them. (Defense-in-depth: T2's parse-time credential rejection and 032's lock-validation credential check are complementary, sharing one helper — see Open Questions.)
+- **Prune *authority* via receipts** (T5) — T2's `cache prune` evicts *cache* repos (safe, re-fetchable); it never deletes rendered skills in targets. Machine-local deletion *receipts* and target-orphan pruning are T5.
+- **Inspection triad & wider deprecations** (T6) — `list`/`describe`/`get`, `source`/`target` sub-resources, `ls` removal, root `auto update` relocation are T6. T2 adds **only** the `cache` and `trust` sub-resources.
+- **Migrate / git hooks** (T7).
+- **Version-spec resolution** — ref→commit resolution touches the cache's `Resolve(ref)`, but the *grammar* (`latest`/`branch:`/`tag:`/`commit:`) is validated in 032 and the *network resolution policy* (longest-resolving-ref deep links, `auto_update` floating) is T3/T4. T2 provides a low-level `ResolveRef(ref) (sha, error)` primitive; it does not own version-intent reconciliation.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Resolved with best-judgment defaults (orchestrator authorized autonomous resolution; the epic + design doc settle the rest). Each is recorded so a reviewer can override.
+
+- [x] **Does T2 depend on 032 being merged, or build the paths itself?** → **Depend on 032's `Env` plural paths and `Lock` types**, but T2 must remain independently *plannable* and *buildable* in sequence. If 032's `SkillsConfigDir`/global `~/.auto/skills/` helpers aren't present at execution time, T2 adds the `~/.auto/skills/upstream/` (`UpstreamCacheDir`) and `~/.auto/skills/trust.json` (`TrustPath`) helpers it needs alongside them (idempotent, same plural layout). *Rationale:* the epic marks T2 `depends-on=T1`; pd-meta records `depends-on: 032`. The two tasks touch disjoint files (cache/trust vs schemas/init) so they compose cleanly.
+- [x] **Who owns the URL parse / transport-validate / credential-reject primitive — T2 or T3?** → **T2 owns it** (`internal/transport` or `skill.ParseSource`/`CanonicalizeURL`), because it is the security boundary the cache enforces; T3's higher-level source-form parser *calls into* it. *Rationale:* G-transport + G-cred-hygiene are listed on T2; placing the primitive here means the cache can never be driven by an unvalidated URL, and T3 inherits the gate for free.
+- [x] **Does T2 duplicate 032's `credentials_in_url` lock check?** → **No — share one helper.** T2 implements the canonical `containsCredentials(url)` / `CanonicalizeURL` logic; 032's `ValidateLock` should call the same helper (or T2 relocates the check into the shared primitive and 032's validator delegates). If 032 already shipped its own inline check, T2 refactors both to the shared function. *Rationale:* one source of truth for credential detection (CLAUDE.md "one shared validate()").
+- [x] **How does the cache shell out to git — new exec wrapper or reuse?** → **Extend the existing `auto-shared/git` exec pattern** (`runGit(dir, args...)` in `detect.go`), adding cache-specific wrappers (`Clone`, `Fetch`, `Archive`, `RevParse`, `LsRemote`) that (a) always pass repo args after `--`, (b) set `GIT_TERMINAL_PROMPT=0` and, for offline ops, `GIT_NO_LAZY_FETCH=1`, (c) disable config-file hook execution surface. *Rationale:* zero new deps; reuse the audited credential-stripping `NormalizeRemoteURL`/`ComputeRepoID` already there.
+- [x] **Where do cache + trust live — `auto-shared` or `auto-skill`?** → **`auto-skill/internal/`** (e.g. `internal/cache`, `internal/trust`, `internal/transport`), since they are skill-specific policy. The low-level git exec helpers (`Clone`/`Fetch`/`Archive`) may land in `auto-shared/git` if genuinely reusable; trust/cache policy stays in `auto-skill`. *Rationale:* keeps `auto-shared` a thin, broadly-reused layer; skill trust policy is not shared.
+- [x] **`trust.json` schema + concurrency.** → `{"version":1,"endpoints":["https://github.com:443", "/abs/local/path", ...]}` canonicalized + sorted + deduped; written via `WriteJSONFileAtomic` under a file lock. Endpoints normalize default ports (https→443, ssh→22, git→9418) so `https://github.com` and `https://github.com:443` are one entry. *Rationale:* merge-friendly, deterministic, matches the `lock.json` "alphabetized, atomic" convention.
+- [x] **Resource limits — concrete defaults.** → file-count limit **2000** entries, total uncompressed size **64 MiB** per extracted subtree, single-file size **8 MiB**; configurable later via global settings, hard-coded constants now with named consts. *Rationale:* generous for real skill trees, tight enough to stop a hostile repo; tunable is a later concern (not blocking).
+- [x] **`cache path <id>` input form.** → accepts the canonical identity (`github.com/acme/agent-skills`) **or** a full URL, normalizes via the same `CanonicalizeURL` primitive, prints the on-disk `.git` path (whether or not it exists yet; a `--exists-only` could gate later). *Rationale:* matches the design quickstart example `auto skill cache path github.com/acme/agent-skills`.
+- [x] **What does the interactive bootstrap prompt look like in this (non-TTY) planning/CI context?** → The prompt path is only taken when stdin is a TTY; T2's tests exercise the **fail-closed** non-TTY branch and the `--trust-requested` opt-in, not the live prompt wording (low value, high churn). *Rationale:* deterministic in automation, mirrors 032's wizard-TTY decision.
+- [x] **Does `cache prune --unreferenced` need a lockfile-scan across registered projects?** → **No deep scan.** "Referenced" = a cache repo whose canonical identity appears in any `lock.json` under a project path listed in `~/.auto/projects.json`. Unreadable/missing project locks are treated as *unknown* (never pruned under `--unreferenced` unless also age/size-evictable). Prune logs what it skipped (no silent truncation). *Rationale:* honest reference discovery per the design's RESOLVED(P2); avoids a false "no references anywhere" claim.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Security-critical library + CLI task — verification is **Go unit + integration tests** in `auto-skill` (plus any helper that lands in `auto-shared/git`), no browser. The threat model (untrusted repo trees, credential-bearing URLs, unapproved endpoints) means the **rejection paths are the product**, so every guard rail gets adversarial table-test coverage that asserts the *exact* `ValidationError.Code`/`Field` or a typed sentinel error — not just "errored".
+
+- **URL / transport / credential** — table tests over `CanonicalizeURL` + the transport validator: accept `https`/`ssh`/`git`/`file`; reject `ext::`, `fd::`, leading-`-`, unknown schemes (`unsupported_transport`), and credential-bearing forms (`user:token@`, `?access_token=`) with `credentials_in_url`. Assert the canonical output is byte-stable across HTTPS/SSH forms of one repo and carries no userinfo/query creds. The same helper is asserted to be the one `ValidateLock` (032) calls — a regression test pins that they agree.
+- **Cache identity + safe path encoding** — table tests: HTTPS and SSH forms of one repo map to one cache path; nested GitLab subgroups (`acme/platform/skills`) nest correctly; dangerous components (`..`, `.`, empty, `/`, `\`, control chars, `CON`/`NUL`/trailing-dot) are percent-encoded; a crafted identity that would escape `~/.auto/skills/upstream/` is caught by the post-join containment check (`path_escapes_cache_root`). A genuine two-remotes-one-path collision gets a deterministic URL-hash suffix.
+- **Clone / realize / offline (real git, `file://` fixture)** — a test helper `git init`s a small skill tree in a temp dir and commits it; the cache clones it bare+blobless from a `file://` URL (which doubles as the local-transport test). Assert: after `Clone` the ref exists but a blob may be absent; after `Realize(commit)` the commit is **fully present**; `CommitPresent(commit)` run with `GIT_NO_LAZY_FETCH=1` returns true; on a deliberately un-realized commit it returns an **incomplete-cache** error with a `run auto skill sync` remediation and makes **no network call** (verified by pointing origin at an unreachable path and asserting no hang/fetch).
+- **Archive extraction safety** — build fixture repos containing a symlink entry, a gitlink/submodule, an oversized tree (> file-count limit), and an oversized single file; assert extraction **rejects before writing any file** (the destination dir is empty after a rejected extract) with the matching code (`symlink_entry`/`special_entry`/`too_many_files`/`size_limit_exceeded`). A clean tree extracts to the expected files with expected contents and containment under the target root.
+- **Trust** — table tests over `trust.json` round-trips: canonicalize + normalize default ports (`https://github.com` ≡ `https://github.com:443`), dedupe, sort, atomic write; `IsApproved(endpoint)` true only for an exact canonical match (HTTPS approval does **not** authorize `git://`, another port, or a local path). `trust add`/`remove` are idempotent.
+- **Bootstrap fail-closed** — with a non-TTY stdin and an unapproved endpoint, the trust-gate returns a fail-closed error listing endpoints to approve and writes nothing; `--trust-requested` / `AUTO_SKILL_TRUST_REQUESTED=1` opts into the `skills.yaml trusted_hosts` for that run; the interactive prompt branch is only reached under a TTY (wording not snapshot-tested).
+- **Concurrency** — a test launches N goroutines calling `Realize`/`Extract` on the same cache repo; the per-repo `syscall.Flock` serializes them and the bare repo is intact afterward (no partial-fetch corruption, single resulting tree).
+- **CLI integration** — extend `cli_integration_test.go`: `cache list`/`cache path <id>`/`cache prune --dry-run`/`trust list`/`trust add`/`trust remove` against an isolated `HOME` + `--root`; assert JSON-default stdout (parseable payload only), diagnostics on stderr, `--text` human output, and exit-non-zero-on-error-with-partial-results. `cache prune --unreferenced` against a seeded `~/.auto/projects.json` evicts only repos not referenced by a registered project's lock and logs what it skipped.
+- **Discipline** — `go build ./...` + `go test ./...` green in `auto-skill` (and `auto-shared` if touched) after each file (CLAUDE.md Go build discipline). **Zero new runtime deps** (`syscall`/`net/url`/`archive/tar`/`crypto/sha256` stdlib; reuse `auto-shared`). Tests that shell to real `git` skip cleanly if `git` is absent.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="Testing layers">
+flowchart TB
+  url["Unit: URL/transport/credential\nallow-list · canonical · credentials_in_url\n(exact ValidationError code)"]
+  ident["Unit: cache identity + safe path encoding\nHTTPS≡SSH · nested groups · containment · hash suffix"]
+  trust["Unit: trust.json round-trip + IsApproved\nport-normalize · dedupe · scheme/port isolation"]
+  gitfx["Integration (real git, file:// fixture):\nclone bare+blobless · Realize · offline CommitPresent\n(GIT_NO_LAZY_FETCH=1, no network)"]
+  extract["Integration: archive extraction safety\nsymlink/gitlink/limits rejected BEFORE write"]
+  conc["Integration: per-repo Flock concurrency"]
+  cli["CLI: cache list/path/prune · trust list/add/remove\nJSON-default · stderr diagnostics · exit codes · --unreferenced registry"]
+  url --> gitfx
+  ident --> gitfx
+  trust --> cli
+  gitfx --> extract
+  gitfx --> conc
+  extract --> cli
+  conc --> cli
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-ac id="AC-1" title="Canonical repo identity collapses transports and maps to one cache path" phases="1,2" tests="auto-skill/internal/transport/transport_test.go,auto-skill/internal/cache/cache_test.go">
+        <md><script type="text/plain">
+**Given** the HTTPS, SSH, and bare `owner/repo` forms of one repository (incl. a nested GitLab subgroup path),
+**When** each is run through `CanonicalizeURL` → cache-identity → cache path,
+**Then** all transport forms of the same repo yield **one** canonical identity (lowercased host + full ordered path, scheme/userinfo/port/`.git` stripped) and **one** `~/.auto/skills/upstream/<host>/<repo-path>.git` path; nested subgroups nest correctly (no owner/repo assumption); and two **genuinely distinct** remotes that would collide at one path are disambiguated by a deterministic `git.ComputeRepoID` URL-hash suffix. On reuse of an existing bare repo, the configured `origin` is verified against the canonical URL.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="Path components are safely encoded and contained under the cache root" phases="2" tests="auto-skill/internal/cache/cache_test.go">
+        <md><script type="text/plain">
+**Given** a host/path containing dangerous components (`.`, `..`, empty, `/`, `\`, control chars, platform-reserved `CON`/`NUL`/trailing dot or space),
+**When** the cache path is derived,
+**Then** each component is validated/percent-encoded before becoming a directory name and a **post-join containment check** confirms the result stays under `~/.auto/skills/upstream/`; an identity engineered to escape the root is rejected with `path_escapes_cache_root` **before any filesystem write**.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-3" title="Transport allow-list accepts only approved schemes and rejects helper/option URLs" phases="1" tests="auto-skill/internal/transport/transport_test.go">
+        <md><script type="text/plain">
+**Given** a candidate URL,
+**When** the transport validator runs,
+**Then** `https`/`ssh`/`git`/`file` are accepted; `ext::`, `fd::`, any remote-helper form, a string starting with `-`, and any other scheme are rejected with `unsupported_transport`; and every git invocation in the cache passes repo arguments **after `--`** (asserted by the wrapper, so an option-like URL can never be read as a git flag).
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-4" title="Credential-bearing URLs are rejected at parse; canonical URL carries no secrets" phases="1" tests="auto-skill/internal/transport/transport_test.go">
+        <md><script type="text/plain">
+**Given** a URL with userinfo (`https://user:token@host/repo`) or a token query param (`?access_token=…`),
+**When** it is parsed/canonicalized,
+**Then** it is **rejected at parse** with `credentials_in_url` (remediation: use git's credential helper); a clean URL canonicalizes to a form with no userinfo and no credential query params. The same `containsCredentials` helper backs 032's `ValidateLock` (a test pins that the two agree).
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="Bare blobless clone then realize makes the resolved commit fully present" phases="2" tests="auto-skill/internal/cache/cache_test.go">
+        <md><script type="text/plain">
+**Given** a `file://` git fixture repo,
+**When** the cache `Clone`s it (`--bare --filter=blob:none`) and then `Realize(commit)`,
+**Then** the clone is bare (no worktree) and initially blobless (trees/history present, blobs on demand); after `Realize` the resolved commit's reachable objects are present locally so extraction can proceed offline. "Commit present" is defined as **objects present**, not merely the ref existing.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="Offline freshness checks are honest and never hit the network" phases="2" tests="auto-skill/internal/cache/cache_test.go">
+        <md><script type="text/plain">
+**Given** a cache where a commit's blobs have NOT been realized,
+**When** `CommitPresent(commit)` / the cache-status path runs (with `GIT_NO_LAZY_FETCH=1` and `GIT_TERMINAL_PROMPT=0`),
+**Then** it reports an **incomplete cache** with a `run auto skill sync` remediation and makes **no network call** (verified by an unreachable origin: the check returns promptly, does not fetch, does not hang). A fully-realized commit reports present. The result reflects actual on-disk objects.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-7" title="Archive extraction validates every entry before any write" phases="3" tests="auto-skill/internal/cache/extract_test.go">
+        <md><script type="text/plain">
+**Given** a repo subtree containing a symlink, a gitlink/submodule, a device entry, a tree exceeding the file-count limit, or a single file exceeding the size limit,
+**When** `Extract(commit, subpath, dest)` runs (streaming `git archive`),
+**Then** the offending case is rejected **before the first byte is written** (dest dir empty after a rejected extract) with the matching code (`symlink_entry` / `special_entry` / `too_many_files` / `size_limit_exceeded`); symlinks/special entries are never followed; a clean tree extracts to exactly the expected files/contents, all contained under `dest`.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-8" title="Trust is machine-local over canonical endpoints; approval does not over-authorize" phases="1,4" tests="auto-skill/internal/transport/transport_test.go,auto-skill/internal/trust/trust_test.go">
+        <md><script type="text/plain">
+**Given** `~/.auto/skills/trust.json` approving `https://github.com`,
+**When** `IsApproved(endpoint)` is checked,
+**Then** only the exact canonical endpoint (`scheme://host:port`, default ports normalized — `https`→443/`ssh`→22/`git`→9418; or a canonical absolute path for `file:`/local) is approved; `git://github.com`, `https://github.com:8443`, and arbitrary local paths are **not** authorized. A fetch runs only if its endpoint is approved; effective trust lives only in machine-local state, never the repo.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-9" title="Unapproved endpoints fail closed in CI/non-TTY; trusted_hosts only requests trust" phases="4" tests="auto-skill/internal/trust/trust_test.go">
+        <md><script type="text/plain">
+**Given** a requested-but-unapproved endpoint and a **non-TTY** stdin,
+**When** the trust gate is hit,
+**Then** it **fails closed**, listing the endpoints to approve, and records nothing — unless `--trust-requested` / `AUTO_SKILL_TRUST_REQUESTED=1` opts into trusting `skills.yaml`'s `trusted_hosts` for that run. A `skills.yaml trusted_hosts` entry **only requests** trust and never self-authorizes (a branch editing lock + requested-hosts together still stops). The interactive `Approve <endpoint>? [y/N]` prompt is reached **only** under a TTY.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-10" title="trust list/add/remove keep canonical, deduped, sorted, atomic state" phases="4,5" tests="auto-skill/internal/trust/trust_test.go,auto-skill/internal/cli/cli_integration_test.go">
+        <md><script type="text/plain">
+**Given** the `trust` sub-resource,
+**When** `trust add <endpoint>` / `trust remove <endpoint>` / `trust list` run,
+**Then** endpoints are canonicalized (port-normalized) before storage, deduped and sorted in `trust.json`, written via `WriteJSONFileAtomic` under a file lock; `add` and `remove` are idempotent (adding an existing entry or removing an absent one is a no-op success); `list` returns the approved set as JSON. A non-endpoint argument (credential-bearing or unsupported transport) is rejected with the matching code.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-11" title="cache list and cache path report the cache without fetching" phases="5" tests="auto-skill/internal/cli/cli_integration_test.go">
+        <md><script type="text/plain">
+**Given** a populated cache,
+**When** `cache list` and `cache path <id-or-url>` run,
+**Then** `list` returns each cached repo with its canonical identity, on-disk size, and last-fetch time (JSON default); `cache path` normalizes its argument via `CanonicalizeURL` (accepting `github.com/acme/agent-skills` **or** a full URL) and prints the on-disk `.git` path. Neither command performs a network fetch.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-12" title="cache prune defaults to safe age/size eviction; --unreferenced uses the registry honestly" phases="2,5" tests="auto-skill/internal/cache/cache_test.go,auto-skill/internal/cli/cli_integration_test.go">
+        <md><script type="text/plain">
+**Given** a cache with repos of varying age/size and a seeded `~/.auto/projects.json`,
+**When** `cache prune` runs,
+**Then** the default mode evicts by **age/size LRU** (`--max-age 90d`, `--max-size 5g`, both tunable; `--dry-run` previews and writes nothing) — always safe because evicted repos are re-fetched on next sync; `--unreferenced` additionally drops repos whose canonical identity is referenced by **no** lock under any project path in the registry, treats unreadable/missing project locks as *unknown* (not pruned on that basis alone), and **logs what it skipped** (no silent truncation, no false "no references anywhere" claim).
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-13" title="Per-repo file lock serializes concurrent fetch/extract without corruption" phases="2" tests="auto-skill/internal/cache/cache_test.go">
+        <md><script type="text/plain">
+**Given** N concurrent operations targeting the **same** cache repo,
+**When** they call `Realize`/`Extract` simultaneously,
+**Then** a per-repo `syscall.Flock` (`<repo>.git/.fetch.lock`, the `auto-env` pattern) serializes fetch/extract so the bare repo is never left half-fetched; extraction always targets immutable/ephemeral output, never a shared mutable checkout; the final cache state is a single intact tree.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-14" title="cache/trust commands honor the JSON-default I/O contract" phases="5,6" tests="auto-skill/internal/cli/cli_integration_test.go">
+        <md><script type="text/plain">
+**Given** any `cache`/`trust` command in default mode,
+**When** it runs,
+**Then** **stdout is a single parseable JSON payload** and nothing else; diagnostics and errors go to **stderr**; a listing returns all valid results and exits **non-zero** if any entry was invalid; `--text`/`--format text` produces human output; invalid flag usage fails fast via the standard cobra error.
+        </script></md>
+      </pd-ac>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **Real-`git` dependence** — clone/realize/archive/offline tests shell to the system `git`; they skip cleanly when `git` is absent and use `file://` fixtures (no network). Behavior against a real remote host (auth via the user's credential helper) is exercised manually, not in CI.
+- **No source-form parsing** — T2 tests the canonical-URL primitive on already-near-canonical inputs; the full `owner/repo`/deep-link/local-split normalization (and longest-resolving-ref) is T3's surface and tested there.
+- **No render/sync** — `Resolve`/`Realize`/`Extract` are unit-tested as primitives; their orchestration through the journaled, parallel `sync` pipeline is T4.
+- **Interactive prompt wording untested** — only the fail-closed non-TTY and `--trust-requested` branches are asserted; the live TTY prompt flow is low-value/high-churn and left to manual check.
+- **Platform-reserved-name encoding** is validated by table tests on Linux; Windows-specific reserved-name behavior is encoded defensively but CI runs Linux only.
+- **032 ordering** — if 032's plural `Env` helpers are not yet merged at execution time, T2 adds the cache/trust path helpers itself in the same layout; a later rebase onto merged-032 must not duplicate them (call-site grep in P1).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Add a small, security-first **cache + trust + transport** subsystem to `auto-skill`, built on the git-exec and config infrastructure the monorepo already has — **no new package boundary in `auto-shared` unless a helper is genuinely reusable, and zero new runtime dependencies**.
+
+**Transport primitive (the gate everything passes through).** A new `internal/transport` package owns URL parsing: `CanonicalizeURL(raw) (canonical string, identity CacheIdentity, err)` rejects credential-bearing URLs (`credentials_in_url`) and disallowed schemes/helper-or-option forms (`unsupported_transport`) at parse, then returns a sanitized canonical URL plus the canonical repo identity (lowercased host + full ordered path). It reuses `auto-shared/git.NormalizeRemoteURL` for the credential-stripping/host-lowercasing backbone and exposes the shared `containsCredentials` helper that 032's `ValidateLock` calls — one source of truth for credential detection. This is the primitive T3's source-form parser will build on.
+
+**Cache (`internal/cache`).** A `Cache` rooted at `~/.auto/skills/upstream/` (via a new `Env.UpstreamCacheDir()`), with a `Repo` per canonical identity. Path derivation runs each identity component through `safeComponent` (validate/percent-encode dangerous chars + reserved names) and a post-join `isSubpathSafe` containment check before any write. Operations: `Open/EnsureClone` (`git clone --bare --filter=blob:none`, verify `origin` on reuse, hash-suffix on genuine collision), `ResolveRef(ref) (sha,err)`, `Realize(sha)` (fetch reachable objects so the commit is fully present), `CommitPresent(sha)` (offline, `GIT_NO_LAZY_FETCH=1`, reports incomplete-cache), and `Extract(sha, subpath, dest)` (stream `git archive`, validate every tar entry **before** writing). All mutating ops run under a per-repo `syscall.Flock` (the `auto-env` pattern). Git is driven through a thin `gitexec` wrapper that always passes args after `--`, sets `GIT_TERMINAL_PROMPT=0`, and adds `GIT_NO_LAZY_FETCH=1` for offline calls.
+
+**Extraction safety (`internal/cache/extract.go`).** `git archive --format=tar` is read with stdlib `archive/tar`; each header is checked against limits (file-count, total size, single-file size) and type rules (regular/dir only; symlink/gitlink/device/other rejected, never followed) **before** the first file is created; outputs are written under `dest` with a per-file containment check. A rejected extract leaves `dest` empty.
+
+**Trust (`internal/trust`).** A `Store` over `~/.auto/skills/trust.json` (`Env.TrustPath()`): `{"version":1,"endpoints":[...]}`, canonical endpoints (`scheme://host:port` with default-port normalization, or canonical abs path), deduped + sorted, strict-decoded and atomically written under a lock. `IsApproved(endpoint)`, `Add`, `Remove` (idempotent). A `Gate` ties it together: given a candidate endpoint + the `skills.yaml trusted_hosts` request list + I/O context, it approves (machine state), or — only on a TTY — prompts and records; in non-TTY/CI it **fails closed** unless `--trust-requested`/`AUTO_SKILL_TRUST_REQUESTED=1` opts into the requested hosts for that run.
+
+**CLI (`internal/cli/cache.go`, `internal/cli/trust.go`).** Cobra sub-resources mounted in `root.go`: `cache list|path|prune` (prune flags `--dry-run`/`--unreferenced`/`--max-age`/`--max-size`) and `trust list|add|remove`. JSON-default to stdout, diagnostics to stderr, `--text` for humans, exit-non-zero on error with partial results — matching the existing `init`/`lint` pattern. `cache prune --unreferenced` reads `~/.auto/projects.json` via `auto-shared/config` and logs skipped/unknown projects.
+
+T2 does **not** touch `sync.go` (still npx — T4 deletes it), does **not** parse source forms or discover skills (T3), and does **not** write `lock.json`/`manifest.json` or render (T3/T4).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="api-outline" title="Public surface (key types)">
+        <pd-api kind="module" name="transport" lang="go" path="auto-skill/internal/transport/transport.go" caption="The URL gate — credential + scheme allow-list, canonical identity">
+          <pd-member kind="method" sig="CanonicalizeURL(raw string) (canonical string, id CacheIdentity, err error)">Reject creds (credentials_in_url) + bad schemes/helper/option forms (unsupported_transport); return sanitized URL + canonical identity. Reuses git.NormalizeRemoteURL.</pd-member>
+          <pd-member kind="method" sig="ContainsCredentials(raw string) bool">Shared with 032 ValidateLock — userinfo + token query-param detection.</pd-member>
+          <pd-member kind="method" sig="Endpoint(raw string) (string, error)">Canonical scheme://host:port (default-port normalized) or canonical abs path — the trust identity.</pd-member>
+          <pd-member kind="field" sig="type CacheIdentity struct{ Host string; Path []string }">Lowercased host + full ordered path; `.RelPath()`/`.HashSuffix()` for cache layout.</pd-member>
+        </pd-api>
+        <pd-api kind="struct" name="cache.Cache" lang="go" path="auto-skill/internal/cache/cache.go" caption="Content-addressed bare blobless git cache under ~/.auto/skills/upstream/">
+          <pd-member kind="method" sig="Open(id CacheIdentity, url string) (*Repo, error)">Resolve safe-encoded contained path; clone bare+blobless if absent, else verify origin (+hash suffix on collision).</pd-member>
+          <pd-member kind="method" sig="(r *Repo) ResolveRef(ref string) (sha string, err error)">git rev-parse / ls-remote; grammar-level only, no version-intent policy.</pd-member>
+          <pd-member kind="method" sig="(r *Repo) Realize(sha string) error">Fetch reachable objects for sha → commit fully present (online).</pd-member>
+          <pd-member kind="method" sig="(r *Repo) CommitPresent(sha string) (bool, error)">Offline (GIT_NO_LAZY_FETCH=1); incomplete-cache error, never fetches.</pd-member>
+          <pd-member kind="method" sig="(r *Repo) Extract(sha, subpath, dest string) error">Stream git archive; validate every entry before write; symlink/special/limits rejected.</pd-member>
+          <pd-member kind="method" sig="List() ([]RepoInfo, error) / Prune(opts PruneOptions) (PruneResult, error)">cache list/prune backing; PruneOptions{MaxAge,MaxSize,Unreferenced,DryRun}.</pd-member>
+        </pd-api>
+        <pd-api kind="struct" name="trust.Store / trust.Gate" lang="go" path="auto-skill/internal/trust/trust.go" caption="Machine-local approved endpoints + the fetch gate">
+          <pd-member kind="method" sig="Load(env Env) (*Store, error)">Strict-decode ~/.auto/skills/trust.json; {version, endpoints[]}.</pd-member>
+          <pd-member kind="method" sig="(s *Store) IsApproved(endpoint string) bool / Add(e string) error / Remove(e string) error">Canonical, deduped, sorted; atomic write under flock; idempotent.</pd-member>
+          <pd-member kind="method" sig="(g *Gate) Authorize(endpoint string, requested []string, io GateIO) error">Approve from state; TTY → prompt+record; non-TTY → fail closed unless --trust-requested.</pd-member>
+        </pd-api>
+        <pd-api kind="module" name="skill (Env path helpers)" lang="go" path="auto-skill/internal/skill/skill.go" caption="Plural-layout cache/trust paths (alongside 032's helpers)">
+          <pd-member kind="method" sig="(e Env) UpstreamCacheDir() string">~/.auto/skills/upstream/ (honors RootOverride for test isolation).</pd-member>
+          <pd-member kind="method" sig="(e Env) TrustPath() string">~/.auto/skills/trust.json.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-skill/internal/transport/transport.go" change="add">`CanonicalizeURL`, `ContainsCredentials`, `Endpoint`, `CacheIdentity` + scheme allow-list / helper-option rejection; reuses `auto-shared/git.NormalizeRemoteURL`.</pd-file>
+          <pd-file path="auto-skill/internal/transport/transport_test.go" change="add">Table tests: accept/reject schemes, credential forms, canonical stability, identity from HTTPS≡SSH≡bare + nested groups, endpoint port-normalization.</pd-file>
+          <pd-file path="auto-skill/internal/cache/cache.go" change="add">`Cache`/`Repo`/`RepoInfo`/`PruneOptions`/`PruneResult`; safe-component path encoding + post-join containment; clone(bare,blobless)/origin-verify/hash-suffix; `ResolveRef`/`Realize`/`CommitPresent`; `List`/`Prune`; per-repo `syscall.Flock`.</pd-file>
+          <pd-file path="auto-skill/internal/cache/gitexec.go" change="add">Thin git wrapper over the `auto-shared/git.runGit` pattern: args-after-`--`, `GIT_TERMINAL_PROMPT=0`, `GIT_NO_LAZY_FETCH=1` for offline ops, no hook surface.</pd-file>
+          <pd-file path="auto-skill/internal/cache/extract.go" change="add">`Extract` via stdlib `archive/tar`: per-entry type/limit validation **before** write (symlink/gitlink/device rejected; file-count/total-size/single-file caps; containment).</pd-file>
+          <pd-file path="auto-skill/internal/cache/cache_test.go" change="add">Real-git `file://` fixture: bare blobless clone, `Realize`, offline `CommitPresent` (no-network), identity/containment, concurrency (N goroutines, flock), prune age/size + `--unreferenced` registry.</pd-file>
+          <pd-file path="auto-skill/internal/cache/extract_test.go" change="add">Hostile-repo fixtures: symlink/gitlink/device/too-many-files/oversize rejected before any write; clean tree extracts correctly + contained.</pd-file>
+          <pd-file path="auto-skill/internal/trust/trust.go" change="add">`Store` (strict-decode/atomic-write/flock, canonical+dedupe+sort, port-normalize), `IsApproved`/`Add`/`Remove`; `Gate.Authorize` (machine-state → TTY prompt → fail-closed; `--trust-requested`/env opt-in).</pd-file>
+          <pd-file path="auto-skill/internal/trust/trust_test.go" change="add">Round-trip + `IsApproved` scheme/port isolation; idempotent add/remove; non-TTY fail-closed + opt-in; reject credential/unsupported endpoint.</pd-file>
+          <pd-file path="auto-skill/internal/skill/skill.go" change="edit">Add `Env.UpstreamCacheDir()` + `Env.TrustPath()` in the `.auto/skills/` plural layout (honor `RootOverride`); coordinate with 032's plural helpers (grep to avoid duplicate definitions).</pd-file>
+          <pd-file path="auto-skill/internal/cli/cache.go" change="add">`newCacheCmd`: `list`/`path <id>`/`prune` (`--dry-run`/`--unreferenced`/`--max-age`/`--max-size`); JSON-default + `--text`; prune reads `~/.auto/projects.json` and logs skipped.</pd-file>
+          <pd-file path="auto-skill/internal/cli/trust.go" change="add">`newTrustCmd`: `list`/`add <endpoint>`/`remove <endpoint>`; JSON-default + `--text`; endpoint validation via the transport primitive.</pd-file>
+          <pd-file path="auto-skill/internal/cli/root.go" change="edit">Mount `newCacheCmd()` + `newTrustCmd()` in `AddCommand`.</pd-file>
+          <pd-file path="auto-skill/internal/cli/cli_integration_test.go" change="edit">Integration: `cache list/path/prune` + `trust list/add/remove` against isolated HOME + `--root`; JSON-default/stderr/exit contract; `prune --unreferenced` with seeded projects.json.</pd-file>
+          <pd-file path="auto-shared/config/validation.go" change="edit">(if needed) add the few new shared error-code consts T2 introduces (`unsupported_transport`, `path_escapes_cache_root`, `symlink_entry`, `special_entry`, `too_many_files`, `size_limit_exceeded`) — or declare them locally in `transport`/`cache` if not shared.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **GitHub Trees API / REST client (vercel's no-clone path).** Rejected by the design (§Global git cache): cloning reuses the user's git auth, hits no REST rate limits, and handles every host with one code path — deleting a provider abstraction. T2 follows the design's accepted clone-based model.
+- **A `git checkout`/worktree to read skill trees.** Rejected — `git archive` streams the subtree at an exact SHA with no working tree, no checkout hooks, and a single validated extraction point. A worktree adds a mutable shared dir and a hook surface (contradicts No-RCE).
+- **`--filter=blob:none --sparse` bare clone.** Invalid — sparse-checkout needs a worktree a bare repo lacks (design RESOLVED P1 :143). Bare + blobless + explicit `Realize` is the chosen shape.
+- **A go-git (pure-Go) library instead of shelling to `git`.** Rejected — adds a heavy runtime dep (violates minimal-deps), and would not transparently reuse the user's ssh/credential-helper auth the way the system `git` does. Reuse `auto-shared/git`'s exec pattern instead.
+- **Trust stored in `skills.yaml` (checked-in).** Rejected by the design (RESOLVED P1 :183): checked-in trust can't authorize a checked-in lock — a malicious branch edits both. Effective trust is machine-local; `trusted_hosts` only *requests*.
+- **Host-only trust identity (`github.com`).** Rejected (RESOLVED P2 :188): conflates HTTPS/SSH/`git`/ports and can't name local paths. Trust is a canonical `scheme://host:port` or absolute path.
+- **`cache prune` deleting by "no lock references anywhere".** Rejected (RESOLVED P2 :223) — a global cache can't know all project references. Default is safe age/size eviction; `--unreferenced` is honest registry-scoped deletion that logs unknowns.
+- **Putting cache/trust policy in `auto-shared`.** Rejected — skill-specific policy belongs in `auto-skill`; only genuinely reusable low-level git exec helpers may graduate to `auto-shared/git`. Keeps `auto-shared` thin.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-1" title="Cache/trust/transport live in auto-skill/internal/*, not auto-shared" status="accepted" by="agent"
+        summary="Skill-specific security policy stays in auto-skill; only reusable git exec helpers may graduate to auto-shared/git.">
+        <md><script type="text/plain">
+**Context:** The cache, trust gate, and transport allow-list are skill-management policy, but they lean on `auto-shared/git` (NormalizeRemoteURL, ComputeRepoID, runGit pattern) and `auto-shared/config` (JSON I/O, projects registry).
+**Decision:** New `internal/transport`, `internal/cache`, `internal/trust` packages inside `auto-skill`. Reuse `auto-shared` helpers; do not move policy there.
+**Alternatives:** A shared `auto-shared/cache` (over-generalizes; no second consumer); inlining into package `skill` (bloats it and entangles schemas with fetch policy).
+**Consequences:** `auto-shared` stays thin/broadly-reused; T3/T4 import these three packages directly.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-2" title="One shared credential/URL primitive backs both T2's cache and 032's lock validation" status="accepted" by="agent"
+        summary="transport.ContainsCredentials/CanonicalizeURL is the single source of truth; ValidateLock delegates to it.">
+        <md><script type="text/plain">
+**Context:** G-cred-hygiene requires rejecting credential-bearing URLs both at parse (T2) and in the checked-in lock (032 `ValidateLock`).
+**Decision:** T2 owns `ContainsCredentials`/`CanonicalizeURL`; 032's `ValidateLock` calls the same helper (T2 refactors it to delegate if 032 shipped an inline check). A test pins that the two agree.
+**Alternatives:** Two independent credential checks (drift risk — one tightens, the other doesn't, and a secret leaks through the laxer path).
+**Consequences:** A slight T2→032 coupling on one function, accepted for a single source of truth (CLAUDE.md "one shared validate()").
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-3" title="Shell to system git via the auto-shared exec pattern; no go-git dependency" status="accepted" by="agent"
+        summary="Reuse runGit-style exec with args-after-`--`, GIT_TERMINAL_PROMPT=0, GIT_NO_LAZY_FETCH=1 offline; zero new deps.">
+        <md><script type="text/plain">
+**Context:** The cache needs clone/fetch/archive/rev-parse with the user's existing auth and honest offline behavior.
+**Decision:** A thin `gitexec` wrapper over `auto-shared/git`'s `runGit` exec pattern — args after `--`, `GIT_TERMINAL_PROMPT=0` always, `GIT_NO_LAZY_FETCH=1` for offline ops.
+**Alternatives:** go-git (heavy dep, no transparent credential-helper/ssh reuse, partial-clone gaps); a bespoke libgit2 binding (cgo, build complexity).
+**Consequences:** Tests depend on a real `git` (skip when absent) and use `file://` fixtures; zero new runtime deps (honors minimal-deps).
+        </script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Six phases. The **transport gate + Env paths** (P1) is the security root everything passes through. The **cache core** (P2 — bare blobless clone, realize, offline check, prune backing, per-repo flock) and **extraction safety** (P3) form one chain; the **trust store + gate** (P4) is an independent chain off P1. Both converge into the **`cache`/`trust` CLI** (P5), then the **end-to-end integration tests** (P6). P1 and P4 are the parallelizable roots after P1; P2→P3 is the longest chain.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-dag caption="Phase dependency graph"></pd-dag>
+      </pd-section>
+
+      <pd-stepper>
+        <pd-phase n="1" title="Env cache/trust paths + transport gate (allow-list, credentials, canonical identity)" files="auto-skill/internal/skill/skill.go,auto-skill/internal/transport/transport.go,auto-skill/internal/transport/transport_test.go,auto-shared/config/validation.go" status="todo">
+          <md><script type="text/plain">
+**Goal:** The single URL gate the cache + trust both pass through, plus the plural-layout path helpers T2 needs.
+
+**Steps:**
+1. In `skill.go`, add `(e Env) UpstreamCacheDir() string` → `~/.auto/skills/upstream/` and `(e Env) TrustPath() string` → `~/.auto/skills/trust.json`, both honoring `RootOverride` → `<root>/.auto/skills/...` for test isolation (use `config.HomeDir()`). **Grep first** for 032's plural helpers: `grep -rn 'SkillsConfigDir\|\.auto/skills' auto-skill/internal/skill/` — if 032 already added a global-dir helper, build on it; do **not** duplicate a definition.
+   - **Verify:** `grep -rn '\.auto/skill[^s]' auto-skill/internal/{skill,cache,trust,transport}` returns no live cache/trust path (singular only in pre-032 legacy settings, untouched here).
+2. Declare error-code consts (`unsupported_transport`, `path_escapes_cache_root`, `symlink_entry`, `special_entry`, `too_many_files`, `size_limit_exceeded`, reuse `credentials_in_url` from 032) — in `auto-shared/config/validation.go` if shared with 032's lock check, else locally in `transport`.
+3. `transport/transport.go`:
+   - `type CacheIdentity struct{ Host string; Path []string }` with `RelPath()` (safe-encoded join, see P2 helper) and `HashSuffix(url)` via `git.ComputeRepoID`.
+   - `ContainsCredentials(raw) bool` — detect userinfo (`user[:pw]@`) and token query params (`access_token`/`private_token`/`token`/`x-access-token`). **This is the helper 032's `ValidateLock` will delegate to** (D-2); if 032 shipped an inline check, refactor it to call this.
+   - `CanonicalizeURL(raw) (canonical string, id CacheIdentity, err error)` — reject creds (`credentials_in_url`); parse scheme (infer when omitted for `host/path` + `git@host:` SSH forms); reject schemes outside `{https,ssh,git,file}`, any `*::` remote-helper form, and any string starting `-` (`unsupported_transport`); strip `.git`/trailing `/`, lowercase host, build `CacheIdentity` (full ordered path); return a sanitized canonical URL. Reuse `git.NormalizeRemoteURL` for the credential-stripping/host-lowercasing backbone.
+   - `Endpoint(raw) (string, error)` — canonical `scheme://host:port` (normalize default ports https→443/ssh→22/git→9418) or a canonical absolute path for `file:`/local; the trust identity.
+4. `transport_test.go` — table tests asserting exact codes: accept/reject per scheme; `ext::`/`fd::`/leading-`-`/unknown → `unsupported_transport`; `user:token@` + `?access_token=` → `credentials_in_url`; HTTPS≡SSH≡bare `owner/repo` → one identity; nested `gitlab.com/acme/platform/skills` nests; `Endpoint` port-normalization (`https://github.com` ≡ `:443`).
+5. `go build ./...` + `go test ./internal/transport/...` in auto-skill.
+   - **Verify:** build + tests green.
+6. **Commit:** `feat(009): transport gate (scheme allow-list, credential reject, canonical identity) + cache/trust paths`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Cache core: bare blobless clone, realize, offline check, prune, per-repo flock" files="auto-skill/internal/cache/cache.go,auto-skill/internal/cache/gitexec.go,auto-skill/internal/cache/cache_test.go" status="todo" depends-on="1">
+          <md><script type="text/plain">
+**Goal:** The content-addressed cache: safe-encoded contained paths, clone/realize/offline primitives, prune backing, concurrency.
+
+**Steps:**
+1. `gitexec.go` — thin wrapper over the `auto-shared/git` `runGit` exec pattern: `runGit(dir, env, args...)` that **always** appends repo args after `--`, sets `GIT_TERMINAL_PROMPT=0`, and accepts an extra-env slice so offline ops can add `GIT_NO_LAZY_FETCH=1`. Never enables hook execution.
+2. `cache.go` — path safety first:
+   - `safeComponent(s) (string, error)` — reject `.`/`..`/empty; percent-encode `/`, `\`, control chars, and platform-reserved names (`CON`/`NUL`/trailing dot or space, …).
+   - `(c *Cache) repoPath(id CacheIdentity) (string, error)` — join `UpstreamCacheDir()/<host>/<enc path>.git`, then a post-join `isSubpathSafe(root, path)` containment check (`path_escapes_cache_root` on failure) **before** returning.
+3. `Cache`/`Repo` ops:
+   - `Open(id, url) (*Repo, error)` — if absent: `git clone --bare --filter=blob:none -- <url> <path>`; if present: read configured `origin`, verify against canonical url; on genuine mismatch append `HashSuffix(url)` and use a distinct path.
+   - `ResolveRef(ref) (sha, error)` — `git rev-parse`/`ls-remote` (grammar-level resolution only).
+   - `Realize(sha) error` — `git fetch` the objects reachable for `sha` so the commit is fully present (online).
+   - `CommitPresent(sha) (bool, error)` — **offline** via `gitexec` + `GIT_NO_LAZY_FETCH=1` (`git cat-file --batch-check`/`rev-list --objects --quiet`); a missing object → incomplete-cache error with `run auto skill sync` remediation, **no network**.
+   - `List() ([]RepoInfo, error)` — walk `upstream/`, report identity + on-disk size + last-fetch (mtime of `FETCH_HEAD`/packed-refs).
+   - `Prune(opts PruneOptions) (PruneResult, error)` — age/size LRU eviction (`MaxAge`/`MaxSize`, `DryRun`); `Unreferenced` mode takes a referenced-id set (computed by the CLI from the registry in P5) and additionally drops unreferenced repos; returns evicted + skipped/unknown lists (never silently truncates).
+   - All mutating ops (`Open` clone, `Realize`, `Extract`) wrapped in a per-repo `syscall.Flock` on `<path>/.fetch.lock` (the `auto-env/internal/registry` pattern).
+4. `cache_test.go` — real-`git` `file://` fixture helper (`git init` + commit a small skill tree; skip if `git` absent): bare blobless clone shape; `Realize` → `CommitPresent` true; un-realized commit → incomplete-cache error **with origin pointed at an unreachable path** (asserts no fetch/hang); identity/containment (dangerous component rejected before any write); N-goroutine concurrency leaves one intact tree; prune age/size (+ `--dry-run` writes nothing) and `Unreferenced` with an explicit referenced-set.
+5. `go build ./...` + `go test ./internal/cache/...`.
+   - **Verify:** green.
+6. **Commit:** `feat(009): bare blobless git cache — safe paths, realize/offline, prune, per-repo flock`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Archive extraction with per-entry validation + resource limits" files="auto-skill/internal/cache/extract.go,auto-skill/internal/cache/extract_test.go" status="todo" depends-on="2">
+          <md><script type="text/plain">
+**Goal:** `git archive` extraction that validates every entry **before** any write — symlinks/special files rejected, resource limits, containment.
+
+**Steps:**
+1. `extract.go` — `(r *Repo) Extract(sha, subpath, dest string) error`:
+   - stream `git -C <path> archive --format=tar <sha>:<subpath>` (under the repo flock; requires `Realize(sha)` first — error if `!CommitPresent`).
+   - read with stdlib `archive/tar`; named consts `maxFiles=2000`, `maxTotalBytes=64<<20`, `maxFileBytes=8<<20`.
+   - for **each** header before writing: allow only `TypeReg`/`TypeDir`; reject `TypeSymlink`/`TypeLink` (`symlink_entry`), `TypeChar`/`TypeBlock`/`TypeFifo`/gitlink (`special_entry`); enforce file-count (`too_many_files`) + running total + single-file size (`size_limit_exceeded`); compute the dest path and verify containment under `dest`.
+   - **two-pass or buffered-stage** so a rejection writes nothing: stage into a temp dir on the same FS, validate fully, then atomically move into `dest` (or validate the whole stream into memory/temp first). A rejected extract leaves `dest` empty.
+2. `extract_test.go` — fixtures (built via `git`): a symlink entry, a gitlink/submodule, a device-like/special entry (simulated tar), an over-count tree, an oversize single file → each rejected with the exact code and `dest` empty; a clean tree → exact files/contents, all contained.
+3. `go build ./...` + `go test ./internal/cache/...`.
+   - **Verify:** green.
+4. **Commit:** `feat(009): safe git-archive extraction (reject symlink/special, file-count/size limits, containment)`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="Machine-local trust store + fetch gate (fail-closed bootstrap)" files="auto-skill/internal/trust/trust.go,auto-skill/internal/trust/trust_test.go" status="todo" depends-on="1">
+          <md><script type="text/plain">
+**Goal:** `trust.json` over canonical endpoints + the fetch authorization gate with fail-closed CI behavior.
+
+**Steps:**
+1. `trust.go`:
+   - `type Store struct{ Version int; Endpoints []string }`; `Load(env) (*Store, error)` via `config.DecodeJSONFileStrict` (missing file → empty store); endpoints canonicalized via `transport.Endpoint`, deduped + sorted.
+   - `(s *Store) IsApproved(endpoint string) bool` — exact canonical match only (so HTTPS approval never authorizes `git://`, another port, or a local path).
+   - `(s *Store) Add(e) error` / `Remove(e) error` — canonicalize, dedupe, sort, `WriteJSONFileAtomic` under a `syscall.Flock` on `trust.json.lock`; idempotent (add existing / remove absent = no-op success); reject a credential-bearing or unsupported endpoint via the transport primitive.
+   - `type Gate struct{ Store *Store }` + `Authorize(endpoint string, requested []string, io GateIO) error` — approved in state → ok; else if `io.TrustRequested` (`--trust-requested`/`AUTO_SKILL_TRUST_REQUESTED=1`) **and** endpoint ∈ requested-hosts → approve+record; else if `io.IsTTY` → prompt `Approve <endpoint>? [y/N]`, record on yes; else **fail closed** with an error listing endpoints to approve. `GateIO` abstracts stdin-TTY + the env/flag so tests inject it.
+2. `trust_test.go` — round-trip (canonical, dedupe, sort, port-normalize); `IsApproved` scheme/port/path isolation; idempotent add/remove; non-TTY unapproved → fail-closed listing; `TrustRequested` opt-in approves only requested hosts; reject credential/unsupported endpoint.
+3. `go build ./...` + `go test ./internal/trust/...`.
+   - **Verify:** green.
+4. **Commit:** `feat(009): machine-local trust.json + fail-closed fetch gate over canonical endpoints`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="5" title="cache + trust CLI sub-resources (JSON-default), mounted in root" files="auto-skill/internal/cli/cache.go,auto-skill/internal/cli/trust.go,auto-skill/internal/cli/root.go" status="todo" depends-on="3,4">
+          <md><script type="text/plain">
+**Goal:** Wire the `cache` and `trust` Cobra sub-resources, JSON-default I/O, and `prune --unreferenced` registry integration.
+
+**Steps:**
+1. `cli/cache.go` — `newCacheCmd` with `list`, `path <id>`, `prune` (`--dry-run`, `--unreferenced`, `--max-age <dur>`, `--max-size <size>`). Default JSON via `skill.EncodeJSON` to stdout, diagnostics to stderr, `--text`/`--format text`. `path` normalizes its arg via `transport.CanonicalizeURL` (accepts `github.com/acme/agent-skills` or a full URL) and prints the on-disk `.git` path. `prune --unreferenced` builds the referenced-id set from `~/.auto/projects.json` (`config.LoadProjects` → for each project path, read its `lock.json`, collect canonical ids), passes it to `Cache.Prune`, and **logs skipped/unknown** projects (unreadable lock → unknown, not pruned on that basis).
+2. `cli/trust.go` — `newTrustCmd` with `list`, `add <endpoint>`, `remove <endpoint>`; endpoint validated via `transport.Endpoint`; JSON-default + `--text`; exit non-zero on a rejected endpoint with a remediation hint.
+3. `root.go` — `cmd.AddCommand(newCacheCmd(...), newTrustCmd(...))`.
+   - **Verify:** `go build ./...`; `go vet ./...`; `auto skill cache --help` + `auto skill trust --help` show the sub-verbs and flags.
+4. **Commit:** `feat(009): cache + trust CLI sub-resources (JSON-default, prune --unreferenced via registry)`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="6" title="End-to-end CLI integration tests" files="auto-skill/internal/cli/cli_integration_test.go" status="todo" depends-on="5">
+          <md><script type="text/plain">
+**Goal:** Prove the `cache`/`trust` CLI contract end-to-end against isolated `HOME` + `--root`.
+
+**Steps:**
+1. `trust add/list/remove` round-trip: add `https://github.com` → `list` shows canonical `https://github.com:443`; idempotent re-add; `remove` drops it; a credential-bearing endpoint is rejected (exit non-zero, stderr).
+2. `cache path <id>` for a canonical identity and a full URL → same printed path; `cache list` on an empty/populated cache returns JSON.
+3. `cache prune --dry-run` writes nothing; `cache prune --unreferenced` with a seeded `~/.auto/projects.json` (one project whose `lock.json` references repo A, repo B unreferenced) evicts only B and logs the decision.
+4. JSON-default contract: stdout parses as JSON (payload only); diagnostics on stderr; `--text` human; exit non-zero on error with partial valid results; invalid flag usage fails fast.
+   - **Verify:** `go test ./...` green in auto-skill (and `auto-shared` if touched); `go vet ./...`; pre-commit lint clean.
+5. **Commit:** `test(009): e2e cache/trust CLI — round-trip, path, prune --unreferenced, JSON contract`.
+          </script></md>
+        </pd-phase>
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **P1** satisfies **AC-3, AC-4** (transport allow-list + credential reject) and the identity/endpoint halves of **AC-1, AC-8**.
+- **P2** satisfies **AC-2** (safe path + containment), **AC-5** (bare blobless + realize), **AC-6** (honest offline check), **AC-13** (per-repo flock concurrency), and the cache-path/prune-backing halves of **AC-1, AC-12**.
+- **P3** satisfies **AC-7** (archive extraction safety).
+- **P4** satisfies **AC-9** (fail-closed bootstrap) and the store half of **AC-8, AC-10**.
+- **P5** satisfies **AC-11** (cache list/path), the CLI halves of **AC-10, AC-12**, and the contract half of **AC-14**.
+- **P6** is the end-to-end proof tying **AC-10 through AC-14** to `cli_integration_test.go`.
+- Guard rails: **G-transport** (P1 allow-list + P4 trust gate), **G-cred-hygiene** (P1 reject-at-parse, one shared helper), **G-extract-safe** (P2 safe paths + P3 entry validation/limits), **G-offline-check** (P2 `GIT_NO_LAZY_FETCH=1`), **G-json-default** (P5/P6). Zero new runtime deps; `go build`/`go test`/`go vet` green per phase.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
