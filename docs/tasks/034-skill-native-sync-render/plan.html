@@ -1,0 +1,966 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>034: skill-native-sync-render</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "034",
+    "name": "skill-native-sync-render",
+    "epic": "004-remote-skill-management",
+    "depends-on": ["033"],
+    "status": "planning",
+    "created": "2026-06-20"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="034: skill-native-sync-render" status="draft" pr="pending" generated="2026-06-20">
+
+    <pd-tab name="Requirements">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Epic 004 (remote-skill-management) replaces the `npx skills` shell-out with a native
+Go pipeline. Task T1 (032) settled the checked-in **schemas** (`skills.yaml` /
+`lock.json` / `manifest.json`); T2 (009) built the **fetch substrate** (canonical git
+cache, transport allow-list, credential rejection, machine-local trust, the cache's
+`ResolveRef`/`Realize`/`CommitPresent`/`Extract` API); T3 (033) built **`add`** —
+parse → resolve → discover → write the lock + `skills.yaml` stub, behaving as
+`--no-sync` because nothing yet renders.
+
+Today `auto skill sync` still **shells out** to `npx skills add ./skills …`
+(`auto-skill/internal/cli/sync.go`): an external Node dependency that lies about
+freshness, can't customize what it installs, runs upstream post-checkout hooks, and
+gives no reproducibility. **T4 is the PR where that dies.** It carries the two halves
+that only ship together:
+
+- **(a) the render engine** — the pure `(template, replacements, resolved-files) →
+  canonical tree` function with a deterministic, code-execution-free templating model
+  and a full-rendered-tree `skill_version` digest; and
+- **(b) the sync pipeline** — the three-phase (plan → parallel fetch → render+write)
+  orchestrator with a journaled crash-consistent commit, incremental on-disk-digest
+  skipping, the `auto_update` freshness modes, and the `update` verb behavior that
+  drives them.
+
+Render has no standalone user value (it emits nothing without sync) and shares all of
+sync's fixtures, so the epic deliberately keeps them in one task (decision D-1).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+**(a) Render engine — deterministic, no code execution.**
+- **Restricted templating** — Go `text/template`, fixed `{{ }}` delimiters, parsed via
+  `text/template/parse` then the **AST is walked and rejected** unless every node is a
+  field-access action (`{{ .var }}`) or the literal-brace escape (`{{ "{{" }}`):
+  function calls, pipelines, control actions (`if`/`range`/`with`), and built-ins are
+  **rejected at parse** so the accepted grammar == the promised grammar (G-no-exec).
+  Values substitute as **raw text** (skills are prose, not an injection sink).
+- **`customize:` schema** — `customize: { <var>: { required: bool (default false),
+  default: <string>, description: <string> } }` declared in template frontmatter;
+  `skills.yaml` supplies values. Resolution: an **undeclared** placeholder → hard
+  error; a declared var with no value and no `default` → hard error if `required`,
+  else the empty string.
+- **Replacements** — two value types only: a **literal** (inlined verbatim) and a
+  **file-ref** (a repo file or a section of one, content inlined). Leading YAML
+  frontmatter is **stripped by default** (`strip_frontmatter: false` keeps it). File-
+  refs resolve **inside the repo only**: containment enforced on the **fully symlink-
+  resolved real path** (not lexical cleaning); a ref that is or traverses a symlink
+  out of root is **rejected** (G-extract-safe). Referenced content is inserted **raw**,
+  never re-templated.
+- **Section extraction** — heading-based, best-effort *matching* isolated from a
+  fixed deterministic *extraction*. Match cascade: exact normalized
+  (`casefold(collapse_ws(trim))`) → GitHub-style slug; **multiple matches** → first in
+  document order + warn (path form `["A","B"]` disambiguates); **zero matches** → hard
+  error. Extraction is the fixed algorithm: UTF-8 + LF, strip frontmatter, code-fence-
+  aware ATX heading scan, extent = heading → next heading with `level ≤ matched` (or
+  EOF), apply `include_heading`, canonicalize. `content_hash = sha256(canonical_bytes)`.
+- **`skill_version`** — sha256 over `canonical_json({render_version, files:[{path,
+  mode, sha256-of-emitted-bytes} sorted by path]})` covering **every emitted file**
+  (SKILL.md + references/scripts/assets). Canonicalize **text** files (valid UTF-8, no
+  NUL → LF + strip trailing ws + one trailing newline) at render time so hash ==
+  emitted bytes; **binary** files copied + hashed byte-for-byte. The provenance stamp
+  (`metadata.auto_skill`) is added **after** the digest and **excluded** from it
+  (G-determinism, G-reproducible). Uniform for authored and vendored skills.
+- **`render_version`** — the engine's behavior version; a bump triggers a **one-time
+  lazy re-render of all skills** on the next `sync` (output is derived).
+
+**(b) Sync pipeline — three phases + crash-consistent commit.**
+- **Phase A · Plan (no network)** — dedupe by repo (N skills, one fetch); skip cache-
+  satisfied commits (objects present, offline `CommitPresent`); **locked
+  materialization** (a locked/pinned `sync` fetches the *exact pinned commit's objects*
+  on a cache miss but never re-resolves the ref — fails "pinned commit unavailable
+  upstream" if the object is gone); **intent reconciliation** (when `skills.yaml`'s
+  `version` differs from the lock's `version_spec`: `auto_update:true` re-resolves +
+  rewrites the lock entry; `auto_update:false` → `--check`/report "intent changed —
+  run `update <name>`").
+- **Phase B · Fetch (parallel)** — clone/fetch needed repos through a bounded worker
+  pool (`--jobs`, default 8); each repo takes its per-repo cache lock; **one repo
+  failing does not abort the run** — errors collected, valid repos still process, exit
+  non-zero if any failed. `--check` skips phase B entirely (offline) (G-fast-sync).
+- **Phase C · Process (parallel, pure)** — extract (`git archive`) → render → write to
+  targets, **incremental**: a target skill is skipped only when its **actual on-disk
+  tree digest equals the freshly computed `skill_version`** (a user edit / truncated
+  side file / forged stamp forces a re-render); each target receives `union(authored ∪
+  vendored)` with **authored shadowing** vendored on a name clash.
+- **Journaled crash-consistent commit** — `.auto/skills/.sync-journal` + fixed order:
+  (1) stage each rendered tree into a same-FS temp dir, journal intended writes +
+  digests; (2) swap staged dirs in per skill via rename, an existing non-empty dir
+  moved to journaled trash first; (3) write machine-local **receipts** (what this
+  machine wrote + digests); (4) write `manifest.json` then `lock.json` (both atomic,
+  manifest before lock); (5) clear the journal (the commit point), drop trash. A
+  non-empty journal triggers **recovery** (roll forward/back). Pruning suppressed when
+  the desired set is incomplete (G-crash-consistent).
+- **`manifest.json`** — write the derived render state (per skill `template_hash`,
+  resolved replacement literals, file-ref `content_hash`es + `matched_heading`,
+  `skill_version`, `render_version`; per target the managed set + expected
+  `skill_version`). Locked `sync` rewrites the **manifest**, never the lock.
+- **Flags & modes** — `--check` (offline CI gate; phase-A/C digest compare, no fetch,
+  exits non-zero if any target stale); `--locked`/`--no-update` (reproduce the locked
+  commit; precedence `--locked` > `auto_update`); `--target t…` (**implies
+  `--locked`** — a scoped sync is a partial/repair op, never floats); `--jobs n`
+  (bounds phase B fetch + phase C render parallelism). `auto_update` on (default;
+  float `latest`/`branch:` to HEAD first) / off (pure `npm ci`).
+- **`update [name] [--check]` verb** — advance floating specs to newest upstream and
+  re-render; re-resolve `<tag>` specs **only on explicit update** (peeled, force-move
+  warned), never on `sync`; `<sha>` never floats. `--check` does a `git fetch`,
+  compares HEAD vs locked commit, **writes nothing**. (Engine + entrypoint here; the
+  public `auto skill update` command name is reclaimed in T6 — see Open Questions / D-3.)
+- **Delete the npx shell-out** in `sync.go`; wire the post-`add` auto-sync call.
+
+**CLI conventions** — JSON-default (payload on stdout, diagnostics on stderr); `--text`
+for humans; `sync` only **warns** on token budgets (advisory, never blocks a render —
+`lint` is the gate, G-token-budget); every hard error carries a remediation hint.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Prune / adopt / doctor (T5)** — the **orphan-prune pass** (deleting manifest
+  orphans under receipt authority), foreign-dir hard-conflict handling, `adopt`
+  (staged move → `git add`), renamed-vendored handling, and `doctor`'s drift +
+  orphan/foreign reporting are **T5**. T4 *writes* receipts + manifest and replaces an
+  existing **managed** skill dir via trash+swap (the commit protocol needs this), but
+  does **not** run the receipt-gated deletion of no-longer-desired skills. The journal
+  reserves a `prunes` section T5 fills (see Open Questions).
+- **Inspection triad + binary-self-update relocation (T6)** — `list`/`describe`/`get`,
+  `source`/`target` sub-resources, `ls` removal, and **reclaiming the `auto skill
+  update` command name** from the binary self-update (D-3). T4 builds the skills update
+  *engine* + entrypoint and drives it through `sync`'s `auto_update` mode; it does not
+  relocate the binary self-update or register the public `update` command.
+- **Migrate + git hooks (T7)** — translating `skills-lock.json`; the pre-commit `sync
+  --check` + `lint`, post-merge/checkout `sync --locked`, and pre-push `update --check`
+  hook wiring. `sync`/`update`/`--check` are the primitives those hooks call, built
+  here; the hook installation itself is T7.
+- **Schemas (T1 / 032)** — the `skills.yaml`/`lock.json`/`manifest.json` Go types,
+  strict parsers, and `validate()` functions. T4 **populates** `manifest.json` through
+  the typed `Manifest` and re-validates; it does not redefine the schemas (if a
+  derived field is missing it extends the schema — Open Questions).
+- **Cache / transport / trust internals (T2 / 009)** — the bare blobless clone,
+  canonical-identity encoding, archive-extraction entry validation + limits, offline
+  `CommitPresent`, scheme allow-list, credential rejection, and trust gate. T4 **calls**
+  them; it does not reimplement them.
+- **Source parsing & discovery (T3 / 033)** — `ParseSource`, the discovery roots/
+  dedupe/divergence logic. T4 consumes the lock `add` wrote and reuses the tree-digest
+  helper; the deep-link/discovery surface is owned by T3.
+- **`lint` thresholds** — the token-budget gate logic lives in `lint` (existing); T4
+  only emits the **advisory** budget warning path inside `sync`.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Resolved with best-judgment defaults (orchestrator authorized fully autonomous
+resolution; the epic + design doc settle the rest). Each is recorded so a reviewer —
+and the T5/T6/T7 planners — can override.
+
+- [x] **EPIC DECISION D-3 — the `update` naming / sequencing handoff to T6.** Today
+  `auto skill update` is the **binary self-update** (`internal/cli/update.go` →
+  `auto-shared/update`). The epic relocates that to root `auto update` and reclaims the
+  `auto skill update` name for skills **in T6** (D-3), and **T6 depends-on T4** — so the
+  name is still occupied when T4 lands. → **Default:** T4 implements the **float-then-
+  render engine** (`update.Run`: advance floating specs, re-resolve `<tag>` on explicit
+  update only) and **drives it through `sync`'s `auto_update` mode** so `auto skill
+  sync` already floats-then-renders end-to-end. T4 exposes the engine as a stable
+  internal entrypoint but does **not** register a public `auto skill update` command and
+  does **not** touch the binary-self-update relocation — **T6 completes the command-name
+  reclaim with no temporary alias** (matching D-3's "reclaimed name is ready for T4's
+  update verb"). *Handoff for the T6 planner/executor:* wire `newUpdateCmd` to the
+  skills engine T4 ships and move binary self-update to root `auto update`. *Rationale:*
+  honors D-3 (relocation owned by T6), avoids a throwaway alias, and still ships the
+  freshness behavior in T4 via `sync`.
+
+- [x] **Where is the receipts/prune boundary between T4 and T5?** The journaled commit
+  protocol (T4) *writes* receipts and the design's `sync` note mentions "pruning only
+  manifest-owned orphans confirmed by a receipt," yet the epic scopes prune/adopt/
+  receipts-as-deletion-authority to **T5**. → **Default:** T4 **writes** receipts (the
+  crash-consistent commit needs a record of what this machine wrote) and **replaces an
+  existing managed skill dir** via trash+swap when re-rendering; but T4 does **not** run
+  the **orphan-prune pass** (deleting manifest orphans that are no longer desired) — that
+  receipt-gated deletion, plus foreign-dir conflict handling and `doctor` reporting, is
+  T5. The journal schema reserves a `prunes` array (empty in T4) so T5 adds the pass
+  without a journal-format change. *Rationale:* keeps T4's commit crash-consistent and
+  receipts truthful while honoring the epic's T5 scope; "pruning suppressed when the
+  desired set is incomplete" is preserved either way.
+
+- [x] **Where does the render engine live, and how is the import cycle avoided?** →
+  **`internal/render` — a pure leaf package** (no import of `internal/skill` to avoid a
+  cycle, since `discovery`/`skill` may import shared frontmatter helpers). It depends
+  only on stdlib (`text/template`, `text/template/parse`, `crypto/sha256`,
+  `encoding/json`) + `yaml.v3` (for the `customize:` block) + 032's typed
+  `SkillsYAML`/`Manifest` value types. The frontmatter split is a small local helper
+  mirroring `skill.parseFrontmatterAndBody` (relocated to a shared leaf if reuse is
+  cleaner at execution time). *Rationale:* matches 033's leaf-package discipline;
+  render stays unit-testable with zero cache/network deps.
+
+- [x] **Where does the sync orchestration + journal live?** → **`internal/sync`**
+  (phases A/B/C + journal + recovery + manifest population + targets union/shadow +
+  receipts write), importing `internal/render`, 009's cache/trust, and 032's schemas.
+  The `update` engine is `internal/sync` (or a thin `internal/update` calling sync's
+  plan with float enabled) — single resolution path, no duplication. *Rationale:* one
+  package owns the transaction boundary and the single-writer lock/manifest commit.
+
+- [x] **`--jobs` default?** → **8** (the G-fast-sync metric: "`--jobs default 8`").
+  Fetches are network-bound, so concurrency above core count helps; the cap stays polite
+  to host rate-limits/SSH connection limits. `--jobs` bounds both phase-B fetch and
+  phase-C render parallelism.
+
+- [x] **`render_version` initial value + storage?** → **`render_version = 1`** (a code
+  constant), stored per skill in `manifest.json`. On the next `sync` after the constant
+  bumps, any skill whose manifest `render_version` is lower triggers a **one-time lazy
+  re-render** (output is derived; churn on a tool upgrade is expected). No migrate
+  command. *Rationale:* the design names `render_version` as a manifest field and a
+  detectable bump; a code constant is the simplest deterministic source.
+
+- [x] **Does 032's `Manifest` struct already carry every derived field T4 needs?** →
+  **Assume yes; extend if not.** T4 populates `template_hash`, resolved replacement
+  literals, file-ref `content_hash` + `matched_heading`, `skill_version`,
+  `render_version`, and the per-target managed set. If 032 shipped a thinner struct, T4
+  **adds the missing fields to 032's schema** (coordinating at the seam — the manifest
+  is *derived/regenerable*, so a field addition is non-breaking). *Rationale:* the
+  manifest is T4's output; the schema must hold what render produces.
+
+- [x] **Provenance stamp shape, and is it deletion authority?** → A minimal
+  `metadata.auto_skill` block stamped into the emitted `SKILL.md` **after** the
+  `skill_version` digest and **excluded** from it: `{source, commit, skill_version,
+  render_version}` (+ an informational `managed: true`). It is **informational only** —
+  never a deletion authority (a forged stamp authorizes nothing; receipts + on-disk
+  digest are the truth, G-no-foreign-delete). *Rationale:* the design pins the stamp as
+  excluded-from-hash and informational; deletion authority is T5's receipts.
+
+- [x] **Does `sync` block on token-budget overflow?** → **No — `sync` only warns**
+  (advisory, to stderr), never blocks a render; `lint` is the gate (body warn >4000 /
+  error >8000 tokens; chars/4 estimate). *Rationale:* G-token-budget states "`sync`
+  only warns on budgets."
+
+- [x] **Does T4 delete the npx shell-out, or leave it for a later task?** → **Delete it
+  now.** Replacing `sync` with the native render/sync pipeline is exactly T4's job ("the
+  point where the npx shell-out dies", D-1). T4 rewrites `newSyncCmd`'s body to call the
+  native pipeline and removes the `os/exec` import. *Rationale:* leaving it would make
+  `sync` mean two things; the epic's `G-decisive-cli` forbids carrying it.
+
+- [x] **`sync --check` exit semantics + what it reports for stale-by-intent?** →
+  `--check` is offline: phase-A intent reconciliation in *report* mode + phase-C digest
+  compare (on-disk tree digest vs expected `skill_version`), **no fetch**. It exits
+  **non-zero** if any target is stale-by-render **or** stale-by-intent (with
+  `auto_update:false`), printing the remediation (`run auto skill sync` /
+  `run auto skill update <name>`). Missing cache objects report an *incomplete cache*
+  (run sync), never a silent network call (G-offline-check). *Rationale:* makes `--check`
+  a real CI gate that can't be fooled by a forged stamp.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Library + CLI task — verification is **Go unit + integration tests** in `auto-skill`,
+no browser. The two halves test differently:
+
+- **Render engine (`internal/render`) — pure, deterministic, table-driven.** The
+  product is *byte-exact output and rejection*, so determinism and the security
+  rejections are the product. Table tests assert **exact bytes** and **exact error
+  codes/sentinels**, never "errored":
+  - **Template AST allow-list** — accept `{{ .var }}` + `{{ "{{" }}`; **reject at
+    parse** every function call, pipeline, and control action (`if`/`range`/`with`/
+    `{{ printf … }}`/`{{ .a.b | upper }}`) with a typed `template_rejected` error
+    naming the offending node. Raw (unescaped) substitution verified (a value with `<`
+    / `&` / shell metachars passes through verbatim).
+  - **`customize:` resolution** — required-missing → hard error; declared-no-default →
+    empty string; undeclared placeholder → hard error; `{{ "{{" }}` → literal `{{`.
+  - **Determinism / `skill_version`** — the **same** inputs hash identically across two
+    independent renders; a whitespace-only template change either renders identically
+    (same hash) or changes the hash (never "same version, different bytes"); a changed
+    **side file** (references/scripts/assets) moves the version; a **binary** asset
+    (NUL byte) is copied + hashed **byte-for-byte** (a crafted PNG stays uncorrupted);
+    the `metadata.auto_skill` stamp is **excluded** from the digest (adding it doesn't
+    move `skill_version`). Mode (100644/100755) is part of the digest.
+  - **File-refs + extraction** — whole-file (frontmatter stripped by default;
+    `strip_frontmatter:false` keeps it, moving `content_hash`); section match cascade
+    (exact → slug); **multi-match → first-in-order + warning**; **zero-match → hard
+    error**; the fixed extract algorithm against a fenced-code fixture (a `#` inside a
+    fence is **not** a heading; extent stops at `level ≤ matched`); path-form
+    disambiguation. **Symlink containment** on a tmp tree: a file-ref that *is* or
+    *traverses* a symlink escaping root is **rejected** (`symlink_escape`), tested on
+    the fully-resolved real path (lexical-only `..` cleaning would pass it — that's the
+    bug being guarded).
+  - **`render_version`** — a manifest entry with a lower `render_version` forces a
+    re-render even when the on-disk digest matches the *old* engine output.
+- **Sync pipeline (`internal/sync`) — integration against a real `git` `file://`
+  fixture** driving 009's cache (skip cleanly if `git` is absent):
+  - **Phase A plan** — N skills from one repo dedupe to one fetch; a cache-satisfied
+    commit needs no fetch; **locked materialization** fetches a pinned commit's objects
+    on a cache miss but a *floating* run re-resolves the ref; a pinned object gone
+    upstream → "pinned commit unavailable upstream"; **intent reconciliation**
+    (`skills.yaml` version edited): `auto_update:true` re-resolves + rewrites the lock,
+    `auto_update:false` reports + leaves the lock.
+  - **Phase B fetch** — a worker pool bounded by `--jobs`; **one repo failing does not
+    abort** (the valid repo still renders, the command exits non-zero); `--check` does
+    no network (a fixture with the remote deleted still `--check`s offline).
+  - **Phase C process** — extract→render→write `union(authored ∪ vendored)` into every
+    target; **authored shadows vendored** on a name clash; **incremental skip** only
+    when the on-disk tree digest equals the expected `skill_version` (hand-editing a
+    target file forces a re-render; touching mtime alone does not).
+  - **Journaled commit + recovery** — assert the fixed write order (stage → swap →
+    receipts → manifest → lock → clear); a **fault injected** between any two steps
+    (kill before manifest, before lock, before journal-clear) leaves a state the next
+    run's recovery rolls forward/back to a consistent tree; an existing non-empty
+    target dir goes to journaled trash, never deleted in place; a failed fetch (desired
+    set incomplete) **suppresses pruning**; receipts record the written digests.
+  - **`manifest.json`** — populated with `skill_version`/`content_hash`/`template_hash`/
+    `render_version`; a **locked** `sync` after a value/doc edit rewrites the **manifest**
+    and leaves `lock.json` byte-identical (the "lock unchanged" contract).
+  - **`update [name] [--check]` engine** — advances a floating `latest` to a new HEAD +
+    re-renders; re-resolves a `<tag>` **only on explicit update** (a `sync` leaves the
+    tag's commit); `--check` fetches + compares + writes nothing.
+- **CLI integration (`internal/cli`)** — extend `cli_integration_test.go`: `sync`,
+  `sync --check`, `sync --locked`, `sync --target`, `sync --jobs` against an isolated
+  `HOME` + `--root` + a `file://` fixture; assert JSON-default stdout (parseable payload
+  only), diagnostics on stderr, `--text`, `--target` implies `--locked` (a scoped sync
+  never advances the lock), exit codes (non-zero on a stale `--check` / a repo failure),
+  and that the **npx exec is gone** (no `os/exec` import; a fixture with no Node still
+  syncs). Token-budget overflow emits a **warning** but exits zero.
+- **Discipline** — `go build ./...` + `go test ./...` green in `auto-skill` (and
+  `auto-shared` if touched) after each file. **Zero new runtime deps** (stdlib
+  `text/template`, the existing `yaml.v3`, `auto-shared`). Tests shelling to real `git`
+  skip cleanly when absent.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage map">
+        <pd-mermaid caption="Testing layers — render is pure/byte-exact; the pipeline is real-git integration; the journal is fault-injected">
+flowchart TB
+  tmpl["Unit: render — template AST allow-list\nfield-access + literal-brace accept · funcs/pipes/control reject\ncustomize resolution · raw substitution"]
+  hash["Unit: render — skill_version / content_hash\ndeterministic bytes · side-file moves version · binary verbatim\nstamp excluded · render_version re-render"]
+  fref["Unit: render — file-refs + extraction\nfrontmatter strip · match cascade · multi-warn/zero-error\nfenced-code-aware extract · symlink-escape reject"]
+  plan["Integration (real git, file://): plan + fetch\ndedupe-by-repo · cache-satisfied skip · locked materialization\nintent reconciliation · --jobs pool · isolated repo failure"]
+  proc["Integration: process + journal\nunion+shadow · on-disk-digest skip · staged swap+trash\nfault-injected recovery · receipts · manifest write · update engine"]
+  cli["CLI: sync/--check/--locked/--target/--jobs\nJSON-default · exit codes · npx exec gone · budget warns-not-blocks"]
+  tmpl --> hash --> fref --> proc
+  plan --> proc --> cli
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="Templating rejects everything but field access + the literal-brace escape, at parse" phases="1" tests="auto-skill/internal/render/template_test.go">
+          <md><script type="text/plain">
+**Given** a SKILL.md template,
+**When** it is parsed by the render engine,
+**Then** only **field-access actions** (`{{ .var }}`) and the **literal-brace escape**
+(`{{ "{{" }}` → literal `{{`) are accepted; a function call, pipeline, or control
+action (`{{ printf … }}`, `{{ .a | upper }}`, `{{ if … }}`/`{{ range … }}`/`{{ with
+… }}`, any built-in) is **rejected at parse** with a typed error naming the offending
+node (G-no-exec) — the AST is walked, not just executed; and substituted values are
+inserted as **raw, unescaped text** (a value containing `<`, `&`, or shell metacharacters
+passes through verbatim — skills are prose, not an injection sink).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="The customize: schema drives resolution with strict failure rules" phases="1" tests="auto-skill/internal/render/customize_test.go">
+          <md><script type="text/plain">
+**Given** a template declaring `customize: { <var>: { required, default, description } }`
+and a `skills.yaml` supplying replacement values,
+**When** the template is rendered,
+**Then** an **undeclared** placeholder (used in the body but not in `customize:`) is a
+**hard error**; a declared `required` var with no value and no `default` is a **hard
+error**; a declared non-required var with no value and no `default` resolves to the
+**empty string**; `{{ "{{" }}` emits a literal `{{`; and every error carries a
+remediation hint (which var, what to supply).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="File-refs inline repo content, strip frontmatter by default, and reject symlink escapes on the resolved path" phases="2" tests="auto-skill/internal/render/fileref_test.go">
+          <md><script type="text/plain">
+**Given** a file-ref replacement `{file, section?, include_heading?, strip_frontmatter?}`,
+**When** it is resolved during render,
+**Then** the referenced file's content is inlined **raw** (never re-templated); leading
+YAML frontmatter is **stripped by default** (`strip_frontmatter:false` keeps it, which
+**moves `content_hash`**); containment is enforced on the **fully symlink-resolved real
+path** — a ref that *is* or *traverses* a symlink leaving the repo root is **rejected**
+(`symlink_escape`), where lexical `..`/absolute cleaning alone would have allowed it
+(G-extract-safe); and a glob or value-to-value interpolation is not a valid ref.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Section extraction: best-effort match, deterministic extract, content_hash over inlined bytes" phases="2" tests="auto-skill/internal/render/extract_test.go">
+          <md><script type="text/plain">
+**Given** a file-ref with a `section` selector over a markdown doc,
+**When** the section is extracted,
+**Then** matching is a best-effort cascade (exact normalized
+`casefold(collapse_ws(trim))` → GitHub-style slug); **multiple matches** take the
+**first in document order** and emit a warning naming the collision (path form
+`["A","B"]` disambiguates); **zero matches** is a **hard error** (a skill never renders
+with missing content); extraction is fixed and code-fence-aware (a `#` inside a fence is
+not a heading; extent = matched heading → next heading with `level ≤ matched`, else EOF;
+`include_heading` applied; canonicalized to LF + trimmed + one trailing newline); and
+`content_hash = sha256(canonical_bytes)` covers exactly the inlined bytes (editing an
+unrelated section does not move it; renaming the matched heading fails loud).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="skill_version is the full rendered-tree digest over exact emitted bytes" phases="1" tests="auto-skill/internal/render/hash_test.go">
+          <md><script type="text/plain">
+**Given** a rendered skill tree (SKILL.md + references/scripts/assets),
+**When** `skill_version` is computed,
+**Then** it is `sha256(canonical_json({render_version, files:[{path, mode, sha256-of-
+emitted-bytes} sorted by path]}))` over **every emitted file**; **text** files (valid
+UTF-8, no NUL) are canonicalized at render (LF + strip trailing ws + one trailing
+newline) so **hash == emitted bytes**, while **binary** files (NUL present) are copied
+and hashed **byte-for-byte** (a PNG/font stays uncorrupted); a changed **side file**
+moves the version; mode (`100644`/`100755`) is part of the digest; the same inputs hash
+**identically across independent renders** (G-determinism); and the `metadata.auto_skill`
+provenance stamp is added **after** the digest and **excluded** from it (adding it does
+not move `skill_version`). Authored and vendored skills share this one definition.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="render_version bump triggers a one-time lazy re-render" phases="4" tests="auto-skill/internal/sync/process_test.go">
+          <md><script type="text/plain">
+**Given** a manifest whose per-skill `render_version` is lower than the engine's current
+`render_version` constant,
+**When** the next `sync` runs,
+**Then** every affected skill is **re-rendered once** (even when its on-disk digest still
+matches the *old* engine's output), the manifest `render_version` is advanced, and a
+subsequent `sync` with no input change skips them again — the churn is a one-time tool-
+upgrade cost, with no special migrate command.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="Phase A plans the minimum network work and reconciles intent" phases="3" tests="auto-skill/internal/sync/plan_test.go">
+          <md><script type="text/plain">
+**Given** a lock + `skills.yaml` over one or more repos,
+**When** phase A plans,
+**Then** N skills from one repo dedupe to **one** fetch; a commit whose objects are
+already cached needs **no** network (offline `CommitPresent`); a locked/pinned `sync`
+performs **locked materialization** on a cache miss (fetch the *exact pinned commit's
+objects*, **no ref re-resolution**) and **fails "pinned commit unavailable upstream"** if
+the object is gone (history rewrite/GC); a floating (`auto_update:true`) run additionally
+**re-resolves** `latest`/`branch:` to HEAD; and **intent reconciliation** handles a
+`skills.yaml` `version` that differs from the lock's `version_spec`
+(`auto_update:true` → re-resolve + rewrite the lock entry; `auto_update:false` →
+report "intent changed — run `update <name>`", lock untouched).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="Phase B fetches in parallel with isolated per-repo failure; --check is offline" phases="3" tests="auto-skill/internal/sync/fetch_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+**Given** a plan needing several repos fetched,
+**When** phase B runs,
+**Then** the needed repos clone/fetch concurrently through a **bounded worker pool**
+(`--jobs`, default 8); **one repo failing does not abort the run** — errors are
+collected and reported, valid repos still process, and `sync` **exits non-zero** if any
+failed (G-fast-sync); each repo takes its per-repo cache lock; and `sync --check` **skips
+phase B entirely** (offline, `GIT_NO_LAZY_FETCH=1` — a missing object reports an
+*incomplete cache: run sync*, never a silent network call, G-offline-check).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="Phase C writes union(authored ∪ vendored) with authored shadowing, skipping only on an on-disk-digest match" phases="4" tests="auto-skill/internal/sync/process_test.go">
+          <md><script type="text/plain">
+**Given** locally-available content + authored `./skills/**`,
+**When** phase C processes,
+**Then** it extracts (`git archive`) → renders → writes **both** rendered vendored and
+authored skills into **every** output target, with **authored shadowing** vendored on a
+name clash; a target skill is **skipped only when its actual on-disk tree digest equals
+the freshly computed `skill_version`** — a user edit, truncated side file, or forged
+in-file stamp changes the on-disk digest and **forces a re-render** (presence + the
+embedded stamp are never trusted alone); and output is **identical regardless of skill
+order** (G-determinism). `--jobs` also bounds phase-C render parallelism.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-10" title="The commit is journaled and crash-consistent with a fixed order and recovery" phases="5" tests="auto-skill/internal/sync/journal_test.go">
+          <md><script type="text/plain">
+**Given** a render ready to commit,
+**When** `sync` writes,
+**Then** it follows the fixed order via `.auto/skills/.sync-journal`: (1) stage each tree
+into a **same-FS** temp dir + journal intended writes/digests, (2) **swap per skill** by
+rename with an existing non-empty dir moved to **journaled trash** first (never deleted
+in place / cross-FS), (3) write machine-local **receipts**, (4) write `manifest.json`
+then `lock.json` (atomic, manifest before lock), (5) **clear the journal** (the commit
+point) then drop trash; a crash with a **non-empty journal** triggers **recovery** that
+rolls forward/back to a consistent tree (reconciling receipts + manifest so output never
+looks foreign and the manifest never claims un-written bytes); and **pruning is
+suppressed whenever the desired set is incomplete** — a failed fetch never deletes or
+half-advances (G-crash-consistent).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-11" title="auto_update modes + the flag surface; locked sync rewrites the manifest, never the lock" phases="3,4,6" tests="auto-skill/internal/sync/sync_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+**Given** the `sync` flag surface,
+**When** each mode runs,
+**Then** default `auto_update:true` floats `latest`/`branch:` to HEAD then renders;
+`auto_update:false` (or `--locked`/`--no-update`) reproduces the locked commit
+(precedence `--locked` > `auto_update`); `--target t…` **implies `--locked`** (a scoped
+sync is a partial/repair op — it never floats or advances the project-wide lock); `--jobs
+n` bounds fetch + render parallelism; `--check` is the offline dry-run gate (on-disk
+digest vs expected `skill_version`, exits non-zero if any target is stale-by-render or
+stale-by-intent); a **locked** `sync` after a value/doc edit rewrites **`manifest.json`**
+and leaves **`lock.json` byte-identical** (the "lock unchanged" contract,
+G-reproducible); and `sync` only **warns** on token-budget overflow (advisory, exits
+zero — `lint` is the gate, G-token-budget).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-12" title="The update engine floats specs (tags only on explicit update); the npx shell-out is deleted" phases="3,6" tests="auto-skill/internal/sync/update_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+**Given** the skills update engine and the existing `npx`-based `sync` command,
+**When** T4 lands,
+**Then** the `update [name] [--check]` engine **advances floating specs** (`latest`/
+`branch:`) to newest upstream and re-renders, **re-resolves a `<tag>` only on an explicit
+update** (peeled, force-move warned — a plain `sync` never moves a tag's commit) and
+**never floats a `<sha>`**; `update --check` does a `git fetch`, compares HEAD vs the
+locked commit, and **writes nothing**; the engine drives `sync`'s `auto_update` mode so
+`auto skill sync` floats-then-renders end-to-end; the **npx `exec.Command` shell-out in
+`sync.go` is deleted** (the `os/exec` import removed) and the post-`add` auto-sync call is
+wired; and per **D-3** the public `auto skill update` **command name is left for T6** —
+T4 exposes the engine + entrypoint with **no temporary alias** and does not relocate the
+binary self-update.
+          </script></md>
+        </pd-ac>
+
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **Prune / adopt / doctor not exercised** — T4 **writes** receipts + manifest and
+  replaces managed dirs (trash+swap), but the receipt-gated **orphan-prune pass**,
+  foreign-dir conflict handling, `adopt`, and `doctor` drift reporting are **T5**;
+  T4 tests assert the journal *reserves* the `prunes` slot and that pruning is
+  *suppressed* on an incomplete desired set, not the deletion pass itself.
+- **Public `auto skill update` command not registered** — T4 ships the engine +
+  entrypoint and drives it via `sync`; the command-name reclaim from the binary
+  self-update is **T6** (D-3). T4 tests cover the engine + the `sync` auto_update path,
+  not a standalone `auto skill update` CLI invocation.
+- **Migrate + hooks unverified** — `sync`/`--check`/`update --check` are built and
+  tested as primitives, but the pre-commit/post-merge/pre-push **hook wiring** and
+  `migrate vercel` are **T7**.
+- **Cache / transport / trust internals re-tested only through the pipeline** — clone/
+  realize/extract-safety, canonical identity, offline `CommitPresent`, and the trust
+  gate are **009's** ACs; T4 exercises them via a real-git `file://` fixture and asserts
+  T4's *use* (locked materialization fetches the pinned object, `--check` is offline),
+  not their internal correctness.
+- **Schema correctness is 032's** — T4 asserts it **populates a valid `manifest.json`**
+  that passes `ValidateManifest` and leaves a valid `lock.json`, not the validators
+  themselves; any manifest field T4 must add is a coordinated, non-breaking schema
+  extension.
+- **Fault-injection is deterministic, not exhaustive** — recovery is tested by killing
+  between named commit steps (before manifest / before lock / before journal-clear), not
+  by random fuzzing; the fixed-order protocol bounds the state space being covered.
+- **Real-host fetch parallelism not in CI** — phase-B concurrency, rate-limit politeness,
+  and SSH connection limits are exercised against `file://` fixtures (no network); the
+  `--jobs` cap behavior under a real forge is not in CI.
+- **No token counting beyond chars/4** — the budget warning uses the existing chars/4
+  estimate; exact tokenizer parity with the agent runtime is out of scope.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Build T4 as **two new packages** — a pure `internal/render` leaf and an `internal/sync`
+orchestrator — plus a rewrite of the `sync` cobra command, all in `auto-skill/internal/`,
+layered so the schemas (T1), the security boundary (T2), and `add` (T3) stay
+authoritative and T4 only composes them.
+
+1. **`internal/render` — the pure render engine (leaf, no cache/network).**
+   `Render(input RenderInput) (Tree, error)` turns `(template bytes, customize schema,
+   replacement values, a file-ref resolver scoped to the repo root) → a canonical
+   in-memory tree` and computes `skill_version`. Sub-files:
+   - `template.go` — parse with `text/template/parse`, then **walk the AST** and reject
+     any node that is not a field-access action or the literal-brace escape
+     (`template_rejected`); execute with a data-only map; raw substitution.
+   - `customize.go` — parse the `customize:` frontmatter block (yaml.v3) + apply the
+     resolution rules (required/default/undeclared).
+   - `fileref.go` — resolve a literal or a file-ref; strip leading frontmatter by
+     default; enforce containment on the **fully symlink-resolved** real path (reject
+     `symlink_escape`); insert raw.
+   - `extract.go` — the best-effort heading match cascade + the fixed, code-fence-aware
+     deterministic extract + canonicalize; `content_hash`.
+   - `hash.go` — per-file text/binary classification + canonicalization, the full-tree
+     `skill_version` digest (sorted path/mode/sha256), `render_version` constant, the
+     excluded-from-hash `metadata.auto_skill` stamp.
+   It depends only on stdlib + `yaml.v3` + 032's value types; **no import of
+   `internal/skill`** (avoids a cycle).
+
+2. **`internal/sync` — the 3-phase pipeline + journal (imports render, cache, schemas).**
+   `Run(env, opts) (Result, error)` runs phases A→B→C then the journaled commit. Sub-files:
+   - `plan.go` — phase A: dedupe by repo, skip cache-satisfied (`CommitPresent`), locked
+     materialization vs float decision, intent reconciliation (`skills.yaml` vs lock).
+   - `fetch.go` — phase B: a bounded `--jobs` worker pool over the distinct repos via
+     009's cache, isolated per-repo failure, error aggregation, exit-non-zero. Skipped
+     under `--check`.
+   - `process.go` — phase C: per skill, `Extract` → `render.Render` → compare the
+     **on-disk target tree digest** to the expected `skill_version` (skip on match) →
+     stage; union(authored ∪ vendored) with authored shadowing; `render_version` lazy
+     re-render; advisory token-budget warning.
+   - `journal.go` — the write-ahead journal + fixed commit order (stage → swap-with-trash
+     → receipts → manifest → lock → clear) + roll-forward/back **recovery**; a reserved
+     (empty in T4) `prunes` slot for T5.
+   - `manifest.go` — populate + write `manifest.json` (derived render state, per skill +
+     per target) via 032's typed `Manifest` + atomic writer.
+   - `receipts.go` — write machine-local receipts (`~/.auto/skills/receipts/<project-id>
+     .json`) recording what this machine wrote (target → name → digest).
+   - `targets.go` — resolve configured targets (`.claude/skills`, `.agents/skills`),
+     compute a target's on-disk tree digest, write/replace a skill dir.
+   - `update.go` — the float-then-render engine: `Update(env, names, check)` advances
+     floating specs (and re-resolves `<tag>` on explicit update only), reusing plan.go's
+     resolution; drives `sync`'s `auto_update` path. The **public command name is T6's**
+     (D-3) — this is an internal entrypoint.
+   - `sync.go` — the orchestrator tying A→B→C + commit, honoring
+     `--check`/`--locked`/`--no-update`/`--target`(implies locked)/`--jobs` and the
+     `auto_update` modes.
+
+3. **`internal/cli/sync.go` — rewrite (delete the npx exec).** `newSyncCmd` now resolves
+   `Env`, registers `--check`/`--locked`/`--no-update`/`--target`/`--jobs`/`--text`,
+   calls `sync.Run`, and emits JSON on stdout / diagnostics on stderr / `ExitError` on
+   failure. The `os/exec` import and the `npx skills add` shell-out are removed; the
+   command registration in `root.go` is unchanged. The post-`add` auto-sync call (T3's
+   deferred `--no-sync`) is wired to `sync.Run`.
+
+`internal/cli/update.go` (binary self-update) is **left untouched** — per D-3 the
+`auto skill update` name reclaim and the binary-self-update relocation are T6.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-skill/internal/render/template.go" change="add">Restricted `text/template` engine: parse via `text/template/parse`, **walk the AST** rejecting any non-field-access / non-literal-brace node (`template_rejected`), execute data-only with raw substitution.</pd-file>
+          <pd-file path="auto-skill/internal/render/customize.go" change="add">Parse the `customize:` frontmatter block (yaml.v3) + the resolution rules: required-missing → error, declared-no-default → empty string, undeclared placeholder → error.</pd-file>
+          <pd-file path="auto-skill/internal/render/fileref.go" change="add">Resolve literal + file-ref replacements; frontmatter-strip default; containment on the fully symlink-resolved real path (reject `symlink_escape`); raw insertion, no re-templating.</pd-file>
+          <pd-file path="auto-skill/internal/render/extract.go" change="add">Section extraction: heading match cascade (exact → slug), multi→first+warn, zero→hard error; the fixed code-fence-aware deterministic extract + canonicalize; `content_hash`.</pd-file>
+          <pd-file path="auto-skill/internal/render/hash.go" change="add">Per-file text/binary classification + canonicalization; the full rendered-tree `skill_version` digest (sorted path/mode/sha256-of-emitted-bytes); `render_version` constant; the excluded-from-hash `metadata.auto_skill` stamp.</pd-file>
+          <pd-file path="auto-skill/internal/render/render.go" change="add">`Render(RenderInput) (Tree, error)` + the `RenderInput`/`Tree`/`FileRefResolver` types tying template + customize + replacements + hashing into one pure function.</pd-file>
+          <pd-file path="auto-skill/internal/render/template_test.go" change="add">AST allow-list: accept `{{ .var }}`/`{{ "{{" }}`; reject funcs/pipelines/control at parse with the offending node; raw (unescaped) substitution.</pd-file>
+          <pd-file path="auto-skill/internal/render/customize_test.go" change="add">`customize:` resolution table tests: required-missing/declared-no-default/undeclared/literal-brace, each with the exact error or value.</pd-file>
+          <pd-file path="auto-skill/internal/render/fileref_test.go" change="add">File-ref tests: frontmatter strip default + `strip_frontmatter:false` moves `content_hash`; symlink-escape rejected on the resolved path (lexical-only would pass).</pd-file>
+          <pd-file path="auto-skill/internal/render/extract_test.go" change="add">Extraction tests over a fenced-code fixture: match cascade, multi-warn, zero-error, extent at `level ≤ matched`, path-form disambiguation, `content_hash` scoping.</pd-file>
+          <pd-file path="auto-skill/internal/render/hash_test.go" change="add">Determinism + `skill_version`: identical across renders, side-file moves version, binary verbatim, mode in digest, stamp excluded, `render_version`.</pd-file>
+          <pd-file path="auto-skill/internal/sync/plan.go" change="add">Phase A: dedupe by repo, cache-satisfied skip, locked materialization vs float decision, intent reconciliation (`skills.yaml` version vs lock `version_spec`).</pd-file>
+          <pd-file path="auto-skill/internal/sync/fetch.go" change="add">Phase B: bounded `--jobs` worker pool over distinct repos via 009's cache; isolated per-repo failure; error aggregation; skipped under `--check`.</pd-file>
+          <pd-file path="auto-skill/internal/sync/process.go" change="add">Phase C: `Extract`→`render.Render`→on-disk-digest skip→stage; union(authored ∪ vendored) + authored shadowing; `render_version` lazy re-render; advisory budget warning.</pd-file>
+          <pd-file path="auto-skill/internal/sync/journal.go" change="add">Write-ahead journal + fixed commit order (stage → swap-with-trash → receipts → manifest → lock → clear) + roll-forward/back recovery; reserved empty `prunes` slot (T5).</pd-file>
+          <pd-file path="auto-skill/internal/sync/manifest.go" change="add">Populate + atomically write `manifest.json` derived render state (per skill `template_hash`/`content_hash`/`skill_version`/`render_version`; per target managed set) via 032's `Manifest`.</pd-file>
+          <pd-file path="auto-skill/internal/sync/receipts.go" change="add">Machine-local receipts (`~/.auto/skills/receipts/<project-id>.json`): record target→name→digest of what this machine wrote (the deletion authority T5 consumes).</pd-file>
+          <pd-file path="auto-skill/internal/sync/targets.go" change="add">Resolve configured output targets; compute a target skill's on-disk tree digest; write/replace a skill dir on the same FS for an atomic swap.</pd-file>
+          <pd-file path="auto-skill/internal/sync/update.go" change="add">`Update(env, names, check)` float-then-render engine: advance floating specs, re-resolve `<tag>` on explicit update only, never float `<sha>`; `--check` fetch+compare, writes nothing; drives `sync`'s auto_update.</pd-file>
+          <pd-file path="auto-skill/internal/sync/sync.go" change="add">`Run(env, opts) (Result, error)` orchestrator: phases A→B→C + journaled commit; honors `--check`/`--locked`/`--no-update`/`--target`(implies locked)/`--jobs` + auto_update modes.</pd-file>
+          <pd-file path="auto-skill/internal/sync/plan_test.go" change="add">Phase A integration: dedupe-by-repo, cache-satisfied skip, locked materialization + pinned-gone error, float re-resolve, intent reconciliation both auto_update modes.</pd-file>
+          <pd-file path="auto-skill/internal/sync/fetch_test.go" change="add">Phase B: `--jobs` pool, isolated per-repo failure (valid repo still renders, exit non-zero), `--check` offline (remote deleted still checks).</pd-file>
+          <pd-file path="auto-skill/internal/sync/process_test.go" change="add">Phase C: union+shadow, on-disk-digest skip (edit forces re-render, mtime alone does not), `render_version` lazy re-render.</pd-file>
+          <pd-file path="auto-skill/internal/sync/journal_test.go" change="add">Fault-injected commit/recovery: kill before manifest/lock/journal-clear → next run recovers; non-empty dir → trash not in-place; pruning suppressed on incomplete desired set; receipts written.</pd-file>
+          <pd-file path="auto-skill/internal/sync/sync_test.go" change="add">Mode matrix: auto_update on/off, `--locked` precedence, `--target` implies `--locked` (lock not advanced), locked sync rewrites manifest not lock, budget warns-not-blocks.</pd-file>
+          <pd-file path="auto-skill/internal/sync/update_test.go" change="add">Update engine: floats `latest` + re-renders, re-resolves `<tag>` only on explicit update, `<sha>` never floats, `--check` writes nothing.</pd-file>
+          <pd-file path="auto-skill/internal/cli/sync.go" change="edit">Rewrite `newSyncCmd`: delete the `npx`/`os/exec` shell-out; resolve `Env`; register `--check`/`--locked`/`--no-update`/`--target`/`--jobs`/`--text`; call `sync.Run`; JSON stdout / stderr diagnostics / `ExitError`.</pd-file>
+          <pd-file path="auto-skill/internal/cli/cli_integration_test.go" change="edit">Add `sync`/`--check`/`--locked`/`--target`/`--jobs` integration cases against an isolated `HOME` + `--root` + `file://` fixture: JSON-default, exit codes, `--target` implies `--locked`, npx exec gone, budget warning exits zero.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Use `text/template` execution-only (no AST walk), relying on a restricted `FuncMap`
+  to block functions.** Rejected (G-no-exec): pipelines, control actions, and built-ins
+  (`index`, `printf`, `and`) execute without any custom func, and execution-time errors
+  are not parse-time guarantees. Walking the parsed AST and rejecting every non-allowed
+  node is the only way to make the accepted grammar == the promised grammar.
+- **Hash only `SKILL.md` (the templated file) for `skill_version`.** Rejected (the
+  design's RESOLVED P1): an upstream `scripts/`/`references/` change would leave the
+  composite hash identical, so phase C would skip a stale target and `--check` would
+  report it current. The digest must cover **every emitted file**.
+- **Canonicalize every emitted file uniformly (LF + trim + trailing newline).** Rejected:
+  it corrupts PNGs/fonts/archives in `assets/`. Classify text (valid UTF-8, no NUL) vs
+  binary deterministically; canonicalize text, copy+hash binary byte-for-byte.
+- **Lexical `..`/absolute path cleaning for file-ref containment.** Rejected (RESOLVED
+  P1): a checked-in path can be a symlink to a host-local secret, rendering differently
+  per machine. Enforce containment on the **fully symlink-resolved real path**.
+- **One atomic `lock.json` rename as the whole transaction (no journal).** Rejected
+  (G-crash-consistent): per-directory swaps + a single rename are not one transaction; a
+  crash can make tool output look foreign or the manifest claim un-written bytes. A
+  write-ahead journal + fixed commit order + recovery is required.
+- **Trust the embedded `skill_version` stamp / dir presence for the incremental skip.**
+  Rejected (RESOLVED P1): a user edit, truncated side file, or forged stamp would be
+  skipped and `--check` defeated. Compare the **actual on-disk tree digest**.
+- **Register the public `auto skill update` skills command in T4 (do the binary-self-
+  update relocation here).** Rejected per **D-3**: the relocation is owned by the
+  deprecations task **T6**. T4 ships the engine + entrypoint and drives it via `sync`'s
+  `auto_update`; T6 reclaims the name with **no temporary alias**.
+- **Run the orphan-prune pass in T4 (delete no-longer-desired skills).** Rejected: the
+  receipt-gated deletion, foreign-dir conflict handling, and `doctor` reporting are
+  **T5**. T4 writes receipts + manifest and replaces managed dirs, reserving an empty
+  `prunes` journal slot.
+- **Fold `sync` into the `skill` package.** Rejected (matches 033): it would make `skill`
+  import `cache`/`render`, risking cycles; a dedicated `internal/sync` keeps `skill`
+  schema-only and imports the leaves cleanly.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions">
+        <pd-decisions></pd-decisions>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Build the pure `internal/render` engine first (template AST + customize + hashing, then
+file-refs + extraction), then the `internal/sync` pipeline bottom-up (plan+fetch, then
+process+manifest, then the journaled commit+recovery+receipts), and finally rewrite the
+`sync` cobra command (deleting the npx exec) with CLI integration. Each phase is one
+subagent, builds green, and ends with tests + `go build ./...` + a commit.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-dag caption="Phase dependency graph"></pd-dag>
+      </pd-section>
+
+      <pd-section id="phases" title="Phases">
+        <pd-stepper>
+
+          <pd-phase n="1" title="Render core — restricted template + customize + hashing" files="auto-skill/internal/render/template.go,auto-skill/internal/render/customize.go,auto-skill/internal/render/hash.go,auto-skill/internal/render/render.go,auto-skill/internal/render/template_test.go,auto-skill/internal/render/customize_test.go,auto-skill/internal/render/hash_test.go" status="todo">
+            <md><script type="text/plain">
+Create the pure `internal/render` leaf — the code-execution-free templating model and
+the deterministic full-tree digest. No cache/network.
+
+**Steps**
+1. `template.go` — parse with `text/template/parse.Parse` (fixed `{{ }}`), then **walk
+   every node** in the parse tree; accept only `*parse.ActionNode` whose pipeline is a
+   single field-access (`{{ .var }}`) and the literal-brace escape (`{{ "{{" }}`);
+   reject any `FuncNode`/`PipeNode` with stages/`IfNode`/`RangeNode`/`WithNode`/built-in
+   with a typed `template_rejected` error naming the node. Execute data-only with raw
+   (unescaped) substitution.
+2. `customize.go` — parse the `customize:` frontmatter block (yaml.v3) into `{required,
+   default, description}` per var; implement resolution (undeclared placeholder → error;
+   required-missing → error; declared-no-default → empty string).
+3. `hash.go` — per-file text/binary classification (valid UTF-8 + no NUL = text);
+   canonicalize text (LF + strip trailing ws + one trailing newline), copy binary
+   verbatim; the `skill_version` digest = `sha256(canonical_json({render_version, files:
+   [{path, mode, sha256}] sorted}))`; `const renderVersion = 1`; build the excluded-
+   from-hash `metadata.auto_skill` stamp.
+4. `render.go` — `Render(RenderInput) (Tree, error)` + `RenderInput`/`Tree`/
+   `FileRefResolver` types wiring template + customize + (phase-2) replacements + hashing.
+   Stub the file-ref resolver interface (phase 2 implements it).
+5. **Verify:** `template_test.go` (AST accept/reject + raw substitution), `customize_test
+   .go` (resolution rules), `hash_test.go` (determinism, side-file moves version, binary
+   verbatim, mode in digest, stamp excluded).
+6. **Commit:** `go build ./... && go test ./internal/render/...` green →
+   `feat(034): render core — restricted template + customize + skill_version`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="2" title="File-refs + section extraction" files="auto-skill/internal/render/fileref.go,auto-skill/internal/render/extract.go,auto-skill/internal/render/fileref_test.go,auto-skill/internal/render/extract_test.go" status="todo" depends-on="1">
+            <md><script type="text/plain">
+Implement the file-ref resolver + the deterministic section extractor on top of the
+phase-1 engine.
+
+**Steps**
+1. `fileref.go` — implement `FileRefResolver` over a repo root: resolve a literal
+   (verbatim) or a file-ref `{file, section?, include_heading?, strip_frontmatter?}`;
+   strip leading YAML frontmatter by default; enforce containment on the **fully symlink-
+   resolved real path** (`filepath.EvalSymlinks` + a post-join check), rejecting a ref
+   that is or traverses a symlink leaving root (`symlink_escape`, TOCTOU-safe open where
+   practical); insert raw (never re-templated).
+2. `extract.go` — the matching cascade (exact normalized → GitHub slug; multi → first in
+   document order + warning; zero → hard error) and the **fixed** extract: UTF-8 + LF,
+   strip frontmatter, code-fence-aware ATX scan, extent = matched heading → next heading
+   `level ≤ matched` (or EOF), apply `include_heading`, canonicalize; `content_hash =
+   sha256(canonical_bytes)`. Path-form `["A","B"]` walks parent→child.
+3. Wire the resolver into `render.Render` so a replacement value can be a literal or a
+   file-ref; record `content_hash` + `matched_heading` for the manifest.
+4. **Verify:** `fileref_test.go` (frontmatter strip default + `false` moves hash; symlink-
+   escape rejected where lexical cleaning would pass), `extract_test.go` (cascade, multi-
+   warn, zero-error, fenced-code-aware extent, path-form, `content_hash` scoping).
+5. **Commit:** `go build ./... && go test ./internal/render/...` green →
+   `feat(034): file-refs + deterministic section extraction`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="3" title="Sync phase A+B — plan, parallel fetch, update engine" files="auto-skill/internal/sync/plan.go,auto-skill/internal/sync/fetch.go,auto-skill/internal/sync/update.go,auto-skill/internal/sync/plan_test.go,auto-skill/internal/sync/fetch_test.go,auto-skill/internal/sync/update_test.go" status="todo" depends-on="1">
+            <md><script type="text/plain">
+Create `internal/sync` and build the network-planning half — phase A plan, phase B
+parallel fetch, and the float-then-render `update` engine. Uses 009's cache/trust + 032's
+lock/skills.yaml. Independent of render *output* (works on the resolved work-list).
+
+**Steps**
+1. `plan.go` — read lock + `skills.yaml`; compute the distinct repo set: **dedupe by
+   repo**; **skip cache-satisfied** commits (`cache.CommitPresent`, offline); decide
+   **locked materialization** (locked/pinned → fetch the exact pinned commit's objects on
+   a miss, no ref re-resolution; fail "pinned commit unavailable upstream" if gone) vs
+   **float** (`auto_update:true` re-resolves `latest`/`branch:`); **intent
+   reconciliation** (`skills.yaml` version ≠ lock `version_spec`: float → re-resolve +
+   mark lock rewrite; locked → report "intent changed — run `update <name>`").
+2. `fetch.go` — phase B: a bounded worker pool (`--jobs`, default 8) over the distinct
+   repos, each via 009's `cache` behind the trust gate, taking the per-repo cache lock;
+   **isolated per-repo failure** (collect errors, valid repos still proceed, exit
+   non-zero if any failed); skipped entirely under `--check`.
+3. `update.go` — `Update(env, names, check)`: reuse `plan.go`'s resolution with float
+   enabled; advance floating specs (and re-resolve a `<tag>` **only** on explicit update,
+   peeled + force-move warned); never float a `<sha>`; `--check` does `git fetch` +
+   compare HEAD vs locked commit and **writes nothing**. This is the engine `sync`'s
+   `auto_update` mode calls; the **public command name is T6's** (D-3) — expose a stable
+   internal entrypoint only.
+4. **Verify:** `plan_test.go` (dedupe, cache-satisfied skip, locked materialization +
+   pinned-gone error, float re-resolve, intent reconciliation both modes), `fetch_test.go`
+   (`--jobs` pool, isolated failure, `--check` offline), `update_test.go` (float +
+   re-render, tag only on explicit update, `<sha>` never floats, `--check` writes
+   nothing) — real `git` `file://` fixtures, skip if `git` absent.
+5. **Commit:** `go build ./... && go test ./internal/sync/...` green →
+   `feat(034): sync plan + parallel fetch + update engine`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="4" title="Sync phase C — process, targets, manifest, render_version" files="auto-skill/internal/sync/process.go,auto-skill/internal/sync/targets.go,auto-skill/internal/sync/manifest.go,auto-skill/internal/sync/process_test.go" status="todo" depends-on="2,3">
+            <md><script type="text/plain">
+Build the render+write half — phase C process, the target union/shadow + on-disk digest,
+manifest population, and the `render_version` lazy re-render. Depends on the render engine
+(1,2) and the plan/fetch work-list (3).
+
+**Steps**
+1. `targets.go` — resolve configured output targets (`.claude/skills`, `.agents/skills`
+   from settings, defaults if unset); compute a target skill's **actual on-disk tree
+   digest** (same canonicalization as `skill_version`); stage/write a skill dir on the
+   same FS as its target (for the phase-5 atomic swap).
+2. `process.go` — phase C per skill: `cache.Extract`(subpath)→`render.Render`→compute the
+   expected `skill_version`; **skip only when the on-disk tree digest equals it** (a user
+   edit / truncated file / forged stamp forces a re-render — presence + stamp never
+   trusted alone); build `union(authored ∪ vendored)` with **authored shadowing**;
+   `render_version` lazy re-render (manifest entry below the constant → re-render once);
+   emit the **advisory** token-budget warning (never blocks). `--jobs` bounds render
+   parallelism. Output identical regardless of order.
+3. `manifest.go` — populate + atomically write `manifest.json` (per skill `template_hash`,
+   resolved replacement literals, file-ref `content_hash` + `matched_heading`,
+   `skill_version`, `render_version`; per target the managed set + expected
+   `skill_version`) via 032's typed `Manifest` + `WriteJSONFileAtomic`. Extend 032's
+   struct if a derived field is missing (non-breaking — manifest is regenerable).
+4. **Verify:** `process_test.go` — union+shadow, on-disk-digest skip (edit forces
+   re-render, mtime-only does not), `render_version` lazy re-render, advisory budget
+   warning; real `file://` fixture.
+5. **Commit:** `go build ./... && go test ./internal/sync/...` green →
+   `feat(034): sync process — render, targets, manifest, render_version`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="5" title="Journaled crash-consistent commit + recovery + receipts" files="auto-skill/internal/sync/journal.go,auto-skill/internal/sync/receipts.go,auto-skill/internal/sync/sync.go,auto-skill/internal/sync/journal_test.go,auto-skill/internal/sync/sync_test.go" status="todo" depends-on="4">
+            <md><script type="text/plain">
+Wrap phases A→C in the journaled commit protocol + recovery, write receipts, and assemble
+the `sync.Run` orchestrator honoring every mode/flag.
+
+**Steps**
+1. `journal.go` — the write-ahead journal (`.auto/skills/.sync-journal`) + fixed commit
+   order: (1) stage each rendered tree same-FS + journal intended writes/digests; (2)
+   swap per skill by rename, an existing non-empty dir → **journaled trash** first; (3)
+   write receipts; (4) write `manifest.json` then `lock.json` (atomic, manifest before
+   lock); (5) clear the journal (commit point) + drop trash. **Recovery:** a non-empty
+   journal on the next run rolls forward (re-apply staged) or back (restore trash),
+   reconciling receipts+manifest; **pruning suppressed when the desired set is
+   incomplete**. Reserve an empty `prunes` slot for T5.
+2. `receipts.go` — write `~/.auto/skills/receipts/<project-id>.json` (target→name→digest),
+   keyed by the `projects.json` id; this is what T5's prune consumes as deletion
+   authority.
+3. `sync.go` — `Run(env, opts)` orchestrator: phase A (plan, honoring `--locked`/
+   `--no-update`/`--target`-implies-locked/`auto_update`) → phase B (skipped under
+   `--check`) → phase C → journaled commit; `--check` = dry-run digest compare (offline,
+   exits non-zero if any target stale-by-render or stale-by-intent); `--jobs` threads
+   through; a **locked** sync rewrites the **manifest**, never the lock.
+4. **Verify:** `journal_test.go` (fault-injected recovery before manifest/lock/journal-
+   clear; non-empty dir → trash; pruning suppressed on incomplete set; receipts written),
+   `sync_test.go` (auto_update on/off, `--locked` precedence, `--target` implies
+   `--locked` + lock not advanced, locked sync rewrites manifest not lock, budget warns-
+   not-blocks).
+5. **Commit:** `go build ./... && go test ./internal/sync/...` green →
+   `feat(034): journaled crash-consistent commit + recovery + receipts`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="6" title="Rewrite the sync command (delete npx) + CLI integration" files="auto-skill/internal/cli/sync.go,auto-skill/internal/cli/cli_integration_test.go" status="todo" depends-on="5">
+            <md><script type="text/plain">
+Replace the npx shell-out with the native pipeline and prove the CLI contract end-to-end.
+
+**Steps**
+1. `internal/cli/sync.go` — rewrite `newSyncCmd`: **delete** the `exec.Command("npx",
+   …)` body and the `os/exec` import; resolve `Env` via the existing `resolveEnv()`
+   closure; register `--check`, `--locked`, `--no-update` (alias of `--locked`),
+   `--target` (repeatable, implies `--locked`), `--jobs` (default 8), `--text`; call
+   `sync.Run`; emit the `Result` as JSON on `cmd.OutOrStdout()` (`skill.EncodeJSON`),
+   diagnostics/progress + advisory budget warnings on `cmd.ErrOrStderr()`; return
+   `&ExitError{Code:1, Err:…}` on failure (non-zero on a stale `--check` or any repo
+   failure). Leave `internal/cli/update.go` (binary self-update) untouched (D-3 / T6).
+2. Wire the post-`add` auto-sync call (T3's deferred `--no-sync`) to `sync.Run` so `add`
+   renders into targets by default — guarding the call so a `--no-sync` add still skips it.
+3. **Verify:** extend `cli_integration_test.go` — `sync`/`--check`/`--locked`/`--target`/
+   `--jobs` against an isolated `HOME` + `--root` + a `file://` fixture: JSON payload-only
+   stdout vs stderr diagnostics, `--text`, exit codes (non-zero stale `--check` / repo
+   failure), `--target` implies `--locked` (lock not advanced), the **npx exec is gone**
+   (a fixture with no Node still syncs; no `os/exec` import), budget overflow warns + exits
+   zero.
+4. **Commit:** `go build ./... && go test ./...` green in `auto-skill` →
+   `feat(034): native auto skill sync (delete npx) + CLI integration`.
+            </script></md>
+          </pd-phase>
+
+        </pd-stepper>
+      </pd-section>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **Phase 1** → AC-1, AC-2, AC-5 (restricted template, `customize:` resolution,
+  `skill_version` full-tree digest + determinism).
+- **Phase 2** → AC-3, AC-4 (file-refs + frontmatter strip + symlink containment; section
+  extraction + `content_hash`).
+- **Phase 3** → AC-7, AC-8, and the engine half of AC-12 (plan/dedupe/locked
+  materialization/intent reconciliation, parallel fetch + isolated failure + offline
+  `--check`, the float-then-render `update` engine).
+- **Phase 4** → AC-6, AC-9, and the manifest half of AC-11 (`render_version` re-render,
+  union+shadow + on-disk-digest skip, `manifest.json` population).
+- **Phase 5** → AC-10, and the mode half of AC-11 (journaled commit + recovery + receipts;
+  auto_update modes, `--locked` precedence, `--target` implies `--locked`, locked sync
+  rewrites manifest not lock, budget warns-not-blocks).
+- **Phase 6** → AC-11 (CLI flag surface) and the CLI/deletion half of AC-12 (native
+  `sync`, npx exec deleted, post-add auto-sync wired, JSON-default contract + exit codes).
+- `go build ./...` + `go test ./...` green in `auto-skill`; **zero new runtime deps**; the
+  `npx skills` shell-out is **gone**; per **D-3** the public `auto skill update` command
+  name is left for **T6** (T4 ships the engine + entrypoint, no temporary alias).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
