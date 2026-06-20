@@ -471,7 +471,7 @@ the only oracle for the client layer).
       </pd-section>
 
       <pd-stepper>
-        <pd-phase n="1" title="Server parser + dependency" files="auto-ui/internal/server/planmeta.go,auto-ui/internal/server/planmeta_test.go,auto-ui/go.mod,auto-ui/go.sum" status="todo">
+        <pd-phase n="1" title="Server parser + dependency" files="auto-ui/internal/server/planmeta.go,auto-ui/internal/server/planmeta_test.go,auto-ui/go.mod,auto-ui/go.sum" status="done">
           <md><script type="text/plain">
 1. Add `golang.org/x/net` to `auto-ui/go.mod` `require`; run `go mod tidy` in `auto-ui/` to populate
    `auto-ui/go.sum`. **Verify:** `cd auto-ui && go build ./...`. (No `go.work` edit — it pins nothing.)
@@ -504,7 +504,7 @@ the only oracle for the client layer).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Client store: onAny + liveness + repaint widen" files="auto-ui/web/static/rpc.js,auto-ui/web/static/store.js" status="todo">
+        <pd-phase n="3" title="Client store: onAny + liveness + repaint widen" files="auto-ui/web/static/rpc.js,auto-ui/web/static/store.js" status="done">
           <md><script type="text/plain">
 1. `rpc.js`: add `onAny(handler) → unsub` — an `anyHandlers` Set fanned in `onmessage` right after
    `recordEvent` (pass `{method, params}`); export it. Transport only.
