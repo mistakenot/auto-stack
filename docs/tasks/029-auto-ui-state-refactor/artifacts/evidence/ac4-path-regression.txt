@@ -1,0 +1,14 @@
+AC-4 cross-route path-survival regression (captured 2026-06-20T14:27:29Z)
+
+[ON EXPLORER #/explore?...&path=...plan.md] store snapshot:
+"{\"project\":\"proj-a\",\"path\":\"docs/tasks/001-alpha/plan.md\",\"type\":\"markdown\",\"revision\":2,\"docCount\":1,\"lastUpdated\":\"2026-06-20T14:27:26.679Z\"}"
+
+[AFTER location.hash='#/debug' (no reload)] store snapshot:
+"{\"selection\":{\"project\":\"\",\"path\":\"\",\"worktree\":\"\"},\"openDocPath\":\"\",\"snapshot\":{\"project\":\"proj-a\",\"path\":\"\",\"type\":\"\",\"revision\":2,\"docCount\":1,\"lastUpdated\":\"2026-06-20T14:27:26.679Z\"}}"
+
+ROOT CAUSE: store.js syncFromHash() runs on the #/debug hashchange; #/debug
+carries no project/path query, so selection/set clears path and fetchOpenDoc()
+resets openDoc.path to "". selectDebugSnapshot.path = openDoc.path -> shows '—'.
+Pre-refactor uistate.js was a write-only mirror untouched by navigation, so
+path survived. revision survives (monotonic) and docCount survives (active
+project falls back to first project), masking the regression for those fields.

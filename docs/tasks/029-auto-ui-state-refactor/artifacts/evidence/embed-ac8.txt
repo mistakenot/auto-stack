@@ -1,0 +1,2 @@
+after-A=2 after-B=3 after-A-again=3
+live count 4 -> 5 ; calls 3 -> 4 ; node visible=true
