@@ -1,0 +1,693 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>037: skill-integration-migration</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "037",
+    "name": "skill-integration-migration",
+    "epic": "004-remote-skill-management",
+    "depends-on": ["034", "035"],
+    "status": "planning",
+    "created": "2026-06-20"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="037: skill-integration-migration" status="draft" pr="pending" generated="2026-06-20">
+
+    <pd-tab name="Requirements">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Epic 004 (remote-skill-management) replaces the `npx skills` shell-out with a native Go
+pipeline. By T4 (034) the project renders skills natively (`sync` / `sync --check` /
+`sync --locked`, a `manifest.json`, and a lock-derived **file-ref reverse index** mapping
+each referenced doc → the skills that inline it); by T5 (035) `doctor` and prune/adopt
+report drift, orphans, and foreign dirs. What's missing is the **terminal integration
+layer** that lets an existing `npx skills` user actually move over, and that keeps a
+checked-out repo's rendered skills honest without anyone remembering to run `sync`.
+
+This task (T7, the epic's terminal integration task) delivers two small, additive halves:
+**(a) `migrate vercel`** — a one-shot, additive translator from vercel's checked-in
+`skills-lock.json` into our `.auto/skills/lock.json` (`state: "unresolved"`) + a
+`skills.yaml` stub whose `version` preserves each entry's ref intent; and **(b) git
+hooks** — wiring `auto skill` into the repo's pre-commit / post-merge / post-checkout /
+pre-push hooks so rendered output stays current with the lock, `skills.yaml`, and any
+edited referenced doc, using the file-ref reverse index so a changed doc maps straight to
+its dependent skills.
+
+T7 **consumes** the engine built by T4/T5 — it builds no render/reverse-index machinery,
+no prune/adopt/doctor internals, and no inspection triad of its own.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+**(a) `migrate vercel`** — translate vercel's `skills-lock.json` into our project state:
+
+- Read vercel entries `{source, sourceType, ref, skillPath, computedHash}` from
+  `./skills-lock.json` (override with `--from <path>`).
+- Write each as a `.auto/skills/lock.json` entry with `source`/`url`/`subpath` mapped
+  across and **`"state": "unresolved"`** — no `commit`, no hashes (their hash ≠ ours).
+- Seed `skills.yaml` per migrated skill with empty `replacements: {}` **and an explicit
+  `version` derived from the vercel `ref`**: a tag/sha → that pin, a branch → `branch:<name>`,
+  a bare default-branch ref → `latest`. Intent is preserved so default-on sync won't
+  reclassify the skill stale-by-intent and jump it to an unrelated commit.
+- **Per-source handling**, returning valid results and exiting non-zero if any failed:
+  `github` / `gitlab` map cleanly; `local` applies the **local-source split** (git repo →
+  `unresolved` lock entry with `local: true`, non-portable; non-git dir → import into
+  `./skills/` as authored; missing path → reported + skipped); `node_modules` /
+  `well-known` / `huggingface` / `mintlify` are **warned + skipped**, listed in the output.
+- `--dry-run` reports what would be imported without writing; `--from` overrides the
+  default path.
+- **Additive only**: never delete or mutate vercel's `skills-lock.json` or any installed
+  files. Print `migrated N deps, skipped M (unsupported); run \`auto skill sync\` to
+  resolve commits and render.`
+- The `unresolved` state is consumable **only** by `add` / `update` / `sync` (which
+  resolve `ref`→commit, flip to `resolved`, write the manifest); `sync --check` / `doctor`
+  report it as **needs-resolve** and never treat it as commit-addressable.
+
+**(b) Git hooks** — wire `auto skill` into the repo's hook set (the repo already installs
+hooks via `make install-hooks`):
+
+- **pre-commit** — `auto skill sync --check` (offline freshness gate vs lock / `skills.yaml`
+  / referenced docs) **+** `auto skill lint` on the rendered output; a changed referenced
+  doc is mapped to exactly its dependent skills via the lock's file-ref reverse index
+  (doc → skills), no whole-tree scan.
+- **post-merge / post-checkout** — `auto skill sync --locked` to re-materialize targets
+  after a pull or branch switch (the `npm ci`-after-pull move), `--locked` so a routine
+  checkout never floats deps.
+- **(optional) pre-push** — `auto skill update --check`: warn (non-blocking) if a floating
+  skill has newer upstream than the lock.
+
+**Guard rails honored:** `G-schema-strict` (one `validate()`, structured errors,
+remediation hints, strict skill-name regex), `G-json-default` (JSON stdout payload,
+diagnostics to stderr, valid-results-then-nonzero), `G-offline-check` (`sync --check`
+offline under `GIT_NO_LAZY_FETCH=1`), `G-fast-sync` (reverse-index targeting; no whole-repo
+scan in the pre-commit path).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **The sync/render engine and the reverse-index *construction*** — built by T4 (034). T7
+  only *reads* the lock's file-ref edges to derive the doc → skills map; it does not build
+  the render core, the 3-phase pipeline, the manifest, or the edge-recording logic.
+- **prune / adopt / `doctor` internals** — built by T5 (035). T7 relies on `doctor`/
+  `sync --check` to *report* `unresolved` entries; it does not implement that reporting.
+- **The CLI inspection triad** (`list` / `describe` / `get`, `source` / `target`) and the
+  decisive deprecations / self-update relocation — built by T6 (036).
+- **`add` / `update` source parsing & discovery** — T3 (033). Migration writes
+  `unresolved` lock entries that `add`/`update`/`sync` later resolve; it does not itself
+  resolve refs to commits or fetch anything.
+- **More `migrate` sources beyond vercel** (provider abstraction, non-git hosts like
+  `.well-known` / huggingface as first-class) — explicitly deferred in the design.
+- **`auto-watch` doc-change → re-render wiring** via the reverse index — deferred scope in
+  the design; the hooks here are git-hook-driven, not watcher-driven.
+- **Resolving/rendering migrated deps** — migration stops at `unresolved`; the user runs
+  `auto skill sync` (and deletes `skills-lock.json` + the npx wiring) themselves afterward.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Resolved autonomously with best-judgment defaults (planning-only worker; no interactive
+asking). Each carries a one-line rationale; revisit at review if any default is wrong.
+
+- [x] **Where do the hook bodies live and how are they installed?** → **Default:** extend
+  the repo's existing `make install-hooks` mechanism (per CLAUDE.md "Setup"); T7 adds
+  `auto skill`-calling stanzas to the pre-commit / post-merge / post-checkout / pre-push
+  hook scripts (or hook fragments) the repo already manages, rather than inventing a new
+  installer. *Rationale:* the design says "the repo already installs pre-commit hooks
+  (`make install-hooks`)"; reuse it, don't fork hook management.
+- [x] **Does a hook ever block on `lint` budget warnings?** → **Default:** pre-commit
+  `lint` **blocks** only on hard lint failures (frontmatter/schema, terminal-escape /
+  traversal safety, and the token-budget **error** thresholds — body >8000 / listing
+  >4000); budget **warnings** (body >4000 / listing >2000) are advisory and never block.
+  *Rationale:* matches `G-token-budget` ("`lint` gates [on error budgets], `sync` only
+  warns") and keeps the everyday commit unblocked by soft advice.
+- [x] **What does pre-commit do when `.auto/skills/` is absent (repo not using skills)?**
+  → **Default:** the hook stanza no-ops cleanly (exit 0, no diagnostics) when there is no
+  `.auto/skills/lock.json`, so installing the hooks in a non-skills repo is harmless.
+  *Rationale:* hooks ship repo-wide; they must not fail commits in projects that never ran
+  `init --project`.
+- [x] **Does pre-commit re-render and auto-stage, or only check?** → **Default:**
+  pre-commit is **check-only** (`sync --check` + `lint`) and fails the commit with a
+  remediation hint (`run auto skill sync`) when stale — it never silently re-renders and
+  `git add`s output behind the user's back. Re-materialization is the job of the
+  post-merge/checkout `sync --locked` hook. *Rationale:* `G-offline-check` + least-surprise;
+  a pre-commit hook that mutates the index is a footgun.
+- [x] **pre-push `update --check` — on by default or opt-in?** → **Default:** **opt-in**
+  (commented-out / flag-gated in the installed hook), since it is the only hook that can
+  touch the network (`update --check` re-resolves floating refs) and the design marks it
+  "(optional)". *Rationale:* keep the default hook set fully offline and fast; let teams
+  enable the network-touching warning deliberately.
+- [x] **Vercel `local` entry whose path is a git repo but non-portable — lock or skip?**
+  → **Default:** write an `unresolved` lock entry with `local: true` (per the resolved
+  local-source split), flagged non-portable in the migration report so the user knows it
+  won't resolve on another machine. *Rationale:* the design's resolved thread says git repo
+  → local lock entry; non-git dir → authored import; missing path → reported/skipped.
+- [x] **`--from` pointing at a missing/garbled `skills-lock.json` — error shape?** →
+  **Default:** fail fast with a structured `G-schema-strict` error (`code`, `path`,
+  `message`, remediation: check the `--from` path / re-run `npx skills` to regenerate);
+  exit non-zero, write nothing. *Rationale:* invalid CLI input is fail-fast per repo
+  conventions; migration is additive so a hard stop loses nothing.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Two halves, both verified **offline and hermetically** — no network, no `npx`, no real
+git fetch. Migration is a pure file transform; hooks are thin shims that shell to `auto
+skill`, so the wiring is verified by asserting the *commands and exit semantics*, not by
+re-testing the engine (034/035 own that).
+
+**Layer 1 — `internal/migrate` unit tests (`*_test.go`, `t.TempDir()` fixtures).**
+Drive the translator directly against vercel `skills-lock.json` inputs and assert the
+emitted `.auto/skills/lock.json` + `.auto/skills/skills.yaml`:
+- Use the **checked-in `skills-lock.json`** (repo root, 29 github + 8 local) as the
+  realistic corpus, plus a hand-written **synthetic fixture** covering the branches the
+  real file lacks: a tag `ref`, a branch `ref`, a 40-char sha `ref`, a `gitlab` entry, and
+  one of each unsupported `sourceType` (`node_modules`, `well-known`, `huggingface`,
+  `mintlify`).
+- Assert every emitted lock entry carries `state:"unresolved"`, **no `commit`**, a
+  credential-free `url`, and the right `local` flag; assert `skills.yaml` seeds
+  `replacements:{}` + the **version intent** mapping (tag/sha→pin, branch→`branch:<name>`,
+  refless→`latest`).
+- Assert per-source outcomes: github/gitlab mapped; `local` split (git repo→lock entry
+  `local:true`; non-git dir→authored import under `./skills/`; missing path→reported,
+  skipped); unsupported→warned+skipped+listed. Assert **valid results returned + exit
+  non-zero** when any entry failed.
+- Assert **additivity**: the input `skills-lock.json` bytes are unchanged after a run, and
+  `--dry-run` writes nothing at all.
+
+**Layer 2 — `internal/cli` integration tests via the `runCLI` harness.**
+Exercise `auto skill migrate vercel` end-to-end against a `t.TempDir()` project: JSON-on-
+stdout / diagnostics-on-stderr, `--from`, `--dry-run`, the summary line, and the structured
+`ValidationError` (with remediation) for a missing/garbled `--from` file.
+
+**Layer 3 — hook wiring tests (shell-level, hermetic).**
+The hooks shell to `auto skill`; verify the *wiring*, not the engine, with `auto` stubbed
+by a fake on `PATH` that records its argv and returns a scripted exit code:
+- pre-commit stanza runs `sync --check` + `lint` and **fails the commit** (non-zero) when
+  the stub reports stale; **no-ops cleanly** (exit 0) when `.auto/skills/lock.json` is
+  absent; never runs `git add` on a target (check-only).
+- post-merge / post-checkout stanzas run `sync --locked` (and only `--locked`).
+- pre-push stanza is **opt-in** and, when enabled, runs `update --check` and **warns
+  without blocking** (always exit 0) even when the stub reports a newer upstream.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-trace caption="AC × phase × test coverage"></pd-trace>
+        <pd-mermaid caption="Verification layers">
+flowchart TB
+  subgraph migrate["migrate vercel"]
+    U["internal/migrate unit tests<br/>(real + synthetic fixtures)"]
+    I["internal/cli runCLI integration<br/>(flags, JSON, errors)"]
+  end
+  subgraph hooks["git hooks"]
+    H["shell wiring tests<br/>(stubbed auto on PATH)"]
+  end
+  U --> I
+  I --> Done["additive · offline · structured"]
+  H --> Done
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="Vercel lock translates to unresolved lock entries" phases="1,2" tests="auto-skill/internal/migrate/migrate_test.go">
+          <md><script type="text/plain">
+- **Given** a vercel `skills-lock.json` with github/gitlab entries
+- **When** `auto skill migrate vercel` runs
+- **Then** each becomes a `.auto/skills/lock.json` entry with `source`/`url`/`subpath`
+  mapped across, `state:"unresolved"`, **no `commit`**, and a credential-free `url`
+- **And** no entry is commit-addressable (a later `sync` resolves it).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="skills.yaml seeds preserved version intent" phases="1,2" tests="auto-skill/internal/migrate/migrate_test.go">
+          <md><script type="text/plain">
+- **Given** vercel entries with a tag ref, a branch ref, a sha ref, and no ref
+- **When** migration seeds `skills.yaml`
+- **Then** each skill gets `replacements:{}` plus an explicit `version`: tag/sha→that pin,
+  branch→`branch:<name>`, refless/default→`latest`
+- **And** a default-on `sync` therefore won't reclassify it stale-by-intent and advance it
+  to an unrelated commit.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="Local source applies the git-vs-non-git split" phases="1,2" tests="auto-skill/internal/migrate/migrate_test.go">
+          <md><script type="text/plain">
+- **Given** vercel `local` entries: one path that is a git repo, one that is a non-git
+  directory, one that is missing
+- **When** migration processes them
+- **Then** the git repo → an `unresolved` lock entry flagged `local:true` (non-portable);
+  the non-git dir → imported into `./skills/<name>/` as an authored skill (no lock entry);
+  the missing path → reported and skipped (no entry).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Unsupported source types warn, skip, and list" phases="1,3" tests="auto-skill/internal/migrate/migrate_test.go,auto-skill/internal/cli/migrate_test.go">
+          <md><script type="text/plain">
+- **Given** vercel entries with `sourceType` of `node_modules`, `well-known`, `huggingface`,
+  or `mintlify`
+- **When** migration runs
+- **Then** each is warned + skipped and named in the output (`skipped M (unsupported)`)
+- **And** the command returns the valid migrated results **and exits non-zero** because some
+  entries failed.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="Migration is additive and dry-run is write-free" phases="2,3" tests="auto-skill/internal/migrate/migrate_test.go,auto-skill/internal/cli/migrate_test.go">
+          <md><script type="text/plain">
+- **Given** a project with an existing vercel `skills-lock.json`
+- **When** `auto skill migrate vercel` (or `--dry-run`) runs
+- **Then** `skills-lock.json` and all installed files are byte-for-byte unchanged
+- **And** with `--dry-run` nothing is written at all (no `.auto/skills/` mutation), while a
+  real run only creates/extends `.auto/skills/lock.json` + `skills.yaml`.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="migrate honors --from and reports structured errors" phases="3" tests="auto-skill/internal/cli/migrate_test.go">
+          <md><script type="text/plain">
+- **Given** `--from ./custom/skills-lock.json` (override) or a missing/garbled file
+- **When** migration runs
+- **Then** the override path is read instead of the default `./skills-lock.json`
+- **And** a missing/garbled file fails fast with a `config.ValidationError`
+  (`code`/`path`/`message` + remediation hint), exits non-zero, and writes nothing.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="migrate output is JSON-default with stdout/stderr split" phases="3" tests="auto-skill/internal/cli/migrate_test.go">
+          <md><script type="text/plain">
+- **Given** a migration run (`--format json` default)
+- **When** it completes
+- **Then** stdout carries strictly parseable JSON (migrated + skipped lists, counts) and all
+  diagnostics/warnings go to stderr
+- **And** `--format text` prints the human summary `migrated N deps, skipped M (unsupported);
+  run \`auto skill sync\` to resolve commits and render.`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="pre-commit hook gates on sync --check + lint, offline" phases="4" tests="auto-skill/internal/cli/hooks_test.go">
+          <md><script type="text/plain">
+- **Given** the installed pre-commit hook and a project with `.auto/skills/lock.json`
+- **When** a commit is attempted while a rendered target is stale (or a referenced doc was
+  edited)
+- **Then** the hook runs `auto skill sync --check` (offline) + `auto skill lint` and **fails
+  the commit** with a remediation hint, using the file-ref reverse index to map a changed doc
+  to only its dependent skills — never a whole-tree scan
+- **And** it is **check-only**: it never re-renders or `git add`s target output.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="post-merge/post-checkout re-materialize with sync --locked" phases="4" tests="auto-skill/internal/cli/hooks_test.go">
+          <md><script type="text/plain">
+- **Given** the installed post-merge and post-checkout hooks
+- **When** a pull or branch switch changes the lock / `skills.yaml`
+- **Then** each hook runs `auto skill sync --locked` (and only `--locked`, never floating
+  refs) to re-materialize the targets to match the new lock.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-10" title="pre-push update --check is opt-in and non-blocking" phases="4" tests="auto-skill/internal/cli/hooks_test.go">
+          <md><script type="text/plain">
+- **Given** the optional pre-push hook (disabled by default in the installed hook)
+- **When** it is enabled and a floating skill has a newer upstream than the lock
+- **Then** `auto skill update --check` **warns** but the push **succeeds** (exit 0); it is
+  the only hook that may touch the network and ships off by default.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-11" title="Hooks no-op cleanly in non-skills repos" phases="4" tests="auto-skill/internal/cli/hooks_test.go">
+          <md><script type="text/plain">
+- **Given** a repo with the hooks installed but **no** `.auto/skills/lock.json`
+- **When** any hook fires (commit, merge, checkout, push)
+- **Then** the `auto skill` stanza is skipped (exit 0, no diagnostics), so installing the
+  hooks repo-wide never breaks projects that don't use skills.
+          </script></md>
+        </pd-ac>
+
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **Depends on 034/035 being merged.** `sync --check`, `sync --locked`, `update --check`,
+  the manifest, and the file-ref reverse index are *planned, not yet built*. Hook tests stub
+  `auto` to assert wiring; the real end-to-end stale→fail behaviour can only be exercised once
+  034 lands. Mitigation: keep migrate/hook logic independent of internal engine APIs (shell to
+  the CLI), so a schema-field rename ripples only into fixtures.
+- **`local` git-repo detection is best-effort.** Migration inspects each `local` path on the
+  *current* machine; a path absent here (e.g. another contributor's worktree, as in the real
+  fixture's `.claude/worktrees/...` entries) is reported/skipped, not failed. The resulting
+  `local:true` entry is explicitly non-portable.
+- **Hook wiring is shell, not Go.** The Makefile stanzas and `hooks/*` shims are tested at the
+  shell level with a stubbed `auto`; subtle quoting / `set -euo pipefail` interactions are a
+  risk. Mitigation: keep stanzas minimal and mirror the existing `skills-sync`/`beads-sync`
+  shape exactly.
+- **Reverse-index targeting is verified by contract, not internals.** The pre-commit hook
+  relies on `sync --check` already consulting the reverse index (034); T7 asserts the hook
+  *invokes* `sync --check` offline, not that the index itself is correct (034's tests own that).
+- **No auto-resolution.** Migrated entries stay `unresolved`; a user who skips the follow-up
+  `auto skill sync` sees no rendered skills. Surfaced in the summary line and `doctor` (035),
+  not auto-run by migration.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Two additive, terminal pieces of glue. **No render/sync engine, no reverse-index
+construction, no doctor internals** — those are 034/035; T7 *invokes* them.
+
+**(a) `migrate vercel`** is a new `internal/migrate` package plus a
+`internal/cli/migrate.go` command. The package is a **pure file transform**: read a
+vercel `skills-lock.json`, classify each entry by `sourceType`, and emit (or, for
+`--dry-run`, describe) additions to `.auto/skills/lock.json` + `.auto/skills/skills.yaml`.
+It writes **only** those two files, never touching the vercel lock or installed output. A
+migrated lock entry is `state:"unresolved"` with **no `commit`** — a versioned hand-off the
+engine (`add`/`update`/`sync`) later resolves; `sync --check`/`doctor` report it as
+needs-resolve. The command layer adds JSON-default I/O, `--from`, `--dry-run`, structured
+errors, and the partial-success exit convention.
+
+Per-source classification:
+- **github / gitlab** → a clean lock entry (`source`, derived `url`, `subpath` from
+  `skillPath`), `state:"unresolved"`, `version` seeded from the ref.
+- **local** → the resolved **local-source split** (033): git repo → `unresolved` lock entry
+  `local:true` (non-portable); non-git dir → import into `./skills/<name>/` as authored;
+  missing path → reported + skipped.
+- **node_modules / well-known / huggingface / mintlify** → warn + skip + list.
+
+**Version intent** is derived once from each vercel `ref` and written into `skills.yaml`:
+a tag or 40-hex sha → that exact pin; `branch:`-style → `branch:<name>`; absent/default →
+`latest`. This is the single guard against a default-on `sync` jumping a migrated skill to
+an unrelated default-branch commit.
+
+**(b) Git hooks** extend the repo's existing Makefile-driven hook system (`make
+install-hooks` → `core.hooksPath hooks/`). The pre-commit pipeline's npx-based,
+auto-staging `skills-sync` stanza is **replaced** by a check-only `skills-check` target
+(`auto skill sync --check` + `auto skill lint`), and three new thin `hooks/*` shims +
+Makefile targets are added: `post-merge` and `post-checkout` run `auto skill sync
+--locked`; an **opt-in** `pre-push` runs `auto skill update --check` (warn-only). Every
+stanza no-ops when `.auto/skills/lock.json` is absent, so the hooks are safe repo-wide.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="surface" title="Command &amp; package surface">
+        <pd-api kind="package" name="internal/migrate" lang="go" path="auto-skill/internal/migrate/migrate.go" caption="Pure vercel→.auto/skills translator (no network, no engine calls)">
+          <pd-member kind="func" sig="ParseVercelLock(r io.Reader) (VercelLock, []config.ValidationError)">Decode + validate `skills-lock.json`; fail fast (structured error + remediation) on missing/garbled input.</pd-member>
+          <pd-member kind="func" sig="Plan(v VercelLock, projectRoot string) (Migration, error)">Classify each entry by sourceType → per-entry outcome (lock-add / authored-import / skip); inspect `local` paths for the git-vs-non-git split. No writes.</pd-member>
+          <pd-member kind="func" sig="(Migration) Apply(dryRun bool) (Result, error)">Additively write lock + skills.yaml entries and authored imports (skipped when dryRun); never touches the vercel lock.</pd-member>
+          <pd-member kind="func" sig="versionFromRef(ref string) string">Map a vercel ref → version spec: tag/sha→pin, `branch:`→`branch:<name>`, empty→`latest`.</pd-member>
+          <pd-member kind="field" sig="Result{ Migrated []Entry; Skipped []Skip; Imported []string; Failed bool }">Drives JSON payload + the `migrated N, skipped M` summary; `Failed` → exit non-zero.</pd-member>
+        </pd-api>
+        <pd-api kind="command" name="auto skill migrate vercel" lang="go" path="auto-skill/internal/cli/migrate.go" caption="Cobra wiring registered in root.go">
+          <pd-member kind="flag" sig="--from <path>  (default ./skills-lock.json)">Override the vercel lock location.</pd-member>
+          <pd-member kind="flag" sig="--dry-run">Report the plan without writing anything.</pd-member>
+          <pd-member kind="behavior" sig="--format json|text (persistent)">JSON payload on stdout, diagnostics on stderr; text mode prints the summary line.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="hook-wiring" title="Hook wiring (final shape)">
+        <pd-code lang="make" path="Makefile" caption="pre-commit swaps npx skills-sync → check-only skills-check; new hook targets">
+# pre-commit: replace `skills-sync` with check-only `skills-check`
+pre-commit: fmt-staged check verify-fixtures vulncheck-if-deps-changed autodoc-fix skills-check beads-sync
+
+skills-check:
+	@if [ -f "$(CURDIR)/.auto/skills/lock.json" ] && command -v auto >/dev/null 2>&1; then \
+		auto skill sync --check --format json || exit 1; \
+		auto skill lint --format json || exit 1; \
+	fi
+
+# new: re-materialize targets after pull / branch switch (locked, never floats)
+post-merge post-checkout: skills-sync-locked
+skills-sync-locked:
+	@if [ -f "$(CURDIR)/.auto/skills/lock.json" ] && command -v auto >/dev/null 2>&1; then \
+		auto skill sync --locked --format json 2>/dev/null || true; \
+	fi
+
+# new (opt-in): warn on newer upstream, never block the push
+pre-push: skills-update-check
+skills-update-check:
+	@: # disabled by default — uncomment to enable:
+	@# auto skill update --check --format json 2>/dev/null || true
+		</pd-code>
+        <md><script type="text/plain">
+Each `hooks/post-merge`, `hooks/post-checkout`, `hooks/pre-push` is a thin shim mirroring
+`hooks/pre-commit` (`exec make -C "$ROOT" --no-print-directory <hook>`). The `lock.json`
+guard makes every stanza a clean no-op in non-skills repos (AC-11). pre-commit stays
+**check-only** — re-materialization is the post-merge/checkout job, so a commit never
+silently rewrites the index.
+        </script></md>
+      </pd-section>
+
+      <pd-files>
+        <pd-file path="auto-skill/internal/migrate/migrate.go" change="add">Vercel lock parse/validate, per-source classification, version-intent mapping, additive apply.</pd-file>
+        <pd-file path="auto-skill/internal/migrate/migrate_test.go" change="add">Unit tests over the real `skills-lock.json` + a synthetic fixture (tag/branch/sha refs, gitlab, each unsupported type, local split).</pd-file>
+        <pd-file path="auto-skill/internal/migrate/testdata/synthetic-skills-lock.json" change="add">Hand-written vercel lock covering branches the real fixture lacks.</pd-file>
+        <pd-file path="auto-skill/internal/cli/migrate.go" change="add">`newMigrateCmd` + nested `vercel` subcommand; `--from`/`--dry-run`; JSON-default output; structured errors.</pd-file>
+        <pd-file path="auto-skill/internal/cli/migrate_test.go" change="add">`runCLI` integration tests: flags, JSON/stderr split, summary line, missing/garbled `--from`.</pd-file>
+        <pd-file path="auto-skill/internal/cli/root.go" change="edit">Register `newMigrateCmd(resolveEnv)` in `NewRootCmd`.</pd-file>
+        <pd-file path="Makefile" change="edit">Swap `skills-sync`→`skills-check` in pre-commit; add `skills-sync-locked` (post-merge/checkout) + opt-in `skills-update-check` (pre-push) targets.</pd-file>
+        <pd-file path="hooks/post-merge" change="add">Thin shim → `make post-merge`.</pd-file>
+        <pd-file path="hooks/post-checkout" change="add">Thin shim → `make post-checkout`.</pd-file>
+        <pd-file path="hooks/pre-push" change="add">Thin shim → `make pre-push` (opt-in update --check).</pd-file>
+        <pd-file path="auto-skill/internal/cli/hooks_test.go" change="add">Shell-level wiring tests with a stubbed `auto` on PATH: pre-commit fail-on-stale + no-op-when-absent + check-only; post-* run `--locked`; pre-push warn-only.</pd-file>
+        <pd-file path="auto-skill/CLAUDE.md" change="edit">Document `migrate vercel` + the hook stanzas.</pd-file>
+      </pd-files>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Resolve commits during migration (write `state:"resolved"`).** Rejected: resolution needs
+  the cache/trust/fetch path (032/033/034) and a network round-trip; it would duplicate
+  `sync` and break the additive, offline guarantee. The `unresolved` hand-off is the design's
+  resolved call (design:1264-1268).
+- **Seed `skills.yaml` with only `replacements:{}` and let `version` default to `latest`.**
+  Rejected: a tag/branch/sha-pinned vercel skill would be silently reclassified stale-by-intent
+  and advanced to an unrelated default-branch commit on the first auto-update sync
+  (design:1281-1284).
+- **Keep the npx `skills-sync` pre-commit stanza and add `auto skill` alongside it.** Rejected:
+  the epic kills the npx shell-out (G-decisive-cli); running both renders twice and re-introduces
+  the external Node dependency this epic removes.
+- **Make pre-commit re-render and `git add` the targets (like today's `skills-sync`).**
+  Rejected: a pre-commit hook that mutates the index is a footgun and contradicts the offline
+  check contract; re-materialization belongs in post-merge/post-checkout. (See D-2.)
+- **Auto-enable pre-push `update --check`.** Rejected: it is the only network-touching hook;
+  the design marks it optional. Shipping it off-by-default keeps the default hook set fast and
+  fully offline (G-offline-check).
+- **Implement hooks as standalone shell scripts (not Makefile targets).** Rejected: the repo's
+  established pattern is thin `hooks/*` shims delegating to a single Makefile entry point; a new
+  pattern would fragment hook management.
+- **A generic `migrate <tool>` abstraction.** Rejected: vercel is the only source in scope;
+  the design defers other sources. A `vercel` subcommand keeps the surface explicit (no
+  speculative abstraction).
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-1" title="Migration writes unresolved entries; resolution is deferred to sync" status="accepted" by="agent"
+        summary="migrate is an additive, offline file transform; add/update/sync resolve the commit later.">
+        <md><script type="text/plain">
+**Context:** Vercel's `computedHash` is not our commit, and resolving a ref→commit needs the
+cache/trust/fetch machinery (032/033/034) plus the network.
+**Decision:** Migration emits `state:"unresolved"` lock entries (no commit, no hashes) +
+seeded `skills.yaml`, and stops. Only `add`/`update`/`sync` consume `unresolved`;
+`sync --check`/`doctor` report it as needs-resolve.
+**Alternatives:** Resolve during migrate (duplicates sync, breaks offline/additive); block
+sync on unresolved without a discriminator (the original schema-violation flagged in
+design review).
+**Consequences:** A two-step user flow (`migrate` then `sync`), surfaced in the summary line;
+migration is fully offline, additive, and testable without the engine merged.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-2" title="pre-commit is check-only; re-materialization moves to post-merge/checkout" status="accepted" by="agent"
+        summary="Replace the auto-staging npx skills-sync with sync --check + lint; sync --locked runs on merge/checkout.">
+        <md><script type="text/plain">
+**Context:** Today's `skills-sync` pre-commit stanza runs `npx skills install` and `git add`s
+the rendered output — it mutates the index mid-commit and depends on npx.
+**Decision:** pre-commit becomes check-only (`sync --check` offline + `lint`, fail on stale);
+the `npm ci`-after-pull re-render moves to `post-merge`/`post-checkout` via `sync --locked`.
+**Alternatives:** Keep auto-staging in pre-commit (index-mutation footgun, npx dependency);
+run a full `sync` (network) in pre-commit (violates G-offline-check).
+**Consequences:** A stale target fails the commit with a remediation hint rather than being
+silently fixed; users (or the post-merge hook) run `sync` to re-materialize. Matches the
+offline-check + decisive-CLI guard rails.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-3" title="pre-push update --check ships opt-in (off by default)" status="accepted" by="agent"
+        summary="The only network-touching hook is disabled by default to keep the hook set offline and fast.">
+        <md><script type="text/plain">
+**Context:** `update --check` re-resolves floating refs against upstream — a network call —
+and the design marks the pre-push hook "(optional)".
+**Decision:** Install the `pre-push` shim + `skills-update-check` target but leave the
+`auto skill update --check` line commented out; teams opt in deliberately.
+**Alternatives:** On by default (slows every push, breaks offline pushes); omit entirely
+(loses the documented freshness warning).
+**Consequences:** The default hook set is fully offline; the freshness warning is available
+but never blocks a push (warn-only even when enabled).
+        </script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Build the `internal/migrate` translator + `migrate vercel` command first (offline, fully
+testable today), then swap the pre-commit stanza and add the post-merge/checkout/pre-push
+hook shims. Migration and hooks are independent and can be built/reviewed in either order;
+docs land last.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-dag caption="Phase dependency DAG"></pd-dag>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="migrate core: parse, classify, version-intent" files="auto-skill/internal/migrate/migrate.go,auto-skill/internal/migrate/testdata/synthetic-skills-lock.json,auto-skill/internal/migrate/migrate_test.go" status="todo">
+          <md><script type="text/plain">
+The pure translator — no CLI, no engine calls, no network.
+
+**Steps:**
+1. Create `internal/migrate/migrate.go`: `VercelLock`/`VercelEntry` structs
+   (`{version, skills: map[name]{source, sourceType, skillPath, computedHash, ref}}`) and
+   `ParseVercelLock(io.Reader)` → decode + validate, returning `[]config.ValidationError`
+   (G-schema-strict: `code`/`path`/`field`/`message` + remediation) on missing/garbled input.
+2. Add `versionFromRef(ref string) string`: 40-hex sha or tag → that pin; `branch:`-form →
+   `branch:<name>`; empty/default → `latest`.
+3. Add `Plan(v, projectRoot)`: classify each entry by `sourceType` into per-entry outcomes —
+   github/gitlab → lock-add (derive credential-free `url` + `subpath` from `skillPath`);
+   `local` → inspect the path for the git-vs-non-git split (git repo → lock-add `local:true`;
+   non-git dir → authored-import; missing → skip+report); `node_modules`/`well-known`/
+   `huggingface`/`mintlify` → skip+report. No writes.
+4. Author `testdata/synthetic-skills-lock.json` covering what the real fixture lacks: a tag
+   ref, a branch ref, a 40-hex sha ref, a `gitlab` entry, and one each of the four unsupported
+   types, plus a local git-repo / non-git-dir / missing-path trio.
+5. Write `migrate_test.go`: table tests over BOTH the repo-root `skills-lock.json` and the
+   synthetic fixture; assert classification, `versionFromRef` mapping, and structured-error
+   shape. **Verify:** `cd auto-skill && go build ./... && go test ./internal/migrate/`.
+6. **Commit:** `feat(037): migrate core — vercel lock parse + classification`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="migrate apply: additive write + dry-run" files="auto-skill/internal/migrate/migrate.go,auto-skill/internal/migrate/migrate_test.go" status="todo" depends-on="1">
+          <md><script type="text/plain">
+The additive writer behind `Plan`.
+
+**Steps:**
+1. Add `Migration.Apply(dryRun bool) (Result, error)`: additively create/extend
+   `.auto/skills/lock.json` (each entry `state:"unresolved"`, no `commit`, credential-free
+   `url`, correct `local` flag) and `.auto/skills/skills.yaml` (per skill `replacements:{}` +
+   the seeded `version`); perform authored imports into `./skills/<name>/` for non-git locals
+   (reuse the 033 import/containment safety: reject symlinks/special files, size/count limits).
+   When `dryRun`, compute the full `Result` but write nothing.
+2. `Result{Migrated, Skipped, Imported, Failed}` drives the summary; `Failed=true` when any
+   entry errored.
+3. Extend `migrate_test.go`: assert emitted lock/skills.yaml bytes, **additivity** (input
+   `skills-lock.json` unchanged), and that `--dry-run`/`dryRun` mutates nothing on disk.
+   **Verify:** `cd auto-skill && go build ./... && go test ./internal/migrate/`.
+4. **Commit:** `feat(037): migrate apply — additive lock + skills.yaml write`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="migrate vercel CLI command" files="auto-skill/internal/cli/migrate.go,auto-skill/internal/cli/root.go,auto-skill/internal/cli/migrate_test.go" status="todo" depends-on="2">
+          <md><script type="text/plain">
+The cobra wiring + JSON-default I/O.
+
+**Steps:**
+1. Create `internal/cli/migrate.go`: `newMigrateCmd(resolveEnv)` with a nested `vercel`
+   subcommand; flags `--from <path>` (default `./skills-lock.json`) and `--dry-run`;
+   honor the persistent `--format json|text`.
+2. RunE: read `--from`, call `ParseVercelLock`→`Plan`→`Apply`; JSON payload (migrated +
+   skipped + imported + counts) to stdout via `EncodeJSON`, warnings/diagnostics to
+   `cmd.ErrOrStderr()`; text mode prints `migrated N deps, skipped M (unsupported); run
+   \`auto skill sync\` to resolve commits and render.`; return `&ExitError{Code:1}` when
+   `Result.Failed` or on a fail-fast parse error.
+3. Register `newMigrateCmd(resolveEnv)` in `root.go` `NewRootCmd` `AddCommand` block (after
+   `newSyncCmd()`).
+4. Write `migrate_test.go` using `runCLI`: `--from`, `--dry-run`, stdout-JSON/stderr-split,
+   summary line, and a missing/garbled `--from` → structured error + non-zero + no writes.
+   **Verify:** `cd auto-skill && go build ./... && go test ./internal/cli/ -run Migrate`.
+5. **Commit:** `feat(037): auto skill migrate vercel command`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="git hook wiring: pre-commit check + sync --locked + opt-in pre-push" files="Makefile,hooks/post-merge,hooks/post-checkout,hooks/pre-push,auto-skill/internal/cli/hooks_test.go" status="todo">
+          <md><script type="text/plain">
+Independent of phases 1–3 (no migrate dependency). Wires `auto skill` into the hook set.
+
+**Steps:**
+1. Makefile: replace `skills-sync` with check-only `skills-check` in the `pre-commit:`
+   prerequisite list; define `skills-check` (`auto skill sync --check` + `auto skill lint`,
+   guarded by `-f .auto/skills/lock.json` && `command -v auto`, fail commit on non-zero,
+   never `git add`).
+2. Makefile: add `skills-sync-locked` (`auto skill sync --locked`, same guard) as the
+   `post-merge`/`post-checkout` target; add opt-in `skills-update-check` (`auto skill update
+   --check`, warn-only, the `auto` line commented out) as the `pre-push` target.
+3. Add thin shims `hooks/post-merge`, `hooks/post-checkout`, `hooks/pre-push` mirroring
+   `hooks/pre-commit` (`exec make -C "$ROOT" --no-print-directory <hook>`); `chmod +x`.
+4. Write `hooks_test.go`: a stubbed `auto` on `PATH` recording argv + scripted exit; assert
+   pre-commit fails on stale + no-ops when `lock.json` absent + never `git add`s; post-*
+   invoke `sync --locked`; pre-push (when enabled) warns but exits 0.
+   **Verify:** `make install-hooks` (sets `core.hooksPath`), run the stubbed-`auto` shell
+   tests, `cd auto-skill && go test ./internal/cli/ -run Hook`.
+5. **Commit:** `feat(037): wire auto skill into git hooks (check + locked re-materialize)`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="5" title="docs + full verification" files="auto-skill/CLAUDE.md" status="todo" depends-on="3,4">
+          <md><script type="text/plain">
+**Steps:**
+1. Document `migrate vercel` (flags, the unresolved→sync two-step, per-source handling) and
+   the hook stanzas in `auto-skill/CLAUDE.md`.
+2. Full verification: `cd auto-skill && go build ./... && go vet ./... && go test ./...`;
+   run the repo pre-commit pipeline (`make pre-commit`) to confirm the swapped `skills-check`
+   stanza no-ops cleanly in this repo (no `.auto/skills/lock.json` yet) and golangci-lint is
+   clean.
+3. **Commit:** `docs(037): document migrate vercel + git hooks`.
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **Phases 1–3** deliver `migrate vercel` → **AC-1 … AC-7** pass (translation, version
+  intent, local split, unsupported skip, additivity/dry-run, `--from`/errors, JSON I/O).
+- **Phase 4** delivers the hooks → **AC-8 … AC-11** pass (pre-commit check-only gate,
+  post-merge/checkout `--locked`, opt-in non-blocking pre-push, clean no-op in non-skills
+  repos).
+- **Phase 5**: `go build`/`vet`/`test` green across `auto-skill`; `make pre-commit` passes
+  with the new stanza; docs updated. Guard rails G-schema-strict / G-json-default /
+  G-offline-check / G-fast-sync all honored.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
