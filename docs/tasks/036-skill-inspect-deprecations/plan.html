@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>036: skill-inspect-deprecations</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "036",
+    "name": "skill-inspect-deprecations",
+    "epic": "004-remote-skill-management",
+    "depends-on": ["034"],
+    "status": "planning",
+    "created": "2026-06-20"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="036: skill-inspect-deprecations" status="draft" pr="pending" generated="2026-06-20">
+
+    <pd-tab name="Requirements">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Epic 004 (remote-skill-management) replaces the `npx skills` shell-out with a native
+Go pipeline. By T4 (034) the project carries real **dependency identity** (`lock.json`),
+**derived render state** (`manifest.json` — per-skill `skill_version`, resolved
+replacements; per-target managed set), and **rendered output** in every target — but
+there is no way to *read* any of it. Today the only inventory command is `ls`, which
+walks the authored `./skills/` directory and knows nothing about vendored skills, their
+provenance, or whether a target's rendered tree is stale against the lock.
+
+This task adds the **read-only inspection triad** the rest of the epic's user journey
+(`C-inspect`) needs — `list` (authored ∪ vendored, with a stale flag), `describe <name>`
+(provenance), `get <name>` (the full rendered SKILL.md) — plus the `source` and `target`
+sub-resources, all following the repo's resource-subcommand convention (cheap→full,
+truncation prints the recover command) and JSON-default I/O.
+
+It also performs the epic's **decisive CLI deprecations** (`G-decisive-cli`): remove the
+ad-hoc `ls` in favour of the triad, and **reclaim `auto skill update`** for the skills
+update verb by making root `auto update` the sole binary self-update (**D-3** — the one
+place the epic reaches into the unified root `auto` binary). `agents` (folded into `init`
+by T1) and the npx `sync` exec (replaced by T4) are confirmed gone here, not re-done.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="what-the-triad-reads" title="What the triad reads (inherited from T1/T3/T4)">
+        <md><script type="text/plain">
+T6 is a pure **reader** — it writes no project state and performs no network fetch. It
+joins four already-existing sources into the triad views:
+
+- **`.auto/skills/lock.json`** (033 writes) — dependency identity per vendored skill:
+  `source`, `url`, `version_spec`, `ref`, `commit`, `subpath`, `state`. Feeds the
+  *vendored* half of `list`, `describe`'s provenance, and `source list`/`describe`.
+- **`.auto/skills/manifest.json`** (034 populates) — derived render state: per-skill
+  `skill_version` + resolved `replacements`; **per target, the managed set + expected
+  `skill_version`**. Feeds `describe`'s `skill_version`/`replacements` and the **stale
+  flag** (manifest's expected version vs the on-disk tree digest).
+- **The rendered target trees** (`.claude/skills/**`, `.agents/skills/**`) — `get`
+  returns their `SKILL.md`; T4's on-disk-tree-digest helper computes the stale compare
+  **offline**.
+- **`./skills/` + `.auto/skills/skills.yaml`** — authored skills (`skill.List`, reused
+  from `ls`) and the configured `targets:` list (feeds `target list`).
+
+If a derived field is missing from a planned struct at execution time, that is T1/T4's
+concern; T6 adapts to the merged reader signature (the *contract* is load-bearing, not
+the identifier).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **`list [--local|--vendored]`** — default lists **both** authored and vendored skills:
+  ids + metadata + a **stale** flag (and a `shadowed` flag where an authored skill
+  shadows a same-named vendored one). `--local` = authored only; `--vendored` = remote
+  only; the two are mutually exclusive (fail-fast on conflict).
+- **`describe <name>`** — provenance: `source`, `url`, `ref`, `commit`, `version_spec`
+  (from the lock) + `skill_version` and resolved `replacements` (from the manifest).
+  Unknown name → hard error with a remediation hint.
+- **`get <name>`** — the **full rendered `SKILL.md`** (full-fidelity by default);
+  `--format text` emits raw markdown to stdout. Authored-only skills are served from
+  `./skills/<name>/`.
+- **`source list | describe <id>`** — upstream deps from `lock.json`, deduped by repo.
+- **`target list`** — configured output targets (default `claude`, `agents`) + each
+  one's resolved on-disk path and managed-skill count.
+- **Resource-convention output** — cheap rungs (`list`, `describe`) return ids +
+  metadata; `get` is full by default; **truncated output prints the exact recover
+  command** (`auto skill get <name>` / `--format text`).
+- **JSON-default** (`G-json-default`) — payload on stdout, diagnostics on stderr,
+  `--format text` for humans; data-listing returns valid items even when some are
+  invalid, then exits non-zero.
+- **Deprecations** (`G-decisive-cli`) — remove `ls` (not aliased); **reclaim `auto skill
+  update`** for the skills update verb by deleting its binary-self-update binding so root
+  `auto update` is the sole self-update; remove the standalone `agents` command (folded
+  into `init` by T1); confirm the npx `sync` exec is gone (T4). Refresh `quickstart` /
+  `docs`.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Sync / render internals** (T4/034) — the manifest population, on-disk-digest helper,
+  `--check` gate, and the actual rendering. T6 only *reads* them.
+- **Prune / adopt / `remove` / `doctor` drift+orphan reporting** (T5/035) — `doctor`'s
+  ownership report is distinct from the read-only triad; T6 does not touch it.
+- **`migrate` + git hooks** (T7).
+- **`add` / `update` / `sync` / `cache` / `trust`** verbs and their write paths — T6
+  neither implements nor modifies them (it only *frees the name* `auto skill update`).
+- **The `search` rung** of the resource pattern (ID-less discovery) — not in the design's
+  CLI surface for skills; deferred.
+- **The root `auto update` self-update *implementation*** — it already exists
+  (`auto-shared/update`); T6 only ensures it is the sole self-update path and updates the
+  surrounding comment.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Resolved autonomously with best-judgment defaults (planning-worker mode — no interactive
+asks). Each is a default + one-line rationale; revisit at review/execution.
+
+- [x] **D-3 vs depends-on ordering inversion.** D-3 says "the reclaimed name is ready for
+  T4's `update` *without a temporary alias*" — implying T6 frees the name **before** T4
+  consumes it — yet 036 is **depends-on 034** (T6 builds *after* T4). **Default:** treat
+  T6's deliverable as the deprecation **end-state**, not the literal byte-flip. Since T4
+  lands first and *cannot* register `auto skill update` as its verb without removing the
+  self-update binding, T4 performs the functional reclaim; T6 **asserts** the end-state
+  (e2e) and finishes the doc/comment cleanup. If T4 instead parks its verb under a
+  temporary alias, T6 performs the swap. Net end-state is identical either way.
+  *Rationale: respects the declared dependency edge while still honouring D-3's "no
+  long-term alias" outcome.*
+- [x] **Does T6 reach into `auto-cli/cmd/auto/main.go`?** **Default: yes, lightly.** Root
+  `auto update` already exists there (017 merged), so there is nothing to *add*; T6 only
+  tightens the `:58-59` "retained equivalents" comment so auto-skill is no longer
+  described as a self-update equivalent, and adds an e2e asserting `auto skill update` ≠
+  self-update. *Rationale: D-3 explicitly scopes "a light reach into the root command
+  tree" to this task; 017 is merged so the edit is safe.*
+- [x] **Unify-binaries (017) dependency.** **Default: none — 017 is already MERGED**
+  (`cd80ea9` folded every tool into the single `auto` binary). The root command tree is
+  real and editable today; no cross-epic blocker. *Rationale: confirmed in git history /
+  035 context.*
+- [x] **`--format text` vs today's `--text`/`--json`.** The design's CLI-surface header
+  says "JSON default, `--format text` for humans"; the existing `ls`/`lint` use
+  `--text`+`--json` booleans. **Default:** the **new** triad/sub-resource commands use
+  `--format text` (matching the design and the resource convention); the legacy
+  `lint` flags are left untouched (out of scope). *Rationale: follow the design's
+  authoritative spelling for new surface; avoid churning unrelated commands.*
+- [x] **Where does `get` read the rendered bytes?** **Default:** read the rendered
+  `SKILL.md` from the **first configured target** that has the skill (deterministic order
+  from `targets:`); authored-only skills from `./skills/<name>/SKILL.md`. Re-rendering is
+  T4's engine and out of scope. *Rationale: reflects what is actually deployed; no render
+  dependency beyond reading bytes.* A `--target <style>` selector is added so a specific
+  target can be inspected.
+- [x] **Stale semantics when the manifest/lock is absent** (e.g. a project that only ever
+  authored local skills, never ran `add`/`sync`). **Default:** `list` degrades to the
+  authored-only view with `stale: null` (unknown, not false) and no vendored rows; no
+  hard error. `describe`/`source`/`target` on an un-initialised project return an empty
+  payload + a remediation hint on stderr, exit non-zero only for an explicitly-requested
+  missing `<name>`/`<id>`. *Rationale: list/read commands stay useful with no filters
+  (CLAUDE.md), `G-offline-check` honesty (unknown ≠ fresh).*
+- [x] **Does `list` need the on-disk digest (network-free)?** **Default: yes, offline
+  only** — reuse T4's tree-digest helper with no fetch; a missing rendered tree reports
+  `stale: true` (not present), never a silent network call. *Rationale: mirrors `sync
+  --check` honesty; T6 must never fetch.*
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Two layers, both offline and hermetic (no network, no `npx`):
+
+1. **`internal/inspect` unit tests** — table-driven over a `t.TempDir()` project fixture
+   seeded with a hand-written `lock.json`, `manifest.json`, `skills.yaml`, `./skills/<n>/`
+   authored trees, and rendered `.claude/skills/<n>/` / `.agents/skills/<n>/` target
+   trees. Assert the joined `SkillView` set (origin, stale, shadowed), `Describe`
+   provenance, `Get` bytes, and `SourceList`/`SourceDescribe`/`TargetList`. Stale is
+   exercised by writing a target tree whose digest does **not** match the manifest's
+   expected `skill_version`.
+2. **`internal/cli` integration tests** — via the existing `runCLI(t, args...)` harness
+   with `t.TempDir()` as `--root`: JSON-default shape on stdout, diagnostics on stderr,
+   exit codes, flag-conflict fail-fast, truncation→recover-command, and the **deprecation
+   assertions** (`ls` is an unknown command; `auto skill update` is the skills verb not a
+   self-update; `agents` standalone is gone).
+
+Because T4/T1/T3 are planned-not-merged, the fixtures hand-author the lock/manifest/yaml
+to the **planned schema**; if a merged field name differs, the loader wrappers
+(`internal/inspect/loaders.go`) absorb the diff and the fixtures update with it.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-trace caption="AC × phase × test coverage"></pd-trace>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="list (default) returns authored ∪ vendored with origin + stale flag" phases="1,3" tests="auto-skill/internal/inspect/inspect_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- Given a project with an authored `./skills/a/` and a vendored `b` (in lock + manifest +
+  rendered into a target)
+- When `auto skill list` runs (no flags)
+- Then JSON on stdout lists **both** `a` (origin `local`) and `b` (origin `vendored`),
+  each with `name`, `description`, `path`, and a boolean `stale`
+- And a skill whose rendered tree digest ≠ the manifest's expected `skill_version` has
+  `stale: true`; a matching one has `stale: false`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="list --local / --vendored filter; the two are mutually exclusive" phases="1,3" tests="auto-skill/internal/inspect/inspect_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- `auto skill list --local` returns only authored skills; `--vendored` only remote ones
+- Filter values are validated against the same name rules as stored data
+- `auto skill list --local --vendored` is a flag conflict → fail-fast with a standard
+  Cobra usage error and a non-zero exit (no partial run)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="describe <name> returns provenance from lock + manifest; unknown name is a hard error" phases="1,3" tests="auto-skill/internal/inspect/inspect_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- `auto skill describe <vendored>` emits `source`, `url`, `ref`, `commit`,
+  `version_spec` (lock) + `skill_version`, resolved `replacements` (manifest)
+- An authored-only skill describes with its authored provenance (no source/commit) and an
+  explicit `origin: local`
+- `auto skill describe <missing>` exits non-zero with a structured error carrying a
+  remediation hint (`run auto skill list`); stdout stays empty/parseable
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="get <name> emits the full rendered SKILL.md; --format text is raw markdown" phases="1,3" tests="auto-skill/internal/inspect/inspect_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- `auto skill get <name>` returns the full rendered `SKILL.md` (full-fidelity by default,
+  JSON-wrapped) read from the first configured target holding it
+- `--format text` writes the raw markdown to stdout (nothing else on stdout)
+- `--target <style>` selects a specific target; an authored-only skill is served from
+  `./skills/<name>/SKILL.md`
+- A missing skill is a hard error with a remediation hint
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="source list / describe and target list read the lock and skills.yaml" phases="2,3" tests="auto-skill/internal/inspect/source_target_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- `auto skill source list` lists upstream deps from `lock.json`, deduped by repo, each
+  with the skills it provides
+- `auto skill source describe <id>` returns one source's `url`/`ref`/`commit` + its skills
+- `auto skill target list` lists configured targets (default `claude`, `agents`) with each
+  one's resolved on-disk path and managed-skill count from the manifest
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Cheap rungs truncate and print the exact recover command" phases="1,3" tests="auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- `list`/`describe` return ids + metadata only (the cheap rung); long fields are
+  truncated
+- Truncated output prints the **exact** command to recover the full version
+  (e.g. `auto skill get <name>` / `auto skill describe <name> --format text`)
+- `get` is full-fidelity by default (the full rung)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="JSON-default I/O; partial-success listing returns valid items then exits non-zero" phases="1,3" tests="auto-skill/internal/inspect/inspect_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- Every triad/sub-resource command defaults to JSON; stdout is strictly parseable payload,
+  diagnostics/errors go to stderr
+- `--format text` produces the human view (results first, then readable errors)
+- `list` with one malformed authored skill still returns the valid skills on stdout and
+  exits non-zero, reporting the bad one on stderr
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="ls is removed; list is the only listing verb" phases="3,4" tests="auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- `auto skill ls` is an **unknown command** (removed, not aliased — `G-decisive-cli`)
+- `auto skill list` is the sole inventory verb
+- `quickstart` and `docs` reference `list`/`describe`/`get`/`source`/`target`, never `ls`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="auto skill update means update-skills; binary self-update is only at root auto update" phases="4,5" tests="auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- `auto skill update`'s **binary self-update binding is gone** — the name belongs to the
+  skills update verb (T4); no `auto-shared/update` call remains under `auto skill`
+- Binary self-update is reachable at **root `auto update`** (already present from 017)
+- The `auto-cli/cmd/auto/main.go` "retained equivalents" comment no longer lists skill as
+  a self-update equivalent
+- `quickstart`/`docs` point self-update at `auto update`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-10" title="The standalone agents command and the npx sync exec are gone" phases="4" tests="auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- `auto skill agents` is no longer a standalone command (folded into `init` by T1/032);
+  if still registered at execution time, T6 removes it
+- `auto skill sync` contains **no `npx` exec** (replaced by T4's native sync); T6 only
+  confirms this — it does not modify `sync`'s entrypoint
+          </script></md>
+        </pd-ac>
+
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **Planned-not-merged dependencies.** lock/manifest/skills.yaml schemas and the
+  tree-digest helper come from 032/033/034 (not on disk). Fixtures hand-author the
+  planned shape; `loaders.go` is the single seam that absorbs a merged-name diff. Risk:
+  a schema field rename ripples into fixtures — mitigated by isolating reads in `loaders`.
+- **`update` reclaim race (D-3).** If T4 has *not* removed the self-update binding by the
+  time T6 executes (e.g. it parked its verb under an alias), T6 must perform the swap
+  itself, which means deleting `update.go` and registering T4's verb — a slightly larger
+  edit than "assert end-state." Both paths are covered by AC-9; the plan's Phase 4 notes
+  the conditional.
+- **`get` source-of-truth.** Reading rendered bytes from a target assumes `sync` has run.
+  On an un-synced project `get` reports "not rendered — run `auto skill sync`" rather than
+  re-rendering (re-render is T4's engine, out of scope).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+A new **read-only** `internal/inspect` package joins the four existing state sources into
+the triad views, and a thin CLI layer wires the resource subcommands — mirroring the
+package split T4 (`internal/render`, `internal/sync`) and T5 (`internal/ownership`)
+establish. T6 introduces **no write path and no network fetch**: it consumes 032's typed
+readers (lock, manifest, project config), 033's lock entries, and 034's on-disk-tree
+digest helper.
+
+The deprecations are a decisive cleanup of `internal/cli/root.go` (swap `ls`→`list`,
+register the triad + sub-resources, drop the self-update + `agents` registrations) plus a
+**light reach** into the merged binary's `auto-cli/cmd/auto/main.go` (tighten the
+"retained equivalents" comment — root `auto update` already exists). No long-term aliases:
+`ls` is removed, the self-update binding is deleted.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="inspect-api" title="The inspect read layer (shared core)">
+        <pd-api kind="module" name="internal/inspect" lang="go" path="auto-skill/internal/inspect/inspect.go" caption="Read-only join of authored ∪ vendored ∪ derived ∪ digest state. No writes, no fetch.">
+          <pd-member kind="method" sig="Inspect(env skill.Env, filter Filter) ([]SkillView, []string, error)">Combined view: authored (skill.List) joined with vendored (lock) + derived (manifest) + offline stale (on-disk tree digest vs expected skill_version). Returns valid views + parse-error strings (partial success).</pd-member>
+          <pd-member kind="method" sig="Describe(env skill.Env, name string) (Provenance, error)">Provenance for one skill: lock identity (source/url/ref/commit/version_spec) + manifest derived (skill_version, resolved replacements). Hard error (with hint) if name is unknown.</pd-member>
+          <pd-member kind="method" sig="Get(env skill.Env, name string, target string) ([]byte, string, error)">Full rendered SKILL.md bytes + the resolved target it was read from; authored-only skills from ./skills/&lt;name&gt;/. Errors if not rendered (hint: run sync).</pd-member>
+          <pd-member kind="field" sig="type Filter struct { Local, Vendored bool }">list scope; Local⊕Vendored validated as mutually exclusive at the CLI boundary.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="view-types" title="View types">
+        <pd-api kind="struct" name="inspect.SkillView" lang="go" path="auto-skill/internal/inspect/view.go" caption="One row of list; JSON-tagged for stdout payload.">
+          <pd-member kind="field" sig="Name string `json:&quot;name&quot;`">Skill name (validated `^[a-z0-9]+(-[a-z0-9]+)*$`).</pd-member>
+          <pd-member kind="field" sig="Origin string `json:&quot;origin&quot;`">`local` (authored) | `vendored` (remote).</pd-member>
+          <pd-member kind="field" sig="Description string `json:&quot;description&quot;`">From the rendered/authored SKILL.md frontmatter.</pd-member>
+          <pd-member kind="field" sig="Path string `json:&quot;path&quot;`">Authored ./skills path, or the source repo for vendored.</pd-member>
+          <pd-member kind="field" sig="SkillVersion string `json:&quot;skill_version,omitempty&quot;`">Manifest expected version (vendored/managed only).</pd-member>
+          <pd-member kind="field" sig="Stale *bool `json:&quot;stale&quot;`">true = on-disk tree digest ≠ expected; false = matches; null = unknown (no manifest).</pd-member>
+          <pd-member kind="field" sig="Shadowed bool `json:&quot;shadowed,omitempty&quot;`">An authored skill shadows a same-named vendored one (authored wins).</pd-member>
+        </pd-api>
+        <pd-api kind="struct" name="inspect.Provenance" lang="go" path="auto-skill/internal/inspect/view.go" caption="describe payload.">
+          <pd-member kind="field" sig="Name, Origin, Source, URL, Ref, Commit, VersionSpec, SkillVersion string">Identity + provenance; source/commit empty for authored-only.</pd-member>
+          <pd-member kind="field" sig="Replacements map[string]any `json:&quot;replacements,omitempty&quot;`">Resolved replacement literals/file-ref summaries from the manifest.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="loaders" title="Shared loaders (the one seam over planned 032/033/034 readers)">
+        <pd-api kind="module" name="internal/inspect/loaders" lang="go" path="auto-skill/internal/inspect/loaders.go" caption="Thin wrappers so the triad + sub-resources share one load path; the single point that absorbs a merged-schema name diff.">
+          <pd-member kind="method" sig="loadLock(env) (Lock, bool, error)">032's ParseLock over .auto/skills/lock.json; bool = present.</pd-member>
+          <pd-member kind="method" sig="loadManifest(env) (Manifest, bool, error)">032's ParseManifest over .auto/skills/manifest.json.</pd-member>
+          <pd-member kind="method" sig="loadProjectConfig(env) (ProjectConfig, bool, error)">032's reader over skills.yaml — targets, commit_targets.</pd-member>
+          <pd-member kind="method" sig="treeDigest(dir string) (string, error)">034's on-disk-tree-digest helper, reused for the offline stale compare.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="subresource-api" title="Sub-resources: source + target">
+        <pd-api kind="module" name="internal/inspect (sub-resources)" lang="go" path="auto-skill/internal/inspect/source.go" caption="Read-only over the lock and skills.yaml.">
+          <pd-member kind="method" sig="SourceList(env) ([]Source, error)">Upstream deps from lock.json, deduped by repo, each with the skills it provides.</pd-member>
+          <pd-member kind="method" sig="SourceDescribe(env, id string) (Source, error)">One source's url/ref/commit + skills; hard error if id unknown.</pd-member>
+          <pd-member kind="method" sig="TargetList(env) ([]Target, error)">Configured targets (default claude, agents) + resolved on-disk path + managed-skill count from the manifest.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="cli-surface" title="CLI surface (final shape)">
+        <pd-cli id="C-inspect" title="zsh — inspect &amp; deprecations" caption="The read-only triad + the decisive renames">
+          <pd-cmd note="all skills, authored + vendored, ids + metadata + stale" status="todo">auto skill list</pd-cmd>
+          <pd-out>[{"name":"a","origin":"local","stale":null},{"name":"deploy","origin":"vendored","skill_version":"e5c075e…","stale":false}]</pd-out>
+          <pd-cmd note="only remote-sourced (or --local for authored)" status="todo">auto skill list --vendored</pd-cmd>
+          <pd-cmd note="provenance: source, ref, commit, skill_version, replacements" status="todo">auto skill describe deploy</pd-cmd>
+          <pd-cmd note="full rendered SKILL.md (raw markdown with --format text)" status="todo">auto skill get deploy --format text</pd-cmd>
+          <pd-cmd note="upstream deps from lock.json" status="todo">auto skill source list</pd-cmd>
+          <pd-cmd note="configured output targets (default: claude, agents)" status="todo">auto skill target list</pd-cmd>
+          <pd-cmd note="REMOVED — unknown command (use list)" status="todo">auto skill ls</pd-cmd>
+          <pd-out><script type="text/plain">Error: unknown command "ls" for "auto skill"</script></pd-out>
+          <pd-cmd note="now the skills update verb (T4); self-update moved to root" status="todo">auto skill update</pd-cmd>
+          <pd-cmd note="the sole binary self-update" status="todo">auto update</pd-cmd>
+        </pd-cli>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-skill/internal/inspect/inspect.go" change="add">Inspect / Describe / Get — the read-only join (Phase 1).</pd-file>
+          <pd-file path="auto-skill/internal/inspect/view.go" change="add">SkillView + Provenance payload types (Phase 1).</pd-file>
+          <pd-file path="auto-skill/internal/inspect/loaders.go" change="add">Thin wrappers over 032/033/034 readers + tree-digest (Phase 1).</pd-file>
+          <pd-file path="auto-skill/internal/inspect/inspect_test.go" change="add">Triad unit tests over a seeded TempDir project (Phase 1).</pd-file>
+          <pd-file path="auto-skill/internal/inspect/source.go" change="add">SourceList / SourceDescribe over the lock (Phase 2).</pd-file>
+          <pd-file path="auto-skill/internal/inspect/target.go" change="add">TargetList over skills.yaml + manifest (Phase 2).</pd-file>
+          <pd-file path="auto-skill/internal/inspect/source_target_test.go" change="add">Sub-resource unit tests (Phase 2).</pd-file>
+          <pd-file path="auto-skill/internal/cli/list.go" change="add">newListCmd / newDescribeCmd / newGetCmd (Phase 3).</pd-file>
+          <pd-file path="auto-skill/internal/cli/resources.go" change="add">newSourceCmd (list/describe) + newTargetCmd (list) (Phase 3).</pd-file>
+          <pd-file path="auto-skill/internal/cli/root.go" change="edit">Swap ls→list, register triad + sub-resources (P3); drop update + agents registrations; refresh quickstart/docs (P4/P5).</pd-file>
+          <pd-file path="auto-skill/internal/cli/update.go" change="delete">Delete the binary-self-update binding; reclaim `auto skill update` for T4's verb (Phase 4; conditional — see D-3).</pd-file>
+          <pd-file path="auto-skill/internal/cli/agents.go" change="delete">Remove the standalone `agents` command (folded into init by T1/032), if still present (Phase 4).</pd-file>
+          <pd-file path="auto-cli/cmd/auto/main.go" change="edit">Tighten the "retained equivalents" comment so skill is not a self-update equivalent; confirm root `auto update` is sole self-update (Phase 4).</pd-file>
+          <pd-file path="auto-skill/internal/cli/cli_integration_test.go" change="edit">Triad / sub-resource / deprecation e2e cases (Phase 5).</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Extend `internal/skill` instead of a new `internal/inspect` package.** Rejected:
+  `internal/skill` is authored-only today; the triad joins lock+manifest+digest+targets, a
+  distinct concern that mirrors the per-task package split (render/sync/ownership). A
+  separate read-only package keeps the dependency direction clean (inspect→skill, not the
+  reverse).
+- **Keep `ls` as a hidden alias of `list`.** Rejected by `G-decisive-cli` — no long-term
+  aliases; remove decisively.
+- **Re-render in `get` for an un-synced project.** Rejected: rendering is T4's engine; T6
+  reads deployed bytes and reports "run sync" otherwise — keeps T6 a pure reader with no
+  render dependency.
+- **Do the `update` name-swap in `main.go` (root) rather than `auto-skill`.** Rejected:
+  root `auto update` already exists; the reclaim is *removing* the per-tool self-update
+  binding in `auto-skill`, not adding anything at root.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-T6-1" title="A new read-only internal/inspect package owns the triad" status="accepted" by="agent" summary="Join authored ∪ vendored ∪ manifest ∪ digest in one no-write, no-fetch package; CLI stays thin.">
+        <md><script type="text/plain">
+**Context:** The triad reads four sources (authored ./skills, lock, manifest, rendered
+target trees) that no single existing package owns.
+**Decision:** Add `internal/inspect` — a pure reader mirroring T4's `internal/render`/
+`internal/sync` and T5's `internal/ownership`. The CLI layer only marshals its output.
+**Alternatives:** Bolt onto `internal/skill` (authored-only, wrong altitude); inline the
+joins in the CLI commands (untestable, duplicated across triad + sub-resources).
+**Consequences:** One `loaders.go` seam absorbs any merged-schema name diff from
+032/033/034; the triad and sub-resources share it.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-T6-2" title="The update reclaim is a deletion, asserted to an end-state (D-3)" status="accepted" by="agent" summary="Root auto update already exists; T6 removes the auto-skill self-update binding and asserts the end-state regardless of who flips the last byte.">
+        <md><script type="text/plain">
+**Context:** D-3 assigns the self-update relocation to T6, but root `auto update` already
+exists (017 merged) and 036 is depends-on 034, whose own scope reclaims `auto skill
+update`.
+**Decision:** Treat T6's deliverable as the deprecation **end-state** — `auto skill
+update` == skills verb, binary self-update only at root `auto update`, no alias — verified
+by e2e. T6 deletes any residual self-update binding under `auto skill` and tightens the
+root comment; if T4 already did the swap, T6 asserts and finishes the cleanup.
+**Alternatives:** Add a root command (already exists — nothing to add); force the swap
+into T6 ahead of T4 (contradicts depends-on=034).
+**Consequences:** A light, reviewable reach into `auto-cli/cmd/auto/main.go`; the
+end-state is identical no matter the merge order. (Ordering inversion logged in Open
+Questions.)
+        </script></md>
+      </pd-decision>
+
+      <pd-thread anchor="cli-surface" status="resolved" priority="p2" title="Does T6 own the byte-level update swap or just assert it?">
+        <pd-comment by="author">036 is depends-on 034, but D-3 says T6 frees `auto skill update` "for T4's update without a temporary alias" — implying T6 runs first. Who actually deletes the self-update binding?</pd-comment>
+        <pd-comment by="author">Resolved (D-T6-2): T6's deliverable is the **end-state**, asserted by e2e (AC-9). Since T4 lands first and can't register its verb without removing the self-update binding, T4 performs the functional reclaim; T6 asserts it and finishes the comment/doc cleanup, performing the swap itself only if T4 left an alias. Net end-state identical either way.</pd-comment>
+      </pd-thread>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Five phases. Phase 1 builds the read-only join core (`internal/inspect`); Phase 2 adds the
+`source`/`target` sub-resource readers on top of its shared loaders; Phase 3 wires the CLI
+triad + sub-resources and removes `ls`; Phase 4 performs the decisive deprecations (reclaim
+`auto skill update`, drop the standalone `agents`, confirm npx `sync` gone, tighten the
+root comment); Phase 5 refreshes `quickstart`/`docs` and lands the e2e suite. root.go edits
+are serialized (P3→P4→P5) so phases never race on the same file.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-dag caption="Phase dependency graph"></pd-dag>
+      </pd-section>
+
+      <pd-section id="phases" title="Phases">
+        <pd-stepper>
+
+          <pd-phase n="1" title="inspect read core (Inspect/Describe/Get + loaders)" status="todo"
+                    files="auto-skill/internal/inspect/inspect.go,auto-skill/internal/inspect/view.go,auto-skill/internal/inspect/loaders.go,auto-skill/internal/inspect/inspect_test.go">
+            <md><script type="text/plain">
+Create the read-only `internal/inspect` package. `loaders.go` wraps 032/033/034 typed
+readers (lock, manifest, project config) + 034's tree-digest helper — the single seam over
+planned schemas. `Inspect(env, filter)` joins authored (`skill.List`) ∪ vendored (lock) +
+derived (manifest) and computes the **offline** stale flag (tree digest vs expected
+`skill_version`); partial-success (valid views + parse-error strings). `Describe` returns
+provenance; `Get` returns rendered `SKILL.md` bytes (authored-only from `./skills`). Unit
+tests over a seeded `t.TempDir()` fixture (lock + manifest + skills.yaml + authored +
+rendered target trees), including a digest-mismatch stale case and a no-manifest
+`stale: null` case. `go build ./...` after each file.
+**Covers:** AC-1, AC-3, AC-4, AC-7.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="2" title="source + target sub-resource readers" status="todo" depends-on="1"
+                    files="auto-skill/internal/inspect/source.go,auto-skill/internal/inspect/target.go,auto-skill/internal/inspect/source_target_test.go">
+            <md><script type="text/plain">
+On top of Phase 1's loaders: `SourceList`/`SourceDescribe` over `lock.json` (deduped by
+repo, skills per source); `TargetList` over `skills.yaml` `targets:` (default claude,
+agents) + each target's resolved on-disk path + managed-skill count from the manifest.
+Unit tests for dedupe, unknown-id hard error, and default-targets behaviour.
+Depends on Phase 1 for the shared loaders. `go build ./...`.
+**Covers:** AC-5.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="3" title="CLI triad + sub-resources; remove ls" status="todo" depends-on="1,2"
+                    files="auto-skill/internal/cli/list.go,auto-skill/internal/cli/resources.go,auto-skill/internal/cli/root.go">
+            <md><script type="text/plain">
+Add `newListCmd` (`--local`/`--vendored` mutually exclusive, `--format text`),
+`newDescribeCmd`, `newGetCmd` (`--format text`, `--target`) in `list.go`; `newSourceCmd`
+(`list`/`describe <id>`) + `newTargetCmd` (`list`) in `resources.go`. In `root.go`:
+**delete `newLsCmd`**, swap its registration for the triad + sub-resources. JSON-default;
+cheap rungs truncate long fields and print the exact recover command; partial-success
+exits non-zero. `go build ./...`.
+**Covers:** AC-2, AC-6, AC-8 (ls removed).
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="4" title="Deprecations: reclaim update, drop agents, confirm sync, tighten root" status="todo" depends-on="3"
+                    files="auto-skill/internal/cli/root.go,auto-skill/internal/cli/update.go,auto-skill/internal/cli/agents.go,auto-cli/cmd/auto/main.go">
+            <md><script type="text/plain">
+The decisive cleanup (D-3). Remove the `newUpdateCmd` (self-update) registration from
+`root.go` and **delete `update.go`** so `auto skill update` is free for T4's skills verb
+(conditional — if T4 already removed it, assert the end-state and register T4's verb if it
+parked an alias). Remove the standalone `newAgentsCmd` registration + **delete `agents.go`**
+if T1/032 left it (it's folded into `init`). Confirm `sync.go` has no `npx` exec (T4) —
+no edit if already native. In `auto-cli/cmd/auto/main.go`, tighten the "retained
+equivalents" comment so skill is not described as a self-update equivalent; confirm root
+`auto update` is the sole self-update. `go build ./...` in **both** `auto-skill` and
+`auto-cli`.
+**Covers:** AC-8 (quickstart/docs follow in P5), AC-9, AC-10.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="5" title="quickstart/docs refresh + e2e suite" status="todo" depends-on="3,4"
+                    files="auto-skill/internal/cli/root.go,auto-skill/internal/cli/cli_integration_test.go">
+            <md><script type="text/plain">
+Update `newQuickstartCmd`/`newDocsCmd` strings: drop `ls`, add `list`/`describe`/`get`/
+`source`/`target`, and point self-update at root `auto update`. Extend
+`cli_integration_test.go` via `runCLI`: triad JSON shapes + flag-conflict + truncation→
+recover; `source`/`target` payloads; and the deprecation assertions (`ls` unknown; `auto
+skill update` ≠ self-update; `agents` standalone gone). `go build ./... && go test ./...`
+in `auto-skill`.
+**Covers:** AC-8 (docs), AC-9 (docs), and the e2e half of AC-1..AC-7, AC-10.
+            </script></md>
+          </pd-phase>
+
+        </pd-stepper>
+      </pd-section>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- All 10 ACs pass; `go build ./...` + `go test ./...` green in `auto-skill` (and
+  `auto-skill` + `auto-cli` build for the `main.go` reach).
+- `auto skill list`/`describe`/`get`/`source list|describe`/`target list` behave per the
+  design's CLI surface; JSON-default with `--format text`.
+- `auto skill ls` is an unknown command; `auto skill update` is the skills update verb;
+  binary self-update is reachable only at root `auto update`.
+- `quickstart`/`docs` reflect the new surface; no `ls`, self-update points at `auto update`.
+- No write path or network fetch introduced by T6 (pure reader).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
