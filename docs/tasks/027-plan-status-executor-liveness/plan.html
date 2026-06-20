@@ -8,7 +8,7 @@
   {
     "id": "027",
     "name": "plan-status-executor-liveness",
-    "status": "planning",
+    "status": "complete",
     "branch": null,
     "epic": "002-planning-docs-dashboard",
     "created": "2026-06-18",
@@ -20,7 +20,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="027: plan-status-executor-liveness" status="executing" pr="pending" generated="2026-06-20">
+  <pd-doc title="027: plan-status-executor-liveness" status="complete" pr="pending" generated="2026-06-20">
 
     <pd-tab name="Requirements">
       <pd-scope></pd-scope>
@@ -543,7 +543,7 @@ the only oracle for the client layer).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="5" title="Backfill + conformance + docs" files="docs/tasks/021-auto-bus-standard/artifacts/auto-bus-standard.html,docs/tasks/022-hook-event-log/artifacts/hook-event-log.html,docs/tasks/027-plan-status-executor-liveness/artifacts/conformance.md,auto-ui/CLAUDE.md" status="todo" depends-on="2,4">
+        <pd-phase n="5" title="Backfill + conformance + docs" files="docs/tasks/021-auto-bus-standard/artifacts/auto-bus-standard.html,docs/tasks/022-hook-event-log/artifacts/hook-event-log.html,docs/tasks/027-plan-status-executor-liveness/artifacts/conformance.md,auto-ui/CLAUDE.md" status="done" depends-on="2,4">
           <md><script type="text/plain">
 1. Backfill: insert a `pd-meta` block into the `<head>` of the 021 and 022 artifact HTML plans
    (`status: "merged"`, `id`/`name`/`created` from the task, accurate `pr`, `epic: null`); preserve
