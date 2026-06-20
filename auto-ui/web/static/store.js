@@ -113,20 +113,24 @@ export function reducer(state, action) {
     }
 
     case "docs/set": {
-      const { project, docs } = action;
+      const { project, worktree, docs } = action;
       return {
         ...state,
-        docsByProject: { ...state.docsByProject, [project]: docs || [] },
+        docsByProject: {
+          ...state.docsByProject,
+          [docsKey(project, worktree)]: docs || [],
+        },
       };
     }
 
     case "docs/invalidate": {
-      // Drop a project's cached doc.list so the next list-orchestration re-fetches
-      // (used by reconnect and by a doc.changed re-list — D-7, no TTL).
-      const { project } = action;
-      if (!(project in state.docsByProject)) return state;
+      // Drop a project+worktree's cached doc.list so the next list-orchestration
+      // re-fetches (used by reconnect and by a doc.changed re-list — D-7, no TTL).
+      const { project, worktree } = action;
+      const key = docsKey(project, worktree);
+      if (!(key in state.docsByProject)) return state;
       const nextCache = { ...state.docsByProject };
-      delete nextCache[project];
+      delete nextCache[key];
       return { ...state, docsByProject: nextCache };
     }
 
@@ -227,9 +231,20 @@ export function selectConn(state) {
   return state.conn;
 }
 
-// selectDocs returns the cached doc.list for a project (empty array if unseen).
-export function selectDocs(state, project) {
-  return state.docsByProject[project] || [];
+// docsKey keys the docsByProject cache by project AND worktree, because doc.list
+// is sent with the selected worktree (fetchDocs) — two worktrees of the same
+// project list different docs, so a project-only key would serve the first
+// worktree's docs after switching. When no worktree is selected (the common
+// case) the key collapses to the bare project id, so single-worktree behaviour
+// is unchanged. Project ids are lowercase-kebab (no "@"), so the delimiter never
+// collides.
+function docsKey(project, worktree) {
+  return worktree ? project + "@" + worktree : project;
+}
+
+// selectDocs returns the cached doc.list for a project+worktree (empty if unseen).
+export function selectDocs(state, project, worktree) {
+  return state.docsByProject[docsKey(project, worktree)] || [];
 }
 
 export function selectOpenDoc(state) {
@@ -240,7 +255,7 @@ export function selectOpenDoc(state) {
 // /debug current-state section: {project, path, type, revision, docCount, lastUpdated}.
 export function selectDebugSnapshot(state) {
   const project = selectActiveProject(state);
-  const docs = selectDocs(state, project);
+  const docs = selectDocs(state, project, state.selection.worktree);
   const od = state.openDoc;
   return {
     project,
@@ -346,16 +361,17 @@ async function fetchProjects() {
 // round-trip (the AC-8 warm cache). Mirrors tree.js's fetchList.
 async function fetchDocs(project, { force = false } = {}) {
   if (!project) return;
-  if (!force && project in getState().docsByProject) return; // warm cache (AC-8)
+  const worktree = getState().selection.worktree;
+  // warm cache (AC-8), keyed by project+worktree so a worktree switch re-lists.
+  if (!force && docsKey(project, worktree) in getState().docsByProject) return;
   try {
     await whenOpen();
     const params = {};
     if (project) params.project = project;
-    const worktree = getState().selection.worktree;
     if (worktree) params.worktree = worktree;
     bumpDocListCount();
     const res = (await call("doc.list", params)) || [];
-    dispatch({ type: "docs/set", project, docs: res });
+    dispatch({ type: "docs/set", project, worktree, docs: res });
   } catch {
     // doc.list errors are recorded at the rpc.js layer.
   }
@@ -482,7 +498,13 @@ export function initStore() {
       // then re-fetch projects, docs, and the open doc (cache does not mask the
       // reconnect re-list — D-7 / AC-8 second clause).
       const active = selectActiveProject(getState());
-      if (active) dispatch({ type: "docs/invalidate", project: active });
+      if (active) {
+        dispatch({
+          type: "docs/invalidate",
+          project: active,
+          worktree: getState().selection.worktree,
+        });
+      }
       fetchProjects();
       if (active) fetchDocs(active, { force: true });
       fetchOpenDoc({ force: true });
@@ -509,7 +531,8 @@ export function initStore() {
 
     const active = selectActiveProject(getState());
     if (c.project === active) {
-      const known = (getState().docsByProject[active] || []).some(
+      const wt = getState().selection.worktree;
+      const known = (getState().docsByProject[docsKey(active, wt)] || []).some(
         (d) => d.path === c.path
       );
       if (!known) {

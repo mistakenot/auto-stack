@@ -129,9 +129,15 @@ export function Explorer({ params }) {
 
   const type = deriveType(path);
 
+  // DocTree is keyed by project+worktree so a switch REMOUNTS it: its
+  // useStore(s => selectDocs(s, project, worktree)) selector is captured once
+  // (useEffect deps []), so a reused instance would keep selecting the previous
+  // project/worktree's docs. Remounting re-captures the selector against the new
+  // props.
   return shell(html`
     <div class="workbench">
       <${DocTree}
+        key=${activeProject + "@" + worktree}
         project=${activeProject}
         worktree=${worktree}
         selected=${path}

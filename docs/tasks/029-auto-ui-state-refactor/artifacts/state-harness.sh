@@ -259,7 +259,7 @@ JSON
     sleep 0.1
   done
   # Switch to B, then back to A, polling the doc-count to confirm each list settled.
-  local CALLS_AFTER_A CALLS_AFTER_B CALLS_AFTER_A2
+  local CALLS_AFTER_A CALLS_AFTER_B CALLS_AFTER_A2 DOCCOUNT_B DOCCOUNT_A2
   CALLS_AFTER_A=$(ev "(window.__autoui&&window.__autoui.store&&window.__autoui.store.docListCalls)||0")
   "$BB" eval "location.hash = '#/explore?project=proj-b'" >/dev/null 2>&1
   for _ in $(seq 1 30); do
@@ -267,6 +267,7 @@ JSON
     [ "$DOCCOUNT" = "1" ] && break   # proj-b has exactly 1 doc
     sleep 0.1
   done
+  DOCCOUNT_B="$DOCCOUNT"
   CALLS_AFTER_B=$(ev "(window.__autoui&&window.__autoui.store&&window.__autoui.store.docListCalls)||0")
   "$BB" eval "location.hash = '#/explore?project=proj-a'" >/dev/null 2>&1
   sleep 1.0   # generous: a (wrong) re-list would have bumped the counter by now
@@ -275,11 +276,20 @@ JSON
     [ "$DOCCOUNT" != "1" ] && [ -n "$DOCCOUNT" ] && [ "$DOCCOUNT" != "0" ] && break
     sleep 0.1
   done
+  DOCCOUNT_A2="$DOCCOUNT"
   CALLS_AFTER_A2=$(ev "(window.__autoui&&window.__autoui.store&&window.__autoui.store.docListCalls)||0")
   echo "  doc.list calls: after-A=$CALLS_AFTER_A after-B=$CALLS_AFTER_B after-A(again)=$CALLS_AFTER_A2"
+  echo "  tree doc-count: proj-b=$DOCCOUNT_B proj-a-again=$DOCCOUNT_A2"
   # B was a fresh project -> exactly one new list; A again must be served from cache.
   check "AC-8 switching A->B lists B exactly once" "$CALLS_AFTER_B" "$((CALLS_AFTER_A+1))"
   check "AC-8 returning to A serves from cache (no new doc.list)" "$CALLS_AFTER_A2" "$CALLS_AFTER_B"
+  # The TREE must actually re-render to the switched project's docs, not just the
+  # store cache. DocTree is reused (not remounted by hash nav) unless keyed, and
+  # useStore captures its selector once — so a project switch would otherwise keep
+  # showing the previous project's docs. Asserting the rendered doc-count guards
+  # that regression (PR #82 review P1).
+  check "AC-8 tree shows proj-b docs after A->B switch (P1)" "$DOCCOUNT_B" "1"
+  check "AC-8 tree shows proj-a docs after B->A switch (P1)" "$DOCCOUNT_A2" "4"
 
   echo "== AC-8b: cache does NOT mask liveness (doc.changed for A re-lists) =="
   local DC_BEFORE COUNT_BEFORE CALLS_BEFORE_LIVE

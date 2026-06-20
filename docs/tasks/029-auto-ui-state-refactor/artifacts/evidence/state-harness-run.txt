@@ -5,7 +5,7 @@
 == build embed binary (current web/static) ==
 == build isolated fixture (lowercase-kebab ids; two projects for AC-8) ==
 == start server (--projects fixture, --port 0, debug) ==
-  server at 127.0.0.1:37681 (mode: {"message":"hi from go","mode":"embed"})
+  server at 127.0.0.1:36161 (mode: {"message":"hi from go","mode":"embed"})
 
 == AC-6: importmap / index.html unchanged ==
   PASS  AC-6 index.html importmap unchanged (git diff --quiet) (clean)
@@ -34,8 +34,11 @@
 
 == AC-8: warm cache avoids redundant doc.list on A->B->A ==
   doc.list calls: after-A=2 after-B=3 after-A(again)=3
+  tree doc-count: proj-b=1 proj-a-again=4
   PASS  AC-8 switching A->B lists B exactly once (3)
   PASS  AC-8 returning to A serves from cache (no new doc.list) (3)
+  PASS  AC-8 tree shows proj-b docs after A->B switch (P1) (1)
+  PASS  AC-8 tree shows proj-a docs after B->A switch (P1) (4)
 == AC-8b: cache does NOT mask liveness (doc.changed for A re-lists) ==
   live: count 4 -> 5 ; doc.list calls 3 -> 4 ; node visible=true
   PASS  AC-8b doc.changed re-lists despite warm cache (count grew) (5)
@@ -46,7 +49,7 @@
   PASS  AC-5 open-doc refresh: data-revision bumped (true)
   PASS  AC-5 tree growth from same subscription (true)
 
----- embed RESULT: 20 passed, 0 failed ----
+---- embed RESULT: 22 passed, 0 failed ----
 ✓ Closed session: default
 
 ########################################################
@@ -56,7 +59,7 @@
   WARN  binary may lack 029 store.js (docListCalls not found in strings)
 == build isolated fixture (lowercase-kebab ids; two projects for AC-8) ==
 == start server (--projects fixture, --port 0, debug) ==
-  server at 127.0.0.1:38249 (mode: {"message":"hi from go","mode":"disk"})
+  server at 127.0.0.1:34931 (mode: {"message":"hi from go","mode":"disk"})
 
 == AC-6: importmap / index.html unchanged ==
   PASS  AC-6 index.html importmap unchanged (git diff --quiet) (clean)
@@ -85,8 +88,11 @@
 
 == AC-8: warm cache avoids redundant doc.list on A->B->A ==
   doc.list calls: after-A=2 after-B=3 after-A(again)=3
+  tree doc-count: proj-b=1 proj-a-again=4
   PASS  AC-8 switching A->B lists B exactly once (3)
   PASS  AC-8 returning to A serves from cache (no new doc.list) (3)
+  PASS  AC-8 tree shows proj-b docs after A->B switch (P1) (1)
+  PASS  AC-8 tree shows proj-a docs after B->A switch (P1) (4)
 == AC-8b: cache does NOT mask liveness (doc.changed for A re-lists) ==
   live: count 4 -> 5 ; doc.list calls 3 -> 4 ; node visible=true
   PASS  AC-8b doc.changed re-lists despite warm cache (count grew) (5)
@@ -97,11 +103,11 @@
   PASS  AC-5 open-doc refresh: data-revision bumped (true)
   PASS  AC-5 tree growth from same subscription (true)
 
----- dev RESULT: 20 passed, 0 failed ----
+---- dev RESULT: 22 passed, 0 failed ----
 ✓ Closed session: default
 
 ========================================================
 OVERALL across builds (embed dev): 0 failed
-embed: 20 passed, 0 failed
-dev: 20 passed, 0 failed
+embed: 22 passed, 0 failed
+dev: 22 passed, 0 failed
 ========================================================

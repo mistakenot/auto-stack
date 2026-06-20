@@ -1,2 +1,2 @@
-embed: 20 passed, 0 failed
-dev: 20 passed, 0 failed
+embed: 22 passed, 0 failed
+dev: 22 passed, 0 failed

@@ -15,11 +15,25 @@
 
 | Build | Assertions | Result |
 |-------|-----------|--------|
-| `embed` (`/api/hello` → `mode:embed`) | 20 | **20 PASS / 0 FAIL** |
-| `-tags dev` (`/api/hello` → `mode:disk`, served from `auto-ui/web/static`) | 20 | **20 PASS / 0 FAIL** |
+| `embed` (`/api/hello` → `mode:embed`) | 22 | **22 PASS / 0 FAIL** |
+| `-tags dev` (`/api/hello` → `mode:disk`, served from `auto-ui/web/static`) | 22 | **22 PASS / 0 FAIL** |
 
 All AC-3..AC-8 assertions pass on **both** builds. Full run log:
 [`evidence/state-harness-run.txt`](./evidence/state-harness-run.txt).
+
+> **PR #82 review fixes (Codex).** Two follow-up assertions were added to AC-8 (hence
+> 20 → 22) guarding the **P1** review finding: `DocTree` was reused (not remounted) on a
+> project switch while `useStore` captures its `selectDocs(s, project, worktree)` selector
+> once (`useEffect` deps `[]`), so a switch could keep rendering the previous project's
+> docs. Fix: key `DocTree` by `project+worktree` in `explorer.js` (remount → fresh
+> selector). The new checks assert the rendered `data-doc-count` is `proj-b`'s (1) after
+> A→B and `proj-a`'s (4) after B→A. **P2** (project-only cache served stale docs across a
+> worktree switch) was fixed by making the `docsByProject` cache key worktree-aware
+> (`docsKey(project, worktree)` in `store.js`); with no worktree selected the key collapses
+> to the bare project id, so these harness runs (which set no worktree) are byte-identical.
+> A dedicated worktree-switch browser test needs a multi-worktree registry fixture and is
+> deferred to the planned in-browser unit-test task (which will unit-test `docsKey`/
+> `selectDocs` directly).
 
 > Phase 3 first surfaced a real **AC-4 path-survival regression** (the refactor's
 > `syncFromHash()` cleared `selection`/`openDoc` on the param-less `#/debug` route,

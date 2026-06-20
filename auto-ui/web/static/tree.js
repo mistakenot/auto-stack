@@ -295,7 +295,7 @@ export function DocTree({ project, worktree, selected, onSelect }) {
   // The doc list is owned by the store (the doc.list fetch + docsByProject cache,
   // its reconnect re-list, and the doc.changed re-list on an unseen path all live
   // there). Read this project's cached slice; it re-renders when the list changes.
-  const docs = useStore((s) => selectDocs(s, project));
+  const docs = useStore((s) => selectDocs(s, project, worktree));
 
   // The store's doc.changed subscription bumps lastDocChanged {path, seq} on every
   // touched path (monotonic seq). The tree consumes that single signal to drive
