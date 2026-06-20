@@ -7,6 +7,13 @@ import { html } from "htm/preact";
 import { parseHash, setHash, onRouteChange } from "./router.js";
 import { Explorer } from "./explorer.js";
 import { Debug } from "./debug.js";
+// The module-singleton store is the single source of client state: it owns the
+// connection slice, the one doc.changed subscription, route→selection mirroring,
+// and every server fetch (with a docsByProject cache). initStore() wires those
+// side-effects exactly once and is called at startup BEFORE the first render, so
+// the views (now presentational) read store slices that are already being kept
+// in sync. (029, Phase 2)
+import { initStore } from "./store.js";
 
 // App derives the current view from the hash and renders the matching view.
 // The explorer is the default: empty/legacy views fall through to it (and the
@@ -38,6 +45,10 @@ function mount() {
   if (normalizeHash()) return; // wait for the hashchange from the redirect
   render(html`<${App} />`, document.getElementById("app"));
 }
+
+// Wire all store side-effects once, before the first render, so the
+// presentational views read slices the store is already keeping in sync.
+initStore();
 
 onRouteChange(mount);
 mount();

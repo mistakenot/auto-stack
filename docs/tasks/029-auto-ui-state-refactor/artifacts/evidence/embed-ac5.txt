@@ -1,0 +1,4 @@
+open-doc revision 2 -> 3 (emit on open doc)
+tree doc-count   5 -> 6 (emit on unseen path)
+doc.changed counter at start: 1 (gate only; cannot prove sub count)
+subscription files (grep): /home/vscode/src/auto-stack-task-029/auto-ui/web/static/store.js

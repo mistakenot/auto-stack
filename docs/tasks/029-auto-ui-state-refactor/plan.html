@@ -10,14 +10,14 @@
   {
     "id": "029",
     "name": "auto-ui-state-refactor",
-    "status": "planning",
+    "status": "complete",
     "created": "2026-06-19"
   }
   </script>
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="029: auto-ui-state-refactor" status="pending" pr="pending" generated="2026-06-19">
+  <pd-doc title="029: auto-ui-state-refactor" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/82" generated="2026-06-19">
 
     <pd-tab name="Requirements">
 
@@ -518,7 +518,7 @@ shared-worktree write-leak hazard).
       </pd-section>
 
       <pd-stepper>
-        <pd-phase n="1" title="Store foundation (dormant)" files="auto-ui/web/static/store.js, auto-ui/web/static/app.js" status="todo">
+        <pd-phase n="1" title="Store foundation (dormant)" files="auto-ui/web/static/store.js, auto-ui/web/static/app.js" status="done">
           <md><script type="text/plain">
 Add the store with NO live side-effects yet, so the app keeps working unchanged (no duplicate
 subscriptions) and the module can be reviewed in isolation.
@@ -548,7 +548,7 @@ subscriptions) and the module can be reviewed in isolation.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="Cut views over to the store; delete uistate.js" files="auto-ui/web/static/app.js, auto-ui/web/static/content.js, auto-ui/web/static/tree.js, auto-ui/web/static/explorer.js, auto-ui/web/static/debug.js, auto-ui/web/static/uistate.js" status="todo" depends-on="1">
+        <pd-phase n="2" title="Cut views over to the store; delete uistate.js" files="auto-ui/web/static/app.js, auto-ui/web/static/content.js, auto-ui/web/static/tree.js, auto-ui/web/static/explorer.js, auto-ui/web/static/debug.js, auto-ui/web/static/uistate.js" status="done" depends-on="1">
           <md><script type="text/plain">
 The coordinated cutover — one atomic change so there's never a moment with both the store's and a
 component's `doc.changed` subscription live.
@@ -586,7 +586,7 @@ component's `doc.changed` subscription live.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="029 structure conformance harness + evidence" files="docs/tasks/029-auto-ui-state-refactor/artifacts/state-harness.sh, docs/tasks/029-auto-ui-state-refactor/artifacts/conformance.md" status="todo" depends-on="2">
+        <pd-phase n="3" title="029 structure conformance harness + evidence" files="docs/tasks/029-auto-ui-state-refactor/artifacts/state-harness.sh, docs/tasks/029-auto-ui-state-refactor/artifacts/conformance.md" status="done" depends-on="2">
           <md><script type="text/plain">
 Prove the refactor-specific invariants with a browser harness, on both builds.
 

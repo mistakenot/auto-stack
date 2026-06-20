@@ -1,0 +1,14 @@
+AC-4 cross-route path-survival — FIXED (captured 2026-06-20T14:33:31Z)
+
+[ON EXPLORER #/explore?...&path=...plan.md] selectDebugSnapshot:
+"{\"project\":\"proj-a\",\"path\":\"docs/tasks/001-alpha/plan.md\",\"type\":\"markdown\",\"revision\":2,\"docCount\":1,\"lastUpdated\":\"2026-06-20T14:33:29.026Z\"}"
+
+[AFTER location.hash='#/debug' (no reload)] selection + selectDebugSnapshot:
+"{\"selection\":{\"project\":\"proj-a\",\"path\":\"docs/tasks/001-alpha/plan.md\",\"worktree\":\"\"},\"openDocPath\":\"docs/tasks/001-alpha/plan.md\",\"snapshot\":{\"project\":\"proj-a\",\"path\":\"docs/tasks/001-alpha/plan.md\",\"type\":\"markdown\",\"revision\":2,\"docCount\":1,\"lastUpdated\":\"2026-06-20T14:33:29.026Z\"}}"
+
+FIX: store.js syncFromHash() now early-returns unless the parsed view is
+'explore' (if (view !== "explore") return;). #/debug is read-only and no
+longer clears selection/openDoc, so the last explore selection survives the
+route change and selectDebugSnapshot.path reflects the open doc — restoring
+the pre-refactor uistate.js 'write-only mirror untouched by navigation'
+semantics. revision/docCount unchanged (already survived).

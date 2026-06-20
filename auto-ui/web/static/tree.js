@@ -13,9 +13,7 @@
 //   docs/<other>/...             -> generic group named after that segment
 import { useState, useEffect, useRef } from "preact/hooks";
 import { html } from "htm/preact";
-import { call, on, onStatus, whenOpen, recordError } from "./rpc.js";
-import { parseDocChanged } from "./docevents.js";
-import { setUIState } from "./uistate.js";
+import { useStore, selectDocs } from "./store.js";
 
 // How many Tasks entries the tree shows before the "show more" toggle.
 const TASKS_DEFAULT_LIMIT = 10;
@@ -294,12 +292,20 @@ function GroupBody({ group, selected, onSelect, subHasSelected, limit, flashes, 
 }
 
 export function DocTree({ project, worktree, selected, onSelect }) {
-  const [docs, setDocs] = useState([]);
-  const [error, setError] = useState(null);
+  // The doc list is owned by the store (the doc.list fetch + docsByProject cache,
+  // its reconnect re-list, and the doc.changed re-list on an unseen path all live
+  // there). Read this project's cached slice; it re-renders when the list changes.
+  const docs = useStore((s) => selectDocs(s, project, worktree));
 
-  // Touch-flash state (live doc.changed): a map of node token -> monotonic flash
-  // id. The id drives a key-remount on each node's label span so a CSS animation
-  // (re)plays on every touch, and lets a stale clear-timer skip a superseded flash.
+  // The store's doc.changed subscription bumps lastDocChanged {path, seq} on every
+  // touched path (monotonic seq). The tree consumes that single signal to drive
+  // its purely-visual flash + reveal — no doc.changed subscription of its own.
+  const lastDocChanged = useStore((s) => s.lastDocChanged);
+
+  // Touch-flash state (driven by the store's lastDocChanged signal): a map of node
+  // token -> monotonic flash id. The id drives a key-remount on each node's label
+  // span so a CSS animation (re)plays on every touch, and lets a stale clear-timer
+  // skip a superseded flash.
   const [flashes, setFlashes] = useState({});
   const flashSeq = useRef(0);
 
@@ -331,78 +337,36 @@ export function DocTree({ project, worktree, selected, onSelect }) {
     }, FLASH_MS);
   };
 
-  // Fetch the flat doc.list. Gate on whenOpen() so a cold load doesn't reject
-  // "not connected" before the socket is open. Omit an empty worktree.
-  const fetchList = async () => {
-    setError(null);
-    try {
-      await whenOpen();
-      const params = {};
-      if (project) params.project = project;
-      if (worktree) params.worktree = worktree;
-      const res = (await call("doc.list", params)) || [];
-      setDocs(res);
-      setUIState({ docCount: res.length });
-    } catch (e) {
-      recordError("doc.list", e);
-      setError("doc.list failed: " + (e && e.message ? e.message : String(e)));
+  // Drive the live flash + reveal off the store's lastDocChanged {path, seq}
+  // signal. The store bumps seq for EVERY touched path (any project) and, for an
+  // unseen path under the active project, re-lists it into docsByProject. This
+  // tree filters to its OWN project by reacting only when the changed path is part
+  // of THIS project's docs — so a touch in another project is ignored (parity with
+  // the old `c.project !== project` gate), while a node in this tree flashes + its
+  // ancestors open (reveal). Because the seq bump can precede the store's async
+  // re-list, the effect also re-runs on `docs` changes and fires once per new seq
+  // as soon as the path appears (tracked via handledSeq) — this is how a brand-new
+  // doc reveals + flashes the moment its re-list lands.
+  const handledSeq = useRef(0);
+  useEffect(() => {
+    const { path, seq } = lastDocChanged;
+    if (seq === 0 || !path || seq === handledSeq.current) return;
+    // Filter to this project's tree: only react once the path is in our docs (an
+    // unseen path appears here after the store's re-list lands; a path from another
+    // project never does).
+    if (!docs.some((d) => d.path === path)) return;
+    handledSeq.current = seq;
+    triggerFlash(path);
+    const toOpen = expandTokensForPath(path);
+    if (toOpen.length) {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        for (const t of toOpen) next.add(t);
+        return next;
+      });
     }
-  };
-
-  // Re-fetch on mount and whenever project/worktree change.
-  useEffect(() => {
-    fetchList();
-  }, [project, worktree]);
-
-  // Reconnect self-heal: re-list on a FRESH transition to "open" (i.e. after we
-  // were not open). Track the previous status so the initial "open" — already
-  // handled by the mount fetch — doesn't double-fetch.
-  const prevStatus = useRef(null);
-  useEffect(() => {
-    const off = onStatus((s) => {
-      const was = prevStatus.current;
-      prevStatus.current = s;
-      if (s === "open" && was !== null && was !== "open") fetchList();
-    });
-    return off;
-  }, [project, worktree]);
-
-  // Live nav-tree refresh (026). Keep a ref snapshot of the known paths so the
-  // doc.changed handler — registered once per {project,worktree} — can test
-  // membership without re-subscribing on every fetch.
-  const knownPaths = useRef(new Set());
-  useEffect(() => {
-    knownPaths.current = new Set(docs.map((d) => d.path));
-  }, [docs]);
-
-  // A doc.changed for the active project flashes the touched node + its ancestors
-  // (a live "this file was just touched" cue). A path the tree does NOT yet know
-  // about (a newly created doc) additionally triggers exactly one re-list so the
-  // new node appears. Known-path edits need no re-list — the open-doc refresh
-  // (content.js) handles those and the tree is already correct. The re-list also
-  // reconciles any concurrent deletions against fresh server truth.
-  useEffect(() => {
-    const off = on("doc.changed", (ev) => {
-      const c = parseDocChanged(ev);
-      if (c.project !== project) return;
-      if (!c.path) return;
-      triggerFlash(c.path);
-      if (!knownPaths.current.has(c.path)) {
-        // New doc: open its ancestor group + subgroup BEFORE the re-list so the
-        // freshly-mounted node is visible instead of hidden in a folded group.
-        const toOpen = expandTokensForPath(c.path);
-        if (toOpen.length) {
-          setExpanded((prev) => {
-            const next = new Set(prev);
-            for (const t of toOpen) next.add(t);
-            return next;
-          });
-        }
-        fetchList();
-      }
-    });
-    return off;
-  }, [project, worktree]);
+    // eslint-disable-next-line
+  }, [lastDocChanged.seq, docs]);
 
   const groups = groupDocs(docs);
 
@@ -419,8 +383,7 @@ export function DocTree({ project, worktree, selected, onSelect }) {
         <span class="rail-count">${docs.length}</span>
       </div>
       <nav class="tree" data-doc-count=${docs.length}>
-        ${error && html`<p class="tree-msg err">${error}</p>`}
-        ${docs.length === 0 && !error && html`<p class="tree-msg">No docs found.</p>`}
+        ${docs.length === 0 && html`<p class="tree-msg">No docs found.</p>`}
         <ul>
           ${groups.map(
             (g) => html`

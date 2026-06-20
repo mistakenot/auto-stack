@@ -2,15 +2,20 @@
 // the doc tree (left), and the type-aware content pane (right) into a two-pane
 // layout, with all view state living in the hash (#/explore?project=…&path=…&worktree=…).
 //
-// On mount it gates on whenOpen() (cold-load readiness) then fetches project.list;
-// it re-fetches on a fresh reconnect ("open" transition). An empty registry renders
-// a friendly empty-state, not an error. The header hosts the switcher + a small
-// connection indicator. This is the static explorer — no doc.changed wiring (026).
-import { useState, useEffect, useRef } from "preact/hooks";
+// It is presentational: the store owns project.list (with the registry fetch +
+// reconnect re-fetch) and the connection slice. The shell reads projects / the
+// active project / conn via useStore and routes selection through thin actions.
+// An empty registry renders a friendly empty-state, not an error. The header
+// hosts the switcher + a small connection indicator.
 import { html } from "htm/preact";
-import { setHash } from "./router.js";
-import { call, onStatus, whenOpen, recordError } from "./rpc.js";
-import { setUIState } from "./uistate.js";
+import {
+  useStore,
+  selectProjects,
+  selectActiveProject,
+  selectConn,
+  selectProject,
+  selectDoc,
+} from "./store.js";
 import { DocTree } from "./tree.js";
 import { DocContent } from "./content.js";
 
@@ -20,15 +25,11 @@ function deriveType(path) {
   return path && path.endsWith(".html") ? "html" : "markdown";
 }
 
-// ConnIndicator — a small WS connection dot + label, distilled from the demo
-// Dashboard's ping/WS status code. Subscribes to onStatus and maps the raw
-// status to a human label. Carries data-conn-status (raw) for assertions.
+// ConnIndicator — a small WS connection dot + label. Reads the store's conn slice
+// (the store mirrors rpc.onStatus into it) and maps the raw status to a human
+// label. Carries data-conn-status (raw) for assertions.
 export function ConnIndicator() {
-  const [status, setStatus] = useState("connecting");
-  useEffect(() => {
-    const off = onStatus(setStatus);
-    return off;
-  }, []);
+  const { status } = useStore(selectConn);
 
   // Map the raw rpc.js status to a human label (the dot color is CSS-driven off
   // data-conn-status — see .conn in app.css).
@@ -48,72 +49,36 @@ export function ConnIndicator() {
 }
 
 export function Explorer({ params }) {
-  const project = params.get("project") || "";
   const path = params.get("path") || "";
   const worktree = params.get("worktree") || "";
 
-  const [projects, setProjects] = useState([]);
-  const [error, setError] = useState(null);
-  const [loaded, setLoaded] = useState(false);
+  // projects + the active project + conn all come from the store (it owns the
+  // project.list fetch, the reconnect re-fetch, and the selection mirror). The
+  // store's selectActiveProject resolves the hash project, else the first project
+  // — the same default this shell used to compute locally.
+  const projects = useStore(selectProjects);
+  const activeProject = useStore(selectActiveProject);
+  const conn = useStore(selectConn);
 
-  // fetchProjects gates on whenOpen() so a cold load (explorer is the landing
-  // view) doesn't reject "not connected" before the socket is open.
-  const fetchProjects = async () => {
-    setError(null);
-    try {
-      await whenOpen();
-      const res = (await call("project.list")) || [];
-      setProjects(res);
-      setLoaded(true);
-    } catch (e) {
-      recordError("project.list", e);
-      setError(
-        "project.list failed: " + (e && e.message ? e.message : String(e))
-      );
-    }
-  };
+  // Empty-state vs cold-load: only show the no-projects empty-state once the
+  // socket is open and the registry came back empty (so a connecting cold load
+  // doesn't flash the empty-state before project.list resolves).
+  const loaded = conn.status === "open";
 
-  useEffect(() => {
-    fetchProjects();
-  }, []);
-
-  // Reconnect self-heal: re-fetch the registry on a FRESH transition to "open"
-  // (after we were not open). Track the previous status so the initial "open"
-  // — already covered by the mount fetch — doesn't double-fetch.
-  const prevStatus = useRef(null);
-  useEffect(() => {
-    const off = onStatus((s) => {
-      const was = prevStatus.current;
-      prevStatus.current = s;
-      if (s === "open" && was !== null && was !== "open") fetchProjects();
-    });
-    return off;
-  }, []);
-
-  // The active project defaults to the hash project, else the first project.
-  const activeProject =
-    project || (projects.length > 0 ? projects[0].id : "");
-
-  // Keep the cross-route snapshot's project in sync for /debug.
-  useEffect(() => {
-    if (activeProject) setUIState({ project: activeProject });
-  }, [activeProject]);
-
-  // Selecting a project routes to a fresh explore view (clears path).
+  // Selecting a project routes to a fresh explore view (clears path) via the
+  // store's thin action (it setHashes; the store's onRouteChange does the rest).
   const onPickProject = (id) => {
-    setUIState({ project: id });
-    setHash("explore", new URLSearchParams({ project: id }));
+    selectProject(id);
   };
 
-  // Selecting a doc leaf routes to it, preserving the active project + worktree.
+  // Selecting a doc leaf routes to it via the store's thin action (it preserves
+  // the active project + worktree from the current selection, then setHashes).
   const onSelectDoc = (p) => {
-    const next = { project: activeProject, path: p };
-    if (worktree) next.worktree = worktree;
-    setHash("explore", new URLSearchParams(next));
+    selectDoc(p);
   };
 
-  // The topbar is constant across states (error / empty / populated) so the app
-  // shell never collapses — only the workbench body below it changes.
+  // The topbar is constant across states (empty / populated) so the app shell
+  // never collapses — only the workbench body below it changes.
   const topbar = html`
     <header class="topbar">
       <div class="brand">
@@ -146,16 +111,8 @@ export function Explorer({ params }) {
   // shell wraps the topbar + a body region; body varies by state.
   const shell = (body) => html`<div class="shell">${topbar}${body}</div>`;
 
-  // Inline error (e.g. project.list failed) — not the empty-state.
-  if (error) {
-    return shell(html`
-      <div class="workbench">
-        <article class="editor"><div class="pane-error">${error}</div></article>
-      </div>
-    `);
-  }
-
-  // Empty registry -> a friendly empty-state, NOT an error.
+  // Empty registry -> a friendly empty-state, NOT an error. (project.list errors
+  // are recorded at the rpc.js layer and surfaced in /debug's error log.)
   if (loaded && projects.length === 0) {
     return shell(html`
       <div class="workbench">
@@ -172,9 +129,15 @@ export function Explorer({ params }) {
 
   const type = deriveType(path);
 
+  // DocTree is keyed by project+worktree so a switch REMOUNTS it: its
+  // useStore(s => selectDocs(s, project, worktree)) selector is captured once
+  // (useEffect deps []), so a reused instance would keep selecting the previous
+  // project/worktree's docs. Remounting re-captures the selector against the new
+  // props.
   return shell(html`
     <div class="workbench">
       <${DocTree}
+        key=${activeProject + "@" + worktree}
         project=${activeProject}
         worktree=${worktree}
         selected=${path}

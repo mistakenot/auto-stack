@@ -1,16 +1,15 @@
-// debug.js — the #/debug diagnostics page. One screenshot-able read-only view
-// with four data-testid-tagged sections: connection, event log, error log, and
-// current state. Everything is read from rpc.js (connInfo / recentErrors /
-// on()), uistate.js (the cross-route snapshot), and a one-shot /api/hello fetch.
-//
-// The route is always reachable (read-only diagnostics on a trusted host). Only
-// the pre-mount event backfill depends on ?debug=1, because window.__autoui — the
-// ring that records notifications no view subscribed to — is gated behind the
-// debug flag. Live subscriptions (on("doc.changed"/"ping")) work regardless.
+// debug.js — the #/debug diagnostics page (presentational). One screenshot-able
+// read-only view with four data-testid-tagged sections: connection, event log,
+// error log, and current state. The store is the single source of state: it owns
+// the conn slice, the events ring (its one doc.changed + ping subscription, wired
+// at startup so events accumulate regardless of which view is mounted), and the
+// current-state snapshot (selectDebugSnapshot, replacing the deleted uistate.js
+// mirror). The error log still reads rpc.js's recentErrors() ring; /api/hello is
+// a one-shot fetch for the mode/message rows.
 import { useState, useEffect } from "preact/hooks";
 import { html } from "htm/preact";
-import { on, onStatus, connInfo, reconnectCount, recentErrors } from "./rpc.js";
-import { uiState } from "./uistate.js";
+import { connInfo, reconnectCount, recentErrors } from "./rpc.js";
+import { useStore, selectConn, selectDebugSnapshot } from "./store.js";
 
 // statusLabel maps the raw rpc.js status to a human label (open -> connected).
 function statusLabel(status) {
@@ -42,10 +41,12 @@ function eventRow(t, method, params) {
 
 export function Debug() {
   // --- Connection -----------------------------------------------------------
-  const [status, setStatus] = useState("connecting");
+  // The conn slice (status + reconnects) is mirrored into the store from
+  // rpc.onStatus; read it reactively so the page updates live without polling.
+  const conn = useStore(selectConn);
+  const status = conn.status;
   const [hello, setHello] = useState(null);
   useEffect(() => {
-    const off = onStatus(setStatus);
     let alive = true;
     fetch("/api/hello")
       .then((r) => r.json())
@@ -55,51 +56,34 @@ export function Debug() {
       .catch(() => {});
     return () => {
       alive = false;
-      off();
     };
   }, []);
 
+  // Prefer the store's reconnect count (kept current via the conn slice), falling
+  // back to rpc.js directly for parity with the previous read.
   const info = connInfo();
-  const reconnects = info.reconnects ?? reconnectCount();
+  const reconnects = conn.reconnects ?? info.reconnects ?? reconnectCount();
 
   // --- Event log ------------------------------------------------------------
-  // Live subscriptions from mount (work even with debug off), plus a one-time
-  // backfill from the window.__autoui ring (present only under ?debug=1). Newest
-  // first; de-dupe is not required.
-  const [events, setEvents] = useState([]);
-  useEffect(() => {
-    const backfill = [];
-    const ring = typeof window !== "undefined" ? window.__autoui : undefined;
-    if (ring && Array.isArray(ring.events)) {
-      for (const e of ring.events) {
-        backfill.push(eventRow(e.t, e.method, e.params));
-      }
-    }
-    // Reverse so the backfilled history is newest-first like live events.
-    backfill.reverse();
-    setEvents(backfill);
-
-    const push = (method) => (params) =>
-      setEvents((prev) => [eventRow(Date.now(), method, params), ...prev]);
-    const offDoc = on("doc.changed", push("doc.changed"));
-    const offPing = on("ping", push("ping"));
-    return () => {
-      offDoc();
-      offPing();
-    };
-  }, []);
+  // The store's events ring is the single source: initStore() subscribes once to
+  // doc.changed + ping at startup, so events accumulate regardless of which view
+  // is mounted (no per-page subscription, no window.__autoui backfill needed).
+  // Render newest-first; de-dupe is not required.
+  const storeEvents = useStore((s) => s.events);
+  const events = storeEvents
+    .map((e) => eventRow(e.t, e.method, e.params))
+    .reverse();
 
   // --- Error log + current state --------------------------------------------
-  // Poll every 1s so the error ring and the cross-route uiState snapshot stay
-  // current (the explorer components are unmounted here, so there is no DOM to
-  // read and no render tick driven by their updates).
+  // The current-state snapshot is derived from the store (selectDebugSnapshot
+  // replaces the deleted uistate.js mirror) and updates reactively across nav.
+  const snapshot = useStore(selectDebugSnapshot);
+
+  // The error ring lives in rpc.js (not the store); poll it every 1s to keep the
+  // error log current (call() rejects feed it asynchronously without a re-render).
   const [errors, setErrors] = useState([]);
-  const [snapshot, setSnapshot] = useState({ ...uiState });
   useEffect(() => {
-    const refresh = () => {
-      setErrors([...recentErrors()].reverse());
-      setSnapshot({ ...uiState });
-    };
+    const refresh = () => setErrors([...recentErrors()].reverse());
     refresh();
     const id = setInterval(refresh, 1000);
     return () => clearInterval(id);

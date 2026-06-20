@@ -1,0 +1,1 @@
+/home/vscode/src/auto-stack-task-029/auto-ui/web/static/store.js
