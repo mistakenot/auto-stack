@@ -314,6 +314,53 @@ body {
 .tree-msg { color: var(--rail-faint); font-size: 0.74rem; padding: 0.6rem 0.7rem; }
 .tree-msg.err { color: var(--err); }
 
+/* plan status spinner (executing plans) */
+.plan-spinner {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--warn);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  flex: 0 0 auto;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* merged status checkmark */
+.plan-status-merged {
+  font-size: 0.6rem;
+  color: var(--rail-faint);
+  flex: 0 0 auto;
+}
+
+/* review state pill */
+.review-pill {
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  flex: 0 0 auto;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+.review-pill[data-review-state="draft"] { color: var(--rail-dim); border: 1px solid var(--rail-line); }
+.review-pill[data-review-state="pending"] { color: var(--warn); border: 1px solid rgba(199,144,48,0.3); }
+.review-pill[data-review-state="approved"] { color: var(--ok); border: 1px solid rgba(111,154,95,0.3); background: rgba(111,154,95,0.08); }
+.review-pill[data-review-state="executing"] { color: var(--warn); border: 1px solid rgba(199,144,48,0.3); }
+.review-pill[data-review-state="complete"] { color: var(--ok); border: 1px solid rgba(111,154,95,0.3); }
+
+/* executor liveness indicator */
+.liveness {
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  flex: 0 0 auto;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.liveness-active { color: var(--ok); }
+.liveness-idle { color: var(--rail-faint); }
+
 /* ── right pane: the editor ── */
 .editor {
   flex: 1 1 auto;

@@ -13,7 +13,7 @@
 //   docs/<other>/...             -> generic group named after that segment
 import { useState, useEffect, useRef } from "preact/hooks";
 import { html } from "htm/preact";
-import { useStore, selectDocs } from "./store.js";
+import { useStore, selectDocs, selectLiveness } from "./store.js";
 
 // How many Tasks entries the tree shows before the "show more" toggle.
 const TASKS_DEFAULT_LIMIT = 10;
@@ -106,7 +106,7 @@ function groupDocs(docs) {
   };
 
   for (const d of docs) {
-    const leaf = { path: d.path, type: d.type };
+    const leaf = { path: d.path, type: d.type, meta: d.meta };
     // Strip the leading docs/ segment; everything is rooted there.
     const rel = d.path.replace(/^docs\//, "");
     const seg = rel.split("/");
@@ -171,8 +171,21 @@ function groupDocs(docs) {
 
 // Leaf renders one selectable doc node carrying the acceptance attributes. The
 // row's left padding encodes its depth (group=1, subgroup=2 levels of indent).
-function Leaf({ leaf, selected, onSelect, depth, flashId }) {
+function Leaf({ leaf, selected, onSelect, depth, flashId, project }) {
   const isSel = leaf.path === selected;
+  const meta = leaf.meta;
+
+  // Liveness: read from the store via selectLiveness selector
+  const lv = useStore((s) => selectLiveness(s, project, meta?.branch));
+
+  // Format liveness age display
+  const formatAge = (ms) => {
+    if (ms < 0) ms = 0;
+    const secs = Math.floor(ms / 1000);
+    if (secs < 60) return secs + "s ago";
+    return Math.floor(secs / 60) + "m ago";
+  };
+
   return html`
     <li>
       <a
@@ -181,6 +194,9 @@ function Leaf({ leaf, selected, onSelect, depth, flashId }) {
         data-testid="doc-node"
         data-doc-path=${leaf.path}
         data-doc-type=${leaf.type}
+        data-plan-status=${meta?.status || null}
+        data-review-state=${meta?.reviewState || null}
+        data-liveness=${lv ? (lv.active ? "active" : "idle") : null}
         style=${{ paddingLeft: 0.45 + depth * 0.78 + "rem" }}
         onClick=${(e) => {
           e.preventDefault();
@@ -188,7 +204,11 @@ function Leaf({ leaf, selected, onSelect, depth, flashId }) {
         }}
       >
         <span class=${"ftype ftype-" + (leaf.type || "markdown")}></span>
+        ${meta?.status === "executing" && html`<span class="plan-spinner" data-plan-status="executing"></span>`}
+        ${meta?.status === "merged" && html`<span class="plan-status-merged">${"✓"}</span>`}
+        ${meta?.reviewState && html`<span class="review-pill" data-review-state=${meta.reviewState}>${meta.reviewState}</span>`}
         <span class=${"label" + (flashId ? " flash" : "")} key=${"lbl" + (flashId || 0)}>${leaf.path.split("/").pop()}</span>
+        ${lv && html`<span class=${"liveness " + (lv.active ? "liveness-active" : "liveness-idle")} data-liveness=${lv.active ? "active" : "idle"}>${lv.active ? "● active " : "○ idle "}${formatAge(lv.ageMs)}</span>`}
       </a>
     </li>
   `;
@@ -226,7 +246,7 @@ function Collapsible({ label, kind, depth, defaultOpen, forceOpen, flashId, chil
 // is set (the Tasks group), only the first `limit` subgroups show by default,
 // with a "show N more" toggle. The cap is overridden when the selected doc lives
 // in an otherwise-hidden subgroup, so a deep-link stays visible.
-function GroupBody({ group, selected, onSelect, subHasSelected, limit, flashes, expanded }) {
+function GroupBody({ group, selected, onSelect, subHasSelected, limit, flashes, expanded, project }) {
   const [showAll, setShowAll] = useState(false);
   const subs = group.subgroups;
   const selIdx = subs.findIndex(subHasSelected);
@@ -257,6 +277,7 @@ function GroupBody({ group, selected, onSelect, subHasSelected, limit, flashes, 
                 onSelect=${onSelect}
                 depth=${2}
                 flashId=${flashes["leaf:" + leaf.path]}
+                project=${project}
               />
             `
           )}
@@ -285,6 +306,7 @@ function GroupBody({ group, selected, onSelect, subHasSelected, limit, flashes, 
           onSelect=${onSelect}
           depth=${1}
           flashId=${flashes["leaf:" + leaf.path]}
+          project=${project}
         />
       `
     )}
@@ -404,6 +426,7 @@ export function DocTree({ project, worktree, selected, onSelect }) {
                   limit=${g.name === "Tasks" ? TASKS_DEFAULT_LIMIT : 0}
                   flashes=${flashes}
                   expanded=${expanded}
+                  project=${project}
                 />
               <//>
             `
