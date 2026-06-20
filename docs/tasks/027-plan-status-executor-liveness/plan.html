@@ -20,7 +20,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="027: plan-status-executor-liveness" status="draft" pr="pending" generated="2026-06-20">
+  <pd-doc title="027: plan-status-executor-liveness" status="pending" pr="pending" generated="2026-06-20">
 
     <pd-tab name="Requirements">
       <pd-scope></pd-scope>
@@ -154,7 +154,7 @@ flowchart TB
       </pd-section>
 
       <pd-section id="acceptance" title="Acceptance Criteria">
-        <pd-ac id="AC-1" title="Server-side pd-meta extraction">
+        <pd-ac id="AC-1" title="Server-side pd-meta extraction" phases="1,2" tests="auto-ui/internal/server/planmeta_test.go,auto-ui/internal/server/docs_test.go">
           <md><script type="text/plain">
 - **Given** a `docs/` tree with `.html` plans (some with a `pd-meta` block, some without), `.md`
   docs, and non-plan `.html`
@@ -166,7 +166,7 @@ flowchart TB
           </script></md>
         </pd-ac>
 
-        <pd-ac id="AC-2" title="pd-doc status review state">
+        <pd-ac id="AC-2" title="pd-doc status review state" phases="1,2" tests="auto-ui/internal/server/planmeta_test.go,auto-ui/internal/server/docs_test.go">
           <md><script type="text/plain">
 - **Given** an `.html` plan whose `<body>` has `<pd-doc status="draft|pending|executing|complete" …>`
 - **When** `doc.list` is called
@@ -175,7 +175,7 @@ flowchart TB
           </script></md>
         </pd-ac>
 
-        <pd-ac id="AC-3" title="Malformed / missing tolerance">
+        <pd-ac id="AC-3" title="Malformed / missing tolerance" phases="1,2" tests="auto-ui/internal/server/planmeta_test.go,auto-ui/internal/server/docs_test.go">
           <md><script type="text/plain">
 - **Given** an `.html` doc with no `pd-meta`, malformed JSON in the block, or no `<pd-doc>`
 - **When** `doc.list` is called
@@ -184,7 +184,7 @@ flowchart TB
           </script></md>
         </pd-ac>
 
-        <pd-ac id="AC-4" title="Lifecycle status in the tree">
+        <pd-ac id="AC-4" title="Lifecycle status in the tree" phases="2,3,4" tests="auto-ui/internal/server/docs_test.go,docs/tasks/027-plan-status-executor-liveness/artifacts/conformance.md">
           <md><script type="text/plain">
 - **Given** `doc.list` entries carrying `meta`
 - **When** the tree renders
@@ -195,7 +195,7 @@ flowchart TB
           </script></md>
         </pd-ac>
 
-        <pd-ac id="AC-5" title="Executor liveness from the live hook stream">
+        <pd-ac id="AC-5" title="Executor liveness from the live hook stream" phases="3,4" tests="docs/tasks/027-plan-status-executor-liveness/artifacts/conformance.md">
           <md><script type="text/plain">
 - **Given** the explorer is open and an executor fires hooks while working a plan's branch (raw bus
   events reach WS clients via `rpc_ingest` `hub.Broadcast(ev)`, carrying top-level
@@ -208,7 +208,7 @@ flowchart TB
           </script></md>
         </pd-ac>
 
-        <pd-ac id="AC-5b" title="Shared-branch exclusion">
+        <pd-ac id="AC-5b" title="Shared-branch exclusion" phases="3,4" tests="docs/tasks/027-plan-status-executor-liveness/artifacts/conformance.md">
           <md><script type="text/plain">
 - **Given** a plan whose `meta.branch` is `main`, `master`, or null/empty
 - **When** liveness is computed
@@ -218,7 +218,7 @@ flowchart TB
           </script></md>
         </pd-ac>
 
-        <pd-ac id="AC-6" title="Backfill 021 / 022">
+        <pd-ac id="AC-6" title="Backfill 021 / 022" phases="5" tests="docs/tasks/021-auto-bus-standard/artifacts/auto-bus-standard.html,docs/tasks/022-hook-event-log/artifacts/hook-event-log.html">
           <md><script type="text/plain">
 - **Given** the 021 and 022 artifact HTML plans lack a `pd-meta` block
 - **When** this task lands
@@ -227,7 +227,7 @@ flowchart TB
           </script></md>
         </pd-ac>
 
-        <pd-ac id="AC-7" title="Tests & build">
+        <pd-ac id="AC-7" title="Tests & build" phases="1,2,5" tests="auto-ui/internal/server/planmeta_test.go,auto-ui/internal/server/docs_test.go,auto-ui/internal/server/rpc_ingest_test.go,docs/tasks/027-plan-status-executor-liveness/artifacts/conformance.md">
           <md><script type="text/plain">
 - **Given** the new parsing + rendering paths
 - **When** tests run
@@ -255,6 +255,13 @@ flowchart TB
 - **`onAny` widens the client event surface.** Subscribing to all notifications (vs per-type) means
   any future high-rate event type adds work to the liveness handler; the handler must stay O(1) per
   event (single map write) to avoid render churn.
+- **029 grep gate must stay green.** All bus subscriptions/`call()` live only in `store.js`; the new
+  `onAny` subscription goes there too. Conformance re-runs `029/artifacts/state-harness.sh`'s grep
+  clause as evidence (`grep -rl 'on("doc.changed"' web/static` → only `store.js`).
+- **Known-path repaint (AC-4) is a distinct test from new-doc reveal (026).** The store currently
+  re-lists only on *unknown* paths; the widening (re-list on a known `.html` change) needs its own
+  conformance step: edit a tracked plan's `pd-meta.status` and assert the spinner appears without a
+  new node being created.
         </script></md>
       </pd-section>
     </pd-tab>
@@ -265,18 +272,28 @@ flowchart TB
 Two independent, additive layers — no changes to `doc.get`, `/api/doc/raw`, the bus envelope, or
 the hook producer.
 
+All new client state lives in the **central `store.js`** (task 029). Per the 029 architecture, every
+bus subscription and `call()` stays inside `store.js`; `tree.js` is presentational and reads via
+`useStore` selectors. A grep gate enforces this — so 027 adds its subscription *in the store*, not a
+new module.
+
 **Status (server-derived, point-in-time).** A new pure parser reads a bounded prefix of each
 `.html` doc and extracts the `pd-meta` JSON block and the `<pd-doc status>` attribute. `walkDocs`
-attaches the result as an optional `meta` on each `doc.list` entry. The tree renders a spinner for
-`status == "executing"` and a review-state pill; it repaints by re-fetching `doc.list` on the
-existing `doc.changed` signal, so a `planning → executing` edit shows up without reload.
+attaches the result as an optional `meta` on each `doc.list` entry. `meta` then flows untouched
+through the store cache (`docsByProject` → `selectDocs`) to `groupDocs`/`Leaf`, which render a
+spinner for `status == "executing"` and a review-state pill. **Repaint fix:** the store's single
+`doc.changed` handler today re-lists only for *unknown* paths; 027 widens it so a `doc.changed` on a
+*known* `.html` plan in the active project also forces a re-list — otherwise a same-file
+`planning → executing` edit never refreshes `meta`.
 
-**Liveness (client-derived, continuous).** A small client store subscribes to *every* bus
-notification, keeping a `(project, branch) → lastSeenTs` map (receipt time). Shared/empty branches
-(`main`/`master`/null) are excluded. A once-per-second ticker re-renders relative times. The tree
-joins each plan's `meta.branch` to the map and shows "active Ns ago", decaying to "idle Nm ago"
-past the active window (**120s**). The map is in-memory only — it resets on reload and re-populates from the
-live stream (no server recency source exists; epic-002 "one event path" decision).
+**Liveness (client-derived, continuous).** The store subscribes to *every* bus notification (new
+`rpc.js` `onAny`, consumed inside `store.js`), keeping a `(project, branch) → lastSeenTs` map
+(receipt time) in a `liveness` slice. Shared/empty branches (`main`/`master`/null) are excluded. A
+once-per-second `liveness/tick` action updates `now` (returning the same state ref when nothing is
+tracked, so an idle dashboard fans no re-render). `Leaf` reads `selectLiveness(project, meta.branch)`
+and shows "active Ns ago", decaying to "idle Nm ago" past the active window (**120s**). In-memory
+only — resets on reload and re-populates from the live stream (no server recency source exists;
+epic-002 "one event path" decision).
 
 The two layers meet only at `meta.branch`, the join key (set by `execute-task` when a plan goes
 `executing`).
@@ -287,11 +304,11 @@ flowchart LR
   HTML[".html plan"] --> PM["planmeta.go\nextractPlanMeta (x/net/html)"]
   PM --> WD["docs.go walkDocs\ndocEntry.Meta"]
   WD --> DL["doc.list"]
-  DL --> TREE["tree.js Leaf\nspinner + pill"]
+  DL --> STORE["store.js\ndocsByProject + liveness slice"]
   WS["raw bus events (WS)"] --> ANY["rpc.js onAny"]
-  ANY --> LV["liveness.js\n(project,branch) to lastTs + 1s tick"]
-  LV --> TREE
-  DL -. meta.branch .-> LV
+  ANY --> STORE
+  STORE --> TREE["tree.js Leaf (presentational)\nspinner + pill + liveness via useStore"]
+  STORE -. meta.branch ⨝ lastSeen .-> TREE
         </pd-mermaid>
       </pd-section>
 
@@ -307,11 +324,11 @@ flowchart LR
         <pd-api kind="module" name="planmeta.go funcs" lang="go" path="auto-ui/internal/server/planmeta.go">
           <pd-member kind="function" sig="extractPlanMeta(r io.Reader) *PlanMeta">Tokenises HTML; reads the pd-meta script text → json.Unmarshal, and the first &lt;pd-doc&gt; status attr. Returns nil if neither found. Never errors — malformed input yields nil/partial.</pd-member>
         </pd-api>
-        <pd-api kind="module" name="rpc.js / liveness.js (client)" lang="js" path="auto-ui/web/static/liveness.js">
-          <pd-member kind="function" sig="onAny(handler) → unsub   // rpc.js">Fan every received JSON-RPC notification to handler (no per-method wildcard exists today).</pd-member>
-          <pd-member kind="function" sig="noteEvent(ev)">Record receipt time for (project, branch) unless branch is empty/main/master.</pd-member>
-          <pd-member kind="function" sig="lastSeen(project, branch) → ts | undefined">Lookup for a plan's join key. Caller compares against ACTIVE_WINDOW_MS (120_000): within → "active", beyond → "idle".</pd-member>
-          <pd-member kind="function" sig="onTick(handler) → unsub">1s ticker so relative times re-render while the stream is quiet.</pd-member>
+        <pd-api kind="module" name="client wiring (rpc.js + store.js)" lang="js" path="auto-ui/web/static/store.js" caption="Subscription lives in the store — the 029 grep gate forbids it elsewhere">
+          <pd-member kind="function" sig="onAny(handler) → unsub   // rpc.js (transport only)">Fan every received JSON-RPC notification to handler at the onmessage dispatch (no per-method wildcard exists today). Consumed only inside store.js.</pd-member>
+          <pd-member kind="action" sig='{type:"liveness/note", project, branch, t}   // store.js'>Record receipt time for (project, branch) in the liveness slice — dispatched from the store's onAny subscription; skipped when branch is empty/main/master.</pd-member>
+          <pd-member kind="action" sig='{type:"liveness/tick", now}   // store.js'>1s interval updates `now`; reducer returns the SAME state ref when nothing is tracked → no re-render on an idle dashboard.</pd-member>
+          <pd-member kind="selector" sig="selectLiveness(state, project, branch) → {ageMs, active} | null">Leaf reads this via useStore; null when branch missing/shared. active = ageMs ≤ ACTIVE_WINDOW_MS (120_000).</pd-member>
         </pd-api>
       </pd-section>
 
@@ -324,9 +341,9 @@ flowchart LR
           <pd-file path="auto-ui/internal/server/rpc_ingest_test.go" change="edit">Assert raw broadcast carries top-level params.branch (liveness wire-shape guard).</pd-file>
           <pd-file path="auto-ui/go.mod" change="edit">Add golang.org/x/net (pure-Go; approved AC-1).</pd-file>
           <pd-file path="auto-ui/go.sum" change="edit">Checksums for x/net.</pd-file>
-          <pd-file path="auto-ui/web/static/rpc.js" change="edit">Add onAny(handler) fanned from onmessage alongside the existing per-method dispatch.</pd-file>
-          <pd-file path="auto-ui/web/static/liveness.js" change="add">(project,branch)→lastSeen map via onAny; shared-branch exclusion; lastSeen() + 1s onTick().</pd-file>
-          <pd-file path="auto-ui/web/static/tree.js" change="edit">Thread leaf.meta; render spinner (status=executing), review pill, liveness text with data-* attrs; subscribe to liveness onTick; widen doc.changed to always re-fetch doc.list.</pd-file>
+          <pd-file path="auto-ui/web/static/rpc.js" change="edit">Add onAny(handler) fanned from onmessage alongside the existing per-method dispatch (transport only).</pd-file>
+          <pd-file path="auto-ui/web/static/store.js" change="edit">liveness slice + liveness/note + liveness/tick reducer cases; selectLiveness selector; in initStore subscribe via onAny (dispatch liveness/note for feature branches) + 1s tick interval; widen the existing doc.changed handler to force a re-list when a KNOWN .html plan in the active project changes (AC-4 repaint).</pd-file>
+          <pd-file path="auto-ui/web/static/tree.js" change="edit">Carry leaf.meta through groupDocs; in Leaf render spinner (status=executing), review pill, and liveness via useStore(selectLiveness(project, meta.branch)), with data-plan-status / data-review-state / data-liveness attrs.</pd-file>
           <pd-file path="auto-ui/web/static/app.css" change="edit">Spinner keyframes, review-state pill, active/idle liveness styling.</pd-file>
           <pd-file path="docs/tasks/021-auto-bus-standard/artifacts/auto-bus-standard.html" change="edit">Insert pd-meta block (status merged).</pd-file>
           <pd-file path="docs/tasks/022-hook-event-log/artifacts/hook-event-log.html" change="edit">Insert pd-meta block (status merged).</pd-file>
@@ -335,21 +352,31 @@ flowchart LR
         </pd-files>
       </pd-section>
 
+      <pd-thread anchor="file-changes" priority="p2" status="resolved" title="Why modify old tasks' artifacts (021/022)?">
+        <pd-comment by="review">why are we changing artifacts from old tasks?</pd-comment>
+        <pd-comment by="author">Fair flag. The 021 and 022 artifact HTMLs are the only two pre-existing HTML planning docs in the repo, and they predate the pd-meta standard. The change is minimal and non-destructive: insert a single `<script id="pd-meta">` block into `<head>` (status: merged) — no edits to content, structure, the `<pd-doc>` element, or any threads. Two reasons it earns its place: (1) without it, those two nodes render with no status in the new tree, so on day one the feature has zero real docs to demonstrate on; (2) it dogfoods the standard on the docs that most warrant a "merged" marker. It is genuinely optional — AC-3 tolerance means an un-backfilled plan is simply omitted (no error, entry still listed), so dropping AC-6 + the two `pd-file` entries costs the core feature nothing. Keeping it as the only real-data demo, but happy to cut it if you'd rather not touch merged tasks' artifacts — re-open this thread and I'll remove AC-6. Status: resolved.</pd-comment>
+      </pd-thread>
+
       <pd-section id="decisions-authored" title="Key decisions">
         <pd-decision id="d-onany" title="Add onAny() to rpc.js rather than subscribing per event type" status="accepted" by="author" summary="Liveness must see all hook types; a single fan-out is simpler than enumerating agent.* types.">
           <md><script type="text/plain">
 **Decision.** Add a small `onAny(handler)` to `rpc.js` that receives every JSON-RPC notification,
-and feed `liveness.js` from it.
+and feed the store's `liveness` slice from it (subscription inside `store.js`, per the 029 gate).
 
 **Why.** `on(method, …)` is per-method; liveness cares about *any* agent activity
 (`agent.tool.post`, `agent.session.start`, …). Enumerating the type list couples the client to the
 producer's type taxonomy and silently misses new types. The `onmessage` path already records every
 notification into `window.__autoui`, so the fan-out point exists.
 
+**029 compliance.** `onAny` is added to `rpc.js` (transport) but the *subscription* that uses it is
+placed in `store.js`, beside the existing `on("doc.changed")`/`on("ping")` — so the 029 grep gate
+("all bus subscriptions live only in store.js") stays green.
+
 **Alternatives.** Subscribe to each known `agent.*` type (brittle); a server-derived recency feed
 (no source exists — 022 is log+ETL only).
 
-**Consequences.** The liveness handler runs for every event, so it must be O(1) (one map write).
+**Consequences.** The liveness handler runs for every event, so it must be O(1) (one map write into
+the `liveness` slice).
         </script></md>
         </pd-decision>
 
@@ -363,6 +390,21 @@ heard from that branch", which receipt time captures exactly.
 
 **Consequences.** Liveness measures connectivity-to-us, not absolute event age — acceptable and
 arguably more honest for a live dashboard.
+        </script></md>
+        </pd-decision>
+
+        <pd-decision id="d-threshold" title="active→idle threshold = 120s" status="accepted" by="author" summary="A plan reads 'idle' 2 minutes after the last hook on its branch.">
+          <md><script type="text/plain">
+**Decision.** `ACTIVE_WINDOW_MS = 120_000`. Within 120s of the last hook a plan shows "active Ns
+ago"; beyond it, "idle Nm ago".
+
+**Why.** Hook cadence during active work is sub-minute, but a single long tool call or model turn
+can leave a gap; 2 minutes stays "active" through those without making a genuinely stalled/finished
+executor look live for too long. (User decision; alternatives 60s/90s were snappier but flicker on
+slow turns.)
+
+**Consequences.** A single named constant; trivial to retune. Conformance asserts the *transition*
+(active → idle) by advancing past the window, not an exact number.
         </script></md>
         </pd-decision>
 
@@ -409,6 +451,133 @@ can add them with no backend change.
 - **A new bus event / server recency cache for liveness**: violates epic-002's "one event path"
   decision and adds persistence the requirements explicitly exclude. Client-side map is sufficient.
 - **A new file watcher in auto-ui**: unnecessary — status repaint rides `doc.changed`.
+        </script></md>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Plan">
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Two parallel chains — a Go server chain (parser → wire into doc.list) and a client chain (store
+liveness → tree rendering) — converging on a backfill + browser conformance phase. Each phase is one
+subagent, ends with a commit, and verifies with `go build`/`go test`/`go vet` (server) or `go build`
++ grep gates (client); full behaviour is proven by the Phase 5 conformance harness (the browser is
+the only oracle for the client layer).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-dag caption="Phase DAG — chains {1→2} and {3→4} run in parallel, converge at 5"></pd-dag>
+      </pd-section>
+
+      <pd-stepper>
+        <pd-phase n="1" title="Server parser + dependency" files="auto-ui/internal/server/planmeta.go,auto-ui/internal/server/planmeta_test.go,auto-ui/go.mod,auto-ui/go.sum" status="todo">
+          <md><script type="text/plain">
+1. Add `golang.org/x/net` to `auto-ui/go.mod` `require`; run `go mod tidy` in `auto-ui/` to populate
+   `auto-ui/go.sum`. **Verify:** `cd auto-ui && go build ./...`. (No `go.work` edit — it pins nothing.)
+2. `planmeta.go`: define `PlanMeta` (Status/Branch/Epic/PR/Created/ReviewState, all `json:"…,omitempty"`)
+   and `extractPlanMeta(r io.Reader) *PlanMeta` using the `x/net/html` tokeniser — locate the
+   `<script id="pd-meta" type="application/json">` raw-text node → `json.Unmarshal`; capture the first
+   `<pd-doc>` start tag's `status` attr → `ReviewState`. Tolerant: return `nil`/partial on any
+   failure, never error. Define `maxMetaPrefixBytes = 8192`.
+3. `planmeta_test.go`: cases — valid full block; absent block; malformed JSON; block truncated past
+   an 8KB `io.LimitReader`; missing `<pd-doc>`; non-plan HTML. Assert fields + `nil` paths.
+4. **Verify + commit:** `cd auto-ui && go build ./... && go test ./... && go vet ./...`;
+   `feat(027): phase 1 — pd-meta parser`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Wire into walkDocs + server tests" files="auto-ui/internal/server/docs.go,auto-ui/internal/server/docs_test.go,auto-ui/internal/server/rpc_ingest_test.go" status="todo" depends-on="1">
+          <md><script type="text/plain">
+1. `docs.go`: add `Meta *PlanMeta \`json:"meta,omitempty"\`` to `docEntry`.
+2. In `walkDocs`, for `.html` entries: `os.Open` + `io.LimitReader(f, maxMetaPrefixBytes)` →
+   `extractPlanMeta` → set `entry.Meta` (leave `nil` on open/parse failure; **never drop the entry**).
+   `.md` entries untouched.
+3. `docs_test.go`: extend the fixture with `.html` plans — one `executing` with a feature branch, one
+   `merged`, one with no `pd-meta`, one with malformed JSON — plus `.md` files. Assert
+   `result[i]["meta"]` presence/shape for plans, and that `.md` entries omit `meta` and are byte-for-byte
+   unchanged from today.
+4. `rpc_ingest_test.go`: add an assertion that a broadcast raw `agent.tool.post` carries top-level
+   `params.branch` (liveness wire-shape guard, sibling to the existing `params.data.path` pin).
+5. **Verify + commit:** `cd auto-ui && go build ./... && go test ./... && go vet ./...`;
+   `feat(027): phase 2 — meta on doc.list`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Client store: onAny + liveness + repaint widen" files="auto-ui/web/static/rpc.js,auto-ui/web/static/store.js" status="todo">
+          <md><script type="text/plain">
+1. `rpc.js`: add `onAny(handler) → unsub` — an `anyHandlers` Set fanned in `onmessage` right after
+   `recordEvent` (pass `{method, params}`); export it. Transport only.
+2. `store.js` reducer: initial state `liveness: { byKey: {}, now: 0 }`. Cases `liveness/note`
+   (write `byKey["<project>\\0<branch>"] = t`, new state) and `liveness/tick` (set `now`; **return the
+   SAME state ref when `byKey` is empty** so an idle dashboard fans no re-render).
+3. `store.js` selector: `selectLiveness(state, project, branch)` → `null` when `!branch` or branch ∈
+   {`main`,`master`} or no entry; else `{ ageMs: now - lastSeen, active: ageMs <= ACTIVE_WINDOW_MS }`.
+   `ACTIVE_WINDOW_MS = 120_000`, overridable to a small value via a `?liveWindowMs=` query **only when
+   debug is on** (so conformance can exercise active→idle without a 2-minute wait).
+4. `store.js` `initStore`: subscribe via `onAny(({params}) => { if (params.branch && params.project &&
+   !isShared(params.branch)) dispatch({type:"liveness/note", project:params.project,
+   branch:params.branch, t: Date.now()}) })`; add `setInterval(() => dispatch({type:"liveness/tick",
+   now: Date.now()}), 1000)`. (Both live in `store.js` — 029 grep gate stays green.)
+5. Widen the existing `on("doc.changed")` handler: when `c.project === active` and the path is
+   **known** and ends in `.html`, also `fetchDocs(active, {force:true})` so a same-file
+   `planning→executing` edit repaints `meta` (AC-4) — today only `!known` re-lists.
+6. **Verify + commit:** `cd auto-ui && go build ./...` (embed compiles assets); grep gates:
+   `grep -rl 'on("' web/static` → only `store.js`; `grep -rl 'onAny(' web/static` → only `rpc.js` +
+   `store.js`. `feat(027): phase 3 — liveness store + repaint`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="Tree rendering" files="auto-ui/web/static/tree.js,auto-ui/web/static/app.css" status="todo" depends-on="3">
+          <md><script type="text/plain">
+1. `tree.js` `groupDocs`: carry `meta` onto each leaf object (`{id, path, type, meta}`).
+2. Thread the active `project` down from `DocTree` to `Leaf`. In `Leaf`, between the icon and label
+   spans render: spinner `<span data-plan-status="executing">` when `meta?.status === "executing"`;
+   review pill `<span data-review-state=…>` when `meta?.reviewState`; liveness via
+   `const lv = useStore((s) => selectLiveness(s, project, leaf.meta?.branch))` → when non-null, a
+   `<span data-liveness=${lv.active ? "active" : "idle"}>` reading "active Ns ago" / "idle Nm ago".
+   (Hook is called unconditionally; selector returns `null` for shared/absent branches → no re-render.)
+3. `app.css`: spinner `@keyframes`, review-state pill, active/idle liveness colours.
+4. **Verify + commit:** `cd auto-ui && go build ./...`; grep gates still green (no `on("`/`call(` added
+   to `tree.js`). `feat(027): phase 4 — tree status + liveness render`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="5" title="Backfill + conformance + docs" files="docs/tasks/021-auto-bus-standard/artifacts/auto-bus-standard.html,docs/tasks/022-hook-event-log/artifacts/hook-event-log.html,docs/tasks/027-plan-status-executor-liveness/artifacts/conformance.md,auto-ui/CLAUDE.md" status="todo" depends-on="2,4">
+          <md><script type="text/plain">
+1. Backfill: insert a `pd-meta` block into the `<head>` of the 021 and 022 artifact HTML plans
+   (`status: "merged"`, `id`/`name`/`created` from the task, accurate `pr`, `epic: null`); preserve
+   the existing `<pd-doc>`. **Verify:** open each in a browser; the doc still renders.
+2. `conformance.md` (+ `evidence/`): dual build (embed + `-tags dev`); isolated fixture (lowercase-kebab
+   project id) with `.html` plans — `executing`+feature branch, `merged`, `planning`. Launch
+   `AUTO_UI_DEBUG=1 auto ui serve --port 0 --ready-file --projects`; drive with `agent-browser` at
+   `?debug=1`. Assert: `data-plan-status` spinner on the executing node, `data-review-state` pill,
+   and merged/planning nodes lack the spinner. **Liveness:** `curl` a hand-crafted `agent.tool.post`
+   (top-level `branch` = the executing plan's branch) to `POST /api/rpc`; poll the node's
+   `data-liveness` → `active`; with `?liveWindowMs=2000`, wait >2s → `idle`. Confirm a `main`/null-branch
+   plan never lights up (AC-5b). **AC-4 repaint:** rewrite a known plan's `pd-meta` `planning→executing`,
+   `auto ui emit` that path, poll the node gains the spinner **without** `data-doc-count` growing.
+   Grep gates: `on("` only `store.js`; `onAny(` only `rpc.js`+`store.js`. Poll ≤3s, assert deltas,
+   `find -delete` teardown.
+3. `auto-ui/CLAUDE.md`: document the `meta` field on `doc.list`, the store `liveness` slice + `onAny`
+   wiring, and correct the stale pre-029 notes this task touches.
+4. **Verify + commit:** run the harness on both builds (capture `evidence/`); `cd auto-ui && go build
+   ./... && go test ./... && go vet ./...`. `feat(027): phase 5 — backfill, conformance, docs`.
+          </script></md>
+        </pd-phase>
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **AC-1 / AC-2 / AC-3** (server parse + tolerance) — Phases 1–2; green `planmeta_test.go` +
+  `docs_test.go`, `.md` output unchanged.
+- **AC-4** (lifecycle status + live repaint) — Phases 2 (meta), 3 (known-path re-list), 4 (render);
+  conformance repaint step passes.
+- **AC-5 / AC-5b** (executor liveness + shared-branch exclusion) — Phases 3–4; conformance active→idle
+  + main/null-exclusion pass.
+- **AC-6** (backfill) — Phase 5; 021/022 render with merged state.
+- **AC-7** (tests + build) — Phases 1, 2, 5; `go build`/`go test`/`go vet` clean in `auto-ui`,
+  conformance PASS on both builds, 029 grep gates still green.
         </script></md>
       </pd-section>
     </pd-tab>
