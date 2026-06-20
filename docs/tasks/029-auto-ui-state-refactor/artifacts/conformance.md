@@ -15,20 +15,19 @@
 
 | Build | Assertions | Result |
 |-------|-----------|--------|
-| `embed` (`/api/hello` → `mode:embed`) | 20 | **19 PASS / 1 FAIL** |
-| `-tags dev` (`/api/hello` → `mode:disk`, served from `auto-ui/web/static`) | 20 | **19 PASS / 1 FAIL** |
+| `embed` (`/api/hello` → `mode:embed`) | 20 | **20 PASS / 0 FAIL** |
+| `-tags dev` (`/api/hello` → `mode:disk`, served from `auto-ui/web/static`) | 20 | **20 PASS / 0 FAIL** |
 
-The single failure is **identical on both builds**: **AC-4 path-survival** — a real
-source regression the refactor introduced, which the harness correctly catches (it is
-*not* a harness flake). See **"AC-4 regression (open issue)"** below. All other AC-3..AC-8
-assertions pass on both builds. Full run log:
+All AC-3..AC-8 assertions pass on **both** builds. Full run log:
 [`evidence/state-harness-run.txt`](./evidence/state-harness-run.txt).
 
-> **The harness asserts AC-4 as written (path MUST survive) and therefore exits
-> non-zero until the source is fixed.** Per the Phase-3 contract ("if a harness fails
-> because of a real source bug, STOP and report it — don't quietly patch source in the
-> test phase"), the AC-4 assertion was left faithful and the bug is reported rather than
-> masked. The remaining 19 assertions are green on both builds.
+> Phase 3 first surfaced a real **AC-4 path-survival regression** (the refactor's
+> `syncFromHash()` cleared `selection`/`openDoc` on the param-less `#/debug` route,
+> reported per the Phase-3 contract rather than silently patched in the test pass). The
+> coordinator then authorised the source fix: a one-line gate in `store.js`
+> (`if (view !== "explore") return;` — `#/debug` is a read-only view and no longer drives
+> selection). After the fix the harness is **20/20 on both builds**; see **"AC-4 fix"**
+> below.
 
 ## Build & launch
 
@@ -55,7 +54,7 @@ after each `emit`, and never touches `~/.auto` or real docs.
 | AC | Criterion | How proven | Harness assertion(s) | embed | dev |
 |----|-----------|-----------|----------------------|:----:|:---:|
 | **AC-3** | Single normalised source; views presentational | **grep/static** (the AC defines this as inspection: "the only `call(...)` sites live in the store module") | `no call( in explorer/tree/content` (= 0, comment-only mentions excluded); `store owns all 5 slices` conn/projects/docsByProject/selection/events; `call() sites are store-only` (every `call(` invocation across `web/static` is in `store.js`; `rpc.js` *defines* `call`) | PASS | PASS |
-| **AC-4** | `uistate.js` deleted; `/debug` reflects live store state across nav | **runtime** (browser) + HTTP | select project+doc on `#/explore` (record `data-revision` R, `data-doc-count` N); `location.hash='#/debug'` **without reload**; read `debug-current-state` rows → `project`/`path`/`revision`/`docCount` must equal R/N; `curl /uistate.js` → **404** | **project ✓ / revision ✓ / docCount ✓ / uistate.js 404 ✓ / `path` ✗** | same |
+| **AC-4** | `uistate.js` deleted; `/debug` reflects live store state across nav | **runtime** (browser) + HTTP | select project+doc on `#/explore` (record `data-revision` R, `data-doc-count` N); `location.hash='#/debug'` **without reload**; read `debug-current-state` rows → `project`/`path`/`revision`/`docCount` must equal R/N; `curl /uistate.js` → **404** | PASS (project ✓ / path ✓ / revision ✓ / docCount ✓ / uistate.js 404 ✓) | PASS |
 | **AC-5** | One app-root `doc.changed` subscription drives both live behaviours | **static grep** = subscription-count evidence; **runtime** = single-sub fan-out | `grep -rl 'on("doc.changed"' web/static` matches **only `store.js`** (gate asserts 0 non-store files); runtime: one `emit` on the open doc bumps `data-revision`, one `emit` on an unseen path grows `data-doc-count` — both from the same subscription. `counters.get('doc.changed')` is a **`Map`** used only to gate the poll (it cannot prove sub count — `recordEvent` fires once per received event at the rpc.js dispatch layer) | PASS | PASS |
 | **AC-6** | No new runtime dependency / importmap entry | **static** (git) | `git diff --quiet -- auto-ui/web/static/index.html` (empty diff captured in `evidence/<build>-ac6-index-diff.txt`) | PASS | PASS |
 | **AC-7** | Cold-load gating + reconnect self-heal preserved | **runtime** (browser) | cold `open #/explore?project=proj-a`: `conn-indicator[data-conn-status]` reaches `open` (tracking `connecting`→`open`); the switcher **and** tree populate with **no reload** (`data-doc-count` > 0); no `"not connected"` entry in the error ring (all fetches gate on `whenOpen()`) | PASS | PASS |
@@ -94,43 +93,56 @@ Per-AC eval-output evidence: `evidence/<build>-ac{3,4,5,7,8}*.txt`; screenshots:
   re-exercises its core observables (switcher + tree cold-load population, `data-doc-*`
   attributes, `conn-indicator`, `window.__autoui` gating) under AC-7/AC-8/AC-4.
 
-## AC-4 regression (OPEN ISSUE — reported, not patched)
+## AC-4 fix (`#/debug` no longer clears selection)
 
-**Status: FAIL on both builds.** `debug-current-state` `path` shows `—` after navigating
-`#/explore?...&path=…plan.md` → `#/debug` without reload, instead of the open doc's path.
-`project`, `revision (R)`, and `docCount (N)` *do* survive, so the regression is
-**path-only** (and `type`, which derives from path).
+**Status: PASS on both builds** (fixed in `store.js`).
 
-**Root cause** (captured: [`evidence/ac4-path-regression.txt`](./evidence/ac4-path-regression.txt)):
-`store.js` `syncFromHash()` runs on **every** `hashchange`, including the `#/debug` route.
-`#/debug` carries no `project`/`path` query, so it dispatches `selection/set` with empty
-values and `fetchOpenDoc()` resets `openDoc.path` to `""`. Because
-`selectDebugSnapshot().path = state.openDoc.path`, `/debug` reads the just-cleared path.
+Phase 3 first surfaced this as a real regression: `debug-current-state` `path` showed `—`
+after navigating `#/explore?...&path=…plan.md` → `#/debug` without reload.
+`project`/`revision`/`docCount` survived (revision is monotonic; docCount falls back to the
+first project), so the gap was **path-only** (and `type`, derived from path) — which masked
+it for the other fields.
+
+**Root cause:** `store.js` `syncFromHash()` ran on **every** `hashchange`, including
+`#/debug`. `#/debug` carries no `project`/`path` query, so it dispatched `selection/set`
+with empty values and `fetchOpenDoc()` reset `openDoc.path` to `""`; since
+`selectDebugSnapshot().path = state.openDoc.path`, `/debug` read the just-cleared path.
+Pre-refactor `uistate.js` (`fb37605^:auto-ui/web/static/uistate.js`) was a write-only
+mirror **untouched by navigation**, so path survived.
+
+**The fix (the only source change in this phase — `store.js`, +10/−1):** gate the
+destructive selection/fetch update on the `explore` route. `#/debug` is a read-only view
+of existing state, so the route handler must not drive selection:
+
+```js
+function syncFromHash() {
+  const { view, params } = parseHash();
+  if (view !== "explore") return;   // #/debug must not clear selection/openDoc (AC-4)
+  // …mirror project/path/worktree into selection + orchestrate fetches as before…
+}
+```
+
+This restores the pre-refactor "write-only mirror untouched by navigation" semantics: the
+last explore selection survives the `#/debug` route change, so `selectDebugSnapshot` reads
+the preserved `openDoc.path`. The hash stays the navigational source of truth for the
+explore route (D-6); only `explore` drives selection + fetches. `fetchProjects()` is still
+called separately in `initStore()`, so a cold load directly on `#/debug` still populates
+the registry (and correctly shows an empty current-state — there is no explore selection
+yet, matching the old `uistate.js` default).
+
+**Verification of the fix** (captured: [`evidence/ac4-path-fix.txt`](./evidence/ac4-path-fix.txt)):
 
 ```
 ON  #/explore…plan.md : snapshot.path = "docs/tasks/001-alpha/plan.md"
-AFTER hash → #/debug  : selection = {project:"",path:"",worktree:""}, openDoc.path = ""
-                        snapshot.path = ""   ← regression
+AFTER hash → #/debug  : selection = {project:"proj-a", path:"docs/tasks/001-alpha/plan.md", worktree:""}
+                        openDoc.path = "docs/tasks/001-alpha/plan.md"
+                        snapshot.path = "docs/tasks/001-alpha/plan.md"   ← survives ✓
 ```
 
-Pre-refactor (`uistate.js`, see `fb37605^:auto-ui/web/static/uistate.js`) this was a
-**write-only mirror untouched by navigation** — the explorer wrote `path` into it and
-`#/debug` only *read* it, so path survived. `revision` survives now only because it is
-monotonic (never reset); `docCount` survives because `selectActiveProject` falls back to
-the first registered project — both mask the regression for those fields.
-
-This contradicts **AC-4** ("`debug-current-state` shows the same `project`/**`path`**/
-`revision (R)`/`docCount (N)` — sourced from the store, module-scope state survives the
-route change **unconditionally**") and **Verification → Known Gaps** ("store-survives-
-navigation … survives any unmount/remount"). The gap is that the *route handler itself*
-actively clears selection on a param-less route — a path the design note overlooked.
-
-**Suggested fix (for the implementation phase, NOT applied here):** make `#/debug`
-non-destructive to `selection`/`openDoc` — e.g. `syncFromHash()` should only mirror
-selection for the `explore` view (skip clearing on `#/debug`), **or** `selectDebugSnapshot`
-should read a `lastSelection`/`lastOpenDoc` the store retains across a param-less route,
-restoring the `uistate.js` "last-known explorer state" semantics. Once fixed, AC-4's
-`path` assertion will pass and the harness will exit 0 on both builds.
+No liveness regression from the change: 026 `reveal-harness.sh` re-run **UNEDITED** still
+**3/3 PASS**; the AC-5 `on("doc.changed")` grep still matches only `store.js`; the AC-6
+`index.html` importmap diff is still empty. `go build ./...` (embed) + `-tags dev` + `go
+test ./...` all green in `auto-ui`.
 
 ## Cleanup
 

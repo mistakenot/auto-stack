@@ -5,7 +5,7 @@
 == build embed binary (current web/static) ==
 == build isolated fixture (lowercase-kebab ids; two projects for AC-8) ==
 == start server (--projects fixture, --port 0, debug) ==
-  server at 127.0.0.1:45949 (mode: {"message":"hi from go","mode":"embed"})
+  server at 127.0.0.1:37681 (mode: {"message":"hi from go","mode":"embed"})
 
 == AC-6: importmap / index.html unchanged ==
   PASS  AC-6 index.html importmap unchanged (git diff --quiet) (clean)
@@ -25,9 +25,9 @@
 
 == AC-4: cross-route survival + uistate.js 404 ==
   explorer: revision=1 doc-count=4
-  /debug current-state: project=proj-a path=— revision=1 docCount=4
+  /debug current-state: project=proj-a path=docs/tasks/001-alpha/plan.md revision=1 docCount=4
   PASS  AC-4 /debug project survives nav (proj-a)
-  FAIL  AC-4 /debug path survives nav — got [—] want [docs/tasks/001-alpha/plan.md]
+  PASS  AC-4 /debug path survives nav (docs/tasks/001-alpha/plan.md)
   PASS  AC-4 /debug revision matches (R) (1)
   PASS  AC-4 /debug docCount matches (N) (4)
   PASS  AC-4 uistate.js 404s (deleted) (404)
@@ -46,7 +46,7 @@
   PASS  AC-5 open-doc refresh: data-revision bumped (true)
   PASS  AC-5 tree growth from same subscription (true)
 
----- embed RESULT: 19 passed, 1 failed ----
+---- embed RESULT: 20 passed, 0 failed ----
 ✓ Closed session: default
 
 ########################################################
@@ -56,7 +56,7 @@
   WARN  binary may lack 029 store.js (docListCalls not found in strings)
 == build isolated fixture (lowercase-kebab ids; two projects for AC-8) ==
 == start server (--projects fixture, --port 0, debug) ==
-  server at 127.0.0.1:35775 (mode: {"message":"hi from go","mode":"disk"})
+  server at 127.0.0.1:38249 (mode: {"message":"hi from go","mode":"disk"})
 
 == AC-6: importmap / index.html unchanged ==
   PASS  AC-6 index.html importmap unchanged (git diff --quiet) (clean)
@@ -76,9 +76,9 @@
 
 == AC-4: cross-route survival + uistate.js 404 ==
   explorer: revision=1 doc-count=4
-  /debug current-state: project=proj-a path=— revision=1 docCount=4
+  /debug current-state: project=proj-a path=docs/tasks/001-alpha/plan.md revision=1 docCount=4
   PASS  AC-4 /debug project survives nav (proj-a)
-  FAIL  AC-4 /debug path survives nav — got [—] want [docs/tasks/001-alpha/plan.md]
+  PASS  AC-4 /debug path survives nav (docs/tasks/001-alpha/plan.md)
   PASS  AC-4 /debug revision matches (R) (1)
   PASS  AC-4 /debug docCount matches (N) (4)
   PASS  AC-4 uistate.js 404s (deleted) (404)
@@ -97,11 +97,11 @@
   PASS  AC-5 open-doc refresh: data-revision bumped (true)
   PASS  AC-5 tree growth from same subscription (true)
 
----- dev RESULT: 19 passed, 1 failed ----
+---- dev RESULT: 20 passed, 0 failed ----
 ✓ Closed session: default
 
 ========================================================
-OVERALL across builds (embed dev): 2 failed
-embed: 19 passed, 1 failed
-dev: 19 passed, 1 failed
+OVERALL across builds (embed dev): 0 failed
+embed: 20 passed, 0 failed
+dev: 20 passed, 0 failed
 ========================================================

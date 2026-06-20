@@ -437,8 +437,17 @@ async function fetchOpenDoc({ force = false } = {}) {
 // syncFromHash mirrors the hash into selection and orchestrates the dependent
 // fetches: doc.list for the active project (cache-gated) and the open doc. The
 // single update flow (D-6) — onRouteChange and the initial load both call this.
+//
+// ONLY the explore route drives selection + fetches. #/debug is a read-only
+// view of existing state, and it carries no project/path query — so re-deriving
+// selection there would clear it (and reset openDoc.path), losing the live
+// cross-route snapshot /debug must show (AC-4). The pre-refactor uistate.js was
+// a write-only mirror untouched by navigation; gating here restores that: the
+// last explore selection survives the #/debug route change, and the hash stays
+// the navigational source of truth for the explore route (D-6).
 function syncFromHash() {
-  const { params } = parseHash();
+  const { view, params } = parseHash();
+  if (view !== "explore") return;
   const project = params.get("project") || "";
   const path = params.get("path") || "";
   const worktree = params.get("worktree") || "";
