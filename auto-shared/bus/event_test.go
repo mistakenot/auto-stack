@@ -77,11 +77,12 @@ func TestValidateRequiredFields(t *testing.T) {
 		ev    Event
 		field string
 	}{
-		{"missing specversion", Event{Type: "agent.tool.post", Source: "s", ID: "id", Time: "2026-01-01T00:00:00Z"}, "specversion"},
-		{"missing type", Event{SpecVersion: "1.0", Source: "s", ID: "id", Time: "2026-01-01T00:00:00Z"}, "type"},
-		{"missing source", Event{SpecVersion: "1.0", Type: "agent.tool.post", ID: "id", Time: "2026-01-01T00:00:00Z"}, "source"},
-		{"missing id", Event{SpecVersion: "1.0", Type: "agent.tool.post", Source: "s", Time: "2026-01-01T00:00:00Z"}, "id"},
-		{"missing time", Event{SpecVersion: "1.0", Type: "agent.tool.post", Source: "s", ID: "id"}, "time"},
+		{"missing specversion", Event{Type: "agent.tool.post", Source: "s", ID: "id", Time: "2026-01-01T00:00:00Z", Host: "test-host"}, "specversion"},
+		{"missing type", Event{SpecVersion: "1.0", Source: "s", ID: "id", Time: "2026-01-01T00:00:00Z", Host: "test-host"}, "type"},
+		{"missing source", Event{SpecVersion: "1.0", Type: "agent.tool.post", ID: "id", Time: "2026-01-01T00:00:00Z", Host: "test-host"}, "source"},
+		{"missing id", Event{SpecVersion: "1.0", Type: "agent.tool.post", Source: "s", Time: "2026-01-01T00:00:00Z", Host: "test-host"}, "id"},
+		{"missing time", Event{SpecVersion: "1.0", Type: "agent.tool.post", Source: "s", ID: "id", Host: "test-host"}, "time"},
+		{"missing host", Event{SpecVersion: "1.0", Type: "agent.tool.post", Source: "s", ID: "id", Time: "2026-01-01T00:00:00Z"}, "host"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -118,7 +119,7 @@ func TestValidateDottedType(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.typ, func(t *testing.T) {
-			ev := Event{SpecVersion: "1.0", Type: tt.typ, Source: "s", ID: "id", Time: "2026-01-01T00:00:00Z"}
+			ev := Event{SpecVersion: "1.0", Type: tt.typ, Source: "s", ID: "id", Time: "2026-01-01T00:00:00Z", Host: "test-host"}
 			errs := ev.Validate()
 			hasTypeErr := false
 			for _, e := range errs {
@@ -138,7 +139,7 @@ func TestValidateDottedType(t *testing.T) {
 }
 
 func TestValidateTimeRFC3339(t *testing.T) {
-	ev := Event{SpecVersion: "1.0", Type: "agent.tool.post", Source: "s", ID: "id", Time: "not-a-time"}
+	ev := Event{SpecVersion: "1.0", Type: "agent.tool.post", Source: "s", ID: "id", Time: "not-a-time", Host: "test-host"}
 	errs := ev.Validate()
 	found := false
 	for _, e := range errs {
@@ -288,5 +289,34 @@ func TestToolPostRawNormalizedRoundTrip(t *testing.T) {
 	// Raw should be preserved verbatim.
 	if string(got.Raw) != string(raw) {
 		t.Errorf("raw mismatch: got %s, want %s", got.Raw, raw)
+	}
+}
+
+func TestNewEventSetsHost(t *testing.T) {
+	ev, err := NewEvent("agent.tool.post", "test", nil)
+	if err != nil {
+		t.Fatalf("NewEvent: %v", err)
+	}
+	if ev.Host == "" {
+		t.Error("NewEvent should auto-populate Host")
+	}
+}
+
+func TestHostJSONRoundTrip(t *testing.T) {
+	ev, _ := NewEvent("agent.tool.post", "test", nil)
+	ev.Host = "dev-box.charlie"
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"host"`) {
+		t.Error("JSON should contain host key")
+	}
+	var got Event
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Host != "dev-box.charlie" {
+		t.Errorf("Host = %q, want dev-box.charlie", got.Host)
 	}
 }

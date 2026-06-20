@@ -121,6 +121,9 @@ func TestDeriveDocChangedProvenanceCarried(t *testing.T) {
 		t.Fatalf("expected 1 derived event, got %d", len(derived))
 	}
 	d := derived[0]
+	if d.Host != ev.Host {
+		t.Errorf("host = %q, want %q", d.Host, ev.Host)
+	}
 	if d.Project != ev.Project {
 		t.Errorf("project = %q, want %q", d.Project, ev.Project)
 	}

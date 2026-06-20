@@ -12,12 +12,12 @@
   {
     "id": "028",
     "name": "bus-event-host-field",
-    "status": "planning",
+    "status": "complete",
     "created": "2026-06-18"
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="028: Bus Event Host Field" status="pending" pr="pending" generated="2026-06-18">
+  <pd-doc title="028: Bus Event Host Field" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/83" generated="2026-06-18">
 
     <pd-tab name="Requirements">
 
@@ -258,7 +258,7 @@ flowchart LR
       </pd-mermaid>
 
       <pd-stepper>
-        <pd-phase n="1" title="Host config validation" files="auto-shared/config/host.go,auto-shared/config/host_test.go" status="todo">
+        <pd-phase n="1" title="Host config validation" files="auto-shared/config/host.go,auto-shared/config/host_test.go" status="done">
           <md><script type="text/plain">
 **Goal**: Add `ValidateHostID()` and `HostIDQuietly()` to the shared config package.
 
@@ -288,7 +288,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="Bus envelope Host field" files="auto-shared/bus/event.go,auto-shared/bus/event_test.go,auto-shared/bus/derive.go,auto-shared/bus/derive_test.go,auto-cli/cmd/auto/hookscmd.go,auto-ui/internal/cli/emit.go" status="todo" depends-on="1">
+        <pd-phase n="2" title="Bus envelope Host field" files="auto-shared/bus/event.go,auto-shared/bus/event_test.go,auto-shared/bus/derive.go,auto-shared/bus/derive_test.go,auto-cli/cmd/auto/hookscmd.go,auto-ui/internal/cli/emit.go" status="done" depends-on="1">
           <md><script type="text/plain">
 **Goal**: Add `Host` to `bus.Event`, populate in `NewEvent()`, require in `Validate()`, propagate in `newDerived()`.
 
@@ -332,7 +332,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Doctor check for host config" files="auto-watch/internal/doctor/doctor.go,auto-watch/internal/doctor/doctor_test.go" status="todo" depends-on="2">
+        <pd-phase n="3" title="Doctor check for host config" files="auto-watch/internal/doctor/doctor.go,auto-watch/internal/doctor/doctor_test.go" status="done" depends-on="2">
           <md><script type="text/plain">
 **Goal**: Add a `host_config` doctor check that validates `~/.auto/host.json` exists and contains a valid `hostId`.
 

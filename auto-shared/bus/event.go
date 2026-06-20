@@ -31,6 +31,7 @@ type Event struct {
 	Source      string `json:"source"`
 	ID          string `json:"id"`
 	Time        string `json:"time"`
+	Host        string `json:"host"`
 	Project     string `json:"project,omitempty"`
 	Session     string `json:"session,omitempty"`
 	Remote      string `json:"remote,omitempty"`
@@ -55,6 +56,7 @@ func NewEvent(typ, source string, data any) (Event, error) {
 		ID:          newID(),
 		Time:        time.Now().UTC().Format(time.RFC3339),
 	}
+	ev.Host = config.HostIDQuietly()
 	if data != nil {
 		raw, err := json.Marshal(data)
 		if err != nil {
@@ -89,6 +91,9 @@ func (e Event) Validate() []ValidationError {
 		if _, err2 := time.Parse(time.RFC3339Nano, e.Time); err2 != nil {
 			errs = append(errs, ValidationError{Code: "format", Field: "time", Message: "time must be RFC 3339", Value: e.Time})
 		}
+	}
+	if e.Host == "" {
+		errs = append(errs, ValidationError{Code: "required", Field: "host", Message: "host is required"})
 	}
 	return errs
 }

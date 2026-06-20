@@ -82,6 +82,56 @@ func TestCheckDaemonUnit_NoUnitInstalled(t *testing.T) {
 	}
 }
 
+func TestCheckHostConfig_Missing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	check := checkHostConfig()
+	if check.Name != "host_config" {
+		t.Errorf("name = %q, want host_config", check.Name)
+	}
+	if check.Status != "fail" {
+		t.Errorf("expected fail for missing host config, got %q", check.Status)
+	}
+	if check.Remediation != "run auto watch init" {
+		t.Errorf("remediation = %q, want 'run auto watch init'", check.Remediation)
+	}
+}
+
+func TestCheckHostConfig_InvalidFormat(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// Create ~/.auto/host.json with an invalid hostId.
+	autoDir := filepath.Join(home, ".auto")
+	if err := os.MkdirAll(autoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(autoDir, "host.json"), []byte(`{"hostId":"UPPER-case"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check := checkHostConfig()
+	if check.Status != "fail" {
+		t.Errorf("expected fail for invalid hostId, got %q", check.Status)
+	}
+	if check.Details != "UPPER-case" {
+		t.Errorf("details = %q, want UPPER-case", check.Details)
+	}
+}
+
+func TestCheckHostConfig_Valid(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	autoDir := filepath.Join(home, ".auto")
+	if err := os.MkdirAll(autoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(autoDir, "host.json"), []byte(`{"hostId":"dev-box.charlie"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check := checkHostConfig()
+	if check.Status != "ok" {
+		t.Errorf("expected ok for valid host config, got %q (message=%q)", check.Status, check.Message)
+	}
+}
+
 func TestCheckDaemonUnit_UserScopePreferredOverSystem(t *testing.T) {
 	userDir := t.TempDir()
 	systemDir := t.TempDir()

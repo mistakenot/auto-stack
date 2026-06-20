@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	sharedconfig "github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-watch/internal/config"
 	"github.com/mistakenot/auto-watch/internal/daemoninstall"
 	"github.com/mistakenot/auto-watch/internal/gitx"
@@ -22,6 +23,7 @@ func Run(ctx context.Context, cwd string) (string, []model.DoctorCheck) {
 		checkGit(ctx),
 		checkSettings(),
 		checkDaemonUnit(),
+		checkHostConfig(),
 	}
 	if repoRoot, err := gitx.FindRepoRoot(cwd); err == nil {
 		checks = append(checks, checkProjectConfig(repoRoot))
@@ -235,6 +237,39 @@ func parseExecStart(content string) (execStart, binPath string) {
 		return execStart, binPath
 	}
 	return "", ""
+}
+
+func checkHostConfig() model.DoctorCheck {
+	const name = "host_config"
+	path, err := sharedconfig.HostConfigPath()
+	if err != nil {
+		return model.DoctorCheck{
+			Name:        name,
+			Status:      "fail",
+			Message:     "cannot resolve host config path",
+			Remediation: "run auto watch init",
+			Details:     err.Error(),
+		}
+	}
+	cfg, err := sharedconfig.LoadHost(path)
+	if err != nil {
+		return model.DoctorCheck{
+			Name:        name,
+			Status:      "fail",
+			Message:     "host config is missing",
+			Remediation: "run auto watch init",
+		}
+	}
+	if err := sharedconfig.ValidateHostID(cfg.HostID); err != nil {
+		return model.DoctorCheck{
+			Name:        name,
+			Status:      "fail",
+			Message:     "hostId format is invalid",
+			Remediation: "run auto watch init",
+			Details:     cfg.HostID,
+		}
+	}
+	return model.DoctorCheck{Name: name, Status: "ok", Message: path}
 }
 
 func checkProjectConfig(repoRoot string) model.DoctorCheck {
