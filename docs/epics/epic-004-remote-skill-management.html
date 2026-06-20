@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>004: remote-skill-management</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "004",
+    "name": "remote-skill-management",
+    "kind": "epic",
+    "status": "planning",
+    "created": "2026-06-20"
+  }
+  </script>
+
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="004: remote-skill-management" status="draft" pr="pending" generated="2026-06-20">
+
+    <!-- ============================== VISION ============================== -->
+    <pd-tab name="Vision">
+      <pd-outcome></pd-outcome>
+
+      <pd-section id="why-now" title="Why now">
+        <md><script type="text/plain">
+`auto skill` today shells out to `npx skills add` to pull remote skills — an
+external Node dependency that silently lies about freshness, can't customize
+what it installs, and gives us no reproducibility or supply-chain control. This
+epic replaces that shell-out with a **native Go pipeline** that adds, customizes,
+updates, and renders agent skills from any git host using the user's existing git
+auth — deterministically, offline-checkable, and with no code execution in the
+render path.
+
+The full design (decided defaults, dozens of resolved review threads) lives in
+[`docs/remote-skills-design.md`](../remote-skills-design.md). This epic sets the
+direction and the guard rails, then sequences the build.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="everyday-loop" title="The everyday loop">
+        <pd-cli id="C-loop" title="zsh — add, customize, sync, update" caption="The core author/consume loop, no npx">
+          <pd-cmd note="add a remote skill — any host, the user's git auth" status="todo">auto skill add mistakenot/skills --skill deploy</pd-cmd>
+          <pd-out>✓ resolved deploy@e5c075e → .auto/skills/lock.json; rendered into .claude/skills, .agents/skills</pd-out>
+          <pd-cmd note="customize: edit replacements + file-refs in skills.yaml" status="todo">$EDITOR .auto/skills/skills.yaml</pd-cmd>
+          <pd-cmd note="render authored + vendored into every target (the workhorse)" status="todo">auto skill sync</pd-cmd>
+          <pd-out>✓ 2 targets up to date · deploy re-rendered (skills.yaml changed)</pd-out>
+          <pd-cmd note="offline freshness gate — fast, no network (CI / pre-commit)" status="todo">auto skill sync --check</pd-cmd>
+          <pd-out>✓ all targets current with lock + values + docs</pd-out>
+          <pd-cmd note="advance floating specs to newest upstream" status="todo">auto skill update</pd-cmd>
+          <pd-out>✓ deploy advanced e5c075e → 9a1b2c4; re-rendered</pd-out>
+        </pd-cli>
+      </pd-section>
+
+      <pd-section id="setup-and-housekeeping" title="Setup &amp; housekeeping">
+        <pd-cli id="C-setup" title="zsh — one-time project setup" caption="Interactive wizard, or defaults with -y">
+          <pd-cmd note="wizard: targets, auto_update, version policy, commit-vs-gitignore" status="todo">auto skill init --project</pd-cmd>
+          <pd-out>✓ wrote .auto/skills/skills.yaml, lock.json; scaffolded ./skills/</pd-out>
+          <pd-cmd note="approve a host endpoint before any fetch (machine-local)" status="todo"><script type="text/plain">auto skill trust add https://github.com</script></pd-cmd>
+        </pd-cli>
+
+        <pd-cli id="C-inspect" title="zsh — inspect &amp; adopt" caption="Resource triad + cleanup">
+          <pd-cmd note="all skills, authored + vendored, with stale flags" status="todo">auto skill list</pd-cmd>
+          <pd-cmd note="provenance: source, ref, commit, skill_version, replacements" status="todo">auto skill describe deploy</pd-cmd>
+          <pd-cmd note="pull a hand-dropped skill into ./skills/ as authored" status="todo">auto skill adopt new-plan</pd-cmd>
+        </pd-cli>
+
+        <pd-cli id="C-migrate" title="zsh — migrate off npx skills" caption="One-shot, additive">
+          <pd-cmd note="translate skills-lock.json → .auto/skills/ (unresolved state)" status="todo">auto skill migrate vercel --dry-run</pd-cmd>
+          <pd-cmd note="resolve commits + render; then delete skills-lock.json yourself" status="todo">auto skill sync</pd-cmd>
+        </pd-cli>
+      </pd-section>
+    </pd-tab>
+
+    <!-- ============================== GUARD RAILS ============================== -->
+    <pd-tab name="Guard rails">
+      <pd-section id="functional-rails" title="Functional — invariants every task preserves">
+        <pd-guardrail id="G-determinism" kind="functional" title="Same lock + same inputs → identical bytes everywhere">
+          <md><script type="text/plain">Render is a pure function `(template, replacements, resolved-files) → tree`. The `skill_version` hash is taken over the **exact emitted bytes** — never "same version, different bytes." Same repo + same values render byte-identically on every machine.</script></md>
+        </pd-guardrail>
+        <pd-guardrail id="G-no-exec" kind="functional" title="No code execution in the render path">
+          <md><script type="text/plain">Templating is Go `text/template` with the parsed AST restricted to field-access (`{{ .var }}`) + literal-brace escape; functions/pipelines/control actions rejected at parse. File-refs inline raw bytes, never re-templated. Clone/archive/checkout never run remote hooks.</script></md>
+        </pd-guardrail>
+        <pd-guardrail id="G-reproducible" kind="functional" title="The lock reproduces an exact commit">
+          <md><script type="text/plain">`lock.json` pins each dep to a resolved commit. `auto_update: false` (or `--locked`) reproduces the locked commit and never floats refs or rewrites the lock; only `add`/`update` advance it. Locked sync may fetch a pinned commit's objects on a cache miss but never re-resolves the ref.</script></md>
+        </pd-guardrail>
+        <pd-guardrail id="G-no-foreign-delete" kind="functional" title="Never delete or mutate skills the tool doesn't own">
+          <md><script type="text/plain">Deletion requires BOTH a manifest-managed orphan AND a machine-local receipt confirming this machine wrote that exact digest. Foreign / ad-hoc / locally-modified dirs are reported (for `adopt`), never auto-deleted or overwritten. A forged in-file stamp authorizes nothing.</script></md>
+        </pd-guardrail>
+        <pd-guardrail id="G-crash-consistent" kind="reliability" title="A crash mid-sync leaves a recoverable state">
+          <md><script type="text/plain">`sync` uses a write-ahead journal + fixed commit order (stage same-FS → swap per skill → receipts → manifest → lock → clear journal). A non-empty journal triggers roll-forward/back recovery. Pruning is suppressed whenever the desired set is incomplete — a failed fetch never deletes or half-advances.</script></md>
+        </pd-guardrail>
+        <pd-guardrail id="G-schema-strict" kind="functional" title="Strict, shared validation with structured errors">
+          <md><script type="text/plain">One `validate()` per schema returns structured errors (`code`, `path`, `field`, `message`). Skill names enforce `^[a-z0-9]+(-[a-z0-9]+)*$`; invalid upstream names are rejected (need `--as`), never silently slugified. Every hard error carries a remediation hint.</script></md>
+        </pd-guardrail>
+        <pd-guardrail id="G-decisive-cli" kind="operability" title="Explicit CLI surface, no long-term aliases">
+          <md><script type="text/plain">Deprecated commands are removed decisively, not aliased: `ls`→`list`, `agents`→folded into `init`, the npx `sync`→native, and binary self-update moves to root `auto update` so `auto skill update` means "update skills." Resource triad (`list`/`describe`/`get` + `source`/`target`).</script></md>
+        </pd-guardrail>
+      </pd-section>
+
+      <pd-section id="nonfunctional-rails" title="Non-functional — security, performance, operability">
+        <pd-guardrail id="G-transport" kind="security" title="Only approved transports to approved endpoints">
+          <md><script type="text/plain">Scheme allow-list (https/ssh/git/file); helper/option-style URLs (`ext::`, leading `-`) rejected; git args after `--`. Effective trust is machine-local (`~/.auto/skills/trust.json`) over a canonical `scheme://host:port` (or local path) — checked-in config only *requests* trust, closing the post-checkout-hook vector. Fails closed in CI.</script></md>
+        </pd-guardrail>
+        <pd-guardrail id="G-cred-hygiene" kind="privacy" title="No credentials, ever, in the checked-in lock">
+          <md><script type="text/plain">Credential-bearing URLs (userinfo / token query params) rejected at parse; the lock stores only a sanitized canonical URL + SHA. Auth is delegated to the user's git credential machinery. Private content lives only in the on-machine cache, never the lock.</script></md>
+        </pd-guardrail>
+        <pd-guardrail id="G-offline-check" kind="reliability" title="Freshness checks are offline and honest">
+          <md><script type="text/plain">`sync --check` / `doctor` run with `GIT_NO_LAZY_FETCH=1` — a missing object reports an *incomplete cache* (remediation: run sync), never a silent network call. "Commit present" means objects present. Compares the actual on-disk tree digest, so a CI gate can't be fooled by a forged stamp.</script></md>
+        </pd-guardrail>
+        <pd-guardrail id="G-fast-sync" kind="performance" metric="--jobs default 8" title="Sync parallelizes the slow (network) part">
+          <md><script type="text/plain">Plan dedupes by repo (N skills, one fetch), skips cache-satisfied commits, then fetches needed repos through a bounded worker pool. One repo failing doesn't abort the run; valid repos still process and the command exits non-zero. `--check` skips fetch entirely.</script></md>
+        </pd-guardrail>
+        <pd-guardrail id="G-extract-safe" kind="security" title="Untrusted repo trees can't escape or exhaust">
+          <md><script type="text/plain">Archive extraction and local import validate every entry before any write: symlinks / devices / gitlinks rejected (never followed), file-count + total-size limits, and a post-join containment check under the intended root. File-refs resolve on the fully symlink-resolved real path.</script></md>
+        </pd-guardrail>
+        <pd-guardrail id="G-token-budget" kind="operability" metric="body err >8000 tok" title="Rendered output stays within token budgets">
+          <md><script type="text/plain">`lint` runs on **rendered** output and gates on budgets (body warn >4000 / error >8000 tokens; listing warn >2000 / error >4000; chars/4 estimate). `sync` only warns on budgets — advisory, never blocks a render.</script></md>
+        </pd-guardrail>
+        <pd-guardrail id="G-json-default" kind="operability" title="JSON-default output; payload on stdout, diagnostics on stderr">
+          <md><script type="text/plain">Commands default to JSON; stdout carries strictly parseable payload, diagnostics/errors go to stderr. Data-listing returns valid results even when some items are invalid, then exits non-zero. `--format text` for humans.</script></md>
+        </pd-guardrail>
+      </pd-section>
+    </pd-tab>
+
+    <!-- ============================== ARCHITECTURE & SEAMS ============================== -->
+    <pd-tab name="Architecture &amp; seams">
+      <pd-section id="containers" title="Containers">
+        <pd-mermaid caption="Major containers and how they relate (boundary level)">
+flowchart TB
+  subgraph project["Project (checked in)"]
+    yaml["skills.yaml — intent"]
+    lock["lock.json — dependency identity"]
+    manifest["manifest.json — derived render state"]
+    authored["./skills/ — authored skills"]
+  end
+  subgraph machine["Machine-local (~/.auto/skills, never checked in)"]
+    cache["git cache — bare blobless clones"]
+    trust["trust.json — approved endpoints"]
+    receipts["receipts — deletion authority"]
+  end
+  subgraph engine["auto skill"]
+    add["add / discovery"]
+    render["render engine"]
+    sync["sync pipeline"]
+  end
+  targets[".claude/skills · .agents/skills — output targets"]
+
+  add --> cache
+  add --> lock
+  trust -. gates .-> cache
+  sync --> lock
+  sync --> cache
+  render --> manifest
+  sync --> render
+  authored --> render
+  sync --> targets
+  receipts -. authorizes prune .-> targets
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="seams" title="Load-bearing seams" summary="Six contracts that let tasks proceed independently.">
+        <md><script type="text/plain">
+The contracts a task may build behind but must not break:
+
+- **Lock schema (dependency identity only).** `add`/`update` write resolved
+  `{source, url, version_spec, ref, commit, subpath, state}`; `sync` reads it.
+  All *derived* render state lives in `manifest.json`, never the lock — so a
+  locked sync rewrites the manifest, never the lock.
+- **Render contract.** `(template, replacements, resolved-files) → canonical
+  tree`; `skill_version = sha256` over the full emitted tree. Uniform for
+  authored and vendored skills.
+- **Cache identity.** Canonical repo identity (lowercased host + full path) →
+  cache path; "commit present = objects present"; reuse verifies `origin`.
+- **Trust boundary.** Every fetch endpoint must be approved in machine-local
+  state; checked-in config only requests trust.
+- **Receipts = deletion authority.** Prune requires a manifest orphan AND a
+  matching local receipt + on-disk digest.
+- **Output-target contract.** Each target receives `union(authored ∪ vendored)`
+  after shadowing (authored wins a name clash); targets are derived output the
+  tool owns and regenerates.
+        </script></md>
+      </pd-section>
+    </pd-tab>
+
+    <!-- ============================== BREAKDOWN ============================== -->
+    <pd-tab name="Breakdown">
+      <pd-section id="build-order" title="Build order">
+        <pd-breakdown caption="Deployable staircase — roots left, each column builds on the last"></pd-breakdown>
+
+        <pd-task id="T1" title="Project schemas &amp; init" status="todo" deployable
+                 delivers="C-setup" honors="G-schema-strict,G-json-default,G-decisive-cli">
+          <md><script type="text/plain">The `.auto/skills/` layout + parse/validate `skills.yaml` / `lock.json` / `manifest.json`; reuse the `projects.json` id; `init --project` wizard (+ `-y`/flags) and global settings; fold the old `agents` command into `init`.</script></md>
+        </pd-task>
+
+        <pd-task id="T2" title="Global git cache + trust" status="todo" depends-on="T1" deployable
+                 delivers="C-setup" honors="G-transport,G-cred-hygiene,G-extract-safe,G-offline-check">
+          <md><script type="text/plain">Bare blobless cache with canonical identity + safe path encoding; archive extraction with entry validation + resource limits; scheme allow-list; machine-local `trust.json`; `cache list/path/prune` and `trust list/add/remove`.</script></md>
+        </pd-task>
+
+        <pd-task id="T3" title="add: source parsing &amp; discovery" status="todo" depends-on="T2" deployable
+                 delivers="C-loop" honors="G-schema-strict,G-transport,G-cred-hygiene">
+          <md><script type="text/plain">Normalize every source form (incl. deep links via longest-resolving-ref) → discover skills (roots, dedupe, divergence error) → write lock + `skills.yaml` stub. `--skill`/`--path`/`--list`/`--as`/`--version`/`--no-sync`. Local-source split (git repo vs import).</script></md>
+        </pd-task>
+
+        <pd-task id="T4" title="Native sync + render (replaces npx)" status="todo" depends-on="T3" deployable
+                 delivers="C-loop" honors="G-determinism,G-no-exec,G-extract-safe,G-token-budget,G-reproducible,G-crash-consistent,G-offline-check,G-fast-sync">
+          <md><script type="text/plain">The render core **and** the pipeline that drives it. Render: restricted `text/template` AST, `customize:` schema, file-refs (whole file + heading-section extraction), canonicalization, `content_hash`, full-tree `skill_version`, `render_version`. Pipeline: 3 phases (plan → parallel fetch → render) + `manifest.json`; journaled crash-consistent commit; incremental on-disk-digest skip; `--check`/`--locked`/`--target`/`--jobs`; `auto_update` modes + intent reconciliation; the `update [name]` verb. Deletes the npx shell-out; reclaims `auto skill update`.</script></md>
+        </pd-task>
+
+        <pd-task id="T5" title="Managed vs ad-hoc: prune &amp; adopt" status="todo" depends-on="T4" deployable
+                 delivers="C-inspect" honors="G-no-foreign-delete,G-crash-consistent">
+          <md><script type="text/plain">Machine-local receipts as deletion authority; manifest-orphan pruning (renames need no special detection); foreign-dir hard-conflict handling; `adopt` (staged move → git add); `doctor` drift + orphan/foreign reporting; renamed-vendored handling.</script></md>
+        </pd-task>
+
+        <pd-task id="T6" title="Inspection triad + deprecations" status="todo" depends-on="T4" deployable
+                 delivers="C-inspect" honors="G-decisive-cli,G-json-default">
+          <md><script type="text/plain">`list --local/--vendored`, `describe`, `get`; `source list/describe`, `target list`. Remove `ls`; relocate binary self-update to root `auto update` (owned here — see D-3). Cheap→full per the resource convention; truncated output prints the recover command.</script></md>
+        </pd-task>
+
+        <pd-task id="T7" title="Integration &amp; migration: vercel + git hooks" status="todo" depends-on="T4,T5" deployable
+                 delivers="C-migrate" honors="G-schema-strict,G-json-default,G-offline-check,G-fast-sync">
+          <md><script type="text/plain">**Migrate:** read `skills-lock.json` → lock (`state: unresolved`) + `skills.yaml` with version intent preserved from each ref; per-source handling incl. the local split; `--dry-run`/`--from`; additive (never touches the vercel lock). **Hooks:** pre-commit `sync --check` + `lint`, post-merge/checkout `sync --locked`, optional pre-push `update --check` — using the lock's file-ref reverse index (doc → skills).</script></md>
+        </pd-task>
+      </pd-section>
+    </pd-tab>
+
+    <!-- ============================== DECISIONS ============================== -->
+    <pd-tab name="Decisions">
+      <pd-decisions></pd-decisions>
+
+      <pd-decision id="D-1" title="Decompose into a 7-task deployable staircase" status="accepted" by="agent"
+        summary="Schemas → cache → add → sync(+render) → prune/adopt, inspect+deprecations, integration+migration.">
+        <md><script type="text/plain">
+**Context:** The design is one cohesive system but far too large for a single task.
+**Decision:** Seven independently-deployable tasks. Two foundations (T1 schemas,
+T2 cache) converge into `add` (T3); the native `sync` (T4) carries the render core
+**and** the pipeline — the point where the npx shell-out dies. Prune/adopt (T5),
+inspection + deprecations (T6), and a terminal integration task (T7: migrate +
+git hooks) layer on top.
+**Alternatives:** One mega-task (unreviewable PR); nine finer tasks — render split
+from sync, migrate split from hooks (rejected by review: render delivers nothing
+without sync, and migrate/hooks are both small, additive, terminal).
+**Consequences:** T4 is the largest PR (render + 3-phase journaled pipeline);
+accepted because render has no standalone user value and shares all of sync's
+fixtures.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-3" title="Self-update relocation is owned inside the deprecations task (T6)" status="accepted" by="agent"
+        summary="T6 moves binary self-update to root `auto update`; no cross-epic dependency.">
+        <md><script type="text/plain">
+**Context:** Reclaiming `auto skill update` for skills means relocating today's
+binary self-update, which lives on the unified `auto` binary (unify-binaries
+territory).
+**Decision:** T6 owns the relocation as part of the CLI deprecation cleanup — it
+ships alongside the new resource triad and the `ls` removal.
+**Alternatives:** Defer to the unify-binaries epic (adds a cross-epic dependency
+and forces a temporary name for T4's `update` verb); pull into T1 (a rename with
+no consuming code yet).
+**Consequences:** T6 reaches lightly into the root command tree; isolated and
+reviewable there, and the reclaimed name is ready for T4's `update` without a
+temporary alias.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-2" title="Design defaults are inherited, not re-litigated" status="accepted" by="agent"
+        summary="auto_update:true, commit_targets:true, machine-local trust, copy-only targets — settled upstream.">
+        <md><script type="text/plain">
+**Context:** `docs/remote-skills-design.md` already resolved dozens of review
+threads and recorded its accepted tensions.
+**Decision:** This epic inherits those calls verbatim — `auto_update: true` default
+(freshness over review, opt out per-skill or `--locked`), `commit_targets: true`
+(zero-setup checkouts), machine-local trust (re-approve per machine), copy-only
+targets (no symlinks). Task planners implement them; they don't reopen them.
+**Consequences:** Keeps the epic at direction altitude; the design doc stays the
+source of truth for the *what*.
+        </script></md>
+      </pd-decision>
+
+      <pd-thread anchor="build-order" status="resolved" priority="p2" title="Self-update relocation crosses into the unify-binaries epic">
+        <pd-comment by="author">T7 relocates binary self-update from `auto skill update` to root `auto update`. That touches the unified `auto` binary (task 017 territory), not just the skill subcommand. Open question: own that relocation inside T7, or coordinate it with the unify-binaries work? Flagging so it doesn't surprise the T7 planner.</pd-comment>
+        <pd-comment by="author">Resolved: own it inside the deprecations task. After the breakdown merge that task is **T6**; it performs the relocation as part of the CLI cleanup so the reclaimed `auto skill update` name is ready for T4's update verb with no temporary alias. Recorded as D-3.</pd-comment>
+      </pd-thread>
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
