@@ -13,12 +13,12 @@
     "id": "030",
     "name": "transport-conformance-harness",
     "epic": "003-multi-host-architecture",
-    "status": "planning",
+    "status": "complete",
     "created": "2026-06-20"
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="030: transport-conformance-harness" status="executing" pr="pending" generated="2026-06-20">
+  <pd-doc title="030: transport-conformance-harness" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/85" generated="2026-06-20">
 
     <pd-tab name="Requirements">
 
@@ -327,7 +327,7 @@ flowchart LR
 
       <pd-stepper>
 
-        <pd-phase n="1" title="Transport layer (unix + tcp)" status="todo"
+        <pd-phase n="1" title="Transport layer (unix + tcp)" status="done"
           files="auto-shared/transport/transport.go,auto-shared/transport/unix/unix.go,auto-shared/transport/tcp/tcp.go,auto-shared/transport/transport_test.go">
           <md><script type="text/plain">
 1. `transport.go` — define `type Conn = net.Conn`, `Listener` (`Accept`/`Addr`/`Close`) and `Dialer` (`Dial(ctx)`) interfaces, and `Listen(uri)` / `Dial(ctx, uri)` that parse the scheme (`unix://`, `tcp://`) and delegate. Unknown scheme → clear error. **Verify:** `go build ./...` in `auto-shared`.
@@ -338,7 +338,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="RPC message types + NDJSON codec" status="todo"
+        <pd-phase n="2" title="RPC message types + NDJSON codec" status="done"
           files="auto-shared/rpc/message.go,auto-shared/rpc/codec.go,auto-shared/rpc/codec_test.go">
           <md><script type="text/plain">
 1. `message.go` — `Request{JSONRPC,ID json.RawMessage,Method,Params json.RawMessage}`; `Response{JSONRPC,ID,Result json.RawMessage \`json:"result,omitempty"\`,Error *Error \`json:"error,omitempty"\`}` (`Result` is `json.RawMessage` so a present `result:null` is non-nil and distinguishable from absent; `omitempty` on the nil `*Error`/nil raw keeps exactly one member on the wire); `Error{Code,Message,Data any}` with `func (e *Error) Error() string`; error-code constants (`ParseError=-32700` … `InternalError=-32603`) mirrored verbatim from `auto-ui/internal/server/rpc.go`. A `classify(raw)` that decides request / notification / response and **validates the envelope**: `jsonrpc` must be `"2.0"`, a request needs a string `method`, a response must carry exactly one of `result`/`error` (both or neither → invalid). **Verify:** `go build ./...`.
@@ -348,7 +348,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Symmetric duplex Peer" status="todo" depends-on="2"
+        <pd-phase n="3" title="Symmetric duplex Peer" status="done" depends-on="2"
           files="auto-shared/rpc/peer.go,auto-shared/rpc/peer_test.go">
           <md><script type="text/plain">
 1. `peer.go` — `Peer` over an `io.ReadWriteCloser`, constructed with `NewPeer(conn, opts...)` (`WithHandler`, `WithOnNotify`, `WithBufferSize`). `Register(method, Handler)`; `Serve(ctx)` runs the read-loop (decode → if request: validate envelope (`-32600` on bad), dispatch to handler, enqueue response; if response: deliver to the id-matched pending `Call`; if notification: hand to `OnNotify`); `Call(ctx, method, params)` registers a pending waiter keyed by a monotonically-increasing id and blocks on it (honouring `ctx` — on `ctx.Done` it removes its own waiter and returns); `Notify(method, params)` enqueues an id-less frame. One `writePump` goroutine owns every `Encode` via a bounded channel — on overflow, drop the frame and close the conn (mirror `auto-ui/internal/server/ws.go`; never block the producer). **Terminal shutdown** is single-owner via `sync.Once`-guarded `Close()`: triggered by `Serve` returning (EOF/decode error/ctx cancel), by write-pump overflow, or by an explicit `Close()`; it closes the conn, stops the write-pump, and fails **every** pending waiter with `ErrClosed`; afterwards `Call`/`Notify` return `ErrClosed`. Handler error mapping: `*Error` passes through (`errors.As`), any other error → `InternalError`, unknown method → `MethodNotFound`, malformed JSON → `ParseError`, invalid envelope → `InvalidRequest`; a notification never produces a response. **Verify:** `go build ./...`.
@@ -357,7 +357,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="Conformance harness + layering gate" status="todo" depends-on="1,3"
+        <pd-phase n="4" title="Conformance harness + layering gate" status="done" depends-on="1,3"
           files="auto-shared/rpc/conformance/conformance.go,auto-shared/rpc/conformance/fakes.go,auto-shared/rpc/conformance/conformance_test.go,auto-shared/rpc/layering_test.go">
           <md><script type="text/plain">
 1. `conformance/conformance.go` — the seam: `RPCClient` interface (`Call(ctx context.Context, ...)`, `Notify`, `Notifications() <-chan rpc.Request`); `Observations` interface (`DispatchCount(method) int`); `Fixture` interface (`Client() RPCClient`, `Obs() Observations`, `Close() error`); `FixtureFactory func(testing.TB) Fixture`; `Scenario` interface (`Name()`, `Run(t, f Fixture)` — **no fake hard-coded**); `RunAcrossFixtures(t, s, factories...)` runs `s` against each factory and asserts identical results. Imports both `transport` and `rpc` — the single allowed exception. **Verify:** `go build ./...`.
