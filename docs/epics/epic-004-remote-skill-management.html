@@ -192,36 +192,43 @@ The contracts a task may build behind but must not break:
         <pd-breakdown caption="Deployable staircase — roots left, each column builds on the last"></pd-breakdown>
 
         <pd-task id="T1" title="Project schemas &amp; init" status="todo" deployable
+                 href="../tasks/032-skill-project-schemas/plan.html"
                  delivers="C-setup" honors="G-schema-strict,G-json-default,G-decisive-cli">
           <md><script type="text/plain">The `.auto/skills/` layout + parse/validate `skills.yaml` / `lock.json` / `manifest.json`; reuse the `projects.json` id; `init --project` wizard (+ `-y`/flags) and global settings; fold the old `agents` command into `init`.</script></md>
         </pd-task>
 
         <pd-task id="T2" title="Global git cache + trust" status="todo" depends-on="T1" deployable
+                 href="../tasks/009-skill-git-cache-trust/plan.html"
                  delivers="C-setup" honors="G-transport,G-cred-hygiene,G-extract-safe,G-offline-check">
           <md><script type="text/plain">Bare blobless cache with canonical identity + safe path encoding; archive extraction with entry validation + resource limits; scheme allow-list; machine-local `trust.json`; `cache list/path/prune` and `trust list/add/remove`.</script></md>
         </pd-task>
 
         <pd-task id="T3" title="add: source parsing &amp; discovery" status="todo" depends-on="T2" deployable
+                 href="../tasks/033-skill-add-discovery/plan.html"
                  delivers="C-loop" honors="G-schema-strict,G-transport,G-cred-hygiene">
           <md><script type="text/plain">Normalize every source form (incl. deep links via longest-resolving-ref) → discover skills (roots, dedupe, divergence error) → write lock + `skills.yaml` stub. `--skill`/`--path`/`--list`/`--as`/`--version`/`--no-sync`. Local-source split (git repo vs import).</script></md>
         </pd-task>
 
         <pd-task id="T4" title="Native sync + render (replaces npx)" status="todo" depends-on="T3" deployable
+                 href="../tasks/034-skill-native-sync-render/plan.html"
                  delivers="C-loop" honors="G-determinism,G-no-exec,G-extract-safe,G-token-budget,G-reproducible,G-crash-consistent,G-offline-check,G-fast-sync">
           <md><script type="text/plain">The render core **and** the pipeline that drives it. Render: restricted `text/template` AST, `customize:` schema, file-refs (whole file + heading-section extraction), canonicalization, `content_hash`, full-tree `skill_version`, `render_version`. Pipeline: 3 phases (plan → parallel fetch → render) + `manifest.json`; journaled crash-consistent commit; incremental on-disk-digest skip; `--check`/`--locked`/`--target`/`--jobs`; `auto_update` modes + intent reconciliation; the `update [name]` verb. Deletes the npx shell-out; reclaims `auto skill update`.</script></md>
         </pd-task>
 
         <pd-task id="T5" title="Managed vs ad-hoc: prune &amp; adopt" status="todo" depends-on="T4" deployable
+                 href="../tasks/035-skill-prune-adopt/plan.html"
                  delivers="C-inspect" honors="G-no-foreign-delete,G-crash-consistent">
           <md><script type="text/plain">Machine-local receipts as deletion authority; manifest-orphan pruning (renames need no special detection); foreign-dir hard-conflict handling; `adopt` (staged move → git add); `doctor` drift + orphan/foreign reporting; renamed-vendored handling.</script></md>
         </pd-task>
 
         <pd-task id="T6" title="Inspection triad + deprecations" status="todo" depends-on="T4" deployable
+                 href="../tasks/036-skill-inspect-deprecations/plan.html"
                  delivers="C-inspect" honors="G-decisive-cli,G-json-default">
           <md><script type="text/plain">`list --local/--vendored`, `describe`, `get`; `source list/describe`, `target list`. Remove `ls`; relocate binary self-update to root `auto update` (owned here — see D-3). Cheap→full per the resource convention; truncated output prints the recover command.</script></md>
         </pd-task>
 
         <pd-task id="T7" title="Integration &amp; migration: vercel + git hooks" status="todo" depends-on="T4,T5" deployable
+                 href="../tasks/037-skill-integration-migration/plan.html"
                  delivers="C-migrate" honors="G-schema-strict,G-json-default,G-offline-check,G-fast-sync">
           <md><script type="text/plain">**Migrate:** read `skills-lock.json` → lock (`state: unresolved`) + `skills.yaml` with version intent preserved from each ref; per-source handling incl. the local split; `--dry-run`/`--from`; additive (never touches the vercel lock). **Hooks:** pre-commit `sync --check` + `lint`, post-merge/checkout `sync --locked`, optional pre-push `update --check` — using the lock's file-ref reverse index (doc → skills).</script></md>
         </pd-task>
