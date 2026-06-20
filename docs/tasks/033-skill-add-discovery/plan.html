@@ -1,0 +1,726 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>033: skill-add-discovery</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "033",
+    "name": "skill-add-discovery",
+    "epic": "004-remote-skill-management",
+    "depends-on": ["032", "009"],
+    "status": "planning",
+    "created": "2026-06-20"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="033: skill-add-discovery" status="draft" pr="pending" generated="2026-06-20">
+
+    <pd-tab name="Requirements">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Epic 004 (remote-skill-management) replaces the `npx skills` shell-out with a native
+Go pipeline. Task T1 (032) settled the checked-in **schemas** (`skills.yaml` /
+`lock.json` / `manifest.json`); task T2 (009) built the **security-critical fetch
+substrate** — the canonical-identity git cache, URL parse/canonicalize/credential-reject
+primitive, transport allow-list, machine-local trust, and the cache's
+`Resolve`/`Realize`/`Extract` API. But nothing yet turns a thing a user *types* —
+`mistakenot/skills`, a full URL, an SSH ref, or a browser deep link — into a
+resolved, locked dependency.
+
+There is no native `auto skill add`: today `auto skill sync` still shells out to
+`npx skills add ./skills …` (`auto-skill/internal/cli/sync.go`). T3 is the
+**`add` command**: it normalizes every source surface form to one descriptor,
+resolves the requested version to a commit through the cache, discovers which
+skills a repo exposes (handling cross-container duplicates and divergence),
+`git archive`s the chosen subpaths, and writes the `lock.json` entries +
+`skills.yaml` stubs. It consumes T2's cache and T1's schemas; it does **not**
+render into output targets (that is T4's sync/render engine).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **Source normalization** — turn every accepted input form into one canonical
+  descriptor `<host>/<repo-path>` (+ optional `ref` + `subpath`), where
+  `<repo-path>` is the full ordered path (nested GitLab subgroups nest correctly):
+  - bare `owner/repo` → default host `github.com`
+  - `host/path` (scheme inferred), full `https://…` URL (trailing `.git`/`/` optional)
+  - SSH (`git@host:owner/repo.git`, `ssh://…`) — generic git fallback for any host
+  - browser deep links — GitHub `/tree/<ref>/<subpath>` and GitLab `/-/tree/<ref>/<subpath>`
+    — split via the **longest-resolving-ref** algorithm (candidate ref prefixes
+    checked against the repo's refs; longest that resolves wins, remainder is the
+    subpath; ambiguous/offline → hard error requiring explicit `--version` + `--path`).
+  - **Reject credential-bearing URLs at parse** (userinfo / token query params) —
+    reuse T2's `containsCredentials`/`CanonicalizeURL` primitive (G-cred-hygiene);
+    delegate transport-scheme validation to T2's allow-list (G-transport).
+- **Skill discovery within a source** — separate *where to look* from *which to take*:
+  - **Discovery roots, priority order:** (1) explicit `--path <dir>` (repeatable) or
+    the deep-link `<subpath>` — only those scanned; (2) the default container scan —
+    repo root (if it has `SKILL.md`), then `skills/`, then agent dirs
+    (`.agents/skills/`, `.claude/skills/`, …), each walked one level for the flat
+    layout (`skills/<name>/SKILL.md`) plus one extra level for catalog layouts
+    (`skills/<category>/<name>/SKILL.md`), with a shallower `SKILL.md` **shadowing**
+    anything nested under it; (3) `--full-depth` recursive fallback (auto when the
+    default scan finds nothing, or when forced).
+  - **Cross-container dedupe by name** — same-named copies collapse **only when their
+    full tree digests are identical** (prefer `skills/`, then root, then an agent dir).
+    **Divergent** same-named copies are a **hard error** listing each path + digest,
+    requiring explicit `--path` — never a silent pick.
+  - **Invalid upstream names** — a discovered name failing `^[a-z0-9]+(-[a-z0-9]+)*$`
+    is rejected (never silently slugified): `--list` flags it "needs `--as`"; import
+    is refused unless a valid `--as <name>` is given (G-schema-strict).
+- **`add` pipeline** — parse source → resolve `version`→commit via the cache (clone
+  if absent, through the trust gate) → discover → `git archive` each chosen skill's
+  subpath → write `lock.json` entries (`state: resolved`) + `skills.yaml` stubs.
+  Rendering into targets is **delegated to sync (T4)**; `add` behaves as `--no-sync`
+  until T4 lands.
+- **Flags** — `--skill` (repeatable / `'*'`, exact-match), `--path` (repeatable),
+  `--list` (preview + exit), `--full-depth`, `--version` (overrides a deep-link ref),
+  `--as` (single-skill only — hard error with a multi-skill add), `--no-sync`.
+- **Local-source split** — a local **git repo** → lock entry `local: true`
+  (non-portable; `url` is a machine path), pinned to a commit like any source; a
+  local **non-git directory** → **imported** into `./skills/` as an authored skill
+  (no commit to pin), under the **same archive-safety policy** as remote extraction
+  (reject escaping symlinks/special files, file-count + size limits, source/dest
+  containment; existing `./skills/<name>` is a collision unless `--force`).
+- **CLI conventions** — JSON-default output (payload on stdout, diagnostics on
+  stderr); data-listing (`--list`) returns valid results even when some are invalid,
+  exiting non-zero if any error occurred; every hard error carries a remediation hint.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Rendering + sync (T4)** — no `text/template` rendering, no `manifest.json`
+  writing, no target writes (`.claude/skills`, `.agents/skills`), no `content_hash`/
+  `skill_version` computation, no journal. `add` writes the lock + `skills.yaml` stub
+  and treats rendering as delegated to `sync` (i.e. behaves as `--no-sync`). The
+  `--no-sync` flag is **accepted now** so the surface is stable; the post-add
+  auto-sync invocation is wired in T4.
+- **Cache internals (T2 / 009)** — the bare blobless clone, canonical-identity path
+  encoding, archive-extraction entry validation + resource limits, `CommitPresent`/
+  offline checks, transport allow-list, credential rejection primitive, and
+  machine-local `trust.json` + bootstrap gate are all owned by T2. T3 **calls** the
+  cache's `Resolve`/`ResolveRef`/`Realize`/`Extract` and the URL parse/canonicalize
+  primitive — it does not reimplement them.
+- **Schemas (T1 / 032)** — the `skills.yaml` / `lock.json` / `manifest.json` Go types,
+  strict parsers, and `validate()` functions are owned by T1. T3 **writes** lock
+  entries and `skills.yaml` stubs through those types and re-validates with the shared
+  validators; it does not redefine the schemas.
+- **`update` verb / `auto_update` floating** — re-resolving floating specs to newer
+  upstream commits is T4. `add` resolves the requested `--version` once.
+- **Inspection triad / deprecations (T6)** — `list`/`describe`/`get`, `source`/`target`
+  sub-resources, `ls` removal. (`add --list` is a preview of *discovery*, not the
+  resource `list` command.)
+- **Migration (T7)** — translating `skills-lock.json` into the new lock; `add` is the
+  primitive migration will call, but the `migrate` command itself is out of scope.
+- **Prune / adopt / receipts (T5)** — no deletion authority, no foreign-skill handling
+  beyond the import collision rule.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Resolved with best-judgment defaults (orchestrator authorized fully autonomous
+resolution; the epic + design doc settle the rest). Each is recorded so a reviewer
+can override.
+
+- [x] **Does `add` render into output targets, or stop at the lock + stub?** →
+  **Stop at the lock + `skills.yaml` stub; rendering is delegated to `sync` (T4).**
+  The render-into-targets step belongs to the sync/render engine, which is not built
+  yet. `add` writes the lock entries (`state: resolved`) + `skills.yaml` stubs and
+  behaves as `--no-sync` until T4 lands; the `--no-sync` flag is accepted now so the
+  CLI surface is stable, and the post-add auto-sync call is wired in T4. *Affects
+  acceptance criteria:* the design's `add` step says "(unless `--no-sync`) render into
+  every output target" and the C-loop transcript shows `rendered into .claude/skills,
+  .agents/skills` — that rendered-output line is a **T4** acceptance criterion, not
+  T3's. T3's ACs assert the lock + stub are written correctly and that (when T4 is
+  absent) no target writes occur. *Rationale:* T3 `depends-on` T2, not T4; the epic
+  build order puts native sync/render strictly after `add`.
+
+- [x] **What is the `skills.yaml` "stub" `add` writes?** → A per-skill entry under
+  `skills.<name>` carrying the **intent** only — the resolved `version` spec it was
+  added at (so a later `update`/`sync` knows the floating policy) and an empty/default
+  `replacements` map the user then customizes (per the C-loop "edit replacements +
+  file-refs in skills.yaml" step). Identity (`source`/`url`/`commit`/`subpath`/`state`)
+  goes in `lock.json`, never `skills.yaml` (the load-bearing seam). *Rationale:* mirrors
+  T1's split — `skills.yaml` is intent, `lock.json` is dependency identity.
+
+- [x] **Default `version` when none is given (and no deep-link ref)?** → **`latest`**
+  (the design's default version policy; `skills.yaml shared.version` default). `add`
+  resolves `latest` to the default branch HEAD commit via the cache and records the
+  resolved `commit` + the `latest` `version_spec`. *Rationale:* matches the design's
+  `--version latest | <tag> | <sha> | branch:<name>` default and T1's `shared.version:
+  latest` scaffold default.
+
+- [x] **How does the longest-resolving-ref algorithm get the ref list — `ls-remote`
+  before clone, or after clone?** → **Prefer the cache.** If the repo is already
+  cached, enumerate refs locally; otherwise use T2's `LsRemote` primitive (a network
+  op gated by trust) to get candidate refs before committing to a full clone, then
+  clone/realize the winning commit. The longest candidate prefix that resolves to a
+  real ref wins; the remainder is the subpath. Nothing resolves (offline / genuinely
+  ambiguous) → hard error requiring explicit `--version` + `--path`. *Rationale:*
+  reuses T2's `ResolveRef`/`LsRemote` (Out-of-Scope §009 names `ResolveRef(ref) (sha,
+  error)` as the low-level primitive); avoids a wasted full clone on a bad deep link.
+
+- [x] **`--skill` matches nothing in scope — error or empty add?** → **Hard error**
+  listing what *was* found in scope (remediation per repo convention). Likewise a
+  `--path` scoping to a folder with no discoverable skills is an error. *Rationale:*
+  the design states "a `--skill` that matches nothing in scope is a hard error that
+  lists what *was* found"; silent no-ops violate the fail-fast CLI convention.
+
+- [x] **Re-adding an already-locked skill (name/source collision in `lock.json`)?** →
+  **Idempotent re-resolve, not a duplicate.** Re-`add`ing the same skill from the same
+  source updates that lock entry's resolved commit to the requested version and leaves
+  the `skills.yaml` stub's user customizations intact (re-add never clobbers
+  `replacements`). A *different* source resolving to the **same local skill name** is a
+  hard error (use `--as` to disambiguate). *Rationale:* `add` is the lock-advancing
+  verb for a single dep; clobbering authored intent would violate "never mutate skills
+  the tool doesn't own" in spirit. Recorded for the planner; the exact reconcile path
+  with `update` (T4) is noted there.
+
+- [x] **Does `add` clone into the cache through the trust gate, or assume trust is
+  pre-approved?** → **Through the gate.** Any fetch (`LsRemote`, `Clone`, `Realize`)
+  goes through T2's trust gate: interactive approval under a TTY, fail-closed in
+  CI/non-TTY unless `--trust-requested`/`AUTO_SKILL_TRUST_REQUESTED=1`. `add` does not
+  re-implement trust; it surfaces T2's fail-closed error with the endpoints to approve.
+  *Rationale:* G-transport — the cache can never be driven without an approved endpoint;
+  `add` inherits the gate for free.
+
+- [x] **Where does the source-form parser live — reuse T2's primitive or a new layer?**
+  → **A new T3 layer (`internal/source` / `skill.ParseSource`) that calls T2's
+  `CanonicalizeURL`/transport-validate/credential-reject primitive.** T2 owns the
+  security boundary (per 009's resolved question); T3 owns the higher-level surface-form
+  normalization (bare `owner/repo`, deep-link splitting, local-source detection) on top
+  of it. *Rationale:* 009 explicitly scopes "owner/repo / deep-link / local source form
+  normalization" to T3 while owning the URL primitive in T2.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Library + CLI task — verification is **Go unit + integration tests** in `auto-skill`,
+no browser. The product is *parsing + discovery decisions*, so the **rejection and
+disambiguation paths are the product**: every hard-error and divergence path gets
+adversarial table-test coverage asserting the **exact** `ValidationError.Code`/`Field`
+or a typed sentinel error — not just "errored".
+
+- **Source parsing (`internal/source`)** — table tests over `ParseSource`: every input
+  form (`owner/repo`, `host/path`, `https://…`, `git@host:…`, `ssh://…`, deep links)
+  normalizes to one descriptor `<host>/<repo-path>` (+ ref + subpath); nested GitLab
+  subgroups preserve the full ordered path (no owner/repo assumption); trailing
+  `.git`/`/` stripped, host lowercased, path preserved. Credential-bearing and
+  unsupported-transport forms are rejected via T2's primitive with the exact code.
+  Deep-link splitting is tested against a **fake ref-resolver** (no network): the
+  longest candidate prefix that resolves wins, remainder is subpath; nothing resolves
+  → hard error requiring `--version` + `--path`. GitHub `/tree/` and GitLab `/-/tree/`
+  both covered.
+- **Discovery (`internal/discovery`)** — table tests over an **on-disk fixture tree**
+  (a temp dir mimicking an extracted repo): discovery-root priority (`--path` /
+  deep-link subpath > default container scan > `--full-depth`); the one-level flat +
+  one-extra-level catalog walk; shallower-`SKILL.md`-shadows-nested; cross-container
+  dedupe collapsing **only digest-identical** trees (prefer `skills/` > root > agent
+  dir); **divergent** same-named copies → hard error listing paths + digests; invalid
+  upstream name flagged "needs `--as`" and rejected without it.
+- **Add pipeline (`internal/add`)** — integration tests against a **real `git`
+  `file://` fixture** (a temp repo with a small skill tree, committed) driving the
+  cache: parse → resolve `latest`→commit → discover → extract → write `lock.json`
+  (`state:resolved`) + `skills.yaml` stubs. Assert no target writes occur (behaves as
+  `--no-sync`); `--list` previews + exits writing nothing; re-add is an idempotent
+  re-resolve that preserves authored `replacements`. Local-source split: a local git
+  repo → `local:true` lock entry; a non-git dir → imported into `./skills/` under the
+  archive-safety policy (escaping symlink/special file/oversized → rejected; existing
+  `./skills/<name>` → collision unless `--force`).
+- **CLI integration (`internal/cli`)** — extend `cli_integration_test.go`: `add`
+  against an isolated `HOME` + `--root` + a `file://` fixture; assert JSON-default
+  stdout (parseable payload only), diagnostics on stderr, `--text` human output,
+  fail-fast flag conflicts (`--as` with a multi-skill add), and exit-non-zero on a
+  hard error. Trust fail-closed: a non-TTY run against an unapproved endpoint fails
+  closed listing endpoints to approve; `--trust-requested` opts in.
+- **Discipline** — `go build ./...` + `go test ./...` green in `auto-skill` (and
+  `auto-shared` if touched) after each file. **Zero new runtime deps** (reuse
+  `auto-shared`, stdlib, the existing `yaml.v3`). Tests shelling to real `git` skip
+  cleanly when `git` is absent.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage map">
+        <pd-mermaid caption="Testing layers — parse + discover are pure/fixture-driven; the pipeline is real-git integration">
+flowchart TB
+  src["Unit: source.ParseSource\nall input forms → one descriptor\ncreds/transport rejected · deep-link split (fake resolver)"]
+  disc["Unit: discovery (on-disk fixture tree)\nroots priority · catalog walk · shadowing\ndigest dedupe · divergence error · invalid-name"]
+  pipe["Integration (real git, file:// fixture):\nadd pipeline — parse→resolve→discover→extract→write lock+stub\nno target writes · --list preview · re-add idempotent · local split"]
+  cli["CLI: add via NewRootCmd\nJSON-default · stderr diagnostics · flag conflicts\ntrust fail-closed · exit codes"]
+  src --> pipe
+  disc --> pipe
+  pipe --> cli
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="Every source surface form normalizes to one canonical descriptor" phases="1" tests="auto-skill/internal/source/source_test.go">
+          <md><script type="text/plain">
+**Given** the inputs `mistakenot/skills`, `github.com/mistakenot/skills`,
+`https://github.com/mistakenot/skills(.git)(/)`, and `git@github.com:mistakenot/skills.git`,
+**When** each is run through `ParseSource`,
+**Then** all yield the **one** descriptor `github.com/mistakenot/skills` (bare
+`owner/repo` defaults host `github.com`; scheme inferred when omitted; trailing
+`.git`/`/` stripped; host lowercased, path preserved); a nested GitLab path
+`gitlab.com/acme/platform/skills` preserves the **full ordered repo-path** (no
+owner/repo assumption); and the descriptor's `<host>/<repo-path>` matches the cache
+identity and the lock `source` field byte-for-byte.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="Credential-bearing and unsupported-transport sources are rejected at parse" phases="1" tests="auto-skill/internal/source/source_test.go">
+          <md><script type="text/plain">
+**Given** a source URL with userinfo (`https://user:token@github.com/o/r`) or a token
+query param, or an unsupported/helper/option-like transport (`ext::…`, a leading `-`,
+unknown scheme),
+**When** it is parsed,
+**Then** parsing **fails before any fetch** with the exact code (`credentials_in_url`
+for secrets, `unsupported_transport` for bad schemes) carrying a remediation hint
+(use the git credential helper / approved scheme); the credential check is T2's
+shared `ContainsCredentials` (the same helper `ValidateLock` uses); and no
+credential text ever reaches the canonical URL stored in the lock.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="Browser deep links split by longest-resolving-ref" phases="1" tests="auto-skill/internal/source/source_test.go">
+          <md><script type="text/plain">
+**Given** a GitHub `…/tree/<ref>/<subpath>` or GitLab `…/-/tree/<ref>/<subpath>` deep
+link where `<ref>` may contain slashes (e.g. `tree/feature/x/skills/foo`),
+**When** the deep link is parsed against the repo's ref set,
+**Then** the **longest candidate prefix that resolves to a real ref wins** and the
+remainder becomes the subpath (so `feature/x` is chosen over `feature` when both could
+match); if **nothing resolves** (offline or genuinely ambiguous) it is a **hard error**
+requiring explicit `--version` + `--path` (with that remediation in the message); an
+explicit `--version` **overrides** a deep-link ref. The ref set comes from the cache
+(local refs if cached, else T2's `LsRemote` behind the trust gate) — the split logic
+is unit-tested against a fake resolver with no network.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Version resolves to a commit through the cache and trust gate" phases="3" tests="auto-skill/internal/add/add_test.go">
+          <md><script type="text/plain">
+**Given** a parsed source and a `--version` spec (default `latest`),
+**When** `add` resolves it,
+**Then** the spec is grammar-checked via `ValidateVersionSpec`, then resolved to a
+**concrete commit SHA** via the cache (`latest` → default-branch HEAD; `tag:`/`branch:`/
+`commit:` per the cache's `ResolveRef`), the commit is `Realize`d so extraction is
+local; the lock entry records the resolved `commit` **and** the `version_spec`
+(`state:resolved`). Any fetch (`LsRemote`/`Clone`/`Realize`) passes through T2's trust
+gate: under a non-TTY with an unapproved endpoint it **fails closed** listing the
+endpoints to approve, unless `--trust-requested`/`AUTO_SKILL_TRUST_REQUESTED=1` is set.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="Discovery roots are honored in priority order with the catalog-aware walk" phases="2" tests="auto-skill/internal/discovery/discovery_test.go">
+          <md><script type="text/plain">
+**Given** an extracted repo tree,
+**When** discovery runs,
+**Then** an explicit `--path <dir>` (repeatable) or a deep-link `<subpath>` scopes the
+scan to **only** those folders; otherwise the **default container scan** looks at repo
+root (if it has `SKILL.md`), then `skills/`, then agent dirs (`.agents/skills/`,
+`.claude/skills/`, …), walking each **one level** for the flat layout
+(`skills/<name>/SKILL.md`) and **one extra level** for catalog layouts
+(`skills/<category>/<name>/SKILL.md`), with a shallower `SKILL.md` **shadowing**
+anything nested beneath it; `--full-depth` (forced, or **auto** when the default scan
+finds nothing) recurses the whole tree.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Cross-container dedupe collapses only digest-identical trees; divergence is a hard error" phases="2" tests="auto-skill/internal/discovery/discovery_test.go">
+          <md><script type="text/plain">
+**Given** the same skill name discovered in multiple containers (e.g. `skills/foo`,
+`.claude/skills/foo`, `.agents/skills/foo`),
+**When** discovery dedupes by name,
+**Then** copies collapse to one **only when their full tree digests are identical**
+(preference order `skills/` > root > an agent dir); if any same-named copies have
+**diverged**, discovery is a **hard error** that lists each path + its digest and
+requires an explicit `--path` to choose — it **never** silently picks one.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="Invalid upstream names are rejected with --as remediation; --as is single-skill only" phases="2,3,4" tests="auto-skill/internal/discovery/discovery_test.go,auto-skill/internal/add/add_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+**Given** a discovered skill whose upstream name fails `^[a-z0-9]+(-[a-z0-9]+)*$`,
+**When** it is listed or imported,
+**Then** it is **never silently slugified**: `--list` marks it "needs `--as`" and
+import is **rejected** with `invalid_skill_name` unless a valid `--as <name>` is
+supplied; `--as` is valid **only when exactly one skill is selected/discovered** —
+pairing it with a multi-skill add is a fail-fast hard error; a name `lint`/`sync`
+would later refuse is never advertised or written.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="Skill selection: default all, exact --skill, composing --path, --list preview" phases="3,4" tests="auto-skill/internal/add/add_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+**Given** a discovered set,
+**When** selection flags are applied,
+**Then** with no `--skill` **all** discovered skills are taken (same in TTY and
+`-y`/non-interactive — no prompt); `--skill <name>` is an **exact** match (repeatable,
+or `'*'` for all); `--path` scopes the search and `--skill` filters the results (they
+compose); a `--skill` (or `--path`) that matches **nothing in scope** is a hard error
+that lists what *was* found; and `--list` prints the discovered set (with any
+"needs `--as`" flags) and **exits without writing** lock, stub, or targets.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="add writes lock entries + skills.yaml stubs and stops before rendering" phases="3" tests="auto-skill/internal/add/add_test.go">
+          <md><script type="text/plain">
+**Given** a successful parse → resolve → discover,
+**When** `add` completes (the render step delegated to sync/T4 — `add` behaves as
+`--no-sync`),
+**Then** for each chosen skill it `git archive`s the subpath through the cache's safe
+`Extract` and writes a `lock.json` entry `{source,url,version_spec,ref,commit,subpath,
+state:resolved}` (validated by `ValidateLock`; **no derived render fields**) plus a
+`skills.yaml` stub (`skills.<name>.{version, replacements:{}}`, validated by
+`ValidateSkillsYAML`); **no output target** (`.claude/skills`, `.agents/skills`) is
+written and **no `manifest.json`** is produced; re-adding the same skill from the same
+source is an **idempotent re-resolve** that updates the locked commit and **preserves**
+the stub's authored `replacements`; a different source resolving to an existing local
+skill name is a hard error (use `--as`).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-10" title="Local sources split into a local-git lock entry or a safe ./skills import" phases="3" tests="auto-skill/internal/add/add_test.go">
+          <md><script type="text/plain">
+**Given** a local path source,
+**When** `add` handles it,
+**Then** a local **git repo** is resolved to a commit and locked with `local:true`
+(its `url` is the machine path; non-portable — reported missing on other checkouts);
+a local **non-git directory** is **imported** into `./skills/` as an authored skill
+(no lock entry), applying the **same archive-safety policy** as remote extraction
+(reject escaping symlinks / special files, enforce file-count + total-size limits,
+verify source/destination containment); an existing `./skills/<name>` is a **collision**
+refused unless `--force`.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-11" title="JSON-default output contract and remediation hints hold across add" phases="4" tests="auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+**Given** any `add` invocation (success, `--list`, or a hard error),
+**When** it runs,
+**Then** **stdout is a single parseable JSON payload** and nothing else; diagnostics,
+progress, and errors go to **stderr**; `--text`/`--format text` produces human-readable
+output; invalid flag combinations (e.g. `--as` with multiple skills) **fail fast** via
+the standard cobra error; every hard error carries a concrete **remediation hint**; and
+the command **exits non-zero** on any error even when it emitted partial valid results
+(e.g. `--list` over a tree with one invalid-named skill lists the valid ones and exits
+non-zero).
+          </script></md>
+        </pd-ac>
+
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **No render/sync coverage** — target writes, `manifest.json`, `content_hash`/
+  `skill_version`, and the `--no-sync`→auto-sync wiring are **T4**; T3 asserts only that
+  `add` stops at the lock + stub (no target writes). The post-add auto-sync call is
+  verified in T4.
+- **Cache internals not re-tested** — clone/realize/extract-safety, canonical-identity
+  encoding, offline `CommitPresent`, and the trust gate are **T2's** ACs; T3 tests
+  exercise them only through the pipeline (real-git `file://` fixture) and assert T3's
+  *use* of them (resolved commit recorded, extract called, fail-closed surfaced), not
+  their internal correctness.
+- **Schema correctness not re-tested** — `ValidateLock`/`ValidateSkillsYAML`/
+  `ValidateVersionSpec` correctness is **T1's**; T3 asserts it *writes valid files that
+  pass* those validators, not the validators themselves.
+- **Live TTY trust prompt** — the interactive `Approve <endpoint>? [y/N]` wording is not
+  snapshot-tested (high churn, low value); T3 tests the deterministic non-TTY
+  fail-closed branch and the `--trust-requested` opt-in.
+- **Network-dependent deep-link resolution** — exercised against a fake ref-resolver and
+  a `file://` fixture; real-host `ls-remote` behavior is not in CI (no network).
+- **Concurrent `add`** — single-invocation; the per-repo cache file-lock is T2's
+  concern. Parallel `add` of distinct sources is not a target scenario here.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Add the native `auto skill add` as **three new leaf packages** plus an **orchestrator**
+and a **cobra command**, all in `auto-skill/internal/`, layered so the security boundary
+(T2) and schemas (T1) stay authoritative and T3 only composes them:
+
+1. **`internal/source` — surface-form parser.** `ParseSource(input, opts)` turns any
+   accepted string into a `Source` descriptor (`Host`, `RepoPath []string`, `Ref`,
+   `Subpath`, `Local bool`, canonical `URL`). It calls T2's
+   `transport.CanonicalizeURL`/`ContainsCredentials` for credential + transport
+   rejection (never reimplementing them), handles the bare-`owner/repo`→`github.com`
+   default, infers scheme, strips trailing `.git`/`/`, preserves the full ordered repo
+   path, and detects local paths (`./`, `/abs`, `file:`). Deep-link `/tree/`,
+   `/-/tree/` splitting is a `SplitDeepLink(candidate, RefResolver)` function taking a
+   small `RefResolver` interface (longest-resolving-ref) so it is unit-testable without
+   the network; the cache supplies the real resolver.
+
+2. **`internal/discovery` — skill discovery within an extracted/working tree.**
+   `Discover(root, opts)` implements the discovery-root priority, the one-level flat +
+   one-extra-level catalog walk, shallower-shadows-nested, cross-container digest dedupe
+   (collapse only identical trees; divergence → typed error with paths+digests), and
+   invalid-upstream-name flagging. It reads each candidate's declared name from
+   `SKILL.md` frontmatter with a minimal local parser (a leaf — no dependency on the
+   `skill` package), and computes a tree digest for dedupe. Returns `[]Discovered`
+   (name, relpath/subpath, digest, `NameValid bool`).
+
+3. **`internal/add` — the pipeline orchestrator.** `Run(env, opts) (Result, error)`
+   wires it together: parse → resolve `version`→commit via the cache (through the trust
+   gate) → discover (extract to a temp dir, or scan a local tree) → apply
+   `--skill`/`--path`/`--as` selection → for each chosen skill `Extract` the subpath →
+   write the `lock.json` entries (`state:resolved`) + `skills.yaml` stubs via T1's typed
+   parsers + atomic writer. Honors `--list` (preview + exit), `--no-sync` (the only mode
+   until T4), and the local-source split (git repo → `local:true` lock; non-git dir →
+   `import.go` copies into `./skills/` under the shared archive-safety predicates from
+   T2). Rendering is explicitly **delegated to sync (T4)**.
+
+4. **`internal/cli/add.go` — the cobra command.** Registers flags
+   (`--skill`/`--path` repeatable, `--list`, `--full-depth`, `--version`, `--as`,
+   `--no-sync`, `--force`, `--text`/`--format`, `--trust-requested`), enforces fail-fast
+   conflicts (`--as` + multi-skill), resolves `Env` via the existing closure, calls
+   `add.Run`, and emits JSON on stdout / diagnostics on stderr / non-zero `ExitError`
+   on failure. Registered in `root.go` alongside the existing subcommands; the npx
+   shell-out in `sync.go` is **left untouched** (T4 removes it).
+
+The design keeps each concern in a testable seam: `source` and `discovery` are pure /
+fixture-driven leaves; `add` is the only package that touches the cache and trust; the
+schemas and the security boundary remain owned by T1 and T2.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-skill/internal/source/source.go" change="add">`ParseSource` + `Source` descriptor: all surface forms → the canonical host + ordered repo-path (plus ref/subpath/local), via T2's `CanonicalizeURL`/`ContainsCredentials`; scheme inference, `.git`/`/` strip, full ordered path, local-path detection.</pd-file>
+          <pd-file path="auto-skill/internal/source/deeplink.go" change="add">`SplitDeepLink(candidate, RefResolver)` longest-resolving-ref splitter for GitHub `/tree/` + GitLab `/-/tree/`; `RefResolver` interface (cache impl + fake for tests); ambiguous/offline → typed error.</pd-file>
+          <pd-file path="auto-skill/internal/source/source_test.go" change="add">Table tests: every input form → one descriptor; nested groups; credential/transport rejection codes; deep-link split against a fake resolver (longest wins; nothing-resolves error; `--version` override).</pd-file>
+          <pd-file path="auto-skill/internal/discovery/discovery.go" change="add">`Discover(root, opts)`: root priority, flat + catalog walk, shallower-shadows-nested, digest dedupe (identical-only), divergence typed error (paths+digests), invalid-name flagging; minimal `SKILL.md` frontmatter name read + tree digest.</pd-file>
+          <pd-file path="auto-skill/internal/discovery/discovery_test.go" change="add">Fixture-tree table tests: root priority, catalog walk, shadowing, digest-identical collapse, divergence hard error, invalid-name "needs --as".</pd-file>
+          <pd-file path="auto-skill/internal/add/add.go" change="add">`Run(env, opts) (Result, error)` orchestrator: parse→resolve(commit, via cache+trust gate)→discover→select(`--skill`/`--path`/`--as`)→extract→write lock entries + skills.yaml stubs (T1 typed parsers + atomic write); `--list`/`--no-sync`; idempotent re-resolve preserving authored replacements.</pd-file>
+          <pd-file path="auto-skill/internal/add/import.go" change="add">Local-source split: git repo → `local:true` lock entry; non-git dir → import into `./skills/` reusing T2's archive-safety predicates (symlink/special/limits/containment); an existing same-named dir under `./skills/` is a collision unless `--force`.</pd-file>
+          <pd-file path="auto-skill/internal/add/add_test.go" change="add">Integration tests (real `git` `file://` fixture): full pipeline writes valid lock + stub, no target writes, `--list` preview, re-add idempotent; local git → `local:true`; non-git import + collision/`--force`; trust fail-closed.</pd-file>
+          <pd-file path="auto-skill/internal/cli/add.go" change="add">`newAddCmd(resolveEnv)` cobra command: flags + fail-fast conflicts (`--as`+multi-skill), JSON-default stdout / stderr diagnostics / `--text`, `ExitError` on failure; calls `add.Run`.</pd-file>
+          <pd-file path="auto-skill/internal/cli/root.go" change="edit">Register `newAddCmd(resolveEnv)` in `NewRootCmd`'s `AddCommand(...)` list.</pd-file>
+          <pd-file path="auto-skill/internal/cli/cli_integration_test.go" change="edit">Add `add` integration cases: JSON payload/stderr split, flag-conflict fail-fast, exit codes, trust fail-closed + `--trust-requested`, against isolated `HOME` + `--root` + a `file://` fixture.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Put the source parser in `internal/transport` (T2) instead of a new `internal/source`.**
+  Rejected: 009 explicitly scopes the URL parse/canonicalize/credential-reject
+  *primitive* to T2 and the higher-level *surface-form* normalization (bare `owner/repo`,
+  deep-link splitting, local detection) to T3. Keeping them split preserves T2 as the
+  pure security boundary and lets the cache never be driven by an un-normalized string.
+- **Fold the pipeline into the `skill` package (`internal/skill/add.go`).** Rejected: it
+  would make `skill` import `cache`/`transport`/`discovery`, and `discovery` reading
+  `SKILL.md` would risk an import cycle with `skill`. A dedicated `internal/add`
+  orchestrator imports the leaves cleanly and keeps `skill` schema-only.
+- **Render into output targets now (don't behave as `--no-sync`).** Rejected: the
+  render core + manifest + journaled commit are T4 and have no standalone value; T3
+  `depends-on` T2, not T4. `add` writes lock + stub and delegates rendering — matching
+  the epic build order. (`--no-sync` is accepted now so the surface is stable.)
+- **Silently slugify invalid upstream skill names.** Rejected by the design
+  (G-schema-strict): a name `lint`/`sync` would later refuse must never be advertised or
+  written; reject with `--as` remediation instead.
+- **Pick one copy when same-named trees diverge (precedence-only dedupe).** Rejected:
+  collapses to a possibly stale/incomplete tree; the design requires digest-identical
+  collapse and a hard error (paths+digests) on divergence.
+- **Delete the npx shell-out in `sync.go` here.** Rejected: replacing `sync` with the
+  native render/sync pipeline is T4; removing it in T3 would leave `sync` broken between
+  tasks.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions">
+        <pd-decisions></pd-decisions>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Build two pure/fixture-driven leaf packages in parallel (`source` parser, `discovery`),
+then the `add` orchestrator that wires them to T2's cache + trust and T1's schemas, then
+the cobra command + CLI integration. Each phase is one subagent, builds green, and ends
+with tests + `go build ./...` + a commit.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-dag caption="Phase dependency graph"></pd-dag>
+      </pd-section>
+
+      <pd-section id="phases" title="Phases">
+        <pd-stepper>
+
+          <pd-phase n="1" title="Source-form parser + deep-link splitter" files="auto-skill/internal/source/source.go,auto-skill/internal/source/deeplink.go,auto-skill/internal/source/source_test.go" status="todo">
+            <md><script type="text/plain">
+Create `internal/source` — the surface-form normalizer that sits on top of T2's
+transport primitive.
+
+**Steps**
+1. Define `type Source struct { Host string; RepoPath []string; Ref, Subpath string;
+   Local bool; URL string }` and `type ParseOptions struct { Version, Paths …; … }` in
+   `source.go`.
+2. Implement `ParseSource(input string, opts ParseOptions) (Source, error)`: detect
+   local paths first (`./`, `../`, absolute, `file:`) → `Local:true` (no transport
+   call); otherwise normalize — bare `owner/repo` → host `github.com`; `host/path`
+   scheme-inferred; full URL + SSH (`git@host:…`, `ssh://…`) routed through T2's
+   `transport.CanonicalizeURL` (which rejects `credentials_in_url` /
+   `unsupported_transport`); strip trailing `.git`/`/`; lowercase host; keep the
+   **full ordered** repo path (no owner/repo assumption).
+3. In `deeplink.go` define `type RefResolver interface { Refs() ([]string, error) }`
+   (or `Resolves(prefix string) bool`) and `SplitDeepLink(host string, segs []string,
+   r RefResolver) (ref, subpath string, err error)` implementing **longest-resolving-ref**
+   for GitHub `/tree/<ref>/<subpath>` and GitLab `/-/tree/<ref>/<subpath>`: try the
+   longest candidate ref prefix first, remainder = subpath; nothing resolves → typed
+   error demanding `--version` + `--path`. An explicit `opts.Version` overrides any
+   deep-link ref.
+4. **Verify:** `source_test.go` table tests — every input form → one descriptor; nested
+   GitLab path preserved; credential/transport rejection codes; deep-link split against
+   a fake `RefResolver` (longest wins, nothing-resolves error, `--version` override).
+5. **Commit:** `go build ./... && go test ./internal/source/...` green →
+   `feat(033): source-form parser + deep-link splitter`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="2" title="Skill discovery within a tree" files="auto-skill/internal/discovery/discovery.go,auto-skill/internal/discovery/discovery_test.go" status="todo">
+            <md><script type="text/plain">
+Create `internal/discovery` — pure tree-walk discovery over an extracted (or local)
+repo directory. Independent of phase 1.
+
+**Steps**
+1. Define `type Discovered struct { Name, Subpath, Digest string; NameValid bool;
+   Container string }`, `type Options struct { Paths []string; FullDepth bool }`, and
+   `Discover(root string, opts Options) ([]Discovered, error)`.
+2. Implement discovery-root priority: explicit `opts.Paths` (repeatable) → only those;
+   else default container scan — repo root (if it has `SKILL.md`), then `skills/`, then
+   agent dirs (`.agents/skills/`, `.claude/skills/`, …); walk each **one level** (flat
+   `skills/<name>/SKILL.md`) **plus one extra level** (catalog
+   `skills/<category>/<name>/SKILL.md`); a shallower `SKILL.md` **shadows** anything
+   nested under it; `opts.FullDepth` (forced, or **auto** when the default scan finds
+   nothing) recurses.
+3. Read each candidate's declared name from `SKILL.md` frontmatter with a minimal local
+   parser (leaf — no `skill` import); compute a stable full-tree digest (sha256 over
+   sorted relpath+content) for dedupe.
+4. Cross-container dedupe by name: collapse copies **only when digests are identical**
+   (prefer `skills/` > root > agent dir); on divergence return a typed
+   `DivergenceError` listing each path + digest (requires `--path`). Flag names failing
+   `^[a-z0-9]+(-[a-z0-9]+)*$` as `NameValid:false` (the regex from `skill.skillNameRE`,
+   reused/relocated — single source of truth).
+5. **Verify:** `discovery_test.go` fixture-tree table tests — root priority, catalog
+   walk, shadowing, digest-identical collapse, divergence hard error, invalid-name flag.
+6. **Commit:** `go build ./... && go test ./internal/discovery/...` green →
+   `feat(033): skill discovery (roots, dedupe, divergence)`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="3" title="add pipeline orchestrator + local split" files="auto-skill/internal/add/add.go,auto-skill/internal/add/import.go,auto-skill/internal/add/add_test.go" status="todo" depends-on="1,2">
+            <md><script type="text/plain">
+Create `internal/add` — wires phases 1–2 to T2's cache/trust and T1's schemas. Depends
+on both leaves; uses the merged 032 (`Lock`/`SkillsYAML`/`ValidateVersionSpec`) and 009
+(cache/transport/trust) surfaces.
+
+**Steps**
+1. Define `type Options struct { Source string; Skills, Paths []string; List, FullDepth,
+   NoSync, Force, TrustRequested bool; Version, As, Format string }` and
+   `Run(env skill.Env, opts Options) (Result, error)`.
+2. Parse via `source.ParseSource`; for a remote source resolve `Version` (default
+   `latest`) through the cache: grammar-check with `ValidateVersionSpec`, open the repo
+   by canonical identity (clone bare+blobless if absent — **through the trust gate**;
+   surface T2's fail-closed error verbatim), `ResolveRef`→SHA, `Realize`. Supply the
+   cache as the `source.RefResolver` for deep-link splitting.
+3. Discover: `Extract` the repo (or scoped subpath) to a temp dir and run
+   `discovery.Discover`; apply selection — default all; `--skill` exact match
+   (repeatable/`'*'`); `--path` scopes + `--skill` filters; a match-nothing is a hard
+   error listing what was found; `--as` valid **only** for a single selected skill
+   (fail-fast otherwise); invalid upstream name rejected unless a valid `--as` is given.
+4. `--list` → emit the discovered set (with "needs --as" flags) and **return without
+   writing**. Otherwise for each chosen skill `Extract` its subpath and write the
+   `lock.json` entry (`state:resolved`, validated by `ValidateLock` — no derived fields)
+   + `skills.yaml` stub (`skills.<name>.{version, replacements:{}}`, validated by
+   `ValidateSkillsYAML`) via `config.WriteJSONFileAtomic` / the typed YAML writer. Re-add
+   = idempotent re-resolve preserving authored `replacements`; a different source →
+   existing local name is a hard error. **No target writes / no manifest** (behaves as
+   `--no-sync`; the flag is accepted now, T4 wires post-add auto-sync).
+5. `import.go` — local split: a local **git repo** → resolve a commit + `local:true`
+   lock entry; a **non-git dir** → import into `./skills/` reusing T2's archive-safety
+   predicates (reject escaping symlinks/special files, file-count + size limits,
+   source/dest containment); existing `./skills/<name>` → collision unless `--force`.
+6. **Verify:** `add_test.go` integration tests (real `git` `file://` fixture, skip if
+   `git` absent) — full pipeline writes valid lock + stub + no target writes; `--list`
+   preview; re-add idempotent; local git → `local:true`; non-git import + collision +
+   `--force`; trust fail-closed (non-TTY) + `--trust-requested` opt-in.
+7. **Commit:** `go build ./... && go test ./internal/add/...` green →
+   `feat(033): add pipeline (resolve→discover→archive→lock+stub) + local split`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="4" title="add command + CLI integration" files="auto-skill/internal/cli/add.go,auto-skill/internal/cli/root.go,auto-skill/internal/cli/cli_integration_test.go" status="todo" depends-on="3">
+            <md><script type="text/plain">
+Expose the pipeline as `auto skill add` and prove the CLI contract end-to-end.
+
+**Steps**
+1. `add.go` — `newAddCmd(resolveEnv)`: register flags `--skill`/`--path`
+   (`StringArrayVar`, repeatable), `--list`, `--full-depth`, `--version`, `--as`,
+   `--no-sync`, `--force`, `--trust-requested`, `--text`/`--format`. Fail-fast conflicts
+   via cobra before any work: `--as` with >1 `--skill` (or `'*'`), and any other
+   documented conflict.
+2. Resolve `Env` via the existing `resolveEnv()` closure; call `add.Run`; emit the
+   `Result` as JSON on `cmd.OutOrStdout()` (`skill.EncodeJSON`), diagnostics/progress on
+   `cmd.ErrOrStderr()`; `--text` → human output; return `&ExitError{Code:1, Err:…}` on
+   failure (non-zero even with partial valid `--list` results); every hard error carries
+   a remediation hint.
+3. Register `newAddCmd(resolveEnv)` in `root.go`'s `AddCommand(...)` list. Leave
+   `sync.go`'s npx shell-out untouched (T4 removes it).
+4. **Verify:** extend `cli_integration_test.go` — `add` against isolated `HOME` +
+   `--root` + a `file://` fixture: JSON payload-only stdout vs stderr diagnostics,
+   `--text`, flag-conflict fail-fast, exit codes, trust fail-closed + `--trust-requested`.
+5. **Commit:** `go build ./... && go test ./...` green in `auto-skill` →
+   `feat(033): auto skill add command + CLI integration`.
+            </script></md>
+          </pd-phase>
+
+        </pd-stepper>
+      </pd-section>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **Phase 1** → AC-1, AC-2, AC-3 (source normalization, credential/transport rejection,
+  deep-link split).
+- **Phase 2** → AC-5, AC-6, and the discovery half of AC-7 (roots/walk/shadowing,
+  digest dedupe + divergence, invalid-name flagging).
+- **Phase 3** → AC-4, AC-8, AC-9, AC-10, and the enforcement half of AC-7 (resolve via
+  cache+trust, selection, lock+stub no-render, local split, single-skill `--as`).
+- **Phase 4** → AC-11 and the CLI half of AC-7/AC-8 (JSON-default contract, flag-conflict
+  fail-fast, exit codes, trust fail-closed surfacing).
+- `go build ./...` + `go test ./...` green in `auto-skill`; zero new runtime deps; the
+  npx `sync` shell-out is left intact for T4.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
