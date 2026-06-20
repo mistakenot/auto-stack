@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>029: auto-ui-state-refactor</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.6.0/pd-components/dist/pd.min.js" defer></script>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "029",
+    "name": "auto-ui-state-refactor",
+    "status": "planning",
+    "created": "2026-06-19"
+  }
+  </script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="029: auto-ui-state-refactor" status="pending" pr="pending" generated="2026-06-19">
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+The auto-ui SPA has **no single home for client state**. View data is scattered across
+four mechanisms with overlapping jobs:
+
+- **URL hash** (`router.js`) — navigational state (the only persisted/deep-linkable layer). *This is fine and stays.*
+- **Component-local hooks** — each view independently `call()`s and owns its own slice (`Explorer`→projects, `DocTree`→docs, `DocContent`→markdown). No shared cache: sibling and re-mounted views re-fetch from scratch, and all of this state is lost on navigation.
+- **`rpc.js` singleton** — the shared WS connection + pub/sub. Each interested component separately subscribes to `doc.changed` and parses the envelope.
+- **`uistate.js`** — a *non-reactive, write-only mirror* that exists **solely** as a workaround: `/debug` unmounts the explorer, so it can't read the live components, so components copy a snapshot here for `/debug` to read.
+
+There's no clean line between **state management** and **display**. Components are
+half data-layer (fetching, subscribing, deriving) and half presentation. This is
+serviceable today but resists the more complex view-model transforms we want next.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+Introduce **one state-handling hook** as the single source of normalised state, and
+make the Preact components **presentational** — they receive state + actions and render.
+
+- **`useAppStore()`** — one **module-singleton** store (state + reducer + pub/sub) surfaced by a `useStore()` hook, so components read slices directly with **no Context/provider**. See **D-5** (supersedes D-1's Context wiring).
+- **Normalised state** as the single source of truth: `{ conn, projects, docsByProject, selection, events }`. Views select the slice they need; no view fetches its own data anymore.
+- **Centralise the connection wiring**: the store owns the `rpc.onStatus` subscription and a **single app-root `doc.changed` subscription** that dispatches into state — replacing the per-component subscriptions in `tree.js` and `content.js`.
+- **Safe cleanups that fall out of the refactor**: a shared `docsByProject` cache (no duplicate re-fetch on remount), and **`uistate.js` deleted** — its `/debug` snapshot becomes a selector over the live store (which now survives route changes because it lives at the App root, above the view switch).
+- **A clear seam for later view-model transforms**: components read via selectors, so derived/computed views (grouping, filtering, multi-host fan-in) can grow in the store/selector layer without touching display code. *Open the door — don't build the transforms yet.*
+- **Behaviour-preserving**: routing, liveness, `/debug`, and reconnect self-heal behave identically; the existing 025/026 agent-browser conformance harnesses pass unchanged.
+        </script></md>
+
+        <pd-mermaid caption="Target data flow — state in one hook, components render">
+flowchart LR
+  WS[rpc.js singleton<br/>call / on / onStatus] --> Store[store.js singleton<br/>normalised state + reducer]
+  Hash[URL hash<br/>navigational state] --> Store
+  Store --> Hook[useStore selector hook]
+  Hook --> Explorer
+  Hook --> DocTree
+  Hook --> DocContent
+  Hook --> Debug[Debug view<br/>reads store, not a mirror]
+  Explorer -->|actions| Store
+  DocTree -->|actions| Store
+  DocContent -->|actions| Store
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-thread anchor="goals" status="resolved" priority="p2" title="Hook name should be generic (reused across views)">
+        <pd-comment by="review">make name more generic than useExplorerStore, we will reuse this across new app views</pd-comment>
+        <pd-comment by="author">Agreed — renamed `useExplorerStore()` → `useAppStore()` throughout (Goals, the data-flow diagram, and D-1). It's the single app-wide store hook, not explorer-specific, so it carries cleanly into future app views; the `useStore()` context consumer name is already generic. Explorer-specific shaping (doc grouping, selection) stays in the selector layer, which keeps the store itself reusable. Noted in scope: the store is the reusable substrate, selectors are the per-view layer.</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="goals" status="resolved" priority="p2" title="Requirements tab still describes Context/StoreProvider, contradicting the accepted design (D-5)">
+        <pd-comment by="review">The Solution tab's D-5 (accepted) supersedes D-1 and chooses a **module-singleton store with no Context and no provider**; AC-6 explicitly requires "no Context provider". But this Requirements tab still presents Context as the plan in three places: this Goals bullet ("exposed through **Context** (`&lt;StoreProvider&gt;` at the App root)"), the "Target data flow" mermaid (the `Ctx[StoreProvider Context]` node), and the Open Questions answer ("→ `useReducer` hook + **Context** (`&lt;StoreProvider&gt;` at App root). See D-1."). A reader of Requirements alone would build the wrong thing. Update the Goals prose, the mermaid, and the Open Questions answer to reflect the module-singleton/`useStore` design (or explicitly mark them as superseded by D-5).</pd-comment>
+        <pd-comment by="author">Fixed across the Requirements tab: the Goals bullet, the "Target data flow" mermaid (the `StoreProvider Context` node is gone — now `store.js singleton → useStore hook → components`), and the Open Questions answer now all describe the module-singleton/`useStore` design and point to D-5. D-1 is also marked `superseded` (sibling thread), and the stale "useReducer store + provider" line in `context.md`'s render-lifecycle note was corrected. Requirements no longer implies Context.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Multi-host implementation** — no per-host RPC routing, no per-host connection state, no `host` dimension wired into selection. The store is *structured* so a host dimension can be added later (epic 003 is exploratory), but this task adds **no dead/unused state** for it. See D-3.
+- **`@preact/signals`** — the user asked for hooks; signals are explicitly not this pass.
+- **The view-model transforms themselves** — we leave the selector seam; we don't build grouping/filtering/fan-in logic beyond what already exists.
+- **New features or UX changes** — no visible behaviour change.
+- **Backend / RPC / server changes** — purely a `web/static/` client refactor. `doc.list` / `doc.get` / `doc.changed` wire formats are untouched.
+- **Tree grouping logic** (`groupDocs` and friends) — moves where it's *called from* may change, but the grouping algorithm itself is not redesigned here.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Resolved interactively during intake (2026-06-19):
+
+- [x] **How does the single hook expose state?** → **Module-singleton store + `useStore()` hook** (no Context/provider). See **D-5** (supersedes D-1's Context wiring).
+- [x] **Scope of behaviour change?** → Refactor **+ safe cleanups** (shared fetch cache, fold in `uistate.js`, single app-root `doc.changed` subscription). Behaviour-preserving overall. See D-2.
+- [x] **Where is the centralization line for pass 1?** → **Centralise state *and* events** — store owns the connection + `doc.changed` subscription; components become presentational; `uistate.js` deleted. See D-2.
+- [x] **Validation target?** → No persistent hosted instance exists; **reuse the 025/026 local-serve + headless agent-browser harness** (assert via `data-*` + `window.__autoui`, on both embed and `-tags dev` builds). See D-4.
+
+Resolved by author (low-stakes, reversible — flag on review to change):
+
+- [x] **Does `selection` carry a `host` slot now?** → **No.** Keep `selection = {project, path, worktree}` (today's tuple). Adding an unwired `host` field is dead state; the reducer shape makes it a one-line addition when multi-host actually lands. See D-3.
+
+Resolved in `/beta-new-solution`:
+
+- [x] **Exact file layout** → **single `store.js`** (state + reducer + `useStore` + selectors + thin actions); `docevents.js` stays a separate helper the store imports. See Solution → store-surface.
+- [x] **`docsByProject` cache invalidation** → invalidated by a `doc.changed` re-list or a reconnect, **no TTL**; reconnect self-heal preserved either way. See D-7.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions">
+        <pd-decision id="D-1" title="Single useReducer hook exposed via Context" status="superseded" by="author"
+          summary="One useAppStore() (useReducer) provided at the App root; deep nodes read via Context, no prop-drilling.">
+          <md><script type="text/plain">
+**Context:** Need a single source of normalised state that "pipes down" to a deep
+component tree (group → subgroup → leaf in `tree.js`).
+**Decision:** One `useAppStore()` hook built on `useReducer`, provided via a
+`<StoreProvider>` Context at the App root. Components call `useStore()` for the slice + actions they need.
+**Alternatives:** (a) same hook with explicit prop-drilling — rejected: threads state through every tree level; (b) `@preact/signals` — rejected: not "hooks", adds a vendored dependency.
+**Consequences:** Store state lives at the App root and survives `hashchange` re-renders and the explorer↔debug view switch (App is always the same component instance), which is what lets `uistate.js` be deleted.
+          </script></md>
+        </pd-decision>
+
+        <pd-thread anchor="D-1" status="resolved" priority="p2" title="D-1 is marked status=&quot;accepted&quot; but is superseded by D-5">
+          <pd-comment by="review">D-5 ("Module-singleton store over a Context provider") states it "Supersedes the Context mechanism of D-1", yet D-1 still carries `status="accepted"`. Two accepted decisions now assert contradictory mechanisms (Context vs no-Context). Change D-1's status to `superseded` (the hooks-not-signals call it shares with D-5 can be noted as retained) so the decision log is internally consistent.</pd-comment>
+          <pd-comment by="author">Changed D-1 to `status="superseded"`. Its body is kept verbatim as the historical record of the Context wiring chosen at intake; D-5 is the accepted decision and notes the hooks-not-signals call is retained. Log is now consistent.</pd-comment>
+        </pd-thread>
+
+        <pd-decision id="D-2" title="Centralise connection + doc.changed in the store; delete uistate.js" status="accepted" by="author"
+          summary="Store owns onStatus + one app-root doc.changed subscription; per-component subs and the uistate.js mirror are removed.">
+          <md><script type="text/plain">
+**Context:** Liveness is currently N independent `on("doc.changed")` subscribers, each
+re-parsing the envelope and mutating local state; `uistate.js` is a write-only mirror
+that exists only because the explorer unmounts on `/debug`.
+**Decision:** The store owns the `onStatus` and a **single** `doc.changed` subscription,
+dispatching into normalised state. Components render from state. `uistate.js` is deleted;
+`/debug` reads the store directly.
+**Alternatives:** Centralise data only and leave per-component `doc.changed` subs for a later task — rejected: it would keep `uistate.js` and the duplicated parsing, missing the point of the refactor.
+**Consequences:** Slightly larger blast radius (touches `tree.js`, `content.js`, `debug.js`, `explorer.js`); fully covered by the 025/026 conformance harness, which must pass unchanged.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-3" title="No host dimension in this pass" status="accepted" by="author"
+          summary="selection stays {project, path, worktree}; multi-host is exploratory (epic 003), add the slot when it lands.">
+          <md><script type="text/plain">
+**Context:** The trigger for this cleanup is anticipated multi-host work, but that
+architecture (epic 003) is still a design exploration.
+**Decision:** Keep `selection = {project, path, worktree}`. Do not add a `host` field
+or any per-host state now.
+**Alternatives:** Add a placeholder `host` slot — rejected: dead, unwired state that
+implies scope we're not delivering.
+**Consequences:** When multi-host lands, the host dimension is an additive change to a
+single reducer shape and the selector layer — exactly the seam this refactor opens.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-4" title="Validate with the 025/026 local-serve agent-browser harness" status="accepted" by="author"
+          summary="No persistent hosted instance; spin up auto ui serve on a fixture and drive headless agent-browser on embed + dev builds.">
+          <md><script type="text/plain">
+**Context:** The user asked to validate on "the dev hosted version if there is one."
+There is no persistent hosted instance.
+**Decision:** Reuse the established pattern: build the binary, run `auto ui serve` against
+a temp fixture registry (`--projects … --port 0 --ready-file`), drive headless
+`agent-browser` (`open`/`eval`/`select`/`click`), and assert via `data-*` attributes +
+`window.__autoui` counters. Run on **both** the embed and `-tags dev` builds (browser-layer
+defects are invisible to Go tests — 013 feedback).
+**Alternatives:** Stand up a long-running tailscale-served instance — rejected: more setup, not how 025/026 validated, and unnecessary for a behaviour-preserving refactor.
+**Consequences:** Concrete acceptance criteria belong in the Verification tab (`/beta-new-solution`); the existing harnesses are the regression oracle.
+          </script></md>
+        </pd-decision>
+
+        <pd-decisions></pd-decisions>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+This is a **behaviour-preserving refactor**, so the verification spine is *regression*:
+the existing browser conformance must pass **unchanged**, and a small set of **structural**
+assertions confirm the refactor actually happened (single source, deleted mirror,
+centralized subscription).
+
+**Three layers, in priority order:**
+
+1. **Existing browser conformance is the spec.** The 025 (static explorer) and 026
+   (liveness + reveal) `agent-browser` harnesses are the regression oracle. They assert via
+   `data-*` attributes + `window.__autoui` — never rendered-text diffs (a re-fetch can leave
+   the DOM identical). They must pass with **no edits to the harness**, on **both** the
+   `embed` and `-tags dev` builds (browser-layer defects are invisible to Go tests — 013
+   lesson). If a harness needs editing to pass, the refactor changed behaviour — a fail.
+
+2. **New refactor-structure conformance.** A new `agent-browser` harness asserts the things
+   the refactor adds: cross-route state survival without `uistate.js`, a single `doc.changed`
+   dispatch, no new importmap entries, warm-cache no-refetch. Same fixture/serve pattern as
+   026 (`auto ui serve --projects <fixture> --port 0 --ready-file`, drive headless
+   `agent-browser`).
+
+3. **Go tests unchanged.** The backend (server, RPC, raw route, ingest) is untouched, so
+   `go test ./...` in `auto-ui` stays green — necessary but not sufficient. In particular
+   `rpc_ingest_test.go` still pins `params.data.path`.
+
+**Coverage philosophy:** existing conformance defines "still correct"; new ACs define
+"actually refactored". Assertions are attribute-based and run on both asset-delivery modes.
+        </script></md>
+
+        <pd-mermaid caption="Verification layers — regression-first">
+flowchart TD
+  Go[go test ./... — backend unchanged<br/>incl. rpc_ingest params.data.path] --> R025
+  R025[025 conformance — static explorer<br/>UNCHANGED harness] --> R026
+  R026[026 conformance + reveal-harness — liveness<br/>UNCHANGED harness] --> NEW
+  NEW[029 conformance — refactor structure<br/>survival / single-sub / no-dep / cache]
+  R025 -.both builds.-> Builds[embed + -tags dev]
+  R026 -.both builds.-> Builds
+  NEW -.both builds.-> Builds
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+        <md><script type="text/plain">
+Each criterion is browser-verifiable (or grep-verifiable for the structural ones) and
+build-agnostic. `phases`/`tests` are backfilled by `/beta-new-plan`.
+        </script></md>
+
+        <pd-ac id="AC-1" title="025 static-explorer conformance passes unchanged" phases="2,3" tests="docs/tasks/025-planning-dashboard-explorer/artifacts/conformance.md">
+          <md><script type="text/plain">
+- **Given** the refactor is merged into `web/static`
+- **When** the 025 `artifacts/conformance.md` harness runs against both the `embed` and `-tags dev` builds, with no edits to the harness
+- **Then** every assertion passes: `project-switcher` options carry `data-project`; `nav[data-doc-count]` equals the `doc.list` length; `doc-node` carries `data-doc-path`/`data-doc-type`; the content `article` carries `data-revision`/`data-last-updated`; `doc-iframe` `src` has `/api/doc/raw?…&v=<nonce>`; `conn-indicator` has `data-conn-status`; `/debug` shows its four sections; `window.__autoui` is `object` with `?debug=1` and `undefined` without.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="026 liveness + reveal conformance passes unchanged" phases="2,3" tests="docs/tasks/026-planning-dashboard-live-updates/artifacts/reveal-harness.sh">
+          <md><script type="text/plain">
+- **Given** the refactor is merged
+- **When** the 026 `conformance.md` harness and `reveal-harness.sh` run on both builds, unedited
+- **Then** a `doc.changed` matching the open markdown doc increments `article[data-revision]`; an open `.html` doc bumps the iframe `v=` nonce; a non-matching `doc.changed` leaves `data-revision` unchanged; a `doc.changed` for an unseen path grows `nav[data-doc-count]` AND reveals the new leaf (ancestor group+subgroup auto-expand) AND preserves existing expansion state.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="Single normalised source of state; components are presentational" phases="2,3" tests="docs/tasks/029-auto-ui-state-refactor/artifacts/state-harness.sh">
+          <md><script type="text/plain">
+- **Given** the refactored `web/static`
+- **When** the source is inspected (grep + review)
+- **Then** exactly one store module owns `conn`, `projects`, `docsByProject`, `selection`, and `events`; `explorer.js`/`tree.js`/`content.js` hold **no `useState`/`useEffect` that fetches or caches server data** (they read store state + dispatch actions); the only `call(...)` sites live in the store module.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="uistate.js deleted; /debug reflects live store state across navigation" phases="2,3" tests="docs/tasks/029-auto-ui-state-refactor/artifacts/state-harness.sh">
+          <md><script type="text/plain">
+- **Given** `auto-ui/web/static/uistate.js` no longer exists in the repo
+- **When** the user selects a project + a doc in the explorer (so the tree lists N docs and the content pane is at revision R), then navigates to `#/debug` **without reloading the page**
+- **Then** `debug-current-state` shows the same `project`/`path`/`revision (R)`/`docCount (N)` — sourced from the store (module-scope state survives the route change unconditionally), with `setUIState`/`uiState` absent from all modules.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="A single app-root doc.changed subscription drives both live behaviours" phases="2,3" tests="docs/tasks/029-auto-ui-state-refactor/artifacts/state-harness.sh">
+          <md><script type="text/plain">
+- **Given** the store owns one `on("doc.changed", …)` subscription (parsed via `docevents.js`)
+- **When** a `doc.changed` for the open doc arrives, and separately one for an unseen path arrives
+- **Then** both the open-doc refresh (AC-2) and the tree-growth+reveal (AC-2) occur, driven by that one subscription dispatching into the reducer. **The single-subscription evidence is the grep clause:** `grep -rl 'on("doc.changed"' auto-ui/web/static` matches **only `store.js`** (no component and no `debug.js` subscription). (`window.__autoui.counters.get('doc.changed')` — `counters` is a `Map`, so use `.get()` — only confirms the event was *received* and gates the ~3s propagation poll; `recordEvent` fires once per event at the rpc.js dispatch layer regardless of subscriber count, so the counter cannot itself prove subscription count.)
+          </script></md>
+        </pd-ac>
+
+        <pd-thread anchor="AC-5" status="resolved" priority="p2" title="window.__autoui.counters is a Map — bracket access counters['doc.changed'] returns undefined">
+          <pd-comment by="review">`counters` is a `new Map()` (rpc.js:39), exposed verbatim as `window.__autoui.counters` (rpc.js:93). `counters['doc.changed']` (used here in AC-5 and in Plan → Phase 3 step 1) is bracket indexing on a Map, which is always `undefined` — the assertion can't work as written. The 026 `reveal-harness.sh` already does this correctly: `window.__autoui.counters.get('doc.changed')`. Change both AC-5 and the Phase 3 step to `.get('doc.changed')`.</pd-comment>
+          <pd-comment by="author">Fixed both: AC-5's "Then" now uses `.get('doc.changed')` (with a note that `counters` is a `Map`), and Plan Phase 3 step 1 likewise. The counter is now used only to gate the poll, not as a Map index.</pd-comment>
+        </pd-thread>
+
+        <pd-thread anchor="AC-5" status="resolved" priority="p2" title="The doc.changed counter cannot prove 'no duplicate subscriptions'">
+          <pd-comment by="review">AC-5 claims the counter "increments exactly once per emitted event (no duplicate per-component subscriptions)". But `recordEvent()` runs once per *received* notification at the rpc.js dispatch layer (rpc.js:138), **before** fan-out to `on()` handlers — so the counter is exactly 1 per event regardless of how many components subscribe. It reads 1 today (with content.js + tree.js + debug.js all subscribed) and would read 1 after the refactor too; it does not distinguish the two states. The real single-subscription evidence is the grep clause (or counting subscriber-driven side-effects). Drop the "no duplicate subscriptions" inference from the counter, or replace it with a measure that actually depends on subscriber count.</pd-comment>
+          <pd-comment by="author">Correct — `recordEvent` fires once per received event at the dispatch layer (rpc.js:138), before fan-out, so the count is 1 regardless of subscriber count. AC-5 now states the **grep clause is the single-subscription evidence** and explicitly notes the counter cannot prove subscription count (it only gates the poll). Plan Phase 3 AC-5 step rewritten to match.</pd-comment>
+        </pd-thread>
+
+        <pd-thread anchor="AC-5" status="resolved" priority="p3" title="'+ debug log' grep carve-out contradicts the Solution/Plan removal of debug's subscriptions">
+          <pd-comment by="review">AC-5's grep gate reads "outside the store + debug log is 0", implying `debug.js` retains a `doc.changed` subscription. But the Solution (`debug.js` "replaces … its own `onStatus`/`doc.changed`/`ping` subscriptions") and Plan Phase 2 step 6 ("`grep … 'on("doc.changed"'` → only `store.js` (+ none in components/debug)") both remove it. Reconcile: if debug keeps no `doc.changed` sub, drop the "+ debug log" exception (the gate is simply "only `store.js`"). See the related store.events/ping thread on the Solution tab.</pd-comment>
+          <pd-comment by="author">Reconciled: `debug.js` keeps **no** `doc.changed` subscription. AC-5's grep gate is now simply "matches **only `store.js`**" (no carve-out). Per the store.events/ping thread, `ping` reaches the event log because the **store** subscribes to `on("ping")` to append to `events` — that's the only other `on(...)` in `store.js`, and it's not a `doc.changed` sub, so the gate stays clean.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-6" title="No new runtime dependency or importmap entry" phases="1,3" tests="docs/tasks/029-auto-ui-state-refactor/artifacts/state-harness.sh">
+          <md><script type="text/plain">
+- **Given** the store is a module singleton surfaced by a `useStore` hook (built only on the existing `preact`/`preact/hooks` — `useState`+`useEffect`; no Context provider, no new package)
+- **When** `index.html`'s importmap is diffed before/after
+- **Then** it is unchanged — no new esm.sh entry, no vendored package — satisfying the repo's minimal-runtime-deps rule.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="Cold-load gating and reconnect self-heal preserved" phases="2,3" tests="docs/tasks/029-auto-ui-state-refactor/artifacts/state-harness.sh">
+          <md><script type="text/plain">
+- **Given** a cold load (the explorer is the landing view, socket not yet `open`) and, separately, a mid-session WS drop+reconnect
+- **When** the app mounts before the socket opens, and when the socket transitions back to `open`
+- **Then** no fetch rejects "not connected" (all gate on `whenOpen()` in the store), the registry/list re-fetch exactly once on a *fresh* open transition (not on the initial open), and `conn-indicator[data-conn-status]` tracks `connecting`→`open`→`closed` — all with no manual reload.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="Warm docsByProject cache avoids redundant doc.list refetch" phases="2,3" tests="docs/tasks/029-auto-ui-state-refactor/artifacts/state-harness.sh">
+          <md><script type="text/plain">
+- **Given** project A's docs are cached in the store and no `doc.changed` has invalidated them
+- **When** the user switches to project B and back to A (or a view remounts)
+- **Then** A's tree renders from the cache with **no** new `doc.list` round-trip — observable via a **store-level `doc.list` call counter** (NOT `/api/debug/recent`, which buffers server-side ingest events, not client WS calls) — while a reconnect or a `doc.changed` for A still triggers the re-list that 026 requires (cache does not mask liveness).
+          </script></md>
+        </pd-ac>
+
+        <pd-thread anchor="AC-8" status="resolved" priority="p2" title="/api/debug/recent cannot observe a redundant doc.list — it's the server ingest buffer, not client RPC calls">
+          <pd-comment by="review">AC-8 (and Plan Phase 3 step "AC-8") offer `/api/debug/recent` as the way to observe "no second `doc.list` round-trip". That endpoint exists (server.go:102, gated by `AUTO_UI_DEBUG=1`) but it buffers **server-side ingest events** — raw events POSTed to `/api/rpc` plus the derived `doc.changed` (rpc_ingest.go:26, debug.go:15). A client `doc.list` is a WS JSON-RPC request handled by the dispatcher; it never enters that ingest buffer, so it will not appear in `/api/debug/recent`. Likewise `window.__autoui` records received *notifications*, not outbound calls. The only viable observable here is the proposed store-level call counter. Drop the `/api/debug/recent` alternative from AC-8 (and the Plan step), or add a real client-side `doc.list` call counter to assert against.</pd-comment>
+          <pd-comment by="author">Agreed — a client `doc.list` is a WS JSON-RPC request, invisible to both `/api/debug/recent` (server ingest buffer) and `window.__autoui` (received notifications). AC-8 now specifies a **store-level `doc.list` call counter** as the sole observable and explicitly rules out `/api/debug/recent`; Plan Phase 3's AC-8 step updated to match. The harness exposes the counter via a debug global (e.g. `window.__autoui` extension or a store test hook) for `agent-browser eval`.</pd-comment>
+        </pd-thread>
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps & Risks">
+        <md><script type="text/plain">
+- **Structural ACs (AC-3, AC-5, AC-6) are partly verified by grep + code review**, not purely
+  at runtime. They're objective (grep counts, importmap diff) but depend on reviewer
+  discipline, not a browser assertion.
+- **Store-survives-navigation (AC-4) is unconditional under the chosen design.** With the
+  module-singleton store, state lives in module scope (the `rpc.js`/`uistate.js` idiom) and
+  survives any unmount/remount regardless of Preact's reconcile behaviour — so the earlier
+  "relies on `render()` being diffed" risk no longer applies. AC-4 still runs at runtime as the
+  positive proof that `/debug` reads live store state with `uistate.js` gone.
+- **agent-browser timing.** Harnesses use fixed `sleep`s after emit; under load an assertion
+  could read before the DOM settles (flake, not a real fail). Mitigated by attribute-based
+  assertions and generous waits, per 026.
+- **docsByProject cache invalidation (AC-8) is a new behaviour**, not a pure refactor. The
+  invalidation rule (trust `doc.changed`/reconnect re-list vs TTL) is finalized in the
+  Solution tab; the risk is a stale tree if the cache ever masks a 026 re-list — AC-8's second
+  clause guards against exactly that.
+- **No visual-regression / screenshot diffing.** Evidence screenshots are captured manually
+  (as in 025/026); correctness is asserted via `data-*`, not pixels.
+- **Backend is untouched**, so Go tests can't catch a frontend regression (013 lesson) — the
+  browser conformance is the real gate, which is why AC-1/AC-2 run on both builds.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Introduce **one module-singleton store** (`web/static/store.js`) as the single source of
+normalised client state, and reduce `explorer.js`/`tree.js`/`content.js`/`debug.js` to
+**presentational** components that read the store and dispatch thin actions. `uistate.js` is
+deleted. No new dependency: the store is plain ES-module state + a `useStore` hook built on the
+existing `preact/hooks` (`useState`+`useEffect`), the same subscribe shim `ConnIndicator`
+already uses.
+
+**Why module-singleton (not Context):** it's the established idiom here — `rpc.js` and the
+outgoing `uistate.js` are both module singletons. State lives in module scope, so it survives
+the `#/debug` route change unconditionally (no reliance on Preact reconcile, no provider to
+wrap the view switch). Components import `useStore` directly.
+
+**The store owns everything that was scattered:**
+- the **single** `doc.changed` subscription (parsed via `docevents.js` — `ev.data.path`), which
+  re-lists `docsByProject` on an unseen path and refreshes the open doc on a match;
+- the `onStatus` connection state + reconnect self-heal (re-fetch on a *fresh* open, not the
+  initial open);
+- `onRouteChange` → `selection` (the store mirrors the hash, which stays the navigational
+  source of truth); and
+- all `call()` fetches (`project.list`, `doc.list` with a `docsByProject` cache, `doc.get`),
+  each gated on `whenOpen()`.
+
+**The split:** *domain* state (projects, docs, selection, open-doc revision/markdown) is
+centralized in the store. *Ephemeral view* state (the tree's flash animation + collapse
+disclosure, markdown loading flag) stays component-local — triggered by a `lastDocChanged`
+signal the store exposes, so the single subscription still drives the flash. Grouping
+(`groupDocs`) stays a pure render-time helper in `tree.js` (a pure transform of store data);
+the store's selector boundary is the seam where heavier view-model transforms can later move.
+        </script></md>
+
+        <pd-mermaid caption="Single update loop — store owns side-effects, components render">
+flowchart LR
+  Hash[location.hash<br/>nav source of truth] -->|onRouteChange| Store
+  WS[rpc.js: onStatus / doc.changed / whenOpen] -->|1 subscription| Store
+  Store[store.js singleton<br/>state + reducer + fetches + cache] -->|getState/subscribe| Hook[useStore selector]
+  Hook --> Explorer & DocTree & DocContent & Debug
+  Explorer & DocTree & DocContent -->|thin actions| SetHash[setHash] --> Hash
+  DocContent -->|refreshOpenDoc| Store
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="store-surface" title="store.js — public surface (end state)">
+        <pd-api kind="module" name="store.js" lang="js" path="auto-ui/web/static/store.js" caption="The single state module. Self-initialises on import (like rpc.js).">
+          <pd-member kind="hook" sig="useStore(selector) -> Selected">Subscribe a component to `selector(state)`; re-renders only when the selected slice changes (shallow-compare). Built on `useState`+`useEffect` — no Context, no new import.</pd-member>
+          <pd-member kind="method" sig="getState() -> State">Synchronous snapshot, for non-render reads (e.g. `/debug` selectors).</pd-member>
+          <pd-member kind="method" sig="subscribe(fn) -> () => void">Register a listener; returns unsubscribe. Backs `useStore`.</pd-member>
+          <pd-member kind="method" sig="dispatch(action)">Reducer entrypoint; applies the action and notifies subscribers.</pd-member>
+          <pd-member kind="action" sig="selectProject(id)">Thin action → `setHash('explore', {project:id})`. The `onRouteChange` handler does the state update + fetch (single update flow).</pd-member>
+          <pd-member kind="action" sig="selectDoc(path)">Thin action → `setHash` preserving project+worktree.</pd-member>
+          <pd-member kind="action" sig="refreshOpenDoc()">Force re-fetch (markdown) / nonce-bump (html) of the open doc; bumps `revision`.</pd-member>
+          <pd-member kind="selector" sig="selectProjects / selectActiveProject / selectConn(state)">Slice selectors for the topbar + ConnIndicator.</pd-member>
+          <pd-member kind="selector" sig="selectDocs(state, project) / selectOpenDoc(state)">Docs for the active project (from `docsByProject` cache) + the open-doc view-model.</pd-member>
+          <pd-member kind="selector" sig="selectDebugSnapshot(state)">`{project,path,type,revision,docCount,lastUpdated}` — replaces the deleted `uiState` for `debug-current-state`.</pd-member>
+        </pd-api>
+
+        <pd-code lang="js" path="auto-ui/web/static/store.js" caption="Normalised state shape (single source of truth)">
+state = {
+  conn:          { status, reconnects },              // from rpc.onStatus (centralised)
+  projects:      [ {id, name, path, remote} ],        // project.list
+  docsByProject: { [project]: [ {id, path, type} ] }, // doc.list cache (AC-8)
+  selection:     { project, path, worktree },         // mirrors the hash (no host — D-3)
+  openDoc:       { path, type, markdown, revision, lastUpdated, nonce, loading, error },
+  lastDocChanged:{ path, seq },                        // signal: drives tree flash/expand
+  events:        [ {t, method, params} ],              // recent doc.changed + ping, for /debug
+}
+        </pd-code>
+
+        <pd-thread anchor="store-surface" status="resolved" priority="p2" title="store.events only captures doc.changed — debug-event-log loses live ping rows (regression)">
+          <pd-comment by="review">Today `debug.js` subscribes to **both** `on("doc.changed")` and `on("ping")` (debug.js:84-85) and renders both in `debug-event-log` (the server pushes a 1s `ping` notification per `ws.go`). The Solution says `debug.js` "replaces … its own `onStatus`/`doc.changed`/`ping` subscriptions" by reading store `events`, but the store owns only **one** `doc.changed` subscription, so `events` will never contain `ping`. Net effect: the live `ping` stream disappears from `debug-event-log` (only `?debug=1` backfill from `window.__autoui` would still show historical pings) — a behaviour change no AC catches. Specify how `ping` reaches the event log: either the store also subscribes `on("ping")` to populate `events` (AC-5's grep only restricts `doc.changed`, so this is allowed), or `debug.js` keeps a direct `on("ping")` for the log. The current docs imply neither.</pd-comment>
+          <pd-comment by="author">Specified the first option: the **store subscribes to `on("ping")`** (in addition to `doc.changed`) and appends both to `events`, so `debug-event-log` keeps live ping rows with `debug.js` holding no subscriptions of its own. Captured in the state shape (`events` // recent doc.changed + ping), the `store.js` file-change entry, and AC-5's grep note (the ping sub is the only other `on(...)` in `store.js` and is not a `doc.changed` sub, so the AC-5 gate stays "only store.js"). No AC regression: live ping rows preserved.</pd-comment>
+        </pd-thread>
+      </pd-section>
+
+      <pd-files>
+        <pd-file path="auto-ui/web/static/store.js" change="add">The module-singleton store: normalised state + reducer + `dispatch`/`subscribe`/`getState`, `useStore` hook, thin actions, slice selectors. Self-inits on import: owns the single `doc.changed` subscription (via `docevents.js`) **plus an `on("ping")` subscription that only appends to `events`** (so `debug-event-log` keeps its live ping rows), `onStatus` + reconnect self-heal, `onRouteChange`→selection, and all `call()` fetches with the `docsByProject` cache + a `doc.list` call counter (all gated on `whenOpen()`).</pd-file>
+        <pd-file path="auto-ui/web/static/app.js" change="edit">Import `store.js` so it initialises; App stays the pure hash→view selector (`debug` vs explorer). No provider needed (module-scope store).</pd-file>
+        <pd-file path="auto-ui/web/static/explorer.js" change="edit">Presentational: reads `projects`/`activeProject`/`conn` via `useStore`; switcher + `ConnIndicator` read the store; `onPickProject` → `selectProject` action. Removes its own `project.list` fetch, `onStatus` reconnect effect, and `setUIState`.</pd-file>
+        <pd-file path="auto-ui/web/static/tree.js" change="edit">Presentational: reads docs from the store and groups with the (unchanged) pure `groupDocs`. Flash + expand state stay component-local, triggered by the store's `lastDocChanged` signal. Removes its `doc.list` fetch, `doc.changed` subscription, `onStatus` reconnect, and `setUIState`.</pd-file>
+        <pd-file path="auto-ui/web/static/content.js" change="edit">Presentational: renders `selectOpenDoc(state)` (`markdown`/`revision`/`lastUpdated`/`nonce`/`loading`/`error`); refresh button → `refreshOpenDoc`. Removes its `doc.get` fetch, `doc.changed` subscription, `whenOpen`, and `setUIState`. Keeps `marked`/`dompurify` render + `recordError`.</pd-file>
+        <pd-file path="auto-ui/web/static/debug.js" change="edit">Reads `conn` + `events` + `selectDebugSnapshot` from the store (replaces `uiState` and its own `onStatus`/`doc.changed`/`ping` subscriptions); error log still reads `recentErrors()` from `rpc.js` (an rpc-level ring, not app state). The four `data-testid` sections are unchanged.</pd-file>
+        <pd-file path="auto-ui/web/static/uistate.js" change="delete">Folded into the store; `/debug` reads `selectDebugSnapshot`. The cross-route mirror is no longer needed (module-scope state survives navigation).</pd-file>
+        <pd-file path="docs/tasks/029-auto-ui-state-refactor/artifacts/conformance.md" change="add">029 structure conformance (AC-3..AC-8) with evidence; records that the 025 + 026 harnesses are re-run unchanged on both builds.</pd-file>
+        <pd-file path="docs/tasks/029-auto-ui-state-refactor/artifacts/state-harness.sh" change="add">agent-browser harness for the refactor-structure ACs (cross-route survival, single-subscription counter, no-importmap-diff, warm-cache no-refetch) on `embed` + `-tags dev` builds.</pd-file>
+      </pd-files>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **`@preact/signals`** — rejected (D-1): the user asked for hooks; signals add a vendored
+  dependency. Fine-grained re-render wins don't justify a second reactivity paradigm at this
+  scale; the selector seam can adopt `computed()` later if re-render fan-out ever bites.
+- **`useReducer` + Context provider** (the D-1 wiring) — rejected (D-5) in favour of the module
+  singleton: a provider is an extra moving part, must sit above the Explorer/Debug switch, and
+  makes cross-route survival depend on Preact reconciling repeated `render()` calls. The
+  singleton is simpler, matches the `rpc.js`/`uistate.js` idiom, and survives unconditionally.
+- **Centralise data only; keep per-component `doc.changed` subscriptions** — rejected: it would
+  retain `uistate.js` and the duplicated envelope parsing, missing the refactor's point (D-2).
+- **Move flash/expand into the store** — rejected (D-8): that over-centralises ephemeral
+  animation/disclosure state; it stays component-local, triggered by the store's
+  `lastDocChanged` signal.
+- **TTL-based cache invalidation** — rejected (D-7): the `docsByProject` cache is invalidated
+  only by a `doc.changed` re-list or a reconnect, so there's no staleness window and 026
+  liveness is never masked. Simpler than a timer.
+- **A runtime probe for "only one subscriber"** — rejected: AC-5 is grep + the
+  `window.__autoui` per-event counter; an in-app assertion would be production weight for a
+  review-time invariant.
+        </script></md>
+
+        <pd-decision id="D-5" title="Module-singleton store over a Context provider" status="accepted" by="author"
+          summary="Refines D-1's wiring: state in a module singleton (rpc.js idiom) + a useStore hook; no Context, survives nav unconditionally.">
+          <md><script type="text/plain">
+**Context:** D-1 chose `useReducer`+Context, but context-gathering showed module singletons are
+the repo idiom (`rpc.js`, `uistate.js`) and that a singleton de-risks cross-route survival.
+**Decision:** `store.js` is a module-scope singleton (state + reducer + pub/sub) surfaced by a
+`useStore(selector)` hook; no Context, no provider. Supersedes the Context mechanism of D-1
+(the hooks-not-signals call in D-1 still stands).
+**Alternatives:** Context provider (extra moving part, relies on reconcile); signals (new dep).
+**Consequences:** Components import `useStore` directly; AC-4 becomes unconditional.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-6" title="Store mirrors the hash; actions are thin (single update flow)" status="accepted" by="author"
+          summary="Hash stays nav source of truth; the store subscribes onRouteChange→selection→fetch; actions just setHash.">
+          <md><script type="text/plain">
+**Context:** Need one update path so selection, fetches, and the URL never diverge.
+**Decision:** The hash remains the navigational source of truth. The store subscribes to
+`onRouteChange`, derives `selection`, and orchestrates fetches. User actions
+(`selectProject`/`selectDoc`) only `setHash`; the route handler performs the state update — so
+there's a single flow, no double-dispatch.
+**Alternatives:** App dispatches `setSelection` on each render (two update paths to keep in sync).
+**Consequences:** `store.js` depends on `router.js` (a low-level util) — acceptable.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-7" title="docsByProject cache: invalidate on doc.changed/reconnect, no TTL" status="accepted" by="author"
+          summary="Cache skips redundant doc.list; only a doc.changed re-list or a reconnect invalidates it, so liveness is never masked.">
+          <md><script type="text/plain">
+**Context:** AC-8 adds a cache so re-mount / project re-selection doesn't re-fetch.
+**Decision:** No TTL. The cache is authoritative until a `doc.changed` for that project triggers
+the 026 re-list, or a reconnect forces a fresh list. So a warm cache renders instantly but never
+hides a live change.
+**Alternatives:** TTL timer (staleness window + a clock); no cache (redundant fetches).
+**Consequences:** Correctness rides on the existing `doc.changed`/reconnect paths, which 026
+already exercises — AC-8's second clause guards it.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-8" title="Ephemeral view state stays component-local" status="accepted" by="author"
+          summary="Flash/expand/loading remain local; the store exposes a lastDocChanged signal that triggers them.">
+          <md><script type="text/plain">
+**Context:** The single `doc.changed` subscription lives in the store, but the tree's
+flash/collapse are animation/disclosure concerns.
+**Decision:** Domain state is centralised; the tree's flash + expand and the content loading flag
+stay component-local, driven by reading the store's `lastDocChanged` `{path, seq}` signal.
+**Alternatives:** Move flash/expand into store state (over-centralised; couples animation timing
+to the reducer).
+**Consequences:** Keeps AC-5 (one subscription) while the diff to `tree.js` stays small.
+          </script></md>
+        </pd-decision>
+
+        <pd-decisions></pd-decisions>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Build the module-singleton `store.js` dormant first, then cut all four views over to it in one
+coordinated change (deleting `uistate.js`), then prove it with a structure-conformance harness —
+re-running 025/026 unchanged throughout. Linear DAG (1→2→3); no parallel phases (a half-migrated
+app would run duplicate `doc.changed` subscriptions, and serial dispatch also avoids the
+shared-worktree write-leak hazard).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-dag caption="Phase dependency DAG"></pd-dag>
+      </pd-section>
+
+      <pd-stepper>
+        <pd-phase n="1" title="Store foundation (dormant)" files="auto-ui/web/static/store.js, auto-ui/web/static/app.js" status="todo">
+          <md><script type="text/plain">
+Add the store with NO live side-effects yet, so the app keeps working unchanged (no duplicate
+subscriptions) and the module can be reviewed in isolation.
+
+**Steps (each with its verify):**
+1. Create `store.js`: initial normalised `state` (the Solution shape), a pure
+   `reducer(state, action)`, and `getState()` / `subscribe(fn)` / `dispatch(action)` (dispatch
+   applies the reducer and notifies subscribers only when state identity changes).
+   *Verify:* `cd auto-ui && go build ./...` (embed compiles the new asset).
+2. Add `useStore(selector)` = `useState`+`useEffect(subscribe)` with a shallow-compare guard so a
+   component re-renders only when its selected slice changes (mirrors `ConnIndicator`'s shim).
+   *Verify:* `go build ./...`.
+3. Add selectors (`selectProjects`, `selectActiveProject`, `selectConn`, `selectDocs`,
+   `selectOpenDoc`, `selectDebugSnapshot`) and thin actions (`selectProject`, `selectDoc`,
+   `refreshOpenDoc`) that `setHash`/`dispatch`. *Verify:* `go build ./...`.
+4. Add `initStore()` wiring the side-effects but DO NOT call it: `onStatus`→`conn` + reconnect
+   self-heal (fresh-open re-fetch via a `prevStatus` guard — don't double-fetch on first open);
+   `onRouteChange`→`selection` + fetch orchestration (`project.list` once; `doc.list` per project
+   into the `docsByProject` cache; `doc.get`/nonce for the open doc) all gated on `whenOpen()`;
+   ONE `on("doc.changed")` parsed via `docevents.js` → re-list unseen path / refresh open doc /
+   set `lastDocChanged` / append to `events`. *Verify:* `go build ./...`; serve embed build,
+   open the explorer in the browser — it renders IDENTICALLY (store dormant, zero behaviour
+   change), `window.__autoui` still records.
+5. In `app.js`, `import "./store.js"` (module loads; `initStore` NOT yet called).
+   *Verify:* `go test ./...` green; browser smoke unchanged.
+6. **Commit:** `feat(029): add dormant module-singleton store.js (state + useStore + initStore)`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Cut views over to the store; delete uistate.js" files="auto-ui/web/static/app.js, auto-ui/web/static/content.js, auto-ui/web/static/tree.js, auto-ui/web/static/explorer.js, auto-ui/web/static/debug.js, auto-ui/web/static/uistate.js" status="todo" depends-on="1">
+          <md><script type="text/plain">
+The coordinated cutover — one atomic change so there's never a moment with both the store's and a
+component's `doc.changed` subscription live.
+
+**Steps (each with its verify):**
+1. `app.js`: call `initStore()` once at startup (before the first `render`). *Verify:*
+   `go build ./...`; explorer still loads (now store-driven).
+2. `content.js` → presentational: render `selectOpenDoc(state)`
+   (`markdown`/`revision`/`lastUpdated`/`nonce`/`loading`/`error`); refresh button →
+   `refreshOpenDoc`. Remove its `doc.get` fetch, open-doc `on("doc.changed")`, `whenOpen`,
+   `setUIState`. KEEP `marked`/`dompurify` render, `recordError`, and the
+   `data-revision`/`data-last-updated`/`doc-iframe`/`doc-refresh` hooks. *Verify:* `go build`;
+   open a markdown + an html doc in the browser; both render; refresh works.
+3. `tree.js` → presentational: read docs via `useStore(s => selectDocs(s, project))`; keep the
+   pure `groupDocs` and the stable-name `Collapsible` keys (026: expansion survives reconcile).
+   Drive flash + expand from the store's `lastDocChanged` `{path,seq}` via a `useEffect` on `seq`.
+   Remove its `doc.list` fetch, `on("doc.changed")`, `onStatus` reconnect, `setUIState`. KEEP
+   `data-doc-count`, `doc-node`/`data-doc-path`/`data-doc-type`. *Verify:* `go build`; tree lists,
+   groups, reveals + flashes on a live `auto ui emit`.
+4. `explorer.js` → presentational: read `projects`/`activeProject`/`conn` via `useStore`;
+   `onPickProject`→`selectProject`; `ConnIndicator`→`selectConn`. Remove its `project.list` fetch,
+   `onStatus` reconnect, `setUIState`. KEEP switcher `data-project`, `conn-indicator
+   data-conn-status`, the no-projects empty-state. *Verify:* `go build`; switcher works; empty
+   registry shows the empty-state.
+5. `debug.js`: read `conn` + `events` + `selectDebugSnapshot` via `useStore` (replacing `uiState`
+   and its own `onStatus`/`doc.changed`/`ping` subscriptions); keep the error log via
+   `recentErrors()`. KEEP the four `data-testid` sections + rows. *Verify:* `go build`; navigate
+   explore→`#/debug` WITHOUT reload → `debug-current-state` matches the explorer (AC-4 smoke).
+6. Delete `auto-ui/web/static/uistate.js`; `grep -rn 'uiState\|setUIState' web/static` → 0 hits;
+   `grep -rn 'on("doc.changed"' web/static` → only `store.js` (+ none in components/debug).
+   *Verify:* greps clean.
+7. **Full regression:** build BOTH `embed` and `-tags dev`; run the 025 + 026 + `reveal-harness.sh`
+   UNEDITED on both → all pass (assert DELTAs, poll ~3s — 026 lessons). `go test ./...` green.
+8. **Commit:** `refactor(029): cut explorer/tree/content/debug over to store.js; delete uistate.js`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="029 structure conformance harness + evidence" files="docs/tasks/029-auto-ui-state-refactor/artifacts/state-harness.sh, docs/tasks/029-auto-ui-state-refactor/artifacts/conformance.md" status="todo" depends-on="2">
+          <md><script type="text/plain">
+Prove the refactor-specific invariants with a browser harness, on both builds.
+
+**Steps (each with its verify):**
+1. Write `state-harness.sh` (lowercase-kebab fixture registry, `auto ui serve --projects … --port 0
+   --ready-file`, headless `agent-browser`; assert via `data-*` + `window.__autoui`, poll ~3s):
+   - **AC-4** cross-route survival: select project+doc, record `data-revision`/`data-doc-count`,
+     go `#/debug` WITHOUT reload, assert `debug-current-state` matches; assert `uistate.js` 404s.
+   - **AC-5** single subscription: emit one `doc.changed`; assert the open doc refreshes AND the
+     tree grows, and that `grep -rl 'on("doc.changed"' auto-ui/web/static` matches **only `store.js`**
+     (the grep is the evidence). Use `window.__autoui.counters.get('doc.changed')` only to gate the
+     ~3s poll — it cannot prove subscription count.
+   - **AC-6** importmap diff: assert `git diff --quiet -- auto-ui/web/static/index.html`.
+   - **AC-7** cold-load/reconnect: assert no "not connected" reject on cold load; conn dot tracks.
+   - **AC-8** warm cache: switch project A→B→A, assert no second `doc.list` via the **store-level
+     `doc.list` call counter** (NOT `/api/debug/recent`, which only sees server ingest events), but a
+     `doc.changed`/reconnect still re-lists.
+   - **AC-3** grep gate: no data-fetching `useState`/`call(` in `explorer/tree/content`.
+   *Verify:* harness exits 0 on the `embed` build.
+2. Re-run on the `-tags dev` build; capture `artifacts/evidence/` (screenshots + `eval` outputs).
+   *Verify:* harness exits 0 on dev too.
+3. Write `conformance.md`: AC→assertion map, plus a note that 025 + 026 harnesses were re-run
+   UNEDITED and passed on both builds. *Verify:* doc complete; evidence present.
+4. **Commit:** `test(029): structure conformance harness + evidence (AC-3..AC-8)`.
+          </script></md>
+        </pd-phase>
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **AC-1, AC-2** (025 + 026 conformance pass UNEDITED on both builds) — verified end of Phase 2,
+  re-confirmed Phase 3. This is the behaviour-preserving spine.
+- **AC-3, AC-5** (single source; single subscription) — implemented Phase 2, gated by grep +
+  `window.__autoui` counter in Phase 3.
+- **AC-4** (`uistate.js` deleted; `/debug` live across nav) — Phase 2 deletes it, Phase 3 proves it.
+- **AC-6** (no new importmap entry / dep) — holds from Phase 1, diffed in Phase 3.
+- **AC-7** (cold-load + reconnect self-heal) — store owns it (Phase 1/2), verified Phase 3.
+- **AC-8** (warm cache, no liveness masking) — Phase 1/2 logic, verified Phase 3.
+- Every phase: `go build ./...` + `go test ./...` green; the frontend gate is the browser
+  conformance (013 lesson: Go tests can't see frontend defects).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
