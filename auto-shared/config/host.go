@@ -33,7 +33,7 @@ func ValidateHostID(id string) error {
 // and returns the empty string if even that fails.
 func HostIDQuietly() string {
 	if path, err := HostConfigPath(); err == nil {
-		if cfg, err := LoadHost(path); err == nil {
+		if cfg, err := LoadHost(path); err == nil && ValidateHostID(cfg.HostID) == nil {
 			return cfg.HostID
 		}
 	}

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -36,6 +38,25 @@ func TestValidateHostID(t *testing.T) {
 func TestHostIDQuietly(t *testing.T) {
 	if got := HostIDQuietly(); got == "" {
 		t.Error("HostIDQuietly() = \"\", want non-empty")
+	}
+}
+
+func TestHostIDQuietlyRejectsInvalidConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	autoDir := filepath.Join(home, ".auto")
+	if err := os.MkdirAll(autoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(autoDir, "host.json"), []byte(`{"hostId":"UPPER-case"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := HostIDQuietly()
+	if got == "UPPER-case" {
+		t.Error("HostIDQuietly should not return an invalid hostId from config")
+	}
+	if got == "" {
+		t.Error("HostIDQuietly should fall back to hostname, not empty")
 	}
 }
 
