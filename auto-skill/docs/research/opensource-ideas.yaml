@@ -1,0 +1,476 @@
+profile:
+  recorded: 2026-06-20
+  project: |
+    auto-skill (`auto skill`) is a Go (cobra) CLI in the auto-stack monorepo that
+    manages agent skills stored in a project's canonical `./skills/` directory.
+    Skills are `SKILL.md` files (directory + SKILL.md) with YAML frontmatter
+    (name, description, optional metadata). Today it scaffolds skills from a
+    best-practices template (`create`), validates them against a cross-agent
+    best-practices schema (`lint` — the core feature), lists them ls-style (`ls`),
+    and detects drift between a skill and its source docs via autodoc-style
+    hash-freshness links. Docs are authoritative; skills encode distilled versions
+    that link back to source docs.
+  architecture: |
+    Go module github.com/mistakenot/auto-skill (depends on auto-shared). Cobra
+    command tree in internal/cli/ (root.go, agents.go, sync.go, update.go).
+    Skill model + discovery + validation in internal/skill/skill.go: name regex
+    ^[a-z0-9]+(-[a-z0-9]+)*$, name==dir match, secret detection (AKIA / api-key
+    / sk- patterns), trigger-phrase regex, weak-opening regex, markdown/side-file
+    link resolution, autodoc tag regex [autodoc(id@hash, scopeHash)], token
+    budgets (chars/4). Frontmatter parsed with gopkg.in/yaml.v3. CLI resolves a
+    project root via --root override (used by tests under .tmp/). Output is JSON
+    by default to stdout, diagnostics to stderr; lint returns structured
+    diagnostic objects (severity, code, path, field, message, value). CLAUDE.md
+    carries an autodoc-generated doc index between marker comments. Discovery is
+    a flat scan of `./skills/<name>/SKILL.md` only.
+  stack: [Go, Cobra, yaml.v3]
+  goals: |
+    Near-term: harden the `lint` schema and keep scaffolding/listing fast and
+    deterministic. Aspirational (docs/meta_skill.md, docs/requirements.md, and
+    the user's stated intent to "build our own version" of an open skills CLI):
+    grow toward skill distribution — fetching/installing skills from remote
+    sources, exporting/syncing skills into agent-specific discovery paths
+    (.claude/skills/, .agents/skills/, etc.), mining skills from session
+    history (via auto-etl/CASS), and hybrid search over skills.
+  non_goals: |
+    Phoning home / usage telemetry — auto-stack is local-first; data stays on the
+    user's machine. Heavy runtime dependencies (prefer pure-Go, reuse embedded
+    libs). Reimplementing meta_skill's full Rust feature set wholesale; borrow
+    patterns selectively. Executable/eval-based skill frontmatter.
+
+sources:
+  - repo: vercel-labs/skills
+    url: https://github.com/vercel-labs/skills
+    added: 2026-06-20
+    why: |
+      The reference CLI for the open agent-skills ecosystem — install/use/find/
+      update/remove skills across 70+ coding agents. This is the closest peer to
+      where auto-skill wants to go (distribution + multi-agent export), and the
+      tool the user's own global CLAUDE.md already uses (`npx skills install`).
+      The user wants to potentially build their own version one day.
+    last_investigated_commit: e5c075e3a84b37c5eb398ab74e581558d3fceb0e
+    last_investigated_at: 2026-06-20T00:00:00Z
+    investigations:
+      - from_commit: null
+        to_commit: e5c075e3a84b37c5eb398ab74e581558d3fceb0e
+        investigated_at: 2026-06-20T00:00:00Z
+        ideas_added: 13
+
+ideas:
+  # Baseline snapshot of vercel-labs/skills @ e5c075e. All ideas discovered together.
+  - id: I001
+    title: "Agent registry + multi-agent skill export/sync"
+    source: vercel-labs/skills
+    commits: []
+    files: [src/agents.ts, src/installer.ts]
+    permalink: https://github.com/vercel-labs/skills/blob/e5c075e3a84b37c5eb398ab74e581558d3fceb0e/src/agents.ts
+    discovered: 2026-06-20
+    status: shortlisted
+    change_type: additive
+    area: "new subsystem: agent registry + `auto skill sync/export`"
+    effort: L
+    impact: high
+    risk: low
+    confidence: high
+    dependencies: none
+    score: 4
+    summary: |
+      A flat `Record<AgentType, AgentConfig>` maps ~70 agents to their project
+      skillsDir (e.g. .claude/skills) and globalSkillsDir, plus a detectInstalled()
+      probe. Many agents share `.agents/skills`; some are project-only
+      (globalSkillsDir undefined). The installer writes a canonical copy and
+      exports it into each selected agent's directory.
+    application: |
+      This is auto-skill's documented "future concern" (requirements.md: syncing/
+      exporting to agent paths). Add a Go registry (struct AgentConfig{Name,
+      DisplayName, ProjectDir, GlobalDir}) and an `auto skill sync`/`export`
+      command that materializes `./skills/` into selected agent discovery dirs.
+      Directly serves the user's "build our own version" goal. See [[I010]] for
+      the symlink-canonical install model and [[I002]] for keeping the registry
+      a validated single source of truth.
+    evidence: |
+      agents.ts: `export const agents: Record<AgentType, AgentConfig> = {
+        'claude-code': { name:'claude-code', displayName:'Claude Code',
+        skillsDir:'.claude/skills', globalSkillsDir: join(claudeHome,'skills'),
+        detectInstalled: async () => existsSync(claudeHome) }, ... }`
+    notes: |
+      Big rock (L). The headline strategic item; ranks below the quick wins by
+      impact-to-effort but is the heart of a distribution-capable auto-skill.
+
+  - id: I002
+    title: "Typed registry as single source of truth, validated in CI + marker codegen"
+    source: vercel-labs/skills
+    commits: []
+    files: [scripts/validate-agents.ts, scripts/sync-agents.ts, .github/workflows/agents.yml]
+    permalink: https://github.com/vercel-labs/skills/blob/e5c075e3a84b37c5eb398ab74e581558d3fceb0e/scripts/sync-agents.ts
+    discovered: 2026-06-20
+    status: candidate
+    change_type: additive
+    area: "agent registry + README/doc codegen"
+    effort: M
+    impact: medium
+    risk: low
+    confidence: medium
+    dependencies: none
+    score: 3
+    summary: |
+      validate-agents.ts lints the registry (no duplicate displayNames / path
+      pairs) and runs on every PR. sync-agents.ts regenerates README tables and
+      package.json keywords from the registry between <!-- marker:start/end -->
+      comments, committed on push.
+    application: |
+      auto-skill already uses the marker-codegen pattern for its autodoc CLAUDE.md
+      index. Extend it: once [[I001]]'s agent registry exists, codegen the
+      supported-agents table and skill-discovery path list from the Go registry,
+      and add a `validate()` pass (reuse the shared validate() convention) so the
+      registry can't drift. Pays off mainly alongside I001.
+    evidence: |
+      sync-agents.ts: replaceSection(readme,'supported-agents',table);
+      replaceSection(readme,'skill-discovery',paths); pkg.keywords = generateKeywords().
+
+  - id: I003
+    title: "Strip terminal escapes from untrusted skill metadata before printing"
+    source: vercel-labs/skills
+    commits: []
+    files: [src/sanitize.ts, tests/sanitize-terminal.test.ts]
+    permalink: https://github.com/vercel-labs/skills/blob/e5c075e3a84b37c5eb398ab74e581558d3fceb0e/src/sanitize.ts
+    discovered: 2026-06-20
+    status: shortlisted
+    change_type: additive
+    area: "internal/skill output (ls, lint diagnostics) + a new lint check"
+    effort: S
+    impact: high
+    risk: low
+    confidence: high
+    dependencies: none
+    score: 9
+    summary: |
+      sanitizeMetadata() strips ANSI/VT100/C1 escape sequences (CSI, OSC, DCS/PM/
+      APC, simple ESC, C1 0x80-0x9F, raw control chars except \t\n), collapses
+      newlines, and trims — applied to name/description on parse before any
+      terminal output. Defends against CWE-150 terminal-injection via crafted
+      frontmatter.
+    application: |
+      auto-skill's `ls` and `lint` print name + description straight from arbitrary
+      SKILL.md frontmatter to the terminal — a malicious skill can embed escape
+      sequences (hyperlinks, title spoofing, cursor games). Add a Go
+      sanitizeMetadata() applied wherever frontmatter is emitted, plus a lint
+      check `terminal_escape_detected` (severity warning/error) mirroring the
+      existing `secret_detected` check. Smallest-effort, highest-value win:
+      closes a real injection vector the tool itself introduces.
+    evidence: |
+      const CSI_RE=/\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g;
+      const OSC_RE=/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g;
+      const C1_RE=/[\x80-\x9f]/g;  // stripTerminalEscapes() applies all of these.
+
+  - id: I004
+    title: "Path-traversal-safe skill name handling (sanitizeName + isSubpathSafe)"
+    source: vercel-labs/skills
+    commits: []
+    files: [src/sanitize.ts, tests/sanitize-name.test.ts, tests/subpath-traversal.test.ts]
+    permalink: https://github.com/vercel-labs/skills/blob/e5c075e3a84b37c5eb398ab74e581558d3fceb0e/tests/subpath-traversal.test.ts
+    discovered: 2026-06-20
+    status: candidate
+    change_type: additive
+    area: "internal/skill path resolution (create, future export/install)"
+    effort: S
+    impact: medium
+    risk: low
+    confidence: medium
+    dependencies: none
+    score: 6
+    summary: |
+      sanitizeName() lowercases, hyphenates spaces/specials, strips leading/
+      trailing dots+hyphens, truncates to 255. isSubpathSafe(base, sub) resolves
+      both and asserts the target stays within base — rejecting `..` and absolute
+      escapes before any file write.
+    application: |
+      auto-skill validates the name regex but doesn't defend file operations
+      against traversal when a name/subpath comes from outside (today `create`,
+      tomorrow `add`/`export` from remote sources — [[I009]]). Add an
+      isSubpathSafe() guard before any path join/write so a crafted skill name
+      can't write outside `./skills/`.
+    evidence: |
+      isSubpathSafe(base,sub){ const b=normalize(resolve(base));
+      const t=normalize(resolve(join(base,sub)));
+      return t.startsWith(b+sep)||t===b; }
+
+  - id: I005
+    title: "metadata.internal hidden-skill flag gated by env var"
+    source: vercel-labs/skills
+    commits: []
+    files: [src/frontmatter.ts, src/skills.ts]
+    permalink: https://github.com/vercel-labs/skills/blob/e5c075e3a84b37c5eb398ab74e581558d3fceb0e/src/skills.ts
+    discovered: 2026-06-20
+    status: shortlisted
+    change_type: additive
+    area: "internal/skill discovery + ls filtering"
+    effort: S
+    impact: medium
+    risk: low
+    confidence: high
+    dependencies: none
+    score: 6
+    summary: |
+      `metadata.internal: true` hides a skill from normal discovery/listing;
+      it's only surfaced when INSTALL_INTERNAL_SKILLS=1 (or an explicit
+      includeInternal option). Lets authors keep WIP/internal skills in the repo
+      without exposing them to agents.
+    application: |
+      Add a `metadata.internal` flag to auto-skill's model so `ls` (and any future
+      export) skips internal skills unless an env/flag opts in. Cheap, useful for
+      dogfooding half-written skills in this very repo without polluting the
+      agent's discovery listing. `lint` should still validate internal skills.
+    evidence: |
+      const isInternal = data.metadata?.internal === true;
+      if (isInternal && !shouldInstallInternalSkills() && !options?.includeInternal)
+        return null;
+
+  - id: I006
+    title: "Catalog-layout (depth-2) discovery with shadowing + dedupe"
+    source: vercel-labs/skills
+    commits: []
+    files: [src/skills.ts, tests/nested-container-discovery.test.ts, tests/full-depth-discovery.test.ts]
+    permalink: https://github.com/vercel-labs/skills/blob/e5c075e3a84b37c5eb398ab74e581558d3fceb0e/src/skills.ts
+    discovered: 2026-06-20
+    status: candidate
+    change_type: additive
+    area: "internal/skill discovery walk"
+    effort: M
+    impact: medium
+    risk: low
+    confidence: medium
+    dependencies: none
+    score: 3
+    summary: |
+      Discovery walks known container dirs one level deep for the flat layout
+      (skills/<name>/SKILL.md) and one extra level for catalog layouts
+      (skills/<category>/<name>/SKILL.md). A shallower SKILL.md shadows anything
+      nested below it; a seenNames Set dedupes; a recursive fallback (--full-depth)
+      runs only when nothing is found.
+    application: |
+      auto-skill's discovery is a flat scan of `./skills/<name>/`. Adopt the
+      depth-2 catalog walk (so skills can be grouped by category), the shadowing
+      rule (don't descend past a found SKILL.md), and the seenNames dedupe. Keep
+      the depth-2 set scoped to container dirs so the repo root isn't trawled.
+    evidence: |
+      const deepContainerDirs=new Set(prioritySearchDirs.slice(1));
+      for(const dir of prioritySearchDirs){ const walkDeep=deepContainerDirs.has(dir);
+      const found=await tryAddSkillAt(childDir); if(found||!walkDeep) continue;
+      /* descend one extra level */ }
+
+  - id: I007
+    title: "Plugin-manifest discovery (.claude-plugin/marketplace.json)"
+    source: vercel-labs/skills
+    commits: []
+    files: [src/plugin-manifest.ts, tests/plugin-manifest-discovery.test.ts]
+    permalink: https://github.com/vercel-labs/skills/blob/e5c075e3a84b37c5eb398ab74e581558d3fceb0e/src/plugin-manifest.ts
+    discovered: 2026-06-20
+    status: candidate
+    change_type: additive
+    area: "internal/skill discovery"
+    effort: M
+    impact: low
+    risk: low
+    confidence: low
+    dependencies: none
+    score: 2
+    summary: |
+      If `.claude-plugin/marketplace.json` or `plugin.json` exists, skills declared
+      there are also discovered. All declared paths must be `./`-relative and
+      contained within the repo; remote object-form sources are skipped; the
+      conventional skills/ dir is always added as a fallback.
+    application: |
+      Niche today, but if auto-skill wants Claude Code plugin-marketplace
+      compatibility, parse these manifests for declared skill paths with the same
+      `./`-prefix + containment validation. Low priority until a concrete need
+      appears.
+    evidence: |
+      isValidRelativePath(p){ return p.startsWith('./'); } // + isContainedIn(skillDir, basePath)
+
+  - id: I008
+    title: "Frontmatter field-type validation + reject executable frontmatter"
+    source: vercel-labs/skills
+    commits: []
+    files: [src/frontmatter.ts]
+    permalink: https://github.com/vercel-labs/skills/blob/e5c075e3a84b37c5eb398ab74e581558d3fceb0e/src/frontmatter.ts
+    discovered: 2026-06-20
+    status: shortlisted
+    change_type: additive
+    area: "internal/skill lint (frontmatter checks)"
+    effort: S
+    impact: medium
+    risk: low
+    confidence: medium
+    dependencies: none
+    score: 6
+    summary: |
+      Their parser uses a strict `^---\n...\n---` block and explicitly does NOT
+      support a `---js` executable variant (eval/RCE risk), then type-checks that
+      `name` and `description` are actually strings — because YAML will happily
+      parse `name: 123` or `name: true`.
+    application: |
+      auto-skill uses yaml.v3 (safe), but its checks assert presence, not type.
+      Add lint checks: `name`/`description` must be strings (a YAML scalar that
+      parses to int/bool is an error, not a silently-coerced value), and reject
+      any non-standard executable frontmatter fence. Hardens the core lint schema
+      cheaply.
+    evidence: |
+      "// We intentionally do not support ---js executable frontmatter (eval risk)"
+      + explicit `typeof data.name === 'string'` / `typeof data.description === 'string'` guards.
+
+  - id: I009
+    title: "Remote skill fetch without full clone (GitHub Trees API + source-parser)"
+    source: vercel-labs/skills
+    commits: []
+    files: [src/source-parser.ts, src/blob.ts, src/git.ts]
+    permalink: https://github.com/vercel-labs/skills/blob/e5c075e3a84b37c5eb398ab74e581558d3fceb0e/src/blob.ts
+    discovered: 2026-06-20
+    status: candidate
+    change_type: additive
+    area: "new subsystem: `auto skill add <source>`"
+    effort: L
+    impact: high
+    risk: medium
+    confidence: medium
+    dependencies: "GitHub API (optional token via GITHUB_TOKEN/GH_TOKEN/gh auth token)"
+    score: 4
+    summary: |
+      source-parser.ts normalizes many source formats (owner/repo, full GitHub
+      URL, /tree/<branch>/<path> deep links, GitLab, bare git URLs, local paths,
+      owner/repo#ref@skill fragments) into one descriptor. blob.ts then fetches a
+      skill via the GitHub Trees API (/git/trees/<branch>?recursive=1) with
+      branch fallback (ref→main→master→HEAD) and lazy auth (unauthenticated
+      first, token only after a 403) — no clone needed. git.ts is the shallow-
+      clone fallback for non-GitHub sources, with LFS smudge disabled.
+    application: |
+      The foundation for "build our own version": `auto skill add <source>`.
+      Borrow the source-parser format matrix and the Trees-API fast path so the
+      common case (a GitHub repo) costs one API call and zero clones. Pairs with
+      [[I004]] (safe extraction) and [[I010]] (lockfile + install).
+    evidence: |
+      fetchRepoTree(ownerRepo, ref?, getToken?): branches = ref?[ref]:['HEAD','main','master'];
+      try unauthenticated, on 403 set _rateLimitedThisSession and retry with getToken().
+      findSkillMdPaths(tree) filters tree blobs ending in skill.md by priority dir.
+
+  - id: I010
+    title: "Symlink-canonical install model + dual lockfiles with tree-SHA freshness"
+    source: vercel-labs/skills
+    commits: []
+    files: [src/installer.ts, src/skill-lock.ts, src/local-lock.ts, src/update.ts]
+    permalink: https://github.com/vercel-labs/skills/blob/e5c075e3a84b37c5eb398ab74e581558d3fceb0e/src/skill-lock.ts
+    discovered: 2026-06-20
+    status: candidate
+    change_type: additive
+    area: "new subsystem: install/update + lockfiles"
+    effort: L
+    impact: high
+    risk: medium
+    confidence: medium
+    dependencies: none
+    score: 4
+    summary: |
+      One canonical copy per skill with relative symlinks into each agent dir
+      (copy-mode fallback when symlinks fail). Two lockfiles: a global
+      ~/.agents/.skill-lock.json (versioned v3, auto-wiped on old version,
+      tracks GitHub tree SHA `skillFolderHash` + timestamps) and a project
+      skills-lock.json (checked in, content-hash, timestampless + alphabetized
+      to minimize merge conflicts). `update` compares stored tree SHA vs live
+      tree SHA — detecting updates with zero content download.
+    application: |
+      When auto-skill grows install/export, adopt: (1) canonical-store + symlink
+      per agent (one source of truth, easy updates) over N copies; (2) a
+      merge-friendly checked-in project lock (content hash, no timestamps,
+      sorted); (3) tree-SHA-vs-stored-hash freshness — which mirrors auto-skill's
+      existing autodoc hash-freshness idea, applied to whole skill folders.
+    evidence: |
+      update: latestHash=getSkillFolderHashFromTree(tree, entry.skillPath);
+      if(latestHash && latestHash!==entry.skillFolderHash) updates.push(...).
+      local-lock hash: for(f of files){ h.update(f.relativePath); h.update(f.content); }
+
+  - id: I011
+    title: "Pluggable host-provider abstraction + .well-known self-hosting convention"
+    source: vercel-labs/skills
+    commits: []
+    files: [src/providers/types.ts, src/providers/registry.ts, src/providers/wellknown.ts]
+    permalink: https://github.com/vercel-labs/skills/blob/e5c075e3a84b37c5eb398ab74e581558d3fceb0e/src/providers/wellknown.ts
+    discovered: 2026-06-20
+    status: deferred
+    change_type: additive
+    area: "future remote-fetch subsystem"
+    effort: L
+    impact: medium
+    risk: low
+    confidence: low
+    dependencies: none
+    score: 1
+    summary: |
+      A HostProvider interface (id, match(url), fetchSkill(url), toRawUrl,
+      getSourceIdentifier) behind a registry (first match wins). The wellknown
+      provider implements an RFC-8615-style /.well-known/agent-skills/index.json
+      discovery convention (v0.1 file-list and v0.2 single-artifact+digest), with
+      archive unpacking limits and symlink/traversal rejection.
+    application: |
+      Aligns with auto-stack's "pluggable surfaces" preference — but only pays off
+      once [[I009]] exists. Defer until remote fetch lands, then model providers
+      as the extension point (GitHub, GitLab, well-known, local).
+    notes: |
+      Deferred: depends on the remote-fetch foundation (I009) not being built yet.
+
+  - id: I012
+    title: "`use` command — run a skill as a prompt without installing"
+    source: vercel-labs/skills
+    commits: []
+    files: [src/use.ts, src/find.ts]
+    permalink: https://github.com/vercel-labs/skills/blob/e5c075e3a84b37c5eb398ab74e581558d3fceb0e/src/use.ts
+    discovered: 2026-06-20
+    status: candidate
+    change_type: additive
+    area: "new command: `auto skill use`"
+    effort: M
+    impact: medium
+    risk: low
+    confidence: medium
+    dependencies: none
+    score: 4
+    summary: |
+      `skills use <source>@<skill>` resolves a skill, materializes its files to a
+      temp dir, and prints a wrapped prompt (<SKILL.md>...</SKILL.md> + a pointer
+      to supporting files) to stdout — pipe into `claude`, or `--agent` launches a
+      supported agent interactively. find.ts adds keyword/interactive search
+      against a skills.sh API with an agent-friendly non-TTY fallback.
+    application: |
+      Add `auto skill use <name>` that emits a ready-to-pipe prompt from a LOCAL
+      skill (no remote fetch needed for v1) — handy for one-shot use and for
+      testing a skill's wording before committing it. The buildUsePrompt wrapper
+      is a clean, copyable format.
+    evidence: |
+      buildUsePrompt: ["You are being given a Skill to execute...",
+      "Use the following SKILL.md as your instructions:",
+      `<SKILL.md>\n${skillMd}\n</SKILL.md>`].join('\n\n').
+
+  - id: I013
+    title: "Telemetry opt-out conventions (DO_NOT_TRACK / DISABLE_TELEMETRY / CI auto-off)"
+    source: vercel-labs/skills
+    commits: []
+    files: [src/telemetry.ts]
+    permalink: https://github.com/vercel-labs/skills/blob/e5c075e3a84b37c5eb398ab74e581558d3fceb0e/src/telemetry.ts
+    discovered: 2026-06-20
+    status: rejected
+    change_type: additive
+    area: "n/a"
+    effort: S
+    impact: low
+    risk: low
+    confidence: high
+    dependencies: none
+    score: 1
+    summary: |
+      Anonymous, fire-and-forget usage telemetry (event type, counts, agent type,
+      version) gated by an opt-out: DISABLE_TELEMETRY / DO_NOT_TRACK env vars and
+      auto-disabled across CI providers.
+    notes: |
+      Rejected: phoning home conflicts with auto-stack's local-first profile
+      (non-goal). Recorded only so it doesn't resurface. If auto-stack ever adds
+      any opt-in network feature, the DO_NOT_TRACK convention + CI auto-detect is
+      the standard worth copying then.
