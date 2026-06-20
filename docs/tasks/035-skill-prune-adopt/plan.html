@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>035: skill-prune-adopt</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "035",
+    "name": "skill-prune-adopt",
+    "epic": "004-remote-skill-management",
+    "depends-on": ["034"],
+    "status": "planning",
+    "created": "2026-06-20"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="035: skill-prune-adopt" status="draft" pr="pending" generated="2026-06-20">
+
+    <pd-tab name="Requirements">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Epic 004 (remote-skill-management) replaces the `npx skills` shell-out with a native
+Go pipeline. Task T4 (034) built the **render core + the 3-phase journaled `sync`
+pipeline**: it *writes* the checked-in `.auto/skills/manifest.json` (desired/managed
+render state) and the machine-local `~/.auto/skills/receipts/<project-id>.json`
+(what **this machine** actually wrote, target → name → digest), and it reserves an
+empty `prunes` section in the commit journal. But T4 deliberately stops short of the
+**ownership-sensitive cleanup**: it never deletes a no-longer-desired skill, never
+resolves a desired-name-collides-with-a-foreign-dir conflict beyond reporting, and
+ships no `adopt` / `remove` commands or orphan/foreign reporting in `doctor`.
+
+So today a **rename** (`beta-new-plan` → `new-plan`) leaves the old copy orphaned in
+every target forever; a skill **hand-dropped** straight into `.claude/skills/` (an
+ad-hoc / foreign skill) has no managed path into `./skills/`; and there is no safe,
+receipt-gated way to remove a skill the tool owns without risking deletion of skills
+it does **not** own. This task adds that cleanup layer — pruning, adoption, foreign
+conflict handling, renamed-vendored handling, and the `remove` verb — strictly
+honoring "never delete or mutate skills the tool doesn't own" (**G-no-foreign-delete**)
+and "a crash mid-sync leaves a recoverable state" (**G-crash-consistent**).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="ownership-model" title="The ownership model (inherited from T4 + the design)">
+        <md><script type="text/plain">
+Two records, two jobs — this task **consumes** both (T4 writes them):
+
+- **`.auto/skills/manifest.json`** (checked in) declares the **desired/managed** set:
+  per target, which skill names are managed and their expected `skill_version`. It
+  is regenerable and is **not** a deletion authority — a branch/merge/manual edit can
+  add an entry for a pre-existing foreign dir.
+- **`~/.auto/skills/receipts/<project-id>.json`** (machine-local, never checked in)
+  records what **this machine actually wrote** (target → name → digest). It is the
+  **deletion authority**.
+
+The load-bearing rule every deletion in this task obeys: a skill is **prune-eligible
+only when (a)** it is a manifest-managed orphan (in the manifest, not in the current
+desired set) **and (b)** a local receipt confirms this machine wrote that exact digest
+there **and (c)** the on-disk dir still matches that receipt's digest. Miss any of the
+three → **report, never delete**. The in-file `metadata.auto_skill` stamp is
+informational only (added after the digest, excluded from it); a forged `managed: true`
+authorizes nothing.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+1. **Receipt-gated orphan pruning** — on each `sync`, per target, delete a
+   manifest-managed name that is no longer in the desired set **only** when a local
+   receipt + matching on-disk digest prove this machine wrote it. This fills T4's
+   reserved journal `prunes` slot and runs inside the same journaled commit
+   (G-crash-consistent). Renames need **no special detection** — the old name is just
+   a managed orphan with a stale receipt. Pruning stays suppressed whenever the desired
+   set is incomplete (a failed fetch never deletes).
+2. **Desired-collides-with-foreign hard conflict** — when a desired skill name matches
+   an existing **foreign** (un-manifested) dir in a target, `sync` neither overwrites
+   nor prunes it; it reports the conflict with remediation (`adopt`, `--as` rename, or
+   `--force`). Foreign dirs are never mutated by normal sync or pruning.
+3. **`adopt`** — move foreign (un-managed) skills found in targets into the canonical
+   `./skills/<name>/` via a **staged filesystem move** (copy → verify → remove) then
+   `git add` (never `git mv` — the source is usually untracked/gitignored). Refuse an
+   existing `./skills/<name>/` unless `--force`; divergent copies of the same name
+   across targets are a hard error requiring `--from <target>` (compared by full tree
+   digest — identical copies adopt as one, never silently pick one and discard others).
+4. **`remove <name>`** — remove a skill with a `--local` / `--vendored` selector
+   (selector required if both a local and a vendored skill share the name); the
+   now-undesired skill is then pruned from every target under the same receipt-gated,
+   journaled authority.
+5. **Renamed-vendored handling** — when a vendored skill's locked `subpath` no longer
+   resolves on `update` (upstream renamed/removed it), report it clearly ("not found
+   at its locked path — renamed or removed upstream?") and guide re-`add` / `remove`;
+   its target orphan is pruned on the next `sync` like any other. A stale `skills.yaml`
+   `replacements` entry for a vanished skill is flagged by `lint`/`doctor`.
+6. **`doctor` orphan + foreign reporting** — extend T4's offline `doctor` (drift
+   compare) with two derived lists: **managed orphans** (pruned next `sync`) and
+   **foreign/adoptable** skills, both via the on-disk-tree-digest-vs-`skill_version`
+   comparison, so nothing rots silently.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **The sync pipeline + manifest/receipt WRITING mechanics** — T4 (034) owns the
+  3-phase plan→fetch→render pipeline, the journaled commit protocol, and the code that
+  *writes* `manifest.json` and the receipts file. This task *consumes* those artifacts
+  and *adds* the receipt-gated deletion pass into the slot T4 reserved; it does not
+  re-implement the writer or the journal protocol.
+- **The inspection triad** — `list --local/--vendored`, `describe`, `get`, the
+  `source`/`target` sub-resources, the `ls` removal, and the self-update relocation are
+  T6. (`doctor` reporting here is the orphan/foreign drift summary, not the resource
+  triad.)
+- **Migration + git hooks** — `migrate vercel` and the pre-commit / post-merge /
+  post-checkout / pre-push hooks are T7.
+- **Reopening inherited design defaults** — `auto_update: true`, `commit_targets: true`,
+  machine-local trust, copy-only targets are settled upstream (epic decision D-2); this
+  task implements, it does not re-litigate them.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Resolved autonomously with best-judgment defaults (planning ran non-interactively).
+Each is revisited in the Solution tab against T4's merged package layout.
+
+- [x] **Does T5 own the whole `doctor` command, or extend T4's?**
+  **Default:** T4 ships `doctor` config + drift (offline on-disk-digest vs
+  `skill_version`); T5 **extends** it with the managed-orphan and foreign/adoptable
+  lists. *Rationale:* the design says `doctor` "also lists managed orphans … and
+  foreign/ad-hoc skills" — that listing is exactly the T5 ownership layer; the drift
+  compare is T4's. Coordinate at the seam (one `doctor` command, T5 adds sections).
+- [x] **Where does the prune pass live?**
+  **Default:** inside `internal/sync` (T4's package), filling the reserved journal
+  `prunes` section, so the deletion rides the existing crash-consistent commit. The
+  receipt + on-disk-digest comparison is factored into a small shared helper (an
+  `internal/ownership` or `internal/prune` leaf) reused by `sync`, `doctor`, `adopt`,
+  and `remove`. *Rationale:* deletion must be transactional with the writes T4 already
+  journals; a separate non-journaled pass would violate G-crash-consistent. Confirm
+  against T4's merged layout in Solution.
+- [x] **Is `adopt` interactive (the design shows an interactive pick) given
+  JSON-default output + non-interactive CI?**
+  **Default:** `adopt` with no args lists foreign/adoptable skills as JSON (the
+  candidate set); `adopt <name…>` adopts specific ones; `adopt --all -y` adopts all.
+  An interactive pick is offered **only** on a TTY in `--format text`; a non-TTY with
+  no names and no `--all -y` **fails closed** with a remediation hint. *Rationale:*
+  honors G-json-default and "fails closed in CI" without losing the design's
+  interactive convenience for humans.
+- [x] **What exactly does `remove` delete, and is its target cleanup crash-safe?**
+  **Default:** `remove --vendored <name>` drops the lock + `skills.yaml` entry;
+  `remove --local <name>` deletes `./skills/<name>/`; either way the now-undesired
+  skill is pruned from every target through the **same receipt-gated, journaled**
+  prune authority (so foreign-looking target copies are reported, not deleted —
+  G-no-foreign-delete; and a crash leaves a recoverable state — G-crash-consistent).
+  Selector required only when both a local and a vendored skill share the name.
+- [x] **Where does renamed-vendored detection hook into `update` (a T4 verb)?**
+  **Default:** T4's `update` engine surfaces a structured "locked subpath did not
+  resolve" signal; T5 owns the **report-and-remediate** presentation (the
+  renamed/removed-upstream message + re-add/remove guidance) and the `lint`/`doctor`
+  flag for a stale `skills.yaml` replacement pointing at a vanished skill. *Rationale:*
+  T4 owns the update mechanics; the renamed-handling *policy/UX* is this task's scope
+  per the epic. Confirm the exact signal shape against T4 in Solution.
+- [x] **Does `adopt` re-render after moving, or just stage the source?**
+  **Default:** `adopt` only performs the staged filesystem move + `git add` of
+  `./skills/<name>/`; the **next `sync`** (not `adopt` itself) re-renders the adopted
+  skill into every target. *Rationale:* matches the design ("the next `sync`
+  re-renders them") and keeps `adopt` a pure, reviewable filesystem operation distinct
+  from the render pipeline.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+The ownership model is **all about deletion safety**, so the test strategy is
+adversarial: prove the tool prunes exactly what it owns and **refuses** everything
+else, then prove a crash mid-prune is recoverable.
+
+- **Unit tests (pure, table-driven)** for the **ownership classifier** — the helper
+  that, given (desired set, manifest managed set, receipts, on-disk tree digests),
+  labels each target dir as one of: `managed-current`, `managed-orphan` (prune-eligible),
+  `managed-unestablished` (in manifest, no local receipt → report only), `modified`
+  (receipt exists but on-disk digest drifted → report only), or `foreign` (not in
+  manifest → adoptable). This is the load-bearing logic; every guard-rail edge is a row.
+- **Integration tests against a real on-disk fixture** (a temp `--root` with seeded
+  `./skills/`, `.claude/skills/`, `.agents/skills/`, a `manifest.json`, and a
+  machine-local receipts file under an isolated `$HOME`) for `adopt`, `remove`, the
+  sync prune pass, and `doctor` — exercised through `runCLI(t, …)` exactly as a user
+  would, asserting JSON payload on stdout, diagnostics on stderr, and exit codes.
+- **Crash-injection tests** for the prune pass: drive T4's journaled commit with a
+  fault injected between each ordered step (after journal-write/before swap, after
+  swap/before receipts, after receipts/before manifest) and assert the next run's
+  recovery reconciles to a safe state — no foreign dir touched, no manifest claiming
+  un-written bytes (**G-crash-consistent**).
+- **Forgery tests**: a foreign dir carrying a hand-written `metadata.auto_skill:
+  managed: true` stamp and/or a manifest entry with **no** local receipt is **never**
+  deleted (**G-no-foreign-delete**).
+
+All commands are JSON-default; tests assert the parseable payload shape and that
+diagnostics never pollute stdout. Data-listing commands (`doctor`, `adopt` with no
+args) return valid results even when some dirs are invalid, then exit non-zero only on
+a hard error.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="Testing layers — classifier unit core under CLI integration + crash injection">
+flowchart TB
+  unit["Unit: ownership classifier\n(managed-current / orphan / unestablished / modified / foreign)\n+ adopt divergence digest compare"]
+  integ["Integration (runCLI + temp --root + isolated HOME)\nadopt · remove · sync-prune pass · doctor"]
+  crash["Crash injection\nfault between journal steps → recovery reconciles"]
+  forge["Forgery / safety\nforged stamp · manifest-without-receipt · modified dir → never deleted"]
+  unit --> integ
+  integ --> crash
+  integ --> forge
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="Receipt-gated orphan prune deletes a managed orphan — and a rename is just that" phases="1,2" tests="auto-skill/internal/ownership/classify_test.go,auto-skill/internal/sync/prune_test.go">
+          <md><script type="text/plain">
+- **Given** a target where `beta-new-plan` was previously rendered (manifest-managed,
+  a local receipt records its digest, the on-disk dir still matches that digest) and
+  the desired set now contains `new-plan` instead (the skill was renamed in `./skills/`
+  or the lock)
+- **When** `auto skill sync` runs (full sync, desired set complete)
+- **Then** `new-plan` is written and `beta-new-plan` — a managed orphan whose receipt +
+  on-disk digest agree — is **pruned** from that target, with **no rename-detection
+  heuristic** involved; the receipts + manifest are updated to drop it.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="Prune refuses without the full three-part authority" phases="1,2" tests="auto-skill/internal/ownership/classify_test.go,auto-skill/internal/sync/prune_test.go">
+          <md><script type="text/plain">
+- **Given** a manifest-managed orphan that is EITHER (a) missing a local receipt (a
+  manifest entry introduced by someone's commit), (b) present in a receipt but whose
+  on-disk dir digest no longer matches (locally modified), or (c) carrying a forged
+  in-file `metadata.auto_skill: managed: true` stamp but no matching receipt
+- **When** `auto skill sync` (or its `--check`) runs
+- **Then** the dir is **reported** (as needing manual handling / adoptable) and
+  **never deleted or mutated** (G-no-foreign-delete). A forged in-file stamp authorizes
+  nothing.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="Pruning is suppressed when the desired set is incomplete" phases="2" tests="auto-skill/internal/sync/prune_test.go">
+          <md><script type="text/plain">
+- **Given** a sync where at least one repo's fetch failed, so the desired set cannot be
+  fully computed
+- **When** the commit phase runs
+- **Then** **no prune occurs** for any target (a failed fetch never deletes), even for
+  an otherwise prune-eligible orphan; valid writes still proceed and the command exits
+  non-zero (G-crash-consistent / fail-safe).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="A desired skill colliding with a foreign dir is a hard conflict, not an overwrite" phases="2,6" tests="auto-skill/internal/sync/prune_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** a desired skill name `foo` whose target already contains a **foreign**
+  (un-manifested) dir named `foo`
+- **When** `auto skill sync` runs without `--force`
+- **Then** sync **neither overwrites nor prunes** `foo`; it reports the conflict with
+  remediation — `adopt foo`, rename the incoming skill with `--as`, or `--force` to
+  overwrite — and exits non-zero. With `--force`, the incoming desired skill overwrites.
+  Neither normal sync nor pruning ever mutates the foreign dir absent `--force`.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="adopt stages a filesystem move into ./skills/ then git-adds it" phases="3" tests="auto-skill/internal/adopt/adopt_test.go">
+          <md><script type="text/plain">
+- **Given** a foreign skill `new-plan` hand-dropped into `.claude/skills/` (typically
+  untracked/gitignored) and no `./skills/new-plan/`
+- **When** `auto skill adopt new-plan` runs
+- **Then** it performs a **staged move** — copy into `./skills/new-plan/` → verify the
+  copied tree (digest + readable `SKILL.md`) → remove the source — then `git add
+  ./skills/new-plan/` (never `git mv`); a failure mid-move **rolls back** cleanly. If
+  `./skills/new-plan/` already exists it **refuses unless `--force`**. `adopt` does
+  **not** re-render — the next `sync` does.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="adopt of divergent multi-target copies is a hard error requiring --from" phases="3" tests="auto-skill/internal/adopt/adopt_test.go">
+          <md><script type="text/plain">
+- **Given** the same foreign name present in several targets
+- **When** `auto skill adopt <name>` runs
+- **Then** their **full tree digests** are compared: identical → the single copy is
+  adopted; **divergent → a hard error** listing each path + digest, requiring `--from
+  <target>` to choose the source — it never silently picks one and discards the others.
+  `adopt` with no args lists all adoptable foreign skills as JSON; `adopt --all -y`
+  adopts every unambiguous one.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="remove <name> drops the source of truth and prunes targets under receipt authority" phases="4,6" tests="auto-skill/internal/sync/remove_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** a skill that exists as authored (`./skills/<name>/`) and/or vendored (a
+  lock entry)
+- **When** `auto skill remove <name>` runs with the required `--local` / `--vendored`
+  selector (required only when both exist for that name)
+- **Then** `--vendored` drops the lock + `skills.yaml` entry, `--local` deletes
+  `./skills/<name>/`, and the now-undesired skill is **pruned from every target through
+  the same receipt-gated, journaled prune** — target copies lacking a matching receipt
+  are reported, not deleted (G-no-foreign-delete), and a crash leaves a recoverable
+  state (G-crash-consistent). Ambiguous invocation (both exist, no selector) is a
+  fail-fast usage error with a remediation hint.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="Renamed-vendored upstream is reported with remediation, not silently broken" phases="5,6" tests="auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** a vendored skill whose upstream renamed/removed its subpath so the locked
+  `subpath` no longer resolves on `auto skill update`
+- **When** `update` runs
+- **Then** it **reports** the skill clearly ("`<name>` not found at its locked path —
+  renamed or removed upstream?") with remediation to re-`add` the new name or `remove`
+  the stale entry; the stale skill's target orphan is pruned on the next `sync` like any
+  other. A stale `skills.yaml` `replacements` entry pointing at a vanished skill is
+  flagged by `lint`/`doctor` ("no such skill — did you mean …?").
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="doctor summarizes managed orphans + foreign/adoptable skills (offline)" phases="1,6" tests="auto-skill/internal/ownership/classify_test.go,auto-skill/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** a project with at least one managed orphan (pruned next sync) and one
+  foreign/adoptable dir in its targets
+- **When** `auto skill doctor` runs (offline — no network)
+- **Then** the JSON report includes, alongside T4's drift compare, a **managed-orphans**
+  list and a **foreign/adoptable** list, each derived from the **on-disk-tree-digest vs
+  `skill_version`** comparison (so a forged stamp can't fool it); `--format text` renders
+  the same data for humans. It exits non-zero when actionable drift exists.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-10" title="A crash mid-prune leaves a recoverable state" phases="2" tests="auto-skill/internal/sync/prune_test.go">
+          <md><script type="text/plain">
+- **Given** a prune pass writing through T4's journaled commit (journal `prunes` →
+  swap/trash → receipts → manifest → lock → clear journal)
+- **When** the process is killed between any two ordered steps
+- **Then** the next run's journal recovery reconciles receipts + manifest to a safe
+  state: no foreign dir was deleted, no manifest claims bytes this machine didn't write,
+  and re-running `sync` converges (G-crash-consistent).
+          </script></md>
+        </pd-ac>
+
+        <pd-trace caption="Acceptance coverage"></pd-trace>
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **Seam shapes confirmed at execution, not planning.** The exact receipts struct, the
+  journal `prunes` field layout, and whether the on-disk-digest helper is exported from
+  `internal/render` vs `internal/sync` are T4's to settle. T5's tests assert *behavior*
+  (what gets pruned/reported), so they survive a struct rename, but the wiring is
+  confirmed against T4's merged code first (tracked in Open Questions).
+- **`adopt`'s git-tracked-source edge.** The design's primary case is an untracked
+  (gitignored) target, handled by filesystem copy + `git add`. If a target is *committed*
+  (`commit_targets: true`), the source dir is tracked; the staged-move + `git add` still
+  works (git records the add at the new path and the delete at the old), but this path
+  gets an explicit test rather than relying on the gitignored assumption.
+- **Cross-filesystem `adopt`.** `./skills/` and a target could sit on different mounts;
+  the staged move uses copy-then-remove (not rename), so it is FS-agnostic, but a
+  partial-copy fault must roll back without leaving a half-written `./skills/<name>/`.
+- **Not covered here:** the render/digest algorithm itself (T4), the manifest/receipt
+  *writer* (T4), and `list`/`describe`/`get` (T6) — T5 trusts their contracts.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+T5 adds **one shared truth and four consumers**. The shared truth is a pure
+**ownership classifier**: given the desired set, the manifest's managed set, the
+machine-local receipts, and each target dir's on-disk tree digest, it labels every
+`(target, dir)` as exactly one of `managed-current`, `managed-orphan` (prune-eligible),
+`managed-unestablished` (manifest entry, no local receipt), `modified` (receipt exists,
+digest drifted), or `foreign` (not in manifest). **Every deletion decision in the epic
+flows through this one function**, so the three-part deletion authority
+(manifest-orphan **and** local receipt **and** matching on-disk digest) is implemented
+and tested in exactly one place (**G-no-foreign-delete**).
+
+The four consumers:
+
+1. **Sync prune pass** (`internal/sync`) — after T4's render/write phase, classify each
+   target, populate T4's reserved journal `prunes` slot with the `managed-orphan`
+   dirs, and delete them **inside T4's journaled commit** so a crash is recoverable
+   (**G-crash-consistent**). It also enforces the **desired-collides-with-foreign**
+   hard conflict (report + remediation; `--force` to overwrite), and **suppresses all
+   pruning when the desired set is incomplete** (a failed fetch never deletes).
+2. **`adopt`** — a staged filesystem move (copy → verify → remove) of a `foreign` dir
+   into `./skills/<name>/`, then `git add`; refuses an existing target unless `--force`;
+   divergent multi-target copies are a hard error needing `--from`.
+3. **`remove <name>`** — drops the authored and/or vendored source of truth (selector
+   required when both exist) and lets the same receipt-gated prune clean the targets.
+4. **`doctor`** — extends T4's offline drift report with the classifier's
+   managed-orphan and foreign/adoptable lists; `lint`/`doctor` also flag a stale
+   `skills.yaml` replacement pointing at a vanished skill (the renamed-vendored tail).
+
+`adopt`'s staged move lives in its own small package because it's a filesystem concern
+distinct from the render pipeline; everything deletion-related rides `internal/sync`'s
+existing journal rather than inventing a second commit path.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="ownership-api" title="The ownership classifier (shared core)">
+        <pd-api kind="module" name="internal/ownership" lang="go" path="auto-skill/internal/ownership/classify.go" caption="Pure classification — the single home of the three-part deletion authority">
+          <pd-member kind="enum" sig="type State string  // managed-current | managed-orphan | managed-unestablished | modified | foreign">One label per target dir; only `managed-orphan` is prune-eligible.</pd-member>
+          <pd-member kind="struct" sig="type DirStatus struct { Target, Name, OnDiskDigest string; State State; ReceiptDigest, ExpectedVersion string }">Per `(target,dir)` verdict; carries the digests that justified the label (for `doctor`/reporting).</pd-member>
+          <pd-member kind="function" sig="Classify(in Inputs) []DirStatus">Pure: desired set + manifest managed set + receipts (keyed by absolute target path) + on-disk digests → verdicts. No I/O — caller supplies digests via T4's render hash helper.</pd-member>
+          <pd-member kind="struct" sig="type Inputs struct { Targets []TargetScan; Desired map[string]bool; Manifest *schema.Manifest; Receipts *schema.Receipts }">`TargetScan` = absolute path + the dirs found in it with their computed tree digests.</pd-member>
+          <pd-member kind="function" sig="PruneEligible(verdicts []DirStatus) []DirStatus">Filter to `managed-orphan` only — what the sync prune pass deletes.</pd-member>
+          <pd-member kind="function" sig="Adoptable(verdicts []DirStatus) []DirStatus">Filter to `foreign` — what `doctor` lists and `adopt` consumes.</pd-member>
+        </pd-api>
+        <md><script type="text/plain">
+**Why this shape.** Keeping `Classify` pure (digests passed in, not read) makes the
+guard-rail matrix a table-driven unit test and keeps the package a leaf — it imports
+only 032's schema value types and T4's hash helper, never `internal/sync`. The
+absolute-target-path keying mirrors the design's worktree rule (lines 82-84): two
+worktrees share a project id but never collide because receipts key on each target's
+absolute path.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="sync-prune-api" title="Sync prune pass + foreign-collision handling">
+        <pd-api kind="module" name="internal/sync (T5 additions)" lang="go" path="auto-skill/internal/sync/prune.go" caption="Deletion rides T4's journaled commit">
+          <pd-member kind="function" sig="planPrune(verdicts []ownership.DirStatus, desiredComplete bool) []JournalPrune">Returns the prune entries for the journal's reserved `prunes` slot — **empty when `desiredComplete` is false** (failed fetch never deletes).</pd-member>
+          <pd-member kind="function" sig="detectForeignCollisions(desired map[string]bool, verdicts []ownership.DirStatus) []Conflict">A desired name over a `foreign` dir → a `Conflict` (reported with `adopt`/`--as`/`--force` remediation); never written/pruned unless `--force`.</pd-member>
+          <pd-member kind="field" sig="Journal.Prunes []JournalPrune  // T4 reserves empty; T5 fills">Each: `{ Target, Name, Digest, Reason }`. Committed in order swap → receipts → manifest → lock → clear (T4's protocol).</pd-member>
+          <pd-member kind="function" sig="applyPrunes(j *Journal) error">Move each pruned dir to the journaled trash, then update receipts + manifest to drop it — the same crash-consistent path as a write.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="adopt-remove-api" title="adopt &amp; remove">
+        <pd-api kind="module" name="internal/adopt" lang="go" path="auto-skill/internal/adopt/adopt.go" caption="Staged filesystem move — copy → verify → remove → git add">
+          <pd-member kind="function" sig="Adopt(env skill.Env, names []string, opts Options) (Result, error)">Per name: gather its `foreign` copies across targets, digest-compare, then stage-move the chosen copy into `./skills/<name>/` and `git add` it.</pd-member>
+          <pd-member kind="struct" sig="type Options struct { All, Force, Yes bool; From string }">`--all`, `--force` (overwrite existing `./skills/<name>/`), `-y`, `--from <target>` (divergence tie-break).</pd-member>
+          <pd-member kind="function" sig="stageMove(src, dst string) (rollback func(), err error)">Copy into a temp sibling of `dst` → verify tree digest + readable SKILL.md → atomic rename into place → remove src; `rollback` undoes a partial move (FS-agnostic, no `git mv`).</pd-member>
+        </pd-api>
+        <pd-api kind="module" name="internal/sync remove (T5)" lang="go" path="auto-skill/internal/sync/remove.go" caption="Drop source of truth, then prune targets under receipt authority">
+          <pd-member kind="function" sig="Remove(env skill.Env, name string, sel Selector) (Result, error)">`--vendored` drops the lock + `skills.yaml` entry; `--local` deletes `./skills/<name>/`; then runs the receipt-gated journaled prune so targets converge. Ambiguous (both exist, no selector) → fail-fast usage error.</pd-member>
+          <pd-member kind="enum" sig="type Selector int  // SelLocal | SelVendored | SelUnset">`SelUnset` is valid only when exactly one of local/vendored exists for the name.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="cli-surface" title="CLI surface (final shape)">
+        <pd-cli id="C-inspect-t5" title="zsh — prune, adopt, remove, doctor" caption="The cleanup verbs T5 delivers">
+          <pd-cmd note="rename in ./skills/ or lock, then sync — old copy pruned automatically" status="todo">auto skill sync</pd-cmd>
+          <pd-out>✓ new-plan rendered · pruned managed orphan beta-new-plan (receipt+digest verified) in 2 targets</pd-out>
+          <pd-cmd note="a hand-dropped skill collides with a desired name — sync refuses" status="todo">auto skill sync</pd-cmd>
+          <pd-out><script type="text/plain">! conflict: desired "deploy" collides with a foreign dir in .claude/skills — adopt it, rename with --as, or --force (exit 1)</script></pd-out>
+          <pd-cmd note="list adoptable foreign skills (JSON default)" status="todo">auto skill adopt</pd-cmd>
+          <pd-cmd note="pull one into ./skills/ — staged move + git add; next sync re-renders" status="todo">auto skill adopt new-plan</pd-cmd>
+          <pd-out>✓ moved .claude/skills/new-plan → ./skills/new-plan (git add); run sync to render</pd-out>
+          <pd-cmd note="divergent copies across targets — must choose" status="todo">auto skill adopt new-plan</pd-cmd>
+          <pd-out><script type="text/plain">! new-plan differs across targets (.claude=ab12… .agents=cd34…) — pick with --from <target> (exit 1)</script></pd-out>
+          <pd-cmd note="remove a vendored skill — drops lock entry, prunes targets" status="todo">auto skill remove acme-release --vendored</pd-cmd>
+          <pd-cmd note="offline drift + orphan/foreign summary" status="todo">auto skill doctor --format text</pd-cmd>
+          <pd-out>✓ 2 targets current · 1 managed orphan (prunes next sync) · 1 foreign (adoptable)</pd-out>
+        </pd-cli>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-skill/internal/ownership/classify.go" change="add">Pure ownership classifier — the single home of the three-part deletion authority; `Classify`, `State`, `DirStatus`, `PruneEligible`, `Adoptable`.</pd-file>
+          <pd-file path="auto-skill/internal/ownership/classify_test.go" change="add">Table-driven matrix: every state + every guard-rail edge (forged stamp, no-receipt, modified, worktree-path keying).</pd-file>
+          <pd-file path="auto-skill/internal/sync/prune.go" change="add">Prune pass: `planPrune` (suppressed on incomplete desired set), `detectForeignCollisions`, `applyPrunes` filling T4's journal `prunes` slot.</pd-file>
+          <pd-file path="auto-skill/internal/sync/prune_test.go" change="add">Integration: rename→prune, refuse-without-authority, foreign-collision, incomplete-set suppression, crash injection between journal steps.</pd-file>
+          <pd-file path="auto-skill/internal/sync/remove.go" change="add">`Remove` + `Selector` — drop authored/vendored source of truth, then receipt-gated journaled prune of targets.</pd-file>
+          <pd-file path="auto-skill/internal/sync/remove_test.go" change="add">remove --local / --vendored, ambiguous-selector fail-fast, target prune honors receipt authority.</pd-file>
+          <pd-file path="auto-skill/internal/adopt/adopt.go" change="add">Staged filesystem move (copy→verify→remove→git add); divergence digest-compare + `--from`; refuse existing unless `--force`.</pd-file>
+          <pd-file path="auto-skill/internal/adopt/adopt_test.go" change="add">adopt single/all, existing-target refusal, divergent --from, cross-FS + partial-copy rollback, committed-target git path.</pd-file>
+          <pd-file path="auto-skill/internal/cli/adopt.go" change="add">`newAdoptCmd` — args `[name…]`, flags `--all/--from/--force/-y/--text`; JSON default.</pd-file>
+          <pd-file path="auto-skill/internal/cli/remove.go" change="add">`newRemoveCmd` — positional skill-name arg, flags `--local/--vendored/--text`.</pd-file>
+          <pd-file path="auto-skill/internal/cli/root.go" change="edit">Register `newAdoptCmd`/`newRemoveCmd`; extend `doctorReport` (currently lives here at root.go:360-388) with managed-orphan + foreign/adoptable lists from the classifier — offline. (If T4 splits doctor into its own file, the extension follows it.)</pd-file>
+          <pd-file path="auto-skill/internal/sync/update.go" change="edit">Surface the renamed/removed-upstream report when a locked `subpath` no longer resolves (T4-created file; T4 owns the update mechanics, T5 owns the report + remediation text).</pd-file>
+          <pd-file path="auto-skill/internal/skill/skill.go" change="edit">Flag a `skills.yaml` `replacements` entry naming a vanished skill ("no such skill — did you mean …?") in `Lint` (currently in skill.go); shared with doctor.</pd-file>
+          <pd-file path="auto-skill/internal/cli/cli_integration_test.go" change="edit">End-to-end `adopt`/`remove`/`doctor`/sync-prune cases against a temp `--root` + isolated `$HOME` receipts.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **A second, non-journaled deletion path** (delete orphans directly in a `prune`
+  command outside T4's commit). Rejected: it would make a crash mid-delete leave the
+  manifest/receipts inconsistent, violating G-crash-consistent. Filling T4's reserved
+  journal `prunes` slot reuses the proven recovery protocol.
+- **Inferring ownership from the in-file `metadata.auto_skill` stamp.** Rejected
+  upstream (design RESOLVED P1) and here: a forged `managed: true` would authorize
+  deletion. Authority is the machine-local receipt + on-disk digest; the stamp is
+  informational only and excluded from the digest.
+- **`git mv` for `adopt`.** Rejected (design RESOLVED P2): the source dir is normally
+  untracked/gitignored, so `git mv` fails. A staged filesystem copy→verify→remove then
+  `git add` works for both untracked and committed targets and rolls back cleanly.
+- **mtime/"richest copy" heuristics for divergent adopt.** Rejected: non-deterministic
+  across clones/platforms and silently discards content. Full-tree-digest compare +
+  explicit `--from` is deterministic and loses nothing.
+- **Interactive-only `adopt`.** Rejected for CI: it would break JSON-default /
+  fails-closed. `adopt` is non-interactive by default (list/`<name>`/`--all -y`), with
+  an interactive pick offered only on a TTY in `--format text`.
+- **A standalone `prune` command.** Rejected: pruning is a property of `sync`
+  reconciliation (and `remove`), not a user-driven verb; surfacing orphans is `doctor`'s
+  job. Avoids a third place that can delete.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-T5-1" title="One pure ownership classifier is the sole deletion-authority gate" status="accepted" by="agent" summary="Every prune/adopt/doctor decision flows through internal/ownership.Classify.">
+        <md><script type="text/plain">
+**Context:** Deletion safety (G-no-foreign-delete) is the riskiest part of the epic and
+must be identical across `sync`, `remove`, `doctor`, and `adopt`.
+**Decision:** Implement the three-part authority (manifest-orphan ∧ local-receipt ∧
+matching on-disk digest) once, in a pure leaf `internal/ownership.Classify`; all four
+consumers call it. Digests are passed in (via T4's render hash helper) to keep it
+I/O-free and table-testable.
+**Alternatives:** Re-derive the rule per command (drift risk); embed it in
+`internal/sync` only (forces `adopt`/`doctor` to import the orchestrator).
+**Consequences:** One test matrix proves the safety property; a leaf package avoids
+import cycles. Slight indirection: callers must gather target scans + digests first.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-T5-2" title="All deletions ride T4's journaled commit; no second commit path" status="accepted" by="agent" summary="Prune fills the reserved journal `prunes` slot; remove reuses it.">
+        <md><script type="text/plain">
+**Context:** T4 reserved an empty `prunes` array in its crash-consistent journal
+specifically for T5.
+**Decision:** The sync prune pass and `remove`'s target cleanup both populate that slot
+and commit through T4's ordered protocol (swap/trash → receipts → manifest → lock →
+clear), so recovery is unchanged.
+**Alternatives:** A separate prune transaction (re-implements recovery, risks
+inconsistency).
+**Consequences:** Honors G-crash-consistent for free; T5 must match T4's merged journal
+struct (an Open Question, resolved at execution against the merged code).
+        </script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Build the pure ownership classifier first (the sole deletion-authority gate), then layer
+the four consumers on it — the sync prune pass, `adopt`, `remove`, and the renamed/lint
+tails — and finish by wiring the new commands + extended `doctor` into the CLI with
+end-to-end integration tests. Every phase ends green (`go build ./...` + `go test
+./...` in `auto-skill`) and is committed before the next starts.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-dag caption="Phase dependency DAG"></pd-dag>
+      </pd-section>
+
+      <pd-section id="phases" title="Phases">
+        <pd-stepper>
+
+          <pd-phase n="1" title="Ownership classifier (pure leaf)" status="todo"
+            files="auto-skill/internal/ownership/classify.go,auto-skill/internal/ownership/classify_test.go">
+            <md><script type="text/plain">
+The single home of the three-part deletion authority. No I/O — digests are passed in.
+
+1. Create `internal/ownership/classify.go`: `State` enum (`managed-current` /
+   `managed-orphan` / `managed-unestablished` / `modified` / `foreign`), `DirStatus`,
+   `Inputs`/`TargetScan`, `Classify(in Inputs) []DirStatus`, and the `PruneEligible` /
+   `Adoptable` filters. Consume 032's `schema.Manifest` value type and a `schema.Receipts`
+   type; if T4/032 didn't formalize a `Receipts` parser, add `ParseReceipts`/`Receipts`
+   to 032's schema package (coordinate at the seam — see Open Questions). Key receipts
+   lookups on the **absolute target path** (worktree rule).
+   - *Verify:* `go build ./...` in `auto-skill`.
+2. Write `classify_test.go` as a table-driven matrix: for each target dir, assert the
+   label across every edge — managed+receipt+digest-match → orphan; manifest entry, no
+   receipt → unestablished; receipt but digest drift → modified; forged in-file
+   `managed: true` with no receipt → foreign/never-eligible; not in manifest → foreign;
+   two worktree paths don't cross-contaminate.
+   - *Verify:* `go test ./internal/ownership/...` passes.
+3. **Commit:** `feat(035): ownership classifier — three-part deletion authority`.
+   - *Verify:* `go build ./... && go test ./...` in `auto-skill` green.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="2" title="Sync prune pass + foreign-collision" status="todo" depends-on="1"
+            files="auto-skill/internal/sync/prune.go,auto-skill/internal/sync/prune_test.go">
+            <md><script type="text/plain">
+Fill T4's reserved journal `prunes` slot; deletion rides T4's journaled commit.
+
+1. `internal/sync/prune.go`: `planPrune(verdicts, desiredComplete)` — returns the
+   journal prune entries, **empty when `desiredComplete == false`** (failed fetch never
+   deletes); `detectForeignCollisions(desired, verdicts)` — a desired name over a
+   `foreign` dir → a reported `Conflict` (remediation: `adopt`/`--as`/`--force`);
+   `applyPrunes(j)` — move pruned dirs to the journaled trash, then drop them from
+   receipts + manifest, in T4's commit order. Wire `planPrune`/`detectForeignCollisions`
+   into the sync commit phase (call `ownership.Classify` with the target scans T4
+   already computes for the incremental skip).
+   - *Verify:* `go build ./...`.
+2. `prune_test.go` (integration, temp `--root` + isolated `$HOME` receipts, real `git`
+   `file://` fixture per T4's harness): rename→orphan pruned; refuse-without-authority
+   (no-receipt / modified / forged stamp reported, not deleted); foreign-collision
+   reports + exits non-zero, `--force` overwrites; incomplete desired set suppresses all
+   prunes; **crash injection** — kill between journal steps (post-journal/pre-swap,
+   post-swap/pre-receipts, post-receipts/pre-manifest) and assert recovery converges
+   with no foreign dir touched.
+   - *Verify:* `go test ./internal/sync/...` passes.
+3. **Commit:** `feat(035): receipt-gated orphan prune + foreign-collision handling`.
+   - *Verify:* `go build ./... && go test ./...` green.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="3" title="adopt — staged move + divergence" status="todo" depends-on="1"
+            files="auto-skill/internal/adopt/adopt.go,auto-skill/internal/adopt/adopt_test.go,auto-skill/internal/cli/adopt.go">
+            <md><script type="text/plain">
+1. `internal/adopt/adopt.go`: `Adopt(env, names, opts)` uses `ownership.Adoptable` to
+   find foreign copies; per name digest-compares copies across targets (identical →
+   adopt one; divergent → hard error requiring `--from`); `stageMove(src,dst)` =
+   copy into a temp sibling → verify tree digest + readable `SKILL.md` → atomic rename
+   → remove src, returning a `rollback` for partial-failure (FS-agnostic, no `git mv`);
+   then `runGit(root, "add", "skills/<name>")`. Refuse existing `./skills/<name>/`
+   unless `--force`.
+   - *Verify:* `go build ./...`.
+2. `internal/cli/adopt.go`: `newAdoptCmd` — args `[name…]`, flags
+   `--all/--from/--force/-y/--text`; no args ⇒ list adoptable foreign skills as JSON;
+   non-TTY with no names and no `--all -y` fails closed with a remediation hint. (Do
+   NOT register in root.go yet — phase 6 wires it.)
+   - *Verify:* `go build ./...`.
+3. `adopt_test.go`: single adopt + git add; `--all`; existing-target refusal vs
+   `--force`; divergent copies → `--from`; cross-FS + partial-copy rollback leaves no
+   half-written `./skills/<name>/`; committed-target (tracked source) path.
+   - *Verify:* `go test ./internal/adopt/...` passes.
+4. **Commit:** `feat(035): adopt — staged filesystem move into ./skills`.
+   - *Verify:* `go build ./... && go test ./...` green.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="4" title="remove — drop source of truth + prune targets" status="todo" depends-on="2"
+            files="auto-skill/internal/sync/remove.go,auto-skill/internal/sync/remove_test.go,auto-skill/internal/cli/remove.go">
+            <md><script type="text/plain">
+1. `internal/sync/remove.go`: `Remove(env, name, sel)` + `Selector` (`SelLocal` /
+   `SelVendored` / `SelUnset`). `SelVendored` drops the lock + `skills.yaml` entry via
+   032's typed writers; `SelLocal` deletes `./skills/<name>/`; either way re-run the
+   phase-2 receipt-gated journaled prune so targets converge (target copies without a
+   matching receipt are reported, not deleted). `SelUnset` valid only when exactly one
+   of local/vendored exists; ambiguous ⇒ fail-fast usage error with remediation.
+   - *Verify:* `go build ./...`.
+2. `internal/cli/remove.go`: `newRemoveCmd` — arg `<name>`, flags
+   `--local/--vendored/--text` (mutually exclusive selector). (Registered in phase 6.)
+   - *Verify:* `go build ./...`.
+3. `remove_test.go`: `--local`, `--vendored`, ambiguous-no-selector fail-fast, target
+   prune honors receipt authority + crash-consistency (reuses phase-2 journal).
+   - *Verify:* `go test ./internal/sync/...` passes.
+4. **Commit:** `feat(035): remove <name> with --local/--vendored selectors`.
+   - *Verify:* `go build ./... && go test ./...` green.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="5" title="Renamed-vendored report + stale-replacement lint" status="todo"
+            files="auto-skill/internal/sync/update.go,auto-skill/internal/skill/skill.go">
+            <md><script type="text/plain">
+The renamed-vendored tail — independent of the classifier (no prune logic here).
+
+1. `internal/sync/update.go` (T4-created): when a locked `subpath` no longer resolves
+   on `update`, emit a structured report ("`<name>` not found at its locked path —
+   renamed or removed upstream?") with remediation to re-`add` / `remove`; the stale
+   skill's orphan is left for the next sync's normal prune. Match T4's merged
+   update/error shape — extend its reporting, don't fork the resolution path.
+   - *Verify:* `go build ./...`.
+2. `internal/skill/skill.go`: in `Lint`, flag a `skills.yaml` `replacements` entry that
+   names a skill present in neither `./skills/` nor the lock ("no such skill — did you
+   mean …?"), returning the canonical structured diagnostic; expose it so `doctor`
+   (phase 6) reuses the same check.
+   - *Verify:* `go build ./...` + `go test ./internal/skill/...` passes.
+3. **Commit:** `feat(035): report renamed-vendored skills + lint stale replacements`.
+   - *Verify:* `go build ./... && go test ./...` green.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="6" title="CLI wire-up + doctor extension + e2e" status="todo" depends-on="2,3,4,5"
+            files="auto-skill/internal/cli/root.go,auto-skill/internal/cli/cli_integration_test.go">
+            <md><script type="text/plain">
+1. `internal/cli/root.go`: register `newAdoptCmd()` + `newRemoveCmd()` via
+   `cmd.AddCommand`; extend `doctorReport(env)` (root.go:360-388) to add, alongside
+   T4's drift compare, a **managed-orphans** list (`ownership.PruneEligible`) and a
+   **foreign/adoptable** list (`ownership.Adoptable`), both from on-disk-digest vs
+   `skill_version`; include the phase-5 stale-replacement flag; offline (no network);
+   exit non-zero on actionable drift. JSON default, `--format text` for humans.
+   - *Verify:* `go build ./...`.
+2. `cli_integration_test.go`: end-to-end through `runCLI` against a temp `--root` +
+   isolated `$HOME` receipts — `adopt` (list/specific/divergent), `remove`
+   (local/vendored/ambiguous), a full `sync` that prunes a renamed orphan + reports a
+   foreign collision, `doctor` orphan/foreign JSON shape, and the renamed-vendored
+   report. Assert payload on stdout, diagnostics on stderr, exit codes.
+   - *Verify:* `go test ./...` in `auto-skill` passes.
+3. **Commit:** `feat(035): wire adopt/remove + extend doctor with orphan/foreign lists`.
+   - *Verify:* `go build ./... && go test ./...` green; `go vet ./...` clean.
+            </script></md>
+          </pd-phase>
+
+        </pd-stepper>
+      </pd-section>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **AC-1, AC-2, AC-10** (receipt-gated prune, refusal without authority, crash
+  recovery) pass — phases 1–2.
+- **AC-3, AC-4** (incomplete-set suppression, foreign-collision conflict) pass —
+  phase 2 (+ phase 6 e2e).
+- **AC-5, AC-6** (adopt staged move, divergence `--from`) pass — phase 3.
+- **AC-7** (remove + receipt-gated target prune) passes — phase 4 (+ phase 6 e2e).
+- **AC-8** (renamed-vendored report + stale-replacement lint) passes — phases 5–6.
+- **AC-9** (doctor orphan/foreign offline summary) passes — phases 1 + 6.
+- `auto-skill` builds, `go test ./...` and `go vet ./...` are green, output is
+  JSON-default with diagnostics on stderr, and **no path deletes a dir lacking the full
+  manifest-orphan ∧ receipt ∧ digest authority** (G-no-foreign-delete) while every
+  deletion rides T4's journaled commit (G-crash-consistent).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
