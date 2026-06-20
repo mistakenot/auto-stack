@@ -76,6 +76,7 @@ func isDocPath(rel string) bool {
 func newDerived(src Event, typ string, data any) Event {
 	ev, _ := NewEvent(typ, "auto/bus/derive", data)
 	// Carry provenance from the source event.
+	ev.Host = src.Host
 	ev.Project = src.Project
 	ev.Session = src.Session
 	ev.Remote = src.Remote
