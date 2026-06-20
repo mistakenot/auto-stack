@@ -7,6 +7,7 @@
 
 ## Git Worktree Discipline
 
+- We use branches/worktrees when running via the explicit planning workflow (new-task → execute-task etc.); otherwise assume you can do your work directly on `main` unless specifically instructed otherwise.
 - ALWAYS run `git fetch origin && git checkout main && git pull origin main` before creating a worktree branch. Worktrees forked from a stale main will cause merge conflicts and divergent history.
 
 ## Go Build Discipline
