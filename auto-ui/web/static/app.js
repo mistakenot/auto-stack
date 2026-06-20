@@ -7,6 +7,11 @@ import { html } from "htm/preact";
 import { parseHash, setHash, onRouteChange } from "./router.js";
 import { Explorer } from "./explorer.js";
 import { Debug } from "./debug.js";
+// Load the module-singleton store so it's available to views. PHASE 1: the store
+// is DORMANT — initStore() is NOT called here, so it wires no side-effects and the
+// existing views keep their own fetches/subscriptions; the app renders identically.
+// Phase 2 calls initStore() once at startup and cuts the views over. (029)
+import "./store.js";
 
 // App derives the current view from the hash and renders the matching view.
 // The explorer is the default: empty/legacy views fall through to it (and the
