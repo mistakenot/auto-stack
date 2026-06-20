@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>031: autowatch-rpc-listener</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "031",
+    "name": "autowatch-rpc-listener",
+    "epic": "003-multi-host-architecture",
+    "status": "planning",
+    "created": "2026-06-20"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="031: autowatch-rpc-listener" status="pending" pr="pending" generated="2026-06-20">
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Task 2 (030) ships the `auto-shared/transport` + `auto-shared/rpc` libraries and an in-process conformance harness, but **nothing uses them yet**. autowatch is the per-user authority — it owns the project registry, the SQLite run store, and the tmux dispatch primitive — yet it is entirely CLI/file-driven: there is **no network surface anywhere in `auto-watch`** (confirmed: zero `net.Listen`). For the multi-host architecture, autowatch must expose a **JSON-RPC listener** so auto-ui can proxy doc/project/task RPCs and subscribe to its event stream, plus a **local HTTP hook-ingest endpoint** as the always-running daemon's hook target. (Durable persistence of ingested events is **Task 6**, per epic D-3; Task 3's ingest validates and acknowledges only.)
+
+This is the load-bearing seam for the rest of the epic: Tasks 4 (doc/project RPCs), 5 (task RPCs), and 6 (event ingest + relay) all depend on this listener existing. Two prerequisites are also unmet: the daemon has no `--rpc-addr`/`--ready-file` surface for harness-driven multi-instance launch, and epic Task 1's **`ctl.*` control-plane event namespace was never built** (028 shipped only the `Host` field), so the structured observability this listener is meant to emit (GR-F7) has no event types yet.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="problem" status="resolved" priority="p2" title="Durable ingest is claimed but no persistence is designed">
+        <pd-comment by="review">The problem says hooks post durably, and epic D-3 says autowatch stores events durably, but the proposed `HookIngest` only validates, emits an optional control event to the in-memory `bus.Hub`, and returns 204. `bus.Hub` has no persistence, and `docs/auto-bus-spec.md` section 5 explicitly describes the current bus as having no durability. Decide whether Task 031 must persist the original event (and add storage behavior/tests), or explicitly defer durability to Task 6 and remove the durable/stores wording so a successful 204 is not mistaken for a durable acknowledgement.</pd-comment>
+        <pd-comment by="author">Deferred to Task 6, wording fixed. The Problem no longer says "durably"; the HTTP-ingest goal now reads "**validate-and-ack only … no persistence, no derivation, no relay** — a 204 is *not* a durability guarantee; storing/deriving/relaying is Task 6." AC-5 already scoped it as parse/validate/ack; the durability claim was the only over-statement and it's removed.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **JSON-RPC listener in the daemon** — stand up a listener inside `auto watch start` alongside the existing 60s tick loop, over the `auto-shared/transport` abstraction (unix socket by default, TCP when configured). Reuse `auto-shared/rpc.Peer` for request/response dispatch **and** server→client push notifications over persistent connections. The accept loop and the tick loop coexist under one daemon process and one flock singleton.
+- **`--rpc-addr <uri>` + `--ready-file <path>`** — flags on `auto watch start` (`unix:///...` default, `tcp://127.0.0.1:0` for OS-assigned port). On listen, write `{"addr":"..."}\n` to the ready-file, mirroring `auto-ui/internal/cli/serve.go:126-141`, so the binary harness can launch many instances without port collisions.
+- **A minimal `daemon.status` health/identity method** — returns hostId, version, uptime. This makes the listener **end-to-end testable now** (before Tasks 4/5 add domain methods) and lets the real autowatch listener plug into 030's conformance harness as a `Fixture`. The domain methods (`doc.*`, `project.*`, `task.*`, `bus.subscribe`) are explicitly Tasks 4/5/6.
+- **HTTP hook-ingest endpoint** — accept the exact frame hooks POST to auto-ui's `/api/rpc` today (a JSON-RPC 2.0 notification wrapping a `bus.Event`; `auto-cli/cmd/auto/hookscmd.go:363-381`). **Validate-and-ack only**: parse, `ev.Validate()`, return 204 (or 400). **No persistence, no derivation, no relay** — a 204 is *not* a durability guarantee; storing/deriving/relaying is Task 6. **Additive**: hooks keep posting to auto-ui in parallel; no retarget (Task 10).
+- **`ctl.*` control-plane events (the unbuilt half of epic Task 1)** — register the `ctl.*` event-type namespace + a shared `ctl.LogEvent` payload in `auto-shared/bus`, and when `--ctl-events` is set, emit `ctl.log.*` for significant daemon/RPC operations (listener up, RPC served, connection opened/closed, hook ingested). **Off by default** — no noise in normal operation. (`ctl.log.*` are control-plane infra logs only; data-plane task lifecycle events `watch.task.*` belong to Task 5.)
+- **Conformance coverage** — implement a real-autowatch `Fixture` so the scenarios from 030 run against the live listener, and land the **binary-tier harness** (subprocess launch + `--ready-file` coordination + temp home dirs) that 030 deferred to this task (GR-N6 binary tier).
+- **Clean lifecycle** — the listener shuts down gracefully on SIGINT/SIGTERM with the tick loop; the socket is removed on exit; the daemon stays a singleton.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Domain RPC methods** — `doc.list`/`doc.get`/`doc.raw`/`project.list` (Task 4); `task.dispatch`/`task.cancel`/`task.status`/`task.output`/`task.list` (Task 5); `bus.subscribe` + the event ingest→derive→relay pipeline and `watch.task.*` data-plane events (Task 6). This task ships only the listener, dispatch plumbing, HTTP ingest endpoint, and `daemon.status`.
+- **Hook retarget** — `auto hooks fire` keeps posting to auto-ui; retargeting to autowatch-only and removing auto-ui's `/api/rpc` is Task 10.
+- **auto-ui changes** — proxy layer, backends config, event aggregation (Tasks 7/8).
+- **Task-dispatch execution model** — RPC-driven task dispatch and its "start worker directly, don't signal the tick loop" semantics are Task 5; this task does not dispatch tasks or add a wake channel.
+- **Application-layer auth** — network-layer only (GR-N2).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [x] **Scope / size** — **one task** (full epic Task 3). The pieces all touch the daemon `start` path and are tightly coupled; ship as one deployable PR per the epic breakdown.
+- [x] **`ctl.*` namespace ownership** — **folded into this task.** Register `ctl.*` types + `ctl.LogEvent` in `auto-shared/bus` here, where `--ctl-events` first consumes them (closes the unbuilt half of epic Task 1). Keeps producer and event types together.
+- [x] **Binary-tier harness timing** — **lands here.** 030 deferred the binary tier to Task 3 because `--rpc-addr`/`--ready-file` appear here; `daemon.status` gives it a real call to exercise. Fulfills GR-N6's binary tier.
+- [x] **`daemon.status` health method** — **included.** A hostId/version/uptime method is the natural smoke method for the listener itself and makes the in-process fixture + binary harness exercise something real. (Epic lists it under Task 4; pulling the minimal version forward here.)
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Mostly Go unit + integration tests run with `-race` (this is the GR-N7 API-first layer), plus the two-tier conformance harness from 030. The daemon's RPC surface is exercised directly — no browser.
+
+- **`auto-shared/bus`** — table-driven tests for the new `ctl.*` types + `ctl.LogEvent` payload (regex validity, `NewEvent`/`Validate` round-trip, payload marshal).
+- **`auto-watch/internal/rpcserver`** — `net.Pipe`/unix/tcp tests for the listener + `daemon.status`; `httptest` for the hook-ingest endpoint; subscribed-sink tests for `--ctl-events` emission; lifecycle tests (shutdown unblocks `Accept`, socket removed).
+- **Conformance** — a real-autowatch **in-process `Fixture`** and a **binary-tier `Fixture`**, both driven by one `Scenario` through `conformance.RunAcrossFixtures`, reusing `conformance.PeerClient` for the client side. The binary fixture must satisfy the `start` **doctor preflight** (which exits non-zero on failure): `TestMain` builds `./cmd/autowatch` with `cmd.Dir` = the module root (walk up to `go.mod`, not the test's package dir); the fixture seeds a temp `$HOME` with a valid `~/.auto/host.json` (`EnsureHost`) + minimal `~/.auto/projects.json`, and prepends a PATH dir holding stub `tmux` (prints `tmux 3.4` for `-V`) and `claude` executables (git is real). Only then does `start --rpc-addr tcp://127.0.0.1:0 --ready-file` reach the listener and write the ready-file.
+- **Layering gate** — extend 030's recursive import check so the autowatch **handler** package never imports `transport` (GR-N3); `git diff --quiet` on both `go.mod`s (GR-N1).
+- **Regression** — `cd auto-ui && go build ./... && go vet ./... && go test ./...` stays green (hooks still post to auto-ui; ingest is additive); `cd auto-shared && cd auto-watch && go build ./... && go test -race ./...` green.
+
+Harness rule carried from task 029/030: **a poll-to-settle is not an assertion** — assert the actual RPC result, the received notification, or a counter delta.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="test-strategy" status="resolved" priority="p1" title="Binary fixture launch recipe cannot pass daemon startup checks">
+        <pd-comment by="review">The real `start` path runs `doctor.Run` before creating the listener. With only a temp HOME, doctor fails on missing `~/.auto/projects.json`, missing `~/.auto/host.json`, and unavailable `claude`/`tmux` binaries; therefore the binary fixture exits before writing the ready-file. The plan also says `TestMain` runs `go build ./cmd/autowatch`, but Go executes this package's test binary from `auto-watch/internal/rpcserver`, where that relative package path does not exist unless `cmd.Dir` is set to the module root. Specify the complete fixture bootstrap (module-root build directory, valid settings/host files, and controlled PATH stubs or an explicit test-only prerequisite bypass) so the advertised binary tier can actually launch.</pd-comment>
+        <pd-comment by="author">Confirmed against `ops.go:53-62` — `start` runs `doctor.Run` and exits 1 on any failure (`checkTmux`/`checkClaude`/`checkGit`/`checkSettings`/`checkHostConfig`). The complete bootstrap is now specified in the Test Strategy, Solution §5, AC-8, and Phase 5: `TestMain` builds `./cmd/autowatch` with `cmd.Dir` = the module root (walk up to `go.mod`); the fixture seeds a temp `$HOME` with `host.json` (`EnsureHost`) + a minimal valid `projects.json`, and prepends a PATH dir with stub `tmux` (`-V`→`tmux 3.4`) + `claude` execs (git is real) so the doctor preflight passes before the listener binds.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-1" title="ctl.* event types + ctl.LogEvent payload" phases="1" tests="auto-shared/bus/ctl_test.go">
+        <md><script type="text/plain">
+**Given** the new `ctl.*` namespace in `auto-shared/bus`,
+**When** a `ctl.log.info`/`ctl.log.warn`/`ctl.log.error` (and `ctl.connect`/`ctl.disconnect`/`ctl.health`) event is built via `NewEvent` with a `ctl.LogEvent` payload,
+**Then** every type string matches `dottedType` (`^[a-z0-9]+(\.[a-z0-9]+)+$`) — i.e. dotted, no underscores — `Validate()` passes, and `ctl.LogEvent` (level/message/op/fields) round-trips through `DecodeData`. Type-string constants are exported so producers don't hand-spell them.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="JSON-RPC listener serves daemon.status over unix and tcp" phases="2,3" tests="auto-watch/internal/rpcmethods/methods_test.go,auto-watch/internal/rpcserver/server_test.go">
+        <md><script type="text/plain">
+**Given** the autowatch RPC listener built on `transport.Listen` + `rpc.Peer`,
+**When** a client dials (unix socket and `tcp://127.0.0.1:0`) and calls `daemon.status`,
+**Then** it receives `{hostId, version, uptimeSeconds, pid, startedAt}` with hostId from `config.HostIDQuietly()` and version from `auto-shared/version`; multiple concurrent connections are each served; and because the peer dispatches handlers concurrently (`go handleRequest`), a slow `daemon.status` call does not block other connections. (`hostId`/`version` are stable; `pid`/`uptimeSeconds`/`startedAt` are dynamic — they are the per-process fields that AC-8 does **not** compare for equality across fixtures.)
+        </script></md>
+      </pd-ac>
+
+      <pd-thread anchor="AC-2" status="resolved" priority="p2" title="Cross-fixture status values cannot be identical">
+        <pd-comment by="review">AC-8 requires the in-process and subprocess fixtures to return identical `daemon.status` results, but this AC includes `pid`, `startedAt`, and `uptimeSeconds`. Those values must differ between the test process and child process (and uptime is timing-dependent). Define equality as schema/semantic invariants with fixture-specific expected PID/start time, or remove dynamic fields from the cross-fixture equality assertion; literal result equality is not a valid test.</pd-comment>
+        <pd-comment by="author">Fixed. AC-8 now asserts only the **stable invariants** — equal `hostId` and `version` — and treats `pid`/`uptimeSeconds`/`startedAt` as **present and well-formed but not compared for equality**. AC-2 was annotated to mark exactly those three as the dynamic per-process fields. No literal cross-fixture result equality.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-3" title="GR-N3 layering + GR-N1 zero-deps hold for autowatch" phases="2" tests="auto-watch/internal/rpcmethods/layering_test.go">
+        <md><script type="text/plain">
+**Given** the new autowatch RPC packages,
+**When** the layering check runs (recursive, via `go list -json`, extending 030's gate),
+**Then** the RPC **handler** package imports `auto-shared/rpc` but **not** `auto-shared/transport` (only the accept-loop file imports transport); and neither `auto-watch/go.mod` nor `auto-shared/go.mod` gains a `require` entry (`git diff --quiet`). `go build ./... && go test -race ./...` pass in both modules.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-4" title="Listener lifecycle: starts with daemon, shuts down cleanly" phases="3,4" tests="auto-watch/internal/cli/ops_test.go,auto-watch/internal/rpcserver/server_test.go">
+        <md><script type="text/plain">
+**Given** `auto watch start` with the listener wired to the start-command `ctx`,
+**When** the daemon receives SIGTERM / its `ctx` is cancelled,
+**Then** the listener closes promptly (a pending `Accept()` returns), active peers are closed (`Peer.Close()` → `ErrClosed` to in-flight calls), a unix socket file is removed, and the process exits 0; the daemon remains a singleton (existing flock still rejects a second `start`). **Listener health is daemon health**: a bind failure at startup (`transport.Listen` or the hook `net.Listen`) makes `auto watch start` exit **non-zero** before the run loop; a fatal accept-loop / `http.Server` error mid-run cancels the shared `errgroup` ctx so the daemon exits non-zero rather than silently losing its RPC surface.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="HTTP hook-ingest endpoint accepts the auto-ui frame, additively" phases="3" tests="auto-watch/internal/rpcserver/ingest_test.go">
+        <md><script type="text/plain">
+**Given** the loopback HTTP hook-ingest endpoint,
+**When** a JSON-RPC notification wrapping a `bus.Event` is POSTed (the exact frame from `auto-cli/cmd/auto/hookscmd.go` / auto-ui `/api/rpc`),
+**Then** body is capped at 1 MiB, `ev.Validate()` failures return `400` with a JSON-RPC error body, a valid frame returns `204 No Content`, non-`POST` returns `405`, and non-loopback peers are refused. This task **does not derive or relay** the event (Task 6); ingest is additive — `auto hooks fire` still posts to auto-ui and that path is unchanged.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="--ctl-events gates the control-plane event matrix" phases="2,3,4" tests="auto-watch/internal/rpcmethods/methods_test.go,auto-watch/internal/rpcserver/ingest_test.go,auto-watch/internal/rpcserver/server_test.go,auto-watch/internal/cli/ops_test.go">
+        <md><script type="text/plain">
+**Given** the daemon's in-process `bus.Hub` with a test `bus.Sink` subscribed,
+**When** each significant operation occurs, the **exact** event is (per the matrix below) broadcast to the hub — every one carrying `Host` and, for `ctl.log.*`, a `ctl.LogEvent{Level,Op,Message,Fields}` payload:
+
+| Operation | Event type | Payload `Op` | Emitted in |
+|---|---|---|---|
+| RPC listener bound | `ctl.health` | — | Phase 4 (start wiring) |
+| connection opened | `ctl.connect` | — | Phase 3 (accept loop) |
+| connection closed | `ctl.disconnect` | — | Phase 3 (accept loop) |
+| RPC method served | `ctl.log.info` | `rpc.served` (+ `method` field) | Phase 2 (dispatch decorator in rpcmethods) |
+| hook ingested | `ctl.log.info` | `hook.ingested` | Phase 3 (ingest handler) |
+
+**Then** with `--ctl-events` **unset** (default) **none** of these are broadcast; with `--ctl-events` **set**, each fires exactly once per its operation. Tests assert **both the on and off case for every row** (not just connect + ingest). (The hub→connected-peer bridge `bus.subscribe` is Task 6; here we assert emission onto the hub via the subscribed sink.)
+        </script></md>
+      </pd-ac>
+
+      <pd-thread anchor="AC-6" status="resolved" priority="p2" title="Plan steps do not implement the full control-event matrix">
+        <pd-comment by="review">This AC requires listener-up, RPC-served, connection-opened/closed, and hook-ingested emissions. Phase 2 only specifies counting RPC dispatches, Phase 3 only specifies `ctl.connect`/`ctl.disconnect` plus the hook log, and Phase 4 has no listener-up emission step. The AC also calls all corresponding events `ctl.log.*` while the solution maps connection lifecycle to distinct `ctl.connect`/`ctl.disconnect` types. Define the exact type and payload for each operation, add the missing producer steps, and test every on/off pair rather than only connect and ingest.</pd-comment>
+        <pd-comment by="author">Fixed. AC-6 now carries an explicit matrix mapping each operation to its **exact event type + payload Op + emitting phase**: listener-bound→`ctl.health` (P4), connection open/close→`ctl.connect`/`ctl.disconnect` (P3), RPC served→`ctl.log.info`/`rpc.served` (P2 decorator), hook ingested→`ctl.log.info`/`hook.ingested` (P3) — no longer mislabelling everything `ctl.log.*`. The missing producer steps were added (P2 decorator emits rpc.served; P4 emits `ctl.health` at bind), and each phase's tests now assert **both on and off** for its rows. AC-6 spans phases 2,3,4.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-7" title="--rpc-addr / --ready-file enable harness-driven launch" phases="4" tests="auto-watch/internal/cli/ops_test.go">
+        <md><script type="text/plain">
+**Given** `auto watch start --rpc-addr tcp://127.0.0.1:0 --ready-file <path>`,
+**When** the listener binds,
+**Then** the ready-file is written as one JSON line `{"addr":"127.0.0.1:NNNNN","hookAddr":"127.0.0.1:MMMM"}` with **both** OS-resolved addresses, before the daemon accepts; the same resolved rpc + hook addresses are persisted into `daemon.pid.json` so a systemd-started daemon (no ready-file) is still discoverable by hooks / Task 6/10; `--rpc-addr` defaults to a unix socket under the watch dir and `--hook-addr` to the stable `127.0.0.1:7787` when unset; and a second `start` against a unix path with a live server is rejected (reusing `transport/unix`'s probe-before-bind). Tests cover the ready-file contents (both addrs) and the PID-metadata fields.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-8" title="One scenario runs against in-process AND binary autowatch fixtures" phases="5" tests="auto-watch/internal/rpcserver/conformance_test.go">
+        <md><script type="text/plain">
+**Given** a real-autowatch **in-process `Fixture`** (handlers over a unix/tcp transport, client = `conformance.PeerClient`) and a **binary-tier `Fixture`** (`TestMain` builds `./cmd/autowatch` with `cmd.Dir`=module root; the fixture seeds a temp `$HOME` with `host.json`+minimal `projects.json` and PATH stubs for `tmux`/`claude` so the `start` doctor preflight passes, then launches `--rpc-addr tcp://127.0.0.1:0 --ready-file`, reads the addr, dials),
+**When** one `Scenario` is replayed across both via `conformance.RunAcrossFixtures`,
+**Then** both `daemon.status` results agree on the **stable invariants** — equal `hostId` and `version` — while `pid`/`uptimeSeconds`/`startedAt` are asserted **present and well-formed, not equal** (they differ by construction). The scenario asserts via `Client()` only; it does **not** assert a pushed notification (no hub→peer bridge in Task 3 — deferred to Task 6) and does **not** call `Obs()` (the binary fixture's `DispatchCount` is a documented no-op, `-1`, since per-method counts aren't cross-process observable — logged, not silently dropped). `ctl.*` emission is covered in-process by AC-6.
+        </script></md>
+      </pd-ac>
+
+      <pd-thread anchor="AC-8" status="resolved" priority="p1" title="Required pushed notification has no delivery path">
+        <pd-comment by="review">The solution explicitly defers the `bus.Hub` to connected-peer bridge to Task 6 and says Task 031 has no live hub subscribers. In the current code, `Hub.Broadcast` only calls registered `bus.Sink`s; `rpc.Peer` does not automatically subscribe or turn events into notifications. Consequently neither fixture can receive the `ctl.log.*` notification required here. Either add a narrowly scoped peer sink/subscription in this task (without claiming the later `bus.subscribe` API), or change AC-8 to assert hub emission only and defer network notification conformance to Task 6.</pd-comment>
+        <pd-comment by="author">Took the second option — no premature `bus.subscribe`. AC-8's cross-fixture scenario now asserts only `daemon.status` stable invariants via `Client()`; the pushed-notification assertion is **removed** (network-notification conformance deferred to Task 6). `ctl.*` emission is verified **in-process** by AC-6 via a `bus.Sink` subscribed to the daemon hub. Solution §5, AC-8, the Test Strategy, and Rejected Alternatives all updated to state the no-hub→peer-bridge constraint explicitly.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-9" title="Build/test gates green; auto-watch docs updated" phases="5" tests="auto-watch/CLAUDE.md">
+        <md><script type="text/plain">
+**Given** the full change,
+**When** the gates run,
+**Then** `go build ./... && go test -race ./...` pass in `auto-shared` and `auto-watch`; the `auto-ui` regression suite passes unmodified; both `go.mod`s are unchanged (GR-N1); and `auto-watch/CLAUDE.md`'s "Build & Test: TODO" is replaced with real instructions.
+        </script></md>
+      </pd-ac>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Add an RPC layer to autowatch and wire two listeners into `auto watch start`, plus the `ctl.*` event vocabulary in `auto-shared/bus`. The daemon keeps its tick loop unchanged (D-5); the listeners are additive and share the start-command `ctx`.
+
+**1. `auto-shared/bus` — `ctl.*` vocabulary (closes epic Task 1's leftover).** New `ctl.go`: exported dotted type-string constants (`TypeCtlLogInfo="ctl.log.info"`, `…Warn`/`…Error`, `TypeCtlConnect`, `TypeCtlDisconnect`, `TypeCtlHealth`) and a `CtlLogEvent` payload (`Level, Op, Message string; Fields map[string]string`) — a plain struct like `ToolPost`. A `NewCtlLog(level, op, msg, fields) (Event, error)` helper builds it via `NewEvent(typ, "auto/watch/daemon", payload)` (matching the bus spec's `auto/watch/daemon` source convention).
+
+**2. Two packages, split for GR-N3 (D-31-2).** RPC method handlers must not import `transport`, so they live apart from the accept loop:
+- **`auto-watch/internal/rpcmethods`** — `Handlers` struct (closes over `*store.Store`, `runner.Backend`, hostId, version, startedAt, `*bus.Hub`, `ctlEvents bool`, and an atomic per-method dispatch counter). `Register(*rpc.Peer)` wires methods; today only `daemon.status` → `StatusResult{HostID,Version,UptimeSeconds,PID,StartedAt}`. Imports `rpc`/`bus`/`store`/`runner` — **never `transport`**. Tasks 4/5 add `doc.*`/`task.*` here.
+- **`auto-watch/internal/rpcserver`** — `server.go` accept loop over `transport.Listener` (one `*rpc.Peer` per conn, `Handlers.Register` + `peer.Serve` in a goroutine, tracked for shutdown; gated `ctl.connect`/`ctl.disconnect`), and `ingest.go` the loopback HTTP hook-ingest handler. The **only** package importing `transport`.
+
+**3. In-process `bus.Hub` as the daemon event stream (D-31-3).** `ops.go` constructs a `bus.Hub`; `Handlers` and the ingest handler `Broadcast` gated `ctl.log.*` onto it. In Task 3 there are no subscribers (assert via a test sink); `bus.subscribe` (hub→connected-peer bridge) + data-plane relay are Task 6.
+
+**4. `auto watch start` wiring.** New flags: `--rpc-addr` (default `unix://<watchDir>/rpc.sock`), `--ready-file`, `--hook-addr` (default a **stable** loopback port `127.0.0.1:7787` so hooks/Task 6/10 can locate it; `:0` allowed for tests), `--ctl-events` (default false). After `daemon.New(...)`, build the `bus.Hub` + `Handlers`, then bind **before** entering the run loop: `transport.Listen(rpcAddr)` and the hook `net.Listen("tcp", hookAddr)` — **a bind failure returns `ExitError` immediately** (fail fast; the daemon does not start half-up). Write the ready-file `{"addr":<rpcAddr>,"hookAddr":<resolved hook addr>}` and persist both resolved addresses into the existing PID metadata (`daemon.pid.json`) so a systemd-started daemon is discoverable. Then run the **tick loop, `rpcserver.Serve`, and the hook `http.Server` under a single `errgroup` bound to `ctx`**: the first fatal error from any of the three cancels the group and `start` returns it non-zero (listener failures are daemon health, not detached). On `ctx.Done()` every member shuts down (listener close unblocks `Accept`; peers `Close()`; unix socket removed; `http.Server.Shutdown`). The 60s tick cadence and the flock singleton are untouched.
+
+**5. Conformance (real fixture + binary tier).** In `rpcserver` test code:
+- **In-process `Fixture`** — Handlers over a unix/tcp `transport` listener, client = `conformance.PeerClient`, `Obs()` = the dispatch counter.
+- **Binary `Fixture`** — `TestMain` `go build`s `./cmd/autowatch` (with `cmd.Dir` = the module root, located by walking up to `go.mod`). The fixture creates a temp `$HOME`, **seeds the `start` preflight** (`start` runs `doctor.Run` and exits non-zero on any failure): write `~/.auto/host.json` (`EnsureHost`) + a minimal valid `~/.auto/projects.json`, and prepend a PATH dir with stub `tmux` (answers `-V` with `tmux 3.4`) and `claude` executables (git is real). Then launch `start --rpc-addr tcp://127.0.0.1:0 --ready-file <tmp>`, read the addr, dial. `Obs()` returns a documented **no-op** (`DispatchCount → -1`, not cross-process observable); `Close` kills the process.
+
+The shared `Scenario` asserts **only what both tiers can observe over the wire**: `daemon.status` returns a result whose **`hostId` and `version` are equal across fixtures**, and whose `pid`/`uptimeSeconds`/`startedAt` are **present and well-formed but NOT compared for equality** (they legitimately differ between the test process and the child). The scenario does **not** assert a pushed notification — Task 3 has **no hub→peer bridge** (`Hub.Broadcast` only reaches registered `Sink`s; `rpc.Peer` does not auto-subscribe), so client-side notification conformance is deferred to Task 6. `ctl.*` emission is verified separately by **in-process unit tests** that subscribe a `bus.Sink` to the daemon hub (AC-6), not through the cross-fixture client.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="approach" status="resolved" priority="p2" title="Default hook listener address is not discoverable">
+        <pd-comment by="review">`--hook-addr` defaults to `127.0.0.1:0`, but the only ready-file contains the RPC listener address and the plan neither prints nor persists the HTTP listener's resolved port. A daemon started by the existing systemd unit therefore exposes an endpoint that Task 6/10 and hooks cannot locate. Specify a stable configured default or a discovery contract (for example daemon metadata or a separate ready field/file), and cover the resolved hook address in CLI tests.</pd-comment>
+        <pd-comment by="author">Both a stable default and a discovery contract added. `--hook-addr` now defaults to the **stable** `127.0.0.1:7787` (a systemd-started daemon is locatable without a ready-file); the ready-file gains a `hookAddr` field (`{"addr":...,"hookAddr":...}`); and both resolved addresses are persisted into the existing `daemon.pid.json` (via `writePIDMetadata`). AC-7 + Phase 4 now cover the resolved hook address (ready-file + PID metadata) in CLI tests.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="api-outline" title="API outline (end state)">
+
+        <pd-api kind="package" name="auto-shared/bus (ctl.go)" lang="go" path="auto-shared/bus/ctl.go">
+          <pd-member kind="const" sig="TypeCtlLogInfo=&quot;ctl.log.info&quot;, TypeCtlLogWarn, TypeCtlLogError, TypeCtlConnect=&quot;ctl.connect&quot;, TypeCtlDisconnect, TypeCtlHealth=&quot;ctl.health&quot;">All dotted (pass dottedType regex).</pd-member>
+          <pd-member kind="struct" sig="type CtlLogEvent struct { Level string; Op string; Message string; Fields map[string]string }">Control-plane log payload; plain struct like ToolPost.</pd-member>
+          <pd-member kind="func" sig="func NewCtlLog(level, op, msg string, fields map[string]string) (Event, error)">Builds via NewEvent(typeFor(level), &quot;auto/watch/daemon&quot;, CtlLogEvent{...}) — source matches the bus spec.</pd-member>
+        </pd-api>
+
+        <pd-api kind="struct" name="rpcmethods.Handlers" lang="go" path="auto-watch/internal/rpcmethods/methods.go">
+          <pd-member kind="constructor" sig="func New(store *store.Store, backend runner.Backend, hostID, version string, startedAt time.Time, hub *bus.Hub, ctlEvents bool) *Handlers">No transport import.</pd-member>
+          <pd-member kind="method" sig="func (h *Handlers) Register(p *rpc.Peer)">Registers daemon.status (+ doc.*/task.* in Tasks 4/5); wraps each in a dispatch-counting decorator.</pd-member>
+          <pd-member kind="method" sig="func (h *Handlers) DispatchCount(method string) int">Implements conformance.Observations.</pd-member>
+          <pd-member kind="type" sig="type StatusResult struct { HostID string; Version string; UptimeSeconds int64; PID int; StartedAt string }">daemon.status result.</pd-member>
+        </pd-api>
+
+        <pd-api kind="struct" name="rpcserver" lang="go" path="auto-watch/internal/rpcserver/server.go">
+          <pd-member kind="constructor" sig="func New(ln transport.Listener, h *rpcmethods.Handlers, hub *bus.Hub, ctlEvents bool) *Server">The only autowatch package importing transport.</pd-member>
+          <pd-member kind="method" sig="func (s *Server) Serve(ctx context.Context) error">Accept loop: peer-per-conn, Register+Serve in a goroutine, gated ctl.connect/ctl.disconnect; on ctx.Done closes listener + all peers.</pd-member>
+          <pd-member kind="func" sig="func HookIngest(hub *bus.Hub, ctlEvents bool) http.Handler">POST-only, 1 MiB cap, parse {jsonrpc,method,params:bus.Event}, ev.Validate→400, 204; loopback-guarded; gated ctl.log.info on success. No derive/relay.</pd-member>
+        </pd-api>
+
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-shared/bus/ctl.go" change="add">ctl.* type constants + CtlLogEvent payload + NewCtlLog helper.</pd-file>
+          <pd-file path="auto-shared/bus/ctl_test.go" change="add">AC-1: dotted-regex validity, NewEvent/Validate round-trip, payload marshal.</pd-file>
+          <pd-file path="docs/auto-bus-spec.md" change="edit">Register the ctl.* control-plane namespace in the event-type registry; document --ctl-events gating + the data/control split.</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/methods.go" change="add">Handlers, daemon.status, Register + dispatch-counting decorator, Observations impl. No transport import.</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/methods_test.go" change="add">AC-2: daemon.status result shape over net.Pipe; concurrent-call safety.</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/layering_test.go" change="add">AC-3: rpcmethods ↛ transport (go list); go.mod unchanged.</pd-file>
+          <pd-file path="auto-watch/internal/rpcserver/server.go" change="add">Accept loop over transport.Listener; peer lifecycle; gated ctl.connect/disconnect.</pd-file>
+          <pd-file path="auto-watch/internal/rpcserver/server_test.go" change="add">AC-2/AC-4/AC-6: serve over unix+tcp, shutdown unblocks Accept + closes peers, ctl gating.</pd-file>
+          <pd-file path="auto-watch/internal/rpcserver/ingest.go" change="add">Loopback HTTP hook-ingest handler (mirror auto-ui frame; no derive/relay).</pd-file>
+          <pd-file path="auto-watch/internal/rpcserver/ingest_test.go" change="add">AC-5/AC-6: frame accept, 1MiB/validate/204/405/loopback, additive, ctl gating.</pd-file>
+          <pd-file path="auto-watch/internal/rpcserver/conformance_test.go" change="add">AC-8: in-process + binary fixtures via RunAcrossFixtures; TestMain builds ./cmd/autowatch.</pd-file>
+          <pd-thread anchor="auto-watch/internal/rpcserver/conformance_test.go" status="resolved" priority="p1" title="Binary fixture cannot satisfy the mandatory Observations interface">
+            <pd-comment by="review">The merged 030 API requires every `Fixture` to return a non-optional `Observations`, whose only method is `DispatchCount`. A shared `Scenario` is expected to assert that observable, but this plan says the binary fixture cannot provide it and will merely document/skip it; there is no capability marker in the interface for such a conditional assertion. That does not implement the existing conformance contract. Add a real cross-process observable, or deliberately revise the 030 seam to model optional capabilities and list the required `auto-shared/rpc/conformance` file changes/tests.</pd-comment>
+            <pd-comment by="author">Resolved by removing the dependency rather than the interface. The binary fixture still **returns a valid `Observations`** (its `DispatchCount` returns `-1`), so the `Fixture` contract is satisfied with no 030 seam change. The shared cross-fixture `Scenario` no longer asserts `DispatchCount` at all — it asserts only `daemon.status` stable invariants via `Client()` (see the AC-8 resolution). `DispatchCount` is exercised where it *is* observable: the in-process fixture and the `rpcmethods` unit tests (AC-6 rpc.served). No conditional-capability marker needed.</pd-comment>
+          </pd-thread>
+          <pd-file path="auto-watch/internal/cli/ops.go" change="edit">--rpc-addr/--ready-file/--hook-addr/--ctl-events flags; build hub+Handlers; start both listeners on ctx; ready-file; shutdown.</pd-file>
+          <pd-thread anchor="auto-watch/internal/cli/ops.go" status="resolved" priority="p1" title="Listener failures are detached from daemon health">
+            <pd-comment by="review">Phase 4 launches both `rpcserver.Serve` and the HTTP server in goroutines but defines no error channel or main-loop case that observes their return values. A post-bind accept failure, HTTP serve failure, or unexpected RPC server exit would leave the tick loop running and possibly leave a ready-file advertising a dead listener. The existing auto-ui serve path blocks on `srv.Serve` and propagates non-`ErrServerClosed` failures. Specify coordinated error propagation so either required listener failing cancels the shared context and makes `start` exit non-zero, while context-driven shutdown remains a clean exit.</pd-comment>
+            <pd-comment by="author">Fixed. Solution §4, AC-4, and Phase 4 now specify: **bind both listeners before the run loop** (a bind failure returns `ExitError` immediately — no half-up daemon, no ready-file for a dead listener), then run the **tick loop + `rpcserver.Serve` + the hook `http.Server` under one `errgroup` bound to `ctx`**. The first fatal error from any member cancels the group and `start` returns it non-zero; `ctx`-driven shutdown (SIGTERM) is the clean exit-0 path (`http.ErrServerClosed`/closed-listener are not treated as fatal). `ops_test.go` covers the unbindable-`--rpc-addr` fail-fast case.</pd-comment>
+          </pd-thread>
+          <pd-file path="auto-watch/internal/cli/ops_test.go" change="edit">AC-4/AC-7: ready-file contents, default unix addr, live-socket rejection, clean shutdown.</pd-file>
+          <pd-file path="auto-watch/CLAUDE.md" change="edit">AC-9: replace "Build & Test: TODO" with real instructions incl. the binary-fixture build.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-thread anchor="file-changes" status="resolved" priority="p2" title="Canonical bus specification is omitted from the change set">
+        <pd-comment by="review">This task adds a public event namespace and payload, but `docs/auto-bus-spec.md` is the canonical type registry and its `read_when` explicitly covers adding event types. It currently has no `ctl.*` section, and its auto-watch source examples use `auto/watch/daemon` while `NewCtlLog` here proposes `auto/watch`. Add the spec to Phase 1/file changes and document the constants, payload schema, gating, source convention, and delivery semantics so producers in Tasks 5/6 do not invent incompatible forms.</pd-comment>
+        <pd-comment by="author">Both fixed. `docs/auto-bus-spec.md` is now a file-change and a Phase 1 step: register the six `ctl.*` constants, the `ctl.LogEvent` payload schema, the `--ctl-events` gating, and the data/control split + at-most-once delivery note. And the source mismatch is corrected — `NewCtlLog` uses `auto/watch/daemon` (verified against the spec's existing `auto/watch/daemon` examples at lines 322/358), updated in Approach §1 and the api-outline.</pd-comment>
+      </pd-thread>
+
+      <pd-decision id="D-31-1" title="Two listeners, one daemon, one ctx" status="accepted" by="author"
+        summary="A transport JSON-RPC listener (proxy) + a loopback HTTP listener (hook ingest) both hang off the start-command ctx alongside the unchanged tick loop.">
+        <md><script type="text/plain">
+**Context:** The epic gives autowatch both a JSON-RPC surface (for the auto-ui proxy, over unix/tcp) and an HTTP hook-ingest endpoint (hooks speak `http://127.0.0.1/api/rpc`). These are different protocols with different audiences.
+
+**Decision:** Two independent listeners started in `newStartCmd`, both bound to the existing `signal.NotifyContext` ctx, both closed on `ctx.Done()`. The 60s tick loop and the flock singleton are untouched (D-5: additive).
+
+**Alternatives:** One listener multiplexing both — couples unrelated protocols; hooks can't easily speak the transport framing. HTTP-only — loses the persistent duplex connection auto-ui needs for push.
+
+**Consequences:** Two `Close()` paths to coordinate on shutdown; both are simple (listener close unblocks Accept; http.Server.Shutdown).
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-31-2" title="Split rpcmethods (no transport) from rpcserver (transport)" status="accepted" by="author"
+        summary="Handler funcs live in a package that never imports transport; the accept loop lives in a separate package. Makes GR-N3 enforceable at package granularity.">
+        <md><script type="text/plain">
+**Context:** GR-N3 requires RPC handlers to never import a transport package. If handlers and the accept loop share one package, that package imports `transport`, so a package-level import gate can't distinguish them.
+
+**Decision:** `rpcmethods` (handlers, imports `rpc`/`store`/`bus`) and `rpcserver` (accept loop + ingest, imports `transport`). The layering test asserts `rpcmethods` never imports `transport`.
+
+**Alternatives:** One package with a source-file-level lint — fragile, not what `go list` reports.
+
+**Consequences:** One extra package, but the seam is machine-checkable and matches the 030 layering gate's recursive style.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-31-3" title="ctl.* events emit onto an in-process bus.Hub" status="accepted" by="author"
+        summary="The daemon owns a bus.Hub as its event stream; ctl.log.* are broadcast there (gated). The hub→peer bridge (bus.subscribe) is Task 6.">
+        <md><script type="text/plain">
+**Context:** GR-F7 wants log lines as first-class bus events "in the same event stream as data plane events", but `bus.subscribe` (the relay to connected peers) is Task 6.
+
+**Decision:** Introduce a `bus.Hub` in the daemon now as the event stream; `ctl.log.*` (and later watch.*/relay) `Broadcast` onto it. Task 3 asserts emission via a subscribed test sink; Task 6 adds the hub→peer bridge.
+
+**Alternatives:** Write ctl logs to `Output`/a file — not subscribable, doesn't satisfy "same event stream". Defer ctl entirely — leaves epic Task 1 + GR-F7 unmet and `--ctl-events` meaningless.
+
+**Consequences:** A real, testable seam Task 6 extends; in Task 3 the hub has no live subscribers (lossy/at-most-once, fine).
+        </script></md>
+      </pd-decision>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Separate `auto-rpc` daemon** — rejected by epic D-5; autowatch already owns the registry/store/dispatch and a stable lifecycle.
+- **Hook ingest derives + relays now** — that is Task 6; Task 3's ingest is parse/validate/ack only (additive; hooks still post to auto-ui until Task 10).
+- **Handlers + accept loop in one package** — breaks package-level GR-N3 enforcement (see D-31-2).
+- **`ctl.log_event` (underscore) type names** — fails `dottedType` (`^[a-z0-9]+(\.[a-z0-9]+)+$`); use dotted `ctl.log.info` etc.
+- **A `daemon.status` served-count field for cross-process observability** — over-fits the binary fixture; instead document `DispatchCount` as in-process-only (`-1` for the binary fixture) and have the cross-fixture scenario assert on `daemon.status` results only (no silent cap).
+- **Asserting a pushed `ctl.*` notification in the cross-fixture scenario** — impossible in Task 3: `Hub.Broadcast` reaches `Sink`s, not connected peers, and the hub→peer bridge (`bus.subscribe`) is Task 6. ctl emission is verified in-process via a subscribed sink instead; network-notification conformance is deferred to Task 6.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions">
+        <pd-decisions></pd-decisions>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Five phases: ship the `ctl.*` vocabulary and the transport-free handler package (parallel), then the accept-loop + HTTP-ingest server, then wire both listeners into `auto watch start`, then the two-tier conformance fixtures + docs. Each phase commits code + tests together with `go build ./...` + `go test -race ./...` green in the affected module(s).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution sequence">
+        <pd-mermaid caption="Phase DAG — P1 and P2 are independent">
+flowchart LR
+    P1["P1\nctl.* vocabulary\n(auto-shared/bus)"]
+    P2["P2\nrpcmethods\n(handlers, no transport)"]
+    P3["P3\nrpcserver\n(accept loop + HTTP ingest)"]
+    P4["P4\nwire listeners\ninto auto watch start"]
+    P5["P5\nconformance fixtures\n+ binary tier + docs"]
+
+    P1 --> P3
+    P2 --> P3
+    P3 --> P4
+    P4 --> P5
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="ctl.* event vocabulary + spec" status="todo"
+          files="auto-shared/bus/ctl.go,auto-shared/bus/ctl_test.go,docs/auto-bus-spec.md">
+          <md><script type="text/plain">
+1. `ctl.go` — exported dotted type constants (`TypeCtlLogInfo` … `TypeCtlHealth`), `CtlLogEvent{Level,Op,Message,Fields}`, and `NewCtlLog(level,op,msg,fields) (Event,error)` (source `auto/watch`). **Verify:** `go build ./...` in `auto-shared`.
+2. `ctl_test.go` — assert each type string matches `dottedType`; `NewCtlLog` → `Validate()` passes and carries `Host`; `CtlLogEvent` round-trips via `DecodeData` (AC-1). **Verify:** `go test -race ./bus/`.
+3. `docs/auto-bus-spec.md` — register the `ctl.*` namespace in the event-type registry (the six types), and document the data/control split + `--ctl-events` gating, so the canonical spec is not left behind. **Verify:** spec lists every `ctl.*` constant added in step 1.
+4. **Commit:** `feat(031): ctl.* control-plane event vocabulary + bus spec`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="rpcmethods: handlers + daemon.status (no transport)" status="todo"
+          files="auto-watch/internal/rpcmethods/methods.go,auto-watch/internal/rpcmethods/methods_test.go,auto-watch/internal/rpcmethods/layering_test.go">
+          <md><script type="text/plain">
+1. `methods.go` — `Handlers` (store/backend/hostId/version/startedAt/hub/ctlEvents + atomic dispatch-count map), `New(...)`, `Register(*rpc.Peer)` wrapping each method in a decorator that (a) increments the per-method counter and (b) when `ctlEvents` is set, `Broadcast`es a `ctl.log.info` with `Op="rpc.served"` + a `method` field onto the hub. `daemon.status` → `StatusResult{HostID,Version,UptimeSeconds,PID,StartedAt}` (hostId/version stable; pid/uptime/startedAt dynamic). `DispatchCount(method) int` implements `conformance.Observations`. Import `rpc`/`bus`/`store`/`runner`, **not `transport`**. **Verify:** `go build ./...` in `auto-watch`.
+2. `methods_test.go` — over `net.Pipe()` (client = `conformance.PeerClient`): `daemon.status` returns the expected stable hostId/version (and well-formed pid/uptime); a slow handler doesn't block a second concurrent call; with `--ctl-events` on, a subscribed sink sees one `ctl.log.info`/`rpc.served`, and **none** with it off (AC-2, AC-6 rpc.served row). **Verify:** `go test -race ./internal/rpcmethods/`.
+3. `layering_test.go` — `go list -json ./internal/rpcmethods/...`; assert no import of `auto-shared/transport`; assert `auto-watch/go.mod` has no new `require` (AC-3). **Verify:** `go test ./internal/rpcmethods/`.
+4. **Commit:** `feat(031): autowatch rpc handlers + daemon.status`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="rpcserver: accept loop + HTTP hook-ingest" status="todo" depends-on="1,2"
+          files="auto-watch/internal/rpcserver/server.go,auto-watch/internal/rpcserver/server_test.go,auto-watch/internal/rpcserver/ingest.go,auto-watch/internal/rpcserver/ingest_test.go">
+          <md><script type="text/plain">
+1. `server.go` — `New(ln transport.Listener, h *rpcmethods.Handlers, hub *bus.Hub, ctlEvents bool)` + `Serve(ctx)`: accept loop, one `*rpc.Peer` per conn (`h.Register` + `go peer.Serve`), track peers; on `ctx.Done()` close listener (unblocks Accept) and all peers. When `ctlEvents`, `Broadcast` `ctl.connect` on accept and `ctl.disconnect` on peer teardown. `Serve` returns a non-nil error on a fatal accept-loop failure (so Phase 4's errgroup can propagate it). Imports `transport`+`rpc`. **Verify:** `go build ./...`.
+2. `ingest.go` — `HookIngest(hub, ctlEvents) http.Handler`: POST-only (405 else), `io.LimitReader(r.Body, 1<<20)`, parse `{jsonrpc,method,params:bus.Event}`, `ev.Validate()`→400, success 204; reject non-loopback `r.RemoteAddr` (small local guard, not auto-ui's internal `loopbackOnly`); gated `ctl.log.info` `Op="hook.ingested"`. **No persistence/derive/relay** (Task 6). **Verify:** `go build ./...`.
+3. `server_test.go` — serve `daemon.status` over unix + `tcp://127.0.0.1:0`; concurrent conns each served; `ctx` cancel closes listener + peers promptly and removes the unix socket; assert the **on AND off** case for `ctl.connect`/`ctl.disconnect` via a subscribed sink (AC-2/AC-4/AC-6). `ingest_test.go` — `httptest`: valid frame→204, bad envelope→400, GET→405, non-loopback refused; assert the **on AND off** case for `ctl.log.info`/`hook.ingested`; confirm no derive/relay and the auto-ui path is untouched (AC-5/AC-6). **Verify:** `go test -race ./internal/rpcserver/`.
+4. **Commit:** `feat(031): autowatch rpc accept loop + hook-ingest endpoint`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="Wire listeners into auto watch start" status="todo" depends-on="3"
+          files="auto-watch/internal/cli/ops.go,auto-watch/internal/cli/ops_test.go">
+          <md><script type="text/plain">
+1. `ops.go` — add flags `--rpc-addr` (default `unix://<WatchDir>/rpc.sock`), `--ready-file`, `--hook-addr` (default stable `127.0.0.1:7787`; `:0` allowed), `--ctl-events`. After `daemon.New(...)`: construct `bus.Hub` + `rpcmethods.New(...)`; **bind both listeners before the run loop** — `ln, err := transport.Listen(rpcAddr)` and `hl, err := net.Listen("tcp", hookAddr)` — and **return `ExitError` on any bind failure (fail fast)**. When `ctlEvents`, emit `ctl.health` (listener bound). Write the ready-file `{"addr":<ln.Addr()>,"hookAddr":<hl.Addr()>}\n` and persist both resolved addrs into `daemon.pid.json` (extend `writePIDMetadata`). Run **tick loop + `rpcserver.New(ln,h,hub,ctl).Serve(ctx)` + `http.Server{Handler:HookIngest(hub,ctl)}.Serve(hl)` under one `errgroup` bound to `ctx`**; first fatal error cancels all and `start` returns it non-zero. On `ctx.Done()`: close listener (unblocks Accept), `http.Server.Shutdown`, remove unix socket. Tick cadence + flock unchanged. **Verify:** `go build ./...`.
+2. `ops_test.go` — start with `--rpc-addr tcp://127.0.0.1:0 --hook-addr 127.0.0.1:0 --ready-file <tmp>`: ready-file holds resolved `{"addr":...,"hookAddr":...}`, `daemon.pid.json` carries both, and a client can `daemon.status`; default unix addr created under the watch dir; a second `start` on a live unix path rejected; an unbindable `--rpc-addr` exits non-zero (fail fast); SIGTERM/ctx-cancel exits 0 and removes the socket; `ctl.health` emitted iff `--ctl-events` (AC-4/AC-6/AC-7). **Verify:** `go test -race ./internal/cli/`.
+3. **Commit:** `feat(031): serve rpc + hook-ingest listeners from auto watch start`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="5" title="Conformance fixtures (in-process + binary) + docs" status="todo" depends-on="4"
+          files="auto-watch/internal/rpcserver/conformance_test.go,auto-watch/CLAUDE.md">
+          <md><script type="text/plain">
+1. `conformance_test.go` — `TestMain` `go build`s `./cmd/autowatch` once with `cmd.Dir` = the **module root** (walk up to `go.mod`; the test runs from `internal/rpcserver`, so the relative `./cmd/autowatch` path is invalid without it). An **in-process** `conformance.Fixture` (Handlers over a unix/tcp `transport` listener, client `conformance.PeerClient`, `Obs()` = `Handlers.DispatchCount`) and a **binary** `Fixture`: build a temp `$HOME`, seed `~/.auto/host.json` (`EnsureHost`) + a minimal valid `~/.auto/projects.json`, and a PATH dir with stub `tmux` (`-V`→`tmux 3.4`) + `claude` execs so the `start` **doctor preflight passes**; launch `start --rpc-addr tcp://127.0.0.1:0 --ready-file <tmp>`; read the addr; dial (client `PeerClient`); `Obs()` is a documented no-op (`DispatchCount→-1`); `Close` kills the proc. One `Scenario` via `conformance.RunAcrossFixtures` asserts the **stable invariants of `daemon.status`** (equal `hostId`+`version`; `pid`/`uptime`/`startedAt` present, not equal) through `Client()` only — **no pushed-notification assertion** (no hub→peer bridge until Task 6) and **no `Obs()` call** (AC-8). **Verify:** `go test -race ./internal/rpcserver/`.
+2. `auto-watch/CLAUDE.md` — replace "Build & Test: TODO" with real instructions (`cd auto-watch && go build ./... && go test -race ./...`, plus the binary-fixture build note) (AC-9). **Verify:** doc reads correctly.
+3. **Full gates:** `cd auto-shared && go build ./... && go test -race ./...`; `cd auto-watch && go build ./... && go test -race ./...`; `cd auto-ui && go build ./... && go vet ./... && go test ./...`; `git diff --quiet -- auto-shared/go.mod auto-watch/go.mod` (AC-9). **Commit:** `test(031): two-tier autowatch conformance + docs`.
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success criteria">
+        <md><script type="text/plain">
+- **AC-1** after P1; **AC-3** after P2; **AC-2** after P3 (handlers P2 + listener P3); **AC-5** after P3; **AC-6** spans P2 (rpc.served) + P3 (connect/disconnect/ingest) + P4 (listener-bound `ctl.health`); **AC-4/AC-7** after P4; **AC-8/AC-9** after P5.
+- `go build ./... && go test -race ./...` green in `auto-shared` and `auto-watch`; `auto-ui` regression green unmodified; both `go.mod`s unchanged (GR-N1).
+- `rpcmethods` never imports `transport` (GR-N3, machine-checked); `daemon.status` round-trips over unix + tcp + binary subprocess; `--ctl-events` gates `ctl.log.*` onto the daemon hub.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
