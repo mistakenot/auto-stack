@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>032: skill-project-schemas</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "032",
+    "name": "skill-project-schemas",
+    "epic": "004-remote-skill-management",
+    "status": "planning",
+    "created": "2026-06-20"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="032: skill-project-schemas" status="draft" pr="pending" generated="2026-06-20">
+
+    <pd-tab name="Requirements">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Epic 004 (remote-skill-management) replaces the `npx skills` shell-out with a native Go pipeline. Every later task — git cache (T2), `add` (T3), native `sync`/render (T4), prune/adopt (T5) — reads and writes three checked-in project files that **do not exist yet**: `.auto/skills/skills.yaml` (intent), `.auto/skills/lock.json` (dependency identity), and `.auto/skills/manifest.json` (derived render state). There is no parser, no schema, and no shared validation for any of them.
+
+Today's `auto skill init` writes a single opaque `settings.json` to the **wrong, singular path** (`.auto/skill/`), with no project config schema, no targets/auto_update/version policy, and no link to the shared `~/.auto/projects.json` registry. A standalone `agents` command writes a CLAUDE.md/AGENTS.md snippet — a concept the new **output-target** model subsumes.
+
+T1 is the schema-and-setup foundation: it defines the `.auto/skills/` layout, the three strict schemas with one shared `validate()` each, the `init --project` wizard, and folds `agents` into `init` — so every downstream task builds on a settled, validated contract instead of inventing its own.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **`.auto/skills/` path layout** — establish the per-project layout (`skills.yaml`, `lock.json`, `manifest.json`, `./skills/`) and the machine-global `~/.auto/skills/settings.json`. Retire the current singular `.auto/skill/` path decisively (G-decisive-cli) — it is pre-release, no migration shim.
+- **Three strict schemas, one shared `validate()` each** — Go types + a single `validate()` per file returning structured errors (`code`, `path`, `field`, `message`, optional `value`), every hard error carrying a remediation hint (G-schema-strict). Unknown keys rejected. Reused identically across `init`, `doctor`, and (later) `sync`/`add`/`list`.
+  - **`skills.yaml` (intent)** — `auto_update`, `targets`, `commit_targets`, `trusted_hosts`, `shared.{version,replacements}`, `skills.<name>.{version,replacements}`. Skill names enforce `^[a-z0-9]+(-[a-z0-9]+)*$`. Replacement **literals are strings** (non-string scalars must be quoted); `{file:, section?, include_heading?, strip_frontmatter?}` mappings are file-refs. Version specs validated against the grammar (`latest` | `branch:<n>` | `tag:<n>` | `commit:<sha>` | bare best-effort).
+  - **`lock.json` (dependency identity ONLY)** — `{version, skills.<name>.{source, url, version_spec, ref, commit, subpath, private, local, state}}`. `state ∈ {resolved, unresolved}`. Credential-bearing `url` rejected at parse (G-cred-hygiene). No derived render fields — that is the load-bearing seam.
+  - **`manifest.json` (derived render state)** — schema defined + validated only: per-skill `{template_hash, replacements, file_refs[].{path,content_hash,matched_heading}, skill_version}` and per-target managed sets. T1 **parses and validates** it; it does **not** compute hashes or render (T4).
+- **`init --project` wizard (+ `-y`/flags)** — interactive wizard picks targets (default `claude`,`agents`), `auto_update` (default on), default version (default `latest`), commit-vs-gitignore (`commit_targets`, default on); scaffolds `./skills/`, `skills.yaml`, an empty valid `lock.json`, and `.gitignore` entries. `-y` takes defaults non-interactively; flags (`--target`, `--auto-update`/`--no-auto-update`, `--default-version`, `--commit-targets`/`--no-commit-targets`) override. Idempotent.
+- **Reuse the `projects.json` id** — `init --project` ensures the repo has a stable entry in `~/.auto/projects.json` (id ↔ path ↔ normalized remote ↔ tools), creating it if absent, and appends `skill` to that project's `tools`. The id is what later tasks key machine-local receipts on.
+- **Global `init`** — bare `auto skill init` writes `~/.auto/skills/settings.json` (machine defaults: cache location, default `--jobs`). Idempotent.
+- **Fold `agents` → `init`** — remove the standalone `agents` command (G-decisive-cli); the CLAUDE.md/AGENTS.md registration becomes part of `init`. Output dirs are now the `target` concept (surfaced by `target list` in T6).
+- **JSON-default I/O** (G-json-default) — `init`/`doctor` default to JSON on stdout, diagnostics on stderr, `--format text` for humans. Validation listing returns all valid entries and exits non-zero if any item failed.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Git cache & trust** (T2) — no `~/.auto/skills/upstream/` clones, no `trust.json`, no transport allow-list. T1 only *parses/validates* `trusted_hosts` in `skills.yaml`; it never enforces trust.
+- **`add` / source parsing / discovery** (T3) — T1 defines the lock schema and reads/validates it; it does **not** resolve sources, clone, discover skills, or **write** lock entries (other than scaffolding an empty `{version:1, skills:{}}`).
+- **Native `sync` + render engine** (T4) — no rendering, no `text/template`, no hashing (`template_hash`/`content_hash`/`skill_version`), no manifest **writing**, no target writes, no journal. The manifest schema is defined and validated only.
+- **Prune / adopt / receipts** (T5) — no machine-local receipts, no deletion authority, no orphan/foreign detection.
+- **Inspection triad & wider deprecations** (T6) — `list`/`describe`/`get`, `source`/`target`/`cache`/`trust` sub-resources, `ls` removal, and relocating binary self-update to root `auto update` are T6. T1 removes **only** `agents`.
+- **Migrate / git hooks** (T7) — no `skills-lock.json` translation, no hook installation.
+- **Intent reconciliation behavior** — T1 validates that intent (`version`) and resolution (`commit`) live in the right files; the *reconcile-on-sync* logic when they diverge is T4.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Resolved with best-judgment defaults (orchestrator authorized autonomous resolution; the epic + design doc settle the rest). Each is recorded so a reviewer can override.
+
+- [x] **Does `init --project` create the `projects.json` entry, or only read it?** → **Create-if-absent.** The design says "`auto init --project` registers the repo … `auto skill init` adds `skill` to the project's `tools`," implying the entry may pre-exist. To work standalone (no dependency on a separate `auto init`), `auto skill init --project` ensures an entry exists — reusing the existing registry shape (id, path, normalized remote, tools) — and appends `skill` to `tools`. *Rationale:* T1 must be independently deployable; requiring a foreign `auto init` first would break that. Normalized remote follows the existing credential-stripping convention.
+- [x] **Does `init` scaffold `manifest.json`?** → **No.** The manifest is derived render state produced by `sync` (T4); nothing is rendered at setup time. `init` writes only `skills.yaml` + an empty valid `lock.json` (matching the epic's C-setup output line). T1 still defines + validates the manifest schema so `doctor` and T4 share it. *Rationale:* keeps T1's writes to genuine intent/identity files; avoids emitting a manifest that claims a managed set before anything is managed.
+- [x] **Empty `lock.json` shape at scaffold.** → `{"version": 1, "skills": {}}` (valid, alphabetized, no timestamps). *Rationale:* gives `sync`/`list`/`doctor` a real file to read from day one; `add` (T3) fills it.
+- [x] **Interactive wizard in a non-TTY (CI / this planning run).** → If stdin is not a TTY and `-y` is absent, **fail fast** with a remediation hint ("not a TTY — pass `-y` or the explicit flags"). The wizard never blocks waiting on input. *Rationale:* honors fail-fast-on-invalid-usage and keeps `init` deterministic in automation.
+- [x] **Old `.auto/skill/` (singular) settings.** → **No migration shim.** The path is pre-release with no real users; `init` writes only `.auto/skills/`. `doctor` may note a stray singular dir. *Rationale:* G-decisive-cli — carry no legacy path.
+- [x] **Where do `targets`/`auto_update`/`commit_targets` live?** → **`skills.yaml` (checked in)**, per the design's RESOLVED(P1) note; `~/.auto/skills/settings.json` holds machine-only defaults (cache loc, `--jobs`). Not reopened here — recorded for traceability.
+- [x] **Skill-name validation reuse.** → Reuse/relocate the existing `ValidateSkillName` (`^[a-z0-9]+(-[a-z0-9]+)*$`) so the YAML validator and authored-skill scaffolding share one regex. *Rationale:* one source of truth for the name grammar across the package.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Pure-library + CLI task — verification is **Go unit + integration tests** in `auto-skill` (and a small `auto-shared/config` addition), no browser, no network. The three schemas are the core deliverable, so coverage is **golden-fixture table tests** per schema plus CLI integration tests for `init`.
+
+- **Schema validators** — one table-driven test per `validate()` (skills.yaml, lock.json, manifest.json). Each table has a `valid` baseline and one row per rejection: unknown key, bad skill-name, bad version-spec, credential-bearing `url`, wrong `state` enum, missing required field, duplicate target, non-string literal. Every rejection row asserts the **exact `ValidationError.Code` + `Field` + `Path`** — not just "errored" (a validator that returns the wrong code is a bug the design's structured-error contract is meant to prevent).
+- **Strictness** — assert unknown keys are rejected: YAML via `yaml.Decoder.KnownFields(true)`, JSON via `DecodeJSONFileStrict`. A fixture with an extra top-level key must produce an `unknown_field` error, not be silently dropped.
+- **`init` CLI integration** — extend `auto-skill/internal/cli/cli_integration_test.go`: run `init --project -y` against a temp repo (isolated `HOME` + `--root`), then assert the on-disk tree (`.auto/skills/skills.yaml`, valid empty `lock.json`, `./skills/`, `.gitignore` entries) and that re-running is idempotent (no diff, exit 0). Flag overrides (`--target`, `--no-auto-update`, `--default-version`, `--no-commit-targets`) are asserted by parsing the written `skills.yaml`.
+- **Non-TTY guard** — `init --project` with no `-y` and a non-TTY stdin exits non-zero with a remediation message on stderr (the wizard never blocks). This is the path this very planning run would hit.
+- **projects.json reuse** — `init --project` against an isolated `HOME` with no registry creates the entry (id from path/remote) and appends `skill` to `tools`; against an existing entry it appends `skill` without duplicating and without clobbering other tools. Uses `auto-shared/config` helpers, asserted by reloading the registry.
+- **`agents` removed** — a test asserts `auto skill agents` is no longer a registered command, and that `init` performs the CLAUDE.md/AGENTS.md snippet registration the old command did (idempotent, symlink-safe).
+- **JSON-default contract** — stdout is valid parseable JSON (payload only); diagnostics/validation errors go to stderr; `--text` produces human output. A `doctor`/validate path returns all valid items and exits non-zero when any schema file is invalid.
+- **Discipline** — `go build ./...` + `go test ./...` green in `auto-skill` (and `auto-shared` if touched) after each file (CLAUDE.md Go build discipline). Reuse `auto-shared/config.ValidationError`; add **zero** new runtime deps (`yaml.v3` already present).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="Testing layers">
+flowchart TB
+  unit["Unit: validate() table tests\nskills.yaml · lock.json · manifest.json\n(assert exact ValidationError code/field/path)"]
+  paths["Unit: Env path helpers\n.auto/skills/ plural · global ~/.auto/skills/"]
+  reg["Integration: projects.json reuse\ncreate-if-absent · append skill tool"]
+  cli["Integration: init --project / -y / flags\nscaffold tree · idempotent · non-TTY guard · agents fold-in"]
+  json["Contract: JSON-default stdout · stderr diagnostics · exit codes"]
+  unit --> cli
+  paths --> cli
+  reg --> cli
+  cli --> json
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-ac id="AC-1" title="skills.yaml strict parse + validate with structured errors" phases="2" tests="auto-skill/internal/skill/skillsyaml_test.go">
+        <md><script type="text/plain">
+**Given** a `skills.yaml` fixture,
+**When** it is parsed (strict, `KnownFields(true)`) and run through `ValidateSkillsYAML`,
+**Then** a well-formed file yields zero errors and a typed value; and each malformed fixture yields a `[]config.ValidationError` with the **exact** `code`/`field`/`path`: unknown key → `unknown_field`; skill key failing `^[a-z0-9]+(-[a-z0-9]+)*$` → `invalid_skill_name`; a non-string replacement scalar (unquoted number/bool/null) → `invalid_literal`; a replacement mapping missing `file:` or carrying unknown keys → `invalid_file_ref`; an invalid `version` → `invalid_version_spec`; a duplicate entry in `targets`/`trusted_hosts` → `duplicate_value`. Every error `Message` carries a remediation hint.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="lock.json is dependency-identity-only and rejects credentials" phases="2" tests="auto-skill/internal/skill/lock_test.go">
+        <md><script type="text/plain">
+**Given** a `lock.json` fixture,
+**When** parsed (strict JSON) and run through `ValidateLock`,
+**Then** a valid file (alphabetized, no timestamps) parses to a typed value with zero errors; and rejections produce exact codes: a `url` containing userinfo or a token query param → `credentials_in_url`; `state` not in `{resolved, unresolved}` → `invalid_state`; a missing required field (`source`/`url`/`commit` when `state:resolved`) → `required`; a skill key failing the name regex → `invalid_skill_name`; **any derived render field** (e.g. `skill_version`, `template_hash`, `content_hash`, `replacements`) present in a lock entry → `unknown_field` (proves the lock/manifest split — those belong only in the manifest).
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-3" title="manifest.json schema validates without computing render state" phases="2" tests="auto-skill/internal/skill/manifest_test.go">
+        <md><script type="text/plain">
+**Given** a `manifest.json` fixture,
+**When** parsed (strict JSON) and run through `ValidateManifest`,
+**Then** a valid manifest (per-skill `template_hash`/`replacements`/`file_refs[].{path,content_hash,matched_heading}`/`skill_version`/`render_version`; per-target managed set + expected `skill_version`) parses to a typed value with zero errors; malformed fixtures yield exact codes (unknown key → `unknown_field`; hash field not matching the hash format → `invalid_hash`; a target referencing a skill absent from the per-skill map → `unknown_skill_ref`). **No hashing or rendering is performed** — validation is structural only; `init` does not emit a manifest.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-4" title="version-spec grammar is validated (not resolved)" phases="2" tests="auto-skill/internal/skill/version_test.go">
+        <md><script type="text/plain">
+**Given** a version string,
+**When** run through the shared spec validator,
+**Then** `latest`, `branch:<name>`, `tag:<name>`, `commit:<hex>`, and a bare best-effort string are accepted; an empty `branch:`/`tag:` payload, a `commit:` with non-hex/short sha, or an unknown `prefix:` is rejected with `invalid_version_spec`. The validator only checks **grammar** — no network resolution (that is T4). The same validator is reused for `skills.yaml` `version` fields and `lock.json` `version_spec`.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="init --project scaffolds the .auto/skills/ tree and is idempotent" phases="3,4" tests="auto-skill/internal/cli/cli_integration_test.go">
+        <md><script type="text/plain">
+**Given** a temp repo with isolated `HOME` and `--root`,
+**When** `auto skill init --project -y` runs,
+**Then** it creates `.auto/skills/skills.yaml` (defaults: `auto_update:true`, `targets:[claude,agents]`, `commit_targets:true`, `shared.version:latest`), a valid empty `lock.json` (`{"version":1,"skills":{}}`), `./skills/`, and `.gitignore` entries; the written `skills.yaml` itself **passes `ValidateSkillsYAML`**. Re-running produces no changes (idempotent) and exits 0. Flag overrides (`--target codex`, `--no-auto-update`, `--default-version "tag:v1"`, `--no-commit-targets`) are reflected in the written `skills.yaml`. When `commit_targets:false`, target dirs are added to `.gitignore`.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="Wizard requires a TTY; non-interactive needs -y" phases="4" tests="auto-skill/internal/cli/cli_integration_test.go">
+        <md><script type="text/plain">
+**Given** `init --project` invoked with a **non-TTY** stdin and **no** `-y`,
+**When** it runs,
+**Then** it exits non-zero **without prompting or hanging** and prints a remediation hint to stderr ("not a TTY — pass `-y` or explicit flags"). With `-y` (or all values supplied via flags) it proceeds non-interactively. The interactive prompt path is only taken when stdin is a TTY.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-7" title="init --project reuses the projects.json id (create-if-absent, append skill tool)" phases="3" tests="auto-skill/internal/cli/cli_integration_test.go">
+        <md><script type="text/plain">
+**Given** an isolated `HOME`,
+**When** `init --project` runs in a repo not yet in `~/.auto/projects.json`,
+**Then** it creates a `ProjectRef` (stable `id`, `path`, credential-stripped `remote` via `git.NormalizeRemoteURL`) and `tools` containing `skill`, using `auto-shared/config` helpers (`EnsureProjects`/`UpsertProject`). **Given** the repo already registered (e.g. with `tools:[watch]`), re-running **appends** `skill` without duplicating it and preserves the existing tools and id. No second registry file is created.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-8" title="agents command removed; its registration folds into init" phases="3,4" tests="auto-skill/internal/cli/cli_integration_test.go">
+        <md><script type="text/plain">
+**Given** the reworked CLI,
+**When** `auto skill agents` is invoked,
+**Then** it is **not a registered command** (unknown command error). **When** `init` runs, it performs the same CLAUDE.md/AGENTS.md snippet registration the old `agents` command did — idempotent and symlink-safe (the existing `ensureSkillSnippet` logic is reused, not duplicated). Bare `init` and `init --project` both apply it.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-9" title="Global init writes ~/.auto/skills/settings.json (plural path)" phases="1,3" tests="auto-skill/internal/cli/cli_integration_test.go">
+        <md><script type="text/plain">
+**Given** an isolated `HOME`,
+**When** bare `auto skill init` runs,
+**Then** it writes `~/.auto/skills/settings.json` (machine defaults: cache location, default `--jobs`), creating `~/.auto/skills/` if absent, and is idempotent. The **singular** `~/.auto/skill/` and `.auto/skill/` paths are no longer written by any code path (decisive rename, no migration shim).
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-10" title="JSON-default output contract holds across init and validate" phases="4" tests="auto-skill/internal/cli/cli_integration_test.go">
+        <md><script type="text/plain">
+**Given** any T1 command in default mode,
+**When** it succeeds,
+**Then** **stdout is a single parseable JSON payload** and nothing else; diagnostics and validation errors go to **stderr**. A validate/`doctor` path over a directory of schema files returns all valid results and exits **non-zero** if any file failed validation. `--text`/`--format text` produces human-readable output. Invalid flag combinations (e.g. `--text` + `--json`) fail fast via the standard command-framework error.
+        </script></md>
+      </pd-ac>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **No rendering/hashing tests** — `skill_version`/`content_hash`/`template_hash` are *validated for shape* but never *computed* in T1; correctness of the hashing algorithm is verified in T4. A manifest fixture here is hand-authored, not engine-produced.
+- **No network / resolution tests** — version specs are grammar-checked only; ref→commit resolution (and the `unresolved`→`resolved` transition) is T3/T4.
+- **No trust enforcement** — `trusted_hosts` in `skills.yaml` is parsed/validated but not enforced; the transport gate is T2. A fixture with `trusted_hosts` is accepted regardless of machine-local trust state.
+- **Interactive prompt UX is lightly tested** — the TTY prompt branch is exercised only via the non-TTY guard and `-y`/flag paths; the actual prompt wording/flow is not snapshot-tested (low value, high churn).
+- **Singular-path cleanup** — `doctor` may *report* a stray legacy `.auto/skill/` dir, but T1 does not delete or migrate it; intentional per G-decisive-cli (pre-release, no users).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Add three schema types with shared strict validation to the existing `auto-skill` `skill` package, rework `init` into a wizard, and delete the `agents` command — reusing the `auto-shared/config` infrastructure the codebase already has (no new package, no new dependency).
+
+**Schemas (new files in package `skill`).** Each schema gets its own file with a typed Go struct, a strict `Parse*` (rejecting unknown keys: YAML via `yaml.Decoder.KnownFields(true)`, JSON via `config.DecodeJSONFileStrict`), and a `Validate*` returning **`[]config.ValidationError`** — the canonical shared structured error. Error codes are shared consts (`required`, `unknown_field`, `invalid_skill_name`, `invalid_version_spec`, `invalid_literal`, `invalid_file_ref`, `credentials_in_url`, `invalid_state`, `invalid_hash`, `unknown_skill_ref`, `duplicate_value`), each `Message` carrying a remediation hint. The skill-name regex (`skillNameRE`) and a new `ValidateVersionSpec` are reused across all three.
+
+**The load-bearing seam.** `lock.json`'s struct contains *only* dependency identity; its strict decoder makes any derived render field (`skill_version`, `template_hash`, `content_hash`, `replacements`) an `unknown_field` error. All derived state lives in the `manifest.json` struct. T1 validates the manifest's shape but never computes a hash or renders — `init` does not even emit one.
+
+**Paths.** `Env` gains `.auto/skills/` (plural) helpers — `SkillsConfigDir`, `SkillsYAMLPath`, `LockPath`, `ManifestPath` — and the global settings path moves to `~/.auto/skills/settings.json`. The singular `.auto/skill/` is removed outright (no migration).
+
+**`init` wizard.** A new `cli/init.go` drives the flow: bare `init` writes global settings; `init --project` runs an interactive wizard when stdin is a TTY, else requires `-y` (fail-fast on a non-TTY without `-y`). `skill.InitProject` scaffolds `skills.yaml` (from wizard/flag/default values), an empty valid `lock.json`, `./skills/`, and `.gitignore` entries — idempotently — then ensures the `~/.auto/projects.json` entry exists (create-if-absent via `config.EnsureProjects`/`UpsertProject`, credential-stripped remote) and appends `skill` to its `tools`. Both `init` modes apply the CLAUDE.md/AGENTS.md snippet registration that the deleted `agents` command used to do (its `ensureSkillSnippet` moves into the package, reused not duplicated).
+
+**Output.** JSON-default on stdout, diagnostics on stderr, `--text` for humans — matching the existing `init`/`lint` commands.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="api-outline" title="Schema types (public surface)">
+        <pd-api kind="struct" name="skill.SkillsYAML" lang="go" path="auto-skill/internal/skill/skillsyaml.go" caption="Intent — the authoritative checked-in project config">
+          <pd-member kind="field" sig="AutoUpdate bool `yaml:&quot;auto_update&quot;`">Default true; sync floats latest/branch before render.</pd-member>
+          <pd-member kind="field" sig="Targets []string `yaml:&quot;targets&quot;`">Output target styles (default [claude, agents]); deduped, validated.</pd-member>
+          <pd-member kind="field" sig="CommitTargets bool `yaml:&quot;commit_targets&quot;`">Default true; false = gitignore + regenerate.</pd-member>
+          <pd-member kind="field" sig="TrustedHosts []string `yaml:&quot;trusted_hosts&quot;`">Requested hosts only — parsed/validated, not enforced (T2).</pd-member>
+          <pd-member kind="field" sig="Shared SharedConfig `yaml:&quot;shared&quot;`">Default version + replacements merged into every skill.</pd-member>
+          <pd-member kind="field" sig="Skills map[string]SkillConfig `yaml:&quot;skills&quot;`">Per-skill version + replacements; keys match the name regex.</pd-member>
+          <pd-member kind="method" sig="ParseSkillsYAML(b []byte) (*SkillsYAML, error)">Strict decode (KnownFields true); unknown keys rejected.</pd-member>
+          <pd-member kind="method" sig="ValidateSkillsYAML(c *SkillsYAML) []config.ValidationError">Name regex, version-spec grammar, literal-is-string, file-ref shape, dedupe.</pd-member>
+        </pd-api>
+        <pd-api kind="struct" name="skill.Lock" lang="go" path="auto-skill/internal/skill/lock.go" caption="Dependency identity ONLY — no derived render state (the seam)">
+          <pd-member kind="field" sig="Version int `json:&quot;version&quot;`">Schema version (1).</pd-member>
+          <pd-member kind="field" sig="Skills map[string]LockEntry `json:&quot;skills&quot;`">Alphabetized, no timestamps.</pd-member>
+          <pd-member kind="field" sig="LockEntry{Source,URL,VersionSpec,Ref,Commit,Subpath string; Private,Local bool; State string}">State ∈ {resolved, unresolved}; URL must be credential-free.</pd-member>
+          <pd-member kind="method" sig="ParseLock(b []byte) (*Lock, error)">Strict JSON; a derived field (skill_version, template_hash…) ⇒ unknown_field.</pd-member>
+          <pd-member kind="method" sig="ValidateLock(l *Lock) []config.ValidationError">credentials_in_url, invalid_state, required, invalid_skill_name.</pd-member>
+        </pd-api>
+        <pd-api kind="struct" name="skill.Manifest" lang="go" path="auto-skill/internal/skill/manifest.go" caption="Derived render state — schema defined + validated only (no hashing in T1)">
+          <pd-member kind="field" sig="Version int; RenderVersion string">Manifest + renderer schema versions.</pd-member>
+          <pd-member kind="field" sig="Skills map[string]ManifestSkill">template_hash, replacements, file_refs[].{path,content_hash,matched_heading}, skill_version.</pd-member>
+          <pd-member kind="field" sig="Targets map[string]ManifestTarget">Managed skill set + expected skill_version per target.</pd-member>
+          <pd-member kind="method" sig="ParseManifest(b []byte) (*Manifest, error) / ValidateManifest(m *Manifest) []config.ValidationError">Structural only: invalid_hash, unknown_skill_ref, unknown_field. Never computes a hash.</pd-member>
+        </pd-api>
+        <pd-api kind="module" name="skill (init + paths + version)" lang="go" path="auto-skill/internal/skill/init.go" caption="Wizard-facing surface">
+          <pd-member kind="method" sig="ValidateVersionSpec(s string) error">Grammar only: latest | branch:&lt;n&gt; | tag:&lt;n&gt; | commit:&lt;hex&gt; | bare. No resolution.</pd-member>
+          <pd-member kind="method" sig="InitProject(env Env, opts InitProjectOptions) (InitResult, error)">Scaffold skills.yaml + empty lock + ./skills/ + .gitignore; ensure projects.json entry; append skill tool; idempotent.</pd-member>
+          <pd-member kind="method" sig="InitGlobal(env Env) (InitResult, error)">Write ~/.auto/skills/settings.json (cache loc, default --jobs); idempotent.</pd-member>
+          <pd-member kind="method" sig="(e Env) SkillsConfigDir()/SkillsYAMLPath()/LockPath()/ManifestPath() string">.auto/skills/ (plural) layout.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-skill/internal/skill/skillsyaml.go" change="add">`SkillsYAML`/`SharedConfig`/`SkillConfig`/`Replacement` types; `ParseSkillsYAML` (strict YAML); `ValidateSkillsYAML` → `[]config.ValidationError`.</pd-file>
+          <pd-file path="auto-skill/internal/skill/lock.go" change="add">`Lock`/`LockEntry` types; `ParseLock` (strict JSON); `ValidateLock` — credential-free URL, state enum, dependency-identity-only.</pd-file>
+          <pd-file path="auto-skill/internal/skill/manifest.go" change="add">`Manifest`/`ManifestSkill`/`FileRef`/`ManifestTarget` types; `ParseManifest`; `ValidateManifest` — structural only, no hashing.</pd-file>
+          <pd-file path="auto-skill/internal/skill/version.go" change="add">`ValidateVersionSpec` grammar validator; shared error-code consts for all schemas.</pd-file>
+          <pd-file path="auto-skill/internal/skill/init.go" change="add">`InitProject`/`InitGlobal`/`InitProjectOptions`; scaffold writers; projects.json reuse; agent-file snippet registration (moved from agents.go).</pd-file>
+          <pd-file path="auto-skill/internal/skill/skill.go" change="edit">Env path helpers → `.auto/skills/` (plural) + `SkillsConfigDir`/`SkillsYAMLPath`/`LockPath`/`ManifestPath`; global settings → `~/.auto/skills/settings.json`; retire singular path; old `Init` replaced by `InitProject`/`InitGlobal`.</pd-file>
+          <pd-file path="auto-skill/internal/cli/init.go" change="add">Wizard: TTY detection, prompts, `-y`/flag wiring (`--target`,`--auto-update`/`--no-auto-update`,`--default-version`,`--commit-targets`/`--no-commit-targets`); JSON/text output; non-TTY-without-`-y` fail-fast.</pd-file>
+          <pd-file path="auto-skill/internal/cli/root.go" change="edit">Remove `newAgentsCmd()` from `AddCommand`; point `newInitCmd` at the new wizard in `cli/init.go`.</pd-file>
+          <pd-file path="auto-skill/internal/cli/agents.go" change="delete">Folded into `init`; `autoskillSnippet`/`agentFiles`/`ensureSkillSnippet` relocate into the `skill` package.</pd-file>
+          <pd-file path="auto-skill/internal/skill/skillsyaml_test.go" change="add">Table tests for `ValidateSkillsYAML` asserting exact code/field/path per fixture.</pd-file>
+          <pd-file path="auto-skill/internal/skill/lock_test.go" change="add">Table tests for `ParseLock`/`ValidateLock` incl. credential + derived-field rejection.</pd-file>
+          <pd-file path="auto-skill/internal/skill/manifest_test.go" change="add">Table tests for `ValidateManifest` (structural).</pd-file>
+          <pd-file path="auto-skill/internal/skill/version_test.go" change="add">`ValidateVersionSpec` accept/reject cases.</pd-file>
+          <pd-file path="auto-skill/internal/skill/testdata/" change="add">Golden fixtures: valid + per-rejection `skills.yaml`/`lock.json`/`manifest.json`.</pd-file>
+          <pd-file path="auto-skill/internal/cli/cli_integration_test.go" change="edit">`init --project -y` scaffold + idempotency + flag-override + non-TTY-guard + projects.json reuse + `agents`-removed assertions.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **A new `internal/project` (or `internal/schema`) sub-package.** Cleaner separation in the abstract, but `Env`/`skillNameRE`/the path helpers already live in package `skill`, and the three schemas are tightly coupled to them. A new package would force exporting those or duplicating them. Rejected — add files to the existing package instead. (See D-1.)
+- **A skill-local `Diagnostic`-based validator** (reusing `skill.Diagnostic` with `Severity`). Rejected: the package patterns + CLAUDE.md mandate the shared `config.ValidationError` (no severity) for schema validation; schema errors are uniformly hard errors. `Diagnostic` stays for *lint* (severity-tiered), `ValidationError` for *schema validation*.
+- **Adding a YAML library** (e.g. `sigs.k8s.io/yaml`). Rejected — `gopkg.in/yaml.v3` is already a direct dep with `KnownFields(true)` strictness; honors the zero-new-deps rule.
+- **A separate skill registry file** for project identity. Rejected by the design — reuse `~/.auto/projects.json` and key receipts on it; no second registry.
+- **Scaffolding a `manifest.json` at `init`.** Rejected — the manifest is derived render state; emitting one before anything is rendered would assert a managed set that does not exist. `init` writes only `skills.yaml` + empty `lock.json`. (See D-3.)
+- **Auto-migrating the singular `.auto/skill/` path.** Rejected per G-decisive-cli — pre-release, no users; `doctor` may report a stray dir, but no shim is carried.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-1" title="Schemas live in the existing `skill` package, not a new sub-package" status="accepted" by="agent"
+        summary="Reuse Env/regex/paths in package skill; new files, no new package.">
+        <md><script type="text/plain">
+**Context:** The three schemas need `Env` path helpers and the skill-name regex, both already in package `skill`.
+**Decision:** Add `skillsyaml.go`/`lock.go`/`manifest.go`/`version.go`/`init.go` to package `skill`.
+**Alternatives:** A dedicated `internal/project` package (would re-export or duplicate Env + regex; also collides conceptually with the `projects.json` registry).
+**Consequences:** Package `skill` grows by several files but stays cohesive; later tasks (render, sync) can still split out a render package without disturbing the schemas.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-2" title="Schema validators return the shared `config.ValidationError`" status="accepted" by="agent"
+        summary="config.ValidationError for schema validation; skill.Diagnostic stays for lint.">
+        <md><script type="text/plain">
+**Context:** auto-skill has a severity-tiered `Diagnostic`; auto-shared has the flat `ValidationError` the package patterns mandate.
+**Decision:** `Validate*` returns `[]config.ValidationError` (code/path/field/message/value), the canonical structured-error contract reused across `init`/`doctor`/later `sync`.
+**Alternatives:** Reuse `skill.Diagnostic` (adds an irrelevant `severity` to uniformly-hard schema errors and diverges from the shared convention).
+**Consequences:** Two error types in the package by role — `Diagnostic` (lint, multi-severity) vs `ValidationError` (schema, hard); documented to avoid confusion.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-3" title="`init --project` registers in projects.json (create-if-absent) and scaffolds no manifest" status="accepted" by="agent"
+        summary="EnsureProjects/UpsertProject + append skill tool; write only skills.yaml + empty lock.json.">
+        <md><script type="text/plain">
+**Context:** The design says `auto init --project` registers the repo and `auto skill init` adds `skill` to tools — but T1 must be independently deployable without a foreign `auto init`.
+**Decision:** `init --project` ensures the `~/.auto/projects.json` entry exists itself (create-if-absent, credential-stripped remote) and appends `skill` to `tools`; it scaffolds `skills.yaml` + empty `lock.json` + `./skills/` + `.gitignore`, but **not** `manifest.json` (derived, written by T4 sync).
+**Alternatives:** Require `auto init` first (breaks standalone deployability); emit a manifest at init (asserts a managed set before any render).
+**Consequences:** Reuses the shared registry API; the manifest schema is defined/validated now and first written in T4.
+        </script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Five phases: rework the `Env` paths to `.auto/skills/` (P1), add the three strict schema validators + version-spec grammar (P2), build `InitProject`/`InitGlobal` with projects.json reuse and the folded agent-snippet (P3), wire the CLI wizard and delete `agents` (P4), then the end-to-end integration tests (P5). P1 and P2 are independent roots; P3 joins them; P4→P5 finish the CLI.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-dag caption="Phase dependency graph"></pd-dag>
+      </pd-section>
+
+      <pd-stepper>
+        <pd-phase n="1" title="Env path rework → .auto/skills/ (plural)" files="auto-skill/internal/skill/skill.go" status="todo">
+          <md><script type="text/plain">
+**Goal:** Retire the singular `.auto/skill/` path; establish the plural `.auto/skills/` layout + global `~/.auto/skills/`.
+
+**Steps:**
+1. In `skill.go`, change `ProjectSettingsPath()` and add `SkillsConfigDir()` → `<root>/.auto/skills/`, plus `SkillsYAMLPath()`, `LockPath()`, `ManifestPath()` under it. Keep `SkillsDir()` → `./skills/` unchanged.
+2. Change `GlobalSettingsPath()` → `~/.auto/skills/settings.json` (use `config.HomeDir()`; honor `RootOverride` → `<root>/.auto/skills/settings.json`).
+3. Grep the package for every reference to the singular path / `ProjectSettingsPath`; update call sites (`Init`, `doctor`, tests) so nothing writes `.auto/skill/` anymore.
+   - **Verify:** `grep -rn '\.auto/skill[^s]' auto-skill/` returns no live code path (only comments/docs if any).
+4. `go build ./...` in auto-skill.
+   - **Verify:** build green.
+5. **Commit:** `refactor(032): move skill config to .auto/skills/ plural layout`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Three strict schemas + version-spec validator" files="auto-skill/internal/skill/version.go,auto-skill/internal/skill/skillsyaml.go,auto-skill/internal/skill/lock.go,auto-skill/internal/skill/manifest.go,auto-skill/internal/skill/version_test.go,auto-skill/internal/skill/skillsyaml_test.go,auto-skill/internal/skill/lock_test.go,auto-skill/internal/skill/manifest_test.go,auto-skill/internal/skill/testdata/" status="todo">
+          <md><script type="text/plain">
+**Goal:** Typed structs + strict parse + `Validate*` returning `[]config.ValidationError` for all three files, sharing one version-spec validator and one set of error-code consts.
+
+**Steps:**
+1. `version.go` — declare error-code consts (`CodeRequired`, `CodeUnknownField`, `CodeInvalidSkillName`, `CodeInvalidVersionSpec`, `CodeInvalidLiteral`, `CodeInvalidFileRef`, `CodeCredentialsInURL`, `CodeInvalidState`, `CodeInvalidHash`, `CodeUnknownSkillRef`, `CodeDuplicateValue`). Implement `ValidateVersionSpec(s string) error`: accept `latest`, `branch:<non-empty>`, `tag:<non-empty>`, `commit:<hex≥7>`, bare non-empty; reject empty payloads, unknown `prefix:`, malformed `commit:`. Grammar only — no resolution.
+2. `skillsyaml.go` — `SkillsYAML`/`SharedConfig`/`SkillConfig`/`Replacement` types. `ParseSkillsYAML` via `yaml.Decoder` + `KnownFields(true)`. `ValidateSkillsYAML`: skill keys vs `skillNameRE` (`invalid_skill_name`), `version`/`shared.version` via `ValidateVersionSpec`, replacement literals must be strings (`invalid_literal` for unquoted scalar), file-ref mappings require `file:` + only known keys (`invalid_file_ref`), dedupe `targets`/`trusted_hosts` (`duplicate_value`). Each `Message` has a remediation hint.
+3. `lock.go` — `Lock`/`LockEntry` (dependency identity only). `ParseLock` via `config.DecodeJSONFileStrict` (or a strict `json.Decoder` with `DisallowUnknownFields`) so any derived field is `unknown_field`. `ValidateLock`: `url` credential check via `git.NormalizeRemoteURL` / userinfo+token scan (`credentials_in_url`), `state ∈ {resolved,unresolved}` (`invalid_state`), required fields when `resolved` (`required`), skill-name keys.
+4. `manifest.go` — `Manifest`/`ManifestSkill`/`FileRef`/`ManifestTarget`. `ParseManifest` strict JSON. `ValidateManifest`: structural only — hash fields match a hex/sha format (`invalid_hash`), each target's managed skill exists in the per-skill map (`unknown_skill_ref`). **No hashing, no rendering.**
+5. Add `testdata/` golden fixtures: one `valid` + one-per-rejection for each schema.
+6. Write the four table tests asserting **exact** `Code`+`Field`+`Path` per fixture row (not just "error returned").
+   - **Verify:** `go test ./internal/skill/...` green; `go build ./...`.
+7. **Commit:** `feat(032): strict skills.yaml/lock.json/manifest.json schemas + validators`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="InitProject / InitGlobal + projects.json reuse + agent snippet" files="auto-skill/internal/skill/init.go,auto-skill/internal/skill/skill.go" status="todo" depends-on="1,2">
+          <md><script type="text/plain">
+**Goal:** Library-level init that scaffolds the project, reuses the shared registry, and folds in the agent-file snippet — all idempotent.
+
+**Steps:**
+1. `init.go` — move `autoskillSnippet`/`agentFiles`/`ensureSkillSnippet` from `cli/agents.go` into the package (function `ensureAgentSnippets(dir) ([]string, error)`).
+2. `InitGlobal(env) (InitResult, error)` — write `~/.auto/skills/settings.json` (machine defaults: `cache_dir`, `jobs` default 8) via `WriteJSONFileAtomic` if absent; idempotent. Apply `ensureAgentSnippets`.
+3. `InitProjectOptions{Targets []string; AutoUpdate, CommitTargets bool; DefaultVersion string}` + `InitProject(env, opts)` — build a `SkillsYAML` from opts, **validate it** with `ValidateSkillsYAML` before writing (fail on error), marshal to `skills.yaml`; write empty `lock.json` `{"version":1,"skills":{}}`; `MkdirAll ./skills/`; add `.gitignore` entries (target dirs when `!CommitTargets`, always `.auto/skills/.sync-journal`). All writes idempotent (skip if present + equal).
+4. projects.json reuse — `config.EnsureProjects()`; `FindProjectByExactPath(root)`; if absent build a `ProjectRef{ID: SlugifyID(name), Path: root, Remote: git.NormalizeRemoteURL(origin), Tools: []}`; append `skill` to `Tools` if not present; `UpsertProject` + `SaveProjects`.
+5. Replace the old `skill.Init` with `InitProject`/`InitGlobal`; update `InitResult` fields.
+   - **Verify:** `go build ./...`; a unit test for `InitProject` against a temp root + isolated `HOME` (registry created, `skill` tool appended, written `skills.yaml` passes `ValidateSkillsYAML`, second run no-op).
+6. **Commit:** `feat(032): init scaffolds .auto/skills + reuses projects.json registry`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="CLI wizard + delete agents command" files="auto-skill/internal/cli/init.go,auto-skill/internal/cli/root.go,auto-skill/internal/cli/agents.go" status="todo" depends-on="3">
+          <md><script type="text/plain">
+**Goal:** Wire the `init` wizard/flags, JSON-default output, and remove the standalone `agents` command.
+
+**Steps:**
+1. `cli/init.go` — new `newInitCmd` with flags: `--project`, `-y`, `--target` (repeatable), `--auto-update`/`--no-auto-update`, `--default-version`, `--commit-targets`/`--no-commit-targets`, `--text`. Conflicting paired bools → fail-fast (standard cobra error).
+2. TTY detection: if `--project` && !`-y` && stdin is **not** a TTY → `ExitError{1}` with remediation on stderr ("not a TTY — pass `-y` or explicit flags"). If TTY && !`-y`, run interactive prompts seeded with defaults; flags override prompted values. With `-y`, defaults + flag overrides, no prompts.
+3. Call `skill.InitProject`/`skill.InitGlobal`; emit JSON payload to stdout (paths + created flags + resolved options), diagnostics to stderr; `--text` human output. Validation errors from a bad `--default-version`/`--target` surface as structured errors, exit non-zero.
+4. In `root.go`, delete `newAgentsCmd()` from `AddCommand`; delete `cli/agents.go`.
+   - **Verify:** `go build ./...`; `go vet ./...`; `auto skill agents` returns unknown-command; `auto skill init --help` shows the new flags.
+5. **Commit:** `feat(032): init wizard (-y/flags), fold agents into init, remove agents cmd`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="5" title="End-to-end integration tests" files="auto-skill/internal/cli/cli_integration_test.go" status="todo" depends-on="4">
+          <md><script type="text/plain">
+**Goal:** Prove the full `init` contract end-to-end against a temp repo with isolated `HOME`.
+
+**Steps:**
+1. `init --project -y` (isolated `HOME`, `--root` temp): assert `.auto/skills/skills.yaml` (valid, defaults), empty valid `lock.json`, `./skills/`, `.gitignore` entries; re-run → no diff, exit 0 (idempotent); written `skills.yaml` passes `ValidateSkillsYAML`.
+2. Flag overrides: `--target codex --no-auto-update --default-version "tag:v1" --no-commit-targets` → parse written `skills.yaml`, assert values; target dirs gitignored.
+3. Non-TTY guard: `init --project` (no `-y`, piped stdin) → exit non-zero + stderr remediation; no files written.
+4. projects.json reuse: empty registry → entry created with `skill` tool; pre-seeded `tools:[watch]` → `skill` appended, `watch` preserved, no dup.
+5. `agents` removed: assert command unregistered; assert `init` registered the CLAUDE.md/AGENTS.md snippet (idempotent).
+6. Global `init`: writes `~/.auto/skills/settings.json`; assert no singular path written.
+7. JSON-default contract: stdout parses as JSON; `--text` human; `--text`+`--json` (if both exist) → fail-fast.
+   - **Verify:** `go test ./...` green in auto-skill; `go vet ./...`; pre-commit lint clean.
+8. **Commit:** `test(032): e2e init scaffold/idempotency/tty-guard/registry/agents-fold`.
+          </script></md>
+        </pd-phase>
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **P2** satisfies **AC-1, AC-2, AC-3, AC-4** (the three strict schemas + version-spec grammar, exact structured-error codes).
+- **P1 + P3** satisfy **AC-9** (plural path, singular retired) and the scaffolding half of **AC-5**; **P3** satisfies **AC-7** (projects.json reuse).
+- **P4** satisfies **AC-6** (TTY guard), **AC-8** (agents folded/removed), **AC-10** (JSON-default contract), and the wizard/flag half of **AC-5**.
+- **P5** is the end-to-end proof tying **AC-5 through AC-10** to `cli_integration_test.go`.
+- Guard rails: **G-schema-strict** (P2 strict decode + shared `validate()`), **G-json-default** (P4 output contract), **G-decisive-cli** (P4 removes `agents`, no alias). Zero new runtime deps; `go build`/`go test`/`go vet` green per phase.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
