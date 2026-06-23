@@ -1,0 +1,764 @@
+# Playbook reflection observations — immutable records mined from task runs.
+# Managed by /playbook-observe. Never edit existing observations.
+cursors:
+  sessions:
+    last_scan_started_at: "2026-06-23T17:25:00Z"
+    processed:
+      - 00f0bcac-b89e-4005-8bde-1a2bb6e7eff4
+      - 07c5ecd3-4be8-4764-9986-56ed8da1c1be
+      - 17c23bc9-8d0e-40b7-9e17-ac363b6c77d0
+      - 3b8bd636-8d7a-43cb-915a-35b14f4c65d5
+      - 4462d249-56f1-4b85-8d2c-c47dc438748b
+      - 51c808a0-44d6-4115-97e2-3ed16f8b6c0a
+      - 51f5dc53-5c8e-4d62-835a-c868531e8420
+      - 6250c45c-8b18-48dc-a1c4-5358cb2400b8
+      - 62bae898-7e31-48b1-89fe-9737a9da4859
+      - 675a524c-27e6-4193-a8bb-d79a2c5a3aca
+      - 6c71f534-8a37-4157-9ae2-cabe1ab541c9
+      - 7476b98b-cc07-4460-b104-22123b98c005
+      - 81f9a30d-f062-452b-8bc2-a19a041024f4
+      - 88943e4d-fa33-444d-9c32-4fe269718550
+      - ac94c382-8bdd-494c-b00e-aa0e22a79873
+  feedback:
+    docs/tasks/001-ts-import-graph/feedback.md:
+      content_sha256: 668333d87cdf651163cc9fb42cb370bf3af5b8491ebe640e7bc67010dbcb1166
+      processed_at: "2026-06-23T17:26:00Z"
+    docs/tasks/002-git-history-etl/feedback.md:
+      content_sha256: 68ac982709dc00ab4a662267968391ae66e16a37a4c0cdd9f64adc2aec94ac0f
+      processed_at: "2026-06-23T17:26:00Z"
+    docs/tasks/003-go-import-graph/feedback.md:
+      content_sha256: afb9de116ec63776e5bc572d39277cadf810bfda26dc7c719aeb0b00f5b2d277
+      processed_at: "2026-06-23T17:26:00Z"
+    docs/tasks/004-context-pack/feedback.md:
+      content_sha256: a3063580c51d9c290675e151c6883ba14345e9912106ca8c8b647befc2815571
+      processed_at: "2026-06-23T17:26:00Z"
+    docs/tasks/005-code-graph-alias-reexports/feedback.md:
+      content_sha256: 465411404d77b99386b9bf7c35631495f34b665bb29b16cbfdf94c6722ec5902
+      processed_at: "2026-06-23T17:26:00Z"
+    docs/tasks/006-autograph-quote-jsonc-fixes/feedback.md:
+      content_sha256: 6836cc8e19f39674ca7e500c371ea5f8f28997f01fe67bfa59fa71e093bf402a
+      processed_at: "2026-06-23T17:26:00Z"
+    docs/tasks/007-autograph-doc-links/feedback.md:
+      content_sha256: 28d7aee74cf736b3324dcdc567ef8fe9509b2871c6ad4c3255646cac18c2d3be
+      processed_at: "2026-06-23T17:26:00Z"
+    docs/tasks/008-commit-session-link/feedback.md:
+      content_sha256: 3ed6eaf1a5cc251ccf2d9a81af2815f7eb73246fbea1e62e5a94b04166134d55
+      processed_at: "2026-06-23T17:26:00Z"
+observations:
+  - id: 20260623T172706.433083Z-0001
+    description: "When implementing a linkscan/tag-detection system for source code, always filter out documentation files (.md, .yaml, .json) and test files (_test.go, testdata/) before scanning — otherwise prose descriptions of the tag format and test fixtures produce large volumes of false-positive 'malformed tag' errors that are impossible to distinguish from real issues."
+    context: "autodoc's linkscan was scanning all git-tracked files including .md docs and _test.go files. Any line mentioning '[autodoc()]' in a comment or string literal was incorrectly flagged as a malformed tag. The fix required adding extension-based filtering, suffix-based filtering for test files, and tightening the 'malformed' heuristic to only flag patterns containing '@' (indicating an attempted real tag format, not a description)."
+    git_commit: 13cc9f3
+    files: ["auto-doc/internal/linkscan/linkscan.go"]
+    session_ids: [6c71f534-8a37-4157-9ae2-cabe1ab541c9]
+    sources:
+      - {kind: session, ref: 6c71f534-8a37-4157-9ae2-cabe1ab541c9}
+  - id: 20260623T172706.433114Z-0002
+    description: "When the beads dependency system uses 'dep add A B' to mean 'A depends on B (B blocks A)', it's easy to wire the direction backwards. Always verify by checking br ready after wiring: if the foundational task doesn't appear as ready, the direction is wrong and must be reversed with dep remove."
+    context: "When building the autodoc v1 epic, the agent initially wired 'tasks -> epic' (meaning tasks depended on the epic), blocking the tasks from showing as ready. After checking br ready and seeing the config migration task was blocked, the agent removed all epic links and re-added them in the correct direction (epic depends on final acceptance task). The correct pattern: only link the epic to the final 'acceptance pass' task, not to all tasks."
+    git_commit: 13cc9f3
+    files: []
+    session_ids: [6c71f534-8a37-4157-9ae2-cabe1ab541c9]
+    sources:
+      - {kind: session, ref: 6c71f534-8a37-4157-9ae2-cabe1ab541c9}
+  - id: 20260623T172706.433122Z-0003
+    description: "When splitting a CLI init command into global vs project modes, the 'project' init should automatically run global init if global config doesn't exist yet — this makes the tool work on a fresh system without requiring users to run two separate commands in the right order."
+    context: "autodoc's init was split into InitGlobal (creates ~/.auto/doc/settings.json and ~/.auto/host.json) and InitProject (creates .auto/doc/settings.json). InitProject was wired to call InitGlobal first if ~/.auto/doc/settings.json doesn't exist, so autodoc init --project works end-to-end on a fresh system."
+    git_commit: 13cc9f3
+    files: ["auto-doc/internal/commands/init.go"]
+    session_ids: [6c71f534-8a37-4157-9ae2-cabe1ab541c9]
+    sources:
+      - {kind: session, ref: 6c71f534-8a37-4157-9ae2-cabe1ab541c9}
+  - id: 20260623T172706.433126Z-0004
+    description: "When git ls-files is used to enumerate files for scanning, it can return directory entries (e.g. skills installed as git submodules or symlinks). Always add an os.Stat + info.IsDir() check before attempting os.ReadFile, otherwise the scan crashes with 'is a directory' errors."
+    context: "autodoc fix was crashing with 'read .claude/skills/contextual-commit: is a directory' because git ls-files returned the skills directory as a tracked path. The fix was to stat each path and skip it if IsDir() before calling ReadFile."
+    git_commit: 13cc9f3
+    files: ["auto-doc/internal/linkscan/linkscan.go"]
+    session_ids: [6c71f534-8a37-4157-9ae2-cabe1ab541c9]
+    sources:
+      - {kind: session, ref: 6c71f534-8a37-4157-9ae2-cabe1ab541c9}
+  - id: 20260623T172706.433130Z-0005
+    description: "Fix instruction output for stale-hash-only docs should say 'review that title and summary still reflect the content' — not 'set summary to...' — because those files already have valid summaries. Conflating 'stale hash' with 'needs summary update' produces misleading agent instructions that waste effort on no-op edits."
+    context: "autodoc fix was generating 'Set summary to one-line description' for files that had correct titles and summaries but just needed rehashing after content changed. The fix was to add EmptySummary as a distinct issue type and only emit the summary instruction when summary is actually empty."
+    git_commit: 13cc9f3
+    files: ["auto-doc/internal/commands/fix.go"]
+    session_ids: [6c71f534-8a37-4157-9ae2-cabe1ab541c9]
+    sources:
+      - {kind: session, ref: 6c71f534-8a37-4157-9ae2-cabe1ab541c9}
+  - id: 20260623T172706.433134Z-0006
+    description: "When a feature is described as a gap to implement, always grep for existing implementations first before building it from scratch — WalkRepo for recursive docs discovery was already fully implemented and tested with multi-root fixtures."
+    context: "The auto-anp task was to implement recursive docs discovery across nested docs/ directories. After reading the tech design doc and searching the codebase, WalkRepo was already implemented in doctree.go using git ls-files to find all docs/ directories, with multi-root tests in place. The task was closed as 'already done' with a quick verification run."
+    git_commit: 13cc9f3
+    files: ["auto-doc/internal/doctree/doctree.go"]
+    session_ids: [6c71f534-8a37-4157-9ae2-cabe1ab541c9]
+    sources:
+      - {kind: session, ref: 6c71f534-8a37-4157-9ae2-cabe1ab541c9}
+  - id: 20260623T172706.433138Z-0007
+    description: "When Cobra commands are refactored (e.g. Init renamed to InitProject), all internal test calls must be updated with replace_all to avoid compilation failures — missed rename in a single test file can block the whole test suite from compiling."
+    context: "When Init() was split into InitGlobal() and InitProject(), the test file init_test.go had multiple calls to Init(). Using replace_all=true caught all instances at once. A missed call would have caused a compile error that prevents any tests from running."
+    git_commit: 13cc9f3
+    files: ["auto-doc/internal/commands/init_test.go"]
+    session_ids: [6c71f534-8a37-4157-9ae2-cabe1ab541c9]
+    sources:
+      - {kind: session, ref: 6c71f534-8a37-4157-9ae2-cabe1ab541c9}
+  - id: 20260623T172706.433142Z-0008
+    description: "To add a persistent --json flag to a Cobra root command that all subcommands can read, declare a package-level bool variable, bind it with rootCmd.PersistentFlags().BoolVar(), and reference it directly in each subcommand's RunE closure — no need to pass it through function parameters or use context."
+    context: "autodoc needed --json on all subcommands (tree, stale, fix, fixed, agents). The cleanest approach was a package-level 'var jsonOutput bool' bound to rootCmd as a persistent flag, with each subcommand's RunE checking jsonOutput directly."
+    git_commit: 13cc9f3
+    files: ["auto-doc/cmd/autodoc/main.go"]
+    session_ids: [6c71f534-8a37-4157-9ae2-cabe1ab541c9]
+    sources:
+      - {kind: session, ref: 6c71f534-8a37-4157-9ae2-cabe1ab541c9}
+  - id: 20260623T172706.433146Z-0009
+    description: "When a session resumes mid-task, always audit what background agents already completed before starting new work. Attempting to close issues that background agents already closed produces a no-op error — check br ready and br show before assuming an issue needs implementation."
+    context: "Session 17c23bc9 had multiple parallel background agents implementing auto-k8z.2 through auto-k8z.12. When the coordinator later tried to close auto-k8z.2, auto-k8z.5, and auto-k8z.4, they were already closed. The coordinator caught this via the 'Warning: Skipped ... already closed' output from br close."
+    git_commit: 13cc9f3
+    files: []
+    session_ids: [17c23bc9-8d0e-40b7-9e17-ac363b6c77d0]
+    sources:
+      - {kind: session, ref: 17c23bc9-8d0e-40b7-9e17-ac363b6c77d0}
+  - id: 20260623T172706.433149Z-0010
+    description: "When implementing FTS5 virtual table queries in SQLite (modernc.org/sqlite), use rowid not a custom column name to query matched rows. FTS5 exposes rowid as the hidden column linking back to the content table."
+    context: "A test for FTS trigger sync in auto-search used SELECT doc_id FROM sessions_fts which failed with 'no such column: doc_id'. The fix was to switch to rowid. FTS tests should use COUNT(*) rather than selecting a specific column to avoid this class of error."
+    git_commit: 13cc9f3
+    files: ["auto-search/internal/indexdb/indexdb_test.go", "auto-search/internal/indexdb/schema.go"]
+    session_ids: [17c23bc9-8d0e-40b7-9e17-ac363b6c77d0]
+    sources:
+      - {kind: session, ref: 17c23bc9-8d0e-40b7-9e17-ac363b6c77d0}
+  - id: 20260623T172706.433153Z-0011
+    description: "Before writing or creating a file with the Write tool, always Read it first even when you believe it doesn't exist. The 'File has not been read yet' error aborts the write; the 'File has been modified since read' error requires re-reading before retrying."
+    context: "In session 17c23bc9, the agent hit 'File has not been read yet' when trying to Write to indexdb_test.go and discover.go without prior reads, and 'File has been modified since read' after a background agent modified search.go between read and edit."
+    git_commit: 13cc9f3
+    files: []
+    session_ids: [17c23bc9-8d0e-40b7-9e17-ac363b6c77d0]
+    sources:
+      - {kind: session, ref: 17c23bc9-8d0e-40b7-9e17-ac363b6c77d0}
+  - id: 20260623T172706.433157Z-0012
+    description: "Use br close return code and warning text to detect when background agents have raced ahead: exit code 3 + 'Warning: Skipped ... already closed' means another agent already finished that issue. Treat this as a success signal and move on."
+    context: "The coordinator in session 17c23bc9 ran br close auto-k8z.2 after verifying the implementation, but the issue was already closed from an earlier session. Exit code 3 with 'Warning: Skipped auto-k8z.2: already closed' is the expected signal."
+    git_commit: 13cc9f3
+    files: []
+    session_ids: [17c23bc9-8d0e-40b7-9e17-ac363b6c77d0]
+    sources:
+      - {kind: session, ref: 17c23bc9-8d0e-40b7-9e17-ac363b6c77d0}
+  - id: 20260623T172706.433160Z-0013
+    description: "When dispatching multiple background agents writing to the same Go module, each agent should write to disjoint packages. Two agents that both need to modify the same file will produce 'File has been modified since read' conflicts; separate their work at package boundaries."
+    context: "Session 17c23bc9 dispatched two background agents: one for query parsing (internal/query/) and one for incremental reindex (internal/indexdb/). The reindex agent also needed to update cli/index.go, which caused conflicts when the coordinator was also reading it."
+    git_commit: 13cc9f3
+    files: ["auto-search/internal/cli/search.go", "auto-search/internal/cli/index.go"]
+    session_ids: [17c23bc9-8d0e-40b7-9e17-ac363b6c77d0]
+    sources:
+      - {kind: session, ref: 17c23bc9-8d0e-40b7-9e17-ac363b6c77d0}
+  - id: 20260623T172706.433164Z-0014
+    description: "When reviewing a design doc against code, use a dedicated Explore sub-agent per subsystem rather than reading files inline. The sub-agent returns a structured summary that can be compared against the doc without the coordinator needing to read source files directly."
+    context: "Session 4462d249 used Explore sub-agents to audit auto-doc and auto-etl internals. The auto-doc sub-agent (68s, 27 tool uses) answered 8 specific questions; the auto-etl sub-agent (58s, 22 tool uses) answered 10. The coordinator synthesized both reports to update docs without re-reading any source files."
+    git_commit: 13cc9f3
+    files: ["docs/user-journey.claude.md", "docs/user-journey.md"]
+    session_ids: [4462d249-56f1-4b85-8d2c-c47dc438748b]
+    sources:
+      - {kind: session, ref: 4462d249-56f1-4b85-8d2c-c47dc438748b}
+  - id: 20260623T172706.433167Z-0015
+    description: "When answering questions by cross-referencing code, remove questions that are fully answered rather than marking them 'answered'. The user explicitly asked to 'remove questions answered by code existing' — keeping answered questions as annotations adds noise once the code is authoritative."
+    context: "Session 4462d249 started with 42 review questions in user-journey.claude.md. After cross-referencing code, the user instructed removal of answered questions. The final doc had 3 actionable items covering only genuine gaps."
+    git_commit: 13cc9f3
+    files: ["docs/user-journey.claude.md"]
+    session_ids: [4462d249-56f1-4b85-8d2c-c47dc438748b]
+    sources:
+      - {kind: session, ref: 4462d249-56f1-4b85-8d2c-c47dc438748b}
+  - id: 20260623T172706.433171Z-0016
+    description: "When a user renames a project directory (e.g., auto-etl-2 to auto-etl), immediately update the root CLAUDE.md sub-projects table, then check and update any docs that referenced the old name. Don't wait for the user to ask — git status showing staged deletions of the old path is the signal."
+    context: "Session 4462d249: the user said 'i just deleted ./auto-etl old project and renamed ./auto-etl'. git status showed 22 files staged under auto-etl-2/ as deleted. The agent immediately updated CLAUDE.md and struck through the resolved question in the review doc."
+    git_commit: 13cc9f3
+    files: [CLAUDE.md, "docs/user-journey.claude.md"]
+    session_ids: [4462d249-56f1-4b85-8d2c-c47dc438748b]
+    sources:
+      - {kind: session, ref: 4462d249-56f1-4b85-8d2c-c47dc438748b}
+  - id: 20260623T172706.433174Z-0017
+    description: Schema structs embedded in CLAUDE.md drift from the actual model file within a session. Remove inline Go structs from CLAUDE.md and replace with a single pointer to the canonical source file to prevent agents from using stale field lists.
+    context: "Session 4462d249 found that AgentMessage, AgentSession, and AgentFileBlob structs in root CLAUDE.md were missing 9+ fields compared to auto-etl/internal/model/model.go. The fix was to replace the ~70-line embedded Go code with a pointer sentence."
+    git_commit: 13cc9f3
+    files: [CLAUDE.md, "auto-etl/internal/model/model.go"]
+    session_ids: [4462d249-56f1-4b85-8d2c-c47dc438748b]
+    sources:
+      - {kind: session, ref: 4462d249-56f1-4b85-8d2c-c47dc438748b}
+  - id: 20260623T172706.433177Z-0018
+    description: "Denormalize git_remote into both sessions and messages parquet tables as a cross-host project identity key. git_remote provides a stable identifier for the same project across machines with different absolute paths."
+    context: "Session 4462d249 identified a gap: multi-host scenarios were described but no cross-host identity key was defined. The user confirmed git_remote as the answer. Messages also got git_branch (not denormalized from session, since branch can change mid-session)."
+    git_commit: 13cc9f3
+    files: ["docs/user-journey.md", "auto-etl/internal/model/model.go"]
+    session_ids: [4462d249-56f1-4b85-8d2c-c47dc438748b]
+    sources:
+      - {kind: session, ref: 4462d249-56f1-4b85-8d2c-c47dc438748b}
+  - id: 20260623T172706.433181Z-0019
+    description: "When the user says 'add to todo', they mean a todo.md file in the relevant project directory, not a beads issue. Create the file if it doesn't exist rather than defaulting to beads tracking."
+    context: "In session 51f5dc53, user said 'add to todo - worktree detection' and the agent immediately created auto-etl-2/todo.md. Lightweight deferred items go in a markdown todo file, not the beads issue tracker."
+    git_commit: 13cc9f3
+    files: ["auto-etl-2/todo.md"]
+    session_ids: [51f5dc53-5c8e-4d62-835a-c868531e8420]
+    sources:
+      - {kind: session, ref: 51f5dc53-5c8e-4d62-835a-c868531e8420}
+  - id: 20260623T172706.433184Z-0020
+    description: "When iterating on a schema design with a user, write the design doc first and share it for review before touching any code. Multiple design reversals were resolved entirely at the doc level, saving rework in code."
+    context: "The subagent session-ID design went through at least 3 full reversals: {sessionId}-{agentId}, then {sessionId}/{agentId}, then just agentId as the primary key with a separate parent_session_id FK. All changes were made to the markdown doc before any code was written."
+    git_commit: 13cc9f3
+    files: ["auto-etl-2/docs/subagent-session-dedup.md"]
+    session_ids: [51f5dc53-5c8e-4d62-835a-c868531e8420]
+    sources:
+      - {kind: session, ref: 51f5dc53-5c8e-4d62-835a-c868531e8420}
+  - id: 20260623T172706.433188Z-0021
+    description: "Composite primary keys that embed hierarchy (e.g. {parentId}/{childId}) are anti-SQL patterns. Prefer opaque IDs on each row with a separate parent FK column, which standard OLAP query patterns expect."
+    context: "The user explicitly overrode the composite-key design ('this feels kinda anti-sql patterns') and chose: subagent session uses agentId as its ID, plus a parent_session_id FK. The same OLAP principle was applied to messages: parent_session_id was denormalized onto the messages table to avoid joins on hot query paths."
+    git_commit: 13cc9f3
+    files: ["auto-etl-2/docs/subagent-session-dedup.md", "auto-etl-2/internal/model/model.go"]
+    session_ids: [51f5dc53-5c8e-4d62-835a-c868531e8420]
+    sources:
+      - {kind: session, ref: 51f5dc53-5c8e-4d62-835a-c868531e8420}
+  - id: 20260623T172706.433194Z-0022
+    description: "When a session recovery context is presented (via a summary preamble), start by reading AGENTS.md/CLAUDE.md and then checking br ready before doing anything else. Do not assume the prior session's issue state is current."
+    context: "Session 07c5ecd3 opened with a recovery context listing 10 blocked tasks. The agent correctly read AGENTS.md first, then ran br ready to find the 6 actually-unblocked tasks, then br show on the first ready task before starting work."
+    git_commit: 13cc9f3
+    files: []
+    session_ids: [07c5ecd3-4be8-4764-9986-56ed8da1c1be]
+    sources:
+      - {kind: session, ref: 07c5ecd3-4be8-4764-9986-56ed8da1c1be}
+  - id: 20260623T172706.433197Z-0023
+    description: "When code was already implemented in a prior session (discoverable via go build ./... and inspecting existing files), close the corresponding beads issue immediately rather than reimplementing. Check first by reading the file tree and verifying with go build."
+    context: "Multiple tasks (auto-k8z.4, auto-k8z.5, auto-k8z.8, auto-k8z.9) were already implemented from a prior session. The agent discovered this by reading existing Go files, running go build ./... && echo OK, and verifying the functions existed."
+    git_commit: 13cc9f3
+    files: ["auto-search/internal/cli/index.go", "auto-search/internal/indexdb/indexer.go"]
+    session_ids: [07c5ecd3-4be8-4764-9986-56ed8da1c1be]
+    sources:
+      - {kind: session, ref: 07c5ecd3-4be8-4764-9986-56ed8da1c1be}
+  - id: 20260623T172706.433201Z-0024
+    description: "FTS5 virtual tables in SQLite use rowid as their primary key column, not any user-defined column like doc_id. A test that queries SELECT doc_id FROM fts_table WHERE fts_table MATCH ... will fail; use SELECT rowid instead."
+    context: "In session 07c5ecd3, TestFTSTriggersSync used doc_id in FTS queries and failed with 'SQL logic error: no such column: doc_id'. The fix was to replace all FTS column references with rowid."
+    git_commit: 13cc9f3
+    files: ["auto-search/internal/indexdb/indexdb_test.go"]
+    session_ids: [07c5ecd3-4be8-4764-9986-56ed8da1c1be]
+    sources:
+      - {kind: session, ref: 07c5ecd3-4be8-4764-9986-56ed8da1c1be}
+  - id: 20260623T172706.433204Z-0025
+    description: "Use systemctl try-restart rather than systemctl restart when restarting a daemon after binary update. try-restart only restarts if currently running, avoiding unexpectedly starting a daemon the operator intentionally stopped."
+    context: "Session 07c5ecd3 included design work on the autostack daemon-install feature. The design doc chose try-restart because the operator may have intentionally left the service stopped. Also noted: daemon-reload is not needed when only the binary changes."
+    git_commit: 13cc9f3
+    files: ["docs/autostack-install-daemon.md"]
+    session_ids: [07c5ecd3-4be8-4764-9986-56ed8da1c1be]
+    sources:
+      - {kind: session, ref: 07c5ecd3-4be8-4764-9986-56ed8da1c1be}
+  - id: 20260623T172706.433208Z-0026
+    description: "When spawning an Explore subagent to understand a codebase, give it a structured list of specific things to read (data flow, ID assignment, session creation, test harness) rather than a vague 'explore the codebase'. The subagent returns a comprehensive report organized by those exact sections."
+    context: "The Explore subagent prompt in session 51f5dc53 listed 8 specific questions covering file discovery, session creation, session ID assignment, subagent file handling, model definitions, transform logic, and existing tests. The result was a structured report the agent used directly to draft the fix design."
+    git_commit: 13cc9f3
+    files: []
+    session_ids: [51f5dc53-5c8e-4d62-835a-c868531e8420]
+    sources:
+      - {kind: session, ref: 51f5dc53-5c8e-4d62-835a-c868531e8420}
+  - id: 20260623T172706.433211Z-0027
+    description: "When inserting a new section into an already-numbered document, renumber all subsequent sections immediately in the same editing pass to prevent duplicate section numbers."
+    context: "Session 6250c45c shows ~15 sequential Edit tool calls to renumber sections 2-17 one by one after inserting a new section 2. A pre-planned renumber strategy starting from the highest number downward avoids conflicts."
+    git_commit: 13cc9f3
+    files: ["auto-watch/docs/solution.md"]
+    session_ids: [6250c45c-8b18-48dc-a1c4-5358cb2400b8]
+    sources:
+      - {kind: session, ref: 6250c45c-8b18-48dc-a1c4-5358cb2400b8}
+  - id: 20260623T172706.433215Z-0028
+    description: "When a user provides specific domain language for system processes (Ticker, Worker, Candidate trigger), adopt that vocabulary immediately across all affected sections — diagrams, prose, and code stubs — rather than requiring multiple follow-up edits to propagate the naming."
+    context: "Session 6250c45c: the user introduced the Ticker/Worker split as explicit named processes; the agent updated diagrams, prose, and concurrency model sections separately across several rounds. Consolidating vocabulary adoption into one pass reduces revision cycles."
+    git_commit: 13cc9f3
+    files: ["auto-watch/docs/solution.md"]
+    session_ids: [6250c45c-8b18-48dc-a1c4-5358cb2400b8]
+    sources:
+      - {kind: session, ref: 6250c45c-8b18-48dc-a1c4-5358cb2400b8}
+  - id: 20260623T172706.433219Z-0029
+    description: "When doc-review inline comments are found in a specification, address all of them in a single pass rather than presenting them one-by-one: read all comment blocks, triage each (fix, explain, or defer), then edit every affected section before reporting results."
+    context: "The auto-watch solution.md had 4 embedded HTML doc-review comments (sol-001 through sol-004). The agent addressed all four in one coordinated pass — updating Go structs, SQL schema, algorithm prose, and CLI docs."
+    git_commit: 13cc9f3
+    files: ["auto-watch/docs/solution.md"]
+    session_ids: [6250c45c-8b18-48dc-a1c4-5358cb2400b8]
+    sources:
+      - {kind: session, ref: 6250c45c-8b18-48dc-a1c4-5358cb2400b8}
+  - id: 20260623T172706.433222Z-0030
+    description: "A tmux-based executor should use remain-on-exit on the tmux session, detect completion via an exit-code file (not tmux has-session), and call capture-pane before killing the session to capture the agent's final output without blocking."
+    context: "Designing executor interfaces for daemon-launched Claude Code sessions. The naive approach (poll tmux has-session) fails to capture last output because the session disappears on process exit. Writing exit code to a file and keeping the pane alive decouples completion signal from cleanup."
+    git_commit: 13cc9f3
+    files: ["auto-watch/docs/solution.md"]
+    session_ids: [6250c45c-8b18-48dc-a1c4-5358cb2400b8]
+    sources:
+      - {kind: session, ref: 6250c45c-8b18-48dc-a1c4-5358cb2400b8}
+  - id: 20260623T172706.433225Z-0031
+    description: The E2E test oracle (genstats/stats generator) must be a fully independent implementation with no imports from the system under test. Using the same parsing code for both generating expectations and running the ETL means bugs cancel out and tests always pass despite incorrect output.
+    context: "Session 00f0bcac shows the agent initially wrote genstats using the same internal parser+transform packages as the ETL binary — the user caught this: 'if we use the same infrastructure to build this test file as we then use to run the ETL scripts, we're not really independently testing it.' The fix was rewriting genstats as a standalone raw JSONL walker."
+    git_commit: 13cc9f3
+    files: ["auto-etl-2/cmd/genstats/main.go", "auto-etl-2/e2e_test.go"]
+    session_ids: [00f0bcac-b89e-4005-8bde-1a2bb6e7eff4]
+    sources:
+      - {kind: session, ref: 00f0bcac-b89e-4005-8bde-1a2bb6e7eff4}
+  - id: 20260623T172706.433229Z-0032
+    description: "A stats/oracle tool for E2E testing should be a transparent observer that records everything it sees (including unknown line types and unparseable data) as named metrics, rather than silently filtering rows to match what the pipeline does."
+    context: "The user pushed the agent twice: first to make genstats independent, then to remove all filtering from it. genstats should count all raw lines with linesByType breakdowns, and the test computes expected output from raw counts."
+    git_commit: 13cc9f3
+    files: ["auto-etl-2/cmd/genstats/main.go", "auto-etl-2/e2e_test.go"]
+    session_ids: [00f0bcac-b89e-4005-8bde-1a2bb6e7eff4]
+    sources:
+      - {kind: session, ref: 00f0bcac-b89e-4005-8bde-1a2bb6e7eff4}
+  - id: 20260623T172706.433232Z-0033
+    description: "Use a shared TestMain fixture that runs expensive setup (binary build, pipeline execution, stats generation) exactly once per test run, not once per test function. This cut total E2E test time from ~19 seconds to ~8 seconds."
+    context: "Session 00f0bcac: initial E2E tests each called exec.Command to build the binary and run the pipeline independently. After restructuring with TestMain, the pipeline runs once and tests verify different aspects of the shared output."
+    git_commit: 13cc9f3
+    files: ["auto-etl-2/e2e_test.go"]
+    session_ids: [00f0bcac-b89e-4005-8bde-1a2bb6e7eff4]
+    sources:
+      - {kind: session, ref: 00f0bcac-b89e-4005-8bde-1a2bb6e7eff4}
+  - id: 20260623T172706.433235Z-0034
+    description: "When exploring a new codebase, dispatch parallel sub-agents per subsystem rather than reading all files sequentially. Session 00f0bcac launched three simultaneous Explore sub-agents for auto-etl, auto-doc, and stub directories — dramatically faster than reading files one package at a time."
+    context: "Project exploration tasks where the codebase has distinct independent subsystems. The coordinator spawns one sub-agent per subsystem, collects their reports, then synthesizes. This works because exploration is read-only and sub-agents don't need to coordinate."
+    git_commit: 13cc9f3
+    files: []
+    session_ids: [00f0bcac-b89e-4005-8bde-1a2bb6e7eff4]
+    sources:
+      - {kind: session, ref: 00f0bcac-b89e-4005-8bde-1a2bb6e7eff4}
+  - id: 20260623T172706.433239Z-0035
+    description: "Claude Code JSONL subagent files are identifiable by path (lives under {session-uuid}/subagents/), the presence of an agentId field on every line, and isSidechain: true. They share the parent's sessionId, so ETL pipelines that create one session row per file will produce duplicate session IDs."
+    context: "Session 00f0bcac discovered this by comparing 179 files against 64 unique session IDs. The correct ETL strategy is to use the JSONL file path as the primary key, designate files at depth 2 as parent sessions, and treat files under /subagents/ as child traces."
+    git_commit: 13cc9f3
+    files: ["auto-etl-2/cmd/genstats/main.go", "docs/reference/claude-project-files-schema.md"]
+    session_ids: [00f0bcac-b89e-4005-8bde-1a2bb6e7eff4]
+    sources:
+      - {kind: session, ref: 00f0bcac-b89e-4005-8bde-1a2bb6e7eff4}
+  - id: 20260623T172706.433242Z-0036
+    description: "When make is not installed and cannot be installed (no sudo), fall back to running build commands directly via go build with absolute paths. Write the Makefile anyway for portability but don't block on the tool being missing."
+    context: "Session 00f0bcac: the agent created a Makefile, ran make build, got exit 127 (make not found), couldn't install it (no sudo), then manually ran each go build command with absolute paths to verify builds succeeded."
+    git_commit: 13cc9f3
+    files: [Makefile]
+    session_ids: [00f0bcac-b89e-4005-8bde-1a2bb6e7eff4]
+    sources:
+      - {kind: session, ref: 00f0bcac-b89e-4005-8bde-1a2bb6e7eff4}
+  - id: 20260623T172706.433245Z-0037
+    description: "When setting up golangci-lint with 'default: all', the noise is overwhelming (150+ issues). Start with defaults plus a small curated set of bug-catching linters (errorlint, gosec, nilerr, bodyclose), then incrementally add more."
+    context: "Session 81f9a30d: Setting up golangci-lint across a Go monorepo. The agent tried 'default: all' first, got 151 issues, then iterated the config down to a workable baseline."
+    git_commit: 13cc9f3
+    files: [.golangci.yml]
+    session_ids: [81f9a30d-f062-452b-8bc2-a19a041024f4]
+    sources:
+      - {kind: session, ref: 81f9a30d-f062-452b-8bc2-a19a041024f4}
+  - id: 20260623T172706.433248Z-0038
+    description: "Dispatching subagent tasks in parallel for independent file groups (e.g., 4 groups of doc frontmatter fixes) dramatically reduces wall-clock time. Coordinate by partitioning files explicitly in each agent's prompt so there is zero overlap."
+    context: "Session 81f9a30d: 26 doc files needed frontmatter. The agent launched 4 parallel sub-agents each assigned ~6-7 non-overlapping files, cutting what would have been sequential work into parallel completion."
+    git_commit: 13cc9f3
+    files: []
+    session_ids: [81f9a30d-f062-452b-8bc2-a19a041024f4]
+    sources:
+      - {kind: session, ref: 81f9a30d-f062-452b-8bc2-a19a041024f4}
+  - id: 20260623T172706.433252Z-0039
+    description: "Gate expensive pre-commit checks (lint, vet) behind a staged-files guard so they only run when relevant file types change. A 9-second lint run on every commit — including docs-only commits — causes developers to use --no-verify."
+    context: "Session 81f9a30d: The pre-commit hook ran make lint unconditionally. The user asked to gate it on .go file changes. The fix was a single if [ -n \"$STAGED_GO_FILES\" ] block wrapping the lint call."
+    git_commit: 13cc9f3
+    files: ["hooks/pre-commit"]
+    session_ids: [81f9a30d-f062-452b-8bc2-a19a041024f4]
+    sources:
+      - {kind: session, ref: 81f9a30d-f062-452b-8bc2-a19a041024f4}
+  - id: 20260623T172706.433255Z-0040
+    description: "When installing a CLI tool via curl script, always verify the correct GitHub org path first. The golangci-lint org is 'golangci' not 'golangci-lint'; hitting the wrong URL returned a 404."
+    context: "Session 81f9a30d: The agent tried github.com/golangci-lint/golangci-lint (wrong) before finding the correct github.com/golangci/golangci-lint. A quick curl --head or GitHub search would have saved two failed attempts."
+    git_commit: 13cc9f3
+    files: []
+    session_ids: [81f9a30d-f062-452b-8bc2-a19a041024f4]
+    sources:
+      - {kind: session, ref: 81f9a30d-f062-452b-8bc2-a19a041024f4}
+  - id: 20260623T172706.433258Z-0041
+    description: "When a linter config key appears twice in YAML (e.g., two 'errcheck' blocks under 'settings'), the parser silently uses one and ignores the other or errors out. Always consolidate repeated config keys into a single block."
+    context: "Session 81f9a30d: The agent accidentally wrote two 'errcheck' sections in .golangci.yml while editing, which caused a YAML parse error on the next lint run."
+    git_commit: 13cc9f3
+    files: [.golangci.yml]
+    session_ids: [81f9a30d-f062-452b-8bc2-a19a041024f4]
+    sources:
+      - {kind: session, ref: 81f9a30d-f062-452b-8bc2-a19a041024f4}
+  - id: 20260623T172706.433262Z-0042
+    description: "Subagent JSONL files in Claude Code share the parent session's sessionId, causing duplicate AgentSession rows in ETL output. The correct fix is to use the agentId field as the session ID and add a parent_session_id FK."
+    context: "Session ac94c382: The ETL pipeline produced 179 sessions from 179 files but only 64 unique session IDs because 115 subagent files re-used the parent's sessionId. Detected by comparing genstats output against ETL output."
+    git_commit: 13cc9f3
+    files: ["auto-etl-2/internal/model/model.go", "auto-etl-2/internal/parser/parser.go", "auto-etl-2/internal/transform/transform.go"]
+    session_ids: [ac94c382-8bdd-494c-b00e-aa0e22a79873]
+    sources:
+      - {kind: session, ref: ac94c382-8bdd-494c-b00e-aa0e22a79873}
+  - id: 20260623T172706.433265Z-0043
+    description: "Build an independent reference implementation (genstats) to generate ground-truth metrics from raw inputs before running ETL. This creates a self-checking test harness: run the reference tool on raw data, compare against ETL output, any discrepancy is a bug."
+    context: "Session ac94c382: The auto-etl-2 project uses a separate genstats binary that reads raw JSONL directly (no ETL imports) and produces stats.json. E2E tests use TestMain to run genstats first, then ETL, then compare."
+    git_commit: 13cc9f3
+    files: ["auto-etl-2/cmd/genstats/main.go", "auto-etl-2/e2e_test.go"]
+    session_ids: [ac94c382-8bdd-494c-b00e-aa0e22a79873]
+    sources:
+      - {kind: session, ref: ac94c382-8bdd-494c-b00e-aa0e22a79873}
+  - id: 20260623T172706.433268Z-0044
+    description: "When existing beads/task issues already exist for a design doc's work items, verify they match the design before creating new ones. Check br search first to avoid duplicate issues and preserve existing dependency graphs."
+    context: "Session ac94c382: The user asked to 'start beads tasks' for a design doc. The agent searched first and found all 7 tasks already existed with proper descriptions and blockers, avoiding duplicates."
+    git_commit: 13cc9f3
+    files: []
+    session_ids: [ac94c382-8bdd-494c-b00e-aa0e22a79873]
+    sources:
+      - {kind: session, ref: ac94c382-8bdd-494c-b00e-aa0e22a79873}
+  - id: 20260623T172706.433272Z-0045
+    description: "When files are being modified concurrently by external linters or formatters during an edit session, Read-then-Edit sequences will fail with 'File has been modified since read'. Always re-read a file immediately before editing if any background process might have touched it."
+    context: "Session 81f9a30d: After dispatching a sub-agent to fix lint issues, several Edit calls failed with 'File has been modified since read'. The linter or parallel sub-agent had rewritten the file between Read and Edit."
+    git_commit: 13cc9f3
+    files: []
+    session_ids: [81f9a30d-f062-452b-8bc2-a19a041024f4]
+    sources:
+      - {kind: session, ref: 81f9a30d-f062-452b-8bc2-a19a041024f4}
+  - id: 20260623T172706.433275Z-0046
+    description: "When a Makefile for d in auto-*/ loop uses && / || chains with echo, spurious 'FAILED' outputs can appear because the echo exit code propagates. Use explicit if/fi blocks with explicit exit code checks instead."
+    context: "Session 81f9a30d: for d in auto-*/; do [...] && echo OK || echo FAILED printed 'FAILED' for projects where go vet succeeded, because the second && in the chain propagated incorrectly. Rewriting with explicit exit code capture fixed it."
+    git_commit: 13cc9f3
+    files: [Makefile]
+    session_ids: [81f9a30d-f062-452b-8bc2-a19a041024f4]
+    sources:
+      - {kind: session, ref: 81f9a30d-f062-452b-8bc2-a19a041024f4}
+  - id: 20260623T172706.433278Z-0047
+    description: "When agent-produced analysis comments are embedded directly in a doc file as blockquotes, the user can then immediately ask 'fix these items' and the agent has full context without needing to re-investigate. Writing analysis inline collapses the investigation-to-implementation loop."
+    context: "Session 62bae898: the agent read docs/end-to-end-problems.md, ran sub-agents to investigate root causes, added '> Agent analysis:' blockquotes with concrete fix locations after each problem, then the user said 'fix these items'. The agent used its own earlier notes as the implementation spec."
+    git_commit: 13cc9f3
+    files: ["docs/end-to-end-problems.md", "auto-search/internal/cli/session.go"]
+    session_ids: [62bae898-7e31-48b1-89fe-9737a9da4859]
+    sources:
+      - {kind: session, ref: 62bae898-7e31-48b1-89fe-9737a9da4859}
+  - id: 20260623T172706.433282Z-0048
+    description: "Tool_use rows from the Claude API produce empty-content messages that pollute session transcripts. These rows have role=assistant, content='', and carry information in separate tool_input fields. The session renderer must handle them separately."
+    context: "Session 62bae898: the end-to-end-problems.md analysis revealed that assistant messages with empty content are tool_use blocks. ETL correctly routes their payload to tool_input fields. The fix is purely in the renderer."
+    git_commit: 13cc9f3
+    files: ["auto-search/internal/cli/session.go", "auto-etl/internal/transform/transform.go"]
+    session_ids: [62bae898-7e31-48b1-89fe-9737a9da4859]
+    sources:
+      - {kind: session, ref: 62bae898-7e31-48b1-89fe-9737a9da4859}
+  - id: 20260623T172706.433285Z-0049
+    description: "Truncation markers in rendered transcripts should include the exact drill-down command with the message ID, so an agent reading a truncated transcript knows immediately how to get the full content without constructing the command from memory."
+    context: "Session 62bae898: the static truncation marker was changed to include the recovery command. This pattern was applied to all message renderings: dead-end UI states should always include a recovery command."
+    git_commit: 13cc9f3
+    files: ["auto-search/internal/cli/session.go"]
+    session_ids: [62bae898-7e31-48b1-89fe-9737a9da4859]
+    sources:
+      - {kind: session, ref: 62bae898-7e31-48b1-89fe-9737a9da4859}
+  - id: 20260623T172706.433288Z-0050
+    description: "When two places render the same data with different formats (ETL-time transcript fields vs autosearch session get output), intentionally keep them divergent if they serve different consumers. The lean transcript is for FTS search indexing; the rich XML rendering is for agent consumption at read time."
+    context: "Session 62bae898: user asked whether the transcript field and session get output should match. Agent started to propose unification but the user redirected: 'keep this, otherwise all the extra fields we're adding will be indexed by FTS'. This is an explicit architectural decision."
+    git_commit: 13cc9f3
+    files: ["auto-etl/internal/transform/transform.go", "auto-search/internal/cli/session.go"]
+    session_ids: [62bae898-7e31-48b1-89fe-9737a9da4859]
+    sources:
+      - {kind: session, ref: 62bae898-7e31-48b1-89fe-9737a9da4859}
+  - id: 20260623T172706.433292Z-0051
+    description: "Git branch information is already embedded per-message in Claude Code's raw JSONL as a 'gitBranch' field — no need to shell out to git at transform time. Only git_remote requires an external git command, and that should be cached per workspace."
+    context: "Session 88943e4d: agent dispatched an Explore subagent to check test data for available git fields. Found gitBranch present on ~28,000 message objects. git_remote was not present in any transcript and must be derived. Caching design: ~/.auto/etl/settings.json remotes map."
+    git_commit: 13cc9f3
+    files: ["auto-etl/docs/plan-schema-cleanup.md"]
+    session_ids: [88943e4d-fa33-444d-9c32-4fe269718550]
+    sources:
+      - {kind: session, ref: 88943e4d-fa33-444d-9c32-4fe269718550}
+  - id: 20260623T172706.433295Z-0052
+    description: "When planning multi-question clarifications, ask one question at a time and wait for the answer before asking the next. Batching multiple design questions into a single prompt obscures which answers belong to which questions."
+    context: "Session 88943e4d: the agent listed 5 open planning questions for the schema plan, the user replied 'ask me 1 by 1'. The agent then used AskUserQuestion for each in sequence. The final plan cleanly records the 5 answers."
+    git_commit: 13cc9f3
+    files: ["auto-etl/docs/plan-schema-cleanup.md"]
+    session_ids: [88943e4d-fa33-444d-9c32-4fe269718550]
+    sources:
+      - {kind: session, ref: 88943e4d-fa33-444d-9c32-4fe269718550}
+  - id: 20260623T172706.433298Z-0053
+    description: "When a sub-agent uses awk/sed to extract a block delimited by a pattern like '<tool index=10>', the pattern must be anchored to avoid matching '<tool index=100>'. Use an exact-match pattern including the closing attribute rather than a prefix match."
+    context: "Session 62bae898: the agent was verifying truncation output size but measured 6581 bytes instead of expected ~2048. The pattern matched index=10, 100, 101, 102 concatenated. Correcting to the full opening tag gave the expected 2085 bytes."
+    git_commit: 13cc9f3
+    files: ["auto-search/internal/cli/session.go"]
+    session_ids: [62bae898-7e31-48b1-89fe-9737a9da4859]
+    sources:
+      - {kind: session, ref: 62bae898-7e31-48b1-89fe-9737a9da4859}
+  - id: 20260623T172706.433301Z-0054
+    description: "When a skill file references a tool by name, verify the exact tool name in code before committing. The skill file used 'AskUserQuestionTool' but the actual tool name is 'AskUserQuestion', causing all skill-recommended search queries to return zero results."
+    context: "Session 7476b98b: the agent found three occurrences of 'AskUserQuestionTool' (wrong) in the reflect-on-agent-sessions SKILL.md and fixed them to 'AskUserQuestion'."
+    git_commit: 13cc9f3
+    files: ["auto-reflect/skills/reflect-on-agent-sessions/SKILL.md"]
+    session_ids: [7476b98b-cc07-4460-b104-22123b98c005]
+    sources:
+      - {kind: session, ref: 7476b98b-cc07-4460-b104-22123b98c005}
+  - id: 20260623T172706.433305Z-0055
+    description: "Skill files can have duplicate copies (source at auto-reflect/skills/ and registered copy at .agents/skills/) that diverge silently over time. After editing the source skill file, always check whether .agents/skills/ has a stale copy and sync it."
+    context: "Session 7476b98b: after updating SKILL.md, the agent ran diff between the two copies and found the .agents/ copy was missing a step added in a prior session. The project has at least two skill directories that must stay in sync manually."
+    git_commit: 13cc9f3
+    files: ["auto-reflect/skills/reflect-on-agent-sessions/SKILL.md", ".agents/skills/reflect-on-agent-sessions/SKILL.md"]
+    session_ids: [7476b98b-cc07-4460-b104-22123b98c005]
+    sources:
+      - {kind: session, ref: 7476b98b-cc07-4460-b104-22123b98c005}
+  - id: 20260623T172706.433308Z-0056
+    description: "When searching session transcripts with autosearch, tool_use content was previously invisible because ETL stored it only in tool_input fields, not in content_truncated. After the ETL fix to populate content_truncated for tool_use rows, FTS search can now find Agent subagent prompts, Bash commands, and Edit diffs."
+    context: "Sessions 7476b98b and 62bae898: the ETL transform was updated to render AskUserQuestion tool_use inputs as markdown and all other tool_use inputs as raw JSON into content_truncated. Searching 'subagent_type Explore' went from zero results to 50 sessions."
+    git_commit: 13cc9f3
+    files: ["auto-etl/internal/transform/transform.go", "auto-search/internal/cli/session.go"]
+    session_ids: [7476b98b-cc07-4460-b104-22123b98c005, 62bae898-7e31-48b1-89fe-9737a9da4859]
+    sources:
+      - {kind: session, ref: 7476b98b-cc07-4460-b104-22123b98c005}
+      - {kind: session, ref: 62bae898-7e31-48b1-89fe-9737a9da4859}
+  - id: 20260623T172706.433311Z-0057
+    description: "Autowatch cron jobs run in isolated git worktrees whose paths are stored as the workspace field in ETL output. Worktree sessions can be identified with workspace LIKE '%/worktrees/%' filter in DuckDB."
+    context: "Session 88943e4d: after running ETL on new sessions from autowatch cron triggers, the agent queried parquet for worktree sessions and confirmed the worktree path, git_branch='HEAD' (detached), and autowatch-context XML in message content."
+    git_commit: 13cc9f3
+    files: ["auto-etl/internal/transform/transform.go"]
+    session_ids: [88943e4d-fa33-444d-9c32-4fe269718550]
+    sources:
+      - {kind: session, ref: 88943e4d-fa33-444d-9c32-4fe269718550}
+  - id: 20260623T172706.433315Z-0058
+    description: "Before writing implementation docs, surface all mismatches between a user-journey spec and existing planning docs in a single structured diff. Listing gaps by category allows the user to answer them in one compact reply, avoiding multiple round-trips."
+    context: "Session 675a524c: agent discovered 6 concrete mismatches between user-journey.md and auto-watch requirements (imperative vs declarative config, missing bash tasks, global scope, init behavior, config schema shape, manual task execution). Surfaced them all at once; user answered in one message."
+    git_commit: 13cc9f3
+    files: ["auto-watch/docs/requirements.md", "auto-watch/docs/solution.md", "docs/user-journey.md"]
+    session_ids: [675a524c-27e6-4193-a8bb-d79a2c5a3aca]
+    sources:
+      - {kind: session, ref: 675a524c-27e6-4193-a8bb-d79a2c5a3aca}
+  - id: 20260623T172706.433318Z-0059
+    description: "When updating a solution doc to match revised requirements, also update embedded Go type definitions and CLI command numbered steps — not just the prose. Config type changes propagate through every code block in the doc."
+    context: "Session 675a524c: after updating requirements.md, the agent made several passes through solution.md updating Go types, numbered CLI command steps, and the testing matrix. The change from nested structs to flat map required removing the GitHub adapter layer entirely."
+    git_commit: 13cc9f3
+    files: ["auto-watch/docs/solution.md"]
+    session_ids: [675a524c-27e6-4193-a8bb-d79a2c5a3aca]
+    sources:
+      - {kind: session, ref: 675a524c-27e6-4193-a8bb-d79a2c5a3aca}
+  - id: 20260623T172706.433321Z-0060
+    description: "A pre-commit hook running autodoc fix will false-positive on autodoc tag examples embedded inside Go string literals. Break the literal string concatenation to prevent the scanner from matching."
+    context: "Session 3b8bd636: during a large commit, autodoc fix blocked because agents.go contained the literal autodoc tag text inside a Go string. The fix was splitting the string constant so the scanner pattern no longer matched."
+    git_commit: 13cc9f3
+    files: ["auto-doc/internal/commands/agents.go", "hooks/pre-commit"]
+    session_ids: [3b8bd636-8d7a-43cb-915a-35b14f4c65d5]
+    sources:
+      - {kind: session, ref: 3b8bd636-8d7a-43cb-915a-35b14f4c65d5}
+  - id: 20260623T172706.433325Z-0061
+    description: "When a session recovery context lists tasks as blocked, verify the dependency chain in git log before assuming work is pending — the blocker may already be committed and only the beads status was not updated."
+    context: "Session 3b8bd636: started with three tasks blocked on auto-ahn.1. Checking git log showed auto-ahn.1 (timefilters.go) was already committed. The agent proceeded directly to downstream tasks."
+    git_commit: 13cc9f3
+    files: ["auto-search/internal/search/timefilters.go"]
+    session_ids: [3b8bd636-8d7a-43cb-915a-35b14f4c65d5]
+    sources:
+      - {kind: session, ref: 3b8bd636-8d7a-43cb-915a-35b14f4c65d5}
+  - id: 20260623T172706.433328Z-0062
+    description: "Naive term extraction from search queries by splitting on spaces breaks for boolean expressions — walk the parsed query AST instead. Collect only non-negated leaf nodes, skipping NodeNot subtrees, so highlight snippets never include forbidden terms."
+    context: "Session 3b8bd636: ExtractTerms was splitting the raw query string, failing for NOT expressions and quoted phrases. The refactor to AST-based extraction correctly handles all operator types."
+    git_commit: 13cc9f3
+    files: ["auto-search/internal/search/snippets.go", "auto-search/internal/search/messages.go"]
+    session_ids: [3b8bd636-8d7a-43cb-915a-35b14f4c65d5]
+    sources:
+      - {kind: session, ref: 3b8bd636-8d7a-43cb-915a-35b14f4c65d5}
+  - id: 20260623T172706.433331Z-0063
+    description: "Before adding a GitHub Actions format check to an existing Go repo, run gofmt -l locally first — existing files are almost certainly unformatted and will fail CI immediately. Fix and commit formatting before pushing the workflow."
+    context: "Session 51c808a0: the first CI push failed across all three sub-projects because existing Go files had never been gofmt'd (9 files). Required a follow-up commit and new tag (v0.1.1 instead of v0.1.0)."
+    git_commit: 13cc9f3
+    files: [.github/workflows/ci.yml, "hooks/pre-commit", Makefile]
+    session_ids: [51c808a0-44d6-4115-97e2-3ed16f8b6c0a]
+    sources:
+      - {kind: session, ref: 51c808a0-44d6-4115-97e2-3ed16f8b6c0a}
+  - id: 20260623T172706.433335Z-0064
+    description: "Verify cross-compilation locally with CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build before adding a darwin CI step. If it succeeds silently the project is CGo-free and native macOS runners are unnecessary."
+    context: "Session 51c808a0: all three projects built successfully with CGO_ENABLED=0 cross-compilation, including auto-doc which uses Bluge for search. This avoids expensive macOS GitHub Actions runners."
+    git_commit: 13cc9f3
+    files: [.github/workflows/ci.yml]
+    session_ids: [51c808a0-44d6-4115-97e2-3ed16f8b6c0a]
+    sources:
+      - {kind: session, ref: 51c808a0-44d6-4115-97e2-3ed16f8b6c0a}
+  - id: 20260623T172706.433338Z-0065
+    description: "When a release tag must be moved because an initial push failed CI, create a new incremented tag (v0.1.1) rather than force-pushing the original. Force-pushing tags is blocked by git safety tools and disrupts CI pipelines."
+    context: "Session 51c808a0: after CI failed on v0.1.0 due to formatting issues, the agent attempted git push origin v0.1.0 --force which was blocked. The resolution was to push a fix and tag v0.1.1."
+    git_commit: 13cc9f3
+    files: [.github/workflows/ci.yml, .github/workflows/release.yml]
+    session_ids: [51c808a0-44d6-4115-97e2-3ed16f8b6c0a]
+    sources:
+      - {kind: session, ref: 51c808a0-44d6-4115-97e2-3ed16f8b6c0a}
+  - id: 20260623T172706.433341Z-0066
+    description: "When delegating codebase exploration to a sub-agent before writing a solution doc, give it specific questions rather than a generic exploration prompt. Targeted questions produce structured output that maps directly onto the doc's sections."
+    context: "Session 51c808a0: before writing two-way-freshness-solution.md, the agent spawned an Explore sub-agent with 7 targeted questions. The sub-agent's structured report mapped directly onto the doc's sections with no follow-up exploration needed."
+    git_commit: 13cc9f3
+    files: ["auto-doc/docs/two-way-freshness-solution.md", "auto-doc/internal/commands/fix.go"]
+    session_ids: [51c808a0-44d6-4115-97e2-3ed16f8b6c0a]
+    sources:
+      - {kind: session, ref: 51c808a0-44d6-4115-97e2-3ed16f8b6c0a}
+  - id: 20260623T172706.433344Z-0067
+    description: "Use br agents --add --dry-run to preview the beads CLAUDE.md snippet before writing it, then --add --force to commit. The dry-run output is the exact content that will be inserted, enabling user review without a separate edit cycle."
+    context: "Session 51c808a0: when setting up beads, the agent ran br agents --add --dry-run first. User reviewed the preview and approved; agent ran --add --force with no post-write cleanup needed."
+    git_commit: 13cc9f3
+    files: [CLAUDE.md]
+    session_ids: [51c808a0-44d6-4115-97e2-3ed16f8b6c0a]
+    sources:
+      - {kind: session, ref: 51c808a0-44d6-4115-97e2-3ed16f8b6c0a}
+  - id: 20260623T172706.433348Z-0068
+    description: "ast-grep treats --lang=ts and --lang=tsx as completely separate language modes — .tsx files are silently missed unless both modes are run explicitly."
+    context: "Discovered when building the TypeScript import graph scanner. The scanner only used --lang=ts, so imports in .tsx files produced zero edges with no error. Only caught by unit tests exercising real .tsx fixtures."
+    git_commit: 13cc9f3
+    files: ["auto-graph/internal/scanner/typescript.go"]
+    session_ids: []
+    task_id: 001-ts-import-graph
+    sources:
+      - {kind: feedback, ref: docs/tasks/001-ts-import-graph/feedback.md}
+  - id: 20260623T172706.433351Z-0069
+    description: "ast-grep $_ matches exactly one item while $$$ matches multiple — using $_ in re-export patterns silently under-captures multi-name exports."
+    context: "The pattern export { $_ } from \"$_\" only matched single-name re-exports. Replaced with export { $$$ } from \"$_\" plus star and type-export variants. Caught in PR review, not by tests."
+    git_commit: 13cc9f3
+    files: ["auto-graph/internal/scanner/typescript.go"]
+    session_ids: []
+    task_id: 001-ts-import-graph
+    sources:
+      - {kind: feedback, ref: docs/tasks/001-ts-import-graph/feedback.md}
+  - id: 20260623T172706.433355Z-0070
+    description: "When a branch is created from a local main that is ahead of origin/main, the resulting PR includes all the unrelated divergent commits. Always push main or pull from origin before branching."
+    context: "The PR showed 140+ unrelated files because the feature branch was created from a local main 3 commits ahead of origin/main. Fixed by pushing main first and patching the PR base via gh api -X PATCH."
+    git_commit: 13cc9f3
+    files: []
+    session_ids: []
+    task_id: 001-ts-import-graph
+    sources:
+      - {kind: feedback, ref: docs/tasks/001-ts-import-graph/feedback.md}
+  - id: 20260623T172706.433358Z-0071
+    description: "Read the project-wide CLAUDE.md date/unit conventions before implementing any time-unit parsing — convention conflicts are easy to prevent but annoying to fix after code review."
+    context: "The git ETL implementation mapped 'm' to months, but CLAUDE.md specifies 'm' = minutes. Caught by automated code review; required a rename to 'mo' for months after the fact."
+    git_commit: 13cc9f3
+    files: [CLAUDE.md, "auto-etl/internal/writer/github.go"]
+    session_ids: []
+    task_id: 002-git-history-etl
+    sources:
+      - {kind: feedback, ref: docs/tasks/002-git-history-etl/feedback.md}
+  - id: 20260623T172706.433361Z-0072
+    description: "Git remote URLs frequently embed PAT tokens (x-access-token:github_pat_...@github.com); any code that reads git remote get-url origin must strip credentials before persisting output."
+    context: "Both repo_remote and repo_remote_normalized fields in the git ETL stored raw URLs including PAT tokens in plain text in parquet files. The spec didn't mention credential stripping; E2E testing caught it."
+    git_commit: 13cc9f3
+    files: ["auto-etl/internal/normalize/normalize.go"]
+    session_ids: []
+    task_id: 002-git-history-etl
+    sources:
+      - {kind: feedback, ref: docs/tasks/002-git-history-etl/feedback.md}
+  - id: 20260623T172706.433366Z-0073
+    description: "Subagent workflows bypass the local pre-commit hook (gofmt, go vet), so CI format checks can fail on first push even when the hook is installed locally. Run gofmt explicitly on all new files before pushing from a subagent."
+    context: "The git ETL subagent produced files that weren't gofmt'd; CI caught this on first push. The pre-commit hook ran fine in interactive sessions but not in the subagent's non-interactive shell."
+    git_commit: 13cc9f3
+    files: []
+    session_ids: []
+    task_id: 002-git-history-etl
+    sources:
+      - {kind: feedback, ref: docs/tasks/002-git-history-etl/feedback.md}
+  - id: 20260623T172706.433369Z-0074
+    description: "When scanner and walker have separate skip-lists, they will inevitably diverge, producing graph edges whose source nodes don't exist in the node set. Share a single skip-list constant from the start."
+    context: "The Go scanner didn't skip node_modules while discoverFiles did. Fixed with a nodeSet[sourceRel] guard, but the root cause was duplicated skip logic. Caught by code review."
+    git_commit: 13cc9f3
+    files: ["auto-graph/internal/scanner/golang.go"]
+    session_ids: []
+    task_id: 003-go-import-graph
+    sources:
+      - {kind: feedback, ref: docs/tasks/003-go-import-graph/feedback.md}
+  - id: 20260623T172706.433373Z-0075
+    description: "go.mod line parsing must handle inline comments and quoted module paths — naive line-splitting produces a silent zero-edge graph on valid go.mod files that use these features."
+    context: "The initial parser didn't handle // comment after the module path or quoted paths. Silent failure (no error, empty graph) made this hard to detect without real-world fixtures."
+    git_commit: 13cc9f3
+    files: ["auto-graph/internal/scanner/golang.go"]
+    session_ids: []
+    task_id: 003-go-import-graph
+    sources:
+      - {kind: feedback, ref: docs/tasks/003-go-import-graph/feedback.md}
+  - id: 20260623T172706.433376Z-0076
+    description: "When unit tests use synthetic data with the builder's expected string format and golden files bake in the broken behavior, a scanner/builder string mismatch is completely invisible until an integration test uses the real scanner."
+    context: "The TypeScript scanner emits 'type' and 'side-effect' but the builder expected 'type_only' and 'side_effect'. Tests used builder-format strings directly, forming a closed loop. Only caught when an integration test ran the actual ast-grep scanner against a real fixture."
+    git_commit: 13cc9f3
+    files: ["auto-graph/internal/codegraph/build.go", "auto-graph/internal/scanner/typescript.go"]
+    session_ids: []
+    task_id: 004-context-pack
+    sources:
+      - {kind: feedback, ref: docs/tasks/004-context-pack/feedback.md}
+  - id: 20260623T172706.433379Z-0077
+    description: Budget estimators that run against a partially populated model accept too many candidates; always ensure the pack model is fully populated (including derived sections) before each budget check.
+    context: "The context pack's FormatEstimator was called before relationships, reading_order, and guidance were populated, so it underestimated size and accepted more files than the budget allowed. Fixed with refreshDerived() before each check."
+    git_commit: 13cc9f3
+    files: ["auto-graph/internal/contextpack/builder.go"]
+    session_ids: []
+    task_id: 004-context-pack
+    sources:
+      - {kind: feedback, ref: docs/tasks/004-context-pack/feedback.md}
+  - id: 20260623T172706.433383Z-0078
+    description: "When e2e tests invoke the binary via exec.Command, stderr and stdout are separate streams — tests using CombinedOutput() will mix diagnostic stderr into the JSON stdout and cause parse failures."
+    context: Adding stderr diagnostics to autograph caused TestEdgeReferentialIntegrity to fail because the e2e helper used CombinedOutput(). Unit/integration tests were unaffected because they use cmd.SetOut/cmd.SetErr buffers.
+    git_commit: 13cc9f3
+    files: ["auto-graph/e2e/e2e_test.go"]
+    session_ids: []
+    task_id: 005-code-graph-alias-reexports
+    sources:
+      - {kind: feedback, ref: docs/tasks/005-code-graph-alias-reexports/feedback.md}
+  - id: 20260623T172706.433387Z-0079
+    description: "Diagnostics (warnings, errors) belong on stderr, not as fields in the JSON output schema — mixing them into the graph data payload corrupts the JSON contract for all callers."
+    context: "When adding alias-resolution warnings, the option to add a warnings field to the JSON graph schema was considered and correctly rejected. Stderr keeps the JSON contract stable for machine consumers."
+    git_commit: 13cc9f3
+    files: ["auto-graph/internal/scanner/typescript.go"]
+    session_ids: []
+    task_id: 005-code-graph-alias-reexports
+    sources:
+      - {kind: feedback, ref: docs/tasks/005-code-graph-alias-reexports/feedback.md}
+  - id: 20260623T172706.433390Z-0080
+    description: "A two-pass JSONC stripper that runs a regex in pass 2 over string contents will corrupt string values that happen to contain the patterns being stripped. Use a single-pass state-machine approach instead."
+    context: "The initial stripJSONC implementation used two passes; the second regex pass ran over already-processed string content. Caught in review before merge; rewrote as single-pass."
+    git_commit: 13cc9f3
+    files: ["auto-graph/internal/scanner/typescript.go"]
+    session_ids: []
+    task_id: 006-autograph-quote-jsonc-fixes
+    sources:
+      - {kind: feedback, ref: docs/tasks/006-autograph-quote-jsonc-fixes/feedback.md}
+  - id: 20260623T172706.433393Z-0081
+    description: "When a Build function signature changes, existing golden files may contain pre-transformation values that will fail assertions even if the logic is correct — plan explicit golden regeneration steps."
+    context: "Phase 2's Build signature change triggered golden file regeneration, surfacing that existing goldens used raw scanner kind names instead of canonical names. Both golden files and e2e assertions needed updating."
+    git_commit: 13cc9f3
+    files: ["auto-graph/internal/codegraph/build.go", "auto-graph/e2e/e2e_test.go"]
+    session_ids: []
+    task_id: 006-autograph-quote-jsonc-fixes
+    sources:
+      - {kind: feedback, ref: docs/tasks/006-autograph-quote-jsonc-fixes/feedback.md}
+  - id: 20260623T172706.433399Z-0082
+    description: "Go's internal/ package visibility rules prevent cross-module imports; expose shared types through thin pkg/ wrapper packages and use monorepo replace directives in go.mod."
+    context: "autograph needed types from autodoc's internal package. The existing auto-shared module already demonstrated the replace directive pattern."
+    git_commit: 13cc9f3
+    files: ["auto-graph/go.mod"]
+    session_ids: []
+    task_id: 007-autograph-doc-links
+    sources:
+      - {kind: feedback, ref: docs/tasks/007-autograph-doc-links/feedback.md}
+  - id: 20260623T172706.433405Z-0083
+    description: "When scanning functions shell out to git ls-files, E2E fixture directories must be initialized as git repos — otherwise the scanner silently returns no files and produces an empty result with no error."
+    context: "linkscan.ScanFiles depended on git ls-files to enumerate markdown files. Non-git fixture directories returned empty results. Fixed with soft-failure in doclink.Scan plus git-init in fixtures."
+    git_commit: 13cc9f3
+    files: ["auto-graph/internal/linkscan/linkscan.go"]
+    session_ids: []
+    task_id: 007-autograph-doc-links
+    sources:
+      - {kind: feedback, ref: docs/tasks/007-autograph-doc-links/feedback.md}
+  - id: 20260623T172706.433412Z-0084
+    description: "Markdown files containing fenced code blocks need adaptive fence length in context pack output — use max(3, longest_run+1) backticks per CommonMark spec to prevent fence collision."
+    context: "When doc .md files with fenced code blocks were included in context pack markdown output, the outer fence was broken by inner triple backticks. CommonMark allows fences of arbitrary length, making this a clean fix."
+    git_commit: 13cc9f3
+    files: ["auto-graph/internal/contextpack/builder.go"]
+    session_ids: []
+    task_id: 007-autograph-doc-links
+    sources:
+      - {kind: feedback, ref: docs/tasks/007-autograph-doc-links/feedback.md}
+  - id: 20260623T172706.433419Z-0085
+    description: "filepath.Glob does not support recursive ** patterns in Go — it silently finds zero files in nested directory structures. Use filepath.WalkDir for recursive file discovery."
+    context: "The fallback parquet linker used filepath.Glob with a ** pattern. Tests used flat directories so they passed, but production's nested partition layout was never traversed. Fixed by switching to filepath.WalkDir."
+    git_commit: 13cc9f3
+    files: ["auto-etl/internal/git/session_link.go"]
+    session_ids: []
+    task_id: 008-commit-session-link
+    sources:
+      - {kind: feedback, ref: docs/tasks/008-commit-session-link/feedback.md}
+  - id: 20260623T172706.433427Z-0086
+    description: "Tests that use pre-normalized strings on both sides of a comparison hide format mismatches between systems — always test with production-realistic raw formats on the input side."
+    context: "Remote URL scoping compared raw SSH URLs against already-normalized HTTPS URLs from parquet. Tests used normalized strings on both sides and passed. The repo filter rejected every real row in production."
+    git_commit: 13cc9f3
+    files: ["auto-etl/internal/git/session_link.go", "auto-etl/internal/git/normalize.go"]
+    session_ids: []
+    task_id: 008-commit-session-link
+    sources:
+      - {kind: feedback, ref: docs/tasks/008-commit-session-link/feedback.md}
+  - id: 20260623T172706.433434Z-0087
+    description: "In git worktrees, git rev-parse --git-dir returns a per-worktree path, not the shared hooks directory; use --git-common-dir to locate hooks that must apply across all worktrees."
+    context: "A post-commit hook installation script used --git-dir to find the hooks directory. In worktrees this resolves to a per-worktree .git file reference, not the shared .git/hooks/ directory."
+    git_commit: 13cc9f3
+    files: ["auto-etl/internal/git/session_link.go"]
+    session_ids: []
+    task_id: 008-commit-session-link
+    sources:
+      - {kind: feedback, ref: docs/tasks/008-commit-session-link/feedback.md}
