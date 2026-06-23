@@ -142,6 +142,24 @@
       "skillPath": "skills/planning-doc/SKILL.md",
       "computedHash": "394c954c5beff1bb2555510d1edee443aeb627b03d6471bf48dd318ba0c3e7e4"
     },
+    "playbook-observe": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "skillPath": "skills/playbook-observe/SKILL.md",
+      "computedHash": "fad54a31b8414b08c927002f88e3492f73281d16a8e031108679d3fc8882f062"
+    },
+    "playbook-refine": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "skillPath": "skills/playbook-refine/SKILL.md",
+      "computedHash": "4a9bd228efbdfa32e474cf2ef803489c36bc862900b79395fa4d0d6c6c091e11"
+    },
+    "playbook-search": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "skillPath": "skills/playbook-search/SKILL.md",
+      "computedHash": "27727e9d56b03c138da9acabe2534e1df4ec1d2d079cca24b6b2d5832d6dcca1"
+    },
     "readme-updater": {
       "source": "/home/vscode/src/auto-stack/.claude/worktrees/017-unify-binaries-into-auto/skills",
       "sourceType": "local",
