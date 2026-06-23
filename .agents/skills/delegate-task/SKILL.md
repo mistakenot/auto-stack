@@ -27,9 +27,8 @@ Task ID (numeric) and optionally a tmux session name (defaults to `$PROJECT--exe
 
 Before finding a worker, mark the task as executing so the worker's fresh
 worktree (created from `origin/main`) sees the right stage. See
-[references/task-status.md](references/task-status.md): set `status: executing`
-in `plan.md` frontmatter (markdown task) or `status="executing"` on `<pd-doc>`
-in `plan.html` (HTML/beta task), then commit and push:
+[references/task-status.md](references/task-status.md): set `status="executing"`
+on `<pd-doc>` in `plan.html`, then commit and push:
 
 ```bash
 git commit -am "docs($ID): status executing" && git push origin main

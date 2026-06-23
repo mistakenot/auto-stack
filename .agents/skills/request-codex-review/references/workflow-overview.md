@@ -1,37 +1,34 @@
 ## Workflow Overview
 
-This skill is part of a multi-stage task workflow. There are two paths:
+This skill is part of the planning workflow. Output is `plan.html` (with tabs) + `context.md`.
 
-### Full Workflow
+### Pipeline
 ```
-Plan (on main)                Execute (on feature branch)         Review & Complete
-─────────────────             ──────────────────────────          ─────────────────
-/new-task                     /execute-task $ID                   /address-feedback
-  → requirements.md             → worktree + branch              /code-review
-/new-solution                    → subagent per phase             /complete-task
-  → solution.md                  → PR                              → feedback.md
-/new-plan                                                          → merge
-  → context.md + plan.md     /delegate-task (optional)
-/review-task (optional)       /status-report (optional)
-/request-codex-review (optional)
-/resolve-comments (optional)
+Plan (on main)                          Execute                    Review & Complete
+────────────────────                    ───────                    ─────────────────
+/new-task                   /execute-task $ID          /address-feedback
+  → plan.html (Requirements tab)         → worktree + branch      /complete-task
+/new-solution                 → subagent per phase      → merge
+  → context.md                            → PR
+  → plan.html (Verification + Solution)
+/new-plan
+  → plan.html (Plan tab)
 /commit-task
 ```
 
-### Mini Workflow (fast path)
-```
-Plan (on main)                Execute (on feature branch)         Review & Complete
-─────────────────             ──────────────────────────          ─────────────────
-/new-mini-task                /execute-task $ID                   /address-feedback
-  → plan.md only                → worktree + branch              /complete-task
-  (AC + context dump)            → self-directed execution          → merge
-                                 → self-review + PR
-                              /delegate-task (optional)
-```
-
-**Conventions:**
+### Conventions
 - Task folder: `docs/tasks/$ID-$NAME/` (3-digit ID, kebab-case name)
 - Branch: `task/$ID-$NAME`
 - Planning happens on `main`. Execution happens in isolated worktrees.
 - Each stage hard-stops for user review before proceeding to the next.
-- Mini-tasks use a single `plan.md` with `workflow: mini` frontmatter instead of separate requirements/solution/context/plan docs.
+- Artifacts: `plan.html` + `context.md` (two files total)
+
+### pd-meta status lifecycle
+- `"planning"` — set on creation by `new-task`
+- `"executing"` — set by `execute-task` when it creates the worktree/branch
+- `"merged"` — set by `complete-task` on merge
+
+### pd-doc status vs pd-meta status
+- `pd-doc status` (draft/in-review/approved) = document review state
+- `pd-meta status` (planning/executing/merged) = task lifecycle state
+- These are complementary — a doc can be "approved" while the task is still "planning"

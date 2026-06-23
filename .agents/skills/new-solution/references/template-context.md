@@ -1,13 +1,9 @@
 # Context Template
 
 ```markdown
----
-epic: path/to/epic.md  # optional — only if this task belongs to an epic
----
-
 # Context: Task $ID
 
-One sentence describing what this file contains + link to solution.md.
+One sentence describing what this file contains + link to plan.html.
 
 ## Key Files
 - `path/to/file.ts:42` -- description of relevant code
@@ -27,4 +23,3 @@ One sentence describing what this file contains + link to solution.md.
 - Full paths relative to repo root
 - Every code snippet needs a file path + line reference
 - Never paste full files -- excerpts only
-- If requirements.md has `epic:` frontmatter, copy it to this file's frontmatter. Omit frontmatter if no epic.

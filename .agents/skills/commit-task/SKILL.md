@@ -33,9 +33,8 @@ If any check fails, report the failures and stop. Do not commit incomplete docs.
 
 The planning docs are complete and about to be committed — advance the task to
 the `pending` stage (awaiting execution). See
-[references/task-status.md](references/task-status.md): set `status: pending` in
-`plan.md` frontmatter (markdown task) or `status="pending"` on `<pd-doc>` in
-`plan.html` (HTML/beta task). Stage this change with the docs.
+[references/task-status.md](references/task-status.md): set `status="pending"` on
+`<pd-doc>` in `plan.html`. Stage this change with the docs.
 
 ### Step 4: Commit and Push
 

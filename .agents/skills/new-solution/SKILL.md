@@ -1,26 +1,28 @@
 ---
 name: new-solution
-description: "Writes a solution design (solution.md) for an existing task by exploring approaches and tradeoffs. Use when 'write a solution', 'design the solution', 'new solution', 'explore approaches', or after requirements have been approved. Not applicable when requirements.md doesn't exist yet."
+description: "Gathers context, writes Verification and Solution tabs for a task. Use when 'write a solution', 'design the solution', 'new solution', 'explore approaches', or after requirements have been approved. Not applicable when requirements don't exist yet."
 ---
 
 # New Solution
 
-Read approved requirements, gather codebase context, explore approaches, write `solution.md` and `context.md`.
+Read approved requirements, gather codebase context, write `context.md`, then add Verification and Solution tabs to `plan.html`.
 
-> Part of the task planning workflow. See [references/workflow-overview.md](references/workflow-overview.md) for the full pipeline.
+> Part of the planning workflow. See [references/workflow-overview.md](references/workflow-overview.md) for the full pipeline.
 
 ## Guiding Principles
 
 - If multiple approaches exist, surface them all with tradeoffs -- don't silently pick one.
 - Bias toward the simplest approach. If a simpler option exists, say so even if it's less elegant.
-- No speculative abstractions or "flexibility" that wasn't requested. The solution should be the minimum design that satisfies the acceptance criteria.
+- No speculative abstractions or flexibility that wasn't requested. Design the minimum that satisfies the requirements.
 - If something in the requirements is ambiguous, stop and ask before designing around an assumption.
 
 ## Process
 
-1. **Find task folder** -- identify the active task from recent context, user input, or by scanning `docs/tasks/` for the latest folder. Read `requirements.md`. Verify all Open Questions are resolved -- if not, resolve them first.
+### Stage 1: Context Gathering
+
+1. **Find task folder** -- identify the active task from recent context, user input, or by scanning `docs/tasks/` for the latest folder. Read `plan.html` and check the Requirements tab. Verify all Open Questions are resolved -- if not, resolve them first.
 2. **Scan skills** -- check available skills for topic matches relevant to this task's domain. Load matched skills.
-3. **Gather codebase context** -- spawn 2 parallel subagents to ground the solution design in codebase reality before choosing an approach.
+3. **Gather codebase context** -- spawn 2 parallel subagents to ground the design in codebase reality:
 
    **CB1 (Code):**
    - Search files, functions, types, and patterns relevant to the task
@@ -35,24 +37,30 @@ Read approved requirements, gather codebase context, explore approaches, write `
 
    Collect findings from both subagents before proceeding.
 
-4. **Assess complexity** (informed by context):
-   - **Straightforward** (one obvious approach): go directly to step 6.
-   - **Ambiguous** (multiple viable approaches): go to step 5.
-5. **Explore options** -- spawn parallel subagents, one per candidate approach. Each subagent investigates feasibility using the gathered context, checking patterns, and identifying risks. Collect results. Present a comparison table to the user with pros/cons for each option. Wait for the user to pick an approach.
-6. **Write solution.md** -- use the template and rules below. Fill in Approach, Files, Test Coverage, Out of Scope, and Rejected Alternatives. The gathered context should inform file paths, patterns, and conventions used in the solution. If requirements.md has `epic:` frontmatter, copy it to solution.md.
-7. **Write context.md** -- combine the findings from step 3 into `context.md` in the task folder using the context template below. Include only verified facts -- paths, snippets, descriptions grounded in actual code. If requirements.md has `epic:` frontmatter, copy it to context.md.
-8. **Create artifacts** -- if the solution involves user-facing flows or complex architecture, create artifact files (wireframes, diagrams) in the task folder. Follow the artifact guidelines below.
-9. **Validate assumptions** -- before presenting the docs, review every design decision you made and identify any that were NOT clearly dictated by (a) the requirements or (b) pre-established patterns in the repository. Decisions that are obvious from context or instructions don't need confirmation. But if you chose an approach, structure, behavior, or tradeoff that the user didn't explicitly ask for and that isn't a clear convention in the codebase, you MUST surface it. Use the `AskUserQuestion` tool to double-check these assumptions with the user. When asking questions: always include a free-text "Other" option so the user can be more descriptive if none of the choices fit. Record all user responses in solution.md (under the relevant section or as an appendix) for traceability. Update solution.md with their answers before proceeding. The goal is to catch decisions the user would regret later when reviewing the implementation.
-10. **Hard-stop** -- present the completed solution.md and context.md to the user. Do NOT proceed to the plan stage. Tell them: "Review solution.md and context.md. When ready, run `/new-plan` to continue."
+4. **Write context.md** -- combine the findings into `context.md` in the task folder.
 
-## Solution Template and Rules
+   See [references/template-context.md](references/template-context.md) for the template and rules.
 
-See [references/template-solution.md](references/template-solution.md) for the full template and rules.
+5. **Impact analysis** -- run an impact analysis on the proposed file changes (each file + one-sentence change summary); fold flagged files into the changes list and any data, permission, or integration concerns into the Verification tab as acceptance criteria.
 
-## Context Template and Rules
+### Stage 2: Verification Tab
 
-See [references/template-context.md](references/template-context.md) for the full template and rules.
+6. **Scan for verification strategies** -- check available project skills for testing, verification, and assurance strategies. Load any matched skills.
+7. **Write Verification tab** -- using the context and requirements, design the verification strategy. Insert `<pd-tab name="Verification">` into plan.html after the Requirements tab.
 
-## Artifact Guidelines
+   See [references/tab-verification.md](references/tab-verification.md) for the tab structure and rules.
 
-See [references/artifact-guidelines.md](references/artifact-guidelines.md) for artifact creation rules and examples.
+8. **Hard-stop (gate 1)** -- present the Verification tab to the user. Tell them: "Review the Verification tab. When ready, confirm to proceed to Solution design."
+
+### Stage 3: Solution Tab
+
+9. **Assess complexity** (informed by context):
+   - **Straightforward** (one obvious approach): go directly to step 10.
+   - **Ambiguous** (multiple viable approaches): go to step 9.
+10. **Explore options** -- spawn parallel subagents, one per candidate approach. Each subagent investigates feasibility using the gathered context. Collect results. Present a comparison table with pros/cons for each option. Wait for the user to pick.
+11. **Write Solution tab** -- design the solution and insert `<pd-tab name="Solution">` into plan.html after the Verification tab.
+
+    See [references/tab-solution.md](references/tab-solution.md) for the tab structure and rules.
+
+12. **Validate assumptions** -- review every design decision and identify any that were NOT clearly dictated by (a) the requirements or (b) pre-established patterns in the repository. Surface uncertain decisions with the user (use `AskUserQuestion` tool). Update plan.html with their answers.
+13. **Hard-stop (gate 2)** -- present the completed Solution tab to the user. Do NOT proceed to the plan stage. Tell them: "Review the Solution tab. When ready, run `/new-plan` to continue."

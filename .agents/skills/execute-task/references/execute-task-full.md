@@ -69,9 +69,8 @@ If session ends mid-execution, a new session reads `plan.md` -- checked phases a
 After all phases complete (or after stopping on failure), open a PR.
 
 Before opening the PR, advance the task to `complete` — this is the worker
-marking the work done. See [task-status.md](task-status.md): set `status: complete`
-in `plan.md` frontmatter (markdown task) or `status="complete"` on `<pd-doc>` in
-`plan.html` (HTML/beta task), and include it in the final docs commit.
+marking the work done. See [task-status.md](task-status.md): set `status="complete"`
+on `<pd-doc>` in `plan.html`, and include it in the final docs commit.
 
 See [template-pr-body.md](template-pr-body.md) for the PR body template.
 

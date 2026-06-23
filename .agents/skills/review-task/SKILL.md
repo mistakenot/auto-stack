@@ -19,8 +19,7 @@ The user provides a task ID (e.g. `042`) or a task folder name (e.g. `042-add-te
 
 1. Find the task folder under `docs/tasks/` matching the provided ID.
 2. Identify the doc layout and read **every** planning doc present. A folder uses one layout or the other, not both:
-   - **Markdown task** — `requirements.md`, `solution.md`, `context.md`, `plan.md`.
-   - **HTML task (beta)** — `plan.html` + `context.md`. `plan.html` is a single self-contained file with one `<pd-tab>` per stage: **Requirements**, **Verification**, **Solution**, **Plan**. Read the full HTML source; sections carry stable kebab-case `id`s that you anchor comments to.
+   - **HTML task** — `plan.html` + `context.md`. `plan.html` is a single self-contained file with one `<pd-tab>` per stage: **Requirements**, **Verification**, **Solution**, **Plan**. Read the full HTML source; sections carry stable kebab-case `id`s that you anchor comments to.
    - **HTML epic** — `epic.html`. Review it the same way, treating its direction / guard-rail / task-breakdown tabs as the units to verify.
 3. Read any project docs referenced by the task docs (linked concept docs, how-to guides).
 

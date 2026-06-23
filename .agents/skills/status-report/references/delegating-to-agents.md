@@ -1,8 +1,13 @@
 # Delegating to ntm agents
 
 How to find agents running under `ntm` (Named Tmux Manager) and drive each of
-the three coding-agent CLIs — **Claude Code**, **Codex**, and **OpenCode** —
-without knowing in advance which is in which pane.
+the coding-agent CLIs — **Claude Code**, **Codex**, **OpenCode**, and **Grok**
+— without knowing in advance which is in which pane.
+
+For **headless review delegation** (no tmux pane — run from bash and exit), use
+the `request-claude-review`, `request-codex-review`, or `request-grok-review`
+skills. Each invokes its CLI in print/headless mode with `/review-task`, then
+hands off to `resolve-comments`.
 
 The shape of every interaction is the same: **discover sessions → enumerate the
 agents in a session → identify each agent's type → send text or a slash command
@@ -168,3 +173,24 @@ All three accept `/clear`, but the effect and the surrounding quirks differ:
 - **When in doubt, read the pane.** `ntm copy <session>:<index> --last N
   --quiet --output /dev/stdout` dumps the last N lines so you can see exactly
   what state the agent is in.
+
+## 7. Headless CLI delegation (Claude, Codex, Grok)
+
+When you need a second agent to review task docs without an interactive tmux
+pane, invoke the matching CLI headlessly from bash. All three follow the same
+shape: set cwd, send `/review-task <folder>`, capture output, count comments,
+then run `/resolve-comments` in the coordinator.
+
+| Agent | Headless command | Stdin gotcha | Auto-approve flags |
+| ----- | ---------------- | ------------ | ------------------ |
+| **Claude Code** | `claude -p --add-dir "$CWD" --dangerously-skip-permissions "/review-task …"` | **Requires** `< /dev/null` — inherited open stdin stalls ~3s or blocks in background | `--dangerously-skip-permissions` |
+| **Codex** | `codex exec --cd "$CWD" --sandbox workspace-write "…"` | **Requires** `< /dev/null` — blocks on open stdin with "Reading additional input from stdin…" | `--sandbox workspace-write` (writes task docs) |
+| **Grok** | `grok --cwd "$CWD" --permission-mode bypassPermissions --always-approve --single "/review-task …"` | **No redirect needed** — headless mode ignores piped stdin | `--permission-mode bypassPermissions --always-approve` |
+
+Grok discovers skills from `.agents/skills/` (same tree `npx skills install`
+writes for Codex). Ensure `review-task` is installed before delegating.
+`--single` (short form `-p`) takes the prompt as its immediate value; never put
+other flags between it and the prompt.
+
+Auth: Claude uses `~/.claude/.credentials.json`; Codex uses `codex login`;
+Grok uses `~/.grok/auth.json` or `XAI_API_KEY`.

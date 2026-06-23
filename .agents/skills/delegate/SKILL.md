@@ -1,0 +1,86 @@
+---
+name: delegate
+description: "Sends a freeform prompt to an idle agent pane in a tmux session, without requiring task planning docs. Use when 'delegate this', 'send this to an executor', 'run this in background', or when the user wants to hand off ad-hoc work. Not for planned tasks with docs (use delegate-task instead)."
+---
+
+# Delegate
+
+Send a freeform prompt to an idle coding-agent pane in a tmux session using `ntm`, without requiring task planning documents.
+
+> For delegating **planned tasks** with requirements/solution/plan docs, use
+> [/delegate-task](../delegate-task/SKILL.md) instead.
+>
+> For agent discovery, type identification, and send conventions, see
+> [references/delegating-to-agents.md](references/delegating-to-agents.md).
+
+## Input
+
+A prompt describing the work to delegate, and optionally:
+- A tmux session name (defaults to `$PROJECT--execute`)
+- A target agent type preference (Claude Code, Codex, OpenCode)
+
+If no prompt is given, ask the user what they'd like to delegate.
+
+## Delegation Workflow
+
+### Step 1: Find an eligible pane
+
+```bash
+ntm status $SESSION --json
+```
+
+Parse the JSON output to get the list of panes. Then inspect each candidate:
+
+```bash
+ntm copy $SESSION:$PANE --last 20 --quiet --output /dev/stdout
+```
+
+A pane is eligible when **all** of the following are true:
+
+1. **Not busy** — the pane output shows a prompt waiting for input, not an active task in progress.
+2. **On `main`** — the pane's status line or prompt shows `(main)`, not a feature/worktree branch. A pane on a feature branch almost always means a prior task is in flight (open PR, awaiting review/merge). **Never target a pane that is not on `main`**, even if it appears idle — an open/unmerged PR or feature branch disqualifies it.
+3. **No open PR** — there is no evidence of an unmerged PR from a prior task.
+
+If a candidate is idle but on a feature branch, skip it and report why (e.g. "pane 2 skipped: on branch `task-505` with open PR").
+
+If no panes are eligible, report what each pane is doing and stop. Do not interrupt active work.
+
+### Step 2: Clear and send
+
+Use `ntm send` with `--smart` to auto-route to the best idle agent:
+
+```bash
+ntm send $SESSION --smart --cc --json '/clear'
+```
+
+Note which pane index was selected from the JSON response. Wait 5 seconds, then send the prompt:
+
+```bash
+ntm send $SESSION --pane=$PANE --json '$PROMPT'
+```
+
+**Prompt construction:** Send the user's prompt as-is. Do not wrap it in a slash command or add preamble. If the prompt references files or paths, ensure they are absolute paths (the executor pane may have a different working directory).
+
+### Step 3: Verify kickoff
+
+Capture the pane output to confirm the prompt was received:
+
+```bash
+ntm copy $SESSION:$PANE --last 30 --quiet --output /dev/stdout
+```
+
+Check that the output shows the agent received the prompt and work has begun.
+
+### Step 4: Report
+
+Output which pane was selected, confirmation that the prompt was sent, and what the pane is currently doing.
+
+Tell the user how to check on progress later:
+
+```
+To check on the delegated work:
+  ntm copy $SESSION:$PANE --last 50
+  ntm copy $SESSION:$PANE --code        # extract just code blocks
+  ntm grep 'error\|warning' $SESSION    # search across all panes
+  ntm watch $SESSION --pane=$PANE       # stream output live
+```

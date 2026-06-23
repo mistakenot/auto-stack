@@ -8,7 +8,7 @@ is the review-side summary; the authoritative element contract (attributes,
 roles, the comment-merge protocol) ships in the pinned component release:
 
 ```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/llms.txt
+curl -fsSL https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/llms.txt
 ```
 
 ## Comment Syntax

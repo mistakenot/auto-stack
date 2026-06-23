@@ -13,16 +13,9 @@ Autonomous end-to-end implementation using the coordinator-subagent pattern.
 
 Task ID (numeric, e.g. `042`).
 
-## Task Type Detection
+## Startup
 
-Find the task folder matching ID under `docs/tasks/` (glob `docs/tasks/$ID-*`). Then determine the workflow type:
-
-1. Read `plan.md` in the task folder
-2. Check for `workflow: mini` in the YAML frontmatter
-
-**If `workflow: mini`** — this is a mini-task with a single plan.md file. Read and follow [references/execute-task-mini.md](references/execute-task-mini.md).
-
-**Otherwise** — this is a full task with requirements.md, solution.md, context.md, and plan.md. Read and follow [references/execute-task-full.md](references/execute-task-full.md).
+Find the task folder matching ID under `docs/tasks/` (glob `docs/tasks/$ID-*`). Read `plan.html` and `context.md`, then follow [references/execute-task-full.md](references/execute-task-full.md).
 
 ## Worktree Conventions
 
