@@ -1,0 +1,984 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auto UI v2: Inbox-Driven Planning Review</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <pd-doc title="Auto UI v2: Inbox-Driven Planning Review" status="draft" pr="pending" generated="2026-06-20">
+
+    <!-- ================================================================== -->
+    <!--  OVERVIEW                                                          -->
+    <!-- ================================================================== -->
+    <pd-tab name="Overview">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+The current auto-ui is a **doc browser**. The human opens a planning doc, reads it top-to-bottom, mentally identifies what needs attention, comments, exports, pastes back to the agent. Every step is friction. Every second spent navigating is an agent-second wasted blocked.
+
+The v2 default screen is an **inbox of decisions**. The UI parses structured `pd-*` attributes from planning docs, extracts every actionable item (open questions, unresolved threads, proposed decisions), and presents them as a prioritized queue. The human triages, responds inline, and the agent is unblocked immediately.
+
+Every human response is captured as structured data — choice + optional notes — creating a training signal for future runs.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="principles" title="Design Principles">
+        <md><script type="text/plain">
+1. **Inbox is the default** — the explorer is one click away, but throughput lives in the inbox
+2. **Context in situ** — clicking an inbox item opens the doc scrolled to the exact anchor, not a summary card
+3. **Structured capture** — every response is choice + optional notes, not free text
+4. **No export/paste dance** — responses write directly to the doc file
+5. **Training data by default** — every answer teaches the system for next time
+        </script></md>
+      </pd-section>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <!-- ================================================================== -->
+    <!--  WIREFRAMES: APP SHELL                                             -->
+    <!-- ================================================================== -->
+    <pd-tab name="App Shell">
+
+      <pd-section id="shell-layout" title="Top-Level Layout">
+        <md><script type="text/plain">
+The app shell has two views selectable via top-nav tabs: **Inbox** (default) and **Explorer** (the existing doc browser). Both share the same two-pane layout — narrow sidebar left, wide content pane right — but the sidebar content differs per view. The top bar is constant.
+        </script></md>
+
+        <div class="border border-gray-300 rounded-lg overflow-hidden font-mono text-sm mt-4 bg-white">
+          <!-- Top bar -->
+          <div class="flex items-center justify-between px-4 py-2 bg-gray-100 border-b border-gray-300">
+            <div class="flex items-center gap-4">
+              <span class="font-bold text-gray-800">auto-ui</span>
+              <div class="flex gap-1">
+                <span class="px-3 py-1 bg-blue-600 text-white rounded-t text-xs font-semibold">Inbox (3)</span>
+                <span class="px-3 py-1 bg-gray-200 text-gray-600 rounded-t text-xs">Explorer</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-gray-500">auto-stack</span>
+              <span class="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
+              <span class="text-xs text-green-700">connected</span>
+            </div>
+          </div>
+          <!-- Two-pane body -->
+          <div class="flex" style="min-height: 300px">
+            <div class="w-64 border-r border-gray-200 bg-gray-50 p-3">
+              <pd-wire label="Sidebar content differs per view" h="260px"></pd-wire>
+            </div>
+            <div class="flex-1 p-4">
+              <pd-wire label="Content pane (doc viewer / response area)" h="260px"></pd-wire>
+            </div>
+          </div>
+        </div>
+
+        <pd-note>The view tabs (Inbox / Explorer) replace the project switcher position. Project selection moves inside the Explorer view's sidebar. The inbox is cross-project by default — it shows ALL pending items from ALL projects, since throughput means "unblock the next agent" regardless of project.</pd-note>
+      </pd-section>
+
+      <pd-section id="shell-interaction" title="View Switching">
+        <md><script type="text/plain">
+- **Inbox tab** shows a badge with the count of pending actionable items
+- **Explorer tab** has no badge — it's a browse view, not a queue
+- Clicking a tab swaps the sidebar content; the content pane may persist or clear depending on context
+- Hash routing: `#/inbox` (default, bare hash redirects here), `#/explore` (existing)
+- Keyboard: `1` for Inbox, `2` for Explorer (when sidebar is focused)
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <!-- ================================================================== -->
+    <!--  WIREFRAMES: INBOX VIEW                                            -->
+    <!-- ================================================================== -->
+    <pd-tab name="Inbox View">
+
+      <pd-section id="inbox-sidebar" title="Inbox Sidebar — The Queue">
+        <md><script type="text/plain">
+The sidebar is a flat list of pending items, one per actionable element extracted from planning docs. Each item shows: task name, item type icon, one-line summary, and time waiting. Sorted oldest-first by default (longest-blocked agent gets attention first). Toggle button to reverse.
+        </script></md>
+
+        <!-- Wireframe: sidebar with items -->
+        <div class="border border-gray-300 rounded-lg overflow-hidden font-mono text-xs mt-4 bg-white">
+          <div class="w-72 bg-gray-50">
+            <!-- Sort toggle -->
+            <div class="flex items-center justify-between px-3 py-2 border-b border-gray-200">
+              <span class="font-semibold text-gray-700 text-xs">3 pending</span>
+              <button class="text-xs text-blue-600 hover:underline">↕ newest first</button>
+            </div>
+
+            <!-- Item 1: selected -->
+            <div class="px-3 py-3 bg-blue-50 border-l-4 border-blue-600 cursor-pointer">
+              <div class="flex items-center justify-between">
+                <span class="font-semibold text-gray-800">task-035</span>
+                <span class="text-gray-400 text-xs">12m</span>
+              </div>
+              <div class="flex items-center gap-1 mt-1">
+                <span class="px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-xs">question</span>
+              </div>
+              <div class="text-gray-600 mt-1 truncate">Should pruning be reversible?</div>
+            </div>
+
+            <!-- Item 2 -->
+            <div class="px-3 py-3 border-b border-gray-100 hover:bg-gray-100 cursor-pointer">
+              <div class="flex items-center justify-between">
+                <span class="font-semibold text-gray-800">task-034</span>
+                <span class="text-gray-400 text-xs">8m</span>
+              </div>
+              <div class="flex items-center gap-1 mt-1">
+                <span class="px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded text-xs">thread</span>
+                <span class="px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded text-xs">p1</span>
+              </div>
+              <div class="text-gray-600 mt-1 truncate">Hook name too specific for reuse</div>
+            </div>
+
+            <!-- Item 3 -->
+            <div class="px-3 py-3 border-b border-gray-100 hover:bg-gray-100 cursor-pointer">
+              <div class="flex items-center justify-between">
+                <span class="font-semibold text-gray-800">task-032</span>
+                <span class="text-gray-400 text-xs">3m</span>
+              </div>
+              <div class="flex items-center gap-1 mt-1">
+                <span class="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">decision</span>
+              </div>
+              <div class="text-gray-600 mt-1 truncate">D-2: Event format — CloudEvents vs flat</div>
+            </div>
+
+            <!-- Divider: completed -->
+            <div class="px-3 py-1.5 bg-gray-100 text-gray-400 text-xs border-t border-gray-200">
+              completed today (2)
+            </div>
+            <div class="px-3 py-2 text-gray-400">
+              <div class="flex items-center gap-2">
+                <span class="text-green-500">✓</span>
+                <span>task-031 question — 22m ago</span>
+              </div>
+              <div class="flex items-center gap-2 mt-1">
+                <span class="text-green-500">✓</span>
+                <span>task-030 thread — 45m ago</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <pd-note>Item types are extracted by parsing `pd-thread[status=unresolved]`, `pd-decision[status=proposed]`, and open-question markers from the planning doc HTML. The UI does this client-side from the doc content it already fetches.</pd-note>
+      </pd-section>
+
+      <pd-section id="inbox-content-pane" title="Content Pane — Doc Scrolled to Anchor">
+        <md><script type="text/plain">
+When an inbox item is clicked, the content pane loads the relevant planning doc (as an iframe, same as the current explorer) and **scrolls to the anchor** where the actionable item lives. The human sees the question/thread/decision in context — surrounded by the section content that informed it.
+
+At the bottom of the content pane, a **response widget** overlays the doc. This is the structured capture UI — it stays pinned to the bottom so the human can read context above and respond below without scrolling away.
+        </script></md>
+
+        <!-- Full two-pane wireframe showing the interaction -->
+        <div class="border border-gray-300 rounded-lg overflow-hidden font-mono text-xs mt-4 bg-white">
+          <div class="flex" style="min-height: 500px">
+            <!-- Sidebar (compact) -->
+            <div class="w-56 border-r border-gray-200 bg-gray-50 flex-shrink-0">
+              <div class="px-2 py-1.5 border-b border-gray-200 text-xs text-gray-500">3 pending</div>
+              <div class="px-2 py-2 bg-blue-50 border-l-4 border-blue-600">
+                <div class="font-semibold">task-035</div>
+                <div class="text-red-600 text-xs">● question · 12m</div>
+                <div class="text-gray-500 truncate">Should pruning be reversible?</div>
+              </div>
+              <div class="px-2 py-2 border-b border-gray-100">
+                <div class="font-semibold text-gray-500">task-034</div>
+                <div class="text-yellow-600 text-xs">● thread · 8m</div>
+              </div>
+              <div class="px-2 py-2 border-b border-gray-100">
+                <div class="font-semibold text-gray-500">task-032</div>
+                <div class="text-purple-600 text-xs">● decision · 3m</div>
+              </div>
+            </div>
+
+            <!-- Content pane -->
+            <div class="flex-1 flex flex-col">
+              <!-- Doc header -->
+              <div class="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-gray-50">
+                <div class="flex items-center gap-2">
+                  <span class="text-gray-500">task-035/plan.html</span>
+                  <span class="px-1.5 py-0.5 bg-gray-200 text-gray-600 rounded text-xs">Requirements</span>
+                </div>
+                <button class="text-xs text-blue-600">open in new tab ↗</button>
+              </div>
+
+              <!-- Scrolled doc content (simulated) -->
+              <div class="flex-1 overflow-auto px-6 py-4 bg-white">
+                <div class="text-gray-300 text-center py-4 border-b border-dashed border-gray-200">
+                  ↑ sections above (Goals, Background) — scrolled past ↑
+                </div>
+
+                <!-- The section containing the question -->
+                <div class="mt-4">
+                  <h3 class="text-base font-bold text-gray-800 flex items-center gap-2">
+                    Open Questions
+                    <span class="text-xs text-gray-400">#open-questions</span>
+                  </h3>
+
+                  <div class="mt-3 text-sm text-gray-700 leading-relaxed">
+                    <p>The following questions need resolution before solution design can proceed:</p>
+                  </div>
+
+                  <!-- THE HIGHLIGHTED QUESTION -->
+                  <div class="mt-3 border-2 border-red-400 rounded-lg bg-red-50 p-4 shadow-sm" id="q-reversibility">
+                    <div class="flex items-center gap-2 mb-2">
+                      <span class="px-2 py-0.5 bg-red-200 text-red-800 rounded-full text-xs font-semibold">OPEN QUESTION</span>
+                      <span class="text-xs text-gray-400">agent blocked on this</span>
+                    </div>
+                    <p class="text-sm font-medium text-gray-800">Should pruning be reversible? If yes, what's the recovery window?</p>
+                    <div class="mt-2 text-xs text-gray-500 bg-white rounded p-2 border border-gray-200">
+                      <span class="font-semibold">Agent suggests:</span> Soft-delete with configurable TTL (default 30 days). Pruned skills move to a <code>.pruned/</code> directory and can be restored with <code>auto skill restore &lt;name&gt;</code>.
+                    </div>
+                  </div>
+
+                  <!-- Other questions (not highlighted) -->
+                  <div class="mt-3 border border-gray-200 rounded-lg p-4 opacity-60">
+                    <div class="flex items-center gap-2 mb-2">
+                      <span class="px-2 py-0.5 bg-green-200 text-green-800 rounded-full text-xs">RESOLVED</span>
+                    </div>
+                    <p class="text-sm text-gray-600">Should adopt check for version conflicts? → Yes, warn but don't block.</p>
+                  </div>
+                </div>
+
+                <div class="text-gray-300 text-center py-4 mt-4 border-t border-dashed border-gray-200">
+                  ↓ sections below (Decisions, Out of Scope) — can scroll to ↓
+                </div>
+              </div>
+
+              <!-- RESPONSE WIDGET — pinned to bottom -->
+              <div class="border-t-2 border-blue-400 bg-blue-50 px-4 py-3 flex-shrink-0">
+                <div class="text-xs text-blue-700 font-semibold mb-2">YOUR RESPONSE — task-035: Should pruning be reversible?</div>
+                <div class="flex flex-col gap-2">
+                  <div class="flex items-center gap-3">
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="radio" name="response" class="accent-blue-600" checked>
+                      <span class="text-sm">Accept suggestion</span>
+                    </label>
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="radio" name="response" class="accent-blue-600">
+                      <span class="text-sm">No, hard delete</span>
+                    </label>
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                      <input type="radio" name="response" class="accent-blue-600">
+                      <span class="text-sm">Other...</span>
+                    </label>
+                  </div>
+                  <div>
+                    <textarea class="w-full text-sm border border-gray-300 rounded px-2 py-1.5 bg-white placeholder:text-gray-400" rows="2" placeholder="Notes (optional) — why this choice? context for future runs...">soft-delete is fine but make TTL configurable per-project, enterprise needs longer windows</textarea>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs text-gray-400">↵ Enter to submit · Tab to next item</span>
+                    <div class="flex gap-2">
+                      <button class="px-3 py-1 text-sm text-gray-600 border border-gray-300 rounded hover:bg-gray-100">Skip</button>
+                      <button class="px-3 py-1 text-sm text-white bg-blue-600 rounded hover:bg-blue-700 font-semibold">Submit &amp; Next →</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <pd-note>The response widget is pinned to the bottom of the content pane, not the viewport. The doc scrolls above it. "Submit &amp; Next" writes the response to the doc file (as a pd-comment or answer), then auto-advances to the next inbox item — loading that item's doc and scrolling to its anchor.</pd-note>
+      </pd-section>
+
+    </pd-tab>
+
+    <!-- ================================================================== -->
+    <!--  WIREFRAMES: ITEM TYPE EXAMPLES                                    -->
+    <!-- ================================================================== -->
+    <pd-tab name="Item Examples">
+
+      <pd-section id="example-question" title="Example 1: Open Question">
+        <md><script type="text/plain">
+An agent writing a solution doc hit a question it can't resolve alone. The question is marked as an open item in the requirements tab. The inbox extracts it and presents it with the agent's suggested answer as a pre-selected option.
+        </script></md>
+
+        <!-- Question response widget close-up -->
+        <div class="border border-gray-300 rounded-lg overflow-hidden font-mono text-xs mt-4 bg-white max-w-2xl">
+          <div class="px-4 py-2 bg-red-50 border-b border-red-200">
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 bg-red-200 text-red-800 rounded-full text-xs font-bold">QUESTION</span>
+              <span class="text-gray-700 font-semibold">task-035 / Requirements / Open Questions</span>
+              <span class="text-gray-400 ml-auto">12m waiting</span>
+            </div>
+          </div>
+          <div class="px-4 py-3">
+            <p class="text-sm font-medium text-gray-800 mb-3">Should pruning be reversible? If yes, what's the recovery window?</p>
+
+            <div class="text-xs text-gray-500 bg-gray-50 rounded p-2 border border-gray-100 mb-3">
+              <strong>Agent context:</strong> The prune command removes skills not referenced in any agent's CLAUDE.md. Without reversibility, a misconfigured agent file could permanently delete a valid skill.
+            </div>
+
+            <div class="space-y-2 mb-3">
+              <label class="flex items-start gap-2 p-2 rounded border border-blue-200 bg-blue-50 cursor-pointer">
+                <input type="radio" name="q1" checked class="mt-0.5 accent-blue-600">
+                <div>
+                  <div class="text-sm font-medium">Soft-delete with 30d TTL (recommended)</div>
+                  <div class="text-xs text-gray-500">Pruned skills move to .pruned/, restorable via `auto skill restore`</div>
+                </div>
+              </label>
+              <label class="flex items-start gap-2 p-2 rounded border border-gray-200 cursor-pointer hover:bg-gray-50">
+                <input type="radio" name="q1" class="mt-0.5 accent-blue-600">
+                <div>
+                  <div class="text-sm font-medium">Hard delete, no recovery</div>
+                  <div class="text-xs text-gray-500">Simpler implementation; skills can be re-installed from source</div>
+                </div>
+              </label>
+              <label class="flex items-start gap-2 p-2 rounded border border-gray-200 cursor-pointer hover:bg-gray-50">
+                <input type="radio" name="q1" class="mt-0.5 accent-blue-600">
+                <div>
+                  <div class="text-sm font-medium">Other...</div>
+                  <div class="text-xs text-gray-500"><input type="text" class="border-b border-gray-400 bg-transparent w-full outline-none" placeholder="Describe alternative approach..."></div>
+                </div>
+              </label>
+            </div>
+
+            <div class="mb-3">
+              <label class="text-xs text-gray-500 font-semibold mb-1 block">Notes (optional)</label>
+              <textarea class="w-full text-sm border border-gray-300 rounded px-2 py-1.5 placeholder:text-gray-400" rows="2" placeholder="Why this choice? Any constraints the agent should know about..."></textarea>
+            </div>
+
+            <div class="flex justify-end gap-2">
+              <button class="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded">Skip</button>
+              <button class="px-3 py-1.5 text-sm text-white bg-blue-600 rounded font-semibold">Submit &amp; Next →</button>
+            </div>
+          </div>
+        </div>
+
+        <pd-note>The agent's recommended option is pre-selected (blue highlight). If the human just hits Enter, they accept the recommendation. The "Other" option expands an inline text field. Notes are always available regardless of which option is chosen.</pd-note>
+      </pd-section>
+
+      <pd-section id="example-thread" title="Example 2: Unresolved Review Thread">
+        <md><script type="text/plain">
+A reviewer left a comment on the solution tab that the agent responded to, but the thread is still unresolved. The human needs to decide: did the agent's response address the concern?
+        </script></md>
+
+        <div class="border border-gray-300 rounded-lg overflow-hidden font-mono text-xs mt-4 bg-white max-w-2xl">
+          <div class="px-4 py-2 bg-yellow-50 border-b border-yellow-200">
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 bg-yellow-200 text-yellow-800 rounded-full text-xs font-bold">THREAD</span>
+              <span class="px-1.5 py-0.5 bg-orange-200 text-orange-800 rounded text-xs">p1 blocking</span>
+              <span class="text-gray-700 font-semibold">task-034 / Solution / #approach</span>
+              <span class="text-gray-400 ml-auto">8m waiting</span>
+            </div>
+          </div>
+          <div class="px-4 py-3">
+            <p class="text-sm font-semibold text-gray-800 mb-3">"Hook name too specific for reuse"</p>
+
+            <!-- Thread history -->
+            <div class="space-y-2 mb-3 border-l-2 border-gray-200 pl-3">
+              <div>
+                <div class="flex items-center gap-2 text-xs">
+                  <span class="px-1.5 py-0.5 bg-gray-200 text-gray-700 rounded font-semibold">reviewer</span>
+                  <span class="text-gray-400">initial comment</span>
+                </div>
+                <p class="text-sm text-gray-700 mt-1">Make name more generic than useExplorerStore — we'll reuse this hook across views (inbox, debug, future views).</p>
+              </div>
+              <div>
+                <div class="flex items-center gap-2 text-xs">
+                  <span class="px-1.5 py-0.5 bg-blue-200 text-blue-700 rounded font-semibold">author</span>
+                  <span class="text-gray-400">response</span>
+                </div>
+                <p class="text-sm text-gray-700 mt-1">Agreed — renamed useExplorerStore() → useAppStore() throughout. It's the single app-wide store hook; the name now reflects that it backs all views.</p>
+              </div>
+            </div>
+
+            <!-- Response options -->
+            <div class="space-y-2 mb-3">
+              <label class="flex items-start gap-2 p-2 rounded border border-green-200 bg-green-50 cursor-pointer">
+                <input type="radio" name="t1" checked class="mt-0.5 accent-green-600">
+                <div>
+                  <div class="text-sm font-medium text-green-800">Resolve — response addresses the concern</div>
+                </div>
+              </label>
+              <label class="flex items-start gap-2 p-2 rounded border border-gray-200 cursor-pointer hover:bg-gray-50">
+                <input type="radio" name="t1" class="mt-0.5 accent-blue-600">
+                <div>
+                  <div class="text-sm font-medium">Not resolved — needs more work</div>
+                  <div class="text-xs text-gray-500">Your reply will be appended as a new comment</div>
+                </div>
+              </label>
+              <label class="flex items-start gap-2 p-2 rounded border border-gray-200 cursor-pointer hover:bg-gray-50">
+                <input type="radio" name="t1" class="mt-0.5 accent-red-600">
+                <div>
+                  <div class="text-sm font-medium">Reject — this concern was invalid</div>
+                  <div class="text-xs text-gray-500">Thread will be marked rejected with your reasoning</div>
+                </div>
+              </label>
+            </div>
+
+            <div class="mb-3">
+              <label class="text-xs text-gray-500 font-semibold mb-1 block">Notes (optional)</label>
+              <textarea class="w-full text-sm border border-gray-300 rounded px-2 py-1.5 placeholder:text-gray-400" rows="2" placeholder="Additional context, or explain why not resolved..."></textarea>
+            </div>
+
+            <div class="flex justify-end gap-2">
+              <button class="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded">Skip</button>
+              <button class="px-3 py-1.5 text-sm text-white bg-green-600 rounded font-semibold">Resolve &amp; Next →</button>
+            </div>
+          </div>
+        </div>
+
+        <pd-note>The thread history is shown inline so the human can read the conversation without opening the full doc. "Resolve" is pre-selected when the agent has already responded — the optimistic default. If "Not resolved" is chosen, the notes field becomes required (the human must explain what's still wrong).</pd-note>
+      </pd-section>
+
+      <pd-section id="example-decision" title="Example 3: Proposed Decision">
+        <md><script type="text/plain">
+An agent proposed an architectural decision (pd-decision with status="proposed") and is waiting for the human to accept, modify, or reject it before proceeding.
+        </script></md>
+
+        <div class="border border-gray-300 rounded-lg overflow-hidden font-mono text-xs mt-4 bg-white max-w-2xl">
+          <div class="px-4 py-2 bg-purple-50 border-b border-purple-200">
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 bg-purple-200 text-purple-800 rounded-full text-xs font-bold">DECISION</span>
+              <span class="text-gray-700 font-semibold">task-032 / Solution / D-2</span>
+              <span class="text-gray-400 ml-auto">3m waiting</span>
+            </div>
+          </div>
+          <div class="px-4 py-3">
+            <p class="text-sm font-semibold text-gray-800 mb-1">D-2: Event envelope format</p>
+            <p class="text-xs text-gray-500 mb-3">CloudEvents vs flat JSON for the bus wire format</p>
+
+            <!-- Decision detail (collapsed by default, shown expanded) -->
+            <div class="bg-gray-50 rounded p-3 mb-3 border border-gray-200 text-sm">
+              <div class="mb-2">
+                <span class="font-semibold text-gray-700">Context:</span>
+                <span class="text-gray-600"> The auto-bus needs a standard envelope. Two options fit the constraints.</span>
+              </div>
+              <div class="mb-2">
+                <span class="font-semibold text-gray-700">Decision:</span>
+                <span class="text-gray-600"> CloudEvents v1.0 envelope with JSON content type.</span>
+              </div>
+              <div class="mb-2">
+                <span class="font-semibold text-gray-700">Alternatives:</span>
+                <span class="text-gray-600"> Flat JSON with ad-hoc type field — simpler, but no ecosystem tooling.</span>
+              </div>
+              <div>
+                <span class="font-semibold text-gray-700">Consequences:</span>
+                <span class="text-gray-600"> 3 extra envelope fields per message; gains spec compliance and tooling interop.</span>
+              </div>
+            </div>
+
+            <div class="space-y-2 mb-3">
+              <label class="flex items-start gap-2 p-2 rounded border border-green-200 bg-green-50 cursor-pointer">
+                <input type="radio" name="d1" checked class="mt-0.5 accent-green-600">
+                <div>
+                  <div class="text-sm font-medium text-green-800">Accept — proceed with CloudEvents</div>
+                </div>
+              </label>
+              <label class="flex items-start gap-2 p-2 rounded border border-gray-200 cursor-pointer hover:bg-gray-50">
+                <input type="radio" name="d1" class="mt-0.5 accent-blue-600">
+                <div>
+                  <div class="text-sm font-medium">Accept with modifications</div>
+                  <div class="text-xs text-gray-500">Use notes to specify what to change</div>
+                </div>
+              </label>
+              <label class="flex items-start gap-2 p-2 rounded border border-gray-200 cursor-pointer hover:bg-gray-50">
+                <input type="radio" name="d1" class="mt-0.5 accent-red-600">
+                <div>
+                  <div class="text-sm font-medium">Reject — use flat JSON instead</div>
+                </div>
+              </label>
+            </div>
+
+            <div class="mb-3">
+              <label class="text-xs text-gray-500 font-semibold mb-1 block">Notes (optional)</label>
+              <textarea class="w-full text-sm border border-gray-300 rounded px-2 py-1.5 placeholder:text-gray-400" rows="2" placeholder="Why? Constraints the agent should know about..."></textarea>
+            </div>
+
+            <div class="flex justify-end gap-2">
+              <button class="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded">Skip</button>
+              <button class="px-3 py-1.5 text-sm text-white bg-green-600 rounded font-semibold">Accept &amp; Next →</button>
+            </div>
+          </div>
+        </div>
+
+        <pd-note>The full ADR (context/decision/alternatives/consequences) is shown inline — no need to open the doc for most decisions. The "Accept with modifications" option makes the notes field required. The submit button label changes based on selection: "Accept", "Submit", or "Reject".</pd-note>
+      </pd-section>
+
+      <pd-section id="example-plan-review" title="Example 4: Plan Ready for Review">
+        <md><script type="text/plain">
+An agent has completed a full plan.html and is awaiting review before execution begins. This is different from the item-level examples above — the human needs to review the whole doc, not just one element. The inbox item links to the doc with no specific anchor scroll — it opens at the top.
+        </script></md>
+
+        <div class="border border-gray-300 rounded-lg overflow-hidden font-mono text-xs mt-4 bg-white max-w-2xl">
+          <div class="px-4 py-2 bg-blue-50 border-b border-blue-200">
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 bg-blue-200 text-blue-800 rounded-full text-xs font-bold">REVIEW</span>
+              <span class="text-gray-700 font-semibold">task-033 / plan.html</span>
+              <span class="text-gray-400 ml-auto">1m waiting</span>
+            </div>
+          </div>
+          <div class="px-4 py-3">
+            <p class="text-sm font-semibold text-gray-800 mb-1">skill-add-discovery — full plan ready</p>
+
+            <!-- Summary stats from pd-scope data -->
+            <div class="flex gap-4 mb-3 text-xs text-gray-500">
+              <span>4 phases</span>
+              <span>·</span>
+              <span>7 files (3 add, 4 edit)</span>
+              <span>·</span>
+              <span>5 acceptance criteria</span>
+              <span>·</span>
+              <span>0 open threads</span>
+            </div>
+
+            <div class="space-y-2 mb-3">
+              <label class="flex items-start gap-2 p-2 rounded border border-green-200 bg-green-50 cursor-pointer">
+                <input type="radio" name="r1" checked class="mt-0.5 accent-green-600">
+                <div>
+                  <div class="text-sm font-medium text-green-800">Approve — ready to execute</div>
+                  <div class="text-xs text-gray-500">Status changes to "pending", agent can begin</div>
+                </div>
+              </label>
+              <label class="flex items-start gap-2 p-2 rounded border border-gray-200 cursor-pointer hover:bg-gray-50">
+                <input type="radio" name="r1" class="mt-0.5 accent-blue-600">
+                <div>
+                  <div class="text-sm font-medium">Review first — open the doc</div>
+                  <div class="text-xs text-gray-500">Opens the full plan.html in the content pane for reading</div>
+                </div>
+              </label>
+              <label class="flex items-start gap-2 p-2 rounded border border-gray-200 cursor-pointer hover:bg-gray-50">
+                <input type="radio" name="r1" class="mt-0.5 accent-red-600">
+                <div>
+                  <div class="text-sm font-medium">Send back — needs more work</div>
+                  <div class="text-xs text-gray-500">Describe what's missing in notes</div>
+                </div>
+              </label>
+            </div>
+
+            <div class="mb-3">
+              <label class="text-xs text-gray-500 font-semibold mb-1 block">Notes (optional)</label>
+              <textarea class="w-full text-sm border border-gray-300 rounded px-2 py-1.5 placeholder:text-gray-400" rows="2" placeholder="Concerns, constraints, scope notes..."></textarea>
+            </div>
+
+            <div class="flex justify-end gap-2">
+              <button class="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded">Skip</button>
+              <button class="px-3 py-1.5 text-sm text-white bg-green-600 rounded font-semibold">Approve &amp; Next →</button>
+            </div>
+          </div>
+        </div>
+
+        <pd-note>The "Review first" option switches the content pane to the full doc view (like explorer mode) but keeps the inbox sidebar so the human can return to the queue after reviewing. The summary stats (phases, files, ACs, threads) are extracted from the doc's pd-scope data — a quick sanity check before rubber-stamping.</pd-note>
+      </pd-section>
+
+    </pd-tab>
+
+    <!-- ================================================================== -->
+    <!--  WIREFRAMES: WORKFLOWS                                             -->
+    <!-- ================================================================== -->
+    <pd-tab name="Workflows">
+
+      <pd-section id="workflow-overview" title="End-to-End Workflows">
+        <md><script type="text/plain">
+Three scenarios showing the complete interaction flow from notification to resolution.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="workflow-fast-triage" title="Workflow A: Fast Triage (30 seconds)">
+        <md><script type="text/plain">
+The human opens auto-ui, sees 3 pending items, and triages all of them quickly because they're straightforward.
+        </script></md>
+
+        <pd-mermaid caption="Fast triage flow">
+sequenceDiagram
+    participant H as Human
+    participant UI as Inbox UI
+    participant FS as File System
+    participant A as Agent
+
+    H->>UI: Opens auto-ui (lands on Inbox)
+    UI->>UI: Parses 3 planning docs, finds 3 items
+    UI-->>H: Shows queue: Q1 (12m), T1 (8m), D1 (3m)
+
+    H->>UI: Clicks Q1 (oldest first)
+    UI-->>H: Doc scrolls to open question
+    H->>UI: Accepts suggestion, adds note
+    UI->>FS: Writes pd-comment to plan.html
+    FS-->>A: File watch triggers, agent unblocked
+    UI-->>H: Auto-advances to T1
+
+    H->>UI: Reads thread history
+    H->>UI: Resolves thread (response was good)
+    UI->>FS: Sets status=resolved, appends comment
+    UI-->>H: Auto-advances to D1
+
+    H->>UI: Reads ADR summary
+    H->>UI: Accepts decision
+    UI->>FS: Sets status=accepted
+    UI-->>H: Queue empty, shows "all clear"
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="workflow-deep-review" title="Workflow B: Deep Review (5 minutes)">
+        <md><script type="text/plain">
+The human needs to read the surrounding context before answering. They click an inbox item, read the section in the doc, scroll around, then come back to respond.
+        </script></md>
+
+        <pd-mermaid caption="Deep review flow">
+sequenceDiagram
+    participant H as Human
+    participant UI as Inbox UI
+    participant Doc as Doc Pane
+
+    H->>UI: Clicks inbox item (question about auth approach)
+    UI->>Doc: Loads plan.html, scrolls to #auth-approach
+    Doc-->>H: Shows question in context of Approach section
+
+    H->>Doc: Scrolls up to read Goals section
+    H->>Doc: Scrolls to Solution tab, reads file changes
+    H->>Doc: Scrolls back to question anchor
+
+    Note over H,Doc: Human now has full context
+
+    H->>UI: Selects "Other" option
+    H->>UI: Types alternative approach in text field
+    H->>UI: Adds notes explaining reasoning
+    H->>UI: Clicks Submit
+    UI-->>H: Auto-advances to next item
+        </pd-mermaid>
+
+        <pd-note>Key UX detail: when the human scrolls away from the highlighted anchor, the response widget stays pinned at the bottom. A small "← back to question" link appears in the widget so they can jump back after exploring. The inbox sidebar also stays visible, showing which item they're working on.</pd-note>
+      </pd-section>
+
+      <pd-section id="workflow-multi-agent" title="Workflow C: Multi-Agent Burst (2 minutes)">
+        <md><script type="text/plain">
+Three agents finish planning simultaneously. The human has 7 items across 3 docs. They need to context-switch efficiently.
+        </script></md>
+
+        <!-- Multi-agent burst wireframe -->
+        <div class="border border-gray-300 rounded-lg overflow-hidden font-mono text-xs mt-4 bg-white">
+          <div class="flex" style="min-height: 400px">
+            <!-- Sidebar showing grouped items -->
+            <div class="w-64 border-r border-gray-200 bg-gray-50 flex-shrink-0">
+              <div class="flex items-center justify-between px-3 py-2 border-b border-gray-200">
+                <span class="font-semibold text-gray-700">7 pending</span>
+                <span class="text-xs text-gray-400">3 tasks</span>
+              </div>
+
+              <!-- Task 035 group -->
+              <div class="px-3 py-1.5 bg-gray-100 text-xs text-gray-500 font-semibold border-b border-gray-200">
+                task-035 · skill-prune-adopt (3 items)
+              </div>
+              <div class="px-3 py-2 bg-blue-50 border-l-4 border-blue-600">
+                <div class="text-red-600 text-xs">● question · 12m</div>
+                <div class="text-gray-600 truncate">Reversibility?</div>
+              </div>
+              <div class="px-3 py-2 border-b border-gray-100">
+                <div class="text-yellow-600 text-xs">● thread · 10m</div>
+                <div class="text-gray-500 truncate">Naming convention</div>
+              </div>
+              <div class="px-3 py-2 border-b border-gray-100">
+                <div class="text-purple-600 text-xs">● decision · 8m</div>
+                <div class="text-gray-500 truncate">D-1: Storage format</div>
+              </div>
+
+              <!-- Task 034 group -->
+              <div class="px-3 py-1.5 bg-gray-100 text-xs text-gray-500 font-semibold border-b border-gray-200">
+                task-034 · sync-render (2 items)
+              </div>
+              <div class="px-3 py-2 border-b border-gray-100">
+                <div class="text-yellow-600 text-xs">● thread · 6m</div>
+                <div class="text-gray-500 truncate">SSE vs WebSocket</div>
+              </div>
+              <div class="px-3 py-2 border-b border-gray-100">
+                <div class="text-red-600 text-xs">● question · 4m</div>
+                <div class="text-gray-500 truncate">Reconnect strategy?</div>
+              </div>
+
+              <!-- Task 032 group -->
+              <div class="px-3 py-1.5 bg-gray-100 text-xs text-gray-500 font-semibold border-b border-gray-200">
+                task-032 · project-schemas (2 items)
+              </div>
+              <div class="px-3 py-2 border-b border-gray-100">
+                <div class="text-purple-600 text-xs">● decision · 3m</div>
+                <div class="text-gray-500 truncate">D-2: Event format</div>
+              </div>
+              <div class="px-3 py-2 border-b border-gray-100">
+                <div class="text-blue-600 text-xs">● review · 1m</div>
+                <div class="text-gray-500 truncate">Plan ready for approval</div>
+              </div>
+            </div>
+
+            <!-- Content pane -->
+            <div class="flex-1 flex flex-col">
+              <div class="flex-1 flex items-center justify-center text-gray-400 text-sm p-8">
+                <div class="text-center">
+                  <div class="text-4xl mb-2">←</div>
+                  <div>Click an item to review it in context.</div>
+                  <div class="mt-2 text-xs">Items are sorted by wait time within each task.</div>
+                  <div class="mt-1 text-xs">Working through one task's items before moving to the next<br>minimizes context switches.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <pd-note>When multiple items come from the same doc, the sidebar groups them by task. This way the human can work through all of task-035's items in sequence (the doc stays loaded, just scrolling between anchors) before context-switching to task-034. The sort within a group is oldest-first, but the groups themselves are ordered by oldest item — so the task with the longest-waiting item appears first.</pd-note>
+      </pd-section>
+
+      <pd-section id="workflow-empty-state" title="Workflow D: Empty Inbox">
+        <md><script type="text/plain">
+No agents are blocked. The inbox shows a clean state with a summary of recent activity and a link to the explorer.
+        </script></md>
+
+        <div class="border border-gray-300 rounded-lg overflow-hidden font-mono text-xs mt-4 bg-white max-w-lg mx-auto">
+          <div class="p-8 text-center">
+            <div class="text-3xl mb-3 text-green-500">✓</div>
+            <div class="text-lg font-semibold text-gray-800 mb-1">All clear</div>
+            <div class="text-sm text-gray-500 mb-4">No agents are waiting for your input</div>
+
+            <div class="text-xs text-gray-400 space-y-1 mb-4">
+              <div>5 items resolved today</div>
+              <div>Last response: 12 minutes ago</div>
+              <div>3 agents currently executing</div>
+            </div>
+
+            <button class="px-4 py-2 text-sm text-blue-600 border border-blue-300 rounded hover:bg-blue-50">
+              Browse docs in Explorer →
+            </button>
+          </div>
+        </div>
+
+        <pd-note>The empty state isn't just "nothing here" — it confirms agents are running and gives a sense of throughput. "3 agents currently executing" reassures that work is happening even though nothing needs human input right now.</pd-note>
+      </pd-section>
+
+    </pd-tab>
+
+    <!-- ================================================================== -->
+    <!--  WIREFRAMES: RESPONSE CAPTURE                                      -->
+    <!-- ================================================================== -->
+    <pd-tab name="Data Capture">
+
+      <pd-section id="response-schema" title="Structured Response Schema">
+        <md><script type="text/plain">
+Every response captured by the UI follows a consistent schema. This is the training data that feeds future agent improvements.
+        </script></md>
+
+        <pd-code lang="json" path="response-schema.json" caption="Captured per human response">
+<script type="text/plain">
+{
+  "timestamp": "2026-06-20T14:32:00Z",
+  "project": "auto-stack",
+  "task": "035-skill-prune-adopt",
+  "doc_path": "docs/tasks/035-skill-prune-adopt/plan.html",
+  "item": {
+    "type": "question | thread | decision | review",
+    "anchor": "open-questions",
+    "title": "Should pruning be reversible?",
+    "agent_recommendation": "Soft-delete with 30d TTL",
+    "wait_time_seconds": 720,
+    "priority": "p1 | p2 | p3 | null"
+  },
+  "response": {
+    "action": "accept | reject | resolve | modify | other",
+    "selected_option": "Soft-delete with 30d TTL",
+    "custom_text": null,
+    "notes": "make TTL configurable per-project, enterprise needs longer"
+  },
+  "context": {
+    "items_in_queue": 3,
+    "position_in_queue": 1,
+    "time_to_respond_seconds": 18,
+    "doc_sections_viewed": ["goals", "open-questions"]
+  }
+}
+</script>
+        </pd-code>
+
+        <pd-note>The `context` block captures behavioural signals: how long the human spent, what sections they looked at before deciding, and where this item was in the queue. This is metadata for optimizing question quality — if the human always scrolls to the same section before answering a type of question, that section content should be pre-loaded in the agent's context.</pd-note>
+      </pd-section>
+
+      <pd-section id="training-signals" title="Training Signals from Responses">
+        <md><script type="text/plain">
+The structured response data enables several feedback loops:
+
+**Pattern detection** — if the human always accepts the agent's recommendation for a category of question (e.g., "naming conventions"), the agent can auto-resolve those in future runs.
+
+**Context optimization** — if the human always views the Goals section before answering an Open Question, the agent should include Goals context when formulating questions.
+
+**Question quality scoring** — questions where the human picks "Other" or takes >60s to respond are poorly framed. The agent should learn to ask differently.
+
+**Decision consistency** — if the human accepted "CloudEvents" for task-032 but rejected it for task-034, there's a context difference worth understanding. The notes field captures why.
+        </script></md>
+
+        <pd-mermaid caption="Response data feedback loop">
+flowchart LR
+    H[Human responds] --> C[Capture structured data]
+    C --> P[Pattern detection]
+    C --> Q[Question quality score]
+    C --> X[Context optimization]
+    P --> A[Agent auto-resolves<br>known patterns]
+    Q --> B[Agent reframes<br>poor questions]
+    X --> D[Agent pre-loads<br>relevant context]
+    A --> F[Fewer questions<br>asked over time]
+    B --> F
+    D --> G[Faster human<br>response time]
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="notes-value" title="Why Notes Matter Even for Accept">
+        <md><script type="text/plain">
+The notes field is always present, even for a simple "Accept." Three examples of why:
+
+| Response | Without Notes | With Notes |
+|----------|--------------|------------|
+| Accept soft-delete | "User prefers soft-delete" | "Enterprise tier needs reversibility; make TTL configurable per-project" |
+| Resolve thread | "User agreed with rename" | "useAppStore is fine but consider useViewStore if we ever split state per view" |
+| Accept CloudEvents | "User chose CloudEvents" | "Aligns with what we did in the bus spec (D-1); don't want two envelope formats" |
+
+The notes column captures the **why** — the generalisable insight. "Accept" alone is a data point. "Accept because X" is a rule the system can learn.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <!-- ================================================================== -->
+    <!--  WIREFRAMES: KEYBOARD & NAVIGATION                                 -->
+    <!-- ================================================================== -->
+    <pd-tab name="Keyboard & Nav">
+
+      <pd-section id="keyboard-shortcuts" title="Keyboard Navigation">
+        <md><script type="text/plain">
+The inbox is keyboard-first for speed. The human should be able to triage a full queue without touching the mouse.
+        </script></md>
+
+        <pd-code lang="text" caption="Keyboard shortcuts">
+<script type="text/plain">
+SIDEBAR (queue focus)
+  j / ↓        Next item in queue
+  k / ↑        Previous item in queue
+  Enter        Open item (load doc, scroll to anchor)
+  1            Switch to Inbox view
+  2            Switch to Explorer view
+
+CONTENT PANE (doc focus)
+  Tab          Jump focus to response widget
+  Escape       Jump focus back to sidebar
+  b            Back to highlighted anchor (if scrolled away)
+
+RESPONSE WIDGET (response focus)
+  ↑ / ↓       Cycle through options
+  Tab          Jump to notes field
+  Enter        Submit response & advance to next item
+  Shift+Enter  Newline in notes field
+  Escape       Cancel / jump focus to doc
+  s            Skip this item (move to end of queue)
+</script>
+        </pd-code>
+      </pd-section>
+
+      <pd-section id="auto-advance" title="Auto-Advance Behaviour">
+        <md><script type="text/plain">
+After submitting a response:
+
+1. The current item is moved from "pending" to "completed" in the sidebar
+2. The next pending item is highlighted in the sidebar
+3. **If the next item is in the same doc**: the content pane smooth-scrolls to the new anchor (no reload)
+4. **If the next item is in a different doc**: the content pane loads the new doc and scrolls to anchor
+5. **If no more items**: the content pane shows the "all clear" empty state
+
+The smooth-scroll for same-doc items is important — it gives the human spatial awareness ("this question is further down in the same section" vs "this is in a different tab entirely").
+        </script></md>
+      </pd-section>
+
+      <pd-section id="back-to-anchor" title="Back-to-Anchor Affordance">
+        <md><script type="text/plain">
+When the human scrolls away from the highlighted anchor to read surrounding context, a floating breadcrumb appears in the response widget:
+        </script></md>
+
+        <div class="border border-gray-300 rounded-lg overflow-hidden font-mono text-xs mt-4 bg-white max-w-2xl">
+          <div class="border-t-2 border-blue-400 bg-blue-50 px-4 py-2">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="text-blue-700 text-xs font-semibold">Responding to:</span>
+                <span class="text-gray-700 text-xs">Should pruning be reversible?</span>
+                <button class="text-xs text-blue-600 underline hover:text-blue-800">← scroll back to question</button>
+              </div>
+              <span class="text-gray-400 text-xs">task-035 #open-questions</span>
+            </div>
+          </div>
+        </div>
+
+        <pd-note>This breadcrumb only appears when the anchor is scrolled out of the viewport. When the anchor is visible, the breadcrumb collapses to save space. Clicking it smooth-scrolls the doc back to the highlighted element.</pd-note>
+      </pd-section>
+
+    </pd-tab>
+
+    <!-- ================================================================== -->
+    <!--  IMPLEMENTATION NOTES                                              -->
+    <!-- ================================================================== -->
+    <pd-tab name="Implementation Notes">
+
+      <pd-section id="item-extraction" title="Extracting Inbox Items from Docs">
+        <md><script type="text/plain">
+The inbox needs to parse planning doc HTML and extract actionable items. Three sources:
+
+1. **Unresolved threads**: `querySelectorAll('pd-thread[status=unresolved], pd-thread:not([status])')` — every thread that isn't resolved/rejected
+2. **Proposed decisions**: `querySelectorAll('pd-decision[status=proposed]')` — decisions awaiting human approval
+3. **Open questions**: these don't have a dedicated pd-* element today — they're prose inside pd-sections. Two options:
+   - Add a `pd-question` component (cleaner, structured)
+   - Use a convention marker in markdown (e.g., `**OPEN QUESTION:**`) and regex-extract
+
+Option 1 (new component) is better for structured capture. Worth adding to the pd-* library.
+        </script></md>
+
+        <pd-decision id="D-1" title="Add pd-question component for structured open questions" status="proposed" by="agent"
+          summary="New component enables reliable extraction + structured response capture.">
+          <md><script type="text/plain">
+**Context:** The inbox needs to extract open questions from planning docs. Currently questions are prose — no structured element.
+
+**Decision:** Add `<pd-question id anchor status>` to the pd-* component library. Attributes: `id` (stable), `anchor` (section it belongs to), `status` (open/answered), `suggestion` (agent's recommended answer). Children: the question text + option elements.
+
+**Alternatives:** Regex-extract from markdown conventions (`**OPEN QUESTION:**`). Cheaper but brittle, no structured options, no status tracking.
+
+**Consequences:** Planning-doc skill needs updating to emit pd-question elements. Existing docs need migration (or graceful fallback to regex for legacy docs).
+          </script></md>
+        </pd-decision>
+      </pd-section>
+
+      <pd-section id="write-back" title="Writing Responses Back to Docs">
+        <md><script type="text/plain">
+When the human submits a response, the UI needs to write it back to the planning doc file. Two approaches:
+
+**Option A: Direct file write via RPC** — the UI calls an RPC method (e.g., `doc.respond`) that patches the HTML file on disk. The server parses the HTML, finds the target element by anchor/id, appends a `pd-comment` or updates a status attribute, and writes the file.
+
+**Option B: Export + agent pickup** — the UI queues the response as a structured event on the bus, and the agent picks it up and edits the doc. This is closer to the current "Copy for agent" flow but automated.
+
+Option A is better for throughput — the response is written immediately and the agent can react via file watch. Option B adds a round-trip through the agent for a mechanical edit.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="live-updates" title="Live Queue Updates">
+        <md><script type="text/plain">
+The inbox should update in real-time as agents create or resolve items:
+
+- **New item appears**: agent writes a new `pd-thread` or `pd-question` → `doc.changed` fires → UI re-parses the doc → new item appears in the sidebar (with a brief highlight animation)
+- **Item resolved by agent**: agent resolves a thread without human input → `doc.changed` fires → item disappears from the pending queue
+- **Doc created**: agent creates a new plan.html → `doc.changed` with a new path → UI parses it for items
+
+This builds on the existing `doc.changed` notification infrastructure from task 026. The inbox just adds a parsing layer on top of the raw doc content.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="response-storage" title="Response Data Storage">
+        <md><script type="text/plain">
+Structured response data (the training signal) is stored separately from the doc edits:
+
+- The **doc edit** (pd-comment, status change) goes into the HTML file — this is the planning artifact
+- The **response metadata** (timing, queue position, sections viewed) goes into a JSONL append log at `~/.auto/ui/responses.jsonl`
+
+The JSONL log is the training data source. It's append-only, one JSON object per line, matching the schema in the Data Capture tab. The auto-reflect pipeline can later consume this to mine patterns.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
