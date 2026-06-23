@@ -18,6 +18,7 @@ import {
 } from "./store.js";
 import { DocTree } from "./tree.js";
 import { DocContent } from "./content.js";
+import { ActivityFeed } from "./activity.js";
 
 // deriveType maps a doc path suffix to the DocContent type. We don't thread the
 // type through the hash — the suffix is authoritative.
@@ -136,13 +137,19 @@ export function Explorer({ params }) {
   // props.
   return shell(html`
     <div class="workbench">
-      <${DocTree}
-        key=${activeProject + "@" + worktree}
-        project=${activeProject}
-        worktree=${worktree}
-        selected=${path}
-        onSelect=${(p) => onSelectDoc(p)}
-      />
+      <div class="sidebar-col">
+        <${DocTree}
+          key=${activeProject + "@" + worktree}
+          project=${activeProject}
+          worktree=${worktree}
+          selected=${path}
+          onSelect=${(p) => onSelectDoc(p)}
+        />
+        <${ActivityFeed}
+          project=${activeProject}
+          onSelectDoc=${(p) => onSelectDoc(p)}
+        />
+      </div>
       <${DocContent}
         project=${activeProject}
         path=${path}
