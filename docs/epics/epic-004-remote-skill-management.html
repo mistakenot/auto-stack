@@ -55,6 +55,41 @@ direction and the guard rails, then sequences the build.
         </pd-cli>
       </pd-section>
 
+      <pd-section id="customizing" title="Customizing a skill (template values)">
+        <md><script type="text/plain">
+A vendored skill declares what's customizable in its `customize:` frontmatter; your `skills.yaml` supplies the values — **literals** inlined verbatim and **file-refs** that pull a doc (or one heading section) into the rendered skill. Substitution is pure text, no code execution. Here: tailoring a shared `code-review` skill to one repo's focus and conventions.
+        </script></md>
+        <pd-cli id="C-customize" title="zsh — customize a shared code-review skill" caption="Literals + a file-ref, rendered deterministically">
+          <pd-cmd note="pull a shared skill that exposes customize vars" status="todo">auto skill add acme/agent-skills --skill code-review</pd-cmd>
+          <pd-out>✓ added code-review@a1b2c3d → targets</pd-out>
+          <pd-cmd note="see what it lets you customize" status="todo">auto skill describe code-review</pd-cmd>
+          <pd-out><script type="text/plain">customize: review_focus (required) · severity_threshold (default "p2") · conventions (file-ref)</script></pd-out>
+          <pd-cmd note="set per-project values in skills.yaml" status="todo">$EDITOR .auto/skills/skills.yaml</pd-cmd>
+          <pd-out><script type="text/plain">skills:
+  code-review:
+    replacements:
+      review_focus: "security and error handling"    # literal -> {{ .review_focus }}
+      severity_threshold: p1                           # literal -> {{ .severity_threshold }}
+      conventions:                                     # file-ref: inline one doc section
+        file: docs/conventions.md
+        section: "Code Review"</script></pd-out>
+          <pd-cmd note="render: substitutes the literals, inlines the doc section" status="todo">auto skill sync</pd-cmd>
+          <pd-out>✓ code-review re-rendered (skill_version changed)</pd-out>
+          <pd-cmd note="the rendered skill now carries your values + your repo's conventions" status="todo">auto skill get code-review</pd-cmd>
+          <pd-out><script type="text/plain">## Code review
+Focus: security and error handling. Flag issues at p1 or above.
+
+<your docs/conventions.md "Code Review" section — inlined verbatim, so drift is impossible by construction></script></pd-out>
+        </pd-cli>
+        <md><script type="text/plain">
+**Missing a required value fails loud.** `sync` never renders a skill with an unfilled required placeholder — a declared-`required` var with no value and no default is a hard error that names the var, the skill, and the fix, then exits non-zero. e.g.:
+
+`✗ code-review: required value 'review_focus' is not set → set skills.code-review.replacements.review_focus in .auto/skills/skills.yaml (run 'auto skill describe code-review' to list customizable vars)`
+
+`lint` enforces the same rule, so the gap is caught before sync (and in CI) rather than silently rendering an incomplete skill.
+        </script></md>
+      </pd-section>
+
       <pd-section id="setup-and-housekeeping" title="Setup &amp; housekeeping">
         <pd-cli id="C-setup" title="zsh — one-time project setup" caption="Interactive wizard, or defaults with -y">
           <pd-cmd note="wizard: targets, auto_update, version policy, commit-vs-gitignore" status="todo">auto skill init --project</pd-cmd>
@@ -205,13 +240,13 @@ The contracts a task may build behind but must not break:
 
         <pd-task id="T3" title="add: source parsing &amp; discovery" status="todo" depends-on="T2" deployable
                  href="../tasks/033-skill-add-discovery/plan.html"
-                 delivers="C-loop" honors="G-schema-strict,G-transport,G-cred-hygiene">
+                 delivers="C-loop,C-customize" honors="G-schema-strict,G-transport,G-cred-hygiene">
           <md><script type="text/plain">Normalize every source form (incl. deep links via longest-resolving-ref) → discover skills (roots, dedupe, divergence error) → write lock + `skills.yaml` stub. `--skill`/`--path`/`--list`/`--as`/`--version`/`--no-sync`. Local-source split (git repo vs import).</script></md>
         </pd-task>
 
         <pd-task id="T4" title="Native sync + render (replaces npx)" status="todo" depends-on="T3" deployable
                  href="../tasks/034-skill-native-sync-render/plan.html"
-                 delivers="C-loop" honors="G-determinism,G-no-exec,G-extract-safe,G-token-budget,G-reproducible,G-crash-consistent,G-offline-check,G-fast-sync">
+                 delivers="C-loop,C-customize" honors="G-determinism,G-no-exec,G-extract-safe,G-token-budget,G-reproducible,G-crash-consistent,G-offline-check,G-fast-sync">
           <md><script type="text/plain">The render core **and** the pipeline that drives it. Render: restricted `text/template` AST, `customize:` schema, file-refs (whole file + heading-section extraction), canonicalization, `content_hash`, full-tree `skill_version`, `render_version`. Pipeline: 3 phases (plan → parallel fetch → render) + `manifest.json`; journaled crash-consistent commit; incremental on-disk-digest skip; `--check`/`--locked`/`--target`/`--jobs`; `auto_update` modes + intent reconciliation; the `update [name]` verb. Deletes the npx shell-out; reclaims `auto skill update`.</script></md>
         </pd-task>
 
