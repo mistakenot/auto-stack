@@ -23,7 +23,7 @@ func TestInitProjectCreatesFilesAndIsIdempotent(t *testing.T) {
 		t.Fatalf("init --project failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 
-	projectSettings := filepath.Join(root, ".auto", "skill", "settings.json")
+	projectSettings := filepath.Join(root, ".auto", "skills", "settings.json")
 	skillsDir := filepath.Join(root, "skills")
 	assertExists(t, projectSettings)
 	assertExists(t, skillsDir)

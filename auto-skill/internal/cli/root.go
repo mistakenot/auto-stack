@@ -175,7 +175,7 @@ func newInitCmd(resolveEnv envResolver) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&project, "project", false, "initialize project-local skills/ and .auto/skill/settings.json")
+	cmd.Flags().BoolVar(&project, "project", false, "initialize project-local skills/ and .auto/skills/settings.json")
 	cmd.Flags().BoolVar(&textOutput, "text", false, "emit human-readable text output")
 	return cmd
 }
