@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/mistakenot/auto-shared/bus"
 )
@@ -15,7 +16,9 @@ import (
 // performed — this is a validate-and-ack endpoint.
 //
 // Only POST from loopback addresses is accepted; all other methods receive
-// 405 and non-loopback origins receive 403.
+// 405 and non-loopback origins receive 403. Requests with a browser Origin
+// header or non-JSON Content-Type are rejected to prevent CSRF via
+// CORS-safelisted simple requests.
 func HookIngest(hub *bus.Hub, ctlEvents bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -33,6 +36,16 @@ func HookIngest(hub *bus.Hub, ctlEvents bool) http.Handler {
 		}
 		if !isLoopback(host) {
 			writeIngestError(w, http.StatusForbidden, -32600, "non-loopback request rejected")
+			return
+		}
+
+		// Reject browser-origin requests (CSRF via CORS-safelisted POSTs).
+		if origin := r.Header.Get("Origin"); origin != "" {
+			writeIngestError(w, http.StatusForbidden, -32600, "cross-origin requests are not accepted")
+			return
+		}
+		if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+			writeIngestError(w, http.StatusUnsupportedMediaType, -32600, "Content-Type must be application/json")
 			return
 		}
 

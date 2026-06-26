@@ -52,6 +52,7 @@ func TestHookIngest_ValidFrame_204(t *testing.T) {
 
 	body := validNotificationBody(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/rpc", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "127.0.0.1:12345"
 	rec := httptest.NewRecorder()
 
@@ -67,6 +68,7 @@ func TestHookIngest_InvalidJSON_400(t *testing.T) {
 	handler := HookIngest(hub, false)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/rpc", strings.NewReader("{invalid"))
+	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "127.0.0.1:12345"
 	rec := httptest.NewRecorder()
 
@@ -105,6 +107,7 @@ func TestHookIngest_MissingJSONRPC_400(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/rpc", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "127.0.0.1:12345"
 	rec := httptest.NewRecorder()
 
@@ -138,6 +141,7 @@ func TestHookIngest_ValidationFailure_400(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/rpc", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "127.0.0.1:12345"
 	rec := httptest.NewRecorder()
 
@@ -181,6 +185,7 @@ func TestHookIngest_NonLoopback_403(t *testing.T) {
 
 	body := validNotificationBody(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/rpc", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "192.168.1.1:12345"
 	rec := httptest.NewRecorder()
 
@@ -197,6 +202,7 @@ func TestHookIngest_IPv6Loopback_204(t *testing.T) {
 
 	body := validNotificationBody(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/rpc", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "[::1]:12345"
 	rec := httptest.NewRecorder()
 
@@ -217,6 +223,7 @@ func TestHookIngest_CtlEventsTrue_EmitsEvent(t *testing.T) {
 
 	body := validNotificationBody(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/rpc", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "127.0.0.1:12345"
 	rec := httptest.NewRecorder()
 
@@ -252,6 +259,7 @@ func TestHookIngest_CtlEventsFalse_NoEvents(t *testing.T) {
 
 	body := validNotificationBody(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/rpc", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "127.0.0.1:12345"
 	rec := httptest.NewRecorder()
 
@@ -279,6 +287,7 @@ func TestHookIngest_BroadcastsEvent(t *testing.T) {
 
 	body := validNotificationBody(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/rpc", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	req.RemoteAddr = "127.0.0.1:12345"
 	rec := httptest.NewRecorder()
 
@@ -297,5 +306,56 @@ func TestHookIngest_BroadcastsEvent(t *testing.T) {
 	}
 	if !hasAgentEvent {
 		t.Error("expected broadcast of agent.tool.post event, got none")
+	}
+}
+
+func TestHookIngest_OriginHeader_403(t *testing.T) {
+	hub := bus.NewHub()
+	handler := HookIngest(hub, false)
+
+	body := validNotificationBody(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/rpc", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://evil.example.com")
+	req.RemoteAddr = "127.0.0.1:12345"
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestHookIngest_WrongContentType_415(t *testing.T) {
+	hub := bus.NewHub()
+	handler := HookIngest(hub, false)
+
+	body := validNotificationBody(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/rpc", strings.NewReader(body))
+	req.Header.Set("Content-Type", "text/plain")
+	req.RemoteAddr = "127.0.0.1:12345"
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusUnsupportedMediaType)
+	}
+}
+
+func TestHookIngest_NoContentType_415(t *testing.T) {
+	hub := bus.NewHub()
+	handler := HookIngest(hub, false)
+
+	body := validNotificationBody(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/rpc", strings.NewReader(body))
+	req.RemoteAddr = "127.0.0.1:12345"
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusUnsupportedMediaType)
 	}
 }
