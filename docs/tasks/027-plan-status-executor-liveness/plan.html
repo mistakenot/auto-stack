@@ -8,19 +8,18 @@
   {
     "id": "027",
     "name": "plan-status-executor-liveness",
-    "status": "planning",
+    "status": "complete",
     "branch": null,
     "epic": "002-planning-docs-dashboard",
     "created": "2026-06-18",
-    "pr": null
+    "pr": "https://github.com/mistakenot/auto-stack/pull/84"
   }
   </script>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.6.0/pd-components/dist/pd.min.js" defer></script>
 </head>
 <body>
-  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="027: plan-status-executor-liveness" status="executing" pr="pending" generated="2026-06-20">
+  <pd-doc title="027: plan-status-executor-liveness" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/84" generated="2026-06-20">
 
     <pd-tab name="Requirements">
       <pd-scope></pd-scope>
@@ -471,7 +470,7 @@ the only oracle for the client layer).
       </pd-section>
 
       <pd-stepper>
-        <pd-phase n="1" title="Server parser + dependency" files="auto-ui/internal/server/planmeta.go,auto-ui/internal/server/planmeta_test.go,auto-ui/go.mod,auto-ui/go.sum" status="todo">
+        <pd-phase n="1" title="Server parser + dependency" files="auto-ui/internal/server/planmeta.go,auto-ui/internal/server/planmeta_test.go,auto-ui/go.mod,auto-ui/go.sum" status="done">
           <md><script type="text/plain">
 1. Add `golang.org/x/net` to `auto-ui/go.mod` `require`; run `go mod tidy` in `auto-ui/` to populate
    `auto-ui/go.sum`. **Verify:** `cd auto-ui && go build ./...`. (No `go.work` edit — it pins nothing.)
@@ -487,7 +486,7 @@ the only oracle for the client layer).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="Wire into walkDocs + server tests" files="auto-ui/internal/server/docs.go,auto-ui/internal/server/docs_test.go,auto-ui/internal/server/rpc_ingest_test.go" status="todo" depends-on="1">
+        <pd-phase n="2" title="Wire into walkDocs + server tests" files="auto-ui/internal/server/docs.go,auto-ui/internal/server/docs_test.go,auto-ui/internal/server/rpc_ingest_test.go" status="done" depends-on="1">
           <md><script type="text/plain">
 1. `docs.go`: add `Meta *PlanMeta \`json:"meta,omitempty"\`` to `docEntry`.
 2. In `walkDocs`, for `.html` entries: `os.Open` + `io.LimitReader(f, maxMetaPrefixBytes)` →
@@ -504,7 +503,7 @@ the only oracle for the client layer).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Client store: onAny + liveness + repaint widen" files="auto-ui/web/static/rpc.js,auto-ui/web/static/store.js" status="todo">
+        <pd-phase n="3" title="Client store: onAny + liveness + repaint widen" files="auto-ui/web/static/rpc.js,auto-ui/web/static/store.js" status="done">
           <md><script type="text/plain">
 1. `rpc.js`: add `onAny(handler) → unsub` — an `anyHandlers` Set fanned in `onmessage` right after
    `recordEvent` (pass `{method, params}`); export it. Transport only.
@@ -528,7 +527,7 @@ the only oracle for the client layer).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="Tree rendering" files="auto-ui/web/static/tree.js,auto-ui/web/static/app.css" status="todo" depends-on="3">
+        <pd-phase n="4" title="Tree rendering" files="auto-ui/web/static/tree.js,auto-ui/web/static/app.css" status="done" depends-on="3">
           <md><script type="text/plain">
 1. `tree.js` `groupDocs`: carry `meta` onto each leaf object (`{id, path, type, meta}`).
 2. Thread the active `project` down from `DocTree` to `Leaf`. In `Leaf`, between the icon and label
@@ -543,7 +542,7 @@ the only oracle for the client layer).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="5" title="Backfill + conformance + docs" files="docs/tasks/021-auto-bus-standard/artifacts/auto-bus-standard.html,docs/tasks/022-hook-event-log/artifacts/hook-event-log.html,docs/tasks/027-plan-status-executor-liveness/artifacts/conformance.md,auto-ui/CLAUDE.md" status="todo" depends-on="2,4">
+        <pd-phase n="5" title="Backfill + conformance + docs" files="docs/tasks/021-auto-bus-standard/artifacts/auto-bus-standard.html,docs/tasks/022-hook-event-log/artifacts/hook-event-log.html,docs/tasks/027-plan-status-executor-liveness/artifacts/conformance.md,auto-ui/CLAUDE.md" status="done" depends-on="2,4">
           <md><script type="text/plain">
 1. Backfill: insert a `pd-meta` block into the `<head>` of the 021 and 022 artifact HTML plans
    (`status: "merged"`, `id`/`name`/`created` from the task, accurate `pr`, `epic: null`); preserve

@@ -54,12 +54,14 @@ make build && ./bin/auto ui serve
     single write pump, a 1s server-push `ping` notification, and a client-callable `ping` RPC
 - `web/` — build-tag split asset delivery (`embed_prod.go` embeds, `embed_dev.go` reads from disk)
 - `web/static/` — no-build Preact+htm SPA (index.html, app.js, router.js)
-  - `rpc.js` — singleton JSON-RPC 2.0 client over WebSocket (`call`/`on`/`onStatus`); derives
+  - `rpc.js` — singleton JSON-RPC 2.0 client over WebSocket (`call`/`on`/`onAny`/`onStatus`); derives
     `wss://` vs `ws://` from the page origin so it works behind `tailscale serve` (HTTPS).
     Also exports `whenOpen()` (await before any mount-time `call()` so a cold load doesn't reject
     "not connected"), `connInfo()`/`reconnectCount()`, and `recordError(source, err)` /
     `recentErrors()` (an always-on bounded error ring fed by `call()` rejects, `window.onerror`,
-    `unhandledrejection`, and explicit view-level records)
+    `unhandledrejection`, and explicit view-level records).
+    `onAny(handler)` subscribes to ALL server-push notifications (any method) — used by the store
+    for executor liveness tracking
   - `vendor/pico.min.css` — vendored Pico CSS v2 (embedded; offline-capable)
 
 ## The planning-docs explorer (default view)
@@ -76,10 +78,13 @@ The explorer is composed from four `web/static/` modules:
   `data-testid="no-projects"` empty-state (not an error). All view state lives in the hash
   (`#/explore?project=…&path=…&worktree=…`). Hosts a small `ConnIndicator`
   (`data-testid="conn-indicator"`, `data-conn-status`).
-- `tree.js` — the nav tree. `call("doc.list", {project, worktree})` → groups the flat
-  `[{path, type}]` **client-side** by path prefix (Tasks → `NNN-slug`; Epics; Research; Reference;
-  Experiments; Spikes; root docs). Each leaf carries `data-testid="doc-node"`, `data-doc-path`,
-  `data-doc-type`; the `nav` root carries `data-doc-count`.
+- `tree.js` — the nav tree. Reads docs via `useStore(selectDocs(...))` → groups the flat
+  `[{path, type, meta?}]` **client-side** by path prefix (Tasks → `NNN-slug`; Epics; Research;
+  Reference; Experiments; Spikes; root docs). Each leaf carries `data-testid="doc-node"`,
+  `data-doc-path`, `data-doc-type`. HTML plans with `pd-meta` also carry `data-plan-status`,
+  `data-review-state`, and `data-liveness` (active/idle) attributes. A spinner renders for
+  `executing` plans; a review-state pill renders when `reviewState` is set. Liveness reads from
+  `selectLiveness(state, project, branch)` in the store. The `nav` root carries `data-doc-count`.
 - `content.js` — the type-aware pane (this **replaces the retired `doc.js`**, which is gone). It
   renders **by type**: markdown via `call("doc.get")` + `marked`/`dompurify` inline; HTML via an
   `<iframe src="/api/doc/raw?…&v=<nonce>" data-testid="doc-iframe">` (never through `doc.get`) plus
@@ -93,23 +98,40 @@ The explorer is composed from four `web/static/` modules:
   content write to it; `/debug` reads it (the explorer components are unmounted on `#/debug`, so the
   DOM can't be read cross-route). It is **not** a reactive store.
 
-## Live updates (task 026)
+## Live updates (tasks 026, 027, 029)
 
 The explorer refreshes itself when an agent edits a planning doc — no polling, no file watcher. The
 only signal is the existing bus `doc.changed` notification: agent edit → hook → `agent.tool.post` →
-`/api/rpc` ingest → `bus.DeriveDocChanged` → a `doc.changed` on the WS. Two views subscribe:
+`/api/rpc` ingest → `bus.DeriveDocChanged` → a `doc.changed` on the WS.
 
-- `content.js` — a `doc.changed` matching the **open** doc's `{project, path}` (and `worktree` when
-  present) auto-applies the refresh action: markdown re-runs `doc.get` + re-renders
-  (`data-revision++`), HTML bumps the iframe `v=<nonce>` (cache-busted reload, no `doc.get`). A
-  non-matching event is a no-op.
-- `tree.js` — a `doc.changed` for the **active project** carrying a path the tree does **not** yet
-  know (a newly created doc) triggers exactly one `doc.list` re-list + regroup, so the new node
-  appears (`data-doc-count` grows). Known-path edits need no re-list (content.js handles those).
-  Expansion state survives the reconcile because `Collapsible` is keyed by stable group name.
+Post-029, **all bus subscriptions live in `store.js`** (grep gate: `on("` only in `store.js`;
+`onAny(` only in `rpc.js` + `store.js`). Views are presentational and read state via
+`useStore`/selectors.
 
+- `store.js` `on("doc.changed", ...)` — handles two cases:
+  - **New doc path** under the active project: forces a `doc.list` re-list so the node appears.
+  - **Known `.html` path**: also forces a re-list to pick up `pd-meta` changes (e.g.
+    `planning` → `executing`). This is the AC-4 repaint path added by task 027.
+  - Matching the open doc: triggers `refreshOpenDoc()` (markdown re-fetch or iframe nonce bump).
+- `store.js` `onAny(...)` — **executor liveness** (task 027): subscribes to ALL notifications and
+  records `(project, branch) → timestamp` for non-main/master branches in the `liveness` state
+  slice. A 1s `setInterval` tick drives the `"Ns ago"` / `"Nm ago"` display.
 - `docevents.js` — the **single source of truth** for reading the notification:
-  `parseDocChanged(ev)` + `matchesDoc(ev, target)`, imported by both views.
+  `parseDocChanged(ev)` + `matchesDoc(ev, target)`, imported by the store.
+
+## Plan metadata and liveness (task 027)
+
+`doc.list` entries for HTML plans with a `<script type="application/json" id="pd-meta">` block
+carry an optional `meta` field (`PlanMeta` struct server-side, parsed by `ExtractPlanMeta` in
+`docs.go`). Fields: `id`, `name`, `status` (planning/executing/merged), `branch`, `epic`,
+`created`, `pr`, `reviewState` (from `<pd-doc status="...">`). Markdown and non-pd HTML entries
+omit `meta` (`omitempty`).
+
+The store's `liveness` slice (`{ byKey: {(project\0branch): timestamp}, now: ms }`) tracks
+executor activity. `selectLiveness(state, project, branch)` returns `{ ageMs, active }` or `null`
+(null for missing/main/master branches). The active window defaults to 120s; overridable in debug
+via `?liveWindowMs=N`. Tree leaves read liveness via `useStore((s) => selectLiveness(s, project,
+meta?.branch))`.
 
 **THE GOTCHA:** the changed path is at **`ev.data.path`** (== `params.data.path` on the wire), NOT
 top-level `ev.path`. `Event.AsNotification` (`auto-shared/bus/event.go`) puts the whole event
@@ -133,6 +155,7 @@ silently regress.
   The route is always reachable; only the pre-mount event backfill depends on `?debug=1`.
 
 Acceptance for the explorer is browser-driven (frontend-only) — see
-`docs/tasks/025-planning-dashboard-explorer/artifacts/conformance.md` (static explorer) and
-`docs/tasks/026-planning-dashboard-live-updates/artifacts/conformance.md` (liveness), each with its
-own `evidence/`.
+`docs/tasks/025-planning-dashboard-explorer/artifacts/conformance.md` (static explorer),
+`docs/tasks/026-planning-dashboard-live-updates/artifacts/conformance.md` (doc liveness), and
+`docs/tasks/027-plan-status-executor-liveness/artifacts/conformance.md` (plan status + executor
+liveness), each with its own `evidence/` where applicable.

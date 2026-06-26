@@ -24,6 +24,9 @@ func setupDocsFixture(t *testing.T) string {
 	dirs := []string{
 		filepath.Join(root, "docs"),
 		filepath.Join(root, "docs", "tasks"),
+		filepath.Join(root, "docs", "tasks", "042-test"),
+		filepath.Join(root, "docs", "tasks", "041-done"),
+		filepath.Join(root, "docs", "tasks", "040-bad"),
 		filepath.Join(root, "src"),
 	}
 	for _, d := range dirs {
@@ -39,6 +42,15 @@ func setupDocsFixture(t *testing.T) string {
 		filepath.Join(root, "docs", "tasks", "notes.txt"): "not a markdown file",
 		filepath.Join(root, "src", "main.go"):             "package main",
 		filepath.Join(root, ".env"):                       "SECRET=hunter2",
+
+		// HTML plan with full pd-meta + pd-doc status
+		filepath.Join(root, "docs", "tasks", "042-test", "plan.html"): `<!doctype html><html><head><script type="application/json" id="pd-meta">{"id":"042","name":"test-task","status":"executing","branch":"task/042-test","epic":"002","created":"2026-06-20","pr":"pending"}</script></head><body><pd-doc title="042" status="approved"></pd-doc></body></html>`,
+
+		// HTML plan that is merged
+		filepath.Join(root, "docs", "tasks", "041-done", "plan.html"): `<!doctype html><html><head><script type="application/json" id="pd-meta">{"id":"041","name":"done-task","status":"merged","branch":null,"epic":null,"created":"2026-06-15","pr":"https://github.com/test/1"}</script></head><body><pd-doc title="041" status="complete"></pd-doc></body></html>`,
+
+		// HTML with malformed pd-meta JSON (pd-doc should still parse)
+		filepath.Join(root, "docs", "tasks", "040-bad", "plan.html"): `<!doctype html><html><head><script type="application/json" id="pd-meta">{broken json</script></head><body><pd-doc title="040" status="draft"></pd-doc></body></html>`,
 	}
 	for path, content := range files {
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -115,13 +127,21 @@ func TestDocListHappy(t *testing.T) {
 		t.Fatalf("doc.list result not an array: %T %v", resp["result"], resp["result"])
 	}
 
-	// Should have exactly 3 doc files: docs/readme.md, docs/tasks/plan.md (markdown),
-	// and docs/tasks/page.html (html). notes.txt is excluded.
-	if len(result) != 3 {
-		t.Fatalf("doc.list returned %d entries, want 3: %v", len(result), result)
+	// Should have 6 doc files:
+	//   docs/readme.md, docs/tasks/plan.md (markdown),
+	//   docs/tasks/page.html (html, no pd-meta),
+	//   docs/tasks/042-test/plan.html, docs/tasks/041-done/plan.html,
+	//   docs/tasks/040-bad/plan.html
+	// notes.txt is excluded.
+	if len(result) != 6 {
+		t.Fatalf("doc.list returned %d entries, want 6: %v", len(result), result)
 	}
 
-	types := map[string]string{}
+	type entryInfo struct {
+		Type string
+		Meta map[string]any
+	}
+	entries := map[string]entryInfo{}
 	for _, entry := range result {
 		e, ok := entry.(map[string]any)
 		if !ok {
@@ -129,17 +149,70 @@ func TestDocListHappy(t *testing.T) {
 		}
 		p, _ := e["path"].(string)
 		ty, _ := e["type"].(string)
-		types[p] = ty
+		meta, _ := e["meta"].(map[string]any)
+		entries[p] = entryInfo{Type: ty, Meta: meta}
 	}
 
-	if types["docs/readme.md"] != "markdown" {
-		t.Errorf("docs/readme.md type = %q, want markdown (entries: %v)", types["docs/readme.md"], types)
+	if entries["docs/readme.md"].Type != "markdown" {
+		t.Errorf("docs/readme.md type = %q, want markdown", entries["docs/readme.md"].Type)
 	}
-	if types["docs/tasks/plan.md"] != "markdown" {
-		t.Errorf("docs/tasks/plan.md type = %q, want markdown (entries: %v)", types["docs/tasks/plan.md"], types)
+	if entries["docs/tasks/plan.md"].Type != "markdown" {
+		t.Errorf("docs/tasks/plan.md type = %q, want markdown", entries["docs/tasks/plan.md"].Type)
 	}
-	if types["docs/tasks/page.html"] != "html" {
-		t.Errorf("docs/tasks/page.html type = %q, want html (entries: %v)", types["docs/tasks/page.html"], types)
+	if entries["docs/tasks/page.html"].Type != "html" {
+		t.Errorf("docs/tasks/page.html type = %q, want html", entries["docs/tasks/page.html"].Type)
+	}
+
+	// Markdown entries must NOT have meta.
+	if entries["docs/readme.md"].Meta != nil {
+		t.Errorf("docs/readme.md should have no meta, got %v", entries["docs/readme.md"].Meta)
+	}
+	if entries["docs/tasks/plan.md"].Meta != nil {
+		t.Errorf("docs/tasks/plan.md should have no meta, got %v", entries["docs/tasks/plan.md"].Meta)
+	}
+
+	// Plain HTML without pd-meta should have no meta (nil → omitted in JSON).
+	if entries["docs/tasks/page.html"].Meta != nil {
+		t.Errorf("docs/tasks/page.html should have no meta, got %v", entries["docs/tasks/page.html"].Meta)
+	}
+
+	// 042-test: full pd-meta with status "executing" and pd-doc status "approved"
+	e042 := entries["docs/tasks/042-test/plan.html"]
+	if e042.Meta == nil {
+		t.Fatal("docs/tasks/042-test/plan.html meta is nil, expected populated meta")
+	}
+	if e042.Meta["status"] != "executing" {
+		t.Errorf("042-test meta.status = %v, want executing", e042.Meta["status"])
+	}
+	if e042.Meta["branch"] != "task/042-test" {
+		t.Errorf("042-test meta.branch = %v, want task/042-test", e042.Meta["branch"])
+	}
+	if e042.Meta["reviewState"] != "approved" {
+		t.Errorf("042-test meta.reviewState = %v, want approved", e042.Meta["reviewState"])
+	}
+
+	// 041-done: merged status with pd-doc status "complete"
+	e041 := entries["docs/tasks/041-done/plan.html"]
+	if e041.Meta == nil {
+		t.Fatal("docs/tasks/041-done/plan.html meta is nil, expected populated meta")
+	}
+	if e041.Meta["status"] != "merged" {
+		t.Errorf("041-done meta.status = %v, want merged", e041.Meta["status"])
+	}
+	if e041.Meta["reviewState"] != "complete" {
+		t.Errorf("041-done meta.reviewState = %v, want complete", e041.Meta["reviewState"])
+	}
+
+	// 040-bad: malformed pd-meta JSON, but pd-doc status "draft" should still parse
+	e040 := entries["docs/tasks/040-bad/plan.html"]
+	if e040.Type != "html" {
+		t.Errorf("040-bad entry missing or wrong type: %v", e040)
+	}
+	if e040.Meta == nil {
+		t.Fatal("docs/tasks/040-bad/plan.html meta is nil, expected reviewState from pd-doc")
+	}
+	if e040.Meta["reviewState"] != "draft" {
+		t.Errorf("040-bad meta.reviewState = %v, want draft", e040.Meta["reviewState"])
 	}
 }
 
