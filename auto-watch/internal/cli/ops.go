@@ -2,8 +2,11 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -11,11 +14,17 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mistakenot/auto-shared/bus"
+	sharedconfig "github.com/mistakenot/auto-shared/config"
+	"github.com/mistakenot/auto-shared/transport"
+	"github.com/mistakenot/auto-shared/version"
 	"github.com/mistakenot/auto-watch/internal/app"
 	"github.com/mistakenot/auto-watch/internal/config"
 	"github.com/mistakenot/auto-watch/internal/daemon"
 	"github.com/mistakenot/auto-watch/internal/doctor"
 	"github.com/mistakenot/auto-watch/internal/model"
+	"github.com/mistakenot/auto-watch/internal/rpcmethods"
+	"github.com/mistakenot/auto-watch/internal/rpcserver"
 	"github.com/mistakenot/auto-watch/internal/store"
 	"github.com/mistakenot/auto-watch/internal/textout"
 	"github.com/mistakenot/auto-watch/internal/timeparse"
@@ -24,6 +33,10 @@ import (
 
 func newStartCmd(application *app.App) *cobra.Command {
 	var once bool
+	var rpcAddr string
+	var readyFile string
+	var hookAddr string
+	var ctlEvents bool
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the autowatch daemon",
@@ -61,12 +74,11 @@ func newStartCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: errors.New("doctor checks failed")}
 			}
 
-			if err := writePIDMetadata(); err != nil {
-				return &ExitError{Code: 1, Err: err}
-			}
-
 			service := daemon.New(db, application.Backend, cmd.OutOrStdout(), application.Now)
 			if once {
+				if err := writePIDMetadata(); err != nil {
+					return &ExitError{Code: 1, Err: err}
+				}
 				if err := service.Tick(cmd.Context()); err != nil {
 					return &ExitError{Code: 1, Err: err}
 				}
@@ -78,20 +90,111 @@ func newStartCmd(application *app.App) *cobra.Command {
 				return nil
 			}
 
+			// Compute default RPC address if not provided.
+			if rpcAddr == "" {
+				watchDir, wdErr := config.WatchDir()
+				if wdErr != nil {
+					return &ExitError{Code: 1, Err: wdErr}
+				}
+				rpcAddr = "unix://" + filepath.Join(watchDir, "rpc.sock")
+			}
+
+			// Build the bus hub and RPC handlers.
+			startedAt := time.Now()
+			hub := bus.NewHub()
+			hostID := sharedconfig.HostIDQuietly()
+			handlers := rpcmethods.New(hostID, version.Version, startedAt, hub, ctlEvents)
+
+			// Bind both listeners before entering the run loop (fail fast).
+			rpcLn, lnErr := transport.Listen(rpcAddr)
+			if lnErr != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("bind RPC listener: %w", lnErr)}
+			}
+			defer func() { _ = rpcLn.Close() }()
+
+			hookLn, hlErr := net.Listen("tcp", hookAddr)
+			if hlErr != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("bind hook listener: %w", hlErr)}
+			}
+			defer func() { _ = hookLn.Close() }()
+
+			// Emit ctl.health if control-plane events are enabled.
+			if ctlEvents {
+				ev, evErr := bus.NewEvent(bus.TypeCtlHealth, "auto/watch/daemon", nil)
+				if evErr == nil {
+					hub.Broadcast(ev)
+				}
+			}
+
+			// Write ready-file with resolved listener addresses.
+			if readyFile != "" {
+				readyData := map[string]string{
+					"addr":     rpcLn.Addr().String(),
+					"hookAddr": hookLn.Addr().String(),
+				}
+				readyJSON, rjErr := json.Marshal(readyData)
+				if rjErr != nil {
+					return &ExitError{Code: 1, Err: rjErr}
+				}
+				readyJSON = append(readyJSON, '\n')
+				if wfErr := os.WriteFile(readyFile, readyJSON, 0o644); wfErr != nil {
+					return &ExitError{Code: 1, Err: wfErr}
+				}
+			}
+
+			// Persist PID metadata with resolved listener addresses.
+			if err := writePIDMetadataWithAddrs(rpcLn.Addr().String(), hookLn.Addr().String()); err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+
+			errCh := make(chan error, 3)
+
+			// Run initial tick.
 			if err := service.Tick(ctx); err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
+
+			// RPC server goroutine.
+			rpcSrv := rpcserver.New(rpcLn, handlers, hub, ctlEvents)
+			go func() { errCh <- rpcSrv.Serve(ctx) }()
+
+			// HTTP hook-ingest server goroutine.
+			hookSrv := &http.Server{
+				Handler:           rpcserver.HookIngest(hub, ctlEvents),
+				ReadHeaderTimeout: 10 * time.Second,
+			}
+			go func() {
+				sErr := hookSrv.Serve(hookLn)
+				if sErr == http.ErrServerClosed {
+					errCh <- nil
+				} else {
+					errCh <- sErr
+				}
+			}()
+
+			// Tick loop.
 			ticker := time.NewTicker(60 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-ctx.Done():
+					shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					_ = hookSrv.Shutdown(shutdownCtx)
+					cancel()
 					return nil
+				case lErr := <-errCh:
+					if lErr != nil {
+						shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+						_ = hookSrv.Shutdown(shutdownCtx)
+						cancel()
+						return &ExitError{Code: 1, Err: lErr}
+					}
 				case <-ticker.C:
-					if err := service.Tick(ctx); err != nil {
-						return &ExitError{Code: 1, Err: err}
+					if tErr := service.Tick(ctx); tErr != nil {
+						return &ExitError{Code: 1, Err: tErr}
 					}
 				}
 			}
@@ -99,6 +202,10 @@ func newStartCmd(application *app.App) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&once, "once", false, "run one daemon tick then exit")
 	_ = cmd.Flags().MarkHidden("once")
+	cmd.Flags().StringVar(&rpcAddr, "rpc-addr", "", "RPC listener address (unix:///path or tcp://host:port; default unix socket in watch dir)")
+	cmd.Flags().StringVar(&readyFile, "ready-file", "", "write {\"addr\":...,\"hookAddr\":...} to this file when listeners are bound")
+	cmd.Flags().StringVar(&hookAddr, "hook-addr", "127.0.0.1:7787", "HTTP hook-ingest listener address")
+	cmd.Flags().BoolVar(&ctlEvents, "ctl-events", false, "emit ctl.* control-plane events to the bus")
 	return cmd
 }
 
@@ -394,6 +501,27 @@ func writePIDMetadata() error {
 		"startedAt": time.Now().UTC().Format(time.RFC3339Nano),
 		"hostId":    hostname,
 		"hostPath":  filepath.Join(autoDir, "host.json"),
+	}
+	return textout.WriteJSONFile(pidPath, payload)
+}
+
+func writePIDMetadataWithAddrs(rpcAddr, hookAddr string) error {
+	pidPath, err := config.PIDPath()
+	if err != nil {
+		return err
+	}
+	autoDir, err := config.AutoDir()
+	if err != nil {
+		return err
+	}
+	hostname, _ := os.Hostname()
+	payload := map[string]any{
+		"pid":       os.Getpid(),
+		"startedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		"hostId":    hostname,
+		"hostPath":  filepath.Join(autoDir, "host.json"),
+		"rpcAddr":   rpcAddr,
+		"hookAddr":  hookAddr,
 	}
 	return textout.WriteJSONFile(pidPath, payload)
 }

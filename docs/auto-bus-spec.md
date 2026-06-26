@@ -11,7 +11,7 @@ title: "Auto Bus Specification"
 **Version:** 1.0
 **Status:** Implemented (v1)
 
-AC-1 coverage: Envelope | Framing | Bindings | Contract | Type registry | watch.task.* mapping
+AC-1 coverage: Envelope | Framing | Bindings | Contract | Type registry | ctl.* events | watch.task.* mapping
 
 ---
 
@@ -287,7 +287,44 @@ Derived by the hub, not published directly by producers.
 }
 ```
 
-### 6.3 `watch.*` -- auto-watch daemon events (future adopter)
+### 6.3 `ctl.*` -- control-plane events
+
+Control-plane events provide daemon-level observability: structured logging, connection lifecycle, and health. They are **gated behind `--ctl-events`** and off by default, so they add no noise in normal operation. The data/control split is: `ctl.*` events are infrastructure-level logs from the daemon process itself; `watch.task.*` events are data-plane domain events about watched tasks.
+
+Delivery follows the same at-most-once contract as all bus events (section 5).
+
+| Type | Description | Data payload |
+|------|-------------|-------------|
+| `ctl.log.info` | Informational daemon log entry | `CtlLogEvent` |
+| `ctl.log.warn` | Warning-level daemon log entry | `CtlLogEvent` |
+| `ctl.log.error` | Error-level daemon log entry | `CtlLogEvent` |
+| `ctl.connect` | A client connected to the daemon | *(envelope only)* |
+| `ctl.disconnect` | A client disconnected from the daemon | *(envelope only)* |
+| `ctl.health` | Periodic daemon health heartbeat | *(envelope only)* |
+
+**Source:** `auto/watch/daemon`
+
+**CtlLogEvent data payload:**
+
+```json
+{
+  "level": "info",
+  "op": "rpc.served",
+  "message": "served request",
+  "fields": {"method": "daemon.status"}
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `level` | string | yes | One of `info`, `warn`, `error`. Matches the dotted type suffix. |
+| `op` | string | yes | The operation that produced this log (e.g. `rpc.served`, `slow.client`). |
+| `message` | string | yes | Human-readable log message. |
+| `fields` | map[string]string | no | Optional structured key-value pairs for machine-readable context. |
+
+**Constructor:** `NewCtlLog(level, op, msg, fields)` maps the level to the appropriate `ctl.log.*` type constant and returns a validated `Event`. Unknown levels return an error.
+
+### 6.4 `watch.*` -- auto-watch daemon events (future adopter)
 
 The auto-watch daemon is the named second adopter of the bus standard. Currently, auto-watch stores its events in SQLite via `store.EventInput`. This section maps those events onto the bus envelope as a paper exercise to validate the envelope design. **Implementation is out of scope for v1.**
 
@@ -304,9 +341,9 @@ The auto-watch daemon is the named second adopter of the bus standard. Currently
 | `watch.system.warning` | `system_warning` | Non-fatal system-level warning |
 | `watch.config.warning` | `config_warning` | Configuration-level warning |
 
-See section 6.4 for the detailed `watch.task.*` envelope mapping.
+See section 6.5 for the detailed `watch.task.*` envelope mapping.
 
-### 6.4 Paper mapping: `watch.task.*` onto the bus envelope
+### 6.5 Paper mapping: `watch.task.*` onto the bus envelope
 
 This mapping demonstrates that the bus envelope accommodates auto-watch's domain without modification.
 
@@ -569,4 +606,24 @@ type DocChanged struct {
 
 // DecodeData unmarshals ev.Data into T.
 func DecodeData[T any](ev Event) (T, error)
+
+// Control-plane event types (gated behind --ctl-events, off by default).
+const (
+    TypeCtlLogInfo    = "ctl.log.info"
+    TypeCtlLogWarn    = "ctl.log.warn"
+    TypeCtlLogError   = "ctl.log.error"
+    TypeCtlConnect    = "ctl.connect"
+    TypeCtlDisconnect = "ctl.disconnect"
+    TypeCtlHealth     = "ctl.health"
+)
+
+// CtlLogEvent is the data payload for ctl.log.* events.
+type CtlLogEvent struct {
+    Level   string            `json:"level"`
+    Op      string            `json:"op"`
+    Message string            `json:"message"`
+    Fields  map[string]string `json:"fields,omitempty"`
+}
+
+func NewCtlLog(level, op, msg string, fields map[string]string) (Event, error)
 ```

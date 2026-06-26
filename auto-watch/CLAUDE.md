@@ -6,7 +6,13 @@ See [docs/requirements.md](docs/requirements.md) for full requirements, config s
 
 ## Build & Test
 
-TODO: add build/test instructions once scaffolded.
+```bash
+cd auto-watch
+go build ./...
+go test -race ./...
+```
+
+The `rpcserver` conformance tests include a binary-tier fixture that builds `./cmd/autowatch` via `TestMain`. This requires the `go` toolchain and takes a few seconds on the first run.
 
 <!-- autodoc: start -->
 ## Documentation Index
