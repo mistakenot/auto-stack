@@ -18,7 +18,7 @@
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="039: autowatch-task-rpcs" status="draft" generated="2026-06-26">
+  <pd-doc title="039: autowatch-task-rpcs" status="pending" generated="2026-06-26">
 
     <pd-tab name="Requirements">
 
@@ -70,6 +70,331 @@ The remaining questions are **design, not requirements scope** — they are defe
 - [ ] **Concurrency model for `task.*` handlers.** Because `rpc.Peer` runs each request in `go handleRequest`, two `task.dispatch` calls (or a `task.dispatch` + `task.cancel` on the same run) can execute simultaneously. What is the minimal correct guarding — a `Service`-level mutex around the dispatch/cancel primitive, per-run locking, or reliance on SQLite constraints — and which operations must be serialized? (→ resolved in /beta-new-solution)
 - [ ] **What `task.output` returns.** Does `task.output` return the **live tmux pane capture** (via the backend, only meaningful while the session exists) or the **stored output file** at the run's `OutputPath` (the `output.log` written by the launch script, available during and after the run)? Should it support tailing / a max-lines or byte cap (cf. `tailOutput`), and what does it return for a `pending` run that has no output path yet? (→ resolved in /beta-new-solution)
 - [ ] **`task.dispatch` request shape.** What does the caller supply — `(projectId, taskId)` resolved against the project registry's configured tasks, or an inline ad-hoc task definition? Is a `triggerId`/`resourceKey` required (the existing `ReserveRunInput` carries trigger/resource fields and `startWorker` reads `run.TriggerID`/`run.TriggerType`/`run.ResourceKey` to build the prompt), and what synthetic values are used for an RPC-initiated (non-trigger) dispatch? (→ resolved in /beta-new-solution)
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Go unit + integration tests run with **`-race`** (the GR-N7 API-first layer); the RPC surface is exercised directly over `net.Pipe` (reusing 031's `rpcmethods` test harness) — no browser. The concurrency tests are the load-bearing ones for this task.
+
+- **`auto-shared/bus`** — table-driven tests for the new `watch.*` type constants + `WatchTaskData` payload (every type matches `dottedType`, `NewWatchTask`/`Validate` round-trip, payload `DecodeData`, provenance fields populated from the run). Mirrors 031's `ctl_test.go`.
+- **`auto-watch/internal/daemon`** — the dispatch/reap/cancel primitive is tested at the `Service` layer with a **fake `runner.Backend`** (records `Start`/`Kill`, lets the test write the `exit-code` file to simulate completion) over a **temp `store.Open` DB** and a temp `RunsDir`:
+  - `Dispatch` reserves + starts a run identical to the tick path (same `RunRecord` columns, same `ScheduledRunName` session); duplicate `(project,task,resource)` while active returns `store.ErrActiveRunExists`.
+  - `Reap` transitions an RPC-dispatched run exactly as a tick-dispatched one (parity).
+  - **Concurrency under `-race`** (AC-6): launch N (~50) concurrent `Dispatch` goroutines for distinct tasks **plus** a concurrent `Tick`/`Reap`, then a second wave with a colliding resource_key; assert (a) no `-race` failure, (b) the unique index admits exactly one active run per resource_key, (c) after exit files are written and one `Reap` runs, **each run is reaped exactly once** (each reaches a terminal state once), and (d) a subscribed `bus.Sink` counts **exactly one** `watch.task.started` and **exactly one** terminal `watch.task.completed`/`failed` per run — proving no double-reap and no cancel/reap double-transition.
+- **`auto-watch/internal/rpcmethods`** — over `net.Pipe` (client = `conformance.PeerClient`, like 031): `task.dispatch` returns `{runId,state}` and produces a real run via a fake backend; an unknown `projectId`/`taskId` → `InvalidParams`; an active duplicate → a domain JSON-RPC error. `task.status` returns the run record; `task.list` returns all runs (and a state-filtered subset); `task.output` returns the stored `output.log` content with tail/byte caps and `truncated`, and an empty body + state for a `pending` run; `task.cancel` kills the session (fake backend records it) and transitions the run terminal, idempotent on an already-terminal run. Concurrent `task.dispatch` calls over one peer (`go handleRequest`) don't race (`-race`).
+- **watch.task.* emission (AC-5)** — a `bus.Sink` subscribed to the daemon hub sees `watch.task.started` from the dispatch path and `watch.task.completed`/`failed` from the reap/cancel path, with §6.5 provenance; assert they fire **regardless of `--ctl-events`** (data-plane, always-on) and that the existing `store.InsertEvent` `task_started`/`task_completed`/`task_failed` rows are **still written in addition** (query the events table).
+- **Layering gate (AC-7)** — extend 031's recursive `go list` check: `rpcmethods` still never imports `auto-shared/transport` (the new `daemon`/`store`/`runner` imports don't pull it); `git diff --quiet` on both `go.mod`s (GR-N1).
+- **Regression** — `cd auto-shared && go build ./... && go test -race ./...`; `cd auto-watch && go build ./... && go test -race ./...`; `cd auto-ui && go build ./... && go vet ./... && go test ./...` stay green.
+
+Harness rule carried from 029/030/031: **a poll-to-settle is not an assertion** — assert the actual RPC result, the run row, the subscribed-sink event, or a counter delta.
+        </script></md>
+      </pd-section>
+
+      <pd-ac id="AC-1" title="task.dispatch reserves + starts a run via the shared primitive (GR-F2 parity)" phases="2,4" tests="auto-watch/internal/daemon/dispatch_test.go,auto-watch/internal/rpcmethods/task_test.go">
+        <md><script type="text/plain">
+**Given** the daemon's exported `(*Service).Dispatch` (the extracted `ReserveRun → startWorker` primitive) wired into the `task.dispatch` handler,
+**When** a client calls `task.dispatch{projectId, taskId}` against a registry with that task configured,
+**Then** a run is inserted (`pending`) and started directly (`UpdateRunStarted → running`, `runner.Backend.Start` called once with `SessionName = ScheduledRunName(runID, taskID)`), the handler returns `{runId, state}`, the tick loop is **not** signalled, and the resulting `RunRecord` is column-for-column equivalent to one produced by `evaluateTrigger` (same project/task/type/session/runtime fields) — GR-F2 parity, verified by dispatching the same task through both paths and diffing the records.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="task.dispatch dedups active runs via the unique index" phases="2,4" tests="auto-watch/internal/rpcmethods/task_test.go,auto-watch/internal/daemon/dispatch_test.go">
+        <md><script type="text/plain">
+**Given** a synthetic RPC dispatch identity (`triggerType="rpc"`, `triggerId="rpc"`, `resourceKey="rpc:"+taskId`),
+**When** a second `task.dispatch` for the same `(projectId, taskId)` is issued while the first run is still `pending`/`running`,
+**Then** `store.ReserveRun` returns `store.ErrActiveRunExists` (the partial unique index `uniq_runs_active` fires) and the handler maps it to a stable domain JSON-RPC error (not a generic internal error); an unknown `projectId`/`taskId` returns `InvalidParams`. Dedup parity with the cron path's `task_skipped_dedup` behaviour.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-3" title="task.cancel kills the session and marks the run terminal exactly once" phases="2,4" tests="auto-watch/internal/rpcmethods/task_test.go,auto-watch/internal/daemon/cancel_test.go">
+        <md><script type="text/plain">
+**Given** a `running` RPC- or tick-dispatched run,
+**When** `task.cancel{runId}` is called,
+**Then** under the lifecycle mutex the handler re-reads state, calls `runner.Backend.Kill` for the run's `Handle`, `MarkRunTerminal(RunFailed, …, "cancelled via task.cancel")`, removes the worktree if present, and emits **one** `watch.task.failed` (+ one `task_failed` SQLite row); a `pending` run is failed without a kill; an already-terminal run is a no-op returning its current state (idempotent). Because the transition is mutex-guarded and the run is no longer `running`, the next `Reap` skips it — **no double terminal transition / double event**.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-4" title="task.status / task.list / task.output read the store and stored output" phases="4" tests="auto-watch/internal/rpcmethods/task_test.go">
+        <md><script type="text/plain">
+**Given** runs in the store,
+**When** the read methods are called,
+**Then** `task.status{runId}` returns the run's `RunRecord` view (state, exitCode, session, worktree, timestamps); `task.list{state?}` returns runs as IDs + metadata via `ListRunsByStates` (all runs when no `state` filter, a filtered subset otherwise); `task.output{runId, tailLines?, maxBytes?}` returns the contents of the run's stored `OutputPath` (`output.log`) with a default line/byte cap, a `truncated` flag when capped, and an **empty body + state** for a `pending` run that has no output path yet. No live tmux capture is used.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="watch.task.* emit onto the shared hub, data-plane always-on, in addition to SQLite rows" phases="1,2" tests="auto-shared/bus/watch_test.go,auto-watch/internal/daemon/watch_emit_test.go">
+        <md><script type="text/plain">
+**Given** the daemon `Service` owning the in-process `bus.Hub` (passed via `daemon.New`) with a test `bus.Sink` subscribed,
+**When** a run is dispatched then reaped (and separately, cancelled),
+**Then** the shared lifecycle emits `watch.task.started` from the dispatch/`startWorker` path and `watch.task.completed` (exit 0) / `watch.task.failed` (non-zero / stale-pending / cancel) from the reap/cancel path, each carrying §6.5 envelope provenance (`source="auto/watch/daemon"`, top-level `project`/`branch`/`worktree`, `data.{task_id,run_id,trigger_id,session_name,resource_key,exit_code,message}`); the events fire **whether or not `--ctl-events` is set** (data-plane, never gated); and the existing `store.InsertEvent` `task_started`/`task_completed`/`task_failed` rows are **still written in addition** (the SQLite log remains the durable record). Cron-triggered runs emit the same `watch.task.*` (shared primitive ⇒ parity). The hub→connected-peer relay remains Task 6 (asserted in-process via the sink only).
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="Concurrent RPC dispatch + in-flight Tick is race-free with exactly-once reap" phases="3" tests="auto-watch/internal/daemon/concurrency_test.go">
+        <md><script type="text/plain">
+**Given** the `Service`-level dispatch/lifecycle mutex,
+**When** ~50 `task.dispatch` goroutines (distinct tasks) run concurrently with a `Tick`/`Reap` in flight, followed by a wave of colliding-`resourceKey` dispatches, and then exit files are written and one `Reap` runs,
+**Then** the test passes under **`go test -race`** with no data race; the unique index admits **exactly one** active run per `resourceKey` (the rest get `ErrActiveRunExists`); **each run reaches a terminal state exactly once** (no double-reap); and a subscribed `bus.Sink` records **exactly one** `watch.task.started` and **exactly one** terminal event per run. This proves the shared-mutex + single-reaper design holds when RPC dispatch races the tick loop.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-7" title="GR-N3 layering + GR-N1 zero-deps + build/test gates hold" phases="4,5" tests="auto-watch/internal/rpcmethods/layering_test.go">
+        <md><script type="text/plain">
+**Given** the new `task.*` handlers (which now import `daemon`/`store`/`runner`),
+**When** the recursive layering check runs (`go list -json`, extending 031's gate),
+**Then** `rpcmethods` imports `auto-shared/rpc`/`bus`/`daemon`/`store`/`runner` but **still NOT `auto-shared/transport`** (none of the new imports pull it); neither `auto-watch/go.mod` nor `auto-shared/go.mod` gains a `require` (`git diff --quiet`); and `go build ./... && go test -race ./...` pass in `auto-shared` and `auto-watch` with the `auto-ui` regression green.
+        </script></md>
+      </pd-ac>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Reuse the daemon's existing dispatch and reap machinery rather than re-implementing it in the RPC layer — that is the only way to get GR-F2 parity and to keep a single source of truth for the run lifecycle. The work is: (1) extract the dispatch primitive onto `Service` and guard it; (2) make the shared lifecycle the producer of `watch.task.*`; (3) add the five `task.*` handlers in `rpcmethods` that call the `Service`.
+
+**1. `auto-shared/bus` — `watch.*` vocabulary.** New `watch.go` (sibling of `ctl.go`): exported dotted constants `TypeWatchTaskStarted="watch.task.started"`, `…Completed`, `…Failed`; a `WatchTaskData` payload (`TaskID, RunID int64, TriggerID, SessionName, ResourceKey, Message string; ExitCode *int`); and `NewWatchTask(typ string, p RunProvenance, data WatchTaskData) (Event, error)` that builds via `NewEvent(typ, "auto/watch/daemon", data)` then sets the top-level provenance fields (`Project`, `Branch`, `Worktree`) from a small `RunProvenance` struct (so `bus` need not import `auto-watch/model`). Registers the live producer for the bus spec's §6.4/§6.5 paper mapping.
+
+**2. `auto-watch/internal/daemon` — export + guard the dispatch primitive; centralise lifecycle events (D-39-1, D-39-2, D-39-3, D-39-4).**
+- Add `dispatchMu sync.Mutex` to `Service`. Extract the inline `ReserveRun → log task_reserved → startWorker` sequence used by both trigger evaluators into an exported `(*Service).Dispatch(ctx, *store.ReserveRunInput, model.TaskDef) (runID int64, err error)`, which takes `dispatchMu` for the whole reserve+start critical section and returns `store.ErrActiveRunExists` unchanged for the caller to interpret. `evaluateTrigger`/`evaluateFileCreatedTrigger` are refactored to call `Dispatch` (keeping their `task_skipped_dedup` handling on the `ErrActiveRunExists` return). `task.dispatch` calls the **same** `Dispatch`.
+- `startWorker` emits `watch.task.started` (in addition to the existing `task_started` row) on success — so **every** run, cron or RPC, produces it.
+- `Service` gains the `*bus.Hub` (added to `daemon.New`; tolerates `nil` for the `--once`/secondary paths). `Reap` and the new `Cancel` take the same mutex around each per-run terminal transition, emitting `watch.task.completed`/`failed` next to the existing `task_completed`/`task_failed` rows. A shared helper `emitWatchTask(run, typ, exitCode, msg)` keeps the envelope consistent.
+- New `(*Service).Cancel(ctx, runID) (model.RunState, error)`: under the mutex, `GetRun`; if terminal → no-op; if `running` → `Backend.Kill(Handle{...})` + `MarkRunTerminal(RunFailed, nil, now, "cancelled via task.cancel")` + worktree cleanup + emit `watch.task.failed`; if `pending` → fail without a kill.
+
+**3. `auto-watch/internal/rpcmethods` — the five `task.*` handlers (D-39-5, D-39-6).** `Handlers` gains a `svc *daemon.Service` field (passed to `New`); `Register` adds `task.dispatch`/`task.cancel`/`task.status`/`task.output`/`task.list`, each wrapped by the existing `counted` decorator.
+- `task.dispatch{projectId, taskId}`: load the global config (`config.ProjectsPath`/`LoadGlobalConfig`), resolve the project + its configured `TaskDef` (unknown → `InvalidParams`), build a `ReserveRunInput` with the **synthetic RPC identity** (`TriggerType="rpc"`, `TriggerID="rpc"`, `ResourceKey="rpc:"+taskId`, `ProjectPath` from the registration, `StartedAt=now`), call `svc.Dispatch`, map `ErrActiveRunExists` to a domain error, return `{runId, state}`.
+- `task.cancel{runId}` → `svc.Cancel`. `task.status{runId}` → `svc.Store.GetRun` projected to a `RunView`. `task.list{state?}` → `svc.Store.ListRunsByStates` (all states when unset). `task.output{runId, tailLines?, maxBytes?}` → read `run.OutputPath` from disk with a default cap (reusing the `tailOutput` approach), returning `{runId, output, truncated, path}`; empty for a `pending` run.
+- The package imports `daemon`/`store`/`runner`/`config` but **not `transport`** (none of these pull it) — GR-N3 holds.
+
+**4. `auto watch start` wiring (`ops.go`).** `daemon.New(...)` now also takes `hub` (so the `Service` can emit `watch.task.*`); `rpcmethods.New(...)` now also takes the `*Service`. No new flags, no new listener — the 031 listener already serves whatever `Handlers.Register` binds. The tick cadence, flock singleton, and shutdown path are untouched.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="api-outline" title="API outline (end state)">
+
+        <pd-api kind="package" name="auto-shared/bus (watch.go)" lang="go" path="auto-shared/bus/watch.go">
+          <pd-member kind="const" sig="TypeWatchTaskStarted=&quot;watch.task.started&quot;, TypeWatchTaskCompleted=&quot;watch.task.completed&quot;, TypeWatchTaskFailed=&quot;watch.task.failed&quot;">All dotted (pass dottedType).</pd-member>
+          <pd-member kind="struct" sig="type WatchTaskData struct { TaskID string; RunID int64; TriggerID, SessionName, ResourceKey, Message string; ExitCode *int }">Data-plane task lifecycle payload (§6.5).</pd-member>
+          <pd-member kind="struct" sig="type RunProvenance struct { Project, Branch, Worktree, Remote, Commit string }">Envelope provenance carried from the run; keeps bus free of auto-watch/model.</pd-member>
+          <pd-member kind="func" sig="func NewWatchTask(typ string, p RunProvenance, d WatchTaskData) (Event, error)">NewEvent(typ, &quot;auto/watch/daemon&quot;, d) then sets top-level provenance.</pd-member>
+        </pd-api>
+
+        <pd-api kind="struct" name="daemon.Service (dispatch + lifecycle)" lang="go" path="auto-watch/internal/daemon/daemon.go">
+          <pd-member kind="field" sig="dispatchMu sync.Mutex; hub *bus.Hub">Serialises reserve+start and terminal transitions; hub for watch.task.* (nil-tolerant).</pd-member>
+          <pd-member kind="constructor" sig="func New(db *store.Store, backend runner.Backend, out io.Writer, now func() time.Time, hub *bus.Hub) *Service">Hub added (was 4 args).</pd-member>
+          <pd-member kind="method" sig="func (s *Service) Dispatch(ctx, in *store.ReserveRunInput, task model.TaskDef) (int64, error)">Exported primitive: locks, ReserveRun (returns ErrActiveRunExists), logs task_reserved, startWorker. Reused by tick + RPC.</pd-member>
+          <pd-member kind="method" sig="func (s *Service) Cancel(ctx, runID int64) (model.RunState, error)">Locks, kills session, marks terminal once, emits watch.task.failed; idempotent on terminal.</pd-member>
+        </pd-api>
+
+        <pd-api kind="struct" name="rpcmethods.Handlers (task.*)" lang="go" path="auto-watch/internal/rpcmethods/methods.go">
+          <pd-member kind="constructor" sig="func New(svc *daemon.Service, hostID, version string, startedAt time.Time, hub *bus.Hub, ctlEvents bool) *Handlers">svc added; still no transport import.</pd-member>
+          <pd-member kind="method" sig="Register: task.dispatch, task.cancel, task.status, task.output, task.list">Each wrapped by the existing counted() decorator.</pd-member>
+          <pd-member kind="type" sig="type DispatchParams struct { ProjectID, TaskID string }; type DispatchResult struct { RunID int64; State string }">task.dispatch I/O.</pd-member>
+          <pd-member kind="type" sig="type OutputParams struct { RunID int64; TailLines, MaxBytes int }; type OutputResult struct { RunID int64; Output string; Truncated bool; Path string }">task.output reads stored OutputPath.</pd-member>
+        </pd-api>
+
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-shared/bus/watch.go" change="add">watch.task.* type constants + WatchTaskData/RunProvenance payload + NewWatchTask builder.</pd-file>
+          <pd-file path="auto-shared/bus/watch_test.go" change="add">AC-5: dotted-regex validity, NewWatchTask/Validate round-trip, payload + provenance marshal.</pd-file>
+          <pd-file path="docs/auto-bus-spec.md" change="edit">Promote §6.4/§6.5 from "future adopter / paper mapping" to a live producer (autowatch task RPCs emit watch.task.started/completed/failed; data-plane always-on).</pd-file>
+          <pd-file path="auto-watch/internal/daemon/daemon.go" change="edit">Add dispatchMu + hub; extract exported Dispatch; add Cancel; emit watch.task.* from startWorker + Reap (+ stale-pending) under the mutex; refactor evaluateTrigger/evaluateFileCreatedTrigger to call Dispatch.</pd-file>
+          <pd-file path="auto-watch/internal/daemon/dispatch_test.go" change="add">AC-1/AC-2: Dispatch parity vs tick path; dedup via ErrActiveRunExists; fake backend + temp store.</pd-file>
+          <pd-file path="auto-watch/internal/daemon/cancel_test.go" change="add">AC-3: Cancel kills + terminal once; idempotent; pending vs running.</pd-file>
+          <pd-file path="auto-watch/internal/daemon/watch_emit_test.go" change="add">AC-5: watch.task.* emitted with §6.5 provenance, always-on, in addition to SQLite rows.</pd-file>
+          <pd-file path="auto-watch/internal/daemon/concurrency_test.go" change="add">AC-6: ~50 concurrent Dispatch + in-flight Tick/Reap under -race; exactly-once reap + events; dedup holds.</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/methods.go" change="edit">Add svc field to Handlers/New; register + implement task.dispatch/cancel/status/output/list; param/result types.</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/task_test.go" change="add">AC-1..AC-4: method I/O over net.Pipe with a fake backend + temp store; concurrent dispatch under -race.</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/layering_test.go" change="edit">AC-7: extend the recursive gate — rpcmethods still ↛ transport with the new daemon/store/runner imports.</pd-file>
+          <pd-file path="auto-watch/internal/cli/ops.go" change="edit">Pass hub into daemon.New; pass *Service into rpcmethods.New. No new flags/listeners.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-decision id="D-39-1" title="Extract one exported Service.Dispatch reused by both the tick loop and task.dispatch" status="accepted" by="author"
+        summary="The ReserveRun-then-startWorker sequence becomes an exported (*Service).Dispatch; trigger evaluators and the RPC handler both call it, so RPC dispatch is the same primitive by construction.">
+        <md><script type="text/plain">
+**Context:** GR-F2 requires `task.dispatch` to produce the same SQLite record, tmux session, and reap lifecycle as the tick-driven flow. Today that flow is inline in `evaluateTrigger`/`evaluateFileCreatedTrigger` (`ReserveRun` → log `task_reserved` → `startWorker`), and `startWorker` is unexported.
+
+**Decision:** Extract the sequence into an exported `(*Service).Dispatch(ctx, *store.ReserveRunInput, model.TaskDef)`. Both trigger evaluators are refactored to call it; `task.dispatch` calls the identical method. Parity is structural, not asserted by duplication.
+
+**Alternatives:** Re-implement reserve+start inside `rpcmethods` — guarantees drift from the tick path and re-creates worktree/launch-script logic; rejected. Export `startWorker` alone and let callers also call `ReserveRun` — leaves the two-step critical section ungrouped, so the mutex boundary and dedup handling get duplicated.
+
+**Consequences:** `rpcmethods` imports `daemon` (which does not import `transport`, so GR-N3 holds). The trigger evaluators change, so their existing tests must stay green (regression surface).
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-39-2" title="Guard dispatch with a Service mutex; rely on ErrActiveRunExists only for logical dedup" status="accepted" by="author"
+        summary="A Service-level sync.Mutex serialises the reserve+start critical section; the partial unique index handles same-resource dedup. The mutex is load-bearing; the constraint alone is insufficient.">
+        <md><script type="text/plain">
+**Context:** `rpc.Peer` dispatches every request in its own goroutine (`go handleRequest`, peer.go:181), so two `task.dispatch` calls — and the tick loop — can enter the dispatch path concurrently. `startWorker` mutates `Service.workerWG`, creates git worktrees, writes the launch script, and starts tmux; none of that is safe to interleave.
+
+**Decision:** Add `dispatchMu sync.Mutex` to `Service`; `Dispatch` (and the tick loop, via `Dispatch`) hold it across reserve+start. The partial unique index `uniq_runs_active(project_id, task_id, resource_key)` remains the **logical dedup** mechanism (returns `ErrActiveRunExists`). The two are complementary: the mutex provides memory-safety + serialised side-effects, the index provides duplicate-suppression.
+
+**Alternatives:** **Sole reliance on `ErrActiveRunExists`** — rejected: the unique index only suppresses duplicates with the *same* `(project,task,resource)`; two dispatches with *distinct* resource_keys still race on shared `Service` state (`workerWG`, hub) and run unserialised git worktree creation, which `go test -race` flags. SQLite constraints are not a substitute for an in-process memory barrier. Per-run locking — more complex than needed; dispatch volume is low (occasional RPC + a 60s tick), so coarse serialisation is acceptable.
+
+**Consequences:** Dispatches serialise (incl. across RPC + tick); acceptable given low volume and fast `Backend.Start`. Worktree creation (~hundreds of ms for `claude` tasks) is serialised — a throughput ceiling, not a correctness issue.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-39-3" title="One shared reaper (the tick loop) owns terminal transitions; no self-reaping waiter" status="accepted" by="author"
+        summary="RPC-dispatched runs are reaped by the same Service.Reap that already sweeps all running runs; terminal watch.task.* events are emitted from the reap (and cancel) path, never from the dispatch handler. Exactly one reaper means no double-reap.">
+        <md><script type="text/plain">
+**Context:** The epic says RPC-dispatched runs "handle their own lifecycle", but `Reap` (daemon.go:139) already lists **all** `running` runs irrespective of origin and transitions them off their exit-code file. Two reapers (a per-dispatch waiter + the tick `Reap`) would race to transition the same run and double-emit terminal events.
+
+**Decision:** Keep a **single reaper** — the existing tick-loop `Reap`. RPC-dispatched runs are reaped by it identically to tick-dispatched runs (GR-F2 reap parity). Terminal `watch.task.completed`/`failed` are emitted **from the reap path** (where the terminal transition + `task_completed`/`task_failed` rows already happen), not from the handler. `task.cancel` is the one out-of-band terminal transition; it shares the `Service` mutex and only transitions if the run is still non-terminal, so `Reap` (which lists only `running`) cannot also transition it. "Exactly one terminal transition (and one terminal event) per run" is the invariant, verified under `-race` in AC-6.
+
+**Alternatives:** A per-dispatch self-reaping goroutine — gives sub-second terminal events but introduces a second reaper that races the tick `Reap`; it would need the same mutex + non-terminal re-check, yielding no real benefit over the shared reaper for v1. Rejected.
+
+**Consequences:** Terminal `watch.task.*` for a normally-finishing run can lag up to one tick (~60s), because the requirements forbid changing the reap cadence. `task.cancel` provides an immediate terminal transition when a caller needs one. Faster automatic reaping (a dedicated reap ticker) is a deliberate future enhancement — **flagged for user sign-off**.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-39-4" title="watch.task.* are produced by the shared Service lifecycle, onto the daemon bus.Hub, always-on" status="accepted" by="author"
+        summary="The Service (not the RPC handler) emits watch.task.started from startWorker and watch.task.completed/failed from Reap/Cancel, onto the 031 hub, ungated by --ctl-events, in addition to the SQLite rows.">
+        <md><script type="text/plain">
+**Context:** Per the resolved Requirements question and the epic event-planes thread, `watch.task.*` are **data-plane** events that broadcast onto the same in-process `bus.Hub` introduced in 031, always-on (not gated by `--ctl-events`), in **addition** to the existing `store.InsertEvent` rows.
+
+**Decision:** The `Service` owns the hub (added to `daemon.New`) and emits from the shared lifecycle: `watch.task.started` in `startWorker`, `watch.task.completed`/`failed` in `Reap` (and the stale-pending sweep) and `Cancel`. Because emission lives in the shared primitive, **cron-triggered runs emit the same events** — consistent with the bus spec's §6.4/§6.5 mapping. Verified in-process via a subscribed `bus.Sink`; the hub→connected-peer relay (`bus.subscribe`) stays Task 6.
+
+**Alternatives:** Emit from the `rpcmethods` handler — only RPC-dispatched runs would get events, and terminal events have no handler to fire from (they happen in `Reap`); rejected. Replace the SQLite rows with bus events — loses the durable record; rejected (events are additive).
+
+**Consequences:** `auto-shared/bus` gains a `watch.go` namespace; `daemon.New` grows a `hub` param (nil-tolerant for the `--once`/secondary paths).
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-39-5" title="task.output returns the stored OutputPath (output.log), not a live tmux capture" status="accepted" by="author"
+        summary="Read the run's persisted output.log with tail/byte caps; works during and after the run and is backend-agnostic.">
+        <md><script type="text/plain">
+**Context:** A run's output is teed to `<runDir>/output.log` (`OutputPath`) by the launch script and persists after the tmux session ends.
+
+**Decision:** `task.output{runId, tailLines?, maxBytes?}` reads `run.OutputPath` with a default cap (reusing the `tailOutput` approach), returning `{runId, output, truncated, path}`; a `pending` run with no `OutputPath` returns an empty body + state.
+
+**Alternatives:** Live `tmux capture-pane` via the backend — only works while the session is alive, is racy against teardown, is tmux-specific (breaks the `runner.Backend` abstraction), and loses output after completion. Rejected.
+
+**Consequences:** Output is as fresh as the launch script's `tee` flush; "follow/stream" is out of scope (a future streaming method over the bus).
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-39-6" title="task.dispatch takes projectId+taskId resolved against the registry, with a synthetic RPC trigger identity" status="accepted" by="author"
+        summary="Dispatch only configured tasks (projectId+taskId), not inline definitions; synthesise triggerType=rpc and resourceKey=rpc:taskId so the unique index dedups repeat RPC dispatches of the same task.">
+        <md><script type="text/plain">
+**Context:** `ReserveRunInput`/`startWorker` need trigger + resource identity (the prompt builder reads `TriggerType`/`TriggerID`/`ResourceKey`), but an RPC dispatch has no cron/file trigger.
+
+**Decision:** The request is `{projectId, taskId}`, resolved against the registry's configured `TaskDef` (unknown → `InvalidParams`). Synthesise `TriggerType="rpc"`, `TriggerID="rpc"`, `ResourceKey="rpc:"+taskId`, `ProjectPath` from the registration. The stable `resourceKey` means a second dispatch of the same task while one is active hits `uniq_runs_active` → `ErrActiveRunExists` (dedup parity with cron's `cron:<triggerId>`).
+
+**Alternatives:** Inline ad-hoc task definition (command/prompt in the request) — turns RPC into arbitrary remote code execution outside the reviewed registry; rejected (could be a future explicit, separately-scoped method). A unique-per-call `resourceKey` (uuid/timestamp) — would allow unbounded concurrent dispatches of one task and lose the dedup safety; rejected for v1.
+
+**Consequences:** Only configured tasks are RPC-dispatchable. Re-dispatching an active task returns a clear domain error rather than spawning a duplicate.
+        </script></md>
+      </pd-decision>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Re-implement reserve+start in `rpcmethods`** — guarantees lifecycle drift from the tick path; breaks GR-F2. Use the shared `Service.Dispatch` (D-39-1).
+- **Sole reliance on the SQLite unique index for concurrency safety** — suppresses logical duplicates but not the in-process data race on shared `Service` state or unserialised git worktree creation; `-race` fails. Mutex required (D-39-2).
+- **Per-dispatch self-reaping waiter goroutine** — a second reaper racing the tick `Reap`; double-transition / double-event risk with no benefit over the single shared reaper (D-39-3).
+- **Live tmux `capture-pane` for `task.output`** — backend-specific, racy, lost after completion (D-39-5).
+- **Inline ad-hoc task definitions over RPC** — remote arbitrary execution outside the reviewed registry (D-39-6).
+- **Gating `watch.task.*` behind `--ctl-events`** — they are data-plane, not control-plane; always-on (D-39-4).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions">
+        <pd-decisions></pd-decisions>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Five phases. First ship the `watch.*` bus vocabulary (P1, independent), then the load-bearing daemon change — extract the exported `Service.Dispatch`, add the `dispatchMu sync.Mutex` across reserve+start (shared by `task.dispatch` AND the tick loop), add `Cancel`, and emit `watch.task.*` from the shared lifecycle (P2). P3 is a dedicated `-race` concurrency phase proving no double-reap and no race against an in-flight `Tick`. P4 adds the five `task.*` RPC handlers in `rpcmethods` (+ the GR-N3 layering gate). P5 wires the hub/Service through `auto watch start` and runs the full gates. Each phase commits code + tests together with `go build ./...` + `go test -race ./...` green in the affected module(s).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution sequence">
+        <pd-mermaid caption="Phase DAG — P1 is independent; P3 and P4 both fan out from P2">
+flowchart LR
+    P1["P1\nwatch.* bus vocabulary\n(auto-shared/bus)"]
+    P2["P2\nService.Dispatch + mutex\n+ Cancel + watch.task.* emit"]
+    P3["P3\n-race concurrency:\nno double-reap"]
+    P4["P4\ntask.* RPC handlers\n(rpcmethods) + layering"]
+    P5["P5\nwire start + full gates"]
+
+    P1 --> P2
+    P2 --> P3
+    P2 --> P4
+    P3 --> P5
+    P4 --> P5
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="watch.* bus vocabulary + spec" status="todo"
+          files="auto-shared/bus/watch.go,auto-shared/bus/watch_test.go,docs/auto-bus-spec.md">
+          <md><script type="text/plain">
+1. `watch.go` — exported dotted constants `TypeWatchTaskStarted="watch.task.started"`, `TypeWatchTaskCompleted`, `TypeWatchTaskFailed`; `WatchTaskData{TaskID,RunID,TriggerID,SessionName,ResourceKey,Message,ExitCode}` payload; `RunProvenance{Project,Branch,Worktree,Remote,Commit}`; `NewWatchTask(typ, p, d) (Event, error)` = `NewEvent(typ,"auto/watch/daemon",d)` then set top-level provenance. **Verify:** `go build ./...` in `auto-shared`.
+2. `watch_test.go` — each type matches `dottedType`; `NewWatchTask` → `Validate()` passes and carries `Host`; `WatchTaskData` round-trips via `DecodeData`; provenance fields populate from `RunProvenance` (AC-5 bus part). **Verify:** `go test -race ./bus/`.
+3. `docs/auto-bus-spec.md` — promote §6.4/§6.5 from "future adopter / paper mapping" to a **live producer**: autowatch task RPCs emit `watch.task.started/completed/failed`, data-plane always-on (not gated by `--ctl-events`), in addition to the SQLite event rows. **Verify:** spec lists the three live `watch.task.*` types.
+4. **Commit:** `feat(039): watch.task.* bus vocabulary + live-producer spec`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Service.Dispatch + mutex + Cancel + watch.task.* emission" status="todo" depends-on="1"
+          files="auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/dispatch_test.go,auto-watch/internal/daemon/cancel_test.go,auto-watch/internal/daemon/watch_emit_test.go">
+          <md><script type="text/plain">
+1. `daemon.go` — add `dispatchMu sync.Mutex` + `hub *bus.Hub` to `Service`; grow `New(...)` to take `hub` (nil-tolerant). Extract the inline `ReserveRun → log task_reserved → startWorker` into exported `(*Service).Dispatch(ctx, *store.ReserveRunInput, model.TaskDef) (int64, error)` holding `dispatchMu` across the whole reserve+start critical section and returning `store.ErrActiveRunExists` unchanged; refactor `evaluateTrigger`/`evaluateFileCreatedTrigger` to call `Dispatch` (keeping their `task_skipped_dedup` handling). Emit `watch.task.started` from `startWorker` success. Add `(*Service).Cancel(ctx, runID) (model.RunState, error)`: under `dispatchMu`, `GetRun`; terminal→no-op; `running`→`Backend.Kill`+`MarkRunTerminal(RunFailed,…,"cancelled via task.cancel")`+worktree cleanup+emit `watch.task.failed`; `pending`→fail without kill. Wrap the terminal transitions in `Reap` (incl. the stale-pending sweep) with `dispatchMu` and emit `watch.task.completed`/`failed` next to the existing rows via a shared `emitWatchTask` helper — **the single shared reaper owns normal terminal events** (accepted ~60s lag; cancel is the immediate path). **Verify:** `go build ./...` in `auto-watch`.
+2. `dispatch_test.go` — fake `runner.Backend` + temp `store.Open` + temp `RunsDir`: `Dispatch` produces a `RunRecord` column-for-column equal to `evaluateTrigger`'s (same session via `ScheduledRunName`); a duplicate `(project,task,resource)` while active returns `ErrActiveRunExists` (AC-1, AC-2 Service part). **Verify:** `go test -race ./internal/daemon/ -run Dispatch`.
+3. `cancel_test.go` — `Cancel` on a `running` run kills the session (fake records it) and marks terminal **once** + one `watch.task.failed`; `pending` fails without kill; already-terminal is a no-op; a subsequent `Reap` does not re-transition it (AC-3). **Verify:** `go test -race ./internal/daemon/ -run Cancel`.
+4. `watch_emit_test.go` — subscribed `bus.Sink`: dispatch→`watch.task.started`; write exit file + `Reap`→`watch.task.completed`/`failed` with §6.5 provenance; assert events fire with `hub` set **regardless of `--ctl-events`** and that the `task_started`/`task_completed`/`task_failed` SQLite rows are **still written in addition** (query events table) (AC-5 emission part). **Verify:** `go test -race ./internal/daemon/ -run WatchEmit`.
+5. **Commit:** `feat(039): exported Service.Dispatch + mutex + Cancel + watch.task.* lifecycle events`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Race-free concurrent dispatch vs in-flight Tick (no double-reap)" status="todo" depends-on="2"
+          files="auto-watch/internal/daemon/concurrency_test.go">
+          <md><script type="text/plain">
+1. `concurrency_test.go` — fake backend + temp store: launch ~50 `Dispatch` goroutines for distinct tasks **concurrently with** a `Tick`/`Reap` in flight, then a wave of colliding-`resourceKey` dispatches; write exit files; run one `Reap`. Assert under **`go test -race`**: (a) no data race; (b) the `uniq_runs_active` index admits exactly one active run per `resourceKey` (the rest get `ErrActiveRunExists`); (c) **each run reaches a terminal state exactly once** (no double-reap); (d) a subscribed `bus.Sink` records **exactly one** `watch.task.started` and **exactly one** terminal event per run (AC-6). **Verify:** `go test -race ./internal/daemon/ -run Concurrency` (and the full `./internal/daemon/` package under `-race`).
+2. **Commit:** `test(039): -race concurrency proof — single-mutex dispatch, single-reaper, exactly-once`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="task.* RPC handlers + GR-N3 layering" status="todo" depends-on="2"
+          files="auto-watch/internal/rpcmethods/methods.go,auto-watch/internal/rpcmethods/task_test.go,auto-watch/internal/rpcmethods/layering_test.go">
+          <md><script type="text/plain">
+1. `methods.go` — add `svc *daemon.Service` to `Handlers`/`New`; `Register` binds `task.dispatch`/`task.cancel`/`task.status`/`task.output`/`task.list` (each via the existing `counted` decorator). `task.dispatch{projectId,taskId}`: resolve the configured `TaskDef` via `config.ProjectsPath`/`LoadGlobalConfig` (unknown→`InvalidParams`), build `ReserveRunInput` with synthetic identity (`TriggerType="rpc"`, `TriggerID="rpc"`, `ResourceKey="rpc:"+taskId`, `ProjectPath` from registration), call `svc.Dispatch`, map `ErrActiveRunExists`→stable domain error, return `{runId,state}`. `task.cancel`→`svc.Cancel`; `task.status`→`svc.Store.GetRun` view; `task.list{state?}`→`svc.Store.ListRunsByStates` (all when unset); `task.output{runId,tailLines?,maxBytes?}`→read `run.OutputPath` with default cap + `truncated`, empty for `pending`. Imports `daemon`/`store`/`runner`/`config`, **not `transport`**. **Verify:** `go build ./...`.
+2. `task_test.go` — over `net.Pipe` (client `conformance.PeerClient`) + fake backend + temp store: `task.dispatch` returns `{runId,state}` and creates a run; unknown project/task→`InvalidParams`; active duplicate→domain error (AC-1, AC-2 handler part); `task.status`/`task.list` (all + state-filtered)/`task.output` (tail/byte cap, `truncated`, empty for pending) shapes (AC-4); `task.cancel` kills + transitions, idempotent (AC-3 handler part); concurrent `task.dispatch` over one peer is race-free under `-race`. **Verify:** `go test -race ./internal/rpcmethods/`.
+3. `layering_test.go` — extend 031's recursive `go list -json` gate: `rpcmethods` imports `rpc`/`bus`/`daemon`/`store`/`runner` but **still not `auto-shared/transport`**; assert `auto-watch/go.mod` gains no `require` (AC-7 layering part). **Verify:** `go test ./internal/rpcmethods/ -run Layering`.
+4. **Commit:** `feat(039): task.dispatch/cancel/status/output/list RPC handlers`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="5" title="Wire hub + Service into auto watch start; full gates" status="todo" depends-on="3,4"
+          files="auto-watch/internal/cli/ops.go">
+          <md><script type="text/plain">
+1. `ops.go` — pass `hub` into `daemon.New(...)` (so the `Service` emits `watch.task.*`) and the `*daemon.Service` into `rpcmethods.New(...)`. No new flags, no new listener — the 031 listener serves whatever `Handlers.Register` binds; tick cadence, flock singleton, and shutdown path untouched. Update the `--once` and secondary `daemon.New` call sites to pass a `nil`/no-op hub. **Verify:** `go build ./...` in `auto-watch`; existing `ops_test.go` stays green.
+2. **Full gates (AC-7):** `cd auto-shared && go build ./... && go test -race ./...`; `cd auto-watch && go build ./... && go test -race ./...`; `cd auto-ui && go build ./... && go vet ./... && go test ./...`; `git diff --quiet -- auto-shared/go.mod auto-watch/go.mod` (GR-N1). **Commit:** `feat(039): serve task.* RPCs from auto watch start`.
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success criteria">
+        <md><script type="text/plain">
+- **AC-5** (bus vocab) after P1; **AC-1/AC-2/AC-3** Service-layer + **AC-5** emission after P2; **AC-6** (`-race`, no double-reap) after P3; **AC-1/AC-2/AC-3** handler-layer + **AC-4** + **AC-7** layering after P4; **AC-7** build/dep gates after P5.
+- `task.dispatch` reuses the **exported `Service.Dispatch`** (same primitive as the tick loop) under the shared `dispatchMu`; the tick loop is never signalled (GR-F2 parity).
+- A single shared reaper owns normal terminal transitions; `watch.task.*` are emitted from the lifecycle onto the 031 `bus.Hub`, data-plane always-on, in addition to the SQLite rows; `-race` proves no double-reap and no race against an in-flight `Tick`.
+- `go build ./... && go test -race ./...` green in `auto-shared` and `auto-watch`; `auto-ui` regression green; both `go.mod`s unchanged (GR-N1); `rpcmethods` never imports `transport` (GR-N3, machine-checked).
         </script></md>
       </pd-section>
 

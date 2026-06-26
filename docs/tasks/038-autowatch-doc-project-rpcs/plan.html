@@ -18,7 +18,7 @@
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="038: autowatch-doc-project-rpcs" status="draft" pr="pending" generated="2026-06-26">
+  <pd-doc title="038: autowatch-doc-project-rpcs" status="pending" pr="pending" generated="2026-06-26">
 
     <pd-tab name="Requirements">
 
@@ -70,6 +70,421 @@ This is the doc/project half of the autowatch RPC surface; the task half (`task.
 - [ ] **`doc.raw` content-type handling.** auto-ui's `/api/doc/raw` only ever serves `.html` and hard-codes `Content-Type: text/html; charset=utf-8`. Should the `doc.raw` RPC likewise restrict to `.html` and hard-code the content type (strict parity), or generalize to return a detected/declared content type for arbitrary doc bytes? And what is the exact response envelope (e.g. `{path, contentType, bytes/base64}` vs. a status-bearing shape) that lets the Task 7 proxy reconstruct 200/400/404 faithfully? (→ resolved in /beta-new-solution)
 - [ ] **Should the `doc.get` (markdown) vs. `doc.raw` (HTML) split be preserved verbatim?** auto-ui deliberately refuses HTML from `doc.get` (`cleanDocPath(p, ".md")`) and serves it only via the raw route, because the SPA renders self-contained planning HTML in a sandboxed iframe rather than inlining it. Confirm this two-method separation is mirrored exactly on autowatch (it is assumed in Goals), or whether the cut-over is an opportunity to unify them. (→ resolved in /beta-new-solution)
 - [ ] **Error-code mapping parity across the HTTP→RPC boundary.** Today the failure mappings differ by surface: `doc.get` maps a `resolveRoot` failure to a JSON-RPC `codeInternalError` and a bad path to `codeParseError`; `/api/doc/raw` maps the same failures to HTTP `400` and a missing file to `404`. When `doc.raw` becomes an RPC whose result the proxy must turn back into HTTP statuses, what is the canonical error contract so the proxy reproduces auto-ui's current 400/404/405 behaviour without guessing? (→ resolved in /beta-new-solution)
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+All Go unit + integration tests run with `-race` (GR-N7 API-first layer). The RPC surface is
+exercised directly over `net.Pipe()` / a transport listener — no browser. The defining obligation
+is **parity**: because 038 reimplements auto-ui's doc/project logic in autowatch rather than
+sharing a package, the tests must prove the autowatch methods produce the **same validation
+outcomes, the same traversal rejections, and the same response shapes/bytes** as
+`auto-ui/internal/server/docs.go` / `raw.go` / `project.go`.
+
+- **`auto-watch/internal/rpcmethods` unit tests** — table-driven, over `net.Pipe()` with the
+  client = `conformance.PeerClient`, against a temp fixture repo on disk (a `t.TempDir()` project
+  seeded with a `docs/` tree of `.md` + `.html` planning files and registered in a synthetic
+  `ProjectsConfig`). Cover all four methods + the full `cleanDocPath`/`resolveRoot` guard matrix.
+- **Parity harness** — a **shared golden table** of `(method, params, expected)` cases run twice:
+  once against the reimplemented autowatch handlers, once against auto-ui's live handlers
+  (`auto-ui/internal/server`, exercised through its own dispatcher in an auto-ui test) over an
+  identical on-disk fixture. Equal inputs must yield equal results (same JSON for doc.list/get/
+  project.list modulo the **decided** `host` addition; same bytes + content type for doc.raw; same
+  reject/accept decision and equivalent error class for every guard case). Where auto-ui's HTTP
+  raw route returns an HTTP status and autowatch returns an `rpc.Error`, parity is asserted on the
+  **decision** (accept/400-class/404-class) per the error-mapping decision (D-038-4), not on the
+  literal transport status.
+- **Traversal-guard corpus** — reused across both surfaces: `../etc/passwd`, `docs/../../x`,
+  `/etc/passwd`, `notdocs/x.md`, `docs/x.txt` (wrong ext), `docs/a.md` via doc.raw (ext mismatch),
+  `docs/a.html` via doc.get (ext mismatch), empty path. Each must be rejected identically.
+- **`bus.Hub` / ctl gating** — with `--ctl-events` on, each new method's dispatch emits one
+  `ctl.log.info`/`rpc.served` carrying its `method` field (free via `counted`); off → none. Assert
+  both cases for at least one new method (the decorator is shared, proven per-method in 031).
+- **Conformance** — extend 031's in-process + binary fixtures so the shared `Scenario` calls
+  `project.list` and at least one `doc.*` method over the wire and asserts the stable result shape
+  (incl. the stamped `host` == the fixture's hostId). The binary fixture's temp `$HOME` project
+  gains a real `docs/` tree so the calls return non-empty data.
+- **Gates** — `cd auto-watch && go build ./... && go test -race ./...` green;
+  `cd auto-ui && go build ./... && go vet ./... && go test ./...` stays green (unmodified — 038
+  does not touch auto-ui); `auto-watch/go.mod` gains **only** the `golang.org/x/net/html` direct
+  require (already in the module graph via auto-ui — no new transitive deps) and **no other** new
+  require; `auto-shared/go.mod` unchanged (GR-N1, per the accepted decision in the thread above).
+  The layering test (031) keeps `rpcmethods` free of `transport`.
+
+Harness rule carried from 031: **a poll-to-settle is not an assertion** — assert the actual RPC
+result, the stamped `host`, the returned bytes/content type, or the rejection error.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="test-strategy" status="resolved" priority="p2" title="ExtractPlanMeta may add a dependency to auto-watch (GR-N1)">
+        <pd-comment by="review">`ExtractPlanMeta` (auto-ui `planmeta.go`) parses HTML via `golang.org/x/net/html`. Reimplementing it verbatim in `auto-watch` adds a `require` unless that module is already in auto-watch's graph, which would violate GR-N1 (zero new deps). Verify membership before relying on it; if absent, either vendor an equivalent bounded tokeniser already available in the stdlib path, or scope doc.list's `meta` extraction explicitly. The `git diff --quiet` gate must cover `auto-watch/go.mod`.</pd-comment>
+        <pd-comment by="author">Flagged as a Phase-0 verification step in the Plan stage and surfaced to the user (see the reply to the coordinator). If `golang.org/x/net/html` is not already transitively required by auto-watch, the fallback is to keep `meta` extraction but reuse whatever HTML/token primitive is already imported, or descope `meta` to a follow-up — decided at Plan time, not assumed here.</pd-comment>
+        <pd-comment by="author">RESOLVED by user decision: **accept the `golang.org/x/net/html` direct `require` line** in `auto-watch/go.mod`. It adds no new *transitive* surface (already in the module graph via auto-ui), so GR-N1's intent (no new external dependency footprint) holds. The GR-N1 gate is relaxed accordingly — the `go.mod` check now permits exactly the one `golang.org/x/net/html` require line and forbids any other new require. `meta` extraction is kept (verbatim parity); not descoped.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-1" title="doc.list parity: md+html entries, plan-meta, empty-dir, registry-resolved root" phases="1,2,3" tests="auto-watch/internal/rpcmethods/docs_test.go">
+        <md><script type="text/plain">
+**Given** the autowatch `doc.list` handler over a registry-resolved root,
+**When** called with `{project}` (and separately `{worktree}`) against a fixture `docs/` tree
+containing `.md`, `.html` (with a `pd-meta` block), and non-doc files,
+**Then** it returns `[{id, path, type, meta?}]` byte-identical to auto-ui's `doc.list` for the same
+tree: `.md`→`type:"markdown"`, `.html`→`type:"html"` with `meta` populated from the bounded prefix
+(`MaxMetaPrefixBytes`), non-`.md`/`.html` skipped, `id==path` forward-slashed; a missing `docs/`
+dir returns an **empty array, not an error**; and an unknown project/worktree is rejected (no
+arbitrary client path is ever accepted as a read root).
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="doc.get parity: markdown-only, traversal guards, response shape" phases="2,3" tests="auto-watch/internal/rpcmethods/docs_test.go">
+        <md><script type="text/plain">
+**Given** the autowatch `doc.get` handler,
+**When** called with `{project, path}`,
+**Then** a valid `docs/**/*.md` path returns `{path, markdown}` with the cleaned forward-slash path
+and the verbatim file body; an empty path, a traversal attempt (`..`/`/..`), a path outside
+`docs/`, and a `.html` path are **all rejected** (markdown-only parity — HTML is served only by
+`doc.raw`); a missing file returns a not-found error that does **not** leak the absolute path. The
+accept/reject decision matches auto-ui's `doc.get` for every case in the traversal corpus.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-3" title="doc.raw parity: html-only, verbatim bytes + content type, status mapping" phases="2,3" tests="auto-watch/internal/rpcmethods/docs_test.go">
+        <md><script type="text/plain">
+**Given** the autowatch `doc.raw` handler,
+**When** called with `{project, path}` for a `docs/**/*.html` file,
+**Then** it returns the file's **verbatim bytes** (base64-encoded in the JSON result) plus
+`contentType: "text/html; charset=utf-8"` — matching auto-ui's `/api/doc/raw` body and content
+type exactly; a `.md` path, a traversal attempt, a path outside `docs/`, and an empty path are
+**rejected with an invalid-params class error** (proxy → 400); a missing file returns a
+**not-found class error** (proxy → 404) distinguishable from invalid-params (per D-038-4). The
+decoded bytes are byte-equal to what auto-ui's raw route writes for the same file.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-4" title="project.list parity + GR-F8 host stamp + credential stripping" phases="2,3" tests="auto-watch/internal/rpcmethods/project_test.go">
+        <md><script type="text/plain">
+**Given** the autowatch `project.list` handler,
+**When** called against a registry containing projects (one with a credentialed remote) and against
+an empty registry,
+**Then** it returns one `{id, name, path, remote, host}` per project where `id/name/path` mirror
+auto-ui's `project.list`, `remote` is passed through `git.NormalizeRemoteURL` (a credentialed
+remote never appears verbatim), and **`host` equals `config.HostIDQuietly()`** (the daemon's own
+hostId, GR-F8) on every entry; an empty registry returns an empty array (never null, never error).
+The `{id,name,path,remote}` subset is byte-identical to auto-ui's output for the same registry.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="Methods registered via Handlers.Register; ctl gating; GR-N3 layering holds" phases="2,3" tests="auto-watch/internal/rpcmethods/methods_test.go,auto-watch/internal/rpcmethods/layering_test.go">
+        <md><script type="text/plain">
+**Given** the four new methods wired through `Handlers.Register` with the shared `counted`
+decorator,
+**When** each is dispatched over `net.Pipe()`,
+**Then** `DispatchCount(method)` increments; with `--ctl-events` **on** each dispatch broadcasts one
+`ctl.log.info`/`rpc.served` carrying the `method` field and **none** when off; `MethodNotFound` is
+returned for unregistered methods; and the layering test still proves `rpcmethods` never imports
+`auto-shared/transport` (GR-N3) with no new `auto-watch/go.mod` require (GR-N1).
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="Cross-surface parity table + two-tier conformance + gates" phases="3,4" tests="auto-watch/internal/rpcmethods/parity_test.go,auto-watch/internal/rpcserver/conformance_test.go">
+        <md><script type="text/plain">
+**Given** the shared golden `(method, params, expected)` table and the 031 in-process + binary
+fixtures,
+**When** the table is replayed against both the reimplemented autowatch handlers and auto-ui's live
+handlers over an identical on-disk fixture, and the conformance `Scenario` calls `project.list`
++ a `doc.*` method across both fixtures,
+**Then** the results agree (same JSON for doc.list/get/project.list modulo the decided `host`
+field; same bytes + content type for doc.raw; equivalent error class per guard case); the
+conformance scenario sees the stamped `host` == the fixture hostId; and the gates pass:
+`go build ./... && go test -race ./...` green in `auto-watch`, `auto-ui` regression green
+**unmodified**, and `auto-watch/go.mod` adds only the `golang.org/x/net/html` direct require
+(no other new deps; `auto-shared/go.mod` unchanged) per GR-N1 as accepted.
+        </script></md>
+      </pd-ac>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Add four read-only RPC methods to the **existing** `rpcmethods.Handlers` (031), reusing its
+`Register` + `counted` decorator and `bus.Hub` plumbing. No new package, no transport coupling
+(GR-N3 holds because all new code imports only `config`/`git`/stdlib/`golang.org/x/net/html`, never
+`transport`). The doc/project reading logic is **reimplemented in autowatch** (decided in
+Requirements) by porting `auto-ui/internal/server/{docs.go,raw.go,project.go,planmeta.go}` — the
+behaviour, not a shared import, is the contract, and the parity table (AC-6) is the regression
+guard against drift.
+
+**1. Registry provider on Handlers.** Extend `rpcmethods.New(...)` with a
+`reg func() config.ProjectsConfig` parameter (mirroring auto-ui's `regProvider` indirection so the
+snapshot is re-read per call — registry edits land without a daemon restart, and a missing/unreadable
+file degrades to an empty registry). `ops.go:106` passes a provider built from
+`config.LoadProjects(config.ProjectsConfigPath())`. `Handlers` stores `reg` alongside the existing
+`hostID`.
+
+**2. Ported helpers (new file `docfs.go` in rpcmethods).** `resolveRoot`, `cleanDocPath`,
+`walkDocs`, `docEntry`, `projectEntry`, `PlanMeta`/`ExtractPlanMeta` — ported verbatim from auto-ui
+(same traversal rejection, same `docs/`-prefix requirement, same extension allow-list, same
+registry-backed root resolution; an arbitrary client path is never a read root). `ExtractPlanMeta`
+keeps `MaxMetaPrefixBytes = 8192`.
+
+**3. The four handlers (`docs.go`, `project.go` in rpcmethods).** Each is an `rpc.Handler`
+registered through `h.counted(method, ...)`:
+- `doc.list` `{project, worktree}` → `[]docEntry` (md+html, plan-meta on html, empty-dir → `[]`).
+- `doc.get` `{project, path}` → `{path, markdown}`, **markdown-only** (`cleanDocPath(p, ".md")`).
+- `doc.raw` `{project, path}` → `DocRawResult{path, contentType, contentBase64}`, **html-only**
+  (`cleanDocPath(p, ".html")`). Bytes are base64-encoded because the JSON-RPC result is JSON text;
+  `contentType` is hard-coded `text/html; charset=utf-8` (parity with auto-ui's single-purpose
+  route). auto-ui's Task 7 proxy base64-decodes and writes verbatim with that content type.
+- `project.list` (no params) → `[]projectEntry{id, name, path, remote, host}` with
+  `remote = git.NormalizeRemoteURL(ref.Remote)` and `host = h.hostID`.
+
+**4. Error mapping (D-038-4).** Use canonical `rpc.Error` codes: missing/invalid path, traversal,
+wrong extension, and unknown project/worktree → `rpc.InvalidParams` (-32602) → proxy renders 400;
+a file that resolves-and-validates but cannot be read → `rpc.InternalError` (-32603) with
+`Data: {"kind":"not_found"}` so the Task 7 proxy maps it to 404 (and everything else to 400),
+reproducing auto-ui's raw 400/404 split without string-matching messages. Not-found messages never
+include the absolute path.
+
+**5. Conformance.** Extend 031's fixtures: seed the temp-`$HOME` project with a small `docs/` tree
+so `doc.*` return data, and add `project.list` + a `doc.*` call to the shared `Scenario`, asserting
+the stamped `host`. Add a parity test that diffs autowatch vs auto-ui outputs over one on-disk
+fixture.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="api-outline" title="API outline (end state)">
+
+        <pd-api kind="struct" name="rpcmethods.Handlers (extended)" lang="go" path="auto-watch/internal/rpcmethods/methods.go">
+          <pd-member kind="constructor" sig="func New(hostID, version string, startedAt time.Time, hub *bus.Hub, ctlEvents bool, reg func() config.ProjectsConfig) *Handlers">Adds the registry provider; no transport import.</pd-member>
+          <pd-member kind="method" sig="func (h *Handlers) Register(p *rpc.Peer)">Now also registers doc.list / doc.get / doc.raw / project.list, each via h.counted(...).</pd-member>
+        </pd-api>
+
+        <pd-api kind="package" name="rpcmethods doc + project methods" lang="go" path="auto-watch/internal/rpcmethods/docs.go">
+          <pd-member kind="method" sig="func (h *Handlers) handleDocList(ctx, params) (any, error)">params {project, worktree}; returns []docEntry (md+html, plan-meta, empty-dir → []).</pd-member>
+          <pd-member kind="method" sig="func (h *Handlers) handleDocGet(ctx, params) (any, error)">params {project, path}; markdown-only; returns {path, markdown}.</pd-member>
+          <pd-member kind="method" sig="func (h *Handlers) handleDocRaw(ctx, params) (any, error)">params {project, path}; html-only; returns DocRawResult.</pd-member>
+          <pd-member kind="type" sig="type docEntry struct { ID string; Path string; Type string; Meta *PlanMeta `json:&quot;meta,omitempty&quot;` }">Ported from auto-ui; doc.list element.</pd-member>
+          <pd-member kind="type" sig="type DocRawResult struct { Path string `json:&quot;path&quot;`; ContentType string `json:&quot;contentType&quot;`; ContentBase64 string `json:&quot;contentBase64&quot;` }">doc.raw result; bytes base64-encoded (JSON-safe), contentType hard-coded text/html.</pd-member>
+        </pd-api>
+
+        <pd-api kind="package" name="rpcmethods project.list" lang="go" path="auto-watch/internal/rpcmethods/project.go">
+          <pd-member kind="method" sig="func (h *Handlers) handleProjectList(ctx, params) (any, error)">No params; maps registry → []projectEntry; remote normalized, host stamped.</pd-member>
+          <pd-member kind="type" sig="type projectEntry struct { ID string; Name string; Path string; Remote string; Host string `json:&quot;host&quot;` }">Adds Host (GR-F8) over auto-ui's shape; Remote via git.NormalizeRemoteURL.</pd-member>
+        </pd-api>
+
+        <pd-api kind="package" name="rpcmethods ported helpers" lang="go" path="auto-watch/internal/rpcmethods/docfs.go">
+          <pd-member kind="func" sig="func resolveRoot(reg config.ProjectsConfig, project, worktree string) (string, error)">Registry-backed root; arbitrary client path never accepted.</pd-member>
+          <pd-member kind="func" sig="func cleanDocPath(p string, allowed ...string) string">Traversal + docs/-prefix + extension guard; &quot;&quot; on reject.</pd-member>
+          <pd-member kind="func" sig="func walkDocs(root string) ([]docEntry, error)">Walks &lt;root&gt;/docs; md+html; plan-meta on html; missing dir → empty.</pd-member>
+          <pd-member kind="func" sig="func ExtractPlanMeta(r io.Reader) *PlanMeta">Ported verbatim; MaxMetaPrefixBytes=8192.</pd-member>
+        </pd-api>
+
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-watch/internal/rpcmethods/methods.go" change="edit">Add reg provider to New + Handlers; register the four methods via counted.</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/docfs.go" change="add">Ported resolveRoot/cleanDocPath/walkDocs/docEntry/PlanMeta/ExtractPlanMeta from auto-ui.</pd-file>
+          <pd-file path="auto-watch/go.mod" change="edit">Promote golang.org/x/net to a direct require (the one accepted GR-N1 exception for ExtractPlanMeta); no other new deps.</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/docs.go" change="add">doc.list / doc.get / doc.raw handlers + DocRawResult.</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/project.go" change="add">project.list handler + projectEntry (host stamped, remote normalized).</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/docs_test.go" change="add">AC-1/2/3: doc.list/get/raw shape + traversal-guard corpus.</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/project_test.go" change="add">AC-4: project.list shape, host stamp, credential stripping, empty registry.</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/parity_test.go" change="add">AC-6: golden table diffed vs auto-ui handler outputs over one on-disk fixture.</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/methods_test.go" change="edit">AC-5: registration + ctl gating for the new methods (extends 031 tests).</pd-file>
+          <pd-file path="auto-watch/internal/cli/ops.go" change="edit">Pass a config.LoadProjects-backed registry provider into rpcmethods.New.</pd-file>
+          <pd-file path="auto-watch/internal/rpcserver/conformance_test.go" change="edit">AC-6: seed docs/ tree; scenario calls project.list + doc.* and asserts host.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-decision id="D-038-1" title="(hostId, projectId) param shape: project/worktree unchanged; hostId is proxy-side only" status="accepted" by="author"
+        summary="Autowatch methods keep auto-ui's {project, worktree, path} param shape; they do NOT take a hostId param. Autowatch serves only its own host; hostId is the proxy's routing key and is stamped into project.list responses.">
+        <md><script type="text/plain">
+**Context:** GR-F8 / seam #2 say the UI identity is `(hostId, projectId)` and the proxy attaches
+`hostId` to forwarded RPCs. Open question: does autowatch take a `hostId` param?
+
+**Decision:** No. Autowatch can only serve its own host, so a `hostId` param would be redundant (at
+best validated against `host.json`, at worst a footgun). The request param shape stays exactly
+auto-ui's: `{project, worktree}` for doc.list, `{project, path}` for doc.get/doc.raw, none for
+project.list. `hostId` lives entirely in auto-ui's proxy as the **routing key** (which backend to
+dial) and is reunited with the response via the **stamped `host` field on project.list** (D-038-3).
+
+**Alternatives:** Accept+validate a `hostId` param (extra surface, no behaviour); composite
+`host/project` ids (changes the registry contract — out of scope).
+
+**Consequences:** Zero param drift from auto-ui → the parity table compares like-for-like. The Task
+7 proxy owns host routing; these methods stay host-agnostic except for the response `host` stamp.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-038-2" title="doc.get (markdown) and doc.raw (html) stay separate, mirroring auto-ui" status="accepted" by="author"
+        summary="Preserve auto-ui's deliberate split: doc.get serves markdown only and returns {path, markdown}; doc.raw serves html only and returns verbatim bytes. No unification.">
+        <md><script type="text/plain">
+**Context:** auto-ui deliberately refuses `.html` from `doc.get` (`cleanDocPath(p, ".md")`) and
+serves it only via `/api/doc/raw`, because the SPA renders self-contained planning HTML in a
+sandboxed iframe rather than inlining it through `marked`/`dompurify`.
+
+**Decision:** Mirror the split exactly. `doc.get` = markdown-only `{path, markdown}`; `doc.raw` =
+html-only verbatim bytes + content type. The cut-over is **not** an opportunity to unify — the
+sandbox-iframe rendering model in `content.js` depends on the separation, and GR-F1 (full parity)
+forbids changing the contract here.
+
+**Alternatives:** One `doc.read` returning a typed payload — breaks the SPA's iframe path and
+expands the parity surface for no benefit in this task.
+
+**Consequences:** Two methods, each with a single extension allow-list; the traversal corpus
+asserts the cross-extension rejection (`.html` via doc.get, `.md` via doc.raw) both ways.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-038-3" title="doc.raw response envelope: base64 bytes + hard-coded text/html content type" status="accepted" by="author"
+        summary="doc.raw returns {path, contentType, contentBase64}. Bytes are base64 (JSON-safe); contentType is hard-coded text/html; charset=utf-8 (parity with auto-ui's single-purpose route).">
+        <md><script type="text/plain">
+**Context:** auto-ui's `/api/doc/raw` writes raw HTML bytes with `Content-Type: text/html;
+charset=utf-8`. The RPC equivalent must carry bytes + content type so the Task 7 proxy can rebuild
+the HTTP response. JSON-RPC results are JSON text, so raw bytes can't be embedded directly.
+
+**Decision:** `DocRawResult{Path, ContentType, ContentBase64}`. `ContentBase64` is the
+standard-base64-encoded file bytes (lossless through JSON/NDJSON); `ContentType` is hard-coded
+`text/html; charset=utf-8` since this route serves only `.html` (parity — auto-ui never content-
+sniffs). The proxy base64-decodes and writes verbatim with the returned content type.
+
+**Alternatives:** Return a raw string (breaks on invalid-UTF-8 bytes, lossy); a generalized
+content-sniffed type (over-scopes — auto-ui hard-codes text/html); a side-channel binary frame
+(the transport is NDJSON-framed JSON-RPC — out of scope).
+
+**Consequences:** ~33% size overhead for base64 on planning HTML (acceptable; docs are small). The
+proxy is a thin decode-and-write. Content type is future-generalizable if non-HTML raw docs ever
+appear, without changing the envelope.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-038-4" title="HTTP→RPC error mapping: InvalidParams for 400-class, InternalError+Data.kind for not-found" status="accepted" by="author"
+        summary="Reuse canonical rpc.Error codes: invalid/traversal/unknown-project → InvalidParams (proxy 400); unreadable resolved file → InternalError with Data{kind:not_found} (proxy 404).">
+        <md><script type="text/plain">
+**Context:** auto-ui's raw route maps bad request → 400 and missing file → 404; its `doc.get`
+uses codeParseError for path errors and codeInternalError for not-found. The Task 7 proxy must
+reproduce 400/404 from an `rpc.Error` without brittle message string-matching.
+
+**Decision:** Use the canonical `rpc.Error` codes (no new app code): all request-validation
+failures (empty/invalid path, traversal, wrong extension, unknown project/worktree) →
+`rpc.InvalidParams` (-32602); a path that resolves and validates but whose file cannot be read →
+`rpc.InternalError` (-32603) carrying `Data: {"kind":"not_found"}`. The proxy maps `InvalidParams`
+→ 400 and `InternalError` with `Data.kind=="not_found"` → 404, everything else → 500. This
+standardizes auto-ui's slightly inconsistent doc.get codes (which used ParseError for bad paths)
+onto the semantically correct `InvalidParams` while preserving the externally observable 400/404
+behaviour.
+
+**Alternatives:** A server-defined code (`-32004` not-found) — cleaner discriminator but invents a
+constant the `rpc` package doesn't export (the brief said reuse `rpc.Error` codes); message
+string-matching — brittle; copying auto-ui's ParseError-for-paths quirk — propagates a known wart.
+
+**Consequences:** The proxy contract keys on `(code, Data.kind)`, not messages. One small
+divergence from auto-ui's literal doc.get codes (ParseError→InvalidParams) — invisible to the
+browser, which only sees HTTP status. Flagged for user sign-off (custom code vs Data discriminator).
+        </script></md>
+      </pd-decision>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Extract the doc-reading logic to a shared package** — rejected in Requirements (reimplement in
+  autowatch). Sharing would change auto-ui in this task (Task 7 owns that) and entangle the two
+  modules; the parity table (AC-6) guards against drift instead.
+- **Take a `hostId` RPC param** — redundant; autowatch serves only its own host (D-038-1).
+- **Unify doc.get and doc.raw into one method** — breaks the SPA's sandbox-iframe rendering and
+  GR-F1 parity (D-038-2).
+- **Return raw HTML as a JSON string** — lossy/unsafe for non-UTF-8 bytes; base64 is lossless
+  (D-038-3).
+- **A new server-defined not-found code** — the brief asked to reuse `rpc.Error` codes; an
+  `InternalError` + `Data.kind` discriminator stays within the standard set (D-038-4).
+- **Re-read hostId per project.list call** — `Handlers` already holds `hostID` from
+  `HostIDQuietly()` (031); reuse it for consistency with `daemon.status` and to avoid per-call file
+  reads.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions">
+        <pd-decisions></pd-decisions>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Four phases: port the doc/registry helpers (and add the one accepted `golang.org/x/net` direct require), implement the four handlers + daemon wiring, land the unit + cross-surface parity tests, then extend the two-tier conformance fixtures and run the full gates. Each phase commits code + tests together and ends green in the affected module(s).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution sequence">
+        <pd-mermaid caption="Phase DAG — strictly sequential (each phase builds on the prior)">
+flowchart LR
+    P1["P1\nported helpers (docfs.go)\n+ accepted x/net require"]
+    P2["P2\n4 handlers + register\n+ ops.go wiring"]
+    P3["P3\nunit + parity tests"]
+    P4["P4\nconformance fixtures\n+ full gates"]
+
+    P1 --> P2
+    P2 --> P3
+    P3 --> P4
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="Ported doc/registry helpers + accepted dependency" status="todo"
+          files="auto-watch/internal/rpcmethods/docfs.go,auto-watch/go.mod">
+          <md><script type="text/plain">
+1. `docfs.go` — port from `auto-ui/internal/server/{docs.go,project.go,planmeta.go}`, verbatim behaviour: `resolveRoot(reg, project, worktree)` (registry-backed root; arbitrary client path never accepted), `cleanDocPath(p, allowed...)` (traversal + `docs/`-prefix + extension guard, `""` on reject), `walkDocs(root)` (md+html, plan-meta on html, missing dir → empty), the `docEntry`/`projectEntry` types, and `PlanMeta`/`ExtractPlanMeta` with `MaxMetaPrefixBytes = 8192`. Imports only `config`/stdlib/`golang.org/x/net/html` — **never `transport`** (GR-N3). **Verify:** `cd auto-watch && go build ./...`.
+2. `go.mod` — promote `golang.org/x/net` to a **direct** require (the `// indirect` marker drops once `ExtractPlanMeta` imports `golang.org/x/net/html`). **Verify:** `go mod tidy` is a no-op beyond that line; `git diff -- auto-watch/go.mod` shows **exactly one** added/changed require (`golang.org/x/net`) and nothing else; `git diff --quiet -- auto-shared/go.mod` (D-038-5 / GR-N1 as accepted).
+3. **Commit:** `feat(038): port doc/project filesystem helpers into autowatch rpcmethods`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Four handlers + registration + daemon wiring" status="todo" depends-on="1"
+          files="auto-watch/internal/rpcmethods/methods.go,auto-watch/internal/rpcmethods/docs.go,auto-watch/internal/rpcmethods/project.go,auto-watch/internal/cli/ops.go">
+          <md><script type="text/plain">
+1. `methods.go` — extend `New(...)` with a `reg func() config.ProjectsConfig` param and store it on `Handlers`; in `Register`, add `doc.list`/`doc.get`/`doc.raw`/`project.list`, each wrapped in `h.counted(method, ...)` (free dispatch-count + gated `ctl.log.info`/`rpc.served`). **Verify:** `go build ./...`.
+2. `docs.go` — `handleDocList` `{project,worktree}` → `[]docEntry` (empty-dir → `[]`); `handleDocGet` `{project,path}` markdown-only (`cleanDocPath(p, ".md")`) → `{path, markdown}`; `handleDocRaw` `{project,path}` html-only (`cleanDocPath(p, ".html")`) → `DocRawResult{path, contentType:"text/html; charset=utf-8", contentBase64}` (D-038-2, D-038-3). Errors: validation/traversal/unknown-project → `rpc.InvalidParams`; resolved-but-unreadable → `rpc.InternalError` + `Data:{"kind":"not_found"}` (D-038-4); never leak abs paths. **Verify:** `go build ./...`.
+3. `project.go` — `handleProjectList` (no params) → `[]projectEntry{id,name,path,remote,host}` with `remote = git.NormalizeRemoteURL(ref.Remote)` and `host = h.hostID` (GR-F8); empty registry → `[]`. **Verify:** `go build ./...`.
+4. `ops.go` — pass a `config.LoadProjects(config.ProjectsConfigPath())`-backed provider into `rpcmethods.New(...)` (re-read per call; missing/unreadable → empty registry). **Verify:** `cd auto-watch && go build ./...`.
+5. **Commit:** `feat(038): doc.list/doc.get/doc.raw/project.list RPC methods on autowatch`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Unit tests + cross-surface parity table" status="todo" depends-on="2"
+          files="auto-watch/internal/rpcmethods/docs_test.go,auto-watch/internal/rpcmethods/project_test.go,auto-watch/internal/rpcmethods/methods_test.go,auto-watch/internal/rpcmethods/parity_test.go">
+          <md><script type="text/plain">
+1. `docs_test.go` — over `net.Pipe()` with `conformance.PeerClient` against a `t.TempDir()` project seeded with a `docs/` tree (`.md`, `.html` with `pd-meta`, non-doc files): AC-1 doc.list (md+html, plan-meta, empty-dir → `[]`, unknown project rejected); AC-2 doc.get (markdown-only, `{path,markdown}`); AC-3 doc.raw (verbatim base64 bytes + `text/html` content type); plus the full traversal corpus (`..`, `/..`, outside `docs/`, wrong ext both ways, empty) asserting InvalidParams, and not-found → InternalError+`kind:not_found`. **Verify:** `go test -race ./internal/rpcmethods/ -run 'Doc'`.
+2. `project_test.go` — AC-4: project.list shape, `host == config.HostIDQuietly()` on every entry, credentialed remote normalized away, empty registry → `[]`. **Verify:** `go test -race ./internal/rpcmethods/ -run 'Project'`.
+3. `methods_test.go` (edit) — AC-5: each new method increments `DispatchCount`; `--ctl-events` on → one `ctl.log.info`/`rpc.served` with the `method` field, off → none; `MethodNotFound` for unregistered. **Verify:** `go test -race ./internal/rpcmethods/`; the 031 `layering_test.go` still proves no `transport` import.
+4. `parity_test.go` — AC-6 (parity half): a shared golden `(method, params, expected)` table replayed against the autowatch handlers and against auto-ui's live handlers over one identical on-disk fixture; assert equal results (doc.list/get/project.list JSON modulo `host`; doc.raw decoded bytes + content type; equivalent error class per guard case). **Verify:** `go test -race ./internal/rpcmethods/`; `git diff --quiet -- auto-watch/go.mod auto-shared/go.mod` (only the P1 x/net line).
+5. **Commit:** `test(038): doc/project RPC unit coverage + auto-ui parity table`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="Two-tier conformance + full gates" status="todo" depends-on="3"
+          files="auto-watch/internal/rpcserver/conformance_test.go">
+          <md><script type="text/plain">
+1. `conformance_test.go` (edit) — seed the temp-`$HOME` project (binary fixture) and the in-process fixture with a small `docs/` tree so `doc.*` return data; extend the shared `Scenario` (run via `conformance.RunAcrossFixtures`) to call `project.list` and at least one `doc.*` method over the wire and assert the result shape, incl. the stamped `host` == the fixture's hostId (AC-6 conformance half). **Verify:** `go test -race ./internal/rpcserver/`.
+2. **Full gates:** `cd auto-watch && go build ./... && go test -race ./...`; `cd auto-ui && go build ./... && go vet ./... && go test ./...` (unmodified — must stay green); `git diff -- auto-watch/go.mod` shows only the `golang.org/x/net` require, `git diff --quiet -- auto-shared/go.mod` (GR-N1 as accepted). **Commit:** `test(038): doc/project methods in two-tier conformance harness`.
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success criteria">
+        <md><script type="text/plain">
+- **AC-1/AC-2/AC-3** (doc.list/get/raw parity) after P3 (handlers P2 + helpers P1 + tests P3); **AC-4** (project.list + host stamp + credential stripping) after P3; **AC-5** (registration + ctl gating + GR-N3 layering) after P3; **AC-6** (cross-surface parity table + two-tier conformance + gates) spans P3 (parity table) + P4 (conformance + full gates).
+- `go build ./... && go test -race ./...` green in `auto-watch`; `auto-ui` regression green **unmodified**; `auto-watch/go.mod` adds **only** the `golang.org/x/net` direct require and `auto-shared/go.mod` is unchanged (GR-N1 as accepted, D-038-5).
+- `rpcmethods` never imports `transport` (GR-N3, machine-checked); doc.get markdown-only and doc.raw html-only (D-038-2); doc.raw returns base64 bytes + `text/html` (D-038-3); validation→InvalidParams and not-found→InternalError+`kind:not_found` (D-038-4); `project.list` stamps `host = config.HostIDQuietly()` (GR-F8).
         </script></md>
       </pd-section>
 

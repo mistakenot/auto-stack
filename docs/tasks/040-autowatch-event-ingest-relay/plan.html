@@ -18,7 +18,7 @@
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="040: autowatch-event-ingest-relay" status="draft" generated="2026-06-26">
+  <pd-doc title="040: autowatch-event-ingest-relay" status="pending" generated="2026-06-26">
 
     <pd-tab name="Requirements">
 
@@ -65,6 +65,283 @@ Task 6 **extends 031** — it does not rebuild the listener, the ingest endpoint
 - [ ] **Per-peer drop-on-full / at-most-once for the notification path (→ resolved in /beta-new-solution).** `Peer.Notify` enqueues onto a bounded buffer (`defaultBufferSize=16`) that drops the frame and closes the connection when full (`peer.go:416-431`), while `Hub.Broadcast` calls `Sink.Deliver` synchronously (`hub.go:48-59`). The bridge Sink should use non-blocking `Notify` so a saturated subscriber is dropped (connection closed) rather than blocking the hub and stalling other subscribers — matching the auto-ui slow-client policy (`ws.go` enqueue).
 - [ ] **hostId stamping policy when the inbound event already carries a `Host` (→ resolved in /beta-new-solution).** Decide always-overwrite with the local hostId vs stamp-if-empty (preserving a `Host` set by an upstream relay hop). Pick a rule to keep GR-F3 fidelity unambiguous once multi-hop relay exists.
 - [ ] **Registry-snapshot freshness for derivation (→ resolved in /beta-new-solution).** auto-ui derives against a `regProvider func()` re-read per request (`rpc_ingest.go:25`). Decide re-read per ingest (picks up newly-registered projects without a restart) vs snapshot once at daemon start (cheaper, but stale until restart).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Pure Go unit + integration tests run with `-race` (the GR-N7 API-first layer); no browser. Everything is exercised over the in-process `bus.Hub` plus a real `rpc.Peer` pair on `net.Pipe()` (the same harness 031 uses for `rpcmethods`/`rpcserver`), so the relay path is asserted on the actual wire shape, not a mock.
+
+- **`bus.subscribe` bridge** (`auto-watch/internal/rpcserver/server_test.go`) — dial a peer over `net.Pipe`/unix, call `bus.subscribe`, `Broadcast` an event on the daemon hub, and assert the client peer receives a JSON-RPC notification whose `method == ev.Type` and whose `params` round-trips back to the **full envelope with every field intact** (esp. `Host`, `Project`). Assert subscribe is idempotent (a second call does not double-deliver). The client side reuses `conformance.PeerClient`'s notification capture or a `WithOnNotify` callback on the dialing peer.
+- **Cleanup on disconnect** — after a subscribed peer's `Serve` returns (client closes), assert the hub's registered-sink count returns to its pre-subscribe value (the `Hub.Subscribe` cancel fired exactly once) and a subsequent `Broadcast` neither blocks nor panics. Run under `-race` to catch the handler-goroutine vs teardown-goroutine race on the stored cancel.
+- **Drop-on-full / at-most-once** — subscribe a peer whose outbound buffer is saturated (don't drain its reader), `Broadcast` more than `defaultBufferSize` (16) events, and assert: the saturated peer's connection is closed (its `Serve` returns) while `Hub.Broadcast` returns promptly and a *second*, healthy subscriber still receives every event. `-race` clean. This reuses the peer's existing drop-and-close enqueue (`peer.go:416-431`) — the test proves the hub is not stalled by a slow consumer.
+- **Ingest derive + hostId** (`auto-watch/internal/rpcserver/ingest_test.go`) — `httptest` POST of an `agent.tool.post` frame touching `docs/foo.md` in a **registered** project (seed the registry provider): assert 204, and via a subscribed sink/peer assert **two** broadcasts — the ingested event and a derived `doc.changed` — **both carrying `Host == <daemon hostId>`** (overwrite-always), the derived one matching `DeriveDocChanged`. A frame for an **unregistered** project derives nothing (ingested-only). Preserve 031's behaviors: 405 non-POST, 400 invalid envelope, loopback-only, 1 MiB cap.
+- **ctl gating through the bridge** — with `--ctl-events` **off**, a subscriber receives the ingested/derived **data-plane** events but **no `ctl.*`**; with it **on**, the subscriber additionally receives `ctl.*` (connect / rpc.served / hook.ingested). This verifies the gate stays at *emission* (031) and the bridge relays everything on the hub.
+- **Regression / additive** — `cd auto-shared && go build ./... && go test -race ./...`; `cd auto-watch && go build ./... && go test -race ./...`; `cd auto-ui && go build ./... && go vet ./... && go test ./...` (the `/api/rpc` path is untouched — hooks still dual-post); `git diff --quiet -- auto-shared/go.mod auto-watch/go.mod` (GR-N1); 031's `rpcmethods` layering test still passes (the bridge lives in `rpcserver`, GR-N3).
+
+Harness rule carried from 029/030/031: **a poll-to-settle is not an assertion** — assert the received notification, the envelope fields, the sink-count delta, or the closed connection, not a sleep.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="Relay path under test: hook POST → ingest → hub → per-peer bridge → wire">
+flowchart LR
+    HOOK["hook POST\n(agent.tool.post)"] --> ING["HookIngest\nvalidate + stamp Host\n+ DeriveDocChanged"]
+    ING -->|Broadcast ingested + derived| HUB["bus.Hub"]
+    CTL["ctl.* (gated)\nconnect / served / ingested"] -->|only when --ctl-events| HUB
+    HUB -->|Deliver| SINK["peerSink\n(per subscribed peer)"]
+    SINK -->|non-blocking Notify\ndrop+close on full| WIRE["rpc.Peer\nJSON-RPC notification"]
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-ac id="AC-1" title="bus.subscribe relays hub broadcasts to a connected peer as JSON-RPC notifications" phases="1" tests="auto-watch/internal/rpcserver/server_test.go">
+        <md><script type="text/plain">
+**Given** a client peer connected to the autowatch listener that has called `bus.subscribe` (parameterless),
+**When** an event is `Broadcast` on the daemon `bus.Hub`,
+**Then** the client receives a JSON-RPC 2.0 notification (no `id`) whose `method` equals the event `Type` and whose `params` deserialize back to the **complete envelope with every field intact** — `SpecVersion`, `Type`, `Source`, `ID`, `Time`, `Host`, and any `Project`/`Session`/`Branch`/`Worktree` — satisfying GR-F3 (no field loss in the relay hop). A second `bus.subscribe` from the same peer is idempotent (no duplicate deliveries).
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="ingest derives doc.changed, stamps hostId, and broadcasts ingested + derived" phases="2" tests="auto-watch/internal/rpcserver/ingest_test.go">
+        <md><script type="text/plain">
+**Given** the hook-ingest endpoint with a project-registry provider, and a subscribed peer,
+**When** a valid `agent.tool.post` frame touching `docs/**/*.md` in a **registered** project is POSTed,
+**Then** the handler stamps `Host` = the daemon's hostId (overwrite-always), `Broadcast`s **both** the ingested event and a derived `doc.changed` (per `DeriveDocChanged`), returns `204`, and the subscribed peer receives both as notifications — **both carrying the daemon hostId** (the derived event inherits it via `newDerived`). A frame for an **unregistered** project (or a non-doc path) broadcasts the ingested event only, with no derived event. 031's ingest guards are preserved: non-POST→405, invalid envelope→400, non-loopback→403, body capped at 1 MiB.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-3" title="ctl.* relays only when --ctl-events is on; data-plane always relays" phases="1" tests="auto-watch/internal/rpcserver/server_test.go">
+        <md><script type="text/plain">
+**Given** a subscribed peer,
+**When** the daemon runs with `--ctl-events` **off**,
+**Then** the subscriber receives the ingested/derived **data-plane** events but **no `ctl.*`** events; **and when** `--ctl-events` is **on**, the subscriber additionally receives the `ctl.*` events (`ctl.connect`, `ctl.log.info`/`rpc.served`, `ctl.log.info`/`hook.ingested`). The gate is enforced at *emission* (031) — the bridge applies no `ctl`-specific filter and relays whatever is on the hub.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-4" title="subscription is cleaned up on peer disconnect (no leaked sink or goroutine)" phases="1" tests="auto-watch/internal/rpcserver/server_test.go">
+        <md><script type="text/plain">
+**Given** a peer that has called `bus.subscribe`,
+**When** the peer disconnects (its `Peer.Serve` returns),
+**Then** the `Hub.Subscribe` cancel fires **exactly once** at teardown (alongside the existing `delete(s.peers, peer)` / `ctl.disconnect`), the hub's registered-sink count returns to its pre-subscribe value, and subsequent `Broadcast`s neither block nor panic and are not delivered to the gone peer. Verified `-race` to cover the subscribe-handler vs teardown-goroutine ordering on the stored cancel.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="a saturated subscriber is dropped without stalling the hub" phases="1" tests="auto-watch/internal/rpcserver/server_test.go">
+        <md><script type="text/plain">
+**Given** two subscribed peers, one whose outbound buffer is saturated (reader not draining) and one healthy,
+**When** more than `defaultBufferSize` (16) events are `Broadcast`,
+**Then** the saturated peer is dropped — its connection is closed by the peer's non-blocking enqueue (`peer.go:416-431`) and its `Serve` returns — while `Hub.Broadcast` returns promptly (never blocks on the slow consumer) and the healthy peer still receives **every** event. At-most-once / lossy delivery per auto-bus-spec §5. `-race` clean.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="additive; build/test gates green; zero new deps" phases="3" tests="auto-watch/CLAUDE.md">
+        <md><script type="text/plain">
+**Given** the full change,
+**When** the gates run,
+**Then** `go build ./... && go test -race ./...` pass in `auto-shared` and `auto-watch`; the `auto-ui` suite passes unmodified (the `/api/rpc` ingest path is untouched — `auto hooks fire` still dual-posts); 031's `rpcmethods` layering test still holds (the bridge lives in `rpcserver`, GR-N3); and neither `go.mod` gains a `require` (GR-N1).
+        </script></md>
+      </pd-ac>
+
+      <pd-section id="verification-gaps" title="Known Gaps & Risks">
+        <md><script type="text/plain">
+- **No cross-process / binary-tier coverage of the relay.** 031's binary fixture asserts only `daemon.status` invariants (its AC-8 deferred network-notification conformance to this task). Here the relay is asserted **in-process** over `net.Pipe`/unix with a real `rpc.Peer`. End-to-end browser delivery is Task 8 (auto-ui subscription) and is explicitly out of scope.
+- **auto-ui is not yet a subscriber.** Until Task 8, nothing calls `bus.subscribe` in production; the bridge is exercised only by tests. This is intentional (the task is plumbing) but means no live dogfooding of the relay until Task 8 lands.
+- **Per-ingest registry read cost.** Re-reading `~/.auto/projects.json` per hook event (mirroring auto-ui) is a small disk read on a low-frequency path; if hook volume grows, a cached/snapshot provider may be needed (deferred).
+- **Ordering across producers.** Per-producer order is preserved (single hub, synchronous `Deliver`); there is no global ordering guarantee across concurrent producers (consistent with spec §5).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+**This extends 031; it does not rebuild it.** The RPC listener, the validate-and-ack `HookIngest`, the in-process `bus.Hub`, and gated `ctl.*` emission all stay exactly as 031 shipped them. Two seams are added, both small and both grounded in code that already exists:
+
+**1. `bus.subscribe` — the hub→connected-peer bridge (031's deferred D-31-3 / AC-8).** The blocker is that a plain `rpc.Handler` is `func(ctx, params) (any, error)` with **no handle to the `*rpc.Peer` it serves**, yet the relay must push notifications on *that* peer. The fix lives where the peer already exists: the **accept loop** in `rpcserver/server.go` (`server.go:71-72`, where `peer` is constructed and `Handlers.Register(peer)` runs). For each accepted connection we register a **peer-bound `bus.subscribe`** via a closure that captures that `peer`, `s.hub`, and a per-connection `*subscription` holder. When the client calls `bus.subscribe` (parameterless — broadcast-all per GR-N5), the handler lazily does `cancel := s.hub.Subscribe(&peerSink{peer})` and stores `cancel` in the holder under a mutex (idempotent: a second call is a no-op). `peerSink.Deliver(ev)` calls `peer.Notify(ev.Type, ev)` — exactly `Event.AsNotification`'s shape — which is **already non-blocking with drop-and-close on a full buffer** (`peer.go:416-431`). At peer teardown — the `wg.Go` closure at `server.go:85-98` after `Serve` returns, beside `delete(s.peers, peer)` and the gated `ctl.disconnect` — we call the stored `cancel`, so a disconnected peer leaves no leaked hub sink. Per-connection subscription state lives in the accept-loop scope, **not** in the single shared `rpcmethods.Handlers` (which is registered onto every peer). The bridge stays in `rpcserver` (already imports `transport`+`rpc`), so `rpcmethods` remains transport-free and 031's layering test is untouched (GR-N3).
+
+**2. Ingest gains derive + hostId (mirroring auto-ui's `/api/rpc`).** `HookIngest` grows two inputs: the daemon `hostID` and a `regProvider func() config.ProjectsConfig`. After `ev.Validate()` (unchanged — still 400 on failure), it **stamps `ev.Host = hostID`** (overwrite-always), then `Broadcast`s the ingested event, runs `bus.DeriveDocChanged(ev, regProvider())`, and `Broadcast`s each derived `doc.changed`. Because `newDerived` copies `src.Host` (`derive.go:79`), stamping before deriving makes derived events inherit the daemon hostId — satisfying GR-F3. This is the same shape as `auto-ui/internal/server/rpc_ingest.go:75-88`.
+
+**ctl gating falls out for free.** 031 already `Broadcast`s `ctl.*` onto the hub only when `--ctl-events` is set. A bridge that relays *everything on the hub* therefore relays `ctl.*` exactly when the flag is on and data-plane events always — no `ctl`-specific filter in the bridge (D-40-5).
+
+**Additive.** `auto hooks fire` keeps dual-posting to auto-ui; the `/api/rpc` path is unchanged. Hook retarget is Task 10; auto-ui calling `bus.subscribe` is Task 8.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="api-outline" title="API outline (end state)">
+
+        <pd-api kind="struct" name="rpcserver (bus.subscribe bridge)" lang="go" path="auto-watch/internal/rpcserver/subscribe.go">
+          <pd-member kind="struct" sig="type peerSink struct { peer *rpc.Peer }">Implements bus.Sink; Deliver(ev) calls peer.Notify(ev.Type, ev) — non-blocking, drop+close on full via the peer's own enqueue.</pd-member>
+          <pd-member kind="method" sig="func (s *peerSink) Deliver(ev bus.Event)">peer.Notify(ev.Type, ev); on ErrClosed the peer is already shutting down — teardown will fire cancel.</pd-member>
+          <pd-member kind="struct" sig="type subscription struct { mu sync.Mutex; cancel func() }">Per-connection holder for the Hub.Subscribe cancel; subscribe sets it once (idempotent), teardown fires it once.</pd-member>
+          <pd-member kind="func" sig="func registerSubscribe(p *rpc.Peer, hub *bus.Hub, sub *subscription)">Registers a peer-bound &quot;bus.subscribe&quot; handler on p that calls hub.Subscribe(&amp;peerSink{p}) and stores the cancel in sub.</pd-member>
+        </pd-api>
+
+        <pd-api kind="func" name="rpcserver.HookIngest (extended)" lang="go" path="auto-watch/internal/rpcserver/ingest.go">
+          <pd-member kind="func" sig="func HookIngest(hub *bus.Hub, hostID string, regProvider func() config.ProjectsConfig, ctlEvents bool) http.Handler">Adds hostID + regProvider. After Validate: ev.Host = hostID; Broadcast(ev); for _, d := range bus.DeriveDocChanged(ev, regProvider()) { Broadcast(d) }. 405/400/403/1MiB guards unchanged.</pd-member>
+        </pd-api>
+
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-watch/internal/rpcserver/subscribe.go" change="add">peerSink (bus.Sink → peer.Notify), per-conn subscription holder, registerSubscribe(peer, hub, sub) — the hub→peer bridge.</pd-file>
+          <pd-file path="auto-watch/internal/rpcserver/server.go" change="edit">In the accept loop, build a per-conn *subscription and call registerSubscribe(peer, s.hub, sub) after Handlers.Register; in the teardown closure (server.go:85-98) fire sub.cancel() beside delete(s.peers,peer)/ctl.disconnect.</pd-file>
+          <pd-file path="auto-watch/internal/rpcserver/server_test.go" change="edit">AC-1 (relay + envelope fidelity + idempotent), AC-3 (ctl gating through bridge), AC-4 (cleanup on disconnect, sink-count delta, -race), AC-5 (saturated subscriber dropped, hub not stalled, -race).</pd-file>
+          <pd-file path="auto-watch/internal/rpcserver/ingest.go" change="edit">Add hostID + regProvider params; stamp ev.Host = hostID after Validate; Broadcast ingested + DeriveDocChanged-derived events. No new persistence.</pd-file>
+          <pd-file path="auto-watch/internal/rpcserver/ingest_test.go" change="edit">AC-2: registered-project derive→doc.changed with daemon hostId on both; unregistered/non-doc → ingested-only; 405/400/403/1MiB preserved.</pd-file>
+          <pd-file path="auto-watch/internal/cli/ops.go" change="edit">Thread hostID + a regProvider (config.LoadProjects(ProjectsPath()) re-read per call) into HookIngest at ops.go:166. rpcserver.New call (ops.go:161) unchanged — hub already passed.</pd-file>
+          <pd-file path="docs/auto-bus-spec.md" change="edit">Promote §4.3's &quot;future subscribe() RPC&quot; to an implemented broadcast-all bus.subscribe; document the relay path, the per-peer drop-on-full/at-most-once semantics, and that ctl.* relays only under --ctl-events.</pd-file>
+          <pd-file path="auto-watch/CLAUDE.md" change="edit">Note the bus.subscribe relay + extended ingest in the build/test instructions if needed.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-decision id="D-40-1" title="bus.subscribe is wired in the accept loop, peer-bound by closure (not a shared Handlers method)" status="accepted" by="author"
+        summary="The accept loop registers a per-connection bus.subscribe handler that closes over that peer + the hub and stores the Hub.Subscribe cancel in per-conn state; teardown fires it.">
+        <md><script type="text/plain">
+**Context:** A relayed event must be pushed on the *specific* peer that subscribed, via `Peer.Notify`. But `rpc.Handler` is `func(ctx, params)` with no peer handle, and `rpcmethods.Handlers` is a single shared instance registered onto every peer — so it cannot hold per-connection subscription state.
+
+**Decision:** Register `bus.subscribe` in `rpcserver/server.go`'s accept loop (where `peer` exists, `server.go:71-72`), via a closure capturing `peer`, `s.hub`, and a per-connection `*subscription`. The handler does `sub.cancel = s.hub.Subscribe(&peerSink{peer})` under a mutex (idempotent). `peerSink.Deliver` calls `peer.Notify(ev.Type, ev)`. Teardown (`server.go:85-98`, after `Serve` returns) calls `sub.cancel`.
+
+**Alternatives:** (a) Add the peer to `rpcmethods.Handlers.Register` and subscribe there — but `Handlers` is shared, so cancel/state would collide across connections. (b) Extend `rpc.Handler` to receive its peer — a cross-cutting signature change to the shared `auto-shared/rpc` API for one method. (c) A `WithOnSubscribe` peer option — more machinery than a closure.
+
+**Consequences:** Subscription lifecycle is co-located with the existing peer lifecycle (connect/disconnect, `ctl.connect`/`ctl.disconnect`). The bridge stays in `rpcserver` (transport-allowed), so `rpcmethods` remains transport-free and 031's layering test is untouched. One mutex guards the handler-goroutine vs teardown-goroutine race on `cancel` (tested `-race`).
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-40-2" title="Per-peer relay is non-blocking, drop-and-close on a full buffer (at-most-once)" status="accepted" by="author"
+        summary="peerSink.Deliver calls the peer's existing non-blocking Notify; a saturated subscriber is dropped (connection closed) and the hub never blocks.">
+        <md><script type="text/plain">
+**Context:** `Hub.Broadcast` calls each `Sink.Deliver` synchronously (`hub.go:48-59`), so a blocking sink would stall the hub and every other subscriber.
+
+**Decision:** `peerSink.Deliver` calls `peer.Notify(ev.Type, ev)`, which uses the peer's existing bounded-channel enqueue that **drops the frame and closes the connection when full** (`peer.go:416-431`). No new buffering or backpressure is added — the relay inherits at-most-once/lossy delivery (auto-bus-spec §5), mirroring auto-ui's `ws.go` slow-client drop (`ws.go:85-95`). A dropped (closed) peer is then cleaned up by the normal teardown path (D-40-1).
+
+**Alternatives:** A per-sink unbounded queue (unbounded memory under a stuck consumer); blocking delivery with a timeout (still stalls the hub for the timeout window). Both violate the never-block-on-a-slow-consumer contract.
+
+**Consequences:** A slow subscriber loses events and its connection; it must reconnect and re-fetch state via RPC (spec §5 — events are invalidations, not state transfer). The hub stays responsive for all other subscribers.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-40-3" title="Ingest stamps hostId by overwrite-always" status="accepted" by="author"
+        summary="HookIngest sets ev.Host = the daemon's hostId for every ingested event (and derived events inherit it), rather than stamp-if-empty.">
+        <md><script type="text/plain">
+**Context:** GR-F3 requires relayed events to carry an intact `Host`. `Event.Validate()` already **rejects an empty Host** (`event.go:95`), so a stamp-if-empty rule would never fire on the validated path. Ingest is a **loopback-only, single-hop** local hook target (`ingest.go` loopback guard), so the ingesting daemon is the authoritative host for the events it accepts.
+
+**Decision:** Overwrite `ev.Host = hostID` (the daemon's `config.HostIDQuietly()`) after `Validate`, before deriving. `newDerived` copies `src.Host` (`derive.go:79`), so derived `doc.changed` events inherit it. The daemon asserts its own identity rather than trusting a producer-supplied value.
+
+**Alternatives:** Stamp-if-empty — moot (validation rejects empty) and would trust a possibly-wrong producer Host. Stamp before Validate to accept empty-Host frames — needlessly loosens 031's 400 contract.
+
+**Consequences:** When multi-hop relay (remote autowatch → local) is built in later epic work, that relay path must explicitly *preserve* an upstream Host rather than reusing this overwrite. Noted for the future; not in scope here (single-hop local ingest).
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-40-4" title="Derivation reads the project registry per ingest (provider func)" status="accepted" by="author"
+        summary="HookIngest takes a regProvider func() config.ProjectsConfig re-read on each request, matching auto-ui, so newly-registered projects derive without a daemon restart.">
+        <md><script type="text/plain">
+**Context:** `DeriveDocChanged` only derives for registered projects (`derive.go:20`). autowatch owns and mutates `~/.auto/projects.json` while running, so a snapshot taken at daemon start would go stale — a project registered after start would derive nothing until restart.
+
+**Decision:** Pass `HookIngest` a `regProvider func() config.ProjectsConfig` that re-reads the registry (via `config.LoadProjects(ProjectsPath())`) per request — the exact pattern auto-ui uses (`rpc_ingest.go:25`). Consistency with the auto-ui ingest path is a bonus.
+
+**Alternatives:** Snapshot at start — cheaper but stale until restart; wrong for a daemon that mutates its own registry. A watched/cached registry with invalidation — more machinery than warranted for a low-frequency hook path.
+
+**Consequences:** A small disk read per hook event. Acceptable at current hook volume; if it grows, a cached provider can replace the closure with no API change (noted in Known Gaps).
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-40-5" title="ctl.* gating stays at emission; the bridge relays everything on the hub" status="accepted" by="author"
+        summary="No ctl-specific filter in the bridge — 031 already gates ctl.* emission behind --ctl-events, so relaying the whole hub yields the desired behavior.">
+        <md><script type="text/plain">
+**Context:** The decision is "ctl.* relays to subscribers only when --ctl-events is on; data-plane always relays."
+
+**Decision:** Keep the gate where 031 put it — `ctl.*` is `Broadcast` onto the hub only when `ctlEvents` is true (`server.go:78`, `methods.go:74`, `ingest.go:85`). The bridge relays whatever reaches the hub, so `ctl.*` flows to subscribers exactly when the flag is on, and ingested/derived data-plane events always flow. No `ctl`-type filter in `peerSink`.
+
+**Alternatives:** A type-prefix filter in the bridge — duplicates the emission gate and risks the two diverging.
+
+**Consequences:** GR-F7's unified hop-by-hop trace is available by running the daemon with `--ctl-events`; the default-off path adds no control-plane noise to subscribers.
+        </script></md>
+      </pd-decision>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Rebuild the ingest handler / hub** — rejected: 031 shipped the validate-ack shell, the loopback/CSRF/1MiB guards, and the hub; this task only *extends* ingest (derive + hostId) and *adds* the bridge.
+- **Subscribe inside `rpcmethods.Handlers`** — rejected (D-40-1): `Handlers` is a shared singleton with no per-connection state and no teardown hook; it would also pull peer-lifecycle concerns into the transport-free package.
+- **Change the shared `rpc.Handler` signature to pass the peer** — rejected: a cross-cutting change to `auto-shared/rpc` for one method, when a per-conn closure in the accept loop suffices.
+- **Per-subscriber unbounded queue or blocking delivery** — rejected (D-40-2): violates the never-block-on-a-slow-consumer contract (spec §5); reuse the peer's drop-and-close enqueue instead.
+- **Filtered/parameterized `bus.subscribe`** — rejected: GR-N5 keeps filtering client-side; subscribe is broadcast-all and parameterless.
+- **Snapshot the registry at start** — rejected (D-40-4): stale for a daemon that mutates its own registry; re-read per ingest like auto-ui.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions">
+        <pd-decisions></pd-decisions>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Three phases that **extend 031, not rebuild it**. P1 and P2 are independent (the relay bridge vs the ingest extension) and touch disjoint files; P3 lands the doc updates and the full gate sweep. Each phase commits code + tests together with `go build ./...` + `go test -race ./...` green in the affected module(s) (Go Build Discipline). No new `go.mod` requires (GR-N1); the bridge stays in `rpcserver` so `rpcmethods` remains transport-free and 031's layering test is untouched (GR-N3).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution sequence">
+        <pd-mermaid caption="Phase DAG — P1 (bridge) and P2 (ingest) are independent">
+flowchart LR
+    P1["P1\nbus.subscribe bridge\n(rpcserver: subscribe.go + accept loop)"]
+    P2["P2\ningest derive + hostId\n(rpcserver/ingest.go + ops.go wiring)"]
+    P3["P3\nspec + CLAUDE.md docs\n+ full gate sweep"]
+
+    P1 --> P3
+    P2 --> P3
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="bus.subscribe hub→peer bridge" status="todo"
+          files="auto-watch/internal/rpcserver/subscribe.go,auto-watch/internal/rpcserver/server.go,auto-watch/internal/rpcserver/server_test.go">
+          <md><script type="text/plain">
+1. `subscribe.go` — add `peerSink{peer *rpc.Peer}` implementing `bus.Sink` (`Deliver(ev)` → `peer.Notify(ev.Type, ev)`, the `Event.AsNotification` shape; non-blocking, drop-and-close on full via the peer's own enqueue — no extra buffering); a per-connection `subscription{mu sync.Mutex; cancel func()}` holder; and `registerSubscribe(p *rpc.Peer, hub *bus.Hub, sub *subscription)` that registers a peer-bound `bus.subscribe` handler (parameterless, broadcast-all) which lazily does `sub.cancel = hub.Subscribe(&peerSink{p})` under the mutex (idempotent — a second call is a no-op) and returns a small ack. **Verify:** `go build ./...` in `auto-watch`.
+2. `server.go` — in the accept loop after `s.handlers.Register(peer)` (`server.go:71-72`), build a per-conn `sub := &subscription{}` and call `registerSubscribe(peer, s.hub, sub)`; in the `wg.Go` teardown closure (`server.go:85-98`), call `sub.cancel()` (nil-safe) beside `delete(s.peers, peer)` / gated `ctl.disconnect`, so a disconnected peer leaves no leaked hub sink. `rpcmethods` is untouched (stays transport-free). **Verify:** `go build ./...`.
+3. `server_test.go` — over `net.Pipe`/unix with a real `rpc.Peer`: (AC-1) after `bus.subscribe`, a hub `Broadcast` arrives as a JSON-RPC notification with `method == ev.Type` and `params` round-tripping to the full envelope incl. `Host`/`Project`; a second subscribe is idempotent. (AC-3) with `--ctl-events` off a synthetic data-plane event relays but no `ctl.*`; with it on, `ctl.*` also relays — no bridge-side filter (gate is at emission). (AC-4) after the peer disconnects, the hub sink-count returns to its pre-subscribe value (cancel fired once) and later `Broadcast`s don't block/panic. (AC-5) a saturated subscriber is dropped (conn closed, `Serve` returns) while `Broadcast` returns promptly and a healthy subscriber still gets every event. **Verify:** `go test -race ./internal/rpcserver/`.
+4. **Commit:** `feat(040): bus.subscribe hub→peer relay bridge`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="ingest derive + hostId + start wiring" status="todo"
+          files="auto-watch/internal/rpcserver/ingest.go,auto-watch/internal/rpcserver/ingest_test.go,auto-watch/internal/cli/ops.go">
+          <md><script type="text/plain">
+1. `ingest.go` — extend `HookIngest(hub, hostID string, regProvider func() config.ProjectsConfig, ctlEvents bool)`. After `ev.Validate()` (unchanged; still 400 on failure): **stamp `ev.Host = hostID` (overwrite-always)**, `hub.Broadcast(ev)`, then `for _, d := range bus.DeriveDocChanged(ev, regProvider()) { hub.Broadcast(d) }` (derived events inherit `Host` via `newDerived`, `derive.go:79`). The 405/400/403/loopback/1 MiB guards and the gated `hook.ingested` ctl log are unchanged. **No new persistence.** **Verify:** `go build ./...`.
+2. `ops.go` — at the `HookIngest` call (`ops.go:166`) thread the in-scope `hostID` (`ops.go:105`) and a `regProvider` closure that re-reads the registry per call (`config.LoadProjects(config.ProjectsPath())`, D-40-4). The `rpcserver.New(...)` call (`ops.go:161`) is unchanged — the hub is already passed. **Verify:** `go build ./...` in `auto-watch` (whole module compiles with the new signature).
+3. `ingest_test.go` — `httptest`: (AC-2) a valid `agent.tool.post` frame touching `docs/foo.md` in a **registered** project (seed the `regProvider`) → 204, and a hub-subscribed test sink sees **two** broadcasts — the ingested event and a derived `doc.changed`, **both with `Host == <daemon hostId>`**; an **unregistered** project / non-doc path → ingested-only; 031's 405/400/403/1 MiB guards still hold. **Verify:** `go test -race ./internal/rpcserver/ ./internal/cli/`.
+4. **Commit:** `feat(040): ingest derives doc.changed + stamps hostId`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Spec + CLAUDE.md docs; full gate sweep" status="todo" depends-on="1,2"
+          files="docs/auto-bus-spec.md,auto-watch/CLAUDE.md">
+          <md><script type="text/plain">
+1. `docs/auto-bus-spec.md` — promote §4.3's "future `subscribe()` RPC" to an implemented **broadcast-all** `bus.subscribe`: document the relay path (hub→peer-bound sink→`Peer.Notify`), the per-peer **drop-on-full / at-most-once** semantics (consistent with §5), and that `ctl.*` relays to subscribers **only under `--ctl-events`** while data-plane events always relay. **Verify:** the spec mentions `bus.subscribe`, broadcast-all, and the gating note.
+2. `auto-watch/CLAUDE.md` — note the `bus.subscribe` relay + extended ingest in the build/test instructions. **Verify:** doc reads correctly.
+3. **Full gates (AC-6):** `cd auto-shared && go build ./... && go test -race ./...`; `cd auto-watch && go build ./... && go test -race ./...`; `cd auto-ui && go build ./... && go vet ./... && go test ./...` (the `/api/rpc` path is untouched — hooks still dual-post); 031's `rpcmethods` layering test still passes (GR-N3); `git diff --quiet -- auto-shared/go.mod auto-watch/go.mod` (GR-N1). **Commit:** `docs(040): bus.subscribe relay + ingest derivation`.
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success criteria">
+        <md><script type="text/plain">
+- **AC-1 / AC-3 / AC-4 / AC-5** after P1 (the `bus.subscribe` bridge: relay + envelope fidelity, ctl gating through the bridge, cleanup-on-disconnect, drop-on-full).
+- **AC-2** after P2 (ingest derives `doc.changed`, stamps `Host` overwrite-always, broadcasts ingested + derived).
+- **AC-6** after P3 (build/test gates green in `auto-shared`/`auto-watch`; `auto-ui` regression green and untouched; layering held; both `go.mod`s unchanged).
+- Locked decisions realized: peer-bound `bus.subscribe` in the accept-loop closure holding the `Hub.Subscribe` cancel (fired on teardown beside `delete(peers)`/`ctl.disconnect`); non-blocking `Notify` drop-and-close; `hostId` overwrite-always; registry re-read per ingest; `ctl.*` relayed only when `--ctl-events` on, data-plane always. Extends 031 — listener, hub, ingest shell, and `ctl.*` emission gate are reused, not rebuilt.
         </script></md>
       </pd-section>
 
