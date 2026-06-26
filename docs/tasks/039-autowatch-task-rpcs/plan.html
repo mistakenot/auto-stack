@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>039: autowatch-task-rpcs</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "039",
+    "name": "autowatch-task-rpcs",
+    "epic": "003-multi-host-architecture",
+    "status": "planning",
+    "created": "2026-06-26"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="039: autowatch-task-rpcs" status="draft" generated="2026-06-26">
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Epic Task 3 (031, MERGED) stood up the autowatch JSON-RPC listener, the transport-free `rpcmethods.Handlers` package, the in-process `bus.Hub`, and a `daemon.status` smoke method — but **no domain method touches the run lifecycle**. Task 4 (038) adds the read-only `doc.*`/`project.*` methods. The remaining half of autowatch's authority — **dispatching and controlling tasks over RPC** — does not exist: there is no way for a remote auto-ui proxy (or any RPC client) to start a task, cancel it, read its status/output, or list runs. Today task dispatch is reachable **only** through the daemon's internal 60s tick loop (`daemon.Service.Tick` → trigger evaluation → `ReserveRun` + `startWorker`), which is cron/file-trigger driven and not callable from the network surface.
+
+This blocks **GR-F2 (task dispatch parity)**: a `task.dispatch` issued through autowatch must produce the *same* SQLite run record, the *same* tmux session, and the *same* reap lifecycle as the existing CLI/tick-driven flow. The dispatch primitive already exists and is battle-tested inside the daemon (`store.ReserveRun` to insert a `pending` run, then `(*Service).startWorker` to build the runtime dir / worktree / launch script, call `runner.Backend.Start`, flip the run to `running` via `UpdateRunStarted`, and emit `task_started`); the gap is that it is **unexported and only invoked from trigger evaluation**. Task 5 must expose the same primitive to RPC handlers without forking the lifecycle and without regressing the tick loop.
+
+A subtle constraint comes from the epic's resolved Task-5 review thread ("Task dispatch execution model is contradictory"): the earlier "insert pending + signal the wake channel" model was removed. The **resolved** model is that `task.dispatch` **inserts into SQLite and starts the worker directly** (the same dispatch primitive the tick loop uses) and does **NOT** signal the tick loop. The tick loop continues to own cron-triggered runs and **reaping**; RPC-dispatched runs handle their own lifecycle. But the existing `Service.Reap` lists **all** `running` runs regardless of origin and marks them terminal off their exit-code file — so "handle their own lifecycle" must be reconciled with a reaper that already sweeps every running run (see Open Questions). The handlers also run concurrently: `rpc.Peer` dispatches each request in its own `go handleRequest` goroutine, so any shared call into `startWorker`/`ReserveRun`/`Reap` must be concurrency-safe.
+
+Finally, these methods must emit the **data-plane** lifecycle events the bus spec already reserves — `watch.task.started`, `watch.task.completed`, `watch.task.failed` (per `docs/auto-bus-spec.md` §6.4–6.5) — distinct from the `ctl.*` control-plane logs 031 added. The epic's event-planes review thread resolved that task lifecycle events are **data plane** (`watch.task.*`), not `ctl.*`.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **`task.dispatch` RPC — start a run directly (GR-F2 parity).** Insert a run into SQLite (`store.ReserveRun`, `pending`) and **start the worker directly** via the *same dispatch primitive the tick loop uses* (`(*Service).startWorker`: runtime dir, worktree for `claude` tasks, launch script, `runner.Backend.Start`, `UpdateRunStarted` → `running`). It produces the **same** SQLite record, tmux session, and reap lifecycle as the CLI/tick-driven flow. It does **NOT** signal or wake the tick loop. Returns the reserved `run_id` (+ run metadata) to the caller.
+- **`task.cancel` RPC — stop an in-flight run.** Kill the tmux session for a running run (`runner.Backend.Kill` via the run's `Handle`) and mark the run terminal, reusing the existing terminal-transition path (`store.MarkRunTerminal`) and worktree cleanup where applicable.
+- **`task.status` RPC — describe one run.** Return a single run's current state and metadata from `store.GetRun` (state, exit code, session name, worktree, timestamps).
+- **`task.list` RPC — enumerate runs.** Return runs (optionally filtered by state) via `store.ListRunsByStates` / the store's run listing, IDs + metadata, consistent with the resource-listing conventions.
+- **`task.output` RPC — return a run's output.** Return the run's captured output (the `output.log` written by the launch script, addressed by the run's stored `OutputPath`), as the operator-facing log for a dispatched run.
+- **Emit `watch.task.*` data-plane events onto the 031 `bus.Hub`.** On the dispatched-run lifecycle, broadcast `watch.task.started` (on successful start), `watch.task.completed` (exit 0), and `watch.task.failed` (non-zero exit / timeout / worker-not-started) onto the **same in-process `bus.Hub` introduced in 031** (the consistent producer seam; verified in-process via a subscribed `bus.Sink`), shaped per `docs/auto-bus-spec.md` §6.5 (envelope provenance from the run; domain identifiers in `data`). These are **data-plane** events: **always on, NOT gated by `--ctl-events`** (unlike 031's `ctl.*` control-plane logs, which only relay to `bus.subscribe` subscribers when `--ctl-events` is set in Task 6). They are emitted **in addition to** the existing `store.InsertEvent` SQLite rows (`task_started`/`task_completed`/`task_failed`) — the SQLite log stays as the durable record; the bus events are the live stream. The hub→connected-peer relay itself is Task 6; Task 5 only produces onto the hub.
+- **Concurrency-safe over the RPC goroutine model.** `rpc.Peer` dispatches each request via `go handleRequest`, so `task.*` handlers may run concurrently with each other and with the tick loop. The shared dispatch primitive (`ReserveRun`/`startWorker`/`Reap`) must be reused safely — relying on the store's existing `ErrActiveRunExists` unique constraint for dedup and adding whatever guarding the shared `Service` state requires.
+- **GR-N3 layering preserved.** The new `task.*` handlers live in `auto-watch/internal/rpcmethods` and must **never** import `auto-shared/transport` (only the `rpcserver` accept loop does); extend 031's layering gate so it still holds with the new methods.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **`bus.subscribe` / hub→connected-peer relay.** Bridging the in-process `bus.Hub` to connected RPC peers (so a remote proxy receives the `watch.task.*` notifications over the wire) is **Task 6**. Task 5 emits onto the hub; it does not add the network relay. The event ingest→derive→relay pipeline and durable event persistence are also Task 6.
+- **`doc.*` / `project.*` RPC methods.** Read-only doc/project methods are **Task 4 (038)**.
+- **Changing the tick loop / cron triggering / reaping cadence.** The 60s tick loop, trigger evaluation, and the existing reaper remain functionally unchanged (additive). No wake channel is introduced (it was removed from the epic).
+- **auto-ui proxy / backends config / event aggregation.** Tasks 7/8.
+- **Hook retarget.** `auto hooks fire` posting target is Task 10.
+- **Application-layer auth / authorization on `task.*`.** Network-layer only (GR-N2); RPC-level auth is out of scope for this epic.
+- **New tmux/runner backends or a new execution model.** Reuse the existing `runner.Backend` (tmux) and launch-script execution unchanged.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [x] **Do `watch.task.*` emit onto the in-process `bus.Hub` from 031 (like `ctl.*`)?** **Resolved: yes — broadcast onto the same in-process `bus.Hub` introduced in 031** (consistent producer seam; verified in-process via a subscribed `bus.Sink`). They are **data-plane: always on, NOT gated by `--ctl-events`**. Emit them **in addition to** the existing `store.InsertEvent` SQLite rows (`task_started`/`task_completed`/`task_failed`) — the SQLite log stays as the durable record; the bus events are the live stream. (Cross-cutting context: `ctl.*` control-plane events relay to `bus.subscribe` subscribers only when `--ctl-events` is on in Task 6; `watch.task.*` always flow. The hub→connected-peer relay itself is Task 6; Task 5 only produces onto the hub.)
+
+The remaining questions are **design, not requirements scope** — they are deferred to the solution stage but kept prominently listed because the `startWorker` concurrency issue is a real risk the solution must address:
+
+- [ ] **Reaper ownership vs "RPC-dispatched runs handle their own lifecycle."** The epic says RPC-dispatched runs handle their own lifecycle and `task.dispatch` does not signal the tick loop — yet `(*Service).Reap` (daemon.go:139, run at the top of every `Tick`) lists **all** `running` runs and marks them terminal off their exit-code file, independent of how they were started. Does an RPC-dispatched run rely on the *same* tick-loop reaper to reach `completed`/`failed` and emit `watch.task.completed`/`failed` (in which case the events must be produced from the shared reap path, not the handler), or does `task.dispatch` spawn its **own** waiter goroutine that reaps just that run — and if so, how is a double-reap race against the tick-loop reaper prevented? (→ resolved in /beta-new-solution)
+- [ ] **Reusing `startWorker` without racing the tick loop.** `startWorker` (daemon.go:741) and `ReserveRun` are currently **unexported and only called from single-threaded trigger evaluation**. To call the *same* primitive from `task.dispatch`, must it be exported/extracted onto `daemon.Service`, and does the shared `Service` (including `workerWG`) need a mutex to be safe when invoked from concurrent RPC goroutines alongside an in-progress `Tick`? Is `store.ReserveRun`'s `ErrActiveRunExists` unique constraint sufficient dedup between a concurrent RPC dispatch and a tick-triggered dispatch of the same resource? (→ resolved in /beta-new-solution)
+- [ ] **Concurrency model for `task.*` handlers.** Because `rpc.Peer` runs each request in `go handleRequest`, two `task.dispatch` calls (or a `task.dispatch` + `task.cancel` on the same run) can execute simultaneously. What is the minimal correct guarding — a `Service`-level mutex around the dispatch/cancel primitive, per-run locking, or reliance on SQLite constraints — and which operations must be serialized? (→ resolved in /beta-new-solution)
+- [ ] **What `task.output` returns.** Does `task.output` return the **live tmux pane capture** (via the backend, only meaningful while the session exists) or the **stored output file** at the run's `OutputPath` (the `output.log` written by the launch script, available during and after the run)? Should it support tailing / a max-lines or byte cap (cf. `tailOutput`), and what does it return for a `pending` run that has no output path yet? (→ resolved in /beta-new-solution)
+- [ ] **`task.dispatch` request shape.** What does the caller supply — `(projectId, taskId)` resolved against the project registry's configured tasks, or an inline ad-hoc task definition? Is a `triggerId`/`resourceKey` required (the existing `ReserveRunInput` carries trigger/resource fields and `startWorker` reads `run.TriggerID`/`run.TriggerType`/`run.ResourceKey` to build the prompt), and what synthetic values are used for an RPC-initiated (non-trigger) dispatch? (→ resolved in /beta-new-solution)
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>

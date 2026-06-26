@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>038: autowatch-doc-project-rpcs</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "038",
+    "name": "autowatch-doc-project-rpcs",
+    "epic": "003-multi-host-architecture",
+    "status": "planning",
+    "created": "2026-06-26"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="038: autowatch-doc-project-rpcs" status="draft" pr="pending" generated="2026-06-26">
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Epic Task 3 (031, MERGED) stood up autowatch's JSON-RPC listener and a single `daemon.status` health method — but **no domain methods exist yet**. The listener is an empty surface: `auto-watch/internal/rpcmethods/methods.go` registers only `daemon.status`, and the rest of the epic (the auto-ui proxy cut-over in Task 7) cannot proceed until autowatch can actually serve docs and projects.
+
+Today, **auto-ui reads docs and the project registry directly from the local filesystem**. The four operations the SPA depends on all live in `auto-ui/internal/server/`:
+- `doc.list` (`docs.go`) — walks `docs/**` under a resolved project root, returns `[{id, path, type, meta?}]` for every `.md` **and** `.html` file, extracting `PlanMeta` from HTML planning docs.
+- `doc.get` (`docs.go`) — reads a single **markdown** file (`cleanDocPath(p, ".md")`) and returns `{path, markdown}`. It deliberately **refuses HTML**.
+- `/api/doc/raw` (`raw.go`) — an **HTTP GET** route that serves a single `.html` file verbatim (`cleanDocPath(p, ".html")`) with `Content-Type: text/html`. HTML is never routed through `doc.get`; the SPA renders it in a sandboxed iframe.
+- `project.list` (`project.go`) — maps the registry to `[{id, name, path, remote}]`, passing each `remote` through `git.NormalizeRemoteURL` (credential stripping at the UI boundary).
+
+Epic D-2 mandates a clean cut-over: auto-ui removes all direct filesystem reads and delegates entirely to autowatch (Task 7). For that to be a no-regression change (GR-F1, full doc parity), autowatch must first expose `doc.list`, `doc.get`, `doc.raw`, and `project.list` as JSON-RPC methods that read from **autowatch's own** local filesystem and project registry (GR-F5, registry authoritative) — with the **same path validation, the same traversal guards, and the same response shapes** auto-ui produces today. `doc.raw` is the one new wrinkle: it must return raw file bytes plus a content type over JSON-RPC, so that auto-ui's proxy (Task 7) can translate the HTTP GET on `/api/doc/raw` into this RPC call and reconstruct the HTTP response.
+
+This is the doc/project half of the autowatch RPC surface; the task half (`task.*`) is Task 5 and the event ingest/relay pipeline is Task 6. This task is one of the two siblings (with Task 5) that unblock Task 7.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **`doc.list` RPC** — register on autowatch's `rpcmethods.Handlers` (alongside `daemon.status`), walking `docs/**` under a registry-resolved root and returning the **exact** `[{id, path, type, meta?}]` shape auto-ui emits today: both `.md` (`type:"markdown"`) and `.html` (`type:"html"`) entries, with `PlanMeta` extracted from HTML planning docs and `omitempty` elsewhere. An absent `docs/` dir is an empty list, never an error.
+- **`doc.get` RPC** — read a single **markdown** file and return `{path, markdown}`, preserving auto-ui's deliberate markdown-only contract (HTML is rejected here and served only by `doc.raw`).
+- **`doc.raw` RPC** — return **raw file bytes + content type** for a single `.html` doc, achieving behavioural parity with auto-ui's `/api/doc/raw` HTTP route (same `cleanDocPath(p, ".html")` validation, same traversal rejection, same "verbatim HTML" contract). The response carries enough (bytes + content type, and a not-found/invalid-path signal) for auto-ui's Task 7 proxy to rebuild the HTTP GET response (200/400/404) without re-deriving the guards.
+- **`project.list` RPC** — map autowatch's authoritative `~/.auto/projects.json` registry to one object per project, passing each `remote` through `git.NormalizeRemoteURL` so a credentialed remote never crosses the wire (the same normalization auto-ui does today). **Additionally stamp `host` into every entry** from `config.HostIDQuietly()`: autowatch can only serve its own projects, so it is the authoritative producer of the `(hostId, projectId)` identity (GR-F8), and the Task 7 proxy merges entries across backends. This is the one deliberate, decided addition over auto-ui's current `{id, name, path, remote}` shape.
+- **Parity, not reinvention — reimplement in autowatch** — re-implement the path-cleaning / traversal-guard / root-resolution / doc-walk logic **directly in autowatch** (do **not** extract to a shared package), porting the behaviour of auto-ui's `auto-ui/internal/server/docs.go` (`cleanDocPath`, `resolveRoot`, `walkDocs`, `ExtractPlanMeta`/`PlanMeta`), `raw.go`, and `project.go`. The parity obligation is accepted explicitly: **path validation, traversal guards, and response shapes must match** auto-ui's current behaviour, and the Verification stage will assert byte/shape parity against it via tests. The behaviour, not just the surface, must match.
+- **GR-N3 layering preserved** — the new methods live in `rpcmethods` (which imports `rpc`/`bus`/`store`/registry config but **never `transport`**), extending 031's `Handlers.Register` + dispatch-count decorator rather than introducing a new seam.
+- **Conformance coverage** — extend the 031 two-tier conformance fixtures (in-process + binary) so a scenario exercises the new methods against the live listener over the wire (GR-N6/GR-N7, API-first).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **`daemon.status`** — already shipped in Task 3 (031). The epic lists it under Task 4, but the minimal health/identity method was pulled forward into 031; this task does not re-add it.
+- **Task RPCs** — `task.dispatch`/`task.cancel`/`task.status`/`task.output`/`task.list` and the `watch.task.*` data-plane events are Task 5 (031's sibling).
+- **Event ingest / derivation / relay** — `bus.subscribe`, the hook ingest→derive→relay pipeline, and pushing `doc.changed` notifications are Task 6. This task serves request/response reads only; it does not produce or relay events.
+- **auto-ui changes** — the proxy layer, `backends.json`, the HTTP→RPC translation of `/api/doc/raw`, and removing auto-ui's direct filesystem reads are Task 7. This task only makes the autowatch methods exist and conform.
+- **Multi-backend identity plumbing in the SPA** — the `(hostId, projectId)` hash routing / event matching in the browser is Task 9. (How identity is carried into *these* RPCs is an Open Question below, but the SPA work is not in scope.)
+- **Hook retarget** — `auto hooks fire` retargeting and removing auto-ui's `/api/rpc` are Task 10.
+- **Application-layer auth** — network-layer only (GR-N2).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [x] **Reimplement vs. extract the doc-reading logic → REIMPLEMENT IN AUTOWATCH.** Re-implement `cleanDocPath`, `resolveRoot`, `walkDocs`, `ExtractPlanMeta`/`PlanMeta` (and the `docEntry`/`projectEntry` shapes) directly in autowatch — do **not** extract to a shared package. The parity-drift risk is accepted and discharged at the Verification stage: tests assert byte/shape parity against auto-ui's current `docs.go`/`raw.go`/`project.go` behaviour. This keeps auto-ui untouched (Task 7 owns auto-ui changes).
+- [x] **Does `project.list` gain a `host` field now or in Task 7? → ADD NOW.** autowatch stamps its own hostId via `config.HostIDQuietly()` into each `project.list` entry, satisfying GR-F8 at the producer; the Task 7 proxy merges entries across backends. `git.NormalizeRemoteURL` credential-stripping is preserved in the port. (Reflected in Goals.)
+- [ ] **How is `(hostId, projectId)` carried in these RPCs (GR-F8 / seam #2).** The epic says the proxy attaches `hostId` to every forwarded RPC and the UI identity is the `(hostId, projectId)` tuple. But autowatch *is* the host — does it ignore an inbound `hostId` param (it can only serve its own), validate it against its own `host.json`, or is `hostId` purely an auto-ui-side routing concern that never appears in the autowatch method params? Relatedly, the request shape currently keys on `project`/`worktree` (registry-resolved) — is that unchanged here? (→ resolved in /beta-new-solution)
+- [ ] **`doc.raw` content-type handling.** auto-ui's `/api/doc/raw` only ever serves `.html` and hard-codes `Content-Type: text/html; charset=utf-8`. Should the `doc.raw` RPC likewise restrict to `.html` and hard-code the content type (strict parity), or generalize to return a detected/declared content type for arbitrary doc bytes? And what is the exact response envelope (e.g. `{path, contentType, bytes/base64}` vs. a status-bearing shape) that lets the Task 7 proxy reconstruct 200/400/404 faithfully? (→ resolved in /beta-new-solution)
+- [ ] **Should the `doc.get` (markdown) vs. `doc.raw` (HTML) split be preserved verbatim?** auto-ui deliberately refuses HTML from `doc.get` (`cleanDocPath(p, ".md")`) and serves it only via the raw route, because the SPA renders self-contained planning HTML in a sandboxed iframe rather than inlining it. Confirm this two-method separation is mirrored exactly on autowatch (it is assumed in Goals), or whether the cut-over is an opportunity to unify them. (→ resolved in /beta-new-solution)
+- [ ] **Error-code mapping parity across the HTTP→RPC boundary.** Today the failure mappings differ by surface: `doc.get` maps a `resolveRoot` failure to a JSON-RPC `codeInternalError` and a bad path to `codeParseError`; `/api/doc/raw` maps the same failures to HTTP `400` and a missing file to `404`. When `doc.raw` becomes an RPC whose result the proxy must turn back into HTTP statuses, what is the canonical error contract so the proxy reproduces auto-ui's current 400/404/405 behaviour without guessing? (→ resolved in /beta-new-solution)
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>

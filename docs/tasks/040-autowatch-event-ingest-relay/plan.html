@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>040: autowatch-event-ingest-relay</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "040",
+    "name": "autowatch-event-ingest-relay",
+    "epic": "003-multi-host-architecture",
+    "status": "planning",
+    "created": "2026-06-26"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="040: autowatch-event-ingest-relay" status="draft" generated="2026-06-26">
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+This is epic-003 **Task 6: Autowatch event ingest + relay plumbing**. Task 3 (031, MERGED) stood up autowatch's network surface but deliberately stopped short of a working event relay, leaving the daemon able to *receive* hook events but unable to *push* them to a connected upstream client:
+
+- **The hub has no bridge to connected peers.** 031 introduced an in-process `bus.Hub` as the daemon event stream (`auto-shared/bus/hub.go`), but `Hub.Broadcast` only fans out to registered `bus.Sink`s (`hub.go:48-59`); an `rpc.Peer` does not auto-subscribe, and although `Peer.Notify` exists (`auto-shared/rpc/peer.go:384`) for server→client push, **nothing wires hub events onto it**. 031 explicitly deferred this hub→connected-peer bridge (`docs/tasks/031-autowatch-rpc-listener/plan.html` decision D-31-3 and the resolved AC-8 thread). There is no `bus.subscribe` method, so events that reach the daemon hub never reach the wire — they die at in-process sinks.
+- **Ingest validates and broadcasts the raw event but does not derive or attach identity.** The current handler (`auto-watch/internal/rpcserver/ingest.go`) parses the JSON-RPC frame, runs `ev.Validate()`, `hub.Broadcast(ev)`s the raw event, and returns 204. It does **not** run `bus.DeriveDocChanged` (`auto-shared/bus/derive.go`) — that derivation lives only in auto-ui's `/api/rpc` path (`auto-ui/internal/server/rpc_ingest.go:75-88`) — and it does **not** attach `hostId` to ingested events. The handler also has no access to the project registry that `DeriveDocChanged` needs.
+
+The net effect: autowatch cannot relay `doc.changed` (or any derived/host-stamped events) to upstream consumers. This blocks GR-F3 (event fidelity — envelope fields incl. `Host` intact through the relay hop), GR-F7 (logs are first-class events flowing upstream through the same relay), and epic decision D-3 (hooks post to autowatch, which ingests, derives, and pushes events to connected auto-ui instances).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+Task 6 **extends 031** — it does not rebuild the listener, the ingest endpoint, or the hub. The new scope is exactly the two pieces 031 deferred, plus host-stamping:
+
+- **`bus.subscribe` — the hub→connected-peer bridge (the piece D-31-3/AC-8 explicitly deferred).** When an upstream client (auto-ui in Task 8) calls `bus.subscribe` over its persistent RPC connection, autowatch registers a per-peer `bus.Sink` against the daemon `bus.Hub` (via `Hub.Subscribe`, `hub.go:30`) that turns every hub `Broadcast` into a JSON-RPC notification pushed on that peer (`Peer.Notify` → `Event.AsNotification`). The subscription is bound to the peer's lifetime: it is cancelled (deregistered from the hub) when the peer disconnects, so a dead connection leaves no leaked sink.
+- **Extend ingest to derive + attach `hostId`, then broadcast both the ingested and derived events.** After `ev.Validate()`, stamp `hostId` onto the event (from `config.HostIDQuietly()`, already used at `auto-watch/internal/cli/ops.go:105`) for GR-F3 fidelity, then run `bus.DeriveDocChanged(ev, registry)` and `Broadcast` the ingested event **and** each derived `doc.changed` onto the hub — mirroring the auto-ui pattern at `rpc_ingest.go:75-88`. This requires giving the ingest handler access to the project registry (a `config.ProjectsConfig` provider, as auto-ui passes a `regProvider func()`).
+- **Events relayed to subscribers carry every envelope field, in order.** GR-F3: the `Host` field and all other envelope fields survive the relay hop intact. Per-producer ordering is preserved (spec §5); delivery stays at-most-once and lossy (no new durability).
+- **Broadcast-all, parameterless subscription (GR-N5).** `bus.subscribe` takes no filter params — a subscriber receives every event and the SPA filters client-side. No server-side filtering.
+- **Logs as events (GR-F7).** The `ctl.*` events that 031 already broadcasts onto the hub now relay to subscribers via the new bridge **when `--ctl-events` is on** (off by default = not relayed), so a debugging agent can watch the unified hop-by-hop trace. Data-plane events (`doc.changed`, `watch.task.*`) always relay regardless of the gate.
+- **Additive — no hook retarget.** `auto hooks fire` keeps posting to auto-ui in parallel during this phase; autowatch ingest is additive and the auto-ui `/api/rpc` path is unchanged. The resolved epic review thread "Hook retarget breaks live refresh before auto-ui subscribes" splits Task 6 (ingest/relay plumbing) from the actual retarget, which is Task 10.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Hook retarget to autowatch-only — Task 10.** `auto hooks fire` is NOT repointed away from auto-ui here, and auto-ui's `/api/rpc` ingest endpoint is NOT removed. Hooks dual-post (auto-ui + autowatch) until Task 8 lands auto-ui's subscription and Task 10 does the cut-over. (Per the resolved "Hook retarget breaks live refresh" epic thread.)
+- **auto-ui subscription wiring — Task 8.** auto-ui *calling* `bus.subscribe` on each backend, merging relayed events into its own Hub, and broadcasting to browser WebSocket clients is Task 8. This task ships only the autowatch *server* side of `bus.subscribe`.
+- **Persistence / durability beyond what relay needs.** Delivery stays at-most-once and explicitly lossy (auto-bus-spec §5); no durable event store, no replay, no acks. The canonical record remains ETL/SQLite.
+- **Domain RPC methods and data-plane task events.** `doc.*`/`project.*` (Task 4), `task.*` (Task 5), and `watch.task.*` data-plane lifecycle events (Task 5) are out of scope — Task 6 relays whatever is broadcast onto the hub but defines no new data-plane event types.
+- **Server-side event filtering.** GR-N5 keeps filtering client-side; `bus.subscribe` is broadcast-all and parameterless (decided), not a parameterized server-side filter.
+- **Network/application-layer auth** — network-layer only (GR-N2), unchanged from 031.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [x] **Filtered vs broadcast-all → broadcast-all, parameterless.** `bus.subscribe` takes no filter params: a subscriber receives every event and the SPA filters client-side (GR-N5, consistent with spec §4.3). No project/host/type params and no server-side filtering.
+- [x] **Do `ctl.*` events flow to subscribers? → yes, when `--ctl-events` is on.** `ctl.*` events relay to `bus.subscribe` subscribers when `--ctl-events` is set (off by default = not relayed), realizing GR-F7/D-9's unified hop-by-hop trace. Data-plane events (`doc.changed`, `watch.task.*`) always relay regardless of the gate.
+- [ ] **`bus.subscribe` wiring seam (→ resolved in /beta-new-solution).** A plain `rpc.Handler` receives `(ctx, params)` but not the `*rpc.Peer` it is serving, yet the bridge must call `Peer.Notify` on *that* peer. Decide between a peer-aware handler shape and a per-peer registration in the `rpcserver` accept loop (`server.go` already has `peer` in scope at `Register`/`go peer.Serve`) that closes over the peer and the hub and holds the `Hub.Subscribe` cancel func so it fires exactly once on peer teardown (alongside the existing `delete(s.peers, peer)` + `ctl.disconnect` in `server.go:88-97`).
+- [ ] **Per-peer drop-on-full / at-most-once for the notification path (→ resolved in /beta-new-solution).** `Peer.Notify` enqueues onto a bounded buffer (`defaultBufferSize=16`) that drops the frame and closes the connection when full (`peer.go:416-431`), while `Hub.Broadcast` calls `Sink.Deliver` synchronously (`hub.go:48-59`). The bridge Sink should use non-blocking `Notify` so a saturated subscriber is dropped (connection closed) rather than blocking the hub and stalling other subscribers — matching the auto-ui slow-client policy (`ws.go` enqueue).
+- [ ] **hostId stamping policy when the inbound event already carries a `Host` (→ resolved in /beta-new-solution).** Decide always-overwrite with the local hostId vs stamp-if-empty (preserving a `Host` set by an upstream relay hop). Pick a rule to keep GR-F3 fidelity unambiguous once multi-hop relay exists.
+- [ ] **Registry-snapshot freshness for derivation (→ resolved in /beta-new-solution).** auto-ui derives against a `regProvider func()` re-read per request (`rpc_ingest.go:25`). Decide re-read per ingest (picks up newly-registered projects without a restart) vs snapshot once at daemon start (cheaper, but stale until restart).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
