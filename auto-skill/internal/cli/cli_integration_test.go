@@ -351,6 +351,212 @@ func TestDoctorReportsMissingAndReadyState(t *testing.T) {
 	}
 }
 
+func TestInitProjectFlagOverrides(t *testing.T) {
+	root := t.TempDir()
+
+	stdout, stderr, code := runCLI(t, "--root", root, "init", "--project", "-y",
+		"--target", "claude",
+		"--no-auto-update",
+		"--default-version", "branch:main",
+		"--no-commit-targets",
+	)
+	if code != 0 {
+		t.Fatalf("init --project with flags failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	yamlPath := filepath.Join(root, ".auto", "skills", "skills.yaml")
+	data, err := os.ReadFile(yamlPath)
+	if err != nil {
+		t.Fatalf("read skills.yaml: %v", err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "auto_update: false") {
+		t.Fatalf("expected auto_update: false in skills.yaml, got:\n%s", content)
+	}
+	if !strings.Contains(content, "commit_targets: false") {
+		t.Fatalf("expected commit_targets: false in skills.yaml, got:\n%s", content)
+	}
+	if !strings.Contains(content, "version: branch:main") {
+		t.Fatalf("expected version: branch:main in skills.yaml, got:\n%s", content)
+	}
+	if strings.Contains(content, "agents") {
+		t.Fatalf("expected only claude target, got:\n%s", content)
+	}
+}
+
+func TestInitProjectConflictingFlags(t *testing.T) {
+	root := t.TempDir()
+
+	_, stderr, code := runCLI(t, "--root", root, "init", "--project", "-y",
+		"--auto-update", "--no-auto-update")
+	if code == 0 {
+		t.Fatal("expected error for conflicting --auto-update and --no-auto-update")
+	}
+	if !strings.Contains(stderr, "cannot be combined") {
+		t.Fatalf("expected 'cannot be combined' in stderr, got: %s", stderr)
+	}
+
+	_, stderr, code = runCLI(t, "--root", root, "init", "--project", "-y",
+		"--commit-targets", "--no-commit-targets")
+	if code == 0 {
+		t.Fatal("expected error for conflicting --commit-targets and --no-commit-targets")
+	}
+	if !strings.Contains(stderr, "cannot be combined") {
+		t.Fatalf("expected 'cannot be combined' in stderr, got: %s", stderr)
+	}
+}
+
+func TestInitProjectNonTTYGuard(t *testing.T) {
+	fi, err := os.Stdin.Stat()
+	if err == nil && fi.Mode()&os.ModeCharDevice != 0 {
+		t.Skip("stdin is a TTY — guard only triggers when stdin is a pipe")
+	}
+
+	root := t.TempDir()
+
+	_, stderr, code := runCLI(t, "--root", root, "init", "--project")
+	if code == 0 {
+		t.Fatal("expected error when running init --project without -y in non-TTY")
+	}
+	if !strings.Contains(stderr, "not a TTY") {
+		t.Fatalf("expected 'not a TTY' error, got: %s", stderr)
+	}
+}
+
+func TestInitGlobalCreatesSettings(t *testing.T) {
+	root := t.TempDir()
+
+	stdout, stderr, code := runCLI(t, "--root", root, "init")
+	if code != 0 {
+		t.Fatalf("init (global) failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("stdout not valid JSON: %v\nraw:\n%s", err, stdout)
+	}
+	if result["mode"] != "global" {
+		t.Fatalf("expected mode=global, got %v", result["mode"])
+	}
+
+	globalSection, ok := result["global"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected global section in result, got: %v", result)
+	}
+	if globalSection["created"] != true {
+		t.Fatalf("expected created=true, got %v", globalSection["created"])
+	}
+
+	settingsPath := filepath.Join(root, ".auto", "skills", "settings.json")
+	assertExists(t, settingsPath)
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		t.Fatalf("settings not valid JSON: %v\nraw:\n%s", err, data)
+	}
+	if settings["schemaVersion"] != float64(1) {
+		t.Fatalf("expected schemaVersion=1, got %v", settings["schemaVersion"])
+	}
+}
+
+func TestInitProjectJSONDefault(t *testing.T) {
+	root := t.TempDir()
+
+	stdout, _, code := runCLI(t, "--root", root, "init", "--project", "-y")
+	if code != 0 {
+		t.Fatalf("init --project failed: code=%d", code)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("stdout is not valid JSON (default should be JSON): %v\nraw:\n%s", err, stdout)
+	}
+	if result["mode"] != "project" {
+		t.Fatalf("expected mode=project, got %v", result["mode"])
+	}
+	if _, ok := result["skills_yaml"]; !ok {
+		t.Fatalf("expected skills_yaml key in JSON output, got: %v", result)
+	}
+	if _, ok := result["lock"]; !ok {
+		t.Fatalf("expected lock key in JSON output, got: %v", result)
+	}
+}
+
+func TestInitProjectTextOutput(t *testing.T) {
+	root := t.TempDir()
+
+	stdout, _, code := runCLI(t, "--root", root, "init", "--project", "-y", "--text")
+	if code != 0 {
+		t.Fatalf("init --project --text failed: code=%d", code)
+	}
+
+	if strings.HasPrefix(strings.TrimSpace(stdout), "{") {
+		t.Fatalf("expected text output, got JSON:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "skills.yaml:") {
+		t.Fatalf("expected skills.yaml mention in text output, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "Created.") {
+		t.Fatalf("expected 'Created.' in text output, got:\n%s", stdout)
+	}
+}
+
+func TestAgentsCommandRemoved(t *testing.T) {
+	root := t.TempDir()
+
+	_, stderr, code := runCLI(t, "--root", root, "agents")
+	if code == 0 {
+		t.Fatal("expected error — agents command should be removed")
+	}
+	if !strings.Contains(stderr, "unknown command") {
+		t.Fatalf("expected 'unknown command' error for agents, got: %s", stderr)
+	}
+}
+
+func TestInitProjectGitignoreEntries(t *testing.T) {
+	root := t.TempDir()
+
+	_, _, code := runCLI(t, "--root", root, "init", "--project", "-y")
+	if code != 0 {
+		t.Fatalf("init --project failed: code=%d", code)
+	}
+
+	gitignorePath := filepath.Join(root, ".gitignore")
+	data, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if !strings.Contains(string(data), ".auto/skills/.sync-journal") {
+		t.Fatalf("expected .auto/skills/.sync-journal in .gitignore, got:\n%s", data)
+	}
+}
+
+func TestInitProjectNoCommitTargetsGitignore(t *testing.T) {
+	root := t.TempDir()
+
+	_, _, code := runCLI(t, "--root", root, "init", "--project", "-y", "--no-commit-targets")
+	if code != 0 {
+		t.Fatalf("init --project --no-commit-targets failed: code=%d", code)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "CLAUDE.md") {
+		t.Fatalf("expected CLAUDE.md in .gitignore when --no-commit-targets, got:\n%s", content)
+	}
+	if !strings.Contains(content, "AGENTS.md") {
+		t.Fatalf("expected AGENTS.md in .gitignore when --no-commit-targets, got:\n%s", content)
+	}
+}
+
 func TestQuickstartAndDocs(t *testing.T) {
 	root := t.TempDir()
 
