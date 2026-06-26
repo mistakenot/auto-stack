@@ -1,6 +1,6 @@
 cursors:
   sessions:
-    last_scan_started_at: '2026-06-23T19:00:00Z'
+    last_scan_started_at: '2026-06-26T22:27:44Z'
     processed:
     - 00f0bcac-b89e-4005-8bde-1a2bb6e7eff4
     - 07c5ecd3-4be8-4764-9986-56ed8da1c1be
@@ -76,6 +76,152 @@ cursors:
     - a3682379-8011-411f-9ce7-579d24277e6d
     - 68f99ee7-6ee9-4cf6-9497-6e65b6efc347
     - 5f2d3aa2-1049-4bc8-89a4-676fffe7f415
+    - b9bf59de-eb66-4944-ac39-8791e872a51c
+    - a47ba171-fcfb-4ef0-a730-b7967071ff7e
+    - a7ee6b7b-6058-4d2b-8197-a71673b58a7f
+    - 342685f1-7a5a-4f9a-9ccc-aecd00a844a4
+    - be9df1b4-3baa-4159-a1ee-08b43bc3a70c
+    - 58263605-53fa-4bb0-9b52-10112641a77d
+    - d3b3f45c-2c43-41f8-ae25-7a2efbc073ab
+    - 6bcd2907-1bfa-4bf5-a90f-5a8adb6f1382
+    - 9fa19162-2510-4129-a420-bf199857ccfc
+    - fe7aa8f8-25cb-4629-93bc-1f824b2176b4
+    - 1c0d3021-6c3f-4b3c-838b-f4673c43a6fc
+    - e8de7b9c-c02b-4239-a91b-c79979505165
+    - 7e587780-b280-4d2d-85ce-ad2fbd859c12
+    - c080a23c-abb2-4992-b6f5-8cce953e00de
+    - 4cb9ede7-d6a8-43c6-b35a-c78eee87b382
+    - c4e48c9d-5852-492b-bdc4-85c1b9b53e2b
+    - 200bfb8c-cbfc-4f02-82be-81df540e8417
+    - 565377cf-55b6-4f3b-856e-01bb32ced444
+    - 676b7aa7-ab59-459e-b9ca-4d4f069d4085
+    - 54593187-a0f8-4773-998f-b38ebac145ef
+    - 054cece5-5a5e-481d-9871-eca420fd2365
+    - 3abfc9ee-abd8-4e51-b3c7-dbc625dc054a
+    - 1a8d2b9c-ef2e-401c-a5dc-3c8df5a7e66c
+    - 8fd4863d-3867-4adb-989c-a53bde2d8c2e
+    - f2e2e033-438c-43ca-9759-b966dc202e74
+    - 0b5a5bfc-d705-444e-bebe-75e6737326ac
+    - 045565fa-b64d-45b1-be0e-87ce03b7f093
+    - 62b4d368-ba71-4322-8d85-a18da405df2b
+    - ae60077a-6e73-4fa3-998e-01d40e8e8a2e
+    - 402548db-2b80-497d-8528-f9bf0ae27200
+    - e61d5473-c046-46e3-9379-a7312966da0a
+    - 1da0c605-3f5a-45fd-b92b-577d06335bc4
+    - d031ba37-ccf8-46a1-9c57-9bd393b1b84a
+    - 4c954908-47c5-48b2-bd14-41c9e98795d9
+    - 02bf318b-d09a-421e-8a07-e22d4b1dd0d8
+    - f0e7c1fa-b3f0-476c-82dd-71e4a691685a
+    - 6875c1ec-dc04-408e-8639-c30bfeaf67b9
+    - 2325dc81-f9dd-4c11-a33b-75f3bab1a11e
+    - c6194fa7-209e-4da6-baf0-797025a3077a
+    - 8e16eb46-b491-49bf-9892-45f2f8f17f6b
+    - 9a4f3d1b-d7b1-4176-85b9-4d86b0fa93c7
+    - fb0b6dde-692e-4cd4-885d-28a1286cf85f
+    - c92d7a49-6055-43d9-8356-cee7343fcb36
+    - 7cfd90d1-d3fc-47cd-af4e-30af0e1be331
+    - ff96a517-01ef-4b6c-ab71-e3f26db47bf7
+    - 48058654-eed0-425d-9859-457b24b0b332
+    - b887b243-d7a9-41c9-b2e2-374fc420f618
+    - e1ec4142-e48e-47bc-b9a6-3689c5f690ef
+    - 5a09ce3c-e836-4c8a-af5d-fb538f7c6cb8
+    - 341a2b69-b2fe-4449-948e-6161e4b7ddb8
+    - 79104e37-7614-4241-8fa0-1a278fdd1333
+    - cedf615e-414d-4715-8e03-23bdb5938062
+    - 35e78674-a5ff-4878-a4a0-1d2f9ed41a4c
+    - 2648ccfa-3114-433c-824a-94daef02bb2d
+    - 050b3e7b-cdc5-466f-95d4-15baa8cb9aa9
+    - d15d35d4-b899-4e19-ae7e-8b8b56706c03
+    - 603ab775-c0e9-4baa-8074-177b31412e82
+    - 8222f059-7ef8-43ef-92b2-f4a8fc980fdc
+    - ed03f394-1060-4f89-8150-7c59f4487564
+    - d7a1d4ad-ddf8-4b44-8c56-dae922f80e3d
+    - 8aa06e1f-ef41-4863-b74c-7e3e7e0c19ce
+    - 2131ba76-cac2-4acc-9663-00194e3e0940
+    - 95bf7daa-d872-4c7d-b371-b2c99515c754
+    - b76cf2db-34d2-44de-a185-5fa886d6e5f0
+    - 98159195-8575-46cc-b1fa-8edb88cef8d3
+    - 59c30595-66f8-48cf-951a-ea6bc7d069e5
+    - ce0be544-f475-4538-8547-1348bc5e2479
+    - 91e6bdd5-d6ed-4323-b6d9-4bd95078b4c8
+    - 148d620b-27e2-4db6-b50f-5d3fc860c348
+    - 758e5e06-4f52-44a0-ac61-0c25d6383dc5
+    - cedf5c19-1867-46dc-b9bc-8959578901c3
+    - 0429b9b9-3cad-49ef-b2dc-de52fdf7e549
+    - f214e70b-2df0-49e3-bbd2-26ba1eca0490
+    - 4f59f0b5-552d-41f6-b4bc-5edba5503caf
+    - abfa9f57-040d-4fe7-b862-b9204eb1d48b
+    - 7f2b7b1a-bb6a-49e6-b36a-0914f6e6cc3a
+    - 9d1bdeb5-6870-4328-b668-ea2e3679f53e
+    - 9b5cffb7-cd82-4ac4-80eb-e9418e2b3769
+    - a07846c1-c7ec-4abb-8d7e-a5c10c3daeeb
+    - e9abe05c-aa40-4455-8a62-e8383781ff56
+    - 7fd1242b-faa5-4f6a-9d3d-4e94a04e7e00
+    - 847337d9-6ef9-4c8c-888b-38e2396a608f
+    - f182001d-c5f1-4d83-8df2-8c2a4e21fc93
+    - a5c7f4c0-c0ba-43c8-a6a0-3713f6c17f62
+    - 8bc70a85-1017-4f3a-b8d5-23418ae05848
+    - 4b37efb0-2294-48cf-878b-5bd2753dcd82
+    - 01546b12-37b0-4da5-8180-edc148f2daaf
+    - 120a1288-4f8d-4068-a815-e39e20cbec07
+    - 0747eca0-b8cd-4eef-b7b7-0d1ca729c3d7
+    - 2989002b-a037-4d74-aed1-a66d1051d26b
+    - feec452d-d7c4-42e4-b312-9137dd95c70d
+    - 9bf4ed7c-56b9-44fa-a355-23eda4798565
+    - 2eeaae19-099d-4fce-b271-72fb3a2b1160
+    - 66f8e665-7066-4376-af97-1ea10f56cf12
+    - 0d441de8-2d87-44e6-9ba0-659db5956c3d
+    - 488a4d4a-11fd-4fde-a123-bf0d5aad059b
+    - f40d6f1a-f9cf-4e6d-9c60-357f1f9e9f34
+    - c8d3bd4e-b6aa-4763-a9b9-79c2774e37f9
+    - 8e4682cf-9986-49fc-b3c9-d86350b01218
+    - d82f24ba-075b-4172-a53a-cad3d1a75781
+    - b595224a-8a6e-4d0a-a5ac-ce0344222565
+    - 4c2f71bb-d75d-4542-bc7a-5a20a02bb90a
+    - d7d8b991-9df7-4fef-ad7b-11347fa763fa
+    - 8f525a5a-5703-4b66-a262-356691cc78af
+    - 7662373a-be4e-4b65-b83b-7f462236a9cd
+    - 29998d1a-790d-42f3-87df-ccf32749884c
+    - e1fca388-0c68-4058-b986-23c1ee913fa1
+    - ee2b59f4-6c30-462e-a700-b40fa3420dd0
+    - 42b787da-e7f3-402a-93c7-dd255fef481a
+    - 33eeb5f8-83e2-49e8-9998-1c182e0ddd9e
+    - 8392f1a4-1437-4b73-b185-627e1808675c
+    - ab623175-de53-49dc-b0a8-15171827e953
+    - 44442b5a-9591-4d12-b6c4-286580b6eef2
+    - 8ca071c9-357c-4290-abeb-f9311e45ceb2
+    - a81b82b6-af93-4b3b-acef-85d72bcc9850
+    - 7a80492a-a4af-40a5-a3d2-66f835352396
+    - 0761da57-dbb0-414c-9d01-022c25d57bb4
+    - cc050ea4-7b92-4f02-802c-79c24455b04f
+    - 258ca080-40e0-4972-81c3-9ea2d9556d99
+    - 9ff92ec1-be54-46f0-b815-77c545d869c5
+    - ddb9d4f4-d75a-4857-a14c-eca7a06a2ccb
+    - d4f19af0-8724-45da-9b43-ddbb5f851b7f
+    - ea7569be-9f0b-4c8d-8fb9-dcfed1f21e52
+    - 148c88c2-8ed5-42c4-abba-575966211716
+    - c9124cdf-f262-470a-87cf-3390e0926be0
+    - 6d58fdd5-e278-4ea2-a177-669a6cba97c4
+    - c0de5ad7-2cae-4463-bce5-e0c21ceeb7b7
+    - 843a8820-2a82-4251-9bd1-52739085fbc6
+    - b17b8bac-47f9-4ba3-a9ce-14edf55dfbbf
+    - 169c715a-0ea3-4b85-b398-e2d22dbe48f1
+    - 07bb2da7-32bb-474b-a1af-1d8f5d9c0b25
+    - f2bda478-e6d0-4319-a248-14340188be6d
+    - b0a57849-0ecc-4371-8ec0-6d7c2cfe6ac5
+    - 27bdbed4-1c72-4041-89bb-825ea61d6cd0
+    - fe230771-892d-4e63-bd3f-72f02853a837
+    - c1250219-173d-4628-8d03-6f574e00ec95
+    - 6028190f-300e-43f2-be7c-4abf67fd6df0
+    - b75fe2ee-3627-4be8-96e4-8b5e14f49fcb
+    - ee74fbab-d1b1-4a33-9c47-ac149591b6d3
+    - b413abd6-dedd-4185-a8ee-9b232c1c85ef
+    - dc169859-bda5-4d92-a8a8-06b9d9c3cd8f
+    - aa68b3aa-7a63-4a21-bd53-e4b6dc570026
+    - f81fe3a7-5f8a-4391-9303-24db6436f0e6
+    - f1ae23f9-42d9-41e2-ad91-8748624e090c
+    - f1aca653-fc40-48c1-a772-d69cb70d8450
+    - 300e5a31-3dd0-484b-80b1-4972b496d008
   feedback:
     docs/tasks/001-ts-import-graph/feedback.md:
       content_sha256: 668333d87cdf651163cc9fb42cb370bf3af5b8491ebe640e7bc67010dbcb1166
@@ -134,6 +280,33 @@ cursors:
     docs/tasks/021-auto-bus-standard/feedback.md:
       content_sha256: f85982cdb0937b7e9374c84a8186dd5c3c9dbda186b637291938556f5a4c2197
       processed_at: '2026-06-23T19:00:00Z'
+    docs/tasks/024-planning-dashboard-backend/feedback.md:
+      content_sha256: 5918da811f3ae47785a7c72f6a953479860ddc625b37eafb6bb5ea953360a3f9
+      processed_at: '2026-06-26T22:38:00Z'
+    docs/tasks/025-planning-dashboard-explorer/feedback.md:
+      content_sha256: 60b06457433f92730e8326ed871ca4c92028b9ddd1404498335f22a7563ff558
+      processed_at: '2026-06-26T22:38:00Z'
+    docs/tasks/026-planning-dashboard-live-updates/feedback.md:
+      content_sha256: 7a043419e4340079db7683f03e509e3dd97cadc91f826f1d8f5da7de0d76b881
+      processed_at: '2026-06-26T22:38:00Z'
+    docs/tasks/027-activity-feed/feedback.md:
+      content_sha256: a1b4bed99a934be3a73fc7cd55fd463dd80febeee9cbb4e535a56df8976dd2fb
+      processed_at: '2026-06-26T22:38:00Z'
+    docs/tasks/027-plan-status-executor-liveness/feedback.md:
+      content_sha256: c5f5b64241262df867f0b63a5c8bce1e1dd65202c8638ebeb5406214e366f075
+      processed_at: '2026-06-26T22:38:00Z'
+    docs/tasks/028-bus-event-host-field/feedback.md:
+      content_sha256: ebc871687120155017d01a5500e9458250a9dd35b05a91d90dc5360ee985f142
+      processed_at: '2026-06-26T22:38:00Z'
+    docs/tasks/029-auto-ui-state-refactor/feedback.md:
+      content_sha256: b7eba6d73fb5dc4cab712c5320d5f04c6a7275410712a60f606dec8d50163b13
+      processed_at: '2026-06-26T22:38:00Z'
+    docs/tasks/030-transport-conformance-harness/feedback.md:
+      content_sha256: 17a71e340f26de8ffaeb28e49fc02bbd7293aedd16075285db6d547bbcad3a8b
+      processed_at: '2026-06-26T22:38:00Z'
+    docs/tasks/031-autowatch-rpc-listener/feedback.md:
+      content_sha256: 4cc58076981b62ae0521e177a6cafe6a84ffb5d99ebd95fd9b156daebc287515
+      processed_at: '2026-06-26T22:38:00Z'
 observations:
 - id: 20260623T172706.433083Z-0001
   description: When implementing a linkscan/tag-detection system for source code, always filter out documentation files (.md,
@@ -5169,3 +5342,2137 @@ observations:
   sources:
   - kind: feedback
     ref: docs/tasks/021-auto-bus-standard/feedback.md
+- id: 20260626T224004.081442Z-0001
+  description: 'Serving verbatim HTML from a constrained path (validated by cleanDocPath) is a legitimate XSS gosec false
+    positive. Suppress with a scoped //nolint:gosec plus an explanatory comment.
+
+    '
+  context: 'Any auto-ui route that intentionally serves raw HTML blobs
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/server/raw.go
+  session_ids: []
+  task_id: 024-planning-dashboard-backend
+  sources:
+  - kind: feedback
+    ref: docs/tasks/024-planning-dashboard-backend/feedback.md
+- id: 20260626T224004.081486Z-0002
+  description: 'Sequence shared validator functions before their consumers within the same branch. cleanDocPath had to land
+    in Phase 1 so the raw route in Phase 3 could build on it.
+
+    '
+  context: 'Any task that introduces a shared helper AND consumers of that helper in the same feature branch
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/server/docpath.go
+  session_ids: []
+  task_id: 024-planning-dashboard-backend
+  sources:
+  - kind: feedback
+    ref: docs/tasks/024-planning-dashboard-backend/feedback.md
+- id: 20260626T224004.081494Z-0003
+  description: 'Concurrent subagents sharing one worktree leak writes into the main worktree. Even when modules are fully
+    independent, dispatch serially to keep the branch clean.
+
+    '
+  context: 'Multi-phase execute-task runs where subagents share a single git worktree
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids: []
+  task_id: 024-planning-dashboard-backend
+  sources:
+  - kind: feedback
+    ref: docs/tasks/024-planning-dashboard-backend/feedback.md
+- id: 20260626T224004.081499Z-0004
+  description: 'The --ready-file JSON line plus net.Listen + srv.Serve(ln) (instead of ListenAndServe) makes --port 0 deterministic
+    in test harnesses: read the real bound port from ln.Addr().
+
+    '
+  context: 'Writing integration tests for any auto-ui or HTTP server that uses a random port
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/server/serve.go
+  - auto-ui/server/serve_test.go
+  session_ids: []
+  task_id: 024-planning-dashboard-backend
+  sources:
+  - kind: feedback
+    ref: docs/tasks/024-planning-dashboard-backend/feedback.md
+- id: 20260626T224004.081504Z-0005
+  description: 'The raw route reads from the real OS filesystem via resolveRoot, not the embedded web.FS, so its tests need
+    a real temp docs/ tree — a different fixture shape from the in-memory fstest.MapFS used elsewhere.
+
+    '
+  context: 'Writing server tests for auto-ui routes that mix embedded FS and real OS filesystem access
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/server/raw_test.go
+  - auto-ui/server/server_test.go
+  session_ids: []
+  task_id: 024-planning-dashboard-backend
+  sources:
+  - kind: feedback
+    ref: docs/tasks/024-planning-dashboard-backend/feedback.md
+- id: 20260626T224004.081508Z-0006
+  description: 'Registry project ids must be lowercase-kebab (^[a-z0-9]+(?:-[a-z0-9]+)*$). Using camelCase ids like projA
+    in fixtures causes doc.list to fail ''''project not found'''' at runtime.
+
+    '
+  context: 'Writing any auto-ui fixture or conformance test that registers projects
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-shared/config/projects.go
+  session_ids: []
+  task_id: 025-planning-dashboard-explorer
+  sources:
+  - kind: feedback
+    ref: docs/tasks/025-planning-dashboard-explorer/feedback.md
+- id: 20260626T224004.081511Z-0007
+  description: 'rpc.js call() rejects synchronously when the WebSocket is not OPEN (no queue). Making the explorer the default
+    landing page surfaced a deterministic cold-load failure. Fix: a whenOpen() readiness promise.
+
+    '
+  context: 'Any auto-ui component that makes RPC calls on mount, especially when it is the first/default route
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/web/rpc.js
+  session_ids: []
+  task_id: 025-planning-dashboard-explorer
+  sources:
+  - kind: feedback
+    ref: docs/tasks/025-planning-dashboard-explorer/feedback.md
+- id: 20260626T224004.081515Z-0008
+  description: 'The doc.changed envelope nests the changed path at params.data.path, NOT params.path. Code reading ev.path
+    or params.path will always get undefined — root cause of the original doc.js live-update no-op bug.
+
+    '
+  context: 'Any consumer of doc.changed bus events in auto-ui or auto-watch
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/web/docevents.js
+  - auto-shared/bus/derive.go
+  session_ids: []
+  task_id: 025-planning-dashboard-explorer
+  sources:
+  - kind: feedback
+    ref: docs/tasks/025-planning-dashboard-explorer/feedback.md
+- id: 20260626T224004.081519Z-0009
+  description: 'go build ./... always succeeds for auto-ui because assets are //go:embed-ed at build time. It is NOT a real
+    acceptance check — the actual gate is agent-browser conformance.
+
+    '
+  context: 'CI or phase gate design for any package using //go:embed for frontend assets
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/
+  session_ids: []
+  task_id: 025-planning-dashboard-explorer
+  sources:
+  - kind: feedback
+    ref: docs/tasks/025-planning-dashboard-explorer/feedback.md
+- id: 20260626T224004.081522Z-0010
+  description: 'Cross-route state in a hash-router SPA cannot use DOM reads from components that are unmounted on route change.
+    The solution is a minimal module-level snapshot object (uistate.js).
+
+    '
+  context: 'Any auto-ui feature needing state visible across routes when components unmount on navigation
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/web/uistate.js
+  session_ids: []
+  task_id: 025-planning-dashboard-explorer
+  sources:
+  - kind: feedback
+    ref: docs/tasks/025-planning-dashboard-explorer/feedback.md
+- id: 20260626T224004.081526Z-0011
+  description: 'When stacking worktrees, verify that the dependency task''''s endpoints actually exist on main before creating
+    the new worktree. Building against a phantom contract causes silent failures.
+
+    '
+  context: 'Any execute-task run that depends on a recently merged predecessor task
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids: []
+  task_id: 025-planning-dashboard-explorer
+  sources:
+  - kind: feedback
+    ref: docs/tasks/025-planning-dashboard-explorer/feedback.md
+- id: 20260626T224004.081530Z-0012
+  description: 'Temp-fixture teardown in conformance harnesses must use ''''find $TMP -delete'''' instead of ''''rm -rf $TMP''''.
+    The rm -rf form trips the destructive-command guard and blocks the harness.
+
+    '
+  context: 'Any conformance or E2E test harness that creates and tears down temp directories
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids: []
+  task_id: 026-planning-dashboard-live-updates
+  sources:
+  - kind: feedback
+    ref: docs/tasks/026-planning-dashboard-live-updates/feedback.md
+- id: 20260626T224004.081533Z-0013
+  description: 'data-revision accumulates across page opens and is not deterministic between runs. Assert the DELTA (after
+    > before), never an absolute value.
+
+    '
+  context: 'Any conformance assertion on data-revision, data-doc-count, or similar counters in auto-ui
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/web/content.js
+  session_ids: []
+  task_id: 026-planning-dashboard-live-updates
+  sources:
+  - kind: feedback
+    ref: docs/tasks/026-planning-dashboard-live-updates/feedback.md
+- id: 20260626T224004.081537Z-0014
+  description: 'After ''''auto ui emit'''' returns HTTP 204, the derived doc.changed still traverses Hub -> WS -> client handler
+    -> Preact re-render asynchronously. Always poll the attribute for 2-3s rather than reading it once.
+
+    '
+  context: 'Any conformance test that emits a bus event and then asserts a browser-side DOM change
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids: []
+  task_id: 026-planning-dashboard-live-updates
+  sources:
+  - kind: feedback
+    ref: docs/tasks/026-planning-dashboard-live-updates/feedback.md
+- id: 20260626T224004.081542Z-0015
+  description: 'A new doc''''s first write emits a doc.changed (not doc.created) because DeriveDocChanged fires on any agent.tool.post
+    matching isDocPath regardless of whether the file existed before.
+
+    '
+  context: 'Designing bus consumers for doc lifecycle events; deciding whether doc.created is needed
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-shared/bus/derive.go
+  - auto-ui/web/tree.js
+  session_ids: []
+  task_id: 026-planning-dashboard-live-updates
+  sources:
+  - kind: feedback
+    ref: docs/tasks/026-planning-dashboard-live-updates/feedback.md
+- id: 20260626T224004.081545Z-0016
+  description: 'Deletions have no bus signal today (no agent.tool.post for deletes), so deleted docs linger in the tree until
+    the next create event or project switch triggers a re-list.
+
+    '
+  context: 'Deciding whether to implement doc.removed or lazy reconcile for tree stale-entry cleanup
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-shared/bus/derive.go
+  session_ids: []
+  task_id: 026-planning-dashboard-live-updates
+  sources:
+  - kind: feedback
+    ref: docs/tasks/026-planning-dashboard-live-updates/feedback.md
+- id: 20260626T224004.081549Z-0017
+  description: 'Keying Preact/React list children by stable semantic name (path, name) rather than array index means a full
+    doc.list re-list preserves each tree group''''s expansion state for free.
+
+    '
+  context: 'Any auto-ui component rendering lists that can be re-fetched live
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/web/tree.js
+  session_ids: []
+  task_id: 026-planning-dashboard-live-updates
+  sources:
+  - kind: feedback
+    ref: docs/tasks/026-planning-dashboard-live-updates/feedback.md
+- id: 20260626T224004.081552Z-0018
+  description: 'The embed build and dev build intentionally differ in Cache-Control: dev serves app.js with no-store so disk
+    edits show on reload; embed ships an immutable artifact without it.
+
+    '
+  context: 'Debugging caching behavior differences between auto ui serve embed mode and dev mode
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/server/serve.go
+  session_ids: []
+  task_id: 026-planning-dashboard-live-updates
+  sources:
+  - kind: feedback
+    ref: docs/tasks/026-planning-dashboard-live-updates/feedback.md
+- id: 20260626T224004.081556Z-0019
+  description: 'agent-browser eval returns JS string results with surrounding quotes. Shell scripts that grep eval output
+    must strip quotes with tr -d ''''"'''' or the assertions will silently fail.
+
+    '
+  context: 'Any conformance driver.sh that uses agent-browser eval to extract DOM text or attribute values
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/
+  session_ids: []
+  task_id: 027-activity-feed
+  sources:
+  - kind: feedback
+    ref: docs/tasks/027-activity-feed/feedback.md
+- id: 20260626T224004.081559Z-0020
+  description: 'Compound JS expressions with const in agent-browser eval are fragile under shell interpolation. Use simple
+    inline expressions like (el || {}).textContent rather than multi-statement blocks.
+
+    '
+  context: 'Writing conformance driver scripts that pass JS to agent-browser eval
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/
+  session_ids: []
+  task_id: 027-activity-feed
+  sources:
+  - kind: feedback
+    ref: docs/tasks/027-activity-feed/feedback.md
+- id: 20260626T224004.081562Z-0021
+  description: 'Adding a second component to the sidebar requires wrapping both in a .sidebar-col flex container and moving
+    fixed-width/border-right styles up to the wrapper.
+
+    '
+  context: 'Extending the auto-ui left rail with new sidebar sections
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/
+  session_ids: []
+  task_id: 027-activity-feed
+  sources:
+  - kind: feedback
+    ref: docs/tasks/027-activity-feed/feedback.md
+- id: 20260626T224004.081569Z-0022
+  description: 'docevents.js parseDocChanged is the single source of truth: always read ev.data.path, never ev.path. The latter
+    is undefined and silently produces incorrect behavior.
+
+    '
+  context: 'Any code subscribing to doc.changed events in auto-ui
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/public/docevents.js
+  session_ids: []
+  task_id: 027-activity-feed
+  sources:
+  - kind: feedback
+    ref: docs/tasks/027-activity-feed/feedback.md
+- id: 20260626T224004.081598Z-0023
+  description: 'The driver.sh conformance pattern (fixture, build, launch, agent-browser assertions) is stable and reusable
+    across UI tasks. When a task has a clear browser-testable surface, this pattern eliminates the need for JS unit test infrastructure.
+
+    '
+  context: 'Planning conformance testing for any auto-ui feature
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/
+  session_ids: []
+  task_id: 027-activity-feed
+  sources:
+  - kind: feedback
+    ref: docs/tasks/027-activity-feed/feedback.md
+- id: 20260626T224004.081603Z-0024
+  description: 'A concurrent task refactoring the client architecture (task 029) merged mid-flight, invalidating the original
+    plan. Reading the actual post-merge codebase before planning would have prevented this.
+
+    '
+  context: 'Planning any auto-ui task when other architectural tasks are in-flight concurrently
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/public/store.js
+  session_ids: []
+  task_id: 027-plan-status-executor-liveness
+  sources:
+  - kind: feedback
+    ref: docs/tasks/027-plan-status-executor-liveness/feedback.md
+- id: 20260626T224004.081606Z-0025
+  description: 'auto ui emit CLI only synthesizes agent.tool.post events and cannot set branch or emit arbitrary event types.
+    Conformance tests for other event types must use raw curl POSTs to /api/rpc with a full CloudEvents envelope.
+
+    '
+  context: 'Writing conformance tests for liveness or non-tool bus events in auto-ui
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/
+  session_ids: []
+  task_id: 027-plan-status-executor-liveness
+  sources:
+  - kind: feedback
+    ref: docs/tasks/027-plan-status-executor-liveness/feedback.md
+- id: 20260626T224004.081610Z-0026
+  description: 'Task 029''''s grep gate enforces that all on() and call() subscriptions live only in store.js, verified by
+    state-harness.sh. New features must extend the store reducer pattern.
+
+    '
+  context: 'Adding any new WebSocket subscription or RPC call to auto-ui
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/public/store.js
+  - auto-ui/test/state-harness.sh
+  session_ids: []
+  task_id: 027-plan-status-executor-liveness
+  sources:
+  - kind: feedback
+    ref: docs/tasks/027-plan-status-executor-liveness/feedback.md
+- id: 20260626T224004.081613Z-0027
+  description: 'Client-side-only liveness state resets on page reload because there is no server-side hook recency tracking.
+    This is an acceptable v1 tradeoff but must be documented as a known limitation.
+
+    '
+  context: 'Designing liveness or presence features in auto-ui where persistence across reloads matters
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/
+  session_ids: []
+  task_id: 027-plan-status-executor-liveness
+  sources:
+  - kind: feedback
+    ref: docs/tasks/027-plan-status-executor-liveness/feedback.md
+- id: 20260626T224004.081617Z-0028
+  description: 'Adding a new dependency only to one workspace module requires go mod tidy in that module only; go.work does
+    not need editing since it pins no module versions.
+
+    '
+  context: 'Adding a new Go dependency to a single module in the auto-stack go.work workspace
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/go.mod
+  - go.work
+  session_ids: []
+  task_id: 027-plan-status-executor-liveness
+  sources:
+  - kind: feedback
+    ref: docs/tasks/027-plan-status-executor-liveness/feedback.md
+- id: 20260626T224004.081620Z-0029
+  description: 'Automated Codex review caught that HostIDQuietly() returned the configured hostId without validating it against
+    the format regex. Automated review is effective at catching silent validation gaps in config-reading paths.
+
+    '
+  context: 'Any function that reads a stored identifier and returns it without re-validating format
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-shared/bus/event.go
+  session_ids: []
+  task_id: 028-bus-event-host-field
+  sources:
+  - kind: feedback
+    ref: docs/tasks/028-bus-event-host-field/feedback.md
+- id: 20260626T224004.081623Z-0030
+  description: 'EnsureHost() must handle the case where user.Current() fails (e.g., containerized environments without a user
+    database). Any default hostname generation that calls OS user APIs needs a fallback.
+
+    '
+  context: 'Implementing host identity initialization in containerized or restricted environments
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-shared/bus/event.go
+  session_ids: []
+  task_id: 028-bus-event-host-field
+  sources:
+  - kind: feedback
+    ref: docs/tasks/028-bus-event-host-field/feedback.md
+- id: 20260626T224004.081627Z-0031
+  description: 'newDerived() must explicitly preserve the source event''''s Host field even though NewEvent() auto-populates
+    Host. Derived events must carry the originating host''''s identity, not the local machine''''s.
+
+    '
+  context: 'Creating derived or forwarded bus events where source identity must be preserved
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-shared/bus/event.go
+  session_ids: []
+  task_id: 028-bus-event-host-field
+  sources:
+  - kind: feedback
+    ref: docs/tasks/028-bus-event-host-field/feedback.md
+- id: 20260626T224004.081630Z-0032
+  description: 'context.md files with file-level code pointers and line numbers made subagent dispatch dramatically more efficient
+    — each phase agent could start coding without an exploration pass.
+
+    '
+  context: 'Writing context.md or planning docs for tasks that will be executed by subagents
+
+    '
+  git_commit: 1a49353
+  files:
+  - docs/tasks/028-bus-event-host-field/context.md
+  session_ids: []
+  task_id: 028-bus-event-host-field
+  sources:
+  - kind: feedback
+    ref: docs/tasks/028-bus-event-host-field/feedback.md
+- id: 20260626T224004.081633Z-0033
+  description: 'Table-driven test patterns in existing test files made adding new cases straightforward with no structural
+    work. Establishing table-driven tests early reduces friction of future test additions to near zero.
+
+    '
+  context: 'Designing tests for packages likely to grow new cases (event types, config fields, validation rules)
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-shared/bus/event_test.go
+  session_ids: []
+  task_id: 028-bus-event-host-field
+  sources:
+  - kind: feedback
+    ref: docs/tasks/028-bus-event-host-field/feedback.md
+- id: 20260626T224004.081637Z-0034
+  description: 'The Go toolchain is structurally blind to browser/SPA defects: go build and go test stayed green through every
+    regression in a no-build SPA refactor. Browser conformance harnesses are the only real gate.
+
+    '
+  context: 'Any task that modifies a no-build SPA served by a Go backend
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/web/static/
+  session_ids: []
+  task_id: 029-auto-ui-state-refactor
+  sources:
+  - kind: feedback
+    ref: docs/tasks/029-auto-ui-state-refactor/feedback.md
+- id: 20260626T224004.081640Z-0035
+  description: 'A poll-to-settle in a conformance harness is not an assertion. AC-8 polled data-doc-count for stability but
+    only asserted a store-level call counter, not the rendered value — so the harness reported 20/20 while a stale-selector
+    bug left the DOM showing wrong data.
+
+    '
+  context: 'Writing browser conformance harnesses for async state propagation
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/web/static/
+  session_ids: []
+  task_id: 029-auto-ui-state-refactor
+  sources:
+  - kind: feedback
+    ref: docs/tasks/029-auto-ui-state-refactor/feedback.md
+- id: 20260626T224004.081644Z-0036
+  description: 'useStore(inlineSelector) is a footgun when the selector closes over a prop: useEffect captures the selector
+    once at mount. Module-level selectors are safe; prop-dependent selectors require remounting via a key.
+
+    '
+  context: 'Preact/React components that subscribe to a Zustand-style store with a parameterized selector derived from props
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/web/static/store.js
+  - auto-ui/web/static/components/
+  session_ids: []
+  task_id: 029-auto-ui-state-refactor
+  sources:
+  - kind: feedback
+    ref: docs/tasks/029-auto-ui-state-refactor/feedback.md
+- id: 20260626T224004.081647Z-0037
+  description: 'When deleting a write-only mirror, enumerate every property the mirror kept alive for free and re-prove each
+    one survives under the new model. The AC-4 path-survival regression was missed because the old module''''s inertia protected
+    openDoc.path through route changes at zero cost.
+
+    '
+  context: 'Refactoring state management layers in SPAs, especially when removing a module whose job is implicit
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/web/static/uistate.js
+  - auto-ui/web/static/store.js
+  session_ids: []
+  task_id: 029-auto-ui-state-refactor
+  sources:
+  - kind: feedback
+    ref: docs/tasks/029-auto-ui-state-refactor/feedback.md
+- id: 20260626T224004.081650Z-0038
+  description: 'Read-only routes (e.g. #/debug) must not drive selection state; only routes whose purpose is navigation should
+    call syncFromHash() to update selection.
+
+    '
+  context: 'SPAs with hash-based routing where some views are observational and others are navigational
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/web/static/router.js
+  session_ids: []
+  task_id: 029-auto-ui-state-refactor
+  sources:
+  - kind: feedback
+    ref: docs/tasks/029-auto-ui-state-refactor/feedback.md
+- id: 20260626T224004.081653Z-0039
+  description: 'Use grep-as-evidence for structural invariants that cannot be probed at runtime: single-subscription proof,
+    no data-fetching in presentational components proof, and importmap-diff for dependency gates.
+
+    '
+  context: 'Conformance harnesses for architectural constraints
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/web/static/
+  session_ids: []
+  task_id: 029-auto-ui-state-refactor
+  sources:
+  - kind: feedback
+    ref: docs/tasks/029-auto-ui-state-refactor/feedback.md
+- id: 20260626T224004.081657Z-0040
+  description: 'Run every browser harness assertion on both the embed build (baked assets) and the -tags dev build (disk-served
+    assets): asset-delivery mode is itself a defect surface.
+
+    '
+  context: 'Any task touching a Go-served SPA with dual asset delivery modes
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/cmd/serve.go
+  - auto-ui/web/static/
+  session_ids: []
+  task_id: 029-auto-ui-state-refactor
+  sources:
+  - kind: feedback
+    ref: docs/tasks/029-auto-ui-state-refactor/feedback.md
+- id: 20260626T224004.081660Z-0041
+  description: 'Go''''s net.Listen(''''unix'''', path) auto-unlinks the socket on close, making it impossible to simulate
+    a stale socket. Use net.ListenUnix with SetUnlinkOnClose(false) for testing stale-socket recovery paths.
+
+    '
+  context: 'Writing tests for Unix domain socket listeners that must handle pre-existing stale socket files
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-watch/internal/rpc/
+  session_ids: []
+  task_id: 030-transport-conformance-harness
+  sources:
+  - kind: feedback
+    ref: docs/tasks/030-transport-conformance-harness/feedback.md
+- id: 20260626T224004.081664Z-0042
+  description: 'In a write-pump architecture (single goroutine, bounded channel), concurrent async handler dispatch is safe
+    under -race because response delivery is serialized through the pump channel.
+
+    '
+  context: 'Designing RPC peer implementations with async handler dispatch over a write-pump serialization layer
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/internal/server/ws.go
+  - auto-watch/internal/rpc/
+  session_ids: []
+  task_id: 030-transport-conformance-harness
+  sources:
+  - kind: feedback
+    ref: docs/tasks/030-transport-conformance-harness/feedback.md
+- id: 20260626T224004.081667Z-0043
+  description: 'Peer shutdown should drain before closing: drain-first lets error responses reach the remote, while close-first
+    risks a deadlock if the write pump stalls on a live connection.
+
+    '
+  context: 'Implementing graceful shutdown for RPC or WebSocket peer connections with a write pump
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-watch/internal/rpc/peer.go
+  - auto-ui/internal/server/ws.go
+  session_ids: []
+  task_id: 030-transport-conformance-harness
+  sources:
+  - kind: feedback
+    ref: docs/tasks/030-transport-conformance-harness/feedback.md
+- id: 20260626T224004.081671Z-0044
+  description: 'A Fixture/Scenario test seam (write the conformance test once, parameterize the transport) lets you validate
+    an abstraction across N implementations with a single test suite.
+
+    '
+  context: 'Designing conformance tests for transport abstractions with multiple implementations
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-watch/internal/rpc/
+  session_ids: []
+  task_id: 030-transport-conformance-harness
+  sources:
+  - kind: feedback
+    ref: docs/tasks/030-transport-conformance-harness/feedback.md
+- id: 20260626T224004.081674Z-0045
+  description: 'Use json.RawMessage for protocol Result fields that must distinguish result:null from an absent result field;
+    retrofitting this distinction after initial implementation is a breaking API change.
+
+    '
+  context: 'Implementing JSON-RPC or similar response envelope structs where null and absent are semantically distinct
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/internal/server/rpc.go
+  - auto-watch/internal/rpc/
+  session_ids: []
+  task_id: 030-transport-conformance-harness
+  sources:
+  - kind: feedback
+    ref: docs/tasks/030-transport-conformance-harness/feedback.md
+- id: 20260626T224004.081677Z-0046
+  description: 'net.Pipe() satisfies io.ReadWriteCloser and returns net.Conn, making it the simplest in-process transport
+    tier for an RPC conformance harness — no sockets, no ports, no cleanup.
+
+    '
+  context: 'Building multi-transport test fixtures for network protocols in Go
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-watch/internal/rpc/
+  session_ids: []
+  task_id: 030-transport-conformance-harness
+  sources:
+  - kind: feedback
+    ref: docs/tasks/030-transport-conformance-harness/feedback.md
+- id: 20260626T224004.081681Z-0047
+  description: 'Loopback HTTP handlers that accept POSTs from a browser are vulnerable to CSRF via CORS-safelisted simple
+    requests. The guard is: reject requests with an Origin header and require Content-Type: application/json.
+
+    '
+  context: 'Any HTTP endpoint on localhost that accepts POST requests and could be triggered by browser-executed JavaScript
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/internal/server/rpc_ingest.go
+  - auto-watch/internal/server/
+  session_ids: []
+  task_id: 031-autowatch-rpc-listener
+  sources:
+  - kind: feedback
+    ref: docs/tasks/031-autowatch-rpc-listener/feedback.md
+- id: 20260626T224004.081684Z-0048
+  description: 'When a new localhost HTTP endpoint is the same category as an existing one, copy its security guards at the
+    start rather than discovering the gap in PR review.
+
+    '
+  context: 'Adding any new localhost HTTP POST handler when the codebase already has an established security pattern
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-ui/internal/server/rpc_ingest.go
+  - auto-watch/internal/server/
+  session_ids: []
+  task_id: 031-autowatch-rpc-listener
+  sources:
+  - kind: feedback
+    ref: docs/tasks/031-autowatch-rpc-listener/feedback.md
+- id: 20260626T224004.081687Z-0049
+  description: 'Test requests that omit Content-Type will silently pass until a Content-Type guard is added, at which point
+    all existing tests break together. Write test HTTP requests with realistic headers from the start.
+
+    '
+  context: 'Writing Go httptest-based tests for HTTP handlers that enforce Content-Type
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-watch/internal/server/ingest_test.go
+  - auto-ui/internal/server/rpc_ingest.go
+  session_ids: []
+  task_id: 031-autowatch-rpc-listener
+  sources:
+  - kind: feedback
+    ref: docs/tasks/031-autowatch-rpc-listener/feedback.md
+- id: 20260626T224004.081690Z-0050
+  description: 'VS Code Remote SSH sessions inject a npm wrapper at ~/.local/bin/npm that silently sets the global prefix
+    to the VS Code Server directory (not on PATH). Fix: npm config set prefix ~/.local.
+
+    '
+  context: 'Any session where npm install -g in a VS Code Remote SSH environment and the binary isn''''t found afterward
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - 58263605-53fa-4bb0-9b52-10112641a77d
+  - 0b5a5bfc-d705-444e-bebe-75e6737326ac
+  - a47ba171-fcfb-4ef0-a730-b7967071ff7e
+  sources:
+  - kind: session_message
+    ref: 58263605-53fa-4bb0-9b52-10112641a77d
+- id: 20260626T224004.081694Z-0051
+  description: 'Claude session JSONL files contain assistant messages with thinking content blocks (reasoning traces), but
+    the auto-etl transform silently drops them via a default:continue fallthrough.
+
+    '
+  context: 'Whenever implementing or auditing the ETL transform for Claude session files
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/internal/transform/transform.go
+  session_ids:
+  - a7ee6b7b-6058-4d2b-8197-a71673b58a7f
+  sources:
+  - kind: session_message
+    ref: a7ee6b7b-6058-4d2b-8197-a71673b58a7f
+- id: 20260626T224004.081697Z-0052
+  description: 'When addressing multiple doc-review annotations, the effective pattern is to group them by severity/type,
+    ask focused questions via AskUserQuestion, then apply all edits in one pass.
+
+    '
+  context: 'When a planning doc has several inline review comments that require design decisions before editing
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-watch/docs/requirements.md
+  session_ids:
+  - be9df1b4-3baa-4159-a1ee-08b43bc3a70c
+  sources:
+  - kind: session_message
+    ref: be9df1b4-3baa-4159-a1ee-08b43bc3a70c
+- id: 20260626T224004.081700Z-0053
+  description: 'Go builds in a multi-module monorepo must be run from each module''''s own directory. Running go build ./...
+    from the repo root fails with cannot find main module.
+
+    '
+  context: 'Any time building a Go sub-project in the auto-stack monorepo from the repo root
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - 045565fa-b64d-45b1-be0e-87ce03b7f093
+  sources:
+  - kind: session_message
+    ref: 045565fa-b64d-45b1-be0e-87ce03b7f093
+- id: 20260626T224004.081704Z-0054
+  description: 'For autowatch design: git worktrees per task were chosen as the concurrency isolation primitive rather than
+    global task limits.
+
+    '
+  context: 'When implementing autowatch task dispatch, or any system that runs agent tasks that might conflict over shared
+    files
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-watch/docs/requirements.md
+  session_ids:
+  - 342685f1-7a5a-4f9a-9ccc-aecd00a844a4
+  sources:
+  - kind: session_message
+    ref: 342685f1-7a5a-4f9a-9ccc-aecd00a844a4
+- id: 20260626T224004.081707Z-0055
+  description: 'autowatch config should separate task definitions from trigger definitions (tasks as a flat list with IDs,
+    triggers referencing task IDs) rather than nesting tasks inside triggers.
+
+    '
+  context: 'When designing or extending the autowatch project.json config schema
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-watch/docs/requirements.md
+  session_ids:
+  - 342685f1-7a5a-4f9a-9ccc-aecd00a844a4
+  sources:
+  - kind: session_message
+    ref: 342685f1-7a5a-4f9a-9ccc-aecd00a844a4
+- id: 20260626T224004.081710Z-0056
+  description: 'Researching CASS revealed that wildcard auto-fallback and request-id echoing are low-effort search features
+    with high agent-experience value.
+
+    '
+  context: 'When designing search CLIs consumed by agents
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-search/docs/cass_inspiration.md
+  - docs/user-journey.md
+  session_ids:
+  - 8fd4863d-3867-4adb-989c-a53bde2d8c2e
+  sources:
+  - kind: session_message
+    ref: 8fd4863d-3867-4adb-989c-a53bde2d8c2e
+- id: 20260626T224004.081714Z-0057
+  description: 'When renaming a Go module, the module path in go.mod and all import paths across every .go file must be updated,
+    plus references in SQL comments, .gitignore, documentation, and the binary name in Cobra''''s Use field.
+
+    '
+  context: 'When renaming any Go module or sub-project directory in the auto-stack monorepo
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/go.mod
+  - auto-etl/cmd/root.go
+  session_ids:
+  - d3b3f45c-2c43-41f8-ae25-7a2efbc073ab
+  sources:
+  - kind: session_message
+    ref: d3b3f45c-2c43-41f8-ae25-7a2efbc073ab
+- id: 20260626T224004.081717Z-0058
+  description: 'Missed cron ticks (daemon was stopped) should be skipped on restart rather than caught up — the user explicitly
+    chose this to avoid burst activity after long downtime.
+
+    '
+  context: 'When implementing or extending the autowatch cron scheduler
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-watch/docs/requirements.md
+  session_ids:
+  - be9df1b4-3baa-4159-a1ee-08b43bc3a70c
+  sources:
+  - kind: session_message
+    ref: be9df1b4-3baa-4159-a1ee-08b43bc3a70c
+- id: 20260626T224004.081720Z-0059
+  description: 'The autodoc agents command preamble lacked any explanation of the [autodoc(docId@docHash, scopeHash)] tag
+    format, so agents reading AGENTS.md would not know how to create code-doc links.
+
+    '
+  context: 'When updating autodoc''''s agents command or any tool that injects documentation into AGENTS.md/CLAUDE.md
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-doc/internal/commands/agents.go
+  session_ids:
+  - 3abfc9ee-abd8-4e51-b3c7-dbc625dc054a
+  sources:
+  - kind: session_message
+    ref: 3abfc9ee-abd8-4e51-b3c7-dbc625dc054a
+- id: 20260626T224004.081724Z-0060
+  description: 'Dev container git identity (Dev <vscode@dev.local>) bleeds into squash-merge commit history. Fix by setting
+    real git identity globally in the container.
+
+    '
+  context: 'When working in a dev container with a generic default git identity and merging PRs via GitHub squash-merge
+
+    '
+  git_commit: 1a49353
+  files:
+  - install.sh
+  - .gitconfig
+  session_ids:
+  - b0a57849-0ecc-4371-8ec0-6d7c2cfe6ac5
+  sources:
+  - kind: session_message
+    ref: b0a57849-0ecc-4371-8ec0-6d7c2cfe6ac5
+- id: 20260626T224004.081727Z-0061
+  description: 'auto-etl''''s filepath.Walk recursively ingests ALL .jsonl files, including Claude Code workflow subagent
+    transcripts, but the high-value workflow JS orchestration scripts and JSON run journals are NOT ingested — a significant
+    coverage gap.
+
+    '
+  context: 'When Claude Code''''s Workflow feature is used; when planning auto-etl data coverage improvements
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/internal/parser/parser.go
+  session_ids:
+  - aa68b3aa-7a63-4a21-bd53-e4b6dc570026
+  sources:
+  - kind: session_message
+    ref: aa68b3aa-7a63-4a21-bd53-e4b6dc570026
+- id: 20260626T224004.081730Z-0062
+  description: 'auto-doc uses a non-standard module path (github.com/datadyne-io/autodoc) while all other tools use github.com/mistakenot/auto-*.
+    Any cross-module architectural change must explicitly handle this outlier.
+
+    '
+  context: 'When planning changes that span multiple Go modules in this monorepo
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-doc/go.mod
+  - auto-graph/go.mod
+  session_ids:
+  - ee74fbab-d1b1-4a33-9c47-ac149591b6d3
+  - b413abd6-dedd-4185-a8ee-9b232c1c85ef
+  task_id: '017'
+  sources:
+  - kind: session_message
+    ref: ee74fbab-d1b1-4a33-9c47-ac149591b6d3
+- id: 20260626T224004.081733Z-0063
+  description: 'auto-config and auto-env have private func newRootCmd() (unexported), while all other tools expose func NewRootCmd().
+    Any plan to expose each tool''''s command tree must include exporting these constructors.
+
+    '
+  context: 'When building an umbrella binary that imports each tool''''s command tree from separate modules
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-config/internal/cli/root.go
+  - auto-env/internal/cli/root.go
+  session_ids:
+  - ee74fbab-d1b1-4a33-9c47-ac149591b6d3
+  - b413abd6-dedd-4185-a8ee-9b232c1c85ef
+  task_id: '017'
+  sources:
+  - kind: session_message
+    ref: ee74fbab-d1b1-4a33-9c47-ac149591b6d3
+- id: 20260626T224004.081737Z-0064
+  description: 'auto-etl uses the var rootCmd + func init() pattern rather than the NewRootCmd(application) pattern used by
+    all other tools. This must be explicitly refactored when adding a public rootcmd.New() wrapper.
+
+    '
+  context: 'When extending auto-etl''''s command tree from outside its module, or reviewing the binary unification plan
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/cmd/root.go
+  - auto-etl/cmd/run.go
+  session_ids:
+  - ee74fbab-d1b1-4a33-9c47-ac149591b6d3
+  task_id: '017'
+  sources:
+  - kind: session_message
+    ref: ee74fbab-d1b1-4a33-9c47-ac149591b6d3
+- id: 20260626T224004.081740Z-0065
+  description: 'README claims must be verified against go.mod and the Makefile rather than trusted from memory. The readme-updater
+    caught three stale claims in a single pass.
+
+    '
+  context: 'When updating documentation after multiple feature cycles
+
+    '
+  git_commit: 1a49353
+  files:
+  - README.md
+  - auto-etl/go.mod
+  - Makefile
+  session_ids:
+  - c1250219-173d-4628-8d03-6f574e00ec95
+  sources:
+  - kind: session_message
+    ref: c1250219-173d-4628-8d03-6f574e00ec95
+- id: 20260626T224004.081743Z-0066
+  description: 'Popping a WIP stash during session recovery onto an updated upstream creates spurious comment-only merge conflicts.
+    Resolution: accept both changes. Treat this as expected overhead in long multi-session tasks.
+
+    '
+  context: 'When resuming a session after a pre-rebase stash was left on a branch that main has since advanced past
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/internal/model/model.go
+  session_ids:
+  - 07bb2da7-32bb-474b-a1af-1d8f5d9c0b25
+  - f2bda478-e6d0-4319-a248-14340188be6d
+  sources:
+  - kind: session_message
+    ref: 07bb2da7-32bb-474b-a1af-1d8f5d9c0b25
+- id: 20260626T224004.081746Z-0067
+  description: 'The review-task skill should grep for both exported and unexported command constructors when any plan involves
+    cross-module command tree imports. A single grep across all tool modules is sufficient.
+
+    '
+  context: 'When reviewing planning docs for any task that involves cross-module Go integration
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-config/internal/cli/root.go
+  - auto-env/internal/cli/root.go
+  session_ids:
+  - ee74fbab-d1b1-4a33-9c47-ac149591b6d3
+  - b413abd6-dedd-4185-a8ee-9b232c1c85ef
+  task_id: '017'
+  sources:
+  - kind: session_message
+    ref: ee74fbab-d1b1-4a33-9c47-ac149591b6d3
+- id: 20260626T224004.081750Z-0068
+  description: 'golangci-lint with gocritic and gosec enabled OOM-kills itself (exit code 144) in the constrained dev container.
+    Fix requires --concurrency=1 in golangci config AND GOMEMLIMIT=1GiB; either alone is insufficient.
+
+    '
+  context: 'When adding memory-hungry linters to golangci-lint in a container with limited RAM
+
+    '
+  git_commit: 1a49353
+  files:
+  - hooks/pre-commit
+  - .golangci.yml
+  - .claude/settings.json
+  session_ids:
+  - ae60077a-6e73-4fa3-998e-01d40e8e8a2e
+  - 402548db-2b80-497d-8528-f9bf0ae27200
+  - e61d5473-c046-46e3-9379-a7312966da0a
+  sources:
+  - kind: session_message
+    ref: ae60077a-6e73-4fa3-998e-01d40e8e8a2e
+- id: 20260626T224004.081753Z-0069
+  description: 'Running go build ./auto-search/... from the monorepo root fails with cannot find main module; each sub-project
+    is its own Go module and build commands must be run from inside the module directory.
+
+    '
+  context: 'Any time a Go build, vet, or test command is issued from the monorepo root
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-search/go.mod
+  - auto-etl/go.mod
+  - auto-doc/go.mod
+  - auto-watch/go.mod
+  session_ids:
+  - ae60077a-6e73-4fa3-998e-01d40e8e8a2e
+  - 402548db-2b80-497d-8528-f9bf0ae27200
+  sources:
+  - kind: session_message
+    ref: ae60077a-6e73-4fa3-998e-01d40e8e8a2e
+- id: 20260626T224004.081756Z-0070
+  description: 'Adding autodoc fix to the pre-commit hook under set -euo pipefail means any exit-code-1 silently blocks the
+    commit AND prevents subsequent hook steps from running. New hard-gate tools should be wrapped in || true until proven
+    stable.
+
+    '
+  context: 'When adding new tools to hooks/pre-commit that may legitimately return exit 1
+
+    '
+  git_commit: 1a49353
+  files:
+  - hooks/pre-commit
+  session_ids:
+  - 4c954908-47c5-48b2-bd14-41c9e98795d9
+  sources:
+  - kind: session_message
+    ref: 4c954908-47c5-48b2-bd14-41c9e98795d9
+- id: 20260626T224004.081759Z-0071
+  description: 'The self-improve SKILL.md references files in a scripts/self-improve/ directory, but the agent tried reading
+    them from the skill directory. SKILL.md files that reference external program files must use absolute or clearly anchored
+    paths.
+
+    '
+  context: 'When a SKILL.md references files in a sibling repo directory rather than the skill directory itself
+
+    '
+  git_commit: 1a49353
+  files:
+  - .claude/skills/self-improve/SKILL.md
+  session_ids:
+  - c6194fa7-209e-4da6-baf0-797025a3077a
+  sources:
+  - kind: session_message
+    ref: c6194fa7-209e-4da6-baf0-797025a3077a
+- id: 20260626T224004.081762Z-0072
+  description: 'autosearch cannot answer ''''Are skills being appropriately used?'''' because session transcripts don''''t
+    record which skills were available vs which ones triggered.
+
+    '
+  context: 'When auditing skill adoption or measuring skill effectiveness via session history
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-search/internal/cli/skills.go
+  session_ids:
+  - c6194fa7-209e-4da6-baf0-797025a3077a
+  sources:
+  - kind: session_message
+    ref: c6194fa7-209e-4da6-baf0-797025a3077a
+- id: 20260626T224004.081768Z-0073
+  description: 'autoreflect feedback events only record timestamp (when the rule was written), not effective_at (when the
+    insight was actually relevant). The fix is to add --effective-at as a required CLI flag.
+
+    '
+  context: 'When recording feedback for sessions that ran in the past; any retrospective reflection workflow
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-reflect/internal/feedback/model.go
+  - auto-reflect/internal/feedback/validate.go
+  session_ids:
+  - 8e16eb46-b491-49bf-9892-45f2f8f17f6b
+  sources:
+  - kind: session_message
+    ref: 8e16eb46-b491-49bf-9892-45f2f8f17f6b
+- id: 20260626T224004.081772Z-0074
+  description: 'gh webhook forward is a development/testing tool only — it allows only 3 reconnect attempts then dies permanently.
+    For lightweight PR review polling, gh pr list --json is simpler and reliable.
+
+    '
+  context: 'When considering event-driven PR review automation or designing autowatch GitHub integration
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - 2325dc81-f9dd-4c11-a33b-75f3bab1a11e
+  sources:
+  - kind: session_message
+    ref: 2325dc81-f9dd-4c11-a33b-75f3bab1a11e
+- id: 20260626T224004.081775Z-0075
+  description: 'autodoc drift detection (linkscan.go) explicitly skips .md files so skill files cannot carry [autodoc()] freshness
+    tags. Extending to markdown requires HTML comment syntax for tags.
+
+    '
+  context: 'When implementing doc-to-skill drift detection
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-doc/internal/linkscan/linkscan.go
+  session_ids:
+  - f0e7c1fa-b3f0-476c-82dd-71e4a691685a
+  sources:
+  - kind: session_message
+    ref: f0e7c1fa-b3f0-476c-82dd-71e4a691685a
+- id: 20260626T224004.081778Z-0076
+  description: 'When implementing a new CLI command that mirrors an existing pattern, directing the agent to search for prior
+    art across sibling packages first yields fast, consistent results.
+
+    '
+  context: 'When implementing any new CLI subcommand that likely has a counterpart in another auto-* package
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-doc/internal/commands/agents.go
+  - auto-search/internal/cli/agents.go
+  session_ids:
+  - d031ba37-ccf8-46a1-9c57-9bd393b1b84a
+  sources:
+  - kind: session_message
+    ref: d031ba37-ccf8-46a1-9c57-9bd393b1b84a
+- id: 20260626T224004.081781Z-0077
+  description: 'The pre-commit hook lints ALL sub-projects regardless of which files are staged, so unstaged lint errors in
+    one package block commits to a completely unrelated package.
+
+    '
+  context: 'When committing changes to a single sub-project while other sub-projects have unstaged or incomplete work with
+    lint errors
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-env/internal/registry/registry.go
+  - auto-search/internal/search/messages.go
+  session_ids:
+  - c92d7a49-6055-43d9-8356-cee7343fcb36
+  - 9a4f3d1b-d7b1-4176-85b9-4d86b0fa93c7
+  sources:
+  - kind: session_message
+    ref: c92d7a49-6055-43d9-8356-cee7343fcb36
+- id: 20260626T224004.081785Z-0078
+  description: 'SQLite FTS5 queries were slow because filters ran as WHERE clauses after FTS5 scanned the full corpus. The
+    fix was a rowid-constraining subquery placed before the MATCH predicate.
+
+    '
+  context: 'When queries combine FTS text matching with structured column filters against an FTS5 external-content table
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-search/internal/search/messages.go
+  - auto-search/internal/indexdb/schema.go
+  session_ids:
+  - c92d7a49-6055-43d9-8356-cee7343fcb36
+  sources:
+  - kind: session_message
+    ref: c92d7a49-6055-43d9-8356-cee7343fcb36
+- id: 20260626T224004.081789Z-0079
+  description: 'Per-tool-call wall-clock duration is not captured in the auto-stack parquet schema. Duration-based queries
+    cannot be answered from the index.
+
+    '
+  context: 'When designing analytics or search features that need session quality signals like build/test duration
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/internal/model/model.go
+  - auto-search/internal/indexdb/schema.go
+  session_ids:
+  - fb0b6dde-692e-4cd4-885d-28a1286cf85f
+  sources:
+  - kind: session_message
+    ref: fb0b6dde-692e-4cd4-885d-28a1286cf85f
+- id: 20260626T224004.081792Z-0080
+  description: 'Silently discarding a parse error with _ after upstream validation creates a latent bug. Always propagate
+    parse errors explicitly even when validation is believed to have already run.
+
+    '
+  context: 'In Go service/handler layers where a Validate() step precedes a parse step
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-reflect/internal/feedback/service.go
+  - auto-reflect/internal/feedback/validate.go
+  session_ids:
+  - 7cfd90d1-d3fc-47cd-af4e-30af0e1be331
+  sources:
+  - kind: session_message
+    ref: 7cfd90d1-d3fc-47cd-af4e-30af0e1be331
+- id: 20260626T224004.081795Z-0081
+  description: 'When a subagent reports that a CLI flag exists based on reading source code, always verify against the running
+    installed binary — the installed binary can lag behind source commits.
+
+    '
+  context: 'After making CLI changes that add new flags or commands, the installed binary is stale until make install is run
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-search/internal/cli/session.go
+  session_ids:
+  - 48058654-eed0-425d-9859-457b24b0b332
+  sources:
+  - kind: session_message
+    ref: 48058654-eed0-425d-9859-457b24b0b332
+- id: 20260626T224004.081798Z-0082
+  description: 'The autosearch SQLite index stored is_subagent, parent_session_id, and subagent_name but the session list
+    CLI output omitted them all. Fields present in the DB but absent from the output struct create invisible gaps.
+
+    '
+  context: 'When adding fields to a DB schema or query layer, verify that the corresponding output struct and CLI serialization
+    also include the field
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-search/internal/indexdb/query_sessions.go
+  - auto-search/internal/cli/session.go
+  session_ids:
+  - ff96a517-01ef-4b6c-ab71-e3f26db47bf7
+  - 48058654-eed0-425d-9859-457b24b0b332
+  sources:
+  - kind: session_message
+    ref: ff96a517-01ef-4b6c-ab71-e3f26db47bf7
+- id: 20260626T224004.081801Z-0083
+  description: 'The contextual-commit post-commit hook can switch the working branch unexpectedly and amend a prior commit,
+    sweeping in unrelated staged files. After any commit on a feature branch, verify the commit landed on the right branch.
+
+    '
+  context: 'When committing on feature branches with the contextual-commit hook active
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - 5a09ce3c-e836-4c8a-af5d-fb538f7c6cb8
+  - 341a2b69-b2fe-4449-948e-6161e4b7ddb8
+  sources:
+  - kind: session_message
+    ref: 5a09ce3c-e836-4c8a-af5d-fb538f7c6cb8
+- id: 20260626T224004.081805Z-0084
+  description: 'autodoc init (no flags) only initializes global config; users must pass --project for project-local config,
+    which is counter-intuitive when run inside a project directory.
+
+    '
+  context: 'When users run autodoc init inside a project directory and expect project-local config to be written
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-doc/internal/commands/init.go
+  session_ids:
+  - b887b243-d7a9-41c9-b2e2-374fc420f618
+  sources:
+  - kind: session_message
+    ref: b887b243-d7a9-41c9-b2e2-374fc420f618
+- id: 20260626T224004.081808Z-0085
+  description: 'autosearch role/field/cwd filters cause 8-13x query slowdowns vs plain FTS. Plain FTS returns in ~50ms; filters
+    take ~8-13s. This was fixed in commit 79fd237.
+
+    '
+  context: 'When adding or debugging filter logic in autosearch
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-search/
+  session_ids:
+  - 35e78674-a5ff-4878-a4a0-1d2f9ed41a4c
+  sources:
+  - kind: session_message
+    ref: 35e78674-a5ff-4878-a4a0-1d2f9ed41a4c
+- id: 20260626T224004.081811Z-0086
+  description: 'auto-etl is Claude-only and hardcoded to read from ~/.claude/projects. There is no Codex parser, no connector
+    abstraction, and no --source flag. Codex has 52 JSONL session files that require a separate parser.
+
+    '
+  context: 'When asked if autoetl supports Codex or other agents, or when scoping multi-agent ETL
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/internal/parser/parser.go
+  - auto-etl/cmd/run.go
+  session_ids:
+  - 2648ccfa-3114-433c-824a-94daef02bb2d
+  sources:
+  - kind: session_message
+    ref: 2648ccfa-3114-433c-824a-94daef02bb2d
+- id: 20260626T224004.081814Z-0087
+  description: 'The dcg pre-commit hook blocks git checkout -- and git restore as destructive operations. Agents cannot restore
+    modified files without user intervention via the ! prefix.
+
+    '
+  context: 'When cleaning up after a bad install or reverting files during troubleshooting
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - 2131ba76-cac2-4acc-9663-00194e3e0940
+  sources:
+  - kind: session_message
+    ref: 2131ba76-cac2-4acc-9663-00194e3e0940
+- id: 20260626T224004.081817Z-0088
+  description: 'npx skills install <repo> --all installs to every known agent tool directory (30+ directories) even if the
+    machine only uses Claude. This creates a large mess of untracked files.
+
+    '
+  context: 'When bulk-installing skills from a repo. Prefer installing one skill at a time.
+
+    '
+  git_commit: 1a49353
+  files:
+  - skills-lock.json
+  session_ids:
+  - 2131ba76-cac2-4acc-9663-00194e3e0940
+  sources:
+  - kind: session_message
+    ref: 2131ba76-cac2-4acc-9663-00194e3e0940
+- id: 20260626T224004.081821Z-0089
+  description: 'When the user says ''''address feedback comments on a PR'''', ask for the PR number immediately rather than
+    searching all PRs.
+
+    '
+  context: 'When asked to address, resolve, or review PR feedback on any file
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - d15d35d4-b899-4e19-ae7e-8b8b56706c03
+  sources:
+  - kind: session_message
+    ref: d15d35d4-b899-4e19-ae7e-8b8b56706c03
+- id: 20260626T224004.081824Z-0090
+  description: 'When shrinking or rewriting a string constant injected into user-facing files, always find and update unit
+    tests that assert on the old string content.
+
+    '
+  context: 'When modifying any hardcoded template string, preamble, or generated-block content
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-doc/internal/commands/agents.go
+  - auto-doc/internal/commands/init_test.go
+  session_ids:
+  - ed03f394-1060-4f89-8150-7c59f4487564
+  - d7a1d4ad-ddf8-4b44-8c56-dae922f80e3d
+  sources:
+  - kind: session_message
+    ref: ed03f394-1060-4f89-8150-7c59f4487564
+- id: 20260626T224004.081827Z-0091
+  description: 'Spawning 3 parallel subagents (Code, Docs, History) for codebase context gathering before writing a plan document
+    is efficient and thorough, completing comprehensive exploration in one round-trip.
+
+    '
+  context: 'When running /new-plan or gathering context before writing a solution or plan
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - 8222f059-7ef8-43ef-92b2-f4a8fc980fdc
+  - b76cf2db-34d2-44de-a185-5fa886d6e5f0
+  sources:
+  - kind: session_message
+    ref: 8222f059-7ef8-43ef-92b2-f4a8fc980fdc
+- id: 20260626T224004.081830Z-0092
+  description: 'Git history ETL schema design: two new parquet datasets (commits and commit_files) with a session-linking
+    heuristic based on timestamp proximity plus workspace path match.
+
+    '
+  context: 'When designing or extending auto-etl to include git history
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/docs/git-history-etl.md
+  - auto-etl/internal/model/model.go
+  session_ids:
+  - 98159195-8575-46cc-b1fa-8edb88cef8d3
+  sources:
+  - kind: session_message
+    ref: 98159195-8575-46cc-b1fa-8edb88cef8d3
+- id: 20260626T224004.081833Z-0093
+  description: 'Go tests that call git-dependent discovery functions must call ws.InitGitRepo() BEFORE the function under
+    test. When git init is skipped, autodoc''''s doc discovery falls back to a filesystem walk starting from /tmp, which hits
+    permission-denied errors.
+
+    '
+  context: 'Any Go test that exercises code which walks a repo using git ls-files or has a git/filesystem fallback
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-doc/internal/commands/fixed_test.go
+  - auto-doc/internal/commands/fix_test.go
+  - auto-doc/internal/testutil/testutil.go
+  session_ids:
+  - 9b5cffb7-cd82-4ac4-80eb-e9418e2b3769
+  sources:
+  - kind: session_message
+    ref: 9b5cffb7-cd82-4ac4-80eb-e9418e2b3769
+- id: 20260626T224004.081837Z-0094
+  description: 'Running go test ./... from the monorepo root fails because there is no top-level go.mod. The correct pattern
+    is a loop over module directories, not a root-level invocation.
+
+    '
+  context: 'Any time an agent needs to run all tests in the auto-stack monorepo
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - 7fd1242b-faa5-4f6a-9d3d-4e94a04e7e00
+  sources:
+  - kind: session_message
+    ref: 7fd1242b-faa5-4f6a-9d3d-4e94a04e7e00
+- id: 20260626T224004.081840Z-0095
+  description: 'When one auto-stack module needs to use internal packages from another, Go''''s internal/ visibility rules
+    block direct imports. The workaround is thin public API wrappers in a pkg/ directory with type aliases.
+
+    '
+  context: 'Whenever a new auto-* package needs to reuse logic already in another module''''s internal/
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-doc/pkg/scan/scan.go
+  - auto-doc/pkg/docs/docs.go
+  - auto-graph/internal/doclink/doclink.go
+  session_ids:
+  - 847337d9-6ef9-4c8c-888b-38e2396a608f
+  - f182001d-c5f1-4d83-8df2-8c2a4e21fc93
+  task_id: '007'
+  sources:
+  - kind: session_message
+    ref: 847337d9-6ef9-4c8c-888b-38e2396a608f
+- id: 20260626T224004.081843Z-0096
+  description: 'DuckDB is the right engine for both validating parquet ETL output and running analytical queries. It reads
+    parquet natively with no import step. The existing SQLite FTS5 index should stay for text search; DuckDB handles structured
+    analytics.
+
+    '
+  context: 'When validating autoetl parquet output, adding analytics commands to autosearch, or prototyping git-data queries
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - 7fd1242b-faa5-4f6a-9d3d-4e94a04e7e00
+  - 4b37efb0-2294-48cf-878b-5bd2753dcd82
+  sources:
+  - kind: session_message
+    ref: 7fd1242b-faa5-4f6a-9d3d-4e94a04e7e00
+- id: 20260626T224004.081846Z-0097
+  description: 'pre-commit hooks cannot modify commit messages — they run before the message is composed. The correct hook
+    for injecting trailers like Session-Id is prepare-commit-msg.
+
+    '
+  context: 'Any task involving git hooks that modify commit messages, inject metadata, or append trailers
+
+    '
+  git_commit: 1a49353
+  files:
+  - docs/tasks/008-commit-session-link/requirements.md
+  session_ids:
+  - a5c7f4c0-c0ba-43c8-a6a0-3713f6c17f62
+  task_id: 008
+  sources:
+  - kind: session_message
+    ref: a5c7f4c0-c0ba-43c8-a6a0-3713f6c17f62
+- id: 20260626T224004.081849Z-0098
+  description: 'When a context.md documents a design tension between a prior architectural doc and the current requirements,
+    the requirements are authoritative. The design tension should be noted but must not block implementation.
+
+    '
+  context: 'Any task where a design doc prescribes one approach but current requirements choose a simpler one
+
+    '
+  git_commit: 1a49353
+  files:
+  - docs/tasks/008-commit-session-link/context.md
+  session_ids:
+  - 8bc70a85-1017-4f3a-b8d5-23418ae05848
+  task_id: 008
+  sources:
+  - kind: session_message
+    ref: 8bc70a85-1017-4f3a-b8d5-23418ae05848
+- id: 20260626T224004.081853Z-0099
+  description: 'The coordinator-subagent execution pattern — coordinator reads all docs, dispatches subagents with complete
+    self-contained prompts, tracks phase progress via TaskCreate/TaskUpdate — is used consistently across execute-task, tech-spike,
+    and experiment workflows.
+
+    '
+  context: 'Any multi-phase autonomous task execution
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - f182001d-c5f1-4d83-8df2-8c2a4e21fc93
+  - feec452d-d7c4-42e4-b312-9137dd95c70d
+  - 9bf4ed7c-56b9-44fa-a355-23eda4798565
+  sources:
+  - kind: session_message
+    ref: f182001d-c5f1-4d83-8df2-8c2a4e21fc93
+- id: 20260626T224004.081856Z-0100
+  description: 'Autosearch can mine its own session history to identify requirement-authoring sessions using search --role
+    user for /new-task skill invocations and AskUserQuestion responses.
+
+    '
+  context: 'When building datasets of user requirement inputs or studying how requirements evolve
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - 01546b12-37b0-4da5-8180-edc148f2daaf
+  sources:
+  - kind: session_message
+    ref: 01546b12-37b0-4da5-8180-edc148f2daaf
+- id: 20260626T224004.081859Z-0101
+  description: 'When requirements are amended mid-session after a prior out-of-scope declaration, the requirements doc must
+    be updated in two places: add the new AC and remove the contradicting out-of-scope line.
+
+    '
+  context: 'Whenever requirements are amended after a prior out-of-scope declaration
+
+    '
+  git_commit: 1a49353
+  files:
+  - docs/tasks/008-commit-session-link/requirements.md
+  session_ids:
+  - a5c7f4c0-c0ba-43c8-a6a0-3713f6c17f62
+  task_id: 008
+  sources:
+  - kind: session_message
+    ref: a5c7f4c0-c0ba-43c8-a6a0-3713f6c17f62
+- id: 20260626T224004.081862Z-0102
+  description: 'Using //go:embed to embed shell scripts from real files rather than hardcoding them as Go string constants
+    keeps the hook source editable and independently testable.
+
+    '
+  context: 'Any auto-* package that needs to ship a script, template, or config file as embedded bytes
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-config/internal/hooks/
+  session_ids:
+  - 8bc70a85-1017-4f3a-b8d5-23418ae05848
+  task_id: 008
+  sources:
+  - kind: session_message
+    ref: 8bc70a85-1017-4f3a-b8d5-23418ae05848
+- id: 20260626T224004.081866Z-0103
+  description: 'auto-etl silently skips past partitions when new raw data arrives. Adding data from a newly-supported source
+    to historical periods requires --full rebuild, which wipes all output. There is no safe partial merge path.
+
+    '
+  context: 'When integrating a new session source into auto-etl or replaying old data after a bug fix
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/internal/writer/writer.go
+  session_ids:
+  - 2eeaae19-099d-4fce-b271-72fb3a2b1160
+  task_id: 009
+  sources:
+  - kind: session_message
+    ref: 2eeaae19-099d-4fce-b271-72fb3a2b1160
+- id: 20260626T224004.081869Z-0104
+  description: 'When requirements assumed shelling out to DuckDB CLI, exploration revealed the codebase already embedded pure-Go
+    SQLite. The implementation pivoted to ephemeral in-memory SQLite with parquet-go reads, preserving the zero-external-dependency
+    constraint.
+
+    '
+  context: 'When choosing a query engine or data-processing library for a new command in a Go CLI tool
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-search/internal/etlscan
+  - auto-search/go.mod
+  session_ids:
+  - 0d441de8-2d87-44e6-9ba0-659db5956c3d
+  - d82f24ba-075b-4172-a53a-cad3d1a75781
+  task_id: '010'
+  sources:
+  - kind: session_message
+    ref: 0d441de8-2d87-44e6-9ba0-659db5956c3d
+- id: 20260626T224004.081872Z-0105
+  description: 'Test fixtures for commands that read from ~/.auto/etl/output must be regenerated from the repository itself,
+    never sliced from the developer''''s local ETL output. This makes the privacy boundary structural.
+
+    '
+  context: 'When writing tests for commands that read parquet data
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - 0d441de8-2d87-44e6-9ba0-659db5956c3d
+  task_id: '010'
+  sources:
+  - kind: session_message
+    ref: 0d441de8-2d87-44e6-9ba0-659db5956c3d
+- id: 20260626T224004.081875Z-0106
+  description: 'NormalizeRemoteURL was duplicated in auto-etl and auto-search, which would silently break repo->repo_id matching
+    if the two diverged. The fix was to move it to auto-shared. Cross-tool identifiers used for join keys must derive from
+    one shared function.
+
+    '
+  context: 'When a derived key (like repo_id) is computed in multiple packages and used for cross-dataset joins
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/internal/git
+  - auto-search/internal
+  - auto-shared
+  session_ids:
+  - 0d441de8-2d87-44e6-9ba0-659db5956c3d
+  task_id: '010'
+  sources:
+  - kind: session_message
+    ref: 0d441de8-2d87-44e6-9ba0-659db5956c3d
+- id: 20260626T224004.081879Z-0107
+  description: 'Before committing to the co-change implementation, the user explicitly ran /experiment-designer to validate
+    the SQLite in-memory latency assumption. This experiment-first pattern avoided building on an untested performance assumption.
+
+    '
+  context: 'When the implementation plan depends on a latency or throughput assumption about a data-processing approach
+
+    '
+  git_commit: 1a49353
+  files:
+  - docs/experiments
+  session_ids:
+  - 0d441de8-2d87-44e6-9ba0-659db5956c3d
+  task_id: '010'
+  sources:
+  - kind: session_message
+    ref: 0d441de8-2d87-44e6-9ba0-659db5956c3d
+- id: 20260626T224004.081882Z-0108
+  description: 'Solution docs should explicitly enumerate rejected alternatives with one-line reasons. This prevents future
+    contributors from re-proposing the same approaches.
+
+    '
+  context: 'When writing solution.md for any non-trivial technical decision where multiple approaches were considered
+
+    '
+  git_commit: 1a49353
+  files:
+  - docs/tasks/010-autosearch-co-change/solution.md
+  session_ids:
+  - 0d441de8-2d87-44e6-9ba0-659db5956c3d
+  - d82f24ba-075b-4172-a53a-cad3d1a75781
+  task_id: '010'
+  sources:
+  - kind: session_message
+    ref: 0d441de8-2d87-44e6-9ba0-659db5956c3d
+- id: 20260626T224004.081885Z-0109
+  description: 'The auto-etl parquet schema does not capture per-tool-call duration_ms at a queryable level. The user wanted
+    tooling to distinguish expected-long calls from stuck/error-looping calls.
+
+    '
+  context: 'When extending auto-etl or auto-search to answer session-quality or performance questions
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/internal/model/model.go
+  - auto-search
+  session_ids:
+  - 8f525a5a-5703-4b66-a262-356691cc78af
+  - 7662373a-be4e-4b65-b83b-7f462236a9cd
+  sources:
+  - kind: session_message
+    ref: 8f525a5a-5703-4b66-a262-356691cc78af
+- id: 20260626T224004.081889Z-0110
+  description: 'govulncheck is run only on push to main in CI, not on pull requests. PRs can introduce dependency vulnerabilities
+    that are only caught after merge.
+
+    '
+  context: 'When reviewing the security posture of the CI pipeline or deciding where to add new quality gates
+
+    '
+  git_commit: 1a49353
+  files:
+  - .github/workflows/ci.yml
+  - .github/workflows/claude-review.yml
+  session_ids:
+  - d7d8b991-9df7-4fef-ad7b-11347fa763fa
+  sources:
+  - kind: session_message
+    ref: d7d8b991-9df7-4fef-ad7b-11347fa763fa
+- id: 20260626T224004.081892Z-0111
+  description: 'Tools used as phase-1 routers by AI agents must default to compact output; verbose JSON with 15-digit floats,
+    repeated commit bodies, and per-row metadata burns enough tokens that agents skip the tool entirely. The fix: compact
+    text renderer as default, --json flag for full detail, and a token-budget flag instead of a row-count --limit.
+
+    '
+  context: 'When designing CLI tools that AI agents call as cheap index/routing steps before reading actual files
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-search/internal/cli/cochange.go
+  - auto-search/internal/cochange/types.go
+  session_ids:
+  - 29998d1a-790d-42f3-87df-ccf32749884c
+  - 42b787da-e7f3-402a-93c7-dd255fef481a
+  task_id: '011'
+  sources:
+  - kind: session_message
+    ref: 29998d1a-790d-42f3-87df-ccf32749884c
+  - kind: session_message
+    ref: 42b787da-e7f3-402a-93c7-dd255fef481a
+- id: 20260626T224004.081895Z-0112
+  description: 'The toolUseResult envelope in Claude Code JSONL (which carries structured AskUserQuestion answers, options,
+    and recommendations) is silently discarded at the auto-etl parser layer; downstream analytics on question/answer pairs
+    is impossible until a raw JSON column (tool_use_result_json) is threaded through parquet to SQLite to CLI output.
+
+    '
+  context: 'When adding new structured fields from Claude JSONL to the ETL pipeline; also when planning analytics on AskUserQuestion
+    decision data
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/internal/parser/parser.go
+  - auto-etl/internal/transform/transform.go
+  session_ids:
+  - 33eeb5f8-83e2-49e8-9998-1c182e0ddd9e
+  - 8392f1a4-1437-4b73-b185-627e1808675c
+  task_id: '012'
+  sources:
+  - kind: session_message
+    ref: 33eeb5f8-83e2-49e8-9998-1c182e0ddd9e
+  - kind: session_message
+    ref: 8392f1a4-1437-4b73-b185-627e1808675c
+- id: 20260626T224004.081898Z-0113
+  description: 'ETL schema version bumps abandoned mid-flight (on branches that were never merged) should be treated as if
+    they never happened; reuse the skipped version number rather than incrementing past it.
+
+    '
+  context: 'When bumping parquet or SQLite schema version numbers after a prior attempt was abandoned without merging
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/internal/transform/transform.go
+  session_ids:
+  - 8392f1a4-1437-4b73-b185-627e1808675c
+  task_id: '012'
+  sources:
+  - kind: session_message
+    ref: 8392f1a4-1437-4b73-b185-627e1808675c
+- id: 20260626T224004.081902Z-0114
+  description: 'Stacked PRs based correctly on each other (PR2 targets PR1''''s branch, PR3 targets PR2''''s) auto-retarget
+    to main after the bottom merges. Fake stacks with the same /1 /2 /3 naming but each independently off main do NOT auto-retarget.
+
+    '
+  context: 'When reviewing or merging a series of stacked PRs; when deciding how to structure a multi-PR feature branch stack
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - 8ca071c9-357c-4290-abeb-f9311e45ceb2
+  sources:
+  - kind: session_message
+    ref: 8ca071c9-357c-4290-abeb-f9311e45ceb2
+- id: 20260626T224004.081905Z-0115
+  description: 'When /address-feedback finds zero unresolved review threads it should explicitly confirm the PR is clear rather
+    than returning silently. A silent return can mislead the caller into thinking the skill was not invoked.
+
+    '
+  context: 'When running address-feedback on PRs that have already been fully reviewed; when building skills that may complete
+    trivially
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - a81b82b6-af93-4b3b-acef-85d72bcc9850
+  sources:
+  - kind: session_message
+    ref: a81b82b6-af93-4b3b-acef-85d72bcc9850
+- id: 20260626T224004.081908Z-0116
+  description: 'For large-scale codebase documentation tasks, fan out two independent Explorer subagents in parallel — one
+    surveying sub-project state, one mining git history — then synthesize. This halves wall time and keeps each agent context
+    narrow.
+
+    '
+  context: 'When writing or updating project-wide documentation that requires surveying many sub-projects and a long git history
+    simultaneously
+
+    '
+  git_commit: 1a49353
+  files:
+  - README.md
+  session_ids:
+  - ab623175-de53-49dc-b0a8-15171827e953
+  sources:
+  - kind: session_message
+    ref: ab623175-de53-49dc-b0a8-15171827e953
+- id: 20260626T224004.081911Z-0117
+  description: 'The review-task skill sometimes flags missing context.md/plan.md as defects during the solution stage. The
+    author should push back: these docs are produced by the next planning step, not the current one.
+
+    '
+  context: 'During the new-task to new-solution to new-plan planning pipeline; when reviewers flag missing docs at the solution
+    stage
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - 8392f1a4-1437-4b73-b185-627e1808675c
+  task_id: '012'
+  sources:
+  - kind: session_message
+    ref: 8392f1a4-1437-4b73-b185-627e1808675c
+- id: 20260626T224004.081914Z-0118
+  description: 'Quint v0.32.0 successfully models CRDT merge semantics (G-Set messages, LWW-Register sessions, tombstone dominance)
+    for the auto-etl sync protocol. The model checker caught a tombstone resurrection bug automatically in 63ms.
+
+    '
+  context: 'When designing distributed merge protocols, CRDT semantics, or multi-host sync for the auto-etl pipeline
+
+    '
+  git_commit: 1a49353
+  files:
+  - docs/experiments/quint-sync-protocol/etl_sync.qnt
+  session_ids:
+  - 258ca080-40e0-4972-81c3-9ea2d9556d99
+  - 9ff92ec1-be54-46f0-b815-77c545d869c5
+  sources:
+  - kind: session_message
+    ref: 258ca080-40e0-4972-81c3-9ea2d9556d99
+  - kind: session_message
+    ref: 9ff92ec1-be54-46f0-b815-77c545d869c5
+- id: 20260626T224004.081918Z-0119
+  description: 'Experiment planning docs can describe deliverables that don''''t exist yet. Future sessions reading the doc
+    would be misled into thinking the work was done. Always verify paths exist on disk before treating a planning doc as ground
+    truth.
+
+    '
+  context: 'When reading experiment or planning docs that claim specific Go packages, test counts, or file deliverables.
+
+    '
+  git_commit: 1a49353
+  files:
+  - docs/experiments/quint-sync-protocol/phase2-mbt-verification.md
+  session_ids:
+  - ddb9d4f4-d75a-4857-a14c-eca7a06a2ccb
+  sources:
+  - kind: session_message
+    ref: ddb9d4f4-d75a-4857-a14c-eca7a06a2ccb
+- id: 20260626T224004.081921Z-0120
+  description: 'When session recovery context contains empty placeholder brackets, the agent must fall back to git-based orientation:
+    git status, git diff todo.md, and inspecting untracked files. This pattern reliably reconstructs in-progress work.
+
+    '
+  context: 'At the start of any session where recovery context shows empty fields.
+
+    '
+  git_commit: 1a49353
+  files:
+  - todo.md
+  session_ids:
+  - ddb9d4f4-d75a-4857-a14c-eca7a06a2ccb
+  - d4f19af0-8724-45da-9b43-ddbb5f851b7f
+  sources:
+  - kind: session_message
+    ref: ddb9d4f4-d75a-4857-a14c-eca7a06a2ccb
+  - kind: session_message
+    ref: d4f19af0-8724-45da-9b43-ddbb5f851b7f
+- id: 20260626T224004.081924Z-0121
+  description: '24% of sessions have junk first user messages dominated by local-command-caveat wrappers. A simple XML-prefix
+    skip-list recovers clean intent for 98%+ of sessions.
+
+    '
+  context: 'When extracting session intent from the first user message in ETL transform or search tooling.
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/internal/transform/transform.go
+  - auto-etl/internal/model/model.go
+  session_ids:
+  - c0de5ad7-2cae-4463-bce5-e0c21ceeb7b7
+  task_id: '015'
+  sources:
+  - kind: session_message
+    ref: c0de5ad7-2cae-4463-bce5-e0c21ceeb7b7
+- id: 20260626T224004.081927Z-0122
+  description: 'DuckDB with glob paths over ETL parquet output is the fastest investigation tool for data questions before
+    building Go implementations.
+
+    '
+  context: 'Before writing Go code to compute or filter over session/message data.
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - c0de5ad7-2cae-4463-bce5-e0c21ceeb7b7
+  task_id: '015'
+  sources:
+  - kind: session_message
+    ref: c0de5ad7-2cae-4463-bce5-e0c21ceeb7b7
+- id: 20260626T224004.081931Z-0123
+  description: 'The canonical pattern for adding a new field end-to-end through the ETL-search pipeline is: model.go -> transform.go
+    -> parquet.go -> schema.go -> indexer.go -> query_sessions.go -> cli/session.go. Commit 042857e is the reference template.
+
+    '
+  context: 'Any time a new derived or raw field needs to flow from ETL parquet into the autosearch CLI.
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/internal/model/model.go
+  - auto-etl/internal/transform/transform.go
+  - auto-search/internal/model/parquet.go
+  - auto-search/internal/indexdb/schema.go
+  session_ids:
+  - 169c715a-0ea3-4b85-b398-e2d22dbe48f1
+  task_id: '015'
+  sources:
+  - kind: session_message
+    ref: 169c715a-0ea3-4b85-b398-e2d22dbe48f1
+- id: 20260626T224004.081937Z-0124
+  description: 'Inline [autodoc()] linkage markers in source code cause git churn whenever referenced doc files change. An
+    append-only event log (.auto/docs/links.jsonl) is a better model for metadata that changes independently of code logic.
+
+    '
+  context: 'When designing doc-to-code linkage or any metadata that tracks relationships between source files and external
+    artifacts.
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-doc/docs/two-way-freshness.md
+  session_ids:
+  - 148c88c2-8ed5-42c4-abba-575966211716
+  task_id: '014'
+  sources:
+  - kind: session_message
+    ref: 148c88c2-8ed5-42c4-abba-575966211716
+- id: 20260626T224004.081941Z-0125
+  description: 'The EFC paper''''s deterministic gate tables are directly implementable from the existing parquet schema:
+    BashExitCode and Interrupted columns carry the validity/progress signal. The main blocker for full EFC scoring is the
+    absence of a ground-truth success label.
+
+    '
+  context: 'When designing session quality scoring or auto-reflect metrics.
+
+    '
+  git_commit: 1a49353
+  files:
+  - auto-etl/internal/model/model.go
+  - docs/research/efc-scaling-laws.md
+  session_ids:
+  - 6d58fdd5-e278-4ea2-a177-669a6cba97c4
+  sources:
+  - kind: session_message
+    ref: 6d58fdd5-e278-4ea2-a177-669a6cba97c4
+- id: 20260626T224004.081944Z-0126
+  description: 'The /review-task skill verifies planning doc claims against the actual codebase — file paths, function signatures,
+    struct fields — not just doc structure. Running it after writing solution.md catches aspirational claims before they cause
+    subagent failures during /execute-task.
+
+    '
+  context: 'After writing any solution.md or context.md that references specific file paths or function signatures.
+
+    '
+  git_commit: 1a49353
+  files: []
+  session_ids:
+  - c9124cdf-f262-470a-87cf-3390e0926be0
+  - b17b8bac-47f9-4ba3-a9ce-14edf55dfbbf
+  task_id: '013'
+  sources:
+  - kind: session_message
+    ref: c9124cdf-f262-470a-87cf-3390e0926be0
+  - kind: session_message
+    ref: b17b8bac-47f9-4ba3-a9ce-14edf55dfbbf
