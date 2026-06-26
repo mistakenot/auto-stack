@@ -18,38 +18,40 @@ import (
 func TestInitProjectCreatesFilesAndIsIdempotent(t *testing.T) {
 	root := t.TempDir()
 
-	stdout, stderr, code := runCLI(t, "--root", root, "init", "--project")
+	stdout, stderr, code := runCLI(t, "--root", root, "init", "--project", "-y")
 	if code != 0 {
 		t.Fatalf("init --project failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 
-	projectSettings := filepath.Join(root, ".auto", "skills", "settings.json")
+	skillsYAML := filepath.Join(root, ".auto", "skills", "skills.yaml")
+	lockJSON := filepath.Join(root, ".auto", "skills", "lock.json")
 	skillsDir := filepath.Join(root, "skills")
-	assertExists(t, projectSettings)
+	assertExists(t, skillsYAML)
+	assertExists(t, lockJSON)
 	assertExists(t, skillsDir)
 
-	firstSettings, err := os.ReadFile(projectSettings)
+	firstYAML, err := os.ReadFile(skillsYAML)
 	if err != nil {
-		t.Fatalf("read settings: %v", err)
+		t.Fatalf("read skills.yaml: %v", err)
 	}
 
-	stdout, stderr, code = runCLI(t, "--root", root, "init", "--project")
+	stdout, stderr, code = runCLI(t, "--root", root, "init", "--project", "-y")
 	if code != 0 {
 		t.Fatalf("second init --project failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 
-	secondSettings, err := os.ReadFile(projectSettings)
+	secondYAML, err := os.ReadFile(skillsYAML)
 	if err != nil {
-		t.Fatalf("read settings after rerun: %v", err)
+		t.Fatalf("read skills.yaml after rerun: %v", err)
 	}
-	if !bytes.Equal(firstSettings, secondSettings) {
-		t.Fatalf("settings changed across idempotent runs\nfirst:\n%s\nsecond:\n%s", firstSettings, secondSettings)
+	if !bytes.Equal(firstYAML, secondYAML) {
+		t.Fatalf("skills.yaml changed across idempotent runs\nfirst:\n%s\nsecond:\n%s", firstYAML, secondYAML)
 	}
 }
 
 func TestCreateHappyWithDirs(t *testing.T) {
 	root := t.TempDir()
-	_, _, code := runCLI(t, "--root", root, "init", "--project")
+	_, _, code := runCLI(t, "--root", root, "init", "--project", "-y")
 	if code != 0 {
 		t.Fatal("init failed")
 	}
@@ -80,7 +82,7 @@ func TestCreateHappyWithDirs(t *testing.T) {
 
 func TestCreateRejectsBadAndLongNames(t *testing.T) {
 	root := t.TempDir()
-	_, _, code := runCLI(t, "--root", root, "init", "--project")
+	_, _, code := runCLI(t, "--root", root, "init", "--project", "-y")
 	if code != 0 {
 		t.Fatal("init failed")
 	}
@@ -334,7 +336,7 @@ func TestDoctorReportsMissingAndReadyState(t *testing.T) {
 	if code != 0 {
 		t.Fatal("init failed")
 	}
-	_, _, code = runCLI(t, "--root", root, "init", "--project")
+	_, _, code = runCLI(t, "--root", root, "init", "--project", "-y")
 	if code != 0 {
 		t.Fatal("init --project failed")
 	}
