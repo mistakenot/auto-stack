@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -131,13 +132,17 @@ func checkSettings() model.DoctorCheck {
 			Details:     err.Error(),
 		}
 	}
-	if errs := config.ValidateGlobalConfig(cfg); len(errs) > 0 {
+	// Skippable bad entries (malformed id, missing/stale path, duplicates) must
+	// not crash the daemon — it runs for the usable projects and skips the rest.
+	// Only an unloadable registry (handled above) is fatal.
+	usable, skipped := config.UsableGlobalConfig(cfg)
+	if len(skipped) > 0 {
 		return model.DoctorCheck{
 			Name:        "settings",
-			Status:      "fail",
-			Message:     "project registry failed validation",
+			Status:      "warn",
+			Message:     fmt.Sprintf("%d of %d registered project(s) skipped; using %d", len(skipped), len(cfg.Projects), len(usable.Projects)),
 			Remediation: "fix ~/.auto/projects.json or rerun auto watch init",
-			Details:     errs[0].Message,
+			Details:     fmt.Sprintf("%s: %s", skipped[0].Code, skipped[0].Message),
 		}
 	}
 	return model.DoctorCheck{Name: "settings", Status: "ok", Message: path}

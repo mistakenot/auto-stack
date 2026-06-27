@@ -287,3 +287,44 @@ func TestLoadProjectsLenientUnknownFields(t *testing.T) {
 		t.Fatalf("expected alpha loaded, got %+v", got)
 	}
 }
+
+func TestUsableSkipsStaleAndInvalidKeepsRealProjects(t *testing.T) {
+	// Two real directories on disk; everything else should be skipped.
+	realA := t.TempDir()
+	realB := t.TempDir()
+	realC := t.TempDir()
+	cfg := ProjectsConfig{Projects: []ProjectRef{
+		{ID: "alpha", Path: realA},                            // kept
+		{ID: "Bad_ID", Path: realB},                           // skipped: invalid id
+		{ID: "beta", Path: ""},                                // skipped: missing path
+		{ID: "gamma", Path: "/tmp/does-not-exist-2718281828"}, // skipped: path not real
+		{ID: "beta", Path: realB},                             // kept: distinct valid entry
+		{ID: "beta", Path: realC},                             // skipped: duplicate id (real path)
+	}}
+	usable, skipped := cfg.Usable()
+	if len(usable.Projects) != 2 {
+		t.Fatalf("expected 2 usable, got %d: %+v", len(usable.Projects), usable.Projects)
+	}
+	if usable.Projects[0].ID != "alpha" || usable.Projects[1].ID != "beta" {
+		t.Fatalf("unexpected usable set: %+v", usable.Projects)
+	}
+	if len(skipped) != 4 {
+		t.Fatalf("expected 4 skips, got %d: %+v", len(skipped), skipped)
+	}
+	codes := map[string]bool{}
+	for _, s := range skipped {
+		codes[s.Code] = true
+	}
+	for _, want := range []string{"invalid_project_id", "missing_project_path", "project_path_missing", "duplicate_project_id"} {
+		if !codes[want] {
+			t.Errorf("expected a %q skip, got codes %v", want, codes)
+		}
+	}
+}
+
+func TestUsableEmptyRegistry(t *testing.T) {
+	usable, skipped := ProjectsConfig{}.Usable()
+	if len(usable.Projects) != 0 || len(skipped) != 0 {
+		t.Fatalf("expected empty usable + no skips, got %d/%d", len(usable.Projects), len(skipped))
+	}
+}

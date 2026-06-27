@@ -233,11 +233,13 @@ func (s *Service) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if errs := config.ValidateGlobalConfig(settings); len(errs) > 0 {
-		return fmt.Errorf("global settings failed validation: %s", errs[0].Message)
-	}
+	// Operate on the usable subset (valid id, existing path, no duplicates) and
+	// skip stale/malformed entries rather than failing the whole tick — a single
+	// bad registry entry must not take the daemon down. Skips are surfaced by the
+	// startup doctor "settings" check; we don't re-log them every tick.
+	usable, _ := config.UsableGlobalConfig(settings)
 
-	projects := append([]model.ProjectRef(nil), settings.Projects...)
+	projects := append([]model.ProjectRef(nil), usable.Projects...)
 	sort.Slice(projects, func(i, j int) bool { return projects[i].ID < projects[j].ID })
 
 	for _, project := range projects {

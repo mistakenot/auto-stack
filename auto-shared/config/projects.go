@@ -298,3 +298,49 @@ func ValidateProjects(cfg ProjectsConfig) []ValidationError {
 	}
 	return errs
 }
+
+// Usable returns the subset of projects that a running tool can safely act on,
+// together with a structured error for every entry it dropped. A project is
+// usable when its id matches the canonical pattern, its path is present and
+// exists as a directory on disk ("real"), and neither its id nor its cleaned
+// path duplicates one already kept (first occurrence wins).
+//
+// This is the lenient counterpart to ValidateProjects: rather than failing the
+// whole registry when one entry is malformed or stale, callers operate on the
+// good projects and skip the rest. It keeps long-running consumers — notably the
+// `auto watch` daemon startup doctor — resilient to a registry that has picked
+// up a dead entry (for example a deleted temp dir left behind by a test run).
+// Use ValidateProjects when strict, all-or-nothing validation is required.
+func (c ProjectsConfig) Usable() (ProjectsConfig, []ValidationError) {
+	kept := ProjectsConfig{Projects: []ProjectRef{}}
+	skipped := []ValidationError{}
+	seenIDs := map[string]bool{}
+	seenPaths := map[string]bool{}
+	for i, project := range c.Projects {
+		jsonPath := fmt.Sprintf("$.projects[%d]", i)
+		cleanPath := filepath.Clean(strings.TrimSpace(project.Path))
+		switch {
+		case !projectIDPattern.MatchString(project.ID):
+			skipped = append(skipped, ValidationError{Code: "invalid_project_id", Path: jsonPath, Field: "id", Message: "project id must match ^[a-z0-9]+(?:-[a-z0-9]+)*$", Value: project.ID})
+		case cleanPath == "." || cleanPath == "":
+			skipped = append(skipped, ValidationError{Code: "missing_project_path", Path: jsonPath, Field: "path", Message: "project path is required"})
+		case !dirExists(cleanPath):
+			skipped = append(skipped, ValidationError{Code: "project_path_missing", Path: jsonPath, Field: "path", Message: "project path does not exist on disk", Value: project.Path})
+		case seenIDs[project.ID]:
+			skipped = append(skipped, ValidationError{Code: "duplicate_project_id", Path: jsonPath, Field: "id", Message: "project id is already registered", Value: project.ID})
+		case seenPaths[cleanPath]:
+			skipped = append(skipped, ValidationError{Code: "duplicate_project_path", Path: jsonPath, Field: "path", Message: "project path is already registered", Value: project.Path})
+		default:
+			seenIDs[project.ID] = true
+			seenPaths[cleanPath] = true
+			kept.Projects = append(kept.Projects, project)
+		}
+	}
+	return kept, skipped
+}
+
+// dirExists reports whether path is an existing directory on disk.
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}

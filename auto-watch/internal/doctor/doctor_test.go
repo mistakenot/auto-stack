@@ -149,3 +149,27 @@ func TestCheckDaemonUnit_UserScopePreferredOverSystem(t *testing.T) {
 		t.Fatalf("expected user unit %q to be selected, got %q", userUnit, check.Message)
 	}
 }
+
+func TestCheckSettings_WarnsOnSkippableEntriesNotFail(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	autoDir := filepath.Join(home, ".auto")
+	if err := os.MkdirAll(autoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// One real project + one stale entry pointing at a deleted dir. The stale
+	// entry must downgrade the check to "warn" (skipped, not fatal) so the
+	// daemon still starts — the bug that crash-looped it on test pollution.
+	real := t.TempDir()
+	reg := `{"projects":[` +
+		`{"id":"good","path":"` + real + `"},` +
+		`{"id":"001","path":"/tmp/deleted-by-a-test-1618033988/001"}` +
+		`]}`
+	if err := os.WriteFile(filepath.Join(autoDir, "projects.json"), []byte(reg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	check := checkSettings()
+	if check.Status != "warn" {
+		t.Fatalf("expected warn (daemon should still start), got %q: %s", check.Status, check.Message)
+	}
+}

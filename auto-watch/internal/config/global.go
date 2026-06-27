@@ -23,6 +23,14 @@ func ValidateGlobalConfig(cfg model.GlobalConfig) []model.ValidationError {
 	return sharedconfig.ValidateProjects(cfg)
 }
 
+// UsableGlobalConfig returns the subset of registered projects safe to act on
+// (valid id, existing path, no duplicates) plus a structured error per skipped
+// entry. Unlike ValidateGlobalConfig it never rejects the whole registry for one
+// bad entry, so the daemon keeps running for the good projects.
+func UsableGlobalConfig(cfg model.GlobalConfig) (model.GlobalConfig, []model.ValidationError) {
+	return cfg.Usable()
+}
+
 func UpsertProjectRef(cfg *model.GlobalConfig, project *model.ProjectRef) {
 	sharedconfig.UpsertProject(cfg, *project)
 }

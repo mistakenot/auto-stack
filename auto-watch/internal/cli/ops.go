@@ -104,13 +104,17 @@ func newStartCmd(application *app.App) *cobra.Command {
 			// can emit watch.task.* lifecycle events).
 			startedAt := time.Now()
 			hostID := sharedconfig.HostIDQuietly()
+			// Serve only the usable subset (valid id, existing path, no
+			// duplicates) so derivation and RPC ignore stale/malformed entries
+			// rather than the daemon refusing to run for the good projects.
 			regProvider := func() sharedconfig.ProjectsConfig {
 				p, _ := sharedconfig.ProjectsConfigPath()
 				cfg, err := sharedconfig.LoadProjects(p)
 				if err != nil {
 					return sharedconfig.ProjectsConfig{Projects: []sharedconfig.ProjectRef{}}
 				}
-				return cfg
+				usable, _ := cfg.Usable()
+				return usable
 			}
 			handlers := rpcmethods.New(service, hostID, version.Version, startedAt, hub, ctlEvents, regProvider)
 
