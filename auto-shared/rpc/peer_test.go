@@ -1110,5 +1110,59 @@ func TestKeepAliveNoFalseReapWhenHealthy(t *testing.T) {
 	}
 }
 
+func TestKeepAliveNoFalseReapServerOnly(t *testing.T) {
+	// Asymmetric keepalive: only the server enables it; the client is a plain
+	// NewPeer with no keepalive and sends no application traffic (modelling a
+	// read-only bus.subscribe consumer). The server's pings must be answered by
+	// the client's automatic $keepalive pong, keeping the server's watchdog
+	// satisfied — so the server must NOT reap a healthy but app-idle client.
+	// This is the regression guard for the server-only-keepalive false-reap.
+	const (
+		interval = 10 * time.Millisecond
+		timeout  = 40 * time.Millisecond
+	)
+
+	handlers := map[string]Handler{
+		"echo": func(_ context.Context, params json.RawMessage) (any, error) {
+			return params, nil
+		},
+	}
+
+	// clientOpts nil => client has NO keepalive; server enables it.
+	client, _, cancel, clientErr, serverErr := newPipePeers(t, handlers,
+		nil,
+		WithKeepAlive(interval, timeout),
+	)
+	defer cancel()
+
+	// Bounded negative assertion: over several ping cycles past the reap timeout,
+	// neither Serve returns — the client's auto-pong keeps the server alive even
+	// though the client never initiates a frame. Fixed-window wait, not settle.
+	select {
+	case err := <-serverErr:
+		t.Fatalf("server Serve reaped a healthy app-idle client: %v", err)
+	case err := <-clientErr:
+		t.Fatalf("client Serve returned during healthy idle: %v", err)
+	case <-time.After(8 * interval):
+		// Survived multiple ping/pong cycles past the timeout — good.
+	}
+
+	// Positive observable: a late Call still round-trips, proving the connection
+	// was never reaped and both Serve loops are still running.
+	ctx, tCancel := context.WithTimeout(context.Background(), testTimeout)
+	defer tCancel()
+	result, err := client.Call(ctx, "echo", map[string]string{"msg": "alive"})
+	if err != nil {
+		t.Fatalf("late Call after idle failed (client was reaped?): %v", err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(result, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["msg"] != "alive" {
+		t.Errorf("late Call result = %q, want alive", got["msg"])
+	}
+}
+
 // ensure io is used (net.Pipe returns net.Conn which implements io.ReadWriteCloser)
 var _ io.ReadWriteCloser = (*net.UnixConn)(nil)

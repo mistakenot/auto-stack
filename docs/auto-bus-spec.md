@@ -232,7 +232,7 @@ The connection-oriented RPC transport (`rpc.Peer` over TCP, Unix-domain `SOCK_ST
 | Aspect | Detail |
 |--------|--------|
 | Opt-in | `rpc.WithKeepAlive(interval, timeout)`; default off, so existing callers/tests are behaviorally unchanged |
-| Ping | A reserved `$keepalive` JSON-RPC notification is pushed every `interval` |
+| Ping/pong | A reserved `$keepalive` ping (no params) is pushed every `interval`; **every** peer that receives a ping immediately echoes a `$keepalive` pong (carrying a `{"pong":true}` marker), regardless of whether it enabled keepalive itself. A pong is never echoed again, so the exchange never loops |
 | Ping enqueue | Uses the same bounded, drop-on-full enqueue as `Notify` (a stalled writer closes the conn rather than blocking) |
 | Reap | A watchdog closes the connection (via the normal shutdown path) when no inbound frame has been decoded within `timeout` |
 | Swallowing | `$keepalive` is consumed by the transport; it is never forwarded to application notification handlers |
@@ -242,7 +242,7 @@ The connection-oriented RPC transport (`rpc.Peer` over TCP, Unix-domain `SOCK_ST
 
 **Why a watchdog-close, not `SetReadDeadline`:** `Peer.conn` is typed `io.ReadWriteCloser` (not `net.Conn`), and a read deadline firing mid-frame leaves `json.Decoder` in a corrupted state. The watchdog calls the existing `shutdown` (closing the conn → the blocked `Decode` returns → `Serve` returns → every pending caller is released as `ErrClosed`), reusing the proven terminal-shutdown path identically across pipe/unix/tcp. This is the section 5 "connection drop / half-open mid-call" failure mode being actively detected rather than waited on.
 
-Any inbound frame — including the remote's own `$keepalive` ping — resets the silence window, so a healthy idle connection with keepalive enabled on both ends never false-reaps.
+Any inbound frame — including the remote's `$keepalive` ping or pong — resets the silence window. Because the ping/pong is automatic and symmetric, the side that enables keepalive (e.g. the daemon) detects a dead peer even when the **other** side runs no keepalive and sends no application traffic: the daemon's ping elicits the client's pong, and only the *absence* of that pong (a genuinely half-open / dead peer) trips the watchdog. This is what lets the daemon enable keepalive on every accepted peer — including read-only `bus.subscribe` consumers — without false-reaping healthy idle subscribers.
 
 ### 4.5 Future transports (not implemented)
 

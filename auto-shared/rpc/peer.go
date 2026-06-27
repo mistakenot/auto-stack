@@ -21,7 +21,33 @@ const defaultBufferSize = 16
 // pingMethod is the reserved notification method used by the keepalive ping
 // sender. It is swallowed by handleNotification and never forwarded to the
 // application's OnNotify callback.
+//
+// Keepalive is a ping/pong: a peer that receives a $keepalive ping (no params)
+// immediately echoes a $keepalive pong (carrying pongParams). This is done by
+// EVERY peer on receipt, regardless of whether it enabled WithKeepAlive — so a
+// keepalive-enabled side (e.g. the daemon) that pings a plain client gets an
+// inbound pong proving the client is alive, and only reaps it when the pong
+// stops arriving (a genuinely dead/half-open peer). Pongs do not elicit further
+// pongs, so the exchange never loops.
 const pingMethod = "$keepalive"
+
+// pongParams marks a $keepalive frame as a pong (a reply to a ping) so the
+// responder does not echo it again. A ping carries no params.
+var pongParams = json.RawMessage(`{"pong":true}`)
+
+// isKeepAlivePong reports whether a $keepalive frame's params mark it as a pong.
+func isKeepAlivePong(params json.RawMessage) bool {
+	if len(params) == 0 {
+		return false
+	}
+	var p struct {
+		Pong bool `json:"pong"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return false
+	}
+	return p.Pong
+}
 
 // peerConfig accumulates option values before the Peer is fully constructed.
 type peerConfig struct {
@@ -203,11 +229,13 @@ func (p *Peer) Serve(ctx context.Context) error {
 	return err
 }
 
-// pingLoop pushes a $keepalive notification every kaInterval so the remote's
-// read watchdog stays satisfied. It mirrors the WebSocket ping model in
-// auto-ui/internal/server/ws.go: a dedicated ticker goroutine using the
-// drop-on-full enqueue (a stalled writer closes the conn rather than blocking).
-// Exits on p.closed or ctx cancellation.
+// pingLoop pushes a $keepalive ping every kaInterval. The remote echoes a pong
+// (see handleNotification), and that inbound pong satisfies this side's read
+// watchdog — so a keepalive-enabled peer detects a dead remote even when the
+// remote sends no application traffic and runs no keepalive of its own. It
+// mirrors the WebSocket ping model in auto-ui/internal/server/ws.go: a
+// dedicated ticker goroutine using the drop-on-full enqueue (a stalled writer
+// closes the conn rather than blocking). Exits on p.closed or ctx cancellation.
 func (p *Peer) pingLoop(ctx context.Context) {
 	t := time.NewTicker(p.kaInterval)
 	defer t.Stop()
@@ -397,6 +425,14 @@ func (p *Peer) handleNotification(raw json.RawMessage) {
 		return
 	}
 	if req.Method == pingMethod {
+		// A ping (no params) elicits a pong so the pinging side sees inbound
+		// proof-of-life even when this peer sends no application traffic and has
+		// no keepalive of its own. A pong is terminal (it carries pongParams and
+		// is not echoed again). Both already refreshed lastActivity via the
+		// readLoop stamp; the pong is best-effort (non-blocking enqueue).
+		if !isKeepAlivePong(req.Params) {
+			p.enqueue(&Request{JSONRPC: "2.0", Method: pingMethod, Params: pongParams})
+		}
 		return
 	}
 	if p.onNotify == nil {
