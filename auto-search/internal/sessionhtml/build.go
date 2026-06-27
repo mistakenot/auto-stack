@@ -199,15 +199,18 @@ func buildToolEvent(db *sql.DB, m *indexdb.MessageRow, results map[string]indexd
 	switch {
 	case m.ToolName == "Bash":
 		counts.Bash++
-		if exit != 0 || isErr {
-			counts.Error++
-		}
 	case isFileTool(m.ToolName):
 		counts.File++
 	case m.ToolName == "Skill":
 		counts.Skill++
 	default:
 		counts.Tool++
+	}
+	// Count failures independent of tool kind: any tool whose result row is
+	// flagged is_error (or a non-zero bash exit) contributes to the error
+	// total, matching the per-row error badge the viewer shows.
+	if isErr || exit != 0 {
+		counts.Error++
 	}
 
 	input, itr := opts.clipField(m.ToolInput)

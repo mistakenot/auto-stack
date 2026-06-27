@@ -234,9 +234,6 @@ function evMeta(e){
 }
 
 function renderEvent(e){
-  if(e.kind==='agent' && e.child){
-    return renderAgent(e.child, e.summary);
-  }
   const fk=filterKey(e);
   const div=document.createElement('div');
   div.className='ev '+kindClass(e)+(fk?(' filt-'+fk):'');
@@ -247,6 +244,16 @@ function renderEvent(e){
     </div>
     <div class="ev-body">${evBody(e)}</div>`;
   div.querySelector('.ev-head').addEventListener('click',()=>div.classList.toggle('open'));
+  // An Agent dispatch correlated to a child renders the dispatch row itself
+  // (so the prompt/result/duration drill-down stays inspectable) followed by
+  // the nested child work-graph block — rather than replacing one with the
+  // other.
+  if(e.kind==='agent' && e.child){
+    const wrap=document.createElement('div');
+    wrap.appendChild(div);
+    wrap.appendChild(renderAgent(e.child, e.summary));
+    return wrap;
+  }
   return div;
 }
 

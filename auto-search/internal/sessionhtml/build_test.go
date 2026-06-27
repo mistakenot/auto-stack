@@ -195,6 +195,30 @@ func TestBuildModelCorrelatesAndPairs(t *testing.T) {
 	}
 }
 
+func TestBuildModelCountsNonBashErrors(t *testing.T) {
+	// A failing non-Bash tool (Grep result flagged is_error) must contribute
+	// to Counts.Error, not only Bash failures.
+	sessions := []testSession{{id: "e1", intent: "/run", firstMs: 1, lastMs: 2}}
+	messages := []testMessage{
+		{id: "e-0", session: "e1", idx: 0, role: "user", content: "go"},
+		{id: "e-1", session: "e1", idx: 1, role: "assistant", toolName: "Grep",
+			toolInput: `{"pattern":"foo"}`, toolUseID: "tu-grep"},
+		{id: "e-2", session: "e1", idx: 2, role: "tool", toolName: "Grep",
+			content: "grep failed", toolUseID: "tu-grep", isError: true},
+	}
+	db := newTestDB(t, sessions, messages)
+	root, err := BuildModel(db, "e1", Options{})
+	if err != nil {
+		t.Fatalf("BuildModel: %v", err)
+	}
+	if root.Counts.Error != 1 {
+		t.Errorf("error count = %d, want 1 (non-Bash tool error)", root.Counts.Error)
+	}
+	if root.Counts.Tool != 1 {
+		t.Errorf("tool count = %d, want 1", root.Counts.Tool)
+	}
+}
+
 func TestBuildModelThinkingToggle(t *testing.T) {
 	sessions, messages := scenario()
 	db := newTestDB(t, sessions, messages)
