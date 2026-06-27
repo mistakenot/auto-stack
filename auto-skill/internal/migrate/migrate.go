@@ -1,13 +1,16 @@
 // Package migrate translates a vercel-style skills-lock.json into the native
-// auto-skill lock/skills.yaml model. It is a pure, offline transform: it parses,
-// classifies, and plans — it never resolves commits, touches the network, or
-// writes any files. Writing the planned outcome is the job of a later Apply step.
+// auto-skill lock/skills.yaml model. Parse/Plan are a pure, offline transform —
+// they classify without resolving commits or touching the network. Apply is the
+// additive writer: it only ever creates/extends .auto/skills/lock.json,
+// .auto/skills/skills.yaml, and authored skills under ./skills/, never resolving
+// commits or overwriting existing entries; sync resolves the commits later.
 package migrate
 
 import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
@@ -18,6 +21,17 @@ import (
 	"github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-skill/internal/skill"
 	"github.com/mistakenot/auto-skill/internal/transport"
+	"gopkg.in/yaml.v3"
+)
+
+// Authored-import safety limits, mirroring internal/add (unexported there).
+const (
+	maxImportFiles    = 2000
+	maxImportTotalMiB = 64
+	maxImportFileMiB  = 8
+
+	maxImportTotal = maxImportTotalMiB * 1024 * 1024
+	maxImportFile  = maxImportFileMiB * 1024 * 1024
 )
 
 // Vercel source-type discriminators observed in skills-lock.json.
@@ -33,9 +47,10 @@ const (
 
 // Skip reason codes carried on each skipped entry.
 const (
-	ReasonUnsupported   = "unsupported_source_type"
-	ReasonMissingPath   = "missing_path"
-	ReasonInvalidSource = "invalid_source"
+	ReasonUnsupported    = "unsupported_source_type"
+	ReasonMissingPath    = "missing_path"
+	ReasonInvalidSource  = "invalid_source"
+	ReasonAlreadyPresent = "already_present"
 )
 
 // Validation error codes returned by ParseVercelLock.
@@ -395,4 +410,262 @@ func sortedKeys(skills map[string]VercelEntry) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// Apply additively materializes the Migration under m.ProjectRoot, returning the
+// Result that actually occurred. It NEVER touches the source skills-lock.json and
+// never overwrites existing entries: it merges migrated entries into
+// .auto/skills/lock.json (state "unresolved", no commit) and .auto/skills/skills.yaml
+// (seeded version intent, empty replacements), and copies each non-git local
+// Import into ./skills/<name>/ as an authored skill. An entry whose name already
+// exists is left untouched and reported as skipped. When dryRun is true, Apply
+// computes the full Result (including collision detection) but writes nothing.
+func (m Migration) Apply(dryRun bool) (Result, error) {
+	env := skill.Env{Root: m.ProjectRoot}
+
+	lock, err := loadOrCreateLock(env)
+	if err != nil {
+		return Result{}, err
+	}
+	syaml, err := loadOrCreateSkillsYAML(env)
+	if err != nil {
+		return Result{}, err
+	}
+
+	res := Result{
+		Migrated: []Entry{},
+		Skipped:  append([]Skip{}, m.Skipped...),
+		Imported: []string{},
+	}
+
+	for _, e := range m.Migrated {
+		if _, exists := lock.Skills[e.Name]; exists {
+			res.Skipped = append(res.Skipped, Skip{
+				Name:       e.Name,
+				SourceType: localOrRemote(e.Local),
+				Source:     e.Source,
+				Reason:     ReasonAlreadyPresent,
+				Message:    fmt.Sprintf("skill %q already present in lock.json; left unchanged (migration is additive)", e.Name),
+			})
+			continue
+		}
+		lock.Skills[e.Name] = skill.LockEntry{
+			Source:      e.Source,
+			URL:         e.URL,
+			VersionSpec: e.VersionSpec,
+			Subpath:     e.Subpath,
+			Local:       e.Local,
+			State:       "unresolved",
+		}
+		if _, ok := syaml.Skills[e.Name]; !ok {
+			syaml.Skills[e.Name] = skill.SkillConfig{Version: e.VersionSpec}
+		}
+		res.Migrated = append(res.Migrated, e)
+	}
+
+	// Resolve authored-import collisions (stat is read-only, safe in dry-run).
+	var toImport []Import
+	for _, imp := range m.Imports {
+		dest := filepath.Join(env.SkillsDir(), imp.Name)
+		if _, statErr := os.Stat(dest); statErr == nil {
+			res.Skipped = append(res.Skipped, Skip{
+				Name:       imp.Name,
+				SourceType: sourceTypeLocal,
+				Source:     imp.SourcePath,
+				Reason:     ReasonAlreadyPresent,
+				Message:    fmt.Sprintf("skills/%s already exists; left unchanged (migration is additive)", imp.Name),
+			})
+			continue
+		}
+		res.Imported = append(res.Imported, imp.Name)
+		toImport = append(toImport, imp)
+	}
+
+	res.Failed = len(res.Skipped) > 0
+
+	if dryRun {
+		return res, nil
+	}
+
+	if errs := skill.ValidateLock(lock); len(errs) > 0 {
+		return res, fmt.Errorf("refusing to write invalid lock.json: %s", errs[0].Message)
+	}
+	if errs := skill.ValidateSkillsYAML(syaml); len(errs) > 0 {
+		return res, fmt.Errorf("refusing to write invalid skills.yaml: %s", errs[0].Message)
+	}
+
+	if err := os.MkdirAll(env.SkillsConfigDir(), 0o755); err != nil {
+		return res, fmt.Errorf("create config dir: %w", err)
+	}
+	if err := writeLock(env.LockPath(), lock); err != nil {
+		return res, err
+	}
+	if err := writeSkillsYAML(env.SkillsYAMLPath(), syaml); err != nil {
+		return res, err
+	}
+
+	for _, imp := range toImport {
+		dest := filepath.Join(env.SkillsDir(), imp.Name)
+		if err := os.MkdirAll(env.SkillsDir(), 0o755); err != nil {
+			return res, fmt.Errorf("create skills dir: %w", err)
+		}
+		if err := safeCopyDir(imp.SourcePath, dest); err != nil {
+			return res, fmt.Errorf("import skill %q: %w", imp.Name, err)
+		}
+	}
+
+	return res, nil
+}
+
+// localOrRemote labels a migrated entry's origin for skip reports.
+func localOrRemote(local bool) string {
+	if local {
+		return sourceTypeLocal
+	}
+	return "remote"
+}
+
+// loadOrCreateLock reads an existing lock.json or returns a fresh empty Lock,
+// mirroring internal/add (unexported there).
+func loadOrCreateLock(env skill.Env) (*skill.Lock, error) {
+	data, err := os.ReadFile(env.LockPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &skill.Lock{Version: 1, Skills: map[string]skill.LockEntry{}}, nil
+		}
+		return nil, fmt.Errorf("read lock: %w", err)
+	}
+	lock, err := skill.ParseLock(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse lock: %w", err)
+	}
+	if lock.Version == 0 {
+		lock.Version = 1
+	}
+	if lock.Skills == nil {
+		lock.Skills = map[string]skill.LockEntry{}
+	}
+	return lock, nil
+}
+
+// loadOrCreateSkillsYAML reads an existing skills.yaml or returns a fresh empty
+// one, mirroring internal/add (unexported there).
+func loadOrCreateSkillsYAML(env skill.Env) (*skill.SkillsYAML, error) {
+	data, err := os.ReadFile(env.SkillsYAMLPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &skill.SkillsYAML{Skills: map[string]skill.SkillConfig{}}, nil
+		}
+		return nil, fmt.Errorf("read skills.yaml: %w", err)
+	}
+	cfg, err := skill.ParseSkillsYAML(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse skills.yaml: %w", err)
+	}
+	if cfg.Skills == nil {
+		cfg.Skills = make(map[string]skill.SkillConfig)
+	}
+	return cfg, nil
+}
+
+// writeLock writes lock.json with the lock.go indentation convention.
+func writeLock(path string, lock *skill.Lock) error {
+	data, err := skill.EncodeJSON(lock)
+	if err != nil {
+		return fmt.Errorf("marshal lock: %w", err)
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+// writeSkillsYAML marshals and writes skills.yaml. A SkillConfig with no
+// replacements round-trips as an empty "replacements: []" sequence.
+func writeSkillsYAML(path string, cfg *skill.SkillsYAML) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal skills.yaml: %w", err)
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+// safeCopyDir copies src to dest with the same archive-safety predicates as
+// internal/add's importer: no symlinks, no special files, file count/size
+// limits, and containment within dest.
+func safeCopyDir(src, dest string) error {
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return err
+	}
+
+	var fileCount int
+	var totalSize int64
+
+	return filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, relErr := filepath.Rel(src, p)
+		if relErr != nil {
+			return relErr
+		}
+		target := filepath.Join(dest, rel)
+
+		cleanTarget := filepath.Clean(target)
+		cleanDest := filepath.Clean(dest) + string(filepath.Separator)
+		if cleanTarget != filepath.Clean(dest) && !strings.HasPrefix(cleanTarget, cleanDest) {
+			return fmt.Errorf("path escapes destination: %s", rel)
+		}
+
+		info, lstatErr := os.Lstat(p)
+		if lstatErr != nil {
+			return lstatErr
+		}
+
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("symlinks are not allowed in skill trees: %s", rel)
+		}
+		if !info.Mode().IsDir() && !info.Mode().IsRegular() {
+			return fmt.Errorf("special file not allowed in skill trees: %s", rel)
+		}
+
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+
+		fileCount++
+		if fileCount > maxImportFiles {
+			return fmt.Errorf("source exceeds %d file limit", maxImportFiles)
+		}
+		if info.Size() > maxImportFile {
+			return fmt.Errorf("file %s is %d bytes, exceeding %d MiB limit", rel, info.Size(), maxImportFileMiB)
+		}
+		totalSize += info.Size()
+		if totalSize > maxImportTotal {
+			return fmt.Errorf("source total size exceeds %d MiB limit", maxImportTotalMiB)
+		}
+
+		return copyFile(p, target)
+	})
+}
+
+// copyFile copies a single regular file, preserving execute bits.
+func copyFile(src, dest string) error {
+	sf, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sf.Close() }()
+
+	info, err := sf.Stat()
+	if err != nil {
+		return err
+	}
+
+	df, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode()&0o755|0o644)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = df.Close() }()
+
+	_, err = io.Copy(df, sf)
+	return err
 }
