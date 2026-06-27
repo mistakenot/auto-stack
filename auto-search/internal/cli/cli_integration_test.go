@@ -193,8 +193,8 @@ func TestIndexFullBuild(t *testing.T) {
 	if out["sessions_indexed"] != float64(3) {
 		t.Fatalf("sessions_indexed = %v, want 3", out["sessions_indexed"])
 	}
-	if out["messages_indexed"] != float64(13) {
-		t.Fatalf("messages_indexed = %v, want 13", out["messages_indexed"])
+	if out["messages_indexed"] != float64(17) {
+		t.Fatalf("messages_indexed = %v, want 17", out["messages_indexed"])
 	}
 
 	dbPath := filepath.Join(home, ".auto", "search", "default.sqlite")
@@ -1264,8 +1264,8 @@ func TestStatsMessagesSuccess(t *testing.T) {
 	if meta["group_by"] != "session_id" {
 		t.Fatalf("group_by = %v, want session_id", meta["group_by"])
 	}
-	if meta["total_matches"] != float64(13) {
-		t.Fatalf("total_matches = %v, want 13", meta["total_matches"])
+	if meta["total_matches"] != float64(17) {
+		t.Fatalf("total_matches = %v, want 17", meta["total_matches"])
 	}
 	buckets := out["buckets"].([]any)
 	if len(buckets) != 3 {

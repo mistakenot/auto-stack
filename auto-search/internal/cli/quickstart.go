@@ -124,6 +124,25 @@ e.g. ` + "`" + `<user index=0>` + "`" + `, ` + "`" + `<agent index=1>` + "`" + `
 Thinking blocks are excluded by default; use ` + "`" + `--include-thinking` + "`" + ` to show them
 (rendered as ` + "`" + `<thinking index=N>` + "`" + `).
 
+For a human to **see the shape of the work** — the call tree to sub-agents, where the
+slow/failed commands were — export the session as a self-contained HTML map instead:
+
+` + "```" + `bash
+# Writes ./docs/sessions/<session_id>.html (a single offline file) and prints
+# the path + size to stderr.
+auto search session export <session_id>
+
+# Choose the output path explicitly (parent dirs are created; existing file overwritten).
+auto search session export <session_id> --out /tmp/session-map.html
+` + "```" + `
+
+The map reads top-to-bottom with each sub-agent dispatch nested inline as a collapsible
+block, a work-graph sidebar, and per-row drill-down (bash command + exit code, file ops,
+skills, slow/error badges). It embeds **everything including thinking by default**. If the
+file is too large for a browser to load comfortably (the command warns past ~5MB), shrink it:
+` + "`" + `--exclude-thinking` + "`" + ` drops thinking blocks; ` + "`" + `--light` + "`" + ` drops thinking **and** uses
+truncated message bodies. ` + "`" + `--format html` + "`" + ` is the default (` + "`" + `--format json` + "`" + ` is reserved).
+
 ### 4. Drill into a specific message
 
 Message IDs follow the format ` + "`" + `{sessionId}-{index}` + "`" + `. The index comes from

@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session Map</title>
+<style>
+  :root{
+    --bg:#f4f2ee; --panel:#fbfaf8; --ink:#23211d; --muted:#8a857c; --line:#e3ddd2;
+    --accent:#9a5b34; --accent-soft:#f0e6dc;
+    --user:#3c6e57; --asst:#3a4a63; --think:#9b8e6a; --bash:#7a4a8c; --file:#2f6f8f;
+    --skill:#b4762a; --agent:#9a5b34; --err:#b3402e;
+    --mono:"SF Mono",ui-monospace,"Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.5}
+  a{color:var(--accent)}
+  .wrap{display:grid;grid-template-columns:280px minmax(0,1fr);gap:0;max-width:1500px;margin:0 auto}
+  /* ---- sidebar ---- */
+  aside{position:sticky;top:0;align-self:start;height:100vh;overflow:auto;padding:20px 14px 40px;border-right:1px solid var(--line)}
+  aside h2{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 6px 8px}
+  .toc-item{display:block;width:100%;text-align:left;border:0;background:none;font:inherit;color:var(--ink);
+    padding:6px 8px;border-radius:6px;cursor:pointer;border-left:3px solid transparent}
+  .toc-item:hover{background:var(--accent-soft)}
+  .toc-item .tlabel{font-weight:600;font-size:12.5px}
+  .toc-item .tmeta{color:var(--muted);font-size:11px;font-family:var(--mono)}
+  .toc-sub{margin-left:14px;border-left:1px solid var(--line);padding-left:4px}
+  .toc-badge{display:inline-block;background:var(--agent);color:#fff;font-size:9px;font-weight:700;
+    padding:1px 5px;border-radius:8px;vertical-align:middle;margin-left:4px}
+  /* ---- main ---- */
+  main{padding:24px 28px 120px;min-width:0}
+  .hdr{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:18px}
+  .hdr h1{font-size:18px;margin:0 0 4px}
+  .hdr .sub{color:var(--muted);font-family:var(--mono);font-size:12px;word-break:break-all}
+  .hdr .intent{margin-top:10px;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:8px;
+    font-size:13px;white-space:pre-wrap;max-height:5.5em;overflow:hidden;position:relative;cursor:pointer}
+  .hdr .intent.open{max-height:none}
+  .stats{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+  .chip{font-family:var(--mono);font-size:11px;background:#fff;border:1px solid var(--line);
+    border-radius:20px;padding:3px 10px;color:var(--ink)}
+  .chip b{color:var(--accent)}
+  /* ---- toolbar ---- */
+  .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;position:sticky;top:0;
+    background:var(--bg);padding:8px 0;z-index:5;border-bottom:1px solid var(--line)}
+  .bar button{font:inherit;font-size:12px;border:1px solid var(--line);background:var(--panel);
+    border-radius:7px;padding:5px 10px;cursor:pointer}
+  .bar button:hover{background:var(--accent-soft)}
+  .bar label{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+  .bar .spacer{flex:1}
+  /* ---- timeline ---- */
+  .agent{border:1px solid var(--line);border-radius:10px;background:var(--panel);margin:8px 0;overflow:hidden}
+  .agent.depth0{border:0;background:none}
+  .agent-head{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;
+    background:linear-gradient(0deg,rgba(154,91,52,.06),rgba(154,91,52,.06));border-bottom:1px solid var(--line)}
+  .agent.depth0>.agent-head{display:none}
+  .agent-head:hover{background:var(--accent-soft)}
+  .agent-head .caret{color:var(--agent);font-family:var(--mono);width:12px}
+  .agent-head .alabel{font-weight:700;font-size:13px;color:var(--agent)}
+  .agent-head .atype{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .agent-body{padding:6px 0 6px 0}
+  .agent .agent-body .agent{margin-left:16px;border-left:3px solid var(--agent)}
+  .ev{display:block;border-left:3px solid transparent;margin:0;padding:0}
+  .ev-head{display:flex;align-items:baseline;gap:8px;padding:4px 12px;cursor:pointer;border-radius:6px}
+  .ev-head:hover{background:#fff}
+  .ev .ico{font-family:var(--mono);font-size:11px;width:64px;flex:none;font-weight:700;letter-spacing:.02em}
+  .ev .sum{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12.5px}
+  .ev .meta{flex:none;font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+  .ev-body{display:none;margin:2px 12px 8px 66px;background:#fff;border:1px solid var(--line);border-radius:8px;
+    padding:10px 12px;font-family:var(--mono);font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:480px;overflow:auto}
+  .ev.open>.ev-head{background:#fff}
+  .ev.open>.ev-body{display:block}
+  .ev-body .seg-label{display:block;font-weight:700;color:var(--muted);font-size:10px;text-transform:uppercase;
+    letter-spacing:.06em;margin:8px 0 3px}
+  .ev-body .seg-label:first-child{margin-top:0}
+  .trunc{color:var(--accent);font-style:italic}
+  /* kind colors */
+  .k-user>.ev-head .ico{color:var(--user)} .k-user{border-left-color:var(--user)}
+  .k-assistant>.ev-head .ico{color:var(--asst)}
+  .k-thinking>.ev-head .ico{color:var(--think)} .k-thinking .sum{color:var(--muted);font-style:italic}
+  .k-bash>.ev-head .ico{color:var(--bash)} .k-bash{border-left-color:var(--bash)}
+  .k-file>.ev-head .ico{color:var(--file)}
+  .k-skill>.ev-head .ico{color:var(--skill)} .k-skill{border-left-color:var(--skill)}
+  .k-tool>.ev-head .ico{color:var(--muted)}
+  .badge{font-family:var(--mono);font-size:10px;padding:0 6px;border-radius:10px;font-weight:700}
+  .badge.err{background:#fbe4df;color:var(--err)}
+  .badge.ok{background:#e2efe7;color:var(--user)}
+  .badge.slow{background:#f6ead2;color:var(--skill)}
+  .hidden{display:none!important}
+  .jump{margin-left:auto;font-size:10px;color:var(--muted);font-family:var(--mono);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <aside>
+    <h2>Work graph</h2>
+    <div id="toc"></div>
+  </aside>
+  <main>
+    <div id="header"></div>
+    <div class="bar">
+      <button onclick="setAll(true)">Expand all</button>
+      <button onclick="setAll(false)">Collapse all</button>
+      <button onclick="preset('structure')">Structure only</button>
+      <button onclick="preset('full')">Full</button>
+      <span class="spacer"></span>
+      <label><input type="checkbox" id="f-thinking" onchange="applyFilters()"> thinking</label>
+      <label><input type="checkbox" id="f-file" checked onchange="applyFilters()"> file ops</label>
+      <label><input type="checkbox" id="f-assistant" checked onchange="applyFilters()"> assistant</label>
+      <label><input type="checkbox" id="f-bash" checked onchange="applyFilters()"> bash</label>
+      <label><input type="checkbox" id="f-tool" checked onchange="applyFilters()"> other tools</label>
+    </div>
+    <div id="timeline"></div>
+  </main>
+</div>
+<script>
+/*__DATA__*/
+</script>
+<script>
+const D = window.__SESSION__;
+const esc = s => (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const fmtDur = ms => { if(!ms) return ''; const s=ms/1000; if(s<60) return s.toFixed(s<10?1:0)+'s'; const m=Math.floor(s/60); return m+'m'+String(Math.round(s%60)).padStart(2,'0')+'s'; };
+const fmtTok = n => n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(0)+'k':String(n||0);
+
+let agentSeq = 0;
+function agentId(){ return 'ag'+(agentSeq++); }
+
+/* ---------- header ---------- */
+function renderHeader(){
+  const c = D.counts, sub = countTree(D);
+  document.getElementById('header').innerHTML = `
+    <div class="hdr">
+      <h1>${esc(D.title || D.dispatch_label || 'Session')}</h1>
+      <div class="sub">${esc(D.id)} · ${esc(D.model)} · ${esc(D.workspace)}</div>
+      <div class="intent" onclick="this.classList.toggle('open')">${esc(D.intent)||'<i>no intent</i>'}</div>
+      <div class="stats">
+        <span class="chip"><b>${fmtDur(D.duration_ms)}</b> wall</span>
+        <span class="chip"><b>${fmtTok(D.total_tokens)}</b> tokens</span>
+        <span class="chip"><b>${D.msg_count}</b> msgs</span>
+        <span class="chip"><b>${sub.agent}</b> sub-agents</span>
+        <span class="chip"><b>${sub.bash}</b> bash</span>
+        <span class="chip"><b>${sub.file}</b> file ops</span>
+        <span class="chip"><b>${sub.error}</b> errors</span>
+      </div>
+    </div>`;
+}
+function countTree(n){
+  const t={agent:0,bash:0,file:0,error:0,skill:0,tool:0};
+  (function walk(x){ for(const k in t) t[k]+=(x.counts[k]||0);
+    for(const e of x.events) if(e.kind==='agent'&&e.child) walk(e.child); })(n);
+  return t;
+}
+
+/* ---------- table of contents (work graph) ---------- */
+function renderToc(){
+  const out=[];
+  (function walk(n, dispatch){
+    const label = dispatch || (n.subagent_name? n.subagent_name : 'coordinator');
+    out.push(`<button class="toc-item" onclick="jump('${n._aid}')">
+        <div class="tlabel">${esc(label)}${n.is_subagent?'<span class="toc-badge">sub</span>':''}</div>
+        <div class="tmeta">${fmtDur(n.duration_ms)} · ${fmtTok(n.total_tokens)} · ${n.counts.agent||0}▸</div>
+      </button>`);
+    const kids=n.events.filter(e=>e.kind==='agent'&&e.child);
+    if(kids.length){ out.push('<div class="toc-sub">');
+      kids.forEach(e=>walk(e.child, e.summary)); out.push('</div>'); }
+  })(D, D.dispatch_label);
+  document.getElementById('toc').innerHTML=out.join('');
+}
+function jump(aid){
+  const el=document.getElementById(aid);
+  if(!el) return;
+  let p=el; while(p){ if(p.classList&&p.classList.contains('agent')) p.classList.remove('collapsed'); p=p.parentElement; }
+  el.scrollIntoView({behavior:'smooth',block:'start'});
+  el.animate([{background:'#f0e6dc'},{background:'transparent'}],{duration:1200});
+}
+
+/* ---------- timeline ---------- */
+const TOOL_LABEL={Bash:'$ bash',Read:'read',Write:'write',Edit:'edit',Glob:'glob',
+  NotebookEdit:'edit nb',Skill:'skill',Grep:'grep',ToolSearch:'search',
+  TaskCreate:'task +',TaskUpdate:'task ~',TaskGet:'task ?',SendMessage:'message',
+  WebFetch:'web',WebSearch:'web',Agent:'▸ agent'};
+function icoFor(e){
+  if(e.kind==='user') return 'USER';
+  if(e.kind==='assistant') return 'say';
+  if(e.kind==='thinking') return 'think';
+  if(e.kind==='agent') return '▸ agent';
+  if(e.kind==='tool') return TOOL_LABEL[e.tool] || e.tool.toLowerCase();
+  return e.kind;
+}
+function kindClass(e){
+  if(e.kind!=='tool') return 'k-'+e.kind;
+  if(e.tool==='Bash') return 'k-bash';
+  if(['Read','Write','Edit','Glob','NotebookEdit'].includes(e.tool)) return 'k-file';
+  if(e.tool==='Skill') return 'k-skill';
+  return 'k-tool';
+}
+function filterKey(e){
+  if(e.kind==='thinking') return 'thinking';
+  if(e.kind==='assistant') return 'assistant';
+  if(e.kind==='user'||e.kind==='agent') return null; // never filtered
+  if(e.tool==='Bash') return 'bash';
+  if(['Read','Write','Edit','Glob','NotebookEdit'].includes(e.tool)) return 'file';
+  return 'tool';
+}
+function truncNote(t){ return t?'\n<span class="trunc">… truncated — auto search message get …</span>':''; }
+
+function evBody(e){
+  let h='';
+  if(e.kind==='agent'){
+    h += `<span class="seg-label">prompt</span>${esc(e.prompt)}${e.prompt_trunc?'<span class="trunc"> …truncated</span>':''}`;
+    h += `<span class="seg-label">result</span>${esc(e.result)||'<i>—</i>'}${e.result_trunc?'<span class="trunc"> …truncated</span>':''}`;
+    return h;
+  }
+  if(e.kind==='tool'){
+    h += `<span class="seg-label">input</span>${esc(e.input)||'<i>—</i>'}${e.input_trunc?'<span class="trunc"> …truncated</span>':''}`;
+    h += `<span class="seg-label">output</span>${esc(e.output)||'<i>—</i>'}${e.output_trunc?'<span class="trunc"> …truncated</span>':''}`;
+    return h;
+  }
+  return esc(e.body)+ (e.truncated?'<span class="trunc"> …truncated</span>':'');
+}
+function evMeta(e){
+  const m=[];
+  if(e.kind==='tool'){
+    if(e.tool==='Bash'){ if(e.exit) m.push('<span class="badge err">exit '+e.exit+'</span>'); }
+    if(e.is_error) m.push('<span class="badge err">error</span>');
+    if(e.interrupted) m.push('<span class="badge err">interrupted</span>');
+    if(e.duration>=10000) m.push('<span class="badge slow">'+fmtDur(e.duration)+'</span>');
+    else if(e.duration) m.push('<span class="meta">'+fmtDur(e.duration)+'</span>');
+  }
+  if(e.kind==='assistant'&&e.out_tokens>2000) m.push('<span class="meta">'+fmtTok(e.out_tokens)+'t</span>');
+  if(e.kind==='agent'){ m.push('<span class="meta">'+fmtDur(e.child?e.child.duration_ms:e.duration)+'</span>'); }
+  return m.join(' ');
+}
+
+function renderEvent(e){
+  const fk=filterKey(e);
+  const div=document.createElement('div');
+  div.className='ev '+kindClass(e)+(fk?(' filt-'+fk):'');
+  div.innerHTML=`<div class="ev-head">
+      <span class="ico">${esc(icoFor(e))}</span>
+      <span class="sum">${esc(e.summary)||'<i>—</i>'}</span>
+      <span class="meta">${evMeta(e)}</span>
+    </div>
+    <div class="ev-body">${evBody(e)}</div>`;
+  div.querySelector('.ev-head').addEventListener('click',()=>div.classList.toggle('open'));
+  // An Agent dispatch correlated to a child renders the dispatch row itself
+  // (so the prompt/result/duration drill-down stays inspectable) followed by
+  // the nested child work-graph block — rather than replacing one with the
+  // other.
+  if(e.kind==='agent' && e.child){
+    const wrap=document.createElement('div');
+    wrap.appendChild(div);
+    wrap.appendChild(renderAgent(e.child, e.summary));
+    return wrap;
+  }
+  return div;
+}
+
+function renderAgent(n, dispatch){
+  n._aid = agentId();
+  const wrap=document.createElement('div');
+  wrap.className='agent depth'+(n.depth>2?2:n.depth);
+  wrap.id=n._aid;
+  const label = dispatch || n.subagent_name || 'coordinator';
+  const head=document.createElement('div');
+  head.className='agent-head';
+  head.innerHTML=`<span class="caret">▾</span>
+     <span class="alabel">▸ ${esc(label)}</span>
+     <span class="atype">${esc(n.subagent_type||n.subagent_name||'')}</span>
+     <span class="jump">${fmtDur(n.duration_ms)} · ${fmtTok(n.total_tokens)} · ${n.msg_count} msgs · ${n.counts.bash} bash · ${n.counts.file} file · ${n.counts.agent}▸</span>`;
+  const body=document.createElement('div');
+  body.className='agent-body';
+  for(const e of n.events){ const el=renderEvent(e); if(el) body.appendChild(el); }
+  head.addEventListener('click',()=>{ wrap.classList.toggle('collapsed');
+    head.querySelector('.caret').textContent=wrap.classList.contains('collapsed')?'▸':'▾'; });
+  wrap.appendChild(head); wrap.appendChild(body);
+  return wrap;
+}
+// collapse styling
+const st=document.createElement('style');
+st.textContent='.agent.collapsed>.agent-body{display:none}';
+document.head.appendChild(st);
+
+function setAll(open){
+  document.querySelectorAll('.ev').forEach(d=>d.classList.toggle('open',open));
+  document.querySelectorAll('.agent').forEach(d=>{ if(d.classList.contains('depth0'))return;
+    d.classList.toggle('collapsed',!open);
+    const c=d.querySelector(':scope>.agent-head .caret'); if(c)c.textContent=open?'▾':'▸'; });
+}
+function applyFilters(){
+  const on=k=>document.getElementById('f-'+k).checked;
+  ['thinking','file','assistant','bash','tool'].forEach(k=>{
+    document.querySelectorAll('.filt-'+k).forEach(d=>d.classList.toggle('hidden',!on(k)));
+  });
+}
+// "Structure only" = the work skeleton: keep bash/other-tools/agents/users,
+// drop thinking, assistant prose, and file reads/writes.
+function preset(mode){
+  const struct = mode==='structure';
+  document.getElementById('f-thinking').checked = !struct;
+  document.getElementById('f-file').checked = !struct;
+  document.getElementById('f-assistant').checked = !struct;
+  document.getElementById('f-bash').checked = true;
+  document.getElementById('f-tool').checked = true;
+  applyFilters();
+}
+
+renderHeader();
+document.getElementById('timeline').appendChild(renderAgent(D, D.dispatch_label));
+renderToc();
+applyFilters();
+</script>
+</body>
+</html>

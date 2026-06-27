@@ -35,8 +35,8 @@ func buildTestDB(t *testing.T) *sql.DB {
 	if result.SessionsIndexed != 3 {
 		t.Fatalf("expected 3 sessions, got %d", result.SessionsIndexed)
 	}
-	if result.MessagesIndexed != 13 {
-		t.Fatalf("expected 13 messages, got %d", result.MessagesIndexed)
+	if result.MessagesIndexed != 17 {
+		t.Fatalf("expected 17 messages, got %d", result.MessagesIndexed)
 	}
 
 	db, err := indexdb.Open(dbPath)
@@ -421,13 +421,13 @@ func TestSessionSearchBatchMessageCounts(t *testing.T) {
 		}
 	}
 
-	// Verify the sum of per-session counts equals the total indexed messages (13).
+	// Verify the sum of per-session counts equals the total indexed messages (17).
 	total := 0
 	for _, hit := range result.Hits {
 		total += hit.TotalMessages
 	}
-	if total != 13 {
-		t.Errorf("sum of TotalMessages across sessions = %d, want 13", total)
+	if total != 17 {
+		t.Errorf("sum of TotalMessages across sessions = %d, want 17", total)
 	}
 }
 
@@ -1044,9 +1044,9 @@ func TestMessageSearchNoFTSDefaultExcludesThinking(t *testing.T) {
 			t.Errorf("default structured search returned thinking message %s", hit.MessageID)
 		}
 	}
-	// Session-1 has 9 messages but only 8 non-thinking.
-	if result.Meta.TotalHits != 8 {
-		t.Errorf("total hits = %d, want 8 (9 minus 1 thinking)", result.Meta.TotalHits)
+	// Session-1 has 13 messages but only 12 non-thinking.
+	if result.Meta.TotalHits != 12 {
+		t.Errorf("total hits = %d, want 12 (13 minus 1 thinking)", result.Meta.TotalHits)
 	}
 }
 
