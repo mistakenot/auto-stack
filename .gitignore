@@ -31,3 +31,4 @@ credentials.json
 
 # autoenv local runtime state
 .auto/env/.generated
+.auto/skills/.sync-journal

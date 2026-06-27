@@ -1,0 +1,131 @@
+auto_update: false
+targets: []
+commit_targets: true
+trusted_hosts: []
+shared:
+    version: ""
+    replacements: []
+skills:
+    address-feedback:
+        version: latest
+        replacements: []
+    assurance-strategist:
+        version: latest
+        replacements: []
+    borrow-from-oss:
+        version: latest
+        replacements: []
+    cass:
+        version: latest
+        replacements: []
+    code-review:
+        version: latest
+        replacements: []
+    commit-task:
+        version: latest
+        replacements: []
+    complete-task:
+        version: latest
+        replacements: []
+    contextual-commit:
+        version: latest
+        replacements: []
+    delegate:
+        version: latest
+        replacements: []
+    delegate-task:
+        version: latest
+        replacements: []
+    domain-modelling:
+        version: latest
+        replacements: []
+    execute-task:
+        version: latest
+        replacements: []
+    experiment-designer:
+        version: latest
+        replacements: []
+    fan-out-user-simulation:
+        version: latest
+        replacements: []
+    frontend-design:
+        version: latest
+        replacements: []
+    generate-10-ideas:
+        version: latest
+        replacements: []
+    improve-claude-md:
+        version: latest
+        replacements: []
+    learning-diary:
+        version: latest
+        replacements: []
+    new-epic:
+        version: latest
+        replacements: []
+    new-package:
+        version: latest
+        replacements: []
+    new-plan:
+        version: latest
+        replacements: []
+    new-solution:
+        version: latest
+        replacements: []
+    new-task:
+        version: latest
+        replacements: []
+    open-prose:
+        version: latest
+        replacements: []
+    planning-doc:
+        version: latest
+        replacements: []
+    playbook-observe:
+        version: latest
+        replacements: []
+    playbook-refine:
+        version: latest
+        replacements: []
+    playbook-search:
+        version: latest
+        replacements: []
+    readme-updater:
+        version: latest
+        replacements: []
+    recall:
+        version: latest
+        replacements: []
+    release:
+        version: latest
+        replacements: []
+    request-claude-review:
+        version: latest
+        replacements: []
+    request-codex-review:
+        version: latest
+        replacements: []
+    request-grok-review:
+        version: latest
+        replacements: []
+    resolve-comments:
+        version: latest
+        replacements: []
+    review-task:
+        version: latest
+        replacements: []
+    self-improve:
+        version: latest
+        replacements: []
+    skill-reviewer:
+        version: latest
+        replacements: []
+    status-report:
+        version: latest
+        replacements: []
+    task-feedback-analyser:
+        version: latest
+        replacements: []
+    tech-spike:
+        version: latest
+        replacements: []
