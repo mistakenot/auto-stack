@@ -92,7 +92,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newDoctorCmd(resolveEnv),
 		newQuickstartCmd(),
 		newDocsCmd(),
-		newUpdateCmd(),
+		newUpdateCmd(resolveEnv),
 		newSyncCmd(resolveEnv),
 		newCacheCmd(resolveEnv),
 		newTrustCmd(resolveEnv),

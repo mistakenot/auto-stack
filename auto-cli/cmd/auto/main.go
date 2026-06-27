@@ -55,8 +55,10 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	return root
 }
 
-// newUpdateCmd is the canonical top-level update path for the merged binary.
-// The per-tool `auto <tool> update` subcommands are retained equivalents.
+// newUpdateCmd is the sole binary self-update path for the merged binary. Some
+// per-tool `auto <tool> update` subcommands are retained equivalents, but
+// `auto skill update` is NOT — it is the skills update verb (it floats vendored
+// skills), so binary self-update lives only here at the root.
 func newUpdateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "update",
