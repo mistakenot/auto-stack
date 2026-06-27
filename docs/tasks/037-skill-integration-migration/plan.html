@@ -432,22 +432,22 @@ pre-commit: fmt-staged check verify-fixtures vulncheck-if-deps-changed autodoc-f
 
 skills-check:
 	@if [ -f "$(CURDIR)/.auto/skills/lock.json" ] && command -v auto >/dev/null 2>&1; then \
-		auto skill sync --check --format json || exit 1; \
-		auto skill lint --format json || exit 1; \
+		auto skill sync --check || exit 1; \
+		auto skill lint || exit 1; \
 	fi
 
 # new: re-materialize targets after pull / branch switch (locked, never floats)
 post-merge post-checkout: skills-sync-locked
 skills-sync-locked:
 	@if [ -f "$(CURDIR)/.auto/skills/lock.json" ] && command -v auto >/dev/null 2>&1; then \
-		auto skill sync --locked --format json 2>/dev/null || true; \
+		auto skill sync --locked 2>/dev/null || true; \
 	fi
 
 # new (opt-in): warn on newer upstream, never block the push
 pre-push: skills-update-check
 skills-update-check:
 	@: # disabled by default — uncomment to enable:
-	@# auto skill update --check --format json 2>/dev/null || true
+	@# auto skill update --check 2>/dev/null || true
 		</pd-code>
         <md><script type="text/plain">
 Each `hooks/post-merge`, `hooks/post-checkout`, `hooks/pre-push` is a thin shim mirroring

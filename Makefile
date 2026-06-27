@@ -289,8 +289,8 @@ autodoc-fix:
 # or any skill fails lint. Replaces the former npx-based skills-sync stanza.
 skills-check:
 	@if [ -f "$(CURDIR)/.auto/skills/lock.json" ] && command -v auto >/dev/null 2>&1; then \
-		auto skill sync --check --format json || exit 1; \
-		auto skill lint --format json || exit 1; \
+		auto skill sync --check || exit 1; \
+		auto skill lint || exit 1; \
 	fi
 
 # Post-merge / post-checkout re-materialize: reproduce the locked commit and
@@ -298,7 +298,7 @@ skills-check:
 post-merge post-checkout: skills-sync-locked
 skills-sync-locked:
 	@if [ -f "$(CURDIR)/.auto/skills/lock.json" ] && command -v auto >/dev/null 2>&1; then \
-		auto skill sync --locked --format json 2>/dev/null || true; \
+		auto skill sync --locked 2>/dev/null || true; \
 	fi
 
 # Pre-push upstream-drift check: opt-in, off by default. Enable per-invocation
@@ -307,7 +307,7 @@ pre-push: skills-update-check
 SKILLS_UPDATE_CHECK ?= 0
 skills-update-check:
 	@if [ "$(SKILLS_UPDATE_CHECK)" = "1" ] && [ -f "$(CURDIR)/.auto/skills/lock.json" ] && command -v auto >/dev/null 2>&1; then \
-		auto skill update --check --format json 2>/dev/null || true; \
+		auto skill update --check 2>/dev/null || true; \
 	fi
 
 # Flush beads issue state to JSONL so issue changes land in the commit.

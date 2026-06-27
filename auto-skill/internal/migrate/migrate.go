@@ -325,11 +325,32 @@ func (m *Migration) classifyLocal(name string, entry VercelEntry, projectRoot st
 	}
 
 	if isGitRepo(abs) {
+		// A vercel local source may be a subdirectory inside a worktree (the
+		// checked-in corpus points at e.g. <repo>/skills). A later sync clones
+		// the repo top-level, not the subdir, so resolve URL/Source to the
+		// worktree root and carry the source dir as a Subpath relative to it.
+		// On any failure, fall back to the source path as given.
+		url := abs
+		subpath := subpathFromSkillPath(entry.SkillPath)
+		if top, err := gitToplevel(abs); err == nil && top != "" {
+			url = top
+			// git --show-toplevel returns a symlink-resolved path; resolve abs the
+			// same way before computing the relative subpath so they share a root.
+			base := abs
+			if real, rerr := filepath.EvalSymlinks(abs); rerr == nil {
+				base = real
+			}
+			if rel, rerr := filepath.Rel(top, base); rerr == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+				subpath = filepath.ToSlash(rel)
+			} else {
+				subpath = ""
+			}
+		}
 		m.Migrated = append(m.Migrated, Entry{
 			Name:        name,
-			Source:      abs,
-			URL:         abs,
-			Subpath:     subpathFromSkillPath(entry.SkillPath),
+			Source:      url,
+			URL:         url,
+			Subpath:     subpath,
 			VersionSpec: versionFromRef(entry.Ref),
 			Local:       true,
 			State:       "unresolved",
@@ -400,6 +421,19 @@ func isGitRepo(path string) bool {
 		return false
 	}
 	return strings.TrimSpace(string(out)) == "true"
+}
+
+// gitToplevel returns the absolute path of the worktree top-level containing
+// path, via `git -C <path> rev-parse --show-toplevel`. The returned path is the
+// repo root a later `git clone` can address (a vercel local source may point at
+// a subdirectory inside the worktree).
+func gitToplevel(path string) (string, error) {
+	cmd := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // sortedKeys returns the skill names in deterministic order.

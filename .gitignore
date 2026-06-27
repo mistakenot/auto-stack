@@ -13,6 +13,7 @@ auto-cli/auto
 !auto-graph/e2e/testdata/
 !auto-reflect/internal/rules/testdata/
 !auto-reflect/internal/rules/testdata/**
+!auto-skill/internal/migrate/testdata/
 
 # Credentials and secrets
 *.env

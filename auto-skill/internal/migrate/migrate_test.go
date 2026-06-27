@@ -248,6 +248,10 @@ func TestPlanLocalSplit(t *testing.T) {
 	if m.Migrated[0].State != "unresolved" {
 		t.Errorf("local-git state = %q, want unresolved", m.Migrated[0].State)
 	}
+	// gitDir IS the worktree top-level, so Subpath is empty.
+	if m.Migrated[0].Subpath != "" {
+		t.Errorf("local-git subpath = %q, want empty (source is the repo root)", m.Migrated[0].Subpath)
+	}
 
 	// non-git dir → authored import.
 	if len(m.Imports) != 1 || m.Imports[0].Name != "local-plain" {
@@ -267,6 +271,61 @@ func TestPlanLocalSplit(t *testing.T) {
 
 	if imported := m.Result().Imported; len(imported) != 1 || imported[0] != "local-plain" {
 		t.Errorf("Result.Imported = %v, want [local-plain]", imported)
+	}
+}
+
+// TestPlanLocalGitSubdir covers a vercel local source pointing at a subdirectory
+// inside a worktree (the real-corpus shape, e.g. <repo>/skills). The lock entry
+// must resolve URL to the worktree top-level and carry the relative subdir as
+// Subpath, so a later sync can clone the repo root rather than a non-repo subdir.
+func TestPlanLocalGitSubdir(t *testing.T) {
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	// git --show-toplevel canonicalizes symlinks (e.g. macOS /tmp); resolve the
+	// repo path the same way for a stable expectation.
+	topWant, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		topWant = repo
+	}
+
+	subDir := filepath.Join(repo, "skills", "my-skill")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "SKILL.md"), []byte("# my skill\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	v := VercelLock{
+		Version: 1,
+		Skills: map[string]VercelEntry{
+			"my-skill": {Source: subDir, SourceType: sourceTypeLocal},
+		},
+	}
+	m, err := Plan(v, repo)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(m.Migrated) != 1 {
+		t.Fatalf("migrated = %+v, want exactly one entry", m.Migrated)
+	}
+	e := m.Migrated[0]
+	if !e.Local {
+		t.Error("Local = false, want true")
+	}
+	if e.State != "unresolved" {
+		t.Errorf("state = %q, want unresolved", e.State)
+	}
+	if e.URL != topWant {
+		t.Errorf("URL = %q, want worktree top-level %q", e.URL, topWant)
+	}
+	if e.Source != topWant {
+		t.Errorf("Source = %q, want worktree top-level %q", e.Source, topWant)
+	}
+	if e.Subpath != "skills/my-skill" {
+		t.Errorf("Subpath = %q, want %q", e.Subpath, "skills/my-skill")
 	}
 }
 

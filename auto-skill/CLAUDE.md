@@ -52,12 +52,12 @@ are guarded by `.auto/skills/lock.json` presence (and `command -v auto`), so the
 **no-op cleanly in repos without native skills**:
 
 - **pre-commit → `skills-check`** (check-only, replaces the old npx `skills-sync`):
-  runs `auto skill sync --check --format json` then `auto skill lint --format
-  json`; **fails the commit** if any target is stale or any skill fails lint. It
-  never mutates the tree (no render, no `git add`).
+  runs `auto skill sync --check` then `auto skill lint` (both JSON by default);
+  **fails the commit** if any target is stale or any skill fails lint. It never
+  mutates the tree (no render, no `git add`).
 - **post-merge / post-checkout → `skills-sync-locked`**: runs `auto skill sync
-  --locked --format json` to re-materialize the locked commit into each target.
-  Non-blocking — never fails the hook.
+  --locked` to re-materialize the locked commit into each target. Non-blocking —
+  never fails the hook.
 - **pre-push → `skills-update-check`**: **opt-in, off by default.** Enable with
   `SKILLS_UPDATE_CHECK=1` (per-invocation or exported) to run `auto skill update
   --check`. Warn-only — never blocks the push.

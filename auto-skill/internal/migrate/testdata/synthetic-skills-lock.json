@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "skills": {
+    "gh-default": {
+      "source": "acme/skills",
+      "sourceType": "github",
+      "skillPath": "skills/gh-default/SKILL.md",
+      "computedHash": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "gh-tag": {
+      "source": "acme/skills",
+      "sourceType": "github",
+      "skillPath": "skills/gh-tag/SKILL.md",
+      "computedHash": "2222222222222222222222222222222222222222222222222222222222222222",
+      "ref": "v1.2.3"
+    },
+    "gh-branch": {
+      "source": "acme/skills",
+      "sourceType": "github",
+      "skillPath": "skills/gh-branch/SKILL.md",
+      "computedHash": "3333333333333333333333333333333333333333333333333333333333333333",
+      "ref": "branch:main"
+    },
+    "gh-sha": {
+      "source": "acme/skills",
+      "sourceType": "github",
+      "skillPath": "skills/gh-sha/SKILL.md",
+      "computedHash": "4444444444444444444444444444444444444444444444444444444444444444",
+      "ref": "0123456789abcdef0123456789abcdef01234567"
+    },
+    "gl-repo": {
+      "source": "group/subgroup/skills",
+      "sourceType": "gitlab",
+      "skillPath": "skills/gl-repo/SKILL.md",
+      "computedHash": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "nm-skill": {
+      "source": "some-package",
+      "sourceType": "node_modules",
+      "computedHash": "6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    "wk-skill": {
+      "source": "example.com/.well-known/skills",
+      "sourceType": "well-known",
+      "computedHash": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "hf-skill": {
+      "source": "org/model",
+      "sourceType": "huggingface",
+      "computedHash": "8888888888888888888888888888888888888888888888888888888888888888"
+    },
+    "ml-skill": {
+      "source": "docs.example.com",
+      "sourceType": "mintlify",
+      "computedHash": "9999999999999999999999999999999999999999999999999999999999999999"
+    }
+  }
+}
