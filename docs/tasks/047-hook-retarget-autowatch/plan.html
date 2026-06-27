@@ -12,12 +12,12 @@
     "id": "047",
     "name": "hook-retarget-autowatch",
     "epic": "003-multi-host-architecture",
-    "status": "executing",
+    "status": "complete",
     "created": "2026-06-27"
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="..." below with the PR URL -->
-  <pd-doc title="047: hook-retarget-autowatch" status="executing" pr="pending" generated="2026-06-27">
+  <pd-doc title="047: hook-retarget-autowatch" status="complete" pr="pending" generated="2026-06-27">
 
     <pd-tab name="Requirements">
 
@@ -242,7 +242,7 @@ Depends on P1 (hooks no longer post to `/api/rpc`).
             </script></md>
           </pd-phase>
 
-          <pd-phase n="3" title="Docs" files="auto-ui/CLAUDE.md,docs/auto-bus-spec.md" status="todo">
+          <pd-phase n="3" title="Docs" files="auto-ui/CLAUDE.md,docs/auto-bus-spec.md" status="done">
             <md><script type="text/plain">
 Depends on P2.
 1. `auto-ui/CLAUDE.md`: rewrite Live-updates — hooks post to autowatch; auto-ui receives events ONLY via the relay; `/api/rpc` + eventGate removed; `/api/debug/recent` sourced from relayed events.
