@@ -305,7 +305,7 @@ flowchart LR
 
       <pd-stepper>
 
-        <pd-phase n="1" title="bus.subscribe hub→peer bridge" status="todo"
+        <pd-phase n="1" title="bus.subscribe hub→peer bridge" status="done"
           files="auto-watch/internal/rpcserver/subscribe.go,auto-watch/internal/rpcserver/server.go,auto-watch/internal/rpcserver/server_test.go">
           <md><script type="text/plain">
 1. `subscribe.go` — add `peerSink{peer *rpc.Peer}` implementing `bus.Sink` (`Deliver(ev)` → `peer.Notify(ev.Type, ev)`, the `Event.AsNotification` shape; non-blocking, drop-and-close on full via the peer's own enqueue — no extra buffering); a per-connection `subscription{mu sync.Mutex; cancel func()}` holder; and `registerSubscribe(p *rpc.Peer, hub *bus.Hub, sub *subscription)` that registers a peer-bound `bus.subscribe` handler (parameterless, broadcast-all) which lazily does `sub.cancel = hub.Subscribe(&peerSink{p})` under the mutex (idempotent — a second call is a no-op) and returns a small ack. **Verify:** `go build ./...` in `auto-watch`.
