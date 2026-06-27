@@ -19,7 +19,7 @@
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="035: skill-prune-adopt" status="executing" pr="pending" generated="2026-06-20">
+  <pd-doc title="035: skill-prune-adopt" status="complete" pr="pending" generated="2026-06-20">
 
     <pd-tab name="Requirements">
 
@@ -684,7 +684,7 @@ The renamed-vendored tail — independent of the classifier (no prune logic here
             </script></md>
           </pd-phase>
 
-          <pd-phase n="6" title="CLI wire-up + doctor extension + e2e" status="todo" depends-on="2,3,4,5"
+          <pd-phase n="6" title="CLI wire-up + doctor extension + e2e" status="done" depends-on="2,3,4,5"
             files="auto-skill/internal/cli/root.go,auto-skill/internal/cli/cli_integration_test.go">
             <md><script type="text/plain">
 1. `internal/cli/root.go`: register `newAdoptCmd()` + `newRemoveCmd()` via
