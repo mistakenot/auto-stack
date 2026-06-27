@@ -43,7 +43,7 @@ direction and the guard rails, then sequences the build.
 
       <pd-section id="everyday-loop" title="The everyday loop">
         <pd-cli id="C-loop" title="zsh — add, customize, sync, update" caption="The core author/consume loop, no npx">
-          <pd-cmd note="add a remote skill — any host, the user's git auth" status="todo">auto skill add mistakenot/skills --skill deploy</pd-cmd>
+          <pd-cmd note="add a remote skill — any host, the user's git auth" status="done">auto skill add mistakenot/skills --skill deploy</pd-cmd>
           <pd-out>✓ resolved deploy@e5c075e → .auto/skills/lock.json; rendered into .claude/skills, .agents/skills</pd-out>
           <pd-cmd note="customize: edit replacements + file-refs in skills.yaml" status="todo">$EDITOR .auto/skills/skills.yaml</pd-cmd>
           <pd-cmd note="render authored + vendored into every target (the workhorse)" status="todo">auto skill sync</pd-cmd>
@@ -60,7 +60,7 @@ direction and the guard rails, then sequences the build.
 A vendored skill declares what's customizable in its `customize:` frontmatter; your `skills.yaml` supplies the values — **literals** inlined verbatim and **file-refs** that pull a doc (or one heading section) into the rendered skill. Substitution is pure text, no code execution. Here: tailoring a shared `code-review` skill to one repo's focus and conventions.
         </script></md>
         <pd-cli id="C-customize" title="zsh — customize a shared code-review skill" caption="Literals + a file-ref, rendered deterministically">
-          <pd-cmd note="pull a shared skill that exposes customize vars" status="todo">auto skill add acme/agent-skills --skill code-review</pd-cmd>
+          <pd-cmd note="pull a shared skill that exposes customize vars" status="done">auto skill add acme/agent-skills --skill code-review</pd-cmd>
           <pd-out>✓ added code-review@a1b2c3d → targets</pd-out>
           <pd-cmd note="see what it lets you customize" status="todo">auto skill describe code-review</pd-cmd>
           <pd-out><script type="text/plain">customize: review_focus (required) · severity_threshold (default "p2") · conventions (file-ref)</script></pd-out>
@@ -92,9 +92,9 @@ Focus: security and error handling. Flag issues at p1 or above.
 
       <pd-section id="setup-and-housekeeping" title="Setup &amp; housekeeping">
         <pd-cli id="C-setup" title="zsh — one-time project setup" caption="Interactive wizard, or defaults with -y">
-          <pd-cmd note="wizard: targets, auto_update, version policy, commit-vs-gitignore" status="todo">auto skill init --project</pd-cmd>
+          <pd-cmd note="wizard: targets, auto_update, version policy, commit-vs-gitignore" status="done">auto skill init --project</pd-cmd>
           <pd-out>✓ wrote .auto/skills/skills.yaml, lock.json; scaffolded ./skills/</pd-out>
-          <pd-cmd note="approve a host endpoint before any fetch (machine-local)" status="todo"><script type="text/plain">auto skill trust add https://github.com</script></pd-cmd>
+          <pd-cmd note="approve a host endpoint before any fetch (machine-local)" status="done"><script type="text/plain">auto skill trust add https://github.com</script></pd-cmd>
         </pd-cli>
 
         <pd-cli id="C-inspect" title="zsh — inspect &amp; adopt" caption="Resource triad + cleanup">
@@ -226,19 +226,19 @@ The contracts a task may build behind but must not break:
       <pd-section id="build-order" title="Build order">
         <pd-breakdown caption="Deployable staircase — roots left, each column builds on the last"></pd-breakdown>
 
-        <pd-task id="T1" title="Project schemas &amp; init" status="todo" deployable
+        <pd-task id="T1" title="Project schemas &amp; init" status="done" deployable
                  href="../tasks/032-skill-project-schemas/plan.html"
                  delivers="C-setup" honors="G-schema-strict,G-json-default,G-decisive-cli">
           <md><script type="text/plain">The `.auto/skills/` layout + parse/validate `skills.yaml` / `lock.json` / `manifest.json`; reuse the `projects.json` id; `init --project` wizard (+ `-y`/flags) and global settings; fold the old `agents` command into `init`.</script></md>
         </pd-task>
 
-        <pd-task id="T2" title="Global git cache + trust" status="todo" depends-on="T1" deployable
+        <pd-task id="T2" title="Global git cache + trust" status="done" depends-on="T1" deployable
                  href="../tasks/009-skill-git-cache-trust/plan.html"
                  delivers="C-setup" honors="G-transport,G-cred-hygiene,G-extract-safe,G-offline-check">
           <md><script type="text/plain">Bare blobless cache with canonical identity + safe path encoding; archive extraction with entry validation + resource limits; scheme allow-list; machine-local `trust.json`; `cache list/path/prune` and `trust list/add/remove`.</script></md>
         </pd-task>
 
-        <pd-task id="T3" title="add: source parsing &amp; discovery" status="todo" depends-on="T2" deployable
+        <pd-task id="T3" title="add: source parsing &amp; discovery" status="done" depends-on="T2" deployable
                  href="../tasks/033-skill-add-discovery/plan.html"
                  delivers="C-loop,C-customize" honors="G-schema-strict,G-transport,G-cred-hygiene">
           <md><script type="text/plain">Normalize every source form (incl. deep links via longest-resolving-ref) → discover skills (roots, dedupe, divergence error) → write lock + `skills.yaml` stub. `--skill`/`--path`/`--list`/`--as`/`--version`/`--no-sync`. Local-source split (git repo vs import).</script></md>
