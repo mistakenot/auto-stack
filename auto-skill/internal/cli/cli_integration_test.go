@@ -269,13 +269,15 @@ func TestLintValueFieldsPopulated(t *testing.T) {
 	}
 }
 
-func TestLsMixedAndJSON(t *testing.T) {
+func TestListMixedAndJSON(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "skills", "alpha", "SKILL.md"), validSkill("alpha", "Use when alpha. Prefer for alpha tasks.", "## Workflow\n\n1. Run alpha.\n"))
 	writeFile(t, filepath.Join(root, "skills", "beta", "SKILL.md"), validSkill("beta", "Use when beta. Prefer for beta tasks.", "## Workflow\n\n1. Run beta.\n"))
 	writeFile(t, filepath.Join(root, "skills", "broken", "SKILL.md"), "no-frontmatter")
 
-	stdout, stderr, code := runCLI(t, "--root", root, "ls")
+	// Partial success: the valid skills are still returned on stdout, the bad one
+	// is reported on stderr, and the exit code is non-zero (AC-7).
+	stdout, stderr, code := runCLI(t, "--root", root, "list")
 	if code == 0 {
 		t.Fatalf("expected non-zero due mixed parse errors\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
 	}
@@ -290,36 +292,36 @@ func TestLsMixedAndJSON(t *testing.T) {
 		t.Fatalf("expected parse error on stderr, got:\n%s", stderr)
 	}
 
-	stdout, stderr, code = runCLI(t, "--root", root, "ls", "--text")
+	stdout, stderr, code = runCLI(t, "--root", root, "list", "--format", "text")
 	if code == 0 {
-		t.Fatalf("expected non-zero for mixed parse errors with --text\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+		t.Fatalf("expected non-zero for mixed parse errors with text\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
 	}
-	if !strings.Contains(stdout, "- alpha: Use when alpha. Prefer for alpha tasks.") {
+	if !strings.Contains(stdout, "alpha") || !strings.Contains(stdout, "Use when alpha. Prefer for alpha tasks.") {
 		t.Fatalf("missing alpha listing, stdout:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "- beta: Use when beta. Prefer for beta tasks.") {
+	if !strings.Contains(stdout, "beta") || !strings.Contains(stdout, "Use when beta. Prefer for beta tasks.") {
 		t.Fatalf("missing beta listing, stdout:\n%s", stdout)
 	}
 }
 
-func TestLsEmpty(t *testing.T) {
+func TestListEmpty(t *testing.T) {
 	root := t.TempDir()
 	assertNoError(t, os.MkdirAll(filepath.Join(root, "skills"), 0o755))
 
-	stdout, stderr, code := runCLI(t, "--root", root, "ls")
+	stdout, stderr, code := runCLI(t, "--root", root, "list")
 	if code != 0 {
-		t.Fatalf("ls empty should succeed: code=%d stdout=%q stderr=%q", code, stdout, stderr)
+		t.Fatalf("list empty should succeed: code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	if strings.TrimSpace(stdout) != "[]" {
-		t.Fatalf("expected [] JSON for empty ls, got:\n%s", stdout)
+		t.Fatalf("expected [] JSON for empty list, got:\n%s", stdout)
 	}
 
-	stdout, stderr, code = runCLI(t, "--root", root, "ls", "--text")
+	stdout, stderr, code = runCLI(t, "--root", root, "list", "--format", "text")
 	if code != 0 {
-		t.Fatalf("ls --text empty should succeed: code=%d stdout=%q stderr=%q", code, stdout, stderr)
+		t.Fatalf("list text empty should succeed: code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	if stdout != "" {
-		t.Fatalf("expected no output for empty ls --text, got:\n%s", stdout)
+		t.Fatalf("expected no output for empty list text, got:\n%s", stdout)
 	}
 }
 
