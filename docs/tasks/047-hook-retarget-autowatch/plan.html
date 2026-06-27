@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>047: hook-retarget-autowatch</title>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "047",
+    "name": "hook-retarget-autowatch",
+    "epic": "003-multi-host-architecture",
+    "status": "planning",
+    "created": "2026-06-27"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="..." below with the PR URL -->
+  <pd-doc title="047: hook-retarget-autowatch" status="pending" pr="pending" generated="2026-06-27">
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+This is **epic-003 Task 10: Hook retarget to autowatch-only** — the final task of the multi-host epic. The autowatch backend is now the authoritative event ingest + relay point (Task 6 / 040): its `HookIngest` HTTP handler (`auto-watch/internal/rpcserver/ingest.go`, default `--hook-addr 127.0.0.1:7787`, advertised in the daemon's PID metadata via `writePIDMetadataWithAddrs`) validates an event, stamps `hostId`, broadcasts the raw event, derives `doc.changed` for registered projects, and relays everything to subscribed peers. Since Task 8 (045, MERGED) auto-ui subscribes to each backend and merges relayed events into its Hub — **so events that reach autowatch already reach the browser**.
+
+But `auto hooks fire` still posts to the **wrong place**:
+
+- **Hooks post only to auto-ui, not autowatch.** `auto hooks fire` (`auto-cli/cmd/auto/hookscmd.go:115`) does a single best-effort `postBusEvent(uiPort(), ev)` to auto-ui's `POST /api/rpc`. It does **not** post to autowatch's hook-ingest at all. *(Note: the epic card describes removing a "dual-post to auto-ui"; in the current code there is no dual-post — hooks post to auto-ui only. T10 is therefore a **retarget** of the single post from auto-ui → autowatch, plus removal of auto-ui's ingest endpoint.)*
+- **auto-ui owns a redundant local ingest path.** `POST /api/rpc` (`auto-ui/internal/server/server.go:132` → `rpc_ingest.go`) ingests the event locally, runs its **own** `DeriveDocChanged` (duplicating autowatch's derive), and broadcasts through an `eventGate` (`eventgate.go`, 045) that dedups by deterministic event id. The eventGate + deterministic derived ids were added in 045 specifically to survive the **transition window** where an event could arrive via both the local `/api/rpc` path and a relayed local backend. Once hooks post only to autowatch, that double-path closes.
+
+The result of leaving this as-is: the dashboard depends on hooks hitting auto-ui directly, the derive logic is duplicated in two places, and the multi-host story is incoherent (remote hosts route through autowatch; the local host bypasses it). T10 makes **autowatch the sole ingest** for every host, local included.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+Every hook event flows through autowatch; auto-ui receives it only via the relay; the local ingest path is gone.
+
+- **Retarget `auto hooks fire` to autowatch's hook-ingest.** Replace the `postBusEvent(uiPort(), …)` call with a post to autowatch's hook-ingest endpoint. The endpoint address is discovered from the running daemon (autowatch PID metadata's `hookAddr`), with an env override and the `127.0.0.1:7787` default as fallback — mirroring the existing `uiPort()` precedence pattern. The post stays **best-effort, fire-and-forget** (bounded timeout, never breaks the agent), and the **durable append** (`hooks.Append`) remains the canonical record before the live post (unchanged).
+- **Honor autowatch's ingest contract.** `HookIngest` requires `POST`, loopback origin, `Content-Type: application/json`, and a valid JSON-RPC 2.0 envelope; it rejects browser-origin (CSRF) requests. The retargeted post must satisfy these (loopback CLI post with the JSON content type) — autowatch then stamps `hostId` (overwrite-always) and derives `doc.changed` itself, so the hook no longer needs the UI to derive anything.
+- **Remove auto-ui's `/api/rpc` ingest endpoint.** Delete the `POST /api/rpc` route, `rpc_ingest.go`, and auto-ui's local `DeriveDocChanged` invocation. auto-ui now receives events **only** through the backend relay (045). Its Hub is fed exclusively by `BackendManager` event forwarding.
+- **Remove 045's transition-window dedup (`eventGate`).** With a single ingest path, the same event can no longer arrive via two routes, so the `eventGate` id-dedup (and the deterministic-derived-id coupling it relied on) is **removed** — autowatch's Hub feeds auto-ui's Hub directly. The deterministic-derived-id rationale (045) is noted in the commit. No event should be dropped or double-rendered after the cut-over.
+- **Single source of derivation.** After T10, `DeriveDocChanged` runs in exactly one place (autowatch). The duplicate copy in auto-ui is removed, eliminating the drift risk between two derive implementations.
+
+**Advances:** GR-F4 (hook compatibility — hooks keep working, now via autowatch), D-3 (hooks post to autowatch).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Multi-host SPA (Task 9 / 046).** The flat host-tagged list, host badge, per-backend health UI, and `(hostId, projectId)` SPA identity are 046. T10 is the ingest-path cut-over only.
+- **autowatch's `HookIngest` behavior.** The ingest handler, its validation, hostId stamping, and derive/relay logic are frozen (Task 6 / 040). T10 points hooks at it; it does not change it.
+- **The durable hook event log.** `hooks.Append` and the `auto-etl` consumption of that log are unchanged — T10 only changes the **live** post target, not the canonical durable record.
+- **The backend relay / subscription mechanism (045).** auto-ui's event forwarding from backends into its Hub is consumed as-is.
+- **`auto hooks install` wiring.** How the hook is registered into agent config (Claude/Codex) is unchanged; only the runtime `fire` post target moves.
+- **Transport changes.** Hook ingest stays loopback HTTP POST (GR-N8: connection-oriented reliable transports only).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="acceptance" title="Acceptance Criteria (draft)">
+        <md><script type="text/plain">
+1. **AC-1 — Hooks post to autowatch.** `auto hooks fire` posts the JSON-RPC event to autowatch's hook-ingest endpoint (discovered address, `127.0.0.1:7787` fallback) with `Content-Type: application/json`, and no longer posts to auto-ui's `/api/rpc`.
+2. **AC-2 — Endpoint discovery + fallback.** The post target is resolved from the running daemon's PID metadata `hookAddr`, overridable by env, falling back to the default; resolution failures degrade to the default without breaking the agent.
+3. **AC-3 — Best-effort / non-breaking.** With autowatch **down**, `auto hooks fire` still exits 0, still writes the durable append, and does not error to the agent (live post is fire-and-forget).
+4. **AC-4 — End-to-end live update via relay.** An agent edit on the local host fires a hook → autowatch ingests + derives `doc.changed` → relays to auto-ui → the open doc refreshes in the browser. No `/api/rpc` POST occurs.
+5. **AC-5 — `/api/rpc` removed.** auto-ui no longer registers `POST /api/rpc`; `rpc_ingest.go` and the local `DeriveDocChanged` call are gone; a POST to `/api/rpc` returns 404. Existing tests referencing the route are removed/updated.
+6. **AC-6 — No double-render / no drop.** After the cut-over, a single hook produces exactly one `doc.changed` to the browser (no duplicate, no loss) with the `eventGate` removed.
+7. **AC-7 — Single derive site.** `DeriveDocChanged` is invoked only in autowatch; the auto-ui copy is removed.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+1. **Endpoint discovery mechanism.** Read autowatch's `hookAddr` from its PID metadata file (written by `writePIDMetadataWithAddrs`), an env override (e.g. `AUTO_WATCH_HOOK_ADDR`), then the `127.0.0.1:7787` default? *(Recommendation: PID-metadata → env → default, mirroring `uiPort()`. Confirm the exact metadata path/field at /new-solution.)*
+2. **eventGate fate.** — **RESOLVED: remove.** The `eventGate` + deterministic-derived-id coupling is deleted (the double-path it guarded is gone); the deterministic-id rationale is recorded in the commit. (045 scoped it to the transition window.)
+3. **Live-update ownership shifts from auto-ui to autowatch.** After T10, live dashboard updates require the **autowatch daemon** to be running (previously auto-ui alone sufficed for the local host). Is that acceptable as the steady state (autowatch is the always-on daemon in the multi-host arch), or should auto-ui retain a fallback ingest when no backend is connected? *(Recommendation: accept autowatch-as-sole-ingest — it is the epic's explicit D-3 direction; a fallback would re-introduce the double-path T10 removes. /new-solution to confirm.)*
+4. **Sequencing vs 046.** — **RESOLVED: parallel.** 046 and 047 are dispatched concurrently (both depend only on T8, merged). ⚠️ Both edit `auto-ui/internal/server/server.go` (046 adds an aggregating `project.list` + health RPC; 047 removes the `/api/rpc` route + eventGate), so a merge conflict in that file is likely — whichever PR merges second must rebase. Endpoint-discovery (Q1) remains a /new-solution detail.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="strategy" title="Strategy">
+        <md><script type="text/plain">
+Mostly Go unit/integration tests across three modules, plus one end-to-end live-update check:
+
+1. **auto-cli** — the retarget itself: `auto hooks fire` posts to the discovered autowatch hook address (not auto-ui), with the right method/headers; address discovery precedence; graceful no-op when the daemon is down.
+2. **auto-ui** — the removal: `/api/rpc` is gone (404), the manager sink feeds the hub directly, and the remaining relay-path tests stay green; deleted tests are removed cleanly.
+3. **End-to-end** — an agent edit on the local host flows hook → autowatch ingest+derive → relay → auto-ui hub → browser WS, with no `/api/rpc` POST. Verified against autowatch's existing ingest+relay tests plus an auto-ui relay test (already present from 045).
+
+No browser-conformance suite is needed (no SPA change); the live-update path is asserted at the Go/WS layer.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="ac-traceability" title="Acceptance Criteria → Tests">
+        <md><script type="text/plain">
+| AC | How it's verified |
+|---|---|
+| AC-1 Hooks post to autowatch | auto-cli: a fake HTTP server stands in for autowatch hook-ingest; assert `auto hooks fire` POSTs to it (root path), `Content-Type: application/json`, JSON-RPC notification body, no `Origin`; and does NOT POST to any `/api/rpc` |
+| AC-2 Discovery + fallback | auto-cli: `watchHookAddr()` table test — `AUTO_WATCH_HOOK_ADDR` env wins; else `daemon.pid.json` `.hookAddr`; else `127.0.0.1:7787`; malformed/missing metadata → default |
+| AC-3 Best-effort when down | auto-cli: with no listener (daemon down), `auto hooks fire` exits 0, still wrote the durable append, emitted no error to stdout (`TestFireExitsZeroWhenUIDown` retargeted) |
+| AC-4 E2E live update via relay | autowatch ingest+derive+relay tests (existing) + auto-ui `event_flow_test.go` relay path (existing, minus the removed dedup-across-paths case); confirm a hook-shaped event reaches a WS client with `Host` intact and no `/api/rpc` involved |
+| AC-5 `/api/rpc` removed | auto-ui: POST `/api/rpc` → 404; `rpc_ingest.go`/`eventgate.go` deleted; `rpc_ingest_test.go`/`eventgate_test.go` removed; build green |
+| AC-6 No double-render / no drop | auto-ui: a single relayed event → exactly one hub broadcast → one WS notification (eventGate removed; relay is the only path so no dup is possible) |
+| AC-7 Single derive site | grep/test: `bus.DeriveDocChanged` no longer called in auto-ui (only in autowatch ingest) |
+        </script></md>
+      </pd-section>
+
+      <pd-section id="regression" title="Regression & Non-Regression">
+        <md><script type="text/plain">
+- **Hook never breaks the agent.** `auto hooks fire` must still return nil on every failure path (bad addr, daemon down, marshal error). Covered by AC-3 + existing fire tests.
+- **Durable log unchanged.** `hooks.Append` still runs first; `auto-etl` consumption of the hook event log is untouched.
+- **Relay path stays green.** The non-removed `event_flow_test.go` cases (multi-backend merge, Host fidelity, slow-client drop) must still pass — they don't depend on the local ingest.
+- **`params.data.path` shape pin** moves to autowatch: confirm autowatch ingest tests assert the derived `doc.changed` carries `data.path` (the regression `rpc_ingest_test.go` used to guard).
+- **/api/debug/recent** still returns events (now sourced from relayed events via the wrapped sink — D-3), or is explicitly retired. Pick per D-3.
+- **Full suites green:** `auto-cli`, `auto-ui` (`go build/test/vet`), `auto-watch` (`go test -race`). pd-lint clean.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="risks" title="Risks / Edge Cases">
+        <md><script type="text/plain">
+- **Daemon not running during a hook** — expected; live post silently dropped, durable append is the record. Live dashboard simply won't update until the daemon is up (acceptable per OQ3).
+- **Ephemeral hook port (`--hook-addr :0`)** — discovery MUST read the bound `hookAddr` from `daemon.pid.json`, not assume 7787. Covered by AC-2.
+- **Stale PID metadata** (daemon died) — POST to a dead address fails fast within the 150ms timeout and is swallowed; no agent impact.
+- **Merge conflict with 046** — both edit `auto-ui/internal/server/server.go`; second-merged PR rebases. 046 adds registrations; 047 removes the `/api/rpc` route + gate wiring — disjoint lines, but adjacent. Note in feedback.md.
+- **Removing the `params.data.path` pin** without the autowatch equivalent in place would lose regression coverage — verify the autowatch assertion exists before deleting `rpc_ingest_test.go`.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Two disjoint changes that together make autowatch the sole ingest:
+
+1. **auto-cli — retarget the live post.** Add `watchHookAddr()` (env → `daemon.pid.json` `.hookAddr` → `127.0.0.1:7787`), and change `postBusEvent` to take an address string and POST to `http://<hookAddr>/` (autowatch's root hook handler) instead of `http://127.0.0.1:<uiPort>/api/rpc`. The JSON-RPC notification body, `Content-Type`, timeout, and fire-and-forget error handling are unchanged — the existing post already satisfies autowatch's ingest contract (POST, loopback, no Origin, application/json). `uiPort()` becomes dead code and is removed.
+2. **auto-ui — remove the local ingest.** Delete the `/api/rpc` route, `rpc_ingest.go`, `eventgate.go` (+ tests), rewire `mgr.SetEventSink` from `gate.Broadcast` to a sink that broadcasts to the hub (and records into the debug buffer so `/api/debug/recent` keeps working — D-3). `bus.DeriveDocChanged` is no longer called in auto-ui; derivation lives solely in autowatch.
+
+Events then flow: agent edit → hook → autowatch ingest (stamp host, derive) → relay (045) → auto-ui hub → browser. One path, one derive, no dedup needed.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-cli/cmd/auto/hookscmd.go" change="edit">Add `watchHookAddr()` (AUTO_WATCH_HOOK_ADDR → daemon.pid.json hookAddr → 127.0.0.1:7787); change `postBusEvent(addr string, ev)` to POST to `http://HOST/` (autowatch root); call site `postBusEvent(watchHookAddr(), ev)`; remove now-dead `uiPort()` + `defaultUIPort`.</pd-file>
+          <pd-file path="auto-cli/cmd/auto/hookscmd_test.go" change="edit">Retarget post-target assertion to autowatch hook-ingest (fake server, root path); add `watchHookAddr()` precedence table test; retarget the daemon-down graceful test.</pd-file>
+          <pd-file path="auto-ui/internal/server/server.go" change="edit">Remove `newEventGate` + `/api/rpc` route; rewire `o.mgr.SetEventSink` to a hub+debug-buffer sink (D-3).</pd-file>
+          <pd-file path="auto-ui/internal/server/rpc_ingest.go" change="delete">Local ingest handler + local DeriveDocChanged — removed (ingest moves to autowatch).</pd-file>
+          <pd-file path="auto-ui/internal/server/rpc_ingest_test.go" change="delete">Local-ingest tests removed; the `params.data.path` shape pin is covered by autowatch ingest tests.</pd-file>
+          <pd-file path="auto-ui/internal/server/eventgate.go" change="delete">Transition-window id-dedup — no longer needed with a single ingest path.</pd-file>
+          <pd-file path="auto-ui/internal/server/eventgate_test.go" change="delete">eventGate dedup tests removed.</pd-file>
+          <pd-file path="auto-ui/internal/server/event_flow_test.go" change="edit">Remove `TestRelayDedupAcrossPaths` (local-vs-relay dedup no longer applies); keep multi-backend merge / Host fidelity / slow-client tests.</pd-file>
+          <pd-file path="auto-ui/CLAUDE.md" change="edit">Update Live-updates section: hooks post to autowatch; auto-ui receives events only via the relay; `/api/rpc` + eventGate removed; `/api/debug/recent` now sourced from relayed events.</pd-file>
+          <pd-file path="docs/auto-bus-spec.md" change="edit">Update §5 hook-ingestion: hooks POST to autowatch's hook-ingest (single ingest); note auto-ui no longer ingests/derives locally.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="ac-map" title="Acceptance Criteria → Phases/Tests">
+        <pd-ac id="AC-1" title="Hooks post to autowatch hook-ingest" phases="1" tests="auto-cli/cmd/auto/hookscmd_test.go">POST to discovered hook addr (root path), application/json, JSON-RPC notification, no Origin; no /api/rpc.</pd-ac>
+        <pd-ac id="AC-2" title="Endpoint discovery + fallback" phases="1" tests="auto-cli/cmd/auto/hookscmd_test.go">watchHookAddr precedence: env → daemon.pid.json hookAddr → 127.0.0.1:7787; malformed → default.</pd-ac>
+        <pd-ac id="AC-3" title="Best-effort / non-breaking when daemon down" phases="1" tests="auto-cli/cmd/auto/hookscmd_test.go">fire exits 0, durable append written, no error emitted.</pd-ac>
+        <pd-ac id="AC-4" title="E2E live update via relay" phases="2" tests="auto-ui/internal/server/event_flow_test.go">Relayed hook-shaped event reaches WS client with Host intact; no /api/rpc.</pd-ac>
+        <pd-ac id="AC-5" title="/api/rpc removed" phases="2" tests="auto-ui/internal/server/server_test.go">POST /api/rpc → 404; rpc_ingest/eventgate deleted; build green.</pd-ac>
+        <pd-ac id="AC-6" title="No double-render / no drop" phases="2" tests="auto-ui/internal/server/event_flow_test.go">Single relayed event → one hub broadcast → one WS notification (gate removed).</pd-ac>
+        <pd-ac id="AC-7" title="Single derive site" phases="2" tests="auto-ui/internal/server/server_test.go">bus.DeriveDocChanged not called in auto-ui (grep/test); only autowatch derives.</pd-ac>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions">
+        <pd-decisions>
+          <pd-decision id="D-1" title="Discover hook addr from daemon PID metadata" status="accepted" by="author" summary="watchHookAddr resolves AUTO_WATCH_HOOK_ADDR env → ~/.auto/watch/daemon.pid.json .hookAddr → 127.0.0.1:7787. Reading the bound hookAddr handles ephemeral ports (--hook-addr :0); mirrors uiPort() precedence.">
+          </pd-decision>
+          <pd-decision id="D-2" title="Remove the eventGate entirely" status="accepted" by="author" summary="With a single ingest path the double-path the gate guarded is gone, so id-dedup is unnecessary for correctness. Delete eventgate.go + tests; the deterministic-derived-id (045) remains in the shared bus but is no longer load-bearing for auto-ui dedup.">
+          </pd-decision>
+          <pd-decision id="D-3" title="Feed /api/debug/recent from relayed events" status="accepted" by="author" summary="The sink wired to SetEventSink broadcasts to the hub AND records into the debug ring, so /api/debug/recent (previously fed only by /api/rpc) keeps showing events now that the local ingest is gone.">
+          </pd-decision>
+          <pd-decision id="D-4" title="POST to autowatch root path" status="accepted" by="author" summary="autowatch mounts HookIngest as the hook server's root handler (any path), so the client POSTs to http://<hookAddr>/. No path segment needed.">
+          </pd-decision>
+        </pd-decisions>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Keep auto-ui `/api/rpc` as a fallback ingest** when no backend is connected. Rejected (OQ3): re-introduces the double-path T10 exists to remove and keeps a second derive site. autowatch is the always-on daemon; it is the single ingest by design (D-3 of the epic).
+- **Retain the eventGate as a defensive idempotency net.** Rejected (Requirements decision): no second path can produce a duplicate, so it is dead weight; simpler to remove and note the rationale.
+- **Hard-fail the hook when the daemon is down.** Rejected: a hook must never break the agent; the durable append is the canonical record and the live post stays best-effort.
+- **Discover the hook addr from a settings.json port** (like uiPort). Rejected in favor of the PID metadata's bound `hookAddr`, which is correct even for ephemeral ports.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Make autowatch the sole hook ingest: P1 retargets `auto hooks fire` to autowatch's hook-ingest — which, because auto-ui already subscribes to the relay (045), immediately delivers end-to-end live updates through the new path (walking skeleton). P2 removes the now-redundant auto-ui `/api/rpc` + eventGate and rewires the event sink straight to the hub. P3 updates docs.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-mermaid>
+flowchart LR
+    P1["P1 — Retarget hooks → autowatch\n(end-to-end: live update flows via relay)"]
+    P2["P2 — Remove auto-ui /api/rpc + eventGate\n(dead-code cleanup; sink → hub)"]
+    P3["P3 — Docs"]
+    P1 --> P2
+    P2 --> P3
+        </pd-mermaid>
+        <md><script type="text/plain">
+Strictly sequential. P1 is the walking skeleton — after it, hook events reach the browser through autowatch's relay with no auto-ui change. P2 is safe to do only once P1 has moved hooks off `/api/rpc` (else removing the route drops live updates). P3 documents the final shape.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="plan-phases" title="Phases">
+        <pd-stepper>
+
+          <pd-phase n="1" title="Retarget hooks → autowatch (walking skeleton)" files="auto-cli/cmd/auto/hookscmd.go,auto-cli/cmd/auto/hookscmd_test.go" status="todo">
+            <md><script type="text/plain">
+After this phase, an agent edit fires a hook → autowatch ingests + derives → relays → auto-ui hub → browser, with NO auto-ui change (045 already subscribes). That is the end-to-end skeleton.
+1. Add `watchHookAddr() string`: `AUTO_WATCH_HOOK_ADDR` env (non-empty) → read `~/.auto/watch/daemon.pid.json` via `sharedconfig.DecodeJSONFile`, take `.hookAddr` → fallback `"127.0.0.1:7787"`. Mirror `uiPort()`'s structure/error-swallowing.
+2. Change `postBusEvent(addr string, ev bus.Event)`: build the URL as `http://` + addr + `/`; keep `ev.AsNotification()` body, `Content-Type: application/json`, 150ms timeout, swallow-all errors. Call site: `postBusEvent(watchHookAddr(), ev)`.
+3. Delete dead `uiPort()` + `defaultUIPort` (confirm no other callers via grep).
+4. Tests (`hookscmd_test.go`): fake HTTP server as autowatch hook-ingest — assert root-path POST, headers, JSON-RPC body, no `/api/rpc`; `watchHookAddr()` precedence table (env / pid-metadata / default / malformed); daemon-down → exit 0 + durable append written.
+5. **End-to-end check + Verify:** `cd auto-cli && go test ./... && go build ./... && go vet ./...` green; manual — with a running autowatch daemon, `auto hooks fire` lands on its ingest (observe relay/ctl log). **Commit** via /contextual-commit.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="2" title="Remove auto-ui /api/rpc + eventGate" files="auto-ui/internal/server/server.go,auto-ui/internal/server/rpc_ingest.go,auto-ui/internal/server/rpc_ingest_test.go,auto-ui/internal/server/eventgate.go,auto-ui/internal/server/eventgate_test.go,auto-ui/internal/server/event_flow_test.go" status="todo">
+            <md><script type="text/plain">
+Depends on P1 (hooks no longer post to `/api/rpc`).
+1. `server.go`: delete the `newEventGate` line and the `/api/rpc` `mux.HandleFunc`; rewire `o.mgr.SetEventSink` to a sink func that calls `hub.Broadcast(ev)` AND records into `buf` (keep `/api/debug/recent` populated — D-3). Drop now-unused params/imports.
+2. Delete `rpc_ingest.go`, `rpc_ingest_test.go`, `eventgate.go`, `eventgate_test.go`.
+3. `event_flow_test.go`: remove `TestRelayDedupAcrossPaths`; keep the relay-fidelity / multi-backend-merge / slow-client tests. Add a `server_test.go` assertion that POST `/api/rpc` → 404.
+4. Grep-confirm `bus.DeriveDocChanged` is no longer referenced in auto-ui (AC-7); confirm autowatch ingest tests assert the derived `data.path` shape before relying on the deletion.
+5. **End-to-end check + Verify:** `cd auto-ui && go build ./... && go test -race ./... && go vet ./...` green; a relayed event still reaches a WS client once (AC-4/AC-6). **Commit** via /contextual-commit.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="3" title="Docs" files="auto-ui/CLAUDE.md,docs/auto-bus-spec.md" status="todo">
+            <md><script type="text/plain">
+Depends on P2.
+1. `auto-ui/CLAUDE.md`: rewrite Live-updates — hooks post to autowatch; auto-ui receives events ONLY via the relay; `/api/rpc` + eventGate removed; `/api/debug/recent` sourced from relayed events.
+2. `docs/auto-bus-spec.md` §5: hooks POST to autowatch's hook-ingest as the single ingest; auto-ui no longer ingests/derives locally.
+3. **Verify:** pd-lint clean; docs read consistently. **Commit** via /contextual-commit.
+            </script></md>
+          </pd-phase>
+
+        </pd-stepper>
+      </pd-section>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **P1** → AC-1, AC-2, AC-3 pass; AC-4 (E2E via relay) confirmed manually (relay already wired by 045).
+- **P2** → AC-5, AC-6, AC-7 pass; `/api/rpc` returns 404; suites green.
+- **P3** → docs reflect single-ingest shape; pd-lint clean.
+- Done when AC-1…AC-7 pass, all three module suites (`auto-cli`, `auto-ui`, `auto-watch`) are green, and the hook never breaks the agent when the daemon is down.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
