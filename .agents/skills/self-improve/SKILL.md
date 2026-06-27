@@ -16,4 +16,4 @@ metadata:
 - Always pass `focus` — it is required.
 - `codebase-context` is optional; omit unless the user provides specific context.
 - The program produces up to 3 PRs. Report their URLs and status when done.
-- If OpenProse is not available, read the program index and its service files from the `scripts` directory and execute the phases manually as subagents.
+- You MUST invoke the open-prose skill to run the self-improve program. If the Skill tool invocation for open-prose returns an error (tool not found, skill not loaded), report the error to the user and stop — do not attempt to execute manually. The open-prose VM provides contract enforcement and DAG orchestration that cannot be replicated by manual subagent execution.
