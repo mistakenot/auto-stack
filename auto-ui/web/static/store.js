@@ -592,19 +592,17 @@ export function initStore() {
     }
   });
 
-  // ping subscription: append to events ONLY (so /debug's event log keeps its
-  // live ping rows). This is the only other on(...) in store.js and is NOT a
-  // doc.changed subscription, so the AC-5 grep gate stays "only store.js".
-  on("ping", (params) => {
-    dispatch({
-      type: "events/append",
-      event: { t: Date.now(), method: "ping", params },
-    });
-  });
-
-  // Liveness: subscribe to all bus notifications and record (project, branch) receipt time.
-  // Subscription lives here in store.js — the 029 grep gate forbids it elsewhere.
+  // Liveness + debug event log: subscribe to all bus notifications. Record
+  // (project, branch) receipt time for liveness, and append non-doc.changed
+  // events to the debug event ring (doc.changed is already appended by its
+  // own on() handler above — appending here too would double it).
   onAny(({ method, params }) => {
+    if (method !== "doc.changed") {
+      dispatch({
+        type: "events/append",
+        event: { t: Date.now(), method, params },
+      });
+    }
     if (params && params.branch && params.project) {
       const b = params.branch;
       if (b !== "main" && b !== "master") {

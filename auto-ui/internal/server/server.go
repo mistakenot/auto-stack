@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"io/fs"
 	"net/http"
@@ -94,13 +93,6 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 
 	// Shared dispatcher routes client->server RPC calls over WebSocket.
 	d := newDispatcher()
-	d.Register("ping", func(_ context.Context, params json.RawMessage) (any, error) {
-		var p struct {
-			Seq int64 `json:"seq"`
-		}
-		_ = json.Unmarshal(params, &p)
-		return map[string]any{"pong": true, "seq": p.Seq}, nil
-	})
 	// Doc/project reads are pure proxies to the resolved backend — the UI owns
 	// no local copy of this data. A nil manager yields a clear error, never a
 	// local-filesystem read.

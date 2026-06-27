@@ -2,21 +2,14 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
-	"sync/atomic"
-	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/mistakenot/auto-shared/bus"
 )
-
-// pingInterval is how often the server pushes an unsolicited `ping` notification
-// to each connected client (the POC's server->client push primitive).
-const pingInterval = time.Second
 
 // outboundBuffer bounds the per-connection write queue. If a client stalls and
 // the buffer fills, the connection is dropped rather than letting the ticker and
@@ -45,7 +38,6 @@ func handleWSWithHub(hub *bus.Hub, d *Dispatcher) http.HandlerFunc {
 		defer unsub()
 
 		go s.writePump(ctx)
-		go s.pingLoop(ctx)
 
 		s.readLoop(ctx, d)
 		_ = c.Close(websocket.StatusNormalClosure, "")
@@ -56,7 +48,7 @@ func handleWSWithHub(hub *bus.Hub, d *Dispatcher) http.HandlerFunc {
 // not safe for concurrent writers, so EVERY outbound message — RPC responses
 // and server-push notifications alike — is funnelled through `out` and written
 // by the single writePump goroutine. cancel is the connection's context cancel:
-// calling it unwinds writePump, pingLoop, and readLoop, then handleWS closes.
+// calling it unwinds writePump and readLoop, then handleWS closes.
 //
 // session implements bus.Sink so the hub can deliver broadcast events.
 type session struct {
@@ -64,7 +56,6 @@ type session struct {
 	ctx    context.Context
 	out    chan any
 	cancel context.CancelFunc
-	seq    atomic.Int64 // monotonic ping sequence
 }
 
 func newSession(c *websocket.Conn, ctx context.Context, cancel context.CancelFunc) *session {
@@ -94,11 +85,6 @@ func (s *session) enqueue(ctx context.Context, msg any) bool {
 	}
 }
 
-// notify enqueues an id-less JSON-RPC notification (server push).
-func (s *session) notify(ctx context.Context, method string, params any) bool {
-	return s.enqueue(ctx, rpcRequest{JSONRPC: "2.0", Method: method, Params: mustRaw(params)})
-}
-
 // writePump is the sole writer for the connection.
 func (s *session) writePump(ctx context.Context) {
 	for {
@@ -107,28 +93,7 @@ func (s *session) writePump(ctx context.Context) {
 			return
 		case msg := <-s.out:
 			if err := wsjson.Write(ctx, s.c, msg); err != nil {
-				s.cancel() // connection gone; unwind pingLoop/readLoop promptly
-				return
-			}
-		}
-	}
-}
-
-// pingLoop pushes a `ping` notification every pingInterval — the server->client
-// push primitive the POC demonstrates.
-func (s *session) pingLoop(ctx context.Context) {
-	t := time.NewTicker(pingInterval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			n := s.seq.Add(1)
-			if !s.notify(ctx, "ping", map[string]any{
-				"seq": n,
-				"ts":  time.Now().UnixMilli(),
-			}) {
+				s.cancel() // connection gone; unwind readLoop promptly
 				return
 			}
 		}
@@ -153,16 +118,6 @@ func (s *session) readLoop(ctx context.Context, d *Dispatcher) {
 			}
 		}
 	}
-}
-
-// mustRaw marshals params for embedding in an rpcRequest. Inputs are server-built
-// maps that always marshal cleanly; on the impossible error, send null params.
-func mustRaw(v any) json.RawMessage {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return json.RawMessage("null")
-	}
-	return b
 }
 
 // isCloseErr reports whether err is an ordinary connection close (normal or

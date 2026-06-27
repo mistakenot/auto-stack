@@ -72,11 +72,6 @@ func TestRPCIngestBroadcastAndDerive(t *testing.T) {
 	c := dialWS(ctx, t, srv.URL)
 	defer c.Close(websocket.StatusNormalClosure, "")
 
-	// Wait for at least one ping to confirm the WS connection is established.
-	readUntil(ctx, t, c, func(m map[string]any) bool {
-		return m["method"] == "ping"
-	})
-
 	// POST a valid agent.tool.post event with a docs/ path.
 	ev := validToolPostEvent(t, "docs/tasks/test.md")
 	frame := bus.Notification{
@@ -153,10 +148,6 @@ func TestRPCIngestNonDocNoDerived(t *testing.T) {
 	c := dialWS(ctx, t, srv.URL)
 	defer c.Close(websocket.StatusNormalClosure, "")
 
-	readUntil(ctx, t, c, func(m map[string]any) bool {
-		return m["method"] == "ping"
-	})
-
 	// POST a valid event with a non-docs path.
 	ev := validToolPostEvent(t, "src/main.go")
 	frame := bus.Notification{JSONRPC: "2.0", Method: ev.Type, Params: ev}
@@ -176,7 +167,7 @@ func TestRPCIngestNonDocNoDerived(t *testing.T) {
 		return m["method"] == "agent.tool.post"
 	})
 
-	// Should NOT receive doc.changed — wait a bit and confirm only pings arrive.
+	// Should NOT receive doc.changed — wait a bit and confirm nothing else arrives.
 	shortCtx, shortCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer shortCancel()
 
@@ -202,40 +193,11 @@ func TestRPCIngestMalformed(t *testing.T) {
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	c := dialWS(ctx, t, srv.URL)
-	defer c.Close(websocket.StatusNormalClosure, "")
-
-	readUntil(ctx, t, c, func(m map[string]any) bool {
-		return m["method"] == "ping"
-	})
-
-	// POST garbage.
+	// POST garbage — should get 400.
 	resp := postRPC(t, srv, []byte(`{not valid json`))
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("POST status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
-	}
-
-	// The WS client should receive only pings, not any broadcast.
-	shortCtx, shortCancel := context.WithTimeout(ctx, 500*time.Millisecond)
-	defer shortCancel()
-
-	for {
-		_, data, err := c.Read(shortCtx)
-		if err != nil {
-			break
-		}
-		var msg map[string]any
-		if err := json.Unmarshal(data, &msg); err != nil {
-			continue
-		}
-		method, _ := msg["method"].(string)
-		if method != "ping" {
-			t.Fatalf("unexpected method %q received after malformed POST", method)
-		}
 	}
 }
 

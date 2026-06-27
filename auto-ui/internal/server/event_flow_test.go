@@ -214,11 +214,12 @@ func idOf(m map[string]any) string {
 	return s
 }
 
-// waitPing drains until the first server `ping`, proving the WS is connected and
-// hub-subscribed (hub.Subscribe runs before pingLoop starts).
-func waitPing(ctx context.Context, t *testing.T, c *websocket.Conn) {
-	t.Helper()
-	readUntil(ctx, t, c, func(m map[string]any) bool { return m["method"] == "ping" })
+// waitSubscribed gives the server goroutine time to reach hub.Subscribe after
+// the WebSocket handshake completes. hub.Subscribe is the first thing the
+// handler does after Accept, but goroutine scheduling means the client's Dial
+// can return before it runs.
+func waitSubscribed() {
+	time.Sleep(50 * time.Millisecond)
 }
 
 // TestRelayFidelity (AC-2): a backend-broadcast event reaches the WS client as a
@@ -233,7 +234,7 @@ func TestRelayFidelity(t *testing.T) {
 
 	c := dialWS(ctx, t, srv.URL)
 	defer c.Close(websocket.StatusNormalClosure, "")
-	waitPing(ctx, t, c)
+	waitSubscribed()
 
 	want := relayEvent("doc.changed", "evt-ac2", "host-a")
 	want.Project = "proj-1"
@@ -266,7 +267,7 @@ func TestRelayMultiBackendMerge(t *testing.T) {
 
 	c := dialWS(ctx, t, srv.URL)
 	defer c.Close(websocket.StatusNormalClosure, "")
-	waitPing(ctx, t, c)
+	waitSubscribed()
 
 	fleet.backendFor("host-a").broadcast(relayEvent("doc.changed", "evt-a", "host-a"))
 	fleet.backendFor("host-b").broadcast(relayEvent("doc.changed", "evt-b", "host-b"))
@@ -301,7 +302,7 @@ func TestRelayDedupAcrossPaths(t *testing.T) {
 
 	c := dialWS(ctx, t, srv.URL)
 	defer c.Close(websocket.StatusNormalClosure, "")
-	waitPing(ctx, t, c)
+	waitSubscribed()
 
 	dup := relayEvent("relay.test", "dup-1", "host-a")
 
@@ -349,7 +350,7 @@ func TestRelayNoReDerivation(t *testing.T) {
 
 	c := dialWS(ctx, t, srv.URL)
 	defer c.Close(websocket.StatusNormalClosure, "")
-	waitPing(ctx, t, c)
+	waitSubscribed()
 
 	raw := relayEvent("agent.tool.post", "raw-1", "host-a")
 	raw.Project = "proj-1"
@@ -395,7 +396,7 @@ func TestRelaySlowClientDropped(t *testing.T) {
 	// notification's id on a channel.
 	healthy := dialWS(ctx, t, srv.URL)
 	defer healthy.Close(websocket.StatusNormalClosure, "")
-	waitPing(ctx, t, healthy)
+	waitSubscribed()
 	healthyIDs := make(chan string, 4096)
 	go func() {
 		for {
@@ -418,7 +419,7 @@ func TestRelaySlowClientDropped(t *testing.T) {
 	// Slow client connects but never reads again after this point.
 	slow := dialWS(ctx, t, srv.URL)
 	defer slow.Close(websocket.StatusNormalClosure, "")
-	waitPing(ctx, t, slow)
+	waitSubscribed()
 
 	// Flood the hub via the synchronous local /api/rpc ingest path with sizable,
 	// uniquely-ided events. (The relay can't carry a flood: a backend peer's own

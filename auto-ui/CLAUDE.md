@@ -51,7 +51,7 @@ make build && ./bin/auto ui serve
 - `internal/server/` — HTTP handler: `/api/hello`, `/api/ws`, plus static file server
   - `rpc.go` — transport-agnostic JSON-RPC 2.0 dispatcher (request/response + notifications)
   - `ws.go` — `/api/ws` WebSocket handler (coder/websocket): per-connection session with a
-    single write pump, a 1s server-push `ping` notification, and a client-callable `ping` RPC
+    single write pump and hub-relayed server-push notifications
 - `web/` — build-tag split asset delivery (`embed_prod.go` embeds, `embed_dev.go` reads from disk)
 - `web/static/` — no-build Preact+htm SPA (index.html, app.js, router.js)
   - `rpc.js` — singleton JSON-RPC 2.0 client over WebSocket (`call`/`on`/`onAny`/`onStatus`); derives
@@ -150,7 +150,7 @@ silently regress.
   `eval "window.__autoui.events.filter(e=>e.method==='doc.changed')"`.
 - **`#/debug`** (`debug.js`) — a screenshot-able read-only diagnostics page with four
   `data-testid`-tagged sections: `debug-connection` (status/reconnects/`/api/hello` mode/host),
-  `debug-event-log` (live `on("doc.changed"/"ping")` from mount + backfill from `window.__autoui`),
+  `debug-event-log` (live bus events from mount + backfill from `window.__autoui`),
   `debug-error-log` (`recentErrors()`), and `debug-current-state` (reads the `uistate.js` snapshot).
   The route is always reachable; only the pre-mount event backfill depends on `?debug=1`.
 
