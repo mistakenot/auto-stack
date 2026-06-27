@@ -346,7 +346,7 @@ Depends on P1.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Proxy + clean break (atomic)" files="auto-ui/internal/server/proxy.go,auto-ui/internal/server/proxy_test.go,auto-ui/internal/server/server.go,auto-ui/internal/server/raw.go,auto-ui/internal/server/docs.go,auto-ui/internal/server/project.go,auto-ui/internal/server/planmeta.go,auto-ui/internal/server/planmeta_test.go,auto-ui/internal/server/docs_test.go,auto-ui/internal/server/raw_test.go,auto-ui/internal/server/project_test.go" status="todo">
+        <pd-phase n="3" title="Proxy + clean break (atomic)" files="auto-ui/internal/server/proxy.go,auto-ui/internal/server/proxy_test.go,auto-ui/internal/server/server.go,auto-ui/internal/server/raw.go,auto-ui/internal/server/docs.go,auto-ui/internal/server/project.go,auto-ui/internal/server/planmeta.go,auto-ui/internal/server/planmeta_test.go,auto-ui/internal/server/docs_test.go,auto-ui/internal/server/raw_test.go,auto-ui/internal/server/project_test.go" status="done">
           <md><script type="text/plain">
 Depends on P2. **Single atomic change** — proxy-in + local-out together so the build stays green.
 1. Add `proxy.go`: `proxyCall(mgr, method) Handler` (resolve peer by optional `host` param → `peer.Call` → return raw) and `handleDocRawProxy(mgr)` (call `doc.raw` → base64-decode `ContentBase64` → set `Content-Type` → write bytes).
