@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>041: dataplane-backbone-assurance</title>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "041",
+    "name": "dataplane-backbone-assurance",
+    "epic": "003-multi-host-architecture",
+    "status": "pending",
+    "created": "2026-06-27"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="041: dataplane-backbone-assurance" status="pending" pr="pending" generated="2026-06-27">
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+The multi-host backbone — the connection / coordination / message-passing data plane built across epic-003 Tasks 1–6 (028, 030, 031, 038, 039, 040, all MERGED) — has good *component-level* tests but cannot yet be trusted from a green CI run alone. The goal of this task is to close the gaps that stand between "the tests pass" and "I believe the backbone works without running it myself." An assurance review identified three RED (must-fix) gaps; this task addresses exactly those three. (Two YELLOW gaps — generative correlation testing and the end-to-end relay-seam test — are deferred, see Out of Scope.)
+
+- **G1 — The concurrency tests run with their oracle disabled.** `make test` is `go test ./...` with **no `-race`** (`Makefile` test target), and CI runs exactly that (`.github/workflows/ci.yml:33` → `make test`). The data plane is a goroutine + bounded-channel + mutex design (`auto-shared/rpc/peer.go`: read loop, write pump, `pending` map under `sync.Mutex`, shutdown via `sync.Once`). The concurrency tests exist (`TestConcurrentCallsNoCrosstalk`, the pending-call release matrix) but the race detector — the *primary* oracle for that whole bug class — is never run in CI. A correlation/crosstalk data race can stay green forever.
+- **G2 — There is no liveness detection in the TCP/Unix transport, and GR-N8 makes that load-bearing.** `grep` confirms zero `keepalive` / `SetDeadline` / read-deadline / ping handling in `auto-shared/rpc/peer.go` or `auto-watch/internal/rpcserver/`. By committing to GR-N8 (connection-oriented, reliable, in-order transports — `docs/auto-bus-spec.md` §4), we made **liveness the only way to detect a dead peer**: on a reliable transport a peer whose process was killed / NAT-dropped / rebooted leaves a **half-open** connection that produces no read error until someone writes. Today nothing reaps it — a dead subscriber lingers in the hub's sink set (evicted only slowly/indirectly via drop-on-full, and only while events keep flowing) and a pending `Call` with a non-cancelling context hangs forever. This is the canonical "works in a 5-minute manual test, fails in production" failure. (Note: auto-ui's WebSocket path has a 1s ping per `docs/auto-bus-spec.md` §4.2; the new autowatch TCP/Unix RPC transport has no equivalent.)
+- **G3 — Conformance proves transport-invariance only for the trivial path.** The harness shape is right — `auto-shared/rpc/conformance.RunAcrossFixtures` runs a `Scenario` against pipe / Unix / TCP fixtures — but it runs **one** scenario (`echo-and-push`). Every *hard* coordination behavior (concurrent in-flight call correlation, connection-drop-mid-call, slow-consumer drop-on-full) is proven **pipe-only** in `auto-shared/rpc/peer_test.go`, never across Unix/TCP, which is exactly where connection-layer bugs live. A conn wrapper (`CountingConn`) exists in `conformance/fakes.go` but is **observational only** (it counts reads/writes); fault injection (close-mid-stream, blocking-write) is net-new code this task adds.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+Make a green CI run sufficient proof that the backbone's connection / coordination / message-passing works — so no manual run is needed. Scope is the three RED gaps plus the evidence wiring that converts "tests pass" into "tests would catch a break."
+
+- **G1 — Gate the race detector in CI, and stop excluding `auto-shared` from the gates.** Two coupled fixes, because today **`auto-shared` is absent from `PROJECTS` (Makefile:15)** so its concurrency tests (`peer_test.go`) run in *no* aggregate CI command at all — the premise "a green CI run proves the backbone works" cannot hold until this is closed:
+  - (a) **Add `auto-shared` to the standard test loop** so `go test ./...` over it runs in plain `make test` (the existing non-race coverage is finally gated).
+  - (b) **Add a dedicated `test-race` target** running `go test -race ./...` over the concurrency-bearing modules (`auto-shared`, `auto-watch`) and wire it as its **own required CI step** (`CGO_ENABLED=1`). The `-race` pass is kept *separate* from plain `make test` (not folded in), so a cgo-less local env still runs the normal suite fast; CI runs both, and a green CI run then means `auto-shared` is exercised **and** race-free.
+- **G2 — Add application-level liveness to the connection-oriented transport and prove dead peers are reaped.** Give `rpc.Peer` an application-level liveness mechanism — a periodic ping plus a read deadline, mirroring auto-ui's WebSocket 1s-ping model (§4.2) — so a half-open connection is detected within a bounded time, pending callers are released (connection death triggers `shutdown`, which fails waiters), and a dead subscriber is deregistered from the hub. Application-level (rather than OS `SetKeepAlive`) was chosen so the same mechanism covers all three conformance fixtures including the in-process pipe, and so the timeout is testable with fake clocks/conns. Exact ping interval and deadline values are tuned in /new-solution.
+- **G3 — Deepen the conformance suite to prove transport-invariance of the hard behaviors.** Make the scenario list data-driven and run each across all three fixtures (pipe/Unix/TCP): (1) N concurrent in-flight calls correlate with no crosstalk; (2) connection dropped mid-call releases pending callers and empties the `pending` map (via a new fault-injecting conn wrapper added to the harness — `CountingConn` today only counts); (3) a slow consumer triggers drop-on-full while the broadcaster keeps serving other peers. Plus one decoder test for split/coalesced frames (a `json.Decoder` property, not a per-transport matrix — GR-N8/§4).
+- **Evidence that substitutes for a manual run.** CI emits a conformance report artifact (scenarios × transports, pass/fail). A **one-time** mutation kill-test pass proves detection power: inject (a) a swapped `pending`-map key → crosstalk, (b) a removed drop-on-full → hang, (c) a disabled liveness reap → leaked peer; each must turn the suite red, with the red runs captured in `artifacts/` and then reverted. (Decision: one-time captured evidence, not a permanent CI gate — clears the RED bar without ongoing harness/runtime cost; promote to a gate later if the backbone starts churning.)
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="goals" status="resolved" priority="p1" title="Race gate integration conflicts with cgo decoupling and current gate structure">
+        <pd-comment by="review">I verified: Requirements §G1 says add `verify-race` target and "compose it into `make test` so it blocks merge". Verification gaps explicitly say the race target "must stay decoupled from plain `make test`" so cgo-less local envs still run normal suite (AC-1 also requires CGO_ENABLED=1). CI currently does a single `make test` step with no CGO (ci.yml:33). These are in tension; the exact wiring (new top-level target invoked from CI job vs. conditional inside make test; how non-cgo `make test` remains fast) is not specified and the wording is contradictory. Resolve the integration model before solution. Also: `make test` (and check/vet/lint) only iterates PROJECTS (Makefile:15) which **omits auto-shared entirely** (I read the list and the test: loop at 129-132). The "concurrency-bearing packages" are not exercised by any aggregate green-CI command today. Adding auto-shared (and the race gate) must be explicit.</pd-comment>
+        <pd-comment by="author">Valid — the "compose into make test" wording contradicted the cgo-decoupling gap. Settled on one model and rewrote G1 (Goals) and the Test Strategy layer-1 to match: (a) `auto-shared` is added to the standard test loop so its existing tests are gated at all; (b) a dedicated `test-race` target (`go test -race` over `auto-shared`+`auto-watch`, `CGO_ENABLED=1`) runs as its **own required CI step**, kept **separate** from plain `make test` so cgo-less local runs stay fast. "Compose into make test" is removed. AC-10 now references `make test` (incl. auto-shared) + the new `make test-race`. The exact Makefile/ci.yml wiring is the Solution tab's job.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **The two YELLOW assurance gaps.** Generative/model-based correlation testing (PBT over codec round-trips + a `Call`/`Notify`/`Close` interleaving model) and the end-to-end relay-seam test (hook → ingest → derive → broadcast → fake-subscriber-receives) are higher-confidence upgrades but not required to clear the RED bar. Track them as a follow-up task.
+- **Unreliable-transport hardening.** Per GR-N8, reorder / duplication / corruption / byte-loss handling is explicitly out of scope — those classes are deleted from the model, not tested.
+- **The auto-ui consumer half (epic-003 Tasks 7–10).** Multi-host aggregation, proxy/backends config, the SPA, and the final hook cut-over are separate tasks; this task hardens the per-host backbone they will build on.
+- **Reconnection / resubscribe semantics** beyond dead-peer reaping (no replay is promised per §5; clients re-fetch via RPC). Worth a test when Task 8 lands, not here.
+- **New product behavior or RPC methods.** This is assurance hardening of existing merged surface, plus the minimal transport change required for G2.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [x] **Scope split:** Keep all three (G1+G2+G3) in this one task as backbone hardening — single PR, single confidence goal.
+- [x] **G2 mechanism:** Application-level periodic ping + read deadline in `rpc.Peer` (mirrors the WebSocket ping model), chosen over OS-level TCP keepalive so it covers the in-process pipe fixture and is testable. Interval/deadline values tuned in /new-solution.
+- [x] **Evidence bar:** One-time captured mutation kill-test evidence in `artifacts/` (inject → record red → revert), not a permanent CI gate.
+- [x] **`Call` default deadline:** Resolved by the G2 mechanism — connection-liveness reap triggers `shutdown` which releases all pending callers, so a hung `Call` on a dead peer is bounded by the read deadline regardless of caller context. A separate per-call default timeout is unnecessary; caller context discipline remains documented as a constraint. (Confirm in /new-solution.)
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+The bar for this task is **"a green CI run is sufficient proof the backbone works"** — no manual run. That means every claim is backed by an automated, CI-gated assertion, plus one-time mutation evidence that the suite actually *catches* a coordination break.
+
+Three layers, all already-established tooling (`go test`, the `RunAcrossFixtures` conformance harness from Task 030 — GR-N6 in-process tier, GR-N1 zero new deps):
+
+1. **Race-gated unit/integration tests (G1).** First, **`auto-shared` is added to the standard test loop** — it is absent from `PROJECTS` (Makefile:15) today, so its concurrency tests run in no aggregate gate at all. Then a dedicated `test-race` target runs `go test -race ./...` over the concurrency-bearing modules (`auto-shared`, `auto-watch`) as its **own required CI step** (kept separate from plain `make test` so a cgo-less local env stays fast). The race detector is the *primary oracle* for the coordination layer, so this is the load-bearing gate.
+2. **Transport-invariant conformance (G3).** The hard coordination behaviors are promoted from pipe-only unit tests into `Scenario`s run across **all three** fixtures (pipe/unix/tcp) via `RunAcrossFixtures`. Fault injection (close-mid-stream, blocking-write) is added to the harness — net-new, since `CountingConn` is observational only. Mirrors Task 030's rule: **assert an observable (frame / error code / counter delta) on a bounded timeout — never a poll-to-settle.**
+3. **Liveness tests (G2).** New unit tests for the keepalive mechanism (half-open → bounded reap; healthy-idle → no false reap) at the `rpc.Peer` layer, plus a server-level test that a dead subscriber's hub sink is reaped (no leak).
+
+**Evidence wiring:** CI emits a conformance pass/fail report (scenarios × transports). A **one-time** mutation pass (inject → record red → revert) proves detection power and is captured in `artifacts/`; it is not a permanent CI gate (per the resolved Evidence-bar decision).
+
+**Out of scope for verification:** unreliable-transport classes (reorder/dup/corruption/loss) are deleted per GR-N8; the binary-tier conformance harness (autowatch↔auto-ui) and the YELLOW generative/relay-seam tests are deferred.
+        </script></md>
+
+        <pd-mermaid caption="Verification layers for the backbone">
+flowchart TD
+  subgraph CI["CI-gated (green = trustworthy)"]
+    R["test-race: go test -race<br/>auto-shared + auto-watch"]
+    U["Unit tests<br/>peer_test.go (incl. new liveness)"]
+    C["Conformance: RunAcrossFixtures"]
+    S["Server test: dead-peer sink reap"]
+  end
+  C --> P1["pipe"]
+  C --> P2["unix"]
+  C --> P3["tcp"]
+  P1 & P2 & P3 --> SC["scenarios:<br/>concurrent-correlation<br/>drop-mid-call<br/>slow-consumer drop-on-full"]
+  M["One-time mutation kill-tests<br/>(artifacts/, not gated)"] -.proves detection.-> U
+  M -.proves detection.-> C
+</pd-mermaid>
+      </pd-section>
+
+      <pd-thread anchor="test-strategy" status="resolved" priority="p2" title="CountingConn described as existing 'fault-injection seam' but is observational only">
+        <pd-comment by="review">In goals G3 and test-strategy: "via the existing `CountingConn` fault seam", "Fault injection (close-mid-stream, blocking-write) is added to the harness — net-new, since `CountingConn` is observational only." I read auto-shared/rpc/conformance/fakes.go:134-157 (CountingConn) and 221-386 (factories). It only increments atomic Read/Write/Accept counts in Read/Write/Accept; no fault modes, no Close injection, no blocking write seam. The wrapper pattern is reusable, but the "fault-injection seam" does not yet exist in the code — fault behavior will be net-new code (new type or extended CountingConn). Update the grounding claim for accuracy.</pd-comment>
+        <pd-comment by="author">Correct. Fixed the wording in three places: Problem §G3 (`CountingConn` is now described as "observational only … fault injection is net-new code this task adds"), Goals §G3 ("via a new fault-injecting conn wrapper — `CountingConn` today only counts"), and the Test Strategy already stated it was net-new. context.md's bullet was already accurate ("They cannot inject faults … Fault injection is net-new for G3"); resolved its companion comment there too.</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="test-strategy" status="resolved" priority="p1" title="auto-shared (and its concurrency tests) are excluded from all Makefile/CI gates today">
+        <pd-comment by="review">I checked: Makefile:15 PROJECTS := auto-doc ... auto-cli (no auto-shared); test: (129), fmt-check, vet, lint, vulncheck all iterate only PROJECTS and `cd $$d && go test ./...`. .github/workflows/ci.yml:32 runs only `make test`. go.work includes ./auto-shared but the aggregate "green" commands never visit it. Therefore TestConcurrentCallsNoCrosstalk, the pending matrix, stalled-reader etc. (peer_test.go) have never been part of CI. G1's premise ("a green CI run is sufficient proof") cannot hold until auto-shared is added to the loops + the race target is wired. Context.md explicitly notes the omission ("auto-shared is **not** in PROJECTS"). This must be closed by the task.</pd-comment>
+        <pd-comment by="author">Sharp catch — this was the hidden blocker under G1's premise. Adding `auto-shared` to the standard test loop is now an explicit (a) sub-goal of G1, called out in Test Strategy layer-1, and folded into AC-10's "`make test` (now including `auto-shared`)". Whether to add it to `PROJECTS` wholesale (which also pulls it into fmt-check/vet/lint/vulncheck) or to a narrower test-only loop is a Solution-tab decision; the requirement that its concurrency tests join the aggregate gate is now firm.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="Race detector is gated in CI and catches a real race" phases="1" tests="Makefile, .github/workflows/ci.yml">
+          <md><script type="text/plain">
+**Given** a `test-race` target running `go test -race ./...` scoped to `auto-shared` and `auto-watch`, wired as a required CI step (`CGO_ENABLED=1`),
+**When** CI runs on a PR,
+**Then** the step passes on the current code, fails the build on any data race, **and** a deliberately-introduced unsynchronized access to `Peer.pending` makes it red (recorded as kill-test evidence per AC-9).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="Half-open connection is reaped within a bounded time" phases="2" tests="auto-shared/rpc/peer_test.go">
+          <md><script type="text/plain">
+**Given** a connected `Peer` pair with keepalive enabled and a fault conn that silently swallows bytes (half-open: TCP up, peer unresponsive),
+**When** no frames arrive for longer than the configured timeout,
+**Then** within a bounded multiple of that timeout the local `Peer.Serve` returns, every pending `Call` returns `ErrClosed` (not on an unrelated caller deadline), and subsequent `Call`/`Notify` return `ErrClosed`. Asserted on a bounded test timeout, not by quiescence.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="Keepalive does not false-positive on a healthy idle connection" phases="2" tests="auto-shared/rpc/peer_test.go">
+          <md><script type="text/plain">
+**Given** a connected `Peer` pair with keepalive enabled and no application traffic,
+**When** the connection stays healthy for several keepalive intervals,
+**Then** periodic pings keep it alive, `Serve` does **not** return, and a subsequent `Call` still succeeds — proving liveness pings prevent a false reap. Asserted via an observable (a successful late Call / received ping count), bounded.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="A dead subscriber's hub sink is reaped (no leak)" phases="3" tests="auto-watch/internal/rpcserver/server_test.go">
+          <md><script type="text/plain">
+**Given** an autowatch `rpcserver` with a peer that has called `bus.subscribe` (sink registered on the hub),
+**When** that peer's connection goes half-open,
+**Then** within the keepalive bound the peer's `Serve` returns, `subscription.teardown()` fires (made a `defer`), the hub's sink count returns to its pre-subscribe baseline, and a subsequent `hub.Broadcast` does not target the dead peer. Asserted via hub sink-count delta, bounded.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="Concurrent call correlation holds across all three transports" phases="4" tests="auto-shared/rpc/conformance/conformance_test.go">
+          <md><script type="text/plain">
+**Given** the conformance harness over pipe, unix, and tcp,
+**When** N concurrent `Call`s run against an identity handler,
+**Then** on every transport each response correlates to its own request with zero crosstalk, under `go test -race`. (Promotes `TestConcurrentCallsNoCrosstalk` from pipe-only to transport-invariant.)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Connection drop mid-call releases pending callers across all three transports" phases="4" tests="auto-shared/rpc/conformance/conformance_test.go">
+          <md><script type="text/plain">
+**Given** a fault-injecting fixture over pipe, unix, and tcp,
+**When** the connection is severed while a `Call` is in flight,
+**Then** on every transport the pending caller returns `ErrClosed` promptly (bounded timeout) and the `pending` map is empty afterward (no leaked waiter).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="Slow consumer triggers drop-on-full without blocking the producer, across all three transports" phases="4" tests="auto-shared/rpc/conformance/conformance_test.go">
+          <md><script type="text/plain">
+**Given** a fixture whose consumer stalls (a blocking-write fault conn) over pipe, unix, and tcp,
+**When** the producer pushes beyond the bounded outbound buffer,
+**Then** on every transport the slow connection is dropped (`ErrClosed`) and the producer never blocks — the documented at-most-once / drop-on-full application policy (bus-spec §5). Asserted via the producer's error and a bounded timeout, never quiescence.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="Codec decodes split and coalesced frames correctly" phases="4" tests="auto-shared/rpc/codec_test.go">
+          <md><script type="text/plain">
+**Given** the NDJSON codec,
+**When** a single frame is delivered one byte at a time, and when two frames arrive coalesced in a single read,
+**Then** `Decode` yields exactly one correct value per frame in both cases — locking the `json.Decoder` framing property GR-N8 §4 relies on (a codec property, asserted once, not a per-transport matrix).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="Mutation kill-tests prove the suite catches coordination breaks" phases="5" tests="docs/tasks/041-dataplane-backbone-assurance/artifacts/">
+          <md><script type="text/plain">
+**Given** the hardened suite,
+**When** each of three mutations is injected one at a time — (a) swapped/duplicated `pending`-map key → crosstalk, (b) removed drop-on-full → producer hang, (c) disabled liveness reap → leaked peer / non-returning `Serve`,
+**Then** a specific named test or conformance scenario turns red for each mutation, the red run output is captured in `docs/tasks/041-dataplane-backbone-assurance/artifacts/`, and the mutation is reverted (one-time evidence, not a permanent gate).
+          </script></md>
+        </pd-ac>
+
+        <pd-thread anchor="AC-9" status="resolved" priority="p3" title="Mutation artifacts directory does not exist in the task folder">
+          <pd-comment by="review">AC-9 requires capturing red run output in `docs/tasks/041-dataplane-backbone-assurance/artifacts/`. Current task folder (list_dir) contains only context.md + plan.html; no artifacts/ yet. Solution/plan must create it (or the evidence files) and commit the captured red outputs as documentation that the suite detects the injected faults. Revert mutations after capture.</pd-comment>
+          <pd-comment by="author">Created `artifacts/` with a README that names the three expected evidence files (`mutation-pending-key.txt`, `mutation-no-drop-on-full.txt`, `mutation-no-liveness-reap.txt`). Execution captures each red run there, then reverts the mutation.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-10" title="No regressions and guard rails upheld" phases="1,2,3,4,5" tests="auto-shared/rpc/peer_test.go, auto-shared/rpc/conformance/conformance_test.go, auto-watch/internal/rpcserver/server_test.go">
+          <md><script type="text/plain">
+**Given** all changes,
+**When** the full `make test` (now including `auto-shared`), the new `make test-race`, `make vet`, and per-module `go build ./...` run,
+**Then** every existing test still passes, **no new runtime dependency** is added (GR-N1 — stdlib only), method handlers remain transport-free (GR-N3), and keepalive is **opt-in** so existing callers/tests that don't enable it are behaviorally unchanged.
+          </script></md>
+        </pd-ac>
+
+      </pd-section>
+
+      <pd-thread anchor="acceptance-criteria" status="rejected" priority="p2" title="All &lt;pd-ac&gt; have empty phases=&quot;&quot; tests=&quot;&quot; placeholders">
+        <pd-comment by="review">Every &lt;pd-ac id="AC-N"&gt; (AC-1 through AC-10) currently has phases="" tests="". Per review process, when Solution and Plan tabs are written these must be populated with accurate phase names and test locations (e.g. phases="3" tests="auto-shared/rpc/peer_test.go:xxx, conformance_test.go"). Leaving them blank now is expected for a requirements-only doc, but they are placeholders that must be resolved before the task is considered ready to execute (traceability requirement in the skill). Verify backfill matches the execution steps in Plan.</pd-comment>
+        <pd-comment by="author">Rejecting as working-as-intended: the new-solution `tab-verification` guideline explicitly says "Leave `phases` and `tests` attributes empty — the Plan stage backfills these with traceability data." Empty attributes at the Verification stage are correct, not a defect. The reviewer's own note concedes this is "expected for a requirements-only doc." The backfill-matches-execution check is a valid gate, but it belongs to `/new-plan`, not this stage — no doc change warranted now.</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="AC-9" status="resolved" priority="p3" title="Mutation artifacts directory does not exist in the task folder">
+        <pd-comment by="review">AC-9 requires capturing red run output in `docs/tasks/041-dataplane-backbone-assurance/artifacts/`. I listed the task dir: only context.md + plan.html (no artifacts/ subdir, no .gitkeep). Other tasks (e.g. 025, 026) create artifacts/ + evidence/ when they capture conformance output. The plan must either create the dir or the solution must document how the captured logs are committed (plain files are fine). Trivial but needed for the "one-time evidence" contract.</pd-comment>
+        <pd-comment by="review">Dup of the properly placed thread right after the AC-9 &lt;pd-ac&gt; element inside acceptance-criteria. Resolving this copy.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="verification-gaps" title="Known Gaps & Risks">
+        <md><script type="text/plain">
+- **Generative correlation testing not included.** Correlation is asserted at fixed concurrency (AC-5), not via a property/model-based interleaving generator. That's the deferred YELLOW upgrade; AC-5 + the race gate clear the RED bar but a rare scheduling-dependent crosstalk could still escape. Documented, accepted for this task.
+- **Relay seam not tested end-to-end.** AC-4 proves the dead-sink is reaped, but the full hook → ingest → derive → broadcast → subscriber-receives chain is the deferred YELLOW relay-seam test. This task verifies the halves and the liveness, not the whole pipe.
+- **Mutation evidence is one-time, not gated.** Per the Evidence-bar decision, AC-9 proves detection power *now*; it can rot as code changes. Accepted trade-off; promote to a gate later if the backbone churns.
+- **Race detector requires CGO.** AC-1 needs `CGO_ENABLED=1` + a C toolchain. ubuntu-latest CI has gcc; `test-race` must stay decoupled from plain `make test` enough that a cgo-less local env can still run the normal suite. Risk: CI image change could silently drop cgo — mitigated by AC-1 asserting the gate is *required*.
+- **Fault-injection realism.** A "half-open" connection is simulated with a fault conn that swallows/blocks bytes, not a real network partition. Adequate under GR-N8 (intra-VPC, reliable transport — the modeled failure is process death / silent peer, exactly what the fault conn reproduces), but it is a model, not a live partition.
+- **Keepalive interval/timeout tuning:** daemon defaults are **15s ping / 45s reap timeout** (gentle, intra-VPC-appropriate). Values too aggressive risk false reaps under GC pauses / CI load. AC-3 guards the false-positive direction; AC-2 guards the detection direction. Tests use small values via an injected clock/short durations, not the daemon defaults.
+- **Full `PROJECTS` inclusion of `auto-shared` may surface pre-existing findings.** `auto-shared` has never been covered by `vet`/`lint`/`vulncheck`/`fmt-check`; adding it could turn those gates red on day one. Resolving any surfaced findings is folded into Phase 1 — this could modestly expand Phase 1's diff beyond the Makefile/CI wiring. If findings are large/unrelated, Phase 1 flags them for a separate hygiene task rather than absorbing unbounded scope.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Three workstreams, all stdlib-only (GR-N1), extending — not rebuilding — the Task 030/031/040 surface. End state:
+
+**G1 — CI race gate + un-exclude `auto-shared`.** `auto-shared` is added to `PROJECTS`, so every aggregate gate (`test`, `vet`, `lint`, `vulncheck`, `fmt-check`) finally covers it and its `peer_test.go` concurrency suite is gated. A new `test-race` target runs `go test -race ./...` over `RACE_PROJECTS = auto-shared auto-watch` with `CGO_ENABLED=1`, wired as its **own** required CI step — kept out of plain `make test` so cgo-less local runs stay fast. Because `auto-shared` was previously ungated, full inclusion may surface pre-existing `vet`/`lint`/`vulncheck` findings; resolving those is **in scope for Phase 1** (flagged in Known Gaps).
+
+**G2 — application-level liveness in `rpc.Peer` (opt-in).** A new `WithKeepAlive(interval, timeout)` option starts, inside `Serve`, two goroutines: a **ping sender** that enqueues a reserved-method notification (`$keepalive`) every `interval`, and a **read watchdog** that closes the connection (via the existing `shutdown`) if no inbound frame has arrived within `timeout`. `readLoop` stamps `lastActivity` after each successful `Decode`; the watchdog compares against it. `handleNotification` swallows the `$keepalive` method so it never reaches `onNotify`. Closing the conn makes the blocked `Decode` return → `Serve` returns → `shutdown` releases all pending callers as ErrClosed (already-built path). Default off, so existing callers/tests are unchanged; the autowatch daemon enables it when constructing peers (default **15s ping / 45s reap timeout**), and on the server side `subscription.teardown()` becomes a `defer` so a dead peer's hub sink is always reaped once `Serve` returns.
+
+**G3 — deepen the conformance suite.** A net-new `faultConn` wrapper (the harness has only the observational `CountingConn` today) adds two controllable faults: `Sever()` (close the underlying conn mid-stream) and a blocking-write stall (deterministically forces drop-on-full across unix/tcp, whose OS buffers otherwise absorb writes). A `FaultFixture` extension exposes the control handle to scenarios. Three new `Scenario`s — concurrent-call correlation, connection-drop-mid-call, slow-consumer drop-on-full — run across pipe/unix/tcp via `RunAcrossFixtures`. Two codec tests lock the `json.Decoder` framing property (byte-dribbled frame; two coalesced frames).
+
+**Evidence.** Execution injects three one-time mutations (swapped `pending` key; removed drop-on-full; disabled watchdog reap), captures the red runs into `artifacts/`, and reverts each.
+        </script></md>
+
+        <pd-api kind="option" name="WithKeepAlive" lang="go" path="auto-shared/rpc/peer.go">
+          <pd-member kind="func" sig="WithKeepAlive(interval, timeout time.Duration) Option">Opt-in liveness. interval = ping cadence; timeout = max inbound silence before the conn is reaped. Both must be &gt; 0; require interval &lt; timeout. Default (unset) = no keepalive, current behavior.</pd-member>
+          <pd-member kind="const" sig='pingMethod = "$keepalive"'>Reserved notification method; sent by the ping goroutine, swallowed by handleNotification (never forwarded to onNotify).</pd-member>
+          <pd-member kind="field" sig="lastActivity atomic.Int64">UnixNano of the last successful Decode; read by the watchdog, written in readLoop.</pd-member>
+        </pd-api>
+
+        <pd-api kind="harness" name="faultConn / FaultFixture" lang="go" path="auto-shared/rpc/conformance/fakes.go">
+          <pd-member kind="type" sig="type faultConn struct { net.Conn; ... }">Wraps a fixture conn. Sever() closes the underlying conn mid-stream; Stall()/Release() make Write block then unblock, simulating a stalled reader for drop-on-full.</pd-member>
+          <pd-member kind="interface" sig="FaultFixture interface { Fixture; Sever(); StallConsumer(); ReleaseConsumer() }">Fault-capable extension of Fixture; fault scenarios type-assert to it. Built by fault-capable variants of the pipe/unix/tcp factories.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="Makefile" change="edit">Add `auto-shared` to `PROJECTS` (gates test/vet/lint/vulncheck/fmt-check); add `test-race` target over `RACE_PROJECTS = auto-shared auto-watch` with CGO_ENABLED=1.</pd-file>
+          <pd-file path=".github/workflows/ci.yml" change="edit">Add a required "Race detector" step running `make test-race` after the existing `make test` step.</pd-file>
+          <pd-file path="auto-shared/rpc/peer.go" change="edit">Add `WithKeepAlive` option + fields; ping-sender and read-watchdog goroutines started in Serve; lastActivity stamping in readLoop; swallow `$keepalive` in handleNotification.</pd-file>
+          <pd-file path="auto-shared/rpc/peer_test.go" change="edit">Add TestKeepAliveReapsHalfOpen (bounded reap → pending ErrClosed) and TestKeepAliveNoFalseReapWhenHealthy (idle-but-alive → late Call succeeds).</pd-file>
+          <pd-file path="auto-shared/rpc/codec_test.go" change="edit">Add TestDecodeByteDribble and TestDecodeCoalescedFrames (json.Decoder framing property).</pd-file>
+          <pd-file path="auto-shared/rpc/conformance/fakes.go" change="edit">Add `faultConn` wrapper + fault-capable pipe/unix/tcp fixture factories returning a FaultFixture.</pd-file>
+          <pd-file path="auto-shared/rpc/conformance/conformance.go" change="edit">Add the `FaultFixture` interface (Fixture + Sever/StallConsumer/ReleaseConsumer).</pd-file>
+          <pd-file path="auto-shared/rpc/conformance/conformance_test.go" change="edit">Add concurrent-correlation, drop-mid-call, slow-consumer scenarios; run all three across pipe/unix/tcp via RunAcrossFixtures.</pd-file>
+          <pd-file path="auto-watch/internal/rpcserver/server.go" change="edit">Construct accepted peers with `WithKeepAlive(15s, 45s)`; make `sub.teardown()` a `defer` in the Serve goroutine.</pd-file>
+          <pd-file path="auto-watch/internal/rpcserver/server_test.go" change="edit">Add TestDeadSubscriberSinkReaped (subscribe → sever → bounded return to baseline via the existing `hub.SinkCount()`).</pd-file>
+          <pd-file path="docs/auto-bus-spec.md" change="edit">Document the RPC-transport keepalive (ping + read-deadline reap) in §4, alongside the existing WebSocket ping model.</pd-file>
+          <pd-file path="docs/tasks/041-dataplane-backbone-assurance/artifacts/mutation-pending-key.txt" change="add">Captured red run: swapped/duplicated pending-map key → crosstalk test fails.</pd-file>
+          <pd-file path="docs/tasks/041-dataplane-backbone-assurance/artifacts/mutation-no-drop-on-full.txt" change="add">Captured red run: removed drop-on-full → producer-hang test fails.</pd-file>
+          <pd-file path="docs/tasks/041-dataplane-backbone-assurance/artifacts/mutation-no-liveness-reap.txt" change="add">Captured red run: disabled watchdog reap → dead-peer/Serve test fails.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **`SetReadDeadline` on the conn instead of a watchdog goroutine.** `Peer.conn` is typed `io.ReadWriteCloser` (not `net.Conn`), and a deadline firing mid-frame leaves `json.Decoder` in a corrupted state. The watchdog-closes-the-conn approach is transport-agnostic and clean (we tear down on reap anyway). Rejected.
+- **OS-level TCP keepalive (`SetKeepAlive`/`SetKeepAlivePeriod`).** Doesn't cover the in-process `net.Pipe` fixture, is coarser-grained, and isn't deterministically testable. Rejected (decided in /new-task).
+- **Fold `test-race` into `make test`.** Breaks cgo-less local envs and slows the inner loop; contradicts the cgo-decoupling requirement (Grok P1). Rejected in favor of a separate required CI step.
+- **Test-only `TEST_PROJECTS` for `auto-shared` (excluding it from vet/lint/vulncheck).** Considered to avoid surprise findings on a previously-ungated module, but **rejected in favor of full `PROJECTS` inclusion** (user decision) for complete gating; any pre-existing vet/lint/vulncheck findings are fixed in Phase 1 rather than deferred.
+- **"Don't read" to trigger drop-on-full in conformance.** Non-deterministic on unix/tcp (OS socket buffers absorb writes before blocking). Rejected for a blocking-write `faultConn` that forces the condition on every transport.
+- **Per-call default `Call` timeout.** Unnecessary — the keepalive watchdog reap already bounds a hung `Call` on a dead peer (resolved in Requirements Open Questions). Rejected.
+</script></md>
+      </pd-section>
+
+      <pd-decision id="D-1" title="Read watchdog (close-on-silence) over SetReadDeadline" status="accepted" by="author" summary="Conn is io.ReadWriteCloser and a deadline mid-frame corrupts json.Decoder; a watchdog that closes the conn is transport-agnostic and clean.">
+        <md><script type="text/plain">
+**Rationale:** `Peer.conn` is `io.ReadWriteCloser`, so `SetReadDeadline` isn't on the type; and a deadline expiry mid-value leaves `json.Decoder` unusable. A watchdog goroutine that calls the existing `shutdown` (closing the conn → Decode errors → pending callers released) reuses the proven teardown path and works identically on pipe/unix/tcp.
+**Alternatives:** SetReadDeadline via type-assertion (corruption risk); OS keepalive (no pipe coverage).
+**Consequences:** one extra goroutine per keepalive-enabled peer; timeout granularity bounded by the watchdog tick.
+</script></md>
+      </pd-decision>
+
+      <pd-decision id="D-2" title="Race gate as a separate required CI step; auto-shared added to PROJECTS (full gating)" status="accepted" by="author" summary="Keeps plain make test cgo-free/fast; auto-shared fully gated (test/vet/lint/vulncheck), with any pre-existing findings fixed in Phase 1.">
+        <md><script type="text/plain">
+**Rationale:** Plain `make test` must stay runnable without cgo; `-race` needs `CGO_ENABLED=1`. A dedicated `test-race` CI step satisfies the gate without burdening the inner loop. Per user decision, `auto-shared` is added to `PROJECTS` so all aggregate gates cover it — complete gating beats deferring vet/lint to a later task.
+**Alternatives:** fold race into make test (breaks cgo-less); test-only `TEST_PROJECTS` (leaves vet/lint uncovered).
+**Consequences:** full inclusion may surface pre-existing `vet`/`lint`/`vulncheck` findings on the previously-ungated module; resolving them is pulled into Phase 1 scope (Known Gaps risk).
+</script></md>
+      </pd-decision>
+
+      <pd-decision id="D-3" title="Blocking faultConn for deterministic drop-on-full across transports" status="accepted" by="author" summary="OS socket buffers make 'don't read' non-deterministic on unix/tcp; a blocking-write conn forces the condition everywhere.">
+        <md><script type="text/plain">
+**Rationale:** The slow-consumer/drop-on-full scenario must behave identically on pipe/unix/tcp. On unix/tcp the kernel buffers absorb writes, so simply not reading is flaky. A `faultConn` whose `Write` blocks on demand deterministically fills the peer's bounded `out` channel → enqueue fails → drop-on-full → shutdown.
+**Alternatives:** `WithBufferSize(1)` + flood (still buffer-dependent); pipe-only test (defeats transport-invariance).
+**Consequences:** net-new harness code (`faultConn` + fault-capable factories + `FaultFixture`).
+</script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Five phases: gate the race detector + un-exclude `auto-shared` (P1), add opt-in `rpc.Peer` keepalive (P2), wire it into the daemon + prove the dead-sink reap (P3), deepen the conformance suite with fault injection (P4), then capture one-time mutation evidence (P5). P1/P2/P4 are independent; P3 depends on P2; P5 depends on all.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-mermaid caption="Phase dependency DAG">
+flowchart LR
+  P1["P1 · CI race gate<br/>+ auto-shared"]
+  P2["P2 · Peer keepalive"]
+  P3["P3 · Daemon wiring<br/>+ dead-sink reap"]
+  P4["P4 · Conformance depth<br/>+ framing"]
+  P5["P5 · Mutation evidence"]
+  P2 --> P3
+  P1 --> P5
+  P2 --> P5
+  P3 --> P5
+  P4 --> P5
+</pd-mermaid>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="CI race gate + un-exclude auto-shared" files="Makefile,.github/workflows/ci.yml" status="todo">
+          <md><script type="text/plain">
+1. Add `auto-shared` to `PROJECTS` (Makefile:15). **Verify:** `grep PROJECTS Makefile` shows `auto-shared`.
+2. Run `make fmt-check vet lint vulncheck test` and resolve any pre-existing `auto-shared` findings now surfaced (gofmt, vet, lint). **Verify:** all five gates exit 0. If a finding is large or unrelated to this task, do **not** absorb it — record it and open a follow-up hygiene issue (see Known Gaps), keeping Phase 1 bounded.
+3. Add `RACE_PROJECTS := auto-shared auto-watch` and a `test-race:` target running `CGO_ENABLED=1 go test -race ./...` per race-project. **Verify:** `make test-race` passes locally (cgo present).
+4. Add a required "Race detector" step to `.github/workflows/ci.yml` running `make test-race` after the existing `make test` step. **Verify:** YAML parses; step present and not `continue-on-error`.
+5. **Commit** via /contextual-commit. **Verify:** pre-commit hooks pass.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="rpc.Peer keepalive (opt-in)" files="auto-shared/rpc/peer.go,auto-shared/rpc/peer_test.go,docs/auto-bus-spec.md" status="todo">
+          <md><script type="text/plain">
+1. Add `WithKeepAlive(interval, timeout time.Duration) Option` + config fields; validate `0 < interval < timeout` (panic or no-op on misuse, matching existing option style). Add `lastActivity atomic.Int64` to `Peer`. **Verify:** `go build ./...` in auto-shared.
+2. Stamp `lastActivity` after each successful `Decode` in `readLoop` (peer.go:~151). **Verify:** build.
+3. In `Serve`, when keepalive is configured, start two goroutines that exit on `p.closed`/ctx: a **ping sender** (ticker @ `interval` → enqueue a `$keepalive` notification, mirroring `auto-ui/internal/server/ws.go:119-135`) and a **watchdog** (ticker @ ~`timeout/3` → if `now-lastActivity > timeout` call `shutdown`). **Verify:** build.
+4. Swallow the `$keepalive` method in `handleNotification` (return before `onNotify`). **Verify:** build.
+5. Add `TestKeepAliveReapsHalfOpen` (fault/throwaway conn that swallows bytes → within a bounded wait `Serve` returns and a pending `Call` gets `ErrClosed`) and `TestKeepAliveNoFalseReapWhenHealthy` (idle-but-alive over several intervals → a late `Call` still succeeds). Use short durations / an injected clock for determinism — never poll-to-settle. **Verify:** `CGO_ENABLED=1 go test -race ./rpc/...` green.
+6. Document the RPC-transport keepalive (ping + read-deadline reap, default 15s/45s) in `docs/auto-bus-spec.md` §4 alongside the WebSocket model. **Verify:** spec reads consistently with GR-N8.
+7. **Commit** via /contextual-commit.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Daemon keepalive wiring + dead-sink reap" files="auto-watch/internal/rpcserver/server.go,auto-watch/internal/rpcserver/server_test.go" status="todo">
+          <md><script type="text/plain">
+Depends on P2.
+1. In the accept loop (server.go:71-90), construct peers with `rpc.WithKeepAlive(15*time.Second, 45*time.Second)`. **Verify:** `go build ./...` in auto-watch.
+2. Make `sub.teardown()` a `defer` in the Serve goroutine (server.go:~88-90) so the sink is reaped even on panic. **Verify:** build.
+3. Add `TestDeadSubscriberSinkReaped`: a peer calls `bus.subscribe` (assert `hub.SinkCount()` increments), then its connection is severed; within a bounded wait `SinkCount()` returns to baseline and a subsequent `hub.Broadcast` does not target the dead peer. Use a short test keepalive timeout. **Verify:** `CGO_ENABLED=1 go test -race ./internal/rpcserver/...` green.
+4. **Commit** via /contextual-commit.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="Conformance depth + framing" files="auto-shared/rpc/conformance/fakes.go,auto-shared/rpc/conformance/conformance.go,auto-shared/rpc/conformance/conformance_test.go,auto-shared/rpc/codec_test.go" status="todo">
+          <md><script type="text/plain">
+1. Add a `faultConn` wrapper in fakes.go: `Sever()` (close underlying conn mid-stream) and `Stall()`/`Release()` (block/unblock `Write` to force drop-on-full). **Verify:** build.
+2. Add the `FaultFixture` interface (`Fixture` + `Sever()`/`StallConsumer()`/`ReleaseConsumer()`) in conformance.go and fault-capable pipe/unix/tcp factory variants returning it. **Verify:** build.
+3. Add three scenarios run via `RunAcrossFixtures` over pipe/unix/tcp: concurrent-correlation (N calls, identity handler, no crosstalk), drop-mid-call (Sever during an in-flight Call → bounded `ErrClosed`, pending map empty), slow-consumer (StallConsumer → push past buffer → bounded `ErrClosed`, producer never blocks). Assert observables, not quiescence. **Verify:** `CGO_ENABLED=1 go test -race ./rpc/conformance/...` green on all three transports.
+4. Add `TestDecodeByteDribble` and `TestDecodeCoalescedFrames` in codec_test.go. **Verify:** `go test ./rpc/...`.
+5. **Commit** via /contextual-commit.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="5" title="One-time mutation evidence" files="docs/tasks/041-dataplane-backbone-assurance/artifacts/mutation-pending-key.txt,docs/tasks/041-dataplane-backbone-assurance/artifacts/mutation-no-drop-on-full.txt,docs/tasks/041-dataplane-backbone-assurance/artifacts/mutation-no-liveness-reap.txt" status="todo">
+          <md><script type="text/plain">
+Depends on P1–P4. For each mutation: inject → run the targeted test → capture the red output → revert → confirm green.
+1. **Mutation A** — swap/duplicate the `pending`-map key in `Call`; run the concurrent-correlation scenario under `-race`; save red output to `artifacts/mutation-pending-key.txt`; revert. **Verify:** test red with mutation, green after revert.
+2. **Mutation B** — make the slow-consumer path block instead of drop-on-full; run the slow-consumer scenario; save to `artifacts/mutation-no-drop-on-full.txt`; revert. **Verify:** test red→green.
+3. **Mutation C** — disable the watchdog reap; run `TestKeepAliveReapsHalfOpen` + `TestDeadSubscriberSinkReaped`; save to `artifacts/mutation-no-liveness-reap.txt`; revert. **Verify:** test red→green.
+4. Run full `make test` + `make test-race` to confirm all mutations reverted and suite green. **Verify:** both exit 0.
+5. **Commit** the captured artifacts via /contextual-commit.
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **P1** satisfies AC-1 (race gate) and the auto-shared half of AC-10.
+- **P2** satisfies AC-2 (half-open reap) and AC-3 (no false reap).
+- **P3** satisfies AC-4 (dead-sink reap).
+- **P4** satisfies AC-5 (correlation ×3 transports), AC-6 (drop-mid-call ×3), AC-7 (slow-consumer ×3), AC-8 (codec framing).
+- **P5** satisfies AC-9 (mutation evidence).
+- **AC-10** (no regressions, guard rails) is verified at the end of every phase (build + `make test`/`test-race` + vet/lint) and finally by P5 step 4.
+- **Done** when AC-1 through AC-10 pass and `make test` + `make test-race` are green in CI.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
