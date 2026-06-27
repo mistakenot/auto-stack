@@ -1,0 +1,62 @@
+backends: unix:///tmp/conf046.2Pj4yF/da.sock (alpha-host), unix:///tmp/conf046.2Pj4yF/db.sock (beta-host); colliding project id=demo
+-- AC-1/AC-3 switcher (union, host-disambiguated) --
+[
+  {
+    "host": "alpha-host",
+    "project": "demo",
+    "text": "Demo Alpha · alpha-host",
+    "value": "alpha-host\ndemo"
+  },
+  {
+    "host": "beta-host",
+    "project": "demo",
+    "text": "Demo Beta · beta-host",
+    "value": "beta-host\ndemo"
+  }
+]
+-- AC-3 host badge --
+{
+  "hostId": "alpha-host",
+  "text": "alpha-host"
+}
+-- AC-6 backend-health (both connected) --
+[
+  {
+    "connected": "true",
+    "hostId": "alpha-host",
+    "state": "connected"
+  },
+  {
+    "connected": "true",
+    "hostId": "beta-host",
+    "state": "connected"
+  }
+]
+-- AC-6 drop backend B (beta-host) --
+-- SERVER TRUTH: backends.list direct WS probe --
+[
+  {
+    "hostId": "alpha-host",
+    "uri": "unix:///tmp/conf046.2Pj4yF/da.sock",
+    "connected": true
+  },
+  {
+    "hostId": "beta-host",
+    "uri": "unix:///tmp/conf046.2Pj4yF/db.sock",
+    "connected": false,
+    "lastErr": "dial unix:///tmp/conf046.2Pj4yF/db.sock: dial unix /tmp/conf046.2Pj4yF/db.sock: connect: no such file or directory"
+  }
+]
+-- AC-6 backend-health rows after drop + reload --
+[
+  {
+    "connected": "true",
+    "hostId": "alpha-host",
+    "state": "connected"
+  },
+  {
+    "connected": "false",
+    "hostId": "beta-host",
+    "state": "disconnected"
+  }
+]
