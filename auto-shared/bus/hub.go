@@ -39,6 +39,14 @@ func (h *Hub) Subscribe(s Sink) (cancel func()) {
 	}
 }
 
+// SinkCount returns the number of currently registered sinks. Intended for
+// tests and diagnostics.
+func (h *Hub) SinkCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.sinks)
+}
+
 // Broadcast sends the event to every registered sink. It snapshots the sink set
 // under RLock and calls Deliver outside the lock, so a slow sink cannot block
 // registration/deregistration. Deliver is called synchronously per sink; if a

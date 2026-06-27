@@ -70,6 +70,8 @@ func (s *Server) Serve(ctx context.Context) error {
 
 		peer := rpc.NewPeer(conn)
 		s.handlers.Register(peer)
+		sub := &subscription{}
+		registerSubscribe(peer, s.hub, sub)
 
 		s.mu.Lock()
 		s.peers[peer] = struct{}{}
@@ -84,6 +86,8 @@ func (s *Server) Serve(ctx context.Context) error {
 
 		wg.Go(func() {
 			_ = peer.Serve(ctx)
+
+			sub.teardown()
 
 			s.mu.Lock()
 			delete(s.peers, peer)
