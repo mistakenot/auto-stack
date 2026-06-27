@@ -247,7 +247,7 @@ P2 and P3 both depend only on P1 and touch disjoint surfaces (P2: content/tree/d
       <pd-section id="plan-phases" title="Phases">
         <pd-stepper>
 
-          <pd-phase n="1" title="Skeleton: two hosts' projects show flat + host-badged, selectable" files="auto-ui/internal/backend/manager.go,auto-ui/internal/backend/manager_test.go,auto-ui/internal/server/project_aggregate.go,auto-ui/internal/server/project_aggregate_test.go,auto-ui/internal/server/server.go,auto-ui/internal/server/project_test.go,auto-ui/web/static/store.js,auto-ui/web/static/explorer.js,auto-ui/web/static/app.css" status="todo">
+          <pd-phase n="1" title="Skeleton: two hosts' projects show flat + host-badged, selectable" files="auto-ui/internal/backend/manager.go,auto-ui/internal/backend/manager_test.go,auto-ui/internal/server/project_aggregate.go,auto-ui/internal/server/project_aggregate_test.go,auto-ui/internal/server/server.go,auto-ui/internal/server/project_test.go,auto-ui/web/static/store.js,auto-ui/web/static/explorer.js,auto-ui/web/static/app.css" status="done">
             <md><script type="text/plain">
 Walking skeleton — the thinnest path through server → store → view that puts a flat, host-tagged, selectable project list on screen for TWO backends.
 1. `manager.go`: add `type PeerRef struct{ HostID string; Peer *rpc.Peer }` + `ConnectedPeers() []PeerRef` (single-lock snapshot of connected conns). `manager_test.go`: ConnectedPeers returns only connected backends. **Verify:** `go build ./...`; `go test -race ./internal/backend/...`.
