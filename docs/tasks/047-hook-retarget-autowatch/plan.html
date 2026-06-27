@@ -220,7 +220,7 @@ Strictly sequential. P1 is the walking skeleton — after it, hook events reach 
       <pd-section id="plan-phases" title="Phases">
         <pd-stepper>
 
-          <pd-phase n="1" title="Retarget hooks → autowatch (walking skeleton)" files="auto-cli/cmd/auto/hookscmd.go,auto-cli/cmd/auto/hookscmd_test.go" status="todo">
+          <pd-phase n="1" title="Retarget hooks → autowatch (walking skeleton)" files="auto-cli/cmd/auto/hookscmd.go,auto-cli/cmd/auto/hookscmd_test.go" status="done">
             <md><script type="text/plain">
 After this phase, an agent edit fires a hook → autowatch ingests + derives → relays → auto-ui hub → browser, with NO auto-ui change (045 already subscribes). That is the end-to-end skeleton.
 1. Add `watchHookAddr() string`: `AUTO_WATCH_HOOK_ADDR` env (non-empty) → read `~/.auto/watch/daemon.pid.json` via `sharedconfig.DecodeJSONFile`, take `.hookAddr` → fallback `"127.0.0.1:7787"`. Mirror `uiPort()`'s structure/error-swallowing.
