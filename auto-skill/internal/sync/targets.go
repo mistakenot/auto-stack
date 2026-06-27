@@ -48,6 +48,27 @@ func resolveTargets(env skill.Env, syaml *skill.SkillsYAML) []Target {
 	return out
 }
 
+// ResolveTargets resolves the configured output targets (style name → absolute
+// skills dir) for env. It reads skills.yaml best-effort (a missing/garbled file
+// just means the default styles) and is the exported seam the adopt package uses
+// to map a target style name back to its on-disk directory.
+func ResolveTargets(env skill.Env) ([]Target, error) {
+	syaml, err := loadSkillsYAML(env)
+	if err != nil {
+		// best-effort: a missing/garbled skills.yaml just means default targets.
+		syaml = nil
+	}
+	return resolveTargets(env, syaml), nil
+}
+
+// OnDiskDigest exposes the on-disk tree digest helper for the adopt package: it
+// returns the render-canonical full-tree digest of the skill dir at dir, with
+// exists=false when dir is absent. It is the same oracle sync and ownership use,
+// so a copy verified against it hashes identically end to end.
+func OnDiskDigest(dir string) (digest string, exists bool, err error) {
+	return onDiskDigest(dir)
+}
+
 // targetDir maps a target style name to its skills directory under root. The two
 // canonical styles are "claude" → .claude/skills and "agents" → .agents/skills;
 // a bare token maps to `.<name>/skills` (a leading dot is tolerated so ".codex"
