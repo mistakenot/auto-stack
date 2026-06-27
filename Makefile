@@ -1,7 +1,8 @@
 .PHONY: build clean test test-race vet fmt lint dist vulncheck install \
        install-hooks install-tools gen-stats check fmt-check stale-refs test-install test-curl-install \
        fixtures verify-fixtures ui-serve \
-       fmt-staged lint-staged vulncheck-if-deps-changed autodoc-fix skills-sync beads-sync pre-commit
+       fmt-staged lint-staged vulncheck-if-deps-changed autodoc-fix skills-check beads-sync pre-commit \
+       skills-sync-locked skills-update-check post-merge post-checkout pre-push
 
 BUILD_DIR := bin
 
@@ -283,13 +284,30 @@ autodoc-fix:
 		fi; \
 	fi
 
-# Reinstall locally authored skills if anything under skills/ was staged.
-skills-sync:
-	@staged=$$(git diff --cached --name-only --diff-filter=ACMR -- 'skills/' || true); \
-	if [ -n "$$staged" ] && command -v npx >/dev/null 2>&1; then \
-		npx skills install "$(CURDIR)/skills" -y 2>/dev/null || true; \
-		git add "$(CURDIR)/.agents/" 2>/dev/null || true; \
-		echo "pre-commit: skills synced"; \
+# Pre-commit skill gate: check-only, never mutates the tree. When the project
+# has a native skills lock, fail the commit if any target is stale (sync --check)
+# or any skill fails lint. Replaces the former npx-based skills-sync stanza.
+skills-check:
+	@if [ -f "$(CURDIR)/.auto/skills/lock.json" ] && command -v auto >/dev/null 2>&1; then \
+		auto skill sync --check --format json || exit 1; \
+		auto skill lint --format json || exit 1; \
+	fi
+
+# Post-merge / post-checkout re-materialize: reproduce the locked commit and
+# render into each target without floating. Non-blocking — never fails the hook.
+post-merge post-checkout: skills-sync-locked
+skills-sync-locked:
+	@if [ -f "$(CURDIR)/.auto/skills/lock.json" ] && command -v auto >/dev/null 2>&1; then \
+		auto skill sync --locked --format json 2>/dev/null || true; \
+	fi
+
+# Pre-push upstream-drift check: opt-in, off by default. Enable per-invocation
+# with SKILLS_UPDATE_CHECK=1 (or export it). Warn-only — never blocks the push.
+pre-push: skills-update-check
+SKILLS_UPDATE_CHECK ?= 0
+skills-update-check:
+	@if [ "$(SKILLS_UPDATE_CHECK)" = "1" ] && [ -f "$(CURDIR)/.auto/skills/lock.json" ] && command -v auto >/dev/null 2>&1; then \
+		auto skill update --check --format json 2>/dev/null || true; \
 	fi
 
 # Flush beads issue state to JSONL so issue changes land in the commit.
@@ -305,5 +323,5 @@ beads-sync:
 # lint scoped to staged packages (full `make lint` runs in CI), then repo
 # housekeeping. We inline check's gates rather than depend on `check` so we can
 # substitute lint-staged for the full lint without affecting CI's `make check`.
-pre-commit: fmt-staged fmt-check vet lint-staged stale-refs verify-fixtures vulncheck-if-deps-changed autodoc-fix skills-sync beads-sync
+pre-commit: fmt-staged fmt-check vet lint-staged stale-refs verify-fixtures vulncheck-if-deps-changed autodoc-fix skills-check beads-sync
 	@echo "pre-commit: all checks passed"

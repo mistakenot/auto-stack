@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Thin shim: the Makefile is the single entry point. After a merge, re-materialize
+# vendored skills from the locked commit. See `make post-merge` (Makefile).
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+exec make -C "$ROOT" --no-print-directory post-merge

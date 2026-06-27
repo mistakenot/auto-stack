@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Thin shim: the Makefile is the single entry point. Opt-in upstream-drift check
+# (off by default; enable with SKILLS_UPDATE_CHECK=1). See `make pre-push` (Makefile).
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+exec make -C "$ROOT" --no-print-directory pre-push
