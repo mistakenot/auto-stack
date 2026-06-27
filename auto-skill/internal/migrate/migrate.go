@@ -349,7 +349,7 @@ func (m *Migration) classifyLocal(name string, entry VercelEntry, projectRoot st
 		m.Migrated = append(m.Migrated, Entry{
 			Name:        name,
 			Source:      url,
-			URL:         url,
+			URL:         localFileURL(url),
 			Subpath:     subpath,
 			VersionSpec: versionFromRef(entry.Ref),
 			Local:       true,
@@ -362,6 +362,18 @@ func (m *Migration) classifyLocal(name string, entry VercelEntry, projectRoot st
 		Name:       name,
 		SourcePath: abs,
 	})
+}
+
+// localFileURL turns an absolute local repo path into a canonical file:// URL.
+// A local lock entry's URL is later canonicalized and turned into a cache path by
+// sync; a bare absolute path lands in transport's "bare host/path" branch and
+// yields an empty Host, which the cache rejects with "invalid path component".
+// transport already maps file:// to a usable _local identity, so emit that form.
+func localFileURL(absPath string) string {
+	if canon, _, err := transport.CanonicalizeURL("file://" + absPath); err == nil {
+		return canon
+	}
+	return "file://" + absPath
 }
 
 // deriveRemoteURL produces a canonical, credential-free https URL from a vercel

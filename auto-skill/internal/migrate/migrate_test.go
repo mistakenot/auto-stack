@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mistakenot/auto-skill/internal/cache"
 	"github.com/mistakenot/auto-skill/internal/skill"
+	"github.com/mistakenot/auto-skill/internal/transport"
 )
 
 // realLockPath resolves the repo-root skills-lock.json from the test's package
@@ -274,6 +276,53 @@ func TestPlanLocalSplit(t *testing.T) {
 	}
 }
 
+// TestPlanLocalGitURLIsResolvable reproduces Bug 2: migrate emits a bare absolute
+// filesystem path as the URL for a local git repo (e.g. "/home/user/src/repo").
+// sync canonicalizes that URL and derives the cache path from the resulting
+// identity — but a bare absolute path lands in transport's "bare host/path" branch
+// and yields an EMPTY Host, which cache.repoPath rejects with "invalid path
+// component". So every local-git lock entry migrate produces is unopenable by sync.
+//
+// The migrated URL must round-trip through the exact transport→cache path sync
+// uses without an empty component. The fix is for migrate to emit a file:// URL
+// (which transport already maps to a usable identity), not a bare path.
+func TestPlanLocalGitURLIsResolvable(t *testing.T) {
+	root := t.TempDir()
+	gitDir := filepath.Join(root, "git-repo")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", gitDir, "init").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+
+	v := VercelLock{
+		Version: 1,
+		Skills: map[string]VercelEntry{
+			"local-git": {Source: gitDir, SourceType: sourceTypeLocal},
+		},
+	}
+	m, err := Plan(v, root)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(m.Migrated) != 1 || !m.Migrated[0].Local {
+		t.Fatalf("want exactly one local migrated entry, got %+v", m.Migrated)
+	}
+
+	url := m.Migrated[0].URL
+	canon, id, err := transport.CanonicalizeURL(url)
+	if err != nil {
+		t.Fatalf("migrated local URL %q is not canonicalizable (Bug 2): %v", url, err)
+	}
+	// This is the exact call sync makes (cache.Open → repoPath) and where the
+	// "invalid path component" surfaces.
+	if _, err := cache.NewCache(t.TempDir()).RepoPath(id); err != nil {
+		t.Fatalf("migrated local URL %q canonicalized to %q (Host=%q) but is unopenable by the cache (Bug 2): %v",
+			url, canon, id.Host, err)
+	}
+}
+
 // TestPlanLocalGitSubdir covers a vercel local source pointing at a subdirectory
 // inside a worktree (the real-corpus shape, e.g. <repo>/skills). The lock entry
 // must resolve URL to the worktree top-level and carry the relative subdir as
@@ -318,8 +367,10 @@ func TestPlanLocalGitSubdir(t *testing.T) {
 	if e.State != "unresolved" {
 		t.Errorf("state = %q, want unresolved", e.State)
 	}
-	if e.URL != topWant {
-		t.Errorf("URL = %q, want worktree top-level %q", e.URL, topWant)
+	// URL is the resolvable form (file:// so sync can canonicalize it); Source
+	// stays the bare worktree path for human-readable provenance.
+	if wantURL := "file://" + topWant; e.URL != wantURL {
+		t.Errorf("URL = %q, want %q", e.URL, wantURL)
 	}
 	if e.Source != topWant {
 		t.Errorf("Source = %q, want worktree top-level %q", e.Source, topWant)
