@@ -1,5 +1,5 @@
 ---
-hash: "eadf7217"
+hash: "43cbac4f"
 id: "573606cd"
 read_when: "implementing git ETL ingestion, designing commit/file/hunk parquet schemas, or adding git history to auto-search"
 summary: "Spec for extending auto-etl to index git commit history as first-class parquet datasets alongside coding agent sessions, enabling cross-referencing with session data."
@@ -224,7 +224,11 @@ git show <sha> --format= -p --diff-filter=AMDRCT -M -C
 
 Split the unified diff output by file header (`diff --git a/... b/...`) to get per-file diffs. Split each file diff by hunk header (`@@ ... @@`) to write `commit_hunks`. Apply MidTruncate at 4096 chars for `diff_truncated` and `hunk_text_truncated`.
 
-**Input:** Local git repositories, discovered automatically from existing session data. The ETL scans `workspace` paths from already-processed session parquet to find git repos. Users can also pass explicit paths via `--repo-path` for repos that have no session history yet.
+**Input:** Local git repositories, discovered automatically from the session-trail remotes cache. The ETL scans `workspace` paths seen across processed sessions to find git repos.
+
+Auto-discovered repos are **registry-gated**: a discovered workspace/remote is only indexed if it belongs to a project registered in `~/.auto/projects.json` (populated by `auto init --project`). Matching is path-then-remote — `FindProjectByPath` (longest-prefix, so worktrees and subdirectories count) first, then `FindProjectByRemote` (after SSH↔HTTPS and credential normalization) as a fallback. This is the same gate the GitHub PR phase applies, and it has the same strict empty-registry behavior: if the registry is empty or absent, auto-discovery indexes **nothing** and a one-line stderr hint suggests running `auto init --project`.
+
+Users can also pass explicit paths via `--repo-path` for repos that have no session history yet. **Explicit `--repo-path` bypasses the gate** — explicitly supplied paths are an intentional user allowlist and are always indexed, registered or not. The gate only filters message-trail-derived auto-discovery.
 
 **Output:**
 

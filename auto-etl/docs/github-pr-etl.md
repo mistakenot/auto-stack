@@ -1,5 +1,5 @@
 ---
-hash: "2f3f58e9"
+hash: "5bcc2e9c"
 id: "badba584"
 read_when: "implementing GitHub PR ETL ingestion or querying PR feedback datasets"
 summary: "Spec for ingesting merged GitHub PR feedback (reviews, comments, diffs, CI checks) into parquet datasets via auto-etl."
@@ -436,7 +436,11 @@ Reuse the existing git remote cache at `~/.auto/etl/settings.json`:
 
 Extract unique `owner/repo` pairs from the cached remote URLs. Filter to GitHub remotes using exact hostname matching: `github.com` only (both HTTPS and SSH formats). Deduplicate across workspaces that point to the same repo. Non-GitHub remotes (GitLab, Bitbucket, etc.) are silently ignored.
 
-**Scope**: all GitHub repos in the global cache are synced, including repos from old or inactive workspaces. This is intentional — if you coded in a repo, its PR feedback is relevant context. Old repos simply won't have new merged PRs to discover, so the cost is one API list call per repo per run (which returns empty quickly).
+**Scope**: repo discovery is **registry-gated**. Only repos belonging to a project registered in `~/.auto/projects.json` (populated by `auto init --project`) are synced. For each cached workspace→remote entry, the gate keeps the repo iff its workspace path matches a registered project (`FindProjectByPath`, longest-prefix, so worktrees and subdirectories count) or, failing that, its origin remote matches a registered project's remote (`FindProjectByRemote`, after SSH↔HTTPS and credential normalization). Unregistered remotes from old or unrelated workspaces — repos you once opened a session in but never registered — are excluded, so their PR/issue data is never pulled into the ETL.
+
+**Strict empty registry → sync nothing.** If the registry is empty or absent, repo discovery syncs **nothing** (the registry is the sole authority). A default `autoetl run` still ingests sessions and exits 0, but prints a one-line stderr hint to run `auto init --project` in each repo you want indexed. An explicit `--only github` run against an empty registry fails fast with a registry-aware error rather than silently syncing nothing.
+
+The gate filters only a copy of the remote cache derived for discovery; the canonical `~/.auto/etl/settings.json` remote cache and session/message ingestion are left untouched. A one-line gate summary (kept N, skipped M) is written to **stderr** so the filtering is observable; **stdout** stays unpolluted.
 
 ## Output Layout
 
