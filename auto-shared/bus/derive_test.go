@@ -211,6 +211,64 @@ func TestDeriveDocChangedPathTraversalRejected(t *testing.T) {
 	}
 }
 
+func TestDeriveDocChangedDeterministicID(t *testing.T) {
+	reg := testRegistry()
+	src := toolPostEvent("auto-stack", []PathRef{
+		{Rel: "docs/plan.md", Abs: "/repos/auto-stack/docs/plan.md"},
+	})
+
+	// Deriving twice from the same source event must yield the same id.
+	d1 := DeriveDocChanged(src, reg)
+	d2 := DeriveDocChanged(src, reg)
+	if len(d1) != 1 || len(d2) != 1 {
+		t.Fatalf("expected 1 derived event each, got %d and %d", len(d1), len(d2))
+	}
+	if d1[0].ID == "" {
+		t.Fatal("derived id is empty")
+	}
+	if len(d1[0].ID) != 16 {
+		t.Errorf("derived id length = %d, want 16", len(d1[0].ID))
+	}
+	if d1[0].ID != d2[0].ID {
+		t.Errorf("derived id not stable across calls: %q != %q", d1[0].ID, d2[0].ID)
+	}
+}
+
+func TestDeriveDocChangedDifferentPathDifferentID(t *testing.T) {
+	reg := testRegistry()
+	// Same source event, two different doc paths -> two different derived ids.
+	src := toolPostEvent("auto-stack", []PathRef{
+		{Rel: "docs/a.md", Abs: "/repos/auto-stack/docs/a.md"},
+		{Rel: "docs/b.md", Abs: "/repos/auto-stack/docs/b.md"},
+	})
+	derived := DeriveDocChanged(src, reg)
+	if len(derived) != 2 {
+		t.Fatalf("expected 2 derived events, got %d", len(derived))
+	}
+	if derived[0].ID == derived[1].ID {
+		t.Errorf("expected different ids for different paths, both = %q", derived[0].ID)
+	}
+}
+
+func TestDeterministicID(t *testing.T) {
+	base := deterministicID("src1", "doc.changed", "docs/a.md")
+	if len(base) != 16 {
+		t.Fatalf("id length = %d, want 16", len(base))
+	}
+	if deterministicID("src1", "doc.changed", "docs/a.md") != base {
+		t.Error("deterministicID not stable for identical inputs")
+	}
+	if deterministicID("src1", "other.type", "docs/a.md") == base {
+		t.Error("expected different id for different type")
+	}
+	if deterministicID("src1", "doc.changed", "docs/b.md") == base {
+		t.Error("expected different id for different path")
+	}
+	if deterministicID("src2", "doc.changed", "docs/a.md") == base {
+		t.Error("expected different id for different source id")
+	}
+}
+
 func TestDeriveDocChangedMultiplePaths(t *testing.T) {
 	reg := testRegistry()
 	ev := toolPostEvent("auto-stack", []PathRef{
