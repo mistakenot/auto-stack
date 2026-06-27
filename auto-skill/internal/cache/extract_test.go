@@ -104,6 +104,34 @@ func TestExtractCleanTree(t *testing.T) {
 	}
 }
 
+func TestExtractMissingSubpathReturnsSentinel(t *testing.T) {
+	requireGit(t)
+	fixtureRepo, headSHA := createExtractFixture(t, map[string]string{
+		"skills/hello/SKILL.md": "# Hello Skill\n",
+	})
+
+	cacheDir := t.TempDir()
+	c := NewCache(cacheDir)
+
+	id := transport.CacheIdentity{Host: "example.com", Path: []string{"test", "missing"}}
+	repo, err := c.Open(id, "file://"+fixtureRepo)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := repo.Realize(headSHA); err != nil {
+		t.Fatalf("Realize: %v", err)
+	}
+
+	dest := t.TempDir()
+	err = repo.Extract(headSHA, "skills/renamed", dest)
+	if err == nil {
+		t.Fatal("expected error for missing subpath")
+	}
+	if !errors.Is(err, ErrSubpathNotFound) {
+		t.Fatalf("error = %v, want errors.Is ErrSubpathNotFound", err)
+	}
+}
+
 func TestExtractFullTreeNoSubpath(t *testing.T) {
 	requireGit(t)
 	fixtureRepo, headSHA := createExtractFixture(t, map[string]string{

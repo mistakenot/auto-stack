@@ -19,7 +19,7 @@
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="035: skill-prune-adopt" status="executing" pr="pending" generated="2026-06-20">
+  <pd-doc title="035: skill-prune-adopt" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/103" generated="2026-06-20">
 
     <pd-tab name="Requirements">
 
@@ -566,7 +566,7 @@ end-to-end integration tests. Every phase ends green (`go build ./...` + `go tes
       <pd-section id="phases" title="Phases">
         <pd-stepper>
 
-          <pd-phase n="1" title="Ownership classifier (pure leaf)" status="todo"
+          <pd-phase n="1" title="Ownership classifier (pure leaf)" status="done"
             files="auto-skill/internal/ownership/classify.go,auto-skill/internal/ownership/classify_test.go">
             <md><script type="text/plain">
 The single home of the three-part deletion authority. No I/O — digests are passed in.
@@ -590,7 +590,7 @@ The single home of the three-part deletion authority. No I/O — digests are pas
             </script></md>
           </pd-phase>
 
-          <pd-phase n="2" title="Sync prune pass + foreign-collision" status="todo" depends-on="1"
+          <pd-phase n="2" title="Sync prune pass + foreign-collision" status="done" depends-on="1"
             files="auto-skill/internal/sync/prune.go,auto-skill/internal/sync/prune_test.go">
             <md><script type="text/plain">
 Fill T4's reserved journal `prunes` slot; deletion rides T4's journaled commit.
@@ -617,7 +617,7 @@ Fill T4's reserved journal `prunes` slot; deletion rides T4's journaled commit.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="3" title="adopt — staged move + divergence" status="todo" depends-on="1"
+          <pd-phase n="3" title="adopt — staged move + divergence" status="done" depends-on="1"
             files="auto-skill/internal/adopt/adopt.go,auto-skill/internal/adopt/adopt_test.go,auto-skill/internal/cli/adopt.go">
             <md><script type="text/plain">
 1. `internal/adopt/adopt.go`: `Adopt(env, names, opts)` uses `ownership.Adoptable` to
@@ -642,7 +642,7 @@ Fill T4's reserved journal `prunes` slot; deletion rides T4's journaled commit.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="4" title="remove — drop source of truth + prune targets" status="todo" depends-on="2"
+          <pd-phase n="4" title="remove — drop source of truth + prune targets" status="done" depends-on="2"
             files="auto-skill/internal/sync/remove.go,auto-skill/internal/sync/remove_test.go,auto-skill/internal/cli/remove.go">
             <md><script type="text/plain">
 1. `internal/sync/remove.go`: `Remove(env, name, sel)` + `Selector` (`SelLocal` /
@@ -663,7 +663,7 @@ Fill T4's reserved journal `prunes` slot; deletion rides T4's journaled commit.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="5" title="Renamed-vendored report + stale-replacement lint" status="todo"
+          <pd-phase n="5" title="Renamed-vendored report + stale-replacement lint" status="done"
             files="auto-skill/internal/sync/update.go,auto-skill/internal/skill/skill.go">
             <md><script type="text/plain">
 The renamed-vendored tail — independent of the classifier (no prune logic here).
@@ -684,7 +684,7 @@ The renamed-vendored tail — independent of the classifier (no prune logic here
             </script></md>
           </pd-phase>
 
-          <pd-phase n="6" title="CLI wire-up + doctor extension + e2e" status="todo" depends-on="2,3,4,5"
+          <pd-phase n="6" title="CLI wire-up + doctor extension + e2e" status="done" depends-on="2,3,4,5"
             files="auto-skill/internal/cli/root.go,auto-skill/internal/cli/cli_integration_test.go">
             <md><script type="text/plain">
 1. `internal/cli/root.go`: register `newAdoptCmd()` + `newRemoveCmd()` via

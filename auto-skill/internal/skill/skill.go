@@ -385,8 +385,108 @@ func Lint(env Env, target string) ([]Diagnostic, error) {
 		}
 	}
 
+	staleDiags, err := CheckStaleSkillRefs(env)
+	if err != nil {
+		return nil, err
+	}
+	diags = append(diags, staleDiags...)
+
 	sortDiagnostics(diags)
 	return diags, nil
+}
+
+// CheckStaleSkillRefs flags every skills.yaml `skills:` entry naming a skill
+// that exists in neither ./skills/<name>/ (authored) nor the lock — a stale
+// entry left behind when an upstream skill was renamed or removed. It is
+// best-effort: a missing or unparseable skills.yaml yields no diagnostics, and a
+// missing lock is treated as empty. Both Lint and phase-6 `doctor` reuse this
+// exact check so their stale-reference reporting stays identical.
+func CheckStaleSkillRefs(env Env) ([]Diagnostic, error) {
+	syaml := loadSkillsYAMLBestEffort(env)
+	if syaml == nil || len(syaml.Skills) == 0 {
+		return nil, nil
+	}
+
+	authored, err := authoredSkillNames(env)
+	if err != nil {
+		return nil, err
+	}
+	locked := lockedSkillNames(env)
+
+	names := make([]string, 0, len(syaml.Skills))
+	for name := range syaml.Skills {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var diags []Diagnostic
+	for _, name := range names {
+		if authored[name] || locked[name] {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Severity: SeverityWarning,
+			Code:     "stale_skill_ref",
+			Path:     relPath(env.Root, env.SkillsYAMLPath()),
+			Field:    name,
+			Message:  fmt.Sprintf("skills.yaml declares %q but no such skill exists in ./skills/ or the lock — renamed or removed upstream? re-add it or drop the stale entry", name),
+			Value:    name,
+		})
+	}
+	return diags, nil
+}
+
+// loadSkillsYAMLBestEffort reads and parses skills.yaml, returning nil when it is
+// absent or unparseable (stale-ref checking never blocks on a malformed file —
+// the schema validator surfaces that separately).
+func loadSkillsYAMLBestEffort(env Env) *SkillsYAML {
+	data, err := os.ReadFile(env.SkillsYAMLPath())
+	if err != nil {
+		return nil
+	}
+	cfg, err := ParseSkillsYAML(data)
+	if err != nil {
+		return nil
+	}
+	return cfg
+}
+
+// authoredSkillNames returns the set of authored skill directory names under
+// ./skills (a missing directory yields the empty set). Any subdirectory counts
+// as "exists" — even a malformed one is not a stale reference.
+func authoredSkillNames(env Env) (map[string]bool, error) {
+	out := map[string]bool{}
+	entries, err := os.ReadDir(env.SkillsDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return out, nil
+		}
+		return nil, err
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			out[e.Name()] = true
+		}
+	}
+	return out, nil
+}
+
+// lockedSkillNames returns the set of skill names recorded in lock.json,
+// best-effort (a missing or unparseable lock yields the empty set).
+func lockedSkillNames(env Env) map[string]bool {
+	out := map[string]bool{}
+	data, err := env.LoadLockFile()
+	if err != nil {
+		return out
+	}
+	lock, err := ParseLock(data)
+	if err != nil {
+		return out
+	}
+	for name := range lock.Skills {
+		out[name] = true
+	}
+	return out
 }
 
 func ValidateSkillName(name string) error {

@@ -246,6 +246,12 @@ func extractVendored(c *cache.Cache, sp SkillPlan) (*skillSource, error) {
 	}
 	if err := repo.Extract(sp.TargetCommit, sp.Subpath, dest); err != nil {
 		_ = os.RemoveAll(dest)
+		// The commit is present (checked above), so a missing subpath means the
+		// path was renamed or removed upstream — report it with remediation
+		// instead of a raw extract failure.
+		if errors.Is(err, cache.ErrSubpathNotFound) {
+			return nil, &RenamedUpstreamError{Name: sp.Name, Subpath: sp.Subpath, Commit: sp.TargetCommit}
+		}
 		return nil, fmt.Errorf("extract %s (%s:%s): %w", sp.Name, short(sp.TargetCommit), sp.Subpath, err)
 	}
 	d := dest

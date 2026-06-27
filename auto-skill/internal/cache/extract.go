@@ -2,12 +2,21 @@ package cache
 
 import (
 	"archive/tar"
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// ErrSubpathNotFound is returned (wrapped) by Extract when the requested
+// sha:subpath does not resolve in the cached repo even though the commit is
+// present — i.e. the subpath was renamed or removed upstream. Callers detect it
+// with errors.Is so they can surface a remediation hint instead of a raw git
+// failure.
+var ErrSubpathNotFound = errors.New("subpath not found in commit")
 
 const (
 	MaxExtractFiles    = 2000
@@ -53,6 +62,8 @@ func (r *Repo) Extract(sha, subpath, dest string) error {
 	if err != nil {
 		return fmt.Errorf("pipe git archive: %w", err)
 	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start git archive: %w", err)
 	}
@@ -78,6 +89,15 @@ func (r *Repo) Extract(sha, subpath, dest string) error {
 	}
 
 	if err := cmd.Wait(); err != nil {
+		// git emits "not a valid object name: <sha>:<subpath>" when the subpath
+		// no longer exists in the (present) commit — surface a sentinel so callers
+		// can report a rename/removal instead of a raw archive failure.
+		if subpath != "" && strings.Contains(stderr.String(), "not a valid object name") {
+			return fmt.Errorf("git archive %s: %w", treeish, ErrSubpathNotFound)
+		}
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return fmt.Errorf("git archive: %s", msg)
+		}
 		return fmt.Errorf("git archive: %w", err)
 	}
 

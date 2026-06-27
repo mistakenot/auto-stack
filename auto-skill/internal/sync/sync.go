@@ -13,6 +13,7 @@ import (
 	"fmt"
 	stdsync "sync"
 
+	"github.com/mistakenot/auto-skill/internal/ownership"
 	"github.com/mistakenot/auto-skill/internal/skill"
 	"github.com/mistakenot/auto-skill/internal/transport"
 )
@@ -31,6 +32,8 @@ type Options struct {
 	AutoUpdate     bool     // float floating specs (effective skills.yaml auto_update)
 	TrustRequested bool     // pass-through to the trust gate
 	IsTTY          bool     // trust-gate interactive context
+	Force          bool     // overwrite a foreign-dir collision instead of refusing (AC-4)
+	As             string   // TODO(phase 6): rename the incoming skill on a collision (--as); unused in phase 2
 }
 
 func (o Options) jobs() int {
@@ -137,6 +140,8 @@ type Result struct {
 	Installs        []Install   `json:"installs"`
 	Written         []string    `json:"written,omitempty"`
 	Skipped         []string    `json:"skipped,omitempty"`
+	Pruned          []string    `json:"pruned,omitempty"`    // target/skill of each deleted orphan
+	Conflicts       []Conflict  `json:"conflicts,omitempty"` // desired names colliding with foreign dirs
 	Stale           []StaleItem `json:"stale,omitempty"`
 	ManifestWritten bool        `json:"manifest_written"`
 	LockRewritten   bool        `json:"lock_rewritten"`
@@ -239,8 +244,42 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 	result.Installs = proc.Installs
 	result.DesiredComplete = desiredComplete
 
-	// --check — offline dry-run: report stale, write nothing.
+	// ── ownership pass (T5): classify the on-disk dirs against the previously
+	// managed set (the OLD on-disk manifest) + this machine's receipts, detect
+	// foreign-dir collisions, and plan the receipt-gated orphan prunes. This is
+	// read-only; the deletions ride the journaled commit below (or, under --check,
+	// are merely reported). The desired set is exactly what sync WILL manage this
+	// run — the staged skill names.
+	desired := desiredSetFromStaged(proc.Staged)
+	inputs, err := ScanOwnership(env, desired)
+	if err != nil {
+		return result, fmt.Errorf("scan target ownership: %w", err)
+	}
+	verdicts := ownership.Classify(inputs)
+	conflicts := detectForeignCollisions(desired, verdicts)
+	result.Conflicts = conflicts
+
+	// AC-4: a desired name landing on a foreign dir is a hard refusal unless
+	// --force overwrites it. Without --force we report the conflict, drop the
+	// colliding install so the swap never touches the foreign dir, and treat the
+	// desired set as unrealized → pruning is suppressed for this run.
+	if len(conflicts) > 0 && !opts.Force {
+		for _, c := range conflicts {
+			result.Errors = append(result.Errors, conflictMessage(c))
+			if !opts.Check {
+				proc.Installs = removeInstall(proc.Installs, c.Target, c.Skill)
+			}
+		}
+		desiredComplete = false
+		result.DesiredComplete = desiredComplete
+		result.Installs = proc.Installs
+	}
+
+	prunes := planPrune(verdicts, proc.Targets, desiredComplete)
+
+	// --check — offline dry-run: report stale + would-be prunes, write nothing.
 	if opts.Check {
+		result.Pruned = prunedNames(prunes)
 		result.Stale = computeStale(plan, proc)
 		return result, nil
 	}
@@ -262,6 +301,7 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 		staged:          stagedByName(proc.Staged),
 		manifest:        proc.Manifest,
 		lock:            lock,
+		prunes:          prunes,
 		desiredComplete: desiredComplete,
 	}, faultNone)
 	if err != nil {
@@ -269,6 +309,7 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 	}
 	result.Written = out.Written
 	result.Skipped = out.Skipped
+	result.Pruned = out.Pruned
 	result.ManifestWritten = out.ManifestWritten
 	result.LockRewritten = out.LockRewritten
 	result.ReceiptsPath = out.ReceiptsPath
@@ -303,6 +344,43 @@ func computeStale(plan *Plan, proc *ProcessResult) []StaleItem {
 		}
 	}
 	return stale
+}
+
+// desiredSetFromStaged builds the set of skill names sync will manage this run —
+// exactly the staged (rendered) skills. The prune pass classifies every other
+// managed-but-not-desired dir as an orphan candidate.
+func desiredSetFromStaged(staged []*StagedSkill) map[string]bool {
+	out := make(map[string]bool, len(staged))
+	for _, s := range staged {
+		out[s.Name] = true
+	}
+	return out
+}
+
+// removeInstall returns installs with the (target style, skill) entry dropped, so
+// a refused foreign-dir collision never reaches the swap.
+func removeInstall(installs []Install, target, name string) []Install {
+	out := installs[:0:0]
+	for _, in := range installs {
+		if in.Target == target && in.Skill == name {
+			continue
+		}
+		out = append(out, in)
+	}
+	return out
+}
+
+// prunedNames renders the planned prunes as "target/skill" strings (used for the
+// --check would-be-prune report; the committed run reports the commit outcome).
+func prunedNames(prunes []journalPrune) []string {
+	if len(prunes) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(prunes))
+	for _, p := range prunes {
+		out = append(out, p.Target+"/"+p.Skill)
+	}
+	return out
 }
 
 func stagedByName(staged []*StagedSkill) map[string]*StagedSkill {
