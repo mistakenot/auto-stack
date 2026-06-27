@@ -13,12 +13,12 @@
     "id": "039",
     "name": "autowatch-task-rpcs",
     "epic": "003-multi-host-architecture",
-    "status": "planning",
+    "status": "complete",
     "created": "2026-06-26"
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="039: autowatch-task-rpcs" status="pending" generated="2026-06-26">
+  <pd-doc title="039: autowatch-task-rpcs" status="complete" generated="2026-06-26">
 
     <pd-tab name="Requirements">
 
@@ -340,7 +340,7 @@ flowchart LR
 
       <pd-stepper>
 
-        <pd-phase n="1" title="watch.* bus vocabulary + spec" status="todo"
+        <pd-phase n="1" title="watch.* bus vocabulary + spec" status="done"
           files="auto-shared/bus/watch.go,auto-shared/bus/watch_test.go,docs/auto-bus-spec.md">
           <md><script type="text/plain">
 1. `watch.go` — exported dotted constants `TypeWatchTaskStarted="watch.task.started"`, `TypeWatchTaskCompleted`, `TypeWatchTaskFailed`; `WatchTaskData{TaskID,RunID,TriggerID,SessionName,ResourceKey,Message,ExitCode}` payload; `RunProvenance{Project,Branch,Worktree,Remote,Commit}`; `NewWatchTask(typ, p, d) (Event, error)` = `NewEvent(typ,"auto/watch/daemon",d)` then set top-level provenance. **Verify:** `go build ./...` in `auto-shared`.
@@ -350,7 +350,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="Service.Dispatch + mutex + Cancel + watch.task.* emission" status="todo" depends-on="1"
+        <pd-phase n="2" title="Service.Dispatch + mutex + Cancel + watch.task.* emission" status="done" depends-on="1"
           files="auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/dispatch_test.go,auto-watch/internal/daemon/cancel_test.go,auto-watch/internal/daemon/watch_emit_test.go">
           <md><script type="text/plain">
 1. `daemon.go` — add `dispatchMu sync.Mutex` + `hub *bus.Hub` to `Service`; grow `New(...)` to take `hub` (nil-tolerant). Extract the inline `ReserveRun → log task_reserved → startWorker` into exported `(*Service).Dispatch(ctx, *store.ReserveRunInput, model.TaskDef) (int64, error)` holding `dispatchMu` across the whole reserve+start critical section and returning `store.ErrActiveRunExists` unchanged; refactor `evaluateTrigger`/`evaluateFileCreatedTrigger` to call `Dispatch` (keeping their `task_skipped_dedup` handling). Emit `watch.task.started` from `startWorker` success. Add `(*Service).Cancel(ctx, runID) (model.RunState, error)`: under `dispatchMu`, `GetRun`; terminal→no-op; `running`→`Backend.Kill`+`MarkRunTerminal(RunFailed,…,"cancelled via task.cancel")`+worktree cleanup+emit `watch.task.failed`; `pending`→fail without kill. Wrap the terminal transitions in `Reap` (incl. the stale-pending sweep) with `dispatchMu` and emit `watch.task.completed`/`failed` next to the existing rows via a shared `emitWatchTask` helper — **the single shared reaper owns normal terminal events** (accepted ~60s lag; cancel is the immediate path). **Verify:** `go build ./...` in `auto-watch`.
@@ -361,7 +361,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Race-free concurrent dispatch vs in-flight Tick (no double-reap)" status="todo" depends-on="2"
+        <pd-phase n="3" title="Race-free concurrent dispatch vs in-flight Tick (no double-reap)" status="done" depends-on="2"
           files="auto-watch/internal/daemon/concurrency_test.go">
           <md><script type="text/plain">
 1. `concurrency_test.go` — fake backend + temp store: launch ~50 `Dispatch` goroutines for distinct tasks **concurrently with** a `Tick`/`Reap` in flight, then a wave of colliding-`resourceKey` dispatches; write exit files; run one `Reap`. Assert under **`go test -race`**: (a) no data race; (b) the `uniq_runs_active` index admits exactly one active run per `resourceKey` (the rest get `ErrActiveRunExists`); (c) **each run reaches a terminal state exactly once** (no double-reap); (d) a subscribed `bus.Sink` records **exactly one** `watch.task.started` and **exactly one** terminal event per run (AC-6). **Verify:** `go test -race ./internal/daemon/ -run Concurrency` (and the full `./internal/daemon/` package under `-race`).
@@ -369,7 +369,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="task.* RPC handlers + GR-N3 layering" status="todo" depends-on="2"
+        <pd-phase n="4" title="task.* RPC handlers + GR-N3 layering" status="done" depends-on="2"
           files="auto-watch/internal/rpcmethods/methods.go,auto-watch/internal/rpcmethods/task_test.go,auto-watch/internal/rpcmethods/layering_test.go">
           <md><script type="text/plain">
 1. `methods.go` — add `svc *daemon.Service` to `Handlers`/`New`; `Register` binds `task.dispatch`/`task.cancel`/`task.status`/`task.output`/`task.list` (each via the existing `counted` decorator). `task.dispatch{projectId,taskId}`: resolve the configured `TaskDef` via `config.ProjectsPath`/`LoadGlobalConfig` (unknown→`InvalidParams`), build `ReserveRunInput` with synthetic identity (`TriggerType="rpc"`, `TriggerID="rpc"`, `ResourceKey="rpc:"+taskId`, `ProjectPath` from registration), call `svc.Dispatch`, map `ErrActiveRunExists`→stable domain error, return `{runId,state}`. `task.cancel`→`svc.Cancel`; `task.status`→`svc.Store.GetRun` view; `task.list{state?}`→`svc.Store.ListRunsByStates` (all when unset); `task.output{runId,tailLines?,maxBytes?}`→read `run.OutputPath` with default cap + `truncated`, empty for `pending`. Imports `daemon`/`store`/`runner`/`config`, **not `transport`**. **Verify:** `go build ./...`.
@@ -379,7 +379,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="5" title="Wire hub + Service into auto watch start; full gates" status="todo" depends-on="3,4"
+        <pd-phase n="5" title="Wire hub + Service into auto watch start; full gates" status="done" depends-on="3,4"
           files="auto-watch/internal/cli/ops.go">
           <md><script type="text/plain">
 1. `ops.go` — pass `hub` into `daemon.New(...)` (so the `Service` emits `watch.task.*`) and the `*daemon.Service` into `rpcmethods.New(...)`. No new flags, no new listener — the 031 listener serves whatever `Handlers.Register` binds; tick cadence, flock singleton, and shutdown path untouched. Update the `--once` and secondary `daemon.New` call sites to pass a `nil`/no-op hub. **Verify:** `go build ./...` in `auto-watch`; existing `ops_test.go` stays green.
