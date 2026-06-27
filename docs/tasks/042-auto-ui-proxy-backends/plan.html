@@ -326,7 +326,7 @@ flowchart LR
 
       <pd-stepper>
 
-        <pd-phase n="1" title="Backends config + CLI" files="auto-ui/internal/config/backends.go,auto-ui/internal/config/backends_test.go,auto-ui/internal/cli/backends.go,auto-ui/internal/cli/backends_test.go,auto-ui/internal/cli/root.go" status="todo">
+        <pd-phase n="1" title="Backends config + CLI" files="auto-ui/internal/config/backends.go,auto-ui/internal/config/backends_test.go,auto-ui/internal/cli/backends.go,auto-ui/internal/cli/backends_test.go,auto-ui/internal/cli/root.go" status="done">
           <md><script type="text/plain">
 1. Add `Backend{URI,Name?,HostID?}` + `BackendsConfig{Backends}`, `BackendsPath()` (→ `~/.auto/ui/backends.json` via `UIDir()`), `LoadBackends`/`SaveBackends` (DecodeJSONFileStrict / WriteJSONFileAtomic), `validateBackends` (URI format + duplicate-URI/hostId → `ValidationError`). **Verify:** `go build ./...` in auto-ui.
 2. Add `newBackendsCmd` with `add`/`remove`/`list` (`auto-ui/internal/cli/backends.go`); `list` is JSON-default; `add` does a one-shot dial (`transport.Dial` → `rpc.NewPeer` → `daemon.status` + `project.list`) and prints `✓ connected to <hostId> (<n> projects)`, with `--no-verify` to skip; errors go to stderr with remediation hints. Register in `root.go`. **Verify:** `auto ui backends add/list/remove` round-trips against a temp HOME.
