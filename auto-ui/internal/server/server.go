@@ -4,19 +4,11 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
-	"time"
 
 	"github.com/mistakenot/auto-shared/bus"
 	"github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-ui/internal/backend"
 )
-
-// dedupWindow is the TTL the eventGate dedups event ids over. The same event
-// arrives at the hub by two paths that fire within milliseconds of each other —
-// the local POST /api/rpc ingest and the relayed copy from a backend's bus —
-// so a small window is enough to collapse them while never suppressing a
-// genuinely later event that happens to reuse an id.
-const dedupWindow = 5 * time.Second
 
 // Option configures New.
 type Option func(*options)
@@ -53,8 +45,9 @@ func WithDebug(enabled bool) Option {
 }
 
 // New builds the autoui HTTP handler: a JSON /api/hello endpoint, a WebSocket
-// JSON-RPC endpoint, a POST /api/rpc ingest endpoint, and a file server for
-// the SPA assets rooted at fsys. mode is reported in /api/hello for diagnostics
+// JSON-RPC endpoint, and a file server for the SPA assets rooted at fsys. Live
+// events reach the browser only via the backend relay (045) — auto-ui has no
+// local ingest endpoint. mode is reported in /api/hello for diagnostics
 // (e.g. "embed" or "disk").
 //
 // In disk (dev) mode the asset responses carry Cache-Control: no-store so a
@@ -72,23 +65,27 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 
 	hub := bus.NewHub()
 
-	// The gate fronts the hub with id-based dedup over dedupWindow. Both the
-	// local /api/rpc ingest path and the relayed-backend sink broadcast through
-	// it, so a single event reaching the hub by both paths is delivered once.
-	gate := newEventGate(hub, dedupWindow)
-
-	// When a backend manager is configured, route every relayed backend event
-	// through the gate into the hub. The relay path broadcasts raw events only;
-	// derivation happens once, on the ingesting backend (no re-derivation here).
-	if o.mgr != nil {
-		o.mgr.SetEventSink(gate.Broadcast)
-	}
-
-	// In debug mode, record raw + derived ingest events into a ring buffer
-	// exposed via /api/debug/recent.
+	// In debug mode, record relayed events into a ring buffer exposed via
+	// /api/debug/recent.
 	var buf *debugBuffer
 	if o.debug {
 		buf = &debugBuffer{}
+	}
+
+	// When a backend manager is configured, broadcast every relayed backend
+	// event straight to the hub — the relay (045) is auto-ui's only ingest path,
+	// so there is no second route an id could arrive by and no dedup is needed.
+	// Derivation happens once, on the ingesting autowatch backend (no
+	// re-derivation here). The same sink also records into the debug ring so
+	// /api/debug/recent keeps showing events now that the local ingest is gone
+	// (D-3).
+	if o.mgr != nil {
+		o.mgr.SetEventSink(func(ev bus.Event) {
+			hub.Broadcast(ev)
+			if buf != nil {
+				buf.record(ev)
+			}
+		})
 	}
 
 	// Shared dispatcher routes client->server RPC calls over WebSocket.
@@ -122,11 +119,6 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 	// Bidirectional JSON-RPC 2.0 over WebSocket: client RPC calls + correlated
 	// responses, plus server->client push notifications via the hub.
 	mux.HandleFunc("/api/ws", handleWSWithHub(hub, d))
-
-	// POST /api/rpc: fire-and-forget ingest of bus events. Ingest broadcasts
-	// through the gate (not the hub directly) so a locally-ingested event and
-	// its relayed copy collapse to a single delivery.
-	mux.HandleFunc("/api/rpc", handleRPC(gate.Broadcast, o.regProvider, buf))
 
 	// GET /api/doc/raw: verbatim doc bytes proxied from the backend's doc.raw.
 	mux.HandleFunc("/api/doc/raw", handleDocRawProxy(o.mgr))

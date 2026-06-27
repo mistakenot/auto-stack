@@ -11,65 +11,50 @@ import (
 	"github.com/mistakenot/auto-ui/internal/server"
 )
 
-// TestDebugRecentEnabled verifies that, with WithDebug(true), POSTing a valid
-// agent.tool.post for a docs/**/*.md path records both the raw event and the
-// derived doc.changed event, retrievable via GET /api/debug/recent.
+// TestDebugRecentEnabled verifies D-3: with WithDebug(true), events arriving via
+// the backend relay (auto-ui's only ingest path post-047) are recorded into the
+// debug ring and retrievable via GET /api/debug/recent. auto-ui no longer
+// ingests or derives locally, so the ring reflects exactly what the relay
+// delivers — here a single agent.tool.post the (fake) backend broadcasts.
 func TestDebugRecentEnabled(t *testing.T) {
-	reg := testRegistry()
-	handler := server.New(newTestFS(), "test",
-		server.WithRegistryProvider(func() config.ProjectsConfig { return reg }),
+	const uri = "unix:///fake/a.sock"
+	srv, fleet := newRelayServer(t, map[string]string{uri: "host-a"},
 		server.WithDebug(true),
+		// Registry is no longer used for local derivation, but wiring it keeps
+		// the relay server shaped like production (registered project context).
+		server.WithRegistryProvider(func() config.ProjectsConfig { return testRegistry() }),
 	)
-	srv := httptest.NewServer(handler)
-	defer srv.Close()
 
-	// POST a valid agent.tool.post with a docs/ markdown path.
+	// A realistic agent.tool.post (already ingested+stamped upstream by
+	// autowatch) relayed from the backend. Build it with the shared fixture and
+	// pin a known id so we can find it in the ring.
 	ev := validToolPostEvent(t, "docs/tasks/test.md")
-	frame := bus.Notification{JSONRPC: "2.0", Method: ev.Type, Params: ev}
-	body, err := json.Marshal(frame)
-	if err != nil {
-		t.Fatalf("marshal frame: %v", err)
-	}
+	ev.ID = "evt-debug"
+	ev.Host = "host-a"
+	fleet.backendFor("host-a").broadcast(ev)
 
-	resp := postRPC(t, srv, body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("POST status = %d, want %d", resp.StatusCode, http.StatusNoContent)
-	}
-
-	// GET /api/debug/recent should return the raw event AND one derived doc.changed.
-	getResp, err := http.Get(srv.URL + "/api/debug/recent")
-	if err != nil {
-		t.Fatalf("GET /api/debug/recent: %v", err)
-	}
-	defer getResp.Body.Close()
-	if getResp.StatusCode != http.StatusOK {
-		t.Fatalf("GET status = %d, want %d", getResp.StatusCode, http.StatusOK)
-	}
-
-	var events []bus.Event
-	if err := json.NewDecoder(getResp.Body).Decode(&events); err != nil {
-		t.Fatalf("decode events: %v", err)
-	}
-
-	var sawRaw, sawDerived bool
-	for _, e := range events {
-		switch e.Type {
-		case "agent.tool.post":
-			sawRaw = true
-		case "doc.changed":
-			sawDerived = true
+	// The relay is asynchronous (backend → manager read loop → sink → ring), so
+	// poll until the event lands in /api/debug/recent.
+	waitTrue(t, "relayed event never recorded in debug ring", func() bool {
+		getResp, err := http.Get(srv.URL + "/api/debug/recent")
+		if err != nil {
+			t.Fatalf("GET /api/debug/recent: %v", err)
 		}
-	}
-	if !sawRaw {
-		t.Errorf("recent events missing raw agent.tool.post: %+v", events)
-	}
-	if !sawDerived {
-		t.Errorf("recent events missing derived doc.changed: %+v", events)
-	}
-	if len(events) != 2 {
-		t.Errorf("recent events = %d, want 2 (raw + derived): %+v", len(events), events)
-	}
+		defer getResp.Body.Close()
+		if getResp.StatusCode != http.StatusOK {
+			t.Fatalf("GET status = %d, want %d", getResp.StatusCode, http.StatusOK)
+		}
+		var events []bus.Event
+		if err := json.NewDecoder(getResp.Body).Decode(&events); err != nil {
+			t.Fatalf("decode events: %v", err)
+		}
+		for _, e := range events {
+			if e.ID == "evt-debug" && e.Type == "agent.tool.post" {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 // TestDebugRecentDisabled verifies that without WithDebug, GET /api/debug/recent

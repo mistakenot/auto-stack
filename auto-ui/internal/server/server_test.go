@@ -111,6 +111,22 @@ func TestServeIndex(t *testing.T) {
 	}
 }
 
+// TestRPCRouteRemoved covers AC-5: the local ingest endpoint is gone. After 047
+// hooks post to autowatch's hook-ingest, not auto-ui, so POST /api/rpc no longer
+// routes to a handler and falls through to the SPA file server, which 404s the
+// unknown path.
+func TestRPCRouteRemoved(t *testing.T) {
+	handler := server.New(newTestFS(), "test")
+
+	req := localReq(http.MethodPost, "/api/rpc")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("POST /api/rpc status = %d, want %d (route removed)", rec.Code, http.StatusNotFound)
+	}
+}
+
 // TestMissingAsset asserts that a request for a non-existent file 404s.
 func TestMissingAsset(t *testing.T) {
 	handler := server.New(newTestFS(), "test")
