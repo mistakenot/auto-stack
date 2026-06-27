@@ -17,7 +17,7 @@
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="043: etl-registry-repo-discovery" status="executing" pr="pending" generated="2026-06-27">
+  <pd-doc title="043: etl-registry-repo-discovery" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/100" generated="2026-06-27">
     <pd-tab name="Requirements">
 
       <pd-section id="problem" title="Problem">
@@ -186,15 +186,22 @@ flowchart TB
         </script></md>
       </pd-ac>
 
-      <pd-ac id="AC-3" title="Matching is path-then-remote" phases="1" tests="auto-etl/cmd/registry_gate_test.go">
+      <pd-ac id="AC-3" title="Matching is remote-first, with a path fallback that does not leak nested clones" phases="1" tests="auto-etl/cmd/registry_gate_test.go">
         <md><script type="text/plain">
-- **Given** (a) a workspace that is a nested subdirectory of a registered
-  project's path but has no remote match, and (b) a workspace whose path is not
-  registered but whose origin remote (after SSH↔HTTPS + credential
-  normalization) equals a registered project's remote
+- **Given** (a) a workspace whose path is not registered but whose origin remote
+  (after SSH↔HTTPS + credential normalization) equals a registered project's
+  remote; (b) a plain subdirectory of a registered project that carries **no
+  distinct remote of its own**; (c) the exact registered directory itself; and
+  (d) a workspace **nested under** a registered project whose origin is a
+  **foreign, unregistered** remote (a vendored/experimental clone inside the
+  project)
 - **When** the gate evaluates each
-- **Then** both are kept — (a) via `FindProjectByPath` longest-prefix, (b) via
-  `FindProjectByRemote` fallback
+- **Then** (a) is kept via `FindProjectByRemote`; (b) is kept via
+  `FindProjectByPath` longest-prefix (empty remote → nothing foreign to leak);
+  (c) is kept via `FindProjectByExactPath` (explicit registration wins
+  regardless of remote); and (d) is **dropped** — a path-prefix match alone must
+  not keep a foreign repo, or its PRs and git history would be re-indexed,
+  reopening the very leak this gate closes
         </script></md>
       </pd-ac>
 
@@ -286,9 +293,14 @@ Flow in `runE` (`cmd/run.go`):
 2. Load the registry read-only (`loadRegistryQuietly`, mirroring
    `auto-cli` hookscmd — never `EnsureProjects`, so ETL never mutates the
    registry).
-3. Build a **filtered copy** of `remotes`, keeping an entry iff
-   `FindProjectByPath(path) != nil` **or** `FindProjectByRemote(remote) != nil`.
-   Print a one-line gate summary to stderr (kept / skipped + remediation hint).
+3. Build a **filtered copy** of `remotes`, keeping an entry iff its remote
+   matches a registered project (`FindProjectByRemote`), **or** the exact
+   directory is registered (`FindProjectByExactPath`), **or** it is nested under
+   a registered project (`FindProjectByPath` longest-prefix) **and carries no
+   distinct remote of its own**. A nested path with a *foreign* remote (a clone
+   vendored inside a registered project) is **dropped** — keeping it on path
+   prefix alone would re-index a foreign repo and reopen the leak. Print a
+   one-line gate summary to stderr (kept / skipped + remediation hint).
 4. Pass the **filtered copy** to `runGitHubSync` and `runGitETL`.
 5. Persist the **original, unfiltered** `remotes` via `saveRemotesCache` — the
    canonical cache is never narrowed.
@@ -340,7 +352,7 @@ regression of the auto-discovery leak this task fixes.
       </pd-decision>
 
       <pd-files>
-        <pd-file path="auto-etl/cmd/registry_gate.go" change="add">Registry gate: `loadRegistryQuietly()` (read-only, empty on error) + `filterRemotesByRegistry(remotes, cfg) (map, gateStats)` doing path-then-remote matching + stderr summary helper.</pd-file>
+        <pd-file path="auto-etl/cmd/registry_gate.go" change="add">Registry gate: `loadRegistryQuietly()` (read-only, empty on error) + `filterRemotesByRegistry(remotes, cfg) (map, gateStats)` doing remote-first matching with an exact-path and empty-remote nested-path fallback (foreign nested clones dropped) + stderr summary helper.</pd-file>
         <pd-file path="auto-etl/cmd/registry_gate_test.go" change="add">Table-driven unit tests: path match, remote-fallback match, nested-subdir longest-prefix, unregistered drop, empty registry → empty map, summary string. Temp-HOME test for `loadRegistryQuietly`.</pd-file>
         <pd-file path="auto-etl/cmd/run.go" change="edit">After session ETL: load registry, build filtered remotes copy, print gate summary to stderr, pass filtered copy to `runGitHubSync` + `runGitETL`; keep `saveRemotesCache` on the unfiltered original; make the `--only github` empty-result error registry-aware.</pd-file>
         <pd-file path="auto-etl/cmd/run_gate_integration_test.go" change="add">Network-free integration tests via temp HOME + seeded `~/.auto/projects.json`: `--only git` against a local git-repo fixture (registered discovered, unregistered skipped, `--repo-path` bypass, saved cache still complete); `--only sessions` asserts all sessions ingested regardless of registration; stdout/stderr capture for the gate summary.</pd-file>
@@ -385,7 +397,7 @@ test (Phase 2), then update the two ETL docs to reflect the reversed policy
       </pd-section>
 
       <pd-stepper>
-        <pd-phase n="1" title="Registry gate core + unit tests" files="auto-etl/cmd/registry_gate.go, auto-etl/cmd/registry_gate_test.go" status="todo">
+        <pd-phase n="1" title="Registry gate core + unit tests" files="auto-etl/cmd/registry_gate.go, auto-etl/cmd/registry_gate_test.go" status="done">
           <md><script type="text/plain">
 Add the pure gate, no `run.go` wiring yet.
 
@@ -397,16 +409,19 @@ Add the pure gate, no `run.go` wiring yet.
    - `type gateStats struct { total, kept, skipped int }`.
    - `filterRemotesByRegistry(remotes map[string]string, cfg sharedconfig.ProjectsConfig) (map[string]string, gateStats)` —
      for each `path → remote`, keep iff
-     `cfg.FindProjectByPath(path) != nil || cfg.FindProjectByRemote(remote) != nil`;
+     `cfg.FindProjectByRemote(remote) != nil || cfg.FindProjectByExactPath(path) != nil || (remote == "" && cfg.FindProjectByPath(path) != nil)`.
+     A nested path with a *foreign* remote is dropped (leak guard — see AC-3);
      tally stats. Return a new map (never mutate the input).
    - `gateSummary(stats gateStats, registryEmpty bool) string` — one line for
      stderr; when `registryEmpty` or `kept == 0`, include the hint
      `run 'auto init --project' in each repo you want indexed`.
    - *Verify:* `go build ./...` (in `auto-etl`).
 2. Create `auto-etl/cmd/registry_gate_test.go` — table-driven:
-   - registered by exact path; by nested sub-path (longest-prefix); by remote
-     fallback when path differs; SSH↔HTTPS/credential-normalized remote match;
-     unregistered dropped; empty registry → empty map + non-zero skipped;
+   - registered by exact path (kept even with a foreign remote); nested
+     sub-path with no own remote (longest-prefix); nested clone with a foreign
+     remote **dropped** (leak guard); remote fallback when path differs;
+     SSH↔HTTPS/credential-normalized remote match; unregistered dropped; empty
+     registry → empty map + non-zero skipped;
      input map not mutated; `gateSummary` includes the hint when empty.
    - temp-HOME test (`t.TempDir()` + `t.Setenv("HOME", …)`) for
      `loadRegistryQuietly`: missing file → empty; seeded file → loaded.
@@ -415,7 +430,7 @@ Add the pure gate, no `run.go` wiring yet.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="Wire gate into run.go + integration test" files="auto-etl/cmd/run.go, auto-etl/cmd/run_gate_integration_test.go" status="todo" depends-on="1">
+        <pd-phase n="2" title="Wire gate into run.go + integration test" files="auto-etl/cmd/run.go, auto-etl/cmd/run_gate_integration_test.go" status="done" depends-on="1">
           <md><script type="text/plain">
 Insert the gate between the session phase and the repo phases.
 
@@ -449,7 +464,7 @@ Insert the gate between the session phase and the repo phases.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Update ETL docs to the gated policy" files="auto-etl/docs/github-pr-etl.md, auto-etl/docs/git-history-etl.md" status="todo" depends-on="2">
+        <pd-phase n="3" title="Update ETL docs to the gated policy" files="auto-etl/docs/github-pr-etl.md, auto-etl/docs/git-history-etl.md" status="done" depends-on="2">
           <md><script type="text/plain">
 Reverse the documented "sync everything" policy.
 

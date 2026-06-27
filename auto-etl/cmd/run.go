@@ -81,17 +81,31 @@ func newRunCmd() *cobra.Command {
 				}
 			}
 
+			// Registry gate: narrow repo discovery (GitHub + git history) to
+			// registered projects, matched path-first then remote-fallback. We
+			// filter a COPY so the canonical remotes cache is never narrowed
+			// (AC-6), and so --repo-path can still flow ungated into runGitETL.
+			gated := remotes
+			if sources["github"] || sources["git"] {
+				reg := loadRegistryQuietly()
+				var stats gateStats
+				gated, stats = filterRemotesByRegistry(remotes, reg)
+				if stats.skipped > 0 || len(reg.Projects) == 0 {
+					fmt.Fprintln(os.Stderr, gateSummary(stats, len(reg.Projects) == 0))
+				}
+			}
+
 			// GitHub PR sync phase
 			if sources["github"] {
 				explicitGitHub := len(onlyFlag) > 0 && !sources["sessions"]
-				if err := runGitHubSync(cmd.Context(), hostID, remotes, explicitGitHub); err != nil {
+				if err := runGitHubSync(cmd.Context(), hostID, gated, explicitGitHub); err != nil {
 					return err
 				}
 			}
 
 			// Git history ETL phase
 			if sources["git"] {
-				if err := runGitETL(hostID, remotes, repoPathFlag, sinceFlag, fullRun); err != nil {
+				if err := runGitETL(hostID, gated, repoPathFlag, sinceFlag, fullRun); err != nil {
 					return err
 				}
 			}
@@ -230,7 +244,7 @@ func runGitHubSync(ctx context.Context, hostID string, remotes map[string]string
 	repos := ghclient.DiscoverRepos(remotes)
 	if len(repos) == 0 {
 		if explicitOnly {
-			return errors.New("no GitHub repos found in settings cache")
+			return errors.New("no GitHub repos found in settings cache — register projects with 'auto init --project' in each repo you want indexed")
 		}
 		return nil
 	}
