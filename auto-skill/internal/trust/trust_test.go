@@ -104,6 +104,29 @@ func TestLocalPathEndpoint(t *testing.T) {
 	}
 }
 
+func TestFileURLTrustIsolation(t *testing.T) {
+	s := newTempStore(t)
+	if err := s.Add("file:///tmp/repo-a"); err != nil {
+		t.Fatalf("Add file:///tmp/repo-a: %v", err)
+	}
+
+	ok, err := s.IsApproved("file:///tmp/repo-a")
+	if err != nil {
+		t.Fatalf("IsApproved repo-a: %v", err)
+	}
+	if !ok {
+		t.Error("file:///tmp/repo-a should be approved")
+	}
+
+	ok, err = s.IsApproved("file:///tmp/repo-b")
+	if err != nil {
+		t.Fatalf("IsApproved repo-b: %v", err)
+	}
+	if ok {
+		t.Error("file:///tmp/repo-b must NOT be approved when only repo-a was trusted")
+	}
+}
+
 func TestIdempotentAdd(t *testing.T) {
 	s := newTempStore(t)
 	if err := s.Add("https://github.com"); err != nil {

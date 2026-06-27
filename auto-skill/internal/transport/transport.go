@@ -279,8 +279,12 @@ func Endpoint(raw string) (string, error) {
 	}
 
 	if scheme == "file" {
-		// For file:// endpoints, return the canonical path.
-		return filepath.Clean("/" + host), nil
+		_, _, path := parseURLParts(raw)
+		absPath := path
+		if !filepath.IsAbs(absPath) {
+			absPath = "/" + absPath
+		}
+		return "file://" + filepath.Clean(absPath), nil
 	}
 
 	host = strings.ToLower(host)

@@ -277,6 +277,16 @@ func TestEndpoint(t *testing.T) {
 			want:  "https://github.com:443",
 		},
 		{
+			name:  "file URL preserves path",
+			input: "file:///tmp/my-repo",
+			want:  "file:///tmp/my-repo",
+		},
+		{
+			name:  "file URL distinct paths are distinct",
+			input: "file:///tmp/other-repo",
+			want:  "file:///tmp/other-repo",
+		},
+		{
 			name:     "reject ftp",
 			input:    "ftp://host/repo",
 			wantCode: CodeUnsupportedTransport,
