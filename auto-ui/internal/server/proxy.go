@@ -24,8 +24,9 @@ func proxyCall(mgr *backend.Manager, method string) Handler {
 		}
 
 		var p struct {
-			Host   string `json:"host"`
-			HostID string `json:"hostId"`
+			Host    string `json:"host"`
+			HostID  string `json:"hostId"`
+			Project string `json:"project"`
 		}
 		if params != nil {
 			_ = json.Unmarshal(params, &p)
@@ -39,13 +40,15 @@ func proxyCall(mgr *backend.Manager, method string) Handler {
 			host = p.Host
 		}
 		peer, err := mgr.Resolve(host)
+		if errors.Is(err, backend.ErrAmbiguousHost) && p.Project != "" {
+			// No explicit host but we have a project id — try each connected
+			// backend until one owns the project (returns a non-error result).
+			peer, err = mgr.ResolveByProject(ctx, p.Project)
+		}
 		if err != nil {
 			return nil, resolveRPCError(err)
 		}
 
-		// Forward the params verbatim (autowatch handlers ignore unknown fields,
-		// so a stray `host` is harmless). The raw result round-trips as `any` and
-		// is re-emitted byte-for-byte by the dispatcher.
 		res, err := peer.Call(ctx, method, params)
 		if err != nil {
 			return nil, backendCallRPCError(err)
@@ -83,6 +86,11 @@ func handleDocRawProxy(mgr *backend.Manager) http.HandlerFunc {
 			host = q.Get("host")
 		}
 		peer, err := mgr.Resolve(host)
+		if errors.Is(err, backend.ErrAmbiguousHost) {
+			if proj := q.Get("project"); proj != "" {
+				peer, err = mgr.ResolveByProject(r.Context(), proj)
+			}
+		}
 		if err != nil {
 			http.Error(w, resolveHTTPMessage(err), resolveHTTPStatus(err))
 			return
@@ -123,6 +131,63 @@ func handleDocRawProxy(mgr *backend.Manager) http.HandlerFunc {
 		// Serving verbatim doc bytes is the explicit purpose of this route; the
 		// payload is produced by the backend's validated doc.raw handler.
 		_, _ = w.Write(data) //nolint:gosec // G705: verbatim doc bytes are this route's contract
+	}
+}
+
+// fanOutProjectList returns a Handler that calls project.list on every connected
+// backend and merges the results into a single flat array. This is necessary
+// because project.list with no host is ambiguous when multiple backends are
+// connected — unlike doc.list which targets one project (and therefore one
+// backend), the project list is cross-backend by definition.
+func fanOutProjectList(mgr *backend.Manager) Handler {
+	return func(ctx context.Context, params json.RawMessage) (any, error) {
+		if mgr == nil {
+			return nil, &rpcError{Code: codeInternalError, Message: "no backend configured"}
+		}
+
+		peers := mgr.ConnectedPeers()
+		if len(peers) == 0 {
+			return nil, &rpcError{Code: codeInternalError, Message: "no backend connected"}
+		}
+
+		// Single backend: skip the fan-out overhead.
+		if len(peers) == 1 {
+			res, err := peers[0].Peer.Call(ctx, "project.list", params)
+			if err != nil {
+				return nil, backendCallRPCError(err)
+			}
+			return res, nil
+		}
+
+		type result struct {
+			raw json.RawMessage
+			err error
+		}
+		ch := make(chan result, len(peers))
+		for _, p := range peers {
+			go func() {
+				raw, err := p.Peer.Call(ctx, "project.list", params)
+				ch <- result{raw, err}
+			}()
+		}
+
+		var merged []json.RawMessage
+		for range peers {
+			r := <-ch
+			if r.err != nil {
+				continue
+			}
+			var items []json.RawMessage
+			if err := json.Unmarshal(r.raw, &items); err != nil {
+				continue
+			}
+			merged = append(merged, items...)
+		}
+
+		if merged == nil {
+			merged = []json.RawMessage{}
+		}
+		return merged, nil
 	}
 }
 

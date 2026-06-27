@@ -400,6 +400,73 @@ func (m *Manager) Resolve(host string) (*rpc.Peer, error) {
 	}
 }
 
+// ResolveByProject finds the backend that owns projectID by calling
+// project.list on each connected peer concurrently. Returns ErrNoBackend if
+// none are connected, ErrUnknownHost if no backend claims the project.
+func (m *Manager) ResolveByProject(ctx context.Context, projectID string) (*rpc.Peer, error) {
+	peers := m.ConnectedPeers()
+	if len(peers) == 0 {
+		return nil, ErrNoBackend
+	}
+
+	type hit struct {
+		peer *rpc.Peer
+	}
+	ch := make(chan *hit, len(peers))
+
+	for _, p := range peers {
+		go func() {
+			raw, err := p.Peer.Call(ctx, "project.list", nil)
+			if err != nil {
+				ch <- nil
+				return
+			}
+			var projects []struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &projects); err != nil {
+				ch <- nil
+				return
+			}
+			for _, proj := range projects {
+				if proj.ID == projectID {
+					ch <- &hit{peer: p.Peer}
+					return
+				}
+			}
+			ch <- nil
+		}()
+	}
+
+	for range peers {
+		if h := <-ch; h != nil {
+			return h.peer, nil
+		}
+	}
+	return nil, ErrUnknownHost
+}
+
+// PeerInfo is a connected peer with its host id, returned by ConnectedPeers.
+type PeerInfo struct {
+	HostID string
+	Peer   *rpc.Peer
+}
+
+// ConnectedPeers returns every currently connected peer. The caller can fan out
+// RPCs across all backends (e.g. project.list aggregation).
+func (m *Manager) ConnectedPeers() []PeerInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var out []PeerInfo
+	for _, c := range m.conns {
+		if c.connected {
+			out = append(out, PeerInfo{HostID: c.hostID, Peer: c.peer})
+		}
+	}
+	return out
+}
+
 // Health returns a snapshot of every known backend (connected or pending),
 // sorted by URI for stable output.
 func (m *Manager) Health() []BackendHealth {

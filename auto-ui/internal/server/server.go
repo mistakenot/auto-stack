@@ -106,7 +106,7 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 	// local-filesystem read.
 	d.Register("doc.list", proxyCall(o.mgr, "doc.list"))
 	d.Register("doc.get", proxyCall(o.mgr, "doc.get"))
-	d.Register("project.list", proxyCall(o.mgr, "project.list"))
+	d.Register("project.list", fanOutProjectList(o.mgr))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/hello", func(w http.ResponseWriter, r *http.Request) {
