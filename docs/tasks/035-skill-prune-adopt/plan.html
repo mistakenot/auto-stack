@@ -642,7 +642,7 @@ Fill T4's reserved journal `prunes` slot; deletion rides T4's journaled commit.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="4" title="remove — drop source of truth + prune targets" status="todo" depends-on="2"
+          <pd-phase n="4" title="remove — drop source of truth + prune targets" status="done" depends-on="2"
             files="auto-skill/internal/sync/remove.go,auto-skill/internal/sync/remove_test.go,auto-skill/internal/cli/remove.go">
             <md><script type="text/plain">
 1. `internal/sync/remove.go`: `Remove(env, name, sel)` + `Selector` (`SelLocal` /
