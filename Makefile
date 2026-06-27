@@ -284,13 +284,21 @@ autodoc-fix:
 		fi; \
 	fi
 
+# When these targets run from a git hook (pre-commit/post-merge/post-checkout/
+# pre-push), git exports GIT_DIR/GIT_INDEX_FILE/GIT_WORK_TREE into the hook
+# environment. `auto skill` resolves the skills cache with `git -C <cache>`, but
+# an inherited GIT_DIR overrides `-C`, redirecting the lookup to this repo and
+# failing (cache commit "not present"). Strip those vars so the cache git calls
+# resolve correctly. Harmless outside a hook (the vars are simply unset).
+SKILL_GIT_ENV := env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE
+
 # Pre-commit skill gate: check-only, never mutates the tree. When the project
 # has a native skills lock, fail the commit if any target is stale (sync --check)
 # or any skill fails lint. Replaces the former npx-based skills-sync stanza.
 skills-check:
 	@if [ -f "$(CURDIR)/.auto/skills/lock.json" ] && command -v auto >/dev/null 2>&1; then \
-		auto skill sync --check || exit 1; \
-		auto skill lint || exit 1; \
+		$(SKILL_GIT_ENV) auto skill sync --check || exit 1; \
+		$(SKILL_GIT_ENV) auto skill lint || exit 1; \
 	fi
 
 # Post-merge / post-checkout re-materialize: reproduce the locked commit and
@@ -298,7 +306,7 @@ skills-check:
 post-merge post-checkout: skills-sync-locked
 skills-sync-locked:
 	@if [ -f "$(CURDIR)/.auto/skills/lock.json" ] && command -v auto >/dev/null 2>&1; then \
-		auto skill sync --locked 2>/dev/null || true; \
+		$(SKILL_GIT_ENV) auto skill sync --locked 2>/dev/null || true; \
 	fi
 
 # Pre-push upstream-drift check: opt-in, off by default. Enable per-invocation
@@ -307,7 +315,7 @@ pre-push: skills-update-check
 SKILLS_UPDATE_CHECK ?= 0
 skills-update-check:
 	@if [ "$(SKILLS_UPDATE_CHECK)" = "1" ] && [ -f "$(CURDIR)/.auto/skills/lock.json" ] && command -v auto >/dev/null 2>&1; then \
-		auto skill update --check 2>/dev/null || true; \
+		$(SKILL_GIT_ENV) auto skill update --check 2>/dev/null || true; \
 	fi
 
 # Flush beads issue state to JSONL so issue changes land in the commit.
