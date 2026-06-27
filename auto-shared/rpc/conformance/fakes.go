@@ -215,7 +215,95 @@ func (f *fakeFixture) Close() error {
 }
 
 // ---------------------------------------------------------------------------
-// FakeFixtures: returns 3 fixture factories (pipe, unix, tcp)
+// faultConn: net-new fault-injecting net.Conn wrapper
+// ---------------------------------------------------------------------------
+
+// faultConn wraps a net.Conn to inject two controllable faults used by the
+// conformance fault scenarios:
+//
+//   - Sever()/Close() drops the connection mid-stream (closes the underlying
+//     conn), simulating a connection failure.
+//   - Stall()/Release() make Write block then unblock, simulating a stalled
+//     reader. Per decision D-3, a blocking write is required because OS socket
+//     buffers on unix/tcp absorb writes, so "just don't read" cannot
+//     deterministically fill the producer's bounded out channel.
+//
+// All controls are thread-safe. A stalled Write always unblocks on either
+// Release() or Close(), so a faulted fixture can never wedge a test.
+type faultConn struct {
+	net.Conn
+
+	mu      sync.Mutex
+	stalled bool
+	relCh   chan struct{} // closed by Release to unblock the current stall
+
+	closed    chan struct{} // closed by Close to unblock any stall and stop writes
+	closeOnce sync.Once
+}
+
+// newFaultConn wraps conn with fault-injection controls.
+func newFaultConn(conn net.Conn) *faultConn {
+	return &faultConn{Conn: conn, closed: make(chan struct{})}
+}
+
+// Stall makes subsequent Write calls block until Release or Close. Idempotent.
+func (c *faultConn) Stall() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stalled {
+		return
+	}
+	c.stalled = true
+	c.relCh = make(chan struct{})
+}
+
+// Release unblocks a stalled Write and lets future writes proceed. Idempotent.
+func (c *faultConn) Release() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.stalled {
+		return
+	}
+	c.stalled = false
+	close(c.relCh)
+	c.relCh = nil
+}
+
+// Write blocks while the conn is stalled, then delegates to the underlying
+// conn. A stalled Write returns net.ErrClosed if the conn is closed while
+// waiting, guaranteeing the write pump can never hang past Close.
+func (c *faultConn) Write(b []byte) (int, error) {
+	c.mu.Lock()
+	stalled := c.stalled
+	relCh := c.relCh
+	c.mu.Unlock()
+
+	if stalled {
+		select {
+		case <-relCh:
+			// released — fall through and write
+		case <-c.closed:
+			return 0, net.ErrClosed
+		}
+	}
+	return c.Conn.Write(b)
+}
+
+// Sever closes the underlying connection mid-stream.
+func (c *faultConn) Sever() { _ = c.Close() }
+
+// Close closes the underlying conn and unblocks any stalled Write. Idempotent.
+func (c *faultConn) Close() error {
+	var err error
+	c.closeOnce.Do(func() {
+		close(c.closed)
+		err = c.Conn.Close()
+	})
+	return err
+}
+
+// ---------------------------------------------------------------------------
+// FakeFixtures / FaultFixtures: per-transport fixture factories
 // ---------------------------------------------------------------------------
 
 // FakeFixtures returns 3 FixtureFactory values that build connected RPC
@@ -235,32 +323,30 @@ func FakeFixtures() []FixtureFactory {
 	}
 }
 
-// pipeFactory wires two peers via net.Pipe.
-func pipeFactory(t testing.TB) Fixture {
-	c1, c2 := net.Pipe()
-
-	server := NewFakeServer(c1)
-	client := NewPeerClient(c2)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	sErr := make(chan error, 1)
-	cErr := make(chan error, 1)
-
-	go func() { sErr <- server.Peer().Serve(ctx) }()
-	go func() { cErr <- client.Peer().Serve(ctx) }()
-
-	return &fakeFixture{
-		client:     client,
-		server:     server,
-		cancel:     cancel,
-		serveErrCh: sErr,
-		clientDone: cErr,
+// FaultFixtures returns 3 FixtureFactory values mirroring FakeFixtures over the
+// same transports (pipe, unix, tcp), but each wraps the client (producer) conn
+// in a faultConn so fault scenarios can Sever / StallConsumer / ReleaseConsumer
+// it. Every value returned also satisfies FaultFixture.
+func FaultFixtures() []FixtureFactory {
+	return []FixtureFactory{
+		faultPipeFactory,
+		faultUnixFactory,
+		faultTCPFactory,
 	}
 }
 
-// unixFactory creates a unix socket listener+dialer pair.
-func unixFactory(t testing.TB) Fixture {
+// connectFunc returns a connected server/client conn pair plus a cleanup that
+// releases transport-level resources (closes the listener; a no-op for pipe).
+type connectFunc func(t testing.TB) (serverConn, clientConn net.Conn, cleanup func())
+
+// pipeConnect wires an in-process net.Pipe pair.
+func pipeConnect(_ testing.TB) (net.Conn, net.Conn, func()) {
+	c1, c2 := net.Pipe()
+	return c1, c2, func() {}
+}
+
+// unixConnect creates a unix socket listener+dialer pair.
+func unixConnect(t testing.TB) (net.Conn, net.Conn, func()) {
 	dir := t.(*testing.T).TempDir()
 	sockPath := filepath.Join(dir, "test.sock")
 
@@ -269,9 +355,6 @@ func unixFactory(t testing.TB) Fixture {
 		t.Fatalf("unix.Listen: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Accept one connection in a goroutine.
 	type acceptResult struct {
 		conn net.Conn
 		err  error
@@ -282,57 +365,32 @@ func unixFactory(t testing.TB) Fixture {
 		acceptCh <- acceptResult{conn, err}
 	}()
 
-	// Dial the server.
 	d := unix.NewDialer(sockPath)
-	dialCtx, dialCancel := context.WithTimeout(ctx, testTimeout)
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), testTimeout)
 	defer dialCancel()
 	clientConn, err := d.Dial(dialCtx)
 	if err != nil {
-		cancel()
 		_ = ln.Close()
 		t.Fatalf("unix.Dial: %v", err)
 	}
 
-	// Wait for accept.
 	ar := <-acceptCh
 	if ar.err != nil {
-		cancel()
 		_ = clientConn.Close()
 		_ = ln.Close()
 		t.Fatalf("unix.Accept: %v", ar.err)
 	}
 
-	server := NewFakeServer(ar.conn)
-	client := NewPeerClient(clientConn)
-
-	sErr := make(chan error, 1)
-	cErr := make(chan error, 1)
-
-	go func() { sErr <- server.Peer().Serve(ctx) }()
-	go func() { cErr <- client.Peer().Serve(ctx) }()
-
-	return &fakeFixture{
-		client: client,
-		server: server,
-		cancel: func() {
-			cancel()
-			_ = ln.Close()
-		},
-		serveErrCh: sErr,
-		clientDone: cErr,
-	}
+	return ar.conn, clientConn, func() { _ = ln.Close() }
 }
 
-// tcpFactory creates a TCP listener+dialer pair on loopback.
-func tcpFactory(t testing.TB) Fixture {
+// tcpConnect creates a TCP listener+dialer pair on loopback.
+func tcpConnect(t testing.TB) (net.Conn, net.Conn, func()) {
 	ln, err := tcp.Listen("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("tcp.Listen: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Accept one connection in a goroutine.
 	type acceptResult struct {
 		conn net.Conn
 		err  error
@@ -343,29 +401,34 @@ func tcpFactory(t testing.TB) Fixture {
 		acceptCh <- acceptResult{conn, err}
 	}()
 
-	// Dial the server using the resolved address.
 	addr := ln.Addr().String()
 	d := tcp.NewDialer(addr)
-	dialCtx, dialCancel := context.WithTimeout(ctx, testTimeout)
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), testTimeout)
 	defer dialCancel()
 	clientConn, err := d.Dial(dialCtx)
 	if err != nil {
-		cancel()
 		_ = ln.Close()
 		t.Fatalf("tcp.Dial %s: %v", addr, err)
 	}
 
-	// Wait for accept.
 	ar := <-acceptCh
 	if ar.err != nil {
-		cancel()
 		_ = clientConn.Close()
 		_ = ln.Close()
 		t.Fatalf("tcp.Accept: %v", ar.err)
 	}
 
-	server := NewFakeServer(ar.conn)
+	return ar.conn, clientConn, func() { _ = ln.Close() }
+}
+
+// startFakeFixture wires a FakeServer on serverConn and a PeerClient on
+// clientConn, starts both Serve loops, and returns a fakeFixture whose Close
+// cancels the serve context, runs extraCleanup, and joins both goroutines.
+func startFakeFixture(serverConn, clientConn net.Conn, extraCleanup func()) *fakeFixture {
+	server := NewFakeServer(serverConn)
 	client := NewPeerClient(clientConn)
+
+	ctx, cancel := context.WithCancel(context.Background())
 
 	sErr := make(chan error, 1)
 	cErr := make(chan error, 1)
@@ -378,18 +441,68 @@ func tcpFactory(t testing.TB) Fixture {
 		server: server,
 		cancel: func() {
 			cancel()
-			_ = ln.Close()
+			extraCleanup()
 		},
 		serveErrCh: sErr,
 		clientDone: cErr,
 	}
 }
+
+func pipeFactory(t testing.TB) Fixture {
+	s, c, cleanup := pipeConnect(t)
+	return startFakeFixture(s, c, cleanup)
+}
+
+func unixFactory(t testing.TB) Fixture {
+	s, c, cleanup := unixConnect(t)
+	return startFakeFixture(s, c, cleanup)
+}
+
+func tcpFactory(t testing.TB) Fixture {
+	s, c, cleanup := tcpConnect(t)
+	return startFakeFixture(s, c, cleanup)
+}
+
+// ---------------------------------------------------------------------------
+// faultFixture: FaultFixture backed by a faultConn on the client side
+// ---------------------------------------------------------------------------
+
+// faultFixture extends fakeFixture with control over a faultConn wrapping the
+// client (producer) conn. The client is the side scenarios drive (it issues the
+// in-flight Call to drop and the notifications to overflow), so faulting its
+// conn is what severs an in-flight Call and what stalls the producer's writes.
+type faultFixture struct {
+	*fakeFixture
+	fault *faultConn
+}
+
+func (f *faultFixture) Sever()           { f.fault.Sever() }
+func (f *faultFixture) StallConsumer()   { f.fault.Stall() }
+func (f *faultFixture) ReleaseConsumer() { f.fault.Release() }
+
+// newFaultFixture wraps the client conn from connect in a faultConn and returns
+// a fault-capable fixture.
+func newFaultFixture(t testing.TB, connect connectFunc) Fixture {
+	serverConn, clientConn, cleanup := connect(t)
+	fc := newFaultConn(clientConn)
+	return &faultFixture{
+		fakeFixture: startFakeFixture(serverConn, fc, cleanup),
+		fault:       fc,
+	}
+}
+
+func faultPipeFactory(t testing.TB) Fixture { return newFaultFixture(t, pipeConnect) }
+func faultUnixFactory(t testing.TB) Fixture { return newFaultFixture(t, unixConnect) }
+func faultTCPFactory(t testing.TB) Fixture  { return newFaultFixture(t, tcpConnect) }
 
 // ensure compile-time interface satisfaction
 var (
 	_ RPCClient    = (*PeerClient)(nil)
 	_ Observations = (*FakeServer)(nil)
 	_ Fixture      = (*fakeFixture)(nil)
+	_ Fixture      = (*faultFixture)(nil)
+	_ FaultFixture = (*faultFixture)(nil)
 	_ net.Conn     = (*CountingConn)(nil)
+	_ net.Conn     = (*faultConn)(nil)
 	_              = fmt.Sprintf // suppress unused import if needed
 )

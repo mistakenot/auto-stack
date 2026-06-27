@@ -47,6 +47,26 @@ type Fixture interface {
 	Close() error
 }
 
+// FaultFixture is a Fixture whose underlying connection can be faulted on
+// demand, so fault-injection scenarios can drive connection drops and stalled
+// consumers deterministically across every transport. Fault scenarios type-
+// assert the Fixture they receive to FaultFixture; non-fault fixtures do not
+// satisfy it.
+type FaultFixture interface {
+	Fixture
+	// Sever closes the underlying connection mid-stream, simulating a dropped
+	// connection. In-flight Calls on the affected peer are released promptly.
+	Sever()
+	// StallConsumer makes the producer side's writes block, simulating a
+	// stalled reader. Per decision D-3, a blocking write is required because OS
+	// socket buffers on unix/tcp absorb writes, making "just don't read"
+	// non-deterministic. The producer's bounded out channel then fills, forcing
+	// drop-on-full.
+	StallConsumer()
+	// ReleaseConsumer unblocks a previously stalled write.
+	ReleaseConsumer()
+}
+
 // FixtureFactory builds one Fixture for a test.
 type FixtureFactory func(t testing.TB) Fixture
 
