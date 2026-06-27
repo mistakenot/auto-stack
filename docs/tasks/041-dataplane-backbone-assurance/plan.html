@@ -348,7 +348,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="rpc.Peer keepalive (opt-in)" files="auto-shared/rpc/peer.go,auto-shared/rpc/peer_test.go,docs/auto-bus-spec.md" status="todo">
+        <pd-phase n="2" title="rpc.Peer keepalive (opt-in)" files="auto-shared/rpc/peer.go,auto-shared/rpc/peer_test.go,docs/auto-bus-spec.md" status="done">
           <md><script type="text/plain">
 1. Add `WithKeepAlive(interval, timeout time.Duration) Option` + config fields; validate `0 < interval < timeout` (panic or no-op on misuse, matching existing option style). Add `lastActivity atomic.Int64` to `Peer`. **Verify:** `go build ./...` in auto-shared.
 2. Stamp `lastActivity` after each successful `Decode` in `readLoop` (peer.go:~151). **Verify:** build.
