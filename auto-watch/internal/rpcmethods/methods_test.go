@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mistakenot/auto-shared/bus"
+	"github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-shared/rpc"
 	"github.com/mistakenot/auto-shared/rpc/conformance"
 )
@@ -40,7 +41,10 @@ func setup(t *testing.T, ctlEvents bool) (*conformance.PeerClient, *Handlers, fu
 	t.Helper()
 
 	hub := bus.NewHub()
-	h := New("test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, ctlEvents)
+	emptyReg := func() config.ProjectsConfig {
+		return config.ProjectsConfig{Projects: []config.ProjectRef{}}
+	}
+	h := New("test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, ctlEvents, emptyReg)
 
 	sConn, cConn := net.Pipe()
 	serverPeer := rpc.NewPeer(sConn)
@@ -102,7 +106,9 @@ func TestDaemonStatus_CtlEventsTrue_EmitsEvent(t *testing.T) {
 	unsub := hub.Subscribe(sink)
 	defer unsub()
 
-	h := New("test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, true)
+	h := New("test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, true, func() config.ProjectsConfig {
+		return config.ProjectsConfig{Projects: []config.ProjectRef{}}
+	})
 
 	sConn, cConn := net.Pipe()
 	serverPeer := rpc.NewPeer(sConn)
@@ -160,7 +166,9 @@ func TestDaemonStatus_CtlEventsFalse_NoEvents(t *testing.T) {
 	unsub := hub.Subscribe(sink)
 	defer unsub()
 
-	h := New("test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false)
+	h := New("test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, func() config.ProjectsConfig {
+		return config.ProjectsConfig{Projects: []config.ProjectRef{}}
+	})
 
 	sConn, cConn := net.Pipe()
 	serverPeer := rpc.NewPeer(sConn)
@@ -248,8 +256,100 @@ func TestDispatchCount_Increments(t *testing.T) {
 }
 
 func TestDispatchCount_UnknownMethod(t *testing.T) {
-	h := New("test", "0.0.0", time.Now(), bus.NewHub(), false)
+	h := New("test", "0.0.0", time.Now(), bus.NewHub(), false, func() config.ProjectsConfig {
+		return config.ProjectsConfig{Projects: []config.ProjectRef{}}
+	})
 	if got := h.DispatchCount("nonexistent.method"); got != 0 {
 		t.Errorf("DispatchCount for unknown method = %d, want 0", got)
 	}
+}
+
+// AC-5: new methods registered + dispatch counting
+func TestDispatchCount_NewMethods(t *testing.T) {
+	_, reg := seedDocFixture(t)
+	client, h, cleanup := setupWithReg(t, func() config.ProjectsConfig { return reg })
+	defer cleanup()
+
+	methods := []string{"doc.list", "doc.get", "doc.raw", "project.list"}
+	for _, m := range methods {
+		if got := h.DispatchCount(m); got != 0 {
+			t.Errorf("initial DispatchCount(%s) = %d, want 0", m, got)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Call each method once (pass maps directly — PeerClient.Call marshals internally)
+	if _, err := client.Call(ctx, "doc.list", map[string]string{"project": "test-project"}); err != nil {
+		t.Fatalf("doc.list: %v", err)
+	}
+
+	if _, err := client.Call(ctx, "doc.get", map[string]string{"project": "test-project", "path": "docs/readme.md"}); err != nil {
+		t.Fatalf("doc.get: %v", err)
+	}
+
+	if _, err := client.Call(ctx, "doc.raw", map[string]string{"project": "test-project", "path": "docs/tasks/001-test-task/plan.html"}); err != nil {
+		t.Fatalf("doc.raw: %v", err)
+	}
+
+	if _, err := client.Call(ctx, "project.list", nil); err != nil {
+		t.Fatalf("project.list: %v", err)
+	}
+
+	for _, m := range methods {
+		if got := h.DispatchCount(m); got != 1 {
+			t.Errorf("after 1 call, DispatchCount(%s) = %d, want 1", m, got)
+		}
+	}
+}
+
+func TestCtlEvents_NewMethods(t *testing.T) {
+	hub := bus.NewHub()
+	sink := &collectSink{}
+	unsub := hub.Subscribe(sink)
+	defer unsub()
+
+	_, reg := seedDocFixture(t)
+	h := New("test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, true, func() config.ProjectsConfig {
+		return reg
+	})
+
+	sConn, cConn := net.Pipe()
+	serverPeer := rpc.NewPeer(sConn)
+	h.Register(serverPeer)
+	client := conformance.NewPeerClient(cConn)
+
+	ctx, ctxCancel := context.WithCancel(context.Background())
+	sErr := make(chan error, 1)
+	cErr := make(chan error, 1)
+	go func() { sErr <- serverPeer.Serve(ctx) }()
+	go func() { cErr <- client.Peer().Serve(ctx) }()
+
+	callCtx, callCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer callCancel()
+
+	if _, err := client.Call(callCtx, "project.list", nil); err != nil {
+		t.Fatalf("project.list: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	events := sink.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 ctl event, got %d", len(events))
+	}
+
+	var data bus.CtlLogEvent
+	json.Unmarshal(events[0].Data, &data)
+	if data.Op != "rpc.served" {
+		t.Errorf("op = %q, want rpc.served", data.Op)
+	}
+	if data.Fields["method"] != "project.list" {
+		t.Errorf("fields.method = %q, want project.list", data.Fields["method"])
+	}
+
+	ctxCancel()
+	<-sErr
+	<-cErr
 }

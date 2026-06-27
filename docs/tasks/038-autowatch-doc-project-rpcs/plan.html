@@ -18,7 +18,7 @@
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="038: autowatch-doc-project-rpcs" status="executing" pr="pending" generated="2026-06-26">
+  <pd-doc title="038: autowatch-doc-project-rpcs" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/92" generated="2026-06-26">
 
     <pd-tab name="Requirements">
 
@@ -439,7 +439,7 @@ flowchart LR
 
       <pd-stepper>
 
-        <pd-phase n="1" title="Ported doc/registry helpers + accepted dependency" status="todo"
+        <pd-phase n="1" title="Ported doc/registry helpers + accepted dependency" status="done"
           files="auto-watch/internal/rpcmethods/docfs.go,auto-watch/go.mod">
           <md><script type="text/plain">
 1. `docfs.go` — port from `auto-ui/internal/server/{docs.go,project.go,planmeta.go}`, verbatim behaviour: `resolveRoot(reg, project, worktree)` (registry-backed root; arbitrary client path never accepted), `cleanDocPath(p, allowed...)` (traversal + `docs/`-prefix + extension guard, `""` on reject), `walkDocs(root)` (md+html, plan-meta on html, missing dir → empty), the `docEntry`/`projectEntry` types, and `PlanMeta`/`ExtractPlanMeta` with `MaxMetaPrefixBytes = 8192`. Imports only `config`/stdlib/`golang.org/x/net/html` — **never `transport`** (GR-N3). **Verify:** `cd auto-watch && go build ./...`.
@@ -448,7 +448,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="Four handlers + registration + daemon wiring" status="todo" depends-on="1"
+        <pd-phase n="2" title="Four handlers + registration + daemon wiring" status="done" depends-on="1"
           files="auto-watch/internal/rpcmethods/methods.go,auto-watch/internal/rpcmethods/docs.go,auto-watch/internal/rpcmethods/project.go,auto-watch/internal/cli/ops.go">
           <md><script type="text/plain">
 1. `methods.go` — extend `New(...)` with a `reg func() config.ProjectsConfig` param and store it on `Handlers`; in `Register`, add `doc.list`/`doc.get`/`doc.raw`/`project.list`, each wrapped in `h.counted(method, ...)` (free dispatch-count + gated `ctl.log.info`/`rpc.served`). **Verify:** `go build ./...`.
@@ -459,7 +459,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Unit tests + cross-surface parity table" status="todo" depends-on="2"
+        <pd-phase n="3" title="Unit tests + cross-surface parity table" status="done" depends-on="2"
           files="auto-watch/internal/rpcmethods/docs_test.go,auto-watch/internal/rpcmethods/project_test.go,auto-watch/internal/rpcmethods/methods_test.go,auto-watch/internal/rpcmethods/parity_test.go">
           <md><script type="text/plain">
 1. `docs_test.go` — over `net.Pipe()` with `conformance.PeerClient` against a `t.TempDir()` project seeded with a `docs/` tree (`.md`, `.html` with `pd-meta`, non-doc files): AC-1 doc.list (md+html, plan-meta, empty-dir → `[]`, unknown project rejected); AC-2 doc.get (markdown-only, `{path,markdown}`); AC-3 doc.raw (verbatim base64 bytes + `text/html` content type); plus the full traversal corpus (`..`, `/..`, outside `docs/`, wrong ext both ways, empty) asserting InvalidParams, and not-found → InternalError+`kind:not_found`. **Verify:** `go test -race ./internal/rpcmethods/ -run 'Doc'`.
@@ -470,7 +470,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="Two-tier conformance + full gates" status="todo" depends-on="3"
+        <pd-phase n="4" title="Two-tier conformance + full gates" status="done" depends-on="3"
           files="auto-watch/internal/rpcserver/conformance_test.go">
           <md><script type="text/plain">
 1. `conformance_test.go` (edit) — seed the temp-`$HOME` project (binary fixture) and the in-process fixture with a small `docs/` tree so `doc.*` return data; extend the shared `Scenario` (run via `conformance.RunAcrossFixtures`) to call `project.list` and at least one `doc.*` method over the wire and assert the result shape, incl. the stamped `host` == the fixture's hostId (AC-6 conformance half). **Verify:** `go test -race ./internal/rpcserver/`.

@@ -103,7 +103,15 @@ func newStartCmd(application *app.App) *cobra.Command {
 			startedAt := time.Now()
 			hub := bus.NewHub()
 			hostID := sharedconfig.HostIDQuietly()
-			handlers := rpcmethods.New(hostID, version.Version, startedAt, hub, ctlEvents)
+			regProvider := func() sharedconfig.ProjectsConfig {
+				p, _ := sharedconfig.ProjectsConfigPath()
+				cfg, err := sharedconfig.LoadProjects(p)
+				if err != nil {
+					return sharedconfig.ProjectsConfig{Projects: []sharedconfig.ProjectRef{}}
+				}
+				return cfg
+			}
+			handlers := rpcmethods.New(hostID, version.Version, startedAt, hub, ctlEvents, regProvider)
 
 			// Bind both listeners before entering the run loop (fail fast).
 			rpcLn, lnErr := transport.Listen(rpcAddr)
