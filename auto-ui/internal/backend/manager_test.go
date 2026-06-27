@@ -296,6 +296,55 @@ func relayDegradedFor(m *Manager, hostID string) bool {
 	return false
 }
 
+// TestConnectedPeers verifies ConnectedPeers returns only currently-connected
+// backends, each carrying its learned host id and a live peer, sorted by host id
+// — and excludes a backend that never connected (unreachable/pending).
+func TestConnectedPeers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "backends.json")
+	const uriA = "unix:///fake/a.sock"
+	const uriB = "unix:///fake/b.sock"
+	const uriC = "unix:///fake/c.sock"
+	writeBackends(t, path, uriA, uriB, uriC)
+
+	fleet := newFakeFleet()
+	fleet.addHost(uriA, "host-b") // intentionally out of URI order to prove host sort
+	fleet.addHost(uriB, "host-a")
+	fleet.setUnreachable(uriC) // never connects -> pending/errored, must be excluded
+	defer fleet.stop()
+
+	m := NewManager(path, fleet.dial(t), 0)
+	ctx := t.Context()
+
+	m.Reconcile(ctx)
+	waitResolve(t, m, "host-a")
+	waitResolve(t, m, "host-b")
+
+	peers := m.ConnectedPeers()
+	if len(peers) != 2 {
+		t.Fatalf("ConnectedPeers returned %d, want 2 (errored backend excluded): %+v", len(peers), peers)
+	}
+	// Sorted by host id for stable output.
+	if peers[0].HostID != "host-a" || peers[1].HostID != "host-b" {
+		t.Fatalf("hostIDs = [%q, %q], want [host-a, host-b]", peers[0].HostID, peers[1].HostID)
+	}
+	for _, p := range peers {
+		if p.HostID == "" {
+			t.Fatalf("connected peer has empty hostID: %+v", p)
+		}
+		if p.Peer == nil {
+			t.Fatalf("peer for %q is nil", p.HostID)
+		}
+		callOK(t, p.Peer, "daemon.status")
+	}
+
+	// The unreachable URI is present in Health() as pending but absent from
+	// ConnectedPeers.
+	if len(m.Health()) != 3 {
+		t.Fatalf("Health() = %d backends, want 3 (incl. the pending one)", len(m.Health()))
+	}
+}
+
 // TestBackendReconnectsAfterDisconnect covers AC-7's liveness edge: when a
 // connected backend's transport drops, the conn is marked unhealthy (Resolve
 // fails) and a later Reconcile redials it — without restarting the Manager.

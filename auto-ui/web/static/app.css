@@ -140,6 +140,21 @@ body {
 .switcher:hover { border-color: var(--accent-soft); }
 .switcher:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ghost); }
 
+/* active-host badge — a small inline pill identifying the active backend host.
+   Always shown (even with a single host — D-4) so identity is visible. */
+.host-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.03em;
+  color: var(--ink-soft);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 0.18rem 0.5rem;
+}
+
 /* connection indicator */
 .conn {
   display: inline-flex;

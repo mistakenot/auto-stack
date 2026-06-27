@@ -12,6 +12,7 @@ import {
   useStore,
   selectProjects,
   selectActiveProject,
+  selectActiveHost,
   selectConn,
   selectProject,
   selectDoc,
@@ -59,6 +60,7 @@ export function Explorer({ params }) {
   // — the same default this shell used to compute locally.
   const projects = useStore(selectProjects);
   const activeProject = useStore(selectActiveProject);
+  const activeHost = useStore(selectActiveHost);
   const conn = useStore(selectConn);
 
   // Empty-state vs cold-load: only show the no-projects empty-state once the
@@ -68,8 +70,9 @@ export function Explorer({ params }) {
 
   // Selecting a project routes to a fresh explore view (clears path) via the
   // store's thin action (it setHashes; the store's onRouteChange does the rest).
-  const onPickProject = (id) => {
-    selectProject(id);
+  // Identity is (host, project) — GR-F8 — so the switcher passes both.
+  const onPickProject = (host, id) => {
+    selectProject(host, id);
   };
 
   // Selecting a doc leaf routes to it via the store's thin action (it preserves
@@ -93,18 +96,33 @@ export function Explorer({ params }) {
         <select
           class="switcher"
           data-testid="project-switcher"
-          value=${activeProject}
-          onChange=${(e) => onPickProject(e.target.value)}
+          value=${activeHost + "\n" + activeProject}
+          onChange=${(e) => {
+            const opt = e.target.selectedOptions[0];
+            onPickProject(opt.dataset.hostId, opt.dataset.project);
+          }}
         >
           ${projects.map(
             (p) => html`
-              <option key=${p.id} value=${p.id} data-project=${p.id}>
-                ${p.name || p.id}
+              <option
+                key=${p.host + "\n" + p.id}
+                value=${p.host + "\n" + p.id}
+                data-host-id=${p.host}
+                data-project=${p.id}
+              >
+                ${(p.name || p.id) + " · " + p.host}
               </option>
             `
           )}
         </select>
       `}
+      ${activeHost &&
+      html`<span
+        class="host-badge"
+        data-testid="host-badge"
+        data-host-id=${activeHost}
+        >${activeHost}</span
+      >`}
       <${ConnIndicator} />
     </header>
   `;
@@ -139,7 +157,7 @@ export function Explorer({ params }) {
     <div class="workbench">
       <div class="sidebar-col">
         <${DocTree}
-          key=${activeProject + "@" + worktree}
+          key=${activeHost + "@" + activeProject + "@" + worktree}
           project=${activeProject}
           worktree=${worktree}
           selected=${path}

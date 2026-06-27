@@ -13,7 +13,7 @@
 //   docs/<other>/...             -> generic group named after that segment
 import { useState, useEffect, useRef } from "preact/hooks";
 import { html } from "htm/preact";
-import { useStore, selectDocs, selectLiveness } from "./store.js";
+import { useStore, selectDocs, selectLiveness, selectActiveHost } from "./store.js";
 
 // How many Tasks entries the tree shows before the "show more" toggle.
 const TASKS_DEFAULT_LIMIT = 10;
@@ -317,7 +317,10 @@ export function DocTree({ project, worktree, selected, onSelect }) {
   // The doc list is owned by the store (the doc.list fetch + docsByProject cache,
   // its reconnect re-list, and the doc.changed re-list on an unseen path all live
   // there). Read this project's cached slice; it re-renders when the list changes.
-  const docs = useStore((s) => selectDocs(s, project, worktree));
+  // The host dimension isn't threaded as a prop yet (DocTree host wiring is
+  // Phase 2); read the active host from the store so the cache lookup keys match
+  // what fetchDocs wrote (host+project+worktree).
+  const docs = useStore((s) => selectDocs(s, selectActiveHost(s), project, worktree));
 
   // The store's doc.changed subscription bumps lastDocChanged {path, seq} on every
   // touched path (monotonic seq). The tree consumes that single signal to drive
