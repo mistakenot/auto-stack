@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/mistakenot/auto-shared/config"
+	"github.com/mistakenot/auto-skill/internal/transport"
 )
 
 // Lock is the typed representation of .auto/skills/lock.json — dependency
@@ -29,9 +29,6 @@ type LockEntry struct {
 	Local       bool   `json:"local"`
 	State       string `json:"state"`
 }
-
-// credentialQueryKeys are query parameters that carry secrets in a clone URL.
-var credentialQueryKeys = []string{"token", "access_token", "private_token"}
 
 // ParseLock strictly decodes lock.json, rejecting unknown keys (including any
 // derived render fields, which belong in manifest.json).
@@ -104,38 +101,19 @@ func requireField(value, basePath, field string) []config.ValidationError {
 	}}
 }
 
-// checkURLCredentials rejects URLs that embed userinfo or credential query
-// parameters. Suggests the normalized, credential-free form as remediation.
+// checkURLCredentials delegates to transport.ContainsCredentials (single
+// source of truth for credential detection — decision D-2).
 func checkURLCredentials(rawURL, path string) *config.ValidationError {
 	if strings.TrimSpace(rawURL) == "" {
 		return nil
 	}
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		// Unparseable URLs can't be credential-checked here; ParseLock already
-		// accepted the document structurally, so leave deeper URL validation to
-		// resolution.
-		return nil
-	}
-	if u.User != nil {
+	if transport.ContainsCredentials(rawURL) {
 		return &config.ValidationError{
 			Code:    CodeCredentialsInURL,
 			Path:    path,
 			Field:   "url",
-			Message: "url must not embed credentials; store the credential-free URL (strip user:pass@)",
+			Message: "url must not embed credentials; use git's credential helper instead",
 			Value:   rawURL,
-		}
-	}
-	q := u.Query()
-	for _, key := range credentialQueryKeys {
-		if q.Has(key) {
-			return &config.ValidationError{
-				Code:    CodeCredentialsInURL,
-				Path:    path,
-				Field:   "url",
-				Message: fmt.Sprintf("url must not embed credentials; remove the %q query parameter", key),
-				Value:   rawURL,
-			}
 		}
 	}
 	return nil
