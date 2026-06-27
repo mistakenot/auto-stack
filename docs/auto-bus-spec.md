@@ -45,6 +45,8 @@ Every bus event is a self-contained envelope carrying metadata, workspace proven
 | `commit` | string | no | HEAD commit SHA at event time. |
 | `data` | JSON | no | Opaque payload. Typed only where the bus authors it (see section 2.3). |
 
+**Exception — derived event ids are deterministic.** Events minted by `bus.DeriveDocChanged` (`source` = `auto/bus/derive`) do **not** carry a random `id`. Their `id` is a deterministic hash of the source event's `id`, the derived `type`, and the derived path (`sha256(srcID:type:path)`, first 8 bytes hex). This is intentional: when independent sites derive the same `doc.changed` from the same source event (e.g. auto-ui's local `/api/rpc` ingest and autowatch's relay both deriving it), they mint an **identical** `id` and collide, so a consumer that dedups by `id` collapses the duplicate. Non-derived events keep the randomly-generated `id` above.
+
 ### 2.2 Workspace provenance attributes
 
 Events carry flat provenance attributes so any consumer can locate the physical file and identify the logical workload:
@@ -265,6 +267,8 @@ The bus provides **at-most-once, explicitly lossy** delivery. This is an *applic
 | Replay | None. Clients that reconnect must re-fetch state via RPC (e.g. `doc.get`). |
 | Acks | None. Producers fire-and-forget; consumers receive or don't. |
 | Idempotency | Not guaranteed. Each event has a unique `id`, but no deduplication is performed. |
+
+**Consumer-side dedup is an extension, not a bus guarantee.** The bus itself performs **no deduplication** (the contract above is unchanged). The **auto-ui consumer** layers its own dedup-by-`id` over a short TTL window in front of its Hub, so an event reaching the UI via both the local `/api/rpc` ingest and a relayed backend (`bus.subscribe`) is broadcast to browsers once. This relies on the deterministic derived `id` (section 2.1) to also collapse the derived `doc.changed` pair. It is an explicit, documented extension at the consumer layer — the bus and autowatch hub contracts are untouched.
 
 **Events are invalidations, not state transfer.** A `doc.changed` event tells the client "this document changed" -- it does not carry the new content. The client must call `doc.get` to fetch the updated state. This keeps events small and avoids stale-data races when events arrive out of order.
 
