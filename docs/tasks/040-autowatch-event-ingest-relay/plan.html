@@ -18,7 +18,7 @@
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="040: autowatch-event-ingest-relay" status="pending" generated="2026-06-26">
+  <pd-doc title="040: autowatch-event-ingest-relay" status="complete" generated="2026-06-26">
 
     <pd-tab name="Requirements">
 
@@ -325,7 +325,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Spec + CLAUDE.md docs; full gate sweep" status="todo" depends-on="1,2"
+        <pd-phase n="3" title="Spec + CLAUDE.md docs; full gate sweep" status="done" depends-on="1,2"
           files="docs/auto-bus-spec.md,auto-watch/CLAUDE.md">
           <md><script type="text/plain">
 1. `docs/auto-bus-spec.md` — promote §4.3's "future `subscribe()` RPC" to an implemented **broadcast-all** `bus.subscribe`: document the relay path (hub→peer-bound sink→`Peer.Notify`), the per-peer **drop-on-full / at-most-once** semantics (consistent with §5), and that `ctl.*` relays to subscribers **only under `--ctl-events`** while data-plane events always relay. **Verify:** the spec mentions `bus.subscribe`, broadcast-all, and the gating note.

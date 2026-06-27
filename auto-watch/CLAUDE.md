@@ -14,6 +14,10 @@ go test -race ./...
 
 The `rpcserver` conformance tests include a binary-tier fixture that builds `./cmd/autowatch` via `TestMain`. This requires the `go` toolchain and takes a few seconds on the first run.
 
+## Event relay
+
+The daemon runs an in-process `bus.Hub`. Connected RPC peers can call `bus.subscribe` (parameterless, broadcast-all) to receive hub events as JSON-RPC notifications. The hook-ingest endpoint (`HookIngest`) validates, stamps `hostId` (overwrite-always), broadcasts the raw event, derives `doc.changed` for registered projects, and broadcasts each derived event. `ctl.*` events relay only when `--ctl-events` is on; data-plane events always relay. Slow subscribers are dropped (connection closed) — the hub never blocks.
+
 <!-- autodoc: start -->
 ## Documentation Index
 

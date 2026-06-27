@@ -36,6 +36,7 @@ Every bus event is a self-contained envelope carrying metadata, workspace proven
 | `source` | string | yes | Producer identity (e.g. `auto/hooks/claude`, `auto/bus/derive`). |
 | `id` | string | yes | Unique event identifier (16 hex characters, randomly generated). |
 | `time` | string | yes | RFC 3339 UTC timestamp of event creation. |
+| `host` | string | yes | Host identity of the producing machine (via `config.HostIDQuietly()`). The autowatch daemon overwrites this with its own hostId on ingest (overwrite-always). |
 | `project` | string | no | Registry project ID (e.g. `auto-stack`). Resolved by the producer via `FindProjectByRemote` or `FindProjectByPath`. |
 | `session` | string | no | Agent session identifier, when available. |
 | `remote` | string | no | Normalized git remote URL. See credential rule below. |
@@ -185,11 +186,29 @@ Full-duplex JSON-RPC 2.0 over WebSocket, supporting both client-initiated RPC ca
 4. Read loop dispatches inbound JSON-RPC to the shared `Dispatcher`.
 5. On disconnect (or slow-client drop): cancel context, deregister from hub, close connection.
 
-### 4.3 Future transports (not implemented)
+### 4.3 `bus.subscribe` RPC (broadcast-all relay)
+
+The `bus.subscribe` JSON-RPC method registers a connected peer to receive **all** hub events as server-push notifications. It is parameterless (broadcast-all per GR-N5) -- subscribers receive every event; filtering is client-side.
+
+| Aspect | Detail |
+|--------|--------|
+| Method | `bus.subscribe` |
+| Params | None (broadcast-all) |
+| Response | `{"status": "subscribed"}` |
+| Idempotent | Yes -- a second call from the same peer is a no-op |
+| Cleanup | Subscription is cancelled when the peer disconnects |
+
+**Relay path:** Hub → per-peer `peerSink` (implements `bus.Sink`) → `Peer.Notify(ev.Type, ev)` → JSON-RPC notification on the wire. The notification shape matches `Event.AsNotification()`: `method` = the event type, `params` = the full envelope with every field intact.
+
+**Per-peer drop-on-full / at-most-once:** `peerSink.Deliver` calls `Peer.Notify`, which uses a non-blocking bounded-channel enqueue (`defaultBufferSize=16`). If the buffer is full, the frame is dropped and the connection is closed -- the hub never blocks on a slow subscriber. This is consistent with the at-most-once delivery contract (section 5) and mirrors auto-ui's WebSocket slow-client policy.
+
+**`ctl.*` gating through the relay:** The relay bridge has no type-specific filter. `ctl.*` events reach subscribers only when `--ctl-events` is enabled (the gate is at emission, not relay). Data-plane events (`doc.changed`, `watch.task.*`, `agent.*`) always relay.
+
+**Implementation:** The bridge lives in `rpcserver` (the accept loop), not `rpcmethods`, so the per-connection subscription state (a cancel func) is co-located with the peer lifecycle. `rpcmethods` remains transport-free.
+
+### 4.4 Future transports (not implemented)
 
 The following are documented as planned extensions:
-- **Unix domain socket** -- for local-only IPC without HTTP overhead.
-- **`subscribe()` RPC** -- server-side event filtering (currently all events broadcast to all clients; filtering is client-side via `on()`).
 - **Headless `auto bus serve`** -- standalone bus process without the full auto-ui, for environments that don't need the SPA.
 
 ---
@@ -525,7 +544,7 @@ Producer (auto hooks fire)
 
 ### 8.2 Decoupling
 
-The `bus` package (`auto-shared/bus`) has no dependency on `auto-ui`. The `Hub`, `Event`, and `Sink` types are defined in the shared package. The auto-ui server imports and hosts the hub; sessions implement `bus.Sink`. This decoupling means other components can construct and validate bus events without importing auto-ui.
+The `bus` package (`auto-shared/bus`) has no dependency on `auto-ui` or `auto-watch`. The `Hub`, `Event`, and `Sink` types are defined in the shared package. Both auto-ui (WebSocket sessions) and auto-watch (RPC peer sinks via `bus.subscribe`) host their own hub and implement `bus.Sink`. This decoupling means other components can construct and validate bus events without importing either server.
 
 ### 8.3 Registry provider
 
