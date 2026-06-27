@@ -357,7 +357,7 @@ Depends on P2. **Single atomic change** — proxy-in + local-out together so the
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="serve.go wiring + fail-fast" files="auto-ui/internal/cli/serve.go,auto-ui/internal/cli/serve_test.go" status="todo">
+        <pd-phase n="4" title="serve.go wiring + fail-fast" files="auto-ui/internal/cli/serve.go,auto-ui/internal/cli/serve_test.go" status="done">
           <md><script type="text/plain">
 Depends on P3 (needs `WithBackendManager`) and P2 (Manager).
 1. In `serve.go`: load `backends.json`; if empty/missing, **exit non-zero** with a remediation message (`run auto ui backends add <uri>`) before binding the listener. **Verify:** build.
