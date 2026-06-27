@@ -12,12 +12,12 @@
     "id": "046",
     "name": "multi-host-spa",
     "epic": "003-multi-host-architecture",
-    "status": "executing",
+    "status": "complete",
     "created": "2026-06-27"
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="..." below with the PR URL -->
-  <pd-doc title="046: multi-host-spa" status="executing" pr="pending" generated="2026-06-27">
+  <pd-doc title="046: multi-host-spa" status="complete" pr="pending" generated="2026-06-27">
 
     <pd-tab name="Requirements">
 
@@ -281,7 +281,7 @@ Depends on P1 (parallel-safe with P2 — disjoint surfaces). Harden the data pat
             </script></md>
           </pd-phase>
 
-          <pd-phase n="4" title="Conformance + docs" files="docs/tasks/046-multi-host-spa/artifacts/conformance.md,auto-ui/CLAUDE.md" status="todo">
+          <pd-phase n="4" title="Conformance + docs" files="docs/tasks/046-multi-host-spa/artifacts/conformance.md,auto-ui/CLAUDE.md" status="done">
             <md><script type="text/plain">
 Depends on P1–P3.
 1. `artifacts/conformance.md` + `evidence/`: browser-driven (agent-browser) against embed + dev builds; two-backend fixture (distinct hostIDs, colliding project id) for AC-3/AC-4/AC-5/AC-6 and a single-backend fixture for AC-7. Isolated `projects.json` (never `~/.auto`). Capture `.txt`/`.json`/`.png`.
