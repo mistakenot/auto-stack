@@ -13,8 +13,10 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/mistakenot/auto-shared/bus"
 	"github.com/mistakenot/auto-shared/rpc"
 	"github.com/mistakenot/auto-shared/transport"
 	"github.com/mistakenot/auto-ui/internal/config"
@@ -38,6 +40,11 @@ const defaultInterval = 5 * time.Second
 // on connect, so a half-open connection cannot wedge a reconcile tick.
 const statusTimeout = 10 * time.Second
 
+// subscribeTimeout bounds the bus.subscribe call made after the daemon.status
+// handshake, so a backend that never replies to bus.subscribe cannot wedge a
+// reconcile tick (mirrors statusTimeout). A timeout degrades the relay only.
+const subscribeTimeout = 10 * time.Second
+
 // DialFunc establishes a connection to a backend URI. It is injected so tests
 // can supply a net.Pipe-backed fake; the default is transport.Dial.
 type DialFunc func(ctx context.Context, uri string) (net.Conn, error)
@@ -59,6 +66,11 @@ type conn struct {
 	// them.
 	down    bool
 	lastErr string
+	// relayDegraded is set under m.mu when bus.subscribe fails (or times out):
+	// the peer stays usable for proxied RPCs, but relayed events are not flowing
+	// for this backend. Reconcile re-attempts bus.subscribe on connected-degraded
+	// conns and clears the flag on success.
+	relayDegraded bool
 }
 
 // Manager owns the live set of backend connections, keyed internally by URI
@@ -72,14 +84,27 @@ type Manager struct {
 
 	mu    sync.Mutex
 	conns map[string]*conn // keyed by URI
+
+	// eventSink holds the relay callback set by SetEventSink. It is stored in an
+	// atomic.Value (NOT guarded by m.mu) so the read-loop read in onNotify can't
+	// race the setter write, and so the callback is invoked outside the conns
+	// lock (D-1). It always holds an eventSinkHolder (possibly with a nil fn).
+	eventSink atomic.Value
+}
+
+// eventSinkHolder wraps the relay callback so atomic.Value always stores a
+// single concrete type even when the callback is nil.
+type eventSinkHolder struct {
+	fn func(bus.Event)
 }
 
 // BackendHealth is a snapshot of a single backend's state for doctor.
 type BackendHealth struct {
-	HostID    string `json:"hostId"`
-	URI       string `json:"uri"`
-	Connected bool   `json:"connected"`
-	LastErr   string `json:"lastErr,omitempty"`
+	HostID        string `json:"hostId"`
+	URI           string `json:"uri"`
+	Connected     bool   `json:"connected"`
+	RelayDegraded bool   `json:"relayDegraded,omitempty"`
+	LastErr       string `json:"lastErr,omitempty"`
 }
 
 // statusResult is the minimal shape decoded from daemon.status. The full type
@@ -94,12 +119,39 @@ func NewManager(backendsPath string, dial DialFunc, interval time.Duration) *Man
 	if dial == nil {
 		dial = transport.Dial
 	}
-	return &Manager{
+	m := &Manager{
 		backendsPath: backendsPath,
 		dial:         dial,
 		interval:     interval,
 		conns:        make(map[string]*conn),
 	}
+	m.eventSink.Store(eventSinkHolder{})
+	return m
+}
+
+// SetEventSink stores the relay callback invoked for every relayed bus event.
+// It is stored in an atomic.Value (not guarded by m.mu) so the setter write
+// cannot race the read-loop read in onNotify, and so the callback is invoked
+// outside the conns lock (D-1). Passing nil disables relaying.
+func (m *Manager) SetEventSink(fn func(bus.Event)) {
+	m.eventSink.Store(eventSinkHolder{fn: fn})
+}
+
+// onNotify is the OnNotify callback registered on every peer. It decodes the
+// inbound notification params into a bus.Event and forwards it to the event
+// sink. The sink is loaded + copied and invoked OUTSIDE m.mu (D-1); an unset
+// sink drops the event silently (harmless — events are lossy invalidations).
+func (m *Manager) onNotify(req rpc.Request) {
+	var ev bus.Event
+	if err := json.Unmarshal(req.Params, &ev); err != nil {
+		return
+	}
+	holder, _ := m.eventSink.Load().(eventSinkHolder)
+	fn := holder.fn
+	if fn == nil {
+		return
+	}
+	fn(ev)
 }
 
 // Run reconciles immediately, then every interval until ctx is done. On exit it
@@ -144,8 +196,9 @@ func (m *Manager) Reconcile(ctx context.Context) {
 	}
 
 	var (
-		toClose []*conn
-		toDial  []string
+		toClose       []*conn
+		toDial        []string
+		toResubscribe []*conn
 	)
 
 	m.mu.Lock()
@@ -157,8 +210,14 @@ func (m *Manager) Reconcile(ctx context.Context) {
 	}
 	for uri := range configured {
 		c, ok := m.conns[uri]
-		if !ok || !c.connected {
+		switch {
+		case !ok || !c.connected:
+			// Missing or disconnected: (re)dial. connect() re-subscribes.
 			toDial = append(toDial, uri)
+		case c.relayDegraded:
+			// Connected but relay-degraded: re-attempt bus.subscribe without
+			// redialing — the peer is still usable for proxied RPCs (AC-6).
+			toResubscribe = append(toResubscribe, c)
 		}
 	}
 	m.mu.Unlock()
@@ -173,7 +232,25 @@ func (m *Manager) Reconcile(ctx context.Context) {
 			m.connect(ctx, uri)
 		})
 	}
+	for _, c := range toResubscribe {
+		wg.Go(func() {
+			m.resubscribe(ctx, c)
+		})
+	}
 	wg.Wait()
+}
+
+// resubscribe re-attempts bus.subscribe on a connected-but-degraded conn,
+// clearing relayDegraded on success. The call is bounded by subscribeTimeout so
+// a non-responsive backend cannot wedge Reconcile's wait group (AC-6). It does
+// not redial; a full disconnect+redial re-subscribes via connect() instead.
+func (m *Manager) resubscribe(ctx context.Context, c *conn) {
+	if !m.subscribe(ctx, c.peer) {
+		return
+	}
+	m.mu.Lock()
+	c.relayDegraded = false
+	m.mu.Unlock()
 }
 
 // connect dials uri, starts a Serve goroutine for its peer, and calls
@@ -198,7 +275,7 @@ func (m *Manager) connect(ctx context.Context, uri string) {
 		return
 	}
 
-	peer := rpc.NewPeer(netConn)
+	peer := rpc.NewPeer(netConn, rpc.WithOnNotify(m.onNotify))
 	connCtx, cancel := context.WithCancel(ctx)
 	// Build the conn up front so the Serve goroutine can mark this exact
 	// instance unhealthy when the transport drops (backend restart / network
@@ -239,6 +316,13 @@ func (m *Manager) connect(ctx context.Context, uri string) {
 		return
 	}
 
+	// Subscribe to the backend's event bus so relayed events flow into the UI.
+	// This is bounded by its own subscribeTimeout (mirroring statusTimeout) so a
+	// backend that never replies cannot wedge Reconcile's wait group. A failure
+	// degrades the relay only (D-3): the peer stays usable for proxied RPCs, the
+	// conn is published as connected, and relayDegraded is set for retry.
+	relayDegraded := !m.subscribe(connCtx, peer)
+
 	m.mu.Lock()
 	// If the transport already dropped during the handshake, the Serve
 	// goroutine set c.down — leave it pending for the next tick rather than
@@ -252,8 +336,19 @@ func (m *Manager) connect(ctx context.Context, uri string) {
 	}
 	c.hostID = status.HostID
 	c.connected = true
+	c.relayDegraded = relayDegraded
 	m.conns[uri] = c
 	m.mu.Unlock()
+}
+
+// subscribe calls bus.subscribe on peer, bounded by subscribeTimeout. It returns
+// true on success. A false result degrades the relay only — the peer remains
+// usable for proxied RPCs.
+func (m *Manager) subscribe(connCtx context.Context, peer *rpc.Peer) bool {
+	callCtx, callCancel := context.WithTimeout(connCtx, subscribeTimeout)
+	defer callCancel()
+	_, err := peer.Call(callCtx, "bus.subscribe", nil)
+	return err == nil
 }
 
 // setErr records a failed dial/status for uri, leaving it pending for retry.
@@ -314,10 +409,11 @@ func (m *Manager) Health() []BackendHealth {
 	out := make([]BackendHealth, 0, len(m.conns))
 	for _, c := range m.conns {
 		out = append(out, BackendHealth{
-			HostID:    c.hostID,
-			URI:       c.uri,
-			Connected: c.connected,
-			LastErr:   c.lastErr,
+			HostID:        c.hostID,
+			URI:           c.uri,
+			Connected:     c.connected,
+			RelayDegraded: c.relayDegraded,
+			LastErr:       c.lastErr,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].URI < out[j].URI })
