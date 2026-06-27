@@ -259,7 +259,7 @@ Walking skeleton — the thinnest path through server → store → view that pu
             </script></md>
           </pd-phase>
 
-          <pd-phase n="2" title="Thicken: open remote docs + host-scoped events + reload" files="auto-ui/web/static/content.js,auto-ui/web/static/tree.js,auto-ui/web/static/docevents.js,auto-ui/web/static/store.js" status="todo">
+          <pd-phase n="2" title="Thicken: open remote docs + host-scoped events + reload" files="auto-ui/web/static/content.js,auto-ui/web/static/tree.js,auto-ui/web/static/docevents.js,auto-ui/web/static/store.js" status="done">
             <md><script type="text/plain">
 Depends on P1. Make the open/refresh path fully host-correct.
 1. `content.js`: `rawURL(project,path,worktree,nonce,hostId)` adds `if (hostId) qs.set("hostId", hostId)`; call site passes `selection.host`.
