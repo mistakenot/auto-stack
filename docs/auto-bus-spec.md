@@ -225,7 +225,26 @@ The `bus.subscribe` JSON-RPC method registers a connected peer to receive **all*
 
 **Implementation:** The bridge lives in `rpcserver` (the accept loop), not `rpcmethods`, so the per-connection subscription state (a cancel func) is co-located with the peer lifecycle. `rpcmethods` remains transport-free.
 
-### 4.4 Future transports (not implemented)
+### 4.4 RPC-transport keepalive (TCP / Unix / pipe)
+
+The connection-oriented RPC transport (`rpc.Peer` over TCP, Unix-domain `SOCK_STREAM`, or in-process `net.Pipe()`) carries an **opt-in, application-level liveness** mechanism, mirroring the WebSocket 1-second ping model (section 4.2) at the `rpc.Peer` layer. It exists because GR-N8 makes reliable, in-order transports load-bearing: on such a transport a peer whose process was killed / NAT-dropped / rebooted leaves a **half-open** connection that produces no read error until someone writes. Without liveness nothing reaps it — a dead subscriber lingers in the hub's sink set and a pending `Call` on a non-cancelling context hangs forever.
+
+| Aspect | Detail |
+|--------|--------|
+| Opt-in | `rpc.WithKeepAlive(interval, timeout)`; default off, so existing callers/tests are behaviorally unchanged |
+| Ping | A reserved `$keepalive` JSON-RPC notification is pushed every `interval` |
+| Ping enqueue | Uses the same bounded, drop-on-full enqueue as `Notify` (a stalled writer closes the conn rather than blocking) |
+| Reap | A watchdog closes the connection (via the normal shutdown path) when no inbound frame has been decoded within `timeout` |
+| Swallowing | `$keepalive` is consumed by the transport; it is never forwarded to application notification handlers |
+| Daemon defaults | 15s ping / 45s reap timeout (gentle, intra-VPC-appropriate) |
+
+**Why application-level (not OS `SetKeepAlive`):** the same mechanism covers all three transports including the in-process `net.Pipe()` fixture, and the timeout is deterministically testable with short durations.
+
+**Why a watchdog-close, not `SetReadDeadline`:** `Peer.conn` is typed `io.ReadWriteCloser` (not `net.Conn`), and a read deadline firing mid-frame leaves `json.Decoder` in a corrupted state. The watchdog calls the existing `shutdown` (closing the conn → the blocked `Decode` returns → `Serve` returns → every pending caller is released as `ErrClosed`), reusing the proven terminal-shutdown path identically across pipe/unix/tcp. This is the section 5 "connection drop / half-open mid-call" failure mode being actively detected rather than waited on.
+
+Any inbound frame — including the remote's own `$keepalive` ping — resets the silence window, so a healthy idle connection with keepalive enabled on both ends never false-reaps.
+
+### 4.5 Future transports (not implemented)
 
 The following are documented as planned extensions:
 - **Headless `auto bus serve`** -- standalone bus process without the full auto-ui, for environments that don't need the SPA.

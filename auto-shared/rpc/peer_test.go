@@ -969,5 +969,146 @@ func TestConcurrentCallsNoCrosstalk(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// AC-2 / AC-3: keepalive (opt-in liveness)
+// ---------------------------------------------------------------------------
+
+// halfOpenConn simulates a half-open connection (TCP up, peer silent): writes
+// are swallowed (the local write pump succeeds, as on a real half-open socket)
+// and reads block forever until Close, at which point Read returns io.EOF —
+// modelling the watchdog closing the conn to unblock the stalled Decode. It is
+// local to this test file by design; the conformance fault conns are Phase 4.
+type halfOpenConn struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newHalfOpenConn() *halfOpenConn {
+	return &halfOpenConn{closed: make(chan struct{})}
+}
+
+func (c *halfOpenConn) Read(p []byte) (int, error) {
+	<-c.closed
+	return 0, io.EOF
+}
+
+func (c *halfOpenConn) Write(p []byte) (int, error) {
+	select {
+	case <-c.closed:
+		return 0, io.ErrClosedPipe
+	default:
+		return len(p), nil // swallow — peer is silently unresponsive
+	}
+}
+
+func (c *halfOpenConn) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return nil
+}
+
+func TestKeepAliveReapsHalfOpen(t *testing.T) {
+	// A peer over a half-open conn with keepalive enabled. No inbound frame
+	// ever arrives, so the watchdog must reap the conn within ~timeout.
+	const (
+		interval = 10 * time.Millisecond
+		timeout  = 40 * time.Millisecond
+	)
+
+	conn := newHalfOpenConn()
+	peer := NewPeer(conn, WithKeepAlive(interval, timeout))
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- peer.Serve(context.Background()) }()
+
+	// An in-flight Call whose own context far outlives the keepalive bound, so
+	// an ErrClosed return proves the reap released it (not the caller deadline).
+	callResult := make(chan error, 1)
+	go func() {
+		callCtx, callCancel := context.WithTimeout(context.Background(), testTimeout)
+		defer callCancel()
+		_, err := peer.Call(callCtx, "anything", nil)
+		callResult <- err
+	}()
+
+	// Serve must return within a bounded window (well under testTimeout).
+	select {
+	case <-serveErr:
+		// Serve returned — the watchdog reaped the half-open conn.
+	case <-time.After(testTimeout):
+		t.Fatal("Serve did not return after half-open keepalive reap")
+	}
+
+	// The in-flight Call must return ErrClosed (released by shutdown), not its
+	// own deadline.
+	select {
+	case err := <-callResult:
+		if !errors.Is(err, ErrClosed) {
+			t.Errorf("in-flight Call returned %v, want ErrClosed", err)
+		}
+	case <-time.After(testTimeout):
+		t.Fatal("in-flight Call did not return after reap")
+	}
+
+	// Subsequent Call / Notify must also return ErrClosed.
+	postCtx, postCancel := context.WithTimeout(context.Background(), testTimeout)
+	defer postCancel()
+	if _, err := peer.Call(postCtx, "anything", nil); !errors.Is(err, ErrClosed) {
+		t.Errorf("post-reap Call returned %v, want ErrClosed", err)
+	}
+	if err := peer.Notify("anything", nil); !errors.Is(err, ErrClosed) {
+		t.Errorf("post-reap Notify returned %v, want ErrClosed", err)
+	}
+}
+
+func TestKeepAliveNoFalseReapWhenHealthy(t *testing.T) {
+	// A healthy, idle pair with keepalive enabled on both ends. With no
+	// application traffic, the mutual $keepalive pings keep each side's
+	// lastActivity fresh, so neither watchdog should fire.
+	const (
+		interval = 10 * time.Millisecond
+		timeout  = 40 * time.Millisecond
+	)
+
+	handlers := map[string]Handler{
+		"echo": func(_ context.Context, params json.RawMessage) (any, error) {
+			return params, nil
+		},
+	}
+
+	client, _, cancel, clientErr, serverErr := newPipePeers(t, handlers,
+		[]Option{WithKeepAlive(interval, timeout)},
+		WithKeepAlive(interval, timeout),
+	)
+	defer cancel()
+
+	// Bounded negative assertion: over several keepalive intervals (and past the
+	// reap timeout), neither Serve returns. This is a fixed-window wait, not a
+	// poll-to-settle.
+	select {
+	case err := <-clientErr:
+		t.Fatalf("client Serve returned during healthy idle: %v", err)
+	case err := <-serverErr:
+		t.Fatalf("server Serve returned during healthy idle: %v", err)
+	case <-time.After(8 * interval):
+		// Survived multiple ping cycles past the timeout — good.
+	}
+
+	// Positive observable: a late Call still round-trips, proving the connection
+	// is alive and Serve is still running.
+	ctx, tCancel := context.WithTimeout(context.Background(), testTimeout)
+	defer tCancel()
+	result, err := client.Call(ctx, "echo", map[string]string{"msg": "alive"})
+	if err != nil {
+		t.Fatalf("late Call after idle failed: %v", err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(result, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["msg"] != "alive" {
+		t.Errorf("late Call result = %q, want alive", got["msg"])
+	}
+}
+
 // ensure io is used (net.Pipe returns net.Conn which implements io.ReadWriteCloser)
 var _ io.ReadWriteCloser = (*net.UnixConn)(nil)
