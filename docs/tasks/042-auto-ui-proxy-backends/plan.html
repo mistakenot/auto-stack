@@ -12,12 +12,12 @@
     "id": "042",
     "name": "auto-ui-proxy-backends",
     "epic": "003-multi-host-architecture",
-    "status": "executing",
+    "status": "complete",
     "created": "2026-06-27"
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="042: auto-ui-proxy-backends" status="executing" pr="pending" generated="2026-06-27">
+  <pd-doc title="042: auto-ui-proxy-backends" status="complete" pr="pending" generated="2026-06-27">
 
     <pd-tab name="Requirements">
 
@@ -367,7 +367,7 @@ Depends on P3 (needs `WithBackendManager`) and P2 (Manager).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="5" title="doctor + quickstart docs" files="auto-ui/internal/cli/doctor.go,auto-ui/internal/cli/doctor_test.go,auto-ui/internal/cli/quickstart.go" status="todo">
+        <pd-phase n="5" title="doctor + quickstart docs" files="auto-ui/internal/cli/doctor.go,auto-ui/internal/cli/doctor_test.go,auto-ui/internal/cli/quickstart.go" status="done">
           <md><script type="text/plain">
 Depends on P2.
 1. Extend `runDoctorChecks()` (`doctor.go`): for each backend, add `doctorCheck{check,status,message,hint}` for config validity, connectivity (dial + `daemon.status`), and a `project.list` probe; exit non-zero if any check fails. **Verify:** build.
