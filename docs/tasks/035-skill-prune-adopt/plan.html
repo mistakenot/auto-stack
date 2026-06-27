@@ -617,7 +617,7 @@ Fill T4's reserved journal `prunes` slot; deletion rides T4's journaled commit.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="3" title="adopt — staged move + divergence" status="todo" depends-on="1"
+          <pd-phase n="3" title="adopt — staged move + divergence" status="done" depends-on="1"
             files="auto-skill/internal/adopt/adopt.go,auto-skill/internal/adopt/adopt_test.go,auto-skill/internal/cli/adopt.go">
             <md><script type="text/plain">
 1. `internal/adopt/adopt.go`: `Adopt(env, names, opts)` uses `ownership.Adoptable` to
