@@ -248,13 +248,13 @@ host guard). The flash is purely cosmetic and self-clears.
 ## 4. Grep gates (029 structural invariant)
 
 ```bash
-grep -c 'on("' auto-ui/web/static/store.js            # expect 2 (doc.changed + ping)
-grep -rl 'on("'  auto-ui/web/static/ | sort           # expect ONLY store.js
+grep -c 'on("' auto-ui/web/static/store.js            # expect 1 (doc.changed; the on("ping") was removed on main in 4898d01)
 grep -rl 'onAny(' auto-ui/web/static/ | sort          # expect ONLY rpc.js + store.js
 ```
 
 Any additional subscription site is a conformance failure (host-aware event matching
-stays inside `store.js`'s existing `on("doc.changed")`).
+stays inside `store.js`'s existing `on("doc.changed")`). Note: `activity.js` carries a
+pre-existing `on("doc.changed")` (task 027); 046 added no new subscription site.
 
 ## 5. Teardown
 
