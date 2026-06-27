@@ -156,6 +156,12 @@ func Describe(env skill.Env, name string) (Provenance, error) {
 // ./skills/<name>/SKILL.md. A skill rendered nowhere is a hard error with a
 // run-sync hint.
 func Get(env skill.Env, name, target string) ([]byte, string, error) {
+	// Validate the name against the skill-name schema before any filesystem join
+	// so a path-traversal id (".." or a separator) is rejected up front rather
+	// than reading an arbitrary SKILL.md outside the skills tree.
+	if err := skill.ValidateSkillName(name); err != nil {
+		return nil, "", err
+	}
 	cfg, err := loadProjectConfig(env)
 	if err != nil {
 		return nil, "", err

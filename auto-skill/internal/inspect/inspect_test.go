@@ -369,3 +369,14 @@ func TestGetMissing(t *testing.T) {
 		t.Fatal("expected error for unrendered skill")
 	}
 }
+
+func TestGetRejectsPathTraversal(t *testing.T) {
+	env := seedProject(t)
+	// Plant a SKILL.md outside the skills tree that a traversal id could reach.
+	writeFile(t, filepath.Join(env.Root, "leak", "SKILL.md"), skillMD("leak", "secret."))
+	for _, bad := range []string{"../leak", "../../etc", "foo/bar", "Deploy"} {
+		if _, _, err := Get(env, bad, "claude"); err == nil {
+			t.Errorf("Get(%q) should reject an invalid skill id", bad)
+		}
+	}
+}
