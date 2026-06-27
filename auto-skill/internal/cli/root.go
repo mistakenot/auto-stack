@@ -88,95 +88,9 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newQuickstartCmd(),
 		newDocsCmd(),
 		newUpdateCmd(),
-		newAgentsCmd(),
 		newSyncCmd(),
 	)
 
-	return cmd
-}
-
-func newInitCmd(resolveEnv envResolver) *cobra.Command {
-	var project bool
-	var textOutput bool
-
-	cmd := &cobra.Command{
-		Use:   "init",
-		Short: "Initialize auto skill settings",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			env, err := resolveEnv()
-			if err != nil {
-				return &ExitError{Code: 1, Err: err}
-			}
-
-			result, err := skill.Init(env, project)
-			if err != nil {
-				return &ExitError{Code: 1, Err: err}
-			}
-
-			if textOutput {
-				if !project {
-					fmt.Fprintf(cmd.OutOrStdout(), "Global settings: %s\n", displayPath(result.GlobalPath))
-					if result.GlobalCreated {
-						fmt.Fprintln(cmd.OutOrStdout(), "Created global settings.json.")
-					} else {
-						fmt.Fprintln(cmd.OutOrStdout(), "Global settings.json already exists.")
-					}
-				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "Project settings: %s\n", displayPath(result.ProjectSettingsPath))
-					if result.ProjectCreated {
-						fmt.Fprintln(cmd.OutOrStdout(), "Created project settings.json.")
-					} else {
-						fmt.Fprintln(cmd.OutOrStdout(), "Project settings.json already exists.")
-					}
-				}
-
-				fmt.Fprintf(cmd.OutOrStdout(), "Skills directory: %s\n", displayPath(result.SkillsPath))
-				if result.SkillsCreated {
-					fmt.Fprintln(cmd.OutOrStdout(), "Created skills directory.")
-				} else {
-					fmt.Fprintln(cmd.OutOrStdout(), "Skills directory already exists.")
-				}
-				return nil
-			}
-
-			payload := map[string]any{
-				"mode": func() string {
-					if project {
-						return "project"
-					}
-					return "global"
-				}(),
-			}
-			if !project {
-				payload["global"] = map[string]any{
-					"path":    filepath.ToSlash(result.GlobalPath),
-					"created": result.GlobalCreated,
-				}
-			} else {
-				payload["project"] = map[string]any{
-					"path":    filepath.ToSlash(result.ProjectSettingsPath),
-					"created": result.ProjectCreated,
-				}
-			}
-			payload["skills"] = map[string]any{
-				"path":    filepath.ToSlash(result.SkillsPath),
-				"created": result.SkillsCreated,
-			}
-
-			data, err := skill.EncodeJSON(payload)
-			if err != nil {
-				return &ExitError{Code: 1, Err: err}
-			}
-			if _, err := cmd.OutOrStdout().Write(data); err != nil {
-				return &ExitError{Code: 1, Err: err}
-			}
-			return nil
-		},
-	}
-
-	cmd.Flags().BoolVar(&project, "project", false, "initialize project-local skills/ and .auto/skill/settings.json")
-	cmd.Flags().BoolVar(&textOutput, "text", false, "emit human-readable text output")
 	return cmd
 }
 
@@ -449,14 +363,14 @@ func doctorReport(env skill.Env) (map[string]any, error) {
 		"hint":    "run auto skill init",
 	})
 
-	projectPath := env.ProjectSettingsPath()
-	projectOK := fileExists(projectPath)
+	skillsYAMLPath := env.SkillsYAMLPath()
+	skillsYAMLOK := fileExists(skillsYAMLPath)
 	checks = append(checks, map[string]any{
-		"code":    "project_settings",
-		"ok":      projectOK,
-		"path":    filepath.ToSlash(projectPath),
-		"message": boolMessage(projectOK, "project settings found", "project settings missing"),
-		"hint":    "run auto skill init --project",
+		"code":    "skills_yaml",
+		"ok":      skillsYAMLOK,
+		"path":    filepath.ToSlash(skillsYAMLPath),
+		"message": boolMessage(skillsYAMLOK, "skills.yaml found", "skills.yaml missing"),
+		"hint":    "run auto skill init --project -y",
 	})
 
 	skillsPath := env.SkillsDir()

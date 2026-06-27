@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mistakenot/auto-shared/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -60,19 +61,35 @@ func (e Env) SkillsDir() string {
 	return filepath.Join(e.Root, "skills")
 }
 
+func (e Env) SkillsConfigDir() string {
+	return filepath.Join(e.Root, ".auto", "skills")
+}
+
+func (e Env) SkillsYAMLPath() string {
+	return filepath.Join(e.SkillsConfigDir(), "skills.yaml")
+}
+
+func (e Env) LockPath() string {
+	return filepath.Join(e.SkillsConfigDir(), "lock.json")
+}
+
+func (e Env) ManifestPath() string {
+	return filepath.Join(e.SkillsConfigDir(), "manifest.json")
+}
+
 func (e Env) ProjectSettingsPath() string {
-	return filepath.Join(e.Root, ".auto", "skill", settingsFileName)
+	return filepath.Join(e.Root, ".auto", "skills", settingsFileName)
 }
 
 func (e Env) GlobalSettingsPath() (string, error) {
 	if e.RootOverride {
-		return filepath.Join(e.Root, ".auto", "skill", settingsFileName), nil
+		return filepath.Join(e.Root, ".auto", "skills", settingsFileName), nil
 	}
-	home, err := os.UserHomeDir()
+	home, err := config.HomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
-	return filepath.Join(home, ".auto", "skill", settingsFileName), nil
+	return filepath.Join(home, ".auto", "skills", settingsFileName), nil
 }
 
 type InitResult struct {
