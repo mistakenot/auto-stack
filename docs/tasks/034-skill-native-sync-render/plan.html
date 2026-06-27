@@ -876,7 +876,7 @@ manifest population, and the `render_version` lazy re-render. Depends on the ren
             </script></md>
           </pd-phase>
 
-          <pd-phase n="5" title="Journaled crash-consistent commit + recovery + receipts" files="auto-skill/internal/sync/journal.go,auto-skill/internal/sync/receipts.go,auto-skill/internal/sync/sync.go,auto-skill/internal/sync/journal_test.go,auto-skill/internal/sync/sync_test.go" status="todo" depends-on="4">
+          <pd-phase n="5" title="Journaled crash-consistent commit + recovery + receipts" files="auto-skill/internal/sync/journal.go,auto-skill/internal/sync/receipts.go,auto-skill/internal/sync/sync.go,auto-skill/internal/sync/journal_test.go,auto-skill/internal/sync/sync_test.go" status="done" depends-on="4">
             <md><script type="text/plain">
 Wrap phases A→C in the journaled commit protocol + recovery, write receipts, and assemble
 the `sync.Run` orchestrator honoring every mode/flag.
