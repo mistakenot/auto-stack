@@ -96,6 +96,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newDocsCmd(),
 		newUpdateCmd(resolveEnv),
 		newSyncCmd(resolveEnv),
+		newMigrateCmd(resolveEnv),
 		newAdoptCmd(resolveEnv),
 		newRemoveCmd(resolveEnv),
 		newCacheCmd(resolveEnv),

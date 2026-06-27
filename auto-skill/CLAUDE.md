@@ -1,5 +1,67 @@
 A tool for managing agent skills.
 
+## Migrating from vercel (`auto skill migrate vercel`)
+
+One-shot, additive translator from vercel's checked-in `skills-lock.json` into the
+native model. It **never** touches the source `skills-lock.json` — it only
+creates/extends `.auto/skills/lock.json` and `.auto/skills/skills.yaml`, and
+copies authored skills under `./skills/`. Existing native entries are preserved
+(a name collision is left untouched and reported, never overwritten).
+
+Two-step flow (migrate is offline — it resolves nothing):
+
+1. `auto skill migrate vercel` — writes each migrated dep as a lock entry with
+   `state: "unresolved"` (no commit) plus a `skills.yaml` entry seeding the
+   **version intent** from the vercel `ref`.
+2. `auto skill sync` — resolves commits for the `unresolved` entries and renders
+   into each target.
+
+Flags:
+
+- `--from <path>` — vercel lock to read (default `./skills-lock.json`, resolved
+  against the project root when relative).
+- `--dry-run` — compute and print the full plan/result without writing anything.
+- `--format json|text` — JSON (default) prints `{migrated, skipped, imported,
+  failed, dry_run, counts}` to stdout with per-entry warnings on stderr; text
+  prints the one-line summary `migrated N deps, skipped M (unsupported); run
+  auto skill sync to resolve commits and render.`
+
+Per-source handling:
+
+- **github / gitlab** → lock entry with a credential-free `https://…` URL and a
+  `subpath` derived from the vercel `skillPath`.
+- **local** → inspected on this machine: a git repo becomes a non-portable
+  `local: true` lock entry; a non-git directory is imported into
+  `./skills/<name>/` as an authored skill (no lock entry); a missing path is
+  reported and skipped.
+- **node_modules / well-known / huggingface / mintlify** → unsupported: warned,
+  skipped, and listed.
+
+Version intent (vercel `ref` → `skills.yaml` `version`): absent ref → `latest`;
+`branch:<name>` → `branch:<name>`; a 7–40 char sha → that sha (commit pin); any
+other tag/name → the bare value (tag pin). Migrated `skills.yaml` entries are
+written as `version: <spec>` with empty `replacements: []` (not a literal `{}`).
+
+Migration returns valid results first, then exits non-zero when any entry was
+skipped (so a `--dry-run` plan and a real run both surface unsupported deps).
+
+## Git hooks (`make install-hooks`)
+
+The checked-in `hooks/*` shims delegate to Makefile targets. All skill stanzas
+are guarded by `.auto/skills/lock.json` presence (and `command -v auto`), so they
+**no-op cleanly in repos without native skills**:
+
+- **pre-commit → `skills-check`** (check-only, replaces the old npx `skills-sync`):
+  runs `auto skill sync --check` then `auto skill lint` (both JSON by default);
+  **fails the commit** if any target is stale or any skill fails lint. It never
+  mutates the tree (no render, no `git add`).
+- **post-merge / post-checkout → `skills-sync-locked`**: runs `auto skill sync
+  --locked` to re-materialize the locked commit into each target. Non-blocking —
+  never fails the hook.
+- **pre-push → `skills-update-check`**: **opt-in, off by default.** Enable with
+  `SKILLS_UPDATE_CHECK=1` (per-invocation or exported) to run `auto skill update
+  --check`. Warn-only — never blocks the push.
+
 <!-- autodoc: start -->
 ## Documentation Index
 
