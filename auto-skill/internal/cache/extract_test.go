@@ -212,6 +212,50 @@ func TestExtractRejectsSymlink(t *testing.T) {
 	}
 }
 
+func TestExtractRejectsPreExistingSymlinkDir(t *testing.T) {
+	requireGit(t)
+	fixtureRepo, headSHA := createExtractFixture(t, map[string]string{
+		"subdir/file.txt": "safe content\n",
+	})
+
+	cacheDir := t.TempDir()
+	c := NewCache(cacheDir)
+
+	id := transport.CacheIdentity{Host: "example.com", Path: []string{"test", "symlinkdir"}}
+	repo, err := c.Open(id, "file://"+fixtureRepo)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := repo.Realize(headSHA); err != nil {
+		t.Fatalf("Realize: %v", err)
+	}
+
+	dest := t.TempDir()
+	outside := t.TempDir()
+	// Plant a symlink at dest/subdir → outside directory, before extract runs.
+	if err := os.Symlink(outside, filepath.Join(dest, "subdir")); err != nil {
+		t.Fatalf("plant symlink: %v", err)
+	}
+
+	err = repo.Extract(headSHA, "", dest)
+	if err == nil {
+		t.Fatal("expected error for pre-existing symlink directory")
+	}
+	var ee *ExtractError
+	if !errors.As(err, &ee) {
+		t.Fatalf("expected *ExtractError, got %T: %v", err, err)
+	}
+	if ee.Code != CodeSymlinkEntry {
+		t.Errorf("code = %q, want %q", ee.Code, CodeSymlinkEntry)
+	}
+
+	// Verify nothing was written to the outside directory.
+	entries, _ := os.ReadDir(outside)
+	if len(entries) != 0 {
+		t.Error("symlink escape: files were written outside dest")
+	}
+}
+
 func TestExtractTooManyFiles(t *testing.T) {
 	requireGit(t)
 

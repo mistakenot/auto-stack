@@ -116,12 +116,12 @@ func (r *Repo) Extract(sha, subpath, dest string) error {
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := safeMkdirAll(target, dest); err != nil {
 				_ = cmd2.Wait()
 				return fmt.Errorf("mkdir %s: %w", hdr.Name, err)
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := safeMkdirAll(filepath.Dir(target), dest); err != nil {
 				_ = cmd2.Wait()
 				return fmt.Errorf("mkdir parent %s: %w", hdr.Name, err)
 			}
@@ -144,6 +144,41 @@ func writeFile(target string, hdr *tar.Header, r io.Reader) error {
 	lr := &io.LimitedReader{R: r, N: maxExtractFileForTest + 1}
 	if _, err := io.Copy(f, lr); err != nil {
 		return fmt.Errorf("write %s: %w", hdr.Name, err)
+	}
+	return nil
+}
+
+// safeMkdirAll creates directories like os.MkdirAll but Lstats each component
+// under dest to reject pre-existing symlinks that would escape the extract root.
+func safeMkdirAll(target, dest string) error {
+	cleanDest := filepath.Clean(dest)
+	rel, err := filepath.Rel(cleanDest, filepath.Clean(target))
+	if err != nil {
+		return err
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	cur := cleanDest
+	for _, p := range parts {
+		cur = filepath.Join(cur, p)
+		fi, err := os.Lstat(cur)
+		if os.IsNotExist(err) {
+			if mkErr := os.Mkdir(cur, 0o755); mkErr != nil && !os.IsExist(mkErr) {
+				return mkErr
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return &ExtractError{
+				Code:    CodeSymlinkEntry,
+				Message: fmt.Sprintf("pre-existing symlink at %q would escape extract root", cur),
+			}
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("path component %q is not a directory", cur)
+		}
 	}
 	return nil
 }
