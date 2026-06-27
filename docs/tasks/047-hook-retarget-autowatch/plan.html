@@ -231,7 +231,7 @@ After this phase, an agent edit fires a hook → autowatch ingests + derives →
             </script></md>
           </pd-phase>
 
-          <pd-phase n="2" title="Remove auto-ui /api/rpc + eventGate" files="auto-ui/internal/server/server.go,auto-ui/internal/server/rpc_ingest.go,auto-ui/internal/server/rpc_ingest_test.go,auto-ui/internal/server/eventgate.go,auto-ui/internal/server/eventgate_test.go,auto-ui/internal/server/event_flow_test.go" status="todo">
+          <pd-phase n="2" title="Remove auto-ui /api/rpc + eventGate" files="auto-ui/internal/server/server.go,auto-ui/internal/server/rpc_ingest.go,auto-ui/internal/server/rpc_ingest_test.go,auto-ui/internal/server/eventgate.go,auto-ui/internal/server/eventgate_test.go,auto-ui/internal/server/event_flow_test.go" status="done">
             <md><script type="text/plain">
 Depends on P1 (hooks no longer post to `/api/rpc`).
 1. `server.go`: delete the `newEventGate` line and the `/api/rpc` `mux.HandleFunc`; rewire `o.mgr.SetEventSink` to a sink func that calls `hub.Broadcast(ev)` AND records into `buf` (keep `/api/debug/recent` populated — D-3). Drop now-unused params/imports.
