@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>043: etl-registry-repo-discovery</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "043",
+    "name": "etl-registry-repo-discovery",
+    "status": "planning",
+    "created": "2026-06-27"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="043: etl-registry-repo-discovery" status="pending" pr="pending" generated="2026-06-27">
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+`auto etl`'s **GitHub repo discovery** has no notion of which projects are
+"mine." It builds the list of repos to sync from the agent message trail: the
+session phase records the `cwd` of every transcript into the remotes cache
+(`map[workspace → origin-remote]`), and `github.DiscoverRepos(remotes)` then
+syncs PRs for **every** GitHub remote it finds. So any unrelated repo I cloned
+and once opened a coding session in — random GitHub projects pulled in to read
+or experiment — gets its PR/issue data sucked into the ETL output.
+
+A canonical project registry already exists at `~/.auto/projects.json`
+(`auto-shared/config`), populated by `auto init --project` and consumed by
+auto-watch and auto-ui. The GitHub phase simply doesn't consult it.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="context" title="Context — where discovery happens today" summary="Sessions ingest everything; the remotes cache they build drives GitHub/git repo discovery with no registry filter.">
+        <md><script type="text/plain">
+Key code paths (auto-etl):
+
+- `cmd/run.go:74` — `remotes := loadRemotesCache()` loads the shared
+  `map[workspace → remote]` cache (`~/.auto/etl/settings.json`).
+- `runSessionETL` populates that cache by resolving `git remote get-url origin`
+  for every workspace `cwd` seen across **all** discovered `.jsonl` sessions.
+  Session/message ingestion is intentionally unfiltered — it walks everything
+  under `~/.claude/projects` (`parser.findJSONLFiles`).
+- `cmd/run.go:230` — `repos := ghclient.DiscoverRepos(remotes)` derives the
+  GitHub owner/repo sync list from that cache. **This is the leak.**
+- `cmd/run.go:395` — `gitextract.DiscoverRepos(remotes, explicitPaths)` derives
+  the git-history repo list from the same cache (same root cause — gated too).
+
+The registry to filter against:
+
+- `auto-shared/config/projects.go` — `ProjectsConfig` / `ProjectRef{ID, Path,
+  Remote, …}`, loaded via `EnsureProjects()` / `LoadProjects()`.
+- Lookups: `FindProjectByPath(dir)` (matches sub-paths / worktrees) and
+  `FindProjectByRemote(remote)` (normalizes both sides via
+  `auto-shared/git.NormalizeRemoteURL`, stripping credentials).
+
+The fix filters the **derived repo list** at the discovery boundary, leaving the
+remotes cache and session/message ingestion untouched.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **Registry-gated repo discovery.** The GitHub PR sync phase **and** the
+  git-history phase only operate on repos belonging to a project registered in
+  `~/.auto/projects.json`. Unregistered remotes/workspaces from the message
+  trail are excluded from both.
+- **Strict when registry is empty.** If the registry is empty or absent, repo
+  discovery syncs **nothing** (the registry is the sole authority, matching the
+  auto-bus "unregistered → derives nothing" rule). Print a clear stderr hint to
+  run `auto init --project`.
+- **Match path then remote.** For each candidate workspace/remote, treat it as
+  registered if its workspace path matches a registered project
+  (`FindProjectByPath`), falling back to git-remote match
+  (`FindProjectByRemote`). Reuse the shared lookups; do not reimplement matching.
+- **Visible, not silent.** Print a stderr summary of what was excluded (count of
+  skipped repos / unregistered workspaces) so the filtering is observable and
+  debuggable, without polluting JSON stdout.
+- **Sessions & messages unchanged.** Session/message ingestion keeps pulling in
+  everything under `~/.claude/projects` — the registry gate applies only to
+  repo-level discovery (GitHub + git history), never to session ingestion.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Filtering session/message ingestion.** Explicitly out — the user wants
+  sessions/messages to keep ingesting everything. Only repo discovery is gated.
+- **Retroactive cleanup of already-ingested data.** Going-forward only. Stale
+  unrelated GitHub data already in parquet is left until a natural `--full`
+  rebuild drops it; no dedicated prune command in this task.
+- **Changing the registry format or registration flow.** We consume
+  `~/.auto/projects.json` as-is; no new fields, no changes to `auto init
+  --project`.
+- **Auto-registering discovered repos.** We do not write to the registry from
+  the ETL; discovery is read-only against it.
+- **New per-project ETL settings files** (`.auto/etl/settings.json`
+  project-local config) — not needed for this change.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [x] **OQ-1 — Default mode (sessions vs github).** Should the registry gate
+  apply to sessions/messages too?
+  **Resolved:** No. Sessions/messages ingest everything; the gate applies only
+  to GitHub repo discovery.
+- [x] **OQ-3 — Matching dimension.** What do we match a candidate against?
+  **Resolved:** Path first (`FindProjectByPath`), then git remote
+  (`FindProjectByRemote`) as fallback.
+- [x] **OQ-4 — Unmatched handling.** **Resolved:** Skip the repo and print a
+  stderr summary (count of skipped repos / unregistered workspaces).
+- [x] **OQ-5 — Existing parquet data.** **Resolved:** Going-forward only; no
+  retroactive purge in this task.
+- [x] **OQ-2 — Empty / missing registry fallback.** **Resolved:** Strict — when
+  `~/.auto/projects.json` is empty or absent, repo discovery syncs **nothing**
+  (registry is the sole authority). Print a clear stderr hint to run
+  `auto init --project`.
+- [x] **OQ-6 — Does the git-history phase (`--only git`,
+  `gitextract.DiscoverRepos`) get the same gate?** **Resolved:** Yes — gate both
+  the GitHub PR sync phase and the git-history phase for consistency; both share
+  the identical remotes-cache leak.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Three layers, smallest-first, matching the auto-etl dev loop (`.tmp/claude`
+fixtures, `.tmp/output`, duckdb inspection):
+
+1. **Unit (primary).** The gate is one pure function plus a quiet registry
+   loader. Table-driven tests over `FilterRemotes(remotes, cfg)` cover the
+   path-then-remote matching matrix, dedupe, and the empty-registry case — no
+   git, no network, no HOME. The shared lookups (`FindProjectByPath`,
+   `FindProjectByRemote`) are already unit-tested in `auto-shared`, so we test
+   our *wiring*, not theirs.
+2. **Integration.** Drive `auto etl run` with `t.TempDir()` + `t.Setenv("HOME",
+   …)` and a seeded `~/.auto/projects.json`, against a small fixture session set.
+   Assert the gate's effect on which repos reach the GitHub/git phases and that
+   sessions/messages and the saved remotes cache are untouched. GitHub network
+   calls are out of scope for automated tests — assert on the *discovered repo
+   list* (the gate's output), not on live PR fetches.
+3. **Manual e2e.** Run against real `~/.claude/projects` with the developer's
+   actual registry; confirm via stderr summary + duckdb that unregistered
+   GitHub repos no longer appear in new output, and registered ones still do.
+
+Reporting is verified as a behaviour: the skip summary and the empty-registry
+remediation hint go to **stderr**; **stdout** stays unpolluted.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="Testing layers">
+flowchart TB
+  U[Unit: FilterRemotes matrix + loadRegistryQuietly] --> I[Integration: auto etl run with temp HOME + fixture registry]
+  I --> E[Manual e2e: real registry + duckdb diff]
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-ac id="AC-1" title="GitHub sync excludes unregistered repos" phases="1,2" tests="auto-etl/cmd/registry_gate_test.go">
+        <md><script type="text/plain">
+- **Given** a remotes cache with one workspace on a *registered* project's
+  GitHub remote and one on an *unregistered* GitHub remote
+- **When** the GitHub PR sync phase runs
+- **Then** only the registered repo appears in the discovered repo list; the
+  unregistered owner/repo is excluded
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="Git-history sync excludes unregistered repos" phases="1,2" tests="auto-etl/cmd/registry_gate_test.go, auto-etl/cmd/run_gate_integration_test.go">
+        <md><script type="text/plain">
+- **Given** a remotes cache with a *registered* workspace path and an
+  *unregistered* one
+- **When** the git-history phase runs
+- **Then** only the registered repo is discovered for extraction; the
+  unregistered path is excluded
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-3" title="Matching is path-then-remote" phases="1" tests="auto-etl/cmd/registry_gate_test.go">
+        <md><script type="text/plain">
+- **Given** (a) a workspace that is a nested subdirectory of a registered
+  project's path but has no remote match, and (b) a workspace whose path is not
+  registered but whose origin remote (after SSH↔HTTPS + credential
+  normalization) equals a registered project's remote
+- **When** the gate evaluates each
+- **Then** both are kept — (a) via `FindProjectByPath` longest-prefix, (b) via
+  `FindProjectByRemote` fallback
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-4" title="Empty or missing registry syncs nothing (strict)" phases="1,2" tests="auto-etl/cmd/registry_gate_test.go, auto-etl/cmd/run_gate_integration_test.go">
+        <md><script type="text/plain">
+- **Given** `~/.auto/projects.json` is empty or absent
+- **When** `auto etl run` executes the GitHub and git-history phases
+- **Then** zero repos are discovered for both, a single stderr line hints to run
+  `auto init --project`, and the process exits 0 for a normal run (sessions still
+  ingest); an explicit `--only github`/`--only git` run fails fast with a
+  registry-aware error message
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="Session and message ingestion is unchanged" phases="2" tests="auto-etl/cmd/run_gate_integration_test.go">
+        <md><script type="text/plain">
+- **Given** sessions from both registered and unregistered workspaces under
+  `~/.claude/projects`
+- **When** `auto etl run` runs
+- **Then** every session and message is written to the `sessions`/`messages`
+  parquet datasets regardless of registration — the gate touches only repo
+  discovery
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="The saved remotes cache stays unfiltered" phases="2" tests="auto-etl/cmd/run_gate_integration_test.go">
+        <md><script type="text/plain">
+- **Given** the gate filters the remotes passed to the discovery phases
+- **When** the run completes and `saveRemotesCache` writes
+  `~/.auto/etl/settings.json`
+- **Then** the persisted cache still contains all discovered workspace→remote
+  entries (registered and unregistered) — the gate filters a copy, never the
+  canonical cache
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-7" title="Explicit --repo-path bypasses the gate" phases="2" tests="auto-etl/cmd/run_gate_integration_test.go">
+        <md><script type="text/plain">
+- **Given** `auto etl run --only git --repo-path <an unregistered repo>`
+- **When** the git-history phase runs
+- **Then** that repo is still indexed — explicit user-supplied paths are an
+  intentional allowlist and are not subject to the registry gate (the gate only
+  filters message-trail-derived discovery)
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-8" title="Skip summary on stderr, stdout unpolluted" phases="1,2" tests="auto-etl/cmd/registry_gate_test.go, auto-etl/cmd/run_gate_integration_test.go">
+        <md><script type="text/plain">
+- **Given** some workspaces are skipped by the gate
+- **When** the run completes
+- **Then** a one-line summary (kept N, skipped M, remediation hint) is written to
+  **stderr**, and nothing about the gate is written to **stdout**
+        </script></md>
+      </pd-ac>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **No live GitHub API test.** Automated tests stop at the discovered repo list;
+  actual PR fetch/write is covered only by manual e2e. Acceptable — the gate is
+  upstream of the API call and the API path is unchanged.
+- **Cross-host registries.** A repo registered on host A but not host B is gated
+  out on host B. This is correct per the strict decision, but worth noting for
+  multi-host setups — surfaced in the empty-registry stderr hint.
+- **Stale cache entries.** Already-ingested unregistered repos remain in old
+  parquet partitions until a `--full` rebuild (explicitly out of scope, OQ-5).
+- **`--repo-path` trust.** AC-7 trusts explicit paths unconditionally; a user
+  could still index an unrelated repo by passing it explicitly. This is by
+  design (explicit > implicit), not a leak of the auto-discovery kind.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+**Gate the remotes map once, at the `cmd` boundary, before either discovery
+phase consumes it.** The remotes cache is the single `map[workspacePath]remote`
+both phases derive from. It is the only place where we hold *both* the workspace
+path and the remote together — exactly what path-then-remote matching needs (the
+GitHub `DiscoverRepos` throws the path away when it iterates values). So we
+filter there and leave the two `internal/*` discovery packages untouched and
+registry-agnostic.
+
+Flow in `runE` (`cmd/run.go`):
+
+1. Session ETL runs first and populates `remotes` in place — **unchanged**.
+2. Load the registry read-only (`loadRegistryQuietly`, mirroring
+   `auto-cli` hookscmd — never `EnsureProjects`, so ETL never mutates the
+   registry).
+3. Build a **filtered copy** of `remotes`, keeping an entry iff
+   `FindProjectByPath(path) != nil` **or** `FindProjectByRemote(remote) != nil`.
+   Print a one-line gate summary to stderr (kept / skipped + remediation hint).
+4. Pass the **filtered copy** to `runGitHubSync` and `runGitETL`.
+5. Persist the **original, unfiltered** `remotes` via `saveRemotesCache` — the
+   canonical cache is never narrowed.
+
+`--repo-path` is a separate argument to `runGitETL`, not part of the remotes
+map, so explicit paths flow through ungated — the simplest implementation, and
+the right one (explicit intent overrides auto-discovery). Empty/absent registry
+yields an empty filtered map → both phases discover nothing (strict), with the
+stderr hint to run `auto init --project`. The existing `--only github` empty
+error gains a registry-aware message.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="d-filter-boundary" title="Filter the remotes map in cmd, not inside DiscoverRepos" status="accepted" by="agent" summary="The remotes map is the only place holding both path and remote — required for path-then-remote.">
+        <md><script type="text/plain">
+**Decision.** Apply the registry filter to the `map[path]remote` in
+`cmd/run.go`, producing a filtered copy passed to both phases. Keep
+`internal/github` and `internal/git` registry-agnostic.
+
+**Rationale.** GitHub's `DiscoverRepos(remotes)` iterates map *values*, discarding
+the workspace path; it cannot do `FindProjectByPath`. The cmd-level map is the
+only point with both path and remote. One small, well-tested pure function gates
+both phases; no signature churn in the discovery packages; no new import of
+`auto-shared/config` into `internal/*`.
+
+**Alternatives.** (a) Pass the registry into each `DiscoverRepos` — duplicates
+the gate, and the GitHub variant still lacks the path. (b) A new `internal/gate`
+package — more indirection than a thin cmd helper warrants.
+
+**Consequences.** The gate lives beside the cache load/save it coordinates with;
+`saveRemotesCache` keeps the unfiltered original by construction.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="d-repo-path-bypass" title="Explicit --repo-path bypasses the gate" status="accepted" by="agent" summary="Filtering only the remotes map leaves explicit paths ungated — simplest and matches explicit intent.">
+        <md><script type="text/plain">
+**Decision.** `--repo-path` values reach `runGitETL` as a separate `explicitPaths`
+argument and are **not** filtered against the registry.
+
+**Rationale.** Confirmed with the user ("keep it simple"). Filtering only the
+auto-discovered remotes map is the minimal change; explicit command-line paths
+are intentional user input, not the message-trail auto-discovery that causes the
+leak. Explicit > implicit.
+
+**Consequences.** A user can still index an unregistered repo by naming it
+explicitly. Documented in `git-history-etl.md` and the Verification gaps; not a
+regression of the auto-discovery leak this task fixes.
+        </script></md>
+      </pd-decision>
+
+      <pd-files>
+        <pd-file path="auto-etl/cmd/registry_gate.go" change="add">Registry gate: `loadRegistryQuietly()` (read-only, empty on error) + `filterRemotesByRegistry(remotes, cfg) (map, gateStats)` doing path-then-remote matching + stderr summary helper.</pd-file>
+        <pd-file path="auto-etl/cmd/registry_gate_test.go" change="add">Table-driven unit tests: path match, remote-fallback match, nested-subdir longest-prefix, unregistered drop, empty registry → empty map, summary string. Temp-HOME test for `loadRegistryQuietly`.</pd-file>
+        <pd-file path="auto-etl/cmd/run.go" change="edit">After session ETL: load registry, build filtered remotes copy, print gate summary to stderr, pass filtered copy to `runGitHubSync` + `runGitETL`; keep `saveRemotesCache` on the unfiltered original; make the `--only github` empty-result error registry-aware.</pd-file>
+        <pd-file path="auto-etl/cmd/run_gate_integration_test.go" change="add">Network-free integration tests via temp HOME + seeded `~/.auto/projects.json`: `--only git` against a local git-repo fixture (registered discovered, unregistered skipped, `--repo-path` bypass, saved cache still complete); `--only sessions` asserts all sessions ingested regardless of registration; stdout/stderr capture for the gate summary.</pd-file>
+        <pd-file path="auto-etl/docs/github-pr-etl.md" change="edit">Reverse the documented "all GitHub repos in the global cache are synced … intentional" policy (lines ~425-440) to registry-gated discovery; document strict empty-registry behavior.</pd-file>
+        <pd-file path="auto-etl/docs/git-history-etl.md" change="edit">Note that auto-discovered repos are registry-gated and that explicit `--repo-path` bypasses the gate.</pd-file>
+      </pd-files>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Pass the registry into `DiscoverRepos`.** Duplicates the gate across two
+  packages and the GitHub variant still can't match by path (it lost it). See
+  `d-filter-boundary`.
+- **Filter the saved cache too.** Would degrade the canonical
+  `~/.auto/etl/settings.json` and lose remotes for later (e.g. once a project is
+  registered). Rejected — gate a copy, persist the original (AC-6).
+- **Gate session/message ingestion.** Explicitly out of scope (OQ-1); the user
+  wants all sessions ingested.
+- **New `--registered-only` / `--all` flag.** The strict default is the desired
+  behavior; an opt-out flag adds surface area no requirement asked for.
+- **Retroactive parquet prune.** Out of scope (OQ-5); `--full` rebuild drops
+  stale rows naturally.
+        </script></md>
+      </pd-section>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Add a pure registry-gate helper and its tests (Phase 1), wire it into
+`cmd/run.go` between the session phase and the repo phases with an integration
+test (Phase 2), then update the two ETL docs to reflect the reversed policy
+(Phase 3). Linear DAG; each phase builds, tests, and commits before the next.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-dag caption="Phase dependency DAG"></pd-dag>
+      </pd-section>
+
+      <pd-stepper>
+        <pd-phase n="1" title="Registry gate core + unit tests" files="auto-etl/cmd/registry_gate.go, auto-etl/cmd/registry_gate_test.go" status="todo">
+          <md><script type="text/plain">
+Add the pure gate, no `run.go` wiring yet.
+
+**Steps**
+1. Create `auto-etl/cmd/registry_gate.go`:
+   - `loadRegistryQuietly() sharedconfig.ProjectsConfig` — `ProjectsConfigPath`
+     → `os.Stat` → `LoadProjects`; return empty `ProjectsConfig{}` on any error.
+     Do **not** call `EnsureProjects` (read-only; never mutate the registry).
+   - `type gateStats struct { total, kept, skipped int }`.
+   - `filterRemotesByRegistry(remotes map[string]string, cfg sharedconfig.ProjectsConfig) (map[string]string, gateStats)` —
+     for each `path → remote`, keep iff
+     `cfg.FindProjectByPath(path) != nil || cfg.FindProjectByRemote(remote) != nil`;
+     tally stats. Return a new map (never mutate the input).
+   - `gateSummary(stats gateStats, registryEmpty bool) string` — one line for
+     stderr; when `registryEmpty` or `kept == 0`, include the hint
+     `run 'auto init --project' in each repo you want indexed`.
+   - *Verify:* `go build ./...` (in `auto-etl`).
+2. Create `auto-etl/cmd/registry_gate_test.go` — table-driven:
+   - registered by exact path; by nested sub-path (longest-prefix); by remote
+     fallback when path differs; SSH↔HTTPS/credential-normalized remote match;
+     unregistered dropped; empty registry → empty map + non-zero skipped;
+     input map not mutated; `gateSummary` includes the hint when empty.
+   - temp-HOME test (`t.TempDir()` + `t.Setenv("HOME", …)`) for
+     `loadRegistryQuietly`: missing file → empty; seeded file → loaded.
+   - *Verify:* `go test ./cmd/... -run 'Gate|Registry'` passes; `go vet ./...`.
+3. **Commit** (`/contextual-commit`): "feat(043): registry gate helper for etl repo discovery".
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Wire gate into run.go + integration test" files="auto-etl/cmd/run.go, auto-etl/cmd/run_gate_integration_test.go" status="todo" depends-on="1">
+          <md><script type="text/plain">
+Insert the gate between the session phase and the repo phases.
+
+**Steps**
+1. Edit `auto-etl/cmd/run.go` in the run `RunE` (after `runSessionETL`,
+   before `runGitHubSync`):
+   - `reg := loadRegistryQuietly()`
+   - `gated, stats := filterRemotesByRegistry(remotes, reg)`
+   - Print `gateSummary(stats, len(reg.Projects) == 0)` to **stderr** (only when
+     `stats.skipped > 0` or registry empty, to stay quiet on clean runs).
+   - Pass `gated` (not `remotes`) to `runGitHubSync` and `runGitETL`.
+   - Keep `saveRemotesCache(remotes)` on the **original** map (AC-6).
+   - In `runGitHubSync`, make the `explicitOnly` empty-result error
+     registry-aware (mention registering projects with `auto init --project`).
+   - *Verify:* `go build ./...`; confirm `--repo-path` still flows ungated
+     (it's a separate arg to `runGitETL`, untouched).
+2. Create `auto-etl/cmd/run_gate_integration_test.go` — network-free, temp HOME +
+   seeded `~/.auto/projects.json`:
+   - **git phase**: build two throwaway local git repos (one registered in the
+     fixture, one not); seed the remotes cache; run the git phase via `--only
+     git`; assert only the registered repo is extracted; assert `--repo-path`
+     pointing at the unregistered repo still indexes it (AC-7); assert
+     `~/.auto/etl/settings.json` still lists both workspaces (AC-6).
+   - **sessions phase**: point `--input` at a fixture with sessions from a
+     registered and an unregistered workspace; run `--only sessions`; assert
+     both produce `sessions`/`messages` rows (AC-5).
+   - capture stdout/stderr: gate summary on stderr only, stdout clean (AC-8).
+   - *Verify:* `go test ./...` green; manually run the binary against
+     `.tmp/claude` with a seeded registry and inspect output with duckdb.
+3. **Commit** (`/contextual-commit`): "feat(043): gate etl repo discovery by project registry".
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Update ETL docs to the gated policy" files="auto-etl/docs/github-pr-etl.md, auto-etl/docs/git-history-etl.md" status="todo" depends-on="2">
+          <md><script type="text/plain">
+Reverse the documented "sync everything" policy.
+
+**Steps**
+1. Edit `auto-etl/docs/github-pr-etl.md` (Repo Discovery, ~lines 425-440):
+   replace "all GitHub repos in the global cache are synced … intentional" with
+   the registry-gated behavior; document strict empty-registry → sync nothing +
+   the `auto init --project` remediation.
+2. Edit `auto-etl/docs/git-history-etl.md` (discovery section, ~line 227):
+   note auto-discovered repos are registry-gated, and that explicit `--repo-path`
+   bypasses the gate.
+   - *Verify:* `auto doc stale` clean for these files if autodoc tags apply;
+     otherwise visual consistency review.
+3. **Commit** (`/contextual-commit`): "docs(043): document registry-gated etl repo discovery".
+          </script></md>
+        </pd-phase>
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **Phase 1** satisfies AC-3 and the empty-registry half of AC-4 (unit).
+- **Phase 2** satisfies AC-1, AC-2, AC-4 (wiring), AC-5, AC-6, AC-7, AC-8.
+- **Phase 3** documents the behavior; no AC but required for policy coherence.
+- All `go test ./...` green in `auto-etl`; `go vet` clean; gate summary verified
+  on stderr with stdout unpolluted.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+  </pd-doc>
+</body>
+</html>
