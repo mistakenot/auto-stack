@@ -5,11 +5,19 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"time"
 
 	"github.com/mistakenot/auto-shared/bus"
 	"github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-ui/internal/backend"
 )
+
+// dedupWindow is the TTL the eventGate dedups event ids over. The same event
+// arrives at the hub by two paths that fire within milliseconds of each other —
+// the local POST /api/rpc ingest and the relayed copy from a backend's bus —
+// so a small window is enough to collapse them while never suppressing a
+// genuinely later event that happens to reuse an id.
+const dedupWindow = 5 * time.Second
 
 // Option configures New.
 type Option func(*options)
@@ -65,6 +73,18 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 
 	hub := bus.NewHub()
 
+	// The gate fronts the hub with id-based dedup over dedupWindow. Both the
+	// local /api/rpc ingest path and the relayed-backend sink broadcast through
+	// it, so a single event reaching the hub by both paths is delivered once.
+	gate := newEventGate(hub, dedupWindow)
+
+	// When a backend manager is configured, route every relayed backend event
+	// through the gate into the hub. The relay path broadcasts raw events only;
+	// derivation happens once, on the ingesting backend (no re-derivation here).
+	if o.mgr != nil {
+		o.mgr.SetEventSink(gate.Broadcast)
+	}
+
 	// In debug mode, record raw + derived ingest events into a ring buffer
 	// exposed via /api/debug/recent.
 	var buf *debugBuffer
@@ -106,8 +126,10 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 	// responses, plus server->client push notifications via the hub.
 	mux.HandleFunc("/api/ws", handleWSWithHub(hub, d))
 
-	// POST /api/rpc: fire-and-forget ingest of bus events.
-	mux.HandleFunc("/api/rpc", handleRPC(hub, o.regProvider, buf))
+	// POST /api/rpc: fire-and-forget ingest of bus events. Ingest broadcasts
+	// through the gate (not the hub directly) so a locally-ingested event and
+	// its relayed copy collapse to a single delivery.
+	mux.HandleFunc("/api/rpc", handleRPC(gate.Broadcast, o.regProvider, buf))
 
 	// GET /api/doc/raw: verbatim doc bytes proxied from the backend's doc.raw.
 	mux.HandleFunc("/api/doc/raw", handleDocRawProxy(o.mgr))

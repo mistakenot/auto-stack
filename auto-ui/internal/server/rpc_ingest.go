@@ -15,6 +15,11 @@ import (
 // the envelope, broadcasts to all WebSocket clients, derives doc.changed events
 // where applicable, and broadcasts those too.
 //
+// broadcast is the gate-fronted broadcaster (eventGate.Broadcast): both the raw
+// event and any locally-derived doc.changed events go through it, so an event
+// ingested here and relayed from a backend collapse to a single delivery (the
+// derived ids are deterministic, so derived copies dedup the same way).
+//
 // Malformed or invalid frames receive an HTTP 400 with a JSON-RPC error body.
 // This is a deliberate deviation from JSON-RPC 2.0 (notifications normally get
 // no reply) justified for an HTTP one-shot binding where the producer needs
@@ -24,7 +29,7 @@ import (
 //
 // When buf is non-nil (debug mode), every raw and derived event is recorded
 // into the ring buffer for inspection via /api/debug/recent.
-func handleRPC(hub *bus.Hub, regProvider func() config.ProjectsConfig, buf *debugBuffer) http.HandlerFunc {
+func handleRPC(broadcast func(bus.Event), regProvider func() config.ProjectsConfig, buf *debugBuffer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
@@ -71,17 +76,17 @@ func handleRPC(hub *bus.Hub, regProvider func() config.ProjectsConfig, buf *debu
 			return
 		}
 
-		// Broadcast the raw event to all connected clients.
-		hub.Broadcast(ev)
+		// Broadcast the raw event to all connected clients (through the gate).
+		broadcast(ev)
 		if buf != nil {
 			buf.record(ev)
 		}
 
-		// Derive doc.changed events and broadcast each.
+		// Derive doc.changed events and broadcast each (through the gate).
 		reg := regProvider()
 		derived := bus.DeriveDocChanged(ev, reg)
 		for i := range derived {
-			hub.Broadcast(derived[i])
+			broadcast(derived[i])
 			if buf != nil {
 				buf.record(derived[i])
 			}

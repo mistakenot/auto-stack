@@ -1,6 +1,8 @@
 package bus
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"path"
 	"strings"
 
@@ -43,7 +45,7 @@ func DeriveDocChanged(ev Event, reg config.ProjectsConfig) []Event {
 			Worktree: ev.Worktree,
 			Branch:   ev.Branch,
 		}
-		derived = append(derived, newDerived(ev, "doc.changed", dc))
+		derived = append(derived, newDerived(ev, "doc.changed", rel, dc))
 	}
 	return derived
 }
@@ -72,9 +74,14 @@ func isDocPath(rel string) bool {
 }
 
 // newDerived creates a derived event carrying the same provenance as the source
-// event but with a new type and data payload.
-func newDerived(src Event, typ string, data any) Event {
+// event but with a new type and data payload. The derived id is deterministic
+// (see deterministicID) so that relayed and locally-derived copies of the same
+// source event share an id and can be deduped by a consumer.
+func newDerived(src Event, typ, rel string, data any) Event {
 	ev, _ := NewEvent(typ, "auto/bus/derive", data)
+	// Replace the random id minted by NewEvent with a deterministic one keyed
+	// on the source event id, derived type, and derived path.
+	ev.ID = deterministicID(src.ID, typ, rel)
 	// Carry provenance from the source event.
 	ev.Host = src.Host
 	ev.Project = src.Project
@@ -84,4 +91,14 @@ func newDerived(src Event, typ string, data any) Event {
 	ev.Worktree = src.Worktree
 	ev.Commit = src.Commit
 	return ev
+}
+
+// deterministicID derives a stable 16-hex-character event id from the source
+// event id, derived type, and derived path. The same (srcID, typ, rel) triple
+// always yields the same id, so relayed and locally-derived copies of one event
+// collide on id and can be deduped. The 16-hex form matches the random id format
+// minted by newID (bus-spec §2.1): sha256 truncated to the first 8 bytes.
+func deterministicID(srcID, typ, rel string) string {
+	sum := sha256.Sum256([]byte(srcID + ":" + typ + ":" + rel))
+	return hex.EncodeToString(sum[:8])
 }

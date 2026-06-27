@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
+	"github.com/mistakenot/auto-shared/rpc"
+	"github.com/mistakenot/auto-shared/transport"
 	"github.com/mistakenot/auto-ui/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -160,7 +163,61 @@ func runBackendDoctorChecks(ctx context.Context) []doctorCheck {
 			Status:  "pass",
 			Message: fmt.Sprintf("backend %s reachable: hostId=%s, %d project(s)", b.URI, hostID, projectCount),
 		})
+
+		// Relay probe: only on an otherwise-reachable backend (a backend that
+		// already failed connectivity is not worth re-probing). doctor runs
+		// offline with no live Manager, so it actively probes bus.subscribe
+		// rather than reading Manager.Health() — it shares the assessment, not
+		// the instance. A bus.subscribe failure degrades the relay only (live
+		// events stop flowing) while RPC proxying keeps working, so it warns
+		// rather than fails.
+		relayCheck := "relay:" + b.URI
+		if rerr := probeRelaySubscribe(ctx, b.URI); rerr != nil {
+			checks = append(checks, doctorCheck{
+				Check:   relayCheck,
+				Status:  "warn",
+				Message: fmt.Sprintf("backend %s relay degraded: %v", b.URI, rerr),
+				Hint:    "ensure autowatch at " + b.URI + " supports bus.subscribe (event relay); RPC proxying still works and the relay is retried automatically on reconnect",
+			})
+		} else {
+			checks = append(checks, doctorCheck{
+				Check:   relayCheck,
+				Status:  "pass",
+				Message: fmt.Sprintf("backend %s relay subscribed: live events will flow into the UI", b.URI),
+			})
+		}
 	}
 
 	return checks
+}
+
+// relayProbeTimeout bounds the one-shot bus.subscribe probe doctor performs
+// against an already-reachable backend, mirroring how verifyBackend bounds its
+// daemon.status probe with verifyTimeout so doctor never hangs.
+const relayProbeTimeout = 5 * time.Second
+
+// probeRelaySubscribe performs a one-shot bus.subscribe against an
+// already-reachable backend to confirm the event relay is healthy. doctor runs
+// offline (no live Manager), so it actively probes rather than reading
+// Manager.Health(): it shares the assessment, not the instance. The probe dials,
+// subscribes once bounded by relayProbeTimeout, and tears the connection down
+// before returning, so no goroutine leaks.
+func probeRelaySubscribe(parent context.Context, uri string) error {
+	ctx, cancel := context.WithTimeout(parent, relayProbeTimeout)
+	defer cancel()
+
+	conn, err := transport.Dial(ctx, uri)
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+
+	peer := rpc.NewPeer(conn)
+	serveCtx, serveCancel := context.WithCancel(ctx)
+	defer serveCancel()
+	go func() { _ = peer.Serve(serveCtx) }()
+
+	if _, err := peer.Call(ctx, "bus.subscribe", nil); err != nil {
+		return fmt.Errorf("bus.subscribe: %w", err)
+	}
+	return nil
 }

@@ -12,12 +12,12 @@
     "id": "045",
     "name": "auto-ui-event-aggregation",
     "epic": "003-multi-host-architecture",
-    "status": "executing",
+    "status": "complete",
     "created": "2026-06-27"
   }
   </script>
-  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="045: auto-ui-event-aggregation" status="executing" pr="pending" generated="2026-06-27">
+  <!-- AI: When a PR is created for this work, update pr="https://github.com/mistakenot/auto-stack/pull/104" below with the PR URL -->
+  <pd-doc title="045: auto-ui-event-aggregation" status="complete" pr="pending" generated="2026-06-27">
 
     <pd-tab name="Requirements">
 
@@ -313,7 +313,7 @@ flowchart LR
 
       <pd-stepper>
 
-        <pd-phase n="1" title="Deterministic derived ids + eventGate dedup" files="auto-shared/bus/derive.go,auto-shared/bus/derive_test.go,auto-ui/internal/server/eventgate.go,auto-ui/internal/server/eventgate_test.go" status="todo">
+        <pd-phase n="1" title="Deterministic derived ids + eventGate dedup" files="auto-shared/bus/derive.go,auto-shared/bus/derive_test.go,auto-ui/internal/server/eventgate.go,auto-ui/internal/server/eventgate_test.go" status="done">
           <md><script type="text/plain">
 1. **Deterministic derived id (shared):** in `auto-shared/bus/derive.go` `newDerived` (`:76-78`), after `NewEvent`, set `ev.ID = deterministicID(src.ID, typ, rel)` (first-16-hex of `sha256(src.ID+":"+typ+":"+rel)`). **Verify:** `go build ./...` in auto-shared; **`go test ./... ` in auto-watch still green** (re-check any test asserting a random/changing derived id — update to the deterministic value).
 2. Test (`derive_test.go`): same source+path → identical derived id; different path or type → different id; id is stable across calls. **Verify:** `go test ./bus/...`.
@@ -323,7 +323,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="Manager: subscribe + forward events" files="auto-ui/internal/backend/manager.go,auto-ui/internal/backend/manager_test.go" status="todo">
+        <pd-phase n="2" title="Manager: subscribe + forward events" files="auto-ui/internal/backend/manager.go,auto-ui/internal/backend/manager_test.go" status="done">
           <md><script type="text/plain">
 1. Add the event sink in an `atomic.Value` (or dedicated RWMutex — **not** `m.mu`) + `SetEventSink(fn)`; add `relayDegraded` to the `conn` struct and `RelayDegraded` to `BackendHealth`. **Verify:** build.
 2. In `connect()` (manager.go:201), construct the peer with `rpc.WithOnNotify(m.onNotify)`; `onNotify(req)` unmarshals `req.Params`→`bus.Event`, **loads+copies** the sink and invokes the copy **outside `m.mu`** (nil-guard if unset, per D-1). **Verify:** build.
@@ -334,7 +334,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Wire into server + end-to-end test" files="auto-ui/internal/server/server.go,auto-ui/internal/server/rpc_ingest.go,auto-ui/internal/server/event_flow_test.go" status="todo">
+        <pd-phase n="3" title="Wire into server + end-to-end test" files="auto-ui/internal/server/server.go,auto-ui/internal/server/rpc_ingest.go,auto-ui/internal/server/event_flow_test.go" status="done">
           <md><script type="text/plain">
 Depends on P1 + P2.
 1. In `server.New` (after `hub := bus.NewHub()` @66): create `gate := newEventGate(hub, ttl)`; route the `/api/rpc` handler through `gate` instead of `hub` (pass `gate` into `handleRPC`); and when `o.mgr != nil`, call `o.mgr.SetEventSink(gate.Broadcast)`. **Verify:** build.
@@ -344,7 +344,7 @@ Depends on P1 + P2.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="doctor relay check + bus-spec note" files="auto-ui/internal/cli/doctor.go,docs/auto-bus-spec.md" status="todo">
+        <pd-phase n="4" title="doctor relay check + bus-spec note" files="auto-ui/internal/cli/doctor.go,docs/auto-bus-spec.md" status="done">
           <md><script type="text/plain">
 Depends on P2.
 1. Extend `verifyBackend` (doctor.go:143-162) with a **one-shot relay probe**: after the existing connectivity/`daemon.status` probe, attempt a bounded `bus.subscribe` and emit a `relay` `doctorCheck` (pass = subscribed, warn/fail = degraded + remediation hint). doctor is offline — it does **not** read the live `Manager.Health()`; it shares the assessment, not the instance. **Verify:** `go test ./internal/cli/...` (doctor test, reachable + unreachable backend) green.
