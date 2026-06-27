@@ -1383,3 +1383,319 @@ func TestSyncLockedEditRewritesManifestNotLock(t *testing.T) {
 		t.Errorf("installed tree not updated after edit:\n%s", installed)
 	}
 }
+
+// --- adopt / remove / doctor e2e (Phase 6 / T5) ---
+
+// gitInitRoot initializes a git repo at root so adopt's `git add` succeeds.
+func gitInitRoot(t *testing.T, root string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	git := func(args ...string) {
+		t.Helper()
+		full := append([]string{"-C", root}, args...)
+		cmd := exec.Command("git", full...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	git("init")
+	git("config", "user.email", "test@test.com")
+	git("config", "user.name", "test")
+}
+
+// ownershipName reports whether any item in a doctor ownership list (decoded as
+// []any of JSON objects) has the given name.
+func ownershipHasName(list any, name string) bool {
+	items, ok := list.([]any)
+	if !ok {
+		return false
+	}
+	for _, it := range items {
+		m, ok := it.(map[string]any)
+		if ok && m["name"] == name {
+			return true
+		}
+	}
+	return false
+}
+
+// TestAdoptListThenAdoptSpecific: a foreign skill dropped into a target is listed
+// as an adoptable candidate (JSON, no mutation), then `adopt <name>` stage-moves
+// it into ./skills/ (AC-5 surface).
+func TestAdoptListThenAdoptSpecific(t *testing.T) {
+	root := t.TempDir()
+	gitInitRoot(t, root)
+	writeFile(t, filepath.Join(root, ".claude", "skills", "new-plan", "SKILL.md"),
+		validSkill("new-plan", "Use when planning a new task.", "## Workflow\n\n1. Step.\n"))
+
+	// List mode: candidates only, no filesystem change.
+	stdout, stderr, code := runCLI(t, "--root", root, "adopt")
+	if code != 0 {
+		t.Fatalf("adopt list failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	res := decodeJSONMap(t, stdout)
+	if !ownershipHasName(res["candidates"], "new-plan") {
+		t.Fatalf("expected new-plan in candidates, got: %v", res["candidates"])
+	}
+	if _, err := os.Stat(filepath.Join(root, "skills", "new-plan")); !os.IsNotExist(err) {
+		t.Fatalf("adopt list must not move anything (err=%v)", err)
+	}
+
+	// Adopt the specific name: staged move into ./skills/ + git add.
+	stdout, stderr, code = runCLI(t, "--root", root, "adopt", "new-plan")
+	if code != 0 {
+		t.Fatalf("adopt new-plan failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	res = decodeJSONMap(t, stdout)
+	if !ownershipHasName(res["adopted"], "new-plan") {
+		t.Fatalf("expected new-plan in adopted, got: %v", res["adopted"])
+	}
+	assertExists(t, filepath.Join(root, "skills", "new-plan", "SKILL.md"))
+	// The source copy was removed by the staged move.
+	if _, err := os.Stat(filepath.Join(root, ".claude", "skills", "new-plan")); !os.IsNotExist(err) {
+		t.Errorf("adopt must remove the source copy after the move (err=%v)", err)
+	}
+}
+
+// TestAdoptDivergentRequiresFrom: the same foreign name with differing content
+// across targets is a hard error demanding --from (AC-6 surface).
+func TestAdoptDivergentRequiresFrom(t *testing.T) {
+	root := t.TempDir()
+	gitInitRoot(t, root)
+	writeFile(t, filepath.Join(root, ".claude", "skills", "dup", "SKILL.md"),
+		validSkill("dup", "Use when X happens.", "## Workflow\n\n1. claude variant.\n"))
+	writeFile(t, filepath.Join(root, ".agents", "skills", "dup", "SKILL.md"),
+		validSkill("dup", "Use when X happens.", "## Workflow\n\n1. agents variant differs here.\n"))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "adopt", "dup")
+	if code == 0 {
+		t.Fatalf("divergent adopt must exit non-zero\nstdout:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "--from") {
+		t.Fatalf("expected a --from remediation on stderr, got:\n%s", stderr)
+	}
+	// Nothing was moved into ./skills/.
+	if _, err := os.Stat(filepath.Join(root, "skills", "dup")); !os.IsNotExist(err) {
+		t.Errorf("divergent adopt must not move anything (err=%v)", err)
+	}
+}
+
+// TestRemoveLocalPrunesTargets: an authored skill synced into targets is removed
+// with --local; the source dir is gone and its now-orphaned target copies are
+// pruned under receipt authority (AC-7 surface).
+func TestRemoveLocalPrunesTargets(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "foo", "SKILL.md"),
+		validSkill("foo", "Use when removing locally.", "## Workflow\n\n1. Step.\n"))
+
+	// Initial sync establishes the manifest + machine-local receipts and renders
+	// foo into every target.
+	if _, stderr, code := runCLI(t, "--root", root, "sync"); code != 0 {
+		t.Fatalf("initial sync failed: code=%d stderr:\n%s", code, stderr)
+	}
+	assertExists(t, filepath.Join(root, ".claude", "skills", "foo", "SKILL.md"))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "remove", "foo", "--local")
+	if code != 0 {
+		t.Fatalf("remove --local failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	res := decodeJSONMap(t, stdout)
+	if removed, ok := res["removed"].([]any); !ok || len(removed) == 0 {
+		t.Fatalf("expected removed sources, got: %v", res["removed"])
+	}
+	if _, err := os.Stat(filepath.Join(root, "skills", "foo")); !os.IsNotExist(err) {
+		t.Errorf("./skills/foo must be gone after remove --local (err=%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude", "skills", "foo")); !os.IsNotExist(err) {
+		t.Errorf("the orphaned target copy must be pruned (err=%v)", err)
+	}
+}
+
+// TestRemoveAmbiguousRequiresSelector: a name that exists as BOTH authored and
+// vendored with no --local/--vendored selector is a fail-fast usage error that
+// mutates nothing.
+func TestRemoveAmbiguousRequiresSelector(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "bar", "SKILL.md"),
+		validSkill("bar", "Use when ambiguous.", "## Workflow\n\n1. Step.\n"))
+	writeSyncLock(t, root, map[string]skill.LockEntry{
+		"bar": syncLockEntry("file:///example", "bar", "latest", "deadbeef"),
+	})
+
+	stdout, stderr, code := runCLI(t, "--root", root, "remove", "bar")
+	if code == 0 {
+		t.Fatalf("ambiguous remove must exit non-zero\nstdout:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "--local") || !strings.Contains(stderr, "--vendored") {
+		t.Fatalf("expected a --local/--vendored selector remediation, got:\n%s", stderr)
+	}
+	// Fail-fast: the authored source is untouched.
+	assertExists(t, filepath.Join(root, "skills", "bar", "SKILL.md"))
+}
+
+// TestDoctorReportsOrphanAndForeign: after a real sync, deleting the authored
+// source leaves a managed orphan (manifest+receipt+matching on-disk dir); plus a
+// hand-dropped foreign dir. doctor lists both offline and exits non-zero (AC-9).
+func TestDoctorReportsOrphanAndForeign(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "gone", "SKILL.md"),
+		validSkill("gone", "Use when about to be orphaned.", "## Workflow\n\n1. Step.\n"))
+
+	// Render + receipt "gone" into the targets.
+	if _, stderr, code := runCLI(t, "--root", root, "sync"); code != 0 {
+		t.Fatalf("sync failed: code=%d stderr:\n%s", code, stderr)
+	}
+
+	// Drop the authored source (no re-sync): manifest+receipt still list it, the
+	// on-disk target dirs still match → managed orphan.
+	assertNoError(t, os.RemoveAll(filepath.Join(root, "skills", "gone")))
+
+	// A foreign dir nobody manages.
+	writeFile(t, filepath.Join(root, ".claude", "skills", "stranger", "SKILL.md"),
+		validSkill("stranger", "Use when a stranger appears.", "## Workflow\n\n1. Step.\n"))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "doctor")
+	if code == 0 {
+		t.Fatalf("doctor with a managed orphan must exit non-zero\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	report := decodeJSONMap(t, stdout)
+	own, ok := report["ownership"].(map[string]any)
+	if !ok {
+		t.Fatalf("doctor report missing ownership section: %v", report)
+	}
+	if !ownershipHasName(own["managed_orphans"], "gone") {
+		t.Fatalf("expected 'gone' in managed_orphans, got: %v", own["managed_orphans"])
+	}
+	if !ownershipHasName(own["foreign"], "stranger") {
+		t.Fatalf("expected 'stranger' in foreign, got: %v", own["foreign"])
+	}
+}
+
+// TestDoctorTextMode renders the same data human-readably (counts + lists).
+func TestDoctorTextMode(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "gone", "SKILL.md"),
+		validSkill("gone", "Use when about to be orphaned.", "## Workflow\n\n1. Step.\n"))
+	if _, stderr, code := runCLI(t, "--root", root, "sync"); code != 0 {
+		t.Fatalf("sync failed: code=%d stderr:\n%s", code, stderr)
+	}
+	assertNoError(t, os.RemoveAll(filepath.Join(root, "skills", "gone")))
+
+	stdout, _, code := runCLI(t, "--root", root, "doctor", "--text")
+	if code == 0 {
+		t.Fatalf("doctor --text with an orphan must exit non-zero\nstdout:\n%s", stdout)
+	}
+	if strings.HasPrefix(strings.TrimSpace(stdout), "{") {
+		t.Fatalf("expected human text, got JSON:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "managed orphans") {
+		t.Fatalf("expected an ownership summary in text output, got:\n%s", stdout)
+	}
+}
+
+// TestDoctorFlagsStaleSkillRef: a skills.yaml entry naming a skill that exists in
+// neither ./skills/ nor the lock is reported as a stale_skill_ref and flips ok
+// (AC-8 stale-replacement surface, shared with lint).
+func TestDoctorFlagsStaleSkillRef(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{
+		Skills: map[string]skill.SkillConfig{"ghost": {Version: "latest"}},
+	})
+
+	stdout, _, code := runCLI(t, "--root", root, "doctor")
+	if code == 0 {
+		t.Fatalf("doctor with a stale skill ref must exit non-zero\nstdout:\n%s", stdout)
+	}
+	report := decodeJSONMap(t, stdout)
+	refs, ok := report["stale_skill_refs"].([]any)
+	if !ok || len(refs) == 0 {
+		t.Fatalf("expected a stale_skill_ref, got: %v", report["stale_skill_refs"])
+	}
+	first, _ := refs[0].(map[string]any)
+	if first["field"] != "ghost" {
+		t.Fatalf("expected stale ref field 'ghost', got: %v", refs[0])
+	}
+}
+
+// TestSyncPrunesRenamedOrphan: renaming an authored skill (delete old, add new)
+// then re-syncing prunes the old target copy under receipt authority and reports
+// it in the JSON `pruned` list (AC-1/AC-7 CLI smoke).
+func TestSyncPrunesRenamedOrphan(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "old-name", "SKILL.md"),
+		validSkill("old-name", "Use when testing the prune path.", "## Workflow\n\n1. Step.\n"))
+
+	if _, stderr, code := runCLI(t, "--root", root, "sync"); code != 0 {
+		t.Fatalf("first sync failed: code=%d stderr:\n%s", code, stderr)
+	}
+	assertExists(t, filepath.Join(root, ".claude", "skills", "old-name", "SKILL.md"))
+
+	// Rename: drop old, add new.
+	assertNoError(t, os.RemoveAll(filepath.Join(root, "skills", "old-name")))
+	writeFile(t, filepath.Join(root, "skills", "new-name", "SKILL.md"),
+		validSkill("new-name", "Use when testing the prune path.", "## Workflow\n\n1. Step.\n"))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "sync")
+	if code != 0 {
+		t.Fatalf("second sync failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	res := decodeJSONMap(t, stdout)
+	pruned, ok := res["pruned"].([]any)
+	if !ok || len(pruned) == 0 {
+		t.Fatalf("expected a pruned orphan, got: %v", res["pruned"])
+	}
+	foundOld := false
+	for _, p := range pruned {
+		if s, _ := p.(string); strings.Contains(s, "old-name") {
+			foundOld = true
+		}
+	}
+	if !foundOld {
+		t.Fatalf("expected old-name in pruned, got: %v", pruned)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude", "skills", "old-name")); !os.IsNotExist(err) {
+		t.Errorf("old-name target copy must be pruned (err=%v)", err)
+	}
+	assertExists(t, filepath.Join(root, ".claude", "skills", "new-name", "SKILL.md"))
+}
+
+// TestSyncForeignCollisionExitsNonZero: a desired skill colliding with a foreign
+// dir of the same name is a hard conflict — sync neither overwrites nor prunes it,
+// reports the conflict on stderr, and exits non-zero (AC-4 CLI surface).
+func TestSyncForeignCollisionExitsNonZero(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "deploy", "SKILL.md"),
+		validSkill("deploy", "Use when deploying.", "## Workflow\n\n1. Desired variant.\n"))
+	// A foreign dir of the SAME name already sitting in a target, never managed.
+	writeFile(t, filepath.Join(root, ".claude", "skills", "deploy", "SKILL.md"),
+		validSkill("deploy", "Use when deploying.", "## Workflow\n\n1. Foreign variant.\n"))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "sync")
+	if code == 0 {
+		t.Fatalf("foreign collision must exit non-zero\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "conflict") {
+		t.Fatalf("expected a conflict message on stderr, got:\n%s", stderr)
+	}
+	res := decodeJSONMap(t, stdout)
+	if conflicts, ok := res["conflicts"].([]any); !ok || len(conflicts) == 0 {
+		t.Fatalf("expected conflicts in the JSON payload, got: %v", res["conflicts"])
+	}
+	// The foreign dir was neither overwritten nor pruned.
+	foreign := readBytes(t, filepath.Join(root, ".claude", "skills", "deploy", "SKILL.md"))
+	if !strings.Contains(string(foreign), "Foreign variant") {
+		t.Errorf("foreign dir must not be overwritten without --force, got:\n%s", foreign)
+	}
+}

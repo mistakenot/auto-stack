@@ -16,11 +16,6 @@ import (
 // authority — target copies lacking a matching receipt (or locally modified) are
 // reported, never deleted. The --local / --vendored selector is required only
 // when the name exists as both; otherwise it is inferred.
-//
-// NOTE: this command is intentionally NOT registered in root.go here — phase 6
-// wires it up alongside the doctor extension, hence the nolint:unused.
-//
-//nolint:unused // registered by phase 6 (root.go wire-up)
 func newRemoveCmd(resolveEnv envResolver) *cobra.Command {
 	var (
 		local      bool
@@ -97,8 +92,6 @@ func newRemoveCmd(resolveEnv envResolver) *cobra.Command {
 }
 
 // writeRemoveText prints a compact human-readable summary of a remove result.
-//
-//nolint:unused // used by newRemoveCmd, registered by phase 6 (root.go wire-up)
 func writeRemoveText(w io.Writer, r sync.RemoveResult) {
 	if len(r.Removed) > 0 {
 		fmt.Fprintf(w, "removed %s (%v)\n", r.Name, r.Removed)

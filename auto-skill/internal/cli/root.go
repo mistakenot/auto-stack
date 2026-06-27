@@ -12,7 +12,9 @@ import (
 
 	"github.com/mistakenot/auto-shared/version"
 	"github.com/mistakenot/auto-skill/internal/app"
+	"github.com/mistakenot/auto-skill/internal/ownership"
 	"github.com/mistakenot/auto-skill/internal/skill"
+	"github.com/mistakenot/auto-skill/internal/sync"
 	"github.com/spf13/cobra"
 )
 
@@ -90,6 +92,8 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newDocsCmd(),
 		newUpdateCmd(),
 		newSyncCmd(resolveEnv),
+		newAdoptCmd(resolveEnv),
+		newRemoveCmd(resolveEnv),
 		newCacheCmd(resolveEnv),
 		newTrustCmd(resolveEnv),
 	)
@@ -275,9 +279,11 @@ func newLsCmd(resolveEnv envResolver) *cobra.Command {
 }
 
 func newDoctorCmd(resolveEnv envResolver) *cobra.Command {
+	var textOutput bool
+
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check auto skill configuration and project setup",
+		Short: "Check auto skill configuration, ownership drift, and project setup",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := resolveEnv()
@@ -288,19 +294,28 @@ func newDoctorCmd(resolveEnv envResolver) *cobra.Command {
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
-			data, err := skill.EncodeJSON(report)
-			if err != nil {
-				return &ExitError{Code: 1, Err: err}
+
+			// Payload first: JSON (default) on stdout, or a human summary with --text.
+			if textOutput {
+				writeDoctorText(cmd.OutOrStdout(), report)
+			} else {
+				data, err := skill.EncodeJSON(report)
+				if err != nil {
+					return &ExitError{Code: 1, Err: err}
+				}
+				if _, err := cmd.OutOrStdout().Write(data); err != nil {
+					return &ExitError{Code: 1, Err: err}
+				}
 			}
-			if _, err := cmd.OutOrStdout().Write(data); err != nil {
-				return &ExitError{Code: 1, Err: err}
-			}
+
 			if ok, _ := report["ok"].(bool); !ok {
 				return &ExitError{Code: 1}
 			}
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&textOutput, "text", false, "emit a human-readable summary instead of JSON")
 	return cmd
 }
 
@@ -386,10 +401,73 @@ func doctorReport(env skill.Env) (map[string]any, error) {
 		"hint":    "run auto skill init --project",
 	})
 
-	ok := true
+	// ── ownership section (OFFLINE — no network) ──────────────────────────────
+	//
+	// We surface, alongside the config checks, the same on-disk-tree-digest vs
+	// receipt/skill_version comparison the sync prune pass uses (AC-9). Every
+	// derived list is built from ownership.Classify, the single deletion-authority
+	// gate, so a forged in-file metadata.auto_skill stamp can never fool it.
+	//
+	// Tolerant of an un-initialized project: a missing manifest/receipts/skills.yaml
+	// just yields empty lists (ScanOwnership returns empty inputs). A genuine read
+	// error from DesiredSet/ScanOwnership is reported as a failing config check
+	// rather than panicking, so doctor still emits a payload.
+	ownershipSection := map[string]any{
+		"managed_orphans": []map[string]any{},
+		"foreign":         []map[string]any{},
+		"modified":        []map[string]any{},
+		"unestablished":   []map[string]any{},
+	}
+	staleItems := []map[string]any{}
+	actionableDrift := false
+
+	desired, derr := sync.DesiredSet(env)
+	var inputs ownership.Inputs
+	var serr error
+	if derr == nil {
+		inputs, serr = sync.ScanOwnership(env, desired)
+	}
+	if scanErr := firstErr(derr, serr); scanErr != nil {
+		checks = append(checks, map[string]any{
+			"code":    "ownership_scan",
+			"ok":      false,
+			"message": "ownership scan failed: " + scanErr.Error(),
+			"hint":    "ensure skills.yaml and lock.json are readable",
+		})
+	} else {
+		verdicts := ownership.Classify(inputs)
+		managedOrphans := ownershipItems(ownership.PruneEligible(verdicts))
+		foreign := ownershipItems(ownership.Adoptable(verdicts))
+		modified := ownershipItems(verdictsWithState(verdicts, ownership.StateModified))
+		unestablished := ownershipItems(verdictsWithState(verdicts, ownership.StateManagedUnestablished))
+
+		staleRefs, _ := skill.CheckStaleSkillRefs(env)
+		staleItems = diagItems(staleRefs)
+
+		ownershipSection = map[string]any{
+			"managed_orphans": managedOrphans,
+			"foreign":         foreign,
+			"modified":        modified,
+			"unestablished":   unestablished,
+		}
+
+		// Actionable-drift rule: managed_orphans (will be pruned next sync),
+		// modified (locally edited managed skill), unestablished (manifest row with
+		// no local receipt), and stale_skill_refs each demand a fix, so any of them
+		// flips ok=false. foreign/adoptable is informational only — it is listed but
+		// never flips ok by itself (run `adopt` to act on it). Note: AC-9's scenario
+		// always pairs a foreign dir with a managed orphan, so doctor exits non-zero
+		// there regardless.
+		actionableDrift = len(managedOrphans) > 0 ||
+			len(modified) > 0 ||
+			len(unestablished) > 0 ||
+			len(staleItems) > 0
+	}
+
+	configOK := true
 	for _, check := range checks {
 		if v, _ := check["ok"].(bool); !v {
-			ok = false
+			configOK = false
 		}
 	}
 	slices.SortStableFunc(checks, func(a, b map[string]any) int {
@@ -399,9 +477,109 @@ func doctorReport(env skill.Env) (map[string]any, error) {
 	})
 
 	return map[string]any{
-		"ok":     ok,
-		"checks": checks,
+		"ok":               configOK && !actionableDrift,
+		"checks":           checks,
+		"ownership":        ownershipSection,
+		"stale_skill_refs": staleItems,
 	}, nil
+}
+
+// ownershipItems maps ownership verdicts to small, deterministically ordered JSON
+// objects for the doctor report. Classify already sorts verdicts by (target,
+// name) and the filters preserve that order, so the slices are stable.
+func ownershipItems(verdicts []ownership.DirStatus) []map[string]any {
+	items := make([]map[string]any, 0, len(verdicts))
+	for _, v := range verdicts {
+		items = append(items, map[string]any{
+			"target":           v.Target,
+			"name":             v.Name,
+			"on_disk_digest":   v.OnDiskDigest,
+			"expected_version": v.ExpectedVersion,
+		})
+	}
+	return items
+}
+
+// verdictsWithState filters verdicts to a single ownership state (ownership only
+// exports PruneEligible/Adoptable; doctor also reports modified/unestablished).
+func verdictsWithState(verdicts []ownership.DirStatus, state ownership.State) []ownership.DirStatus {
+	var out []ownership.DirStatus
+	for _, v := range verdicts {
+		if v.State == state {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// diagItems maps stale-skill-ref diagnostics to JSON objects for the report.
+func diagItems(diags []skill.Diagnostic) []map[string]any {
+	items := make([]map[string]any, 0, len(diags))
+	for _, d := range diags {
+		items = append(items, map[string]any{
+			"severity": string(d.Severity),
+			"code":     d.Code,
+			"path":     filepath.ToSlash(d.Path),
+			"field":    d.Field,
+			"message":  d.Message,
+		})
+	}
+	return items
+}
+
+// firstErr returns the first non-nil error of its arguments.
+func firstErr(errs ...error) error {
+	for _, e := range errs {
+		if e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+// writeDoctorText renders the doctor report as a human-readable summary, mirroring
+// the JSON payload: config checks, then the ownership counts/lists, then stale
+// skill references.
+func writeDoctorText(w io.Writer, report map[string]any) {
+	if ok, _ := report["ok"].(bool); ok {
+		fmt.Fprintln(w, "doctor: ok")
+	} else {
+		fmt.Fprintln(w, "doctor: issues found")
+	}
+
+	if checks, ok := report["checks"].([]map[string]any); ok {
+		for _, c := range checks {
+			mark := "x"
+			if cok, _ := c["ok"].(bool); cok {
+				mark = "✓"
+			}
+			fmt.Fprintf(w, "  [%s] %v: %v\n", mark, c["code"], c["message"])
+		}
+	}
+
+	if own, ok := report["ownership"].(map[string]any); ok {
+		fmt.Fprintln(w, "ownership:")
+		writeOwnershipGroup(w, "managed orphans (prune next sync)", own["managed_orphans"])
+		writeOwnershipGroup(w, "foreign (adoptable)", own["foreign"])
+		writeOwnershipGroup(w, "modified (locally edited)", own["modified"])
+		writeOwnershipGroup(w, "unestablished (no local receipt)", own["unestablished"])
+	}
+
+	if refs, ok := report["stale_skill_refs"].([]map[string]any); ok {
+		fmt.Fprintf(w, "stale skill refs: %d\n", len(refs))
+		for _, r := range refs {
+			fmt.Fprintf(w, "  ! %v: %v\n", r["field"], r["message"])
+		}
+	}
+}
+
+// writeOwnershipGroup prints one ownership category with its count and members.
+func writeOwnershipGroup(w io.Writer, label string, v any) {
+	items, _ := v.([]map[string]any)
+	fmt.Fprintf(w, "  %s: %d\n", label, len(items))
+	for _, it := range items {
+		fmt.Fprintf(w, "    - %v/%v\n", it["target"], it["name"])
+	}
 }
 
 func fileExists(path string) bool {

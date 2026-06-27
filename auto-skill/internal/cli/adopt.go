@@ -17,11 +17,6 @@ import (
 // (JSON is the default; --text emits a human summary). We deliberately do NOT
 // implement an interactive TTY picker — that would break JSON-default /
 // fails-closed automation; choose a name, --all, or --from instead.
-//
-// NOTE: this command is intentionally NOT registered in root.go here — phase 6
-// wires it up alongside the doctor extension, hence the nolint:unused.
-//
-//nolint:unused // registered by phase 6 (root.go wire-up)
 func newAdoptCmd(resolveEnv envResolver) *cobra.Command {
 	var (
 		all        bool
@@ -92,8 +87,6 @@ func newAdoptCmd(resolveEnv envResolver) *cobra.Command {
 }
 
 // writeAdoptText prints a compact human-readable summary of an adopt result.
-//
-//nolint:unused // used by newAdoptCmd, registered by phase 6 (root.go wire-up)
 func writeAdoptText(w io.Writer, r adopt.Result) {
 	if len(r.Candidates) > 0 {
 		fmt.Fprintf(w, "adoptable: %d\n", len(r.Candidates))
