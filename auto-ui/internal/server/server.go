@@ -8,6 +8,7 @@ import (
 
 	"github.com/mistakenot/auto-shared/bus"
 	"github.com/mistakenot/auto-shared/config"
+	"github.com/mistakenot/auto-ui/internal/backend"
 )
 
 // Option configures New.
@@ -15,6 +16,7 @@ type Option func(*options)
 
 type options struct {
 	regProvider func() config.ProjectsConfig
+	mgr         *backend.Manager
 	debug       bool
 }
 
@@ -24,6 +26,15 @@ type options struct {
 // empty registry, keeping unit tests hermetic.
 func WithRegistryProvider(fn func() config.ProjectsConfig) Option {
 	return func(o *options) { o.regProvider = fn }
+}
+
+// WithBackendManager sets the backend.Manager the server proxies doc/project
+// RPCs to. The UI holds no local doc/project data: doc.list/doc.get/project.list
+// and GET /api/doc/raw forward to the resolved autowatch backend. When no
+// manager is set those routes return a clear "no backend configured" error
+// rather than touching the local filesystem.
+func WithBackendManager(mgr *backend.Manager) Option {
+	return func(o *options) { o.mgr = mgr }
 }
 
 // WithDebug enables the in-memory debug event buffer and the gated
@@ -70,9 +81,12 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 		_ = json.Unmarshal(params, &p)
 		return map[string]any{"pong": true, "seq": p.Seq}, nil
 	})
-	d.Register("doc.list", docListHandler(o.regProvider))
-	d.Register("doc.get", docGetHandler(o.regProvider))
-	d.Register("project.list", projectListHandler(o.regProvider))
+	// Doc/project reads are pure proxies to the resolved backend — the UI owns
+	// no local copy of this data. A nil manager yields a clear error, never a
+	// local-filesystem read.
+	d.Register("doc.list", proxyCall(o.mgr, "doc.list"))
+	d.Register("doc.get", proxyCall(o.mgr, "doc.get"))
+	d.Register("project.list", proxyCall(o.mgr, "project.list"))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/hello", func(w http.ResponseWriter, r *http.Request) {
@@ -95,8 +109,8 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 	// POST /api/rpc: fire-and-forget ingest of bus events.
 	mux.HandleFunc("/api/rpc", handleRPC(hub, o.regProvider, buf))
 
-	// GET /api/doc/raw: verbatim HTML doc bytes (text/html), .html only.
-	mux.HandleFunc("/api/doc/raw", handleDocRaw(o.regProvider))
+	// GET /api/doc/raw: verbatim doc bytes proxied from the backend's doc.raw.
+	mux.HandleFunc("/api/doc/raw", handleDocRawProxy(o.mgr))
 
 	// GET /api/debug/recent: last N ingest events (gated by WithDebug).
 	mux.HandleFunc("/api/debug/recent", handleDebugRecent(buf, o.debug))
