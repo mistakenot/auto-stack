@@ -338,7 +338,7 @@ flowchart LR
 
       <pd-stepper>
 
-        <pd-phase n="1" title="CI race gate + un-exclude auto-shared" files="Makefile,.github/workflows/ci.yml" status="todo">
+        <pd-phase n="1" title="CI race gate + un-exclude auto-shared" files="Makefile,.github/workflows/ci.yml" status="done">
           <md><script type="text/plain">
 1. Add `auto-shared` to `PROJECTS` (Makefile:15). **Verify:** `grep PROJECTS Makefile` shows `auto-shared`.
 2. Run `make fmt-check vet lint vulncheck test` and resolve any pre-existing `auto-shared` findings now surfaced (gofmt, vet, lint). **Verify:** all five gates exit 0. If a finding is large or unrelated to this task, do **not** absorb it — record it and open a follow-up hygiene issue (see Known Gaps), keeping Phase 1 bounded.
