@@ -12,12 +12,12 @@
     "id": "041",
     "name": "dataplane-backbone-assurance",
     "epic": "003-multi-host-architecture",
-    "status": "executing",
+    "status": "complete",
     "created": "2026-06-27"
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="041: dataplane-backbone-assurance" status="executing" pr="pending" generated="2026-06-27">
+  <pd-doc title="041: dataplane-backbone-assurance" status="complete" pr="pending" generated="2026-06-27">
 
     <pd-tab name="Requirements">
 
@@ -380,7 +380,7 @@ Depends on P2.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="5" title="One-time mutation evidence" files="docs/tasks/041-dataplane-backbone-assurance/artifacts/mutation-pending-key.txt,docs/tasks/041-dataplane-backbone-assurance/artifacts/mutation-no-drop-on-full.txt,docs/tasks/041-dataplane-backbone-assurance/artifacts/mutation-no-liveness-reap.txt" status="todo">
+        <pd-phase n="5" title="One-time mutation evidence" files="docs/tasks/041-dataplane-backbone-assurance/artifacts/mutation-pending-key.txt,docs/tasks/041-dataplane-backbone-assurance/artifacts/mutation-no-drop-on-full.txt,docs/tasks/041-dataplane-backbone-assurance/artifacts/mutation-no-liveness-reap.txt" status="done">
           <md><script type="text/plain">
 Depends on P1–P4. For each mutation: inject → run the targeted test → capture the red output → revert → confirm green.
 1. **Mutation A** — swap/duplicate the `pending`-map key in `Call`; run the concurrent-correlation scenario under `-race`; save red output to `artifacts/mutation-pending-key.txt`; revert. **Verify:** test red with mutation, green after revert.
