@@ -612,6 +612,90 @@ func TestSaturatedSubscriberDropped(t *testing.T) {
 	close(drainStop)
 }
 
+// signalSink implements bus.Sink and closes/sends on a channel the first time
+// it observes an event of the given type. Used to get an event-driven (not
+// poll-to-settle) signal that the daemon broadcast a ctl.disconnect.
+type signalSink struct {
+	want string
+	once sync.Once
+	ch   chan struct{}
+}
+
+func (s *signalSink) Deliver(ev bus.Event) {
+	if ev.Type == s.want {
+		s.once.Do(func() { close(s.ch) })
+	}
+}
+
+// AC-4: a dead subscriber's hub sink is reaped (no leak). A peer subscribes,
+// then goes silent without closing its connection (a healthy-but-mute client
+// that keeps draining server pings — so the drop-on-full path is NOT what
+// reaps it). The keepalive watchdog is therefore the sole reap cause: after the
+// keepalive timeout the peer's Serve returns, subscription.teardown() fires
+// (now defer-guarded), and the hub sink count returns to its pre-subscribe
+// baseline. Proven via the ctl.disconnect broadcast (bounded select, not a
+// poll-to-settle), which the daemon emits only after teardown has run.
+func TestDeadSubscriberSinkReaped(t *testing.T) {
+	hub := bus.NewHub()
+	h := rpcmethods.New(nil, "test-host", "0.1.0", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
+	ln, err := transport.Listen("tcp://127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	srv := New(ln, h, hub, true) // ctlEvents=true so the reap emits ctl.disconnect
+	// Test seam: override the 15s/45s daemon defaults with short durations so
+	// the watchdog reaps within the test's bounded wait.
+	srv.kaInterval = 40 * time.Millisecond
+	srv.kaTimeout = 120 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Serve(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		<-errCh
+	})
+	time.Sleep(20 * time.Millisecond)
+	addr := "tcp://" + ln.Addr().String()
+
+	// Observer: an in-process hub sink that signals on the first ctl.disconnect.
+	disconnected := &signalSink{want: bus.TypeCtlDisconnect, ch: make(chan struct{})}
+	unsub := hub.Subscribe(disconnected)
+	defer unsub()
+
+	baseline := hub.SinkCount() // includes the observer
+
+	// Subscribe the soon-to-be-dead peer. dialSubscribe starts the client's
+	// Serve loop (which keeps draining server $keepalive pings) and calls
+	// bus.subscribe, but we never cancel it: the client stays connected and
+	// silent so only the watchdog can reap it.
+	dialSubscribe(t, ctx, addr)
+	if got := hub.SinkCount(); got != baseline+1 {
+		t.Fatalf("SinkCount after subscribe = %d, want %d", got, baseline+1)
+	}
+
+	// Bounded wait for the reap signal — NOT a poll-to-settle loop.
+	select {
+	case <-disconnected.ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dead subscriber was not reaped within timeout")
+	}
+
+	// teardown runs before the ctl.disconnect broadcast, so the dead peer's
+	// sink is already gone once we observe the signal.
+	if got := hub.SinkCount(); got != baseline {
+		t.Fatalf("SinkCount after reap = %d, want baseline %d", got, baseline)
+	}
+
+	// A subsequent broadcast no longer targets the dead peer (its sink is
+	// deregistered) and must neither panic nor block.
+	ev, _ := bus.NewEvent("agent.tool.post", "test/source", nil)
+	hub.Broadcast(ev)
+	if got := hub.SinkCount(); got != baseline {
+		t.Fatalf("SinkCount after post-reap broadcast = %d, want %d", got, baseline)
+	}
+}
+
 func TestServe_CtlEventsFalse_NoLifecycleEvents(t *testing.T) {
 	hub := bus.NewHub()
 	sink := &collectSink{}
