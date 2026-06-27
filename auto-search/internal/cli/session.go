@@ -4,18 +4,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/mistakenot/auto-search/internal/config"
 	"github.com/mistakenot/auto-search/internal/indexdb"
 	"github.com/mistakenot/auto-search/internal/search"
+	"github.com/mistakenot/auto-search/internal/sessionhtml"
 	"github.com/spf13/cobra"
 )
 
 const (
 	maxMessageRenderLen = 2048
 	maxToolArgPreview   = 80
+
+	// exportSizeWarnBytes is the practical ceiling for a localhost-loaded HTML
+	// file; past it the command suggests --light / --exclude-thinking. ~5 MB.
+	exportSizeWarnBytes = 5 * 1024 * 1024
 )
 
 func newSessionCmd() *cobra.Command {
@@ -27,6 +34,7 @@ func newSessionCmd() *cobra.Command {
 		newSessionListCmd(),
 		newSessionGetCmd(),
 		newSessionDescribeCmd(),
+		newSessionExportCmd(),
 	)
 	return cmd
 }
@@ -305,6 +313,109 @@ func newSessionDescribeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&requestID, "request-id", "", "request identifier to echo in responses")
 	cmd.Flags().StringVar(&index, "index", config.DefaultIndexName, "named index to query")
 	return cmd
+}
+
+// newSessionExportCmd writes a rich, self-contained HTML map of a session and
+// its sub-agents. Unlike the JSON-default convention this command writes a
+// file; the path and size go to stderr while stdout stays empty (reserved for
+// a future `--out -` streaming mode).
+func newSessionExportCmd() *cobra.Command {
+	var (
+		index           string
+		format          string
+		out             string
+		excludeThinking bool
+		light           bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "export <session_id>",
+		Short: "Export a session as a self-contained HTML work-graph map",
+		Long: "Export a session (and its sub-agents) to a single self-contained " +
+			"HTML file that reads top-to-bottom with a collapsible work-graph. " +
+			"Embeds full content including thinking by default; use --exclude-thinking " +
+			"or --light to shrink an oversized export.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessionID := args[0]
+
+			// Validate --format up front (fail-fast on invalid CLI usage).
+			switch format {
+			case "html":
+			case "json":
+				return &ExitError{Code: 1, Err: errors.New("format json is reserved — not yet implemented; use --format html")}
+			default:
+				return &ExitError{Code: 1, Err: fmt.Errorf("invalid --format %q (use html)", format)}
+			}
+
+			dbPath, err := config.IndexPath(index)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			db, err := indexdb.Open(dbPath)
+			if err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("open index: %w; run: auto search index", err)}
+			}
+			defer func() { _ = db.Close() }()
+
+			// Detect an unknown session before building so we never write an
+			// empty file (matches `session describe`).
+			if _, err := indexdb.GetSessionByID(db, sessionID); err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("session not found: %s; run: auto search index", sessionID)}
+			}
+
+			opts := sessionhtml.Options{IncludeThinking: !excludeThinking && !light, Light: light}
+			model, err := sessionhtml.BuildModel(db, sessionID, opts)
+			if err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("build session model: %w", err)}
+			}
+			doc, err := sessionhtml.Render(model)
+			if err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("render session: %w", err)}
+			}
+
+			outPath := out
+			if outPath == "" {
+				outPath = filepath.Join("docs", "sessions", sessionID+".html")
+			}
+			if dir := filepath.Dir(outPath); dir != "" {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return &ExitError{Code: 1, Err: fmt.Errorf("create output directory %s: %w", dir, err)}
+				}
+			}
+			if err := os.WriteFile(outPath, doc, 0o644); err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("write %s: %w", outPath, err)}
+			}
+
+			// Diagnostics to stderr; stdout stays clean.
+			stderr := cmd.ErrOrStderr()
+			size := len(doc)
+			fmt.Fprintf(stderr, "wrote %s (%s)\n", outPath, humanBytes(size))
+			if size > exportSizeWarnBytes {
+				fmt.Fprintf(stderr, "warning: %s exceeds ~%s — re-run with --light or --exclude-thinking to shrink it\n",
+					humanBytes(size), humanBytes(exportSizeWarnBytes))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&index, "index", config.DefaultIndexName, "named index to query")
+	cmd.Flags().StringVar(&format, "format", "html", "output format: html (default); json reserved for later")
+	cmd.Flags().StringVar(&out, "out", "", "output path (default ./docs/sessions/<session_id>.html)")
+	cmd.Flags().BoolVar(&excludeThinking, "exclude-thinking", false, "drop thinking blocks from the export (smaller file)")
+	cmd.Flags().BoolVar(&light, "light", false, "shrink a large export: exclude thinking and use truncated content")
+	return cmd
+}
+
+// humanBytes formats a byte count as B / KB / MB with one decimal place.
+func humanBytes(n int) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	if n < unit*unit {
+		return fmt.Sprintf("%.1f KB", float64(n)/unit)
+	}
+	return fmt.Sprintf("%.1f MB", float64(n)/(unit*unit))
 }
 
 // messageContent returns the display content for a message row.

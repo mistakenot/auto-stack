@@ -118,8 +118,8 @@ func TestFixturesReadable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadMessages: %v", err)
 		}
-		if len(messages) != 13 {
-			t.Fatalf("expected 13 messages, got %d", len(messages))
+		if len(messages) != 17 {
+			t.Fatalf("expected 17 messages, got %d", len(messages))
 		}
 
 		// Check roles are present
