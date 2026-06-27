@@ -73,6 +73,10 @@ func (e Env) LockPath() string {
 	return filepath.Join(e.SkillsConfigDir(), "lock.json")
 }
 
+func (e Env) LoadLockFile() ([]byte, error) {
+	return os.ReadFile(e.LockPath())
+}
+
 func (e Env) ManifestPath() string {
 	return filepath.Join(e.SkillsConfigDir(), "manifest.json")
 }

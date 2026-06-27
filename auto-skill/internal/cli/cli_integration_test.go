@@ -685,3 +685,166 @@ func assertNoError(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+// --- cache + trust CLI integration tests (Phase 5/6) ---
+
+func TestTrustListEmpty(t *testing.T) {
+	root := t.TempDir()
+	stdout, _, code := runCLI(t, "--root", root, "trust", "list")
+	if code != 0 {
+		t.Fatalf("trust list failed: code=%d, stdout=%q", code, stdout)
+	}
+	var tf map[string]any
+	if err := json.Unmarshal([]byte(stdout), &tf); err != nil {
+		t.Fatalf("expected JSON, got: %s", stdout)
+	}
+	eps, _ := tf["endpoints"].([]any)
+	if len(eps) != 0 {
+		t.Fatalf("expected empty endpoints, got %v", eps)
+	}
+}
+
+func TestTrustAddAndList(t *testing.T) {
+	root := t.TempDir()
+
+	_, stderr, code := runCLI(t, "--root", root, "trust", "add", "https://github.com")
+	if code != 0 {
+		t.Fatalf("trust add failed: code=%d, stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stderr, "approved") {
+		t.Fatalf("expected 'approved' message, got: %s", stderr)
+	}
+
+	stdout, _, code := runCLI(t, "--root", root, "trust", "list")
+	if code != 0 {
+		t.Fatal("trust list failed")
+	}
+	var tf map[string]any
+	if err := json.Unmarshal([]byte(stdout), &tf); err != nil {
+		t.Fatalf("json: %v, raw: %s", err, stdout)
+	}
+	eps, _ := tf["endpoints"].([]any)
+	if len(eps) != 1 {
+		t.Fatalf("expected 1 endpoint, got %v", eps)
+	}
+	if eps[0] != "https://github.com:443" {
+		t.Fatalf("expected https://github.com:443, got %v", eps[0])
+	}
+}
+
+func TestTrustAddIdempotent(t *testing.T) {
+	root := t.TempDir()
+	runCLI(t, "--root", root, "trust", "add", "https://github.com")
+	runCLI(t, "--root", root, "trust", "add", "https://github.com")
+
+	stdout, _, _ := runCLI(t, "--root", root, "trust", "list")
+	var tf map[string]any
+	json.Unmarshal([]byte(stdout), &tf)
+	eps, _ := tf["endpoints"].([]any)
+	if len(eps) != 1 {
+		t.Fatalf("expected 1 endpoint after duplicate add, got %d", len(eps))
+	}
+}
+
+func TestTrustRemove(t *testing.T) {
+	root := t.TempDir()
+	runCLI(t, "--root", root, "trust", "add", "https://github.com")
+	_, stderr, code := runCLI(t, "--root", root, "trust", "remove", "https://github.com")
+	if code != 0 {
+		t.Fatalf("trust remove failed: code=%d, stderr=%q", code, stderr)
+	}
+
+	stdout, _, _ := runCLI(t, "--root", root, "trust", "list")
+	var tf map[string]any
+	json.Unmarshal([]byte(stdout), &tf)
+	eps, _ := tf["endpoints"].([]any)
+	if len(eps) != 0 {
+		t.Fatalf("expected 0 endpoints after remove, got %d", len(eps))
+	}
+}
+
+func TestTrustRemoveAbsentIsNoOp(t *testing.T) {
+	root := t.TempDir()
+	_, _, code := runCLI(t, "--root", root, "trust", "remove", "https://github.com")
+	if code != 0 {
+		t.Fatal("removing absent endpoint should succeed")
+	}
+}
+
+func TestTrustListText(t *testing.T) {
+	root := t.TempDir()
+	runCLI(t, "--root", root, "trust", "add", "https://github.com")
+	stdout, _, code := runCLI(t, "--root", root, "trust", "list", "--text")
+	if code != 0 {
+		t.Fatal("trust list --text failed")
+	}
+	if !strings.Contains(stdout, "https://github.com:443") {
+		t.Fatalf("expected endpoint in text output, got: %s", stdout)
+	}
+}
+
+func TestTrustAddRejectsCredentials(t *testing.T) {
+	root := t.TempDir()
+	_, stderr, code := runCLI(t, "--root", root, "trust", "add", "https://user:pass@github.com")
+	if code == 0 {
+		t.Fatal("expected error for credential-bearing endpoint")
+	}
+	if !strings.Contains(stderr, "credential") {
+		t.Fatalf("expected credential error, got: %s", stderr)
+	}
+}
+
+func TestTrustAddRejectsUnsupportedScheme(t *testing.T) {
+	root := t.TempDir()
+	_, _, code := runCLI(t, "--root", root, "trust", "add", "ftp://host/repo")
+	if code == 0 {
+		t.Fatal("expected error for unsupported scheme")
+	}
+}
+
+func TestCacheListEmpty(t *testing.T) {
+	root := t.TempDir()
+	stdout, _, code := runCLI(t, "--root", root, "cache", "list")
+	if code != 0 {
+		t.Fatalf("cache list failed: code=%d", code)
+	}
+	if strings.TrimSpace(stdout) != "null" && strings.TrimSpace(stdout) != "[]" {
+		t.Fatalf("expected null or [] for empty cache, got: %s", stdout)
+	}
+}
+
+func TestCachePathNormalizesURL(t *testing.T) {
+	root := t.TempDir()
+
+	stdout1, _, code := runCLI(t, "--root", root, "cache", "path", "https://github.com/acme/skills")
+	if code != 0 {
+		t.Fatalf("cache path (https) failed: code=%d", code)
+	}
+	stdout2, _, code := runCLI(t, "--root", root, "cache", "path", "github.com/acme/skills")
+	if code != 0 {
+		t.Fatalf("cache path (bare) failed: code=%d", code)
+	}
+	if strings.TrimSpace(stdout1) != strings.TrimSpace(stdout2) {
+		t.Errorf("expected same path for https and bare forms\nhttps: %s\nbare:  %s", stdout1, stdout2)
+	}
+}
+
+func TestCachePathRejectsCredentials(t *testing.T) {
+	root := t.TempDir()
+	_, _, code := runCLI(t, "--root", root, "cache", "path", "https://user:pass@github.com/acme/skills")
+	if code == 0 {
+		t.Fatal("expected error for credential-bearing URL")
+	}
+}
+
+func TestCachePruneDryRunEmpty(t *testing.T) {
+	root := t.TempDir()
+	stdout, _, code := runCLI(t, "--root", root, "cache", "prune", "--dry-run", "--max-age", "1d")
+	if code != 0 {
+		t.Fatalf("cache prune --dry-run failed: code=%d", code)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("expected JSON, got: %s", stdout)
+	}
+}

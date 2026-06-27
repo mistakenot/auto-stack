@@ -235,6 +235,12 @@ func (c *Cache) Prune(opts PruneOptions) (PruneResult, error) {
 	return result, nil
 }
 
+// RepoPath returns the on-disk path for a given cache identity without
+// cloning or opening the repo.
+func (c *Cache) RepoPath(id transport.CacheIdentity) (string, error) {
+	return c.repoPath(id)
+}
+
 func (c *Cache) repoPath(id transport.CacheIdentity) (string, error) {
 	parts := make([]string, 0, 1+len(id.Path))
 

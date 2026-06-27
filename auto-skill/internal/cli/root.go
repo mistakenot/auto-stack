@@ -89,6 +89,8 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newDocsCmd(),
 		newUpdateCmd(),
 		newSyncCmd(),
+		newCacheCmd(resolveEnv),
+		newTrustCmd(resolveEnv),
 	)
 
 	return cmd
