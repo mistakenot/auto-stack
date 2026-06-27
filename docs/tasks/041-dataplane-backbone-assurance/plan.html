@@ -370,7 +370,7 @@ Depends on P2.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="Conformance depth + framing" files="auto-shared/rpc/conformance/fakes.go,auto-shared/rpc/conformance/conformance.go,auto-shared/rpc/conformance/conformance_test.go,auto-shared/rpc/codec_test.go" status="todo">
+        <pd-phase n="4" title="Conformance depth + framing" files="auto-shared/rpc/conformance/fakes.go,auto-shared/rpc/conformance/conformance.go,auto-shared/rpc/conformance/conformance_test.go,auto-shared/rpc/codec_test.go" status="done">
           <md><script type="text/plain">
 1. Add a `faultConn` wrapper in fakes.go: `Sever()` (close underlying conn mid-stream) and `Stall()`/`Release()` (block/unblock `Write` to force drop-on-full). **Verify:** build.
 2. Add the `FaultFixture` interface (`Fixture` + `Sever()`/`StallConsumer()`/`ReleaseConsumer()`) in conformance.go and fault-capable pipe/unix/tcp factory variants returning it. **Verify:** build.
