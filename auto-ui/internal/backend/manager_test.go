@@ -99,6 +99,18 @@ func (f *fakeFleet) stop() {
 	}
 }
 
+// disconnectLast tears down the most recently dialed fake backend, simulating
+// a daemon restart / transport drop. Cancelling its Serve ctx closes the
+// net.Pipe server end, so the manager's client peer sees EOF and its Serve
+// goroutine returns.
+func (f *fakeFleet) disconnectLast() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.backends) > 0 {
+		f.backends[len(f.backends)-1].cancel()
+	}
+}
+
 // writeBackends writes a backends.json with the given URIs at path.
 func writeBackends(t *testing.T, path string, uris ...string) {
 	t.Helper()
@@ -136,6 +148,52 @@ func waitResolve(t *testing.T, m *Manager, host string) *rpc.Peer {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+// waitResolveFails polls Resolve(host) until it returns an error or the
+// deadline passes, asserting the backend has been marked unhealthy.
+func waitResolveFails(t *testing.T, m *Manager, host string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := m.Resolve(host); err != nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Resolve(%q) still succeeds; expected it to fail after disconnect", host)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestBackendReconnectsAfterDisconnect covers AC-7's liveness edge: when a
+// connected backend's transport drops, the conn is marked unhealthy (Resolve
+// fails) and a later Reconcile redials it — without restarting the Manager.
+func TestBackendReconnectsAfterDisconnect(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "backends.json")
+	const uri = "unix:///fake/a.sock"
+	writeBackends(t, path, uri)
+
+	fleet := newFakeFleet()
+	fleet.addHost(uri, "host-a")
+	defer fleet.stop()
+
+	m := NewManager(path, fleet.dial(t), 0)
+	ctx := t.Context()
+
+	m.Reconcile(ctx)
+	waitResolve(t, m, "host-a")
+
+	// Backend drops: the Serve goroutine must mark the conn unhealthy so it is
+	// no longer resolvable and no dead peer is handed out.
+	fleet.disconnectLast()
+	waitResolveFails(t, m, "host-a")
+
+	// Next tick redials and reconnects without a restart.
+	m.Reconcile(ctx)
+	peer := waitResolve(t, m, "host-a")
+	callOK(t, peer, "daemon.status")
 }
 
 func TestReconcileDialsAndLearnsHostID(t *testing.T) {

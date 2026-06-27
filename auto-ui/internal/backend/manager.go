@@ -52,7 +52,13 @@ type conn struct {
 	cancel    context.CancelFunc
 	hostID    string
 	connected bool
-	lastErr   string
+	// down is set under m.mu by the Serve goroutine when the transport drops,
+	// so the handshake path won't publish a dead peer as connected and so the
+	// conn is marked unhealthy for redial. peer/cancel are written once at
+	// creation (read locklessly by closeConn), so the goroutine never mutates
+	// them.
+	down    bool
+	lastErr string
 }
 
 // Manager owns the live set of backend connections, keyed internally by URI
@@ -194,7 +200,22 @@ func (m *Manager) connect(ctx context.Context, uri string) {
 
 	peer := rpc.NewPeer(netConn)
 	connCtx, cancel := context.WithCancel(ctx)
-	go func() { _ = peer.Serve(connCtx) }()
+	// Build the conn up front so the Serve goroutine can mark this exact
+	// instance unhealthy when the transport drops (backend restart / network
+	// loss). Without this the conn would stay connected=true forever, Reconcile
+	// would skip redialing it, and Resolve would keep handing out a dead peer
+	// until the service is restarted.
+	c := &conn{uri: uri, peer: peer, cancel: cancel}
+	go func() {
+		_ = peer.Serve(connCtx)
+		m.mu.Lock()
+		c.connected = false
+		c.down = true
+		if c.lastErr == "" {
+			c.lastErr = "backend disconnected: " + uri
+		}
+		m.mu.Unlock()
+	}()
 
 	callCtx, callCancel := context.WithTimeout(connCtx, statusTimeout)
 	raw, err := peer.Call(callCtx, "daemon.status", nil)
@@ -219,13 +240,19 @@ func (m *Manager) connect(ctx context.Context, uri string) {
 	}
 
 	m.mu.Lock()
-	m.conns[uri] = &conn{
-		uri:       uri,
-		peer:      peer,
-		cancel:    cancel,
-		hostID:    status.HostID,
-		connected: true,
+	// If the transport already dropped during the handshake, the Serve
+	// goroutine set c.down — leave it pending for the next tick rather than
+	// publishing a dead peer as connected.
+	if c.down {
+		m.mu.Unlock()
+		cancel()
+		_ = peer.Close()
+		m.setErr(uri, "backend disconnected during handshake: "+uri)
+		return
 	}
+	c.hostID = status.HostID
+	c.connected = true
+	m.conns[uri] = c
 	m.mu.Unlock()
 }
 

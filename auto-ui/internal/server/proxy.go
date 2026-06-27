@@ -24,13 +24,21 @@ func proxyCall(mgr *backend.Manager, method string) Handler {
 		}
 
 		var p struct {
-			Host string `json:"host"`
+			Host   string `json:"host"`
+			HostID string `json:"hostId"`
 		}
 		if params != nil {
 			_ = json.Unmarshal(params, &p)
 		}
 
-		peer, err := mgr.Resolve(p.Host)
+		// hostId is the documented routing selector; host is accepted as an
+		// alias so either spelling routes explicitly. Empty → single-backend
+		// default (Resolve errors on ambiguity).
+		host := p.HostID
+		if host == "" {
+			host = p.Host
+		}
+		peer, err := mgr.Resolve(host)
 		if err != nil {
 			return nil, resolveRPCError(err)
 		}
@@ -70,7 +78,11 @@ func handleDocRawProxy(mgr *backend.Manager) http.HandlerFunc {
 			return
 		}
 
-		peer, err := mgr.Resolve(q.Get("host"))
+		host := q.Get("hostId")
+		if host == "" {
+			host = q.Get("host")
+		}
+		peer, err := mgr.Resolve(host)
 		if err != nil {
 			http.Error(w, resolveHTTPMessage(err), resolveHTTPStatus(err))
 			return

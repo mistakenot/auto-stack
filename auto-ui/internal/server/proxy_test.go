@@ -190,6 +190,32 @@ func TestProxyRoutesToSingleBackend(t *testing.T) {
 	}
 }
 
+// TestProxyRoutesByHostIdSelector covers AC-6: the documented explicit routing
+// field `hostId` is honored — a call carrying the backend's hostId routes to it
+// (success), while an unknown hostId errors rather than being silently ignored.
+func TestProxyRoutesByHostIdSelector(t *testing.T) {
+	srv := newProxyServer(t, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c := dialWS(ctx, t, srv.URL)
+	defer c.Close(websocket.StatusNormalClosure, "")
+
+	resp := rpcCall(ctx, t, c, 1, "doc.list", map[string]string{"hostId": proxyHostID})
+	if resp["error"] != nil {
+		t.Fatalf("doc.list with hostId=%q errored: %v", proxyHostID, resp["error"])
+	}
+	if _, ok := resp["result"].([]any); !ok {
+		t.Fatalf("doc.list result not an array: %T %v", resp["result"], resp["result"])
+	}
+
+	resp = rpcCall(ctx, t, c, 2, "doc.list", map[string]string{"hostId": "nope"})
+	if resp["error"] == nil {
+		t.Fatalf("expected error for unknown hostId, got result %v", resp["result"])
+	}
+}
+
 // TestProxyUnknownHostErrors covers AC-6: an explicit unknown host yields a
 // clean JSON-RPC error, never local data.
 func TestProxyUnknownHostErrors(t *testing.T) {
