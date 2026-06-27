@@ -845,7 +845,7 @@ lock/skills.yaml. Independent of render *output* (works on the resolved work-lis
             </script></md>
           </pd-phase>
 
-          <pd-phase n="4" title="Sync phase C — process, targets, manifest, render_version" files="auto-skill/internal/sync/process.go,auto-skill/internal/sync/targets.go,auto-skill/internal/sync/manifest.go,auto-skill/internal/sync/process_test.go" status="todo" depends-on="2,3">
+          <pd-phase n="4" title="Sync phase C — process, targets, manifest, render_version" files="auto-skill/internal/sync/process.go,auto-skill/internal/sync/targets.go,auto-skill/internal/sync/manifest.go,auto-skill/internal/sync/process_test.go" status="done" depends-on="2,3">
             <md><script type="text/plain">
 Build the render+write half — phase C process, the target union/shadow + on-disk digest,
 manifest population, and the `render_version` lazy re-render. Depends on the render engine
