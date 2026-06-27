@@ -134,7 +134,11 @@ func handleLocalGit(env skill.Env, absPath string, opts Options) (Result, error)
 		}
 
 		if existing, ok := lock.Skills[name]; ok {
-			if existing.URL != canonicalURL {
+			// Accept both the canonical file:// URL and the legacy bare path a
+			// pre-reconciliation add wrote, so re-adding the same local repo
+			// refreshes the entry (and upgrades its URL) instead of reporting a
+			// false collision.
+			if existing.URL != canonicalURL && existing.URL != absPath {
 				return Result{Source: absPath}, &AddError{
 					Code:    CodeNameCollision,
 					Message: fmt.Sprintf("skill %q already exists from %s; use --as to rename", name, existing.URL),

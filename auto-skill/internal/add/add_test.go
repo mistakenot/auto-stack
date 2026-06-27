@@ -472,6 +472,42 @@ func TestLocalGitRepo(t *testing.T) {
 	}
 }
 
+// TestLocalGitReAddLegacyBarePath simulates a lock written by the
+// pre-reconciliation add path (bare absolute path URL) and verifies that
+// re-adding the same local repo refreshes the entry — upgrading the URL to the
+// canonical file:// form — instead of reporting a false name collision.
+func TestLocalGitReAddLegacyBarePath(t *testing.T) {
+	repoDir, _ := makeGitFixture(t, map[string]string{
+		"skills/local-skill": skillMD("local-skill", "Use when testing legacy re-add."),
+	})
+	env := makeEnv(t)
+
+	if _, err := Run(env, Options{Source: repoDir}); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Downgrade the stored entry to the legacy bare-path URL, as an older add
+	// would have written it.
+	lock := readLock(t, env)
+	entry := lock.Skills["local-skill"]
+	entry.Source = repoDir
+	entry.URL = repoDir
+	lock.Skills["local-skill"] = entry
+	if err := writeJSONLock(env.LockPath(), lock); err != nil {
+		t.Fatalf("rewrite legacy lock: %v", err)
+	}
+
+	// Re-add the same repo: must not collide, and must upgrade the URL.
+	if _, err := Run(env, Options{Source: repoDir}); err != nil {
+		t.Fatalf("re-add over legacy bare-path entry: %v", err)
+	}
+
+	got := readLock(t, env).Skills["local-skill"]
+	if !strings.HasPrefix(got.URL, "file://") {
+		t.Errorf("URL after re-add = %q, want it upgraded to a file:// URL", got.URL)
+	}
+}
+
 func TestLocalNonGitImport(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

@@ -2,6 +2,7 @@ package skill
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -26,7 +27,7 @@ type SharedConfig struct {
 	// Replacements is the named replacement map (var name → value), where value
 	// is a literal scalar or a file-ref mapping. omitempty so a skill with no
 	// replacements round-trips without an empty `replacements:` key.
-	Replacements map[string]yaml.Node `yaml:"replacements,omitempty"`
+	Replacements ReplacementMap `yaml:"replacements,omitempty"`
 }
 
 // SkillConfig holds per-skill overrides.
@@ -34,7 +35,44 @@ type SkillConfig struct {
 	Version string `yaml:"version"`
 	// Replacements is the named replacement map (var name → value); see
 	// SharedConfig.Replacements.
-	Replacements map[string]yaml.Node `yaml:"replacements,omitempty"`
+	Replacements ReplacementMap `yaml:"replacements,omitempty"`
+}
+
+// ReplacementMap is the named replacement map (var name → value node). It
+// decodes the canonical mapping form and, for backward compatibility, accepts
+// the legacy empty-sequence form (`replacements: []`) that the pre-reconciliation
+// add/migrate writers emitted for replacement-free skills — without it,
+// upgrading an existing project would fail to parse before any command could
+// rewrite the file.
+type ReplacementMap map[string]yaml.Node
+
+// UnmarshalYAML decodes a mapping into the named map, treats null/absent and the
+// legacy empty sequence as an empty map, and rejects a populated legacy sequence
+// with a remediation hint (those unnamed entries never bound to a var and cannot
+// be migrated automatically).
+func (r *ReplacementMap) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.MappingNode:
+		m := map[string]yaml.Node{}
+		if err := value.Decode(&m); err != nil {
+			return err
+		}
+		*r = m
+	case yaml.SequenceNode:
+		if len(value.Content) > 0 {
+			return errors.New("replacements must be a named map (var: value); the legacy unnamed list form is no longer supported — rewrite each entry as `<var>: <value>`")
+		}
+		*r = ReplacementMap{}
+	case yaml.ScalarNode:
+		if value.Tag == "!!null" || value.Value == "" {
+			*r = ReplacementMap{}
+			break
+		}
+		return fmt.Errorf("replacements must be a named map (var: value), got scalar %q", value.Value)
+	default:
+		*r = ReplacementMap{}
+	}
+	return nil
 }
 
 // replacementVarRE is the accepted form of a replacement var name — a template
