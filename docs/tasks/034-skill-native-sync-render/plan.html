@@ -19,7 +19,7 @@
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="034: skill-native-sync-render" status="executing" pr="pending" generated="2026-06-20">
+  <pd-doc title="034: skill-native-sync-render" status="complete" pr="pending" generated="2026-06-20">
 
     <pd-tab name="Requirements">
 
@@ -908,7 +908,7 @@ the `sync.Run` orchestrator honoring every mode/flag.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="6" title="Rewrite the sync command (delete npx) + CLI integration" files="auto-skill/internal/cli/sync.go,auto-skill/internal/cli/cli_integration_test.go" status="todo" depends-on="5">
+          <pd-phase n="6" title="Rewrite the sync command (delete npx) + CLI integration" files="auto-skill/internal/cli/sync.go,auto-skill/internal/cli/cli_integration_test.go" status="done" depends-on="5">
             <md><script type="text/plain">
 Replace the npx shell-out with the native pipeline and prove the CLI contract end-to-end.
 
