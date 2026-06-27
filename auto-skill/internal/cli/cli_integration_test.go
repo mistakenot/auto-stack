@@ -14,6 +14,8 @@ import (
 
 	"github.com/mistakenot/auto-skill/internal/app"
 	"github.com/mistakenot/auto-skill/internal/cli"
+	"github.com/mistakenot/auto-skill/internal/skill"
+	"gopkg.in/yaml.v3"
 )
 
 func TestInitProjectCreatesFilesAndIsIdempotent(t *testing.T) {
@@ -1038,5 +1040,346 @@ func TestAddTrustFailClosedRemote(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "not approved") && !strings.Contains(stderr, "approved") {
 		t.Fatalf("expected trust-related error, got: %s", stderr)
+	}
+}
+
+// --- sync CLI integration tests (Phase 6) ---
+
+// syncFixture is a real on-disk git repo reachable over file://, mirroring the
+// sync package's fixture but driven through the CLI.
+type syncFixture struct {
+	t   *testing.T
+	dir string
+	url string
+}
+
+func newSyncFixture(t *testing.T) *syncFixture {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	f := &syncFixture{t: t, dir: dir, url: "file://" + dir}
+	f.git("init")
+	f.git("config", "user.email", "test@test.com")
+	f.git("config", "user.name", "test")
+	return f
+}
+
+func (f *syncFixture) git(args ...string) string {
+	f.t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = f.dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test",
+		"GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=test",
+		"GIT_COMMITTER_EMAIL=test@test.com",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		f.t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// commitSkill writes skills/<name>/SKILL.md, commits, and returns the new HEAD.
+func (f *syncFixture) commitSkill(name, body string) string {
+	f.t.Helper()
+	full := filepath.Join(f.dir, "skills", name, "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		f.t.Fatal(err)
+	}
+	content := "---\nname: " + name + "\ndescription: Use when testing sync render.\n---\n\n" + body + "\n"
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+	f.git("add", "-A")
+	f.git("commit", "-m", "commit "+name)
+	return f.git("rev-parse", "HEAD")
+}
+
+func (f *syncFixture) remove() {
+	f.t.Helper()
+	if err := os.RemoveAll(f.dir); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func skillsConfigDir(root string) string {
+	return filepath.Join(root, ".auto", "skills")
+}
+
+func writeSyncLock(t *testing.T, root string, entries map[string]skill.LockEntry) {
+	t.Helper()
+	assertNoError(t, os.MkdirAll(skillsConfigDir(root), 0o755))
+	data, err := skill.EncodeJSON(&skill.Lock{Version: 1, Skills: entries})
+	assertNoError(t, err)
+	assertNoError(t, os.WriteFile(filepath.Join(skillsConfigDir(root), "lock.json"), data, 0o644))
+}
+
+func writeSyncYAML(t *testing.T, root string, cfg *skill.SkillsYAML) {
+	t.Helper()
+	assertNoError(t, os.MkdirAll(skillsConfigDir(root), 0o755))
+	data, err := yaml.Marshal(cfg)
+	assertNoError(t, err)
+	assertNoError(t, os.WriteFile(filepath.Join(skillsConfigDir(root), "skills.yaml"), data, 0o644))
+}
+
+func syncLockEntry(url, name, spec, commit string) skill.LockEntry {
+	return skill.LockEntry{
+		Source:      url,
+		URL:         url,
+		VersionSpec: spec,
+		Ref:         commit,
+		Commit:      commit,
+		Subpath:     "skills/" + name,
+		State:       "resolved",
+	}
+}
+
+func readBytes(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	assertNoError(t, err)
+	return data
+}
+
+// TestSyncAuthoredRendersIntoTargets proves the native render: authored skills
+// land in every default target, stdout is a strictly parseable JSON payload,
+// and the run needs no Node/npx at all.
+func TestSyncAuthoredRendersIntoTargets(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "alpha", "SKILL.md"),
+		validSkill("alpha", "Use when testing sync render.", "## Workflow\n\n1. Step.\n"))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "sync")
+	if code != 0 {
+		t.Fatalf("sync failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	// stdout must be parseable JSON only (payload, no diagnostics).
+	res := decodeJSONMap(t, stdout)
+	if res["mode"] != "sync" {
+		t.Fatalf("mode = %v, want sync", res["mode"])
+	}
+	assertExists(t, filepath.Join(root, ".claude", "skills", "alpha", "SKILL.md"))
+	assertExists(t, filepath.Join(root, ".agents", "skills", "alpha", "SKILL.md"))
+}
+
+// TestSyncCheckStaleExitsNonZero: --check is an offline dry-run that writes
+// nothing and exits non-zero when a target is stale.
+func TestSyncCheckStaleExitsNonZero(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "alpha", "SKILL.md"),
+		validSkill("alpha", "Use when testing sync check.", "## Workflow\n\n1. Step.\n"))
+
+	stdout, _, code := runCLI(t, "--root", root, "sync", "--check")
+	if code == 0 {
+		t.Fatalf("sync --check with a stale target must exit non-zero\nstdout:\n%s", stdout)
+	}
+	res := decodeJSONMap(t, stdout)
+	if res["mode"] != "check" {
+		t.Fatalf("mode = %v, want check", res["mode"])
+	}
+	stale, ok := res["stale"].([]any)
+	if !ok || len(stale) == 0 {
+		t.Fatalf("expected a stale entry, got: %v", res["stale"])
+	}
+	// --check writes nothing.
+	if _, err := os.Stat(filepath.Join(skillsConfigDir(root), "manifest.json")); !os.IsNotExist(err) {
+		t.Errorf("--check must not write the manifest (err=%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".claude", "skills", "alpha")); !os.IsNotExist(err) {
+		t.Error("--check must not write the target tree")
+	}
+}
+
+// TestSyncTextMode prints a human summary instead of JSON.
+func TestSyncTextMode(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "alpha", "SKILL.md"),
+		validSkill("alpha", "Use when testing sync text.", "## Workflow\n\n1. Step.\n"))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "sync", "--text")
+	if code != 0 {
+		t.Fatalf("sync --text failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if strings.HasPrefix(strings.TrimSpace(stdout), "{") {
+		t.Fatalf("expected human text, got JSON:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "mode: sync") {
+		t.Fatalf("expected 'mode: sync' in text output, got:\n%s", stdout)
+	}
+}
+
+// TestSyncJobsFlag exercises the bounded worker-pool flag.
+func TestSyncJobsFlag(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "alpha", "SKILL.md"),
+		validSkill("alpha", "Use when testing jobs flag.", "## Workflow\n\n1. Step.\n"))
+
+	_, stderr, code := runCLI(t, "--root", root, "sync", "--jobs", "2")
+	if code != 0 {
+		t.Fatalf("sync --jobs 2 failed: code=%d stderr:\n%s", code, stderr)
+	}
+}
+
+// TestSyncBudgetWarnsExitsZero: an oversized SKILL.md warns on stderr but the
+// run still succeeds (advisory budget; lint is the gate). stdout stays JSON.
+func TestSyncBudgetWarnsExitsZero(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	big := strings.Repeat("word ", 5000) // ~6k tokens > 4000 advisory budget
+	writeFile(t, filepath.Join(root, "skills", "alpha", "SKILL.md"),
+		validSkill("alpha", "Use when testing the advisory budget warning.", big))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "sync")
+	if code != 0 {
+		t.Fatalf("budget overflow must exit zero, got code=%d\nstderr:\n%s", code, stderr)
+	}
+	// stdout remains a clean JSON payload.
+	decodeJSONMap(t, stdout)
+	if !strings.Contains(stderr, "advisory budget") {
+		t.Fatalf("expected an advisory budget warning on stderr, got:\n%s", stderr)
+	}
+}
+
+// TestSyncLockedReproducesCommit: --locked renders the pinned commit even when
+// upstream has moved, and leaves lock.json byte-identical.
+func TestSyncLockedReproducesCommit(t *testing.T) {
+	f := newSyncFixture(t)
+	old := f.commitSkill("alpha", "v1 body")
+	f.commitSkill("alpha", "v2 body") // upstream moves on
+
+	root := t.TempDir()
+	if _, _, code := runCLI(t, "--root", root, "trust", "add", f.url); code != 0 {
+		t.Fatalf("trust add failed: code=%d", code)
+	}
+	writeSyncLock(t, root, map[string]skill.LockEntry{
+		"alpha": syncLockEntry(f.url, "alpha", "latest", old),
+	})
+	writeSyncYAML(t, root, &skill.SkillsYAML{AutoUpdate: true})
+	lockBefore := readBytes(t, filepath.Join(skillsConfigDir(root), "lock.json"))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "sync", "--locked")
+	if code != 0 {
+		t.Fatalf("sync --locked failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if !bytes.Equal(lockBefore, readBytes(t, filepath.Join(skillsConfigDir(root), "lock.json"))) {
+		t.Error("--locked must leave lock.json byte-identical")
+	}
+	installed := readBytes(t, filepath.Join(root, ".claude", "skills", "alpha", "SKILL.md"))
+	if !strings.Contains(string(installed), "v1 body") {
+		t.Errorf("--locked must render the pinned (old) commit, got:\n%s", installed)
+	}
+}
+
+// TestSyncTargetImpliesLocked: --target scopes the run and implies --locked, so
+// the project-wide lock is never advanced even with auto_update:true.
+func TestSyncTargetImpliesLocked(t *testing.T) {
+	f := newSyncFixture(t)
+	old := f.commitSkill("alpha", "v1 body")
+	f.commitSkill("alpha", "v2 body")
+
+	root := t.TempDir()
+	if _, _, code := runCLI(t, "--root", root, "trust", "add", f.url); code != 0 {
+		t.Fatalf("trust add failed: code=%d", code)
+	}
+	writeSyncLock(t, root, map[string]skill.LockEntry{
+		"alpha": syncLockEntry(f.url, "alpha", "latest", old),
+	})
+	writeSyncYAML(t, root, &skill.SkillsYAML{AutoUpdate: true})
+	lockBefore := readBytes(t, filepath.Join(skillsConfigDir(root), "lock.json"))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "sync", "--target", "alpha")
+	if code != 0 {
+		t.Fatalf("sync --target failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	res := decodeJSONMap(t, stdout)
+	if res["locked"] != true {
+		t.Errorf("--target must imply locked in the result, got locked=%v", res["locked"])
+	}
+	if !bytes.Equal(lockBefore, readBytes(t, filepath.Join(skillsConfigDir(root), "lock.json"))) {
+		t.Error("--target run must not advance lock.json")
+	}
+}
+
+// TestSyncRepoFailureExitsNonZero: an unfetchable pinned commit (upstream gone)
+// surfaces as a per-repo error and exits non-zero.
+func TestSyncRepoFailureExitsNonZero(t *testing.T) {
+	f := newSyncFixture(t)
+	sha := f.commitSkill("alpha", "v1 body")
+
+	root := t.TempDir()
+	if _, _, code := runCLI(t, "--root", root, "trust", "add", f.url); code != 0 {
+		t.Fatalf("trust add failed: code=%d", code)
+	}
+	writeSyncLock(t, root, map[string]skill.LockEntry{
+		"alpha": syncLockEntry(f.url, "alpha", "latest", sha),
+	})
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	f.remove() // upstream disappears; the pinned commit is not cached
+
+	stdout, stderr, code := runCLI(t, "--root", root, "sync", "--locked")
+	if code == 0 {
+		t.Fatalf("sync against a vanished repo must exit non-zero\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if strings.TrimSpace(stderr) == "" {
+		t.Error("expected a repo-failure diagnostic on stderr")
+	}
+}
+
+// TestSyncSourceHasNoNpxShellOut is a source-level guard: the npx exec and the
+// os/exec import are gone from sync.go (the rewrite is native end-to-end).
+func TestSyncSourceHasNoNpxShellOut(t *testing.T) {
+	src, err := os.ReadFile("sync.go")
+	if err != nil {
+		t.Fatalf("read sync.go: %v", err)
+	}
+	if strings.Contains(string(src), "os/exec") {
+		t.Error("sync.go must not import os/exec (npx shell-out deleted)")
+	}
+	if strings.Contains(string(src), "npx") {
+		t.Error("sync.go must not reference npx")
+	}
+}
+
+// TestSyncLockedEditRewritesManifestNotLock: a locked sync after an authored
+// edit rewrites manifest.json but leaves lock.json byte-identical, and the
+// installed tree reflects the edit. No Node/npx involved.
+func TestSyncLockedEditRewritesManifestNotLock(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeSyncLock(t, root, map[string]skill.LockEntry{}) // empty lock, byte-stable
+	lockBefore := readBytes(t, filepath.Join(skillsConfigDir(root), "lock.json"))
+
+	alpha := filepath.Join(root, "skills", "alpha", "SKILL.md")
+	writeFile(t, alpha, validSkill("alpha", "Use when testing locked edits.", "## Workflow\n\n1. v1.\n"))
+
+	if _, stderr, code := runCLI(t, "--root", root, "sync", "--locked"); code != 0 {
+		t.Fatalf("first sync --locked failed: code=%d stderr:\n%s", code, stderr)
+	}
+	manifest1 := readBytes(t, filepath.Join(skillsConfigDir(root), "manifest.json"))
+
+	// Edit the authored skill: rendered output changes.
+	writeFile(t, alpha, validSkill("alpha", "Use when testing locked edits.", "## Workflow\n\n1. v2 edited.\n"))
+	if _, stderr, code := runCLI(t, "--root", root, "sync", "--locked"); code != 0 {
+		t.Fatalf("second sync --locked failed: code=%d stderr:\n%s", code, stderr)
+	}
+	manifest2 := readBytes(t, filepath.Join(skillsConfigDir(root), "manifest.json"))
+
+	if bytes.Equal(manifest1, manifest2) {
+		t.Error("manifest.json should change after the authored edit")
+	}
+	if !bytes.Equal(lockBefore, readBytes(t, filepath.Join(skillsConfigDir(root), "lock.json"))) {
+		t.Error("lock.json must be byte-identical across a locked sync")
+	}
+	installed := readBytes(t, filepath.Join(root, ".claude", "skills", "alpha", "SKILL.md"))
+	if !strings.Contains(string(installed), "v2 edited") {
+		t.Errorf("installed tree not updated after edit:\n%s", installed)
 	}
 }
