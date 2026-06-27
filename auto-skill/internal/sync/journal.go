@@ -54,13 +54,18 @@ type journalWrite struct {
 	Digest string `json:"digest"` // expected skill_version of the staged tree
 }
 
-// journalPrune is a reserved (empty in T4) record of a no-longer-desired skill
-// dir to delete. T5's receipt-gated orphan-prune pass fills this slot; T4 never
-// populates it, so a failed fetch (incomplete desired set) deletes nothing.
+// journalPrune is one receipt-gated orphan deletion. T5's prune pass fills this
+// slot (T4 always wrote an empty slice, so adding fields is wire-safe); a failed
+// fetch / incomplete desired set still yields an empty slice, so a partial sync
+// deletes nothing. Target is the STYLE name (the receipts key); Dir is the
+// absolute skill dir; Trash is the pre-assigned same-FS sibling where the orphan
+// is moved (never deleted in place) so a crashed prune can roll back.
 type journalPrune struct {
 	Target string `json:"target"`
 	Skill  string `json:"skill"`
 	Dir    string `json:"dir"`
+	Trash  string `json:"trash"`
+	Digest string `json:"digest,omitempty"`
 }
 
 // journal is the self-contained write-ahead record of one commit. It embeds the
@@ -92,7 +97,8 @@ type commitInput struct {
 	installs        []Install
 	staged          map[string]*StagedSkill // by skill name
 	manifest        *skill.Manifest
-	lock            *skill.Lock // non-nil only when the plan marks a lock rewrite
+	lock            *skill.Lock    // non-nil only when the plan marks a lock rewrite
+	prunes          []journalPrune // receipt-gated orphans to delete (empty unless desiredComplete)
 	desiredComplete bool
 }
 
@@ -100,6 +106,7 @@ type commitInput struct {
 type commitOutcome struct {
 	Written         []string
 	Skipped         []string
+	Pruned          []string // target/skill of each pruned orphan
 	ReceiptsPath    string
 	ManifestWritten bool
 	LockRewritten   bool
@@ -152,6 +159,22 @@ func commit(in commitInput, fault faultPoint) (commitOutcome, error) {
 		out.Written = append(out.Written, inst.Target+"/"+inst.Skill)
 	}
 
+	prunes := in.prunes
+	if prunes == nil {
+		prunes = []journalPrune{}
+	}
+	// Drop each pruned orphan from the embedded receipts BEFORE the journal is
+	// written, so the journaled (and later-written, and recovery-rewritten)
+	// receipts are already correct — they must never still claim ownership of a
+	// dir this commit is deleting. The new manifest (in.manifest) already excludes
+	// orphans: they were never staged, so buildManifest's managed map omits them.
+	for _, p := range prunes {
+		if m := receipts.Targets[p.Target]; m != nil {
+			delete(m, p.Skill)
+		}
+		out.Pruned = append(out.Pruned, p.Target+"/"+p.Skill)
+	}
+
 	j := &journal{
 		Version:         journalVersion,
 		StartedAt:       time.Now().UTC().Format(time.RFC3339),
@@ -159,7 +182,7 @@ func commit(in commitInput, fault faultPoint) (commitOutcome, error) {
 		ProjectID:       projectID(env),
 		DesiredComplete: in.desiredComplete,
 		Writes:          writes,
-		Prunes:          []journalPrune{}, // reserved for T5
+		Prunes:          prunes,
 		Receipts:        receipts,
 		ReceiptsPath:    receiptsPath(env),
 		Manifest:        in.manifest,
@@ -176,11 +199,16 @@ func commit(in commitInput, fault faultPoint) (commitOutcome, error) {
 		return out, fmt.Errorf("write sync journal: %w", err)
 	}
 
-	// (2) Swap per skill.
+	// (2) Swap per skill, then apply the receipt-gated prunes (orphan dir → its
+	// journaled trash, never an in-place delete) — both ride the same pre-receipts
+	// boundary so recovery treats them uniformly.
 	for i := range j.Writes {
 		if err := swapOne(j.Writes[i]); err != nil {
 			return out, fmt.Errorf("swap %s/%s: %w", j.Writes[i].Target, j.Writes[i].Skill, err)
 		}
+	}
+	if err := applyPrunes(j); err != nil {
+		return out, fmt.Errorf("apply prunes: %w", err)
 	}
 	if fault == faultBeforeReceipts {
 		return out, errInjectedFault
@@ -237,6 +265,11 @@ func recoverJournal(env skill.Env) (bool, error) {
 		return false, nil
 	}
 
+	// Only the WRITES gate the forward/back decision. Prunes never block forward:
+	// an unapplied prune (dir present) is applyable, and an applied one (dir gone,
+	// trash present) is already done — applyPrunes tolerates both. On a rollback
+	// (forced by an unrecoverable write) restorePrunes brings any moved orphan
+	// back, so prunes are reconciled either way.
 	canForward := true
 	for i := range j.Writes {
 		w := j.Writes[i]
@@ -264,6 +297,11 @@ func (j *journal) rollForward(env skill.Env) error {
 		if err := swapOne(j.Writes[i]); err != nil {
 			return fmt.Errorf("recover swap %s/%s: %w", j.Writes[i].Target, j.Writes[i].Skill, err)
 		}
+	}
+	// Idempotently ensure every prune is applied (the embedded receipts already
+	// dropped these entries, so re-writing them below is correct).
+	if err := applyPrunes(j); err != nil {
+		return fmt.Errorf("recover apply prunes: %w", err)
 	}
 	if j.Receipts != nil && j.ReceiptsPath != "" {
 		if err := config.WriteJSONFileAtomic(j.ReceiptsPath, j.Receipts); err != nil {
@@ -305,6 +343,12 @@ func (j *journal) rollBack(env skill.Env) error {
 			_ = os.RemoveAll(w.Stage)
 		}
 	}
+	// Restore any prune that was already moved to trash — receipts/manifest are
+	// NOT advanced on a rollback, so the on-disk receipts still claim these dirs
+	// and the dirs must come back to match (the repo is left exactly as before).
+	if err := j.restorePrunes(); err != nil {
+		return err
+	}
 	if err := removeJournal(env); err != nil {
 		return fmt.Errorf("recover clear journal: %w", err)
 	}
@@ -341,6 +385,50 @@ func swapOne(w journalWrite) error {
 	return os.Rename(w.Stage, w.Dir)
 }
 
+// applyPrunes moves each receipt-gated orphan dir to its journaled trash (a
+// same-FS rename, never an in-place delete) so a crashed prune can roll back. It
+// is idempotent: an orphan whose dir is already gone is skipped; an orphan whose
+// dir AND trash both survive (a re-entry after a partial rename) is converged by
+// dropping the dir, with the trash preserved as the rollback copy.
+func applyPrunes(j *journal) error {
+	for i := range j.Prunes {
+		p := j.Prunes[i]
+		if !pathExists(p.Dir) {
+			continue // already pruned
+		}
+		if pathExists(p.Trash) {
+			if err := os.RemoveAll(p.Dir); err != nil {
+				return fmt.Errorf("prune drop %s: %w", p.Dir, err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(p.Trash), 0o755); err != nil {
+			return err
+		}
+		if err := os.Rename(p.Dir, p.Trash); err != nil {
+			return fmt.Errorf("prune move %s: %w", p.Dir, err)
+		}
+	}
+	return nil
+}
+
+// restorePrunes undoes applied prunes during a rollback: each orphan moved to
+// trash is restored to its original dir. Mirrors the write rollback.
+func (j *journal) restorePrunes() error {
+	for i := range j.Prunes {
+		p := j.Prunes[i]
+		if pathExists(p.Trash) {
+			if err := os.RemoveAll(p.Dir); err != nil {
+				return fmt.Errorf("prune rollback clear %s: %w", p.Dir, err)
+			}
+			if err := os.Rename(p.Trash, p.Dir); err != nil {
+				return fmt.Errorf("prune rollback restore %s: %w", p.Dir, err)
+			}
+		}
+	}
+	return nil
+}
+
 // dropResidue removes journaled trash and any surviving stage dirs (best effort
 // — they are unreferenced once the journal is cleared).
 func (j *journal) dropResidue() {
@@ -350,6 +438,11 @@ func (j *journal) dropResidue() {
 		}
 		if j.Writes[i].Stage != "" {
 			_ = os.RemoveAll(j.Writes[i].Stage)
+		}
+	}
+	for i := range j.Prunes {
+		if j.Prunes[i].Trash != "" {
+			_ = os.RemoveAll(j.Prunes[i].Trash)
 		}
 	}
 }
