@@ -102,7 +102,7 @@ a ` + "`doc.changed`" + ` from a CLI and **observe** the result in the browser (
 ` + "```" + `bash
 # Drive the hook producer with a canned PostToolUse payload; it posts to autowatch,
 # which derives the doc.changed and relays it to every connected auto-ui.
-echo '{"tool":"Edit","path":"docs/tasks/x.md"}' | auto hooks fire PostToolUse
+echo '{"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"docs/tasks/x.md"}}' | auto hooks fire --agent claude
 ` + "```" + `
 
 ### Agent harness flags + env vars

@@ -33,7 +33,7 @@ func newDocsCmd() *cobra.Command {
 				"",
 				"## Triggering edits",
 				"",
-				"auto-ui receives events only via the backend relay; it has no local ingest endpoint. Trigger an edit with `auto hooks fire PostToolUse` (which posts to autowatch), then observe results in the browser or, with `AUTO_UI_DEBUG=1`, via `/api/debug/recent`.",
+				"auto-ui receives events only via the backend relay; it has no local ingest endpoint. Trigger an edit by piping a hook payload to `auto hooks fire --agent claude` (which posts to autowatch), e.g. `echo '{\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"docs/foo.md\"}}' | auto hooks fire --agent claude`, then observe results in the browser or, with `AUTO_UI_DEBUG=1`, via `/api/debug/recent`.",
 				"",
 				"## Environment variables",
 				"",
