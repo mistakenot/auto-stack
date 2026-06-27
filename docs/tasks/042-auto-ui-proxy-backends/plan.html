@@ -12,12 +12,12 @@
     "id": "042",
     "name": "auto-ui-proxy-backends",
     "epic": "003-multi-host-architecture",
-    "status": "executing",
+    "status": "complete",
     "created": "2026-06-27"
   }
   </script>
-  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="042: auto-ui-proxy-backends" status="executing" pr="pending" generated="2026-06-27">
+  <!-- AI: When a PR is created for this work, update pr="https://github.com/mistakenot/auto-stack/pull/98" below with the PR URL -->
+  <pd-doc title="042: auto-ui-proxy-backends" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/98" generated="2026-06-27">
 
     <pd-tab name="Requirements">
 
@@ -326,7 +326,7 @@ flowchart LR
 
       <pd-stepper>
 
-        <pd-phase n="1" title="Backends config + CLI" files="auto-ui/internal/config/backends.go,auto-ui/internal/config/backends_test.go,auto-ui/internal/cli/backends.go,auto-ui/internal/cli/backends_test.go,auto-ui/internal/cli/root.go" status="todo">
+        <pd-phase n="1" title="Backends config + CLI" files="auto-ui/internal/config/backends.go,auto-ui/internal/config/backends_test.go,auto-ui/internal/cli/backends.go,auto-ui/internal/cli/backends_test.go,auto-ui/internal/cli/root.go" status="done">
           <md><script type="text/plain">
 1. Add `Backend{URI,Name?,HostID?}` + `BackendsConfig{Backends}`, `BackendsPath()` (→ `~/.auto/ui/backends.json` via `UIDir()`), `LoadBackends`/`SaveBackends` (DecodeJSONFileStrict / WriteJSONFileAtomic), `validateBackends` (URI format + duplicate-URI/hostId → `ValidationError`). **Verify:** `go build ./...` in auto-ui.
 2. Add `newBackendsCmd` with `add`/`remove`/`list` (`auto-ui/internal/cli/backends.go`); `list` is JSON-default; `add` does a one-shot dial (`transport.Dial` → `rpc.NewPeer` → `daemon.status` + `project.list`) and prints `✓ connected to <hostId> (<n> projects)`, with `--no-verify` to skip; errors go to stderr with remediation hints. Register in `root.go`. **Verify:** `auto ui backends add/list/remove` round-trips against a temp HOME.
@@ -335,7 +335,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="BackendManager" files="auto-ui/internal/backend/manager.go,auto-ui/internal/backend/manager_test.go" status="todo">
+        <pd-phase n="2" title="BackendManager" files="auto-ui/internal/backend/manager.go,auto-ui/internal/backend/manager_test.go" status="done">
           <md><script type="text/plain">
 Depends on P1.
 1. Add `Manager` (`internal/backend/manager.go`): `NewManager(path, dial DialFunc, interval)`, internal `hostId → *conn` map + mutex, per-backend health. **Verify:** build.
@@ -346,7 +346,7 @@ Depends on P1.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Proxy + clean break (atomic)" files="auto-ui/internal/server/proxy.go,auto-ui/internal/server/proxy_test.go,auto-ui/internal/server/server.go,auto-ui/internal/server/raw.go,auto-ui/internal/server/docs.go,auto-ui/internal/server/project.go,auto-ui/internal/server/planmeta.go,auto-ui/internal/server/planmeta_test.go,auto-ui/internal/server/docs_test.go,auto-ui/internal/server/raw_test.go,auto-ui/internal/server/project_test.go" status="todo">
+        <pd-phase n="3" title="Proxy + clean break (atomic)" files="auto-ui/internal/server/proxy.go,auto-ui/internal/server/proxy_test.go,auto-ui/internal/server/server.go,auto-ui/internal/server/raw.go,auto-ui/internal/server/docs.go,auto-ui/internal/server/project.go,auto-ui/internal/server/planmeta.go,auto-ui/internal/server/planmeta_test.go,auto-ui/internal/server/docs_test.go,auto-ui/internal/server/raw_test.go,auto-ui/internal/server/project_test.go" status="done">
           <md><script type="text/plain">
 Depends on P2. **Single atomic change** — proxy-in + local-out together so the build stays green.
 1. Add `proxy.go`: `proxyCall(mgr, method) Handler` (resolve peer by optional `host` param → `peer.Call` → return raw) and `handleDocRawProxy(mgr)` (call `doc.raw` → base64-decode `ContentBase64` → set `Content-Type` → write bytes).
@@ -357,7 +357,7 @@ Depends on P2. **Single atomic change** — proxy-in + local-out together so the
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="serve.go wiring + fail-fast" files="auto-ui/internal/cli/serve.go,auto-ui/internal/cli/serve_test.go" status="todo">
+        <pd-phase n="4" title="serve.go wiring + fail-fast" files="auto-ui/internal/cli/serve.go,auto-ui/internal/cli/serve_test.go" status="done">
           <md><script type="text/plain">
 Depends on P3 (needs `WithBackendManager`) and P2 (Manager).
 1. In `serve.go`: load `backends.json`; if empty/missing, **exit non-zero** with a remediation message (`run auto ui backends add <uri>`) before binding the listener. **Verify:** build.
@@ -367,7 +367,7 @@ Depends on P3 (needs `WithBackendManager`) and P2 (Manager).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="5" title="doctor + quickstart docs" files="auto-ui/internal/cli/doctor.go,auto-ui/internal/cli/doctor_test.go,auto-ui/internal/cli/quickstart.go" status="todo">
+        <pd-phase n="5" title="doctor + quickstart docs" files="auto-ui/internal/cli/doctor.go,auto-ui/internal/cli/doctor_test.go,auto-ui/internal/cli/quickstart.go" status="done">
           <md><script type="text/plain">
 Depends on P2.
 1. Extend `runDoctorChecks()` (`doctor.go`): for each backend, add `doctorCheck{check,status,message,hint}` for config validity, connectivity (dial + `daemon.status`), and a `project.list` probe; exit non-zero if any check fails. **Verify:** build.
