@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>046: multi-host-spa</title>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "046",
+    "name": "multi-host-spa",
+    "epic": "003-multi-host-architecture",
+    "status": "planning",
+    "created": "2026-06-27"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="..." below with the PR URL -->
+  <pd-doc title="046: multi-host-spa" status="pending" pr="pending" generated="2026-06-27">
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+This is **epic-003 Task 9: Multi-host SPA** — the last UI piece of the multi-host architecture. Task 7 (042, MERGED) made auto-ui a proxy that dials each autowatch backend, learns its `hostId` via `daemon.status`, and routes `doc.*` / `project.list` RPCs through `BackendManager`. Task 8 (045, MERGED) merged every backend's pushed event stream into auto-ui's Hub so events reach the browser **with the `Host` field intact**. The plumbing is done; the **SPA still assumes a single host**:
+
+- **`project.list` does not aggregate.** It is registered as `proxyCall(mgr, "project.list")` (`auto-ui/internal/server/server.go:109`), which `mgr.Resolve("")`s a **single** backend. With two backends connected and no host specified, `Resolve` returns `ErrAmbiguousHost` (`backend/manager.go:393-400`) — so the multi-backend project list **errors today**. Each entry already carries a `host` field (042, GR-F8), but nothing fans out across all backends and merges.
+- **Per-backend health is not reachable from the SPA.** `Manager.Health()` returns `[]BackendHealth{HostID, URI, Connected, RelayDegraded, LastErr}` (`backend/manager.go:405`) but it is **not exposed over any RPC** — the only registered methods are `ping`, `doc.list`, `doc.get`, `project.list`. The SPA's `ConnIndicator` reflects only the single browser↔auto-ui WebSocket, not the health of each upstream backend.
+- **SPA state has no host dimension.** `store.js` `selection` is `{project, path, worktree}` with an explicit "no host dimension" comment (`store.js:32`); the `docsByProject` cache is keyed by `project(+worktree)` (`store.js:260`); `matchesDoc` in `docevents.js` compares only `{project, path, worktree}` (`docevents.js:20-26`). Two backends that both expose a project id `auto-stack` would **collide** in the flat list, the doc cache, raw-doc URLs, and `doc.changed` matching.
+
+Per **GR-F8**, the UI identity for any project is the tuple `(hostId, projectId)`: every proxied RPC, raw-doc URL, event filter, and hash route must carry host identity. This task makes the SPA — and the two server seams it depends on — host-aware end to end.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+The dashboard shows **one flat project list spanning every connected host**, each project tagged with its host, and selecting a remote project works identically to a local one. Concretely:
+
+- **Aggregated, host-tagged project list (server-side).** A new **server-side** aggregating `project.list` handler in auto-ui fans out to **all** connected backends, tags each entry with its `host` (GR-F8), and returns the merged flat list — the SPA keeps making one `project.list` call and stays thin. A single down/unreachable backend must not fail the whole list — return the reachable hosts' projects and surface the unhealthy host via the status indicator (partial results, per the repo's "return available valid results even when some are invalid" convention).
+- **Host shown as a badge, not a hierarchy.** The project switcher (`explorer.js`) lists projects flat and renders each project's host as a badge/tag — **always shown, even with a single host**, for consistent identity. No host→project tree nesting.
+- **`(hostId, projectId)` carried everywhere.** The SPA hash gains a separate `host` query parameter alongside `project`/`path`/`worktree` (single-host URLs stay backward-compatible); `store.js` `selection` gains a `host` dimension; the `docsByProject` cache key includes host; every proxied RPC (`doc.list`, `doc.get`) and the `/api/doc/raw` URL carries `hostId`; `matchesDoc`/`parseDocChanged` in `docevents.js` add a host comparison so a `doc.changed` from host A never refreshes an identically-named doc selected on host B.
+- **Per-backend connection-status indicator.** A new RPC surfaces `Manager.Health()` to the SPA so it can show per-backend health (connected / degraded-relay / error, with host id + URI). This replaces relying on the single browser↔auto-ui socket as the sole health signal. Reconnect/health changes should reflect without a manual reload.
+- **Existing doc tree / content pane / live-update wiring unchanged in behavior.** They already operate on project-scoped RPC calls; they inherit the host dimension by reading the host-aware selection/cache. No redesign of the tree, content pane, or the single `doc.changed` subscription — only the identity tuple widens.
+- **Local-only / single-backend parity.** With one backend (the default local dashboard), behavior is identical to today: list populates, docs open, live refresh works — the host dimension is present and the host badge is shown, but no other UI changes.
+
+**Advances:** Vision (one dashboard, every host), GR-F8.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Hook retarget to autowatch-only (Task 10 / 047).** Removing `auto hooks fire`'s dual-post and auto-ui's `/api/rpc` ingest endpoint is T10. T9 does not touch the ingest path.
+- **Transport / relay changes.** The proxy, `BackendManager`, `bus.subscribe` relay, and event envelope are frozen (Tasks 2–8). T9 consumes them as-is. No new transport (GR-N8: connection-oriented reliable in-order only).
+- **Backends config UX.** Adding/removing backends is `auto ui backends add …` (042); T9 does not add an in-SPA backend editor. It reads whatever the Manager has connected.
+- **New event types or envelope changes.** Consume the existing `bus.Event` with its `Host` field.
+- **Authentication / per-host access control.** Out of scope for this epic; intra-VPC trust is assumed.
+- **Cross-host search / aggregation beyond the project list** (e.g. a unified activity feed across hosts) — not required by the T9 card.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="acceptance" title="Acceptance Criteria (draft)">
+        <md><script type="text/plain">
+Browser-driven conformance (frontend-first, mirroring tasks 025–027), plus Go tests for the two server seams:
+
+1. **AC-1 — Aggregated list.** With two backends connected (distinct host ids, each exposing ≥1 project), `project.list` returns the union of both hosts' projects, every entry carrying the correct `host`. No `ambiguous host` error.
+2. **AC-2 — Partial results on degraded backend.** With one backend healthy and one unreachable, `project.list` returns the healthy host's projects (does not error), and the status indicator shows the unhealthy host as disconnected/errored.
+3. **AC-3 — Host badge in switcher.** The project switcher renders each project flat with a visible host badge; two same-named projects on different hosts are independently selectable (distinct `data-*` identity).
+4. **AC-4 — Host carried through.** Selecting a remote project issues `doc.list` / `doc.get` / `/api/doc/raw` calls carrying that project's `hostId`; the hash includes `host`; reload restores the same (host, project, path) selection.
+5. **AC-5 — Host-scoped event matching.** A `doc.changed` for `(hostA, P, path)` refreshes the open doc only when the selection is `(hostA, P, path)`; an identically-named doc selected on `hostB` is **not** refreshed.
+6. **AC-6 — Per-backend status indicator.** A new RPC returns `Manager.Health()`; the SPA renders per-backend health (host id, URI, connected/degraded/error) and updates on connect/disconnect without a manual reload.
+7. **AC-7 — Single-backend parity.** With exactly one backend, the dashboard behaves identically to pre-T9 (list, open, live refresh); the only visible change is the host badge, which is shown.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+1. **Where does `project.list` aggregation live?** — **RESOLVED: server-side.** A new aggregating handler in auto-ui fans out to every connected backend, tags each entry with host, and merges; the SPA keeps calling `project.list` once. (Single round-trip, thin SPA, matches "proxy owns routing".)
+2. **Hash identity representation.** — **RESOLVED: separate `host=` query param** alongside `project`/`path`/`worktree`. Mirrors existing params; single-host URLs stay backward-compatible; no composite-id parsing.
+3. **Single-host badge behavior.** — **RESOLVED: always show the host badge**, even with one host, for consistent identity. (Local case otherwise unchanged — AC-7.)
+4. **How is per-backend health surfaced (RPC name + shape)?** — _Open, /new-solution._ A dedicated RPC exposing `Manager.Health()` (e.g. `backends.list` / `daemon.health`). Decide whether host enumeration rides on this method or stays separate from the aggregated `project.list`. Gates AC-6.
+5. **Health indicator placement.** — _Open, /new-solution._ Extend the existing `ConnIndicator` region in `explorer.js`, or add a separate per-backend panel (and surface on `#/debug`)? Affects AC-6 test selectors.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="strategy" title="Strategy">
+        <md><script type="text/plain">
+Two verification layers, mirroring the epic's existing split (Go tests for server seams; browser-driven conformance for the SPA, in the style of tasks 025–027):
+
+1. **Go unit/integration tests** for the two new server seams (aggregating `project.list`, `backends.list` health RPC). These run in `auto-ui/internal/server` against fake backends over `net.Pipe`, reusing the `proxy_test.go` / `event_flow_test.go` harnesses. They are the authoritative gate for the multi-backend merge + partial-results behavior.
+2. **Browser-driven conformance** (`docs/tasks/046-multi-host-spa/artifacts/conformance.md` + `evidence/`) driven by `agent-browser`, asserting on `data-testid` / `data-*` attributes and `window.__autoui` event evals, run against **both** the embed and dev builds. This is the gate for host-tagged rendering, host-scoped selection/URL, and host-scoped event matching.
+
+A two-backend fixture is required: two isolated `projects.json` registries on distinct fake hosts (distinct hostIDs), each exposing ≥1 project, with at least one project id colliding across hosts to prove disambiguation. Fixtures live under a temp dir, never `~/.auto`.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="ac-traceability" title="Acceptance Criteria → Tests">
+        <md><script type="text/plain">
+| AC | What it proves | How it's verified |
+|---|---|---|
+| AC-1 Aggregated list | Two backends → union of projects, each with correct `host`; no `ambiguous` error | Go: new `project_aggregate_test.go` — two fake backends (distinct hostIDs), assert merged length + per-entry `host` |
+| AC-2 Partial results | One healthy + one unreachable → healthy host's projects returned, no error; unhealthy host visible | Go: aggregating handler test with one backend whose `project.list` errors / is disconnected → result excludes it, no top-level error; `backends.list` reports it `connected:false`/`lastErr` |
+| AC-3 Host badge | Flat list, visible host badge; two same-named projects independently selectable | Browser: `select[data-testid=project-switcher]` options carry distinct identity (`data-host-id`+`data-project`); host badge element present per option/row |
+| AC-4 Host carried through | Remote project → `doc.list`/`doc.get`/`/api/doc/raw` carry `hostId`; hash has `host`; reload restores `(host,project,path)` | Browser: `window.__autoui` / network assert `hostId` present in calls; iframe `src` contains `hostId`; reload test re-derives selection from hash |
+| AC-5 Host-scoped events | `doc.changed(hostA,P,path)` refreshes only when selection is `(hostA,P,path)`; `hostB` same-name not refreshed | Go unit on `docevents.js` logic equivalent + Browser: inject two `doc.changed` (via the relay/`window.__autoui`) and assert `data-revision` bumps only for the matching host |
+| AC-6 Per-backend status | `backends.list` returns `Health()`; SPA renders per-backend health; updates on connect/disconnect w/o reload | Go: `backends_list_test.go` asserts shape; Browser: `data-testid=backend-health` rows with `data-host-id`+`data-connected`, update after a backend drops |
+| AC-7 Single-backend parity | One backend → identical behavior; host badge shown | Browser: single-backend fixture runs the 025–027 happy paths unchanged; badge present |
+        </script></md>
+      </pd-section>
+
+      <pd-section id="regression" title="Regression & Non-Regression">
+        <md><script type="text/plain">
+- **029 grep gate holds.** No new `on("`/`onAny(` subscription sites — host-aware matching stays inside `store.js`'s existing `on("doc.changed")`. CI grep gate must still pass.
+- **Existing server tests.** `project_test.go` (single-backend project.list with `host`) must still pass — the aggregating handler must behave identically with exactly one backend. If the handler replaces `proxyCall("project.list")`, update/extend `project_test.go` rather than break it.
+- **Single-host URLs.** Pre-046 hashes without `host=` must still resolve (selection falls back to the sole/first host). Covered by AC-7 + a router-level test.
+- **Full `auto-ui` suite green:** `cd auto-ui && go build ./... && go test ./...` (and `go vet ./...`).
+- **pd-lint** clean on `plan.html`.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="risks" title="Risks / Edge Cases to Cover">
+        <md><script type="text/plain">
+- **Same project id on two hosts** — the canonical disambiguation case; must be selectable independently and never cross-refresh (AC-3, AC-5).
+- **Zero backends connected** — empty-state (`data-testid=no-projects`) still renders, not an error.
+- **Backend drops mid-session** — its projects disappear from the list on the next list / health update; selection on a now-gone host degrades gracefully (no crash; clear/empty content pane).
+- **Concurrent fan-out** — a slow/hung backend must not block the whole `project.list` (bounded per-call context; skip-on-error → partial results).
+- **Merge conflict with 047** — both edit `server.go`; the second-merged PR rebases. Verification is per-PR; note in feedback.md.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Widen the project identity from `projectId` to `(hostId, projectId)` end to end, in four layers:
+
+1. **Server — aggregate + expose health.** Replace the single-backend `proxyCall("project.list")` with an **aggregating handler** that fans out `project.list` to every connected backend, tags each entry with its `host`, and merges (skip-on-error → partial results). Add a `backends.list` RPC returning `Manager.Health()`. A small `Manager.ConnectedPeers()` helper yields `(hostId, peer)` pairs so the handler fans out under one lock acquisition (vs Health+Resolve double-lock).
+2. **Store — host in state.** `store.js` `selection` gains `host`; `docsKey` includes host; `fetchDocs`/`fetchOpenDoc` send `hostId`; `syncFromHash` reads `host=`; `selectProject`/`selectDoc` write it. A new `backends` slice is fed by a `backends.list` fetch (on load + on reconnect) for the health UI. The single `on("doc.changed")` becomes host-aware via `docevents.js`.
+3. **Events — host-scoped matching.** `docevents.js` `parseDocChanged` reads `host` (data → envelope `Host`); `matchesDoc` compares host (mirroring the worktree rule: differ only when both sides carry it). Keeps the 029 grep gate (no new subscription site).
+4. **Views — host-tagged rendering.** `explorer.js` renders a host badge per project option + per-backend health rows; `content.js` `rawURL` adds `hostId`; `tree.js` keys its docs read by host; `app.css` styles the badge/health.
+
+The doc tree, content pane, and live-update wiring are otherwise unchanged — they inherit host by reading the widened selection/cache.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-ui/internal/server/project_aggregate.go" change="add">Aggregating `project.list` handler (fan out to ConnectedPeers, tag `host`, merge, skip-on-error → partial) + `backends.list` handler returning `mgr.Health()`.</pd-file>
+          <pd-file path="auto-ui/internal/server/project_aggregate_test.go" change="add">Two-backend merge (union + per-entry host), same-id-on-two-hosts disambiguation, partial-results when one backend errors/disconnected, zero-backends empty list.</pd-file>
+          <pd-file path="auto-ui/internal/server/backends_list_test.go" change="add">`backends.list` returns Health() shape (hostId/uri/connected/relayDegraded/lastErr); reflects a dropped backend as connected:false.</pd-file>
+          <pd-file path="auto-ui/internal/server/server.go" change="edit">Register `project.list` → aggregating handler and `backends.list` → health handler (replace the `proxyCall("project.list")` line).</pd-file>
+          <pd-file path="auto-ui/internal/server/project_test.go" change="edit">Update single-backend expectation to flow through the aggregating handler (still returns one entry with `host`).</pd-file>
+          <pd-file path="auto-ui/internal/backend/manager.go" change="edit">Add `ConnectedPeers() []PeerRef{HostID, Peer}` (single-lock snapshot of connected backends) for the fan-out.</pd-file>
+          <pd-file path="auto-ui/internal/backend/manager_test.go" change="edit">Test ConnectedPeers returns only connected backends with correct hostIDs.</pd-file>
+          <pd-file path="auto-ui/web/static/store.js" change="edit">selection gains `host`; docsKey includes host; fetchDocs/fetchOpenDoc send hostId; syncFromHash reads host=; selectProject/selectDoc write host; selectActiveHost; `backends` slice + fetchBackends (load+reconnect) + selectBackends; host-aware doc.changed matching.</pd-file>
+          <pd-file path="auto-ui/web/static/docevents.js" change="edit">parseDocChanged reads `host` (data.host ?? ev.host/Host); matchesDoc compares host (differ only when both present).</pd-file>
+          <pd-file path="auto-ui/web/static/explorer.js" change="edit">Project switcher option carries `data-host-id` + visible host badge; per-backend health rows (`data-testid=backend-health`, `data-host-id`, `data-connected`); pass host through selection.</pd-file>
+          <pd-file path="auto-ui/web/static/content.js" change="edit">rawURL adds `hostId`; pass selection.host at the call site.</pd-file>
+          <pd-file path="auto-ui/web/static/tree.js" change="edit">Read docs via selectDocs keyed by host; include host in the DocTree remount key.</pd-file>
+          <pd-file path="auto-ui/web/static/app.css" change="edit">Host badge + backend-health row styles.</pd-file>
+          <pd-file path="auto-ui/CLAUDE.md" change="edit">Document the host dimension: `(hostId, projectId)` identity, `backends.list`, per-backend health UI, host-aware matchesDoc.</pd-file>
+          <pd-file path="docs/tasks/046-multi-host-spa/artifacts/conformance.md" change="add">Browser-driven conformance (two-backend + single-backend fixtures), evidence/ for AC-3..AC-7.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="server-api" title="New server surface">
+        <pd-api kind="func" name="ConnectedPeers" lang="go" path="auto-ui/internal/backend/manager.go">
+          <pd-member name="ConnectedPeers() []PeerRef">Snapshot of connected backends as {HostID string; Peer *rpc.Peer}, taken under m.mu once. Lets the aggregator fan out without Health()+Resolve() double-locking.</pd-member>
+        </pd-api>
+        <pd-api kind="method" name="backends.list (RPC)" lang="go" path="auto-ui/internal/server/project_aggregate.go">
+          <pd-member name="params: none">Returns []BackendHealth (hostId, uri, connected, relayDegraded?, lastErr?). The SPA renders per-backend status from this.</pd-member>
+        </pd-api>
+        <pd-api kind="method" name="project.list (RPC, aggregating)" lang="go" path="auto-ui/internal/server/project_aggregate.go">
+          <pd-member name="params: none (host ignored)">Fans out project.list to every ConnectedPeer, sets entry.host = peer.hostId, merges. A peer whose call errors is skipped (partial results); the failure is observable via backends.list. With one backend, identical to today.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="ac-map" title="Acceptance Criteria → Phases/Tests">
+        <pd-ac id="AC-1" title="Aggregated, host-tagged list across backends" phases="1" tests="auto-ui/internal/server/project_aggregate_test.go">Two backends → union of projects, each carrying correct host; no ambiguous error.</pd-ac>
+        <pd-ac id="AC-2" title="Partial results on degraded backend" phases="3" tests="auto-ui/internal/server/project_aggregate_test.go, auto-ui/internal/server/backends_list_test.go">One healthy + one unreachable → healthy host's projects returned, no top-level error; unhealthy host visible via backends.list.</pd-ac>
+        <pd-ac id="AC-3" title="Host badge in switcher; same-name disambiguation" phases="1" tests="docs/tasks/046-multi-host-spa/artifacts/conformance.md">Flat list, visible host badge, two same-named projects independently selectable via distinct data-host-id+data-project.</pd-ac>
+        <pd-ac id="AC-4" title="(hostId, projectId) carried through RPCs/URL/hash" phases="1,2" tests="docs/tasks/046-multi-host-spa/artifacts/conformance.md">doc.list/doc.get/raw carry hostId; hash has host=; reload restores (host,project,path).</pd-ac>
+        <pd-ac id="AC-5" title="Host-scoped event matching" phases="2" tests="auto-ui/web/static/docevents.js, docs/tasks/046-multi-host-spa/artifacts/conformance.md">doc.changed(hostA,P,path) refreshes only the (hostA,P,path) selection; hostB same-name not refreshed.</pd-ac>
+        <pd-ac id="AC-6" title="Per-backend connection-status indicator" phases="3" tests="auto-ui/internal/server/backends_list_test.go, docs/tasks/046-multi-host-spa/artifacts/conformance.md">backends.list returns Health(); SPA renders per-backend health, updates on connect/disconnect without reload.</pd-ac>
+        <pd-ac id="AC-7" title="Single-backend parity (badge shown)" phases="1,2,3,4" tests="auto-ui/internal/server/project_test.go, docs/tasks/046-multi-host-spa/artifacts/conformance.md">One backend → identical behavior; only visible change is the host badge.</pd-ac>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions">
+        <pd-decisions>
+          <pd-decision id="D-1" title="Server-side aggregating project.list" status="accepted" by="author" summary="A new auto-ui handler fans out project.list to all connected backends and merges; the SPA keeps one call. Single round-trip, thin SPA, matches proxy-owns-routing.">
+          </pd-decision>
+          <pd-decision id="D-2" title="backends.list as the health RPC" status="accepted" by="author" summary="New noun.verb RPC backends.list returns Manager.Health() verbatim. Fits naming convention; plural noun matches the per-backend list semantics. Health() already exists; only registration is new.">
+          </pd-decision>
+          <pd-decision id="D-3" title="Separate host= hash param" status="accepted" by="author" summary="Hash becomes #/explore?host=&project=&path=&worktree=. Mirrors existing params; router passes arbitrary params through; single-host URLs stay backward-compatible (host falls back to sole/first backend).">
+          </pd-decision>
+          <pd-decision id="D-4" title="Host badge always shown" status="accepted" by="author" summary="Even with one host, the badge renders, for consistent identity. AC-7 keeps all other behavior identical.">
+          </pd-decision>
+          <pd-decision id="D-5" title="matchesDoc: host differs only when both sides carry it" status="accepted" by="author" summary="Mirror the existing worktree rule so legacy host-less doc.changed events still match by project, while two same-named projects on different hosts never cross-refresh once events carry Host (045 stamps it).">
+          </pd-decision>
+          <pd-decision id="D-6" title="ConnectedPeers helper over Health()+Resolve fan-out" status="accepted" by="author" summary="A single-lock snapshot of (hostId, peer) pairs avoids the double lock-acquisition (and TOCTOU) of calling Health() then Resolve(hostId) per backend in the aggregator.">
+          </pd-decision>
+        </pd-decisions>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Client-side fan-out** (SPA calls `backends.list` then `project.list` per host, merges in JS). Rejected (Requirements OQ1): N round-trips, more SPA logic, no single source of merge truth.
+- **Composite project id (`host/project`).** Rejected (OQ2): forces splitting the composite everywhere a project id is used and breaks existing single-host URLs; a separate `host=` param is cleaner.
+- **Host→project hierarchy tree** in the switcher. Rejected by the epic card (flat list with host badge, not a hierarchy).
+- **New `on(...)` subscription for host events.** Rejected: violates the 029 grep gate; host-aware matching belongs in the existing `store.js` `on("doc.changed")` via `docevents.js`.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Widen project identity to `(hostId, projectId)` as a vertical walking skeleton: P1 stands up the full server→store→view path so two hosts' projects render flat + host-badged and a remote project opens; P2 thickens the open/refresh path to be host-correct (raw URL, host-scoped events, reload); P3 hardens the data path (partial results) and adds the per-backend health UI; P4 is browser conformance + docs.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-mermaid>
+flowchart LR
+    P1["P1 — Skeleton\nserver aggregate + store host + badge\n(end-to-end: 2 hosts listed, selectable)"]
+    P2["P2 — Thicken\nremote docs + host-scoped events + reload"]
+    P3["P3 — Resilience + health\npartial results + backends.list + status UI"]
+    P4["P4 — Conformance + docs"]
+    P1 --> P2
+    P1 --> P3
+    P2 --> P4
+    P3 --> P4
+        </pd-mermaid>
+        <md><script type="text/plain">
+P2 and P3 both depend only on P1 and touch disjoint surfaces (P2: content/tree/docevents/store event-matching; P3: aggregate handler + health + store backends-slice + explorer health rows) — they can run in parallel after P1. Both edit `store.js` and `explorer.js`/`app.css` in different regions, so if dispatched concurrently the second to land rebases (small). P4 (conformance) waits on both.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="plan-phases" title="Phases">
+        <pd-stepper>
+
+          <pd-phase n="1" title="Skeleton: two hosts' projects show flat + host-badged, selectable" files="auto-ui/internal/backend/manager.go,auto-ui/internal/backend/manager_test.go,auto-ui/internal/server/project_aggregate.go,auto-ui/internal/server/project_aggregate_test.go,auto-ui/internal/server/server.go,auto-ui/internal/server/project_test.go,auto-ui/web/static/store.js,auto-ui/web/static/explorer.js,auto-ui/web/static/app.css" status="todo">
+            <md><script type="text/plain">
+Walking skeleton — the thinnest path through server → store → view that puts a flat, host-tagged, selectable project list on screen for TWO backends.
+1. `manager.go`: add `type PeerRef struct{ HostID string; Peer *rpc.Peer }` + `ConnectedPeers() []PeerRef` (single-lock snapshot of connected conns). `manager_test.go`: ConnectedPeers returns only connected backends. **Verify:** `go build ./...`; `go test -race ./internal/backend/...`.
+2. `project_aggregate.go`: `aggregateProjectList(mgr)` Handler — fan out `peer.Call(ctx,"project.list",nil)` over `ConnectedPeers()`, set `host=ref.HostID` on each entry, merge (bounded per-peer ctx; skip-on-error is fleshed out in P3). `server.go`: replace `proxyCall("project.list")` with it. **Verify:** build.
+3. `project_aggregate_test.go`: two fake backends (distinct hostIDs, reuse `event_flow_test.go` relayFleet pattern) → union + per-entry host + same-id disambiguation. `project_test.go`: single-backend still returns one entry with `host`. **Verify:** `go test -race ./internal/server/...`.
+4. `store.js`: `selection` gains `host`; `docsKey(host,project,worktree)`; `syncFromHash` reads `params.get("host")`; `selectProject(host,id)` writes `host=`; `fetchDocs`/`fetchOpenDoc` send `hostId:selection.host`; add `selectActiveHost`.
+5. `explorer.js`: switcher `<option>` carries `data-host-id` + always-shown host badge; `onPickProject` passes the option's host into `selectProject`. `app.css`: badge style.
+6. **End-to-end check:** dev build + two-backend fixture → flat list shows both hosts' projects with badges; a remote project is selectable and lists its docs. **Commit** via /contextual-commit.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="2" title="Thicken: open remote docs + host-scoped events + reload" files="auto-ui/web/static/content.js,auto-ui/web/static/tree.js,auto-ui/web/static/docevents.js,auto-ui/web/static/store.js" status="todo">
+            <md><script type="text/plain">
+Depends on P1. Make the open/refresh path fully host-correct.
+1. `content.js`: `rawURL(project,path,worktree,nonce,hostId)` adds `if (hostId) qs.set("hostId", hostId)`; call site passes `selection.host`.
+2. `tree.js`: read `selectDocs(s, host, project, worktree)`; include host in the `DocTree` remount key.
+3. `docevents.js`: `parseDocChanged` reads `host` (`d.host ?? ev.host ?? ev.Host`); `matchesDoc` adds `if (target.host && c.host && c.host !== target.host) return false;` (mirror the worktree rule — legacy host-less events still match by project).
+4. `store.js` `on("doc.changed")`: gate the known-doc re-list and open-doc refresh on host (via `matchesDoc` with `selection.host`); `selectDoc` preserves `host=`.
+5. **End-to-end check:** remote `.md`/`.html` doc opens (iframe URL carries hostId); a `doc.changed` for the selected (host,project,path) refreshes, an identically-named doc on the other host does not; reload restores `(host,project,path)`. 029 grep gate still passes. **Commit** via /contextual-commit.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="3" title="Resilience + health: partial results + per-backend status UI" files="auto-ui/internal/server/project_aggregate.go,auto-ui/internal/server/backends_list_test.go,auto-ui/internal/server/project_aggregate_test.go,auto-ui/internal/server/server.go,auto-ui/web/static/store.js,auto-ui/web/static/explorer.js,auto-ui/web/static/app.css" status="todo">
+            <md><script type="text/plain">
+Depends on P1 (parallel-safe with P2 — disjoint surfaces). Harden the data path and surface backend health.
+1. `project_aggregate.go`: finalize skip-on-error → a peer whose call errors/times out is omitted (partial results), never failing the whole list; add `backendsList(mgr)` Handler → `mgr.Health()`. `server.go`: `d.Register("backends.list", backendsList(o.mgr))`.
+2. `project_aggregate_test.go`: partial-results case (one backend errors/disconnected → others returned, no top-level error; zero-backends → empty list). `backends_list_test.go`: Health() shape + dropped backend `connected:false`/`lastErr`.
+3. `store.js`: add `backends` slice + `fetchBackends()` (`call("backends.list")` on load and on the reconnect re-fetch) + `selectBackends`.
+4. `explorer.js`: per-backend health block from `useStore(selectBackends)` — rows `data-testid="backend-health"` with `data-host-id` + `data-connected` (+ degraded/error); keep the single-socket `ConnIndicator`. `app.css`: health-row styles.
+5. **End-to-end check:** kill one backend → its projects drop from the list (no error), health row flips to disconnected without reload. `go test -race ./internal/server/...` green. **Commit** via /contextual-commit.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="4" title="Conformance + docs" files="docs/tasks/046-multi-host-spa/artifacts/conformance.md,auto-ui/CLAUDE.md" status="todo">
+            <md><script type="text/plain">
+Depends on P1–P3.
+1. `artifacts/conformance.md` + `evidence/`: browser-driven (agent-browser) against embed + dev builds; two-backend fixture (distinct hostIDs, colliding project id) for AC-3/AC-4/AC-5/AC-6 and a single-backend fixture for AC-7. Isolated `projects.json` (never `~/.auto`). Capture `.txt`/`.json`/`.png`.
+2. `auto-ui/CLAUDE.md`: document the host dimension, `backends.list`, per-backend health UI, host-aware `matchesDoc`.
+3. **Verify:** full `cd auto-ui && go build ./... && go test ./... && go vet ./...` green; pd-lint clean. **Commit** via /contextual-commit.
+            </script></md>
+          </pd-phase>
+
+        </pd-stepper>
+      </pd-section>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **P1** → AC-1, AC-3 pass; AC-4 (hash/RPC host) partially (list+select).
+- **P2** → AC-4 (open + reload), AC-5 pass.
+- **P3** → AC-2, AC-6 pass.
+- **P4** → AC-7 confirmed; full conformance evidence captured; all suites + pd-lint green.
+- Done when AC-1…AC-7 pass, the 029 grep gate holds, and `cd auto-ui && go build/test/vet ./...` is green.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
