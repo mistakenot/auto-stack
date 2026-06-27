@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>044: session-html-map</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "044",
+    "name": "session-html-map",
+    "status": "planning",
+    "created": "2026-06-27"
+  }
+  </script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="044: session-html-map" status="pending" pr="pending" generated="2026-06-27">
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+A coding-agent session — especially one that runs the explicit planning
+workflow — fans out into a tree of sub-agents, dozens of bash commands, file
+edits, skill invocations and task updates. Today the only ways to inspect one
+are:
+
+- `auto search session get <id>` — a flat XML-ish transcript dump, linear,
+  no sub-agent nesting, hard to skim, easy to drown in Read/Write noise.
+- `auto search session describe <id>` — a single JSON summary, no detail.
+
+Neither lets a human **see the shape of the work**: what the coordinator
+delegated, which sub-agent did what, where the slow/failed commands were, and
+how to drill from the high-level call tree down into a specific command's
+output and back up again.
+
+We want a single self-contained HTML artifact that maps a session end to end —
+reads top to bottom, foregrounds **structure** (call tree to sub-agents, bash
+commands, file ops, skills) over raw message prose, and lets the reader drill
+down into any node for full detail and drill back up.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+1. **New command** `auto search session export <id>` that writes a rich,
+   single-file HTML document mapping the session.
+2. **Reads top to bottom** — a linear timeline of the coordinator's events,
+   with each sub-agent dispatch rendered **inline** as a nested, collapsible
+   block (recursive to arbitrary depth).
+3. **Structure-first** — every event is a one-line row (icon + summary +
+   metadata badges). Bash shows the command + exit code; file ops show the
+   path; skills show the name; sub-agents show a dispatch label + per-agent
+   stats. Slow calls (≥10s) and errors are auto-badged.
+4. **Drill down / drill up** — click any row to expand its full input/output;
+   collapse a sub-agent block to fold an entire branch away. "Expand all",
+   "Collapse all", and a "Structure only" preset (skeleton: bash + tools +
+   dispatches, no prose/thinking/reads).
+5. **Work-graph sidebar** — a sticky outline listing the coordinator and every
+   sub-agent with stats; clicking jumps to (and expands) that node.
+6. **Self-contained** — one HTML file, no external network deps, opens from
+   `file://`. Content embedded as JSON + a vanilla-JS renderer in the Go
+   command's template.
+7. **Correlation** — sub-agent sessions are linked to their dispatching `Agent`
+   tool-call so the tree is accurate (see Solution stage for the mechanism).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="command-shape" title="Command shape (proposed)">
+        <md><script type="text/plain">
+```
+auto search session export <session_id> [flags]
+
+  --format string      output format: html (default) | json (reserved, later)
+  --out string         output path (default: ./docs/sessions/<session_id>.html)
+  --index string       named index to query (default "default")
+  --exclude-thinking   drop thinking blocks from the export (smaller file)
+  --light              shrink a large export: exclude thinking + tighter
+                       content truncation. For sessions too big to load.
+```
+
+- `export` is the verb (not `html`/`render`) so a second `--format` can be
+  added without renaming. **`--format html` is the default; `--format json`
+  is reserved for a future structured dump of the same work-graph model.**
+- Default output is `./docs/sessions/<id>.html`, creating the directory. This
+  is a file-writing command, so unlike the JSON-default convention it writes a
+  file and prints the path (a diagnostic) to stderr.
+- **Embeds everything by default** (including thinking) — favour completeness
+  to start. `--exclude-thinking` / `--light` are escape hatches for sessions
+  too large to render.
+- **After writing, print the file size** to stderr; if it exceeds the
+  load-warning threshold (~5MB, the practical ceiling for a localhost-loaded
+  HTML file), append a hint to re-run with `--light`. Overwrites any existing
+  file at the path silently (it's a derived artifact).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Resolved decisions">
+        <md><script type="text/plain">
+These were confirmed with the user during planning (see decision log below):
+
+- **Component layer:** bespoke self-contained viewer, *not* planning-doc's
+  `pd-*` components — those are plan-shaped (tabs/stepper/mermaid/AC), a
+  session trace needs a linear timeline with a nested collapsible work-graph.
+- **Default view:** show everything except thinking; thinking is toggled on.
+- **Content fidelity:** embed full untruncated content by default (favour
+  completeness); `--light` switches to the index's truncated bodies, and
+  `auto search message get <id>` remains the per-message escape hatch. (See
+  decision `d-content-fidelity`.)
+- **Output path:** `./docs/sessions/<id>.html`.
+- **Command name:** `export` with `--format html` default, `--format json`
+  reserved for later.
+
+A working **prototype** lives in `artifacts/` — open
+`artifacts/sample-session.html` in a browser. It was generated from a real
+`/execute-task 041` session (coordinator + 4 sub-agents) by the Python
+prototype (`prototype-build_doc.py` + `prototype-template.html`), which the Go
+command will port.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="decisions" status="resolved" priority="p2" title="Resolved decisions still lists truncated drill fidelity">
+        <pd-comment by="review">The "Drill fidelity: embed each message body truncated (~4–8k)" bullet here predates decision `d-content-fidelity`. It now contradicts the accepted default (full untruncated content; `--light` is the truncation escape hatch). Update or remove this bullet so Requirements matches the decision log.</pd-comment>
+        <pd-comment by="author">Fixed. Replaced the bullet with "Content fidelity: embed full untruncated content by default; `--light` switches to truncated bodies; `auto search message get` remains the per-message escape hatch" and cross-referenced `d-content-fidelity`.</pd-comment>
+        <pd-comment by="review">ok update so that: default is full export, all information, then we have additional flags that can be used to truncate / limit some responses only if its too big, make this consistent across the whole thing.</pd-comment>
+        <pd-comment by="author">Confirmed and made consistent across the whole doc — the through-line is now: **default exports everything (full content incl. thinking); `--light` / `--exclude-thinking` are opt-in trims only for oversized files**. `d-content-fidelity` states it, and Requirements (Content fidelity + Open questions), Command shape, Verification (gaps), and the Plan (Phase 1) all match.</pd-comment>
+      </pd-thread>
+
+      <pd-decision id="d-bespoke-viewer" title="Bespoke trace viewer over pd-components" status="accepted" by="author"
+        summary="The session-export artifact ships its own embedded vanilla-JS viewer rather than reusing the pd-* planning-doc component library.">
+        <md><script type="text/plain">
+**Context.** The user asked whether we could borrow components from the
+`/planning-doc` skill for the output artifact.
+
+**Decision.** Build a bespoke, dependency-free HTML viewer (embedded JSON +
+vanilla JS, inlined CSS) for the exported session map.
+
+**Rationale.** pd-components model a *plan*: tabbed pages, a phase stepper, a
+file-change tree, acceptance-criteria cards, mermaid diagrams. A session trace
+is a different primitive — a deep, linear, top-to-bottom event timeline with
+recursively nested, collapsible sub-agent branches and per-row drill-down.
+None of the pd-* components map onto that, and a CDN dependency conflicts with
+the "self-contained, opens offline" goal.
+
+**Alternatives considered.**
+- *Reuse pd-components* — rejected: wrong shape, adds CDN dependency.
+- *Add a `pd-trace`/`pd-tree` component to the pd-components library* — deferred:
+  cross-repo work in mistakenot/skills; revisit once the trace format is proven
+  and another tool needs it (Hybrid path).
+
+**Consequences.** The viewer (HTML/CSS/JS template) is owned by auto-search and
+must be maintained here. It stays self-contained and offline-capable. If a
+second consumer emerges, extract into pd-components then.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="d-subagent-correlation" title="Correlate sub-agents by dispatch-prompt match" status="accepted" by="author"
+        summary="Link each Agent tool-call to its sub-agent session by matching the dispatch prompt to the sub-agent's first_user_intent, ordered, with parent_session_id as the grouping key.">
+        <md><script type="text/plain">
+**Context.** A sub-agent session carries `parent_session_id`, but nothing in
+the parent's `Agent` tool-call result records the spawned session id, so a
+specific dispatch can't be linked to a specific child by id alone.
+
+**Decision.** Group children by `parent_session_id`, then match each parent
+`Agent` tool-call (in dispatch order) to the child whose `first_user_intent`
+prefix-equals the call's `prompt`; fall back to dispatch order when the prefix
+match is ambiguous.
+
+**Rationale.** Verified against a real session: the `Agent` tool_use `prompt`
+(and the tool_result `prompt`) exactly matches the sub-agent's
+`first_user_intent`. Prompt-prefix + order is robust and needs no schema change.
+
+**Consequences.** Correlation is heuristic, not an id join. If ETL later
+captures the spawned session id on the dispatch result, switch to an exact
+join. The build must tolerate unmatched dispatches (render the dispatch with no
+child) and orphan children (parent_session_id with no matching dispatch).
+        </script></md>
+      </pd-decision>
+
+      <pd-section id="out-of-scope" title="Out of scope">
+        <md><script type="text/plain">
+- **`--format json`** — the flag is reserved and documented, but emitting the
+  structured work-graph as JSON is a later increment.
+- **Aggregate/cross-session views** — file heatmaps, multi-session dashboards,
+  "files edited N times" signals. This task is single-session.
+- **Live/streaming render** — export is a point-in-time snapshot of the index.
+- **A secondary blob/asset store or lazy branch loading** — content is embedded
+  inline in the one file; we don't split assets out or lazy-load sub-agent
+  branches. (A possible later increment for very large trees; full untruncated
+  content is the default per `d-content-fidelity`.)
+- **Serving the HTML** (auto-ui integration) — out of scope; we write a file.
+- **Non-Claude agent specifics** — the model is agent-agnostic, but the
+  prototype/correlation is validated on Claude sessions only.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="out-of-scope" status="resolved" priority="p1" title="Out of scope contradicts accepted content-fidelity decision">
+        <pd-comment by="review">This section still says drill-down embeds truncated bodies and that "embedding full untruncated content" is out of scope, but decision `d-content-fidelity` (accepted) and the Solution approach both state the **default** export embeds full untruncated `content` and tool I/O; only `--light` uses `content_truncated`. Please reconcile: either update Out of scope to match (full embed by default, truncation only under `--light`) or revert the decision.</pd-comment>
+        <pd-comment by="author">Good catch — that bullet was directly contradictory. Removed it and replaced with a genuinely out-of-scope item ("a secondary blob/asset store or lazy branch loading"), noting full untruncated content is the default per `d-content-fidelity`.</pd-comment>
+        <pd-comment by="review">from now on - default is EVERYTHING but hidden behind collsable sections, flags for cutting that down if its too big</pd-comment>
+        <pd-comment by="author">Aligned. The model is "embed everything, hide it behind collapse": full content is embedded in the file but the view shows one-line structural rows with bodies collapsed and sub-agents foldable (Goals #3–4). The `--light`/`--exclude-thinking` flags reduce what's *embedded* only when the file is too big. Recorded this rendering principle in `d-content-fidelity`'s consequences.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="open-questions" title="Open questions">
+        <md><script type="text/plain">
+All three planning-stage questions were resolved during review (see thread):
+
+1. **Thinking embedding** — *Resolved: embed everything (incl. thinking) by
+   default.* `--exclude-thinking` and `--light` are opt-in escape hatches for
+   very large sessions. Start by capturing a lot.
+2. **Very deep / very large trees** — *Resolved: no depth cap / size budget for
+   now; embed everything.* Instead, the command prints the output file size
+   after writing and, past a ~5MB warning threshold (localhost HTML load
+   ceiling), suggests re-running with `--light`. A real size budget / lazy
+   per-branch loading is a possible later increment.
+3. **Overwrite behavior** — *Resolved: just overwrite* the file at the target
+   path; it's a derived artifact.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="open-questions" status="resolved" priority="p2" title="Resolve the three planning questions: thinking, size, overwrite">
+        <pd-comment by="review">1. yes lets include thinking by default, maybe a --exclude-thinking or --light flags as optional extras for sessions that are very large, but lets default to a lot to start with.
+2. im not worreid aboyt this for now, lets just default to everything. maybe the export command, after creating the file, emits a line saying how large the file is, and instructions to use --light if the file is too big (limit is what a localhost can load for html file, i think 5mb maybe is warning limit)
+3. just overwrite</pd-comment>
+        <pd-comment by="author">Merged all three.
+1. Export now **embeds everything including thinking by default**; added `--exclude-thinking` and `--light` as opt-in escape hatches for oversized sessions (see Command shape). Note: the rendered view still defaults the *thinking toggle* to off so the timeline reads structurally — the data is present, one click reveals it. Say the word if you'd rather thinking be visible on load too.
+2. Dropped the size-budget question — default is embed-everything. Added behavior: after writing, the command prints the file size to stderr and, above a ~5MB warn threshold, suggests `--light`.
+3. Overwrite is now the documented behavior (no `--force`).
+Updated the Command shape and Open questions sections accordingly.</pd-comment>
+      </pd-thread>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test strategy">
+        <md><script type="text/plain">
+The feature splits cleanly into a **pure model builder** + a **pure renderer**,
+both unit-testable without a browser, plus a thin **CLI command** covered by an
+integration test through the existing `runCLI` harness.
+
+- **Model unit tests** (`internal/sessionhtml`): feed in-memory `MessageRow` /
+  `SessionRow` slices (or a tiny test index) and assert the built work-graph:
+  sub-agent correlation (prompt-prefix + order), tool-result pairing by
+  `ToolUseID`, event-kind classification, per-node counts, and truncation under
+  `--light`. This is where correctness lives — no HTML involved.
+- **Renderer unit tests**: render a known model and assert the output is a
+  single self-contained file — no external `<script src>` / `<link href>`; the
+  embedded JSON is **script-safe** (`</`, U+2028/U+2029 escaped so a `</script>`
+  or line-separator inside message content can't break the page); structural
+  markers present (work-graph entries, bash command + exit, agent nesting).
+- **CLI integration tests** (`internal/cli`, via `runCLI` + a fixture index):
+  run `session export` end to end and assert the file is written to the default
+  path, the size line lands on **stderr** (stdout empty), flag behaviors, and
+  error paths with remediation hints.
+- **Visual regression (manual, repeatable)**: the prototype already renders a
+  real 5-session tree; a headless-Chromium screenshot script
+  (`artifacts/`) is the manual check that the layout/interactions hold. Not a
+  CI gate — documented for the implementer.
+- **Fixture**: extend `internal/testutil/fixtures.go` so the parent session
+  has at least one `Bash` tool-call (with a paired result carrying
+  `bash_exit_code`/`duration_ms`) and one `Agent` dispatch whose prompt matches
+  the existing `test-session-2` subagent's `first_user_intent`, so correlation
+  and structural rendering are both exercised.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="test-strategy" status="resolved" priority="p2" title="SessionMessages omits tool_use_result_json">
+        <pd-comment by="review">The model builder will call `indexdb.SessionMessages`, but that query (query_sessions.go:331–346) does not SELECT `tool_use_result_json`. `GetMessageByID` does load it. The prototype falls back to `tool_use_result_json` when tool result `content` is empty (e.g. AskUserQuestion envelopes). Either extend `SessionMessages` to populate `MessageRow.ToolUseResultJSON`, or document that drill-down uses `content` only and accept the fidelity gap for structured tool results.</pd-comment>
+        <pd-comment by="author">Verified — `SessionMessages` (query_sessions.go) omits `tool_use_result_json`; only `GetMessageByID` loads it. Chose to extend rather than accept the gap: added `auto-search/internal/indexdb/query_sessions.go` to the Solution file changes and Phase 1 (`files` + step 1) to SELECT + scan `tool_use_result_json` into `MessageRow.ToolUseResultJSON`, used as the tool-output fallback when a result row's `content` is empty. Noted in the Approach.</pd-comment>
+        <pd-comment by="review">fidelity gap fine for now, we can fix in future</pd-comment>
+        <pd-comment by="author">Reverted the query change per your call. The builder uses the `tool_result` row's `content` only (which is populated for the common cases — Bash output, file results). Structured-only envelopes (e.g. AskUserQuestion) whose payload lives solely in `tool_use_result_json` will show empty output on drill-down; that's the accepted, documented gap, deferred to a future increment. Removed `query_sessions.go` from the Solution file changes and Phase 1, and added the gap to Known gaps & risks.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="coverage-map" title="Coverage map">
+        <pd-mermaid caption="Test layers">
+flowchart TD
+  U1[Unit: model builder<br/>correlation, pairing, counts, light-truncation] --> I[Integration: session export via runCLI]
+  U2[Unit: renderer<br/>self-contained, script-safe, structural markers] --> I
+  I --> E[Manual: headless screenshot of real session tree]
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance criteria">
+
+        <pd-ac id="AC-1" title="Exports a self-contained HTML file to the default path" phases="2,3" tests="auto-search/internal/sessionhtml/render_test.go,auto-search/internal/cli/session_export_test.go">
+          <md><script type="text/plain">
+**Given** an indexed session id
+**When** `auto search session export <id>` runs with no flags
+**Then** a single HTML file is written to `./docs/sessions/<id>.html` (creating
+the directory), it contains no external `<script src>`/`<link href>` references,
+and it opens and renders from `file://` with no network access.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="Sub-agents are nested and correctly correlated" phases="1,2,3" tests="auto-search/internal/sessionhtml/build_test.go,auto-search/internal/cli/session_export_test.go">
+          <md><script type="text/plain">
+**Given** a session whose coordinator dispatched N `Agent` sub-agents
+**When** the session is exported
+**Then** each sub-agent renders as a collapsible block nested inline at its
+dispatch point, linked to the correct child session by prompt-prefix match (in
+dispatch order), recursively for nested sub-agents; an unmatched dispatch
+renders with no child rather than erroring, and an orphan child does not crash
+the build.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="Structural detail is surfaced per event" phases="1,2" tests="auto-search/internal/sessionhtml/build_test.go,auto-search/internal/sessionhtml/render_test.go">
+          <md><script type="text/plain">
+**Given** an exported session
+**When** a reader scans the timeline
+**Then** each event shows a one-line structural summary — Bash rows show the
+command and a non-zero exit badge; file-tool rows show the path; skill rows show
+the skill name; `Agent` rows show the dispatch label + per-agent stats — and
+tool calls with `duration_ms ≥ 10s` or `interrupted`/`is_error` are badged.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Drill down / up and the structure-only view work" phases="2" tests="auto-search/internal/sessionhtml/render_test.go">
+          <md><script type="text/plain">
+**Given** an exported session open in a browser
+**When** the reader clicks a row / a sub-agent header / the toolbar controls
+**Then** a row expands to its full input/output; a sub-agent block collapses to
+fold its branch; "Expand all", "Collapse all", "Structure only" (bash + tools +
+dispatches only) and "Full" change the visible set; and the work-graph sidebar
+jumps to and expands a chosen agent.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="Thinking is embedded by default; --exclude-thinking and --light shrink output" phases="1,3" tests="auto-search/internal/sessionhtml/build_test.go,auto-search/internal/cli/session_export_test.go">
+          <md><script type="text/plain">
+**Given** a session containing thinking blocks
+**When** exported with no flags / with `--exclude-thinking` / with `--light`
+**Then** the default export embeds thinking; `--exclude-thinking` produces a
+strictly smaller file with no thinking content embedded; `--light` excludes
+thinking **and** uses truncated message content, producing a smaller file than
+the default.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Size is reported on stderr; large files warn; stdout stays clean" phases="3" tests="auto-search/internal/cli/session_export_test.go">
+          <md><script type="text/plain">
+**Given** a successful export
+**When** the command finishes
+**Then** the output path and file size are printed to **stderr**, stdout is
+empty, and when the file exceeds ~5MB a warning suggesting `--light` /
+`--exclude-thinking` is appended to stderr.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="Flags: --out override, overwrite, --format" phases="3" tests="auto-search/internal/cli/session_export_test.go">
+          <md><script type="text/plain">
+**Given** the command
+**When** `--out <path>` is passed / the target already exists / `--format json`
+is passed / an unknown `--format` is passed
+**Then** `--out` redirects the file (creating parent dirs); an existing file is
+overwritten silently; `--format json` fails fast with a clear "reserved — not
+yet implemented" error; an unknown format fails fast via the standard cobra
+error path. `--format html` is the default.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="Error paths exit non-zero with remediation" phases="3" tests="auto-search/internal/cli/session_export_test.go">
+          <md><script type="text/plain">
+**Given** a missing index or an unknown session id
+**When** `session export` runs
+**Then** it exits non-zero, writes nothing to stdout, and prints a remediation
+hint to stderr (no index → "run: auto search index"; unknown id → "session not
+found …").
+          </script></md>
+        </pd-ac>
+
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known gaps & risks">
+        <md><script type="text/plain">
+- **Default content fidelity is resolved** (decision `d-content-fidelity`):
+  full untruncated content by default; `--light` switches to the index's
+  truncated bodies. The mitigation for oversized files is the printed size +
+  `--light` hint, not a hard cap.
+- **Structured tool envelopes are not embedded** — `SessionMessages` doesn't
+  load `tool_use_result_json`, so tools whose output lives only there (e.g.
+  AskUserQuestion) show empty drill-down output. Accepted/deferred per review;
+  fix later by extending the query or reading the source JSONL.
+- **Correlation is heuristic** (prompt-prefix), not an id join. Tested against
+  the matched-and-ordered case; a pathological session with identical-prompt
+  dispatches could mis-order. Acceptable until ETL records the spawned id.
+- **Visual correctness is not CI-gated** — the screenshot check is manual. We
+  assert structural markers in the HTML, not pixel layout.
+- **No browser test of JS interactions** in CI — toggle/collapse logic is
+  verified manually via the prototype; the renderer test only asserts the
+  emitted markup/JSON, not runtime behavior.
+- **Very large sessions** rely on the size warning, not a hard cap (per the
+  resolved requirements decision).
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="verification-gaps" status="resolved" priority="p2" title="Known gaps still lists content fidelity as open">
+        <pd-comment by="review">The first bullet says "Default content fidelity is an open call", but decision `d-content-fidelity` is already accepted (full untruncated default; `--light` truncated). This gap is stale — remove or rewrite to reflect the resolved decision (e.g. note the size-warning mitigation instead).</pd-comment>
+        <pd-comment by="author">Rewrote the bullet to state the decision is resolved (`d-content-fidelity`) and that the oversized-file mitigation is the printed size + `--light` hint, not a hard cap.</pd-comment>
+        <pd-comment by="review">from now on - full session by default, export logs a line on how big the file is, and recommends flags to use to cut it down.</pd-comment>
+        <pd-comment by="author">That's exactly the behavior captured: full session by default; on completion the command logs the file size to stderr and, when oversized, recommends `--light` / `--exclude-thinking` (Command shape + AC-6).</pd-comment>
+      </pd-thread>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Add a new `auto search session export <id>` command backed by a small,
+self-contained `internal/sessionhtml` package with a clean split:
+
+- **Model builder** (`build.go`) — given the index db + a root session id,
+  recursively builds a `Node` work-graph (one per session) of ordered
+  `Event`s. It walks `SessionMessages`, pairs each `tool_use` with its
+  `tool_result` by `ToolUseID`, classifies each event (user / assistant /
+  thinking / tool / agent-dispatch), and for every `Agent` dispatch resolves
+  the child session — enumerate children via `ListSessions{ParentSessionID}`,
+  then `GetSessionByID` each to read the **full untruncated** `FirstUserIntent`
+  (not the 200-char `SessionListRow` preview), matched by prefix to the dispatch
+  `prompt`, in order — and recurses.
+  It derives per-node counts and a human title (the first non-`/clear`
+  slash-command). This is a direct port of the proven `prototype-build_doc.py`.
+- **Renderer** (`render.go` + embedded `template.html`) — marshals the `Node`
+  tree to JSON, **script-safe-escapes** it (`</` → `<\/`, U+2028/U+2029), and
+  injects it into a single `//go:embed`-ed viewer shell (HTML + inline CSS +
+  vanilla JS, no CDN). Output is one self-contained file. The template is the
+  prototype's `template.html`, with thinking hidden-by-default in the view.
+- **CLI** (`session.go`) — `newSessionExportCmd()` opens the index, builds the
+  model (honoring `--exclude-thinking` / `--light`), renders, writes to
+  `--out` (default `./docs/sessions/<id>.html`, creating dirs, overwriting),
+  and prints the path + byte size to **stderr** — with a `--light` hint when
+  the file exceeds ~5MB. stdout stays empty.
+
+Content fidelity: **default embeds full untruncated `content` / tool I/O**;
+`--light` switches to the index's `content_truncated` and drops thinking;
+`--exclude-thinking` drops thinking only. `--format html` is the default;
+`--format json` fails fast as "reserved — not yet implemented".
+
+Note: `SessionMessages` omits `tool_use_result_json` from its SELECT (only
+`GetMessageByID` loads it). For now the builder uses the `tool_result` row's
+`content` only — populated for the common cases (Bash, file, search results).
+Structured-only envelopes (e.g. AskUserQuestion) whose payload lives solely in
+`tool_use_result_json` show empty output on drill-down; this is an accepted,
+deferred fidelity gap (see Verification → Known gaps), not addressed in this task.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="approach" status="resolved" priority="p2" title="Child correlation should use full FirstUserIntent, not ListSessions preview">
+        <pd-comment by="review">The approach says children come from `ListSessions{ParentSessionID}` and are matched on `FirstUserIntent`, but `ListSessions` returns `SessionListRow`, which only exposes `first_user_intent_truncated` (200-char head cap per `IntentTruncateMaxChars`). `GetSessionByID` is the query that returns the full untruncated `first_user_intent` used in the prototype's prefix match. For long dispatch prompts (common on `/execute-task`), truncated previews can mis-correlate. Enumerate children via `ListSessions`, then `GetSessionByID` each child before matching — or document why truncated intent is sufficient.</pd-comment>
+        <pd-comment by="author">Correct. Updated the Approach to enumerate children via `ListSessions{ParentSessionID}`, then `GetSessionByID` each to read the full untruncated `FirstUserIntent` (explicitly not the 200-char `SessionListRow` preview) before prefix-matching. The context.md "Patterns" note already specified `GetSessionByID` per child; the Approach now matches it.</pd-comment>
+        <pd-comment by="review">do the best with what you have</pd-comment>
+        <pd-comment by="author">Will do — keeping the full-`FirstUserIntent` prefix-match + dispatch-order fallback (the best available signal short of an id join), tolerating unmatched dispatches and orphan children.</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="approach" status="resolved" priority="p2" title="Prototype truncates at 4k; port must diverge for full-content default">
+        <pd-comment by="review">`artifacts/prototype-build_doc.py` sets `TRUNC = 4000` and calls `clip()` on every message body. Decision `d-content-fidelity` chooses full untruncated content by default. Phase 1 says "port prototype-build_doc.py" — call out explicitly that the Go builder must **not** copy the prototype's per-field caps unless `opts.Light` is set, or the default export will silently contradict the decision.</pd-comment>
+        <pd-comment by="author">Called out explicitly in Phase 1 step 2: select full `Content` by default, `ContentTruncated` only under `opts.Light`; do NOT copy the prototype's unconditional 4k `clip()`. Left room for a single high hard-ceiling (~256k/field) purely as an OOM guard, to be documented if added.</pd-comment>
+        <pd-comment by="review">do what you think best</pd-comment>
+        <pd-comment by="author">Going with: no per-field cap on the default path (full content), `--light` uses `content_truncated`, and a single high OOM-guard ceiling only if a pathological field shows up in testing — documented if added.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="api-shape" title="Package shape">
+        <pd-api kind="package" name="internal/sessionhtml" lang="go" path="auto-search/internal/sessionhtml">
+          <pd-member kind="func" sig="BuildModel(db *sql.DB, rootID string, opts Options) (*Node, error)">Recursively build the work-graph for a session and its sub-agents.</pd-member>
+          <pd-member kind="func" sig="Render(root *Node) ([]byte, error)">Marshal the model, script-safe-escape it, inject into the embedded template.</pd-member>
+          <pd-member kind="type" sig="Options{ IncludeThinking bool; Light bool }">Build-time knobs derived from the CLI flags.</pd-member>
+          <pd-member kind="type" sig="Node{ ID, Title, SubagentName, DispatchLabel string; IsSubagent bool; DurationMs, TotalTokens int64; MsgCount, Depth int; Counts; Events []Event }">One session in the tree.</pd-member>
+          <pd-member kind="type" sig="Event{ Kind, Summary string; Idx int; ... Child *Node }">One timeline entry; `Kind` ∈ user|assistant|thinking|tool|agent. Agent events carry a `Child` node.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File changes">
+        <pd-files>
+          <pd-file path="auto-search/internal/sessionhtml/model.go" change="add">Node / Event / Options / Counts structs for the work-graph model.</pd-file>
+          <pd-file path="auto-search/internal/sessionhtml/build.go" change="add">BuildModel: recursive walk, tool-result pairing, event classification, sub-agent correlation, counts, title, content selection (full vs --light).</pd-file>
+          <pd-file path="auto-search/internal/sessionhtml/render.go" change="add">Render: JSON marshal + script-safe escape + inject into embedded template.</pd-file>
+          <pd-file path="auto-search/internal/sessionhtml/template.html" change="add">Self-contained viewer shell (HTML + inline CSS + vanilla JS), ported from the prototype; thinking hidden by default.</pd-file>
+          <pd-file path="auto-search/internal/sessionhtml/assets.go" change="add">//go:embed template.html into the binary.</pd-file>
+          <pd-file path="auto-search/internal/sessionhtml/build_test.go" change="add">Unit tests: correlation, pairing, counts, --light truncation, title.</pd-file>
+          <pd-file path="auto-search/internal/sessionhtml/render_test.go" change="add">Unit tests: self-contained (no external refs), script-safe JSON, structural markers.</pd-file>
+          <pd-file path="auto-search/internal/cli/session.go" change="edit">Add newSessionExportCmd() (+ flags --format/--out/--exclude-thinking/--light/--index) and register it in newSessionCmd().</pd-file>
+          <pd-file path="auto-search/internal/cli/session_export_test.go" change="add">Integration test via runCLI: file written to default path, size on stderr, flag + error behaviors.</pd-file>
+          <pd-file path="auto-search/internal/testutil/fixtures.go" change="edit">Enrich fixtures: add a Bash tool-call (+paired result with exit/duration) and an Agent dispatch in the parent whose prompt matches the existing subagent intent; fix any dependent count assertions.</pd-file>
+          <pd-file path="auto-search/internal/cli/quickstart.go" change="edit">Document `session export` in the quickstart happy-path.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-thread anchor="auto-search/internal/testutil/fixtures.go" status="resolved" priority="p2" title="Existing Bash fixture row will not render without paired tool_use">
+        <pd-comment by="review">`fixtures.go` already has `msg-005` (`role=tool`, `tool_name=Bash`), but the builder walks **assistant `tool_use` rows** and pairs results by `tool_use_id` (prototype skips standalone `role=tool` rows). `msg-005` has no `tool_use_id` and no matching assistant row, so it will not appear in the work-graph until the planned paired `tool_use` + `tool_result` rows are added. AC-3 integration assertions ("HTML contains … the bash command") depend on this fixture edit — worth flagging as required, not optional enrichment.</pd-comment>
+        <pd-comment by="author">Verified: `msg-005` is a standalone `role=tool` Bash row with no `tool_use_id`, so the builder won't render it. Marked the fixture edit **required (not optional)** in Phase 3 step 2 — add a paired assistant `tool_use` + `tool_result` sharing a `tool_use_id` (with `bash_exit_code`/`duration_ms`) plus an `Agent` dispatch matching `test-session-2`'s intent.</pd-comment>
+        <pd-comment by="review">just do what you can</pd-comment>
+        <pd-comment by="author">Acknowledged — the fixture enrichment is the plan; if the parquet regeneration proves fiddly the integration test will assert against whatever paired rows do land, best-effort.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="rejected-alternatives" title="Rejected alternatives">
+        <md><script type="text/plain">
+- **`html/template` auto-escaping** — rejected: we inject a JSON blob into a
+  `<script>`; contextual auto-escaping fights the JSON-in-script pattern. A
+  placeholder replace + explicit script-safe escaping is simpler and is what
+  the prototype proved out.
+- **Build the HTML by string concatenation in Go** — rejected: keep the viewer
+  an editable `//go:embed` asset; Go only produces the JSON model. Easier to
+  iterate on layout without recompiling logic.
+- **Reuse pd-components** — rejected (see decision *d-bespoke-viewer*): wrong
+  shape for a trace, adds a CDN dependency, breaks "opens offline".
+- **A mermaid graph of the call tree** — rejected: deep trees render as
+  unreadable hairballs; the nested collapsible timeline + sidebar outline reads
+  far better and scales.
+- **Exact-id sub-agent join** — deferred (see *d-subagent-correlation*): the
+  spawned session id isn't recorded on the dispatch result, so prompt-prefix +
+  order is the available signal today.
+- **Stream HTML to stdout by default** — rejected: the file is the deliverable;
+  a default `--out` path + stderr diagnostics matches file-writing ergonomics.
+  A `--out -` stdout mode can be added later without a breaking change.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="d-content-fidelity" title="Default to full untruncated content; --light is the truncated escape hatch" status="accepted" by="author"
+        summary="The default export embeds complete message and tool content; --light switches to the index's content_truncated and drops thinking.">
+        <md><script type="text/plain">
+**Context.** Two earlier signals pulled apart: an explicit pick of "embed
+truncated + CLI hint" for drill fidelity, then a stronger steer to "default to
+everything / a lot" with size handled by a warning.
+
+**Decision.** Default embeds full untruncated `content` and tool input/output.
+`--light` uses the index's `content_truncated` (~4k/msg) and excludes thinking;
+`--exclude-thinking` excludes thinking only. The command prints file size and
+warns past ~5MB.
+
+**Rationale.** The latest, most emphatic user guidance wins; completeness is the
+point of a "full-session escape hatch". A real 5-agent tree is ~1–1.5MB full —
+well under the warn threshold — so the default stays practical.
+
+**Consequences.** Larger default files; the size warning + `--light` are the
+mitigation. The CLI breadcrumb (`auto search message get`) still covers any
+content `--light` truncates.
+        </script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Build the pure `sessionhtml` model + renderer first, then wire the CLI command
+and its integration test, then refresh docs — porting the proven prototype.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution sequence">
+        <pd-mermaid caption="Phase dependency DAG">
+flowchart LR
+  P1[P1 Model + builder] --> P2[P2 Renderer + embed]
+  P1 --> P3[P3 CLI command + tests]
+  P2 --> P3
+  P3 --> P4[P4 Docs]
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="Model + builder" status="todo"
+          files="auto-search/internal/sessionhtml/model.go,auto-search/internal/sessionhtml/build.go,auto-search/internal/sessionhtml/build_test.go">
+          <md><script type="text/plain">
+Pure logic, no HTML. Port `prototype-build_doc.py`.
+
+1. `model.go` — define `Options{IncludeThinking, Light bool}`, `Counts`,
+   `Event{Kind, Idx, Summary, ... Child *Node}`, `Node{ID, Title, SubagentName,
+   DispatchLabel, IsSubagent, Workspace, GitRemote, Model, FirstMs, LastMs,
+   DurationMs, TotalTokens, MsgCount, Counts, Depth, Events}`. JSON tags match
+   the template's `window.__SESSION__` field names (id,title,intent,subagent_name,
+   dispatch_label,is_subagent,duration_ms,total_tokens,msg_count,counts,depth,events).
+   **Verify:** `go build ./...`.
+2. `build.go` — `BuildModel(db, rootID, opts)`:
+   - load `GetSessionByID` + `SessionMessages(db,id,opts.IncludeThinking)`;
+   - build `map[ToolUseID]MessageRow` of `role=tool` results;
+   - enumerate children once via `ListSessions{ParentSessionID:id}`; for each
+     `Agent` dispatch, claim the child whose `FirstUserIntent` prefix-matches the
+     dispatch `prompt`, else next-unclaimed-in-order; recurse with `depth+1` and a
+     `seen` set to guard cycles;
+   - classify events; select content — **full `Content` by default**,
+     `ContentTruncated` only when `opts.Light`. Do **not** copy the prototype's
+     unconditional 4k `clip()`; the default path embeds full content. (A single
+     high hard-ceiling, e.g. 256k/field, is acceptable purely as an OOM guard —
+     document it if added.) Derive counts and the `/command`-based title (skip
+     `clear`/`compact`).
+   - Tolerate unmatched dispatch (Child=nil) and orphan children (no crash).
+   **Verify:** `go build ./...`.
+3. `build_test.go` — table tests on in-memory rows (or a tiny temp index):
+   correct nesting + correlation order, tool pairing (exit/duration on result),
+   thinking included/excluded, `--light` picks truncated content, counts, title.
+   **Verify:** `go test ./internal/sessionhtml/...`.
+4. **Commit** (`feat(044): sessionhtml model + builder`). Run `gofmt`, `go vet`,
+   `golangci-lint run`, `go test ./...`.
+          </script></md>
+        </pd-phase>
+
+        <pd-thread anchor="execution-sequence" status="resolved" priority="p2" title="Phase 1 per-field clip contradicts full-content default">
+          <pd-comment by="review">Phase 1 step 2 says "clip embedded blobs to a sane per-field cap" unconditionally. Decision `d-content-fidelity` sets the default to full untruncated content (no cap); only `--light` should switch to `content_truncated`. Clarify whether this clip applies only under `opts.Light`, is a hard safety ceiling (document the bytes/chars), or should be removed for the default path.</pd-comment>
+          <pd-comment by="author">Rewrote Phase 1 step 2: full `Content` by default, `ContentTruncated` only under `opts.Light`, and an explicit "do NOT copy the prototype's unconditional 4k clip" — the only allowance is a single high OOM-guard ceiling (~256k/field), documented if added.</pd-comment>
+        </pd-thread>
+
+        <pd-phase n="2" title="Renderer + embedded template" status="todo" depends-on="1"
+          files="auto-search/internal/sessionhtml/render.go,auto-search/internal/sessionhtml/template.html,auto-search/internal/sessionhtml/assets.go,auto-search/internal/sessionhtml/render_test.go">
+          <md><script type="text/plain">
+1. `template.html` — copy `artifacts/prototype-template.html`; keep the
+   `/*__DATA__*/` injection point; ensure thinking checkbox defaults unchecked.
+   No external `<script src>`/`<link href>`.
+2. `assets.go` — `//go:embed template.html` into a package var.
+3. `render.go` — `Render(root *Node) ([]byte, error)`: `json.Marshal(root)`,
+   then escape `</`→`<\/` and U+2028/U+2029, then replace `/*__DATA__*/` with
+   `window.__SESSION__ = <json>;`. Return bytes.
+4. `render_test.go` — render a small hand-built `Node`; assert: no external refs,
+   embedded JSON is parseable + script-safe (inject content containing
+   `</script>` and a U+2028 and confirm it doesn't break extraction), structural
+   markers present (work-graph entry, a bash command, a nested agent id).
+   **Verify:** `go build ./...` && `go test ./internal/sessionhtml/...`.
+5. **Commit** (`feat(044): sessionhtml renderer + embedded viewer`). Run gofmt,
+   vet, lint, `go test ./...`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="CLI command + integration test" status="todo" depends-on="1,2"
+          files="auto-search/internal/cli/session.go,auto-search/internal/cli/session_export_test.go,auto-search/internal/testutil/fixtures.go">
+          <md><script type="text/plain">
+1. `session.go` — `newSessionExportCmd()`: args `ExactArgs(1)`; flags
+   `--format` (default `html`), `--out`, `--exclude-thinking`, `--light`,
+   `--index` (default `config.DefaultIndexName`). Validate `--format`: `html`
+   ok; `json` → fail-fast `&ExitError{1, "format json is reserved — not yet
+   implemented"}`; else cobra error. Open index (reuse the `indexdb.Open` +
+   remediation-hint pattern). **Call `GetSessionByID` first** to detect an
+   unknown id (return a "session not found" remediation, matching `describe`)
+   so no empty file is written. `BuildModel` then `Render`. Resolve out path
+   (default `./docs/sessions/<id>.html`), `os.MkdirAll` parent, `os.WriteFile`
+   (overwrite). Print `wrote <path> (<size>)` to **stderr**; if size > 5MB
+   append a `--light` hint. stdout empty. Register in `newSessionCmd()`.
+   **Verify:** `go build ./...`.
+2. `fixtures.go` — **required** for AC-3 (the existing `msg-005` is a standalone
+   `role=tool` Bash row with no `tool_use_id`, so the builder won't render it).
+   Add to the parent (`test-session-1`) a paired assistant `Bash` `tool_use` +
+   `tool_result` (sharing a `tool_use_id`, with `bash_exit_code`/`duration_ms`)
+   and an `Agent` dispatch whose `tool_input.prompt` prefix-matches
+   `test-session-2`'s `FirstUserIntent`. Re-run the suite and fix any assertions
+   that counted messages. **Verify:** `go test ./internal/...`.
+3. `session_export_test.go` — via `setupIndexedFixtures`/`runCLI`: default export
+   writes `docs/sessions/test-session-1.html` (chdir to a temp dir), exit 0,
+   stdout empty, size line on stderr; HTML contains the subagent + the bash
+   command; `--exclude-thinking` and `--light` produce strictly smaller files;
+   `--out` redirects; second run overwrites; `--format json` exits non-zero with
+   the reserved message; unknown id exits non-zero with remediation.
+   **Verify:** `go test ./internal/cli/...`.
+4. **Commit** (`feat(044): auto search session export command`). gofmt, vet,
+   lint, `go test ./...`.
+          </script></md>
+        </pd-phase>
+
+        <pd-thread anchor="AC-8" status="resolved" priority="p3" title="Specify unknown-session detection in CLI phase">
+          <pd-comment by="review">Phase 3 does not say how to detect an unknown session id. `session describe` calls `GetSessionByID` first (returns `session not found: %s`). `session get` treats empty `SessionMessages` as not found. Recommend matching `describe`: `GetSessionByID` before building, so AC-8's remediation hint is reliable and an unknown id does not write an empty HTML file.</pd-comment>
+          <pd-comment by="author">Adopted. Phase 3 step 1 now calls `GetSessionByID` first to detect an unknown id (returning the "session not found" remediation, matching `describe`) before building, so no empty file is written.</pd-comment>
+        </pd-thread>
+
+        <pd-phase n="4" title="Docs" status="todo" depends-on="3"
+          files="auto-search/internal/cli/quickstart.go">
+          <md><script type="text/plain">
+1. `quickstart.go` — add a short `session export <id>` entry to the happy-path
+   (default path, `--light`/`--exclude-thinking`, size warning). **Verify:**
+   `auto search quickstart` renders it.
+2. Run `auto doc stale` / `auto doc fix` if the command surface is tracked.
+3. **Commit** (`docs(044): document session export`). gofmt, vet, lint,
+   `go test ./...`.
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success criteria">
+        <md><script type="text/plain">
+- **AC-1, AC-2, AC-3** verified by Phase 1 (builder) + Phase 2 (renderer) unit
+  tests and the Phase 3 integration test.
+- **AC-4** (drill/preset/sidebar interactions) verified manually via the
+  prototype screenshot check — renderer test asserts the markup/JS is present.
+- **AC-5, AC-6, AC-7, AC-8** verified by the Phase 3 integration test.
+- All phases: `go build ./...`, `go test ./...`, gofmt, `go vet`,
+  `golangci-lint run` clean before commit.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+  </pd-doc>
+</body>
+</html>
