@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>045: auto-ui-event-aggregation</title>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "045",
+    "name": "auto-ui-event-aggregation",
+    "epic": "003-multi-host-architecture",
+    "status": "pending",
+    "created": "2026-06-27"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="045: auto-ui-event-aggregation" status="pending" pr="pending" generated="2026-06-27">
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+This is **epic-003 Task 8: auto-ui event aggregation**. Task 7 (042, MERGED) made auto-ui a proxy over autowatch backends — it dials each backend, learns its `hostId` via `daemon.status`, and routes `doc.*`/`project.list` RPCs through `BackendManager`. But it only proxies **request/response** RPCs; it does **not** receive the backends' **pushed events**:
+
+- `BackendManager.connect()` (`auto-ui/internal/backend/manager.go:201`) builds each peer with `rpc.NewPeer(netConn)` and **no `WithOnNotify` handler** — inbound server-push notifications are dropped on the floor.
+- It never calls `bus.subscribe` on the backend, so autowatch's relay (`peerSink.Deliver → Peer.Notify`, `auto-watch/internal/rpcserver/subscribe.go`) never starts pushing.
+- auto-ui's Hub (`bus.NewHub()` in `auto-ui/internal/server/server.go:66`) today is fed only by the **local** `/api/rpc` ingest (`rpc_ingest.go`); remote-host events can't reach the browser.
+
+So a project on a remote backend shows static docs but **no live updates** — `doc.changed`/`agent.*`/`watch.task.*` events that fire on the remote host never appear in the dashboard. GR-F1's "live refresh works identically when proxied" is unmet (042 met it for doc *reads*; this task meets it for the *push* path). Advances GR-F3 (event fidelity through the relay hop) and GR-N5 (client-side filtering: events carry `Host`, the SPA filters).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+auto-ui merges every connected backend's event stream into its existing Hub, so the browser sees live updates from all hosts through the one WebSocket it already has.
+
+- **Subscribe each backend on connect.** When `BackendManager.connect()` establishes a peer (after the `daemon.status` handshake), it (a) registers an `rpc.WithOnNotify` handler and (b) calls `bus.subscribe` so autowatch starts relaying that host's events. This happens on every (re)connect, so 042's live-reconcile redial re-subscribes automatically after a blip.
+- **Forward relayed events into the Hub.** The `OnNotify` handler unmarshals the notification's `params` into a `bus.Event` (reusing the same shape `rpc_ingest.go` parses) and calls `hub.Broadcast(ev)`. From there the existing WS session sinks (`ws.go`) push it to browser clients verbatim — **with the `Host` field intact** (GR-F3). No SPA change in T8: the SPA today filters client-side **by project only** (`matchesDoc` in `docevents.js` checks project/path/worktree, no host dimension); **host-aware filtering and rendering are Task 9** (GR-N5). T8's job is to deliver events with `Host` intact onto the Hub; T8 tests must **not** rely on any host-based SPA filtering.
+- **Forward verbatim — do not re-derive.** Autowatch already runs `DeriveDocChanged` and relays both the raw and derived events (task 040). auto-ui must **not** re-run derivation on relayed events (that would double-emit `doc.changed`). Relayed events are broadcast as-is; local `/api/rpc` ingest keeps its own derivation for the local path.
+- **Dedup by event `id` (with deterministic derived ids).** Drop events whose `id` was seen recently (a small TTL/ring set) so an event reaching the Hub via both the local `/api/rpc` path **and** a relayed local backend (the T8→T10 window) is broadcast once. For this to also catch the **derived** `doc.changed` (which each path derives separately), `bus.DeriveDocChanged` is changed to mint a **deterministic** derived `id` (hash of `source.id` + type + path) instead of a random one — so both derives of the same source collide on `id` and dedup works for raw and derived alike. Dedup lives in the auto-ui consumer (an `eventGate` wrapping `hub.Broadcast`), not the shared `bus.Hub`.
+- **Wire the Hub into the BackendManager.** The Manager currently has no Hub reference (and in `serve.go` it's constructed before the Hub exists). Give the Manager access to the Hub (construction reorder or an event-sink callback) so `connect()` can forward into it. Exact mechanism is a /new-solution detail.
+- **Don't block the read loop or the hub.** The `OnNotify` callback runs on the peer's read goroutine; `hub.Broadcast` snapshots sinks and each WS sink is non-blocking (16-slot buffer, drop-on-full), so a slow browser can't wedge a backend's relay.
+        </script></md>
+      </pd-section>
+      <pd-thread anchor="goals" status="resolved" priority="p2" title="Current SPA does not filter by host">
+        <pd-comment by="review">I checked `auto-ui/web/static/store.js:23-32` and `auto-ui/web/static/docevents.js:20-26`: selection has no host dimension and `matchesDoc` compares only project, path, and worktree. The goals say the existing SPA filters by project and host while events carry Host; that is not true until Task 9. If T8 intentionally broadcasts all hosts before host-aware SPA state lands, the requirement should say remote Events are delivered to WS with Host intact but host-aware filtering and rendering remain Task 9, and tests should avoid relying on existing host filtering.</pd-comment>
+        <pd-comment by="author">Correct — the "SPA already filters by host" claim was wrong. Reworded the goal: T8 delivers events to WS with `Host` intact (GR-F3); the SPA filters by **project only** today (`matchesDoc`), and **host-aware filtering/rendering is Task 9**. Also added an explicit note that T8 tests must not rely on host-based SPA filtering, and the Known Gaps already scopes SPA per-host rendering to Task 9.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **SPA / frontend changes (Task 9).** The flat host-tagged project list, host badge in the switcher, and `(hostId, projectId)` carried through SPA hash/RPCs are Task 9. T8 is server-side only: get remote events onto the existing Hub. The SPA's existing client-side filtering consumes them unchanged.
+- **Hook retarget to autowatch-only (Task 10).** During T8, hooks may still fire to auto-ui's local `/api/rpc`; that path stays. T10 makes autowatch the sole ingest. (See the dedup Open Question for the transition-window overlap.)
+- **Changing the relay/`bus.subscribe` contract.** The autowatch producer side (task 040) is frozen; consume it as-is.
+- **New event types or envelope changes.** Consume the existing `bus.Event`.
+- **Per-backend event UI / connection-status indicator.** That's Task 9's per-backend health UI.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [x] **Re-derivation of relayed events.** **Verbatim** — no `DeriveDocChanged` re-run on relayed events (autowatch already relays raw + derived; re-deriving would double-emit `doc.changed`). Local `/api/rpc` keeps its own derivation.
+- [x] **Transition-window dedup (T8 before T10).** **Add Hub dedup-by-event-`id`** — drop recently-seen ids so an event arriving via both the local `/api/rpc` path and a relayed local backend is broadcast once. Robust during the T8→T10 window and any future double-path.
+- [x] **Hub↔Manager wiring.** Use an `onEvent func(bus.Event)` callback the Manager invokes for relayed events; `server.New` sets it to (deduped) `hub.Broadcast`. Looser coupling than reordering `serve.go` to inject the Hub, and easier to unit-test. (Confirm exact signature in /new-solution.)
+- [x] **bus.subscribe failure handling.** Keep the backend usable for proxied RPCs (events degraded), retry `bus.subscribe` on the next reconcile/reconnect tick, and surface a relay-degraded note in `doctor`/health — don't mark the whole backend unhealthy for a relay-only failure.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+**API-first (GR-N7), in-process (GR-N6).** Extend task 042's `fakeBackend` harness (`rpc.Peer` over `net.Pipe`): give the fake autowatch a `bus.Hub` and a `bus.subscribe` handler that registers a `peerSink` (exactly like the real autowatch). A test then broadcasts an event on the fake's hub → it relays over the pipe → auto-ui's `BackendManager` `OnNotify` fires → `onEvent` → auto-ui Hub → a test WS client receives it. No subprocesses, no ports, no SPA. ~90% of coverage is this path; a thin smoke check covers WS connect/render.
+
+Three layers:
+1. **Manager unit** — `connect()` calls `bus.subscribe` after the handshake; `OnNotify` parses `params`→`bus.Event` and invokes `onEvent`; re-subscribes on redial; a `bus.subscribe` failure leaves the peer usable for RPCs (relay-degraded).
+2. **Dedup unit** — the deduping broadcaster drops a second event with the same `id`, passes distinct ids, and expires old ids (TTL/ring), exercised by both the `/api/rpc` and relay entry points.
+3. **End-to-end (fake backend → browser WS)** — field fidelity (GR-F3, incl. `Host`), multi-backend merge, no re-derivation (one `doc.changed`, not two), dedup across the two paths, and non-blocking (a stalled WS client doesn't wedge a backend's relay).
+
+Conventions: `t.TempDir()`/`t.Setenv()` isolation; assert observables (a received frame, a counter, an error) on bounded waits — never poll-to-settle. The local `/api/rpc` path and its derivation are regression-checked unchanged (untouched until Task 10).
+        </script></md>
+
+        <pd-mermaid caption="Event-flow test topology (fake backend → browser)">
+flowchart LR
+  FB["fake autowatch<br/>(bus.Hub + bus.subscribe→peerSink)"] -->|"net.Pipe relay<br/>Notify(ev.Type, ev)"| MGR["auto-ui BackendManager<br/>OnNotify → onEvent"]
+  MGR --> DD["deduping broadcaster<br/>(by event id)"]
+  ING["/api/rpc ingest<br/>(local path)"] --> DD
+  DD --> HUB["auto-ui Hub.Broadcast"]
+  HUB --> WS["test WS client<br/>(assert received once, fields intact)"]
+</pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="Each backend is subscribed on connect (and re-subscribed on redial)" phases="2" tests="auto-ui/internal/backend/manager_test.go">
+          <md><script type="text/plain">
+**Given** a fake autowatch backend,
+**When** the BackendManager connects (after the `daemon.status` handshake), and again after the backend drops and the reconcile loop redials it,
+**Then** auto-ui calls `bus.subscribe` on the peer each time, and the fake backend records an active subscription — so events flow after a reconnect blip without operator action.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="A relayed event reaches a browser WS client with all fields intact" phases="3" tests="auto-ui/internal/server/event_flow_test.go">
+          <md><script type="text/plain">
+**Given** auto-ui subscribed to a backend and a browser WS client connected,
+**When** the backend broadcasts a `bus.Event` (e.g. `doc.changed`) carrying `host`, `project`, `id`, `data`,
+**Then** the WS client receives a JSON-RPC notification whose `params` is the event with **every envelope field intact including `Host`** (GR-F3, no field loss in the relay hop).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="Events from multiple backends merge into one stream" phases="3" tests="auto-ui/internal/server/event_flow_test.go">
+          <md><script type="text/plain">
+**Given** auto-ui subscribed to two fake backends with distinct `hostId`s,
+**When** each broadcasts an event,
+**Then** a single browser WS client receives both, each tagged with its originating `host` — the streams merge into the one Hub (GR-N5: the SPA filters client-side; T8 does no server-side filtering).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Dedup-by-id: an event arriving via two paths is broadcast once" phases="1,3" tests="auto-shared/bus/derive_test.go, auto-ui/internal/server/eventgate_test.go, auto-ui/internal/server/event_flow_test.go">
+          <md><script type="text/plain">
+**Given** the deduping broadcaster, and **deterministic derived ids** (`bus.DeriveDocChanged` mints the derived `id` as a hash of `source.id` + type + path, not random — so auto-ui's local derive and autowatch's derive of the same source event produce the **same** `id`),
+**When** the same event reaches the Hub via both the local `/api/rpc` ingest and a relayed local backend (the T8→T10 window) — for **both** the raw event and its derived `doc.changed`,
+**Then** the browser WS client receives each **exactly once** (id-dedup now collides the derived pair too); two genuinely-distinct events both pass; an `id` outside the dedup window is not suppressed.
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-4" status="resolved" priority="p1" title="ID dedup misses separately derived doc.changed events">
+          <pd-comment by="review">I checked `auto-shared/bus/derive.go:46,76-78` and `auto-watch/internal/rpcserver/ingest.go:84-90`: both auto-ui's local `/api/rpc` path and autowatch derive `doc.changed` by calling `bus.DeriveDocChanged`, whose `newDerived` calls `NewEvent` and assigns a fresh id. During the T8-to-T10 dual-post window, id-only dedup can drop the duplicate raw `agent.tool.post`, but the two derived `doc.changed` Events will have different ids and both reach the browser. AC-4 and AC-5 need either a deterministic derived id or semantic dedup strategy, or an explicit statement that duplicate derived invalidations are accepted in the transition window.</pd-comment>
+          <pd-comment by="author">Sharp catch — id-only dedup was insufficient for the derived pair. Chose the deterministic-derived-id fix: `newDerived` (`derive.go:76-78`) will set `ev.ID = hash(src.ID + type + path)` instead of `NewEvent`'s random id, so auto-ui's local derive and autowatch's derive of the same source produce an identical `id` → the existing id-dedup collapses the derived `doc.changed` pair just like the raw event. This is a pure-function-of-source property (arguably more correct than a random id for a derived event). Scope: a small change to shared `auto-shared/bus/derive.go` (autowatch produces these too — now consistent); added derive.go + its test to the file tree, decision D-4, updated AC-4/AC-5 + the dedup goal, and a bus-spec §2 note that derived ids are deterministic. AC-5 (no re-derive on the relay path) is unchanged and complementary.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-5" title="Relayed events are forwarded verbatim (no re-derivation)" phases="2,3" tests="auto-ui/internal/server/event_flow_test.go">
+          <md><script type="text/plain">
+**Given** a backend that relays a raw event **and** its already-derived `doc.changed` (as autowatch does, task 040),
+**When** auto-ui forwards them,
+**Then** auto-ui does **not** run `DeriveDocChanged` on relayed events — the browser sees exactly the events the backend sent (no duplicate `doc.changed`). The local `/api/rpc` path still derives for locally-ingested events.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="bus.subscribe failure degrades relay only, not RPC proxying" phases="2" tests="auto-ui/internal/backend/manager_test.go">
+          <md><script type="text/plain">
+**Given** a backend whose `bus.subscribe` call errors but whose `daemon.status` succeeded,
+**When** the Manager finishes connecting and on subsequent reconcile ticks,
+**Then** the backend stays usable for proxied `doc.*`/`project.list` RPCs (`Resolve` returns the peer), `relayDegraded` is set, and **`Reconcile` explicitly re-attempts `bus.subscribe` on connected-but-degraded conns** (not just on disconnect) until it succeeds and clears the flag. The `bus.subscribe` call is **deadline-bounded** (its own `context.WithTimeout`, like `daemon.status`) so a non-responsive backend cannot wedge `Reconcile`'s wait group. `Health()` exposes `RelayDegraded`.
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-6" status="resolved" priority="p1" title="Relay-degraded backend will not retry subscribe">
+          <pd-comment by="review">I checked `auto-ui/internal/backend/manager.go:158-162`: `Reconcile` queues a dial only when a conn is missing or `connected` is false. The plan says a subscribe failure leaves RPC proxying usable, sets `relayDegraded`, and is retried on the next reconcile tick; with `connected=true`, no reconnect or subscribe retry is attempted. Phase 2 also calls `peer.Call(ctx, "bus.subscribe", nil)` with the long-lived manager context; unlike `daemon.status` at `manager.go:220-222`, no timeout is specified, so a backend that never replies can wedge `Reconcile`'s wait group. Add an explicit bounded retry path for relay-degraded conns, for example retry subscribe on connected degraded conns or close and reconnect deliberately, and make the subscribe call deadline-bounded.</pd-comment>
+          <pd-comment by="author">Both valid. (1) Reconcile only redialed on disconnect, so a connected-but-degraded conn never retried — fixed: `Reconcile` now has an explicit branch that re-attempts `bus.subscribe` on conns with `connected==true && relayDegraded==true`, clearing the flag on success. (2) The `bus.subscribe` call is now deadline-bounded with its own `context.WithTimeout` (mirroring the `daemon.status` `statusTimeout` at manager.go:220), so a silent backend can't wedge the reconcile wait group. Updated AC-6, the Solution "Subscribe + receive" paragraph + D-3, and Plan Phase 2 (a `subscribeTimeout` + the degraded-retry branch). Added a test for the connected-degraded retry path.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-7" title="A slow browser client cannot wedge a backend's relay" phases="3" tests="auto-ui/internal/server/event_flow_test.go">
+          <md><script type="text/plain">
+**Given** a WS client that stops draining,
+**When** the backend keeps relaying events past the session's 16-slot buffer,
+**Then** that session is dropped (drop-on-full) without blocking the Hub, the `OnNotify` read-loop, or other clients — relayed delivery stays non-blocking end to end.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="No regressions; guard rails upheld" phases="1,2,3,4" tests="auto-ui/internal/server/eventgate_test.go, auto-ui/internal/backend/manager_test.go, auto-ui/internal/server/event_flow_test.go">
+          <md><script type="text/plain">
+**Given** all changes,
+**When** `make test`, `make vet`, and `go build ./...` run for auto-ui (and auto-shared),
+**Then** all tests pass, the local `/api/rpc` ingest + its derivation are unchanged (untouched until Task 10), the shared `bus.Hub` contract is unchanged (dedup lives in auto-ui, not the shared Hub), and the bus-spec §5 note documenting auto-ui's consumer-side dedup is added.
+          </script></md>
+        </pd-ac>
+
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps & Risks">
+        <md><script type="text/plain">
+- **Real cross-host networking not tested here.** The fake backend runs over `net.Pipe`; a real two-host relay (latency, backend reboot mid-stream, reconnect storms) is binary-tier/manual, not this in-process suite. Acceptable under GR-N8 (intra-VPC) — flagged.
+- **Dedup window sizing.** A TTL/ring of recently-seen ids has a finite window; an event re-delivered after the window expires would pass twice. Sized for the realistic same-event double-path latency (sub-second), not arbitrary replay. The overlap it guards is itself temporary (gone after Task 10).
+- **Extends the documented contract.** bus-spec §5 says "no deduplication is performed" at the bus; T8 adds it at the auto-ui consumer. This is intentional and documented (AC-8), but it means the bus and the auto-ui consumer now have different idempotency properties — a reader of the spec must note the layer.
+- **ctl.* depends on autowatch flags.** auto-ui only receives `ctl.*` when a backend runs `--ctl-events`; otherwise data-plane only. T8 forwards transparently either way, so this is a backend-config dependency, not an auto-ui gap.
+- **SPA filtering unverified here.** T8 gets events onto the Hub; that the SPA correctly filters multi-host events by project/host is Task 9's surface (browser-tier). T8 asserts the events arrive correctly, not that the UI renders them per-host.
+- **Ordering.** Per bus-spec §5, no global ordering across producers; merging N backends into one Hub interleaves their streams. Events are invalidations (clients re-fetch via RPC), so interleaving is acceptable by design.
+</script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Wire the backends' pushed events into auto-ui's existing Hub through a thin dedup gate. Three pieces, all stdlib, no new deps; the SPA and the shared `bus` package are untouched.
+
+**Subscribe + receive (BackendManager).** `connect()` (`manager.go:201`) builds the peer with `rpc.WithOnNotify(handler)` and, after the `daemon.status` handshake succeeds, calls `peer.Call(ctx, "bus.subscribe", nil)` with its **own `context.WithTimeout`** (`subscribeTimeout`, mirroring the `daemon.status` `statusTimeout`) so a silent backend can't wedge `Reconcile`'s wait group. The `OnNotify` handler unmarshals `req.Params` → `bus.Event` and invokes the Manager's `onEvent` callback. A `bus.subscribe` error does **not** fail the connection — the peer stays usable for proxied RPCs and the conn is marked `relayDegraded`. **`Reconcile` retries the relay explicitly:** beyond redialing disconnected conns, it re-attempts `bus.subscribe` (bounded) on conns that are `connected==true && relayDegraded==true`, clearing the flag on success. (A full disconnect+redial still re-subscribes via `connect()` as before.)
+
+**Dedup gate (auto-ui only).** A new `eventGate` in `auto-ui/internal/server` wraps `hub.Broadcast`: it drops events whose `id` was seen within a TTL window, then broadcasts. **Both** entry points feed through it — the relay (`onEvent`) and the local `/api/rpc` ingest — so an event arriving via both paths during the T8→T10 window reaches the browser once. The gate lives in auto-ui, **not** the shared `bus.Hub`, so autowatch's hub contract is unchanged.
+
+**Forward verbatim.** The relay path calls `gate.Broadcast(ev)` directly — it does **not** run `DeriveDocChanged` (autowatch already relayed the derived events). Only the local `/api/rpc` path keeps its existing derive step.
+
+**Deterministic derived ids (shared bus).** `bus.DeriveDocChanged` → `newDerived` (`derive.go:76-78`) currently calls `NewEvent`, minting a random `id`. Change it to set `ev.ID = deterministicID(src.ID, typ, path)` (e.g. first-16-hex of `sha256(src.ID + ":" + typ + ":" + rel)`). A derived event is a pure function of its source, so a stable id is principled — and it makes auto-ui's local derive and autowatch's derive produce identical ids, so id-dedup collapses the derived `doc.changed` pair. autowatch produces these too; both sides become consistent.
+
+**Wiring.** `server.New` already holds the Hub; it creates the `eventGate`, points `/api/rpc` ingest at `gate.Broadcast`, and — when a `BackendManager` was supplied — calls `mgr.SetEventSink(gate.Broadcast)`. Since `serve.go` constructs the Manager before `server.New`, the sink is set just after `mgr.Run` starts; the `onEvent` field is read lazily per-notification and nil-guarded (a relayed event before the sink is set is dropped — harmless, events are lossy invalidations and the client re-fetches).
+
+**Health/doctor.** `Manager.Health()` gains a `RelayDegraded` flag per backend — the source of truth for the **running server** (used by tests and any future health endpoint). `auto ui doctor` runs offline (no live Manager — it does one-shot `verifyBackend` probes), so its new `relay` check is a **one-shot active probe**: dial + `daemon.status` + a bounded `bus.subscribe` attempt, reporting subscribed/degraded. (doctor does not read the live `Manager.Health()`; they share the assessment, not the instance.)
+
+**Docs.** `docs/auto-bus-spec.md` §5 gets a one-line note: the bus performs no dedup, but the auto-ui consumer dedups by `id`.
+        </script></md>
+
+        <pd-api kind="type" name="eventGate" lang="go" path="auto-ui/internal/server/eventgate.go">
+          <pd-member kind="func" sig="newEventGate(hub *bus.Hub, ttl time.Duration) *eventGate">Consumer-side dedup in front of the Hub; ttl bounds the recently-seen-id window.</pd-member>
+          <pd-member kind="method" sig="(g *eventGate) Broadcast(ev bus.Event)">If ev.ID seen within ttl → drop; else record + hub.Broadcast(ev). Concurrency-safe (mutex); prunes expired ids on insert, capped to bound memory.</pd-member>
+        </pd-api>
+
+        <pd-api kind="type" name="BackendManager (additions)" lang="go" path="auto-ui/internal/backend/manager.go">
+          <pd-member kind="method" sig="(m *Manager) SetEventSink(fn func(bus.Event))">Stores the relay callback in an `atomic.Value` (or behind a dedicated RWMutex). `onNotify` loads + copies it and invokes the copy **outside `m.mu`**, so the setter write can't race the read-loop read and the callback never runs under the conns lock.</pd-member>
+          <pd-member kind="behavior" sig="connect(): rpc.NewPeer(conn, rpc.WithOnNotify(m.onNotify))">onNotify parses req.Params→bus.Event and calls the sink. After daemon.status, calls bus.subscribe (failure → relayDegraded, retried).</pd-member>
+          <pd-member kind="field" sig="conn.relayDegraded bool + BackendHealth.RelayDegraded bool">Surfaced via Health() for doctor.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-ui/internal/server/eventgate.go" change="add">Consumer-side dedup-by-id broadcaster wrapping hub.Broadcast (TTL window, capped).</pd-file>
+          <pd-file path="auto-ui/internal/server/eventgate_test.go" change="add">Dedup unit: drops same id within ttl, passes distinct ids, expires old ids, concurrency-safe.</pd-file>
+          <pd-file path="auto-shared/bus/derive.go" change="edit">Make newDerived mint a deterministic id (hash of src.ID+type+path) instead of NewEvent's random id, so both derive sites collide on id.</pd-file>
+          <pd-file path="auto-shared/bus/derive_test.go" change="edit">Assert deterministic derived id: same source+path → same id; different path/type → different id.</pd-file>
+          <pd-file path="auto-ui/internal/backend/manager.go" change="edit">Add onEvent sink + SetEventSink; WithOnNotify handler (params→bus.Event→sink); bus.subscribe after handshake; relayDegraded state in conn + Health.</pd-file>
+          <pd-file path="auto-ui/internal/backend/manager_test.go" change="edit">Extend fakeBackend with a bus.Hub + bus.subscribe→peerSink; tests for subscribe-on-connect, re-subscribe on redial, onEvent fired, subscribe-failure-degraded.</pd-file>
+          <pd-file path="auto-ui/internal/server/server.go" change="edit">Create eventGate from hub; route /api/rpc through it; call mgr.SetEventSink(gate.Broadcast) when a BackendManager is set.</pd-file>
+          <pd-file path="auto-ui/internal/server/rpc_ingest.go" change="edit">Broadcast via the eventGate (so local-path events also dedup); keep DeriveDocChanged for the local path.</pd-file>
+          <pd-file path="auto-ui/internal/server/event_flow_test.go" change="add">End-to-end: fake backend relays → Manager → gate → Hub → test WS client (fidelity incl. Host, multi-backend merge, dedup across paths, no re-derive, slow-client drop).</pd-file>
+          <pd-file path="auto-ui/internal/cli/doctor.go" change="edit">Extend verifyBackend with a one-shot relay probe (bounded bus.subscribe) → subscribed/degraded check. (doctor is offline; RelayDegraded on Manager.Health() is the running-server source, not read here.)</pd-file>
+          <pd-thread anchor="auto-ui/internal/cli/doctor.go" status="resolved" priority="p2" title="Doctor cannot read Manager.Health today">
+            <pd-comment by="review">I checked `auto-ui/internal/cli/doctor.go:143-162`: doctor performs one-shot `verifyBackend` probes and never constructs or connects to the live `BackendManager`, so a runtime `RelayDegraded` field on `Manager.Health()` is not visible to `auto ui doctor`. Either change Phase 4 to have doctor actively probe `bus.subscribe` during `verifyBackend`, add a real server health endpoint/source, or narrow AC-6 and AC-8 to `Health()` only.</pd-comment>
+            <pd-comment by="author">Right — doctor has no live Manager. Chose the active-probe option: Phase 4 extends `verifyBackend` (doctor.go:143-162) with a **one-shot bounded `bus.subscribe` probe** that reports subscribed/degraded, rather than reading `Manager.Health()`. `RelayDegraded` on `Manager.Health()` remains the running-server source of truth (asserted in AC-6's Manager test); doctor and the server share the assessment logic, not the instance. Updated the Solution Health/doctor paragraph, the doctor file-change, and Plan Phase 4 step 1.</pd-comment>
+          </pd-thread>
+          <pd-file path="docs/auto-bus-spec.md" change="edit">§2: note derived events carry a deterministic id (hash of source id+type+path), not random. §5: note auto-ui consumer-side dedup-by-id (the bus itself still performs none).</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Inject the Hub into NewManager (reorder serve.go).** Would require building the Hub outside `server.New` and threading it into both. Rejected for tighter coupling; the `SetEventSink` callback is looser and unit-testable. The construction-order race is handled by a nil-guard (a dropped first event is harmless).
+- **Dedup inside the shared `bus.Hub`.** Would change the documented bus contract ("no deduplication is performed") for *all* consumers including autowatch's hub. Rejected — dedup is an auto-ui consumer concern; keep it there.
+- **Re-derive `doc.changed` on relayed events.** autowatch already relays raw + derived (task 040); re-deriving double-emits. Rejected.
+- **Mark a backend unhealthy when `bus.subscribe` fails.** Loses working RPC proxying for a relay-only fault. Rejected — degrade the relay, keep RPCs, retry.
+- **No dedup (rely on Task 10).** Rejected per the resolved Open Question — a brief window of duplicate live events is user-visible; the gate is cheap.
+- **Server-side event filtering by project/host.** Rejected per GR-N5 — the SPA filters client-side; auto-ui broadcasts all.
+- **Accept duplicate derived `doc.changed` in the transition window.** Considered (it's an idempotent invalidation), but rejected — the user wants dedup to actually work for the common local-dogfood case; deterministic derived ids fix it cleanly.
+- **Semantic dedup of `doc.changed` by (type, project, path) in auto-ui.** Considered (auto-ui-scoped), but rejected — it could collapse genuinely-distinct rapid invalidations and adds a special-case path; the deterministic-id approach keeps dedup uniformly id-based.
+</script></md>
+      </pd-section>
+
+      <pd-decision id="D-1" title="onEvent callback (SetEventSink) over Hub injection" status="accepted" by="author" summary="Manager exposes SetEventSink; server.New wires it to gate.Broadcast. Looser coupling than reordering serve.go to inject the Hub; nil-guard covers the construction-order race.">
+        <md><script type="text/plain">
+**Rationale:** `serve.go` builds the Manager before the Hub exists (inside `server.New`). A callback the Manager reads lazily per-notification avoids a refactor and is trivially testable with a capturing func.
+**Alternatives:** reorder serve.go to create the Hub first and inject it (tighter coupling, bigger diff).
+**Consequences:** a relayed event arriving between `mgr.Run` start and `SetEventSink` is dropped (nil-guard) — harmless: events are lossy invalidations, the client re-fetches via RPC. **The sink must be synchronized:** stored in an `atomic.Value` (or behind a dedicated RWMutex), loaded+copied in `onNotify`, and invoked outside `m.mu` — verified under `go test -race`.
+</script></md>
+      </pd-decision>
+      <pd-thread anchor="D-1" status="resolved" priority="p1" title="SetEventSink needs synchronized access">
+        <pd-comment by="review">I checked the current `Manager` shape in `auto-ui/internal/backend/manager.go:68-74`: `m.mu` protects `conns`, and there is no callback field yet. D-1 says `server.New` sets the sink after `mgr.Run` starts and `onNotify` reads it lazily per notification. If this is implemented as a plain `onEvent func(bus.Event)` plus setter, the `SetEventSink` write can race the RPC read-loop read, and the planned `go test -race` coverage should catch it. Specify an `atomic.Value` or mutex-protected sink and copy the callback before invoking it, so the callback itself does not run under `m.mu`.</pd-comment>
+        <pd-comment by="author">Agreed. Specified it: the sink is stored in an `atomic.Value` (or a dedicated RWMutex — not `m.mu`); `onNotify` loads + copies the callback and invokes the copy **outside** `m.mu`, so neither the setter/read-loop write-read races nor does the callback run under the conns lock. Updated the `SetEventSink` API note and D-1's consequences; Plan Phase 2 builds it this way and the `go test -race` coverage there is the guard.</pd-comment>
+      </pd-thread>
+
+      <pd-decision id="D-2" title="Dedup at the auto-ui consumer, not the shared Hub" status="accepted" by="author" summary="A small eventGate in auto-ui dedups by id in front of hub.Broadcast; both /api/rpc and the relay feed through it. The shared bus.Hub and autowatch are unchanged.">
+        <md><script type="text/plain">
+**Rationale:** bus-spec §5 says the bus performs no dedup; changing `bus.Hub` would alter that contract for autowatch too. Dedup is an auto-ui consumer optimization to absorb the T8→T10 double-path overlap.
+**Alternatives:** dedup in shared Hub (changes contract); no dedup (user-visible duplicates).
+**Consequences:** a finite TTL window (sized for sub-second double-path latency); documented as a §5 extension. Removable once Task 10 makes the relay the sole path. Relies on D-4 (deterministic derived ids) so the dedup catches derived events too.
+</script></md>
+      </pd-decision>
+
+      <pd-decision id="D-4" title="Deterministic derived event ids (shared bus)" status="accepted" by="author" summary="bus.DeriveDocChanged mints the derived id as hash(source.id+type+path) instead of random, so independent derive sites collide on id and dedup catches the derived pair.">
+        <md><script type="text/plain">
+**Rationale:** id-only dedup (D-2) missed the separately-derived `doc.changed` (Codex P1) — auto-ui's local derive and autowatch's derive each minted a fresh random id. A derived event is a pure function of its source, so a deterministic id (hash of `src.id`+type+path) is principled and makes both derive sites produce the same id → dedup works for raw and derived uniformly.
+**Alternatives:** accept derived dupes (defeats the dedup goal for the local-dogfood case); semantic dedup of doc.changed in auto-ui (special-case, can over-collapse).
+**Consequences:** a small change to shared `auto-shared/bus/derive.go`; autowatch produces these too, so both become consistent. bus-spec §2 (id "randomly generated") gets a note that *derived* ids are deterministic. Existing autowatch derive tests must be re-checked for hardcoded random-id assumptions.
+</script></md>
+      </pd-decision>
+
+      <pd-decision id="D-3" title="bus.subscribe failure = relay-degraded, not unhealthy" status="accepted" by="author" summary="A subscribe error keeps the backend usable for proxied RPCs, flags relayDegraded, and retries on the next reconcile tick.">
+        <md><script type="text/plain">
+**Rationale:** RPC proxying and event relay are separable; a relay-only fault shouldn't blind the dashboard's doc/project reads.
+**Alternatives:** mark the whole backend unhealthy (loses working RPCs).
+**Consequences:** a per-conn `relayDegraded` flag surfaced via Health()/doctor; events for that host are missing until a retry succeeds (reads still work).
+</script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Four phases. The pure `eventGate` (P1) and the Manager's event subscription (P2) are independent; P3 wires them into `server.New` + adds the end-to-end test; P4 adds the doctor relay check + the bus-spec note. Each phase builds and tests green on its own (no atomic-cut-over like 042 — this is additive wiring).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-mermaid caption="Phase dependency DAG">
+flowchart LR
+  P1["P1 · deterministic ids + eventGate"]
+  P2["P2 · Manager subscribe + onEvent"]
+  P3["P3 · wire server + e2e test"]
+  P4["P4 · doctor relay check + bus-spec note"]
+  P1 --> P3
+  P2 --> P3
+  P2 --> P4
+</pd-mermaid>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="Deterministic derived ids + eventGate dedup" files="auto-shared/bus/derive.go,auto-shared/bus/derive_test.go,auto-ui/internal/server/eventgate.go,auto-ui/internal/server/eventgate_test.go" status="todo">
+          <md><script type="text/plain">
+1. **Deterministic derived id (shared):** in `auto-shared/bus/derive.go` `newDerived` (`:76-78`), after `NewEvent`, set `ev.ID = deterministicID(src.ID, typ, rel)` (first-16-hex of `sha256(src.ID+":"+typ+":"+rel)`). **Verify:** `go build ./...` in auto-shared; **`go test ./... ` in auto-watch still green** (re-check any test asserting a random/changing derived id — update to the deterministic value).
+2. Test (`derive_test.go`): same source+path → identical derived id; different path or type → different id; id is stable across calls. **Verify:** `go test ./bus/...`.
+3. Add `eventGate` (`eventgate.go`): `newEventGate(hub *bus.Hub, ttl time.Duration)`, `Broadcast(ev)` — mutex-guarded recently-seen-`id` set with a TTL window, pruned/capped on insert; drop if seen, else record + `hub.Broadcast(ev)`. **Verify:** `go build ./...` in auto-ui.
+4. Tests (`eventgate_test.go`): same id within ttl → dropped (hub sees one), distinct ids → both pass, id past ttl → not suppressed, concurrent Broadcast race-clean. **Verify:** `go test -race ./internal/server/ -run EventGate` green.
+5. **Commit** via /contextual-commit.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Manager: subscribe + forward events" files="auto-ui/internal/backend/manager.go,auto-ui/internal/backend/manager_test.go" status="todo">
+          <md><script type="text/plain">
+1. Add the event sink in an `atomic.Value` (or dedicated RWMutex — **not** `m.mu`) + `SetEventSink(fn)`; add `relayDegraded` to the `conn` struct and `RelayDegraded` to `BackendHealth`. **Verify:** build.
+2. In `connect()` (manager.go:201), construct the peer with `rpc.WithOnNotify(m.onNotify)`; `onNotify(req)` unmarshals `req.Params`→`bus.Event`, **loads+copies** the sink and invokes the copy **outside `m.mu`** (nil-guard if unset, per D-1). **Verify:** build.
+3. After the `daemon.status` handshake, call `bus.subscribe` with its own bounded `context.WithTimeout(connCtx, subscribeTimeout)` (mirror `statusTimeout` @220); on error set `c.relayDegraded=true` (conn stays usable for RPCs). **Verify:** build.
+4. In `Reconcile`, add a branch: for conns that are `connected && relayDegraded`, re-attempt the bounded `bus.subscribe` and clear the flag on success (don't redial). **Verify:** build.
+5. Extend `fakeBackend` (manager_test.go): give it a `bus.Hub` + a `bus.subscribe`→`peerSink` handler (mirror `subscribe.go:45-54`) + a broadcast helper. Tests: subscribe-on-connect, re-subscribe after redial, **subscribe-retry on connected-degraded conn** (clears flag), `onEvent` fires with the parsed event (capture func), `bus.subscribe`-failure → `relayDegraded` yet `Resolve` returns the peer, and a non-responsive `bus.subscribe` does **not** wedge `Reconcile` (bounded). **Verify:** `go test -race ./internal/backend/...` green (bounded waits, no poll-to-settle) — the race detector guards the sink synchronization (D-1).
+6. **Commit** via /contextual-commit.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Wire into server + end-to-end test" files="auto-ui/internal/server/server.go,auto-ui/internal/server/rpc_ingest.go,auto-ui/internal/server/event_flow_test.go" status="todo">
+          <md><script type="text/plain">
+Depends on P1 + P2.
+1. In `server.New` (after `hub := bus.NewHub()` @66): create `gate := newEventGate(hub, ttl)`; route the `/api/rpc` handler through `gate` instead of `hub` (pass `gate` into `handleRPC`); and when `o.mgr != nil`, call `o.mgr.SetEventSink(gate.Broadcast)`. **Verify:** build.
+2. Edit `rpc_ingest.go`: `handleRPC` broadcasts via the `eventGate` (both the raw and the `DeriveDocChanged`-derived events go through dedup); keep the local derive step unchanged. **Verify:** build.
+3. Add `event_flow_test.go`: stand up `server.New` with a `BackendManager` pointed at a fake backend (P2 harness); connect a test WS client (`dialWS`/`readUntil`); assert — (a) a backend-broadcast event reaches the client with all fields incl. `Host` (AC-2); (b) two backends' events both arrive tagged by host (AC-3); (c) the same `id` via the local `/api/rpc` and the relay arrives once (AC-4); (d) a relayed pre-derived `doc.changed` is not re-derived — no duplicate (AC-5); (e) a stalled WS client is dropped without wedging the relay (AC-7). **Verify:** `go test -race ./internal/server/...` green.
+4. **Commit** via /contextual-commit.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="doctor relay check + bus-spec note" files="auto-ui/internal/cli/doctor.go,docs/auto-bus-spec.md" status="todo">
+          <md><script type="text/plain">
+Depends on P2.
+1. Extend `verifyBackend` (doctor.go:143-162) with a **one-shot relay probe**: after the existing connectivity/`daemon.status` probe, attempt a bounded `bus.subscribe` and emit a `relay` `doctorCheck` (pass = subscribed, warn/fail = degraded + remediation hint). doctor is offline — it does **not** read the live `Manager.Health()`; it shares the assessment, not the instance. **Verify:** `go test ./internal/cli/...` (doctor test, reachable + unreachable backend) green.
+2. Edit `docs/auto-bus-spec.md`: §2 — note derived events carry a **deterministic** id (hash of source id+type+path), not random; §5 — note the bus performs no dedup but the auto-ui consumer dedups relayed/ingested events by `id`. **Verify:** spec reads consistently with D-2/D-4.
+3. Run full `make test` + `make vet` for auto-ui (and auto-shared + auto-watch, since derive.go is shared). **Verify:** all exit 0. **Commit** via /contextual-commit.
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **P1** → AC-4 (deterministic derived id + dedup unit).
+- **P2** → AC-1 (subscribe/re-subscribe), AC-6 (subscribe-failure degraded).
+- **P3** → AC-2 (fidelity), AC-3 (merge), AC-4 (dedup across paths, e2e), AC-5 (no re-derive), AC-7 (slow-client drop).
+- **P4** → AC-8 (bus-spec note + doctor); guard rails verified at every phase's build/test.
+- **AC-8** (no regressions) checked at the end of each phase and finally by P4's full `make test`/`vet`.
+- **Done** when AC-1–AC-8 pass and `make test` is green; SPA per-host rendering remains Task 9, hook retarget remains Task 10 (noted, not regressions).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
