@@ -753,7 +753,7 @@ subagent, builds green, and ends with tests + `go build ./...` + a commit.
       <pd-section id="phases" title="Phases">
         <pd-stepper>
 
-          <pd-phase n="1" title="Render core — restricted template + customize + hashing" files="auto-skill/internal/render/template.go,auto-skill/internal/render/customize.go,auto-skill/internal/render/hash.go,auto-skill/internal/render/render.go,auto-skill/internal/render/template_test.go,auto-skill/internal/render/customize_test.go,auto-skill/internal/render/hash_test.go" status="todo">
+          <pd-phase n="1" title="Render core — restricted template + customize + hashing" files="auto-skill/internal/render/template.go,auto-skill/internal/render/customize.go,auto-skill/internal/render/hash.go,auto-skill/internal/render/render.go,auto-skill/internal/render/template_test.go,auto-skill/internal/render/customize_test.go,auto-skill/internal/render/hash_test.go" status="done">
             <md><script type="text/plain">
 Create the pure `internal/render` leaf — the code-execution-free templating model and
 the deterministic full-tree digest. No cache/network.
