@@ -1,7 +1,7 @@
 .PHONY: build clean test vet fmt lint dist vulncheck install \
        install-hooks install-tools gen-stats check fmt-check stale-refs test-install test-curl-install \
        fixtures verify-fixtures ui-serve \
-       fmt-staged vulncheck-if-deps-changed autodoc-fix skills-sync beads-sync pre-commit
+       fmt-staged lint-staged vulncheck-if-deps-changed autodoc-fix skills-sync beads-sync pre-commit
 
 BUILD_DIR := bin
 
@@ -76,6 +76,30 @@ lint:
 		(cd "$$d" && golangci-lint run ./...) || exit 1; \
 	done
 	@echo "All projects passed lint"
+
+# Lint only the packages that contain staged .go files. Pre-existing lint debt
+# in untouched code (or a sibling worktree sharing the golangci cache) must not
+# block a commit; CI still runs the full `make lint`. Staged files are grouped
+# by sub-project, then by package directory within each project.
+lint-staged:
+	@staged=$$(git diff --cached --name-only --diff-filter=ACM -- '*.go' || true); \
+	if [ -z "$$staged" ]; then \
+		echo "pre-commit: no staged Go files — lint skipped"; \
+	else \
+		fail=0; \
+		for proj in $$(echo "$$staged" | cut -d/ -f1 | sort -u); do \
+			[ -f "$$proj/go.mod" ] || continue; \
+			pkgs=$$(echo "$$staged" | grep "^$$proj/" | sed "s|^$$proj/||" \
+				| xargs -n1 dirname | sort -u | sed 's|^\.$$|.|; t; s|^|./|'); \
+			[ -n "$$pkgs" ] || continue; \
+			echo "=== lint-staged $$proj: $$pkgs ==="; \
+			(cd "$$proj" && golangci-lint run $$pkgs) || fail=1; \
+		done; \
+		if [ $$fail -ne 0 ]; then \
+			echo "pre-commit: lint failed on staged packages"; exit 1; \
+		fi; \
+		echo "pre-commit: staged packages passed lint"; \
+	fi
 
 vet:
 	@for d in $(PROJECTS); do \
@@ -261,7 +285,9 @@ beads-sync:
 	fi
 
 # Pre-commit pipeline. Excludes `build` + `test` (CI runs those). Format first
-# so subsequent checks see formatted code, then run all check-style gates,
-# then repo housekeeping.
-pre-commit: fmt-staged check verify-fixtures vulncheck-if-deps-changed autodoc-fix skills-sync beads-sync
+# so subsequent checks see formatted code, then run the check-style gates with
+# lint scoped to staged packages (full `make lint` runs in CI), then repo
+# housekeeping. We inline check's gates rather than depend on `check` so we can
+# substitute lint-staged for the full lint without affecting CI's `make check`.
+pre-commit: fmt-staged fmt-check vet lint-staged stale-refs verify-fixtures vulncheck-if-deps-changed autodoc-fix skills-sync beads-sync
 	@echo "pre-commit: all checks passed"
