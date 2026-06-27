@@ -324,28 +324,28 @@ Delivery follows the same at-most-once contract as all bus events (section 5).
 
 **Constructor:** `NewCtlLog(level, op, msg, fields)` maps the level to the appropriate `ctl.log.*` type constant and returns a validated `Event`. Unknown levels return an error.
 
-### 6.4 `watch.*` -- auto-watch daemon events (future adopter)
+### 6.4 `watch.*` -- auto-watch daemon events
 
-The auto-watch daemon is the named second adopter of the bus standard. Currently, auto-watch stores its events in SQLite via `store.EventInput`. This section maps those events onto the bus envelope as a paper exercise to validate the envelope design. **Implementation is out of scope for v1.**
+The auto-watch daemon is the named second adopter of the bus standard. The `watch.task.started`, `watch.task.completed`, and `watch.task.failed` types are **live producers**: they are emitted by the daemon's task RPCs over the bus, in addition to being stored in SQLite via `store.EventInput`. The remaining types are paper mappings — defined here to validate the envelope design, with implementation deferred.
 
-| Bus type | Current `event_type` | Description |
-|----------|---------------------|-------------|
-| `watch.task.started` | `task_started` | A watched task has begun execution |
-| `watch.task.completed` | `task_completed` | A watched task completed successfully |
-| `watch.task.failed` | `task_failed` | A watched task failed (exit code != 0, timeout, worker not started) |
-| `watch.task.reserved` | `task_reserved` | A run slot has been reserved for a task |
-| `watch.task.skipped` | `task_skipped_dedup` | A task was skipped due to deduplication |
-| `watch.trigger.evaluated` | `trigger_evaluated` | A trigger was evaluated (fired or not) |
-| `watch.worktree.created` | `worktree_created` | A worktree was created for a task run |
-| `watch.worktree.removed` | `worktree_removed` | A worktree was cleaned up after a run |
-| `watch.system.warning` | `system_warning` | Non-fatal system-level warning |
-| `watch.config.warning` | `config_warning` | Configuration-level warning |
+| Bus type | Current `event_type` | Status | Description |
+|----------|---------------------|--------|-------------|
+| `watch.task.started` | `task_started` | Live | A watched task has begun execution |
+| `watch.task.completed` | `task_completed` | Live | A watched task completed successfully |
+| `watch.task.failed` | `task_failed` | Live | A watched task failed (exit code != 0, timeout, worker not started) |
+| `watch.task.reserved` | `task_reserved` | Paper | A run slot has been reserved for a task |
+| `watch.task.skipped` | `task_skipped_dedup` | Paper | A task was skipped due to deduplication |
+| `watch.trigger.evaluated` | `trigger_evaluated` | Paper | A trigger was evaluated (fired or not) |
+| `watch.worktree.created` | `worktree_created` | Paper | A worktree was created for a task run |
+| `watch.worktree.removed` | `worktree_removed` | Paper | A worktree was cleaned up after a run |
+| `watch.system.warning` | `system_warning` | Paper | Non-fatal system-level warning |
+| `watch.config.warning` | `config_warning` | Paper | Configuration-level warning |
 
-See section 6.5 for the detailed `watch.task.*` envelope mapping.
+The live types are always-on data-plane events (not gated behind `--ctl-events`). See section 6.5 for the detailed `watch.task.*` envelope mapping.
 
-### 6.5 Paper mapping: `watch.task.*` onto the bus envelope
+### 6.5 Envelope mapping: `watch.task.*` onto the bus envelope
 
-This mapping demonstrates that the bus envelope accommodates auto-watch's domain without modification.
+This mapping documents the live `watch.task.*` envelope produced by the daemon, and demonstrates that the bus envelope accommodates auto-watch's domain without modification.
 
 #### `watch.task.started`
 
@@ -424,7 +424,7 @@ Identical structure to `watch.task.failed` but with `type: "watch.task.completed
 
 #### Design validation
 
-The paper mapping confirms:
+The envelope mapping confirms:
 1. **Provenance fits naturally.** The run's `ProjectID`, `ProjectPath`, `WorktreePath`, and `Branch` map directly to the envelope's `project`, `worktree`, and `branch`. `remote` is resolved from the project registration.
 2. **Domain data stays in `data`.** `TaskID`, `RunID`, `TriggerID`, `ExitCode`, `Message`, and `ResourceKey` are domain-specific and belong in the opaque data payload, not the envelope.
 3. **No envelope changes needed.** The existing envelope fields accommodate auto-watch's requirements without adding new top-level attributes.

@@ -58,7 +58,7 @@ func setupWithReg(t *testing.T, reg func() config.ProjectsConfig) (*conformance.
 	t.Helper()
 
 	hub := bus.NewHub()
-	h := New("test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, reg)
+	h := New(nil, "test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, reg)
 
 	sConn, cConn := net.Pipe()
 	serverPeer := rpc.NewPeer(sConn)

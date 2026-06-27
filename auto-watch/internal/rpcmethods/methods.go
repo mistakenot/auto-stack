@@ -14,6 +14,7 @@ import (
 	"github.com/mistakenot/auto-shared/bus"
 	"github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-shared/rpc"
+	"github.com/mistakenot/auto-watch/internal/daemon"
 )
 
 // StatusResult is the response payload for the "daemon.status" method.
@@ -34,14 +35,16 @@ type Handlers struct {
 	hub       *bus.Hub
 	ctlEvents bool
 	reg       func() config.ProjectsConfig
+	svc       *daemon.Service
 	counts    sync.Map // method → *atomic.Int64
 }
 
 // New creates a Handlers instance. Pass ctlEvents=true to emit ctl.log.info
 // events on each dispatch; false suppresses them. The reg provider is called
 // per request to get a fresh project-registry snapshot.
-func New(hostID, version string, startedAt time.Time, hub *bus.Hub, ctlEvents bool, reg func() config.ProjectsConfig) *Handlers {
+func New(svc *daemon.Service, hostID, version string, startedAt time.Time, hub *bus.Hub, ctlEvents bool, reg func() config.ProjectsConfig) *Handlers {
 	return &Handlers{
+		svc:       svc,
 		hostID:    hostID,
 		version:   version,
 		startedAt: startedAt,
@@ -59,6 +62,11 @@ func (h *Handlers) Register(p *rpc.Peer) {
 	p.Register("doc.get", h.counted("doc.get", h.handleDocGet))
 	p.Register("doc.raw", h.counted("doc.raw", h.handleDocRaw))
 	p.Register("project.list", h.counted("project.list", h.handleProjectList))
+	p.Register("task.dispatch", h.counted("task.dispatch", h.handleTaskDispatch))
+	p.Register("task.cancel", h.counted("task.cancel", h.handleTaskCancel))
+	p.Register("task.status", h.counted("task.status", h.handleTaskStatus))
+	p.Register("task.list", h.counted("task.list", h.handleTaskList))
+	p.Register("task.output", h.counted("task.output", h.handleTaskOutput))
 }
 
 // DispatchCount returns the number of times the handler for method was

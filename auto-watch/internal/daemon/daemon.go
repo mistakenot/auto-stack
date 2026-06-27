@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/mistakenot/auto-shared/bus"
 	"github.com/mistakenot/auto-watch/internal/config"
 	"github.com/mistakenot/auto-watch/internal/gitx"
 	"github.com/mistakenot/auto-watch/internal/model"
@@ -31,14 +32,16 @@ type Service struct {
 	Output  io.Writer
 	Now     func() time.Time
 
-	workerWG sync.WaitGroup
+	dispatchMu sync.Mutex
+	hub        *bus.Hub
+	workerWG   sync.WaitGroup
 }
 
 type Lock struct {
 	file *os.File
 }
 
-func New(db *store.Store, backend runner.Backend, output io.Writer, now func() time.Time) *Service {
+func New(db *store.Store, backend runner.Backend, output io.Writer, now func() time.Time, hub *bus.Hub) *Service {
 	if now == nil {
 		now = time.Now
 	}
@@ -47,7 +50,132 @@ func New(db *store.Store, backend runner.Backend, output io.Writer, now func() t
 		Backend: backend,
 		Output:  output,
 		Now:     now,
+		hub:     hub,
 	}
+}
+
+// Dispatch reserves a run for the given input and starts its worker. It is the
+// shared primitive used by both the trigger tick path and the task.run RPC, so
+// dedup, event logging, and worker startup behave identically. Returns
+// store.ErrActiveRunExists when a duplicate active run already holds the
+// resource key.
+func (s *Service) Dispatch(ctx context.Context, in *store.ReserveRunInput, task model.TaskDef) (int64, error) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+
+	runID, err := s.Store.ReserveRun(ctx, in)
+	if err != nil {
+		return 0, err
+	}
+	_ = s.logEvent(ctx, &store.EventInput{
+		Timestamp: s.Now(),
+		Level:     "info",
+		EventType: "task_reserved",
+		ProjectID: in.ProjectID,
+		TriggerID: in.TriggerID,
+		TaskID:    in.TaskID,
+		RunID:     &runID,
+		Message:   fmt.Sprintf("reserved run %d", runID),
+		Metadata:  map[string]any{"resource_key": in.ResourceKey},
+	})
+	if err := s.startWorker(ctx, runID, task); err != nil {
+		run, loadErr := s.Store.GetRun(ctx, runID)
+		if loadErr == nil && run.State == model.RunPending {
+			_ = s.failRun(ctx, &run, "", err)
+		}
+		_ = s.logEvent(ctx, &store.EventInput{
+			Timestamp: s.Now(),
+			Level:     "error",
+			EventType: "system_warning",
+			ProjectID: in.ProjectID,
+			TriggerID: in.TriggerID,
+			TaskID:    in.TaskID,
+			RunID:     &runID,
+			Message:   "worker startup failed",
+			Metadata:  map[string]any{"error": err.Error()},
+		})
+		return runID, err
+	}
+	return runID, nil
+}
+
+// Cancel transitions a run to failed, killing its session if running. It is
+// idempotent: a run already in a terminal state returns its current state with
+// no side effects.
+func (s *Service) Cancel(ctx context.Context, runID int64) (model.RunState, error) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+
+	run, err := s.Store.GetRun(ctx, runID)
+	if err != nil {
+		return "", err
+	}
+
+	switch run.State {
+	case model.RunCompleted, model.RunFailed:
+		return run.State, nil
+
+	case model.RunRunning:
+		if run.SessionName != "" {
+			_ = s.Backend.Kill(ctx, runner.Handle{
+				SessionName: run.SessionName,
+				ExitPath:    run.ExitPath,
+				OutputPath:  run.OutputPath,
+			})
+		}
+
+	case model.RunPending:
+		// fail without kill
+	}
+
+	now := s.Now()
+	msg := "cancelled via task.cancel"
+	if err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, msg); err != nil {
+		return "", err
+	}
+	_ = s.logEvent(ctx, &store.EventInput{
+		Timestamp: now,
+		Level:     "error",
+		EventType: "task_failed",
+		ProjectID: run.ProjectID,
+		TriggerID: run.TriggerID,
+		TaskID:    run.TaskID,
+		RunID:     &run.ID,
+		Message:   msg,
+		Metadata:  map[string]any{"resource_key": run.ResourceKey},
+	})
+	s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, &run, nil, msg)
+
+	if run.WorktreePath != "" {
+		_ = s.removeWorktree(ctx, &run, "cancel_cleanup")
+	}
+
+	return model.RunFailed, nil
+}
+
+// emitWatchTask broadcasts a watch.task.* data-plane event for the given run.
+// These events are always-on (not gated by --ctl-events); a nil hub is a no-op.
+func (s *Service) emitWatchTask(_ context.Context, typ string, run *model.RunRecord, exitCode *int, message string) {
+	if s.hub == nil {
+		return
+	}
+	ev, err := bus.NewWatchTask(typ, bus.RunProvenance{
+		Project:  run.ProjectID,
+		Branch:   run.Branch,
+		Worktree: run.WorktreePath,
+	}, bus.WatchTaskData{
+		TaskID:      run.TaskID,
+		RunID:       run.ID,
+		TriggerID:   run.TriggerID,
+		SessionName: run.SessionName,
+		ResourceKey: run.ResourceKey,
+		Message:     message,
+		ExitCode:    exitCode,
+	})
+	if err != nil {
+		return
+	}
+	s.hub.Broadcast(ev)
 }
 
 func AcquireLock(path string) (*Lock, error) {
@@ -178,16 +306,26 @@ func (s *Service) Reap(ctx context.Context) error {
 				message = fmt.Sprintf("run exited with code %d", code)
 			}
 		}
-		if err := s.Store.MarkRunTerminal(ctx, run.ID, state, &code, now, message); err != nil {
-			return err
-		}
 		eventType := "task_completed"
 		level := "info"
+		watchType := bus.TypeWatchTaskCompleted
 		if state == model.RunFailed {
 			eventType = "task_failed"
 			level = "error"
+			watchType = bus.TypeWatchTaskFailed
 		}
-		if err := s.logEvent(ctx, &store.EventInput{
+
+		s.dispatchMu.Lock()
+		fresh, reErr := s.Store.GetRun(ctx, run.ID)
+		if reErr != nil || fresh.State != model.RunRunning {
+			s.dispatchMu.Unlock()
+			continue
+		}
+		if err := s.Store.MarkRunTerminal(ctx, run.ID, state, &code, now, message); err != nil {
+			s.dispatchMu.Unlock()
+			return err
+		}
+		logErr := s.logEvent(ctx, &store.EventInput{
 			Timestamp: now,
 			Level:     level,
 			EventType: eventType,
@@ -201,8 +339,11 @@ func (s *Service) Reap(ctx context.Context) error {
 				"session_name": run.SessionName,
 				"resource_key": run.ResourceKey,
 			},
-		}); err != nil {
-			return err
+		})
+		s.emitWatchTask(ctx, watchType, &fresh, &code, fmt.Sprintf("run %d finished with exit code %d", run.ID, code))
+		s.dispatchMu.Unlock()
+		if logErr != nil {
+			return logErr
 		}
 	}
 
@@ -213,10 +354,18 @@ func (s *Service) Reap(ctx context.Context) error {
 	for i := range pending {
 		run := &pending[i]
 		message := "worker did not start"
+
+		s.dispatchMu.Lock()
+		fresh, reErr := s.Store.GetRun(ctx, run.ID)
+		if reErr != nil || fresh.State != model.RunPending {
+			s.dispatchMu.Unlock()
+			continue
+		}
 		if err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, message); err != nil {
+			s.dispatchMu.Unlock()
 			return err
 		}
-		if err := s.logEvent(ctx, &store.EventInput{
+		logErr := s.logEvent(ctx, &store.EventInput{
 			Timestamp: now,
 			Level:     "error",
 			EventType: "task_failed",
@@ -226,8 +375,11 @@ func (s *Service) Reap(ctx context.Context) error {
 			RunID:     &run.ID,
 			Message:   message,
 			Metadata:  map[string]any{"resource_key": run.ResourceKey},
-		}); err != nil {
-			return err
+		})
+		s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, &fresh, nil, message)
+		s.dispatchMu.Unlock()
+		if logErr != nil {
+			return logErr
 		}
 	}
 	return nil
@@ -425,7 +577,7 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 	sort.Strings(taskIDs)
 	for _, taskID := range taskIDs {
 		task := tasks[taskID]
-		runID, err := s.Store.ReserveRun(ctx, &store.ReserveRunInput{
+		_, err := s.Dispatch(ctx, &store.ReserveRunInput{
 			ProjectID:   projectID,
 			ProjectPath: projectPath,
 			TriggerID:   triggerID,
@@ -434,7 +586,7 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 			TaskType:    task.Type,
 			ResourceKey: "cron:" + triggerID,
 			StartedAt:   now,
-		})
+		}, task)
 		if err != nil {
 			if errors.Is(err, store.ErrActiveRunExists) {
 				if logErr := s.logEvent(ctx, &store.EventInput{
@@ -457,39 +609,6 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 			return err
 		}
 		launched++
-		if err := s.logEvent(ctx, &store.EventInput{
-			Timestamp: now,
-			Level:     "info",
-			EventType: "task_reserved",
-			ProjectID: projectID,
-			TriggerID: triggerID,
-			TaskID:    taskID,
-			RunID:     &runID,
-			Message:   fmt.Sprintf("reserved run %d", runID),
-			Metadata: map[string]any{
-				"resource_key": "cron:" + triggerID,
-				"cron":         trigger.When,
-			},
-		}); err != nil {
-			return err
-		}
-		if err := s.startWorker(ctx, runID, task); err != nil {
-			run, loadErr := s.Store.GetRun(ctx, runID)
-			if loadErr == nil && run.State == model.RunPending {
-				_ = s.failRun(ctx, &run, "", err)
-			}
-			_ = s.logEvent(ctx, &store.EventInput{
-				Timestamp: s.Now(),
-				Level:     "error",
-				EventType: "system_warning",
-				ProjectID: projectID,
-				TriggerID: triggerID,
-				TaskID:    taskID,
-				RunID:     &runID,
-				Message:   "worker startup failed",
-				Metadata:  map[string]any{"error": err.Error()},
-			})
-		}
 	}
 
 	if err := s.Store.UpsertTriggerState(ctx, &model.TriggerStateRecord{
@@ -649,7 +768,7 @@ func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time,
 	sort.Strings(taskIDs)
 	for _, taskID := range taskIDs {
 		task := tasks[taskID]
-		runID, err := s.Store.ReserveRun(ctx, &store.ReserveRunInput{
+		_, err := s.Dispatch(ctx, &store.ReserveRunInput{
 			ProjectID:   projectID,
 			ProjectPath: projectPath,
 			TriggerID:   triggerID,
@@ -658,7 +777,7 @@ func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time,
 			TaskType:    task.Type,
 			ResourceKey: resourceKey,
 			StartedAt:   now,
-		})
+		}, task)
 		if err != nil {
 			if errors.Is(err, store.ErrActiveRunExists) {
 				if logErr := s.logEvent(ctx, &store.EventInput{
@@ -681,40 +800,6 @@ func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time,
 			return err
 		}
 		launched++
-		if err := s.logEvent(ctx, &store.EventInput{
-			Timestamp: now,
-			Level:     "info",
-			EventType: "task_reserved",
-			ProjectID: projectID,
-			TriggerID: triggerID,
-			TaskID:    taskID,
-			RunID:     &runID,
-			Message:   fmt.Sprintf("reserved run %d for %d new file(s)", runID, len(newFiles)),
-			Metadata: map[string]any{
-				"resource_key": resourceKey,
-				"glob":         trigger.Glob,
-				"new_files":    newFiles,
-			},
-		}); err != nil {
-			return err
-		}
-		if err := s.startWorker(ctx, runID, task); err != nil {
-			run, loadErr := s.Store.GetRun(ctx, runID)
-			if loadErr == nil && run.State == model.RunPending {
-				_ = s.failRun(ctx, &run, "", err)
-			}
-			_ = s.logEvent(ctx, &store.EventInput{
-				Timestamp: s.Now(),
-				Level:     "error",
-				EventType: "system_warning",
-				ProjectID: projectID,
-				TriggerID: triggerID,
-				TaskID:    taskID,
-				RunID:     &runID,
-				Message:   "worker startup failed",
-				Metadata:  map[string]any{"error": err.Error()},
-			})
-		}
 	}
 
 	outcome := "launched"
@@ -834,7 +919,7 @@ func (s *Service) startWorker(ctx context.Context, runID int64, task model.TaskD
 		_ = s.Backend.Kill(ctx, handle)
 		return s.failRun(ctx, &run, worktreePath, err)
 	}
-	return s.logEvent(ctx, &store.EventInput{
+	if err := s.logEvent(ctx, &store.EventInput{
 		Timestamp: s.Now(),
 		Level:     "info",
 		EventType: "task_started",
@@ -849,7 +934,14 @@ func (s *Service) startWorker(ctx context.Context, runID int64, task model.TaskD
 			"resource_key":  run.ResourceKey,
 			"branch":        branch,
 		},
-	})
+	}); err != nil {
+		return err
+	}
+	run.SessionName = handle.SessionName
+	run.WorktreePath = worktreePath
+	run.Branch = branch
+	s.emitWatchTask(ctx, bus.TypeWatchTaskStarted, &run, nil, "task started")
+	return nil
 }
 
 func (s *Service) failRun(ctx context.Context, run *model.RunRecord, worktreePath string, runErr error) error {
@@ -857,6 +949,10 @@ func (s *Service) failRun(ctx context.Context, run *model.RunRecord, worktreePat
 	if err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, runErr.Error()); err != nil {
 		return err
 	}
+	if worktreePath != "" {
+		run.WorktreePath = worktreePath
+	}
+	s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, run, nil, runErr.Error())
 	if worktreePath != "" {
 		if err := s.removeWorktree(ctx, &model.RunRecord{
 			ID:           run.ID,

@@ -44,7 +44,7 @@ func setup(t *testing.T, ctlEvents bool) (*conformance.PeerClient, *Handlers, fu
 	emptyReg := func() config.ProjectsConfig {
 		return config.ProjectsConfig{Projects: []config.ProjectRef{}}
 	}
-	h := New("test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, ctlEvents, emptyReg)
+	h := New(nil, "test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, ctlEvents, emptyReg)
 
 	sConn, cConn := net.Pipe()
 	serverPeer := rpc.NewPeer(sConn)
@@ -106,7 +106,7 @@ func TestDaemonStatus_CtlEventsTrue_EmitsEvent(t *testing.T) {
 	unsub := hub.Subscribe(sink)
 	defer unsub()
 
-	h := New("test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, true, func() config.ProjectsConfig {
+	h := New(nil, "test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, true, func() config.ProjectsConfig {
 		return config.ProjectsConfig{Projects: []config.ProjectRef{}}
 	})
 
@@ -166,7 +166,7 @@ func TestDaemonStatus_CtlEventsFalse_NoEvents(t *testing.T) {
 	unsub := hub.Subscribe(sink)
 	defer unsub()
 
-	h := New("test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, func() config.ProjectsConfig {
+	h := New(nil, "test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, func() config.ProjectsConfig {
 		return config.ProjectsConfig{Projects: []config.ProjectRef{}}
 	})
 
@@ -256,7 +256,7 @@ func TestDispatchCount_Increments(t *testing.T) {
 }
 
 func TestDispatchCount_UnknownMethod(t *testing.T) {
-	h := New("test", "0.0.0", time.Now(), bus.NewHub(), false, func() config.ProjectsConfig {
+	h := New(nil, "test", "0.0.0", time.Now(), bus.NewHub(), false, func() config.ProjectsConfig {
 		return config.ProjectsConfig{Projects: []config.ProjectRef{}}
 	})
 	if got := h.DispatchCount("nonexistent.method"); got != 0 {
@@ -311,7 +311,7 @@ func TestCtlEvents_NewMethods(t *testing.T) {
 	defer unsub()
 
 	_, reg := seedDocFixture(t)
-	h := New("test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, true, func() config.ProjectsConfig {
+	h := New(nil, "test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, true, func() config.ProjectsConfig {
 		return reg
 	})
 

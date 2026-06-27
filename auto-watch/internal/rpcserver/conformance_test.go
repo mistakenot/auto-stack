@@ -111,7 +111,7 @@ func inProcessFactory(t testing.TB) conformance.Fixture {
 			},
 		}
 	}
-	handlers := rpcmethods.New(hostID, version.Version, time.Now(), hub, false, regProvider)
+	handlers := rpcmethods.New(nil, hostID, version.Version, time.Now(), hub, false, regProvider)
 
 	ln, err := transport.Listen("tcp://127.0.0.1:0")
 	if err != nil {

@@ -59,7 +59,7 @@ func dialAndCall(t *testing.T, ctx context.Context, uri string) json.RawMessage 
 
 func TestServe_TCP_DaemonStatus(t *testing.T) {
 	hub := bus.NewHub()
-	h := rpcmethods.New("test-host", "0.1.0", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
+	h := rpcmethods.New(nil, "test-host", "0.1.0", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
 	ln, err := transport.Listen("tcp://127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -99,7 +99,7 @@ func TestServe_Unix_DaemonStatus(t *testing.T) {
 	sockPath := filepath.Join(dir, "test.sock")
 
 	hub := bus.NewHub()
-	h := rpcmethods.New("unix-host", "2.0.0", time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
+	h := rpcmethods.New(nil, "unix-host", "2.0.0", time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
 	ln, err := transport.Listen("unix://" + sockPath)
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -131,7 +131,7 @@ func TestServe_Unix_DaemonStatus(t *testing.T) {
 
 func TestServe_ConcurrentConnections(t *testing.T) {
 	hub := bus.NewHub()
-	h := rpcmethods.New("test-host", "0.1.0", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
+	h := rpcmethods.New(nil, "test-host", "0.1.0", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
 	ln, err := transport.Listen("tcp://127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -198,7 +198,7 @@ func TestServe_ConcurrentConnections(t *testing.T) {
 
 func TestServe_Shutdown_ClosesListener(t *testing.T) {
 	hub := bus.NewHub()
-	h := rpcmethods.New("test-host", "0.1.0", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
+	h := rpcmethods.New(nil, "test-host", "0.1.0", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
 	ln, err := transport.Listen("tcp://127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -249,7 +249,7 @@ func TestServe_CtlEvents_ConnectDisconnect(t *testing.T) {
 	unsub := hub.Subscribe(sink)
 	defer unsub()
 
-	h := rpcmethods.New("test-host", "0.1.0", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
+	h := rpcmethods.New(nil, "test-host", "0.1.0", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
 	ln, err := transport.Listen("tcp://127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -325,7 +325,7 @@ func TestServe_CtlEventsFalse_NoLifecycleEvents(t *testing.T) {
 	unsub := hub.Subscribe(sink)
 	defer unsub()
 
-	h := rpcmethods.New("test-host", "0.1.0", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
+	h := rpcmethods.New(nil, "test-host", "0.1.0", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
 	ln, err := transport.Listen("tcp://127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
