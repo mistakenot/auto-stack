@@ -83,6 +83,12 @@
       "skillPath": "skills/delegate-task/SKILL.md",
       "computedHash": "c8b1644fba41c4670a26dfc6d659bde0c35089f1ad39f6377f555d91f7259523"
     },
+    "domain-modelling": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "skillPath": "skills/domain-modelling/SKILL.md",
+      "computedHash": "dada0eda771ca32b1cbc93acacedb9076da7fbefc37e712a042ef0ffffa16613"
+    },
     "execute-task": {
       "source": "mistakenot/skills",
       "sourceType": "github",

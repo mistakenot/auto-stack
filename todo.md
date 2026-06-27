@@ -4,6 +4,7 @@
 
 - Validation / verification. Need to be able to view screenshots, terminal videos, verification agent outputs, etc.
 - General sense of chaos. What do I have in flight? What is stuck in worktrees? What work has been orphaned from a worker? What is actually happening??
+- Multi-stage work gets chocked up, too much gating, waiting, etc.
 - Agents probably spend a lot of time down, waiting for things to do
 - Do we have enough tmux worker instances? how to create/kill them automatically?
 
