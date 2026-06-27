@@ -74,7 +74,8 @@ func newStartCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: errors.New("doctor checks failed")}
 			}
 
-			service := daemon.New(db, application.Backend, cmd.OutOrStdout(), application.Now)
+			hub := bus.NewHub()
+			service := daemon.New(db, application.Backend, cmd.OutOrStdout(), application.Now, hub)
 			if once {
 				if err := writePIDMetadata(); err != nil {
 					return &ExitError{Code: 1, Err: err}
@@ -99,9 +100,9 @@ func newStartCmd(application *app.App) *cobra.Command {
 				rpcAddr = "unix://" + filepath.Join(watchDir, "rpc.sock")
 			}
 
-			// Build the bus hub and RPC handlers.
+			// Build the RPC handlers (hub created above so the daemon service
+			// can emit watch.task.* lifecycle events).
 			startedAt := time.Now()
-			hub := bus.NewHub()
 			hostID := sharedconfig.HostIDQuietly()
 			regProvider := func() sharedconfig.ProjectsConfig {
 				p, _ := sharedconfig.ProjectsConfigPath()
@@ -430,7 +431,7 @@ func newCleanCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 			defer func() { _ = db.Close() }()
-			service := daemon.New(db, application.Backend, nil, application.Now)
+			service := daemon.New(db, application.Backend, nil, application.Now, nil)
 			if err := service.Clean(cmd.Context(), force); err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}

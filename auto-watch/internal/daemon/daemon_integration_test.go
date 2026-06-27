@@ -59,7 +59,7 @@ func TestDaemonHonorsOnlyIfBranchHasChanged(t *testing.T) {
 	}
 
 	current := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current })
+	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
 
 	if err := service.Tick(context.Background()); err != nil {
 		t.Fatalf("first tick failed: %v", err)
@@ -126,7 +126,7 @@ func TestReapMarksAbandonedPendingRunsFailed(t *testing.T) {
 
 	service := daemon.New(db, fakeBackend{}, nil, func() time.Time {
 		return time.Date(2026, 3, 20, 9, 10, 0, 0, time.UTC)
-	})
+	}, nil)
 	if err := service.Reap(context.Background()); err != nil {
 		t.Fatalf("Reap failed: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestTickReapsCompletedRunsBeforeDedupReservation(t *testing.T) {
 	}
 
 	current := time.Date(2026, 3, 21, 20, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current })
+	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
 
 	if err := service.Tick(context.Background()); err != nil {
 		t.Fatalf("first tick failed: %v", err)
@@ -248,7 +248,7 @@ func TestFileCreatedTriggerSeedsOnFirstTickWithoutFiring(t *testing.T) {
 	env.WriteFile(repoRoot, "docs/existing.md", "# existing\n")
 
 	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current })
+	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
 
 	if err := service.Tick(ctx); err != nil {
 		t.Fatalf("first tick failed: %v", err)
@@ -281,7 +281,7 @@ func TestFileCreatedTriggerFiresOnNewFile(t *testing.T) {
 	// Seed tick with one existing file.
 	env.WriteFile(repoRoot, "docs/existing.md", "# existing\n")
 	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current })
+	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
 
 	if err := service.Tick(ctx); err != nil {
 		t.Fatalf("seed tick failed: %v", err)
@@ -327,7 +327,7 @@ func TestFileCreatedTriggerNoFireWhenUnchanged(t *testing.T) {
 
 	env.WriteFile(repoRoot, "docs/existing.md", "# existing\n")
 	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current })
+	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
 
 	// Seed tick.
 	if err := service.Tick(ctx); err != nil {
@@ -358,7 +358,7 @@ func TestFileCreatedTriggerDeleteAndRecreateFiresAgain(t *testing.T) {
 	// Seed with file.
 	env.WriteFile(repoRoot, "docs/ephemeral.md", "# temp\n")
 	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current })
+	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
 
 	if err := service.Tick(ctx); err != nil {
 		t.Fatalf("seed tick: %v", err)
@@ -404,7 +404,7 @@ func TestFileCreatedTriggerNonMatchingFilesIgnored(t *testing.T) {
 
 	// Seed empty.
 	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current })
+	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
 	if err := service.Tick(ctx); err != nil {
 		t.Fatalf("seed tick: %v", err)
 	}
@@ -469,7 +469,7 @@ func TestCleanRemovesExpiredTerminalWorktrees(t *testing.T) {
 
 	service := daemon.New(db, fakeBackend{}, nil, func() time.Time {
 		return time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	})
+	}, nil)
 	if err := service.Clean(context.Background(), false); err != nil {
 		t.Fatalf("Clean failed: %v", err)
 	}
