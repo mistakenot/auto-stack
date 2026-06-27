@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>042: auto-ui-proxy-backends</title>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.8.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "042",
+    "name": "auto-ui-proxy-backends",
+    "epic": "003-multi-host-architecture",
+    "status": "pending",
+    "created": "2026-06-27"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="042: auto-ui-proxy-backends" status="pending" pr="pending" generated="2026-06-27">
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+This is **epic-003 Task 7: auto-ui proxy layer + backends config** — the start of the auto-ui half of the multi-host architecture. The backend half (Tasks 1–6) is fully merged: autowatch is now a per-host JSON-RPC daemon serving `doc.list` / `doc.get` / `doc.raw` / `project.list` / `task.*` / `bus.subscribe` over the connection-oriented transport abstraction (`auto-shared/transport`, `auto-shared/rpc`). But **auto-ui still reads everything from its own local filesystem** and has no concept of a remote host:
+
+- `doc.list` / `doc.get` are served by local disk walks and `os.ReadFile` (`auto-ui/internal/server/docs.go:28-93`).
+- `/api/doc/raw` reads bytes off local disk (`auto-ui/internal/server/raw.go:18-65`, `os.ReadFile` at :51).
+- `project.list` reads the local registry only (`auto-ui/internal/server/project.go:27-41`).
+- The dispatcher registers these as **local** handlers (`auto-ui/internal/server/server.go:64-76`); there is no transport client, no backend list, no routing.
+
+So auto-ui can only ever show the one machine it runs on. The epic's vision — *one dashboard, every host* — requires auto-ui to stop touching the filesystem and instead **proxy** these RPCs to one or more autowatch backends. This task is the clean cut-over (epic decisions D-2 full cut-over, D-4 separate backends config; advances GR-F1 doc parity, GR-F6 no fallback, GR-F8). It does **not** include event aggregation (Task 8) or the multi-host SPA (Task 9).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+auto-ui becomes a thin proxy over autowatch backends — it owns no document/project/file-reading logic of its own.
+
+- **Backends config + CLI.** A new `~/.auto/ui/backends.json` (`{backends: [{hostId, uri, name?}]}`) stores the backend list (hostId → transport URI). New `auto ui backends add | remove | list` commands manage it, following the existing `auto-ui/internal/config/settings.go` pattern (`UIDir()` → `~/.auto/ui`) and the cobra registration in `auto-ui/internal/cli/root.go:43-65`.
+- **Connect to backends and reconcile live (no restart).** `auto ui serve` dials each configured backend via `transport.Dial(ctx, uri)` (`auto-shared/transport/transport.go:59`), wrapping each conn in an `rpc.Peer` client (`auto-shared/rpc/peer.go`). A periodic reconcile loop re-reads `backends.json` and diffs it against the live connection set: newly added backends are dialed, removed ones are closed — **without restarting the service**, so `auto ui backends add/remove` takes effect on the next tick. Per-backend health is tracked, and an unreachable backend is retried on subsequent ticks rather than killing the server.
+- **Proxy the data-plane RPCs.** `doc.list`, `doc.get`, and `project.list` are routed to the appropriate autowatch backend instead of local handlers. `/api/doc/raw` is proxied to autowatch's `doc.raw` (which returns base64 `DocRawResult`); auto-ui decodes it back to raw bytes so the browser endpoint contract is unchanged. **Routing rule (until Task 9):** with one backend configured, all calls route to it; a call carrying a `hostId` routes to that backend; multi-backend aggregation is deferred to Task 9. **`task.*` proxying is deferred** (no SPA consumer yet — see Out of Scope).
+- **Remove the local filesystem code (clean break).** auto-ui's own doc-walking, doc-reading, and raw-file-serving code (`docs.go`, `raw.go`, and the `resolveRoot`/`walkDocs` helpers) is deleted. Per GR-F6 (no fallback) / D-2 (full cut-over), **auto-ui cannot function without at least one reachable autowatch backend** — including local dev, which points a backend at a local autowatch (e.g. `unix://` or `tcp://127.0.0.1`).
+- **Preserve the unchanged surfaces.** The Hub + WebSocket broadcast (`auto-shared/bus/hub.go`, `auto-ui/internal/server/ws.go`), `/api/rpc` ingest, and `ping` stay as-is — feeding remote events into the Hub is Task 8, not this task.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="goals" status="resolved" priority="p2" title="Adding a backend should not require a service restart">
+        <pd-comment by="review">adding a new backend shouldnt require a restart of the service, it can always reread the file on each tick</pd-comment>
+        <pd-comment by="author">Agreed — changed the "connect on startup" goal to a **live reconcile** model: a periodic loop re-reads `backends.json` each tick and diffs it against the active connection set, dialing newly-added backends and closing removed ones without restarting `auto ui serve`. So `auto ui backends add/remove` takes effect on the next tick, and an unreachable backend is retried on later ticks rather than failing the server. The exact tick interval / optional file-watch vs. poll is a /new-solution detail.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Event aggregation (Task 8).** Subscribing to backends' `bus.subscribe` and merging remote events into auto-ui's Hub is the next task. T7 stands up the proxy + connections; T8 uses them for events.
+- **Multi-host SPA (Task 9).** Aggregating projects from multiple backends into one flat host-tagged list, the host badge in the switcher, and the SPA carrying `(hostId, projectId)` per GR-F8 are Task 9. T7's routing uses the single-backend-default rule until then (see Goals/Open Questions).
+- **`task.*` proxying.** The autowatch `task.*` methods exist but the SPA has no consumer for them yet; their proxy routes are deferred to the task that introduces a consumer, to keep this cut-over focused and avoid untested-by-a-consumer code.
+- **Hook retarget to autowatch-only (Task 10).** Unchanged here.
+- **Changing the autowatch RPC surface.** The backend methods are merged and frozen for this task; if a gap is found, flag it rather than expanding scope.
+- **No new transport types.** Reuse `auto-shared/transport` (tcp/unix, GR-N8); no new wire protocols.
+- **Auth.** Network-layer only (GR-N2); no application-layer auth in this task.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [x] **Routing before the SPA is multi-host (Task 9).** Single-backend default: one backend → all calls route to it; a call carrying a `hostId` routes to that backend; multi-backend aggregation deferred to Task 9.
+- [x] **Clean break vs. transitional fallback.** Full removal now (per epic GR-F6 / D-2). auto-ui's local FS reads are deleted; auto-ui requires a reachable autowatch backend, including local dev (point a backend at a local autowatch).
+- [x] **`task.*` proxying scope.** Deferred — proxy only `doc.*` / `project.list` / `doc.raw` now; wire `task.*` when a consumer exists.
+- [x] **Local-backend bootstrap UX.** Fail-fast with remediation: if no backend is configured, `serve` exits with a clear "run `auto ui backends add <uri>`" message (matches the project's fail-fast + remediation-hint convention). No auto-registration / URI guessing.
+- [x] **Backend identity: `hostId` vs URI as the key.** User supplies the URI; on connect auto-ui calls `daemon.status` to learn the authoritative `hostId` and keys routing by that. (Confirm exact handling of an unreachable backend at startup in /new-solution.)
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+**API-first (GR-N7):** ~90% of coverage runs at the RPC/HTTP layer; the browser is a thin smoke layer only. The key enabler is an **in-process fake autowatch backend** (GR-N6 tier 1): an `rpc.Peer` over `net.Pipe()` that serves canned `daemon.status` / `doc.list` / `doc.get` / `doc.raw` / `project.list` responses. auto-ui's BackendManager connects to it exactly as it would a real `tcp://` daemon, so every proxy path is exercised without subprocesses, ports, or disk.
+
+Three layers:
+1. **Config + CLI unit tests** — `backends.json` load/save/validate (strict decode, atomic write, structured `ValidationError`) and `auto ui backends add | remove | list` (JSON output, dup/invalid-URI rejection, remediation hints). Isolated via `t.TempDir()` + `t.Setenv("HOME", ...)`.
+2. **Proxy integration tests** — drive auto-ui's WS/HTTP surface (the existing `docs_test.go`/`raw_test.go` patterns, **rewritten** to point at the fake backend instead of a local FS fixture) and assert each call is forwarded and the result/round-trip matches the old local behavior (GR-F1 parity). Includes the `/api/doc/raw` base64→bytes mapping and the `daemon.status`→`hostId` identity flow.
+3. **Lifecycle tests** — live reconcile (mutate `backends.json`, tick, assert connection set changes without restart; unreachable backend retried, server survives) and fail-fast (no backend → `serve` exits with remediation).
+
+**Clean-break verification (GR-F6):** assert auto-ui no longer reads the filesystem for docs — both behaviorally (no backend ⇒ no doc data, never a local fallback) and structurally (the local `walkDocs`/`os.ReadFile` doc paths are deleted; a guard test or build-level check confirms they're gone).
+
+Conventions: `t.TempDir()`/`t.Setenv()` isolation; assert observables (returned frames, status codes, error codes), never quiescence.
+        </script></md>
+
+        <pd-mermaid caption="In-process test topology (GR-N6 tier 1)">
+flowchart LR
+  T["test driver"] -->|"WS doc.list / HTTP /api/doc/raw"| UI["auto-ui server + dispatcher"]
+  UI -->|"proxy Handler → peer.Call"| BM["BackendManager"]
+  BM <-->|"net.Pipe() rpc.Peer"| FB["fake autowatch backend<br/>(canned doc.* / project.list / daemon.status / doc.raw)"]
+  CFG["backends.json (t.TempDir)"] -.reconcile tick.-> BM
+</pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="backends.json + CLI add/remove/list" phases="1" tests="auto-ui/internal/config/backends_test.go, auto-ui/internal/cli/backends_test.go">
+          <md><script type="text/plain">
+**Given** an empty `~/.auto/ui/` (isolated HOME),
+**When** the user runs `auto ui backends add tcp://host:9400 --name box`, then `list`, then `remove tcp://host:9400`,
+**Then** `backends.json` is created/updated atomically with `{backends:[{hostId?,uri,name}]}`, `list` emits JSON of the backends to stdout, a duplicate or malformed URI is rejected with a structured `ValidationError{code,path,field,message}` and a remediation hint on stderr, and `remove` deletes the entry.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="Fail-fast when no backend is configured" phases="4" tests="auto-ui/internal/cli/serve_test.go">
+          <md><script type="text/plain">
+**Given** no `backends.json` (or an empty backend list),
+**When** `auto ui serve` starts,
+**Then** it exits non-zero with a clear remediation message ("run `auto ui backends add <uri>`") — never a degraded local-filesystem mode (GR-F6). No browser HTTP listener is left serving doc data without a backend.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="doc.list / doc.get are proxied with full parity" phases="3" tests="auto-ui/internal/server/proxy_test.go, auto-ui/internal/server/docs_test.go">
+          <md><script type="text/plain">
+**Given** auto-ui connected to a fake autowatch backend serving canned `doc.list`/`doc.get`,
+**When** a client calls `doc.list` then `doc.get` over `/api/ws`,
+**Then** auto-ui forwards each to the backend via `peer.Call` and returns the backend's result verbatim (including `meta` on `doc.list` entries) — identical shape to the previous local handlers (GR-F1). No `os.ReadFile`/`walkDocs` is invoked.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="/api/doc/raw proxied with base64→bytes mapping" phases="3" tests="auto-ui/internal/server/proxy_test.go, auto-ui/internal/server/raw_test.go">
+          <md><script type="text/plain">
+**Given** the fake backend returns `DocRawResult{path, contentType, contentBase64}` for `doc.raw`,
+**When** a browser requests `/api/doc/raw?project=…&path=…` (optionally `&host=…`),
+**Then** auto-ui calls the backend's `doc.raw`, base64-decodes `contentBase64`, sets `Content-Type` from `contentType`, and writes the raw bytes — the browser-facing endpoint contract is byte-identical to today (GR-F1).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="project.list is fetched from backends, not local registry" phases="3" tests="auto-ui/internal/server/proxy_test.go, auto-ui/internal/server/project_test.go">
+          <md><script type="text/plain">
+**Given** the fake backend serves `project.list` returning entries with a `host` field,
+**When** a client calls `project.list`,
+**Then** auto-ui returns the backend-sourced projects (each carrying `host` per GR-F8), and does not read the local `~/.auto/projects.json` registry for this response (D-4).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Backend identity learned via daemon.status; routing rule honored" phases="2,3" tests="auto-ui/internal/backend/manager_test.go, auto-ui/internal/server/proxy_test.go">
+          <md><script type="text/plain">
+**Given** a backend configured by URI only,
+**When** auto-ui connects,
+**Then** it calls `daemon.status`, records the authoritative `hostId`, and keys routing by it. With exactly one backend, all calls route to it; a call carrying a `hostId` routes to the matching backend; an unknown `hostId` returns a clear error (not a silent wrong-host read).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="Live reconcile — add/remove backend without restart" phases="2" tests="auto-ui/internal/backend/manager_test.go">
+          <md><script type="text/plain">
+**Given** a running `auto ui serve` with one backend,
+**When** `backends.json` is edited to add a second backend (and later to remove one),
+**Then** within one reconcile tick the new backend is dialed and the removed one is closed — without restarting the service — and an unreachable backend is retried on subsequent ticks rather than crashing or wedging the server. Asserted on a bounded wait via an observable (a call newly succeeding/failing for that host), not quiescence.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="Clean break — no local filesystem doc reads remain" phases="3" tests="auto-ui/internal/server/proxy_test.go">
+          <md><script type="text/plain">
+**Given** the merged change,
+**When** the auto-ui server handles `doc.list`/`doc.get`/`/api/doc/raw`,
+**Then** no code path reads local doc files (`walkDocs`/`resolveRoot`/`os.ReadFile` for docs are deleted), and with a backend that returns an error the client gets that error — never local file contents (GR-F6, no fallback). A guard/build-level check confirms the local doc-FS helpers are gone.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="doctor reports per-backend health" phases="5" tests="auto-ui/internal/cli/doctor_test.go">
+          <md><script type="text/plain">
+**Given** one reachable and one unreachable backend,
+**When** `auto ui doctor` runs,
+**Then** it emits `DoctorCheck{check,status,message}` entries covering config validity, per-backend connectivity (`pass`/`fail` with the hostId/URI), and a `project.list` fetch probe — failing checks include a remediation hint, and the command exits non-zero if any check fails.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-10" title="Guard rails upheld; no regressions" phases="1,2,3,4,5" tests="auto-ui/internal/backend/manager_test.go, auto-ui/internal/server/proxy_test.go">
+          <md><script type="text/plain">
+**Given** all changes,
+**When** `make test`, `make vet`, and `go build ./...` run for auto-ui (and auto-shared),
+**Then** all tests pass, method handlers stay transport-agnostic (GR-N3 — the proxy lives in the BackendManager, not the handlers), the browser HTTP listener keeps its loopback-only guard (GR-N2), and the Hub / `/api/ws` / `/api/rpc` ingest paths are unchanged (Task 8's surface).
+          </script></md>
+        </pd-ac>
+
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps & Risks">
+        <md><script type="text/plain">
+- **Real cross-host networking not tested here.** The fake backend runs over `net.Pipe` (and optionally loopback tcp). A real two-host deployment (latency, TLS/tailnet, mid-session backend reboot) is exercised by the binary-tier harness later, not by this task's in-process suite. Acceptable under GR-N8 (intra-VPC) — but flagged.
+- **Event aggregation excluded.** T7 stands up connections but does not subscribe `bus.subscribe`; live `doc.changed` refresh across hosts is unverified until Task 8. GR-F1 parity for *live refresh* is therefore only partially met by T7 (the doc *reads* are proxied; the *push* path is T8). Called out so it isn't mistaken for a regression.
+- **Routing is single-backend-biased.** Multi-backend `project.list` aggregation and `(hostId, projectId)` everywhere are Task 9; T7's routing is the simplest rule. A multi-backend config will work for explicit-`hostId` calls but won't aggregate until T9.
+- **Clean break raises dev friction.** Local dev now requires a running local autowatch; if contributors miss this, `serve` fails fast (AC-2) — mitigated by the remediation message and quickstart docs, but it is a real workflow change.
+- **doc.raw size / streaming.** Base64 in a single RPC result buffers the whole file in memory on both sides; fine for planning docs, but very large raw files would be inefficient. Not optimized here (matches today's whole-file read).
+- **Keepalive dependency.** Dead-backend reaping is cleanest once Task 041's `WithKeepAlive` lands; until then the reconcile loop's retry/health is the only liveness signal. Not blocking, but health fidelity improves after 041.
+</script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Introduce a **BackendManager** that owns all transport to autowatch daemons, keep auto-ui's JSON-RPC handlers transport-agnostic (GR-N3) by turning them into thin proxies, and delete the local filesystem code. Stdlib-only.
+
+**Backends config + CLI.** New `auto-ui/internal/config/backends.go` defines `BackendsConfig{Backends []Backend}` (`Backend{URI, Name?, HostID?}`) at `~/.auto/ui/backends.json`, mirroring `settings.go` (strict decode, atomic write, shared `ValidationError`). New `auto ui backends add | remove | list` (`auto-ui/internal/cli/backends.go`, registered in `root.go`). `add` dials the URI, calls `daemon.status` + `project.list`, and reports `✓ connected to <hostId> (<n> projects)` (the epic Vision flow) — with `--no-verify` to register an unreachable backend without checking. `list` is JSON-default.
+
+**BackendManager.** New package `auto-ui/internal/backend`: a `Manager` holds a `hostId → *conn` map. On `Reconcile` it re-reads `backends.json`, diffs against live connections, dials new ones (`transport.Dial` → `rpc.NewPeer` → `Serve` in a goroutine → `daemon.status` to learn the authoritative `hostId`), and closes removed ones. `Run(ctx)` ticks `Reconcile` on an interval (default 5s) until ctx cancels; an unreachable backend is left pending and retried on later ticks (never crashes the server). `Resolve(host)` returns the peer for an explicit `hostId`, or the sole backend when `host` is empty, or a clear error if zero/ambiguous (multi-backend aggregation is Task 9).
+
+**Proxy handlers.** New `auto-ui/internal/server/proxy.go`: `proxyCall(mgr, method)` returns a `Handler` that reads an optional `host` from params, resolves the peer, calls `peer.Call(ctx, method, params)`, and re-emits the raw result. Registered for `doc.list`, `doc.get`, `project.list`. `/api/doc/raw` (`raw.go`) proxies to `doc.raw`, base64-decodes `ContentBase64`, sets `Content-Type`, writes bytes — browser contract unchanged.
+
+**Wiring.** `server.New` gains `WithBackendManager(mgr)`; when set it registers the proxy handlers instead of the local ones. `serve.go` loads `backends.json`, **fails fast** with a remediation hint if empty (GR-F6), constructs the `Manager`, starts `mgr.Run(baseCtx)`, and passes `WithBackendManager`. `doctor` gains per-backend connectivity + `project.list`-probe checks.
+
+**Clean break (GR-F6 / D-2).** Delete `docs.go` (local handlers + `walkDocs`/`resolveRoot`/`cleanDocPath`), `project.go` (local registry handler), and `planmeta.go` (autowatch now returns `meta` in `doc.list`). `raw.go` keeps only the proxy path. The Hub / `/api/ws` / `/api/rpc` ingest are untouched (Task 8's surface).
+        </script></md>
+
+        <pd-api kind="type" name="BackendManager" lang="go" path="auto-ui/internal/backend/manager.go">
+          <pd-member kind="func" sig="NewManager(backendsPath string, dial DialFunc, interval time.Duration) *Manager">Owns connections; dial injected for tests (fake net.Pipe backend).</pd-member>
+          <pd-member kind="method" sig="(m *Manager) Run(ctx context.Context) error">Tick loop: Reconcile every interval until ctx done; closes all peers on exit.</pd-member>
+          <pd-member kind="method" sig="(m *Manager) Reconcile(ctx context.Context)">Re-read backends.json, diff vs live set, dial new (→ daemon.status for hostId), close removed; unreachable left pending for retry.</pd-member>
+          <pd-member kind="method" sig="(m *Manager) Resolve(host string) (*rpc.Peer, error)">host set → that backend; empty + one backend → it; empty + multi → ErrAmbiguousHost; none → ErrNoBackend.</pd-member>
+          <pd-member kind="method" sig="(m *Manager) Health() []BackendHealth">Per-backend {hostId, uri, connected, lastErr} for doctor.</pd-member>
+        </pd-api>
+
+        <pd-api kind="type" name="backends config" lang="go" path="auto-ui/internal/config/backends.go">
+          <pd-member kind="type" sig="type Backend struct { URI string `json:&quot;uri&quot;`; Name string `json:&quot;name,omitempty&quot;`; HostID string `json:&quot;hostId,omitempty&quot;` }">HostID is a cache; authoritative value comes from daemon.status on connect.</pd-member>
+          <pd-member kind="type" sig="type BackendsConfig struct { Backends []Backend `json:&quot;backends&quot;` }"></pd-member>
+          <pd-member kind="func" sig="BackendsPath() (string, error)">~/.auto/ui/backends.json (via UIDir()).</pd-member>
+          <pd-member kind="func" sig="LoadBackends(path) (BackendsConfig, error) / SaveBackends(path, cfg) error">DecodeJSONFileStrict / WriteJSONFileAtomic; SaveBackends validates first.</pd-member>
+          <pd-member kind="func" sig="validateBackends(path, cfg) []ValidationError">URI format + duplicate-URI/hostId detection → {code,path,field,message}.</pd-member>
+        </pd-api>
+
+        <pd-api kind="handler" name="proxy" lang="go" path="auto-ui/internal/server/proxy.go">
+          <pd-member kind="func" sig="proxyCall(mgr *backend.Manager, method string) Handler">Resolve peer by optional params.host → peer.Call(ctx, method, params) → return raw result. Used for doc.list/doc.get/project.list.</pd-member>
+          <pd-member kind="func" sig="handleDocRawProxy(mgr *backend.Manager) http.HandlerFunc">Call doc.raw → base64-decode ContentBase64 → set Content-Type → write bytes.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-ui/internal/config/backends.go" change="add">BackendsConfig + Backend types, BackendsPath, Load/Save/validate (mirrors settings.go).</pd-file>
+          <pd-file path="auto-ui/internal/config/backends_test.go" change="add">Load/save/validate + dup/invalid-URI cases (t.TempDir/t.Setenv).</pd-file>
+          <pd-file path="auto-ui/internal/backend/manager.go" change="add">Manager: Run/Reconcile/Resolve/Health; injected DialFunc; per-backend conn + health.</pd-file>
+          <pd-file path="auto-ui/internal/backend/manager_test.go" change="add">Reconcile/Resolve + live add/remove + unreachable-retry, against a fake net.Pipe backend.</pd-file>
+          <pd-file path="auto-ui/internal/cli/backends.go" change="add">`auto ui backends add|remove|list`; add verifies via daemon.status/project.list (--no-verify escape).</pd-file>
+          <pd-file path="auto-ui/internal/cli/backends_test.go" change="add">CLI add/remove/list via Execute() — JSON output, dup/invalid-URI rejection, --no-verify.</pd-file>
+          <pd-file path="auto-ui/internal/server/proxy.go" change="add">proxyCall Handler + handleDocRawProxy.</pd-file>
+          <pd-file path="auto-ui/internal/server/proxy_test.go" change="add">Fake in-process autowatch backend helper + doc.list/doc.get/project.list/doc.raw proxy tests.</pd-file>
+          <pd-file path="auto-ui/internal/server/server.go" change="edit">Add WithBackendManager option; register proxy handlers + raw proxy when set.</pd-file>
+          <pd-file path="auto-ui/internal/server/raw.go" change="edit">Replace local os.ReadFile with proxy to doc.raw + base64-decode.</pd-file>
+          <pd-file path="auto-ui/internal/server/docs.go" change="delete">Remove local doc.list/doc.get handlers + walkDocs/resolveRoot/cleanDocPath.</pd-file>
+          <pd-file path="auto-ui/internal/server/project.go" change="delete">Remove local project.list handler (now proxied).</pd-file>
+          <pd-file path="auto-ui/internal/server/planmeta.go" change="delete">Remove — only caller is walkDocs (deleted); autowatch doc.list returns meta. (CB3: safe to delete.)</pd-file>
+          <pd-file path="auto-ui/internal/server/planmeta_test.go" change="delete">Remove with planmeta.go.</pd-file>
+          <pd-file path="auto-ui/internal/server/docs_test.go" change="edit">Rewrite to drive the fake backend instead of a local FS fixture.</pd-file>
+          <pd-file path="auto-ui/internal/server/raw_test.go" change="edit">Rewrite against the fake backend (base64→bytes parity).</pd-file>
+          <pd-file path="auto-ui/internal/server/project_test.go" change="edit">Rewrite — project.list now proxied (was local registry).</pd-file>
+          <pd-file path="auto-ui/internal/cli/serve.go" change="edit">Load backends, fail-fast if empty, construct Manager, start Run(baseCtx), inject WithBackendManager.</pd-file>
+          <pd-file path="auto-ui/internal/cli/serve_test.go" change="add">Fail-fast: no backend → serve exits non-zero with remediation hint.</pd-file>
+          <pd-file path="auto-ui/internal/cli/root.go" change="edit">Register newBackendsCmd.</pd-file>
+          <pd-file path="auto-ui/internal/cli/doctor.go" change="edit">Add per-backend connectivity + project.list probe checks.</pd-file>
+          <pd-file path="auto-ui/internal/cli/doctor_test.go" change="add">doctor reports per-backend health (reachable/unreachable) + non-zero exit on failure.</pd-file>
+          <pd-file path="auto-ui/internal/cli/quickstart.go" change="edit">Document the backend prerequisite + `auto ui backends add` happy path.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Proxy logic inside each handler (no Manager).** Couples handlers to transport, violating GR-N3 and duplicating connection/health code per method. Rejected for a single Manager the handlers consult.
+- **fsnotify file-watch for backends.json reload.** Adds a runtime dependency (GR-N1 prefers stdlib) and is harder to test deterministically. Rejected for a simple poll-on-tick (the reviewer's "reread on each tick"); a SIGHUP trigger can be added later as a nicety.
+- **Pass base64 doc.raw straight to the browser.** Would change the SPA's `/api/doc/raw` contract and push decoding into the frontend. Rejected — decode server-side so the browser endpoint is byte-identical (GR-F1).
+- **Keep a local-FS fallback when no backend is reachable.** Violates GR-F6/D-2 (no fallback) and hides backend outages. Rejected — fail fast with remediation.
+- **Aggregate project.list across all backends now.** That's Task 9 (flat host-tagged list + `(hostId,projectId)` everywhere). Rejected for T7's single-backend-default routing to keep scope bounded.
+- **Lazy add (write config without connecting).** Loses the epic's immediate `✓ connected to <host> (n projects)` feedback. Rejected as the default; preserved via `--no-verify`.
+</script></md>
+      </pd-section>
+
+      <pd-decision id="D-1" title="BackendManager owns transport; handlers stay proxies" status="accepted" by="author" summary="A single Manager holds connections/health/routing; JSON-RPC handlers just call peer.Call, preserving GR-N3 transport-agnosticism.">
+        <md><script type="text/plain">
+**Rationale:** GR-N3 requires handlers not reference the transport. Centralizing dial/health/routing in one Manager keeps handlers as thin `peer.Call` proxies and avoids per-method connection code.
+**Alternatives:** proxy inside handlers (couples transport, duplicates code).
+**Consequences:** one new package (`internal/backend`); the Manager is the single place connection lifecycle + the Task-9 routing upgrade will land.
+</script></md>
+      </pd-decision>
+
+      <pd-decision id="D-2" title="Poll-on-tick reload of backends.json (no fsnotify)" status="accepted" by="author" summary="A periodic reconcile re-reads the file each tick (default 5s); stdlib-only and deterministically testable.">
+        <md><script type="text/plain">
+**Rationale:** Matches the reviewer's "reread the file on each tick", needs no new dependency (GR-N1), and is trivial to test by mutating the file and advancing a tick. Add/remove take effect within one interval without a restart.
+**Alternatives:** fsnotify (new dep, flakier tests); restart-required (rejected by review).
+**Consequences:** up to one interval of latency before a config change applies; SIGHUP-immediate reload can be added later if wanted.
+</script></md>
+      </pd-decision>
+
+      <pd-decision id="D-3" title="Single-backend-default routing; explicit hostId otherwise" status="accepted" by="author" summary="Resolve(host): explicit hostId → that backend; empty+one → it; empty+multi → error. Multi-backend aggregation deferred to Task 9.">
+        <md><script type="text/plain">
+**Rationale:** The SPA won't send hostId until Task 9; T7 must still be shippable. The simplest correct rule routes to the sole backend, honors an explicit hostId, and errors clearly on ambiguity rather than guessing.
+**Alternatives:** require hostId now (pulls Task 9 SPA work into T7); aggregate now (Task 9 scope).
+**Consequences:** a multi-backend config works only for explicit-hostId calls until Task 9 adds aggregation.
+</script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Five phases: backends config + CLI (P1), the BackendManager (P2), the proxy + clean-break cut-over as one atomic server-side change (P3), serve.go wiring + fail-fast (P4), and doctor + quickstart docs (P5). The cut-over is mostly linear (P1→P2→P3→P4) because each builds on the prior; P5 branches off P2. **P3 is deliberately atomic** — switching handlers to the proxy and deleting the local FS code must land together or the build breaks (unused/again-missing handlers fail vet/lint).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-mermaid caption="Phase dependency DAG">
+flowchart LR
+  P1["P1 · backends config + CLI"]
+  P2["P2 · BackendManager"]
+  P3["P3 · proxy + clean break"]
+  P4["P4 · serve wiring + fail-fast"]
+  P5["P5 · doctor + quickstart"]
+  P1 --> P2 --> P3 --> P4
+  P2 --> P5
+</pd-mermaid>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="Backends config + CLI" files="auto-ui/internal/config/backends.go,auto-ui/internal/config/backends_test.go,auto-ui/internal/cli/backends.go,auto-ui/internal/cli/backends_test.go,auto-ui/internal/cli/root.go" status="todo">
+          <md><script type="text/plain">
+1. Add `Backend{URI,Name?,HostID?}` + `BackendsConfig{Backends}`, `BackendsPath()` (→ `~/.auto/ui/backends.json` via `UIDir()`), `LoadBackends`/`SaveBackends` (DecodeJSONFileStrict / WriteJSONFileAtomic), `validateBackends` (URI format + duplicate-URI/hostId → `ValidationError`). **Verify:** `go build ./...` in auto-ui.
+2. Add `newBackendsCmd` with `add`/`remove`/`list` (`auto-ui/internal/cli/backends.go`); `list` is JSON-default; `add` does a one-shot dial (`transport.Dial` → `rpc.NewPeer` → `daemon.status` + `project.list`) and prints `✓ connected to <hostId> (<n> projects)`, with `--no-verify` to skip; errors go to stderr with remediation hints. Register in `root.go`. **Verify:** `auto ui backends add/list/remove` round-trips against a temp HOME.
+3. Tests (`backends_test.go` × config + cli): load/save/validate, dup + invalid-URI rejection, CLI JSON output, `--no-verify`. **Verify:** `go test ./internal/config/... ./internal/cli/...` green.
+4. **Commit** via /contextual-commit. **Verify:** pre-commit hooks pass.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="BackendManager" files="auto-ui/internal/backend/manager.go,auto-ui/internal/backend/manager_test.go" status="todo">
+          <md><script type="text/plain">
+Depends on P1.
+1. Add `Manager` (`internal/backend/manager.go`): `NewManager(path, dial DialFunc, interval)`, internal `hostId → *conn` map + mutex, per-backend health. **Verify:** build.
+2. `Reconcile(ctx)`: read `backends.json`, diff vs live set, dial new (`transport.Dial`→`rpc.NewPeer`→`Serve` goroutine→`daemon.status` for authoritative `hostId`), close removed; unreachable left pending (record `lastErr`). `Run(ctx)`: tick every `interval` (default 5s) until ctx done, closing all peers on exit. **Verify:** build.
+3. `Resolve(host)` (explicit hostId → that peer; empty+one → it; empty+multi → `ErrAmbiguousHost`; none → `ErrNoBackend`) and `Health() []BackendHealth`. **Verify:** build.
+4. Tests against a fake in-process autowatch backend (rpc.Peer over `net.Pipe`, injected `DialFunc`): reconcile add/remove without restart, unreachable-retry-doesn't-crash, Resolve matrix, hostId learned via daemon.status. **Verify:** `go test -race ./internal/backend/...` green (assert observables on bounded waits, no poll-to-settle).
+5. **Commit** via /contextual-commit.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Proxy + clean break (atomic)" files="auto-ui/internal/server/proxy.go,auto-ui/internal/server/proxy_test.go,auto-ui/internal/server/server.go,auto-ui/internal/server/raw.go,auto-ui/internal/server/docs.go,auto-ui/internal/server/project.go,auto-ui/internal/server/planmeta.go,auto-ui/internal/server/planmeta_test.go,auto-ui/internal/server/docs_test.go,auto-ui/internal/server/raw_test.go,auto-ui/internal/server/project_test.go" status="todo">
+          <md><script type="text/plain">
+Depends on P2. **Single atomic change** — proxy-in + local-out together so the build stays green.
+1. Add `proxy.go`: `proxyCall(mgr, method) Handler` (resolve peer by optional `host` param → `peer.Call` → return raw) and `handleDocRawProxy(mgr)` (call `doc.raw` → base64-decode `ContentBase64` → set `Content-Type` → write bytes).
+2. Edit `server.go`: add `WithBackendManager(mgr)` option; when set, register `doc.list`/`doc.get`/`project.list` via `proxyCall` and wire `/api/doc/raw` to `handleDocRawProxy`. Edit `raw.go` to the proxy path. **Preserve the loopback-only guard** (GR-N2).
+3. **Delete** `docs.go`, `project.go`, `planmeta.go`, `planmeta_test.go` (local FS handlers + `walkDocs`/`resolveRoot`/`ExtractPlanMeta` — CB3 confirmed safe). **Verify:** `go build ./...` + `go vet ./...` clean (no unused/missing refs).
+4. Rewrite `docs_test.go`/`raw_test.go`/`project_test.go` to drive a fake in-process autowatch backend (reuse the P2 harness) — assert doc.list/doc.get/project.list parity, `/api/doc/raw` base64→bytes byte-identical, and that an error from the backend surfaces (no local fallback). Add `proxy_test.go`. **Verify:** `go test -race ./internal/server/...` green.
+5. **Commit** via /contextual-commit.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="serve.go wiring + fail-fast" files="auto-ui/internal/cli/serve.go,auto-ui/internal/cli/serve_test.go" status="todo">
+          <md><script type="text/plain">
+Depends on P3 (needs `WithBackendManager`) and P2 (Manager).
+1. In `serve.go`: load `backends.json`; if empty/missing, **exit non-zero** with a remediation message (`run auto ui backends add <uri>`) before binding the listener. **Verify:** build.
+2. Construct the `Manager`, start `mgr.Run(baseCtx)` (cancelled by the existing shutdown goroutine), pass `server.WithBackendManager(mgr)` to `server.New`. **Verify:** `auto ui serve` with a configured fake/local backend starts and serves proxied `doc.list`.
+3. Test (`serve_test.go`): no backend → non-zero exit + remediation on stderr. **Verify:** `go test ./internal/cli/...` green.
+4. **Commit** via /contextual-commit.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="5" title="doctor + quickstart docs" files="auto-ui/internal/cli/doctor.go,auto-ui/internal/cli/doctor_test.go,auto-ui/internal/cli/quickstart.go" status="todo">
+          <md><script type="text/plain">
+Depends on P2.
+1. Extend `runDoctorChecks()` (`doctor.go`): for each backend, add `doctorCheck{check,status,message,hint}` for config validity, connectivity (dial + `daemon.status`), and a `project.list` probe; exit non-zero if any check fails. **Verify:** build.
+2. Update `quickstart.go`: document the backend prerequisite ("auto-ui needs ≥1 reachable autowatch") and the `auto ui backends add <uri>` happy path. **Verify:** `auto ui quickstart` renders the new section.
+3. Test (`doctor_test.go`): one reachable + one unreachable backend → pass/fail checks + non-zero exit. **Verify:** `go test ./internal/cli/...` green.
+4. Run full `make test` + `make vet` for auto-ui (and auto-shared). **Verify:** both exit 0. **Commit** via /contextual-commit.
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **P1** → AC-1 (config + CLI).
+- **P2** → AC-6 (identity + routing, with P3), AC-7 (live reconcile).
+- **P3** → AC-3 (doc proxy), AC-4 (raw base64), AC-5 (project.list from backends), AC-6 (routing in handlers), AC-8 (clean break).
+- **P4** → AC-2 (fail-fast).
+- **P5** → AC-9 (doctor).
+- **AC-10** (guard rails / no regressions) verified at the end of every phase (build + `go vet` + `make test`) and finally by P5 step 4.
+- **Done** when AC-1 through AC-10 pass and `make test` is green; live `doc.changed` refresh across hosts remains a Task 8 follow-up (noted in Known Gaps, not a regression).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
