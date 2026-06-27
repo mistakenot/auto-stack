@@ -173,6 +173,7 @@ export function Explorer({ params }) {
         path=${path}
         type=${type}
         worktree=${worktree}
+        host=${activeHost}
       />
     </div>
   `);

@@ -608,19 +608,24 @@ export function initStore() {
     dispatch({ type: "docChanged/signal", path: c.path });
 
     const active = selectActiveProject(getState());
-    const host = selectActiveHost(getState());
-    if (c.project === active) {
+    const activeHost = selectActiveHost(getState());
+    // Host-gate the re-list: a doc.changed only touches the active project's tree
+    // when its host matches the active host (mirrors matchesDoc's host rule, so a
+    // legacy host-less event still matches by project — D-5 / AC-5). Two
+    // same-named projects on different hosts never cross-refresh once events carry
+    // Host (045 stamps it).
+    if (c.project === active && (!c.host || !activeHost || c.host === activeHost)) {
       const wt = getState().selection.worktree;
       const known = (
-        getState().docsByProject[docsKey(host, active, wt)] || []
+        getState().docsByProject[docsKey(activeHost, active, wt)] || []
       ).some((d) => d.path === c.path);
       if (!known) {
         // New doc under the active project: force a re-list so the new node
         // appears (cache invalidation by doc.changed — D-7).
-        fetchDocs(host, active, { force: true });
+        fetchDocs(activeHost, active, { force: true });
       } else if (c.path.endsWith(".html")) {
         // Known .html plan changed: re-list to pick up pd-meta changes (e.g. planning→executing).
-        fetchDocs(host, active, { force: true });
+        fetchDocs(activeHost, active, { force: true });
       }
     }
 

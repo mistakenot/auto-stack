@@ -10,6 +10,7 @@ export function parseDocChanged(ev) {
     project: d.project ?? ev?.project,
     path: d.path, // the fix: NOT ev.path
     worktree: d.worktree ?? ev?.worktree,
+    host: d.host ?? ev?.host ?? ev?.Host,
     branch: d.branch ?? ev?.branch,
   };
 }
@@ -23,5 +24,6 @@ export function matchesDoc(ev, target) {
   if (c.project !== target.project) return false;
   if (c.path !== target.path) return false;
   if (target.worktree && c.worktree && c.worktree !== target.worktree) return false;
+  if (target.host && c.host && c.host !== target.host) return false;
   return true;
 }

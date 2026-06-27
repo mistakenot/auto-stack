@@ -13,13 +13,16 @@ import { recordError } from "./rpc.js";
 import { useStore, selectOpenDoc, refreshOpenDoc } from "./store.js";
 
 // rawURL builds the /api/doc/raw target for an html doc, URL-encoding path and
-// worktree and appending the cache-bust nonce. Omits an empty worktree.
-function rawURL(project, path, worktree, nonce) {
+// worktree and appending the cache-bust nonce. Omits an empty worktree. hostId
+// routes the raw fetch to the right backend (the server reads hostId — see
+// proxy.go handleDocRawProxy); omitted when empty so a single-backend URL stays clean.
+function rawURL(project, path, worktree, nonce, hostId) {
   const qs = new URLSearchParams();
   if (project) qs.set("project", project);
   qs.set("path", path);
   if (worktree) qs.set("worktree", worktree);
   qs.set("v", String(nonce));
+  if (hostId) qs.set("hostId", hostId);
   return "/api/doc/raw?" + qs.toString();
 }
 
@@ -43,7 +46,7 @@ function splitFrontmatter(md) {
   return { meta, body: rest };
 }
 
-export function DocContent({ project, path, type, worktree }) {
+export function DocContent({ project, path, type, worktree, host }) {
   // The open-doc view-model is owned by the store (fetched/refreshed by its
   // route→selection orchestration + the single doc.changed subscription). Read
   // the whole slice; it re-renders only when the open doc actually changes.
@@ -84,7 +87,7 @@ export function DocContent({ project, path, type, worktree }) {
     `;
   }
 
-  const url = rawURL(project, path, worktree, nonce);
+  const url = rawURL(project, path, worktree, nonce, host);
   const fileName = path.split("/").pop();
   const dirPart = path.slice(0, path.length - fileName.length);
   const fm = effType === "markdown" ? splitFrontmatter(markdown) : null;
