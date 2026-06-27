@@ -84,11 +84,15 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newInitCmd(resolveEnv),
 		newCreateCmd(resolveEnv),
 		newLintCmd(resolveEnv),
-		newLsCmd(resolveEnv),
+		newListCmd(resolveEnv),
+		newDescribeCmd(resolveEnv),
+		newGetCmd(resolveEnv),
+		newSourceCmd(resolveEnv),
+		newTargetCmd(resolveEnv),
 		newDoctorCmd(resolveEnv),
 		newQuickstartCmd(),
 		newDocsCmd(),
-		newUpdateCmd(),
+		newUpdateCmd(resolveEnv),
 		newSyncCmd(resolveEnv),
 		newCacheCmd(resolveEnv),
 		newTrustCmd(resolveEnv),
@@ -222,58 +226,6 @@ func newLintCmd(resolveEnv envResolver) *cobra.Command {
 	return cmd
 }
 
-func newLsCmd(resolveEnv envResolver) *cobra.Command {
-	var textOutput bool
-	var jsonOutput bool
-
-	cmd := &cobra.Command{
-		Use:   "ls",
-		Short: "List available skills",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			env, err := resolveEnv()
-			if err != nil {
-				return &ExitError{Code: 1, Err: err}
-			}
-
-			summaries, parseErrors, err := skill.List(env)
-			if err != nil {
-				return &ExitError{Code: 1, Err: err}
-			}
-
-			if textOutput && jsonOutput {
-				return &ExitError{Code: 1, Err: errors.New("invalid flags: --text and --json cannot be combined")}
-			}
-
-			if textOutput {
-				for _, summary := range summaries {
-					fmt.Fprintf(cmd.OutOrStdout(), "- %s: %s\n", summary.Name, summary.Description)
-				}
-			} else {
-				data, err := skill.EncodeJSON(summaries)
-				if err != nil {
-					return &ExitError{Code: 1, Err: err}
-				}
-				if _, err := cmd.OutOrStdout().Write(data); err != nil {
-					return &ExitError{Code: 1, Err: err}
-				}
-			}
-
-			for _, parseErr := range parseErrors {
-				fmt.Fprintf(cmd.ErrOrStderr(), "error: %s\n", parseErr)
-			}
-			if len(parseErrors) > 0 {
-				return &ExitError{Code: 1}
-			}
-			return nil
-		},
-	}
-
-	cmd.Flags().BoolVar(&textOutput, "text", false, "emit human-readable listing output")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON array output (default)")
-	return cmd
-}
-
 func newDoctorCmd(resolveEnv envResolver) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
@@ -317,7 +269,10 @@ func newQuickstartCmd() *cobra.Command {
 				"auto skill init",
 				`auto skill create my-skill --description "Use when the user needs X. Prefer for Y."`,
 				"auto skill lint",
-				"auto skill ls --text",
+				"auto skill list                 # authored + vendored skills, with a stale flag",
+				"auto skill describe my-skill    # provenance: source, ref, commit, skill_version",
+				"auto skill get my-skill         # the full rendered SKILL.md",
+				"auto update                     # update the auto binary itself",
 				"```",
 				"",
 				skillAuthoringGuide,
@@ -340,9 +295,18 @@ func newDocsCmd() *cobra.Command {
 				"- `init`: initialize global (`auto skill init`) or project (`auto skill init --project`) settings.",
 				"- `create <name> --description ...`: create a skill scaffold and lint it.",
 				"- `lint [path]`: validate skills and emit structured JSON diagnostics.",
-				"- `ls`: list skills in JSON (default) or text (`--text`).",
+				"- `list [--local|--vendored]`: list authored and vendored skills with origin and a stale flag (JSON default, `--format text`).",
+				"- `describe <name>`: show a skill's provenance (source, ref, commit, skill_version, replacements).",
+				"- `get <name> [--target <style>]`: print the full rendered SKILL.md (`--format text` for raw markdown).",
+				"- `source list | describe <id>`: inspect upstream sources from the lock.",
+				"- `target list`: list configured output targets with their on-disk path and managed-skill count.",
+				"- `add <source>`: add skills from a local or remote source.",
+				"- `sync`: render authored + vendored skills into each target.",
+				"- `update [name...]`: float vendored skills to their latest upstream commits.",
 				"- `doctor`: verify setup and report issues in JSON.",
 				"- `quickstart`: show a minimal happy-path workflow.",
+				"",
+				"Binary self-update is `auto update` (the root command), not `auto skill update`.",
 			}, "\n")
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), docs)
 			return err

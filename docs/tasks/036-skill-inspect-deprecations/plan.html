@@ -18,8 +18,8 @@
     "created": "2026-06-20"
   }
   </script>
-  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="036: skill-inspect-deprecations" status="executing" pr="pending" generated="2026-06-20">
+  <!-- AI: When a PR is created for this work, update pr="https://github.com/mistakenot/auto-stack/pull/101" below with the PR URL -->
+  <pd-doc title="036: skill-inspect-deprecations" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/101" generated="2026-06-20">
 
     <pd-tab name="Requirements">
 
@@ -388,17 +388,17 @@ register the triad + sub-resources, drop the self-update + `agents` registration
 
       <pd-section id="cli-surface" title="CLI surface (final shape)">
         <pd-cli id="C-inspect" title="zsh — inspect &amp; deprecations" caption="The read-only triad + the decisive renames">
-          <pd-cmd note="all skills, authored + vendored, ids + metadata + stale" status="todo">auto skill list</pd-cmd>
+          <pd-cmd note="all skills, authored + vendored, ids + metadata + stale" status="done">auto skill list</pd-cmd>
           <pd-out>[{"name":"a","origin":"local","stale":null},{"name":"deploy","origin":"vendored","skill_version":"e5c075e…","stale":false}]</pd-out>
-          <pd-cmd note="only remote-sourced (or --local for authored)" status="todo">auto skill list --vendored</pd-cmd>
-          <pd-cmd note="provenance: source, ref, commit, skill_version, replacements" status="todo">auto skill describe deploy</pd-cmd>
-          <pd-cmd note="full rendered SKILL.md (raw markdown with --format text)" status="todo">auto skill get deploy --format text</pd-cmd>
-          <pd-cmd note="upstream deps from lock.json" status="todo">auto skill source list</pd-cmd>
-          <pd-cmd note="configured output targets (default: claude, agents)" status="todo">auto skill target list</pd-cmd>
-          <pd-cmd note="REMOVED — unknown command (use list)" status="todo">auto skill ls</pd-cmd>
+          <pd-cmd note="only remote-sourced (or --local for authored)" status="done">auto skill list --vendored</pd-cmd>
+          <pd-cmd note="provenance: source, ref, commit, skill_version, replacements" status="done">auto skill describe deploy</pd-cmd>
+          <pd-cmd note="full rendered SKILL.md (raw markdown with --format text)" status="done">auto skill get deploy --format text</pd-cmd>
+          <pd-cmd note="upstream deps from lock.json" status="done">auto skill source list</pd-cmd>
+          <pd-cmd note="configured output targets (default: claude, agents)" status="done">auto skill target list</pd-cmd>
+          <pd-cmd note="REMOVED — unknown command (use list)" status="done">auto skill ls</pd-cmd>
           <pd-out><script type="text/plain">Error: unknown command "ls" for "auto skill"</script></pd-out>
-          <pd-cmd note="now the skills update verb (T4); self-update moved to root" status="todo">auto skill update</pd-cmd>
-          <pd-cmd note="the sole binary self-update" status="todo">auto update</pd-cmd>
+          <pd-cmd note="now the skills update verb (T4); self-update moved to root" status="done">auto skill update</pd-cmd>
+          <pd-cmd note="the sole binary self-update" status="done">auto update</pd-cmd>
         </pd-cli>
       </pd-section>
 
@@ -496,7 +496,7 @@ are serialized (P3→P4→P5) so phases never race on the same file.
       <pd-section id="phases" title="Phases">
         <pd-stepper>
 
-          <pd-phase n="1" title="inspect read core (Inspect/Describe/Get + loaders)" status="todo"
+          <pd-phase n="1" title="inspect read core (Inspect/Describe/Get + loaders)" status="done"
                     files="auto-skill/internal/inspect/inspect.go,auto-skill/internal/inspect/view.go,auto-skill/internal/inspect/loaders.go,auto-skill/internal/inspect/inspect_test.go">
             <md><script type="text/plain">
 Create the read-only `internal/inspect` package. `loaders.go` wraps 032/033/034 typed
@@ -512,7 +512,7 @@ rendered target trees), including a digest-mismatch stale case and a no-manifest
             </script></md>
           </pd-phase>
 
-          <pd-phase n="2" title="source + target sub-resource readers" status="todo" depends-on="1"
+          <pd-phase n="2" title="source + target sub-resource readers" status="done" depends-on="1"
                     files="auto-skill/internal/inspect/source.go,auto-skill/internal/inspect/target.go,auto-skill/internal/inspect/source_target_test.go">
             <md><script type="text/plain">
 On top of Phase 1's loaders: `SourceList`/`SourceDescribe` over `lock.json` (deduped by
@@ -524,7 +524,7 @@ Depends on Phase 1 for the shared loaders. `go build ./...`.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="3" title="CLI triad + sub-resources; remove ls" status="todo" depends-on="1,2"
+          <pd-phase n="3" title="CLI triad + sub-resources; remove ls" status="done" depends-on="1,2"
                     files="auto-skill/internal/cli/list.go,auto-skill/internal/cli/resources.go,auto-skill/internal/cli/root.go">
             <md><script type="text/plain">
 Add `newListCmd` (`--local`/`--vendored` mutually exclusive, `--format text`),
@@ -537,7 +537,7 @@ exits non-zero. `go build ./...`.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="4" title="Deprecations: reclaim update, drop agents, confirm sync, tighten root" status="todo" depends-on="3"
+          <pd-phase n="4" title="Deprecations: reclaim update, drop agents, confirm sync, tighten root" status="done" depends-on="3"
                     files="auto-skill/internal/cli/root.go,auto-skill/internal/cli/update.go,auto-skill/internal/cli/agents.go,auto-cli/cmd/auto/main.go">
             <md><script type="text/plain">
 The decisive cleanup (D-3). Remove the `newUpdateCmd` (self-update) registration from
@@ -553,7 +553,7 @@ equivalents" comment so skill is not described as a self-update equivalent; conf
             </script></md>
           </pd-phase>
 
-          <pd-phase n="5" title="quickstart/docs refresh + e2e suite" status="todo" depends-on="3,4"
+          <pd-phase n="5" title="quickstart/docs refresh + e2e suite" status="done" depends-on="3,4"
                     files="auto-skill/internal/cli/root.go,auto-skill/internal/cli/cli_integration_test.go">
             <md><script type="text/plain">
 Update `newQuickstartCmd`/`newDocsCmd` strings: drop `ls`, add `list`/`describe`/`get`/
