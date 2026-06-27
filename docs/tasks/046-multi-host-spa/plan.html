@@ -270,7 +270,7 @@ Depends on P1. Make the open/refresh path fully host-correct.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="3" title="Resilience + health: partial results + per-backend status UI" files="auto-ui/internal/server/project_aggregate.go,auto-ui/internal/server/backends_list_test.go,auto-ui/internal/server/project_aggregate_test.go,auto-ui/internal/server/server.go,auto-ui/web/static/store.js,auto-ui/web/static/explorer.js,auto-ui/web/static/app.css" status="todo">
+          <pd-phase n="3" title="Resilience + health: partial results + per-backend status UI" files="auto-ui/internal/server/project_aggregate.go,auto-ui/internal/server/backends_list_test.go,auto-ui/internal/server/project_aggregate_test.go,auto-ui/internal/server/server.go,auto-ui/web/static/store.js,auto-ui/web/static/explorer.js,auto-ui/web/static/app.css" status="done">
             <md><script type="text/plain">
 Depends on P1 (parallel-safe with P2 — disjoint surfaces). Harden the data path and surface backend health.
 1. `project_aggregate.go`: finalize skip-on-error → a peer whose call errors/times out is omitted (partial results), never failing the whole list; add `backendsList(mgr)` Handler → `mgr.Health()`. `server.go`: `d.Register("backends.list", backendsList(o.mgr))`.
