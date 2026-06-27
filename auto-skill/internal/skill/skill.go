@@ -77,6 +77,28 @@ func (e Env) ManifestPath() string {
 	return filepath.Join(e.SkillsConfigDir(), "manifest.json")
 }
 
+func (e Env) UpstreamCacheDir() string {
+	if e.RootOverride {
+		return filepath.Join(e.Root, ".auto", "skills", "upstream")
+	}
+	home, err := config.HomeDir()
+	if err != nil {
+		return filepath.Join(e.Root, ".auto", "skills", "upstream")
+	}
+	return filepath.Join(home, ".auto", "skills", "upstream")
+}
+
+func (e Env) TrustPath() string {
+	if e.RootOverride {
+		return filepath.Join(e.Root, ".auto", "skills", "trust.json")
+	}
+	home, err := config.HomeDir()
+	if err != nil {
+		return filepath.Join(e.Root, ".auto", "skills", "trust.json")
+	}
+	return filepath.Join(home, ".auto", "skills", "trust.json")
+}
+
 func (e Env) ProjectSettingsPath() string {
 	return filepath.Join(e.Root, ".auto", "skills", settingsFileName)
 }
