@@ -3,8 +3,11 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-skill/internal/cache"
 	"github.com/mistakenot/auto-skill/internal/skill"
 	"github.com/mistakenot/auto-skill/internal/transport"
@@ -209,27 +212,48 @@ func parseDuration(s string) (time.Duration, error) {
 	}
 }
 
-// loadReferencedIDs loads lock files from known projects and builds a set
-// of canonical repo identities that are in use.
+// loadReferencedIDs loads lock files from ALL registered projects and builds
+// a set of canonical repo identities that are in use globally.
 func loadReferencedIDs(env skill.Env) map[string]bool {
 	ids := map[string]bool{}
-	lockData, err := env.LoadLockFile()
-	if err != nil {
-		return ids
-	}
-	lock, err := skill.ParseLock(lockData)
-	if err != nil {
-		return ids
-	}
-	for _, entry := range lock.Skills {
-		if entry.URL == "" {
-			continue
+	collectFromLock := func(lockData []byte) {
+		lock, err := skill.ParseLock(lockData)
+		if err != nil {
+			return
 		}
-		_, cid, err := transport.CanonicalizeURL(entry.URL)
+		for _, entry := range lock.Skills {
+			if entry.URL == "" {
+				continue
+			}
+			_, cid, err := transport.CanonicalizeURL(entry.URL)
+			if err != nil {
+				continue
+			}
+			ids[cid.RelPath()] = true
+		}
+	}
+
+	// Always include the current project.
+	if lockData, err := env.LoadLockFile(); err == nil {
+		collectFromLock(lockData)
+	}
+
+	// Scan all other registered projects.
+	projectsPath, err := config.ProjectsConfigPath()
+	if err != nil {
+		return ids
+	}
+	cfg, err := config.LoadProjects(projectsPath)
+	if err != nil {
+		return ids
+	}
+	for _, proj := range cfg.Projects {
+		lockPath := filepath.Join(proj.Path, ".auto", "skills", "lock.json")
+		lockData, err := os.ReadFile(lockPath)
 		if err != nil {
 			continue
 		}
-		ids[cid.RelPath()] = true
+		collectFromLock(lockData)
 	}
 	return ids
 }
