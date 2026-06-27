@@ -122,13 +122,34 @@ func (r *Repo) ResolveRef(ref string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// Realize fetches reachable objects for a commit so it is fully present.
+// Realize fully materializes a commit in the cache — commit, trees, AND blobs —
+// so later offline operations (CommitPresent, Extract via `git archive`) succeed
+// without any network access.
+//
+// The cache is a blobless partial clone (--filter=blob:none), which makes a plain
+// `git fetch origin <sha>` insufficient: it brings down the commit and its trees
+// but the inherited blob:none filter is re-applied, so blobs never arrive. Worse,
+// once the commit object is already present (it usually is, from the initial
+// clone) a re-fetch no-ops and never backfills the missing blobs. We therefore
+// fetch with the partial-clone filter overridden to empty and --refetch, which
+// forces the server to send every object reachable from the commit regardless of
+// what is already local. The override is per-invocation (`-c`), so the repo stays
+// a partial clone for commits we never pin.
 func (r *Repo) Realize(sha string) error {
 	return r.withLock(func() error {
-		_, err := runGit(r.Path, nil, "fetch", "origin", sha)
-		if err != nil {
-			_, err = runGit(r.Path, nil, "fetch", "origin")
+		if _, err := runGit(r.Path, nil,
+			"-c", "remote.origin.partialclonefilter=",
+			"fetch", "--refetch", "origin", sha); err == nil {
+			return nil
 		}
+		// Fallback for git versions without --refetch or servers that reject
+		// fetch-by-sha: pull the commit, then all refs. Best effort — if blobs
+		// stay filtered, CommitPresent reports the cache as incomplete (no
+		// regression versus the previous behavior).
+		if _, err := runGit(r.Path, nil, "fetch", "origin", sha); err == nil {
+			return nil
+		}
+		_, err := runGit(r.Path, nil, "fetch", "origin")
 		return err
 	})
 }

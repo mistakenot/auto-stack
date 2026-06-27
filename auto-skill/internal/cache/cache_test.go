@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +17,33 @@ func requireGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not found, skipping test")
 	}
+}
+
+// remoteSkillsRepo is a real public repo served by a git host (github.com) that
+// advertises the partial-clone (--filter) capability. This matters: local path
+// and file:// fixtures silently DROP --filter=blob:none ("--filter is ignored in
+// local clones" / "filtering not recognized by server, ignoring"), so they clone
+// every blob and can never exercise the blobless fetch path the cache hits in
+// production. Only a real remote honors the filter, so only a real remote can
+// catch regressions in Realize/CommitPresent against a partial clone.
+const remoteSkillsRepo = "https://github.com/mistakenot/skills"
+
+// requireRemote skips the test when git, the network, or the remote is
+// unavailable, and returns the remote URL plus its current HEAD commit. This
+// keeps the suite green offline (a skip, not a failure) while exercising the
+// real partial-clone transport whenever the remote is reachable.
+func requireRemote(t *testing.T) (url, headSHA string) {
+	t.Helper()
+	requireGit(t)
+	out, err := exec.Command("git", "ls-remote", remoteSkillsRepo, "HEAD").CombinedOutput()
+	if err != nil {
+		t.Skipf("remote %s unreachable, skipping: %v\n%s", remoteSkillsRepo, err, out)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 || len(fields[0]) != 40 {
+		t.Skipf("could not parse HEAD sha from ls-remote output: %q", out)
+	}
+	return remoteSkillsRepo, fields[0]
 }
 
 func createFixtureRepo(t *testing.T) (repoPath string, headSHA string) {
@@ -91,14 +119,15 @@ func TestCacheOpenAndClone(t *testing.T) {
 }
 
 func TestCacheRealizeAndCommitPresent(t *testing.T) {
-	requireGit(t)
-	fixtureRepo, headSHA := createFixtureRepo(t)
+	// Uses a real remote so --filter=blob:none is honored by the server; a local
+	// fixture would silently full-clone and never exercise the blobless path.
+	url, headSHA := requireRemote(t)
 
 	cacheDir := t.TempDir()
 	c := NewCache(cacheDir)
 
-	id := transport.CacheIdentity{Host: "example.com", Path: []string{"test", "repo"}}
-	repo, err := c.Open(id, "file://"+fixtureRepo)
+	id := transport.CacheIdentity{Host: "github.com", Path: []string{"mistakenot", "skills"}}
+	repo, err := c.Open(id, url)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -303,14 +332,15 @@ func TestCachePruneUnreferenced(t *testing.T) {
 }
 
 func TestCacheConcurrency(t *testing.T) {
-	requireGit(t)
-	fixtureRepo, headSHA := createFixtureRepo(t)
+	// Real remote: concurrent Realize must converge to a commit whose objects are
+	// genuinely present, which only a filter-honoring server can verify.
+	url, headSHA := requireRemote(t)
 
 	cacheDir := t.TempDir()
 	c := NewCache(cacheDir)
 
-	id := transport.CacheIdentity{Host: "example.com", Path: []string{"test", "repo"}}
-	repo, err := c.Open(id, "file://"+fixtureRepo)
+	id := transport.CacheIdentity{Host: "github.com", Path: []string{"mistakenot", "skills"}}
+	repo, err := c.Open(id, url)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
