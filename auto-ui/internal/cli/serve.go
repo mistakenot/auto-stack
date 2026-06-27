@@ -13,7 +13,9 @@ import (
 	"time"
 
 	sharedconfig "github.com/mistakenot/auto-shared/config"
+	"github.com/mistakenot/auto-shared/transport"
 	"github.com/mistakenot/auto-ui/internal/app"
+	"github.com/mistakenot/auto-ui/internal/backend"
 	"github.com/mistakenot/auto-ui/internal/config"
 	"github.com/mistakenot/auto-ui/internal/server"
 	"github.com/mistakenot/auto-ui/web"
@@ -59,6 +61,26 @@ func newServeCmd(application *app.App) *cobra.Command {
 				projectsPath = os.Getenv("AUTO_PROJECTS_PATH")
 			}
 
+			// Clean break (GR-F6/AC-2): auto-ui is a pure proxy over autowatch
+			// backends and owns no local doc/project data, so it refuses to start
+			// without at least one backend configured. We resolve and load
+			// backends.json before binding any listener — a missing file or an
+			// empty backend list fails fast with a remediation hint and leaves no
+			// half-started server running. A present-but-invalid config surfaces
+			// its validation error rather than being silently treated as empty.
+			backendsPath, err := config.BackendsPath()
+			if err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("resolving backends path: %w", err)}
+			}
+			cfg, err := config.LoadBackends(backendsPath)
+			if err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("loading %s: %w", backendsPath, err)}
+			}
+			if len(cfg.Backends) == 0 {
+				fmt.Fprintf(application.Stderr, "no autowatch backend configured; run: auto ui backends add <uri>\n")
+				return &ExitError{Code: 2}
+			}
+
 			// Cancel on SIGINT/SIGTERM so the server shuts down gracefully.
 			// main.go passes context.Background() (matching every other auto-* binary),
 			// so signal handling is wired here, in the long-running command — mirrors
@@ -73,6 +95,15 @@ func newServeCmd(application *app.App) *cobra.Command {
 			// goes idle and srv.Shutdown would block until the deadline below.
 			baseCtx, cancelBase := context.WithCancel(context.Background())
 			defer cancelBase()
+
+			// Start the backend manager on baseCtx: it dials every configured
+			// backend, learns each host id from daemon.status, and re-reads
+			// backends.json on a 5s tick so `auto ui backends add/remove` takes
+			// effect without a restart. It reconciles once immediately on Run, so
+			// the first connection is in flight before the listener binds. The
+			// shutdown goroutine's cancelBase() stops it alongside the server.
+			mgr := backend.NewManager(backendsPath, transport.Dial, 0)
+			go func() { _ = mgr.Run(baseCtx) }()
 
 			// Bind to loopback only: auto-ui is a local-dev/internal tool, so it
 			// must not be reachable from the LAN. ReadHeaderTimeout guards against
@@ -93,6 +124,7 @@ func newServeCmd(application *app.App) *cobra.Command {
 					}
 					return cfg
 				}),
+				server.WithBackendManager(mgr),
 				server.WithDebug(os.Getenv("AUTO_UI_DEBUG") == "1"),
 			)
 			srv := &http.Server{
