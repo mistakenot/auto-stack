@@ -35,9 +35,28 @@ func TestFilterRemotesByRegistry(t *testing.T) {
 			wantSkipped: 0,
 		},
 		{
-			name:        "nested sub-path matches via longest-prefix",
-			remotes:     map[string]string{"/repos/main/cmd/tool": "https://github.com/other/unrelated.git"},
+			name: "nested sub-path with no own remote kept via longest-prefix",
+			// A plain subdirectory / local-only repo under a registered project:
+			// no distinct origin, so nothing foreign to leak — kept by path.
+			remotes:     map[string]string{"/repos/main/cmd/tool": ""},
 			wantKept:    []string{"/repos/main/cmd/tool"},
+			wantSkipped: 0,
+		},
+		{
+			name: "nested clone with foreign remote dropped (leak guard)",
+			// A vendored/experimental clone living INSIDE a registered project.
+			// Path-prefix alone would keep it and re-index a foreign repo's PRs
+			// and git history — the exact leak this gate closes. Must be dropped.
+			remotes:     map[string]string{"/repos/main/vendor/foreign": "https://github.com/other/unrelated.git"},
+			wantKept:    nil,
+			wantSkipped: 1,
+		},
+		{
+			name: "exact path registration kept despite foreign remote",
+			// The user registered exactly this directory; explicit intent wins
+			// over the remote not matching the registry's recorded remote.
+			remotes:     map[string]string{"/repos/main": "https://github.com/other/unrelated.git"},
+			wantKept:    []string{"/repos/main"},
 			wantSkipped: 0,
 		},
 		{

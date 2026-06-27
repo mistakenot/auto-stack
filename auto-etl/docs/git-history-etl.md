@@ -1,5 +1,5 @@
 ---
-hash: "43cbac4f"
+hash: "6a9ced72"
 id: "573606cd"
 read_when: "implementing git ETL ingestion, designing commit/file/hunk parquet schemas, or adding git history to auto-search"
 summary: "Spec for extending auto-etl to index git commit history as first-class parquet datasets alongside coding agent sessions, enabling cross-referencing with session data."
@@ -226,7 +226,7 @@ Split the unified diff output by file header (`diff --git a/... b/...`) to get p
 
 **Input:** Local git repositories, discovered automatically from the session-trail remotes cache. The ETL scans `workspace` paths seen across processed sessions to find git repos.
 
-Auto-discovered repos are **registry-gated**: a discovered workspace/remote is only indexed if it belongs to a project registered in `~/.auto/projects.json` (populated by `auto init --project`). Matching is path-then-remote — `FindProjectByPath` (longest-prefix, so worktrees and subdirectories count) first, then `FindProjectByRemote` (after SSH↔HTTPS and credential normalization) as a fallback. This is the same gate the GitHub PR phase applies, and it has the same strict empty-registry behavior: if the registry is empty or absent, auto-discovery indexes **nothing** and a one-line stderr hint suggests running `auto init --project`.
+Auto-discovered repos are **registry-gated**: a discovered workspace/remote is only indexed if it belongs to a project registered in `~/.auto/projects.json` (populated by `auto init --project`). An entry is kept when its origin remote matches a registered project's remote (`FindProjectByRemote`, after SSH↔HTTPS and credential normalization — covering worktrees and ordinary subdirectories, which resolve the enclosing repo's origin), when the user registered exactly that directory (`FindProjectByExactPath`), or when the workspace is nested under a registered project (`FindProjectByPath`, longest-prefix) and has no distinct remote of its own. A clone vendored or experimented with *inside* a registered project — a nested path with its own foreign origin — is **not** indexed, so a path-prefix match never silently pulls in a foreign repo's history. This is the same gate the GitHub PR phase applies, and it has the same strict empty-registry behavior: if the registry is empty or absent, auto-discovery indexes **nothing** and a one-line stderr hint suggests running `auto init --project`.
 
 Users can also pass explicit paths via `--repo-path` for repos that have no session history yet. **Explicit `--repo-path` bypasses the gate** — explicitly supplied paths are an intentional user allowlist and are always indexed, registered or not. The gate only filters message-trail-derived auto-discovery.
 
