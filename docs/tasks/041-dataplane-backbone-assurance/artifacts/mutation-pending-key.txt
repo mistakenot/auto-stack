@@ -1,0 +1,80 @@
+Mutation A — pending-map key crosstalk (AC-5 correlation detection)
+Date: 2026-06-27
+Mutation: auto-shared/rpc/peer.go Call() — changed 'p.pending[id] = ch' to 'p.pending[id-1] = ch' (off-by-one correlation key)
+Test: TestConcurrentCorrelationAcrossFixtures (-race) ./rpc/conformance/...
+Result: RED — responses delivered to wrong waiters (crosstalk) + correlation timeouts
+Command: CGO_ENABLED=1 go test -race -run TestConcurrentCorrelationAcrossFixtures -timeout 60s -v ./rpc/conformance/...
+================================================================
+
+=== RUN   TestConcurrentCorrelationAcrossFixtures
+=== RUN   TestConcurrentCorrelationAcrossFixtures/concurrent-correlation/pipe
+    conformance_test.go:157: call 0: got val 18 (crosstalk)
+    conformance_test.go:157: call 11: got val 4 (crosstalk)
+    conformance_test.go:157: call 7: got val 11 (crosstalk)
+    conformance_test.go:157: call 9: got val 10 (crosstalk)
+    conformance_test.go:157: call 4: got val 0 (crosstalk)
+    conformance_test.go:157: call 10: got val 7 (crosstalk)
+    conformance_test.go:157: call 3: got val 12 (crosstalk)
+    conformance_test.go:157: call 12: got val 2 (crosstalk)
+    conformance_test.go:157: call 2: got val 9 (crosstalk)
+    conformance_test.go:157: call 14: got val 1 (crosstalk)
+    conformance_test.go:157: call 8: got val 14 (crosstalk)
+    conformance_test.go:157: call 1: got val 3 (crosstalk)
+    conformance_test.go:157: call 6: got val 8 (crosstalk)
+    conformance_test.go:157: call 13: got val 15 (crosstalk)
+    conformance_test.go:157: call 15: got val 6 (crosstalk)
+    conformance_test.go:157: call 17: got val 16 (crosstalk)
+    conformance_test.go:157: call 19: got val 17 (crosstalk)
+    conformance_test.go:157: call 16: got val 13 (crosstalk)
+    conformance_test.go:157: call 5: got val 19 (crosstalk)
+    conformance_test.go:160: timed out collecting concurrent call results
+=== RUN   TestConcurrentCorrelationAcrossFixtures/concurrent-correlation/unix
+    conformance_test.go:157: call 0: got val 2 (crosstalk)
+    conformance_test.go:157: call 12: got val 0 (crosstalk)
+    conformance_test.go:157: call 15: got val 13 (crosstalk)
+    conformance_test.go:157: call 16: got val 1 (crosstalk)
+    conformance_test.go:157: call 1: got val 12 (crosstalk)
+    conformance_test.go:157: call 13: got val 4 (crosstalk)
+    conformance_test.go:157: call 6: got val 15 (crosstalk)
+    conformance_test.go:157: call 4: got val 16 (crosstalk)
+    conformance_test.go:157: call 19: got val 18 (crosstalk)
+    conformance_test.go:157: call 9: got val 17 (crosstalk)
+    conformance_test.go:157: call 11: got val 6 (crosstalk)
+    conformance_test.go:157: call 10: got val 19 (crosstalk)
+    conformance_test.go:157: call 18: got val 9 (crosstalk)
+    conformance_test.go:157: call 17: got val 14 (crosstalk)
+    conformance_test.go:157: call 3: got val 5 (crosstalk)
+    conformance_test.go:157: call 5: got val 10 (crosstalk)
+    conformance_test.go:157: call 7: got val 8 (crosstalk)
+    conformance_test.go:157: call 8: got val 3 (crosstalk)
+    conformance_test.go:157: call 14: got val 11 (crosstalk)
+    conformance_test.go:153: call 2: context deadline exceeded
+=== RUN   TestConcurrentCorrelationAcrossFixtures/concurrent-correlation/tcp
+    conformance_test.go:157: call 7: got val 2 (crosstalk)
+    conformance_test.go:157: call 12: got val 19 (crosstalk)
+    conformance_test.go:157: call 11: got val 12 (crosstalk)
+    conformance_test.go:157: call 3: got val 11 (crosstalk)
+    conformance_test.go:157: call 19: got val 7 (crosstalk)
+    conformance_test.go:157: call 6: got val 8 (crosstalk)
+    conformance_test.go:157: call 15: got val 1 (crosstalk)
+    conformance_test.go:157: call 17: got val 6 (crosstalk)
+    conformance_test.go:157: call 16: got val 17 (crosstalk)
+    conformance_test.go:157: call 1: got val 3 (crosstalk)
+    conformance_test.go:157: call 4: got val 13 (crosstalk)
+    conformance_test.go:157: call 13: got val 16 (crosstalk)
+    conformance_test.go:157: call 8: got val 15 (crosstalk)
+    conformance_test.go:157: call 5: got val 18 (crosstalk)
+    conformance_test.go:157: call 14: got val 9 (crosstalk)
+    conformance_test.go:157: call 18: got val 4 (crosstalk)
+    conformance_test.go:157: call 10: got val 14 (crosstalk)
+    conformance_test.go:157: call 9: got val 5 (crosstalk)
+    conformance_test.go:157: call 0: got val 10 (crosstalk)
+    conformance_test.go:160: timed out collecting concurrent call results
+--- FAIL: TestConcurrentCorrelationAcrossFixtures (15.02s)
+    --- FAIL: TestConcurrentCorrelationAcrossFixtures/concurrent-correlation/pipe (5.01s)
+    --- FAIL: TestConcurrentCorrelationAcrossFixtures/concurrent-correlation/unix (5.01s)
+    --- FAIL: TestConcurrentCorrelationAcrossFixtures/concurrent-correlation/tcp (5.00s)
+FAIL
+FAIL	github.com/mistakenot/auto-shared/rpc/conformance	15.033s
+FAIL
+EXIT=1

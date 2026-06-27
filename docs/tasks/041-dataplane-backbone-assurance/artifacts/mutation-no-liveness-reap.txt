@@ -1,0 +1,32 @@
+Mutation C — liveness reap disabled (AC-2 / AC-4 detection)
+Date: 2026-06-27
+Mutation: auto-shared/rpc/peer.go watchdogLoop() — gated the reap condition with 'false &&' so the watchdog never calls p.shutdown(); a half-open / dead peer is never reaped
+Tests (both must go RED):
+  1) auto-shared:  TestKeepAliveReapsHalfOpen   (-race, -timeout 30s) ./rpc/...
+  2) auto-watch:   TestDeadSubscriberSinkReaped (-race, -timeout 30s) ./internal/rpcserver/...
+================================================================
+
+######## RUN 1/2: auto-shared TestKeepAliveReapsHalfOpen ########
+Command: CGO_ENABLED=1 go test -race -run TestKeepAliveReapsHalfOpen -timeout 30s -v ./rpc/...
+
+=== RUN   TestKeepAliveReapsHalfOpen
+    peer_test.go:1038: Serve did not return after half-open keepalive reap
+--- FAIL: TestKeepAliveReapsHalfOpen (5.00s)
+FAIL
+FAIL	github.com/mistakenot/auto-shared/rpc	5.019s
+testing: warning: no tests to run
+PASS
+ok  	github.com/mistakenot/auto-shared/rpc/conformance	1.015s [no tests to run]
+FAIL
+RUN1_EXIT=1
+
+######## RUN 2/2: auto-watch TestDeadSubscriberSinkReaped ########
+Command: CGO_ENABLED=1 go test -race -run TestDeadSubscriberSinkReaped -timeout 30s -v ./internal/rpcserver/...
+
+=== RUN   TestDeadSubscriberSinkReaped
+    server_test.go:681: dead subscriber was not reaped within timeout
+--- FAIL: TestDeadSubscriberSinkReaped (2.03s)
+FAIL
+FAIL	github.com/mistakenot/auto-watch/internal/rpcserver	3.096s
+FAIL
+RUN2_EXIT=1
