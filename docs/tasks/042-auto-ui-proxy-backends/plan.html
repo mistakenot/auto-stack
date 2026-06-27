@@ -335,7 +335,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="BackendManager" files="auto-ui/internal/backend/manager.go,auto-ui/internal/backend/manager_test.go" status="todo">
+        <pd-phase n="2" title="BackendManager" files="auto-ui/internal/backend/manager.go,auto-ui/internal/backend/manager_test.go" status="done">
           <md><script type="text/plain">
 Depends on P1.
 1. Add `Manager` (`internal/backend/manager.go`): `NewManager(path, dial DialFunc, interval)`, internal `hostId → *conn` map + mutex, per-backend health. **Verify:** build.
