@@ -4,6 +4,7 @@
 
 - ALWAYS use the `AskUserQuestion` tool when asking questions about work. Do not ask questions in plain text.
 - Break questions into single numbered items. Never combine multiple questions into one paragraph. Ask one question (or up to 4 via `AskUserQuestion`), wait for the answer, then ask the next if needed.
+- Speak the project's ubiquitous language: see @docs/concepts/UBIQUITOUS_LANGUAGE.md — use the canonical term for each concept and flag any word on an _Avoid_ list.
 
 ## Git Worktree Discipline
 
