@@ -7,6 +7,12 @@
       "skillPath": "skills/address-feedback/SKILL.md",
       "computedHash": "284e17d463f8846df1fabbea0931d7055c728082521f6f7b92713fc1db465668"
     },
+    "assurance-strategist": {
+      "source": "mistakenot/skills",
+      "sourceType": "github",
+      "skillPath": "skills/assurance-strategist/SKILL.md",
+      "computedHash": "1a624b9bc32c839a10875c7f71c16145dbd9fd76764006654a2ad71117b104b3"
+    },
     "beta-new-epic": {
       "source": "mistakenot/skills",
       "sourceType": "github",

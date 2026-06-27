@@ -1,5 +1,12 @@
 # TODO.md
 
+## What are the current bottlenecks?
+
+- Validation / verification. Need to be able to view screenshots, terminal videos, verification agent outputs, etc.
+- General sense of chaos. What do I have in flight? What is stuck in worktrees? What work has been orphaned from a worker? What is actually happening??
+- Agents probably spend a lot of time down, waiting for things to do
+- Do we have enough tmux worker instances? how to create/kill them automatically?
+
 ## auto-etl — align with user-journey spec
 
 - [ ] autoetl: add `quickstart` command
@@ -40,7 +47,7 @@
   - flag when combined skill descriptions consume too much context budget
   - identify redundant/overlapping skills that could be consolidated
 
-## auto-img
+## auto-img (auto artifact)
 
 - [ ] Agent-friendly tool for storing image artifacts long term
   - uploads to S3, keeps images out of the repository
