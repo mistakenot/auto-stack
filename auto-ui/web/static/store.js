@@ -29,6 +29,7 @@ function initialState() {
   return {
     conn: { status: "connecting", reconnects: 0 }, // from rpc.onStatus
     projects: [], // project.list -> [{id,name,path,remote,host}]
+    backends: [], // backends.list -> [{hostId,uri,connected,relayDegraded,lastErr}] — per-backend health (046 Phase 3)
     docsByProject: {}, // { [docsKey(host,project,worktree)]: [{id,path,type}] } — doc.list cache (AC-8)
     selection: { host: "", project: "", path: "", worktree: "" }, // mirrors the hash (incl. host — D-3)
     openDoc: {
@@ -103,6 +104,10 @@ export function reducer(state, action) {
 
     case "projects/set": {
       return { ...state, projects: action.projects || [] };
+    }
+
+    case "backends/set": {
+      return { ...state, backends: action.backends || [] };
     }
 
     case "selection/set": {
@@ -242,6 +247,12 @@ function shallowEqual(a, b) {
 
 export function selectProjects(state) {
   return state.projects;
+}
+
+// selectBackends returns the per-backend health list (backends.list), driving the
+// topbar's per-backend status rows (046 Phase 3 / AC-6).
+export function selectBackends(state) {
+  return state.backends;
 }
 
 // selectActiveProject resolves the effective active project: the hash project,
@@ -425,6 +436,22 @@ async function fetchProjects() {
   }
 }
 
+// fetchBackends loads backends.list (per-backend health) into the store, gated on
+// whenOpen() so a cold load doesn't reject "not connected". It is a plain call()
+// — NOT a subscription — re-run on initial load and on every reconnect, so the
+// status rows reflect connect/disconnect without a page reload (046 Phase 3 /
+// AC-6). Errors leave backends empty (recorded at the rpc.js layer), like
+// fetchProjects.
+async function fetchBackends() {
+  try {
+    await whenOpen();
+    const res = (await call("backends.list")) || [];
+    dispatch({ type: "backends/set", backends: res });
+  } catch {
+    // backends.list errors are recorded at the rpc.js layer; leave backends empty.
+  }
+}
+
 // fetchDocs lists a (host, project)'s docs into the docsByProject cache, gated on
 // whenOpen(). When force is false and the slice is already cached, it skips the
 // round-trip (the AC-8 warm cache). doc.list is routed to the backend via the
@@ -584,6 +611,7 @@ export function initStore() {
         });
       }
       fetchProjects();
+      fetchBackends(); // refresh per-backend health on reconnect (AC-6)
       if (active) fetchDocs(host, active, { force: true });
       fetchOpenDoc({ force: true });
     }
@@ -659,6 +687,7 @@ export function initStore() {
 
   // Initial load: mirror the hash and kick off project.list + dependent fetches.
   fetchProjects();
+  fetchBackends(); // initial per-backend health load (AC-6)
   syncFromHash();
 }
 

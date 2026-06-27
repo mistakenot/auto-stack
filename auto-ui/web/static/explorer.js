@@ -14,6 +14,7 @@ import {
   selectActiveProject,
   selectActiveHost,
   selectConn,
+  selectBackends,
   selectProject,
   selectDoc,
 } from "./store.js";
@@ -47,6 +48,53 @@ export function ConnIndicator() {
       <span class="conn-dot"></span>
       <span>${label}</span>
     </span>
+  `;
+}
+
+// BackendHealth — a compact per-backend status list in the topbar (046 Phase 3 /
+// AC-6). Reads the store's backends slice (fed by backends.list on initial load
+// and re-fetched on every reconnect), so it updates on connect/disconnect without
+// a page reload. Each row carries data-testid + data-host-id + data-connected for
+// assertions, plus a degraded/error cue. Renders nothing when no backends are
+// known (single-host or pre-load), so it never crashes the topbar.
+export function BackendHealth() {
+  const backends = useStore(selectBackends);
+  if (!backends || backends.length === 0) return null;
+
+  return html`
+    <div class="backends" data-testid="backend-health-list">
+      ${backends.map((b) => {
+        // Label precedence: a disconnected backend is "disconnected"; a connected
+        // one is "degraded" when its relay is down, else "connected".
+        const label = !b.connected
+          ? "disconnected"
+          : b.relayDegraded
+            ? "degraded"
+            : "connected";
+        const state = !b.connected
+          ? "disconnected"
+          : b.relayDegraded
+            ? "degraded"
+            : "connected";
+        return html`
+          <span
+            class="backend"
+            data-testid="backend-health"
+            data-host-id=${b.hostId}
+            data-connected=${b.connected}
+            data-state=${state}
+            title=${b.lastErr || b.uri || ""}
+          >
+            <span class="backend-dot"></span>
+            <span class="backend-host">${b.hostId || b.uri}</span>
+            <span class="backend-uri">${b.uri}</span>
+            <span class="backend-label">${label}</span>
+            ${b.lastErr &&
+            html`<span class="backend-err">${b.lastErr}</span>`}
+          </span>
+        `;
+      })}
+    </div>
   `;
 }
 
@@ -123,6 +171,7 @@ export function Explorer({ params }) {
         data-host-id=${activeHost}
         >${activeHost}</span
       >`}
+      <${BackendHealth} />
       <${ConnIndicator} />
     </header>
   `;

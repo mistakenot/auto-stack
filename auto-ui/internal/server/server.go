@@ -102,6 +102,8 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 	d.Register("doc.list", proxyCall(o.mgr, "doc.list"))
 	d.Register("doc.get", proxyCall(o.mgr, "doc.get"))
 	d.Register("project.list", aggregateProjectList(o.mgr))
+	// backends.list surfaces Manager.Health() so the SPA renders a per-backend status UI.
+	d.Register("backends.list", backendsList(o.mgr))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/hello", func(w http.ResponseWriter, r *http.Request) {

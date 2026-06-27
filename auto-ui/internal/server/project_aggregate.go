@@ -71,3 +71,17 @@ func aggregateProjectList(mgr *backend.Manager) Handler {
 		return merged, nil
 	}
 }
+
+// backendsList returns a Handler that reports every known backend's health
+// (connected or pending) verbatim from Manager.Health(), so the SPA can render
+// a per-backend status indicator (AC-6). Params are ignored. Unlike the
+// aggregator this does NOT fan out — Health() is a single-lock local snapshot —
+// so it always succeeds against the live conn set (empty slice when none).
+func backendsList(mgr *backend.Manager) Handler {
+	return func(_ context.Context, _ json.RawMessage) (any, error) {
+		if mgr == nil {
+			return nil, &rpcError{Code: codeInternalError, Message: "no backend configured"}
+		}
+		return mgr.Health(), nil
+	}
+}
