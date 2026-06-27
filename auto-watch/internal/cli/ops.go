@@ -172,7 +172,7 @@ func newStartCmd(application *app.App) *cobra.Command {
 
 			// HTTP hook-ingest server goroutine.
 			hookSrv := &http.Server{
-				Handler:           rpcserver.HookIngest(hub, ctlEvents),
+				Handler:           rpcserver.HookIngest(hub, hostID, regProvider, ctlEvents),
 				ReadHeaderTimeout: 10 * time.Second,
 			}
 			go func() {
