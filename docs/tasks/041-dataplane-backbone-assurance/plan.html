@@ -360,7 +360,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Daemon keepalive wiring + dead-sink reap" files="auto-watch/internal/rpcserver/server.go,auto-watch/internal/rpcserver/server_test.go" status="todo">
+        <pd-phase n="3" title="Daemon keepalive wiring + dead-sink reap" files="auto-watch/internal/rpcserver/server.go,auto-watch/internal/rpcserver/server_test.go" status="done">
           <md><script type="text/plain">
 Depends on P2.
 1. In the accept loop (server.go:71-90), construct peers with `rpc.WithKeepAlive(15*time.Second, 45*time.Second)`. **Verify:** `go build ./...` in auto-watch.
