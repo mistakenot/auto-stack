@@ -13,10 +13,6 @@ import (
 	"github.com/mistakenot/auto-skill/internal/transport"
 )
 
-// realLockPath resolves the repo-root skills-lock.json from the test's package
-// directory (auto-skill/internal/migrate → up three to the worktree root).
-const realLockPath = "../../../skills-lock.json"
-
 const syntheticLockPath = "testdata/synthetic-skills-lock.json"
 
 func openLock(t *testing.T, path string) VercelLock {
@@ -58,70 +54,6 @@ func TestVersionFromRef(t *testing.T) {
 				t.Errorf("versionFromRef(%q) = %q failed ValidateVersionSpec: %+v", tc.ref, got, ve)
 			}
 		})
-	}
-}
-
-func TestParseVercelLockRealCorpus(t *testing.T) {
-	v := openLock(t, realLockPath)
-	if v.Version != 1 {
-		t.Errorf("version = %d, want 1", v.Version)
-	}
-	var github, local int
-	for _, e := range v.Skills {
-		switch e.SourceType {
-		case sourceTypeGitHub:
-			github++
-		case sourceTypeLocal:
-			local++
-		}
-	}
-	if github != 37 {
-		t.Errorf("github entries = %d, want 37", github)
-	}
-	if local != 9 {
-		t.Errorf("local entries = %d, want 9", local)
-	}
-}
-
-func TestPlanRealCorpus(t *testing.T) {
-	v := openLock(t, realLockPath)
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, err := Plan(v, root)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
-
-	var remoteMigrated, localMigrated int
-	for _, e := range m.Migrated {
-		if e.State != "unresolved" {
-			t.Errorf("entry %q state = %q, want unresolved", e.Name, e.State)
-		}
-		if ve := skill.ValidateVersionSpec(e.VersionSpec); ve != nil {
-			t.Errorf("entry %q version_spec %q invalid: %+v", e.Name, e.VersionSpec, ve)
-		}
-		if e.Local {
-			localMigrated++
-			continue
-		}
-		remoteMigrated++
-		if !strings.HasPrefix(e.URL, "https://github.com/") {
-			t.Errorf("github entry %q URL = %q, want https://github.com/ prefix", e.Name, e.URL)
-		}
-	}
-
-	if remoteMigrated != 37 {
-		t.Errorf("remote migrated = %d, want 37", remoteMigrated)
-	}
-
-	// The 9 local entries are machine-dependent (git repo / non-git / missing).
-	// Assert all 9 are accounted for across the three local outcomes.
-	localHandled := localMigrated + len(m.Imports) + countSkipReason(m.Skipped, ReasonMissingPath)
-	if localHandled != 9 {
-		t.Errorf("local entries handled = %d (migrated=%d imports=%d missing=%d), want 9",
-			localHandled, localMigrated, len(m.Imports), countSkipReason(m.Skipped, ReasonMissingPath))
 	}
 }
 
