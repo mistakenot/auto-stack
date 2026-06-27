@@ -84,7 +84,11 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newInitCmd(resolveEnv),
 		newCreateCmd(resolveEnv),
 		newLintCmd(resolveEnv),
-		newLsCmd(resolveEnv),
+		newListCmd(resolveEnv),
+		newDescribeCmd(resolveEnv),
+		newGetCmd(resolveEnv),
+		newSourceCmd(resolveEnv),
+		newTargetCmd(resolveEnv),
 		newDoctorCmd(resolveEnv),
 		newQuickstartCmd(),
 		newDocsCmd(),
@@ -218,58 +222,6 @@ func newLintCmd(resolveEnv envResolver) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&textOutput, "text", false, "emit human-readable diagnostic output")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON array output (default)")
-	return cmd
-}
-
-func newLsCmd(resolveEnv envResolver) *cobra.Command {
-	var textOutput bool
-	var jsonOutput bool
-
-	cmd := &cobra.Command{
-		Use:   "ls",
-		Short: "List available skills",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			env, err := resolveEnv()
-			if err != nil {
-				return &ExitError{Code: 1, Err: err}
-			}
-
-			summaries, parseErrors, err := skill.List(env)
-			if err != nil {
-				return &ExitError{Code: 1, Err: err}
-			}
-
-			if textOutput && jsonOutput {
-				return &ExitError{Code: 1, Err: errors.New("invalid flags: --text and --json cannot be combined")}
-			}
-
-			if textOutput {
-				for _, summary := range summaries {
-					fmt.Fprintf(cmd.OutOrStdout(), "- %s: %s\n", summary.Name, summary.Description)
-				}
-			} else {
-				data, err := skill.EncodeJSON(summaries)
-				if err != nil {
-					return &ExitError{Code: 1, Err: err}
-				}
-				if _, err := cmd.OutOrStdout().Write(data); err != nil {
-					return &ExitError{Code: 1, Err: err}
-				}
-			}
-
-			for _, parseErr := range parseErrors {
-				fmt.Fprintf(cmd.ErrOrStderr(), "error: %s\n", parseErr)
-			}
-			if len(parseErrors) > 0 {
-				return &ExitError{Code: 1}
-			}
-			return nil
-		},
-	}
-
-	cmd.Flags().BoolVar(&textOutput, "text", false, "emit human-readable listing output")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON array output (default)")
 	return cmd
 }
