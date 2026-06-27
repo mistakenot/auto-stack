@@ -112,7 +112,7 @@ func newStartCmd(application *app.App) *cobra.Command {
 				}
 				return cfg
 			}
-			handlers := rpcmethods.New(hostID, version.Version, startedAt, hub, ctlEvents, regProvider)
+			handlers := rpcmethods.New(service, hostID, version.Version, startedAt, hub, ctlEvents, regProvider)
 
 			// Bind both listeners before entering the run loop (fail fast).
 			rpcLn, lnErr := transport.Listen(rpcAddr)
