@@ -446,6 +446,19 @@ func TestHookIngest_DeriveDocChanged_RegisteredProject(t *testing.T) {
 	if derived[0].Project != "my-project" {
 		t.Errorf("derived Project = %q, want %q", derived[0].Project, "my-project")
 	}
+
+	// Derived doc.changed must carry the cleaned doc path in its data payload.
+	// This is the params.data.path shape pin that auto-ui's deleted
+	// rpc_ingest_test.go (TestRPCIngestBroadcastAndDerive) used to guard; with
+	// the local ingest gone (047), autowatch is the sole derive site, so the
+	// pin lives here.
+	dc, err := bus.DecodeData[bus.DocChanged](derived[0])
+	if err != nil {
+		t.Fatalf("decode derived DocChanged: %v", err)
+	}
+	if dc.Path != "docs/foo.md" {
+		t.Errorf("derived data.path = %q, want %q", dc.Path, "docs/foo.md")
+	}
 }
 
 func TestHookIngest_UnregisteredProject_NoDerived(t *testing.T) {
