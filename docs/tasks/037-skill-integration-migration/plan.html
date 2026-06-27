@@ -19,7 +19,7 @@
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="037: skill-integration-migration" status="executing" pr="pending" generated="2026-06-20">
+  <pd-doc title="037: skill-integration-migration" status="complete" pr="pending" generated="2026-06-20">
 
     <pd-tab name="Requirements">
 
@@ -567,7 +567,7 @@ docs land last.
 
       <pd-stepper>
 
-        <pd-phase n="1" title="migrate core: parse, classify, version-intent" files="auto-skill/internal/migrate/migrate.go,auto-skill/internal/migrate/testdata/synthetic-skills-lock.json,auto-skill/internal/migrate/migrate_test.go" status="todo">
+        <pd-phase n="1" title="migrate core: parse, classify, version-intent" files="auto-skill/internal/migrate/migrate.go,auto-skill/internal/migrate/testdata/synthetic-skills-lock.json,auto-skill/internal/migrate/migrate_test.go" status="done">
           <md><script type="text/plain">
 The pure translator — no CLI, no engine calls, no network.
 
@@ -593,7 +593,7 @@ The pure translator — no CLI, no engine calls, no network.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="migrate apply: additive write + dry-run" files="auto-skill/internal/migrate/migrate.go,auto-skill/internal/migrate/migrate_test.go" status="todo" depends-on="1">
+        <pd-phase n="2" title="migrate apply: additive write + dry-run" files="auto-skill/internal/migrate/migrate.go,auto-skill/internal/migrate/migrate_test.go" status="done" depends-on="1">
           <md><script type="text/plain">
 The additive writer behind `Plan`.
 
@@ -613,7 +613,7 @@ The additive writer behind `Plan`.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="migrate vercel CLI command" files="auto-skill/internal/cli/migrate.go,auto-skill/internal/cli/root.go,auto-skill/internal/cli/migrate_test.go" status="todo" depends-on="2">
+        <pd-phase n="3" title="migrate vercel CLI command" files="auto-skill/internal/cli/migrate.go,auto-skill/internal/cli/root.go,auto-skill/internal/cli/migrate_test.go" status="done" depends-on="2">
           <md><script type="text/plain">
 The cobra wiring + JSON-default I/O.
 
@@ -635,7 +635,7 @@ The cobra wiring + JSON-default I/O.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="git hook wiring: pre-commit check + sync --locked + opt-in pre-push" files="Makefile,hooks/post-merge,hooks/post-checkout,hooks/pre-push,auto-skill/internal/cli/hooks_test.go" status="todo">
+        <pd-phase n="4" title="git hook wiring: pre-commit check + sync --locked + opt-in pre-push" files="Makefile,hooks/post-merge,hooks/post-checkout,hooks/pre-push,auto-skill/internal/cli/hooks_test.go" status="done">
           <md><script type="text/plain">
 Independent of phases 1–3 (no migrate dependency). Wires `auto skill` into the hook set.
 
@@ -658,7 +658,7 @@ Independent of phases 1–3 (no migrate dependency). Wires `auto skill` into the
           </script></md>
         </pd-phase>
 
-        <pd-phase n="5" title="docs + full verification" files="auto-skill/CLAUDE.md" status="todo" depends-on="3,4">
+        <pd-phase n="5" title="docs + full verification" files="auto-skill/CLAUDE.md" status="done" depends-on="3,4">
           <md><script type="text/plain">
 **Steps:**
 1. Document `migrate vercel` (flags, the unresolved→sync two-step, per-source handling) and
