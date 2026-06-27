@@ -6,6 +6,9 @@ import (
 
 	"github.com/mistakenot/auto-skill/internal/add"
 	"github.com/mistakenot/auto-skill/internal/skill"
+	"github.com/mistakenot/auto-skill/internal/sync"
+	"github.com/mistakenot/auto-skill/internal/transport"
+	"github.com/mistakenot/auto-skill/internal/trust"
 	"github.com/spf13/cobra"
 )
 
@@ -74,6 +77,17 @@ func newAddCmd(resolveEnv envResolver) *cobra.Command {
 				}
 			}
 
+			// Post-add auto-sync (T4): a plain `add` renders the freshly added
+			// skills into every output target by default. Skipped for --list
+			// (nothing was written) and --no-sync. The render is best-effort: it
+			// never overrides add's own exit code (the add itself — lock +
+			// skills.yaml or the authored copy — already succeeded). Its
+			// diagnostics go to stderr; add's stdout payload (already written
+			// above) is left untouched so it stays strictly parseable.
+			if !noSync && !list {
+				runPostAddSync(cmd, env, result, trustRequested)
+			}
+
 			return nil
 		},
 	}
@@ -91,6 +105,38 @@ func newAddCmd(resolveEnv envResolver) *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "", "output format override (json or text)")
 
 	return cmd
+}
+
+// runPostAddSync renders the just-added skills into the configured targets.
+// It mirrors what `add` already decided about the source: a successful remote
+// add has already approved (and cached) its endpoint, so the render needs no
+// network. A local add bypasses the trust gate, so the source endpoint is
+// approved here to keep the subsequent render symmetric — the user explicitly
+// pointed `add` at that source. The render is best-effort: every outcome is
+// reported on stderr, but add's exit code is owned by the add operation
+// itself, never by this follow-on render.
+func runPostAddSync(cmd *cobra.Command, env skill.Env, result add.Result, trustRequested bool) {
+	// Make the just-added source trustable for the render step (idempotent for
+	// an already-approved remote endpoint; best-effort — a non-approvable
+	// source simply surfaces as a sync diagnostic below).
+	if result.Source != "" {
+		if ep, err := transport.Endpoint(result.Source); err == nil {
+			_ = trust.NewStore(env.TrustPath()).Add(ep)
+		}
+	}
+
+	syncRes, syncErr := sync.Run(env, sync.Options{TrustRequested: trustRequested})
+	if syncRes != nil {
+		for _, w := range syncRes.Warnings {
+			fmt.Fprintf(cmd.ErrOrStderr(), "sync warning: %s\n", w)
+		}
+		for _, e := range syncRes.Errors {
+			fmt.Fprintf(cmd.ErrOrStderr(), "sync error: %s\n", e)
+		}
+	}
+	if syncErr != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "sync error: %s\n", syncErr)
+	}
 }
 
 // formatAddText writes human-readable add output to stdout.

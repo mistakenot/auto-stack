@@ -18,8 +18,8 @@
     "created": "2026-06-20"
   }
   </script>
-  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="034: skill-native-sync-render" status="executing" pr="pending" generated="2026-06-20">
+  <!-- AI: When a PR is created for this work, update pr="https://github.com/mistakenot/auto-stack/pull/99" below with the PR URL -->
+  <pd-doc title="034: skill-native-sync-render" status="complete" pr="pending" generated="2026-06-20">
 
     <pd-tab name="Requirements">
 
@@ -753,7 +753,7 @@ subagent, builds green, and ends with tests + `go build ./...` + a commit.
       <pd-section id="phases" title="Phases">
         <pd-stepper>
 
-          <pd-phase n="1" title="Render core — restricted template + customize + hashing" files="auto-skill/internal/render/template.go,auto-skill/internal/render/customize.go,auto-skill/internal/render/hash.go,auto-skill/internal/render/render.go,auto-skill/internal/render/template_test.go,auto-skill/internal/render/customize_test.go,auto-skill/internal/render/hash_test.go" status="todo">
+          <pd-phase n="1" title="Render core — restricted template + customize + hashing" files="auto-skill/internal/render/template.go,auto-skill/internal/render/customize.go,auto-skill/internal/render/hash.go,auto-skill/internal/render/render.go,auto-skill/internal/render/template_test.go,auto-skill/internal/render/customize_test.go,auto-skill/internal/render/hash_test.go" status="done">
             <md><script type="text/plain">
 Create the pure `internal/render` leaf — the code-execution-free templating model and
 the deterministic full-tree digest. No cache/network.
@@ -784,7 +784,7 @@ the deterministic full-tree digest. No cache/network.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="2" title="File-refs + section extraction" files="auto-skill/internal/render/fileref.go,auto-skill/internal/render/extract.go,auto-skill/internal/render/fileref_test.go,auto-skill/internal/render/extract_test.go" status="todo" depends-on="1">
+          <pd-phase n="2" title="File-refs + section extraction" files="auto-skill/internal/render/fileref.go,auto-skill/internal/render/extract.go,auto-skill/internal/render/fileref_test.go,auto-skill/internal/render/extract_test.go" status="done" depends-on="1">
             <md><script type="text/plain">
 Implement the file-ref resolver + the deterministic section extractor on top of the
 phase-1 engine.
@@ -811,7 +811,7 @@ phase-1 engine.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="3" title="Sync phase A+B — plan, parallel fetch, update engine" files="auto-skill/internal/sync/plan.go,auto-skill/internal/sync/fetch.go,auto-skill/internal/sync/update.go,auto-skill/internal/sync/plan_test.go,auto-skill/internal/sync/fetch_test.go,auto-skill/internal/sync/update_test.go" status="todo" depends-on="1">
+          <pd-phase n="3" title="Sync phase A+B — plan, parallel fetch, update engine" files="auto-skill/internal/sync/plan.go,auto-skill/internal/sync/fetch.go,auto-skill/internal/sync/update.go,auto-skill/internal/sync/plan_test.go,auto-skill/internal/sync/fetch_test.go,auto-skill/internal/sync/update_test.go" status="done" depends-on="1">
             <md><script type="text/plain">
 Create `internal/sync` and build the network-planning half — phase A plan, phase B
 parallel fetch, and the float-then-render `update` engine. Uses 009's cache/trust + 032's
@@ -845,7 +845,7 @@ lock/skills.yaml. Independent of render *output* (works on the resolved work-lis
             </script></md>
           </pd-phase>
 
-          <pd-phase n="4" title="Sync phase C — process, targets, manifest, render_version" files="auto-skill/internal/sync/process.go,auto-skill/internal/sync/targets.go,auto-skill/internal/sync/manifest.go,auto-skill/internal/sync/process_test.go" status="todo" depends-on="2,3">
+          <pd-phase n="4" title="Sync phase C — process, targets, manifest, render_version" files="auto-skill/internal/sync/process.go,auto-skill/internal/sync/targets.go,auto-skill/internal/sync/manifest.go,auto-skill/internal/sync/process_test.go" status="done" depends-on="2,3">
             <md><script type="text/plain">
 Build the render+write half — phase C process, the target union/shadow + on-disk digest,
 manifest population, and the `render_version` lazy re-render. Depends on the render engine
@@ -876,7 +876,7 @@ manifest population, and the `render_version` lazy re-render. Depends on the ren
             </script></md>
           </pd-phase>
 
-          <pd-phase n="5" title="Journaled crash-consistent commit + recovery + receipts" files="auto-skill/internal/sync/journal.go,auto-skill/internal/sync/receipts.go,auto-skill/internal/sync/sync.go,auto-skill/internal/sync/journal_test.go,auto-skill/internal/sync/sync_test.go" status="todo" depends-on="4">
+          <pd-phase n="5" title="Journaled crash-consistent commit + recovery + receipts" files="auto-skill/internal/sync/journal.go,auto-skill/internal/sync/receipts.go,auto-skill/internal/sync/sync.go,auto-skill/internal/sync/journal_test.go,auto-skill/internal/sync/sync_test.go" status="done" depends-on="4">
             <md><script type="text/plain">
 Wrap phases A→C in the journaled commit protocol + recovery, write receipts, and assemble
 the `sync.Run` orchestrator honoring every mode/flag.
@@ -908,7 +908,7 @@ the `sync.Run` orchestrator honoring every mode/flag.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="6" title="Rewrite the sync command (delete npx) + CLI integration" files="auto-skill/internal/cli/sync.go,auto-skill/internal/cli/cli_integration_test.go" status="todo" depends-on="5">
+          <pd-phase n="6" title="Rewrite the sync command (delete npx) + CLI integration" files="auto-skill/internal/cli/sync.go,auto-skill/internal/cli/cli_integration_test.go" status="done" depends-on="5">
             <md><script type="text/plain">
 Replace the npx shell-out with the native pipeline and prove the CLI contract end-to-end.
 
