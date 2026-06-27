@@ -137,6 +137,25 @@ On WebSocket, the standard rule holds: notifications dispatched via the shared `
 
 ## 4. Transport bindings
 
+### Transport model and assumptions (guard rail GR-N8)
+
+**GR-N8 — Connection-oriented, reliable, in-order transports only.** Every transport binding MUST be a connection-oriented, reliable, in-order byte stream: TCP, Unix-domain `SOCK_STREAM`, in-process `net.Pipe()`, and WebSocket (which rides TCP) all qualify. Datagram / lossy / unordered transports (UDP, QUIC datagrams, raw message buses with at-most-once *byte* delivery) are **out of scope** and MUST NOT be added without revisiting the framing and correlation layers.
+
+What this assumption lets us *not* build (and why the code is correct to omit it):
+
+| Concern | Why we ignore it |
+|---------|------------------|
+| Sequence numbers / reorder buffers | The stream guarantees in-order bytes. |
+| Acks / retransmit / NAK | No bytes are lost on a live connection. |
+| Byte-level dedup | No byte is duplicated. |
+| Corruption / bit-flip detection | TCP/UDS checksum the stream. |
+
+**Sharp edge — reliable+in-order is a *byte* guarantee, not a *message* guarantee.** A single `Read()` may return a partial frame or several coalesced frames. This is handled by the codec, not by assumption: `rpc.Decoder` wraps `json.Decoder`, a streaming tokenizer that buffers internally and yields exactly one JSON value per `Decode()` regardless of how bytes were chunked (see section 3, Framing). No application-level framing logic is needed *because of* this choice — but the choice is load-bearing, so it is recorded here as a guard rail.
+
+**Deployment context (the reason this is safe).** In v1, all cross-host networking happens *within a single cloud VPC* (or a tailnet overlay). Connections are low-latency and highly reliable; there is no public-internet packet loss to design around. This is the explicit justification for not over-building the network layer — we are not hardening against an adversarial or lossy WAN. If the deployment topology ever spans untrusted/high-loss links, this assumption (and the lossy delivery contract in section 5) must be re-evaluated.
+
+**What this does *not* excuse.** Reliable, in-order, intra-VPC delivery says nothing about the *connection staying up* or the *application keeping pace*. These failure modes are fully present on TCP and are handled at the application layer, not assumed away: connection drop / half-open mid-call (pending callers are released — section 5), backpressure / slow consumer (drop-on-full — section 4.2 / 4.3), and concurrent call correlation (the `pending` map). At-most-once delivery (section 5) is an *application* policy delivered by drop-on-full, **not** an inheritance from the transport — TCP is reliable; the relay deliberately is not.
+
 ### 4.1 HTTP POST `/api/rpc` (one-shot publish)
 
 The primary ingest endpoint for fire-and-forget event publishing.
@@ -211,11 +230,13 @@ The `bus.subscribe` JSON-RPC method registers a connected peer to receive **all*
 The following are documented as planned extensions:
 - **Headless `auto bus serve`** -- standalone bus process without the full auto-ui, for environments that don't need the SPA.
 
+Any future transport MUST satisfy GR-N8 (connection-oriented, reliable, in-order byte stream — see "Transport model and assumptions" above). Datagram/lossy transports are not a permitted extension without reworking the framing and correlation layers.
+
 ---
 
 ## 5. Delivery contract
 
-The bus provides **at-most-once, explicitly lossy** delivery:
+The bus provides **at-most-once, explicitly lossy** delivery. This is an *application-layer* policy (drop-on-full at the consumer buffer), not a property of the transport — the underlying transports are reliable and in-order (GR-N8, section 4). Losses come from the bus deliberately shedding load to a slow or absent consumer, not from the network dropping bytes. Because all v1 networking is intra-VPC (low-loss, low-latency), this lossy policy is a simplification we *choose*, not a hazard we are forced to tolerate:
 
 | Property | Guarantee |
 |----------|-----------|
