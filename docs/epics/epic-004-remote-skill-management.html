@@ -13,13 +13,13 @@
     "id": "004",
     "name": "remote-skill-management",
     "kind": "epic",
-    "status": "planning",
+    "status": "complete",
     "created": "2026-06-20"
   }
   </script>
 
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="004: remote-skill-management" status="draft" pr="pending" generated="2026-06-20">
+  <pd-doc title="004: remote-skill-management" status="complete" pr="pending" generated="2026-06-20">
 
     <!-- ============================== VISION ============================== -->
     <pd-tab name="Vision">
@@ -45,12 +45,12 @@ direction and the guard rails, then sequences the build.
         <pd-cli id="C-loop" title="zsh — add, customize, sync, update" caption="The core author/consume loop, no npx">
           <pd-cmd note="add a remote skill — any host, the user's git auth" status="done">auto skill add mistakenot/skills --skill deploy</pd-cmd>
           <pd-out>✓ resolved deploy@e5c075e → .auto/skills/lock.json; rendered into .claude/skills, .agents/skills</pd-out>
-          <pd-cmd note="customize: edit replacements + file-refs in skills.yaml" status="todo">$EDITOR .auto/skills/skills.yaml</pd-cmd>
-          <pd-cmd note="render authored + vendored into every target (the workhorse)" status="todo">auto skill sync</pd-cmd>
+          <pd-cmd note="customize: edit replacements + file-refs in skills.yaml" status="done">$EDITOR .auto/skills/skills.yaml</pd-cmd>
+          <pd-cmd note="render authored + vendored into every target (the workhorse)" status="done">auto skill sync</pd-cmd>
           <pd-out>✓ 2 targets up to date · deploy re-rendered (skills.yaml changed)</pd-out>
-          <pd-cmd note="offline freshness gate — fast, no network (CI / pre-commit)" status="todo">auto skill sync --check</pd-cmd>
+          <pd-cmd note="offline freshness gate — fast, no network (CI / pre-commit)" status="done">auto skill sync --check</pd-cmd>
           <pd-out>✓ all targets current with lock + values + docs</pd-out>
-          <pd-cmd note="advance floating specs to newest upstream" status="todo">auto skill update</pd-cmd>
+          <pd-cmd note="advance floating specs to newest upstream" status="done">auto skill update</pd-cmd>
           <pd-out>✓ deploy advanced e5c075e → 9a1b2c4; re-rendered</pd-out>
         </pd-cli>
       </pd-section>
@@ -62,9 +62,9 @@ A vendored skill declares what's customizable in its `customize:` frontmatter; y
         <pd-cli id="C-customize" title="zsh — customize a shared code-review skill" caption="Literals + a file-ref, rendered deterministically">
           <pd-cmd note="pull a shared skill that exposes customize vars" status="done">auto skill add acme/agent-skills --skill code-review</pd-cmd>
           <pd-out>✓ added code-review@a1b2c3d → targets</pd-out>
-          <pd-cmd note="see what it lets you customize" status="todo">auto skill describe code-review</pd-cmd>
+          <pd-cmd note="see what it lets you customize" status="done">auto skill describe code-review</pd-cmd>
           <pd-out><script type="text/plain">customize: review_focus (required) · severity_threshold (default "p2") · conventions (file-ref)</script></pd-out>
-          <pd-cmd note="set per-project values in skills.yaml" status="todo">$EDITOR .auto/skills/skills.yaml</pd-cmd>
+          <pd-cmd note="set per-project values in skills.yaml" status="done">$EDITOR .auto/skills/skills.yaml</pd-cmd>
           <pd-out><script type="text/plain">skills:
   code-review:
     replacements:
@@ -73,9 +73,9 @@ A vendored skill declares what's customizable in its `customize:` frontmatter; y
       conventions:                                     # file-ref: inline one doc section
         file: docs/conventions.md
         section: "Code Review"</script></pd-out>
-          <pd-cmd note="render: substitutes the literals, inlines the doc section" status="todo">auto skill sync</pd-cmd>
+          <pd-cmd note="render: substitutes the literals, inlines the doc section" status="done">auto skill sync</pd-cmd>
           <pd-out>✓ code-review re-rendered (skill_version changed)</pd-out>
-          <pd-cmd note="the rendered skill now carries your values + your repo's conventions" status="todo">auto skill get code-review</pd-cmd>
+          <pd-cmd note="the rendered skill now carries your values + your repo's conventions" status="done">auto skill get code-review</pd-cmd>
           <pd-out><script type="text/plain">## Code review
 Focus: security and error handling. Flag issues at p1 or above.
 
@@ -98,14 +98,14 @@ Focus: security and error handling. Flag issues at p1 or above.
         </pd-cli>
 
         <pd-cli id="C-inspect" title="zsh — inspect &amp; adopt" caption="Resource triad + cleanup">
-          <pd-cmd note="all skills, authored + vendored, with stale flags" status="todo">auto skill list</pd-cmd>
-          <pd-cmd note="provenance: source, ref, commit, skill_version, replacements" status="todo">auto skill describe deploy</pd-cmd>
-          <pd-cmd note="pull a hand-dropped skill into ./skills/ as authored" status="todo">auto skill adopt new-plan</pd-cmd>
+          <pd-cmd note="all skills, authored + vendored, with stale flags" status="done">auto skill list</pd-cmd>
+          <pd-cmd note="provenance: source, ref, commit, skill_version, replacements" status="done">auto skill describe deploy</pd-cmd>
+          <pd-cmd note="pull a hand-dropped skill into ./skills/ as authored" status="done">auto skill adopt new-plan</pd-cmd>
         </pd-cli>
 
         <pd-cli id="C-migrate" title="zsh — migrate off npx skills" caption="One-shot, additive">
-          <pd-cmd note="translate skills-lock.json → .auto/skills/ (unresolved state)" status="todo">auto skill migrate vercel --dry-run</pd-cmd>
-          <pd-cmd note="resolve commits + render; then delete skills-lock.json yourself" status="todo">auto skill sync</pd-cmd>
+          <pd-cmd note="translate skills-lock.json → .auto/skills/ (unresolved state)" status="done">auto skill migrate vercel --dry-run</pd-cmd>
+          <pd-cmd note="resolve commits + render; then delete skills-lock.json yourself" status="done">auto skill sync</pd-cmd>
         </pd-cli>
       </pd-section>
     </pd-tab>
@@ -244,25 +244,25 @@ The contracts a task may build behind but must not break:
           <md><script type="text/plain">Normalize every source form (incl. deep links via longest-resolving-ref) → discover skills (roots, dedupe, divergence error) → write lock + `skills.yaml` stub. `--skill`/`--path`/`--list`/`--as`/`--version`/`--no-sync`. Local-source split (git repo vs import).</script></md>
         </pd-task>
 
-        <pd-task id="T4" title="Native sync + render (replaces npx)" status="todo" depends-on="T3" deployable
+        <pd-task id="T4" title="Native sync + render (replaces npx)" status="done" depends-on="T3" deployable
                  href="../tasks/034-skill-native-sync-render/plan.html"
                  delivers="C-loop,C-customize" honors="G-determinism,G-no-exec,G-extract-safe,G-token-budget,G-reproducible,G-crash-consistent,G-offline-check,G-fast-sync">
           <md><script type="text/plain">The render core **and** the pipeline that drives it. Render: restricted `text/template` AST, `customize:` schema, file-refs (whole file + heading-section extraction), canonicalization, `content_hash`, full-tree `skill_version`, `render_version`. Pipeline: 3 phases (plan → parallel fetch → render) + `manifest.json`; journaled crash-consistent commit; incremental on-disk-digest skip; `--check`/`--locked`/`--target`/`--jobs`; `auto_update` modes + intent reconciliation; the `update [name]` verb. Deletes the npx shell-out; reclaims `auto skill update`.</script></md>
         </pd-task>
 
-        <pd-task id="T5" title="Managed vs ad-hoc: prune &amp; adopt" status="todo" depends-on="T4" deployable
+        <pd-task id="T5" title="Managed vs ad-hoc: prune &amp; adopt" status="done" depends-on="T4" deployable
                  href="../tasks/035-skill-prune-adopt/plan.html"
                  delivers="C-inspect" honors="G-no-foreign-delete,G-crash-consistent">
           <md><script type="text/plain">Machine-local receipts as deletion authority; manifest-orphan pruning (renames need no special detection); foreign-dir hard-conflict handling; `adopt` (staged move → git add); `doctor` drift + orphan/foreign reporting; renamed-vendored handling.</script></md>
         </pd-task>
 
-        <pd-task id="T6" title="Inspection triad + deprecations" status="todo" depends-on="T4" deployable
+        <pd-task id="T6" title="Inspection triad + deprecations" status="done" depends-on="T4" deployable
                  href="../tasks/036-skill-inspect-deprecations/plan.html"
                  delivers="C-inspect" honors="G-decisive-cli,G-json-default">
           <md><script type="text/plain">`list --local/--vendored`, `describe`, `get`; `source list/describe`, `target list`. Remove `ls`; relocate binary self-update to root `auto update` (owned here — see D-3). Cheap→full per the resource convention; truncated output prints the recover command.</script></md>
         </pd-task>
 
-        <pd-task id="T7" title="Integration &amp; migration: vercel + git hooks" status="todo" depends-on="T4,T5" deployable
+        <pd-task id="T7" title="Integration &amp; migration: vercel + git hooks" status="done" depends-on="T4,T5" deployable
                  href="../tasks/037-skill-integration-migration/plan.html"
                  delivers="C-migrate" honors="G-schema-strict,G-json-default,G-offline-check,G-fast-sync">
           <md><script type="text/plain">**Migrate:** read `skills-lock.json` → lock (`state: unresolved`) + `skills.yaml` with version intent preserved from each ref; per-source handling incl. the local split; `--dry-run`/`--from`; additive (never touches the vercel lock). **Hooks:** pre-commit `sync --check` + `lint`, post-merge/checkout `sync --locked`, optional pre-push `update --check` — using the lock's file-ref reverse index (doc → skills).</script></md>
