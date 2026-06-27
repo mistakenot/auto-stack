@@ -33,23 +33,13 @@ func notifID(m map[string]any) string {
 	return s
 }
 
-// waitWSPing drains until the first server `ping`, proving the WS is connected
-// and hub-subscribed (hub.Subscribe runs before pingLoop starts).
-func waitWSPing(ctx context.Context, t *testing.T, c *websocket.Conn) {
-	t.Helper()
-	for {
-		_, data, err := c.Read(ctx)
-		if err != nil {
-			t.Fatalf("read ping: %v", err)
-		}
-		var m map[string]any
-		if json.Unmarshal(data, &m) != nil {
-			continue
-		}
-		if m["method"] == "ping" {
-			return
-		}
-	}
+// waitWSSubscribed gives the server goroutine time to reach hub.Subscribe after
+// the WebSocket handshake completes. hub.Subscribe is the first thing the handler
+// does after Accept, but goroutine scheduling means the client's Dial can return
+// before it runs. (The external-package event_flow tests use an equivalent
+// `waitSubscribed`; this white-box file is `package server`, so it needs its own.)
+func waitWSSubscribed() {
+	time.Sleep(50 * time.Millisecond)
 }
 
 // floodEvent builds a sizable, uniquely-ided bus.Event for the drop-on-full
@@ -92,7 +82,7 @@ func TestWSSlowClientDroppedOnFull(t *testing.T) {
 	// notification's id on a channel.
 	healthy := dialDropWS(ctx, t, srv.URL)
 	defer healthy.Close(websocket.StatusNormalClosure, "")
-	waitWSPing(ctx, t, healthy)
+	waitWSSubscribed()
 	healthyIDs := make(chan string, 4096)
 	go func() {
 		for {
@@ -112,10 +102,10 @@ func TestWSSlowClientDroppedOnFull(t *testing.T) {
 		}
 	}()
 
-	// Slow client connects, drains the initial ping, then never reads again.
+	// Slow client connects, then never reads.
 	slow := dialDropWS(ctx, t, srv.URL)
 	defer slow.Close(websocket.StatusNormalClosure, "")
-	waitWSPing(ctx, t, slow)
+	waitWSSubscribed()
 
 	// drainHealthy blocks until the healthy client has surfaced want — proving it
 	// read that broadcast off the wire (so its 16-slot out is drained again).
