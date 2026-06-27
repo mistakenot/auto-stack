@@ -85,3 +85,6 @@
 - [ ] `search` command: add `--min-index` / `--max-index` filter on message index. Needed to isolate session-opening messages (e.g. "user messages where index < 5") without post-filtering JSON.
 - [ ] `search` / `stats`: add `--tool-name AskUserQuestion` support — currently tool-name filter exists but AskUserQuestion isn't surfaced as a tool name in the index. Would directly surface Q&A decision pairs.
 - [ ] Skill metadata indexing: `--skill` filter doesn't match skills invoked via `<command-name>` tags in user messages (e.g. `/new-task`, `/process-requirements`). Only ETL-tracked skills appear in `autosearch skills`. Need to extract skill name from `<command-name>` tags during indexing.
+
+Auto search
+- Should have a `session render` function, which takes a session id and renders a html file of that session graph to help humans read through it, using planning-doc components.
