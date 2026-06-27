@@ -1,0 +1,23 @@
+Mutation B — drop-on-full removed (AC-7 producer-hang detection)
+Date: 2026-06-27
+Mutation: auto-shared/rpc/peer.go enqueue() — replaced the non-blocking 'select { case p.out <- msg: default: shutdown }' with a blocking 'p.out <- msg' send (producer now hangs on a full buffer instead of dropping + shutting down)
+Test: TestSlowConsumerAcrossFixtures (-race, -timeout 30s) ./rpc/conformance/...
+Result: RED — producer blocks forever; go test panics with 'test timed out' (the timeout-panic IS the red evidence)
+Command: CGO_ENABLED=1 go test -race -run TestSlowConsumerAcrossFixtures -timeout 30s -v ./rpc/conformance/...
+================================================================
+
+=== RUN   TestSlowConsumerAcrossFixtures
+=== RUN   TestSlowConsumerAcrossFixtures/slow-consumer-drop-on-full/pipe
+    conformance_test.go:285: producer blocked: never returned ErrClosed within timeout (drop-on-full failed)
+=== RUN   TestSlowConsumerAcrossFixtures/slow-consumer-drop-on-full/unix
+    conformance_test.go:285: producer blocked: never returned ErrClosed within timeout (drop-on-full failed)
+=== RUN   TestSlowConsumerAcrossFixtures/slow-consumer-drop-on-full/tcp
+    conformance_test.go:285: producer blocked: never returned ErrClosed within timeout (drop-on-full failed)
+--- FAIL: TestSlowConsumerAcrossFixtures (15.02s)
+    --- FAIL: TestSlowConsumerAcrossFixtures/slow-consumer-drop-on-full/pipe (5.00s)
+    --- FAIL: TestSlowConsumerAcrossFixtures/slow-consumer-drop-on-full/unix (5.01s)
+    --- FAIL: TestSlowConsumerAcrossFixtures/slow-consumer-drop-on-full/tcp (5.01s)
+FAIL
+FAIL	github.com/mistakenot/auto-shared/rpc/conformance	15.030s
+FAIL
+EXIT=1

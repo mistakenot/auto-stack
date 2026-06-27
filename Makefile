@@ -1,4 +1,4 @@
-.PHONY: build clean test vet fmt lint dist vulncheck install \
+.PHONY: build clean test test-race vet fmt lint dist vulncheck install \
        install-hooks install-tools gen-stats check fmt-check stale-refs test-install test-curl-install \
        fixtures verify-fixtures ui-serve \
        fmt-staged lint-staged vulncheck-if-deps-changed autodoc-fix skills-sync beads-sync pre-commit
@@ -12,7 +12,12 @@ INSTALL_DIR ?= $(HOME)/.local/bin
 
 # All modules participate in the quality/test loops (fmt/vet/lint/vulncheck/test).
 # The single `auto` binary is built from the auto-cli umbrella module.
-PROJECTS := auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill auto-graph auto-ui auto-config auto-cli
+PROJECTS := auto-shared auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill auto-graph auto-ui auto-config auto-cli
+
+# Modules whose concurrency code must be exercised under the race detector.
+# Kept separate from `test` because -race requires CGO_ENABLED=1 + a C compiler,
+# which cgo-less local envs may lack; CI (ubuntu-latest, has gcc) runs it.
+RACE_PROJECTS := auto-shared auto-watch
 
 # Platform defaults (overridable for cross-compilation)
 GOOS   ?= $(shell go env GOOS)
@@ -130,6 +135,17 @@ test: verify-fixtures
 		echo "=== test $$d ==="; \
 		(cd "$$d" && go test ./...) || exit 1; \
 	done
+
+# Run the race detector over the concurrency-heavy modules. Requires
+# CGO_ENABLED=1 + a C compiler (gcc/clang). Kept out of `test`'s deps so plain
+# `make test` stays fast and works in cgo-less envs; CI runs this as a separate
+# required step.
+test-race:
+	@for d in $(RACE_PROJECTS); do \
+		echo "=== test-race $$d ==="; \
+		(cd "$$d" && CGO_ENABLED=1 go test -race ./...) || exit 1; \
+	done
+	@echo "All race-projects passed -race"
 
 # --- Co-change snapshot fixtures ---
 

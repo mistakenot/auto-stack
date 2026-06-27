@@ -7,6 +7,7 @@ package rpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -79,7 +80,7 @@ func classify(raw json.RawMessage) (frameKind, error) {
 	// jsonrpc must be "2.0".
 	ver, ok := fields["jsonrpc"]
 	if !ok {
-		return 0, fmt.Errorf("classify: missing required field \"jsonrpc\"")
+		return 0, errors.New("classify: missing required field \"jsonrpc\"")
 	}
 	var verStr string
 	if err := json.Unmarshal(ver, &verStr); err != nil || verStr != "2.0" {
@@ -94,21 +95,21 @@ func classify(raw json.RawMessage) (frameKind, error) {
 	// A response carries result and/or error, no method.
 	if hasResult || hasError {
 		if hasMethod {
-			return 0, fmt.Errorf("classify: frame has both method and result/error")
+			return 0, errors.New("classify: frame has both method and result/error")
 		}
 		if hasResult && hasError {
-			return 0, fmt.Errorf("classify: response must carry exactly one of result or error, got both")
+			return 0, errors.New("classify: response must carry exactly one of result or error, got both")
 		}
 		if !hasResult && !hasError {
 			// Unreachable given the outer condition, but defensive.
-			return 0, fmt.Errorf("classify: response must carry exactly one of result or error, got neither")
+			return 0, errors.New("classify: response must carry exactly one of result or error, got neither")
 		}
 		return kindResponse, nil
 	}
 
 	// A request or notification requires a method.
 	if !hasMethod {
-		return 0, fmt.Errorf("classify: frame has no method and no result/error; not a valid JSON-RPC message")
+		return 0, errors.New("classify: frame has no method and no result/error; not a valid JSON-RPC message")
 	}
 
 	// Validate method is a string.

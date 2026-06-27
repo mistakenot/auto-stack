@@ -369,6 +369,43 @@ func dialSubscribe(t *testing.T, ctx context.Context, addr string) (*conformance
 	return client, clientCancel
 }
 
+// dialSubscribeHalfOpen dials the server, performs a bus.subscribe handshake via
+// manual frame I/O, then stops reading while holding the TCP connection open —
+// modelling a half-open peer (process wedged / host gone): the socket stays up
+// (no EOF) but the client never reads the server's $keepalive pings and so never
+// pongs. Only the server's read watchdog can detect this; a live client would
+// auto-pong and keep its sink. The conn is closed at test end.
+func dialSubscribeHalfOpen(t *testing.T, ctx context.Context, addr string) {
+	t.Helper()
+	conn, err := transport.Dial(ctx, addr)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	if err := json.NewEncoder(conn).Encode(rpc.Request{
+		JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "bus.subscribe",
+	}); err != nil {
+		t.Fatalf("encode subscribe: %v", err)
+	}
+
+	// Read frames until the subscribe response (id:1) arrives, skipping any
+	// interleaved notifications/pings. After this we never read again — the conn
+	// stays open but silent, so the server's watchdog (not EOF) must reap it.
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	dec := json.NewDecoder(conn)
+	for {
+		var resp rpc.Response
+		if err := dec.Decode(&resp); err != nil {
+			t.Fatalf("decode subscribe response: %v", err)
+		}
+		if string(resp.ID) == "1" {
+			break
+		}
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+}
+
 // readNotif waits up to timeout for a notification on ch.
 func readNotif(t *testing.T, ch <-chan rpc.Request, timeout time.Duration) (rpc.Request, bool) {
 	t.Helper()
@@ -610,6 +647,147 @@ func TestSaturatedSubscriberDropped(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	close(drainStop)
+}
+
+// signalSink implements bus.Sink and closes/sends on a channel the first time
+// it observes an event of the given type. Used to get an event-driven (not
+// poll-to-settle) signal that the daemon broadcast a ctl.disconnect.
+type signalSink struct {
+	want string
+	once sync.Once
+	ch   chan struct{}
+}
+
+func (s *signalSink) Deliver(ev bus.Event) {
+	if ev.Type == s.want {
+		s.once.Do(func() { close(s.ch) })
+	}
+}
+
+// AC-4: a dead subscriber's hub sink is reaped (no leak). A peer subscribes,
+// then goes silent without closing its connection (a healthy-but-mute client
+// that keeps draining server pings — so the drop-on-full path is NOT what
+// reaps it). The keepalive watchdog is therefore the sole reap cause: after the
+// keepalive timeout the peer's Serve returns, subscription.teardown() fires
+// (now defer-guarded), and the hub sink count returns to its pre-subscribe
+// baseline. Proven via the ctl.disconnect broadcast (bounded select, not a
+// poll-to-settle), which the daemon emits only after teardown has run.
+func TestDeadSubscriberSinkReaped(t *testing.T) {
+	hub := bus.NewHub()
+	h := rpcmethods.New(nil, "test-host", "0.1.0", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
+	ln, err := transport.Listen("tcp://127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	srv := New(ln, h, hub, true) // ctlEvents=true so the reap emits ctl.disconnect
+	// Test seam: override the 15s/45s daemon defaults with short durations so
+	// the watchdog reaps within the test's bounded wait.
+	srv.kaInterval = 40 * time.Millisecond
+	srv.kaTimeout = 120 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Serve(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		<-errCh
+	})
+	time.Sleep(20 * time.Millisecond)
+	addr := "tcp://" + ln.Addr().String()
+
+	// Observer: an in-process hub sink that signals on the first ctl.disconnect.
+	disconnected := &signalSink{want: bus.TypeCtlDisconnect, ch: make(chan struct{})}
+	unsub := hub.Subscribe(disconnected)
+	defer unsub()
+
+	baseline := hub.SinkCount() // includes the observer
+
+	// Subscribe a genuinely half-open peer: it completes bus.subscribe, then
+	// holds the TCP conn open but stops reading, so it never pongs the server's
+	// $keepalive pings. A live client would auto-pong and keep its sink, so only
+	// the server's read watchdog can reap this one.
+	dialSubscribeHalfOpen(t, ctx, addr)
+	if got := hub.SinkCount(); got != baseline+1 {
+		t.Fatalf("SinkCount after subscribe = %d, want %d", got, baseline+1)
+	}
+
+	// Bounded wait for the reap signal — NOT a poll-to-settle loop.
+	select {
+	case <-disconnected.ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dead subscriber was not reaped within timeout")
+	}
+
+	// teardown runs before the ctl.disconnect broadcast, so the dead peer's
+	// sink is already gone once we observe the signal.
+	if got := hub.SinkCount(); got != baseline {
+		t.Fatalf("SinkCount after reap = %d, want baseline %d", got, baseline)
+	}
+
+	// A subsequent broadcast no longer targets the dead peer (its sink is
+	// deregistered) and must neither panic nor block.
+	ev, _ := bus.NewEvent("agent.tool.post", "test/source", nil)
+	hub.Broadcast(ev)
+	if got := hub.SinkCount(); got != baseline {
+		t.Fatalf("SinkCount after post-reap broadcast = %d, want %d", got, baseline)
+	}
+}
+
+func TestHealthySubscriberNotReaped(t *testing.T) {
+	// Regression guard for server-only keepalive false-reaps: a read-only
+	// subscriber (calls bus.subscribe, then only drains pushed notifications and
+	// never sends application traffic) must NOT be reaped. Its peer auto-pongs
+	// the server's $keepalive pings, which keeps the server's watchdog satisfied.
+	hub := bus.NewHub()
+	h := rpcmethods.New(nil, "test-host", "0.1.0", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, emptyReg)
+	ln, err := transport.Listen("tcp://127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	srv := New(ln, h, hub, true)
+	srv.kaInterval = 40 * time.Millisecond
+	srv.kaTimeout = 120 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Serve(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		<-errCh
+	})
+	time.Sleep(20 * time.Millisecond)
+	addr := "tcp://" + ln.Addr().String()
+
+	disconnected := &signalSink{want: bus.TypeCtlDisconnect, ch: make(chan struct{})}
+	unsub := hub.Subscribe(disconnected)
+	defer unsub()
+
+	baseline := hub.SinkCount()
+
+	// A healthy subscriber: dialSubscribe runs the client's Serve loop, so it
+	// auto-pongs server pings even though it sends no application traffic.
+	client, _ := dialSubscribe(t, ctx, addr)
+	if got := hub.SinkCount(); got != baseline+1 {
+		t.Fatalf("SinkCount after subscribe = %d, want %d", got, baseline+1)
+	}
+
+	// Bounded negative assertion: over several ping/pong cycles well past the
+	// reap timeout, no ctl.disconnect fires. Fixed-window wait, not settle.
+	select {
+	case <-disconnected.ch:
+		t.Fatal("healthy read-only subscriber was falsely reaped")
+	case <-time.After(8 * srv.kaInterval):
+	}
+	if got := hub.SinkCount(); got != baseline+1 {
+		t.Fatalf("SinkCount after idle = %d, want %d (healthy subscriber dropped)", got, baseline+1)
+	}
+
+	// Positive observable: a broadcast is still delivered to the live subscriber.
+	ev, _ := bus.NewEvent("agent.tool.post", "test/source", nil)
+	hub.Broadcast(ev)
+	if _, ok := readNotif(t, client.Notifications(), 2*time.Second); !ok {
+		t.Fatal("healthy subscriber did not receive broadcast after idle period")
+	}
 }
 
 func TestServe_CtlEventsFalse_NoLifecycleEvents(t *testing.T) {

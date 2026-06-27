@@ -53,7 +53,7 @@ func newPipePeers(t *testing.T, handlers map[string]Handler, clientOpts []Option
 func TestKnownMethodReturnsResult(t *testing.T) {
 	handlers := map[string]Handler{
 		"echo": func(_ context.Context, params json.RawMessage) (any, error) {
-			return json.RawMessage(params), nil
+			return params, nil
 		},
 	}
 
@@ -160,8 +160,7 @@ func TestMalformedJSON(t *testing.T) {
 		return "ok", nil
 	}))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(ctx) }()
@@ -196,8 +195,7 @@ func TestInvalidEnvelopeNon20(t *testing.T) {
 	c1, c2 := net.Pipe()
 
 	server := NewPeer(c1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(ctx) }()
@@ -230,8 +228,7 @@ func TestInvalidEnvelopeMissingMethod(t *testing.T) {
 	c1, c2 := net.Pipe()
 
 	server := NewPeer(c1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(ctx) }()
@@ -274,8 +271,7 @@ func TestNotificationNoResponse(t *testing.T) {
 		}),
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(ctx) }()
@@ -320,7 +316,7 @@ func TestConcurrentNotifyAndCall(t *testing.T) {
 	// Server Notify concurrently with client Calls under -race.
 	handlers := map[string]Handler{
 		"echo": func(_ context.Context, params json.RawMessage) (any, error) {
-			return json.RawMessage(params), nil
+			return params, nil
 		},
 	}
 
@@ -347,22 +343,18 @@ func TestConcurrentNotifyAndCall(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Client sends calls sequentially (each call blocks until response).
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < n; i++ {
+	wg.Go(func() {
+		for i := range n {
 			_, _ = client.Call(ctx, "echo", map[string]int{"i": i})
 		}
-	}()
+	})
 
 	// Server sends notifications concurrently.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < n; i++ {
+	wg.Go(func() {
+		for i := range n {
 			_ = server.Notify("server.push", map[string]int{"i": i})
 		}
-	}()
+	})
 
 	wg.Wait()
 
@@ -383,8 +375,7 @@ func TestStalledReaderTriggersDropAndClose(t *testing.T) {
 
 	peer := NewPeer(c1, WithBufferSize(1))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- peer.Serve(ctx) }()
@@ -394,7 +385,7 @@ func TestStalledReaderTriggersDropAndClose(t *testing.T) {
 
 	// Hammer notifications until we get ErrClosed.
 	var gotClosed bool
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		err := peer.Notify("spam", nil)
 		if errors.Is(err, ErrClosed) {
 			gotClosed = true
@@ -415,8 +406,7 @@ func TestPendingCallReturnsOnEOF(t *testing.T) {
 
 	peer := NewPeer(c1)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- peer.Serve(ctx) }()
@@ -487,8 +477,7 @@ func TestPendingCallReturnsOnOverflow(t *testing.T) {
 
 	peer := NewPeer(c1, WithBufferSize(1))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- peer.Serve(ctx) }()
@@ -506,7 +495,7 @@ func TestPendingCallReturnsOnOverflow(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Flood notifications to trigger overflow. Don't read from c2.
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		_ = peer.Notify("spam", nil)
 	}
 
@@ -529,8 +518,7 @@ func TestPendingCallReturnsOnExplicitClose(t *testing.T) {
 
 	peer := NewPeer(c1)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go func() { peer.Serve(ctx) }()
 
@@ -587,8 +575,7 @@ func TestPerCallCtxCancellation(t *testing.T) {
 	c1, c2 := net.Pipe()
 
 	client := NewPeer(c1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go func() { client.Serve(ctx) }()
 
@@ -641,7 +628,10 @@ func TestPerCallCtxCancellation(t *testing.T) {
 	}
 
 	// Send a response for call 2 back through the pipe.
-	resultBytes, _ := json.Marshal(map[string]string{"ok": "yes"})
+	resultBytes, err := json.Marshal(map[string]string{"ok": "yes"})
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
 	resp2 := Response{
 		JSONRPC: "2.0",
 		ID:      req2.ID,
@@ -685,20 +675,18 @@ func TestPendingMapEmptyAfterShutdown(t *testing.T) {
 	// Start several pending calls. The remote end never responds.
 	const n = 5
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range n {
+		wg.Go(func() {
 			callCtx, callCancel := context.WithTimeout(context.Background(), testTimeout)
 			defer callCancel()
 			_, _ = peer.Call(callCtx, "anything", nil)
-		}()
+		})
 	}
 
 	// Give calls time to register. Read their requests from c2 to unblock
 	// the write pump (net.Pipe is synchronous).
 	dec := NewDecoder(c2)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		var req Request
 		if err := dec.Decode(&req); err != nil {
 			t.Fatalf("decode request %d: %v", i, err)
@@ -726,7 +714,7 @@ func TestCloseIsIdempotent(t *testing.T) {
 	peer := NewPeer(c1)
 
 	// Close multiple times — should not panic.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if err := peer.Close(); err != nil {
 			t.Errorf("Close() #%d returned error: %v", i, err)
 		}
@@ -742,16 +730,15 @@ func TestDuplexBothSidesServe(t *testing.T) {
 
 	// Server handles "server.echo".
 	server := NewPeer(c1, WithHandler("server.echo", func(_ context.Context, params json.RawMessage) (any, error) {
-		return json.RawMessage(params), nil
+		return params, nil
 	}))
 
 	// Client handles "client.echo".
 	client := NewPeer(c2, WithHandler("client.echo", func(_ context.Context, params json.RawMessage) (any, error) {
-		return json.RawMessage(params), nil
+		return params, nil
 	}))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go func() { server.Serve(ctx) }()
 	go func() { client.Serve(ctx) }()
@@ -817,8 +804,7 @@ func TestNotifySendsValidFrame(t *testing.T) {
 	c1, c2 := net.Pipe()
 
 	peer := NewPeer(c1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go func() { peer.Serve(ctx) }()
 
@@ -869,8 +855,7 @@ func TestRegisterPostConstruction(t *testing.T) {
 
 	client := NewPeer(c2)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go func() { server.Serve(ctx) }()
 	go func() { client.Serve(ctx) }()
@@ -937,7 +922,7 @@ func TestConcurrentCallsNoCrosstalk(t *testing.T) {
 	handlers := map[string]Handler{
 		"identity": func(_ context.Context, params json.RawMessage) (any, error) {
 			// Return params unchanged.
-			return json.RawMessage(params), nil
+			return params, nil
 		},
 	}
 
@@ -957,7 +942,7 @@ func TestConcurrentCallsNoCrosstalk(t *testing.T) {
 
 	results := make(chan result, n)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(idx int) {
 			ctx, c := context.WithTimeout(context.Background(), testTimeout)
 			defer c()
@@ -972,7 +957,7 @@ func TestConcurrentCallsNoCrosstalk(t *testing.T) {
 		}(i)
 	}
 
-	for i := 0; i < n; i++ {
+	for range n {
 		r := <-results
 		if r.err != nil {
 			t.Errorf("call %d: %v", r.idx, r.err)
@@ -981,6 +966,201 @@ func TestConcurrentCallsNoCrosstalk(t *testing.T) {
 		if r.val != r.idx {
 			t.Errorf("call %d: got val %d (crosstalk)", r.idx, r.val)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// AC-2 / AC-3: keepalive (opt-in liveness)
+// ---------------------------------------------------------------------------
+
+// halfOpenConn simulates a half-open connection (TCP up, peer silent): writes
+// are swallowed (the local write pump succeeds, as on a real half-open socket)
+// and reads block forever until Close, at which point Read returns io.EOF —
+// modelling the watchdog closing the conn to unblock the stalled Decode. It is
+// local to this test file by design; the conformance fault conns are Phase 4.
+type halfOpenConn struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newHalfOpenConn() *halfOpenConn {
+	return &halfOpenConn{closed: make(chan struct{})}
+}
+
+func (c *halfOpenConn) Read(p []byte) (int, error) {
+	<-c.closed
+	return 0, io.EOF
+}
+
+func (c *halfOpenConn) Write(p []byte) (int, error) {
+	select {
+	case <-c.closed:
+		return 0, io.ErrClosedPipe
+	default:
+		return len(p), nil // swallow — peer is silently unresponsive
+	}
+}
+
+func (c *halfOpenConn) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return nil
+}
+
+func TestKeepAliveReapsHalfOpen(t *testing.T) {
+	// A peer over a half-open conn with keepalive enabled. No inbound frame
+	// ever arrives, so the watchdog must reap the conn within ~timeout.
+	const (
+		interval = 10 * time.Millisecond
+		timeout  = 40 * time.Millisecond
+	)
+
+	conn := newHalfOpenConn()
+	peer := NewPeer(conn, WithKeepAlive(interval, timeout))
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- peer.Serve(context.Background()) }()
+
+	// An in-flight Call whose own context far outlives the keepalive bound, so
+	// an ErrClosed return proves the reap released it (not the caller deadline).
+	callResult := make(chan error, 1)
+	go func() {
+		callCtx, callCancel := context.WithTimeout(context.Background(), testTimeout)
+		defer callCancel()
+		_, err := peer.Call(callCtx, "anything", nil)
+		callResult <- err
+	}()
+
+	// Serve must return within a bounded window (well under testTimeout).
+	select {
+	case <-serveErr:
+		// Serve returned — the watchdog reaped the half-open conn.
+	case <-time.After(testTimeout):
+		t.Fatal("Serve did not return after half-open keepalive reap")
+	}
+
+	// The in-flight Call must return ErrClosed (released by shutdown), not its
+	// own deadline.
+	select {
+	case err := <-callResult:
+		if !errors.Is(err, ErrClosed) {
+			t.Errorf("in-flight Call returned %v, want ErrClosed", err)
+		}
+	case <-time.After(testTimeout):
+		t.Fatal("in-flight Call did not return after reap")
+	}
+
+	// Subsequent Call / Notify must also return ErrClosed.
+	postCtx, postCancel := context.WithTimeout(context.Background(), testTimeout)
+	defer postCancel()
+	if _, err := peer.Call(postCtx, "anything", nil); !errors.Is(err, ErrClosed) {
+		t.Errorf("post-reap Call returned %v, want ErrClosed", err)
+	}
+	if err := peer.Notify("anything", nil); !errors.Is(err, ErrClosed) {
+		t.Errorf("post-reap Notify returned %v, want ErrClosed", err)
+	}
+}
+
+func TestKeepAliveNoFalseReapWhenHealthy(t *testing.T) {
+	// A healthy, idle pair with keepalive enabled on both ends. With no
+	// application traffic, the mutual $keepalive pings keep each side's
+	// lastActivity fresh, so neither watchdog should fire.
+	const (
+		interval = 10 * time.Millisecond
+		timeout  = 40 * time.Millisecond
+	)
+
+	handlers := map[string]Handler{
+		"echo": func(_ context.Context, params json.RawMessage) (any, error) {
+			return params, nil
+		},
+	}
+
+	client, _, cancel, clientErr, serverErr := newPipePeers(t, handlers,
+		[]Option{WithKeepAlive(interval, timeout)},
+		WithKeepAlive(interval, timeout),
+	)
+	defer cancel()
+
+	// Bounded negative assertion: over several keepalive intervals (and past the
+	// reap timeout), neither Serve returns. This is a fixed-window wait, not a
+	// poll-to-settle.
+	select {
+	case err := <-clientErr:
+		t.Fatalf("client Serve returned during healthy idle: %v", err)
+	case err := <-serverErr:
+		t.Fatalf("server Serve returned during healthy idle: %v", err)
+	case <-time.After(8 * interval):
+		// Survived multiple ping cycles past the timeout — good.
+	}
+
+	// Positive observable: a late Call still round-trips, proving the connection
+	// is alive and Serve is still running.
+	ctx, tCancel := context.WithTimeout(context.Background(), testTimeout)
+	defer tCancel()
+	result, err := client.Call(ctx, "echo", map[string]string{"msg": "alive"})
+	if err != nil {
+		t.Fatalf("late Call after idle failed: %v", err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(result, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["msg"] != "alive" {
+		t.Errorf("late Call result = %q, want alive", got["msg"])
+	}
+}
+
+func TestKeepAliveNoFalseReapServerOnly(t *testing.T) {
+	// Asymmetric keepalive: only the server enables it; the client is a plain
+	// NewPeer with no keepalive and sends no application traffic (modelling a
+	// read-only bus.subscribe consumer). The server's pings must be answered by
+	// the client's automatic $keepalive pong, keeping the server's watchdog
+	// satisfied — so the server must NOT reap a healthy but app-idle client.
+	// This is the regression guard for the server-only-keepalive false-reap.
+	const (
+		interval = 10 * time.Millisecond
+		timeout  = 40 * time.Millisecond
+	)
+
+	handlers := map[string]Handler{
+		"echo": func(_ context.Context, params json.RawMessage) (any, error) {
+			return params, nil
+		},
+	}
+
+	// clientOpts nil => client has NO keepalive; server enables it.
+	client, _, cancel, clientErr, serverErr := newPipePeers(t, handlers,
+		nil,
+		WithKeepAlive(interval, timeout),
+	)
+	defer cancel()
+
+	// Bounded negative assertion: over several ping cycles past the reap timeout,
+	// neither Serve returns — the client's auto-pong keeps the server alive even
+	// though the client never initiates a frame. Fixed-window wait, not settle.
+	select {
+	case err := <-serverErr:
+		t.Fatalf("server Serve reaped a healthy app-idle client: %v", err)
+	case err := <-clientErr:
+		t.Fatalf("client Serve returned during healthy idle: %v", err)
+	case <-time.After(8 * interval):
+		// Survived multiple ping/pong cycles past the timeout — good.
+	}
+
+	// Positive observable: a late Call still round-trips, proving the connection
+	// was never reaped and both Serve loops are still running.
+	ctx, tCancel := context.WithTimeout(context.Background(), testTimeout)
+	defer tCancel()
+	result, err := client.Call(ctx, "echo", map[string]string{"msg": "alive"})
+	if err != nil {
+		t.Fatalf("late Call after idle failed (client was reaped?): %v", err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(result, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["msg"] != "alive" {
+		t.Errorf("late Call result = %q, want alive", got["msg"])
 	}
 }
 

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // ErrClosed is returned by Call and Notify after the peer has been shut down.
@@ -16,11 +18,46 @@ var ErrClosed = errors.New("rpc: peer closed")
 // outboundBuffer constant in auto-ui/internal/server/ws.go.
 const defaultBufferSize = 16
 
+// pingMethod is the reserved notification method used by the keepalive ping
+// sender. It is swallowed by handleNotification and never forwarded to the
+// application's OnNotify callback.
+//
+// Keepalive is a ping/pong: a peer that receives a $keepalive ping (no params)
+// immediately echoes a $keepalive pong (carrying pongParams). This is done by
+// EVERY peer on receipt, regardless of whether it enabled WithKeepAlive — so a
+// keepalive-enabled side (e.g. the daemon) that pings a plain client gets an
+// inbound pong proving the client is alive, and only reaps it when the pong
+// stops arriving (a genuinely dead/half-open peer). Pongs do not elicit further
+// pongs, so the exchange never loops.
+const pingMethod = "$keepalive"
+
+// pongParams marks a $keepalive frame as a pong (a reply to a ping) so the
+// responder does not echo it again. A ping carries no params.
+var pongParams = json.RawMessage(`{"pong":true}`)
+
+// isKeepAlivePong reports whether a $keepalive frame's params mark it as a pong.
+func isKeepAlivePong(params json.RawMessage) bool {
+	if len(params) == 0 {
+		return false
+	}
+	var p struct {
+		Pong bool `json:"pong"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return false
+	}
+	return p.Pong
+}
+
 // peerConfig accumulates option values before the Peer is fully constructed.
 type peerConfig struct {
 	handlers map[string]Handler
 	onNotify func(Request)
 	bufSize  int
+
+	// keepAlive timing; zero means keepalive disabled (the default).
+	kaInterval time.Duration
+	kaTimeout  time.Duration
 }
 
 // Option configures a Peer during construction.
@@ -39,6 +76,23 @@ func WithOnNotify(fn func(Request)) Option {
 // WithBufferSize sets the outbound write-pump channel capacity.
 func WithBufferSize(n int) Option {
 	return func(c *peerConfig) { c.bufSize = n }
+}
+
+// WithKeepAlive enables application-level liveness detection (opt-in; default
+// off). interval is the cadence at which a reserved $keepalive notification is
+// pushed to the peer; timeout is the maximum inbound silence tolerated before
+// the connection is reaped (via the existing shutdown path). Both must be
+// positive and interval must be strictly less than timeout; on misuse the
+// option is a no-op (keepalive stays disabled), mirroring the permissive style
+// of the other options.
+func WithKeepAlive(interval, timeout time.Duration) Option {
+	return func(c *peerConfig) {
+		if interval <= 0 || timeout <= 0 || interval >= timeout {
+			return
+		}
+		c.kaInterval = interval
+		c.kaTimeout = timeout
+	}
 }
 
 // Peer is a symmetric duplex JSON-RPC 2.0 endpoint over an io.ReadWriteCloser.
@@ -71,6 +125,18 @@ type Peer struct {
 
 	// pumpDone is closed when the write pump goroutine exits.
 	pumpDone chan struct{}
+
+	// kaInterval / kaTimeout configure keepalive. Both zero means keepalive is
+	// disabled (the default). When enabled, Serve starts a ping sender and a
+	// read watchdog.
+	kaInterval time.Duration
+	kaTimeout  time.Duration
+
+	// lastActivity is the UnixNano timestamp of the last successful Decode.
+	// Written by readLoop, read by the watchdog goroutine. Initialized to the
+	// Serve start time so a healthy connection isn't reaped before its first
+	// frame arrives.
+	lastActivity atomic.Int64
 }
 
 // NewPeer creates a Peer bound to conn. Register handlers via options or
@@ -84,13 +150,15 @@ func NewPeer(conn io.ReadWriteCloser, opts ...Option) *Peer {
 		o(cfg)
 	}
 	return &Peer{
-		conn:     conn,
-		methods:  cfg.handlers,
-		onNotify: cfg.onNotify,
-		out:      make(chan any, cfg.bufSize),
-		stop:     make(chan struct{}),
-		pending:  make(map[int64]chan Response),
-		closed:   make(chan struct{}),
+		conn:       conn,
+		methods:    cfg.handlers,
+		onNotify:   cfg.onNotify,
+		out:        make(chan any, cfg.bufSize),
+		stop:       make(chan struct{}),
+		pending:    make(map[int64]chan Response),
+		closed:     make(chan struct{}),
+		kaInterval: cfg.kaInterval,
+		kaTimeout:  cfg.kaTimeout,
 	}
 }
 
@@ -123,6 +191,23 @@ func (p *Peer) Serve(ctx context.Context) error {
 		}
 	}()
 
+	// Keepalive (opt-in): start the ping sender and read watchdog. Both exit on
+	// p.closed (which shutdown closes), so the final shutdown below always
+	// releases them; kaDone is joined to guarantee no goroutine leak.
+	kaDone := make(chan struct{})
+	if p.kaInterval > 0 && p.kaTimeout > 0 {
+		// Seed lastActivity with the start time so the watchdog doesn't reap a
+		// healthy connection before its first frame arrives.
+		p.lastActivity.Store(time.Now().UnixNano())
+		var kaWG sync.WaitGroup
+		kaWG.Add(2)
+		go func() { defer kaWG.Done(); p.pingLoop(ctx) }()
+		go func() { defer kaWG.Done(); p.watchdogLoop(ctx) }()
+		go func() { kaWG.Wait(); close(kaDone) }()
+	} else {
+		close(kaDone)
+	}
+
 	// Read loop — blocks until EOF, decode error, or conn closed.
 	err := p.readLoop(ctx)
 	close(ctxDone)
@@ -138,7 +223,61 @@ func (p *Peer) Serve(ctx context.Context) error {
 	// Ensure terminal shutdown ran (idempotent if ctx watcher triggered it).
 	p.shutdown()
 
+	// Join the keepalive goroutines (released by shutdown closing p.closed).
+	<-kaDone
+
 	return err
+}
+
+// pingLoop pushes a $keepalive ping every kaInterval. The remote echoes a pong
+// (see handleNotification), and that inbound pong satisfies this side's read
+// watchdog — so a keepalive-enabled peer detects a dead remote even when the
+// remote sends no application traffic and runs no keepalive of its own. It
+// mirrors the WebSocket ping model in auto-ui/internal/server/ws.go: a
+// dedicated ticker goroutine using the drop-on-full enqueue (a stalled writer
+// closes the conn rather than blocking). Exits on p.closed or ctx cancellation.
+func (p *Peer) pingLoop(ctx context.Context) {
+	t := time.NewTicker(p.kaInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-p.closed:
+			return
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if !p.enqueue(&Request{JSONRPC: "2.0", Method: pingMethod}) {
+				return
+			}
+		}
+	}
+}
+
+// watchdogLoop reaps a half-open connection: if no inbound frame has been
+// decoded within kaTimeout, it calls shutdown (closing the conn, which unblocks
+// readLoop's Decode and releases all pending callers). It ticks at ~kaTimeout/3
+// so detection happens within a bounded multiple of the timeout. Exits on
+// p.closed or ctx cancellation.
+func (p *Peer) watchdogLoop(ctx context.Context) {
+	tick := p.kaTimeout / 3
+	if tick <= 0 {
+		tick = p.kaTimeout
+	}
+	t := time.NewTicker(tick)
+	defer t.Stop()
+	for {
+		select {
+		case <-p.closed:
+			return
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if time.Now().UnixNano()-p.lastActivity.Load() > int64(p.kaTimeout) {
+				p.shutdown()
+				return
+			}
+		}
+	}
 }
 
 // readLoop decodes inbound frames and dispatches them. Returns on the first
@@ -163,6 +302,11 @@ func (p *Peer) readLoop(ctx context.Context) error {
 			}
 			return err
 		}
+
+		// Stamp liveness after every successful Decode. Any inbound frame —
+		// including a remote $keepalive ping — proves the connection is alive
+		// and resets the watchdog's silence window.
+		p.lastActivity.Store(time.Now().UnixNano())
 
 		kind, classErr := classify(raw)
 		if classErr != nil {
@@ -273,12 +417,25 @@ func (p *Peer) handleRequest(ctx context.Context, raw json.RawMessage) {
 }
 
 // handleNotification delivers an inbound notification to the OnNotify callback.
+// The reserved $keepalive method is swallowed here so it never reaches the
+// application handler (its only effect is the lastActivity stamp in readLoop).
 func (p *Peer) handleNotification(raw json.RawMessage) {
-	if p.onNotify == nil {
-		return
-	}
 	var req Request
 	if err := json.Unmarshal(raw, &req); err != nil {
+		return
+	}
+	if req.Method == pingMethod {
+		// A ping (no params) elicits a pong so the pinging side sees inbound
+		// proof-of-life even when this peer sends no application traffic and has
+		// no keepalive of its own. A pong is terminal (it carries pongParams and
+		// is not echoed again). Both already refreshed lastActivity via the
+		// readLoop stamp; the pong is best-effort (non-blocking enqueue).
+		if !isKeepAlivePong(req.Params) {
+			p.enqueue(&Request{JSONRPC: "2.0", Method: pingMethod, Params: pongParams})
+		}
+		return
+	}
+	if p.onNotify == nil {
 		return
 	}
 	p.onNotify(req)
@@ -493,9 +650,9 @@ func (p *Peer) Close() error {
 	return nil
 }
 
-// mustMarshalInt64 marshals an int64 to JSON bytes. This always succeeds for
-// integer values.
+// mustMarshalInt64 renders an int64 as JSON bytes. A JSON number is just the
+// decimal representation of the integer, so strconv produces identical output
+// to json.Marshal without an error path to ignore.
 func mustMarshalInt64(n int64) []byte {
-	b, _ := json.Marshal(n)
-	return b
+	return strconv.AppendInt(nil, n, 10)
 }

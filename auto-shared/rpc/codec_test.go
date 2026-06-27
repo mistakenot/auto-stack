@@ -3,6 +3,8 @@ package rpc
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -530,5 +532,111 @@ func TestBusEventNotificationNoFieldLoss(t *testing.T) {
 
 	if params.Env["tmux_session"] != "main" || params.Env["ntm_pane"] != "0" {
 		t.Errorf("Env round-trip lost data: %v", params.Env)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// AC-8: codec framing — split (byte-dribbled) and coalesced frames
+//
+// These lock the json.Decoder framing property GR-N8 §4 relies on: Decode
+// yields exactly one JSON value per call regardless of how the underlying
+// reader chunks the bytes. This is a codec property, asserted once, NOT a
+// per-transport matrix.
+// ---------------------------------------------------------------------------
+
+// byteDribbleReader yields the wrapped data one byte per Read call, modelling a
+// transport that delivers a frame in arbitrarily small pieces.
+type byteDribbleReader struct {
+	data []byte
+	pos  int
+}
+
+func (r *byteDribbleReader) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	p[0] = r.data[r.pos]
+	r.pos++
+	return 1, nil
+}
+
+func TestDecodeByteDribble(t *testing.T) {
+	req := Request{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`7`),
+		Method:  "drip.method",
+		Params:  json.RawMessage(`{"k":"v"}`),
+	}
+
+	var buf bytes.Buffer
+	if err := NewEncoder(&buf).Encode(req); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	dec := NewDecoder(&byteDribbleReader{data: buf.Bytes()})
+
+	var got Request
+	if err := dec.Decode(&got); err != nil {
+		t.Fatalf("decode dribbled frame: %v", err)
+	}
+	if got.JSONRPC != "2.0" {
+		t.Errorf("jsonrpc = %q, want 2.0", got.JSONRPC)
+	}
+	if string(got.ID) != `7` {
+		t.Errorf("id = %s, want 7", got.ID)
+	}
+	if got.Method != "drip.method" {
+		t.Errorf("method = %q, want drip.method", got.Method)
+	}
+	if string(got.Params) != `{"k":"v"}` {
+		t.Errorf("params = %s, want {\"k\":\"v\"}", got.Params)
+	}
+
+	// Exactly one value: the next Decode must hit EOF.
+	var extra Request
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		t.Errorf("second decode = %v, want io.EOF (exactly one frame)", err)
+	}
+}
+
+func TestDecodeCoalescedFrames(t *testing.T) {
+	frames := []Request{
+		{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "first.method"},
+		{JSONRPC: "2.0", ID: json.RawMessage(`2`), Method: "second.method", Params: json.RawMessage(`{"n":2}`)},
+	}
+
+	var buf bytes.Buffer
+	enc := NewEncoder(&buf)
+	for _, f := range frames {
+		if err := enc.Encode(f); err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+	}
+
+	// bytes.Reader hands the decoder both frames' bytes in a single read, so
+	// this exercises the coalesced-delivery path: two newline-delimited frames
+	// arriving together must decode as two sequential values.
+	dec := NewDecoder(bytes.NewReader(buf.Bytes()))
+
+	for i, want := range frames {
+		var got Request
+		if err := dec.Decode(&got); err != nil {
+			t.Fatalf("decode coalesced frame %d: %v", i, err)
+		}
+		if got.Method != want.Method {
+			t.Errorf("frame %d: method = %q, want %q", i, got.Method, want.Method)
+		}
+		if string(got.ID) != string(want.ID) {
+			t.Errorf("frame %d: id = %s, want %s", i, got.ID, want.ID)
+		}
+	}
+
+	// Exactly two values: the next Decode must hit EOF.
+	var extra Request
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		t.Errorf("third decode = %v, want io.EOF (exactly two frames)", err)
 	}
 }
