@@ -16,6 +16,7 @@ const (
 	CodeInvalidVersionSpec = "invalid_version_spec"
 	CodeInvalidLiteral     = "invalid_literal"
 	CodeInvalidFileRef     = "invalid_file_ref"
+	CodeInvalidVarName     = "invalid_var_name"
 	CodeCredentialsInURL   = "credentials_in_url"
 	CodeInvalidState       = "invalid_state"
 	CodeInvalidHash        = "invalid_hash"

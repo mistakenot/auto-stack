@@ -17,15 +17,16 @@ trusted_hosts:
 shared:
   version: latest
   replacements:
-    - "literal value"
-    - file: snippets/header.md
+    greeting: "literal value"
+    intro:
+      file: snippets/header.md
       section: Intro
       include_heading: true
 skills:
   remote-skill:
     version: tag:v1.0
     replacements:
-      - "another literal"
+      farewell: "another literal"
 `
 
 func TestParseSkillsYAMLStrict(t *testing.T) {
@@ -94,7 +95,7 @@ func TestValidateSkillsYAML(t *testing.T) {
 	})
 
 	t.Run("non-string literal replacement", func(t *testing.T) {
-		cfg, err := ParseSkillsYAML([]byte("shared:\n  replacements:\n    - 123\n"))
+		cfg, err := ParseSkillsYAML([]byte("shared:\n  replacements:\n    count: 123\n"))
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -104,7 +105,7 @@ func TestValidateSkillsYAML(t *testing.T) {
 	})
 
 	t.Run("file-ref missing file key", func(t *testing.T) {
-		cfg, err := ParseSkillsYAML([]byte("shared:\n  replacements:\n    - section: Intro\n"))
+		cfg, err := ParseSkillsYAML([]byte("shared:\n  replacements:\n    intro:\n      section: Intro\n"))
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
@@ -114,12 +115,38 @@ func TestValidateSkillsYAML(t *testing.T) {
 	})
 
 	t.Run("file-ref unknown key", func(t *testing.T) {
-		cfg, err := ParseSkillsYAML([]byte("shared:\n  replacements:\n    - file: a.md\n      bogus: true\n"))
+		cfg, err := ParseSkillsYAML([]byte("shared:\n  replacements:\n    intro:\n      file: a.md\n      bogus: true\n"))
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
 		if !codes(ValidateSkillsYAML(cfg))[CodeUnknownField] {
 			t.Error("expected unknown_field for unknown file-ref key")
+		}
+	})
+
+	t.Run("invalid var name", func(t *testing.T) {
+		cfg, err := ParseSkillsYAML([]byte("shared:\n  replacements:\n    \"bad-name\": value\n"))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if !codes(ValidateSkillsYAML(cfg))[CodeInvalidVarName] {
+			t.Error("expected invalid_var_name for non-identifier replacement key")
+		}
+	})
+
+	t.Run("valid named replacements bind end-to-end", func(t *testing.T) {
+		cfg, err := ParseSkillsYAML([]byte("shared:\n  replacements:\n    greeting: hello\n    intro:\n      file: a.md\n"))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if errs := ValidateSkillsYAML(cfg); len(errs) != 0 {
+			t.Fatalf("ValidateSkillsYAML = %+v, want none", errs)
+		}
+		if _, ok := cfg.Shared.Replacements["greeting"]; !ok {
+			t.Error("greeting var not bound in parsed map")
+		}
+		if _, ok := cfg.Shared.Replacements["intro"]; !ok {
+			t.Error("intro var not bound in parsed map")
 		}
 	})
 

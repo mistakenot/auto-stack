@@ -295,6 +295,63 @@ func TestProcessRenderVersionLazyRerender(t *testing.T) {
 
 // TestProcessTokenBudgetAdvisory: an oversized SKILL.md emits an advisory
 // warning but never errors and still produces a manifest.
+// TestReplacementValuesNamedBinding verifies the auto-faf seam: skills.yaml's
+// named replacement map binds each var name to its literal/file-ref value
+// end-to-end, with a skill's own value overriding the shared default of the
+// same name.
+func TestReplacementValuesNamedBinding(t *testing.T) {
+	cfg, err := skill.ParseSkillsYAML([]byte(`
+shared:
+  replacements:
+    greeting: "hello from shared"
+    intro:
+      file: docs/intro.md
+      section: Intro
+skills:
+  my-skill:
+    replacements:
+      greeting: "hello from skill"
+      farewell: "goodbye"
+`))
+	if err != nil {
+		t.Fatalf("ParseSkillsYAML: %v", err)
+	}
+
+	vals, err := replacementValues(cfg, "my-skill")
+	if err != nil {
+		t.Fatalf("replacementValues: %v", err)
+	}
+
+	// Skill-level greeting overrides the shared default.
+	if got := vals["greeting"].Literal; got != "hello from skill" {
+		t.Errorf("greeting = %q, want skill override %q", got, "hello from skill")
+	}
+	// Skill-only literal binds to its var name.
+	if got := vals["farewell"].Literal; got != "goodbye" {
+		t.Errorf("farewell = %q, want %q", got, "goodbye")
+	}
+	// Shared file-ref binds to its var name (not flattened/dropped).
+	intro := vals["intro"]
+	if intro.FileRef == nil {
+		t.Fatalf("intro = %+v, want a bound file-ref", intro)
+	}
+	if intro.FileRef.File != "docs/intro.md" {
+		t.Errorf("intro file = %q, want %q", intro.FileRef.File, "docs/intro.md")
+	}
+	if len(intro.FileRef.Section) != 1 || intro.FileRef.Section[0] != "Intro" {
+		t.Errorf("intro section = %v, want [Intro]", intro.FileRef.Section)
+	}
+
+	// A skill with no own replacements still inherits shared by name.
+	shared, err := replacementValues(cfg, "other-skill")
+	if err != nil {
+		t.Fatalf("replacementValues(other-skill): %v", err)
+	}
+	if got := shared["greeting"].Literal; got != "hello from shared" {
+		t.Errorf("inherited greeting = %q, want shared %q", got, "hello from shared")
+	}
+}
+
 func TestProcessTokenBudgetAdvisory(t *testing.T) {
 	f := newFixture(t)
 	big := strings.Repeat("word ", 5000) // ~25k chars → ~6k tokens > 4000

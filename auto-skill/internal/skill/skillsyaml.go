@@ -3,6 +3,8 @@ package skill
 import (
 	"bytes"
 	"fmt"
+	"regexp"
+	"sort"
 
 	"github.com/mistakenot/auto-shared/config"
 	"gopkg.in/yaml.v3"
@@ -20,15 +22,25 @@ type SkillsYAML struct {
 
 // SharedConfig holds defaults applied across every managed skill.
 type SharedConfig struct {
-	Version      string      `yaml:"version"`
-	Replacements []yaml.Node `yaml:"replacements"`
+	Version string `yaml:"version"`
+	// Replacements is the named replacement map (var name → value), where value
+	// is a literal scalar or a file-ref mapping. omitempty so a skill with no
+	// replacements round-trips without an empty `replacements:` key.
+	Replacements map[string]yaml.Node `yaml:"replacements,omitempty"`
 }
 
 // SkillConfig holds per-skill overrides.
 type SkillConfig struct {
-	Version      string      `yaml:"version"`
-	Replacements []yaml.Node `yaml:"replacements"`
+	Version string `yaml:"version"`
+	// Replacements is the named replacement map (var name → value); see
+	// SharedConfig.Replacements.
+	Replacements map[string]yaml.Node `yaml:"replacements,omitempty"`
 }
+
+// replacementVarRE is the accepted form of a replacement var name — a template
+// field identifier ({{ .var }}). It mirrors Go's identifier rules so a declared
+// var can bind to a customize: placeholder.
+var replacementVarRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // knownFileRefKeys is the closed set of keys allowed on a file-ref replacement.
 var knownFileRefKeys = map[string]bool{
@@ -93,13 +105,29 @@ func ValidateSkillsYAML(cfg *SkillsYAML) []config.ValidationError {
 	return errs
 }
 
-// validateReplacements checks each replacement node is either a literal string
-// or a well-formed file-ref mapping.
-func validateReplacements(nodes []yaml.Node, basePath string) []config.ValidationError {
+// validateReplacements checks each named replacement (var name → value): the var
+// name must be a valid template identifier and the value must be either a literal
+// string or a well-formed file-ref mapping. Keys are visited in sorted order so
+// multi-error output is deterministic.
+func validateReplacements(reps map[string]yaml.Node, basePath string) []config.ValidationError {
 	var errs []config.ValidationError
-	for i := range nodes {
-		node := &nodes[i]
-		path := fmt.Sprintf("%s[%d]", basePath, i)
+	names := make([]string, 0, len(reps))
+	for name := range reps {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		path := basePath + "." + name
+		if !replacementVarRE.MatchString(name) {
+			errs = append(errs, config.ValidationError{
+				Code:    CodeInvalidVarName,
+				Path:    path,
+				Field:   "name",
+				Message: fmt.Sprintf("replacement var name %q must match %s; rename it to a valid template identifier", name, replacementVarRE.String()),
+				Value:   name,
+			})
+		}
+		node := reps[name]
 		switch node.Kind {
 		case yaml.ScalarNode:
 			if node.Tag != "" && node.Tag != "!!str" {
@@ -111,7 +139,7 @@ func validateReplacements(nodes []yaml.Node, basePath string) []config.Validatio
 				})
 			}
 		case yaml.MappingNode:
-			errs = append(errs, validateFileRefNode(node, path)...)
+			errs = append(errs, validateFileRefNode(&node, path)...)
 		default:
 			errs = append(errs, config.ValidationError{
 				Code:    CodeInvalidFileRef,

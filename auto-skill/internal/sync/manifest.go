@@ -10,7 +10,6 @@ import (
 	"github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-skill/internal/render"
 	"github.com/mistakenot/auto-skill/internal/skill"
-	"gopkg.in/yaml.v3"
 )
 
 // buildManifest populates the typed manifest from the staged skills and the
@@ -76,19 +75,6 @@ func joinValidation(errs []config.ValidationError) string {
 		msgs[i] = e.Path + ": " + e.Message
 	}
 	return strings.Join(msgs, "; ")
-}
-
-// hasMappingKey reports whether a YAML mapping node contains the given key.
-func hasMappingKey(node *yaml.Node, key string) bool {
-	if node.Kind != yaml.MappingNode {
-		return false
-	}
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if node.Content[i].Value == key {
-			return true
-		}
-	}
-	return false
 }
 
 // walkFiles invokes fn for every regular (non-symlink) file under root, passing

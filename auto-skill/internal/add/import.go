@@ -12,6 +12,7 @@ import (
 	"github.com/mistakenot/auto-skill/internal/discovery"
 	"github.com/mistakenot/auto-skill/internal/skill"
 	"github.com/mistakenot/auto-skill/internal/source"
+	"github.com/mistakenot/auto-skill/internal/transport"
 )
 
 // Import safety limits — matching cache.Extract predicates.
@@ -65,6 +66,15 @@ func handleLocalGit(env skill.Env, absPath string, opts Options) (Result, error)
 		return Result{Source: absPath}, fmt.Errorf("resolve local HEAD: %w", err)
 	}
 	sha := strings.TrimSpace(string(out))
+
+	// Store the lock URL as a canonical file:// URL. A bare filesystem path is
+	// mis-parsed by transport.CanonicalizeURL as an empty-host https:// URL, so
+	// the sync cache cannot open it post-add; the file:// form routes through the
+	// cache's local-clone path and round-trips cleanly.
+	canonicalURL, _, err := transport.CanonicalizeURL("file://" + absPath)
+	if err != nil {
+		return Result{Source: absPath}, fmt.Errorf("canonicalize local path: %w", err)
+	}
 
 	// Discover.
 	discOpts := discovery.Options{
@@ -124,7 +134,7 @@ func handleLocalGit(env skill.Env, absPath string, opts Options) (Result, error)
 		}
 
 		if existing, ok := lock.Skills[name]; ok {
-			if existing.URL != absPath {
+			if existing.URL != canonicalURL {
 				return Result{Source: absPath}, &AddError{
 					Code:    CodeNameCollision,
 					Message: fmt.Sprintf("skill %q already exists from %s; use --as to rename", name, existing.URL),
@@ -133,8 +143,8 @@ func handleLocalGit(env skill.Env, absPath string, opts Options) (Result, error)
 		}
 
 		lock.Skills[name] = skill.LockEntry{
-			Source:      absPath,
-			URL:         absPath,
+			Source:      canonicalURL,
+			URL:         canonicalURL,
 			VersionSpec: versionSpec,
 			Ref:         sha,
 			Commit:      sha,

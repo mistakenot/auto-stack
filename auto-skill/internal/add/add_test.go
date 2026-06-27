@@ -232,7 +232,7 @@ func TestReAddIdempotent(t *testing.T) {
 	repNode.Value = "test-replacement"
 	repNode.Tag = "!!str"
 	sc := syaml.Skills["my-skill"]
-	sc.Replacements = []yaml.Node{repNode}
+	sc.Replacements = map[string]yaml.Node{"greeting": repNode}
 	syaml.Skills["my-skill"] = sc
 	data, _ := yaml.Marshal(syaml)
 	os.WriteFile(env.SkillsYAMLPath(), data, 0o644)
@@ -444,6 +444,31 @@ func TestLocalGitRepo(t *testing.T) {
 	}
 	if entry.State != "resolved" {
 		t.Errorf("lock state = %q, want %q", entry.State, "resolved")
+	}
+
+	// Regression (auto-nfx): the lock URL must be a canonical file:// URL, not a
+	// bare filesystem path. A bare path is mis-parsed by transport as an
+	// empty-host https:// URL that the sync cache cannot open.
+	if !strings.HasPrefix(entry.URL, "file://") {
+		t.Errorf("lock URL = %q, want a file:// URL", entry.URL)
+	}
+	if entry.Source != entry.URL {
+		t.Errorf("lock source = %q, want it to match URL %q", entry.Source, entry.URL)
+	}
+	// The stored URL must round-trip through the same canonicalizer sync uses,
+	// yielding the local cache identity (the bug produced an empty host).
+	canonical, id, err := transport.CanonicalizeURL(entry.URL)
+	if err != nil {
+		t.Fatalf("sync cannot canonicalize lock URL %q: %v", entry.URL, err)
+	}
+	if canonical != entry.URL {
+		t.Errorf("canonical round-trip = %q, want stable %q", canonical, entry.URL)
+	}
+	if id.Host != "_local" {
+		t.Errorf("cache identity host = %q, want %q (bare-path bug yields empty host)", id.Host, "_local")
+	}
+	if len(id.Path) == 0 {
+		t.Error("cache identity has no path components; bare-path URL would not open")
 	}
 }
 
