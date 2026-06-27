@@ -7,14 +7,18 @@ import (
 	"strings"
 )
 
-// runGit executes a git command in the given directory with the given
-// environment variables. It always sets GIT_TERMINAL_PROMPT=0 to prevent
-// interactive credential prompts.
-func runGit(dir string, extraEnv []string, args ...string) (string, error) {
+type execCmd = exec.Cmd
+
+func newGitCmd(dir string, extraEnv []string, args ...string) *execCmd {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(cmd.Environ(), "GIT_TERMINAL_PROMPT=0")
 	cmd.Env = append(cmd.Env, extraEnv...)
+	return cmd
+}
+
+func runGit(dir string, extraEnv []string, args ...string) (string, error) {
+	cmd := newGitCmd(dir, extraEnv, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -27,8 +31,6 @@ func runGit(dir string, extraEnv []string, args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-// runGitOffline executes a git command with GIT_NO_LAZY_FETCH=1 to prevent
-// any network fetches.
 func runGitOffline(dir string, args ...string) (string, error) {
 	return runGit(dir, []string{"GIT_NO_LAZY_FETCH=1"}, args...)
 }
