@@ -811,7 +811,7 @@ phase-1 engine.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="3" title="Sync phase A+B — plan, parallel fetch, update engine" files="auto-skill/internal/sync/plan.go,auto-skill/internal/sync/fetch.go,auto-skill/internal/sync/update.go,auto-skill/internal/sync/plan_test.go,auto-skill/internal/sync/fetch_test.go,auto-skill/internal/sync/update_test.go" status="todo" depends-on="1">
+          <pd-phase n="3" title="Sync phase A+B — plan, parallel fetch, update engine" files="auto-skill/internal/sync/plan.go,auto-skill/internal/sync/fetch.go,auto-skill/internal/sync/update.go,auto-skill/internal/sync/plan_test.go,auto-skill/internal/sync/fetch_test.go,auto-skill/internal/sync/update_test.go" status="done" depends-on="1">
             <md><script type="text/plain">
 Create `internal/sync` and build the network-planning half — phase A plan, phase B
 parallel fetch, and the float-then-render `update` engine. Uses 009's cache/trust + 032's
