@@ -65,6 +65,16 @@ func canonicalizeText(data []byte) []byte {
 	return append(joined, '\n')
 }
 
+// CanonicalTreeFile classifies and canonicalizes a single on-disk file into a
+// TreeFile using the exact text/binary rules render applies to emitted files,
+// so a tree read back off disk hashes identically (via ComputeSkillVersion) to
+// the tree render produced. It is the reuse seam for the sync package's
+// incremental on-disk-digest skip — there is no second canonicalization to
+// drift from this one.
+func CanonicalTreeFile(path, mode string, raw []byte) TreeFile {
+	return newTreeFile(path, mode, raw)
+}
+
 // newTreeFile classifies and canonicalizes a single file for emission.
 func newTreeFile(path, mode string, raw []byte) TreeFile {
 	if mode != ModeExecutable {
