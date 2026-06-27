@@ -40,7 +40,8 @@ Per-source handling:
 Version intent (vercel `ref` → `skills.yaml` `version`): absent ref → `latest`;
 `branch:<name>` → `branch:<name>`; a 7–40 char sha → that sha (commit pin); any
 other tag/name → the bare value (tag pin). Migrated `skills.yaml` entries are
-written as `version: <spec>` with empty `replacements: []` (not a literal `{}`).
+written as `version: <spec>`; `replacements` is a named map (var → value) and is
+omitted entirely when empty.
 
 Migration returns valid results first, then exits non-zero when any entry was
 skipped (so a `--dry-run` plan and a real run both surface unsupported deps).

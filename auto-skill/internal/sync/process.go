@@ -378,32 +378,26 @@ func estimateTokens(s string) int {
 
 // replacementValues resolves the named replacement values for a skill from
 // skills.yaml, merging shared.replacements (lowest precedence) with the skill's
-// own replacements. Each replacement node is a single-key mapping `{var: value}`
-// where value is a literal scalar or a file-ref mapping (`{file, section?,
-// include_heading?, strip_frontmatter?}`).
-//
-// NOTE: this follows the design's NAMED replacement model (remote-skills-design
-// §Customization). The merged 032 schema types `replacements` as an unnamed
-// `[]yaml.Node` sequence whose validator treats a bare scalar as a literal and
-// any mapping as a flat file-ref; that shape cannot carry a var name, so a flat
-// file-ref or bare scalar is skipped here (no var to bind it to). Reconciling
-// the 032 skills.yaml schema to the named map form is a follow-up — the
-// render-side wiring below is ready for it.
+// own replacements. The schema types `replacements` as a named map (var name →
+// value) where value is a literal scalar or a file-ref mapping (`{file,
+// section?, include_heading?, strip_frontmatter?}`); this is the design's NAMED
+// replacement model (remote-skills-design §Customization). A skill's own value
+// for a var overrides the shared default of the same name.
 func replacementValues(syaml *skill.SkillsYAML, name string) (map[string]render.ReplacementValue, error) {
 	out := map[string]render.ReplacementValue{}
 	if syaml == nil {
 		return out, nil
 	}
-	apply := func(nodes []yaml.Node) error {
-		for i := range nodes {
-			n := &nodes[i]
-			if n.Kind != yaml.MappingNode || len(n.Content) < 2 || hasMappingKey(n, "file") {
-				// Unnamed literal/flat-file-ref under the merged schema — no var
-				// name to bind it to; skip rather than guess.
-				continue
-			}
-			varName := n.Content[0].Value
-			rv, err := nodeToReplacement(n.Content[1])
+	apply := func(reps map[string]yaml.Node) error {
+		// Deterministic order for stable error reporting.
+		varNames := make([]string, 0, len(reps))
+		for varName := range reps {
+			varNames = append(varNames, varName)
+		}
+		sort.Strings(varNames)
+		for _, varName := range varNames {
+			node := reps[varName]
+			rv, err := nodeToReplacement(&node)
 			if err != nil {
 				return fmt.Errorf("replacement %q: %w", varName, err)
 			}

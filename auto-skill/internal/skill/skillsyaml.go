@@ -2,7 +2,10 @@ package skill
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"regexp"
+	"sort"
 
 	"github.com/mistakenot/auto-shared/config"
 	"gopkg.in/yaml.v3"
@@ -20,15 +23,62 @@ type SkillsYAML struct {
 
 // SharedConfig holds defaults applied across every managed skill.
 type SharedConfig struct {
-	Version      string      `yaml:"version"`
-	Replacements []yaml.Node `yaml:"replacements"`
+	Version string `yaml:"version"`
+	// Replacements is the named replacement map (var name → value), where value
+	// is a literal scalar or a file-ref mapping. omitempty so a skill with no
+	// replacements round-trips without an empty `replacements:` key.
+	Replacements ReplacementMap `yaml:"replacements,omitempty"`
 }
 
 // SkillConfig holds per-skill overrides.
 type SkillConfig struct {
-	Version      string      `yaml:"version"`
-	Replacements []yaml.Node `yaml:"replacements"`
+	Version string `yaml:"version"`
+	// Replacements is the named replacement map (var name → value); see
+	// SharedConfig.Replacements.
+	Replacements ReplacementMap `yaml:"replacements,omitempty"`
 }
+
+// ReplacementMap is the named replacement map (var name → value node). It
+// decodes the canonical mapping form and, for backward compatibility, accepts
+// the legacy empty-sequence form (`replacements: []`) that the pre-reconciliation
+// add/migrate writers emitted for replacement-free skills — without it,
+// upgrading an existing project would fail to parse before any command could
+// rewrite the file.
+type ReplacementMap map[string]yaml.Node
+
+// UnmarshalYAML decodes a mapping into the named map, treats null/absent and the
+// legacy empty sequence as an empty map, and rejects a populated legacy sequence
+// with a remediation hint (those unnamed entries never bound to a var and cannot
+// be migrated automatically).
+func (r *ReplacementMap) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.MappingNode:
+		m := map[string]yaml.Node{}
+		if err := value.Decode(&m); err != nil {
+			return err
+		}
+		*r = m
+	case yaml.SequenceNode:
+		if len(value.Content) > 0 {
+			return errors.New("replacements must be a named map (var: value); the legacy unnamed list form is no longer supported — rewrite each entry as `<var>: <value>`")
+		}
+		*r = ReplacementMap{}
+	case yaml.ScalarNode:
+		if value.Tag == "!!null" || value.Value == "" {
+			*r = ReplacementMap{}
+			break
+		}
+		return fmt.Errorf("replacements must be a named map (var: value), got scalar %q", value.Value)
+	default:
+		*r = ReplacementMap{}
+	}
+	return nil
+}
+
+// replacementVarRE is the accepted form of a replacement var name — a template
+// field identifier ({{ .var }}). It mirrors Go's identifier rules so a declared
+// var can bind to a customize: placeholder.
+var replacementVarRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // knownFileRefKeys is the closed set of keys allowed on a file-ref replacement.
 var knownFileRefKeys = map[string]bool{
@@ -93,13 +143,29 @@ func ValidateSkillsYAML(cfg *SkillsYAML) []config.ValidationError {
 	return errs
 }
 
-// validateReplacements checks each replacement node is either a literal string
-// or a well-formed file-ref mapping.
-func validateReplacements(nodes []yaml.Node, basePath string) []config.ValidationError {
+// validateReplacements checks each named replacement (var name → value): the var
+// name must be a valid template identifier and the value must be either a literal
+// string or a well-formed file-ref mapping. Keys are visited in sorted order so
+// multi-error output is deterministic.
+func validateReplacements(reps map[string]yaml.Node, basePath string) []config.ValidationError {
 	var errs []config.ValidationError
-	for i := range nodes {
-		node := &nodes[i]
-		path := fmt.Sprintf("%s[%d]", basePath, i)
+	names := make([]string, 0, len(reps))
+	for name := range reps {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		path := basePath + "." + name
+		if !replacementVarRE.MatchString(name) {
+			errs = append(errs, config.ValidationError{
+				Code:    CodeInvalidVarName,
+				Path:    path,
+				Field:   "name",
+				Message: fmt.Sprintf("replacement var name %q must match %s; rename it to a valid template identifier", name, replacementVarRE.String()),
+				Value:   name,
+			})
+		}
+		node := reps[name]
 		switch node.Kind {
 		case yaml.ScalarNode:
 			if node.Tag != "" && node.Tag != "!!str" {
@@ -111,7 +177,7 @@ func validateReplacements(nodes []yaml.Node, basePath string) []config.Validatio
 				})
 			}
 		case yaml.MappingNode:
-			errs = append(errs, validateFileRefNode(node, path)...)
+			errs = append(errs, validateFileRefNode(&node, path)...)
 		default:
 			errs = append(errs, config.ValidationError{
 				Code:    CodeInvalidFileRef,

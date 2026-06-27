@@ -624,7 +624,8 @@ func writeLock(path string, lock *skill.Lock) error {
 }
 
 // writeSkillsYAML marshals and writes skills.yaml. A SkillConfig with no
-// replacements round-trips as an empty "replacements: []" sequence.
+// replacements omits the "replacements:" key entirely (the named-map field is
+// omitempty).
 func writeSkillsYAML(path string, cfg *skill.SkillsYAML) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {

@@ -232,7 +232,7 @@ func TestReAddIdempotent(t *testing.T) {
 	repNode.Value = "test-replacement"
 	repNode.Tag = "!!str"
 	sc := syaml.Skills["my-skill"]
-	sc.Replacements = []yaml.Node{repNode}
+	sc.Replacements = map[string]yaml.Node{"greeting": repNode}
 	syaml.Skills["my-skill"] = sc
 	data, _ := yaml.Marshal(syaml)
 	os.WriteFile(env.SkillsYAMLPath(), data, 0o644)
@@ -444,6 +444,67 @@ func TestLocalGitRepo(t *testing.T) {
 	}
 	if entry.State != "resolved" {
 		t.Errorf("lock state = %q, want %q", entry.State, "resolved")
+	}
+
+	// Regression (auto-nfx): the lock URL must be a canonical file:// URL, not a
+	// bare filesystem path. A bare path is mis-parsed by transport as an
+	// empty-host https:// URL that the sync cache cannot open.
+	if !strings.HasPrefix(entry.URL, "file://") {
+		t.Errorf("lock URL = %q, want a file:// URL", entry.URL)
+	}
+	if entry.Source != entry.URL {
+		t.Errorf("lock source = %q, want it to match URL %q", entry.Source, entry.URL)
+	}
+	// The stored URL must round-trip through the same canonicalizer sync uses,
+	// yielding the local cache identity (the bug produced an empty host).
+	canonical, id, err := transport.CanonicalizeURL(entry.URL)
+	if err != nil {
+		t.Fatalf("sync cannot canonicalize lock URL %q: %v", entry.URL, err)
+	}
+	if canonical != entry.URL {
+		t.Errorf("canonical round-trip = %q, want stable %q", canonical, entry.URL)
+	}
+	if id.Host != "_local" {
+		t.Errorf("cache identity host = %q, want %q (bare-path bug yields empty host)", id.Host, "_local")
+	}
+	if len(id.Path) == 0 {
+		t.Error("cache identity has no path components; bare-path URL would not open")
+	}
+}
+
+// TestLocalGitReAddLegacyBarePath simulates a lock written by the
+// pre-reconciliation add path (bare absolute path URL) and verifies that
+// re-adding the same local repo refreshes the entry — upgrading the URL to the
+// canonical file:// form — instead of reporting a false name collision.
+func TestLocalGitReAddLegacyBarePath(t *testing.T) {
+	repoDir, _ := makeGitFixture(t, map[string]string{
+		"skills/local-skill": skillMD("local-skill", "Use when testing legacy re-add."),
+	})
+	env := makeEnv(t)
+
+	if _, err := Run(env, Options{Source: repoDir}); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+
+	// Downgrade the stored entry to the legacy bare-path URL, as an older add
+	// would have written it.
+	lock := readLock(t, env)
+	entry := lock.Skills["local-skill"]
+	entry.Source = repoDir
+	entry.URL = repoDir
+	lock.Skills["local-skill"] = entry
+	if err := writeJSONLock(env.LockPath(), lock); err != nil {
+		t.Fatalf("rewrite legacy lock: %v", err)
+	}
+
+	// Re-add the same repo: must not collide, and must upgrade the URL.
+	if _, err := Run(env, Options{Source: repoDir}); err != nil {
+		t.Fatalf("re-add over legacy bare-path entry: %v", err)
+	}
+
+	got := readLock(t, env).Skills["local-skill"]
+	if !strings.HasPrefix(got.URL, "file://") {
+		t.Errorf("URL after re-add = %q, want it upgraded to a file:// URL", got.URL)
 	}
 }
 
