@@ -18,7 +18,7 @@
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="040: autowatch-event-ingest-relay" status="pending" generated="2026-06-26">
+  <pd-doc title="040: autowatch-event-ingest-relay" status="complete" generated="2026-06-26">
 
     <pd-tab name="Requirements">
 
@@ -305,7 +305,7 @@ flowchart LR
 
       <pd-stepper>
 
-        <pd-phase n="1" title="bus.subscribe hub→peer bridge" status="todo"
+        <pd-phase n="1" title="bus.subscribe hub→peer bridge" status="done"
           files="auto-watch/internal/rpcserver/subscribe.go,auto-watch/internal/rpcserver/server.go,auto-watch/internal/rpcserver/server_test.go">
           <md><script type="text/plain">
 1. `subscribe.go` — add `peerSink{peer *rpc.Peer}` implementing `bus.Sink` (`Deliver(ev)` → `peer.Notify(ev.Type, ev)`, the `Event.AsNotification` shape; non-blocking, drop-and-close on full via the peer's own enqueue — no extra buffering); a per-connection `subscription{mu sync.Mutex; cancel func()}` holder; and `registerSubscribe(p *rpc.Peer, hub *bus.Hub, sub *subscription)` that registers a peer-bound `bus.subscribe` handler (parameterless, broadcast-all) which lazily does `sub.cancel = hub.Subscribe(&peerSink{p})` under the mutex (idempotent — a second call is a no-op) and returns a small ack. **Verify:** `go build ./...` in `auto-watch`.
@@ -315,7 +315,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="ingest derive + hostId + start wiring" status="todo"
+        <pd-phase n="2" title="ingest derive + hostId + start wiring" status="done"
           files="auto-watch/internal/rpcserver/ingest.go,auto-watch/internal/rpcserver/ingest_test.go,auto-watch/internal/cli/ops.go">
           <md><script type="text/plain">
 1. `ingest.go` — extend `HookIngest(hub, hostID string, regProvider func() config.ProjectsConfig, ctlEvents bool)`. After `ev.Validate()` (unchanged; still 400 on failure): **stamp `ev.Host = hostID` (overwrite-always)**, `hub.Broadcast(ev)`, then `for _, d := range bus.DeriveDocChanged(ev, regProvider()) { hub.Broadcast(d) }` (derived events inherit `Host` via `newDerived`, `derive.go:79`). The 405/400/403/loopback/1 MiB guards and the gated `hook.ingested` ctl log are unchanged. **No new persistence.** **Verify:** `go build ./...`.
@@ -325,7 +325,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Spec + CLAUDE.md docs; full gate sweep" status="todo" depends-on="1,2"
+        <pd-phase n="3" title="Spec + CLAUDE.md docs; full gate sweep" status="done" depends-on="1,2"
           files="docs/auto-bus-spec.md,auto-watch/CLAUDE.md">
           <md><script type="text/plain">
 1. `docs/auto-bus-spec.md` — promote §4.3's "future `subscribe()` RPC" to an implemented **broadcast-all** `bus.subscribe`: document the relay path (hub→peer-bound sink→`Peer.Notify`), the per-peer **drop-on-full / at-most-once** semantics (consistent with §5), and that `ctl.*` relays to subscribers **only under `--ctl-events`** while data-plane events always relay. **Verify:** the spec mentions `bus.subscribe`, broadcast-all, and the gating note.

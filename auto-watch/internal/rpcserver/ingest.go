@@ -8,18 +8,20 @@ import (
 	"strings"
 
 	"github.com/mistakenot/auto-shared/bus"
+	"github.com/mistakenot/auto-shared/config"
 )
 
 // HookIngest returns an http.Handler that accepts JSON-RPC notifications
 // containing bus.Event payloads. It validates the envelope and returns
 // 204 No Content on success. No persistence, derivation, or relay is
-// performed — this is a validate-and-ack endpoint.
+// performed — events are stamped with the daemon hostId, derived
+// (doc.changed for registered projects), and broadcast to the hub.
 //
 // Only POST from loopback addresses is accepted; all other methods receive
 // 405 and non-loopback origins receive 403. Requests with a browser Origin
 // header or non-JSON Content-Type are rejected to prevent CSRF via
 // CORS-safelisted simple requests.
-func HookIngest(hub *bus.Hub, ctlEvents bool) http.Handler {
+func HookIngest(hub *bus.Hub, hostID string, regProvider func() config.ProjectsConfig, ctlEvents bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", http.MethodPost)
@@ -76,9 +78,18 @@ func HookIngest(hub *bus.Hub, ctlEvents bool) http.Handler {
 			return
 		}
 
+		// Stamp the daemon's hostId (overwrite-always, D-40-3).
+		ev.Host = hostID
+
 		// Broadcast the validated event.
 		if hub != nil {
 			hub.Broadcast(ev)
+
+			// Derive doc.changed for registered projects (mirrors auto-ui rpc_ingest.go:75-88).
+			derived := bus.DeriveDocChanged(ev, regProvider())
+			for i := range derived {
+				hub.Broadcast(derived[i])
+			}
 		}
 
 		// Emit ctl log for successful ingest.
