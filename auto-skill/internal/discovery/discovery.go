@@ -68,7 +68,10 @@ func Discover(root string, opts Options) ([]Discovered, error) {
 			}
 			results = append(results, found...)
 		}
-		return results, nil
+		// Dedupe so repeated/overlapping --path values that surface the same
+		// skill name collapse (identical digest) or raise a divergence error,
+		// matching default/full-depth behavior instead of silently last-wins.
+		return dedupeResults(results)
 	}
 
 	// Mode 2: default container scan.

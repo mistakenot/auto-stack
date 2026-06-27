@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mistakenot/auto-skill/internal/cache"
 	"github.com/mistakenot/auto-skill/internal/skill"
+	"github.com/mistakenot/auto-skill/internal/transport"
 	"github.com/mistakenot/auto-skill/internal/trust"
 	"gopkg.in/yaml.v3"
 )
@@ -585,6 +587,38 @@ func TestResultJSON(t *testing.T) {
 	}
 	if len(decoded.Added) != 1 || decoded.Added[0].Name != "foo" {
 		t.Errorf("round-trip failed: %+v", decoded)
+	}
+}
+
+// TestRepoRefResolver verifies the cache-backed adapter the add pipeline uses
+// to split deep-link refs: a real branch resolves, an unknown ref does not.
+func TestRepoRefResolver(t *testing.T) {
+	repoDir, fileURL := makeGitFixture(t, map[string]string{
+		"skills/foo": skillMD("foo", "Use when testing deep-link ref resolution."),
+	})
+	// Add a named branch the resolver should recognize.
+	branchCmd := exec.Command("git", "branch", "release-1")
+	branchCmd.Dir = repoDir
+	if out, err := branchCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git branch: %v\n%s", err, out)
+	}
+
+	env := makeEnv(t)
+	canonical, id, err := transport.CanonicalizeURL(fileURL)
+	if err != nil {
+		t.Fatalf("canonicalize: %v", err)
+	}
+	repo, err := cache.NewCache(env.UpstreamCacheDir()).Open(id, canonical)
+	if err != nil {
+		t.Fatalf("open cache: %v", err)
+	}
+
+	r := &repoRefResolver{repo: repo}
+	if !r.ResolveRef("release-1") {
+		t.Errorf("expected branch release-1 to resolve")
+	}
+	if r.ResolveRef("no-such-ref") {
+		t.Errorf("expected no-such-ref to not resolve")
 	}
 }
 

@@ -103,6 +103,14 @@ func Run(env skill.Env, opts Options) (Result, error) {
 		return Result{Source: src.URL}, fmt.Errorf("invalid version spec: %s", ve.Message)
 	}
 
+	// Load skills.yaml up front so the trust gate can honor the project's
+	// declared trusted_hosts: in non-TTY usage --trust-requested only
+	// auto-approves an endpoint that the project opted into here.
+	syaml, err := loadOrCreateSkillsYAML(env)
+	if err != nil {
+		return Result{Source: src.URL}, err
+	}
+
 	// Trust gate.
 	ep, err := transport.Endpoint(src.URL)
 	if err != nil {
@@ -111,7 +119,7 @@ func Run(env skill.Env, opts Options) (Result, error) {
 	store := trust.NewStore(env.TrustPath())
 	gate := &trust.Gate{Store: store}
 	gio := trust.GateIO{IsTTY: false, TrustRequested: opts.TrustRequested}
-	if err := gate.Authorize(ep, nil, gio); err != nil {
+	if err := gate.Authorize(ep, syaml.TrustedHosts, gio); err != nil {
 		return Result{Source: src.URL}, err
 	}
 
@@ -124,6 +132,22 @@ func Run(env skill.Env, opts Options) (Result, error) {
 	repo, err := c.Open(cacheID, src.URL)
 	if err != nil {
 		return Result{Source: src.URL}, fmt.Errorf("open cache: %w", err)
+	}
+
+	// Resolve a GitHub/GitLab deep-link (/tree/<ref>/<subpath>) now that the
+	// repo's ref set is available. ParseSource can only split the ref from the
+	// subpath with a live resolver; the initial parse above ran without one
+	// (we needed the canonical URL first to open the cache). An explicit
+	// --version pins the ref and takes precedence, so skip when it is set.
+	if opts.Version == "" {
+		resolved, err := source.ParseSource(opts.Source, source.ParseOptions{
+			RefResolver: &repoRefResolver{repo: repo},
+		})
+		if err != nil {
+			return Result{Source: src.URL}, err
+		}
+		src.Ref = resolved.Ref
+		src.Subpath = resolved.Subpath
 	}
 
 	// Resolve ref.
@@ -182,10 +206,6 @@ func Run(env skill.Env, opts Options) (Result, error) {
 
 	// 8. Write lock + skills.yaml stubs.
 	lock, err := loadOrCreateLock(env)
-	if err != nil {
-		return Result{Source: src.URL}, err
-	}
-	syaml, err := loadOrCreateSkillsYAML(env)
 	if err != nil {
 		return Result{Source: src.URL}, err
 	}
@@ -277,6 +297,15 @@ func Run(env skill.Env, opts Options) (Result, error) {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
+
+// repoRefResolver adapts a cache.Repo to source.RefResolver for deep-link
+// splitting: a candidate prefix is a ref iff the repo can resolve it.
+type repoRefResolver struct{ repo *cache.Repo }
+
+func (r *repoRefResolver) ResolveRef(ref string) bool {
+	_, err := r.repo.ResolveRef(ref)
+	return err == nil
+}
 
 // resolveRef maps a versionSpec + optional deep-link ref to a commit SHA.
 func resolveRef(repo *cache.Repo, versionSpec, deepLinkRef string) (string, error) {
