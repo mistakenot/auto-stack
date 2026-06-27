@@ -80,6 +80,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&rootFlag, "root", "", "project root override for skills/ and .auto/")
 
 	cmd.AddCommand(
+		newAddCmd(resolveEnv),
 		newInitCmd(resolveEnv),
 		newCreateCmd(resolveEnv),
 		newLintCmd(resolveEnv),

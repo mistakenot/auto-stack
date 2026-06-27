@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -846,5 +847,196 @@ func TestCachePruneDryRunEmpty(t *testing.T) {
 	var result map[string]any
 	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
 		t.Fatalf("expected JSON, got: %s", stdout)
+	}
+}
+
+// --- add CLI integration tests ---
+
+// makeAddFixture creates a temp git repo with SKILL.md files.
+// skills maps subpath (e.g. "skills/my-skill") to SKILL.md content.
+// Returns the repo directory path.
+func makeAddFixture(t *testing.T, skills map[string]string) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %s\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+
+	git("init")
+	git("config", "user.email", "test@test.com")
+	git("config", "user.name", "test")
+
+	for subpath, content := range skills {
+		full := filepath.Join(dir, subpath, "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	git("add", "-A")
+	git("commit", "-m", "initial")
+
+	return dir
+}
+
+func addSkillMD(name, desc string) string {
+	return "---\nname: " + name + "\ndescription: \"" + desc + "\"\n---\n\n## Workflow\n\n1. Do the thing.\n"
+}
+
+func TestAddLocalHappyPathJSON(t *testing.T) {
+	fixture := makeAddFixture(t, map[string]string{
+		"skills/my-skill": addSkillMD("my-skill", "Use when testing add CLI."),
+	})
+	root := t.TempDir()
+
+	stdout, stderr, code := runCLI(t, "--root", root, "add", fixture)
+	if code != 0 {
+		t.Fatalf("add failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nraw:\n%s", err, stdout)
+	}
+
+	added, ok := result["added"].([]any)
+	if !ok || len(added) != 1 {
+		t.Fatalf("expected 1 added skill in JSON, got: %v", result)
+	}
+	first := added[0].(map[string]any)
+	if first["name"] != "my-skill" {
+		t.Errorf("name = %v, want my-skill", first["name"])
+	}
+
+	// Verify lock.json and skills.yaml were written.
+	lockPath := filepath.Join(root, ".auto", "skills", "lock.json")
+	assertExists(t, lockPath)
+	yamlPath := filepath.Join(root, ".auto", "skills", "skills.yaml")
+	assertExists(t, yamlPath)
+}
+
+func TestAddLocalListJSON(t *testing.T) {
+	fixture := makeAddFixture(t, map[string]string{
+		"skills/alpha": addSkillMD("alpha", "Use when testing alpha list."),
+		"skills/beta":  addSkillMD("beta", "Use when testing beta list."),
+	})
+	root := t.TempDir()
+
+	stdout, stderr, code := runCLI(t, "--root", root, "add", fixture, "--list")
+	if code != 0 {
+		t.Fatalf("add --list failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("stdout is not valid JSON: %v\nraw:\n%s", err, stdout)
+	}
+
+	listed, ok := result["listed"].([]any)
+	if !ok || len(listed) != 2 {
+		t.Fatalf("expected 2 listed skills, got: %v", result)
+	}
+
+	// Verify nothing was written.
+	lockPath := filepath.Join(root, ".auto", "skills", "lock.json")
+	if _, err := os.Stat(lockPath); err == nil {
+		t.Error("lock.json should not exist in list mode")
+	}
+	yamlPath := filepath.Join(root, ".auto", "skills", "skills.yaml")
+	if _, err := os.Stat(yamlPath); err == nil {
+		t.Error("skills.yaml should not exist in list mode")
+	}
+}
+
+func TestAddLocalTextOutput(t *testing.T) {
+	fixture := makeAddFixture(t, map[string]string{
+		"skills/my-skill": addSkillMD("my-skill", "Use when testing text output."),
+	})
+	root := t.TempDir()
+
+	stdout, stderr, code := runCLI(t, "--root", root, "add", fixture, "--text")
+	if code != 0 {
+		t.Fatalf("add --text failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	if !strings.Contains(stdout, "Added my-skill") {
+		t.Fatalf("expected 'Added my-skill' in text output, got:\n%s", stdout)
+	}
+	if strings.HasPrefix(strings.TrimSpace(stdout), "{") {
+		t.Fatalf("expected text output, got JSON:\n%s", stdout)
+	}
+}
+
+func TestAddAsConflictFlagValidation(t *testing.T) {
+	fixture := makeAddFixture(t, map[string]string{
+		"skills/a": addSkillMD("a", "Use when testing a."),
+		"skills/b": addSkillMD("b", "Use when testing b."),
+	})
+	root := t.TempDir()
+
+	_, stderr, code := runCLI(t, "--root", root, "add", fixture, "--as", "my-name", "--skill", "a", "--skill", "b")
+	if code == 0 {
+		t.Fatal("expected error when --as combined with multiple --skill")
+	}
+	if !strings.Contains(stderr, "--as") {
+		t.Fatalf("expected --as mentioned in error, got: %s", stderr)
+	}
+}
+
+func TestAddSkillNotFound(t *testing.T) {
+	fixture := makeAddFixture(t, map[string]string{
+		"skills/alpha": addSkillMD("alpha", "Use when testing skill not found."),
+	})
+	root := t.TempDir()
+
+	_, stderr, code := runCLI(t, "--root", root, "add", fixture, "--skill", "nonexistent")
+	if code == 0 {
+		t.Fatal("expected error for nonexistent skill filter")
+	}
+	if !strings.Contains(stderr, "alpha") {
+		t.Fatalf("expected available skill 'alpha' listed in error, got: %s", stderr)
+	}
+}
+
+func TestAddNoArgs(t *testing.T) {
+	root := t.TempDir()
+
+	_, stderr, code := runCLI(t, "--root", root, "add")
+	if code == 0 {
+		t.Fatal("expected error when no positional arg provided")
+	}
+	if !strings.Contains(stderr, "accepts 1 arg") {
+		t.Fatalf("expected cobra arg validation error, got: %s", stderr)
+	}
+}
+
+func TestAddTrustFailClosedRemote(t *testing.T) {
+	root := t.TempDir()
+
+	_, stderr, code := runCLI(t, "--root", root, "add", "github.com/acme/nonexistent-skills-repo")
+	if code == 0 {
+		t.Fatal("expected error for unapproved remote source")
+	}
+	if !strings.Contains(stderr, "not approved") && !strings.Contains(stderr, "approved") {
+		t.Fatalf("expected trust-related error, got: %s", stderr)
 	}
 }
