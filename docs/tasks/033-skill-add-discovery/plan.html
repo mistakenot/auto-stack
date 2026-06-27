@@ -19,7 +19,7 @@
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="033: skill-add-discovery" status="executing" pr="pending" generated="2026-06-20">
+  <pd-doc title="033: skill-add-discovery" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/96" generated="2026-06-20">
 
     <pd-tab name="Requirements">
 
@@ -573,7 +573,7 @@ with tests + `go build ./...` + a commit.
       <pd-section id="phases" title="Phases">
         <pd-stepper>
 
-          <pd-phase n="1" title="Source-form parser + deep-link splitter" files="auto-skill/internal/source/source.go,auto-skill/internal/source/deeplink.go,auto-skill/internal/source/source_test.go" status="todo">
+          <pd-phase n="1" title="Source-form parser + deep-link splitter" files="auto-skill/internal/source/source.go,auto-skill/internal/source/deeplink.go,auto-skill/internal/source/source_test.go" status="done">
             <md><script type="text/plain">
 Create `internal/source` — the surface-form normalizer that sits on top of T2's
 transport primitive.
@@ -604,7 +604,7 @@ transport primitive.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="2" title="Skill discovery within a tree" files="auto-skill/internal/discovery/discovery.go,auto-skill/internal/discovery/discovery_test.go" status="todo">
+          <pd-phase n="2" title="Skill discovery within a tree" files="auto-skill/internal/discovery/discovery.go,auto-skill/internal/discovery/discovery_test.go" status="done">
             <md><script type="text/plain">
 Create `internal/discovery` — pure tree-walk discovery over an extracted (or local)
 repo directory. Independent of phase 1.
@@ -635,7 +635,7 @@ repo directory. Independent of phase 1.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="3" title="add pipeline orchestrator + local split" files="auto-skill/internal/add/add.go,auto-skill/internal/add/import.go,auto-skill/internal/add/add_test.go" status="todo" depends-on="1,2">
+          <pd-phase n="3" title="add pipeline orchestrator + local split" files="auto-skill/internal/add/add.go,auto-skill/internal/add/import.go,auto-skill/internal/add/add_test.go" status="done" depends-on="1,2">
             <md><script type="text/plain">
 Create `internal/add` — wires phases 1–2 to T2's cache/trust and T1's schemas. Depends
 on both leaves; uses the merged 032 (`Lock`/`SkillsYAML`/`ValidateVersionSpec`) and 009
@@ -676,7 +676,7 @@ on both leaves; uses the merged 032 (`Lock`/`SkillsYAML`/`ValidateVersionSpec`) 
             </script></md>
           </pd-phase>
 
-          <pd-phase n="4" title="add command + CLI integration" files="auto-skill/internal/cli/add.go,auto-skill/internal/cli/root.go,auto-skill/internal/cli/cli_integration_test.go" status="todo" depends-on="3">
+          <pd-phase n="4" title="add command + CLI integration" files="auto-skill/internal/cli/add.go,auto-skill/internal/cli/root.go,auto-skill/internal/cli/cli_integration_test.go" status="done" depends-on="3">
             <md><script type="text/plain">
 Expose the pipeline as `auto skill add` and prove the CLI contract end-to-end.
 
