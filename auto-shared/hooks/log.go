@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,13 +44,13 @@ func CaptureEnv() map[string]string {
 func captureEnvFrom(environ []string) map[string]string {
 	out := map[string]string{}
 	for _, kv := range environ {
-		i := strings.IndexByte(kv, '=')
-		if i < 0 {
+		before, after, ok := strings.Cut(kv, "=")
+		if !ok {
 			continue
 		}
-		key := kv[:i]
+		key := before
 		if strings.HasPrefix(key, "NTM_") || key == "TMUX" || strings.HasPrefix(key, "TMUX_") {
-			out[key] = kv[i+1:]
+			out[key] = after
 		}
 	}
 	if len(out) == 0 {
@@ -146,9 +147,7 @@ func CaptureContext() map[string]string {
 	if out == nil {
 		out = make(map[string]string, len(target))
 	}
-	for k, v := range target {
-		out[k] = v
-	}
+	maps.Copy(out, target)
 	return out
 }
 

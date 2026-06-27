@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strconv"
 	"sync"
 	"sync/atomic"
 )
@@ -493,9 +494,9 @@ func (p *Peer) Close() error {
 	return nil
 }
 
-// mustMarshalInt64 marshals an int64 to JSON bytes. This always succeeds for
-// integer values.
+// mustMarshalInt64 renders an int64 as JSON bytes. A JSON number is just the
+// decimal representation of the integer, so strconv produces identical output
+// to json.Marshal without an error path to ignore.
 func mustMarshalInt64(n int64) []byte {
-	b, _ := json.Marshal(n)
-	return b
+	return strconv.AppendInt(nil, n, 10)
 }

@@ -53,7 +53,7 @@ func newPipePeers(t *testing.T, handlers map[string]Handler, clientOpts []Option
 func TestKnownMethodReturnsResult(t *testing.T) {
 	handlers := map[string]Handler{
 		"echo": func(_ context.Context, params json.RawMessage) (any, error) {
-			return json.RawMessage(params), nil
+			return params, nil
 		},
 	}
 
@@ -160,8 +160,7 @@ func TestMalformedJSON(t *testing.T) {
 		return "ok", nil
 	}))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(ctx) }()
@@ -196,8 +195,7 @@ func TestInvalidEnvelopeNon20(t *testing.T) {
 	c1, c2 := net.Pipe()
 
 	server := NewPeer(c1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(ctx) }()
@@ -230,8 +228,7 @@ func TestInvalidEnvelopeMissingMethod(t *testing.T) {
 	c1, c2 := net.Pipe()
 
 	server := NewPeer(c1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(ctx) }()
@@ -274,8 +271,7 @@ func TestNotificationNoResponse(t *testing.T) {
 		}),
 	)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(ctx) }()
@@ -320,7 +316,7 @@ func TestConcurrentNotifyAndCall(t *testing.T) {
 	// Server Notify concurrently with client Calls under -race.
 	handlers := map[string]Handler{
 		"echo": func(_ context.Context, params json.RawMessage) (any, error) {
-			return json.RawMessage(params), nil
+			return params, nil
 		},
 	}
 
@@ -347,22 +343,18 @@ func TestConcurrentNotifyAndCall(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Client sends calls sequentially (each call blocks until response).
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < n; i++ {
+	wg.Go(func() {
+		for i := range n {
 			_, _ = client.Call(ctx, "echo", map[string]int{"i": i})
 		}
-	}()
+	})
 
 	// Server sends notifications concurrently.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < n; i++ {
+	wg.Go(func() {
+		for i := range n {
 			_ = server.Notify("server.push", map[string]int{"i": i})
 		}
-	}()
+	})
 
 	wg.Wait()
 
@@ -383,8 +375,7 @@ func TestStalledReaderTriggersDropAndClose(t *testing.T) {
 
 	peer := NewPeer(c1, WithBufferSize(1))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- peer.Serve(ctx) }()
@@ -394,7 +385,7 @@ func TestStalledReaderTriggersDropAndClose(t *testing.T) {
 
 	// Hammer notifications until we get ErrClosed.
 	var gotClosed bool
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		err := peer.Notify("spam", nil)
 		if errors.Is(err, ErrClosed) {
 			gotClosed = true
@@ -415,8 +406,7 @@ func TestPendingCallReturnsOnEOF(t *testing.T) {
 
 	peer := NewPeer(c1)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- peer.Serve(ctx) }()
@@ -487,8 +477,7 @@ func TestPendingCallReturnsOnOverflow(t *testing.T) {
 
 	peer := NewPeer(c1, WithBufferSize(1))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- peer.Serve(ctx) }()
@@ -506,7 +495,7 @@ func TestPendingCallReturnsOnOverflow(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Flood notifications to trigger overflow. Don't read from c2.
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		_ = peer.Notify("spam", nil)
 	}
 
@@ -529,8 +518,7 @@ func TestPendingCallReturnsOnExplicitClose(t *testing.T) {
 
 	peer := NewPeer(c1)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go func() { peer.Serve(ctx) }()
 
@@ -587,8 +575,7 @@ func TestPerCallCtxCancellation(t *testing.T) {
 	c1, c2 := net.Pipe()
 
 	client := NewPeer(c1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go func() { client.Serve(ctx) }()
 
@@ -641,7 +628,10 @@ func TestPerCallCtxCancellation(t *testing.T) {
 	}
 
 	// Send a response for call 2 back through the pipe.
-	resultBytes, _ := json.Marshal(map[string]string{"ok": "yes"})
+	resultBytes, err := json.Marshal(map[string]string{"ok": "yes"})
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
 	resp2 := Response{
 		JSONRPC: "2.0",
 		ID:      req2.ID,
@@ -685,20 +675,18 @@ func TestPendingMapEmptyAfterShutdown(t *testing.T) {
 	// Start several pending calls. The remote end never responds.
 	const n = 5
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range n {
+		wg.Go(func() {
 			callCtx, callCancel := context.WithTimeout(context.Background(), testTimeout)
 			defer callCancel()
 			_, _ = peer.Call(callCtx, "anything", nil)
-		}()
+		})
 	}
 
 	// Give calls time to register. Read their requests from c2 to unblock
 	// the write pump (net.Pipe is synchronous).
 	dec := NewDecoder(c2)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		var req Request
 		if err := dec.Decode(&req); err != nil {
 			t.Fatalf("decode request %d: %v", i, err)
@@ -726,7 +714,7 @@ func TestCloseIsIdempotent(t *testing.T) {
 	peer := NewPeer(c1)
 
 	// Close multiple times — should not panic.
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		if err := peer.Close(); err != nil {
 			t.Errorf("Close() #%d returned error: %v", i, err)
 		}
@@ -742,16 +730,15 @@ func TestDuplexBothSidesServe(t *testing.T) {
 
 	// Server handles "server.echo".
 	server := NewPeer(c1, WithHandler("server.echo", func(_ context.Context, params json.RawMessage) (any, error) {
-		return json.RawMessage(params), nil
+		return params, nil
 	}))
 
 	// Client handles "client.echo".
 	client := NewPeer(c2, WithHandler("client.echo", func(_ context.Context, params json.RawMessage) (any, error) {
-		return json.RawMessage(params), nil
+		return params, nil
 	}))
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go func() { server.Serve(ctx) }()
 	go func() { client.Serve(ctx) }()
@@ -817,8 +804,7 @@ func TestNotifySendsValidFrame(t *testing.T) {
 	c1, c2 := net.Pipe()
 
 	peer := NewPeer(c1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go func() { peer.Serve(ctx) }()
 
@@ -869,8 +855,7 @@ func TestRegisterPostConstruction(t *testing.T) {
 
 	client := NewPeer(c2)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	go func() { server.Serve(ctx) }()
 	go func() { client.Serve(ctx) }()
@@ -937,7 +922,7 @@ func TestConcurrentCallsNoCrosstalk(t *testing.T) {
 	handlers := map[string]Handler{
 		"identity": func(_ context.Context, params json.RawMessage) (any, error) {
 			// Return params unchanged.
-			return json.RawMessage(params), nil
+			return params, nil
 		},
 	}
 
@@ -957,7 +942,7 @@ func TestConcurrentCallsNoCrosstalk(t *testing.T) {
 
 	results := make(chan result, n)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(idx int) {
 			ctx, c := context.WithTimeout(context.Background(), testTimeout)
 			defer c()
@@ -972,7 +957,7 @@ func TestConcurrentCallsNoCrosstalk(t *testing.T) {
 		}(i)
 	}
 
-	for i := 0; i < n; i++ {
+	for range n {
 		r := <-results
 		if r.err != nil {
 			t.Errorf("call %d: %v", r.idx, r.err)

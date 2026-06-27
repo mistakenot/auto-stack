@@ -73,7 +73,7 @@ func RunAcrossFixtures(t testing.TB, s Scenario, factories ...FixtureFactory) {
 		name := factoryName(i)
 		tt.Run(s.Name()+"/"+name, func(t *testing.T) {
 			fix := f(t)
-			defer fix.Close()
+			defer func() { _ = fix.Close() }()
 			s.Run(t, fix)
 		})
 	}

@@ -41,11 +41,11 @@ func NewFakeServer(conn net.Conn) *FakeServer {
 
 	fs.peer = rpc.NewPeer(conn,
 		rpc.WithHandler("echo", fs.counting("echo", func(_ context.Context, params json.RawMessage) (any, error) {
-			return json.RawMessage(params), nil
+			return params, nil
 		})),
 		rpc.WithHandler("push", fs.counting("push", func(_ context.Context, params json.RawMessage) (any, error) {
 			// Send a server-push notification back to the caller.
-			_ = fs.peer.Notify("server.pushed", json.RawMessage(params))
+			_ = fs.peer.Notify("server.pushed", params)
 			return "ok", nil
 		})),
 		rpc.WithBufferSize(64),
@@ -289,7 +289,7 @@ func unixFactory(t testing.TB) Fixture {
 	clientConn, err := d.Dial(dialCtx)
 	if err != nil {
 		cancel()
-		ln.Close()
+		_ = ln.Close()
 		t.Fatalf("unix.Dial: %v", err)
 	}
 
@@ -297,8 +297,8 @@ func unixFactory(t testing.TB) Fixture {
 	ar := <-acceptCh
 	if ar.err != nil {
 		cancel()
-		clientConn.Close()
-		ln.Close()
+		_ = clientConn.Close()
+		_ = ln.Close()
 		t.Fatalf("unix.Accept: %v", ar.err)
 	}
 
@@ -316,7 +316,7 @@ func unixFactory(t testing.TB) Fixture {
 		server: server,
 		cancel: func() {
 			cancel()
-			ln.Close()
+			_ = ln.Close()
 		},
 		serveErrCh: sErr,
 		clientDone: cErr,
@@ -351,7 +351,7 @@ func tcpFactory(t testing.TB) Fixture {
 	clientConn, err := d.Dial(dialCtx)
 	if err != nil {
 		cancel()
-		ln.Close()
+		_ = ln.Close()
 		t.Fatalf("tcp.Dial %s: %v", addr, err)
 	}
 
@@ -359,8 +359,8 @@ func tcpFactory(t testing.TB) Fixture {
 	ar := <-acceptCh
 	if ar.err != nil {
 		cancel()
-		clientConn.Close()
-		ln.Close()
+		_ = clientConn.Close()
+		_ = ln.Close()
 		t.Fatalf("tcp.Accept: %v", ar.err)
 	}
 
@@ -378,7 +378,7 @@ func tcpFactory(t testing.TB) Fixture {
 		server: server,
 		cancel: func() {
 			cancel()
-			ln.Close()
+			_ = ln.Close()
 		},
 		serveErrCh: sErr,
 		clientDone: cErr,

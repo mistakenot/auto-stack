@@ -1,8 +1,8 @@
 package transport_test
 
 import (
+	"bytes"
 	"context"
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -113,7 +113,7 @@ func TestRoundtrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("server read: %v", err)
 			}
-			if string(buf[:n]) != string(msg1) {
+			if !bytes.Equal(buf[:n], msg1) {
 				t.Errorf("server got %q, want %q", buf[:n], msg1)
 			}
 
@@ -126,7 +126,7 @@ func TestRoundtrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("client read: %v", err)
 			}
-			if string(buf[:n]) != string(msg2) {
+			if !bytes.Equal(buf[:n], msg2) {
 				t.Errorf("client got %q, want %q", buf[:n], msg2)
 			}
 		})
@@ -363,7 +363,7 @@ func TestURIDispatch(t *testing.T) {
 			}
 		}()
 
-		uri := fmt.Sprintf("tcp://%s", ln.Addr().String())
+		uri := "tcp://" + ln.Addr().String()
 		ctx := context.Background()
 		conn, err := transport.Dial(ctx, uri)
 		if err != nil {

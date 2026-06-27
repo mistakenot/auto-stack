@@ -34,7 +34,7 @@ func Listen(path string) (*Listener, error) {
 		// It's a socket — probe for a live server.
 		probe, dialErr := net.Dial("unix", path)
 		if dialErr == nil {
-			probe.Close()
+			_ = probe.Close() // liveness probe only; close error is irrelevant
 			return nil, fmt.Errorf("unix: address in use: %s", path)
 		}
 		// Stale socket — safe to remove.

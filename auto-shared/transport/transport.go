@@ -77,12 +77,12 @@ func Dial(ctx context.Context, uri string) (net.Conn, error) {
 // parseURI splits a URI into scheme and address. It handles the double-slash
 // convention: unix:///tmp/sock → path=/tmp/sock, tcp://127.0.0.1:8080 → addr=127.0.0.1:8080.
 func parseURI(uri string) (scheme, addr string, err error) {
-	idx := strings.Index(uri, "://")
-	if idx < 0 {
+	before, after, ok := strings.Cut(uri, "://")
+	if !ok {
 		return "", "", fmt.Errorf("transport: invalid URI %q; expected scheme://address (e.g. unix:///tmp/sock or tcp://127.0.0.1:8080)", uri)
 	}
-	scheme = uri[:idx]
-	addr = uri[idx+3:]
+	scheme = before
+	addr = after
 	if addr == "" {
 		return "", "", fmt.Errorf("transport: empty address in URI %q", uri)
 	}
