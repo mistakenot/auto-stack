@@ -17,7 +17,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="044: session-html-map" status="executing" pr="pending" generated="2026-06-27">
+  <pd-doc title="044: session-html-map" status="complete" pr="pending" generated="2026-06-27">
     <pd-tab name="Requirements">
 
       <pd-section id="problem" title="Problem">
@@ -566,7 +566,7 @@ flowchart LR
 
       <pd-stepper>
 
-        <pd-phase n="1" title="Model + builder" status="todo"
+        <pd-phase n="1" title="Model + builder" status="done"
           files="auto-search/internal/sessionhtml/model.go,auto-search/internal/sessionhtml/build.go,auto-search/internal/sessionhtml/build_test.go">
           <md><script type="text/plain">
 Pure logic, no HTML. Port `prototype-build_doc.py`.
@@ -607,7 +607,7 @@ Pure logic, no HTML. Port `prototype-build_doc.py`.
           <pd-comment by="author">Rewrote Phase 1 step 2: full `Content` by default, `ContentTruncated` only under `opts.Light`, and an explicit "do NOT copy the prototype's unconditional 4k clip" — the only allowance is a single high OOM-guard ceiling (~256k/field), documented if added.</pd-comment>
         </pd-thread>
 
-        <pd-phase n="2" title="Renderer + embedded template" status="todo" depends-on="1"
+        <pd-phase n="2" title="Renderer + embedded template" status="done" depends-on="1"
           files="auto-search/internal/sessionhtml/render.go,auto-search/internal/sessionhtml/template.html,auto-search/internal/sessionhtml/assets.go,auto-search/internal/sessionhtml/render_test.go">
           <md><script type="text/plain">
 1. `template.html` — copy `artifacts/prototype-template.html`; keep the
@@ -627,7 +627,7 @@ Pure logic, no HTML. Port `prototype-build_doc.py`.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="CLI command + integration test" status="todo" depends-on="1,2"
+        <pd-phase n="3" title="CLI command + integration test" status="done" depends-on="1,2"
           files="auto-search/internal/cli/session.go,auto-search/internal/cli/session_export_test.go,auto-search/internal/testutil/fixtures.go">
           <md><script type="text/plain">
 1. `session.go` — `newSessionExportCmd()`: args `ExactArgs(1)`; flags
@@ -666,7 +666,7 @@ Pure logic, no HTML. Port `prototype-build_doc.py`.
           <pd-comment by="author">Adopted. Phase 3 step 1 now calls `GetSessionByID` first to detect an unknown id (returning the "session not found" remediation, matching `describe`) before building, so no empty file is written.</pd-comment>
         </pd-thread>
 
-        <pd-phase n="4" title="Docs" status="todo" depends-on="3"
+        <pd-phase n="4" title="Docs" status="done" depends-on="3"
           files="auto-search/internal/cli/quickstart.go">
           <md><script type="text/plain">
 1. `quickstart.go` — add a short `session export <id>` entry to the happy-path
