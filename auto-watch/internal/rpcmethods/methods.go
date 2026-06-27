@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mistakenot/auto-shared/bus"
+	"github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-shared/rpc"
 )
 
@@ -32,18 +33,21 @@ type Handlers struct {
 	startedAt time.Time
 	hub       *bus.Hub
 	ctlEvents bool
+	reg       func() config.ProjectsConfig
 	counts    sync.Map // method → *atomic.Int64
 }
 
 // New creates a Handlers instance. Pass ctlEvents=true to emit ctl.log.info
-// events on each dispatch; false suppresses them.
-func New(hostID, version string, startedAt time.Time, hub *bus.Hub, ctlEvents bool) *Handlers {
+// events on each dispatch; false suppresses them. The reg provider is called
+// per request to get a fresh project-registry snapshot.
+func New(hostID, version string, startedAt time.Time, hub *bus.Hub, ctlEvents bool, reg func() config.ProjectsConfig) *Handlers {
 	return &Handlers{
 		hostID:    hostID,
 		version:   version,
 		startedAt: startedAt,
 		hub:       hub,
 		ctlEvents: ctlEvents,
+		reg:       reg,
 	}
 }
 
@@ -51,6 +55,10 @@ func New(hostID, version string, startedAt time.Time, hub *bus.Hub, ctlEvents bo
 // Peer.Serve.
 func (h *Handlers) Register(p *rpc.Peer) {
 	p.Register("daemon.status", h.counted("daemon.status", h.handleStatus))
+	p.Register("doc.list", h.counted("doc.list", h.handleDocList))
+	p.Register("doc.get", h.counted("doc.get", h.handleDocGet))
+	p.Register("doc.raw", h.counted("doc.raw", h.handleDocRaw))
+	p.Register("project.list", h.counted("project.list", h.handleProjectList))
 }
 
 // DispatchCount returns the number of times the handler for method was

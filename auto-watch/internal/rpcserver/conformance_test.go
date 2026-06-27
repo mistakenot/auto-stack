@@ -71,17 +71,47 @@ func findModuleRoot() string {
 // ---------------------------------------------------------------------------
 
 type inProcessFixture struct {
-	handlers *rpcmethods.Handlers
-	client   *conformance.PeerClient
-	ln       transport.Listener
-	cancel   context.CancelFunc
-	done     chan struct{}
+	handlers   *rpcmethods.Handlers
+	client     *conformance.PeerClient
+	ln         transport.Listener
+	cancel     context.CancelFunc
+	done       chan struct{}
+	projectDir string
+}
+
+func seedDocsTree(t testing.TB, root string) {
+	t.Helper()
+	docsDir := filepath.Join(root, "docs")
+	os.MkdirAll(docsDir, 0o755)
+	os.WriteFile(filepath.Join(docsDir, "readme.md"), []byte("# Test\n"), 0o644)
+	htmlContent := `<!doctype html>
+<html><head>
+<script type="application/json" id="pd-meta">
+{"status":"planning","created":"2026-01-01"}
+</script>
+</head><body>
+<pd-doc status="pending"></pd-doc>
+</body></html>`
+	os.MkdirAll(filepath.Join(docsDir, "tasks", "001-test"), 0o755)
+	os.WriteFile(filepath.Join(docsDir, "tasks", "001-test", "plan.html"), []byte(htmlContent), 0o644)
 }
 
 func inProcessFactory(t testing.TB) conformance.Fixture {
 	hub := bus.NewHub()
 	hostID := sharedconfig.HostIDQuietly()
-	handlers := rpcmethods.New(hostID, version.Version, time.Now(), hub, false)
+	projectRoot, err := os.MkdirTemp("", "autowatch-inproc-project-*")
+	if err != nil {
+		t.Fatalf("create project root: %v", err)
+	}
+	seedDocsTree(t, projectRoot)
+	regProvider := func() sharedconfig.ProjectsConfig {
+		return sharedconfig.ProjectsConfig{
+			Projects: []sharedconfig.ProjectRef{
+				{ID: "conformance-project", Name: "Conformance", Path: projectRoot},
+			},
+		}
+	}
+	handlers := rpcmethods.New(hostID, version.Version, time.Now(), hub, false, regProvider)
 
 	ln, err := transport.Listen("tcp://127.0.0.1:0")
 	if err != nil {
@@ -108,11 +138,12 @@ func inProcessFactory(t testing.TB) conformance.Fixture {
 	go client.Peer().Serve(ctx)
 
 	return &inProcessFixture{
-		handlers: handlers,
-		client:   client,
-		ln:       ln,
-		cancel:   cancel,
-		done:     done,
+		handlers:   handlers,
+		client:     client,
+		ln:         ln,
+		cancel:     cancel,
+		done:       done,
+		projectDir: projectRoot,
 	}
 }
 
@@ -121,6 +152,7 @@ func (f *inProcessFixture) Obs() conformance.Observations { return f.handlers }
 func (f *inProcessFixture) Close() error {
 	f.cancel()
 	<-f.done
+	os.RemoveAll(f.projectDir)
 	return nil
 }
 
@@ -157,11 +189,6 @@ func binaryFactory(t testing.TB) conformance.Fixture {
 		t.Fatalf("write host.json: %v", err)
 	}
 
-	// Seed minimal projects.json
-	if err := os.WriteFile(filepath.Join(autoDir, "projects.json"), []byte(`{"projects":[]}`), 0o644); err != nil {
-		t.Fatalf("write projects.json: %v", err)
-	}
-
 	// Stub executables
 	binDir := filepath.Join(tmpDir, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -190,6 +217,15 @@ func binaryFactory(t testing.TB) conformance.Fixture {
 			t.Fatalf("git %v: %v\n%s", gitArgs, err, out)
 		}
 	}
+	// Seed docs tree in the repo for doc.* methods
+	seedDocsTree(t, repoDir)
+
+	// Seed projects.json with the repo registered (after repoDir exists)
+	projectsJSON := fmt.Sprintf(`{"projects":[{"id":"binary-project","name":"Binary","path":%q}]}`, repoDir)
+	if err := os.WriteFile(filepath.Join(autoDir, "projects.json"), []byte(projectsJSON), 0o644); err != nil {
+		t.Fatalf("write projects.json: %v", err)
+	}
+
 	// Commit something so we have a HEAD
 	os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("test"), 0o644)
 	for _, gitArgs := range [][]string{
@@ -343,6 +379,82 @@ func (s *statusScenario) Run(t testing.TB, f conformance.Fixture) {
 }
 
 // ---------------------------------------------------------------------------
+// Shared scenario: doc + project methods
+// ---------------------------------------------------------------------------
+
+type docProjectScenario struct{}
+
+func (s *docProjectScenario) Name() string { return "doc-project" }
+
+func (s *docProjectScenario) Run(t testing.TB, f conformance.Fixture) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// project.list: should return at least one project with a host stamp
+	projResult, err := f.Client().Call(ctx, "project.list", nil)
+	if err != nil {
+		t.Fatalf("call project.list: %v", err)
+	}
+
+	var projects []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Path string `json:"path"`
+		Host string `json:"host"`
+	}
+	if err := json.Unmarshal(projResult, &projects); err != nil {
+		t.Fatalf("unmarshal project.list: %v", err)
+	}
+	if len(projects) == 0 {
+		t.Fatal("project.list returned empty")
+	}
+	if projects[0].Host == "" {
+		t.Fatal("project.list entry missing host stamp")
+	}
+	projectID := projects[0].ID
+
+	// doc.list: should return entries for the seeded docs/ tree
+	docListResult, err := f.Client().Call(ctx, "doc.list", map[string]string{"project": projectID})
+	if err != nil {
+		t.Fatalf("call doc.list: %v", err)
+	}
+
+	var docs []struct {
+		ID   string `json:"id"`
+		Path string `json:"path"`
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(docListResult, &docs); err != nil {
+		t.Fatalf("unmarshal doc.list: %v", err)
+	}
+	if len(docs) == 0 {
+		t.Fatal("doc.list returned empty for seeded project")
+	}
+
+	// Find a markdown doc and get it
+	for _, d := range docs {
+		if d.Type == "markdown" {
+			getResult, err := f.Client().Call(ctx, "doc.get", map[string]string{
+				"project": projectID,
+				"path":    d.Path,
+			})
+			if err != nil {
+				t.Fatalf("call doc.get(%s): %v", d.Path, err)
+			}
+			var got map[string]string
+			json.Unmarshal(getResult, &got)
+			if got["path"] != d.Path {
+				t.Errorf("doc.get path = %q, want %q", got["path"], d.Path)
+			}
+			if got["markdown"] == "" {
+				t.Error("doc.get returned empty markdown")
+			}
+			break
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Test functions
 // ---------------------------------------------------------------------------
 
@@ -351,8 +463,8 @@ func TestConformance(t *testing.T) {
 		t.Skip("binary not built (TestMain failed)")
 	}
 
-	scenario := &statusScenario{}
-	conformance.RunAcrossFixtures(t, scenario, inProcessFactory, binaryFactory)
+	conformance.RunAcrossFixtures(t, &statusScenario{}, inProcessFactory, binaryFactory)
+	conformance.RunAcrossFixtures(t, &docProjectScenario{}, inProcessFactory, binaryFactory)
 }
 
 func TestCrossFixtureStableInvariants(t *testing.T) {
