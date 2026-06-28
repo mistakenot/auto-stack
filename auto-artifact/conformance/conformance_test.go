@@ -348,6 +348,32 @@ func TestAC13_RejectsOversize(t *testing.T) {
 	}
 }
 
+// TestAC9_DeleteRemovesObject: after delete, a GET of the object URL returns
+// 403 or 404.
+func TestAC9_DeleteRemovesObject(t *testing.T) {
+	gate(t)
+	file := writeTempFile(t, "ac9-test.txt", "delete-me\n")
+	res := runArtifact(t, nil, "upload", file)
+	if res.exitCode != 0 {
+		t.Fatalf("upload exit %d; stderr: %s", res.exitCode, res.stderr)
+	}
+	out := decodeUpload(t, res.stdout)
+
+	if code, _ := httpGet(t, out.URL); code < 200 || code >= 300 {
+		t.Fatalf("uploaded object not fetchable: GET %s = %d", out.URL, code)
+	}
+
+	del := runArtifact(t, nil, "delete", out.Key)
+	if del.exitCode != 0 {
+		t.Fatalf("delete exit %d; stderr: %s", del.exitCode, del.stderr)
+	}
+
+	code, _ := httpGet(t, out.URL)
+	if code != http.StatusForbidden && code != http.StatusNotFound {
+		t.Errorf("after delete, GET %s = %d, want 403 or 404", out.URL, code)
+	}
+}
+
 func countLines(path string) int {
 	data, err := os.ReadFile(path)
 	if err != nil {
