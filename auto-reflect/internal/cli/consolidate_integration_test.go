@@ -14,6 +14,7 @@ type consolidateResp struct {
 		Op             string   `json:"op"`
 		RuleID         string   `json:"rule_id"`
 		ObservationIDs []string `json:"observation_ids"`
+		ChildIDs       []string `json:"child_ids"`
 		Rule           *struct {
 			ID             string   `json:"id"`
 			Lifecycle      string   `json:"lifecycle"`
@@ -344,6 +345,25 @@ func TestConsolidateSplit(t *testing.T) {
 	}
 	if len(p.SuccessorIDs) != 2 {
 		t.Fatalf("parent should have two successor_ids, got %#v", p.SuccessorIDs)
+	}
+
+	// The top-level `ids` envelope must carry the new child draft ids (what a
+	// consumer would pipe into `rule promote`), not the stale parent. Regression
+	// for the split-envelope review thread.
+	wantChildren := slices.Clone(p.SuccessorIDs)
+	slices.Sort(wantChildren)
+	gotIDs := slices.Clone(resp.IDs)
+	slices.Sort(gotIDs)
+	if !slices.Equal(gotIDs, wantChildren) {
+		t.Fatalf("split .ids should be the two child ids %#v, got %#v", p.SuccessorIDs, resp.IDs)
+	}
+	if slices.Contains(resp.IDs, parent) {
+		t.Fatalf("split .ids must not include the stale parent %q, got %#v", parent, resp.IDs)
+	}
+	gotChildren := slices.Clone(resp.Applied[0].ChildIDs)
+	slices.Sort(gotChildren)
+	if !slices.Equal(gotChildren, wantChildren) {
+		t.Fatalf("split applied[0].child_ids should be the two children %#v, got %#v", p.SuccessorIDs, resp.Applied[0].ChildIDs)
 	}
 
 	// Each child folds to draft with predecessor_ids=[parent] (lineage both ways).

@@ -272,7 +272,11 @@ func newMinerStatusCmd(application *app.App) *cobra.Command {
 			// subagent) sessions not terminal at the current miner.Version
 			// ("failed" acks stay retryable). checkSource already verified the
 			// ETL source is OK, so src is OK here.
-			pending, _, err := miner.PendingCount(repoRoot, root)
+			// Pass `all` so the pending universe matches the total/mined loop below:
+			// scoped to this repo by default, all-workspace under --all. Otherwise
+			// total_sessions == pending + mined would break under --all (pending
+			// stays repo-scoped while total/mined go all-workspace).
+			pending, _, err := miner.PendingCount(repoRoot, root, all)
 			if err != nil {
 				return &ExitError{Code: 1, Err: fmt.Errorf("count pending: %w", err)}
 			}

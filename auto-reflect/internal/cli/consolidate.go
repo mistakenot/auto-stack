@@ -22,6 +22,7 @@ type applied struct {
 	Op             string      `json:"op"`
 	RuleID         string      `json:"rule_id"`
 	ObservationIDs []string    `json:"observation_ids,omitempty"`
+	ChildIDs       []string    `json:"child_ids,omitempty"`
 	Note           string      `json:"note,omitempty"`
 	Rule           *rules.Rule `json:"rule,omitempty"`
 }
@@ -104,12 +105,19 @@ func newConsolidateCmd(application *app.App) *cobra.Command {
 				proc.attachFoldedRules(refolded)
 			}
 
-			// Top-level ids carry every applied rule id (the content-derived ids), in
-			// order, so a consumer can thread them out without walking applied[]. Dry-run
-			// and apply mint the same ids from the same content.
+			// Top-level ids carry the actionable result id(s) of each applied op, in
+			// order, so a consumer can thread them straight into `rule promote` without
+			// walking applied[]. For a split that's the new child draft ids (the parent
+			// is being retired to stale and isn't promotable); for every other op it's
+			// the affected rule's id. Dry-run and apply mint the same ids from the same
+			// content.
 			ids := make([]string, 0, len(proc.appliedT))
 			for i := range proc.appliedT {
-				ids = append(ids, proc.appliedT[i].RuleID)
+				if a := &proc.appliedT[i]; len(a.ChildIDs) > 0 {
+					ids = append(ids, a.ChildIDs...)
+				} else {
+					ids = append(ids, a.RuleID)
+				}
 			}
 			result := mutationResultIDs(ids, map[string]any{
 				"applied":   proc.appliedT,
@@ -543,7 +551,7 @@ func (c *consolidator) split(d *consolidate.Delta) {
 		siblingKeys[key] = i
 	}
 
-	entry := applied{Op: consolidate.OpSplit, RuleID: current.ID, ObservationIDs: inheritedObs, Note: "split into " + strings.Join(childIDs, ", ")}
+	entry := applied{Op: consolidate.OpSplit, RuleID: current.ID, ChildIDs: childIDs, ObservationIDs: inheritedObs, Note: "split into " + strings.Join(childIDs, ", ")}
 	if c.dryRun {
 		c.appliedT = append(c.appliedT, entry)
 		return
