@@ -12,7 +12,7 @@
 {"id":"049","name":"reflect-audit-lineage-lint","status":"planning","created":"2026-06-28"}
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="049: reflect-audit-lineage-lint" status="executing" pr="pending" generated="2026-06-28">
+  <pd-doc title="049: reflect-audit-lineage-lint" status="complete" pr="pending" generated="2026-06-28">
     <pd-tab name="Requirements">
 
       <pd-section id="problem" title="Problem">
@@ -581,7 +581,7 @@ populated in P4).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="5" title="Backward-compat guard + docs" status="todo" depends-on="2,3,4"
+        <pd-phase n="5" title="Backward-compat guard + docs" status="done" depends-on="2,3,4"
           files="internal/rules/testdata/playbook.golden.json,internal/rules/projection_test.go,internal/events/model_test.go,internal/cli/quickstart.go,internal/cli/cli_integration_test.go,cmd/autoreflect/e2e_lifecycle_test.go">
           <md><script type="text/plain">
 1. `rules/projection_test.go`: backward-compat **fold** test — fold a pre-change event-log
