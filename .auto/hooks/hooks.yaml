@@ -1,0 +1,13 @@
+# Project-scoped hint config for `auto hooks fire`.
+#
+# Each entry maps a built-in trigger (detection logic lives in Go) to a hint
+# rendered into the agent's context window as additionalContext on a matching
+# PostToolUse event. Hint text supports {{.field}} template variables — available
+# fields: agent, branch, remote, project, session_id, tool, event, cwd. Unknown
+# fields render as empty strings.
+hints:
+  - trigger: pushed-to-pr
+    hint: >-
+      You just pushed to branch {{.branch}} in project {{.project}}. If you've
+      finished your current work, check back for code review feedback in a few
+      minutes and run /address-feedback to handle any comments.
