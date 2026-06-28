@@ -70,7 +70,15 @@ func (r *Repo) ExtractPaths(sha string, paths []string, dest string) error {
 	if len(paths) == 0 {
 		return nil
 	}
-	args := append([]string{"archive", "--format=tar", sha, "--"}, paths...)
+	// git archive's trailing operands are pathspecs, so a repo-derived directory
+	// name that begins with pathspec magic (e.g. ":!foo" exclude or ":(glob)*")
+	// would be read as a selector rather than a literal path — re-including
+	// unrelated entries and defeating the scoping. The ":(literal)" magic prefix
+	// disables all magic, forcing each operand to match its exact tree path.
+	args := []string{"archive", "--format=tar", sha, "--"}
+	for _, p := range paths {
+		args = append(args, ":(literal)"+p)
+	}
 	return r.extractArchive(args, "", dest)
 }
 
