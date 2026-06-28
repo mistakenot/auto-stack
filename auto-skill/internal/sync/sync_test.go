@@ -284,6 +284,107 @@ func TestRunCheckStaleExitsNonZero(t *testing.T) {
 
 // TestRunRecoversPendingJournalAtStartup: a pending journal from an interrupted
 // commit is recovered at the next Run's startup.
+// TestRunScopedTargetLeavesOtherRendersIntact: a scoped `--target X` run renders
+// only the named skill and must NEVER delete the rendered copies of the other
+// managed skills. Regression for the bug where the prune pass's "desired" set
+// collapsed to the scoped subset (proc.Staged), so every non-targeted managed
+// skill classified as an orphan and a scoped `sync --target X` reaped all of
+// their renders ("Removed N orphaned target(s)").
+func TestRunScopedTargetLeavesOtherRendersIntact(t *testing.T) {
+	f := newFixture(t)
+	f.commitSkill("alpha", "v1")
+	head := f.commitSkill("beta", "v1") // cumulative tree: both skills at head
+
+	env := newEnv(t)
+	approve(t, env, f.url)
+	writeLock(t, env, map[string]skill.LockEntry{
+		"alpha": lockEntry(f.url, "alpha", "latest", head),
+		"beta":  lockEntry(f.url, "beta", "latest", head),
+	})
+	writeSkillsYAML(t, env, &skill.SkillsYAML{})
+
+	// Full sync renders both vendored skills into every target dir.
+	if _, err := Run(env, Options{Locked: true}); err != nil {
+		t.Fatalf("full sync: %v", err)
+	}
+	betaClaude := filepath.Join(env.Root, ".claude", "skills", "beta")
+	betaAgents := filepath.Join(env.Root, ".agents", "skills", "beta")
+	for _, d := range []string{betaClaude, betaAgents} {
+		if _, err := os.Stat(d); err != nil {
+			t.Fatalf("precondition: beta render missing after full sync at %s: %v", d, err)
+		}
+	}
+
+	// Scoped sync of alpha alone must not prune or delete beta's renders.
+	res, err := Run(env, Options{Targets: []string{"alpha"}})
+	if err != nil {
+		t.Fatalf("scoped sync: %v", err)
+	}
+	if len(res.Pruned) != 0 {
+		t.Errorf("scoped `--target alpha` pruned %v, want nothing pruned", res.Pruned)
+	}
+	for _, d := range []string{betaClaude, betaAgents} {
+		if _, err := os.Stat(d); err != nil {
+			t.Errorf("scoped `--target alpha` deleted non-targeted beta render at %s: %v", d, err)
+		}
+	}
+}
+
+// TestRunScopedTargetPreservesManifestOwnership: a scoped `--target X` run must
+// keep the OTHER managed skills in manifest.json. The manifest is the "managed"
+// authority the ownership pass reads; if a scoped run rebuilds it from only the
+// staged (scoped) set, every non-targeted vendored skill drops out of the
+// manifest and a later FULL sync reclassifies its on-disk dir as foreign
+// (detectForeignCollisions), refusing to overwrite it and wedging normal sync.
+func TestRunScopedTargetPreservesManifestOwnership(t *testing.T) {
+	f := newFixture(t)
+	f.commitSkill("alpha", "v1")
+	head := f.commitSkill("beta", "v1")
+
+	env := newEnv(t)
+	approve(t, env, f.url)
+	writeLock(t, env, map[string]skill.LockEntry{
+		"alpha": lockEntry(f.url, "alpha", "latest", head),
+		"beta":  lockEntry(f.url, "beta", "latest", head),
+	})
+	writeSkillsYAML(t, env, &skill.SkillsYAML{})
+
+	if _, err := Run(env, Options{Locked: true}); err != nil {
+		t.Fatalf("full sync: %v", err)
+	}
+
+	// Scoped sync of alpha must leave beta in the manifest's managed set.
+	if _, err := Run(env, Options{Targets: []string{"alpha"}}); err != nil {
+		t.Fatalf("scoped sync: %v", err)
+	}
+	m := loadManifestBestEffort(env)
+	if m == nil {
+		t.Fatal("manifest missing after scoped sync")
+	}
+	if _, ok := m.Skills["beta"]; !ok {
+		t.Error("scoped sync dropped beta from manifest.skills")
+	}
+	for tname, mt := range m.Targets {
+		if _, ok := mt.ManagedSkills["beta"]; !ok {
+			t.Errorf("scoped sync dropped beta from target %q managed_skills", tname)
+		}
+	}
+
+	// A subsequent full sync must NOT misread beta as a foreign-dir conflict.
+	res, err := Run(env, Options{Locked: true})
+	if err != nil {
+		t.Fatalf("follow-up full sync: %v", err)
+	}
+	for _, c := range res.Conflicts {
+		if c.Skill == "beta" {
+			t.Errorf("follow-up full sync flagged beta as a foreign conflict: %+v", c)
+		}
+	}
+	if len(res.Errors) != 0 {
+		t.Errorf("follow-up full sync errored: %v", res.Errors)
+	}
+}
+
 func TestRunRecoversPendingJournalAtStartup(t *testing.T) {
 	env := newEnv(t)
 	writeSkillsYAML(t, env, &skill.SkillsYAML{})

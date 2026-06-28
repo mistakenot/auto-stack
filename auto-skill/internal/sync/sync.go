@@ -275,7 +275,12 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 		result.Installs = proc.Installs
 	}
 
-	prunes := planPrune(verdicts, proc.Targets, desiredComplete)
+	// A scoped (`--target`) run stages only the named skills, so every other
+	// managed skill would classify as a (false) orphan. Restrict pruning to the
+	// targeted set so a partial sync never reaps non-targeted renders; a full
+	// sync (no targets → nil scope) prunes every receipt-gated orphan as before.
+	pruneScope := normalizeNames(opts.Targets)
+	prunes := planPrune(verdicts, proc.Targets, desiredComplete, pruneScope)
 
 	// --check — offline dry-run: report stale + would-be prunes, write nothing.
 	if opts.Check {

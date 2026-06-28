@@ -118,10 +118,18 @@ func isTempDirName(name string) bool {
 // or any per-skill error never deletes anything (AC-3). Each orphan's absolute
 // dir is resolved from the style name via the resolved targets.
 //
+// scope restricts which orphans may be pruned. On a full sync it is nil and
+// every receipt-gated orphan is eligible. On a SCOPED (`--target X`) run it is
+// the set of targeted skill names: only an orphan that was explicitly named may
+// be reaped. A scoped plan stages only the targeted skills, so every OTHER
+// managed skill classifies as a (false) orphan — without this gate a scoped
+// `sync --target X` would delete every non-targeted skill's render (the full
+// sync prune contract wrongly leaking into a partial run).
+//
 // (Deviates from the brief's planPrune(verdicts, desiredComplete) signature: it
 // takes the resolved targets too, because ownership is keyed by style name and
 // the filesystem rename needs the absolute dir — see the SEAM NOTE above.)
-func planPrune(verdicts []ownership.DirStatus, targets []Target, desiredComplete bool) []journalPrune {
+func planPrune(verdicts []ownership.DirStatus, targets []Target, desiredComplete bool, scope map[string]bool) []journalPrune {
 	if !desiredComplete {
 		return []journalPrune{}
 	}
@@ -131,6 +139,10 @@ func planPrune(verdicts []ownership.DirStatus, targets []Target, desiredComplete
 	}
 	var out []journalPrune
 	for _, v := range ownership.PruneEligible(verdicts) {
+		if scope != nil && !scope[v.Name] {
+			// Scoped run: never reap a skill outside the --target set.
+			continue
+		}
 		base, ok := dirOf[v.Target]
 		if !ok {
 			// A verdict for an unknown target style (should not happen, the scan

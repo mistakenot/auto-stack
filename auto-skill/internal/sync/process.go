@@ -170,6 +170,16 @@ func Process(env skill.Env, plan *Plan, fetch *FetchResult, opts Options) (*Proc
 	if len(mErrs) > 0 {
 		return result, fmt.Errorf("manifest validation failed: %s", joinValidation(mErrs))
 	}
+	// A scoped (--target) run stages only the targeted skills (plus authored), so
+	// the freshly built manifest omits every non-targeted vendored skill. Carry
+	// their prior ownership forward so the write does not disown them — a dropped
+	// skill is later misread as a foreign dir and wedges the next full sync.
+	if scope := normalizeNames(opts.Targets); scope != nil {
+		manifest = mergeScopedManifest(oldManifest, manifest, scope)
+		if vErrs := skill.ValidateManifest(manifest); len(vErrs) > 0 {
+			return result, fmt.Errorf("merged manifest validation failed: %s", joinValidation(vErrs))
+		}
+	}
 	result.Manifest = manifest
 	return result, nil
 }
