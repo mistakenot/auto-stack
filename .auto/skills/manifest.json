@@ -212,6 +212,13 @@
       "skill_version": "6eb667dd7bff1d23046cc70d7d80bbff74671b345067654b1510be6a77024d4a",
       "render_version": "1"
     },
+    "reflect-on-agent-sessions": {
+      "template_hash": "7e8578535b24ee6410fa926225559f514303f76883875c21b8d0e9c6ab99c536",
+      "replacements": {},
+      "file_refs": [],
+      "skill_version": "d8886ea7e1ca7b3e4f72e93d5b486fe564911adeea5d94aa22a10b33ba3547b1",
+      "render_version": "1"
+    },
     "release": {
       "template_hash": "8b088a50a52586fc798a96a87db83016656d9329f4cf92e14303edc1aa02b5bd",
       "replacements": {},
@@ -323,6 +330,7 @@
         "playbook-search": "1e86b067218a1edaaeaacc1e31610dd7bde0b4d7155b63c7a3318ca2888f93ed",
         "readme-updater": "bb1de826e2b7289d822577355cf643332fef04761d434e601f497f79588ee4a7",
         "recall": "6eb667dd7bff1d23046cc70d7d80bbff74671b345067654b1510be6a77024d4a",
+        "reflect-on-agent-sessions": "d8886ea7e1ca7b3e4f72e93d5b486fe564911adeea5d94aa22a10b33ba3547b1",
         "release": "585207e7324346f1bfea5d1172b6c9e5287d56944f79386a806a6f6d56aa662a",
         "request-claude-review": "8ce7795f3e990ef43f44a5a971d93815825cd2cf5fa9026f12608a5f91ed2b36",
         "request-codex-review": "4ef36201933cd53103cb62c6b14bb6c48ea849895c46d6493a3d97667e2517fd",
@@ -368,6 +376,7 @@
         "playbook-search": "1e86b067218a1edaaeaacc1e31610dd7bde0b4d7155b63c7a3318ca2888f93ed",
         "readme-updater": "bb1de826e2b7289d822577355cf643332fef04761d434e601f497f79588ee4a7",
         "recall": "6eb667dd7bff1d23046cc70d7d80bbff74671b345067654b1510be6a77024d4a",
+        "reflect-on-agent-sessions": "d8886ea7e1ca7b3e4f72e93d5b486fe564911adeea5d94aa22a10b33ba3547b1",
         "release": "585207e7324346f1bfea5d1172b6c9e5287d56944f79386a806a6f6d56aa662a",
         "request-claude-review": "8ce7795f3e990ef43f44a5a971d93815825cd2cf5fa9026f12608a5f91ed2b36",
         "request-codex-review": "4ef36201933cd53103cb62c6b14bb6c48ea849895c46d6493a3d97667e2517fd",
