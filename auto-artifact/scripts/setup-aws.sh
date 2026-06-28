@@ -1,13 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BUCKET="auto-artifact-datadyne"
-REGION="eu-west-1"
-PROFILE="default"
+BUCKET="${BUCKET:-auto-artifact-datadyne}"
+REGION="${REGION:-eu-west-1}"
+# Profile is optional. In AWS CloudShell (and on EC2/CI with an instance role)
+# credentials are ambient, so leave PROFILE empty and the CLI picks them up.
+# Set PROFILE=myprofile (or AWS_PROFILE) to use a named profile locally.
+PROFILE="${PROFILE:-${AWS_PROFILE:-}}"
 IAM_USER="auto-artifact-uploader"
 IAM_ROLE="auto-artifact-role"
 IAM_POLICY="auto-artifact-policy"
-ACCOUNT_ID=$(aws sts get-caller-identity --profile "$PROFILE" --query Account --output text)
+
+# run_aws wraps the AWS CLI, appending --profile only when one is configured.
+run_aws() {
+  if [[ -n "$PROFILE" ]]; then
+    aws "$@" --profile "$PROFILE"
+  else
+    aws "$@"
+  fi
+}
+
+ACCOUNT_ID=$(run_aws sts get-caller-identity --query Account --output text)
 
 echo "=== Auto Artifact AWS Setup ==="
 echo "Bucket:  $BUCKET"
@@ -17,23 +30,21 @@ echo ""
 
 # --- 1. Create S3 bucket ---
 echo "[1/6] Creating S3 bucket..."
-aws s3api create-bucket \
+run_aws s3api create-bucket \
   --bucket "$BUCKET" \
   --region "$REGION" \
-  --create-bucket-configuration LocationConstraint="$REGION" \
-  --profile "$PROFILE"
+  --create-bucket-configuration LocationConstraint="$REGION"
 
 # --- 2. Configure Block Public Access (allow public bucket policy, block ACLs) ---
 echo "[2/6] Configuring public access settings..."
-aws s3api put-public-access-block \
+run_aws s3api put-public-access-block \
   --bucket "$BUCKET" \
   --public-access-block-configuration \
-    'BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=false,RestrictPublicBuckets=false' \
-  --profile "$PROFILE"
+    'BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=false,RestrictPublicBuckets=false'
 
 # --- 3. Set bucket policy: public GetObject, deny ListBucket ---
 echo "[3/6] Setting bucket policy (public read, no list)..."
-aws s3api put-bucket-policy \
+run_aws s3api put-bucket-policy \
   --bucket "$BUCKET" \
   --policy "$(cat <<POLICY
 {
@@ -56,12 +67,11 @@ aws s3api put-bucket-policy \
   ]
 }
 POLICY
-)" \
-  --profile "$PROFILE"
+)"
 
 # --- 4. Set lifecycle rules for retention prefixes ---
 echo "[4/6] Setting lifecycle rules (7d, 30d, 90d, 365d)..."
-aws s3api put-bucket-lifecycle-configuration \
+run_aws s3api put-bucket-lifecycle-configuration \
   --bucket "$BUCKET" \
   --lifecycle-configuration "$(cat <<LIFECYCLE
 {
@@ -93,14 +103,13 @@ aws s3api put-bucket-lifecycle-configuration \
   ]
 }
 LIFECYCLE
-)" \
-  --profile "$PROFILE"
+)"
 
 # --- 5. Create IAM policy, role, and user ---
 echo "[5/6] Creating IAM policy, role, and user..."
 
 # Create the policy
-POLICY_ARN=$(aws iam create-policy \
+POLICY_ARN=$(run_aws iam create-policy \
   --policy-name "$IAM_POLICY" \
   --policy-document "$(cat <<IAMPOLICY
 {
@@ -119,27 +128,23 @@ POLICY_ARN=$(aws iam create-policy \
 }
 IAMPOLICY
 )" \
-  --profile "$PROFILE" \
   --query 'Policy.Arn' --output text)
 
 echo "  Policy ARN: $POLICY_ARN"
 
 # Create the user
-aws iam create-user \
-  --user-name "$IAM_USER" \
-  --profile "$PROFILE"
+run_aws iam create-user \
+  --user-name "$IAM_USER"
 
 # Attach the policy to the user
-aws iam attach-user-policy \
+run_aws iam attach-user-policy \
   --user-name "$IAM_USER" \
-  --policy-arn "$POLICY_ARN" \
-  --profile "$PROFILE"
+  --policy-arn "$POLICY_ARN"
 
 # --- 6. Create access keys ---
 echo "[6/6] Creating access keys..."
-KEYS=$(aws iam create-access-key \
+KEYS=$(run_aws iam create-access-key \
   --user-name "$IAM_USER" \
-  --profile "$PROFILE" \
   --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text)
 
 ACCESS_KEY_ID=$(echo "$KEYS" | awk '{print $1}')
