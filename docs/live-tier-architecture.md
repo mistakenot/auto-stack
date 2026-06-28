@@ -1,5 +1,5 @@
 ---
-hash: ""
+hash: "6f992c11"
 id: "3f9f43e0"
 read_when: "deciding how to serve live/monitoring queries over hook events without duplicating auto-etl, or designing the hot/cold data tiering and streaming transform spine"
 summary: "Architecture note resolving the tension between batch ETL (parquet) and live event-stream monitoring: one schema, one transform, many materializations, with a hot tier in front of the same data behind a single query surface."
@@ -7,6 +7,11 @@ title: "Live Tier Architecture: One Transform, Many Materializations"
 ---
 
 # Live Tier Architecture
+
+> **Status: DRAFT / RFC.** This captures the current thinking on the batch-vs-live
+> tension. It is deliberately a thinking artifact, not a settled design — the
+> [open questions](#open-questions) below are load-bearing and need more work
+> before we commit to an implementation. Revisit and harden before acting.
 
 ## The tension
 
