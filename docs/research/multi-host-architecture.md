@@ -1,5 +1,5 @@
 ---
-hash: ""
+hash: "97fbcc1c"
 id: "9649eb7e"
 read_when: "planning multi-project UI support, adding RPC to autowatch, designing cross-host connectivity, or extending the bus event envelope"
 summary: "Design exploration for supporting multiple projects, users, and hosts through a single auto-ui, with autowatch as the per-user RPC executor and an abstracted transport layer."

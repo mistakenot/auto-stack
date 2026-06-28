@@ -1,5 +1,5 @@
 ---
-hash: ""
+hash: "c956c50c"
 id: "b84550b7"
 read_when: "designing auto-env's environment/config resolution layer, an env-overlay model, a secrets story, or worktree-shared key handling; or comparing auto-env's template model against a mature sibling"
 summary: "Architectural study of how hack-dance/hack models, resolves, encrypts, and injects per-project/per-worktree environment configuration: the four-layer YAML overlay model, scope flattening, AES-256-GCM secrets with a worktree-aware key chain, the modern-vs-legacy compose injection paths, host/session/lifecycle injection surfaces, and materialization/drift detection — with lessons for auto-env."

@@ -274,14 +274,19 @@ vulncheck-if-deps-changed:
 	fi
 
 # autodoc fix reports doc-code drift; a non-zero exit means it found issues that
-# need agent attention, not a hard build failure. Print honestly and continue.
+# need attention. This is a blocking check: fix the reported docs (and run
+# `auto doc fixed <file>`) before committing. Skipped only when the `auto`
+# binary isn't installed, so contributors without it can still commit.
 autodoc-fix:
 	@if command -v auto >/dev/null 2>&1; then \
 		if auto doc fix; then \
 			echo "pre-commit: auto doc fix — no issues"; \
 		else \
-			echo "pre-commit: auto doc fix found issues (informational; commit allowed)"; \
+			echo "pre-commit: auto doc fix found issues — resolve them, then 'auto doc fixed <file>'"; \
+			exit 1; \
 		fi; \
+	else \
+		echo "pre-commit: 'auto' not installed — autodoc check skipped"; \
 	fi
 
 # When these targets run from a git hook (pre-commit/post-merge/post-checkout/

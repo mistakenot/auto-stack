@@ -1,5 +1,5 @@
 ---
-hash: "0b3a0433"
+hash: "f4b9db9d"
 id: "7b8cda70"
 read_when: "implementing or consuming bus events, adding a new event type, understanding the wire format or delivery guarantees"
 summary: "The auto-bus standard: CloudEvents-shaped envelope, JSON-RPC 2.0 framing, HTTP and WebSocket transport bindings, at-most-once delivery contract, dotted event-type registry, and watch.task.* paper mapping."

@@ -1,5 +1,5 @@
 ---
-hash: ""
+hash: "9e5326c2"
 id: "4ac5dd90"
 read_when: "scoping auto-skill toward remote skill install/update/distribution, or deciding what to build to replace the npx skills shell-out"
 summary: "What the vercel skills CLI does that auto-skill doesn't, and the concrete pieces needed to make auto-skill a native tool for installing, updating, and managing skills from remote repos."

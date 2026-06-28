@@ -1,5 +1,5 @@
 ---
-hash: ""
+hash: "028ce428"
 id: "75ae66eb"
 read_when: "implementing auto-skill's remote install/customize/update/export pipeline, the skills.yaml/lock.json formats, the git cache, deterministic skill hashing, or the migrate-from-vercel command"
 summary: "End-to-end design for turning auto-skill into a native tool for installing, customizing, updating, and exporting agent skills from remote repos: a global git cache, deterministic templating with literal/file-ref replacements, section-level doc extraction, a composite skill_version hash, version pinning policy, the skills.yaml + lock.json schemas, the full CLI surface, and a migrate-from-vercel path."

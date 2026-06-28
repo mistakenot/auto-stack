@@ -1,3 +1,11 @@
+---
+hash: "1089e286"
+id: "1467e318"
+read_when: "naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept"
+summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack) with the terms to avoid for each."
+title: "Ubiquitous Language"
+---
+
 # Ubiquitous Language
 
 

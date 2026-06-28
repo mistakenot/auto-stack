@@ -1,3 +1,11 @@
+---
+hash: "2573c0c0"
+id: "a32b6d38"
+read_when: "tracing how hook events reach auto-ui, debugging the autowatch→auto-ui→SPA event path, or adding/understanding a backend subscription"
+summary: "Traces the hook flow into auto-ui with source excerpts and wire frames: auto-ui ingests no hooks itself; agents fire into the autowatch daemon (sole ingest), and auto-ui subscribes to autowatch backends over JSON-RPC, relays events through an in-process hub, and pushes them to the browser SPA via WebSocket."
+title: "How auto-ui Receives Hooks From Executing Agents"
+---
+
 # How auto-ui Receives Hooks From Executing Agents
 
 > **One-line summary:** auto-ui ingests **no hooks of its own**. Agents fire hooks

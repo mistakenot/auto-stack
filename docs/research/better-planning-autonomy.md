@@ -1,3 +1,11 @@
+---
+hash: "ce53e737"
+id: "31e8322d"
+read_when: "designing the planning pipeline, autonomy levels, or review/gatekeeping policy for an agent software factory"
+summary: "Recency-biased survey of 2026 spec-driven development and autonomous-planning practice (Spec Kit, OpenSpec, Antigravity artifacts, human-on-the-loop, software constitutions) with concrete moves to reduce gatekeeping."
+title: "Autonomous Planning for Software Factories — 2026 Update"
+---
+
 # Autonomous Planning for Software Factories — 2026 Update (last 6–12 months)
 
 *Recency-biased refresh. Prioritizes Dec 2025–Jun 2026. Supersedes stale items in the prior report (notably GitHub Copilot Workspace, now discontinued). Current as of June 2026.*
