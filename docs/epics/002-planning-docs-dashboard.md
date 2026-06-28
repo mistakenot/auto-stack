@@ -1,14 +1,16 @@
 ---
-hash: "bff72ebb"
+hash: "e015d9ac"
 id: "7b3e9d04"
 read_when: "planning or sequencing sub-tasks for the planning-docs dashboard epic"
-summary: "Epic plan for turning auto-ui into a multi-project planning-docs explorer: a default-landing dashboard that lists every registered project, browses each project's whole docs/ tree, renders markdown inline and self-contained HTML in an iframe, switches projects seamlessly, and live-refreshes both the open doc and the nav tree when an agent edits files. Most plumbing (JSON-RPC/WS, doc.list/doc.get, bus doc.changed, markdown render, project registry) already exists; the epic assembles and extends it rather than building from scratch."
+summary: "Epic (complete): auto-ui planning-docs explorer — browse every registered project's docs/ tree, render markdown inline and HTML in an iframe, live-refresh on agent edits. Phases 1–3 shipped; Phase 4 (optional polish) deferred."
 title: "Epic: Planning Docs Dashboard — Browse, Render, Live, Switch"
 ---
 
 # Epic: Planning Docs Dashboard — Browse, Render, Live, Switch
 
-## Status (updated 2026-06-13)
+## Status: Complete (updated 2026-06-28)
+
+All core phases shipped. Phase 4 (optional polish) is deferred until daily use demands it.
 
 **Phase 1 (backend) shipped.** Sub-tasks 1.1–1.7 are complete (task 024): `project.list` RPC,
 widened doc discovery (`.md`+`.html`) with a parameterized `cleanDocPath`, the `/api/doc/raw`
@@ -80,8 +82,8 @@ liveness conformance harness on **both** the embed and dev builds (8/8 each;
 `doc.created`/`doc.removed` bus change for v1. The only Go change is the test assertion; the rest is
 `//go:embed`-ed `web/static/*`.
 
-**Next up:** Phase 4 polish (optional) — cross-doc search, breadcrumbs, recently-viewed, mermaid,
-dark mode — built only if daily use demands it.
+**Remaining:** Phase 4 polish (optional, deferred) — cross-doc search, breadcrumbs, recently-viewed,
+mermaid, dark mode — built only if daily use demands it.
 
 ## Goal
 
