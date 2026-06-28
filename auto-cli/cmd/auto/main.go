@@ -11,6 +11,7 @@ import (
 	"os"
 
 	doccmd "github.com/datadyne-io/autodoc/rootcmd"
+	artifactcmd "github.com/mistakenot/auto-artifact/rootcmd"
 	configcmd "github.com/mistakenot/auto-config/rootcmd"
 	envcmd "github.com/mistakenot/auto-env/rootcmd"
 	etlcmd "github.com/mistakenot/auto-etl/rootcmd"
@@ -37,6 +38,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	root.SetErr(stderr)
 
 	root.AddCommand(
+		artifactcmd.New(stdout, stderr),
 		configcmd.New(stdout, stderr),
 		doccmd.New(stdout, stderr),
 		envcmd.New(stdout, stderr),

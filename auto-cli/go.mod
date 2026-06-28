@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/datadyne-io/autodoc v0.0.0
+	github.com/mistakenot/auto-artifact v0.0.0
 	github.com/mistakenot/auto-config v0.0.0
 	github.com/mistakenot/auto-env v0.0.0
 	github.com/mistakenot/auto-etl v0.0.0
@@ -65,6 +66,8 @@ require (
 )
 
 replace github.com/datadyne-io/autodoc => ../auto-doc
+
+replace github.com/mistakenot/auto-artifact => ../auto-artifact
 
 replace github.com/mistakenot/auto-config => ../auto-config
 
