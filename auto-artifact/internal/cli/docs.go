@@ -44,6 +44,14 @@ Validate config and bucket access (a real PUT+DELETE probe — the IAM user lack
 ListBucket/GetObject, so a head probe would false-negative). Exit 0 when healthy,
 non-zero with JSON diagnostics otherwise.
 
+## agents
+
+Insert a managed one-line pointer to ` + "`auto artifact quickstart`" + ` into the
+repo's root CLAUDE.md / AGENTS.md so coding agents discover the tool. The line is
+wrapped in HTML-comment markers and upserted in place (idempotent — insert if
+absent, replace if drifted, no-op if identical). Operates only on existing files;
+errors if neither is present.
+
 ## quickstart
 
 Print the happy-path end-to-end guide.

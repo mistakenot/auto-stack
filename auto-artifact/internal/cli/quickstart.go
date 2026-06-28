@@ -51,6 +51,10 @@ Choose a retention tier with --retain 7d|30d|90d|365d (default 90d).
 ## 5. Check things are healthy
 
     auto artifact doctor   # validates config + a real PUT/DELETE bucket probe
+
+## 6. Tell agents the tool exists (once per repo)
+
+    auto artifact agents   # drops a one-line pointer to this guide into CLAUDE.md / AGENTS.md
 `
 
 func newQuickstartCmd() *cobra.Command {
