@@ -9,7 +9,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="050: Model-Based Sync Testing" status="draft" pr="pending" generated="2026-06-28"
+  <pd-doc title="050: Model-Based Sync Testing" status="pending" pr="pending" generated="2026-06-28"
           next-prompt="/new-solution 050">
 
     <script type="application/json" id="pd-meta">
@@ -36,8 +36,8 @@ specifically, how the plan-phase scope filter composes with the classify/prune p
 
 This is a class of bug where individually correct subsystems produce destructive results when
 composed in sequence. The existing test matrix has:
-- 14 PBT properties across 3 prop test files — all stateless, single-function properties
-- 11 sync integration tests — but `TestRunTargetImpliesLocked` only checks lock advancement, not prune scoping
+- 17 PBT properties across 3 prop test files — all stateless, single-function properties
+- 8 sync integration tests — but `TestRunTargetImpliesLocked` only checks lock advancement, not prune scoping
 - 11 prune tests — comprehensive decision table, but none test the "scoped run shrinks desired set → non-targeted skills classified as orphans" interaction
 - 4 ownership/classify tests — `TestClassify_StateMatrix` covers 9 verdict cases but assumes the desired set is always complete
 
@@ -47,14 +47,19 @@ testing fills.
         </script></md>
       </pd-section>
 
+      <pd-thread anchor="problem" status="resolved" priority="p3" title="Several test counts in the motivation are off — verify before citing them in AC-3">
+        <pd-comment by="review">Minor, but a few of the cited counts don't match the tree: `sync_test.go` has 8 `func Test`, not 11 (the "11 sync integration tests" figure); the property suite has 17 `rapid.Check` properties (skill 8 + render 4 + transport 5), not 14. Accurate: `prune_test.go` = 11 tests ✓, `classify_test.go` = 4 tests ✓, `TestRunTargetImpliesLocked` and `TestClassify_StateMatrix` both exist ✓. This matters because AC-3 makes "all 22 existing tests (11 sync + 11 prune) pass unchanged" a verifiable acceptance criterion, and the 11/22 are wrong (sync_test.go is 8). Either recount or phrase AC-3 as "all existing `./auto-skill/internal/sync/...` tests pass" rather than a hard number.</pd-comment>
+        <pd-comment by="author">Fixed: Problem section now says 17 PBT properties and 8 sync integration tests. AC-3 rephrased to use `go test ./auto-skill/internal/sync/...` rather than a hard count.</pd-comment>
+      </pd-thread>
+
       <pd-section id="goals" title="Goals">
         <md><script type="text/plain">
 - **Catch pipeline interaction bugs** by testing the sync engine as a state machine — generating
   random sequences of operations (full sync, scoped sync, add skill, remove skill, update lock)
   and asserting invariants after each step.
-- **Reuse existing generators** (`lockGen`, `manifestGen`, `skillNameGen`, `renderInputGen` from
-  `skill_prop_test.go` / `render_prop_test.go`) composed into a new `syncStateMachine` test
-  harness using `rapid.StateMachine`.
+- **Write focused generators** in `sync_statemachine_test.go` for the state machine's domain
+  (lock entries, skill configs, replacements), following the patterns established in the existing
+  prop test files. Compose into a `syncStateMachine` harness using `rapid.StateMachine`.
 - **Prevent the specific bug class** where a scoped operation's filter doesn't propagate to
   downstream pipeline phases (plan → classify → prune), causing unintended side effects on
   non-targeted state.
@@ -73,8 +78,8 @@ testing fills.
 - **Formal verification (TLA+/Alloy)** — the modeling effort (days) dwarfs the pipeline's
   complexity (~500 lines). The state machine test captures the same invariant
   ("prune scope ⊆ render scope") at lower cost.
-- **Network/fetch-layer testing** — the state machine operates on the plan→classify→prune→commit
-  phases with mocked fetch results, not real git transport.
+- **Network/fetch-layer fault injection** — the state machine uses local `file://` fixture
+  repos (no network). Testing fetch failures, timeouts, or partial clones is a separate concern.
 - **Mutation testing** — valuable as a follow-up quality audit of the property suite, but not
   in scope for this task.
         </script></md>
@@ -87,10 +92,12 @@ written, manifest current) and operations (full sync, scoped sync, add, remove, 
 `rapid.StateMachine` — already available via `pgregory.net/rapid` (used in 3 existing prop
 test files) — generates random sequences of these operations and checks invariants after each.
 
-**The model** is deliberately simple: a `map[string]bool` of which skills should exist per
-target directory. The **system under test** is the real sync pipeline operating on a real
-(temporary) filesystem. After each operation, the test compares the model's expected skill set
-against the actual files on disk.
+**The model** is deliberately simple: a `map[string]map[string]bool` — per render directory
+(`.claude/skills`, `.agents/skills`), which skills should exist on disk. The **system under
+test** is the real sync pipeline operating on a real (temporary) filesystem. After each
+operation, the test compares the model's expected skill set against the actual files on disk,
+per render directory. (Note: "target" in `sync.Run(Options{Targets})` means skill *names* to
+scope the run to — a different concept from render directories.)
 
 **Why this catches the bug:** the model says "after scoped sync of skill X, all other skills
 remain present." The real system deletes them. The state machine finds the divergence on the
@@ -107,6 +114,51 @@ generated sequences.
   interaction bugs the developer didn't anticipate.
         </script></md>
       </pd-section>
+
+      <pd-section id="isolation" title="Test Isolation">
+        <md><script type="text/plain">
+Every state machine sequence runs in full isolation, using the same hermetic patterns as the
+existing sync/prune test suite:
+
+- **Filesystem:** `t.TempDir()` per sequence — auto-cleaned, no cross-sequence leakage.
+- **Home directory:** `RootOverride: true` gates every path that would read `~/.auto/` —
+  upstream cache, trust store, receipts, global settings all resolve under `Root/` instead.
+- **Project registry:** sync tests never touch `~/.auto/projects.json` (the known pollution
+  source from registry tests).
+- **Fixture repos:** local `file://` git repos created by `newFixture(t)` — no network, no
+  GitHub dependency, no cache warm-up latency. Each sequence gets its own fixture repo
+  populated with synthetic skills via `f.commitSkill(name, body)`.
+- **No shared mutable state:** each rapid sequence creates its own `newEnv(t)` + `newFixture(t)`,
+  so sequences are safe to run in parallel.
+
+The state machine test reuses `newEnv(t)`, `newFixture(t)`, `approve(t, env, url)`,
+`writeLock`, `writeSkillsYAML`, and `lockEntry` from `helpers_test.go` — the same helpers all
+existing sync/prune tests use.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="isolation" status="resolved" priority="p2" title="Per-sequence t.TempDir() defeats the cross-sequence cache — 'no network after warm-up' and the 50s budget don't hold">
+        <pd-comment by="review">`newEnv(t)` returns `skill.Env{Root: t.TempDir(), RootOverride: true}`, and `Env.UpstreamCacheDir()` resolves *under Root* when `RootOverride` is set (`skill.go:84`). In a `rapid.StateMachine`, `Init` runs once per generated sequence, so each of the ~100 sequences gets a fresh `t.TempDir()` Root and therefore a *cold* `UpstreamCacheDir`. That means a full git fetch of `mistakenot/skills` at the start of every sequence — the cache never survives across sequences. So the claim "No network after cache warm-up" is incorrect, and D-2's "100 sequences × 10 ops × 50ms ≈ 50s" budget ignores per-sequence network/git-clone latency entirely (realistically minutes, and flaky offline). If you keep an external upstream you'd need a single shared cache dir seeded once outside the per-sequence temp Root (which then breaks the per-sequence isolation story). The local-`file://` `newFixture` approach (see fixture-source thread) sidesteps this cleanly.</pd-comment>
+        <pd-comment by="author">Agreed — switched to local `file://` fixture repos via `newFixture(t)`. Each sequence gets its own fixture, zero network, zero cache concern. Isolation section rewritten, D-2 timing estimate updated.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="fixture-source" title="Fixture Source: Local file:// Repos">
+        <md><script type="text/plain">
+The state machine uses `newFixture(t)` — the same local `file://` git repo pattern used by
+all existing sync/prune tests. Each sequence's `Init` creates a fresh fixture, commits 3-5
+synthetic skills via `f.commitSkill(name, body)`, and approves the `file://` URL in the
+isolated trust store. No network, no GitHub dependency, fully hermetic.
+
+The `AddSkill` operation generates a new skill name and commits it to the fixture repo on the
+fly, then adds the corresponding lock entry and skills.yaml config. This keeps the fixture
+repo as the single source of truth for available skill content.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="fixture-source" status="resolved" priority="p1" title="Using mistakenot/skills over GitHub abandons the existing hermetic local-fixture pattern this task claims to reuse">
+        <pd-comment by="review">The Isolation tab claims this test uses "the same isolation contract as all 22 existing sync/prune tests." It doesn't. I read `helpers_test.go`: the existing tests use `newFixture(t)`, which creates a *local* on-disk git repo reachable over `file://` (`type fixture … url: "file://" + dir`) and commits synthetic skills (`f.commitSkill("alpha", "v1")`). No existing sync/prune test touches GitHub. Sourcing fixtures from `mistakenot/skills` over the network instead: (1) breaks hermeticity — the suite becomes offline-failing and subject to GitHub rate limits/outages, which the local-`file://` pattern was specifically built to avoid; (2) is unnecessary — `newFixture` already gives realistic, fast, deterministic upstreams that the generators can populate; (3) couples the test to whatever skills happen to exist in an external repo today (the named `skill-creator`/`code-review`/`planning-doc` set can change upstream). Strongly recommend driving the state machine off `newFixture(t)` local repos rather than GitHub. See also the per-sequence caching problem flagged on the Isolation section.</pd-comment>
+        <pd-comment by="author">Agreed on all three points. Switched to `newFixture(t)` with `f.commitSkill()` — fully hermetic, no network, no external coupling. Updated Fixture Source, Isolation, D-2, state machine diagram, operations, and struct outline throughout.</pd-comment>
+      </pd-thread>
 
       <pd-decision id="D-1" title="rapid.StateMachine over custom loop" status="accepted" by="agent"
         summary="Use rapid's built-in StateMachine API — shrinking, sequence generation, and seed capture come free.">
@@ -133,17 +185,18 @@ plus one method per operation). The `rapid` library is already in `go.mod`.
 **Context:** The state machine test needs a system under test. Options: (a) call `sync.Run()`
 against a real temp directory, or (b) mock the filesystem and test internal functions.
 
-**Decision:** Real filesystem in a `t.TempDir()`. The bug was in how real pipeline phases
-compose — mocking the filesystem would test a different composition than the one that broke.
-The existing sync integration tests already use real filesystems (via `newTestEnv`), so the
-pattern is established.
+**Decision:** Real filesystem in a `t.TempDir()` with local `file://` fixture repos via
+`newFixture(t)`. The bug was in how real pipeline phases compose — mocking the filesystem would
+test a different composition than the one that broke. The existing sync integration tests
+already use this exact pattern (`newEnv(t)` + `newFixture(t)` from `helpers_test.go`).
 
 **Alternatives:** Mock filesystem (faster but tests a different code path); in-memory fs
 abstraction (the sync engine doesn't use one — would require refactoring production code for
-testing).
+testing); GitHub-hosted fixture repo (breaks hermeticity and creates per-sequence cache misses).
 
-**Consequences:** Tests are ~10-50ms per operation (disk I/O), so 100 sequences × 10 ops ×
-50ms ≈ 50 seconds worst case. Acceptable for CI; can reduce iteration count for local runs.
+**Consequences:** Tests are ~10-50ms per operation (disk I/O, local file:// git), so 100
+sequences × 10 ops × 50ms ≈ 50 seconds worst case. No network latency. Acceptable for CI;
+can reduce iteration count for local runs.
         </script></md>
       </pd-decision>
 
@@ -155,9 +208,17 @@ testing).
   (black-box) — resolved: same package, matching the existing `sync_test.go` pattern.
   White-box access lets us call `planPrune` and `ScanOwnership` directly for intermediate
   assertions if needed.
-- [ ] **Operation set size:** start with 4-5 operations (full sync, scoped sync, add authored
-  skill, remove skill, edit skill config). May expand later. The initial set should be the
-  minimum that reproduces the --target bug class.
+- [x] **Operation set size:** 9 operations in two tiers. Core (5): full sync, scoped sync,
+  add skill, remove skill, edit config. Environmental chaos (4): add authored skill,
+  rename upstream skill, delete one render dir's files, delete all render dirs' files.
+  The core set reproduces the --target bug; the chaos set tests recovery and resilience.
+- [x] **Fixture source:** local `file://` git repos via `newFixture(t)` — hermetic, no
+  network, same pattern as all existing sync/prune tests.
+- [x] **Isolation:** `skill.Env{Root: t.TempDir(), RootOverride: true}` via `newEnv(t)` —
+  same contract as all existing sync/prune tests. No additional machinery needed.
+- [x] **Generator strategy:** write focused generators directly in `sync_statemachine_test.go`.
+  Existing generators in `package skill`/`package render` are unexported `_test.go` — cannot
+  be imported cross-package. Copy the patterns, not the code.
         </script></md>
       </pd-section>
 
@@ -172,18 +233,19 @@ on a real filesystem) tracks what **actually happens**. Divergence = bug.
 
         <pd-mermaid caption="State machine: model vs SUT">
 stateDiagram-v2
-    [*] --> Empty: Init (temp dir + fixture repo)
-    Empty --> Populated: FullSync (renders all locked skills)
-    Populated --> Populated: FullSync (idempotent)
-    Populated --> Populated: ScopedSync(X) (renders X, others unchanged)
-    Populated --> Populated: AddSkill(Y) (add to lock, not yet rendered)
-    Populated --> Partial: RemoveSkill(Z) (remove from lock + config)
-    Partial --> Populated: FullSync (re-renders remaining)
-    Populated --> Populated: EditConfig(X) (change replacements)
+    [*] --> Empty: Init (newFixture + newEnv)
+    Empty --> Populated: FullSync
+    Populated --> Populated: FullSync (idempotent + heals)
+    Populated --> Populated: ScopedSync(X) (re-render X only)
+    Populated --> Populated: AddSkill(Y) (lock only)
+    Populated --> Populated: AddAuthoredSkill(Y) (source + config)
+    Populated --> Degraded: RemoveSkill / DeleteRenderDir
+    Populated --> Populated: RenameSkill(old, new)
+    Degraded --> Populated: FullSync (convergence)
 
     state Populated {
         [*] --> Check
-        Check: model[skill] == exists_on_disk(skill) ∀ skill, target
+        Check: model[renderDir][skill] == disk ∀ renderDir, skill
     }
         </pd-mermaid>
       </pd-section>
@@ -193,67 +255,108 @@ stateDiagram-v2
 Each operation maps to one method on the `rapid.StateMachine` implementation. Rapid generates
 random sequences of these, choosing which to call and with what arguments at each step.
 
-| # | Operation | Model effect | SUT call | Invariant checked |
-|---|-----------|-------------|----------|-------------------|
-| 1 | `FullSync` | model = all skills in lock | `sync.Run(opts{Locked: true})` | All locked skills rendered in all targets |
-| 2 | `ScopedSync(name)` | model unchanged (scoped render, no deletions) | `sync.Run(opts{Targets: [name], Locked: true})` | **Only named skill touched; all others unchanged** |
-| 3 | `AddSkill(name)` | model[name] = false (added to lock, not yet synced) | Write lock entry + skills.yaml | Lock valid; no filesystem change until next sync |
-| 4 | `RemoveSkill(name)` | delete model[name] | Remove from lock + skills.yaml | Removed from config; rendered copy pruned on next full sync |
-| 5 | `EditConfig(name)` | model unchanged (config change, not yet synced) | Modify replacements in skills.yaml | Config valid; rendered copy unchanged until next sync |
+**Core operations** (minimum set that reproduces the --target bug class):
+
+| # | Operation | Model effect | SUT call |
+|---|-----------|-------------|----------|
+| 1 | `FullSync` | model[rd][s] = true ∀ locked skills s, render dirs rd | `sync.Run(opts{Locked: true})` |
+| 2 | `ScopedSync(name)` | model unchanged (only named skill re-rendered) | `sync.Run(opts{Targets: [name]})` |
+| 3 | `AddSkill(name)` | model[rd][name] = false (in lock, not yet synced) | Commit to fixture repo, write lock entry + skills.yaml |
+| 4 | `RemoveSkill(name)` | delete model[rd][name] ∀ render dirs rd | Remove from lock + skills.yaml |
+| 5 | `EditConfig(name)` | model unchanged (config mutated, not synced) | Modify replacements in skills.yaml |
+
+**Environmental chaos operations** (simulate real-world disruptions):
+
+| # | Operation | Model effect | SUT call |
+|---|-----------|-------------|----------|
+| 6 | `AddAuthoredSkill(name)` | model unchanged (authored source, not yet synced) | Write SKILL.md into authored `./skills/name/` dir + add to skills.yaml. Next `FullSync` renders into all render dirs. |
+| 7 | `RenameSkill(old, new)` | model[rd][old] = false ∀ rd; model[rd][new] = false (pending sync) | Update lock entry name, next sync renders under new name |
+| 8 | `DeleteRenderDir(rd, name)` | model[rd][name] = false for that render dir only | `rm -rf` the rendered dir from one render dir (e.g. `.agents/skills/X`) but leave the other |
+| 9 | `DeleteAllRenderDirs(name)` | model[rd][name] = false ∀ render dirs rd | `rm -rf` from all render dirs — simulates user accidentally deleting rendered copies |
+
+Operations 6-9 test **recovery and resilience**: can a subsequent `FullSync` restore the
+expected state after external interference? The model knows what *should* exist; the SUT
+must converge back to it. Note: `AddAuthoredSkill` adds the skill to `skills.yaml` so
+`FullSync` will render it; without a config entry, authored skills are `StateForeign` and
+are neither rendered nor pruned.
 
 **The critical property** (the one the --target bug violates):
 
 > After any operation, for every skill S not named in that operation's target scope:
-> `exists_on_disk(S, target) == model[S]` — the operation did not change S's presence.
+> `exists_on_disk(S, target) == model_before_op[S]` — the operation did not change S's presence.
 
 This is the "no collateral damage" invariant. The model-based test checks it after every
 generated operation, so any operation that has unintended side effects on non-targeted state
 will be caught.
+
+**The convergence property** (tested by operations 6-9):
+
+> After a `FullSync`, ∀ targets t, ∀ locked skills s: `exists_on_disk(s, t) == true`.
+> External deletions, renames, and project-level additions are healed by full sync.
         </script></md>
       </pd-section>
+
+      <pd-thread anchor="operations" status="resolved" priority="p2" title="'target' is overloaded: render directory vs sync.Run's skill-name scope">
+        <pd-comment by="review">The doc uses "target" for two different things, which will confuse the implementer of the very bug under test. In the model `map[string]map[string]bool`, the outer key is a *render directory* (`.claude/skills`, `.agents/skills`) — that's the meaning in `DeleteTargetFiles(target, name)` and "per-target presence." But `ScopedSync` calls `sync.Run(Options{Targets: [name]})`, and in `internal/sync/sync.go:30` `Targets []string` is documented as "restrict to these skill *names*" — i.e. the `--target` scope that the prune bug is about is a skill-name filter, not a directory. Same word, two domains. Recommend renaming one axis (e.g. model keyed by "renderDir", and call the scoped-sync argument "scopeName"/"skill scope") so the collateral-damage invariant reads unambiguously.</pd-comment>
+        <pd-comment by="author">Renamed throughout: the model's outer key is now "rd" (render dir) in tables and "renderDir" in prose. Operations that act on render directories are renamed: `DeleteTargetFiles` → `DeleteRenderDir`, `DeleteAllTargetFiles` → `DeleteAllRenderDirs`. The `Targets` field in `sync.Run(Options{Targets})` is left as-is (it's the production API) but the doc now has an explicit note clarifying it means skill names, not directories.</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="operations" status="resolved" priority="p2" title="AddProjectSkill model effect conflates the authored ./skills/ source dir with render-target dirs">
+        <pd-comment by="review">Operation 6 writes `SKILL.md` directly into `./skills/name/` and sets "model[t][name] = true for project target only." Two problems: (1) `./skills/` is the *authored source* dir (`Env.SkillsConfigDir`), not a render target — the model's target axis is render dirs (`.claude/skills`, `.agents/skills`), so there is no "project target" key to set. (2) An authored skill on disk that isn't yet in `skills.yaml` won't be rendered by the next `FullSync` at all; if it later *is* added to config it renders into *all* targets, not "project only." Separately, for the convergence claim: I checked `internal/ownership/classify.go` — only `StateManagedOrphan` is prune-eligible (`PruneEligible`, line 184); a directory not in the manifest is `StateForeign` and is explicitly *not* pruned. So an unlocked/foreign skill survives `FullSync` rather than being "healed" away. Please pin down exactly what this operation writes (authored source vs a rendered target dir), and what the model should assert after a subsequent `FullSync`, so Check() doesn't fire spuriously.</pd-comment>
+        <pd-comment by="author">Renamed to `AddAuthoredSkill` and fixed the semantics: it now writes the SKILL.md into the authored source dir AND adds the skill to `skills.yaml` (so `FullSync` will render it into all render dirs). Model effect is "unchanged" (pending sync) — the model only updates when the next `FullSync` renders it. Also updated the convergence note: `StateForeign` dirs are not pruned, so only skills that are in config will converge.</pd-comment>
+      </pd-thread>
 
       <pd-section id="generator-composition" title="Generator Composition">
         <md><script type="text/plain">
-Existing generators reused directly (no new generators needed for the model):
+The state machine test needs its own generators — the existing prop test generators in
+`package skill` and `package render` are unexported and in `_test.go` files, so they cannot
+be imported from `package sync`. Rather than extracting them to a shared testutil (a
+cross-package refactor out of scope for this task), we write focused generators directly in
+`sync_statemachine_test.go`, following the same patterns:
 
-| Generator | Source | Used for |
-|-----------|--------|----------|
-| `skillNameGen()` | `skill_prop_test.go:14` | Operation arguments (which skill to target) |
-| `lockEntryGen()` | `skill_prop_test.go:42` | AddSkill operation (new lock entry) |
-| `replacementMapGen()` | `skill_prop_test.go:113` | EditConfig operation (new replacements) |
-| `versionSpecGen()` | `skill_prop_test.go:24` | AddSkill lock entry version |
+| Generator | Purpose | Pattern source |
+|-----------|---------|----------------|
+| `skillNameGen()` | Valid skill names for operation arguments | `skill_prop_test.go:14` |
+| `lockEntryGen(fixtureURL)` | Lock entry pointing at the local fixture repo | `skill_prop_test.go:43` |
+| `replacementMapGen()` | YAML replacement vars for EditConfig | `skill_prop_test.go:113` |
+| `initialStateGen(fixtureURL)` | Consistent lock + skills.yaml with 3-5 skills, all pointing at fixture | New composition |
 
-New composition needed:
-
-| Generator | Purpose |
-|-----------|---------|
-| `initialLockGen()` | 2-6 skill lock entries with unique names, all pointing at the fixture repo |
-| `initialSkillsYAMLGen()` | Matching skills.yaml with targets `[".claude/skills", ".agents/skills"]` |
-
-These are thin wrappers over `lockGen()` and `skillsYAMLGen()`, constrained to produce
-consistent state (every skill in the YAML has a matching lock entry, and vice versa).
+These are intentionally simpler than the full-featured generators in `skill_prop_test.go` —
+they only need to produce valid inputs for the sync pipeline, not exercise the full domain
+model. The `lockEntry` helper from `helpers_test.go` (same package, directly callable)
+handles the common case; generators add randomized variety.
         </script></md>
       </pd-section>
+
+      <pd-thread anchor="generator-composition" status="resolved" priority="p1" title="Generators live in other packages' _test.go files — they cannot be reused from package sync">
+        <pd-comment by="review">The plan's core premise ("Existing generators reused directly … no new generators needed") is not achievable as written. I checked the sources: `skillNameGen`, `versionSpecGen`, `lockEntryGen`, `lockGen`, `replacementMapGen`, `skillsYAMLGen`, `manifestGen` are all unexported in `package skill` (`internal/skill/skill_prop_test.go`); `renderInputGen` is unexported in `package render` (`internal/render/render_prop_test.go`). The new test is `package sync`. Go does not compile one package's `_test.go` identifiers into another package's test binary, and they are unexported regardless — so none of these are importable from `internal/sync`. There is no shared `testutil` package and no exported generator anywhere (`grep` confirms). To actually reuse them the implementer must either copy each generator into the sync test file or extract them to a new exported/shared location (a cross-package refactor the 2-file Solution list doesn't budget for). This contradicts AC-4's "Existing generators … are reused or composed" and the entire Generator Composition table. Note also `lockEntryGen` is at line 43, not 42. Decide and state explicitly: copy-into-sync, or extract-to-shared-testutil (and add that file to the Solution).</pd-comment>
+        <pd-comment by="author">Correct — cross-package `_test.go` reuse is impossible in Go. Rewrote: generators are written directly in `sync_statemachine_test.go`, following the same patterns as the originals but scoped to what the state machine needs. No cross-package refactor. Goals section updated (no longer claims "reuse existing generators"), AC-4 updated to remove the reuse claim. The `lockEntry` helper from `helpers_test.go` (same package) is directly callable for the common case.</pd-comment>
+      </pd-thread>
 
       <pd-section id="invariants" title="Invariants Checked After Each Step">
         <md><script type="text/plain">
 The `Check()` method on the state machine runs after every operation:
 
-1. **Presence invariant:** For every skill in the model marked as "should exist on disk,"
-   the rendered directory exists in every target. For every skill marked as "should not exist,"
-   the directory is absent.
+1. **Presence invariant (per render dir):** For every render dir rd and skill s, if
+   `model[rd][s] == true` then the rendered directory exists at `rd/s/`. If
+   `model[rd][s] == false` or absent, the directory is absent. Checked per render dir
+   independently — a skill can be present in `.claude/skills/` but deleted from
+   `.agents/skills/` (the `DeleteRenderDir` scenario).
 
-2. **No collateral damage:** Skills not named in the most recent operation's scope have the
-   same on-disk presence as before the operation ran. (This is the invariant the --target
-   bug violates.)
+2. **No collateral damage:** Skills not named in the most recent operation's skill-name scope
+   have the same on-disk presence as before the operation ran, in every render dir. (This is
+   the invariant the --target bug violates.)
 
 3. **Manifest consistency:** If a full sync has been run at least once, the manifest on disk
    lists exactly the skills the model says should be rendered.
 
 4. **Lock stability under scoped sync:** After a scoped sync, the lock file is byte-identical
-   to before the sync (scoped syncs don't advance the lock — this is already tested by
-   `TestRunTargetImpliesLocked` but the state machine verifies it holds across arbitrary
-   operation sequences).
+   to before the sync (scoped syncs don't advance the lock).
+
+5. **Convergence after FullSync:** After a `FullSync`, all locked + configured skills are
+   present in all render dirs — regardless of prior deletions, renames, or partial render dir
+   removal. External disruptions are healed. Note: `StateForeign` dirs (not in manifest) are
+   not pruned — only `StateManagedOrphan` entries are removed.
         </script></md>
       </pd-section>
     </pd-tab>
@@ -264,28 +367,39 @@ The `Check()` method on the state machine runs after every operation:
       <pd-section id="files" title="Files">
         <pd-files>
           <pd-file path="auto-skill/internal/sync/sync_statemachine_test.go" change="add">State machine test: model, operations, invariants, generators</pd-file>
-          <pd-file path="auto-skill/internal/sync/testutil_test.go" change="edit">Extract shared test env setup for reuse by state machine test</pd-file>
         </pd-files>
       </pd-section>
+
+      <pd-thread anchor="auto-skill/internal/sync/sync_statemachine_test.go" status="resolved" priority="p2" title="Phase 1 extraction is based on a false premise — newTestEnv doesn't exist, and newEnv is already package-shared">
+        <pd-comment by="review">Phase 1 (and Decision D-2) say to "extract the `newTestEnv` helper … from `sync_test.go`." I checked: there is no `newTestEnv` anywhere — the helper is `newEnv(t)` and it already lives in `internal/sync/helpers_test.go:98`, alongside `newFixture`, `approve`, `writeLock`, `writeSkillsYAML`, `lockEntry`, `realizeCommit`, `writeAuthoredSkill`. All of these are already `package sync`, so a new `sync_statemachine_test.go` in the same package can call them directly with zero extraction. The proposed `testutil_test.go` edit and the entire "extract shared utilities" phase appear to be unnecessary work solving a problem that doesn't exist. Recommend dropping Phase 1 (and the `change="edit"` file), and have the state machine reuse `helpers_test.go` directly — unless there's a concrete helper that genuinely needs relocating, in which case name it. (The one thing that *does* need relocating is the generators, but those are in *other* packages — see the generator-composition thread.)</pd-comment>
+        <pd-comment by="author">Correct — `newEnv`, `newFixture`, and all helpers already live in `helpers_test.go` (same package). Dropped Phase 1 entirely, removed `testutil_test.go` from the file tree. The state machine test file calls helpers directly. Phases renumbered: old Phase 2 → Phase 1, old Phase 3 → Phase 2.</pd-comment>
+      </pd-thread>
 
       <pd-section id="test-structure" title="Test Structure">
         <pd-api kind="struct" name="syncStateMachine" lang="go"
                 path="auto-skill/internal/sync/sync_statemachine_test.go"
                 caption="rapid.StateMachine implementation">
-          <pd-member kind="field" sig="model map[string]bool">Expected skill presence: name → should-exist-on-disk</pd-member>
-          <pd-member kind="field" sig="env *testEnv">Real filesystem environment (temp dir + fixture repo)</pd-member>
-          <pd-member kind="field" sig="lock *skill.Lock">Current lock state (mutated by Add/Remove)</pd-member>
+          <pd-member kind="field" sig="model map[string]map[string]bool">Per-render-dir expected skill presence: renderDir → name → should-exist</pd-member>
+          <pd-member kind="field" sig="env skill.Env">Isolated env: Root=t.TempDir(), RootOverride=true</pd-member>
+          <pd-member kind="field" sig="fix fixture">Local file:// fixture repo with committed skills</pd-member>
+          <pd-member kind="field" sig="lock *skill.Lock">Current lock state (mutated by Add/Remove/Rename)</pd-member>
           <pd-member kind="field" sig="skillsYAML *skill.SkillsYAML">Current config (mutated by Add/Remove/Edit)</pd-member>
+          <pd-member kind="field" sig="nextSkillID int">Counter for generating unique synthetic skill names</pd-member>
           <pd-member kind="field" sig="hasFullSynced bool">Whether a full sync has established baseline state</pd-member>
           <pd-member kind="field" sig="lastOp string">Last operation name (for collateral-damage check)</pd-member>
-          <pd-member kind="field" sig="lastScope []string">Last operation's target scope (for collateral-damage check)</pd-member>
-          <pd-member kind="field" sig="preOpSnapshot map[string]bool">Snapshot before last op (for collateral-damage check)</pd-member>
-          <pd-member kind="method" sig="Init(t *rapid.T)">Create temp dir, write initial lock + skills.yaml with 3-5 skills</pd-member>
-          <pd-member kind="method" sig="FullSync(t *rapid.T)">Run sync.Run(Locked: true), update model to mark all locked skills as present</pd-member>
-          <pd-member kind="method" sig="ScopedSync(t *rapid.T)">Pick a random existing skill, run sync.Run(Targets: [name]), model unchanged</pd-member>
-          <pd-member kind="method" sig="AddSkill(t *rapid.T)">Generate new lock entry + config, write to disk, model[name] = false</pd-member>
-          <pd-member kind="method" sig="RemoveSkill(t *rapid.T)">Remove a random skill from lock + config, model[name] = false</pd-member>
-          <pd-member kind="method" sig="Check(t *rapid.T)">Assert all 4 invariants (presence, collateral, manifest, lock stability)</pd-member>
+          <pd-member kind="field" sig="lastScope []string">Last operation's skill-name scope (for collateral-damage check)</pd-member>
+          <pd-member kind="field" sig="preOpSnapshot map[string]map[string]bool">Per-render-dir snapshot before last op</pd-member>
+          <pd-member kind="method" sig="Init(t *rapid.T)">newEnv(t) + newFixture(t), commit initial skills, approve trust, write lock + config</pd-member>
+          <pd-member kind="method" sig="FullSync(t *rapid.T)">sync.Run(Locked: true) — model converges: all locked skills present in all render dirs</pd-member>
+          <pd-member kind="method" sig="ScopedSync(t *rapid.T)">Pick random existing skill, sync.Run(Targets: [name]) — model unchanged</pd-member>
+          <pd-member kind="method" sig="AddSkill(t *rapid.T)">Commit new skill to fixture, add to lock + config — model[rd][name] = false</pd-member>
+          <pd-member kind="method" sig="RemoveSkill(t *rapid.T)">Remove random skill from lock + config — delete from model</pd-member>
+          <pd-member kind="method" sig="EditConfig(t *rapid.T)">Mutate replacements for a random skill — model unchanged</pd-member>
+          <pd-member kind="method" sig="AddAuthoredSkill(t *rapid.T)">Write SKILL.md into authored source dir + add to config — model unchanged (pending sync)</pd-member>
+          <pd-member kind="method" sig="RenameSkill(t *rapid.T)">Rename lock entry old→new — model tracks the rename (pending sync)</pd-member>
+          <pd-member kind="method" sig="DeleteRenderDir(t *rapid.T)">rm -rf one skill's rendered dir from one random render dir — model[rd][name] = false</pd-member>
+          <pd-member kind="method" sig="DeleteAllRenderDirs(t *rapid.T)">rm -rf one skill's rendered dirs from all render dirs — model[rd][name] = false ∀ rd</pd-member>
+          <pd-member kind="method" sig="Check(t *rapid.T)">Assert all invariants (presence, collateral damage, manifest, lock stability, convergence)</pd-member>
         </pd-api>
       </pd-section>
     </pd-tab>
@@ -295,52 +409,45 @@ The `Check()` method on the state machine runs after every operation:
       <pd-dag caption="Execution order"></pd-dag>
 
       <pd-stepper>
-        <pd-phase n="1" title="Extract shared test utilities"
-                  files="auto-skill/internal/sync/testutil_test.go"
-                  status="todo">
-          <md><script type="text/plain">
-Extract the `newTestEnv` helper and fixture repo setup from `sync_test.go` into
-`testutil_test.go` so both the existing integration tests and the new state machine test
-can share the same environment creation code. The existing tests must continue passing
-unchanged.
-
-**Acceptance:** `go test ./auto-skill/internal/sync/...` passes. No behavior change.
-          </script></md>
-        </pd-phase>
-
-        <pd-phase n="2" title="Implement state machine test"
+        <pd-phase n="1" title="Implement state machine test"
                   files="auto-skill/internal/sync/sync_statemachine_test.go"
-                  status="todo"
-                  depends-on="1">
+                  status="todo">
           <md><script type="text/plain">
 Write the `syncStateMachine` struct implementing `rapid.StateMachine`:
 
-1. **Init:** Create a temp dir with a fixture git repo containing 3-5 skill sources. Write
-   a valid lock file and skills.yaml referencing those skills. Initialize the model with all
-   skills marked as "not yet rendered."
+1. **Init:** Create an isolated env via `newEnv(t)` + `newFixture(t)` from `helpers_test.go`.
+   Commit 3-5 synthetic skills to the fixture repo via `f.commitSkill(name, body)`. Approve
+   the `file://` URL in the isolated trust store. Write lock + skills.yaml pointing at the
+   fixture. Initialize the per-render-dir model with all skills marked as "not yet rendered."
 
-2. **Operations:** Implement `FullSync`, `ScopedSync`, `AddSkill`, `RemoveSkill` as described
-   in the State Machine Design tab. Each operation:
-   - Snapshots pre-op state
-   - Calls the real `sync.Run()` with appropriate options
-   - Updates the model accordingly
+2. **Generators:** Write `skillNameGen()`, `lockEntryGen(fixtureURL)`, `replacementMapGen()`,
+   and `initialStateGen(fixtureURL)` directly in the test file, following the patterns in
+   `skill_prop_test.go`. Keep them focused on what the state machine needs.
 
-3. **Check:** After each operation, assert the 4 invariants (presence, no collateral damage,
-   manifest consistency, lock stability).
+3. **Core operations (5):** `FullSync`, `ScopedSync`, `AddSkill`, `RemoveSkill`, `EditConfig`
+   as described in the State Machine Design tab. Each operation snapshots pre-op state, calls
+   the real `sync.Run()` (or writes config), and updates the per-render-dir model.
 
-4. **Test function:** `TestSyncStateMachine` calls `rapid.Check(t, rapid.Run[syncStateMachine]())`
+4. **Chaos operations (4):** `AddAuthoredSkill` (write SKILL.md + add to config),
+   `RenameSkill` (update lock entry name), `DeleteRenderDir` (rm -rf from one render dir),
+   `DeleteAllRenderDirs` (rm -rf from all render dirs). These simulate real-world disruptions
+   and test that `FullSync` converges the system back to the expected state.
+
+5. **Check:** After each operation, assert all 5 invariants (presence per render dir, no
+   collateral damage, manifest consistency, lock stability, convergence after full sync).
+
+6. **Test function:** `TestSyncStateMachine` calls `rapid.Check(t, rapid.Run[syncStateMachine]())`
    with default settings (100 sequences).
 
 **Kill test:** Before the --target bug is fixed, `ScopedSync` after `FullSync` should produce
 a failing counterexample showing the collateral damage. After the fix, the test should pass.
-This validates the test catches the exact bug class.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Verify and tune"
+        <pd-phase n="2" title="Verify and tune"
                   files="auto-skill/internal/sync/sync_statemachine_test.go"
                   status="todo"
-                  depends-on="2">
+                  depends-on="1">
           <md><script type="text/plain">
 1. **Run against the unfixed code** to confirm the test catches the --target bug. Record the
    shrunk counterexample (expected: "FullSync → ScopedSync(X) → Check fails: skill Y missing
@@ -364,7 +471,7 @@ fixed code, fails on unfixed code. `go build ./...` clean.
     <pd-tab name="Verification">
       <pd-section id="acceptance-criteria" title="Acceptance Criteria">
         <pd-ac id="AC-1" title="State machine test catches the --target prune bug"
-               phases="2,3"
+               phases="1,2"
                tests="auto-skill/internal/sync/sync_statemachine_test.go">
           <md><script type="text/plain">
 - Given the sync engine with the --target prune scoping bug present
@@ -375,12 +482,15 @@ fixed code, fails on unfixed code. `go build ./...` clean.
         </pd-ac>
 
         <pd-ac id="AC-2" title="State machine test passes on correct implementation"
-               phases="2,3"
+               phases="1,2"
                tests="auto-skill/internal/sync/sync_statemachine_test.go">
           <md><script type="text/plain">
 - Given the sync engine with the --target prune scoping bug fixed
 - When the state machine runs 100 random sequences of 5-15 operations each
-- Then all 4 invariants hold after every operation in every sequence
+  (drawn from all 9 operations: 5 core + 4 environmental chaos)
+- Then all 5 invariants hold after every operation in every sequence
+- And convergence holds: after any FullSync, all locked skills present in all targets
+  regardless of prior deletions, renames, or partial target removal
           </script></md>
         </pd-ac>
 
@@ -388,18 +498,31 @@ fixed code, fails on unfixed code. `go build ./...` clean.
                phases="1"
                tests="auto-skill/internal/sync/sync_test.go,auto-skill/internal/sync/prune_test.go">
           <md><script type="text/plain">
-- Given the test utility extraction in phase 1
 - When `go test ./auto-skill/internal/sync/...` runs
-- Then all 22 existing tests (11 sync + 11 prune) pass unchanged
+- Then all existing sync + prune tests pass unchanged
+- The new test file does not interfere with existing test helpers or fixtures
           </script></md>
         </pd-ac>
 
         <pd-ac id="AC-4" title="No new dependencies"
-               phases="2">
+               phases="1">
           <md><script type="text/plain">
 - The state machine test uses only `pgregory.net/rapid` (already in go.mod)
 - No new test dependencies added
-- Existing generators from `skill_prop_test.go` / `render_prop_test.go` are reused or composed
+- Generators are written directly in `sync_statemachine_test.go`, following patterns from the
+  existing prop test files (not imported — Go `_test.go` files are package-private)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="Full test isolation — no global state leakage"
+               phases="1"
+               tests="auto-skill/internal/sync/sync_statemachine_test.go">
+          <md><script type="text/plain">
+- Uses `skill.Env{Root: t.TempDir(), RootOverride: true}` via `newEnv(t)`
+- Never reads or writes `~/.auto/` (cache, trust, receipts, settings, projects.json)
+- Each rapid sequence gets its own temp directory (auto-cleaned by `t.TempDir()`)
+- Parallel test execution safe: no shared mutable state between sequences
+- Fixture repos are local `file://` git repos via `newFixture(t)` — no network
           </script></md>
         </pd-ac>
       </pd-section>
