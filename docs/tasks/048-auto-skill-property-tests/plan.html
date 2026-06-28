@@ -9,7 +9,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="048: auto-skill-property-tests" status="executing" pr="pending" generated="2026-06-28"
+  <pd-doc title="048: auto-skill-property-tests" status="complete" pr="pending" generated="2026-06-28"
           next-prompt="/commit-task 048">
 
     <script type="application/json" id="pd-meta">
@@ -282,7 +282,7 @@ flowchart LR
       </pd-mermaid>
 
       <pd-stepper>
-        <pd-phase n="1" title="Walking skeleton — rapid + one property per package" files="auto-skill/go.mod,auto-skill/go.sum,auto-skill/internal/transport/transport_prop_test.go,auto-skill/internal/skill/skill_prop_test.go,auto-skill/internal/render/render_prop_test.go" status="todo">
+        <pd-phase n="1" title="Walking skeleton — rapid + one property per package" files="auto-skill/go.mod,auto-skill/go.sum,auto-skill/internal/transport/transport_prop_test.go,auto-skill/internal/skill/skill_prop_test.go,auto-skill/internal/render/render_prop_test.go" status="done">
           <md><script type="text/plain">
 **Goal:** Prove the PBT infrastructure works end-to-end — `rapid` resolves, one property per package passes, `make test` stays green.
 
@@ -305,7 +305,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="Transport properties T2-T5" files="auto-skill/internal/transport/transport_prop_test.go" status="todo" depends-on="1">
+        <pd-phase n="2" title="Transport properties T2-T5" files="auto-skill/internal/transport/transport_prop_test.go" status="done" depends-on="1">
           <md><script type="text/plain">
 **Goal:** Complete the transport property inventory.
 
@@ -323,7 +323,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Schema properties S2-S5" files="auto-skill/internal/skill/skill_prop_test.go" status="todo" depends-on="1">
+        <pd-phase n="3" title="Schema properties S2-S5" files="auto-skill/internal/skill/skill_prop_test.go" status="done" depends-on="1">
           <md><script type="text/plain">
 **Goal:** Complete the skill package property inventory.
 
@@ -342,7 +342,7 @@ flowchart LR
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="Render properties R1-R3" files="auto-skill/internal/render/render_prop_test.go" status="todo" depends-on="1">
+        <pd-phase n="4" title="Render properties R1-R3" files="auto-skill/internal/render/render_prop_test.go" status="done" depends-on="1">
           <md><script type="text/plain">
 **Goal:** Complete the render package property inventory.
 
