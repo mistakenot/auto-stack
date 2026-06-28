@@ -467,6 +467,28 @@ func TestAC10_SetupScript(t *testing.T) {
 	}
 }
 
+// TestAC15_BucketNotListable: an unauthenticated GET of the bucket root (a
+// ListObjects attempt) returns HTTP 403.
+func TestAC15_BucketNotListable(t *testing.T) {
+	gate(t)
+	data, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".auto", "artifact", "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var cfg struct {
+		Bucket string `json:"bucket"`
+		Region string `json:"region"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("decode settings: %v", err)
+	}
+	url := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/", cfg.Bucket, cfg.Region)
+	code, _ := httpGet(t, url)
+	if code != http.StatusForbidden {
+		t.Errorf("unauthenticated bucket-root GET = %d, want 403 (bucket must not be listable)", code)
+	}
+}
+
 func countLines(path string) int {
 	data, err := os.ReadFile(path)
 	if err != nil {
