@@ -2,6 +2,7 @@ package consolidate
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/mistakenot/auto-reflect/internal/events"
@@ -49,6 +50,36 @@ func TestParseDocumentRejectsUnknownFieldsAndEmpty(t *testing.T) {
 	}
 	if len(doc.Deltas) != 1 || doc.Deltas[0].Op != OpDeprecate {
 		t.Fatalf("bad parse: %#v", doc.Deltas)
+	}
+}
+
+func TestParseDocumentOpVocabulary(t *testing.T) {
+	// Unknown op → fail fast as a structured DocumentError.
+	_, err := ParseDocument([]byte(`{"deltas":[{"op":"bogus"}]}`))
+	var de *DocumentError
+	if !errors.As(err, &de) {
+		t.Fatalf("expected *DocumentError for unknown op, got %v", err)
+	}
+	if len(de.Errors) != 1 || de.Errors[0].Code != "enum" || de.Errors[0].Field != "deltas[0].op" {
+		t.Fatalf("expected one enum error on deltas[0].op, got %#v", de.Errors)
+	}
+
+	// Missing op → required error.
+	_, err = ParseDocument([]byte(`{"deltas":[{"rule_id":"r-aaaaaaaa"}]}`))
+	if !errors.As(err, &de) {
+		t.Fatalf("expected *DocumentError for missing op, got %v", err)
+	}
+	if len(de.Errors) != 1 || de.Errors[0].Code != "required" {
+		t.Fatalf("expected one required error for missing op, got %#v", de.Errors)
+	}
+
+	// split is in the allow-list and parses cleanly.
+	doc, err := ParseDocument([]byte(`{"deltas":[{"op":"split","rule_id":"r-aaaaaaaa","into":[{"use_when":"a","content":"b","causal_note":"c"},{"use_when":"d","content":"e","causal_note":"f"}]}]}`))
+	if err != nil {
+		t.Fatalf("split should parse: %v", err)
+	}
+	if len(doc.Deltas) != 1 || doc.Deltas[0].Op != OpSplit || len(doc.Deltas[0].Into) != 2 {
+		t.Fatalf("bad split parse: %#v", doc.Deltas)
 	}
 }
 

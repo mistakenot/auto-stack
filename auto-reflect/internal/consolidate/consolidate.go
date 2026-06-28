@@ -15,6 +15,7 @@ import (
 
 	"github.com/mistakenot/auto-reflect/internal/events"
 	"github.com/mistakenot/auto-reflect/internal/rules"
+	"github.com/mistakenot/auto-shared/config"
 )
 
 // Delta operations.
@@ -23,7 +24,31 @@ const (
 	OpAttachEvidence = "attach-evidence"
 	OpMerge          = "merge"
 	OpDeprecate      = "deprecate"
+	OpSplit          = "split"
 )
+
+// allowedOps is the consolidation op vocabulary, validated in ParseDocument so a
+// typo'd or missing op fails fast as a structured error rather than skipping.
+var allowedOps = map[string]struct{}{
+	OpCreateDraft:    {},
+	OpAttachEvidence: {},
+	OpMerge:          {},
+	OpDeprecate:      {},
+	OpSplit:          {},
+}
+
+// DocumentError reports structural problems with a delta document (e.g. an
+// unknown op) as structured ValidationErrors so the CLI can fail fast with a
+// non-zero exit instead of silently skipping the delta.
+type DocumentError struct{ Errors []config.ValidationError }
+
+func (e *DocumentError) Error() string {
+	parts := make([]string, 0, len(e.Errors))
+	for _, ve := range e.Errors {
+		parts = append(parts, fmt.Sprintf("%s: %s", ve.Field, ve.Message))
+	}
+	return strings.Join(parts, "; ")
+}
 
 // EvidenceMinSessions is the number of distinct evidence sessions a create-draft
 // must cover before it may mint a rule without --force or a high-severity
@@ -56,17 +81,28 @@ type Document struct {
 // Delta is one consolidation operation. Fields are a union across ops; Validate
 // enforces which are required per Op.
 type Delta struct {
-	Op             string   `json:"op"`
-	UseWhen        string   `json:"use_when,omitempty"`
-	Content        string   `json:"content,omitempty"`
-	CausalNote     string   `json:"causal_note,omitempty"`
-	Domain         []string `json:"domain,omitempty"`
-	Type           string   `json:"type,omitempty"`
-	RuleID         string   `json:"rule_id,omitempty"`
-	RuleIDs        []string `json:"rule_ids,omitempty"`
-	IntoUseWhen    string   `json:"into_use_when,omitempty"`
-	Reason         string   `json:"reason,omitempty"`
-	ObservationIDs []string `json:"observation_ids,omitempty"`
+	Op             string       `json:"op"`
+	UseWhen        string       `json:"use_when,omitempty"`
+	Content        string       `json:"content,omitempty"`
+	CausalNote     string       `json:"causal_note,omitempty"`
+	Domain         []string     `json:"domain,omitempty"`
+	Type           string       `json:"type,omitempty"`
+	RuleID         string       `json:"rule_id,omitempty"`
+	RuleIDs        []string     `json:"rule_ids,omitempty"`
+	IntoUseWhen    string       `json:"into_use_when,omitempty"`
+	Reason         string       `json:"reason,omitempty"`
+	ObservationIDs []string     `json:"observation_ids,omitempty"`
+	Into           []SplitChild `json:"into,omitempty"`
+}
+
+// SplitChild is one narrower draft a split op mints from its parent rule. It
+// mirrors the create-draft fields; Type defaults to soft when empty.
+type SplitChild struct {
+	UseWhen    string   `json:"use_when"`
+	Content    string   `json:"content"`
+	CausalNote string   `json:"causal_note"`
+	Domain     []string `json:"domain,omitempty"`
+	Type       string   `json:"type,omitempty"`
 }
 
 // ParseDocument strictly decodes a delta document, rejecting unknown fields so a
@@ -80,6 +116,30 @@ func ParseDocument(raw []byte) (Document, error) {
 	}
 	if len(doc.Deltas) == 0 {
 		return Document{}, errors.New("no deltas: supply {\"deltas\":[{\"op\":\"create-draft\",...}]}")
+	}
+	var errs []config.ValidationError
+	for i := range doc.Deltas {
+		op := strings.TrimSpace(doc.Deltas[i].Op)
+		field := fmt.Sprintf("deltas[%d].op", i)
+		if op == "" {
+			errs = append(errs, config.ValidationError{
+				Code:    "required",
+				Field:   field,
+				Message: "op is required: one of create-draft, attach-evidence, merge, deprecate, split",
+			})
+			continue
+		}
+		if _, ok := allowedOps[op]; !ok {
+			errs = append(errs, config.ValidationError{
+				Code:    "enum",
+				Field:   field,
+				Message: "op must be one of create-draft, attach-evidence, merge, deprecate, split",
+				Value:   doc.Deltas[i].Op,
+			})
+		}
+	}
+	if len(errs) > 0 {
+		return Document{}, &DocumentError{Errors: errs}
 	}
 	return doc, nil
 }

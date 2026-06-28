@@ -89,6 +89,110 @@ func TestE2EConsolidatePromoteRetrieve(t *testing.T) {
 	}
 }
 
+// TestE2EConsolidateSplit drives the split op through the built binary over the
+// real event log: observe (two sessions) -> consolidate create-draft -> promote
+// (confirmed) -> consolidate split into two narrower drafts. It asserts the
+// parent folds to stale with successor_ids and each child folds to draft with
+// predecessor_ids=[parent] (lineage wired both ways).
+func TestE2EConsolidateSplit(t *testing.T) {
+	repo := initE2ERepo(t)
+	writeE2EFile(t, filepath.Join(repo, "README.md"), "seed\n")
+	runCmd(t, repo, "git", "add", ".")
+	runCmd(t, repo, "git", "commit", "-m", "seed")
+
+	t.Setenv("AUTO_SESSION_ID", "e2e-consolidate-split")
+
+	if stdout, stderr, err := runBinary(repo, "init", "--project"); err != nil {
+		t.Fatalf("init failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	ob1 := e2eAddObservation(t, repo, "split-sess-1")
+	ob2 := e2eAddObservation(t, repo, "split-sess-2")
+
+	// Create + promote a confirmed parent rule.
+	doc := fmt.Sprintf(`{"deltas":[{"op":"create-draft","use_when":"handling cobra wiring broadly","content":"keep flags explicit","causal_note":"ambiguous flags confused agents","domain":["clidom"],"type":"soft","observation_ids":["%s","%s"]}]}`, ob1, ob2)
+	cStdout, cStderr, err := runBinary(repo, "consolidate", doc)
+	if err != nil {
+		t.Fatalf("consolidate (draft) failed: %v\nstdout:\n%s\nstderr:\n%s", err, cStdout, cStderr)
+	}
+	var cresp struct {
+		Applied []struct {
+			RuleID string `json:"rule_id"`
+		} `json:"applied"`
+	}
+	if jerr := json.Unmarshal([]byte(cStdout), &cresp); jerr != nil {
+		t.Fatalf("consolidate stdout not JSON: %v\nraw:\n%s", jerr, cStdout)
+	}
+	if len(cresp.Applied) != 1 {
+		t.Fatalf("expected one applied draft: %s", cStdout)
+	}
+	parent := cresp.Applied[0].RuleID
+	if _, pStderr, perr := runBinary(repo, "rule", "promote", parent); perr != nil {
+		t.Fatalf("promote failed: %v\nstderr:\n%s", perr, pStderr)
+	}
+
+	// Split the confirmed parent into two narrower drafts.
+	splitDoc := fmt.Sprintf(`{"deltas":[{"op":"split","rule_id":"%s","into":[{"use_when":"handling cobra flag wiring","content":"keep flags explicit","causal_note":"ambiguous flags confused agents","domain":["clidom"]},{"use_when":"handling cobra arg validation","content":"validate positional args","causal_note":"missing arg checks crashed agents","domain":["clidom"]}]}]}`, parent)
+	sStdout, sStderr, err := runBinary(repo, "consolidate", splitDoc)
+	if err != nil {
+		t.Fatalf("consolidate (split) failed: %v\nstdout:\n%s\nstderr:\n%s", err, sStdout, sStderr)
+	}
+	var sresp struct {
+		Applied []struct {
+			RuleID string `json:"rule_id"`
+		} `json:"applied"`
+		Skipped []json.RawMessage `json:"skipped"`
+	}
+	if jerr := json.Unmarshal([]byte(sStdout), &sresp); jerr != nil {
+		t.Fatalf("split stdout not JSON: %v\nraw:\n%s", jerr, sStdout)
+	}
+	if len(sresp.Applied) != 1 || len(sresp.Skipped) != 0 {
+		t.Fatalf("expected one applied split, no skips: %s", sStdout)
+	}
+
+	// Parent folds to stale with two successors.
+	p := e2eGetRule(t, repo, parent)
+	if p.Lifecycle != "stale" {
+		t.Fatalf("split parent should be stale, got %q", p.Lifecycle)
+	}
+	if len(p.SuccessorIDs) != 2 {
+		t.Fatalf("parent should have two successor_ids, got %#v", p.SuccessorIDs)
+	}
+
+	// Each child folds to draft with predecessor_ids=[parent].
+	for _, childID := range p.SuccessorIDs {
+		ch := e2eGetRule(t, repo, childID)
+		if ch.Lifecycle != "draft" {
+			t.Fatalf("child %s should be a draft, got %q", childID, ch.Lifecycle)
+		}
+		if len(ch.PredecessorIDs) != 1 || ch.PredecessorIDs[0] != parent {
+			t.Fatalf("child %s predecessor_ids should be [%s], got %#v", childID, parent, ch.PredecessorIDs)
+		}
+	}
+}
+
+// e2eGetRule fetches a rule's lineage fields via the built binary's `rule get`.
+func e2eGetRule(t *testing.T, repo, id string) struct {
+	Lifecycle      string   `json:"lifecycle"`
+	PredecessorIDs []string `json:"predecessor_ids"`
+	SuccessorIDs   []string `json:"successor_ids"`
+} {
+	t.Helper()
+	var r struct {
+		Lifecycle      string   `json:"lifecycle"`
+		PredecessorIDs []string `json:"predecessor_ids"`
+		SuccessorIDs   []string `json:"successor_ids"`
+	}
+	stdout, stderr, err := runBinary(repo, "rule", "get", id)
+	if err != nil {
+		t.Fatalf("rule get %s failed: %v\nstderr:\n%s", id, err, stderr)
+	}
+	if jerr := json.Unmarshal([]byte(stdout), &r); jerr != nil {
+		t.Fatalf("decode rule get json: %v\nraw:\n%s", jerr, stdout)
+	}
+	return r
+}
+
 func e2eAddObservation(t *testing.T, repo, session string) string {
 	t.Helper()
 	stdout, stderr, err := runBinary(repo, "observation", "add",
