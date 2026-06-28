@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>048: auto-skill-property-tests</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="048: auto-skill-property-tests" status="pending" pr="pending" generated="2026-06-28"
+          next-prompt="/commit-task 048">
+
+    <script type="application/json" id="pd-meta">
+    {
+      "id": "048",
+      "name": "auto-skill-property-tests",
+      "status": "planning",
+      "created": "2026-06-28"
+    }
+    </script>
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+The auto-skill tool has 319 hand-written tests across 38 files — solid coverage for cases the authors imagined. But the tool's core subsystems (URL canonicalization, schema parsing, version spec validation, render hashing) have large, combinatorial input spaces where hand-picked examples leave gaps. Hidden corner cases — legacy YAML forms, unusual URL structures, boundary version specs, hash instability — are the likely source of the next production bug, and no amount of additional hand-written tests will systematically explore these spaces.
+
+The recent migration from Vercel's `npx skills` to native `auto skill` introduced compatibility layers (e.g. `ReplacementMap.UnmarshalYAML` handling both modern and legacy forms) that multiply the input-space surface beyond what manual enumeration can cover.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **Find unknown edge cases** in the pure-function core of auto-skill by generating thousands of random inputs per property, with shrinking to isolate minimal counterexamples.
+- **Establish round-trip guarantees** for all three schema files (lock.json, skills.yaml, manifest.json) — `Parse(Serialize(x)) == x` must hold for any valid structure.
+- **Prove the credential-leak invariant** — `CanonicalizeURL(url)` must never produce output containing credentials, regardless of input form.
+- **Verify idempotence** of URL canonicalization and render hashing — double-application must be a no-op.
+- **Add the `rapid` PBT library** (`pgregory.net/rapid`) to auto-skill's test dependencies and integrate property tests into the existing `go test` / `make test` pipeline.
+- **Establish regression seed capture** — every seed that produces a failure is checked in so fixed bugs never silently regress.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Model-based / stateful testing of the sync engine** — the sync operation sequence (plan → fetch → render) is a future upgrade; this task covers stateless property tests on pure functions only.
+- **Go native fuzz tests** (`testing.F`) — complementary but a separate task; PBT and fuzz have different harness requirements and merge separately.
+- **Mutation testing** — an audit of property detection power; prescribe after the property suite is established, not during initial authoring.
+- **Tests requiring network or git fixtures** — all properties target pure functions (no filesystem, no git operations, no cache). Integration-level properties are out of scope.
+- **Changing existing unit tests** — PBT complements the existing hand-written suite; no existing tests are modified or removed.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="target-subsystems" title="Target Subsystems & Property Inventory">
+        <md><script type="text/plain">
+The following subsystems have expressible invariants and large enough input spaces to justify PBT. Each property is tagged with the derivation heuristic that finds it.
+        </script></md>
+
+        <pd-section id="transport-properties" title="1. URL Canonicalization (transport package)">
+          <md><script type="text/plain">
+**File:** `auto-skill/internal/transport/transport.go`
+**Input space:** 6+ URL forms (https, ssh://, git@host:path, file://, git://, bare host/path), credential patterns (userinfo, query params), port variants, `.git` suffix, case variations.
+
+| # | Property | Heuristic | What it catches |
+|---|----------|-----------|-----------------|
+| T1 | `Canonicalize(Canonicalize(url)) == Canonicalize(url)` | Idempotence | Double-normalization bugs (stripping `.git` twice, lowercasing already-lowercase) |
+| T2 | Canonical output never contains credentials | Invariant | Credential leak through edge-case URL forms |
+| T3 | Semantically equivalent URLs produce the same `CacheIdentity` | Invariant | Cache misses from normalization gaps |
+| T4 | If `Canonicalize` succeeds, the result is parseable by `net/url`; for non-file schemes the parsed URL has a non-empty host and path | Hard-to-verify | Canonicalization producing malformed output |
+| T5 | `Endpoint(Endpoint(url)) == Endpoint(url)` (when first succeeds) | Idempotence | Endpoint normalization instability |
+          </script></md>
+        </pd-section>
+
+        <pd-section id="schema-properties" title="2. Schema Round-Trips (skill package)">
+          <md><script type="text/plain">
+**Files:** `lock.go`, `skillsyaml.go`, `manifest.go`, `version.go`
+**Input space:** Valid and boundary-case structures with optional fields, empty vs nil vs zero-value distinctions, legacy YAML forms.
+
+| # | Property | Heuristic | What it catches |
+|---|----------|-----------|-----------------|
+| S1 | `ParseLock(json.Marshal(lock)) == lock` for any valid Lock | Round-trip | Field loss, serialization asymmetries |
+| S2 | `ParseSkillsYAML(yaml.Marshal(cfg))` round-trips to the same canonical form (compare via second marshal cycle, not struct equality, to handle yaml.Node metadata normalization) | Round-trip | YAML encoding edge cases, ReplacementMap legacy form corruption |
+| S3 | `ValidateLock(lock)` returns no errors ↔ every field individually satisfies its constraint | Hard-to-verify | Validator gaps — "ok" result with violated field constraints |
+| S4 | `ValidateVersionSpec(spec)` accepts all well-formed specs and rejects all malformed ones | Invariant | Boundary between valid/invalid version specs |
+| S5 | If `ValidateLock` passes, re-serializing and re-validating also passes | Idempotence | Validation side-effects or non-determinism |
+| S6 | `ParseManifest(json.Marshal(manifest)) == manifest` for any valid Manifest | Round-trip | Manifest field loss, hash truncation |
+          </script></md>
+        </pd-section>
+
+        <pd-section id="render-properties" title="3. Render Pipeline (render package)">
+          <md><script type="text/plain">
+**File:** `auto-skill/internal/render/render.go`
+**Input space:** Templates with replacement vars, literal and file-ref values, side files, frontmatter variants.
+
+| # | Property | Heuristic | What it catches |
+|---|----------|-----------|-----------------|
+| R1 | `Render()` output hash is deterministic — same inputs always produce the same `SkillVersion` | Invariant | Non-deterministic hashing (map iteration order, timestamp leaks) |
+| R2 | `Render()` with no replacements produces output containing the template body verbatim | Invariant | Template engine corrupting non-template content |
+| R3 | `splitFrontmatter(composeFrontmatter(front, body))` recovers front and body | Round-trip | Frontmatter assembly/splitting asymmetry |
+| R4 | `normalizePath` is idempotent | Idempotence | Path normalization instability |
+          </script></md>
+        </pd-section>
+      </pd-section>
+
+      <pd-section id="generator-strategy" title="Generator Strategy">
+        <md><script type="text/plain">
+**Library:** `pgregory.net/rapid` — simpler API than gopter, good shrinking, well-maintained, idiomatic Go.
+
+**Construct, don't reject:** generators build valid inputs by composition (e.g. a valid `LockEntry` is assembled from a valid skill name + valid URL + valid version spec + valid commit hex), not by filtering random strings. This avoids the "gave up generating inputs" failure mode.
+
+**Custom generators needed for:**
+- **Skill names** — lowercase kebab-case strings matching `skillNameRE`
+- **Version specs** — one of: `"latest"`, `"branch:" + name`, `"tag:" + name`, `"commit:" + hex(7-40)`
+- **Commit hashes** — 40-char lowercase hex strings
+- **LockEntry** — composed from the above with valid state transitions
+- **Lock** — map of skill name → LockEntry with version=1
+- **URL strings** — mix of valid forms: `https://host/owner/repo`, `git@host:owner/repo`, `ssh://host/path`, `file:///path`, `host/owner/repo` — plus adversarial variants with credentials, special chars, edge-case ports
+- **ReplacementMap** — valid var names mapped to scalar or file-ref YAML nodes
+- **SkillConfig / SkillsYAML** — composed from the above
+
+**Built-in generators** (`rapid.String()`, `rapid.Bool()`, `rapid.SliceOf()`, etc.) for primitives and containers.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="harness" title="Harness Integration">
+        <md><script type="text/plain">
+- Property tests live alongside existing unit tests in `*_prop_test.go` files (one per package: `transport`, `skill`, `render`).
+- They run as standard `go test` cases — no separate subtarget needed. `make test` picks them up automatically.
+- `rapid` is added as a test-only dependency (`go get -t pgregory.net/rapid`), not a runtime dependency.
+- Default: 100 examples per property (rapid's default). No need to tune higher for this rung.
+- Seed management: rapid captures seeds on failure; failed seeds are added to a `testdata/rapid/` directory per package so they replay on every subsequent run.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [x] **PBT vs model-based testing vs fuzzing?** — PBT recommended for best bang-for-buck on pure-function input spaces. MBT deferred to a future task for sync-engine stateful testing. Fuzzing deferred as complementary. (Resolved in conversation.)
+- [x] **Which PBT library?** — `pgregory.net/rapid` chosen over `gopter` for simpler API and better shrinking. (Resolved in conversation.)
+- [ ] Assumption: property tests in `*_prop_test.go` files is acceptable naming convention (keeps them discoverable but separate from hand-written tests). Will proceed unless corrected.
+- [ ] Assumption: 100 examples per property is sufficient for standard rung. Upgrade to 1000+ only if a property catches a bug that required more exploration.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Property tests are written using `pgregory.net/rapid` and live in `*_prop_test.go` files alongside existing unit tests. They use the internal package declaration (`package transport`, `package skill`, `package render`) to access unexported functions.
+
+Each property test is a standard `func TestPropertyName(t *testing.T)` that calls `rapid.Check(t, func(t *rapid.T) { ... })`. They run via `go test ./...` and `make test` with no extra wiring.
+
+**Verification approach:** every property has a kill test — a deliberate bug introduced to confirm the property catches it. Kill tests are documented in commit messages but not checked in (they'd break CI).
+
+**Seed regression:** `rapid` stores failure seeds in `testdata/rapid/` automatically. Any seed that ever fails is preserved so the exact input replays on every future run.
+        </script></md>
+      </pd-section>
+
+      <pd-ac id="AC-1" title="rapid dependency added" phases="1" tests="auto-skill/go.mod">
+        <md><script type="text/plain">
+**Given** the auto-skill module's `go.mod`
+**When** `go test ./...` is run in `auto-skill/`
+**Then** `pgregory.net/rapid` is resolved as a test dependency and all property tests execute
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="Transport properties pass" phases="1,2" tests="auto-skill/internal/transport/transport_prop_test.go">
+        <md><script type="text/plain">
+**Given** the transport package property tests (T1-T5)
+**When** `go test ./internal/transport/ -run Prop -count=1` is run
+**Then** all 5 properties pass with 100 examples each, exercising URL idempotence, credential invariant, cache identity equivalence, output validity, and endpoint stability
+        </script></md>
+      </pd-ac>
+      <pd-thread anchor="AC-2" status="resolved" priority="p1" title="T4 rejects valid file URLs">
+        <pd-comment by="review">The planned T4 assertion is false for current transport semantics. `CanonicalizeURL("file:///tmp/my-repo")` succeeds and returns a `file:///...` canonical URL with cache host `_local` (covered by the existing `TestCanonicalizeURL/file URL` case), but `url.Parse("file:///tmp/my-repo")` has an empty Host by design. Phase 2 step 4 requires a non-empty host for every successful canonicalization, so the property will fail on a valid generated file URL. Narrow T4 to non-file schemes or make the host/path assertion scheme-specific.</pd-comment>
+        <pd-comment by="author">Good catch. Updated T4 in the property inventory to make the host/path assertion scheme-specific: non-file schemes require non-empty host and path; file:// URLs only require parseability. Updated Phase 2 step 4 accordingly.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-3" title="Schema properties pass" phases="1,3" tests="auto-skill/internal/skill/skill_prop_test.go">
+        <md><script type="text/plain">
+**Given** the skill package property tests (S1-S5)
+**When** `go test ./internal/skill/ -run Prop -count=1` is run
+**Then** all 6 properties pass: lock round-trip, skills.yaml round-trip (canonical-form comparison), manifest round-trip, validator consistency, version spec boundaries, and validation idempotence
+        </script></md>
+      </pd-ac>
+      <pd-thread anchor="AC-3" status="resolved" priority="p2" title="Manifest round-trip is untraced">
+        <pd-comment by="review">The Requirements goal promises round-trip guarantees for all three schema files: `lock.json`, `skills.yaml`, and `manifest.json`. `context.md` also lists `auto-skill/internal/skill/manifest.go` with `ParseManifest`, but AC-3 only traces S1-S5: lock round-trip, skills.yaml round-trip, `ValidateLock`, version spec boundaries, and lock validation idempotence. No AC, phase, or property exercises `ParseManifest(json.Marshal(m))`; add a manifest round-trip property and trace it, or narrow the stated goal.</pd-comment>
+        <pd-comment by="author">Added property S6 (manifest round-trip) to the schema properties inventory. AC-3 now covers S1-S6. Phase 3 updated to include manifest generator and round-trip property.</pd-comment>
+      </pd-thread>
+      <pd-thread anchor="AC-3" status="resolved" priority="p2" title="SkillsYAML needs normalized equality">
+        <pd-comment by="review">S2 says `ParseSkillsYAML(yaml.Marshal(cfg)) == cfg`, but `SkillsYAML` contains `ReplacementMap map[string]yaml.Node` with `omitempty` on the replacement fields. A marshal/parse cycle can legitimately normalize absent vs empty maps and can populate YAML node metadata/style differently from generated nodes even when the schema meaning is identical. A literal struct/deep-equality assertion can fail for a correct round-trip. Define a semantic comparator, for example normalizing nil/empty replacement maps and comparing only YAML node Kind/Tag/Value/Content, or compare a second parse/marshal canonical form.</pd-comment>
+        <pd-comment by="author">Updated S2 to use canonical-form comparison: marshal → parse → marshal again, then compare the two marshalled byte slices. This sidesteps yaml.Node metadata differences while still catching semantic round-trip failures.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-4" title="Render properties pass" phases="1,4" tests="auto-skill/internal/render/render_prop_test.go">
+        <md><script type="text/plain">
+**Given** the render package property tests (R1-R4)
+**When** `go test ./internal/render/ -run Prop -count=1` is run
+**Then** all 4 properties pass: hash determinism, template passthrough, frontmatter round-trip, and path normalization idempotence
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="Kill tests confirm detection power" phases="2,3,4" tests="auto-skill/internal/transport/transport_prop_test.go,auto-skill/internal/skill/skill_prop_test.go,auto-skill/internal/render/render_prop_test.go">
+        <md><script type="text/plain">
+**Given** a deliberate bug introduced in each target package (e.g. removing `.git` stripping from canonicalization, breaking a round-trip field, making hash non-deterministic)
+**When** the property tests are re-run
+**Then** at least one property per package fails with a shrunk counterexample, proving each property has real detection power
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="No runtime dependency added" phases="1" tests="auto-skill/go.mod">
+        <md><script type="text/plain">
+**Given** the auto-skill binary's package dependency graph
+**When** `go list -deps -f '{{with .Module}}{{.Path}}{{end}}' ./cmd/autoskill` is run
+**Then** `pgregory.net/rapid` does not appear in the output (it is a test-only dependency, not linked into the binary)
+        </script></md>
+      </pd-ac>
+      <pd-thread anchor="AC-6" status="resolved" priority="p1" title="go list -m cannot prove runtime absence">
+        <pd-comment by="review">AC-6 uses `go list -m -json all` to inspect the compiled binary's module graph, but that command reports the module graph from `go.mod`, not the package import graph of `./cmd/autoskill`. Once `pgregory.net/rapid` is added for `_test.go` files, it can still appear in `go list -m all` even when it is absent from the built binary. Use an import/dependency check such as `go list -deps -f '{{with .Module}}{{.Path}}{{end}}' ./cmd/autoskill` and assert `pgregory.net/rapid` is absent, while `go test` proves the test dependency is available.</pd-comment>
+        <pd-comment by="author">Fixed AC-6 to use `go list -deps` which inspects the actual package import graph of the binary, not the module graph. This correctly proves rapid is absent from the compiled output.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="verification-gaps" title="Known Gaps & Risks">
+        <md><script type="text/plain">
+- **No stateful coverage:** the sync engine's multi-step operation sequences (plan → fetch → render) are not tested by these properties. Deferred to a future model-based testing task.
+- **No coverage-guided exploration:** PBT uses distribution-based random generation, not coverage-guided mutation. Complementary Go fuzz tests (`testing.F`) would add coverage guidance but are out of scope.
+- **ReplacementMap round-trip limitation:** the legacy empty-sequence YAML form (`replacements: []`) is accepted on decode but serialized as the modern empty-map form on encode. The round-trip property must account for this intentional normalization.
+- **File-ref resolution untested:** `Render()` with file-ref replacements requires a `FileRefResolver` implementation backed by the filesystem. Properties only test literal replacements and the template/hash pipeline, not file-ref content inlining.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Add property-based tests to three auto-skill packages using `pgregory.net/rapid`. Each package gets one `*_prop_test.go` file containing constructive generators and property functions. Tests use the internal package declaration to access unexported helpers (`splitFrontmatter`, `normalizePath`, etc.).
+
+Generators are compositional: low-level generators (skill name, version spec, commit hash, URL) are composed into higher-level generators (LockEntry, Lock, SkillConfig, SkillsYAML). URL generators construct valid URLs from parts rather than filtering random strings.
+
+The `rapid` library is added as a test-only dependency. No Makefile changes needed — `go test ./...` discovers the new `*_prop_test.go` files automatically.
+        </script></md>
+      </pd-section>
+
+      <pd-files>
+        <pd-file path="auto-skill/internal/transport/transport_prop_test.go" change="add">Property tests T1-T5: URL canonicalization idempotence, credential invariant, cache identity, output validity, endpoint stability. Includes URL generators.</pd-file>
+        <pd-file path="auto-skill/internal/skill/skill_prop_test.go" change="add">Property tests S1-S5: lock round-trip, skills.yaml round-trip, validator consistency, version spec boundaries, validation idempotence. Includes generators for skill names, version specs, LockEntry, Lock, SkillConfig, SkillsYAML.</pd-file>
+        <pd-file path="auto-skill/internal/render/render_prop_test.go" change="add">Property tests R1-R4: hash determinism, template passthrough, frontmatter round-trip, path idempotence. Includes template and frontmatter generators.</pd-file>
+        <pd-file path="auto-skill/go.mod" change="edit">Add `pgregory.net/rapid` as test dependency</pd-file>
+        <pd-file path="auto-skill/go.sum" change="edit">Updated checksums for rapid</pd-file>
+      </pd-files>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **gopter** — more featureful (stateful testing built in) but heavier API, less idiomatic Go, weaker shrinking. Since we're targeting stateless properties only, `rapid`'s simpler API wins.
+- **Go native fuzz (`testing.F`)** — coverage-guided but byte-oriented; requires manual corpus seeding and doesn't support shrinking to minimal counterexamples. Better suited as a complementary layer for crash-finding, not invariant verification.
+- **Separate `_test` package declarations** — would require exporting `splitFrontmatter`, `normalizePath`, etc. or adding test-only export shims. Using internal package declaration (matching existing test convention) avoids API surface changes.
+- **Dedicated `testdata/rapid/` seed directories** — `rapid` manages seeds automatically in `testdata/rapid/TestName/` when a property fails. No manual seed infrastructure needed.
+        </script></md>
+      </pd-section>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Add the `rapid` dependency, then build property tests as a walking skeleton across all three packages (one property each) before broadening to the full inventory. Phase 1 proves the PBT infrastructure works end-to-end; phases 2-4 fill out each package's full property set.
+        </script></md>
+      </pd-section>
+
+      <pd-mermaid caption="Execution DAG">
+flowchart LR
+  P1[Phase 1: Walking skeleton] --> P2[Phase 2: Transport properties]
+  P1 --> P3[Phase 3: Schema properties]
+  P1 --> P4[Phase 4: Render properties]
+      </pd-mermaid>
+
+      <pd-stepper>
+        <pd-phase n="1" title="Walking skeleton — rapid + one property per package" files="auto-skill/go.mod,auto-skill/go.sum,auto-skill/internal/transport/transport_prop_test.go,auto-skill/internal/skill/skill_prop_test.go,auto-skill/internal/render/render_prop_test.go" status="todo">
+          <md><script type="text/plain">
+**Goal:** Prove the PBT infrastructure works end-to-end — `rapid` resolves, one property per package passes, `make test` stays green.
+
+**Steps:**
+1. `cd auto-skill && go get -t pgregory.net/rapid` — add the test dependency
+2. Create `transport_prop_test.go` with property **T1** (canonicalize idempotence):
+   - Write a URL generator that constructs valid URLs from scheme + host + path components
+   - Write `TestPropCanonicalizeIdempotent` using `rapid.Check`
+3. Create `skill_prop_test.go` with property **S1** (lock round-trip):
+   - Write generators for skill name, commit hash, version spec, LockEntry, Lock
+   - Write `TestPropLockRoundTrip` — marshal a generated Lock to JSON, parse it back, assert equality
+4. Create `render_prop_test.go` with property **R4** (normalizePath idempotent):
+   - Write a path generator (slash-separated segments with optional `./` prefix and `\\` chars)
+   - Write `TestPropNormalizePathIdempotent` — assert `normalizePath(normalizePath(p)) == normalizePath(p)`
+5. Run `go test ./...` in auto-skill — all existing + new tests pass
+6. Run `go list -deps -f '{{with .Module}}{{.Path}}{{end}}' ./cmd/autoskill | grep rapid` — confirm no output (rapid is test-only)
+7. Commit
+
+**Verify:** `go test ./internal/transport/ ./internal/skill/ ./internal/render/ -run Prop -v -count=1` — three properties pass, 100 examples each.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Transport properties T2-T5" files="auto-skill/internal/transport/transport_prop_test.go" status="todo" depends-on="1">
+          <md><script type="text/plain">
+**Goal:** Complete the transport property inventory.
+
+**Steps:**
+1. Add adversarial URL generators — URLs with embedded credentials (userinfo, query params), unusual ports, double `.git` suffixes, encoded characters
+2. Write **T2** (`TestPropCanonicalizeNoCredentials`): for any URL where `CanonicalizeURL` succeeds, `ContainsCredentials(canonical)` returns false
+3. Write **T3** (`TestPropCacheIdentityEquivalence`): generate semantically equivalent URL pairs (e.g. `https://github.com/owner/repo` vs `https://github.com/owner/repo.git`), assert same `CacheIdentity.RelPath()`
+4. Write **T4** (`TestPropCanonicalizeProducesValidURL`): if canonicalization succeeds, `url.Parse(canonical)` succeeds; for non-file schemes, assert non-empty host and path (file:// URLs have empty host by design)
+5. Write **T5** (`TestPropEndpointIdempotent`): if `Endpoint(url)` succeeds, `Endpoint(result)` returns the same value
+6. Run `go test ./internal/transport/ -run Prop -v -count=1` — all 5 pass
+7. Kill test: temporarily break `.git` stripping (e.g. only strip once), confirm T1 or T3 catches it. Revert.
+8. Commit
+
+**Verify:** 5 transport properties pass. Kill test documented in commit message.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Schema properties S2-S5" files="auto-skill/internal/skill/skill_prop_test.go" status="todo" depends-on="1">
+          <md><script type="text/plain">
+**Goal:** Complete the skill package property inventory.
+
+**Steps:**
+1. Add generators for `ReplacementMap` (valid var names → scalar YAML nodes), `SkillConfig`, `SharedConfig`, `SkillsYAML`, `Manifest`, `ManifestSkill`, `ManifestTarget`
+2. Write **S2** (`TestPropSkillsYAMLRoundTrip`): generate valid SkillsYAML, marshal to YAML, parse back, marshal again — assert the two marshalled byte slices match (canonical-form comparison avoids yaml.Node metadata differences)
+3. Write **S3** (`TestPropValidateLockConsistency`): generate a Lock where every field individually passes its constraint (valid name, valid state, resolved entries have source/url/commit), assert `ValidateLock` returns no errors. Then generate a Lock with at least one invalid field, assert `ValidateLock` returns at least one error.
+4. Write **S4** (`TestPropVersionSpecBoundary`): generate well-formed version specs (from the known-good grammar), assert `ValidateVersionSpec` returns nil. Generate malformed specs (unknown prefixes, empty payloads, non-hex commits), assert it returns an error.
+5. Write **S5** (`TestPropValidateLockIdempotent`): generate a valid Lock, validate it, marshal/parse it, re-validate — assert same result (no errors both times).
+6. Write **S6** (`TestPropManifestRoundTrip`): generate a valid Manifest, marshal to JSON, parse back, assert deep equality.
+7. Run `go test ./internal/skill/ -run Prop -v -count=1` — all 6 pass
+8. Kill test: break the commit hex regex (e.g. require exactly 40 chars instead of 7-40), confirm S4 catches it. Revert.
+9. Commit
+
+**Verify:** 6 skill properties pass. Kill test documented.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="Render properties R1-R3" files="auto-skill/internal/render/render_prop_test.go" status="todo" depends-on="1">
+          <md><script type="text/plain">
+**Goal:** Complete the render package property inventory.
+
+**Steps:**
+1. Add generators for SKILL.md templates (frontmatter + body), side files (`InputFile`), and `RenderInput` with literal replacements only (no file-refs — would need a resolver)
+2. Write **R1** (`TestPropRenderHashDeterministic`): generate a `RenderInput`, call `Render()` twice with identical inputs, assert `SkillVersion` matches
+3. Write **R2** (`TestPropRenderPassthroughBody`): generate a `RenderInput` with no replacements (empty customize block, no `{{ }}` in body), call `Render()`, assert the output SKILL.md body contains the template body verbatim
+4. Write **R3** (`TestPropFrontmatterRoundTrip`): generate frontmatter string (valid YAML mapping) and body string (no `---` sequences), compose with `composeSkillMD`, split with `splitFrontmatter`, assert recovered front/body match originals (after trimming)
+5. Run `go test ./internal/render/ -run Prop -v -count=1` — all 4 pass
+6. Kill test: make `ComputeSkillVersion` non-deterministic (e.g. shuffle files), confirm R1 catches it. Revert.
+7. Commit
+
+**Verify:** 4 render properties pass. Kill test documented.
+          </script></md>
+        </pd-phase>
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- AC-1 through AC-6 pass
+- 15 property tests across 3 packages, all green in `make test`
+- `rapid` is test-only — not in the compiled binary
+- At least one kill test per package confirms detection power
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
