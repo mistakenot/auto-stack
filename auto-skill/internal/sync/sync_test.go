@@ -284,6 +284,52 @@ func TestRunCheckStaleExitsNonZero(t *testing.T) {
 
 // TestRunRecoversPendingJournalAtStartup: a pending journal from an interrupted
 // commit is recovered at the next Run's startup.
+// TestRunScopedTargetLeavesOtherRendersIntact: a scoped `--target X` run renders
+// only the named skill and must NEVER delete the rendered copies of the other
+// managed skills. Regression for the bug where the prune pass's "desired" set
+// collapsed to the scoped subset (proc.Staged), so every non-targeted managed
+// skill classified as an orphan and a scoped `sync --target X` reaped all of
+// their renders ("Removed N orphaned target(s)").
+func TestRunScopedTargetLeavesOtherRendersIntact(t *testing.T) {
+	f := newFixture(t)
+	f.commitSkill("alpha", "v1")
+	head := f.commitSkill("beta", "v1") // cumulative tree: both skills at head
+
+	env := newEnv(t)
+	approve(t, env, f.url)
+	writeLock(t, env, map[string]skill.LockEntry{
+		"alpha": lockEntry(f.url, "alpha", "latest", head),
+		"beta":  lockEntry(f.url, "beta", "latest", head),
+	})
+	writeSkillsYAML(t, env, &skill.SkillsYAML{})
+
+	// Full sync renders both vendored skills into every target dir.
+	if _, err := Run(env, Options{Locked: true}); err != nil {
+		t.Fatalf("full sync: %v", err)
+	}
+	betaClaude := filepath.Join(env.Root, ".claude", "skills", "beta")
+	betaAgents := filepath.Join(env.Root, ".agents", "skills", "beta")
+	for _, d := range []string{betaClaude, betaAgents} {
+		if _, err := os.Stat(d); err != nil {
+			t.Fatalf("precondition: beta render missing after full sync at %s: %v", d, err)
+		}
+	}
+
+	// Scoped sync of alpha alone must not prune or delete beta's renders.
+	res, err := Run(env, Options{Targets: []string{"alpha"}})
+	if err != nil {
+		t.Fatalf("scoped sync: %v", err)
+	}
+	if len(res.Pruned) != 0 {
+		t.Errorf("scoped `--target alpha` pruned %v, want nothing pruned", res.Pruned)
+	}
+	for _, d := range []string{betaClaude, betaAgents} {
+		if _, err := os.Stat(d); err != nil {
+			t.Errorf("scoped `--target alpha` deleted non-targeted beta render at %s: %v", d, err)
+		}
+	}
+}
+
 func TestRunRecoversPendingJournalAtStartup(t *testing.T) {
 	env := newEnv(t)
 	writeSkillsYAML(t, env, &skill.SkillsYAML{})

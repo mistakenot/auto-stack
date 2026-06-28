@@ -70,7 +70,7 @@ func buildPruneCommit(t *testing.T, env skill.Env) (commitInput, []journalPrune,
 		t.Fatalf("ScanOwnership: %v", err)
 	}
 	verdicts := ownership.Classify(inputs)
-	prunes := planPrune(verdicts, proc.Targets, true)
+	prunes := planPrune(verdicts, proc.Targets, true, nil)
 	in := commitInput{
 		env:             env,
 		installs:        proc.Installs,
@@ -118,10 +118,10 @@ func TestPlanPruneEmptyWhenIncomplete(t *testing.T) {
 	verdicts := []ownership.DirStatus{
 		{Target: "claude", Name: "orphan", State: ownership.StateManagedOrphan, OnDiskDigest: "d1"},
 	}
-	if got := planPrune(verdicts, targets, false); len(got) != 0 {
+	if got := planPrune(verdicts, targets, false, nil); len(got) != 0 {
 		t.Fatalf("desiredComplete=false must yield no prunes, got %v", got)
 	}
-	got := planPrune(verdicts, targets, true)
+	got := planPrune(verdicts, targets, true, nil)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 prune, got %d", len(got))
 	}
@@ -153,7 +153,7 @@ func TestPlanPruneOnlyOrphans(t *testing.T) {
 		{Target: "claude", Name: "foreign", State: ownership.StateForeign},
 		{Target: "claude", Name: "current", State: ownership.StateManagedCurrent},
 	}
-	got := planPrune(verdicts, targets, true)
+	got := planPrune(verdicts, targets, true, nil)
 	if len(got) != 1 || got[0].Skill != "orphan" {
 		t.Fatalf("only the orphan is prunable, got %v", got)
 	}
@@ -263,7 +263,7 @@ func TestPruneRefusesWithoutReceipt(t *testing.T) {
 	}
 	verdicts := ownership.Classify(inputs)
 	assertState(t, verdicts, "orphan", ownership.StateManagedUnestablished)
-	if got := planPrune(verdicts, targets, true); len(got) != 0 {
+	if got := planPrune(verdicts, targets, true, nil); len(got) != 0 {
 		t.Fatalf("no-receipt orphan must not be prunable, got %v", got)
 	}
 	for _, dir := range targetSkillDirs(targets, "orphan") {
@@ -294,7 +294,7 @@ func TestPruneRefusesWhenModified(t *testing.T) {
 	}
 	verdicts := ownership.Classify(inputs)
 	assertState(t, verdicts, "orphan", ownership.StateModified)
-	if got := planPrune(verdicts, targets, true); len(got) != 0 {
+	if got := planPrune(verdicts, targets, true, nil); len(got) != 0 {
 		t.Fatalf("modified orphan must not be prunable, got %v", got)
 	}
 	for _, dir := range targetSkillDirs(targets, "orphan") {
@@ -333,7 +333,7 @@ func TestPruneRefusesForgedStamp(t *testing.T) {
 	}
 	verdicts := ownership.Classify(inputs)
 	assertState(t, verdicts, "ghost", ownership.StateForeign)
-	if got := planPrune(verdicts, targets, true); len(got) != 0 {
+	if got := planPrune(verdicts, targets, true, nil); len(got) != 0 {
 		t.Fatalf("forged-stamp dir must not be prunable, got %v", got)
 	}
 	if !strings.Contains(skillBody(t, ghost), "FORGED") {
