@@ -198,9 +198,10 @@ func CanonicalizeURL(raw string) (canonical string, id CacheIdentity, err error)
 		}
 	}
 
-	// Clean the path: strip .git suffix, leading/trailing slashes.
-	pathStr = strings.TrimSuffix(pathStr, ".git")
+	// Clean the path: strip surrounding slashes first, then the .git suffix,
+	// so a trailing-slash form like "repo.git/" canonicalizes in one pass.
 	pathStr = strings.Trim(pathStr, "/")
+	pathStr = strings.TrimSuffix(pathStr, ".git")
 
 	if pathStr == "" {
 		return "", CacheIdentity{}, &TransportError{
