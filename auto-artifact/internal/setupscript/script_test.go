@@ -39,9 +39,32 @@ func TestGenerateRoleIsReal(t *testing.T) {
 
 func TestGenerateParameterized(t *testing.T) {
 	script := Generate(Params{Region: "ap-south-1", Bucket: "my-bucket", Profile: "prod"})
-	for _, want := range []string{`BUCKET="my-bucket"`, `REGION="ap-south-1"`, `PROFILE="prod"`} {
+	for _, want := range []string{`BUCKET='my-bucket'`, `REGION='ap-south-1'`, `PROFILE='prod'`} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing baked value %q", want)
+		}
+	}
+}
+
+// TestGenerateShellQuotesParams ensures shell metacharacters in a parameter are
+// emitted as inert single-quoted literals, not evaluated when the script runs.
+func TestGenerateShellQuotesParams(t *testing.T) {
+	script := Generate(Params{Region: "eu-west-1", Bucket: "b", Profile: "$(touch /tmp/pwned)"})
+	if !strings.Contains(script, `PROFILE='$(touch /tmp/pwned)'`) {
+		t.Errorf("profile not single-quoted as an inert literal:\n%s", script)
+	}
+	// Embedded single quotes must be escaped, keeping the script syntactically valid.
+	tricky := Generate(Params{Region: "eu-west-1", Bucket: "b", Profile: "a'b"})
+	if !strings.Contains(tricky, `PROFILE='a'\''b'`) {
+		t.Errorf("embedded single quote not escaped:\n%s", tricky)
+	}
+	if _, err := exec.LookPath("bash"); err == nil {
+		path := filepath.Join(t.TempDir(), "s.sh")
+		if err := os.WriteFile(path, []byte(tricky), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command("bash", "-n", path).CombinedOutput(); err != nil {
+			t.Errorf("bash -n failed on escaped script: %v\n%s", err, out)
 		}
 	}
 }

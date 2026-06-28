@@ -92,8 +92,10 @@ func (c *Client) PutObject(ctx context.Context, key string, body io.Reader, size
 	return c.do(req, "upload "+key)
 }
 
-// DeleteObject removes key. The empty-body payload hash is signed; S3 returns
-// 204 on success and 404 when the object is already gone — both are success.
+// DeleteObject removes key. The empty-body payload hash is signed. S3's
+// DeleteObject returns 204 even when the object does not exist, so success is
+// 200/204 only; a 404 here means NoSuchBucket (wrong bucket/endpoint) and is
+// surfaced as an error rather than reported as a successful delete.
 func (c *Client) DeleteObject(ctx context.Context, key string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, "", nil)
 	if err != nil {
@@ -109,7 +111,7 @@ func (c *Client) DeleteObject(ctx context.Context, key string) error {
 		return fmt.Errorf("delete %s: %w", key, err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotFound {
+	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK {
 		return nil
 	}
 	return c.statusError(resp, "delete "+key)
