@@ -30,6 +30,12 @@ const (
 // (incident) observation.
 const EvidenceMinSessions = 2
 
+// ConfirmMinTasks is the number of distinct evidence task_ids a draft's
+// provenance must cover for `rule promote` to confirm it via the task-keyed path,
+// an alternative to the EvidenceMinSessions session path. task_id is optional, so
+// task-id-less provenance simply falls back to the session gate.
+const ConfirmMinTasks = 3
+
 // severityHigh marks an incident observation, which auto-bypasses the evidence
 // threshold for the delta that cites it. Mirrors observations.SeverityHigh,
 // duplicated to keep this package free of the observations import.
@@ -111,14 +117,16 @@ func (idx ObservationIndex) Lookup(id string) (events.ObservationPayload, bool) 
 // Coverage is the resolved evidence picture for a set of observation ids.
 type Coverage struct {
 	Sessions     []string // distinct evidence session ids, sorted
+	Tasks        []string // distinct evidence task_ids, sorted (empty task_ids skipped)
 	HighSeverity bool     // any referenced observation is severity high (incident)
 	Missing      []string // ids with no matching observation event
 }
 
-// Coverage resolves observation ids to their distinct evidence sessions and flags
-// whether any is high severity or unknown.
+// Coverage resolves observation ids to their distinct evidence sessions and
+// task_ids and flags whether any is high severity or unknown.
 func (idx ObservationIndex) Coverage(obIDs []string) Coverage {
 	sessionSet := make(map[string]struct{})
+	taskSet := make(map[string]struct{})
 	var cov Coverage
 	for _, id := range obIDs {
 		p, ok := idx.byID[strings.TrimSpace(id)]
@@ -128,6 +136,9 @@ func (idx ObservationIndex) Coverage(obIDs []string) Coverage {
 		}
 		if p.Severity == severityHigh {
 			cov.HighSeverity = true
+		}
+		if task := strings.TrimSpace(p.TaskID); task != "" {
+			taskSet[task] = struct{}{}
 		}
 		for _, ev := range p.Evidence {
 			s := strings.TrimSpace(ev.SessionID)
@@ -142,6 +153,11 @@ func (idx ObservationIndex) Coverage(obIDs []string) Coverage {
 		cov.Sessions = append(cov.Sessions, s)
 	}
 	sort.Strings(cov.Sessions)
+	cov.Tasks = make([]string, 0, len(taskSet))
+	for task := range taskSet {
+		cov.Tasks = append(cov.Tasks, task)
+	}
+	sort.Strings(cov.Tasks)
 	return cov
 }
 

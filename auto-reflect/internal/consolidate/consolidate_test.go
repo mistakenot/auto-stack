@@ -12,12 +12,19 @@ import (
 // session ids, for feeding NewObservationIndex.
 func obEvent(t *testing.T, id, severity string, sessions ...string) events.Event {
 	t.Helper()
+	return obEventTask(t, id, severity, "", sessions...)
+}
+
+// obEventTask is obEvent with an explicit (optional) task_id on the observation.
+func obEventTask(t *testing.T, id, severity, taskID string, sessions ...string) events.Event {
+	t.Helper()
 	ev := make([]events.ObservationEvidence, 0, len(sessions))
 	for _, s := range sessions {
 		ev = append(ev, events.ObservationEvidence{SessionID: s})
 	}
 	payload, err := json.Marshal(events.ObservationPayload{
 		ObservationID: id,
+		TaskID:        taskID,
 		Kind:          "pattern",
 		Subject:       "subject",
 		Evidence:      ev,
@@ -76,6 +83,40 @@ func TestCoverageDistinctSessionsAndSeverity(t *testing.T) {
 	covMissing := idx.Coverage([]string{"ob-deadbeef"})
 	if len(covMissing.Missing) != 1 {
 		t.Fatalf("expected one missing id, got %v", covMissing.Missing)
+	}
+
+	// task_id-less observations contribute no distinct tasks, but sessions still count.
+	if len(cov.Tasks) != 0 {
+		t.Fatalf("expected zero distinct tasks for task-id-less observations, got %v", cov.Tasks)
+	}
+}
+
+func TestCoverageDistinctTasks(t *testing.T) {
+	idx := NewObservationIndex([]events.Event{
+		obEventTask(t, "ob-00000001", "normal", "049-task-a", "sess-a"),
+		obEventTask(t, "ob-00000002", "normal", "049-task-b", "sess-a"), // same session, distinct task
+		obEventTask(t, "ob-00000003", "normal", "049-task-c", "sess-a"),
+		obEventTask(t, "ob-00000004", "normal", "049-task-a", "sess-a"), // repeated task_id dedupes
+		obEvent(t, "ob-00000005", "normal", "sess-b"),                   // no task_id at all
+	})
+
+	// Three observations carrying three distinct task_ids → three distinct tasks,
+	// even though a fourth repeats one and they share a single session.
+	cov := idx.Coverage([]string{"ob-00000001", "ob-00000002", "ob-00000003", "ob-00000004"})
+	if len(cov.Tasks) != 3 {
+		t.Fatalf("expected 3 distinct tasks, got %v", cov.Tasks)
+	}
+	if len(cov.Sessions) != 1 {
+		t.Fatalf("expected 1 distinct session, got %v", cov.Sessions)
+	}
+
+	// A task-id-less observation contributes a session but no task.
+	covNone := idx.Coverage([]string{"ob-00000005"})
+	if len(covNone.Tasks) != 0 {
+		t.Fatalf("expected 0 distinct tasks for task-id-less observation, got %v", covNone.Tasks)
+	}
+	if len(covNone.Sessions) != 1 {
+		t.Fatalf("expected 1 distinct session, got %v", covNone.Sessions)
 	}
 }
 

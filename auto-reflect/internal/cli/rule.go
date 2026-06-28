@@ -360,7 +360,7 @@ func newRulePromoteCmd(application *app.App) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "promote <r-id>",
-		Short: "Promote a draft rule to confirmed (gated on >=2 distinct evidence sessions)",
+		Short: "Promote a draft rule to confirmed (gated on >=3 distinct tasks or >=2 distinct evidence sessions)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			outputFormat, err := normalizeFormat(format)
@@ -395,8 +395,8 @@ func newRulePromoteCmd(application *app.App) *cobra.Command {
 					return &ExitError{Code: 1, Err: rerr}
 				}
 				cov := consolidate.NewObservationIndex(all).Coverage(current.ObservationIDs)
-				if len(cov.Sessions) < consolidate.EvidenceMinSessions {
-					return &ExitError{Code: 1, Err: fmt.Errorf("rule %s provenance covers %d distinct session(s); promotion needs >=%d (attach more evidence with `auto reflect consolidate`, or pass --force)", current.ID, len(cov.Sessions), consolidate.EvidenceMinSessions)}
+				if len(cov.Tasks) < consolidate.ConfirmMinTasks && len(cov.Sessions) < consolidate.EvidenceMinSessions {
+					return &ExitError{Code: 1, Err: fmt.Errorf("rule %s provenance covers %d distinct task(s) and %d distinct session(s); promotion needs >=%d tasks or >=%d sessions (attach more evidence with `auto reflect consolidate`, or pass --force)", current.ID, len(cov.Tasks), len(cov.Sessions), consolidate.ConfirmMinTasks, consolidate.EvidenceMinSessions)}
 				}
 			}
 
@@ -407,7 +407,7 @@ func newRulePromoteCmd(application *app.App) *cobra.Command {
 			return writeRuleResult(cmd, outputFormat, "Promoted rule", "promoted", &updated)
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "promote even when provenance covers fewer than two distinct sessions")
+	cmd.Flags().BoolVar(&force, "force", false, "promote even when provenance covers fewer than three distinct tasks or two distinct sessions")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
 	return cmd
 }
