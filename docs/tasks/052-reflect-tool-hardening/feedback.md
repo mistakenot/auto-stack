@@ -1,0 +1,18 @@
+# Feedback: Task 052
+
+## Problems faced
+1. **The whole loop "works locally, fails in CI" on a single omitempty field** — `TestE2ELoopQuickstart` asserted the `gap list` row carried a `session_id`, but `session_id` is `omitempty` and the feedback event's session resolves from `events.DetectSessionID()` (env vars). The dev shell exported a session id (inherited by the test subprocess), so it passed; the clean CI runner had none → field omitted → CI red. Fix was to pin `AUTO_SESSION_ID` for the e2e loop (first in detection precedence) so the loop runs under one deterministic session, matching how a real agent always runs. Lesson: any test asserting an env-derived/`omitempty` field must set that env explicitly, or it's only testing the dev host.
+2. **F2 root cause was a normalization mismatch, not "two universes"** — the 390-vs-396 pending divergence came from `miner status` scope-keying with a scheme-strip that skipped `sharedgit.NormalizeRemoteURL`, while `miner.PendingCount` ran it. Sessions whose `git_remote` was `.git`-suffixed / ssh-form / mixed-case fell out of one count but not the other. The plan's instruction to *reproduce the divergence first* (write the failing assertion before collapsing) was what surfaced it cleanly.
+3. **Content-derived ids + a variadic signature is a silent footgun** — `NewRuleID(parts ...string)` means a missed zero-arg caller still compiles but mints a constant id, which `projection.go` then drops all-but-first of. The plan had already flagged the third caller (`rule create`); without that pin it would have been a build-clean, test-passing data-loss bug.
+
+## Reflections
+- **What was tricky?** The CI-only failure — nothing local reproduced it until I cleared the four session env vars (`env -u …`) to simulate a clean runner. That `env -u` trick became the reliable repro.
+- **What would you tell yourself at the start?** Run the full suite *with the ambient session env cleared* before declaring a phase green, especially for anything touching feedback/gate/gap scope. The e2e phase passed locally and still broke CI.
+- **What did you almost do but didn't?** Almost made `gap list` always emit `session_id` (drop `omitempty`) to satisfy the test — but that diverges from the `events list` convention and papers over the real issue (the loop genuinely had no session). Fixing the *test's* environment was the honest fix.
+- The `--all` pending-universe bug (review thread) was a direct consequence of single-sourcing onto `PendingCount` without threading the scope flag — collapsing duplication is right, but the shared function has to carry every axis the callers varied on.
+
+## Useful context
+- `context.md`'s file:line grounding (especially the F2/F6/F7 sections and the "third `NewRuleID` caller" note) was the highest-leverage artifact — it turned each phase into a targeted edit rather than a search.
+- `auto-graph/internal/cli/doctor.go` as the canonical `doctor` template; `cli/events.go` as the closest `gap list` pattern. Mirroring existing siblings kept the new nouns idiomatic.
+- Decisions D-5/D-6/D-9 (envelope = presentation-only, no schema bump; pure content hash, idempotency intended) were the load-bearing constraints — they pre-answered the "should I change the stored payload?" and "should I add a collision suffix?" questions that came up mid-implementation and in review.
+- `reflect-playbook` is a **managed skill**: edit `skills/reflect-playbook/` source and re-render via full `auto skill sync --locked` (never `--target`, which deletes other rendered skills). Editing the `.claude/` render target directly trips the pre-commit `skills-check`.
