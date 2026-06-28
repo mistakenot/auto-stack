@@ -50,8 +50,9 @@ type RetrievedRule struct {
 // Retrieve matches rules against intent (optionally filtered by domains),
 // appends one retrieval event that mints an rt- id per match, and returns the
 // predicate-only view in match order. limit <= 0 means no limit. includeDrafts
-// surfaces draft rules (flagged Draft) alongside confirmed ones; stale rules are
-// never surfaced regardless.
+// surfaces draft rules (flagged Draft) alongside confirmed ones; stale AND
+// enforced rules are never surfaced regardless (enforced rules have graduated
+// into a static lint check, so retrieval no longer needs to remind the agent).
 func (s *Service) Retrieve(intent string, domains []string, limit int, includeDrafts bool) ([]RetrievedRule, error) {
 	repo, err := gitutil.DetectRepoLenient(s.cwd)
 	if err != nil {

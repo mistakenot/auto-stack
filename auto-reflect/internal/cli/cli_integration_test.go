@@ -606,6 +606,88 @@ func TestRetrieveLifecycleFilteringAndRuleListFilter(t *testing.T) {
 	}
 }
 
+func TestRuleGraduateEnforcedLifecycle(t *testing.T) {
+	repo := initGitRepo(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	gitAddCommit(t, repo, "seed")
+
+	id := createTestRuleWith(t, repo,
+		"--use-when", "checking unchecked errors in go",
+		"--content", "always handle returned errors",
+		"--causal-note", "swallowed errors hid a real bug",
+		"--domain", "go",
+		"--type", "soft",
+		"--lifecycle", "confirmed",
+	)
+
+	// Graduate the rule into a static lint check.
+	stdout, stderr, code := runCLIAt(t, repo, "rule", "graduate", id,
+		"--linter", "golangci-lint",
+		"--check", "errcheck",
+		"--config-path", ".golangci.yml",
+		"--note", "now enforced statically",
+	)
+	if code != 0 {
+		t.Fatalf("rule graduate failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	var gradResp struct {
+		Graduated bool           `json:"graduated"`
+		Rule      map[string]any `json:"rule"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &gradResp); err != nil {
+		t.Fatalf("decode graduate json: %v\nraw:\n%s", err, stdout)
+	}
+	if !gradResp.Graduated {
+		t.Fatalf("expected graduated=true, got %#v", gradResp)
+	}
+	if gradResp.Rule["lifecycle"] != "enforced" {
+		t.Fatalf("expected lifecycle enforced, got %v", gradResp.Rule["lifecycle"])
+	}
+	lintRef, ok := gradResp.Rule["lint_ref"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected lint_ref object on graduated rule, got %#v", gradResp.Rule["lint_ref"])
+	}
+	if lintRef["linter"] != "golangci-lint" || lintRef["check"] != "errcheck" {
+		t.Fatalf("lint_ref linter/check incorrect: %#v", lintRef)
+	}
+
+	// rule list --lifecycle enforced returns it.
+	stdout, stderr, code = runCLIAt(t, repo, "rule", "list", "--lifecycle", "enforced")
+	if code != 0 {
+		t.Fatalf("rule list --lifecycle enforced failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	var listResp struct {
+		Rules []map[string]any `json:"rules"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &listResp); err != nil {
+		t.Fatalf("decode rule list json: %v\nraw:\n%s", err, stdout)
+	}
+	if len(listResp.Rules) != 1 || listResp.Rules[0]["id"] != id {
+		t.Fatalf("rule list --lifecycle enforced should return only the graduated rule, got %#v", listResp.Rules)
+	}
+
+	// retrieve over a matching intent must NOT include the enforced rule.
+	stdout, stderr, code = runCLIAt(t, repo, "retrieve", "checking unchecked errors in go", "--domain", "go")
+	if code != 0 {
+		t.Fatalf("retrieve failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	var retrieved []map[string]any
+	if err := json.Unmarshal([]byte(stdout), &retrieved); err != nil {
+		t.Fatalf("decode retrieve json: %v\nraw:\n%s", err, stdout)
+	}
+	for _, it := range retrieved {
+		if it["lifecycle"] == "enforced" {
+			t.Fatalf("enforced rule surfaced in retrieve: %#v", retrieved)
+		}
+	}
+
+	// graduate without --linter/--check fails fast.
+	stdout, _, code = runCLIAt(t, repo, "rule", "graduate", id)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for graduate without required flags\nstdout:\n%s", stdout)
+	}
+}
+
 func runCLIAt(t *testing.T, cwd string, args ...string) (stdout string, stderr string, code int) {
 	t.Helper()
 

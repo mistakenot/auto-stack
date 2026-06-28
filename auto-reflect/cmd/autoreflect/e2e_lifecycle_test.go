@@ -74,3 +74,82 @@ func TestE2ELifecycleRetrieval(t *testing.T) {
 		t.Fatalf("--no-drafts should return only the confirmed rule, got %#v", noDraft)
 	}
 }
+
+// TestE2EGraduateEnforced is a black-box check through the real binary that a
+// graduated rule becomes enforced, carries its lint_ref, lists under
+// --lifecycle enforced, and is excluded from retrieval.
+func TestE2EGraduateEnforced(t *testing.T) {
+	repo := initE2ERepo(t)
+	writeE2EFile(t, repo+"/README.md", "hello\n")
+	runCmd(t, repo, "git", "add", ".")
+	runCmd(t, repo, "git", "commit", "-m", "seed")
+
+	if stdout, stderr, err := runBinary(repo, "init"); err != nil {
+		t.Fatalf("init failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	id := e2eCreateRule(t, repo,
+		"--use-when", "checking unchecked errors in go",
+		"--content", "always handle returned errors",
+		"--causal-note", "swallowed errors hid a real bug",
+		"--domain", "graduatetest",
+		"--type", "soft",
+		"--lifecycle", "confirmed",
+	)
+
+	stdout, stderr, err := runBinary(repo, "rule", "graduate", id,
+		"--linter", "golangci-lint",
+		"--check", "errcheck",
+	)
+	if err != nil {
+		t.Fatalf("rule graduate failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	var gradResp struct {
+		Rule struct {
+			Lifecycle string `json:"lifecycle"`
+			LintRef   *struct {
+				Linter string `json:"linter"`
+				Check  string `json:"check"`
+			} `json:"lint_ref"`
+		} `json:"rule"`
+	}
+	if jerr := json.Unmarshal([]byte(stdout), &gradResp); jerr != nil {
+		t.Fatalf("decode graduate json: %v\nraw:\n%s", jerr, stdout)
+	}
+	if gradResp.Rule.Lifecycle != "enforced" {
+		t.Fatalf("expected lifecycle enforced, got %q", gradResp.Rule.Lifecycle)
+	}
+	if gradResp.Rule.LintRef == nil || gradResp.Rule.LintRef.Check != "errcheck" {
+		t.Fatalf("expected lint_ref with check errcheck, got %#v", gradResp.Rule.LintRef)
+	}
+
+	// list --lifecycle enforced shows the rule with its lint_ref.
+	stdout, stderr, err = runBinary(repo, "rule", "list", "--lifecycle", "enforced")
+	if err != nil {
+		t.Fatalf("rule list --lifecycle enforced failed: %v\nstderr:\n%s", err, stderr)
+	}
+	var listResp struct {
+		Rules []map[string]any `json:"rules"`
+	}
+	if jerr := json.Unmarshal([]byte(stdout), &listResp); jerr != nil {
+		t.Fatalf("decode list json: %v\nraw:\n%s", jerr, stdout)
+	}
+	if len(listResp.Rules) != 1 || listResp.Rules[0]["id"] != id {
+		t.Fatalf("rule list --lifecycle enforced should return the graduated rule, got %#v", listResp.Rules)
+	}
+
+	// retrieve over a matching intent must exclude the enforced rule.
+	stdout, stderr, err = runBinary(repo, "retrieve", "checking unchecked errors in go", "--domain", "graduatetest")
+	if err != nil {
+		t.Fatalf("retrieve failed: %v\nstderr:\n%s", err, stderr)
+	}
+	var retrieved []map[string]any
+	if jerr := json.Unmarshal([]byte(stdout), &retrieved); jerr != nil {
+		t.Fatalf("decode retrieve json: %v\nraw:\n%s", jerr, stdout)
+	}
+	for _, it := range retrieved {
+		if it["lifecycle"] == "enforced" {
+			t.Fatalf("enforced rule surfaced through the binary: %#v", retrieved)
+		}
+	}
+}

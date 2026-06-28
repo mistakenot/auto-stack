@@ -14,7 +14,7 @@ var (
 // validRuleTypes / validLifecycles back the enum checks.
 var (
 	validRuleTypes  = map[string]struct{}{RuleTypeHard: {}, RuleTypeSoft: {}}
-	validLifecycles = map[string]struct{}{LifecycleDraft: {}, LifecycleConfirmed: {}, LifecycleStale: {}}
+	validLifecycles = map[string]struct{}{LifecycleDraft: {}, LifecycleConfirmed: {}, LifecycleStale: {}, LifecycleEnforced: {}}
 )
 
 // NormalizeDomain trims and lowercases each entry, dropping empties. Order is
@@ -101,7 +101,7 @@ func ValidateRule(path string, index int, rule *Rule) []ValidationError {
 			Code:    "enum",
 			Path:    path,
 			Field:   prefix + ".lifecycle",
-			Message: "lifecycle must be one of draft, confirmed, stale",
+			Message: "lifecycle must be one of draft, confirmed, stale, enforced",
 			Value:   rule.Lifecycle,
 		})
 	}

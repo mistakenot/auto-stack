@@ -48,6 +48,16 @@ type GitProvenance struct {
 	Remote string `json:"remote"`
 }
 
+// LintRef is a record-only structured reference to a static lint check a rule
+// graduated into. The tool stores it verbatim and verifies nothing.
+type LintRef struct {
+	Linter     string `json:"linter"` // required, e.g. golangci-lint
+	Check      string `json:"check"`  // required, e.g. errcheck
+	ConfigPath string `json:"config_path,omitempty"`
+	Commit     string `json:"commit,omitempty"`
+	Note       string `json:"note,omitempty"`
+}
+
 // Event is the canonical append-only envelope. Every record in an events shard
 // decodes to one Event.
 type Event struct {
@@ -75,6 +85,9 @@ type RuleCreatedPayload struct {
 	RuleType       string   `json:"rule_type"`
 	Lifecycle      string   `json:"lifecycle"`
 	ObservationIDs []string `json:"observation_ids,omitempty"`
+	PredecessorIDs []string `json:"predecessor_ids,omitempty"`
+	SuccessorIDs   []string `json:"successor_ids,omitempty"`
+	LintRef        *LintRef `json:"lint_ref,omitempty"`
 }
 
 // FieldDelta is a single field change within a rule_edited event.

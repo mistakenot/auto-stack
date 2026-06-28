@@ -17,6 +17,9 @@ const (
 	FieldRuleType       = "rule_type"
 	FieldLifecycle      = "lifecycle"
 	FieldObservationIDs = "observation_ids"
+	FieldLintRef        = "lint_ref"
+	FieldSuccessorIDs   = "successor_ids"
+	FieldPredecessorIDs = "predecessor_ids"
 )
 
 // FoldResult is the output of folding the event log: the projected playbook plus
@@ -63,6 +66,9 @@ func Fold(sharded []events.ShardedEvent) FoldResult {
 				CreatedAt:      ev.TS,
 				UpdatedAt:      ev.TS,
 				ObservationIDs: copyNonEmpty(p.ObservationIDs),
+				PredecessorIDs: copyNonEmpty(p.PredecessorIDs),
+				SuccessorIDs:   copyNonEmpty(p.SuccessorIDs),
+				LintRef:        p.LintRef,
 			}
 			byID[p.RuleID] = rule
 			order = append(order, p.RuleID)
@@ -154,7 +160,30 @@ func applyDelta(rule *Rule, d events.FieldDelta) {
 		rule.Lifecycle = toString(d.New)
 	case FieldObservationIDs:
 		rule.ObservationIDs = copyNonEmpty(toStringSlice(d.New))
+	case FieldSuccessorIDs:
+		rule.SuccessorIDs = copyNonEmpty(toStringSlice(d.New))
+	case FieldPredecessorIDs:
+		rule.PredecessorIDs = copyNonEmpty(toStringSlice(d.New))
+	case FieldLintRef:
+		rule.LintRef = toLintRef(d.New)
 	}
+}
+
+// toLintRef decodes a delta's generic JSON value into a *events.LintRef. A nil
+// or absent value (a cleared lint_ref) decodes to nil so omitempty drops it.
+func toLintRef(v any) *events.LintRef {
+	if v == nil {
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var ref events.LintRef
+	if json.Unmarshal(b, &ref) != nil {
+		return nil
+	}
+	return &ref
 }
 
 // copyNonEmpty returns a copy of src, or nil when src is empty, so an absent

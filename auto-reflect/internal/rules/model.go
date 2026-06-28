@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mistakenot/auto-reflect/internal/events"
 	"github.com/mistakenot/auto-shared/config"
 )
 
@@ -29,6 +30,7 @@ const (
 	LifecycleDraft     = "draft"
 	LifecycleConfirmed = "confirmed"
 	LifecycleStale     = "stale"
+	LifecycleEnforced  = "enforced"
 )
 
 // Rule is the folded projection of a rule's create/edit history. Rules are never
@@ -48,6 +50,13 @@ type Rule struct {
 	// generalizes. Empty for rules created directly via `rule create`; populated
 	// by `consolidate`. Optional on legacy rules, so validation never requires it.
 	ObservationIDs []string `json:"observation_ids,omitempty"`
+	// PredecessorIDs / SuccessorIDs record rule lineage (the rules this one
+	// supersedes / was superseded by). Declared now; populated in a later phase.
+	PredecessorIDs []string `json:"predecessor_ids,omitempty"`
+	SuccessorIDs   []string `json:"successor_ids,omitempty"`
+	// LintRef is the record-only static lint check this rule graduated into. Set
+	// by `rule graduate`; nil otherwise. The tool stores it verbatim.
+	LintRef *events.LintRef `json:"lint_ref,omitempty"`
 }
 
 // Conflict records a from_version mismatch resolved during a fold. The losing

@@ -201,6 +201,57 @@ func TestFoldEmptyProvenanceStaysNil(t *testing.T) {
 	}
 }
 
+func TestFoldLineageAndLintRefFromCreate(t *testing.T) {
+	// A rule_created carrying lineage + lint_ref folds those fields onto the rule.
+	result := Fold([]events.ShardedEvent{
+		shardedRuleEvent(t, 1, "2026-06-10T10:00:00Z", events.TypeRuleCreated, events.RuleCreatedPayload{
+			RuleID: "r-cccccccc", Domain: []string{"go"}, UseWhen: "x", Content: "c",
+			CausalNote: "n", RuleType: RuleTypeSoft, Lifecycle: LifecycleEnforced,
+			PredecessorIDs: []string{"r-00000001"},
+			SuccessorIDs:   []string{"r-00000002"},
+			LintRef:        &events.LintRef{Linter: "golangci-lint", Check: "errcheck"},
+		}),
+	})
+	r := findRule(t, result.Playbook, "r-cccccccc")
+	if len(r.PredecessorIDs) != 1 || r.PredecessorIDs[0] != "r-00000001" {
+		t.Fatalf("predecessor_ids not folded: %#v", r.PredecessorIDs)
+	}
+	if len(r.SuccessorIDs) != 1 || r.SuccessorIDs[0] != "r-00000002" {
+		t.Fatalf("successor_ids not folded: %#v", r.SuccessorIDs)
+	}
+	if r.LintRef == nil || r.LintRef.Linter != "golangci-lint" || r.LintRef.Check != "errcheck" {
+		t.Fatalf("lint_ref not folded: %#v", r.LintRef)
+	}
+}
+
+func TestFoldLifecycleToEnforcedWithLintRefDelta(t *testing.T) {
+	// A graduate edit carries a lifecycle->enforced delta plus a lint_ref delta in
+	// one event; both fold onto the rule with a single version bump.
+	result := Fold([]events.ShardedEvent{
+		shardedRuleEvent(t, 1, "2026-06-10T10:00:00Z", events.TypeRuleCreated, events.RuleCreatedPayload{
+			RuleID: "r-dddddddd", Domain: []string{"go"}, UseWhen: "x", Content: "c",
+			CausalNote: "n", RuleType: RuleTypeSoft, Lifecycle: LifecycleConfirmed,
+		}),
+		shardedRuleEvent(t, 2, "2026-06-10T11:00:00Z", events.TypeRuleEdited, events.RuleEditedPayload{
+			RuleID: "r-dddddddd", FromVersion: 1, ToVersion: 2,
+			Deltas: []events.FieldDelta{
+				{Field: FieldLifecycle, Old: LifecycleConfirmed, New: LifecycleEnforced},
+				{Field: FieldLintRef, Old: nil, New: &events.LintRef{Linter: "golangci-lint", Check: "errcheck"}},
+			},
+		}),
+	})
+	r := findRule(t, result.Playbook, "r-dddddddd")
+	if r.Lifecycle != LifecycleEnforced {
+		t.Fatalf("lifecycle = %q, want enforced", r.Lifecycle)
+	}
+	if r.Version != 2 {
+		t.Fatalf("version = %d, want 2 (single bump)", r.Version)
+	}
+	if r.LintRef == nil || r.LintRef.Check != "errcheck" {
+		t.Fatalf("lint_ref delta not folded: %#v", r.LintRef)
+	}
+}
+
 func findRule(t *testing.T, pb Playbook, id string) Rule {
 	t.Helper()
 	for i := range pb.Rules {
