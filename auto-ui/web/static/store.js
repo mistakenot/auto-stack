@@ -20,16 +20,18 @@ import { parseDocChanged, matchesDoc } from "./docevents.js";
 
 // --- Normalised state (single source of truth) ----------------------------
 //
-// The shape mirrors the Solution tab's <pd-code>. selection mirrors the hash
-// (no host dimension — D-3). openDoc mirrors content.js's per-doc view-model;
-// docsByProject is the AC-8 cache; events is the recent doc.changed + ping ring
-// that /debug's event log reads.
+// The shape mirrors the Solution tab's <pd-code>. selection mirrors the hash,
+// now including a host dimension (the `host=` hash param — D-3) so identity is
+// (hostId, projectId) end to end (GR-F8). openDoc mirrors content.js's per-doc
+// view-model; docsByProject is the AC-8 cache (keyed by host+project+worktree);
+// events is the recent doc.changed + ping ring that /debug's event log reads.
 function initialState() {
   return {
     conn: { status: "connecting", reconnects: 0 }, // from rpc.onStatus
-    projects: [], // project.list -> [{id,name,path,remote}]
-    docsByProject: {}, // { [project]: [{id,path,type}] } — doc.list cache (AC-8)
-    selection: { project: "", path: "", worktree: "" }, // mirrors the hash (no host — D-3)
+    projects: [], // project.list -> [{id,name,path,remote,host}]
+    backends: [], // backends.list -> [{hostId,uri,connected,relayDegraded,lastErr}] — per-backend health (046 Phase 3)
+    docsByProject: {}, // { [docsKey(host,project,worktree)]: [{id,path,type}] } — doc.list cache (AC-8)
+    selection: { host: "", project: "", path: "", worktree: "" }, // mirrors the hash (incl. host — D-3)
     openDoc: {
       path: "",
       type: "",
@@ -104,31 +106,41 @@ export function reducer(state, action) {
       return { ...state, projects: action.projects || [] };
     }
 
+    case "backends/set": {
+      return { ...state, backends: action.backends || [] };
+    }
+
     case "selection/set": {
-      const { project, path, worktree } = action;
+      const { host, project, path, worktree } = action;
       const s = state.selection;
-      if (s.project === project && s.path === path && s.worktree === worktree) {
+      if (
+        s.host === host &&
+        s.project === project &&
+        s.path === path &&
+        s.worktree === worktree
+      ) {
         return state;
       }
-      return { ...state, selection: { project, path, worktree } };
+      return { ...state, selection: { host, project, path, worktree } };
     }
 
     case "docs/set": {
-      const { project, worktree, docs } = action;
+      const { host, project, worktree, docs } = action;
       return {
         ...state,
         docsByProject: {
           ...state.docsByProject,
-          [docsKey(project, worktree)]: docs || [],
+          [docsKey(host, project, worktree)]: docs || [],
         },
       };
     }
 
     case "docs/invalidate": {
-      // Drop a project+worktree's cached doc.list so the next list-orchestration
-      // re-fetches (used by reconnect and by a doc.changed re-list — D-7, no TTL).
-      const { project, worktree } = action;
-      const key = docsKey(project, worktree);
+      // Drop a host+project+worktree's cached doc.list so the next
+      // list-orchestration re-fetches (used by reconnect and by a doc.changed
+      // re-list — D-7, no TTL).
+      const { host, project, worktree } = action;
+      const key = docsKey(host, project, worktree);
       if (!(key in state.docsByProject)) return state;
       const nextCache = { ...state.docsByProject };
       delete nextCache[key];
@@ -237,6 +249,12 @@ export function selectProjects(state) {
   return state.projects;
 }
 
+// selectBackends returns the per-backend health list (backends.list), driving the
+// topbar's per-backend status rows (046 Phase 3 / AC-6).
+export function selectBackends(state) {
+  return state.backends;
+}
+
 // selectActiveProject resolves the effective active project: the hash project,
 // else the first registered project (mirrors explorer.js's activeProject).
 export function selectActiveProject(state) {
@@ -246,24 +264,38 @@ export function selectActiveProject(state) {
   );
 }
 
+// selectActiveHost resolves the effective active host: the hash host if set,
+// else the host of the active project (the registry entry whose id matches
+// selectActiveProject), else the first registered project's host. This lets a
+// legacy host-less URL resolve to the sole backend's host (AC-7 backward compat).
+export function selectActiveHost(state) {
+  if (state.selection.host) return state.selection.host;
+  const active = selectActiveProject(state);
+  const entry = state.projects.find((p) => p.id === active);
+  if (entry && entry.host) return entry.host;
+  return (state.projects.length > 0 && state.projects[0].host) || "";
+}
+
 export function selectConn(state) {
   return state.conn;
 }
 
-// docsKey keys the docsByProject cache by project AND worktree, because doc.list
-// is sent with the selected worktree (fetchDocs) — two worktrees of the same
-// project list different docs, so a project-only key would serve the first
-// worktree's docs after switching. When no worktree is selected (the common
-// case) the key collapses to the bare project id, so single-worktree behaviour
-// is unchanged. Project ids are lowercase-kebab (no "@"), so the delimiter never
-// collides.
-function docsKey(project, worktree) {
-  return worktree ? project + "@" + worktree : project;
+// docsKey keys the docsByProject cache by host AND project AND worktree, because
+// doc.list is routed to a specific backend (host) and sent with the selected
+// worktree (fetchDocs): two hosts can expose the same project id (GR-F8), and two
+// worktrees of one project list different docs, so a host-or-worktree-blind key
+// would serve the wrong slice after switching. The key is fully POSITIONAL —
+// always all three fields joined by a "\0" delimiter — so it is unambiguous even
+// when some fields are empty (host/project/worktree are lowercase-kebab and never
+// contain a null byte, so the segments can't collide). This mirrors the "\0"
+// delimiter the liveness key already uses.
+function docsKey(host, project, worktree) {
+  return host + "\0" + project + "\0" + worktree;
 }
 
-// selectDocs returns the cached doc.list for a project+worktree (empty if unseen).
-export function selectDocs(state, project, worktree) {
-  return state.docsByProject[docsKey(project, worktree)] || [];
+// selectDocs returns the cached doc.list for a host+project+worktree (empty if unseen).
+export function selectDocs(state, host, project, worktree) {
+  return state.docsByProject[docsKey(host, project, worktree)] || [];
 }
 
 export function selectOpenDoc(state) {
@@ -296,7 +328,8 @@ if (typeof window !== "undefined" && window.__autoui) {
 // /debug current-state section: {project, path, type, revision, docCount, lastUpdated}.
 export function selectDebugSnapshot(state) {
   const project = selectActiveProject(state);
-  const docs = selectDocs(state, project, state.selection.worktree);
+  const host = selectActiveHost(state);
+  const docs = selectDocs(state, host, project, state.selection.worktree);
   const od = state.openDoc;
   return {
     project,
@@ -315,18 +348,23 @@ export function selectDebugSnapshot(state) {
 // URL, selection, and fetches never diverge. refreshOpenDoc is the exception:
 // it re-fetches the open doc directly (the content pane's refresh button).
 
-// selectProject routes to a fresh explore view for a project (clears path),
-// mirroring explorer.js's onPickProject.
-export function selectProject(id) {
-  setHash("explore", new URLSearchParams({ project: id }));
+// selectProject routes to a fresh explore view for a (host, project) — clears
+// path — mirroring explorer.js's onPickProject. host is included only when
+// truthy so a single-backend (host-less) URL stays clean.
+export function selectProject(host, id) {
+  const next = { project: id };
+  if (host) next.host = host;
+  setHash("explore", new URLSearchParams(next));
 }
 
-// selectDoc routes to a doc leaf, preserving the active project + worktree,
-// mirroring explorer.js's onSelectDoc.
+// selectDoc routes to a doc leaf, preserving the active host + project +
+// worktree, mirroring explorer.js's onSelectDoc.
 export function selectDoc(path) {
   const { selection } = state;
   const project = selectActiveProject(state);
+  const host = selection.host || selectActiveHost(state);
   const next = { project, path };
+  if (host) next.host = host;
   if (selection.worktree) next.worktree = selection.worktree;
   setHash("explore", new URLSearchParams(next));
 }
@@ -386,8 +424,9 @@ async function fetchProjects() {
     dispatch({ type: "projects/set", projects: res });
     if (!getState().selection.project) {
       const active = selectActiveProject(getState());
+      const host = selectActiveHost(getState());
       if (active) {
-        fetchDocs(active);
+        fetchDocs(host, active);
         fetchOpenDoc();
       }
     }
@@ -397,22 +436,41 @@ async function fetchProjects() {
   }
 }
 
-// fetchDocs lists a project's docs into the docsByProject cache, gated on
-// whenOpen(). When force is false and the project is already cached, it skips the
-// round-trip (the AC-8 warm cache). Mirrors tree.js's fetchList.
-async function fetchDocs(project, { force = false } = {}) {
+// fetchBackends loads backends.list (per-backend health) into the store, gated on
+// whenOpen() so a cold load doesn't reject "not connected". It is a plain call()
+// — NOT a subscription — re-run on initial load and on every reconnect, so the
+// status rows reflect connect/disconnect without a page reload (046 Phase 3 /
+// AC-6). Errors leave backends empty (recorded at the rpc.js layer), like
+// fetchProjects.
+async function fetchBackends() {
+  try {
+    await whenOpen();
+    const res = (await call("backends.list")) || [];
+    dispatch({ type: "backends/set", backends: res });
+  } catch {
+    // backends.list errors are recorded at the rpc.js layer; leave backends empty.
+  }
+}
+
+// fetchDocs lists a (host, project)'s docs into the docsByProject cache, gated on
+// whenOpen(). When force is false and the slice is already cached, it skips the
+// round-trip (the AC-8 warm cache). doc.list is routed to the backend via the
+// hostId param so the right host's docs are listed. Mirrors tree.js's fetchList.
+async function fetchDocs(host, project, { force = false } = {}) {
   if (!project) return;
   const worktree = getState().selection.worktree;
-  // warm cache (AC-8), keyed by project+worktree so a worktree switch re-lists.
-  if (!force && docsKey(project, worktree) in getState().docsByProject) return;
+  // warm cache (AC-8), keyed by host+project+worktree so a host or worktree
+  // switch re-lists.
+  if (!force && docsKey(host, project, worktree) in getState().docsByProject) return;
   try {
     await whenOpen();
     const params = {};
+    if (host) params.hostId = host;
     if (project) params.project = project;
     if (worktree) params.worktree = worktree;
     bumpDocListCount();
     const res = (await call("doc.list", params)) || [];
-    dispatch({ type: "docs/set", project, worktree, docs: res });
+    dispatch({ type: "docs/set", host, project, worktree, docs: res });
   } catch {
     // doc.list errors are recorded at the rpc.js layer.
   }
@@ -426,6 +484,7 @@ async function fetchDocs(project, { force = false } = {}) {
 async function fetchOpenDoc({ force = false } = {}) {
   const { selection } = getState();
   const { project, path, worktree } = selection;
+  const host = selection.host || selectActiveHost(getState());
   const type = resolveType(path);
 
   if (!path) {
@@ -473,6 +532,7 @@ async function fetchOpenDoc({ force = false } = {}) {
   try {
     await whenOpen();
     const params = { project, path };
+    if (host) params.hostId = host;
     if (worktree) params.worktree = worktree;
     const res = await call("doc.get", params);
     dispatch({
@@ -505,13 +565,15 @@ async function fetchOpenDoc({ force = false } = {}) {
 function syncFromHash() {
   const { view, params } = parseHash();
   if (view !== "explore") return;
+  const host = params.get("host") || "";
   const project = params.get("project") || "";
   const path = params.get("path") || "";
   const worktree = params.get("worktree") || "";
-  dispatch({ type: "selection/set", project, path, worktree });
+  dispatch({ type: "selection/set", host, project, path, worktree });
 
   const active = selectActiveProject(getState());
-  if (active) fetchDocs(active);
+  const activeHost = selectActiveHost(getState());
+  if (active) fetchDocs(activeHost, active);
   fetchOpenDoc();
 }
 
@@ -539,15 +601,18 @@ export function initStore() {
       // then re-fetch projects, docs, and the open doc (cache does not mask the
       // reconnect re-list — D-7 / AC-8 second clause).
       const active = selectActiveProject(getState());
+      const host = selectActiveHost(getState());
       if (active) {
         dispatch({
           type: "docs/invalidate",
+          host,
           project: active,
           worktree: getState().selection.worktree,
         });
       }
       fetchProjects();
-      if (active) fetchDocs(active, { force: true });
+      fetchBackends(); // refresh per-backend health on reconnect (AC-6)
+      if (active) fetchDocs(host, active, { force: true });
       fetchOpenDoc({ force: true });
     }
   });
@@ -571,18 +636,24 @@ export function initStore() {
     dispatch({ type: "docChanged/signal", path: c.path });
 
     const active = selectActiveProject(getState());
-    if (c.project === active) {
+    const activeHost = selectActiveHost(getState());
+    // Host-gate the re-list: a doc.changed only touches the active project's tree
+    // when its host matches the active host (mirrors matchesDoc's host rule, so a
+    // legacy host-less event still matches by project — D-5 / AC-5). Two
+    // same-named projects on different hosts never cross-refresh once events carry
+    // Host (045 stamps it).
+    if (c.project === active && (!c.host || !activeHost || c.host === activeHost)) {
       const wt = getState().selection.worktree;
-      const known = (getState().docsByProject[docsKey(active, wt)] || []).some(
-        (d) => d.path === c.path
-      );
+      const known = (
+        getState().docsByProject[docsKey(activeHost, active, wt)] || []
+      ).some((d) => d.path === c.path);
       if (!known) {
         // New doc under the active project: force a re-list so the new node
         // appears (cache invalidation by doc.changed — D-7).
-        fetchDocs(active, { force: true });
+        fetchDocs(activeHost, active, { force: true });
       } else if (c.path.endsWith(".html")) {
         // Known .html plan changed: re-list to pick up pd-meta changes (e.g. planning→executing).
-        fetchDocs(active, { force: true });
+        fetchDocs(activeHost, active, { force: true });
       }
     }
 
@@ -616,6 +687,7 @@ export function initStore() {
 
   // Initial load: mirror the hash and kick off project.list + dependent fetches.
   fetchProjects();
+  fetchBackends(); // initial per-backend health load (AC-6)
   syncFromHash();
 }
 

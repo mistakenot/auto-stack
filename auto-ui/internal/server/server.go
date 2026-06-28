@@ -93,12 +93,17 @@ func New(fsys fs.FS, mode string, opts ...Option) http.Handler {
 
 	// Shared dispatcher routes client->server RPC calls over WebSocket.
 	d := newDispatcher()
-	// Doc/project reads are pure proxies to the resolved backend — the UI owns
-	// no local copy of this data. A nil manager yields a clear error, never a
-	// local-filesystem read.
+	// Doc reads are pure proxies to the resolved backend — the UI owns no local
+	// copy of this data. A nil manager yields a clear error, never a
+	// local-filesystem read. project.list is the exception: it AGGREGATES across
+	// all connected backends (fan-out + host-tag + merge — see
+	// project_aggregate.go), so a multi-host fleet renders one flat list; doc.list
+	// and doc.get stay per-backend proxies routed by host.
 	d.Register("doc.list", proxyCall(o.mgr, "doc.list"))
 	d.Register("doc.get", proxyCall(o.mgr, "doc.get"))
-	d.Register("project.list", fanOutProjectList(o.mgr))
+	d.Register("project.list", aggregateProjectList(o.mgr))
+	// backends.list surfaces Manager.Health() so the SPA renders a per-backend status UI.
+	d.Register("backends.list", backendsList(o.mgr))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/hello", func(w http.ResponseWriter, r *http.Request) {

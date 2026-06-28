@@ -12,12 +12,12 @@
     "id": "046",
     "name": "multi-host-spa",
     "epic": "003-multi-host-architecture",
-    "status": "executing",
+    "status": "complete",
     "created": "2026-06-27"
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="..." below with the PR URL -->
-  <pd-doc title="046: multi-host-spa" status="executing" pr="pending" generated="2026-06-27">
+  <pd-doc title="046: multi-host-spa" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/107" generated="2026-06-27">
 
     <pd-tab name="Requirements">
 
@@ -247,7 +247,7 @@ P2 and P3 both depend only on P1 and touch disjoint surfaces (P2: content/tree/d
       <pd-section id="plan-phases" title="Phases">
         <pd-stepper>
 
-          <pd-phase n="1" title="Skeleton: two hosts' projects show flat + host-badged, selectable" files="auto-ui/internal/backend/manager.go,auto-ui/internal/backend/manager_test.go,auto-ui/internal/server/project_aggregate.go,auto-ui/internal/server/project_aggregate_test.go,auto-ui/internal/server/server.go,auto-ui/internal/server/project_test.go,auto-ui/web/static/store.js,auto-ui/web/static/explorer.js,auto-ui/web/static/app.css" status="todo">
+          <pd-phase n="1" title="Skeleton: two hosts' projects show flat + host-badged, selectable" files="auto-ui/internal/backend/manager.go,auto-ui/internal/backend/manager_test.go,auto-ui/internal/server/project_aggregate.go,auto-ui/internal/server/project_aggregate_test.go,auto-ui/internal/server/server.go,auto-ui/internal/server/project_test.go,auto-ui/web/static/store.js,auto-ui/web/static/explorer.js,auto-ui/web/static/app.css" status="done">
             <md><script type="text/plain">
 Walking skeleton — the thinnest path through server → store → view that puts a flat, host-tagged, selectable project list on screen for TWO backends.
 1. `manager.go`: add `type PeerRef struct{ HostID string; Peer *rpc.Peer }` + `ConnectedPeers() []PeerRef` (single-lock snapshot of connected conns). `manager_test.go`: ConnectedPeers returns only connected backends. **Verify:** `go build ./...`; `go test -race ./internal/backend/...`.
@@ -259,7 +259,7 @@ Walking skeleton — the thinnest path through server → store → view that pu
             </script></md>
           </pd-phase>
 
-          <pd-phase n="2" title="Thicken: open remote docs + host-scoped events + reload" files="auto-ui/web/static/content.js,auto-ui/web/static/tree.js,auto-ui/web/static/docevents.js,auto-ui/web/static/store.js" status="todo">
+          <pd-phase n="2" title="Thicken: open remote docs + host-scoped events + reload" files="auto-ui/web/static/content.js,auto-ui/web/static/tree.js,auto-ui/web/static/docevents.js,auto-ui/web/static/store.js" status="done">
             <md><script type="text/plain">
 Depends on P1. Make the open/refresh path fully host-correct.
 1. `content.js`: `rawURL(project,path,worktree,nonce,hostId)` adds `if (hostId) qs.set("hostId", hostId)`; call site passes `selection.host`.
@@ -270,7 +270,7 @@ Depends on P1. Make the open/refresh path fully host-correct.
             </script></md>
           </pd-phase>
 
-          <pd-phase n="3" title="Resilience + health: partial results + per-backend status UI" files="auto-ui/internal/server/project_aggregate.go,auto-ui/internal/server/backends_list_test.go,auto-ui/internal/server/project_aggregate_test.go,auto-ui/internal/server/server.go,auto-ui/web/static/store.js,auto-ui/web/static/explorer.js,auto-ui/web/static/app.css" status="todo">
+          <pd-phase n="3" title="Resilience + health: partial results + per-backend status UI" files="auto-ui/internal/server/project_aggregate.go,auto-ui/internal/server/backends_list_test.go,auto-ui/internal/server/project_aggregate_test.go,auto-ui/internal/server/server.go,auto-ui/web/static/store.js,auto-ui/web/static/explorer.js,auto-ui/web/static/app.css" status="done">
             <md><script type="text/plain">
 Depends on P1 (parallel-safe with P2 — disjoint surfaces). Harden the data path and surface backend health.
 1. `project_aggregate.go`: finalize skip-on-error → a peer whose call errors/times out is omitted (partial results), never failing the whole list; add `backendsList(mgr)` Handler → `mgr.Health()`. `server.go`: `d.Register("backends.list", backendsList(o.mgr))`.
@@ -281,7 +281,7 @@ Depends on P1 (parallel-safe with P2 — disjoint surfaces). Harden the data pat
             </script></md>
           </pd-phase>
 
-          <pd-phase n="4" title="Conformance + docs" files="docs/tasks/046-multi-host-spa/artifacts/conformance.md,auto-ui/CLAUDE.md" status="todo">
+          <pd-phase n="4" title="Conformance + docs" files="docs/tasks/046-multi-host-spa/artifacts/conformance.md,auto-ui/CLAUDE.md" status="done">
             <md><script type="text/plain">
 Depends on P1–P3.
 1. `artifacts/conformance.md` + `evidence/`: browser-driven (agent-browser) against embed + dev builds; two-backend fixture (distinct hostIDs, colliding project id) for AC-3/AC-4/AC-5/AC-6 and a single-backend fixture for AC-7. Isolated `projects.json` (never `~/.auto`). Capture `.txt`/`.json`/`.png`.

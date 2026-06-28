@@ -1,0 +1,28 @@
+URL=http://127.0.0.1:39673/?debug=1#/explore?project=shared-proj&host=alpha-host
+-- switcher --
+[
+  {
+    "host": "alpha-host",
+    "project": "shared-proj",
+    "text": "Shared Project · alpha-host",
+    "value": "alpha-host\nshared-proj"
+  }
+]
+-- host badge --
+{
+  "hostId": "alpha-host",
+  "text": "alpha-host"
+}
+-- backend-health --
+[
+  {
+    "connected": "true",
+    "hostId": "alpha-host",
+    "state": "connected"
+  }
+]
+-- conn --
+"open"
+-- nav doc-count --
+"3"
+-- doc iframe src: "/api/doc/raw?project=shared-proj&path=docs%2Ftasks%2F001-demo%2Fplan.html&v=1&hostId=alpha-host"

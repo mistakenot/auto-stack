@@ -452,18 +452,22 @@ type PeerInfo struct {
 	Peer   *rpc.Peer
 }
 
-// ConnectedPeers returns every currently connected peer. The caller can fan out
-// RPCs across all backends (e.g. project.list aggregation).
+// ConnectedPeers returns a single-lock snapshot of every currently-connected
+// backend as (hostID, peer) pairs, sorted by hostID for stable output. Pending
+// or errored backends (not yet connected, or with a nil peer) are excluded. The
+// caller can fan out RPCs across all backends (e.g. project.list aggregation)
+// without a Health()+Resolve() double lock.
 func (m *Manager) ConnectedPeers() []PeerInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var out []PeerInfo
+	out := make([]PeerInfo, 0, len(m.conns))
 	for _, c := range m.conns {
-		if c.connected {
+		if c.connected && c.peer != nil {
 			out = append(out, PeerInfo{HostID: c.hostID, Peer: c.peer})
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].HostID < out[j].HostID })
 	return out
 }
 

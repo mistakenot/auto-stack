@@ -141,6 +141,50 @@ its live refresh never fired — reading `ev.data.path` (via `docevents.js`) is 
 `rpc_ingest_test.go`'s `TestRPCIngestBroadcastAndDerive` pins `params.data.path` so the shape can't
 silently regress.
 
+## Host dimension (task 046)
+
+auto-ui is a **proxy** (post-042): it dials one or more autowatch backends
+(`auto ui backends add <uri>`), each reporting a `hostId` via `daemon.status`. UI
+identity is therefore `(hostId, projectId)` end to end (GR-F8) — two hosts can expose
+the same project id, so host disambiguates everywhere.
+
+- **Aggregating `project.list`** (`internal/server/project_aggregate.go`) fans
+  `project.list` out to every connected backend CONCURRENTLY, tags each returned
+  project with its authoritative `host` (the backend's learned hostId), and merges in
+  hostID-sorted order. A backend whose call errors is **skipped** (partial results) —
+  the list never fails because one backend is down. This replaces the single-backend
+  `Resolve("")` that errored `ambiguous host` with >1 backend.
+- **`backends.list`** (`project_aggregate.go` `backendsList`) returns
+  `Manager.Health()` verbatim — every known backend's `{hostId, uri, connected,
+  relayDegraded, lastErr}`. It is a single-lock local snapshot (no fan-out).
+- **Per-backend status UI** (`explorer.js` `BackendHealth`): one row per backend,
+  `[data-testid=backend-health]` carrying `data-host-id` + `data-connected`
+  (+ `data-state` connected/degraded/disconnected). Fed by the store's `backends`
+  slice. NB: `store.js` `fetchBackends` runs only on initial load and on a store
+  (re)connect (`onStatus` open) — there is **no** event-driven re-fetch on a passive
+  backend drop, so rows refresh on the next reconnect / page reload, not the instant a
+  backend dies. (The server's `Health()` flips immediately; gated by
+  `backends_list_test.go` + `manager_test.go`.)
+- **Host badge** (`explorer.js`): `[data-testid=host-badge][data-host-id=<activeHost>]`
+  — **always shown**, even with one host (D-4), for consistent identity.
+- **Host-aware `matchesDoc`** (`docevents.js`): a host differs only when **both** the
+  event and the target carry one (`if (target.host && c.host && c.host !== target.host)
+  return false`) — a legacy host-less event still matches by project. The re-list path
+  in `store.js`'s `on("doc.changed")` mirrors this guard. 045 stamps `Host` on relayed
+  events, so two same-named projects on different hosts never cross-refresh.
+- **`host=` hash param** (D-3): selection is `{host, project, path, worktree}`; the
+  hash carries a separate `host=`. `selectActiveHost` falls back to the active
+  project's host (then the first project's host) so a legacy host-less URL resolves to
+  the sole backend (AC-7 back-compat).
+- **`docsKey(host, project, worktree)`** (`store.js`): the `docsByProject` cache is
+  now keyed by all three (fully positional, `\0`-joined) — host AND worktree matter
+  because `doc.list` is routed to a specific backend and sent with the selected
+  worktree. The raw-doc iframe `src` and `doc.list`/`doc.get` params all carry
+  `hostId` (omitted when empty so a single-backend URL stays clean).
+
+Host-dimension acceptance is browser-driven + Go-gated — see
+`docs/tasks/046-multi-host-spa/artifacts/conformance.md` and `evidence/`.
+
 ## Debug surfaces
 
 - **`window.__autoui`** — a bounded ring of every received WS notification (`{t, method, params}`)

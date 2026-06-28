@@ -134,63 +134,6 @@ func handleDocRawProxy(mgr *backend.Manager) http.HandlerFunc {
 	}
 }
 
-// fanOutProjectList returns a Handler that calls project.list on every connected
-// backend and merges the results into a single flat array. This is necessary
-// because project.list with no host is ambiguous when multiple backends are
-// connected — unlike doc.list which targets one project (and therefore one
-// backend), the project list is cross-backend by definition.
-func fanOutProjectList(mgr *backend.Manager) Handler {
-	return func(ctx context.Context, params json.RawMessage) (any, error) {
-		if mgr == nil {
-			return nil, &rpcError{Code: codeInternalError, Message: "no backend configured"}
-		}
-
-		peers := mgr.ConnectedPeers()
-		if len(peers) == 0 {
-			return nil, &rpcError{Code: codeInternalError, Message: "no backend connected"}
-		}
-
-		// Single backend: skip the fan-out overhead.
-		if len(peers) == 1 {
-			res, err := peers[0].Peer.Call(ctx, "project.list", params)
-			if err != nil {
-				return nil, backendCallRPCError(err)
-			}
-			return res, nil
-		}
-
-		type result struct {
-			raw json.RawMessage
-			err error
-		}
-		ch := make(chan result, len(peers))
-		for _, p := range peers {
-			go func() {
-				raw, err := p.Peer.Call(ctx, "project.list", params)
-				ch <- result{raw, err}
-			}()
-		}
-
-		var merged []json.RawMessage
-		for range peers {
-			r := <-ch
-			if r.err != nil {
-				continue
-			}
-			var items []json.RawMessage
-			if err := json.Unmarshal(r.raw, &items); err != nil {
-				continue
-			}
-			merged = append(merged, items...)
-		}
-
-		if merged == nil {
-			merged = []json.RawMessage{}
-		}
-		return merged, nil
-	}
-}
-
 // resolveRPCError maps a backend.Manager.Resolve error onto a JSON-RPC error so
 // the client gets a clear failure rather than silent local data.
 func resolveRPCError(err error) *rpcError {

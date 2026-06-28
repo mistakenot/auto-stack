@@ -140,6 +140,21 @@ body {
 .switcher:hover { border-color: var(--accent-soft); }
 .switcher:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ghost); }
 
+/* active-host badge — a small inline pill identifying the active backend host.
+   Always shown (even with a single host — D-4) so identity is visible. */
+.host-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.03em;
+  color: var(--ink-soft);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 0.18rem 0.5rem;
+}
+
 /* connection indicator */
 .conn {
   display: inline-flex;
@@ -161,6 +176,56 @@ body {
 .conn[data-conn-status="connecting"] .conn-dot,
 .conn[data-conn-status="reconnecting"] .conn-dot { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* per-backend health — a compact status list in the topbar (046 Phase 3).
+   One pill per known backend, color-cued by connection state, mirroring the
+   .host-badge / .conn aesthetic. */
+.backends {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.backend {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  color: var(--ink-soft);
+  background: var(--paper-sunk);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 0.18rem 0.5rem;
+  max-width: 22rem;
+}
+.backend-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--ink-faint);
+  flex: 0 0 auto;
+}
+.backend[data-state="connected"]    .backend-dot { background: var(--ok);   box-shadow: 0 0 0 3px rgba(111,154,95,0.18); }
+.backend[data-state="disconnected"] .backend-dot { background: var(--err);  box-shadow: 0 0 0 3px rgba(196,69,47,0.18); }
+.backend[data-state="degraded"]     .backend-dot { background: var(--warn); box-shadow: 0 0 0 3px rgba(196,150,47,0.18); }
+.backend-host { font-weight: 600; color: var(--ink); }
+.backend-uri {
+  color: var(--ink-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 9rem;
+}
+.backend-label { text-transform: lowercase; }
+.backend[data-state="disconnected"] .backend-label { color: var(--err); }
+.backend[data-state="degraded"]     .backend-label { color: var(--warn); }
+.backend-err {
+  color: var(--err);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 9rem;
+}
 
 /* ───────────────────────── workbench ───────────────────────── */
 
