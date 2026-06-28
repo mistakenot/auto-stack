@@ -43,7 +43,20 @@ func newRetrieveCmd(application *app.App) *cobra.Command {
 				}
 				return nil
 			}
-			if err := writeJSON(cmd.OutOrStdout(), results); err != nil {
+			items := make([]map[string]any, 0, len(results))
+			for i := range results {
+				r := &results[i]
+				items = append(items, map[string]any{
+					"id":           r.RetrievalID,
+					"retrieval_id": r.RetrievalID,
+					"use_when":     r.UseWhen,
+					"domain":       r.Domain,
+					"rule_type":    r.RuleType,
+					"lifecycle":    r.Lifecycle,
+					"draft":        r.Draft,
+				})
+			}
+			if err := writeJSON(cmd.OutOrStdout(), items); err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
 			return nil

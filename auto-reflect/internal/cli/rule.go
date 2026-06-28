@@ -96,7 +96,7 @@ func newRuleCreateCmd(application *app.App) *cobra.Command {
 				printRuleText(cmd, "Created rule", &created)
 				return nil
 			}
-			if err := writeJSON(cmd.OutOrStdout(), map[string]any{"created": true, "scope": "repo", "rule": created}); err != nil {
+			if err := writeJSON(cmd.OutOrStdout(), mutationResult(created.ID, map[string]any{"created": true, "scope": "repo", "rule": created})); err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
 			return nil
@@ -227,7 +227,7 @@ func newRuleEditCmd(application *app.App) *cobra.Command {
 				printRuleText(cmd, "Edited rule", &edited)
 				return nil
 			}
-			if err := writeJSON(cmd.OutOrStdout(), map[string]any{"edited": true, "scope": "repo", "rule": edited}); err != nil {
+			if err := writeJSON(cmd.OutOrStdout(), mutationResult(edited.ID, map[string]any{"edited": true, "scope": "repo", "rule": edited})); err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
 			return nil
@@ -302,6 +302,8 @@ func newRuleListCmd(application *app.App) *cobra.Command {
 					"rule_type":       r.RuleType,
 					"lifecycle":       r.Lifecycle,
 					"observation_ids": r.ObservationIDs,
+					"created_at":      r.CreatedAt,
+					"updated_at":      r.UpdatedAt,
 				})
 			}
 			if err := writeJSON(cmd.OutOrStdout(), map[string]any{"scope": "repo", "rules": items}); err != nil {
@@ -562,7 +564,7 @@ func writeRuleResult(cmd *cobra.Command, outputFormat, textHeader, jsonVerb stri
 		printRuleText(cmd, textHeader, r)
 		return nil
 	}
-	if err := writeJSON(cmd.OutOrStdout(), map[string]any{jsonVerb: true, "scope": "repo", "rule": r}); err != nil {
+	if err := writeJSON(cmd.OutOrStdout(), mutationResult(r.ID, map[string]any{jsonVerb: true, "scope": "repo", "rule": r})); err != nil {
 		return &ExitError{Code: 1, Err: err}
 	}
 	return nil
