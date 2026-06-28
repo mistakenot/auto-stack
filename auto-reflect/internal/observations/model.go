@@ -42,8 +42,9 @@ const (
 type ValidationError = config.ValidationError
 
 var (
-	idRegex  = regexp.MustCompile(idPattern)
-	tagRegex = regexp.MustCompile(tagPattern)
+	idRegex     = regexp.MustCompile(idPattern)
+	tagRegex    = regexp.MustCompile(tagPattern)
+	taskIDRegex = regexp.MustCompile(`^[0-9]{3}-[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 	validKinds = map[string]struct{}{
 		KindCorrection: {}, KindPattern: {}, KindGap: {}, KindIncident: {},
@@ -64,15 +65,20 @@ type Observation struct {
 }
 
 // Input is the unpaired, pre-validation form of an observation as supplied on the
-// command line. Evidence arrives as three parallel slices paired by index:
-// Quotes[i] and Messages[i] attach to Sessions[i]. Extra quotes/messages beyond
-// the session count are a validation error; fewer is fine.
+// command line. Evidence arrives as parallel slices paired by index: Quotes[i],
+// Messages[i], EvidenceFiles[i], EvidenceCommits[i], and EvidenceLineRanges[i]
+// each attach to Sessions[i]. Extra entries beyond the session count are a
+// validation error; fewer is fine. TaskID is an optional originating-task pointer.
 type Input struct {
 	Kind                    string
 	Subject                 string
 	Sessions                []string
 	Quotes                  []string
 	Messages                []string
+	EvidenceFiles           []string
+	EvidenceCommits         []string
+	EvidenceLineRanges      []string
+	TaskID                  string
 	Context                 string
 	SuggestedGeneralization string
 	Domain                  []string
@@ -132,6 +138,10 @@ func (in *Input) Validate() []ValidationError {
 		errs = append(errs, ValidationError{Code: "required", Field: "subject", Message: "subject is required: pass --subject <what this observation is about>"})
 	}
 
+	if taskID := strings.TrimSpace(in.TaskID); taskID != "" && !taskIDRegex.MatchString(taskID) {
+		errs = append(errs, ValidationError{Code: "invalid_format", Field: "task_id", Message: "task_id must match ^[0-9]{3}-[a-z0-9]+(?:-[a-z0-9]+)*$ (e.g. 049-reflect-audit-lineage-lint)", Value: in.TaskID})
+	}
+
 	errs = append(errs, in.validateEvidence()...)
 	errs = append(errs, validateDomainTags(normalizeDomain(in.Domain))...)
 
@@ -158,6 +168,15 @@ func (in *Input) validateEvidence() []ValidationError {
 	}
 	if len(in.Messages) > len(in.Sessions) {
 		errs = append(errs, ValidationError{Code: "range", Field: "evidence", Message: "more --evidence-message than --evidence-session: messages pair by position to sessions, so supply at most one message per session", Value: len(in.Messages)})
+	}
+	if len(in.EvidenceFiles) > len(in.Sessions) {
+		errs = append(errs, ValidationError{Code: "range", Field: "evidence", Message: "more --evidence-file than --evidence-session: files pair by position to sessions, so supply at most one file per session", Value: len(in.EvidenceFiles)})
+	}
+	if len(in.EvidenceCommits) > len(in.Sessions) {
+		errs = append(errs, ValidationError{Code: "range", Field: "evidence", Message: "more --evidence-commit than --evidence-session: commits pair by position to sessions, so supply at most one commit per session", Value: len(in.EvidenceCommits)})
+	}
+	if len(in.EvidenceLineRanges) > len(in.Sessions) {
+		errs = append(errs, ValidationError{Code: "range", Field: "evidence", Message: "more --evidence-line-range than --evidence-session: line ranges pair by position to sessions, so supply at most one line range per session", Value: len(in.EvidenceLineRanges)})
 	}
 
 	return errs
@@ -195,6 +214,15 @@ func (in *Input) Payload(id string) events.ObservationPayload {
 		if i < len(in.Messages) {
 			item.MessageID = strings.TrimSpace(in.Messages[i])
 		}
+		if i < len(in.EvidenceFiles) {
+			item.File = strings.TrimSpace(in.EvidenceFiles[i])
+		}
+		if i < len(in.EvidenceLineRanges) {
+			item.LineRange = strings.TrimSpace(in.EvidenceLineRanges[i])
+		}
+		if i < len(in.EvidenceCommits) {
+			item.Commit = strings.TrimSpace(in.EvidenceCommits[i])
+		}
 		evidence = append(evidence, item)
 	}
 
@@ -205,6 +233,7 @@ func (in *Input) Payload(id string) events.ObservationPayload {
 
 	return events.ObservationPayload{
 		ObservationID:           id,
+		TaskID:                  strings.TrimSpace(in.TaskID),
 		Kind:                    strings.ToLower(strings.TrimSpace(in.Kind)),
 		Subject:                 strings.TrimSpace(in.Subject),
 		Evidence:                evidence,

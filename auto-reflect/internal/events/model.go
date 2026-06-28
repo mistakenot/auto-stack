@@ -159,19 +159,26 @@ type FeedbackPayload struct {
 
 // ObservationEvidence links an observation to the session/message/quote it was
 // grounded in. SessionID is required; MessageID and Quote are optional refinements.
+// File, LineRange, and Commit are optional source-provenance refinements that
+// pin the evidence to a concrete file/line/commit in the repository.
 type ObservationEvidence struct {
 	SessionID string `json:"session_id"`
 	MessageID string `json:"message_id,omitempty"`
 	Quote     string `json:"quote,omitempty"`
+	File      string `json:"file,omitempty"`
+	LineRange string `json:"line_range,omitempty"`
+	Commit    string `json:"commit,omitempty"`
 }
 
 // ObservationPayload is the canonical working-memory record: a situated finding
 // (correction|pattern|gap|incident) backed by evidence, separate from the rules
 // it may later be consolidated into. This shape is a contract that consolidation
-// (1.4) and the reader API (1.5) depend on.
+// (1.4) and the reader API (1.5) depend on. TaskID is an optional pointer to the
+// task this observation arose from.
 type ObservationPayload struct {
-	ObservationID           string                `json:"observation_id"` // ob-[0-9a-f]{8}
-	Kind                    string                `json:"kind"`           // correction|pattern|gap|incident
+	ObservationID           string                `json:"observation_id"`    // ob-[0-9a-f]{8}
+	TaskID                  string                `json:"task_id,omitempty"` // optional originating task, e.g. 049-reflect-audit-lineage-lint
+	Kind                    string                `json:"kind"`              // correction|pattern|gap|incident
 	Subject                 string                `json:"subject"`
 	Evidence                []ObservationEvidence `json:"evidence"`
 	Context                 string                `json:"context,omitempty"`
