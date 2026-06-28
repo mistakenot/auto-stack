@@ -1,4 +1,45 @@
 {
   "schema_version": 1,
-  "rules": []
+  "folded_through": {
+    "services-2026-06-28-51d47a9a.jsonl": 20
+  },
+  "rules": [
+    {
+      "id": "r-15c4fec1",
+      "domain": [
+        "multi-agent",
+        "workflow"
+      ],
+      "use_when": "fanning out background sub-agents that each produce data you must persist",
+      "content": "Gate the final write/commit on confirmed delivery from EVERY sub-agent; never commit on idle-notifications or a timeout, and mark ledger items processed only after results are collected",
+      "causal_note": "a straggler agent delivered after commit/push, causing a messy follow-up and silent data loss",
+      "rule_type": "soft",
+      "lifecycle": "confirmed",
+      "version": 2,
+      "created_at": "2026-06-28T13:50:21Z",
+      "updated_at": "2026-06-28T13:50:31Z",
+      "observation_ids": [
+        "ob-00bba5e5"
+      ]
+    },
+    {
+      "id": "r-b20fd2cd",
+      "domain": [
+        "git",
+        "planning"
+      ],
+      "use_when": "creating a new numbered task or doc folder (docs/tasks/NNN-*)",
+      "content": "Before creating a numbered folder, verify the ID is free both locally (ls) and on origin/main (git ls-tree); hard-stop with an ID-CONFLICT marker if taken",
+      "causal_note": "parallel planning agents pick the same next number and collide on merge",
+      "rule_type": "soft",
+      "lifecycle": "confirmed",
+      "version": 2,
+      "created_at": "2026-06-28T13:50:21Z",
+      "updated_at": "2026-06-28T13:50:31Z",
+      "observation_ids": [
+        "ob-695dc6c3",
+        "ob-a123d61d"
+      ]
+    }
+  ]
 }
