@@ -33,7 +33,18 @@ func newSelectCmd(application *app.App) *cobra.Command {
 				}
 				return nil
 			}
-			if err := writeJSON(cmd.OutOrStdout(), results); err != nil {
+			items := make([]map[string]any, 0, len(results))
+			for i := range results {
+				r := &results[i]
+				items = append(items, map[string]any{
+					"id":          r.FeedbackID,
+					"feedback_id": r.FeedbackID,
+					"content":     r.Content,
+					"causal_note": r.CausalNote,
+					"rule_type":   r.RuleType,
+				})
+			}
+			if err := writeJSON(cmd.OutOrStdout(), items); err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
 			return nil

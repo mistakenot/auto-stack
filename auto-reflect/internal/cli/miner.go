@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/mistakenot/auto-reflect/internal/app"
 	"github.com/mistakenot/auto-reflect/internal/etlread"
@@ -10,6 +11,7 @@ import (
 	"github.com/mistakenot/auto-reflect/internal/gitutil"
 	"github.com/mistakenot/auto-reflect/internal/miner"
 	sharedconfig "github.com/mistakenot/auto-shared/config"
+	sharedgit "github.com/mistakenot/auto-shared/git"
 	"github.com/spf13/cobra"
 )
 
@@ -263,7 +265,27 @@ func newMinerStatusCmd(application *app.App) *cobra.Command {
 
 			coverage := miner.FoldCoverage(allEvents)
 
-			// Scope filter (same as miner.Next/PendingCount)
+			// Pending is the single-sourced count: it comes from the SAME
+			// miner.PendingCount that `reflect stats` (loop.Stats) calls, so the
+			// two surfaces can never drift (task 052 F2). The session universe it
+			// counts is documented on PendingCount: in-scope, top-level (non-
+			// subagent) sessions not terminal at the current miner.Version
+			// ("failed" acks stay retryable). checkSource already verified the
+			// ETL source is OK, so src is OK here.
+			// Pass `all` so the pending universe matches the total/mined loop below:
+			// scoped to this repo by default, all-workspace under --all. Otherwise
+			// total_sessions == pending + mined would break under --all (pending
+			// stays repo-scoped while total/mined go all-workspace).
+			pending, _, err := miner.PendingCount(repoRoot, root, all)
+			if err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("count pending: %w", err)}
+			}
+
+			// Scope filter for the total/mined/by_status breakdown. This mirrors
+			// the scope logic in miner.PendingCount EXACTLY (same normalizeRemote,
+			// same subagent + terminal-version filtering) so that, by construction,
+			// total_sessions == pending + mined. Any drift here would re-introduce
+			// the F2 inconsistency between the pending count and the coverage.
 			var scopeRemote string
 			var scopeWorkspace string
 			if !all {
@@ -277,7 +299,6 @@ func newMinerStatusCmd(application *app.App) *cobra.Command {
 			}
 
 			totalSessions := 0
-			pending := 0
 			byStatus := make(map[events.AckStatus]int)
 			totalObservations := 0
 			minedCount := 0
@@ -295,7 +316,7 @@ func newMinerStatusCmd(application *app.App) *cobra.Command {
 							continue
 						}
 					} else if scopeWorkspace != "" {
-						if len(s.Workspace) < len(scopeWorkspace) || s.Workspace[:len(scopeWorkspace)] != scopeWorkspace {
+						if !strings.HasPrefix(s.Workspace, scopeWorkspace) {
 							continue
 						}
 					}
@@ -305,7 +326,8 @@ func newMinerStatusCmd(application *app.App) *cobra.Command {
 
 				state, ok := coverage[s.ID]
 				if !ok || state.MaxTerminalVersion < miner.Version {
-					pending++
+					// Not terminal at the current version: counted by PendingCount,
+					// not part of the mined/by_status breakdown.
 					continue
 				}
 
@@ -461,26 +483,23 @@ func parseAckStatus(raw string) (events.AckStatus, error) {
 	}
 }
 
-// normalizeRemoteForScope is a local helper that matches the scope-filtering
-// logic in miner.Next — normalize via sharedgit then strip scheme for
-// scheme-agnostic comparison. We reuse the shared git NormalizeRemoteURL
-// and strip schemes ourselves to stay in sync with the miner package.
+// normalizeRemoteForScope produces a stable scope-comparison key from a remote
+// URL. It MUST stay byte-identical to the miner package's unexported
+// normalizeRemote (miner/miner.go): canonicalize via sharedgit.NormalizeRemoteURL
+// (lowercases the host, converts ssh/scp forms to https, strips a trailing
+// ".git" and embedded credentials), then strip the scheme for a scheme-agnostic
+// key. The earlier strip-only version skipped NormalizeRemoteURL, so a
+// non-canonical session remote (e.g. a ".git"-suffixed or ssh-form value that
+// slipped through ETL) failed to match the canonical scope key and was dropped
+// from `miner status` while miner.PendingCount still counted it — the task 052
+// F2 divergence. Keeping this identical to miner.normalizeRemote keeps the
+// status total/mined breakdown reconcilable with the single-sourced pending.
 func normalizeRemoteForScope(raw string) string {
-	// This mirrors the miner package's normalizeRemote. Since that function
-	// is unexported, we replicate the minimal logic: use gitutil's
-	// normalizeRemote (which already strips scheme) via DetectRepoLenient
-	// which returns the normalized remote. The raw value from
-	// DetectRepoLenient is already normalized, so just pass through.
-	// For sessions from ETL, we need to do a comparable normalization.
-	// Actually, for sessions the remote comes from the parquet data and
-	// is normalized by auto-etl using sharedgit.NormalizeRemoteURL which
-	// yields "https://host/path". The gitutil normalizeRemote strips scheme
-	// to "host/path". We need to match them, so strip scheme prefixes.
-	result := raw
+	n := sharedgit.NormalizeRemoteURL(raw)
 	for _, prefix := range []string{"https://", "http://", "ssh://", "git://"} {
-		if len(result) > len(prefix) && result[:len(prefix)] == prefix {
-			return result[len(prefix):]
+		if after, ok := strings.CutPrefix(n, prefix); ok {
+			return after
 		}
 	}
-	return result
+	return n
 }

@@ -368,7 +368,8 @@ func (s *Service) Stats() (StatsReport, error) {
 	autoDir, adErr := sharedconfig.AutoDir()
 	if adErr == nil {
 		etlDir := filepath.Join(autoDir, "etl", "output")
-		pending, src, err := miner.PendingCount(repo.Root, etlDir)
+		// stats is always current-repo scoped (allWorkspaces=false).
+		pending, src, err := miner.PendingCount(repo.Root, etlDir, false)
 		if err == nil && src == etlread.SourceOK {
 			report.PendingToMine = &pending
 		}

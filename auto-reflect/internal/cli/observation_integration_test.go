@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
 
 // observationAddResp mirrors the `observation add` JSON envelope.
 type observationAddResp struct {
-	Created     bool `json:"created"`
+	ID          string `json:"id"`
+	Created     bool   `json:"created"`
 	Observation struct {
 		ID            string   `json:"id"`
 		TS            string   `json:"ts"`
@@ -107,6 +109,70 @@ func TestObservationAddWritesEventOnDisk(t *testing.T) {
 	}
 	if got[0]["observation_id"] != resp.Observation.ObservationID {
 		t.Fatalf("on-disk observation_id mismatch: %#v", got[0])
+	}
+}
+
+var obIDRe = regexp.MustCompile(`^ob-[0-9a-f]{8}$`)
+
+// TestObservationAddExposesTopLevelID asserts the uniform envelope surfaces a
+// predictable top-level .id matching ^ob-[0-9a-f]{8}$ that equals the nested
+// observation_id.
+func TestObservationAddExposesTopLevelID(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AUTO_SESSION_ID", "obs-id")
+	repo := initGitRepo(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	gitAddCommit(t, repo, "seed")
+
+	resp := addObservation(t, repo,
+		"--kind", "gap", "--subject", "top level id", "--evidence-session", "s1")
+	if !obIDRe.MatchString(resp.ID) {
+		t.Fatalf("expected top-level .id matching ^ob-[0-9a-f]{8}$, got %q", resp.ID)
+	}
+	if resp.ID != resp.Observation.ObservationID {
+		t.Fatalf("top-level .id %q != .observation.observation_id %q", resp.ID, resp.Observation.ObservationID)
+	}
+}
+
+// TestObservationAddIsIdempotent asserts content-derived ids: re-adding an
+// identical observation mints the same id.
+func TestObservationAddIsIdempotent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AUTO_SESSION_ID", "obs-idem")
+	repo := initGitRepo(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	gitAddCommit(t, repo, "seed")
+
+	args := []string{"--kind", "gap", "--subject", "same finding", "--evidence-session", "s1", "--domain", "docs"}
+	first := addObservation(t, repo, args...)
+	second := addObservation(t, repo, args...)
+	if first.ID == "" {
+		t.Fatalf("expected a non-empty content-derived id")
+	}
+	if first.ID != second.ID {
+		t.Fatalf("expected identical content to mint identical id, got %q then %q", first.ID, second.ID)
+	}
+}
+
+// TestObservationListElementsCarryID asserts every list element carries a
+// non-empty top-level id (the `list | jq '.observations[].id'` contract).
+func TestObservationListElementsCarryID(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AUTO_SESSION_ID", "obs-list-id")
+	repo := initGitRepo(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	gitAddCommit(t, repo, "seed")
+
+	addObservation(t, repo, "--kind", "gap", "--subject", "has id", "--evidence-session", "s1")
+	listed := listObservations(t, repo)
+	if len(listed.Observations) != 1 {
+		t.Fatalf("expected 1 observation, got %d", len(listed.Observations))
+	}
+	if strings.TrimSpace(listed.Observations[0].ID) == "" {
+		t.Fatalf("expected non-empty .observations[].id, got %#v", listed.Observations[0])
 	}
 }
 

@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/mistakenot/auto-reflect/internal/app"
 	"github.com/mistakenot/auto-reflect/internal/config"
@@ -49,6 +50,10 @@ func newInitCmd(application *app.App) *cobra.Command {
 			if err := os.MkdirAll(eventsDir, 0o755); err != nil {
 				return &ExitError{Code: 1, Err: fmt.Errorf("create events directory: %w", err)}
 			}
+			gitignoreCreated, err := ensureStateGitignore(stateDir)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
 			playbookCreated, err := ensurePlaybook(playbookPath)
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
@@ -61,6 +66,11 @@ func newInitCmd(application *app.App) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "Created playbook.json.")
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), "Playbook already exists.")
+			}
+			if gitignoreCreated {
+				fmt.Fprintln(cmd.OutOrStdout(), "Created .gitignore (ignores playbook.json; events/ stays tracked).")
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), ".gitignore already exists.")
 			}
 			return nil
 		},
@@ -96,6 +106,24 @@ func initGlobalSettings(cmd *cobra.Command) error {
 		fmt.Fprintln(cmd.OutOrStdout(), "Reflect settings.json already exists.")
 	}
 	return nil
+}
+
+// ensureStateGitignore writes a `.gitignore` into the reflect state dir that
+// ignores the disposable folded snapshot (playbook.json) while leaving the
+// canonical append-only events/ log tracked (F9/D-2). It is idempotent
+// (stat-then-skip), mirroring auto-doc's init, so re-running init never
+// overwrites or duplicates an existing file.
+func ensureStateGitignore(stateDir string) (bool, error) {
+	gitignorePath := filepath.Join(stateDir, ".gitignore")
+	if _, err := os.Stat(gitignorePath); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, fmt.Errorf("stat .gitignore: %w", err)
+	}
+	if err := os.WriteFile(gitignorePath, []byte("playbook.json\n"), 0o644); err != nil {
+		return false, fmt.Errorf("write .gitignore: %w", err)
+	}
+	return true, nil
 }
 
 func ensurePlaybook(playbookPath string) (bool, error) {

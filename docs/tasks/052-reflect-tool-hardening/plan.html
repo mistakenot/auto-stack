@@ -16,7 +16,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="052: reflect-tool-hardening" status="executing" pr="pending" generated="2026-06-28" next-prompt="/execute-task 052">
+  <pd-doc title="052: reflect-tool-hardening" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/116" generated="2026-06-28" next-prompt="/execute-task 052">
     <pd-tab name="Requirements">
 
       <pd-section id="problem" title="Problem">
@@ -645,7 +645,7 @@ flowchart LR
       <pd-section id="phases" title="Phases">
         <pd-stepper>
 
-          <pd-phase n="1" title="Foundations + walking skeleton" status="todo"
+          <pd-phase n="1" title="Foundations + walking skeleton" status="done"
             files="auto-reflect/internal/idhash/idhash.go,auto-reflect/internal/idhash/idhash_test.go,auto-reflect/internal/cli/output.go,auto-reflect/internal/observations/model.go,auto-reflect/internal/observations/model_test.go,auto-reflect/internal/cli/observation.go,auto-reflect/internal/cli/observation_integration_test.go">
             <md><script type="text/plain">
 Thin path through every layer the task touches: id minting → command → output
@@ -674,7 +674,7 @@ Thin path through every layer the task touches: id minting → command → outpu
             </script></md>
           </pd-phase>
 
-          <pd-phase n="2" title="Rule content ids + consolidate determinism" status="todo" depends-on="1"
+          <pd-phase n="2" title="Rule content ids + consolidate determinism" status="done" depends-on="1"
             files="auto-reflect/internal/rules/model.go,auto-reflect/internal/cli/consolidate.go,auto-reflect/internal/cli/rule.go,auto-reflect/internal/cli/consolidate_integration_test.go,auto-reflect/internal/loop/service_test.go">
             <md><script type="text/plain">
 1. `rules/model.go`: `NewRuleID` takes canonical parts
@@ -698,7 +698,7 @@ Thin path through every layer the task touches: id minting → command → outpu
             </script></md>
           </pd-phase>
 
-          <pd-phase n="3" title="Envelope rollout + rule timestamps" status="todo" depends-on="1,2"
+          <pd-phase n="3" title="Envelope rollout + rule timestamps" status="done" depends-on="1,2"
             files="auto-reflect/internal/cli/rule.go,auto-reflect/internal/cli/retrieve.go,auto-reflect/internal/cli/select.go,auto-reflect/internal/cli/feedback.go,auto-reflect/internal/rules/projection_test.go">
             <md><script type="text/plain">
 1. `rule.go`: `create/edit/promote/retire/graduate` return top-level `.id`
@@ -718,7 +718,7 @@ Thin path through every layer the task touches: id minting → command → outpu
             </script></md>
           </pd-phase>
 
-          <pd-phase n="4" title="Single-source pending count" status="todo" depends-on="1"
+          <pd-phase n="4" title="Single-source pending count" status="done" depends-on="1"
             files="auto-reflect/internal/cli/miner.go,auto-reflect/internal/cli/miner_integration_test.go">
             <md><script type="text/plain">
 1. **First reproduce** the divergence: a test that drives `miner status` and
@@ -735,7 +735,7 @@ Thin path through every layer the task touches: id minting → command → outpu
             </script></md>
           </pd-phase>
 
-          <pd-phase n="5" title="gap list command" status="todo" depends-on="1"
+          <pd-phase n="5" title="gap list command" status="done" depends-on="1"
             files="auto-reflect/internal/cli/gap.go,auto-reflect/internal/cli/gap_integration_test.go,auto-reflect/internal/cli/root.go">
             <md><script type="text/plain">
 1. Add `cli/gap.go` `newGapCmd` → `gap list`: read `feedback` events
@@ -753,7 +753,7 @@ Thin path through every layer the task touches: id minting → command → outpu
             </script></md>
           </pd-phase>
 
-          <pd-phase n="6" title="doctor command" status="todo" depends-on="5"
+          <pd-phase n="6" title="doctor command" status="done" depends-on="5"
             files="auto-reflect/internal/cli/doctor.go,auto-reflect/internal/cli/doctor_integration_test.go,auto-reflect/internal/cli/root.go">
             <md><script type="text/plain">
 1. Add `cli/doctor.go` mirroring `auto-graph/internal/cli/doctor.go`:
@@ -771,7 +771,7 @@ Thin path through every layer the task touches: id minting → command → outpu
             </script></md>
           </pd-phase>
 
-          <pd-phase n="7" title="Docs, init gitignore, cleanup, e2e" status="todo" depends-on="2,3,4,6"
+          <pd-phase n="7" title="Docs, init gitignore, cleanup, e2e" status="done" depends-on="2,3,4,6"
             files="auto-reflect/internal/cli/init.go,auto-reflect/internal/cli/init_test.go,auto-reflect/internal/cli/quickstart.go,auto-reflect/internal/loop/feedback.go,auto-reflect/internal/miner/score.go,auto-reflect/cmd/autoreflect/e2e_loop_test.go,auto-reflect/cmd/autoreflect/e2e_lifecycle_test.go,auto-reflect/CLAUDE.md,.claude/skills/reflect-playbook/SKILL.md,.claude/skills/reflect-playbook/references/retrieve.md,.claude/skills/reflect-playbook/references/observe.md,.claude/skills/reflect-playbook/references/mine.md,.claude/skills/reflect-playbook/references/consolidate.md,docs/reflection/observations.yaml">
             <md><script type="text/plain">
 1. `init.go`: after `MkdirAll(eventsDir)`, write `.auto/reflect/.gitignore`

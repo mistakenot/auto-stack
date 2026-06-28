@@ -22,6 +22,7 @@ type applied struct {
 	Op             string      `json:"op"`
 	RuleID         string      `json:"rule_id"`
 	ObservationIDs []string    `json:"observation_ids,omitempty"`
+	ChildIDs       []string    `json:"child_ids,omitempty"`
 	Note           string      `json:"note,omitempty"`
 	Rule           *rules.Rule `json:"rule,omitempty"`
 }
@@ -104,12 +105,26 @@ func newConsolidateCmd(application *app.App) *cobra.Command {
 				proc.attachFoldedRules(refolded)
 			}
 
-			result := map[string]any{
+			// Top-level ids carry the actionable result id(s) of each applied op, in
+			// order, so a consumer can thread them straight into `rule promote` without
+			// walking applied[]. For a split that's the new child draft ids (the parent
+			// is being retired to stale and isn't promotable); for every other op it's
+			// the affected rule's id. Dry-run and apply mint the same ids from the same
+			// content.
+			ids := make([]string, 0, len(proc.appliedT))
+			for i := range proc.appliedT {
+				if a := &proc.appliedT[i]; len(a.ChildIDs) > 0 {
+					ids = append(ids, a.ChildIDs...)
+				} else {
+					ids = append(ids, a.RuleID)
+				}
+			}
+			result := mutationResultIDs(ids, map[string]any{
 				"applied":   proc.appliedT,
 				"skipped":   proc.skippedT,
 				"conflicts": proc.conflicts,
 				"dry_run":   dryRun,
-			}
+			})
 			if outputFormat == "text" {
 				printConsolidateText(cmd, proc, dryRun)
 				return nil
@@ -199,7 +214,6 @@ func (c *consolidator) createDraft(d *consolidate.Delta) {
 
 	prov := consolidate.UnionObservationIDs(nil, d.ObservationIDs)
 	candidate := rules.Rule{
-		ID:             rules.NewRuleID(),
 		Domain:         domain,
 		UseWhen:        useWhen,
 		Content:        strings.TrimSpace(d.Content),
@@ -209,6 +223,9 @@ func (c *consolidator) createDraft(d *consolidate.Delta) {
 		Version:        1,
 		ObservationIDs: prov,
 	}
+	// Content-derived id so dry-run and apply mint the same id from the same
+	// content and re-running an identical consolidate is idempotent.
+	candidate.ID = rules.NewRuleID(candidate.CanonicalParts()...)
 	if errs := rules.ValidateRule("", 0, &candidate); len(errs) > 0 {
 		c.skip(d, "invalid draft rule: "+joinValidation(errs))
 		return
@@ -482,7 +499,6 @@ func (c *consolidator) split(d *consolidate.Delta) {
 			ruleType = rules.RuleTypeSoft
 		}
 		child := rules.Rule{
-			ID:             rules.NewRuleID(),
 			Domain:         rules.NormalizeDomain(spec.Domain),
 			UseWhen:        strings.TrimSpace(spec.UseWhen),
 			Content:        strings.TrimSpace(spec.Content),
@@ -493,6 +509,8 @@ func (c *consolidator) split(d *consolidate.Delta) {
 			ObservationIDs: inheritedObs,
 			PredecessorIDs: []string{current.ID},
 		}
+		// Content-derived id so each child is stable across dry-run and apply.
+		child.ID = rules.NewRuleID(child.CanonicalParts()...)
 		if errs := rules.ValidateRule("", 0, &child); len(errs) > 0 {
 			c.skip(d, fmt.Sprintf("invalid split child %d: %s", i, joinValidation(errs)))
 			return
@@ -533,7 +551,7 @@ func (c *consolidator) split(d *consolidate.Delta) {
 		siblingKeys[key] = i
 	}
 
-	entry := applied{Op: consolidate.OpSplit, RuleID: current.ID, ObservationIDs: inheritedObs, Note: "split into " + strings.Join(childIDs, ", ")}
+	entry := applied{Op: consolidate.OpSplit, RuleID: current.ID, ChildIDs: childIDs, ObservationIDs: inheritedObs, Note: "split into " + strings.Join(childIDs, ", ")}
 	if c.dryRun {
 		c.appliedT = append(c.appliedT, entry)
 		return

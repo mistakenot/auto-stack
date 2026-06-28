@@ -63,7 +63,7 @@ func newObservationAddCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1}
 			}
 
-			id := observations.NewObservationID()
+			id := observations.NewObservationID(in.CanonicalParts()...)
 			payload := in.Payload(id)
 
 			stored, err := events.AppendEvent(application.CWD, events.TypeObservation, payload, events.AppendOptions{})
@@ -80,7 +80,8 @@ func newObservationAddCmd(application *app.App) *cobra.Command {
 				printObservationText(cmd, "Recorded observation", &obs)
 				return nil
 			}
-			if err := writeJSON(cmd.OutOrStdout(), map[string]any{"created": true, "scope": "repo", "observation": obs}); err != nil {
+			result := mutationResult(obs.ObservationID, map[string]any{"created": true, "scope": "repo", "observation": obs})
+			if err := writeJSON(cmd.OutOrStdout(), result); err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
 			return nil

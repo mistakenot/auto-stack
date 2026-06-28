@@ -14,7 +14,18 @@ import (
 	"github.com/mistakenot/auto-reflect/internal/gitutil"
 )
 
-// Feedback outcome enum values.
+// Feedback outcome enum values. `outcome` records how the *task* the agent was
+// working on ended, captured on the feedback event that closes a retrieval loop:
+//
+//   - success   — the task was completed as intended.
+//   - partial   — some of the task landed; the rest was dropped or deferred.
+//   - fail       — the task was attempted but did not succeed.
+//   - abandoned — the task was given up before an outcome was reached.
+//
+// This is a DIFFERENT dimension from the miner ack status
+// (mined|empty|failed|skipped, see internal/miner), which records how *mining a
+// session for observations* went, not how a coding task ended. A malformed
+// outcome is rejected by validateFeedback naming this exact valid set.
 const (
 	OutcomeSuccess   = "success"
 	OutcomePartial   = "partial"

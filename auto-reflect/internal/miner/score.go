@@ -48,7 +48,12 @@ func ComputeSignals(msgs []etlread.MsgSignalRow) events.Signals {
 		sig.LengthFloorApplied = true
 	}
 
-	// Corrections per 100 user messages
+	// CorrectionDensity is the count of user messages matching correctionPatterns
+	// (an agent being told "no", "wrong", "actually", "fix this", etc.) per 100
+	// user-role messages — i.e. how often the human had to course-correct the
+	// agent, normalized for conversation length. It is the strongest friction
+	// signal: Score weights it at 0.4 (vs 0.25 tool errors / 0.2 failure markers
+	// / 0.15 AskUser), so dense corrections rank a session high for mining.
 	if userMsgCount > 0 {
 		sig.CorrectionDensity = safeDiv(float64(corrections)*100, float64(userMsgCount))
 	}

@@ -134,28 +134,44 @@ auto reflect rebuild                       # force a refold of the playbook snap
 
 The loop mints ids you must thread from one step to the next. Capture them with jq.
 
+**Uniform id envelope.** Every command exposes a predictable top-level id so you
+never have to know each command's bespoke nesting:
+
+- Mutations (` + "`rule create/edit/promote/...`, `observation add`, `consolidate`, `feedback`" + `)
+  carry a top-level ` + "`.id`" + ` (and ` + "`.ids`" + ` when several entities are touched, e.g.
+  ` + "`consolidate`" + ` and ` + "`feedback`" + `) alongside the descriptive payload.
+- Collection commands stay arrays, but each element carries a top-level ` + "`.[].id`" + `
+  next to its descriptive id (` + "`retrieval_id`/`feedback_id`/`observation_id`/`rule_id`" + `,
+  or the ` + "`ev-`" + ` event id for ` + "`events list`/`gap list`" + `). Either key works in jq.
+
 ` + "```" + `bash
 # 1. Retrieve predicates for your task (no content yet). Domain-matched hard rules
 #    are always surfaced (hard_injected). Draft rules are surfaced flagged (lifecycle:
 #    "draft", draft: true) so you can opt in; pass --no-drafts to confirmed-only. Stale
-#    rules are never surfaced. Capture the retrieval_ids:
-RT=$(auto reflect retrieve "add --json flag to auto env" --domain go,cli | jq -r '.[0].retrieval_id')
+#    rules are never surfaced. Capture the retrieval_ids (.id == .retrieval_id here):
+RT=$(auto reflect retrieve "add --json flag to auto env" --domain go,cli | jq -r '.[0].id')
 
 # 2. Select the rules you care about, most interesting first. This reveals content
-#    and mints a feedback_id per rule. Capture the feedback_id:
-FB=$(auto reflect select "$RT" | jq -r '.[0].feedback_id')
+#    and mints a feedback_id per rule. Capture the feedback_id (.id == .feedback_id):
+FB=$(auto reflect select "$RT" | jq -r '.[0].id')
 
 # 3. ...do the coding task, using the rules...
 
 # 4. Close the loop. rankings must cover EVERY outstanding feedback_id; rank is a
 #    permutation of 1..N; reason is required per id. gap is optional but when present
-#    both report and moment are required.
+#    both report and moment are required. outcome is one of:
+#      success | partial | fail | abandoned   (how the TASK ended — distinct from
+#      the miner ack status mined|empty|failed|skipped, which is about mining a session).
 auto reflect feedback "{
   \"outcome\": \"success\",
   \"summary\": \"shipped the flag\",
   \"rankings\": [{\"feedback_id\": \"$FB\", \"rank\": 1, \"reason\": \"told me the exact flag pattern\"}],
   \"gap\": null
 }"
+# A feedback 'gap' records guidance that SHOULD have existed (gap.report + gap.moment).
+# Surface captured gaps later with 'auto reflect gap list' (below) and turn each into
+# an observation. NB: a feedback gap is NOT the same as an observation of --kind gap —
+# the former is a loop signal on a feedback event; the latter is a mined finding.
 
 # You can also pipe the JSON document via stdin:
 echo "$PAYLOAD" | auto reflect feedback -
@@ -177,12 +193,32 @@ auto reflect stats
 # Raw, read-only view over the canonical event log (newest-first).
 auto reflect events list --type feedback --since 7d
 auto reflect events list --type observation --type consolidation   # repeatable --type
+
+# Feedback gaps captured during the loop (guidance that should have existed).
+# Each row is {id (the ev- feedback event id), session_id, ts, report, moment}.
+# Feed each one back into Stage 1 as an 'observation add --kind gap'.
+auto reflect gap list --since 7d
+# Note: feedback gaps carry no domain, so 'gap list --domain ...' fails fast —
+# use 'auto reflect observation list --kind gap --domain <tag>' for domain-scoped
+# gap OBSERVATIONS instead (a different concept from a feedback gap).
+` + "```" + `
+
+## Doctor
+
+` + "```" + `bash
+# Structured health check of the reflect state (state dir, events shards decode,
+# playbook.json freshness vs the folded log, leftover legacy files). Output is
+# [{check, status, message, hint}]; exits non-zero if any check fails.
+auto reflect doctor
 ` + "```" + `
 
 ## Mining queue
 
 ` + "```" + `bash
-# See which sessions are ready to mine (ranked by friction signals):
+# See which sessions are ready to mine (ranked by friction signals). The dominant
+# signal is correction_density — user corrections per 100 user messages (weight 0.4
+# in the score; tool errors 0.25, failure markers 0.2, AskUser 0.15) — so sessions
+# where the human had to course-correct a lot rank highest.
 auto reflect miner next --limit 5
 
 # After mining a session, record the outcome:

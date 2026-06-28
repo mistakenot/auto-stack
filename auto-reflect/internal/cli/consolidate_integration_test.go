@@ -3,6 +3,7 @@ package cli_test
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ type consolidateResp struct {
 		Op             string   `json:"op"`
 		RuleID         string   `json:"rule_id"`
 		ObservationIDs []string `json:"observation_ids"`
+		ChildIDs       []string `json:"child_ids"`
 		Rule           *struct {
 			ID             string   `json:"id"`
 			Lifecycle      string   `json:"lifecycle"`
@@ -25,7 +27,9 @@ type consolidateResp struct {
 	Conflicts []struct {
 		RuleID string `json:"rule_id"`
 	} `json:"conflicts"`
-	DryRun bool `json:"dry_run"`
+	DryRun bool     `json:"dry_run"`
+	ID     string   `json:"id"`
+	IDs    []string `json:"ids"`
 }
 
 // consolidateOK runs `consolidate <doc>` (exit 0 expected — gate skips are normal
@@ -343,6 +347,25 @@ func TestConsolidateSplit(t *testing.T) {
 		t.Fatalf("parent should have two successor_ids, got %#v", p.SuccessorIDs)
 	}
 
+	// The top-level `ids` envelope must carry the new child draft ids (what a
+	// consumer would pipe into `rule promote`), not the stale parent. Regression
+	// for the split-envelope review thread.
+	wantChildren := slices.Clone(p.SuccessorIDs)
+	slices.Sort(wantChildren)
+	gotIDs := slices.Clone(resp.IDs)
+	slices.Sort(gotIDs)
+	if !slices.Equal(gotIDs, wantChildren) {
+		t.Fatalf("split .ids should be the two child ids %#v, got %#v", p.SuccessorIDs, resp.IDs)
+	}
+	if slices.Contains(resp.IDs, parent) {
+		t.Fatalf("split .ids must not include the stale parent %q, got %#v", parent, resp.IDs)
+	}
+	gotChildren := slices.Clone(resp.Applied[0].ChildIDs)
+	slices.Sort(gotChildren)
+	if !slices.Equal(gotChildren, wantChildren) {
+		t.Fatalf("split applied[0].child_ids should be the two children %#v, got %#v", p.SuccessorIDs, resp.Applied[0].ChildIDs)
+	}
+
 	// Each child folds to draft with predecessor_ids=[parent] (lineage both ways).
 	for _, childID := range p.SuccessorIDs {
 		ch := getRule(t, repo, childID)
@@ -352,6 +375,94 @@ func TestConsolidateSplit(t *testing.T) {
 		if len(ch.PredecessorIDs) != 1 || ch.PredecessorIDs[0] != parent {
 			t.Fatalf("child %s predecessor_ids should be [%s], got %#v", childID, parent, ch.PredecessorIDs)
 		}
+	}
+}
+
+var ruleIDRegex = regexp.MustCompile(`^r-[0-9a-f]{8}$`)
+
+// createRule runs `rule create` and returns the created rule's id, failing on a
+// non-zero exit. Used to prove rule create mints content-derived ids.
+func createRule(t *testing.T, repo, useWhen, content string) string {
+	t.Helper()
+	stdout, stderr, code := runCLIAt(t, repo,
+		"rule", "create",
+		"--use-when", useWhen,
+		"--content", content,
+		"--causal-note", "a failure it prevents",
+		"--domain", "createdom")
+	if code != 0 {
+		t.Fatalf("rule create failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	var resp struct {
+		Rule struct {
+			ID string `json:"id"`
+		} `json:"rule"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &resp); err != nil {
+		t.Fatalf("decode rule create json: %v\nraw:\n%s", err, stdout)
+	}
+	return resp.Rule.ID
+}
+
+// TestConsolidateDeterministicIDs is the F7 contract: a create-draft delta mints
+// the same content-derived rule id whether run as --dry-run or applied, and
+// re-applying the identical delta is idempotent (no duplicate rule in the
+// refold). It also smoke-checks that two DISTINCT rule create commands mint two
+// DISTINCT ids — proving rule create feeds canonical content (not a zero-arg
+// constant) to NewRuleID.
+func TestConsolidateDeterministicIDs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AUTO_SESSION_ID", "consolidate-detids")
+	repo := initGitRepo(t)
+	gitAddCommitSeed(t, repo)
+
+	ob1 := addObservation(t, repo, "--kind", "pattern", "--subject", "s1", "--evidence-session", "dsess-1", "--domain", "detdom").Observation.ObservationID
+	ob2 := addObservation(t, repo, "--kind", "pattern", "--subject", "s2", "--evidence-session", "dsess-2", "--domain", "detdom").Observation.ObservationID
+
+	doc := draftDocDomain(t, "deriving a deterministic content hash id", "detdom", ob1, ob2)
+
+	// (a) --dry-run mints an id but writes nothing.
+	before := countRules(t, repo)
+	dry := consolidateOK(t, repo, doc, "--dry-run")
+	if !dry.DryRun || len(dry.Applied) != 1 || len(dry.IDs) != 1 {
+		t.Fatalf("dry-run should report one would-be apply with one id: %#v", dry)
+	}
+	dryID := dry.IDs[0]
+	if dryID == "" || dryID != dry.ID || dryID != dry.Applied[0].RuleID || !ruleIDRegex.MatchString(dryID) {
+		t.Fatalf("dry-run id envelope inconsistent: ids=%v id=%q applied=%q", dry.IDs, dry.ID, dry.Applied[0].RuleID)
+	}
+	if after := countRules(t, repo); after != before {
+		t.Fatalf("dry-run must not write: rules %d -> %d", before, after)
+	}
+
+	// (b) apply the SAME delta in a SEPARATE invocation → identical id, one new rule.
+	apply := consolidateOK(t, repo, doc)
+	if len(apply.IDs) != 1 || apply.IDs[0] != dryID {
+		t.Fatalf("apply must mint the same id as dry-run: dry=%q apply=%v", dryID, apply.IDs)
+	}
+	if got := countRules(t, repo); got != before+1 {
+		t.Fatalf("apply should add exactly one rule: %d -> %d", before, got)
+	}
+
+	// (c) re-apply the identical delta → idempotent: same id, no duplicate rule
+	// (projection ignores a rule_created for an existing id).
+	reapply := consolidateOK(t, repo, doc)
+	if len(reapply.IDs) != 1 || reapply.IDs[0] != dryID {
+		t.Fatalf("re-apply must mint the same id: %v", reapply.IDs)
+	}
+	if got := countRules(t, repo); got != before+1 {
+		t.Fatalf("re-apply must be idempotent (no duplicate rule): %d rules after second apply", got)
+	}
+
+	// (d) rule create smoke: two DISTINCT creates → two DISTINCT content-derived ids.
+	idA := createRule(t, repo, "first distinct rule create predicate", "guidance alpha")
+	idB := createRule(t, repo, "second distinct rule create predicate", "guidance beta")
+	if !ruleIDRegex.MatchString(idA) || !ruleIDRegex.MatchString(idB) {
+		t.Fatalf("rule create ids must match ^r-[0-9a-f]{8}$: %q %q", idA, idB)
+	}
+	if idA == idB {
+		t.Fatalf("distinct rule creates must mint distinct ids (rule create is not feeding zero-arg NewRuleID): %q", idA)
 	}
 }
 

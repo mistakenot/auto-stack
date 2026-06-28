@@ -1,11 +1,10 @@
 package rules
 
 import (
-	"crypto/rand"
-	"fmt"
-	"time"
+	"strings"
 
 	"github.com/mistakenot/auto-reflect/internal/events"
+	"github.com/mistakenot/auto-reflect/internal/idhash"
 	"github.com/mistakenot/auto-shared/config"
 )
 
@@ -79,12 +78,23 @@ type Playbook struct {
 
 type ValidationError = config.ValidationError
 
-// NewRuleID mints a fresh rule id matching ^r-[0-9a-f]{8}$ from crypto/rand,
-// falling back to UnixNano when randomness is unavailable.
-func NewRuleID() string {
-	var buf [4]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return fmt.Sprintf("r-%08x", uint32(time.Now().UnixNano()))
-	}
-	return fmt.Sprintf("r-%02x%02x%02x%02x", buf[0], buf[1], buf[2], buf[3])
+// NewRuleID mints a content-derived rule id matching ^r-[0-9a-f]{8}$ via
+// idhash.Derive over the supplied canonical content parts. Identical content
+// yields an identical id, so a consolidate --dry-run and its apply mint the same
+// id and re-running an identical consolidate is idempotent (a rule_created for an
+// existing id is ignored by Fold). Pass the parts from Rule.CanonicalParts so
+// minting agrees with the stored payload.
+func NewRuleID(parts ...string) string {
+	return idhash.Derive("r", parts...)
+}
+
+// CanonicalParts returns the normalized content fields that derive a rule's
+// content-hash id: the domain tags, use_when, content, and rule_type. Lifecycle,
+// version, provenance (observation_ids), and lineage are deliberately excluded —
+// they are mutable metadata, not identity, so attaching evidence or retiring a
+// rule never changes its id. The fields are read from the Rule after the caller's
+// normalization (NormalizeDomain/TrimSpace) so id minting uses exactly the same
+// content as the stored event payload.
+func (r *Rule) CanonicalParts() []string {
+	return []string{strings.Join(r.Domain, ","), r.UseWhen, r.Content, r.RuleType}
 }

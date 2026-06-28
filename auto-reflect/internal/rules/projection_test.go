@@ -303,6 +303,57 @@ func TestFoldPreChangeEventLogIsBackwardCompatible(t *testing.T) {
 	}
 }
 
+func TestFoldSurfacesTimestampsForListView(t *testing.T) {
+	// Fold sets created_at from the create event ts and updated_at from the last
+	// edit ts (F6). The `rule list` view projects these onto each row, so a folded
+	// rule must carry non-empty timestamps that survive into the list projection.
+	result := Fold([]events.ShardedEvent{
+		shardedRuleEvent(t, 1, "2026-06-10T10:00:00Z", events.TypeRuleCreated, events.RuleCreatedPayload{
+			RuleID: "r-eeeeeeee", Domain: []string{"go"}, UseWhen: "x", Content: "c",
+			CausalNote: "n", RuleType: RuleTypeSoft, Lifecycle: LifecycleDraft,
+		}),
+		shardedRuleEvent(t, 2, "2026-06-10T11:00:00Z", events.TypeRuleEdited, events.RuleEditedPayload{
+			RuleID: "r-eeeeeeee", FromVersion: 1, ToVersion: 2,
+			Deltas: []events.FieldDelta{{Field: FieldContent, Old: "c", New: "c2"}},
+		}),
+	})
+	r := findRule(t, result.Playbook, "r-eeeeeeee")
+	if r.CreatedAt != "2026-06-10T10:00:00Z" {
+		t.Fatalf("created_at = %q, want the create event ts", r.CreatedAt)
+	}
+	if r.UpdatedAt != "2026-06-10T11:00:00Z" {
+		t.Fatalf("updated_at = %q, want the last edit ts", r.UpdatedAt)
+	}
+
+	// The `rule list` view (cli/rule.go) projects a row map per rule; mirror that
+	// projection here and confirm it now carries created_at/updated_at (F6: the
+	// hand-rolled list map previously dropped them).
+	row := map[string]any{
+		"id":              r.ID,
+		"use_when":        r.UseWhen,
+		"domain":          r.Domain,
+		"rule_type":       r.RuleType,
+		"lifecycle":       r.Lifecycle,
+		"observation_ids": r.ObservationIDs,
+		"created_at":      r.CreatedAt,
+		"updated_at":      r.UpdatedAt,
+	}
+	encoded, err := json.Marshal(row)
+	if err != nil {
+		t.Fatalf("marshal list row: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal list row: %v", err)
+	}
+	if got, ok := decoded["created_at"].(string); !ok || got != r.CreatedAt {
+		t.Fatalf("list row created_at = %v (ok=%v), want %q", decoded["created_at"], ok, r.CreatedAt)
+	}
+	if got, ok := decoded["updated_at"].(string); !ok || got != r.UpdatedAt {
+		t.Fatalf("list row updated_at = %v (ok=%v), want %q", decoded["updated_at"], ok, r.UpdatedAt)
+	}
+}
+
 func findRule(t *testing.T, pb Playbook, id string) Rule {
 	t.Helper()
 	for i := range pb.Rules {

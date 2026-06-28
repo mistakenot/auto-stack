@@ -19,7 +19,12 @@ auto reflect observation add \
 
 Flags:
 
-- `--kind` — `correction` | `pattern` | `gap` | `incident` (required).
+- `--kind` — `correction` | `pattern` | `gap` | `incident` (required). An
+  observation of `--kind gap` is a **mined finding with a domain** (missing
+  guidance you spotted in a transcript) — *not* the same thing as a **feedback
+  gap** (the `gap` field on a feedback event, read via `auto reflect gap list`,
+  which carries no domain). The usual flow is: read a feedback gap, then file it
+  here as an `--kind gap` observation with the right `--domain`.
 - `--subject` — what it's about (required).
 - `--severity` — `normal` | `high` (default `normal`). **`high` = an incident
   that auto-bypasses the 2-session consolidation gate** — use sparingly.
@@ -58,6 +63,10 @@ Per-evidence provenance flags (all optional, all positional, all format-checked
   rejected. Use `git rev-parse --short HEAD`.
 
 To cite several moments, repeat the paired flags in lockstep.
+
+`observation add` returns the new id at top-level `.id` (== `.observation.observation_id`):
+`OB=$(auto reflect observation add ... | jq -r '.id')` — thread it into `consolidate`'s
+`observation_ids`.
 
 ## List / filter the backlog
 

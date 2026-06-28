@@ -244,14 +244,37 @@ func TestValidateEmptySeverityDefaultsNormal(t *testing.T) {
 
 func TestNewObservationIDFormat(t *testing.T) {
 	pattern := regexp.MustCompile(idPattern)
-	for range 50 {
-		id := NewObservationID()
-		if !pattern.MatchString(id) {
-			t.Fatalf("minted id %q does not match %s", id, idPattern)
-		}
-		if !ValidID(id) {
-			t.Fatalf("ValidID rejected freshly minted id %q", id)
-		}
+	id := NewObservationID("gap", "subject", "s1")
+	if !pattern.MatchString(id) {
+		t.Fatalf("minted id %q does not match %s", id, idPattern)
+	}
+	if !ValidID(id) {
+		t.Fatalf("ValidID rejected minted id %q", id)
+	}
+	// Deterministic: identical content parts mint an identical id.
+	if again := NewObservationID("gap", "subject", "s1"); again != id {
+		t.Fatalf("expected deterministic id, got %q then %q", id, again)
+	}
+	// Distinct content parts mint a distinct id.
+	if other := NewObservationID("gap", "subject", "s2"); other == id {
+		t.Fatalf("expected different id for different parts, both %q", id)
+	}
+}
+
+func TestCanonicalPartsDeriveStableID(t *testing.T) {
+	in := validInput()
+	parts := in.CanonicalParts()
+	id := NewObservationID(parts...)
+	if !ValidID(id) {
+		t.Fatalf("id %q from CanonicalParts is not a valid observation id", id)
+	}
+	// CanonicalParts normalizes via Payload, so whitespace/case variants of the
+	// same finding mint the same id (idempotency).
+	noisy := validInput()
+	noisy.Kind = "  GAP  "
+	noisy.Subject = "  " + in.Subject + "  "
+	if got := NewObservationID(noisy.CanonicalParts()...); got != id {
+		t.Fatalf("expected normalized variants to mint the same id, got %q vs %q", got, id)
 	}
 }
 

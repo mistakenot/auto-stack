@@ -77,6 +77,8 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newStatsCmd(application),
 		newEventsCmd(application),
 		newMinerCmd(application),
+		newGapCmd(application),
+		newDoctorCmd(application),
 	)
 
 	return cmd

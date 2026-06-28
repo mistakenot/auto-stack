@@ -218,9 +218,12 @@ func Next(repoRoot, etlRoot string, opts NextOpts) ([]WorkItem, error) {
 	return items, nil
 }
 
-// PendingCount returns the number of in-scope top-level sessions not terminal at current version.
-// Used by reflect stats to show the input backlog.
-func PendingCount(repoRoot, etlRoot string) (int, etlread.SourceState, error) {
+// PendingCount returns the number of top-level sessions not terminal at current version.
+// By default it scopes to the current repo (the universe `reflect stats` reports as the
+// input backlog). When allWorkspaces is true, scoping is disabled so the count spans every
+// workspace in the ETL set — matching `miner status --all`, whose total/mined breakdown is
+// likewise all-workspace, so total_sessions == pending + mined holds in both modes.
+func PendingCount(repoRoot, etlRoot string, allWorkspaces bool) (int, etlread.SourceState, error) {
 	src, err := etlread.ResolveSource(etlRoot)
 	if err != nil {
 		return 0, src, err
@@ -240,14 +243,16 @@ func PendingCount(repoRoot, etlRoot string) (int, etlread.SourceState, error) {
 	}
 	coverage := FoldCoverage(allEvents)
 
-	// Scope by current repo
+	// Scope by current repo unless counting across all workspaces.
 	var scopeRemote string
 	var scopeWorkspace string
-	repo, err := gitutil.DetectRepoLenient(repoRoot)
-	if err == nil {
-		scopeRemote = normalizeRemote(repo.Remote)
-		if scopeRemote == "" {
-			scopeWorkspace = repo.Root
+	if !allWorkspaces {
+		repo, derr := gitutil.DetectRepoLenient(repoRoot)
+		if derr == nil {
+			scopeRemote = normalizeRemote(repo.Remote)
+			if scopeRemote == "" {
+				scopeWorkspace = repo.Root
+			}
 		}
 	}
 

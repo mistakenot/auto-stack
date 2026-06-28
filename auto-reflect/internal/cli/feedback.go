@@ -56,7 +56,14 @@ func newFeedbackCmd(application *app.App) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "Feedback recorded; loop closed.")
 				return nil
 			}
-			if err := writeJSON(cmd.OutOrStdout(), map[string]any{"recorded": true}); err != nil {
+			// Echo the feedback ids this submission acted on (the ranked
+			// feedback_ids from the input), so the top-level envelope exposes
+			// .ids / .id like every other command — not a newly minted event id.
+			ackedIDs := make([]string, 0, len(parsed.Rankings))
+			for _, r := range parsed.Rankings {
+				ackedIDs = append(ackedIDs, r.FeedbackID)
+			}
+			if err := writeJSON(cmd.OutOrStdout(), mutationResultIDs(ackedIDs, map[string]any{"recorded": true})); err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
 			return nil

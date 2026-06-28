@@ -24,6 +24,7 @@ func e2eAddObservationTask(t *testing.T, repo, session, taskID string) string {
 		t.Fatalf("observation add failed: %v\nstderr:\n%s", err, stderr)
 	}
 	var resp struct {
+		ID          string `json:"id"` // uniform envelope top-level id
 		Observation struct {
 			ObservationID string `json:"observation_id"`
 		} `json:"observation"`
@@ -33,6 +34,9 @@ func e2eAddObservationTask(t *testing.T, repo, session, taskID string) string {
 	}
 	if resp.Observation.ObservationID == "" {
 		t.Fatalf("observation add returned no id\nraw:\n%s", stdout)
+	}
+	if resp.ID != resp.Observation.ObservationID {
+		t.Fatalf("observation add top-level .id %q != .observation.observation_id %q", resp.ID, resp.Observation.ObservationID)
 	}
 	return resp.Observation.ObservationID
 }
@@ -59,6 +63,8 @@ func e2eConsolidateDraft(t *testing.T, repo, useWhen, domain string, force bool,
 		t.Fatalf("consolidate failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
 	var cresp struct {
+		ID      string   `json:"id"`  // uniform envelope: first applied id
+		IDs     []string `json:"ids"` // uniform envelope: every applied id
 		Applied []struct {
 			RuleID string `json:"rule_id"`
 		} `json:"applied"`
@@ -70,7 +76,11 @@ func e2eConsolidateDraft(t *testing.T, repo, useWhen, domain string, force bool,
 	if len(cresp.Applied) != 1 || len(cresp.Skipped) != 0 {
 		t.Fatalf("expected one applied draft, no skips: %s", stdout)
 	}
-	return cresp.Applied[0].RuleID
+	ruleID := cresp.Applied[0].RuleID
+	if cresp.ID != ruleID || len(cresp.IDs) != 1 || cresp.IDs[0] != ruleID {
+		t.Fatalf("consolidate envelope should carry the applied rule id %q at .id/.ids, got id=%q ids=%v", ruleID, cresp.ID, cresp.IDs)
+	}
+	return ruleID
 }
 
 // TestE2EPromoteTaskGate is a black-box check of the task-keyed promote gate:
@@ -102,7 +112,8 @@ func TestE2EPromoteTaskGate(t *testing.T) {
 		t.Fatalf("task-path promote should succeed: %v\nstdout:\n%s\nstderr:\n%s", err, pStdout, pStderr)
 	}
 	var presp struct {
-		Promoted bool `json:"promoted"`
+		ID       string `json:"id"` // uniform envelope top-level id (AC-4)
+		Promoted bool   `json:"promoted"`
 		Rule     struct {
 			Lifecycle string `json:"lifecycle"`
 		} `json:"rule"`
@@ -112,6 +123,9 @@ func TestE2EPromoteTaskGate(t *testing.T) {
 	}
 	if !presp.Promoted || presp.Rule.Lifecycle != "confirmed" {
 		t.Fatalf("expected confirmed rule after task-path promote: %#v", presp)
+	}
+	if presp.ID != taskRule {
+		t.Fatalf("promote top-level .id %q != promoted rule id %q", presp.ID, taskRule)
 	}
 
 	// (b) Session path still works: two observations, two sessions, no task_ids.
@@ -238,6 +252,7 @@ func TestE2EGraduateEnforced(t *testing.T) {
 		t.Fatalf("rule graduate failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
 	var gradResp struct {
+		ID   string `json:"id"` // uniform envelope top-level id (AC-4)
 		Rule struct {
 			Lifecycle string `json:"lifecycle"`
 			LintRef   *struct {
@@ -251,6 +266,9 @@ func TestE2EGraduateEnforced(t *testing.T) {
 	}
 	if gradResp.Rule.Lifecycle != "enforced" {
 		t.Fatalf("expected lifecycle enforced, got %q", gradResp.Rule.Lifecycle)
+	}
+	if gradResp.ID != id {
+		t.Fatalf("graduate top-level .id %q != rule id %q", gradResp.ID, id)
 	}
 	if gradResp.Rule.LintRef == nil || gradResp.Rule.LintRef.Check != "errcheck" {
 		t.Fatalf("expected lint_ref with check errcheck, got %#v", gradResp.Rule.LintRef)
@@ -269,6 +287,12 @@ func TestE2EGraduateEnforced(t *testing.T) {
 	}
 	if len(listResp.Rules) != 1 || listResp.Rules[0]["id"] != id {
 		t.Fatalf("rule list --lifecycle enforced should return the graduated rule, got %#v", listResp.Rules)
+	}
+	// rule list now carries timestamp metadata in its projection (F6/AC-11).
+	for _, field := range []string{"created_at", "updated_at"} {
+		if ts, _ := listResp.Rules[0][field].(string); strings.TrimSpace(ts) == "" {
+			t.Fatalf("rule list row missing non-empty %s: %#v", field, listResp.Rules[0])
+		}
 	}
 
 	// retrieve over a matching intent must exclude the enforced rule.

@@ -227,10 +227,10 @@
       "render_version": "1"
     },
     "reflect-playbook": {
-      "template_hash": "79deca2102c8cf808cc2ad7bdaec2dc3ece350c051564d0d55545ab62ac91a43",
+      "template_hash": "83530e57d62927131721ba2daa6fdd97bb485e4deab405f91ed1b9df930fc905",
       "replacements": {},
       "file_refs": [],
-      "skill_version": "f81fe250ebce0f31ff03ca3358331f37e82762701c22fe4312a986a361f55b79",
+      "skill_version": "c03ad639228dedf82e4f957409e2f5c7c5749dc2e2fe19fe347f052865cce2be",
       "render_version": "1"
     },
     "release": {
@@ -346,7 +346,7 @@
         "readme-updater": "bb1de826e2b7289d822577355cf643332fef04761d434e601f497f79588ee4a7",
         "recall": "6eb667dd7bff1d23046cc70d7d80bbff74671b345067654b1510be6a77024d4a",
         "reflect-on-agent-sessions": "d8886ea7e1ca7b3e4f72e93d5b486fe564911adeea5d94aa22a10b33ba3547b1",
-        "reflect-playbook": "f81fe250ebce0f31ff03ca3358331f37e82762701c22fe4312a986a361f55b79",
+        "reflect-playbook": "c03ad639228dedf82e4f957409e2f5c7c5749dc2e2fe19fe347f052865cce2be",
         "release": "585207e7324346f1bfea5d1172b6c9e5287d56944f79386a806a6f6d56aa662a",
         "request-claude-review": "8ce7795f3e990ef43f44a5a971d93815825cd2cf5fa9026f12608a5f91ed2b36",
         "request-codex-review": "4ef36201933cd53103cb62c6b14bb6c48ea849895c46d6493a3d97667e2517fd",
@@ -394,7 +394,7 @@
         "readme-updater": "bb1de826e2b7289d822577355cf643332fef04761d434e601f497f79588ee4a7",
         "recall": "6eb667dd7bff1d23046cc70d7d80bbff74671b345067654b1510be6a77024d4a",
         "reflect-on-agent-sessions": "d8886ea7e1ca7b3e4f72e93d5b486fe564911adeea5d94aa22a10b33ba3547b1",
-        "reflect-playbook": "f81fe250ebce0f31ff03ca3358331f37e82762701c22fe4312a986a361f55b79",
+        "reflect-playbook": "c03ad639228dedf82e4f957409e2f5c7c5749dc2e2fe19fe347f052865cce2be",
         "release": "585207e7324346f1bfea5d1172b6c9e5287d56944f79386a806a6f6d56aa662a",
         "request-claude-review": "8ce7795f3e990ef43f44a5a971d93815825cd2cf5fa9026f12608a5f91ed2b36",
         "request-codex-review": "4ef36201933cd53103cb62c6b14bb6c48ea849895c46d6493a3d97667e2517fd",

@@ -8,17 +8,16 @@
 package observations
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/mistakenot/auto-shared/config"
 
 	"github.com/mistakenot/auto-reflect/internal/events"
+	"github.com/mistakenot/auto-reflect/internal/idhash"
 )
 
 const (
@@ -90,15 +89,32 @@ type Input struct {
 	Severity                string
 }
 
-// NewObservationID mints a fresh observation id matching ^ob-[0-9a-f]{8}$ from
-// crypto/rand, falling back to UnixNano when randomness is unavailable. Mirrors
-// rules.NewRuleID.
-func NewObservationID() string {
-	var buf [4]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return fmt.Sprintf("ob-%08x", uint32(time.Now().UnixNano()))
+// NewObservationID mints a content-derived observation id matching
+// ^ob-[0-9a-f]{8}$ via idhash.Derive over the supplied canonical content parts.
+// Identical content yields an identical id, so re-capturing the same finding is
+// idempotent. Pass the parts from Input.CanonicalParts so minting agrees with
+// the stored payload.
+func NewObservationID(parts ...string) string {
+	return idhash.Derive("ob", parts...)
+}
+
+// CanonicalParts returns the normalized content fields that derive an
+// observation's content-hash id: kind, subject, each evidence tuple, the domain
+// tags, and severity. Evidence is included so the same finding captured from two
+// different sessions stays two distinct observations. task_id, context, and the
+// suggested generalization are deliberately excluded — they are metadata, not
+// identity. The fields are taken from Payload so id minting uses exactly the same
+// normalization (trim/lowercase/pairing) as the stored event.
+func (in *Input) CanonicalParts() []string {
+	p := in.Payload("")
+	parts := make([]string, 0, len(p.Evidence)+4)
+	parts = append(parts, p.Kind, p.Subject)
+	for _, ev := range p.Evidence {
+		parts = append(parts, strings.Join(
+			[]string{ev.SessionID, ev.MessageID, ev.Quote, ev.File, ev.LineRange, ev.Commit}, "\x1f"))
 	}
-	return fmt.Sprintf("ob-%02x%02x%02x%02x", buf[0], buf[1], buf[2], buf[3])
+	parts = append(parts, strings.Join(p.Domain, ","), p.Severity)
+	return parts
 }
 
 // normalizeDomain trims and lowercases each tag, dropping empties while
