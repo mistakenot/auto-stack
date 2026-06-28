@@ -136,7 +136,7 @@ func TestValidateFewerEvidenceProvenanceIsFine(t *testing.T) {
 	in := validInput()
 	in.Sessions = []string{"s1", "s2"}
 	in.EvidenceFiles = []string{"a.go"} // fewer than sessions is allowed
-	in.EvidenceCommits = []string{"abc123"}
+	in.EvidenceCommits = []string{"abc1234"}
 	in.EvidenceLineRanges = []string{"1-10"}
 	if errs := in.Validate(); len(errs) != 0 {
 		t.Fatalf("expected no errors for fewer provenance entries, got %+v", errs)

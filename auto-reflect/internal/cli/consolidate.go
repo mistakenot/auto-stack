@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/mistakenot/auto-reflect/internal/app"
@@ -515,6 +516,21 @@ func (c *consolidator) split(d *consolidate.Delta) {
 			c.skip(d, fmt.Sprintf("split child %d duplicates existing rule %s (score %.2f); narrow the use_when or use attach-evidence", i, dup.RuleID, dup.Score))
 			return
 		}
+	}
+	// Sibling dedupe: two children sharing the same normalized use_when + domain
+	// would mint indistinguishable draft successors from one parent. The fuzzy
+	// live-rule gate above can't see them (siblings are drafts the matcher excludes
+	// and not yet written), so reject exact in-batch collisions explicitly.
+	siblingKeys := make(map[string]int, len(children))
+	for i := range children {
+		domain := append([]string{}, children[i].Domain...)
+		sort.Strings(domain)
+		key := strings.ToLower(strings.TrimSpace(children[i].UseWhen)) + "\x00" + strings.Join(domain, ",")
+		if prev, ok := siblingKeys[key]; ok {
+			c.skip(d, fmt.Sprintf("split child %d duplicates sibling child %d (same use_when + domain); give each child a distinct use_when", i, prev))
+			return
+		}
+		siblingKeys[key] = i
 	}
 
 	entry := applied{Op: consolidate.OpSplit, RuleID: current.ID, ObservationIDs: inheritedObs, Note: "split into " + strings.Join(childIDs, ", ")}

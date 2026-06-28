@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,6 +46,10 @@ var (
 	idRegex     = regexp.MustCompile(idPattern)
 	tagRegex    = regexp.MustCompile(tagPattern)
 	taskIDRegex = regexp.MustCompile(`^[0-9]{3}-[a-z0-9]+(?:-[a-z0-9]+)*$`)
+	// commitRegex matches a 7-40 char lowercase-hex git commit (abbreviated or full).
+	commitRegex = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+	// lineRangeRegex matches a single line (`12`) or an inclusive span (`12-34`).
+	lineRangeRegex = regexp.MustCompile(`^[0-9]+(?:-[0-9]+)?$`)
 
 	validKinds = map[string]struct{}{
 		KindCorrection: {}, KindPattern: {}, KindGap: {}, KindIncident: {},
@@ -179,7 +184,43 @@ func (in *Input) validateEvidence() []ValidationError {
 		errs = append(errs, ValidationError{Code: "range", Field: "evidence", Message: "more --evidence-line-range than --evidence-session: line ranges pair by position to sessions, so supply at most one line range per session", Value: len(in.EvidenceLineRanges)})
 	}
 
+	// Format-check the provenance values that are present so the audit trail stays
+	// reliable: a commit must be lowercase-hex (7-40 chars) and a line range must be
+	// a single line or an ascending span. Empty entries stay valid (capture is
+	// best-effort), and excess entries are already flagged by the count checks above.
+	for i, c := range in.EvidenceCommits {
+		commit := strings.TrimSpace(c)
+		if commit != "" && !commitRegex.MatchString(commit) {
+			errs = append(errs, ValidationError{Code: "invalid_format", Field: fmt.Sprintf("evidence[%d].commit", i), Message: "commit must be a 7-40 char lowercase-hex git hash", Value: c})
+		}
+	}
+	for i, lr := range in.EvidenceLineRanges {
+		errs = append(errs, validateLineRange(i, lr)...)
+	}
+
 	return errs
+}
+
+// validateLineRange checks one --evidence-line-range value. Empty is valid
+// (best-effort capture); otherwise it must match `start` or `start-end` with
+// end >= start.
+func validateLineRange(i int, lr string) []ValidationError {
+	line := strings.TrimSpace(lr)
+	if line == "" {
+		return nil
+	}
+	field := fmt.Sprintf("evidence[%d].line_range", i)
+	if !lineRangeRegex.MatchString(line) {
+		return []ValidationError{{Code: "invalid_format", Field: field, Message: "line_range must be a single line (12) or an ascending span (12-34)", Value: lr}}
+	}
+	if start, end, ok := strings.Cut(line, "-"); ok {
+		s, err1 := strconv.Atoi(start)
+		e, err2 := strconv.Atoi(end)
+		if err1 == nil && err2 == nil && e < s {
+			return []ValidationError{{Code: "range", Field: field, Message: "line_range end must be >= start", Value: lr}}
+		}
+	}
+	return nil
 }
 
 func validateDomainTags(domain []string) []ValidationError {

@@ -106,6 +106,21 @@ func ValidateRule(path string, index int, rule *Rule) []ValidationError {
 		})
 	}
 
+	// An enforced rule must carry a lint reference: enforced means "now guarded by a
+	// static check", and the only path that records the check is `rule graduate`.
+	// This blocks `rule create`/`rule edit --lifecycle enforced` from minting an
+	// enforced rule that is hidden from retrieve with no linter/check provenance.
+	if rule.Lifecycle == LifecycleEnforced {
+		if rule.LintRef == nil || strings.TrimSpace(rule.LintRef.Linter) == "" || strings.TrimSpace(rule.LintRef.Check) == "" {
+			errs = append(errs, ValidationError{
+				Code:    "required",
+				Path:    path,
+				Field:   prefix + ".lint_ref",
+				Message: "enforced rules require a lint reference (linter + check): use `auto reflect rule graduate` instead of setting lifecycle=enforced directly",
+			})
+		}
+	}
+
 	if rule.RuleType == RuleTypeHard && len(rule.Domain) == 0 {
 		errs = append(errs, ValidationError{
 			Code:    "required",
