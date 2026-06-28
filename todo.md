@@ -40,6 +40,7 @@ Align with user-journey spec.
 - [ ] fix: warning: `~/.auto/host.json` not found, using hostname:
 - [ ] ensure sessions/messages include `model_id`
 - [ ] import GitHub PR feedback (comments, reviews) as an additional data source — contains valuable signal (code review insights, design decisions, bug context). Spec: `auto-etl/docs/github-pr-etl.md`
+- [ ] **[PARKED — needs more design]** Live tier for monitoring: batch ETL (parquet) is too stale for live queries ("what is job X doing now?"); building a separate monitoring store would recreate data auto-etl already owns. Direction: one schema / one transform / many materializations — a hot tier (pure-Go SQLite, fed by a continuous tailer of the JSONL log) in front of parquet, behind one query surface; ETL becomes a compaction flush, not a daily job. DRAFT/RFC: `docs/live-tier-architecture.md`. Open questions to resolve before building: hot-store retention window, compaction trigger, multi-host query scope, hot/cold schema unification, replay-on-restart.
 
 ## auto-search
 
