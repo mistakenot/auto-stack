@@ -16,7 +16,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="052: reflect-tool-hardening" status="executing" pr="pending" generated="2026-06-28" next-prompt="/execute-task 052">
+  <pd-doc title="052: reflect-tool-hardening" status="complete" pr="pending" generated="2026-06-28" next-prompt="/execute-task 052">
     <pd-tab name="Requirements">
 
       <pd-section id="problem" title="Problem">
@@ -771,7 +771,7 @@ Thin path through every layer the task touches: id minting → command → outpu
             </script></md>
           </pd-phase>
 
-          <pd-phase n="7" title="Docs, init gitignore, cleanup, e2e" status="todo" depends-on="2,3,4,6"
+          <pd-phase n="7" title="Docs, init gitignore, cleanup, e2e" status="done" depends-on="2,3,4,6"
             files="auto-reflect/internal/cli/init.go,auto-reflect/internal/cli/init_test.go,auto-reflect/internal/cli/quickstart.go,auto-reflect/internal/loop/feedback.go,auto-reflect/internal/miner/score.go,auto-reflect/cmd/autoreflect/e2e_loop_test.go,auto-reflect/cmd/autoreflect/e2e_lifecycle_test.go,auto-reflect/CLAUDE.md,.claude/skills/reflect-playbook/SKILL.md,.claude/skills/reflect-playbook/references/retrieve.md,.claude/skills/reflect-playbook/references/observe.md,.claude/skills/reflect-playbook/references/mine.md,.claude/skills/reflect-playbook/references/consolidate.md,docs/reflection/observations.yaml">
             <md><script type="text/plain">
 1. `init.go`: after `MkdirAll(eventsDir)`, write `.auto/reflect/.gitignore`
