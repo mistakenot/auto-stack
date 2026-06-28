@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>051: auto-artifact-cli</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="051: auto-artifact-cli" status="pending" pr="pending" generated="2026-06-28" next-prompt="/execute-task 051">
+    <script type="application/json" id="pd-meta">
+    {
+      "id": "051",
+      "name": "auto-artifact-cli",
+      "status": "planning",
+      "created": "2026-06-28"
+    }
+    </script>
+
+    <pd-tab name="Requirements">
+      <pd-scope></pd-scope>
+      <pd-decisions></pd-decisions>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+AI coding agents produce **evidence artifacts** (screenshots, videos, logs) when they finish
+work, but there is no easy way to host those files at a stable URL that can be embedded in a PR
+comment for a reviewer to open. We need an `auto artifact` command group that uploads a file to
+S3 and hands back a permanent public URL — and we want it covered by **end-to-end conformance
+tests that run against the real, already-provisioned bucket**.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+Build the whole `auto artifact` tool in one task, plus its E2E test harness:
+
+- Ship `auto artifact` as a subcommand of the unified `auto` binary (new `auto-artifact` module wired into `go.work` + `auto-cli`).
+- Implement all five commands: `upload`, `delete`, `setup`, `init`, `doctor`.
+- `upload <file>` → S3 PutObject, returns a permanent **public HTTPS** URL; object key is `{retention}/{uuid}/{filename}`; Content-Type auto-detected so images/videos render inline.
+- Four fixed retention tiers via prefix-scoped lifecycle rules: `7d`, `30d`, `90d` (default), `365d` (`--retain`).
+- `delete <url-or-key>` for early removal; `setup` emits a provisioning bash script; `init` writes config; `doctor` validates config + bucket access.
+- JSON output by default; `--format text` emits the bare URL for piping into `gh pr comment`.
+- Append every upload to `~/.auto/artifact/uploads.jsonl`; config lives in `~/.auto/artifact/settings.json`.
+- Enforce the security model: public-read bucket, `ListBucket` denied, no signed URLs, HTTPS-only URLs, 1 GB size cap.
+- **End-to-end conformance**: port the 16 acceptance criteria in `auto-artifact/docs/requirements.md` into a Go test suite that drives the real `auto artifact` CLI against the live bucket (`auto-artifact-datadyne` / `eu-west-1`).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="settled" title="Decisions already made">
+        <md><script type="text/plain">
+These were settled in conversation / by the existing requirements doc and are recorded here so
+the solution stage doesn't re-litigate them.
+        </script></md>
+
+        <pd-decision id="D-1" title="Test end-to-end against the real provisioned bucket" status="accepted" by="charlie" summary="E2E tests hit the live S3 bucket auto-artifact-datadyne (eu-west-1) using the stored credentials.">
+          <md><script type="text/plain">
+**Rationale:** The user explicitly wants real end-to-end coverage and provided working credentials.
+A bucket is already provisioned via `auto-artifact/scripts/setup-aws.sh`, and creds are stored in
+`~/.auto/artifact/settings.json` (mode 600, outside the repo).
+**Alternatives rejected:** LocalStack/MinIO mock — public-URL + bucket-policy semantics differ from
+real AWS, so AC-9/AC-15 wouldn't be faithfully exercised.
+**Consequences:** Tests create/delete real objects (use the `7d` tier + `delete` to keep the bucket
+clean); credentials must be rotated later (the ones provided will be rotated).
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-2" title="Harness-first TDD from the existing 16 ACs" status="accepted" by="charlie" summary="Port the requirements doc's 16 conformance commands into a Go test suite that shells out to the real `auto artifact` CLI; RED until implemented.">
+          <md><script type="text/plain">
+**Rationale:** The requirements doc already specifies 16 ACs each with an executable conformance
+command. Shelling out to the built `auto` binary keeps the harness faithful to real CLI behaviour.
+**Consequences:** Every AC is RED until the corresponding command lands; the harness becomes the
+executable spec that drives implementation.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-3" title="Gate E2E behind AUTO_ARTIFACT_E2E so default `go test` stays green" status="accepted" by="author" summary="Real-AWS tests skip unless AUTO_ARTIFACT_E2E=1; plain `go test ./...` and PR CI stay green and free.">
+          <md><script type="text/plain">
+**Rationale:** AWS-hitting tests cost money and need credentials; they must not run in ordinary
+`go test ./...` or block contributors without creds.
+**Consequences:** A test gate helper skips the suite unless the env flag is set; config/creds are
+read from `~/.auto/artifact/settings.json`.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-4" title="Config-mutating ACs run under a throwaway $HOME" status="accepted" by="author" summary="AC-11 (init), AC-12b/AC-14 (missing-config) run under a temp HOME so they never clobber the real settings.json.">
+          <md><script type="text/plain">
+**Rationale:** The requirements doc's literal commands `mv` the real settings.json aside; a crash
+mid-test would leave real creds displaced. Running config-mutating ACs under a temp `$HOME` isolates
+them. **Constraint this implies:** the tool must resolve its config dir from `$HOME` (standard
+`os.UserHomeDir`) so the override works.
+          </script></md>
+        </pd-decision>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- `list` and `get` commands — `list` breaks the no-enumeration security model; `get` is redundant (the public URL is directly fetchable).
+- Batch / multi-file upload — single file per invocation in v1.
+- Non-AWS S3-compatible providers (MinIO, R2, etc.) — AWS S3 only for v1.
+- Signed/expiring URLs — permanent public URLs only.
+- Automated bucket provisioning from inside the tool — `setup` only *emits* a script the user runs in their own authenticated context.
+- Credential rotation automation.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Two load-bearing decisions remain; a wrong guess on either would waste real implementation work, so
+they gate the doc. Each carries a recommended answer to rubber-stamp or override.
+        </script></md>
+
+        <pd-question id="Q-1" status="answered" priority="p1" for="charlie"
+                     title="S3 client: hand-rolled SigV4 (zero deps) or AWS SDK for Go v2?">
+          <md><script type="text/plain">
+`upload` and `delete` need authenticated S3 calls (PutObject / DeleteObject), and `doctor` needs a
+cheap auth/bucket probe. Two ways to make those calls:
+
+- **Hand-rolled SigV4 over net/http (recommended).** Zero new runtime dependencies — aligns with the
+  project's strong "prefer zero new runtime deps" guidance. We only need PutObject, DeleteObject, and
+  a HEAD-style probe, all straightforward to sign. More signing code to own and test.
+- **AWS SDK for Go v2.** Battle-tested, less signing code, but pulls a large dependency tree into the
+  binary for a tool that uses a tiny slice of S3.
+
+**Recommended:** Hand-rolled SigV4 (zero deps), given the narrow surface (PUT/DELETE/HEAD).
+          </script></md>
+          <pd-answer by="charlie">Hand-rolled SigV4 — zero new runtime deps. Implement SigV4 signing over net/http for PutObject, DeleteObject, and the doctor probe.</pd-answer>
+        </pd-question>
+
+        <pd-question id="Q-2" status="answered" priority="p2" for="charlie"
+                     title="Where does the E2E conformance suite run — local/manual only, or in CI with stored secrets?">
+          <md><script type="text/plain">
+The E2E suite needs real AWS credentials. Options:
+
+- **Local + manual-trigger CI (recommended).** PR CI runs only the non-E2E build/unit tests (always
+  green, no secrets). A separate `workflow_dispatch` job runs the full E2E suite on demand using AWS
+  creds stored as GitHub Actions secrets. Keeps creds out of every PR run and avoids per-PR AWS cost.
+- **Full CI on every PR.** Requires AWS secrets available to all PR runs (including forks — a leak
+  risk) and incurs AWS calls on every push.
+
+**Recommended:** Local + manual-trigger CI; PR CI stays E2E-free.
+          </script></md>
+          <pd-answer by="charlie">Local + manual-trigger CI. PR CI runs only non-E2E build/unit tests; a separate workflow_dispatch job runs the full E2E suite using AWS creds in GitHub secrets.</pd-answer>
+        </pd-question>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Verification">
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Three layers, split by what each can run without AWS credentials so ordinary `go test ./...` and PR
+CI stay green and free (D-3).
+
+**Layer 1 — Unit (no network, runs in default CI).** Pure functions, the highest-risk being the
+hand-rolled **SigV4 signer**, tested against AWS's published SigV4 test-suite vectors before it ever
+touches the network. Also: object-key construction (`{retention}/{uuid}/{filename}`), retention-tier
+validation, Content-Type detection, the 1 GB size-cap check, settings load/save/validate, and
+`setup` script generation (assert it contains the required `aws` calls and passes `bash -n`).
+
+**Layer 2 — In-process CLI (no network, runs in default CI).** Drive the command tree in-process via
+a `runCLI(t, args...)` helper under a throwaway `$HOME` (`t.Setenv`). Covers behaviour that needs no
+S3: `init` writes settings, `doctor` on missing config, `upload` without config errors with an
+`init` hint, `--retain` rejects bad tiers, `--format text` shape, `setup` output.
+
+**Layer 3 — E2E conformance (real AWS, gated).** A Go suite that builds the `auto` binary, shells out
+to `auto artifact ...`, and hits the live bucket `auto-artifact-datadyne` / `eu-west-1`. Skipped
+unless `AUTO_ARTIFACT_E2E=1` (D-3); reads creds from `~/.auto/artifact/settings.json`. This is the
+faithful port of all 16 acceptance criteria (D-2). Config-mutating ACs (AC-11/12b/14) run under a
+temp `$HOME` so they never touch the real settings file (D-4); object-creating ACs use the `7d` tier
+and self-clean via `delete`. Runs locally and via a manual `workflow_dispatch` CI job with AWS
+secrets (Q-2) — never on PR CI.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="Test layers vs. credentials needed">
+flowchart TD
+  subgraph NoCreds["Runs in default CI (no AWS)"]
+    U["Layer 1: Unit<br/>SigV4 vectors, key build, retention,<br/>content-type, size cap, settings, setup-gen"]
+    C["Layer 2: In-process CLI<br/>init / doctor-missing / no-config hint<br/>/ --retain validation / text / setup"]
+  end
+  subgraph Creds["Gated: AUTO_ARTIFACT_E2E=1 (real bucket)"]
+    E["Layer 3: E2E harness<br/>all 16 ACs via real 'auto artifact' CLI"]
+  end
+  U --> C --> E
+  E -->|local + manual workflow_dispatch| CI["GitHub Actions"]
+</pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+        <md><script type="text/plain">
+The 16 criteria are the authoritative spec from `auto-artifact/docs/requirements.md`, restated in
+Given/When/Then. Each becomes one test in the Layer-3 harness; the no-network subset also gets a
+Layer-1/2 equivalent. `phases`/`tests` are backfilled by `/new-plan`.
+        </script></md>
+
+        <pd-ac id="AC-1" title="Upload returns a valid public URL" phases="1" tests="auto-artifact/internal/s3/sigv4_test.go, auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** a configured tool and a local file
+- **When** `auto artifact upload <file>` runs
+- **Then** the JSON output has a non-empty `url`, and an HTTP GET of that URL succeeds (2xx) over HTTPS
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="Object key follows {retention}/{uuid}/{filename}" phases="2" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** an upload with `--retain 30d`
+- **When** the key is returned
+- **Then** it matches `^30d/<uuidv4>/<original_filename>` (uuidv4 = `[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}`)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="Default retention is 90d" phases="2" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** an upload with no `--retain` flag
+- **When** the key is returned
+- **Then** it starts with `90d/`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Exactly four retention tiers accepted" phases="2" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** uploads with `--retain` of `7d`, `30d`, `90d`, `365d`
+- **When** each runs
+- **Then** each key carries the matching prefix; **and** any other value (e.g. `60d`) is rejected with a non-zero exit before any S3 call
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="Content-Type auto-detected and set on the object" phases="2" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** a `.png` file
+- **When** it is uploaded and the object is fetched
+- **Then** the response `Content-Type` is `image/png` (so browsers render it inline)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="JSON output contains all required fields" phases="2" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** a successful upload (default JSON mode)
+- **When** the output is parsed
+- **Then** it contains `url`, `bucket`, `key`, `retention`, `content_type`, `size_bytes`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="--format text outputs the bare URL only" phases="2" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** an upload with `--format text`
+- **When** stdout is read
+- **Then** it is a single `https://…` line with no JSON wrapping (no `{`)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="Upload appends to the local JSONL log" phases="2" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** `~/.auto/artifact/uploads.jsonl` with N lines
+- **When** an upload succeeds
+- **Then** the file has N+1 lines and the last record has `key`, `url`, `original_path`, `timestamp`, `retention`, `size_bytes`, `content_type`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="Delete removes the object" phases="3" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** an uploaded, publicly-fetchable object
+- **When** `auto artifact delete <key>` runs
+- **Then** a subsequent GET of its URL returns 403 or 404
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-10" title="Setup outputs a valid provisioning script" phases="5" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** `auto artifact setup --region <r> --bucket <b> --profile <p>`
+- **When** its stdout is inspected
+- **Then** it contains `create-bucket`, `put-bucket-policy`, `put-bucket-lifecycle-configuration`, `create-role`, `create-user`, `create-access-key` and passes `bash -n`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-11" title="Init stores config" phases="4" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** `auto artifact init` with endpoint/bucket/region/access-key-id/secret-access-key flags
+- **When** it completes
+- **Then** `~/.auto/artifact/settings.json` exists with `endpoint`, `bucket`, `region`, `access_key_id`, `secret_access_key`, `default_retention`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-12" title="Doctor validates configuration" phases="4" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given (a)** valid config + bucket access — **When** `doctor` runs — **Then** it exits 0
+- **Given (b)** missing config — **When** `doctor` runs — **Then** it exits non-zero with a diagnostic mentioning the problem
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-13" title="Files over 1 GB are rejected before any S3 call" phases="2" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** a file larger than 1 GB
+- **When** `upload` runs
+- **Then** it fails with a clear size/too-large/exceeds message and makes no S3 request
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-14" title="Upload without config fails with an init hint" phases="4" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** no `settings.json`
+- **When** `upload` runs
+- **Then** it exits non-zero and the message directs the user to run `auto artifact init`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-15" title="The bucket is not listable" phases="6" tests="auto-artifact/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** the provisioned bucket
+- **When** an unauthenticated `ListObjects` (GET of the bucket root) is attempted
+- **Then** it returns HTTP 403
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-16" title="Binary builds and registers as the artifact subcommand" phases="1,6" tests="auto-artifact/conformance/conformance_test.go, auto-cli/cmd/auto/main_test.go">
+          <md><script type="text/plain">
+- **Given** the monorepo
+- **When** `go build ./...` runs
+- **Then** it succeeds and `auto artifact --help` shows the artifact command group
+          </script></md>
+        </pd-ac>
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps & Risks">
+        <md><script type="text/plain">
+- **Real lifecycle expiry is not tested** — we assert the lifecycle *rules/prefixes* exist (AC-2/3/4 + setup), not that objects actually vanish after N days (that would take days). The setup script + `doctor` are the guard.
+- **SigV4 edge cases** — vectors cover the canonical cases; filenames with spaces/unicode/`+` need explicit URI-encoding tests beyond the AWS vectors.
+- **E2E not on PR CI** (Q-2) — a regression that only shows against real S3 won't be caught until the manual job runs. `doctor` + the local pre-merge E2E run mitigate.
+- **Unknown extensions** fall back to `application/octet-stream`; not asserted.
+- **Live-bucket coupling** — the suite depends on the bucket staying correctly provisioned; a misprovision could make AC-9/AC-15 misleading. AC-15 (no-list) + `doctor` catch the common misconfig.
+- **Cost/cleanup** — test objects are real; 7d tier + `delete` keep the bucket clean, but a crashed run can leave short-lived objects (auto-expire in 7 days).
+        </script></md>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Solution">
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+A new `auto-artifact` Go module, mounted as `auto artifact` in the merged binary, following the
+standard auto-* package layout (`rootcmd` seam + `internal/{app,cli,config}` + domain packages).
+Five commands — `upload`, `delete`, `setup`, `init`, `doctor` — plus the baseline `quickstart`/
+`docs`/`update`.
+
+The one piece with no in-repo precedent is the **S3 access layer**, which we hand-roll (Q-1, zero new
+deps): a SigV4 v4 signer over `net/http` using only the stdlib (`crypto/hmac`, `crypto/sha256`).
+It needs a thin surface — `PutObject`, `DeleteObject`, and a `doctor` probe — against virtual-hosted
+URLs (`https://{bucket}.s3.{region}.amazonaws.com/{key}`). Reads are never signed: objects are
+fetched over the public bucket policy, so we only sign writes/deletes.
+
+`upload` is the spine: validate size (≤1 GiB) → detect Content-Type → build key
+`{retention}/{uuid}/{filename}` → SigV4 PutObject with that Content-Type → emit JSON (or bare URL
+with `--format text`) → append a record to `~/.auto/artifact/uploads.jsonl`. `setup` is pure
+codegen — it prints a parameterized bash script (the `scripts/setup-aws.sh` template) and makes no
+AWS calls itself. Config lives in `~/.auto/artifact/settings.json`, loaded via the `auto-shared`
+config helpers (whose `HomeDir()` honours `$HOME`, enabling the temp-`$HOME` test isolation).
+
+Verification is the explicit second deliverable: a Go conformance harness under
+`auto-artifact/conformance/` that builds the real `auto` binary and shells out to it, porting all 16
+ACs, gated behind `AUTO_ARTIFACT_E2E=1`; plus SigV4 unit tests against AWS's published vectors; plus
+a manual `workflow_dispatch` CI job.
+        </script></md>
+
+        <pd-api kind="module" name="internal/s3 (hand-rolled SigV4 client)" lang="go" path="auto-artifact/internal/s3/client.go" caption="The only non-trivial new surface — zero deps">
+          <pd-member kind="constructor" sig="NewClient(cfg config.Settings) *Client">Binds creds + region/bucket; builds virtual-hosted base URL.</pd-member>
+          <pd-member kind="method" sig="PutObject(ctx, key string, body io.Reader, size int64, contentType string) error">SigV4-signed PUT. Sets `x-amz-content-sha256: UNSIGNED-PAYLOAD` (valid over HTTPS, which we enforce) so the body streams straight from the open file with no buffering and no second read — avoids OOM on ≤1 GiB files. `size` sets Content-Length. Maps non-2xx to a remediation error.</pd-member>
+          <pd-member kind="method" sig="DeleteObject(ctx, key string) error">SigV4-signed DELETE; empty-body payload hash (the well-known SHA256 of ""); treats 204/404 as success.</pd-member>
+          <pd-member kind="method" sig="Probe(ctx) error">doctor bucket-access check: PUT then DELETE a tiny object under 7d/.doctor/&lt;uuid&gt; using the real creds (D-5).</pd-member>
+          <pd-member kind="field" sig="sign(req *http.Request, payloadSHA256 string) — internal SigV4 (sigv4.go)">Canonical request → string-to-sign → HMAC signing-key chain → Authorization header. `payloadSHA256` is the literal `UNSIGNED-PAYLOAD` for streamed PUTs, or the hex SHA256 of the (empty/tiny) body for DELETE/probe. Unit-tested against AWS vectors with a fixed hash, plus a case asserting the canonical request uses the `UNSIGNED-PAYLOAD` literal verbatim.</pd-member>
+        </pd-api>
+<pd-thread anchor="auto-artifact/internal/s3/client.go" status="resolved" priority="p2" title="SigV4 payload SHA256 for streamed PutObject (io.Reader) is underspecified">
+  <pd-comment by="review">PutObject(ctx, key, body io.Reader, size int64, ct) "streams body". But SigV4 (even the internal sign) requires the hex-encoded SHA256 of the *complete* payload for x-amz-content-sha256 and the canonical request. AWS published test vectors are for known small fixed bodies. For 1 GiB files or true streaming readers there is no strategy described (full read+buffer for hash+send? ReadSeeker + rewind + send? UNSIGNED-PAYLOAD? chunked streaming SigV4 "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"?). The client.go + sigv4.go descriptions and unit test plan (vectors only) do not address this. Caller in upload will Stat size, but the io.Reader contract here risks incorrect auth or OOM. Checked: no prior S3/signing code; only sha256.New() hash uses elsewhere.</pd-comment>
+  <pd-comment by="author">Good catch — specified now. PutObject uses `x-amz-content-sha256: UNSIGNED-PAYLOAD`, which AWS SigV4 permits over HTTPS (we already enforce HTTPS-only URLs). The canonical request and string-to-sign use the literal `UNSIGNED-PAYLOAD` instead of a body hash, so the body streams directly from the open file — no buffering, no second read, no OOM, and no need for chunked STREAMING-AWS4 framing. DELETE and the doctor probe carry empty/tiny bodies, so they use the real hex SHA256 (the well-known empty-string hash for DELETE). Unit tests: AWS vectors with a fixed payload hash (signing-key chain correctness) **plus** a case asserting the canonical request embeds the `UNSIGNED-PAYLOAD` literal; AC-1's live PUT end-to-end proves S3 accepts it. Updated: the `internal/s3` pd-api (PutObject/DeleteObject/sign members) and Phase 1 step 3.</pd-comment>
+</pd-thread>
+      </pd-section>
+
+      <pd-section id="settled-solution" title="Solution-level decisions">
+        <md><script type="text/plain">
+Calls made during design that the requirements didn't dictate.
+        </script></md>
+
+        <pd-decision id="D-5" title="doctor checks bucket access with a PUT+DELETE probe" status="accepted" by="author" summary="doctor verifies real write/delete permission by putting then deleting a tiny object, rather than HeadBucket.">
+          <md><script type="text/plain">
+**Rationale:** The IAM user has only `PutObject`/`DeleteObject` — no `ListBucket` or `GetObject`. So
+`HeadBucket` (needs ListBucket) and a signed `HeadObject` (needs GetObject) both 403 even when
+everything is fine, giving a false negative. A put-then-delete of `7d/.doctor/<uuid>` exercises
+exactly the permissions the tool uses and self-cleans (and auto-expires in 7d if delete fails).
+**Alternatives rejected:** HeadBucket (false 403); config-only validation (doesn't prove creds/network).
+**Consequences:** `doctor` makes two real S3 calls; negligible cost, no lasting objects.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-6" title="setup is codegen only; the emitted script creates a real, valid IAM role" status="accepted" by="author" summary="`auto artifact setup` prints a parameterized script that genuinely provisions a usable IAM role (valid trust policy), and makes no AWS calls; the static script is reconciled to match.">
+          <md><script type="text/plain">
+**Rationale:** AC-10 requires the emitted script to contain `create-role` (alongside create-bucket,
+put-bucket-policy, put-bucket-lifecycle-configuration, create-user, create-access-key). The existing
+`scripts/setup-aws.sh` declares `IAM_ROLE` but never creates it. Rather than satisfy the grep with a
+bare (and invalid — `create-role` requires `--assume-role-policy-document`) command, the generated
+script creates a **genuinely valid, useful** role: an `iam create-role` with a real trust-policy
+document plus the same S3 PutObject/DeleteObject permissions, intended for **instance-profile / role-
+assumption auth** so agents on EC2/ECS can upload without static keys. v1's CLI still authenticates
+with the IAM **user** + access keys in settings.json; the role is an optional, documented extra — not
+a lie to pass a test. The static `scripts/setup-aws.sh` is updated to emit the identical role block.
+**Alternatives rejected:** (a) bare `create-role` to satisfy the grep — invalid AWS call, would fail a
+real run and `bash -n` wouldn't catch the semantic break; (b) dropping `create-role` from AC-10 —
+would mean editing the authoritative requirements doc's conformance command, larger blast radius than
+making the role real.
+**Consequences:** `scripts/setup-aws.sh` gains a valid `create-role` block (with trust policy); the
+role is created but unused by the v1 CLI (documented as optional). AC-10's grep + `bash -n` both pass
+truthfully.
+          </script></md>
+        </pd-decision>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-artifact/go.mod" change="add">Module github.com/mistakenot/auto-artifact; requires auto-shared + cobra; replace auto-shared. No AWS SDK (Q-1).</pd-file>
+          <pd-file path="auto-artifact/rootcmd/rootcmd.go" change="add">New(stdout, stderr) seam → cli.NewRootCmd(app.New(...)).</pd-file>
+          <pd-file path="auto-artifact/cmd/autoartifact/main.go" change="add">Standalone entry point (per package patterns).</pd-file>
+          <pd-file path="auto-artifact/internal/app/app.go" change="add">App struct {Stdout, Stderr, CWD}.</pd-file>
+          <pd-file path="auto-artifact/internal/cli/root.go" change="add">Root cobra cmd, ExitError, mounts all subcommands.</pd-file>
+          <pd-file path="auto-artifact/internal/cli/upload.go" change="add">upload command: size cap, content-type, key, PutObject, JSON/--format text, jsonl log, init hint on missing config.</pd-file>
+          <pd-file path="auto-artifact/internal/cli/delete.go" change="add">delete command: accepts key or URL → DeleteObject.</pd-file>
+          <pd-file path="auto-artifact/internal/cli/setup.go" change="add">setup command: prints parameterized provisioning script (--region/--bucket/--profile).</pd-file>
+          <pd-file path="auto-artifact/internal/cli/init.go" change="add">init command: writes settings.json from flags at mode 0600 (contains secret_access_key).</pd-file>
+          <pd-file path="auto-artifact/internal/cli/doctor.go" change="add">doctor command: validate config + PUT/DELETE probe (D-5); JSON checks, exit 1 on fail.</pd-file>
+          <pd-file path="auto-artifact/internal/cli/quickstart.go" change="add">Embedded happy-path markdown.</pd-file>
+          <pd-file path="auto-artifact/internal/cli/docs.go" change="add">Embedded full command reference.</pd-file>
+          <pd-file path="auto-artifact/internal/cli/update.go" change="add">Delegates to auto-shared/update.</pd-file>
+          <pd-file path="auto-artifact/internal/config/settings.go" change="add">Settings struct + path/Load/Ensure/Validate (required fields + retention enum). Provides a `WriteSecure(path, cfg)` helper that writes then `os.Chmod`s to 0600 — the shared `WriteJSONFile`/`WriteJSONFileAtomic` force 0644, unsafe for the secret key. Also chmods the parent `~/.auto/artifact` dir to 0700.</pd-file>
+          <pd-file path="auto-artifact/internal/s3/sigv4.go" change="add">Hand-rolled AWS SigV4 signer (stdlib crypto only).</pd-file>
+          <pd-file path="auto-artifact/internal/s3/sigv4_test.go" change="add">Unit tests against AWS published SigV4 test vectors + URI-encoding edge cases.</pd-file>
+          <pd-file path="auto-artifact/internal/s3/client.go" change="add">Client: PutObject, DeleteObject, Probe over net/http.</pd-file>
+          <pd-file path="auto-artifact/internal/artifact/key.go" change="add">UUIDv4 (crypto/rand) + key builder {retention}/{uuid}/{filename}.</pd-file>
+          <pd-file path="auto-artifact/internal/artifact/retention.go" change="add">Tier enum {7d,30d,90d,365d}, default 90d, validation.</pd-file>
+          <pd-file path="auto-artifact/internal/artifact/contenttype.go" change="add">Extension→MIME via stdlib mime; octet-stream fallback.</pd-file>
+          <pd-file path="auto-artifact/internal/artifact/log.go" change="add">Append upload record to ~/.auto/artifact/uploads.jsonl.</pd-file>
+          <pd-file path="auto-artifact/internal/setupscript/script.go" change="add">Parameterized bash-script template. Emits create-bucket, put-bucket-policy, put-bucket-lifecycle-configuration, a valid `create-role` (with `--assume-role-policy-document` trust policy + S3 put/delete perms, optional for instance-profile auth), create-user, attach-user-policy, create-access-key.</pd-file>
+          <pd-file path="auto-artifact/conformance/conformance_test.go" change="add">E2E harness: TestMain builds the **unified** binary via `go build -o TMPDIR/auto github.com/mistakenot/auto-cli/cmd/auto` (import path, not a relative path — resolves via go.work regardless of invocation dir; the module-local cmd/autoartifact would NOT have artifact mounted). All 16 ACs; gated by AUTO_ARTIFACT_E2E; temp-HOME for config-mutating ACs.</pd-file>
+          <pd-file path="auto-artifact/CLAUDE.md" change="add">Tool docs: build/test commands, E2E gating instructions.</pd-file>
+          <pd-file path="auto-artifact/scripts/setup-aws.sh" change="edit">Reconcile with generated script: add a valid `aws iam create-role` block (trust policy + S3 put/delete perms) — currently `IAM_ROLE` is declared but never created. D-6.</pd-file>
+          <pd-file path=".github/workflows/artifact-e2e.yml" change="add">Manual workflow_dispatch job: writes settings.json from AWS secrets, runs the gated suite (Q-2).</pd-file>
+          <pd-file path="go.work" change="edit">Add ./auto-artifact to use().</pd-file>
+          <pd-file path="auto-cli/go.mod" change="edit">require + replace github.com/mistakenot/auto-artifact.</pd-file>
+          <pd-file path="auto-cli/cmd/auto/main.go" change="edit">Import artifactcmd + root.AddCommand(artifactcmd.New(stdout, stderr)).</pd-file>
+          <pd-file path="auto-cli/cmd/auto/main_test.go" change="edit">Add "artifact" to the mounted-subcommand stems assertion.</pd-file>
+          <pd-file path="Makefile" change="edit">Add auto-artifact to PROJECTS.</pd-file>
+          <pd-file path="CLAUDE.md" change="edit">Add auto-artifact row to the Sub-Projects table.</pd-file>
+        </pd-files>
+<pd-thread anchor="auto-artifact/internal/cli/init.go" status="resolved" priority="p1" title="settings.json with secret keys will be created world-readable (0644)">
+  <pd-comment by="review">settings.json stores `secret_access_key`. All shared writers (auto-shared/config/jsonfile.go:51 WriteJSONFile and WriteJSONFileAtomic:91) unconditionally use 0o644. No private/0600 helper exists. The plan, Solution, internal/config/settings.go sketch, and init.go description never mention os.Chmod(0600), fchmod after write, or a dedicated secret writer. context.md and requirements explicitly call for mode 600. This is a security violation for credential storage. Either special-case the artifact config write path or extend shared config. Evidence checked: jsonfile.go, HomeDir/Write usage in auto-shared/config/*_test.go and auto-search etc all rely on 644 or t.Setenv HOME.</pd-comment>
+  <pd-comment by="author">Confirmed and fixed in the plan. The shared writers do force 0644, so we won't use them for this file. Added a `WriteSecure(path, cfg)` helper in `internal/config/settings.go` that writes then `os.Chmod(path, 0600)` and ensures the parent `~/.auto/artifact` dir is 0700 (matching the mode we already set on the live settings.json this session). `init` now writes via `WriteSecure`, and Phase 4 adds a `settings_test.go` unit assertion that the resulting file mode is exactly 0600. Updated: init.go + settings.go File-Changes entries and Phase 4 steps 1–2.</pd-comment>
+</pd-thread>
+<pd-thread anchor="auto-artifact/scripts/setup-aws.sh" status="resolved" priority="p2" title="AC-10 conformance, D-6 and actual setup-aws.sh are inconsistent on create-role">
+  <pd-comment by="review">requirements.md AC-10 conformance and plan.html AC-10 both require the emitted script to contain the literal 'create-role'. scripts/setup-aws.sh (the "proven seed") defines IAM_ROLE but performs zero `aws iam create-role` (it only does create-policy + create-user + attach-user-policy). D-6 says "the generated script will actually create the role so AC-10's `create-role` grep is truthful" and "the static script is updated to match". But: (a) requirements IAM section only specifies permissions for the *user*, (b) a bare `create-role` without --assume-role-policy-document is invalid and would break the emitted script, (c) no detail in Solution on what the generated role block should contain or whether the role is even attached/used. If we are only adding the command string to satisfy a grep, the conformance AC and setup generator are lying about what the script does. Evidence: read of full scripts/setup-aws.sh (no create-role, lines 109-148 only policy+user), AC-10 greps in requirements.md:238 and plan.html:275, D-6 text.</pd-comment>
+  <pd-comment by="author">Agreed — a bare grep-satisfier would be dishonest and a no-trust-policy `create-role` is an invalid call. Rewrote D-6: the emitted script now creates a **genuinely valid, useful** role — `aws iam create-role` with a real `--assume-role-policy-document` (trust policy) plus the same S3 PutObject/DeleteObject permissions — documented as **optional, for instance-profile / role-assumption auth** (agents on EC2/ECS skip static keys). v1's CLI still authenticates via the IAM user + access keys; the role is an extra, not a fiction. Verification strengthened: beyond AC-10's grep + `bash -n`, a `script_test.go` unit test asserts the role block contains `--assume-role-policy-document`, so the test can't pass on a fake. Rejected dropping `create-role` from AC-10 (would edit the authoritative requirements conformance command — bigger blast radius). Updated: D-6, setupscript/script.go + setup-aws.sh File-Changes entries, Phase 5 steps.</pd-comment>
+</pd-thread>
+<pd-thread anchor="auto-artifact/conformance/conformance_test.go" status="resolved" priority="p3" title="Harness must build the *unified* `auto` (not a module-local binary) and compute repo root robustly">
+  <pd-comment by="review">AC-16 and all upload/delete tests require shelling out to the merged `auto artifact` subcommand (wired only via auto-cli). The TestMain comment says "builds the auto binary". If the test does `go build -o ./auto ./cmd/autoartifact` (or equivalent) it will produce a binary that does *not* have artifact mounted. Must do `go build -o $bin -ldflags=... ./cmd/auto` from repo root (like other cross-module cases). Computing the "repo root" relative from `conformance/` (../../.. or go list) must be reliable whether test is run as `go test .` inside auto-artifact or `make test` / `go test ./auto-artifact/conformance` from root. No detail in plan on this path logic or ldflags for version. Precedents use cmd.Dir + filepath calc; fragile if not tested.</pd-comment>
+  <pd-comment by="author">Right — clarified in the plan. TestMain builds by **package import path**, not relative path: `go build -o <tmpdir>/auto github.com/mistakenot/auto-cli/cmd/auto`. This (a) builds the unified binary that actually has `artifact` mounted, and (b) sidesteps repo-root math entirely — go resolves the import path through go.work regardless of whether the test runs via `go test .` inside the module, `go test ./auto-artifact/conformance`, or `make test`. The built binary is invoked by absolute path (or placed on PATH), so cmd.Dir/`../../..` fragility disappears. Version ldflags are irrelevant to conformance (the binary's behaviour, not its version string, is under test), so we omit them for a faster build. Updated: conformance_test.go File-Changes entry and Phase 1 step 4.</pd-comment>
+</pd-thread>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **AWS SDK for Go v2** — rejected (Q-1): large dependency tree for a PUT/DELETE-only surface; conflicts with the project's zero-runtime-deps guidance.
+- **LocalStack/MinIO for tests** — rejected (D-1): public-URL + bucket-policy + no-list semantics differ from real AWS, so AC-9/AC-15 wouldn't be faithfully exercised.
+- **Signed (presigned) URLs** — rejected (requirements): expiry breaks long-lived PRs; we use permanent public URLs + unguessable UUID prefixes instead.
+- **HeadBucket for doctor** — rejected (D-5): needs ListBucket, which the IAM user lacks, so it 403s on a healthy bucket.
+- **E2E on every PR** — rejected (Q-2): needs AWS secrets exposed to all PR/fork runs and costs per push; manual workflow_dispatch instead.
+- **Calling AWS directly from `setup`** — rejected (requirements/D-6): `setup` only emits a script the user runs in their own authenticated context; the tool never provisions.
+        </script></md>
+      </pd-section>
+
+      <pd-decisions></pd-decisions>
+    </pd-tab>
+
+    <pd-tab name="Plan">
+      <pd-section id="phases" title="Execution Phases">
+        <md><script type="text/plain">
+Phase 1 is a walking skeleton: a thin end-to-end upload through every layer (CLI → config → SigV4 →
+S3 → public URL) with AC-1 green against the real bucket. Phases 2–5 add behaviour on top of a system
+that already runs and can branch in parallel; Phase 6 hardens + wires CI/docs. Every phase ends with
+`go build ./... && go vet ./...`, its conformance subset green, and a contextual commit.
+
+Run the gated suite with: `AUTO_ARTIFACT_E2E=1 go test ./auto-artifact/conformance/...`
+        </script></md>
+
+        <pd-dag caption="Phase dependency graph"></pd-dag>
+
+        <pd-stepper>
+          <pd-phase n="1" title="Walking skeleton: end-to-end upload"
+                    files="auto-artifact/go.mod, auto-artifact/rootcmd/rootcmd.go, auto-artifact/cmd/autoartifact/main.go, auto-artifact/internal/app/app.go, auto-artifact/internal/cli/root.go, auto-artifact/internal/cli/upload.go, auto-artifact/internal/config/settings.go, auto-artifact/internal/s3/sigv4.go, auto-artifact/internal/s3/sigv4_test.go, auto-artifact/internal/s3/client.go, auto-artifact/internal/artifact/key.go, auto-artifact/conformance/conformance_test.go, auto-artifact/CLAUDE.md, go.work, auto-cli/go.mod, auto-cli/cmd/auto/main.go, auto-cli/cmd/auto/main_test.go, Makefile"
+                    status="todo">
+            <md><script type="text/plain">
+**Goal:** `auto artifact upload <file>` puts a real object and returns a fetchable public URL.
+
+1. Scaffold the module (go.mod, rootcmd seam, app, root cli) mirroring `auto-env`; wire into `go.work`, `auto-cli` (go.mod require+replace, main.go AddCommand, main_test.go stems), `Makefile` PROJECTS. **Verify:** `go build ./...` and `auto artifact --help` lists the group.
+2. Implement the SigV4 signer (`internal/s3/sigv4.go`) — stdlib crypto only. **Verify:** `sigv4_test.go` passes against AWS published test vectors.
+3. Implement `internal/s3/client.go` `PutObject` (signed PUT; `x-amz-content-sha256: UNSIGNED-PAYLOAD` over an enforced-HTTPS endpoint, so the body streams with no buffering/double-read; Content-Type arg) and load `settings.json` via auto-shared helpers; `internal/artifact/key.go` builds `90d/<uuidv4>/<filename>` (content-type hardcoded `application/octet-stream` for now). Wire `upload.go` to emit JSON `{url,...}`.
+4. Conformance harness skeleton: `conformance_test.go` TestMain builds the **unified** binary with `go build -o <tmp>/auto github.com/mistakenot/auto-cli/cmd/auto` (the import path resolves through go.work no matter where `go test` is invoked from — do NOT build `./cmd/autoartifact`, which lacks the mounted subcommand; no fragile `../../..` repo-root math). Put `<tmp>` on PATH or invoke by absolute path. Add AC-1 and AC-16, gated by `AUTO_ARTIFACT_E2E`. **Verify:** `AUTO_ARTIFACT_E2E=1 go test ./auto-artifact/conformance/...` passes AC-1 + AC-16; plain `go test ./...` stays green (suite skips).
+5. Write minimal `auto-artifact/CLAUDE.md`. **Commit.**
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="2" title="Upload semantics: retention, key, content-type, output, log, size cap"
+                    files="auto-artifact/internal/cli/upload.go, auto-artifact/internal/config/settings.go, auto-artifact/internal/artifact/key.go, auto-artifact/internal/artifact/retention.go, auto-artifact/internal/artifact/contenttype.go, auto-artifact/internal/artifact/log.go, auto-artifact/conformance/conformance_test.go"
+                    status="todo" depends-on="1">
+            <md><script type="text/plain">
+1. `retention.go`: tier enum {7d,30d,90d,365d}, default 90d, `--retain` validation (reject others before any S3 call). **Verify:** AC-3, AC-4.
+2. `key.go`: enforce `{retention}/{uuid}/{filename}` with the chosen tier. **Verify:** AC-2.
+3. `contenttype.go`: detect via stdlib `mime`, octet-stream fallback; pass to PutObject. **Verify:** AC-5.
+4. `upload.go`: full JSON fields (url,bucket,key,retention,content_type,size_bytes); `--format text` bare URL. **Verify:** AC-6, AC-7.
+5. `log.go`: append record to `~/.auto/artifact/uploads.jsonl`. **Verify:** AC-8.
+6. `upload.go`: reject files > 1 GiB via `os.Stat` before any S3 call. **Verify:** AC-13.
+7. `go build ./... && go vet ./...`; AC-2,3,4,5,6,7,8,13 green. **Commit.**
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="3" title="Delete command"
+                    files="auto-artifact/internal/cli/delete.go, auto-artifact/internal/s3/client.go, auto-artifact/conformance/conformance_test.go"
+                    status="todo" depends-on="1">
+            <md><script type="text/plain">
+1. `client.go`: add `DeleteObject` (signed DELETE; 204/404 = success).
+2. `delete.go`: accept a key or a full URL (parse key from URL), call DeleteObject.
+3. **Verify:** AC-9 (upload → fetchable → delete → GET returns 403/404). `go build && vet`. **Commit.**
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="4" title="Config & diagnostics: init, doctor, missing-config hint"
+                    files="auto-artifact/internal/cli/init.go, auto-artifact/internal/cli/doctor.go, auto-artifact/internal/cli/upload.go, auto-artifact/internal/config/settings.go, auto-artifact/conformance/conformance_test.go"
+                    status="todo" depends-on="1">
+            <md><script type="text/plain">
+1. `settings.go`: `Validate` (required endpoint/bucket/region/keys; retention enum) returning shared ValidationError; `WriteSecure` writes then `os.Chmod(path, 0600)` (parent dir 0700) — shared writers force 0644, unsafe for `secret_access_key`.
+2. `init.go`: write settings.json from flags (endpoint/bucket/region/access-key-id/secret-access-key) via `WriteSecure`. **Verify:** AC-11 (under temp HOME); a `settings_test.go` unit test asserts the file mode is `0600`.
+3. `upload.go`: when config missing/invalid, exit non-zero with a message directing to `auto artifact init`. **Verify:** AC-14 (temp HOME).
+4. `doctor.go`: config-valid checks + PUT/DELETE probe (D-5); JSON checks, exit 1 on fail. **Verify:** AC-12a (valid) + AC-12b (missing, temp HOME).
+5. `go build && vet`; AC-11,12,14 green. **Commit.**
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="5" title="Setup script generator"
+                    files="auto-artifact/internal/cli/setup.go, auto-artifact/internal/setupscript/script.go, auto-artifact/scripts/setup-aws.sh, auto-artifact/conformance/conformance_test.go"
+                    status="todo" depends-on="1">
+            <md><script type="text/plain">
+1. `setupscript/script.go`: parameterized template (--region/--bucket/--profile) emitting create-bucket, put-bucket-policy, put-bucket-lifecycle-configuration, a **valid `create-role`** (`--assume-role-policy-document` trust policy + S3 put/delete perms; optional, for instance-profile auth — D-6), create-user, attach-user-policy, create-access-key.
+2. `setup.go`: print the script to stdout; make no AWS calls.
+3. Reconcile `scripts/setup-aws.sh` to match (add the real create-role block) — D-6.
+4. **Verify:** AC-10 (greps + `bash -n`); a `script_test.go` unit test also asserts the role block includes `--assume-role-policy-document` (so it's a real call, not a grep-filler). `go build && vet`. **Commit.**
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="6" title="Hardening: baseline commands, no-list test, CI, docs"
+                    files="auto-artifact/internal/cli/quickstart.go, auto-artifact/internal/cli/docs.go, auto-artifact/internal/cli/update.go, .github/workflows/artifact-e2e.yml, CLAUDE.md, auto-artifact/conformance/conformance_test.go"
+                    status="todo" depends-on="2,3,4,5">
+            <md><script type="text/plain">
+1. Baseline commands: `quickstart` + `docs` (embedded markdown), `update` (delegate to auto-shared/update).
+2. Add AC-15 (unauthenticated bucket-root GET → 403) and confirm AC-16 fully (build + subcommand mounts).
+3. `.github/workflows/artifact-e2e.yml`: `workflow_dispatch` job — set up Go, write `~/.auto/artifact/settings.json` from AWS secrets, run `AUTO_ARTIFACT_E2E=1 go test ./auto-artifact/conformance/...`.
+4. Root `CLAUDE.md`: add the `auto-artifact` Sub-Projects row; run `auto doc fix` if needed.
+5. **Verify:** full suite `AUTO_ARTIFACT_E2E=1 go test ./auto-artifact/...` green; plain `go test ./...`, `go build ./...`, `go vet ./...`, lint clean; workflow YAML valid. **Commit.**
+            </script></md>
+          </pd-phase>
+        </pd-stepper>
+      </pd-section>
+    </pd-tab>
+  </pd-doc>
+</body>
+</html>
