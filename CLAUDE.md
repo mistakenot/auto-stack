@@ -57,8 +57,9 @@
 
 All tools ship as subcommands of a single `auto` binary.
 
-| Directory      | Command        | Status      | Description                                                        |
+| Directory       | Command        | Status      | Description                                                        |
 |----------------|----------------|-------------|--------------------------------------------------------------------|
+| `auto-artifact/`| `auto artifact`| Active      | Upload evidence files to public-read S3, get permanent URLs for PRs |
 | `auto-doc/`    | `auto doc`     | Active      | Doc management for AI agents — freshness checking, search, indexing |
 | `auto-env/`    | `auto env`     | Active      | Template-based config generation with per-worktree port allocation  |
 | `auto-etl/`    | `auto etl`     | Active      | ETL for coding agent session histories (SSH, LXC, local)           |

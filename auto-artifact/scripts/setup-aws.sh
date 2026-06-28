@@ -141,6 +141,30 @@ run_aws iam attach-user-policy \
   --user-name "$IAM_USER" \
   --policy-arn "$POLICY_ARN"
 
+# Create a genuinely usable role for instance-profile / role-assumption auth
+# (agents on EC2/ECS can assume it and upload without static keys). The v1 CLI
+# still authenticates with the IAM user + access keys below; the role is an
+# optional extra (D-6).
+run_aws iam create-role \
+  --role-name "$IAM_ROLE" \
+  --assume-role-policy-document "$(cat <<TRUST
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": [ "ec2.amazonaws.com", "ecs-tasks.amazonaws.com" ] },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+TRUST
+)"
+
+run_aws iam attach-role-policy \
+  --role-name "$IAM_ROLE" \
+  --policy-arn "$POLICY_ARN"
+
 # --- 6. Create access keys ---
 echo "[6/6] Creating access keys..."
 KEYS=$(run_aws iam create-access-key \

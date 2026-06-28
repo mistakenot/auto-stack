@@ -9,7 +9,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="051: auto-artifact-cli" status="executing" pr="pending" generated="2026-06-28" next-prompt="/execute-task 051">
+  <pd-doc title="051: auto-artifact-cli" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/114" generated="2026-06-28" next-prompt="/execute-task 051">
     <script type="application/json" id="pd-meta">
     {
       "id": "051",
@@ -493,7 +493,7 @@ Run the gated suite with: `AUTO_ARTIFACT_E2E=1 go test ./auto-artifact/conforman
         <pd-stepper>
           <pd-phase n="1" title="Walking skeleton: end-to-end upload"
                     files="auto-artifact/go.mod, auto-artifact/rootcmd/rootcmd.go, auto-artifact/cmd/autoartifact/main.go, auto-artifact/internal/app/app.go, auto-artifact/internal/cli/root.go, auto-artifact/internal/cli/upload.go, auto-artifact/internal/config/settings.go, auto-artifact/internal/s3/sigv4.go, auto-artifact/internal/s3/sigv4_test.go, auto-artifact/internal/s3/client.go, auto-artifact/internal/artifact/key.go, auto-artifact/conformance/conformance_test.go, auto-artifact/CLAUDE.md, go.work, auto-cli/go.mod, auto-cli/cmd/auto/main.go, auto-cli/cmd/auto/main_test.go, Makefile"
-                    status="todo">
+                    status="done">
             <md><script type="text/plain">
 **Goal:** `auto artifact upload <file>` puts a real object and returns a fetchable public URL.
 
@@ -507,7 +507,7 @@ Run the gated suite with: `AUTO_ARTIFACT_E2E=1 go test ./auto-artifact/conforman
 
           <pd-phase n="2" title="Upload semantics: retention, key, content-type, output, log, size cap"
                     files="auto-artifact/internal/cli/upload.go, auto-artifact/internal/config/settings.go, auto-artifact/internal/artifact/key.go, auto-artifact/internal/artifact/retention.go, auto-artifact/internal/artifact/contenttype.go, auto-artifact/internal/artifact/log.go, auto-artifact/conformance/conformance_test.go"
-                    status="todo" depends-on="1">
+                    status="done" depends-on="1">
             <md><script type="text/plain">
 1. `retention.go`: tier enum {7d,30d,90d,365d}, default 90d, `--retain` validation (reject others before any S3 call). **Verify:** AC-3, AC-4.
 2. `key.go`: enforce `{retention}/{uuid}/{filename}` with the chosen tier. **Verify:** AC-2.
@@ -521,7 +521,7 @@ Run the gated suite with: `AUTO_ARTIFACT_E2E=1 go test ./auto-artifact/conforman
 
           <pd-phase n="3" title="Delete command"
                     files="auto-artifact/internal/cli/delete.go, auto-artifact/internal/s3/client.go, auto-artifact/conformance/conformance_test.go"
-                    status="todo" depends-on="1">
+                    status="done" depends-on="1">
             <md><script type="text/plain">
 1. `client.go`: add `DeleteObject` (signed DELETE; 204/404 = success).
 2. `delete.go`: accept a key or a full URL (parse key from URL), call DeleteObject.
@@ -531,7 +531,7 @@ Run the gated suite with: `AUTO_ARTIFACT_E2E=1 go test ./auto-artifact/conforman
 
           <pd-phase n="4" title="Config & diagnostics: init, doctor, missing-config hint"
                     files="auto-artifact/internal/cli/init.go, auto-artifact/internal/cli/doctor.go, auto-artifact/internal/cli/upload.go, auto-artifact/internal/config/settings.go, auto-artifact/conformance/conformance_test.go"
-                    status="todo" depends-on="1">
+                    status="done" depends-on="1">
             <md><script type="text/plain">
 1. `settings.go`: `Validate` (required endpoint/bucket/region/keys; retention enum) returning shared ValidationError; `WriteSecure` writes then `os.Chmod(path, 0600)` (parent dir 0700) — shared writers force 0644, unsafe for `secret_access_key`.
 2. `init.go`: write settings.json from flags (endpoint/bucket/region/access-key-id/secret-access-key) via `WriteSecure`. **Verify:** AC-11 (under temp HOME); a `settings_test.go` unit test asserts the file mode is `0600`.
@@ -543,7 +543,7 @@ Run the gated suite with: `AUTO_ARTIFACT_E2E=1 go test ./auto-artifact/conforman
 
           <pd-phase n="5" title="Setup script generator"
                     files="auto-artifact/internal/cli/setup.go, auto-artifact/internal/setupscript/script.go, auto-artifact/scripts/setup-aws.sh, auto-artifact/conformance/conformance_test.go"
-                    status="todo" depends-on="1">
+                    status="done" depends-on="1">
             <md><script type="text/plain">
 1. `setupscript/script.go`: parameterized template (--region/--bucket/--profile) emitting create-bucket, put-bucket-policy, put-bucket-lifecycle-configuration, a **valid `create-role`** (`--assume-role-policy-document` trust policy + S3 put/delete perms; optional, for instance-profile auth — D-6), create-user, attach-user-policy, create-access-key.
 2. `setup.go`: print the script to stdout; make no AWS calls.
@@ -554,7 +554,7 @@ Run the gated suite with: `AUTO_ARTIFACT_E2E=1 go test ./auto-artifact/conforman
 
           <pd-phase n="6" title="Hardening: baseline commands, no-list test, CI, docs"
                     files="auto-artifact/internal/cli/quickstart.go, auto-artifact/internal/cli/docs.go, auto-artifact/internal/cli/update.go, .github/workflows/artifact-e2e.yml, CLAUDE.md, auto-artifact/conformance/conformance_test.go"
-                    status="todo" depends-on="2,3,4,5">
+                    status="done" depends-on="2,3,4,5">
             <md><script type="text/plain">
 1. Baseline commands: `quickstart` + `docs` (embedded markdown), `update` (delegate to auto-shared/update).
 2. Add AC-15 (unauthenticated bucket-root GET → 403) and confirm AC-16 fully (build + subcommand mounts).

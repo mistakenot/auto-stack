@@ -1,0 +1,47 @@
+name: Artifact E2E
+
+# Manual-only: the auto-artifact conformance suite hits real AWS, so it runs on
+# demand (never on PR CI). It writes ~/.auto/artifact/settings.json from repo
+# secrets and runs the gated suite against the live bucket.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.26"
+          cache-dependency-path: '**/go.sum'
+
+      - name: Write artifact settings from secrets
+        env:
+          ENDPOINT: ${{ secrets.AUTO_ARTIFACT_ENDPOINT }}
+          BUCKET: ${{ secrets.AUTO_ARTIFACT_BUCKET }}
+          REGION: ${{ secrets.AUTO_ARTIFACT_REGION }}
+          ACCESS_KEY_ID: ${{ secrets.AUTO_ARTIFACT_ACCESS_KEY_ID }}
+          SECRET_ACCESS_KEY: ${{ secrets.AUTO_ARTIFACT_SECRET_ACCESS_KEY }}
+        run: |
+          mkdir -p ~/.auto/artifact
+          chmod 700 ~/.auto/artifact
+          umask 077
+          cat > ~/.auto/artifact/settings.json <<JSON
+          {
+            "endpoint": "${ENDPOINT}",
+            "bucket": "${BUCKET}",
+            "region": "${REGION}",
+            "access_key_id": "${ACCESS_KEY_ID}",
+            "secret_access_key": "${SECRET_ACCESS_KEY}",
+            "default_retention": "90d"
+          }
+          JSON
+          chmod 600 ~/.auto/artifact/settings.json
+
+      - name: Run gated conformance suite
+        run: AUTO_ARTIFACT_E2E=1 go test ./auto-artifact/conformance/... -v

@@ -60,7 +60,7 @@ func runAuto(t *testing.T, args ...string) (string, error) {
 // TestAllToolsMounted asserts every tool stem mounts under `auto` and its usage
 // line is re-rooted to `auto <stem>` (AC-1). Covers config + ui too (AC-6).
 func TestAllToolsMounted(t *testing.T) {
-	stems := []string{"config", "doc", "env", "etl", "graph", "reflect", "search", "skill", "ui", "watch"}
+	stems := []string{"artifact", "config", "doc", "env", "etl", "graph", "reflect", "search", "skill", "ui", "watch"}
 	for _, s := range stems {
 		out, err := runAuto(t, s, "--help")
 		if err != nil {
