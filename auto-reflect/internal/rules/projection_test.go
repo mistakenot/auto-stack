@@ -252,6 +252,57 @@ func TestFoldLifecycleToEnforcedWithLintRefDelta(t *testing.T) {
 	}
 }
 
+func TestFoldPreChangeEventLogIsBackwardCompatible(t *testing.T) {
+	// A pre-change event log carries NONE of the lineage/lint/provenance fields
+	// added in task 049: rule_created/rule_edited with bare payloads and an
+	// observation with no task_id and evidence with no file/line/commit. Folding
+	// it under the current code must project identically to the old behavior:
+	// the new fields stay empty/nil, the schema stays version 1, and no panic.
+	result := Fold([]events.ShardedEvent{
+		shardedRuleEvent(t, 1, "2026-05-01T10:00:00Z", events.TypeRuleCreated, events.RuleCreatedPayload{
+			RuleID: "r-0000000a", Domain: []string{"go"}, UseWhen: "editing go files",
+			Content: "run go build ./... from the module dir", CausalNote: "unbuilt files hide errors",
+			RuleType: RuleTypeSoft, Lifecycle: LifecycleDraft,
+		}),
+		shardedRuleEvent(t, 2, "2026-05-01T11:00:00Z", events.TypeRuleEdited, events.RuleEditedPayload{
+			RuleID: "r-0000000a", FromVersion: 1, ToVersion: 2,
+			Deltas: []events.FieldDelta{
+				{Field: FieldLifecycle, Old: LifecycleDraft, New: LifecycleConfirmed},
+			},
+		}),
+		shardedRuleEvent(t, 3, "2026-05-01T12:00:00Z", events.TypeObservation, events.ObservationPayload{
+			ObservationID: "ob-0000000a", Kind: "gap", Subject: "no go build guidance",
+			Evidence: []events.ObservationEvidence{{SessionID: "sess-1"}},
+			Severity: "normal",
+		}),
+	})
+
+	if result.Playbook.SchemaVersion != SchemaVersion {
+		t.Fatalf("schema_version = %d, want %d", result.Playbook.SchemaVersion, SchemaVersion)
+	}
+	r := findRule(t, result.Playbook, "r-0000000a")
+	if r.Version != 2 {
+		t.Fatalf("version = %d, want 2", r.Version)
+	}
+	if r.Lifecycle != LifecycleConfirmed {
+		t.Fatalf("lifecycle = %q, want confirmed", r.Lifecycle)
+	}
+	// The new fields must fold to empty/nil so omitempty drops them entirely —
+	// a pre-change log serializes byte-identically to the old projection.
+	if r.PredecessorIDs != nil {
+		t.Fatalf("predecessor_ids = %#v, want nil for a pre-change log", r.PredecessorIDs)
+	}
+	if r.SuccessorIDs != nil {
+		t.Fatalf("successor_ids = %#v, want nil for a pre-change log", r.SuccessorIDs)
+	}
+	if r.LintRef != nil {
+		t.Fatalf("lint_ref = %#v, want nil for a pre-change log", r.LintRef)
+	}
+	if r.ObservationIDs != nil {
+		t.Fatalf("observation_ids = %#v, want nil for a pre-change log", r.ObservationIDs)
+	}
+}
+
 func findRule(t *testing.T, pb Playbook, id string) Rule {
 	t.Helper()
 	for i := range pb.Rules {

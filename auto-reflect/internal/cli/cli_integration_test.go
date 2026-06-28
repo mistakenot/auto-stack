@@ -116,6 +116,13 @@ func TestQuickstartIncludesInitAndCoreCommands(t *testing.T) {
 		"--use-when",
 		"retrieval_id",
 		"feedback_id",
+		"rule graduate",
+		"--lifecycle enforced",
+		"--task-id",
+		"--evidence-file",
+		"--evidence-commit",
+		"--evidence-line-range",
+		`"op": "split"`,
 	} {
 		if !strings.Contains(stdout, needle) {
 			t.Fatalf("quickstart output missing %q\noutput:\n%s", needle, stdout)
