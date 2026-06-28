@@ -9,7 +9,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="050: Model-Based Sync Testing" status="executing" pr="pending" generated="2026-06-28"
+  <pd-doc title="050: Model-Based Sync Testing" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/113" generated="2026-06-28"
           next-prompt="/new-solution 050">
 
     <script type="application/json" id="pd-meta">
@@ -411,7 +411,7 @@ The `Check()` method on the state machine runs after every operation:
       <pd-stepper>
         <pd-phase n="1" title="Implement state machine test"
                   files="auto-skill/internal/sync/sync_statemachine_test.go"
-                  status="todo">
+                  status="done">
           <md><script type="text/plain">
 Write the `syncStateMachine` struct implementing `rapid.StateMachine`:
 
@@ -446,7 +446,7 @@ a failing counterexample showing the collateral damage. After the fix, the test 
 
         <pd-phase n="2" title="Verify and tune"
                   files="auto-skill/internal/sync/sync_statemachine_test.go"
-                  status="todo"
+                  status="done"
                   depends-on="1">
           <md><script type="text/plain">
 1. **Run against the unfixed code** to confirm the test catches the --target bug. Record the
