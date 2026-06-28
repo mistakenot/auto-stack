@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>049: reflect-audit-lineage-lint</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+{"id":"049","name":"reflect-audit-lineage-lint","status":"planning","created":"2026-06-28"}
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="049: reflect-audit-lineage-lint" status="pending" pr="pending" generated="2026-06-28">
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+`auto-reflect` is meant to be the deterministic, event-sourced engine for the same
+observe → refine → search loop the `/playbook-*` skills implement over flat YAML.
+A code audit found four structural gaps where the data model **cannot represent**
+things the skills rely on — no amount of skill orchestration can paper over them:
+
+1. **No rule lineage.** Retirement is terminal (`rule.go:388`); `Rule` has no
+   `successor_ids` / `predecessor_ids` (`internal/rules/model.go:39-44`). MERGE,
+   SPLIT and REMOVE lose the thread: a retired rule can't point at what replaced it,
+   so retrieval history on the old id dead-ends. There is also no SPLIT consolidate op.
+2. **Evidence is session-keyed, not task-keyed.** Observations have no `task_id`
+   (`internal/observations/model.go`), and `promote` counts distinct *sessions*
+   (`rule.go:398`). The skills' "≥3 distinct tasks ⇒ confirmed" rule is inexpressible.
+3. **Incomplete audit trail.** `ObservationEvidence` captures `session_id`,
+   `message_id`, `quote` (`internal/events/model.go:147-153`) — but **no file paths,
+   line ranges, or per-evidence git commit**. The skill captures `files: [...]` and
+   `git_commit`. So the chain rule → observation → exact file/line/commit is broken.
+4. **No first-class "graduated to a lint check" state.** When a rule becomes a static
+   lint check (the best possible outcome — deterministic enforcement beats soft
+   guidance), the only option today is to mark it `stale`, conflating "this is wrong /
+   obsolete" with "this is still true and is now enforced for us."
+        </script></md>
+      </pd-section>
+
+      <pd-section id="provenance-chain" title="The audit trail we want" summary="Every rule must trace back to the exact session / message / file / commit it came from.">
+        <pd-mermaid caption="Target provenance chain (dotted = missing today)">
+flowchart LR
+  R[Rule] -->|observation_ids| O[Observation]
+  R -.->|successor/predecessor| R2[Rule lineage]
+  R -.->|lint ref| L[Lint check]
+  O -->|evidence| E[Evidence item]
+  E -->|session_id| S[Session]
+  E -->|message_id| M[Message]
+  E -.->|files + lines| F[File]
+  E -.->|commit| G[Git commit]
+  O -.->|task_id| T[Task]
+        </pd-mermaid>
+        <md><script type="text/plain">
+Solid edges exist today; **dotted edges are the gaps** this task closes. The
+guiding rule: an observation should capture *as much provenance as it can* at
+record time, and a rule inherits that trail transitively through its `observation_ids`.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **Rule lineage.** Add `successor_ids` / `predecessor_ids` to `Rule` and the rule
+  events. MERGE/REMOVE/graduation record the forward link; lineage rolls up so
+  retrieval/analytics on a retired id resolve to its successor. Retire stops being a
+  dead end.
+- **SPLIT op.** Add a `split` consolidate op that retires one rule into ≥2 narrower
+  drafts, wiring lineage both ways, so `read_when`/`use_when` triggers stay specific.
+- **Task-keyed evidence.** Add an **optional** `task_id` to observation evidence (set
+  via an explicit `--task-id` flag; absent when unknown). Where present, the promote
+  gate counts **distinct tasks**; the existing ≥2-distinct-session check stays as the
+  floor when task_id is absent.
+- **Full audit trail on observations.** Extend `ObservationEvidence` with optional
+  `files` (paths), optional line ranges, and an optional per-evidence `commit`, so each
+  observation records the fullest path back to session → message → file/line → commit
+  it can. Capture is best-effort and additive.
+- **`enforced` lifecycle for lint graduation.** Add a first-class `enforced` lifecycle
+  state — *still true, now deterministically guarded by a lint check* — distinct from
+  `stale` (wrong/obsolete). Carry a **record-only** structured lint reference
+  (linter, check id, config path, commit). Add a `graduate` op / CLI verb that moves a
+  rule to `enforced` and records the reference + lineage.
+- **Backward-compatible & event-sourced.** All schema changes are additive
+  (`omitempty`); existing append-only events must fold identically with no migration.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions (resolved with user)">
+        <md><script type="text/plain">
+Resolved up front so the solution stage doesn't re-litigate them:
+
+- **Lint graduation = new `enforced` lifecycle**, not a retire-reason enum. Graduation
+  is a celebrated end-state ("lint checks are OP"), semantically separate from `stale`.
+- **`task_id` is an explicit, optional `--task-id` flag.** No auto-detection from
+  branch/worktree. The model must tolerate its absence everywhere.
+- **Lint linkage is record-only.** The tool stores the reference as provenance and
+  trusts the caller; it does **not** verify the check exists or runs.
+- **One task.** Lineage + task-keying + audit trail + `enforced` all touch the same
+  event/rule/observation surface; doing them together avoids editing the same files twice.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- Migrating the `/playbook-*` skills to call `auto reflect` (separate task; this task
+  only makes the engine *capable*).
+- `feedback.md` ingestion / the miner enrolling non-session artifacts — orchestration,
+  not a model gap.
+- Verifying or running the referenced lint check (record-only, per decision).
+- Auto-detecting `task_id` from branch/worktree/docs path (explicit flag only).
+- Bumping `SchemaVersion` or rewriting existing events — changes are purely additive.
+- Retrieval ranking changes — per Q-1, `enforced` rules are simply excluded from
+  `retrieve` and listed only via `rule list --lifecycle enforced`; no re-ranking.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Assumptions I'm comfortable proceeding on (revisit if wrong):
+
+- **Confirmed gate with optional task_id:** distinct-task count is computed only over
+  evidence that carries a `task_id`; absent task_ids never contribute to the task
+  count. The ≥2-distinct-session draft threshold remains the floor. So a rule can reach
+  `confirmed` via ≥3 distinct tasks *or* the existing session-based path.
+- **Additive schema, no version bump:** new fields are `omitempty`; old events fold
+  unchanged, so `SchemaVersion` stays at 1.
+        </script></md>
+
+        <pd-question id="Q-1" status="answered" priority="p2" for="charlie"
+                     title="Should 'enforced' (lint-graduated) rules still surface in retrieve?">
+          A rule that graduated to a lint check is no longer active *soft* guidance, but
+          the fact that the constraint is now enforced — and *where* (which check) — is
+          useful signal to an agent.
+          <br><br>
+          <b>Recommended:</b> surface `enforced` rules in <code>retrieve</code> but
+          clearly flagged ("already enforced — see check X"), and exclude them from the
+          soft-guidance ranking so they don't crowd out actionable rules. The
+          alternative is to suppress them entirely like `stale`. This changes retrieval
+          behavior, so it shouldn't be silently guessed at the solution stage.
+          <pd-answer by="charlie">Separate query only: `enforced` rules never appear in
+          normal <code>retrieve</code> output (keeping retrieve purely about actionable
+          soft guidance), but stay discoverable on demand via
+          <code>rule list --lifecycle enforced</code>.</pd-answer>
+        </pd-question>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+All changes are additive schema/model work on the event-sourced core, so verification
+is **layered and mostly deterministic** — no LLM-in-the-loop, no external services.
+
+- **Unit (table-driven, per package)** — the bulk of coverage, following existing
+  `validEvent()` / `obEvent()` builder + `t.Run` conventions:
+  - `events` — new payload fields round-trip through JSON; `Validate()` accepts the
+    `split` op and rejects unknown ops.
+  - `observations` — `Input.Validate()` positional pairing for `file`/`commit`/`line-range`
+    (extra entries → `ValidationError`); `Payload()` sets `task_id` + per-evidence fields.
+  - `rules` — `Fold()`/`applyDelta()` apply lineage + `lint_ref` + `enforced`;
+    `surfaceableLifecycle()` excludes `enforced` from retrieval; `ValidateRule()` accepts
+    `enforced`.
+  - `consolidate` — `split` produces (parent→stale + lineage, N drafts + lineage); each
+    child passes the dedupe gate; distinct-**task** coverage counts `task_id`s.
+- **Integration (CLI roundtrip)** — `cli/*_integration_test.go`: `observation add` with the
+  new flags → `observation list` shows them; `rule graduate` → `enforced` + structured
+  `lint_ref`; `rule list --lifecycle enforced` returns it; `retrieve` never does.
+- **E2E (full flows)** — `cmd/autoreflect/e2e_lifecycle_test.go`: graduate and split
+  happy paths + the promote task-count gate, asserting on-disk event log + refolded
+  playbook.
+- **Backward-compatibility** — fold a fixture event log written *before* this change
+  (no new fields) and assert identical projection; `SchemaVersion` stays `1`.
+- **Build discipline** — `go build ./...` in `auto-reflect` after each file (project rule);
+  `go vet` clean (pre-commit hook).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map" summary="Deterministic pyramid — unit-heavy, with backward-compat fold as a dedicated gate.">
+        <pd-mermaid caption="Testing layers">
+flowchart TD
+  U["Unit: events / observations / rules / consolidate"] --> I["Integration: CLI roundtrips (add, graduate, list, retrieve)"]
+  I --> E["E2E: graduate + split + promote-gate over real event log"]
+  BC["Backward-compat: pre-change fixture folds identically"] --> E
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="Split wires lineage both ways" phases="4" tests="internal/consolidate/consolidate_test.go,cmd/autoreflect/e2e_consolidate_test.go">
+          <md><script type="text/plain">
+- Given a `confirmed` rule R with provenance observations
+- When `consolidate` applies a `split` op into two narrower drafts C1, C2
+- Then R folds to `stale` with `successor_ids=[C1,C2]`, each child folds to `draft`
+  with `predecessor_ids=[R]`, and each child independently passes the dedupe gate
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="Retirement is no longer a dead end" phases="1,4" tests="internal/rules/projection_test.go,cmd/autoreflect/e2e_lifecycle_test.go">
+          <md><script type="text/plain">
+- Given a rule retired via `merge` (loser) or `graduate`
+- When the event log is folded
+- Then the retired rule carries a forward `successor_ids` link (or `lint_ref` for
+  graduate), so traversal from an old rule id resolves to what replaced it
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="enforced rules are excluded from retrieve but listable" phases="1" tests="internal/rules/match_test.go,internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- Given a rule in the new `enforced` lifecycle
+- When `auto reflect retrieve <intent>` runs (with or without `--no-drafts`)
+- Then the enforced rule never appears in the retrieval set
+- And `auto reflect rule list --lifecycle enforced` returns it with its `lint_ref`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Confirmed gate counts distinct tasks, with session fallback" phases="2,3" tests="internal/consolidate/consolidate_test.go,cmd/autoreflect/e2e_lifecycle_test.go">
+          <md><script type="text/plain">
+- Given a `draft` rule whose provenance observations carry ≥3 distinct `task_id`s
+- When `auto reflect rule promote <id>` runs
+- Then it transitions to `confirmed`
+- And given <3 distinct tasks AND <2 distinct sessions AND no `--force`, promote fails
+  with a remediation hint naming both the task and session shortfall
+- And given observations with NO `task_id` but ≥2 distinct sessions, the legacy
+  session path still confirms (no regression)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="Observations capture the fullest audit trail available" phases="2" tests="internal/observations/model_test.go,internal/cli/observation_integration_test.go,cmd/autoreflect/e2e_observation_test.go">
+          <md><script type="text/plain">
+- Given `observation add --task-id T --evidence-session S --evidence-file F
+  --evidence-line-range L --evidence-commit C`
+- When the observation is stored and projected
+- Then the evidence item carries `file=F`, `line_range=L`, `commit=C` and the
+  observation carries `task_id=T`
+- And supplying more `--evidence-file` than `--evidence-session` yields a structured
+  `ValidationError` (positional pairing), not a silent drop
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Lint graduation is structured and record-only" phases="1" tests="internal/cli/cli_integration_test.go,cmd/autoreflect/e2e_lifecycle_test.go">
+          <md><script type="text/plain">
+- Given `auto reflect rule graduate <id> --linter golangci-lint --check errcheck
+  [--config-path .golangci.yml --commit <sha>]`
+- When it runs
+- Then the rule folds to `enforced` with a structured `lint_ref{linter, check,
+  config_path?, commit?}`
+- And the tool does NOT attempt to verify the check exists or run the linter
+- And omitting required `--linter`/`--check` yields a `ValidationError` with a hint
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="Existing event logs fold identically (backward compatible)" phases="5" tests="internal/rules/projection_test.go,internal/rules/testdata/playbook.golden.json">
+          <md><script type="text/plain">
+- Given an events log produced before this change (no lineage/task_id/file/lint_ref)
+- When folded by the new code
+- Then rules and observations project identically to the old behavior, all new fields
+  are empty/omitted, no panics, and `SchemaVersion` remains `1`
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-7" status="resolved" priority="p2" title="Backward-compat fold test is assigned to the wrong package">
+          <pd-comment by="review">AC-7 and Phase 5 put the fold-identically assertion in `internal/events/model_test.go`, but that file is currently `package events` and `internal/rules/projection.go` imports `internal/events` (`auto-reflect/internal/events/model_test.go:1`, `auto-reflect/internal/rules/projection.go:8`). A same-package events test cannot import `rules` to fold a Playbook without an import cycle. The existing golden fold lives in `internal/rules/projection_test.go`, so the plan should either move the backward-compat fold assertion there or explicitly add an external `events_test` package test that imports both packages.</pd-comment>
+          <pd-comment by="author">Good catch. Moved the fold-identically assertion to `internal/rules/projection_test.go` (where the golden fold already lives), noting the external `events_test` package as the alternative. `events/model_test.go` is now scoped to payload JSON round-trip + envelope Validate only. Updated AC-7 `tests`, Phase 5 step 1, and Phase 5 `files` (added `projection_test.go`).</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-8" title="New surfaces honor the CLI output + validation contract" phases="2,3,4" tests="internal/observations/model_test.go,internal/consolidate/consolidate_test.go,internal/cli/consolidate_integration_test.go,internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- Given any new flag/op misuse (unknown `--lifecycle` value, a `task_id` not matching
+  `^[0-9]{3}-[a-z0-9]+(?:-[a-z0-9]+)*$`, unknown consolidate op)
+- When the command runs
+- Then a structured `ValidationError` and remediation hint go to stderr with a
+  non-zero exit, while stdout remains strictly parseable JSON (or empty)
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-8" status="resolved" priority="p2" title="task_id has no validation contract">
+          <pd-comment by="review">AC-8 requires malformed `task_id` to produce a structured `ValidationError`, but the schema section only says `ObservationPayload.TaskID string` and the example uses `049-reflect-audit-lineage-lint`; no accepted regex or normalization rule is defined. Without a concrete format, implementers and tests cannot distinguish malformed from merely unfamiliar task identifiers. Please specify the `task_id` grammar, for example whether it must be a task-folder id like `^[0-9]{3}-[a-z0-9]+(?:-[a-z0-9]+)*$`, and route that validation through `observations.Input.Validate()` / CLI tests.</pd-comment>
+          <pd-comment by="author">Confirmed with the user: `task_id` adopts the task-folder grammar `^[0-9]{3}-[a-z0-9]+(?:-[a-z0-9]+)*$` (matching `docs/tasks/NNN-name`). It stays optional — the regex is only enforced when `--task-id` is supplied — and validation routes through `observations.Input.Validate()`. Updated the schema member, the AC-8 criterion (replaced "malformed" with the concrete regex), and Phase 2 step 2 (add `taskIDRegex` check + valid/invalid tests). Aligns with the project's constrained-identifier convention (CLAUDE.md).</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-9" title="quickstart documents the new commands" phases="5" tests="internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- Given `auto reflect quickstart`
+- When it prints the happy-path markdown
+- Then it documents `rule graduate` (lint graduation), the `enforced` lifecycle +
+  `rule list --lifecycle enforced`, the provenance flags (`--task-id`, `--evidence-file`,
+  `--evidence-commit`, `--evidence-line-range`) on `observation add`, and the `split`
+  consolidate op
+- And `TestQuickstartIncludesInitAndCoreCommands` asserts those new needles
+          </script></md>
+        </pd-ac>
+
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps & Risks">
+        <md><script type="text/plain">
+- **Lint linkage can rot.** Record-only means a referenced check can be renamed or
+  removed and the tool won't notice (per the record-only decision). Accepted;
+  verification is explicitly out of scope.
+- **Heterogeneous "confirmed".** With `task_id` optional, some rules confirm via the
+  strong ≥3-task path and others via the legacy ≥2-session path. `stats`/audit can't
+  assume a uniform confirmation basis.
+- **Coarse file provenance.** We capture one best-effort `file`+`line_range`+`commit`
+  per evidence item — not the blob-SHA-anchored, replay-after-edit design in
+  `v1-feedback-rule-memory-synthesis.md`. Multi-file-per-evidence and snippet hashing
+  are deferred.
+- **No historical backfill.** Only newly captured observations get `task_id`/file
+  provenance; existing observations stay as-is.
+- **Downstream tolerance.** No tool reads these reflect fields today; if `auto-ui`/
+  `auto-search` later render reflect events, they must treat the new fields as optional
+  (additive guarantees this, but it's an assumption worth stating).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Four additive, backward-compatible extensions to the event-sourced core. `SchemaVersion`
+stays `1`; all new fields are `omitempty`; existing event logs fold identically (precedent:
+tasks 023 / `4009d3c` added event types and fields with no bump).
+
+1. **Audit trail on observations** — `ObservationEvidence` gains optional `file`,
+   `line_range`, `commit`; `ObservationPayload` gains an observation-level optional
+   `task_id`. Rules inherit the trail transitively through `observation_ids`.
+2. **Rule lineage** — `Rule` + `RuleCreatedPayload` gain `predecessor_ids` / `successor_ids`,
+   threaded through `Fold()` / `applyDelta()`. Retire/merge/split/graduate all record the
+   forward link, so an old rule id always resolves to its successor.
+3. **`enforced` lifecycle + lint reference** — a new lifecycle state plus a structured,
+   record-only `LintRef`. A `rule graduate` verb (mirroring `promote`/`retire`) moves a
+   rule to `enforced`. Per Q-1, `enforced` is excluded from `retrieve` (treated like
+   `stale` in `surfaceableLifecycle`) but listable via `rule list --lifecycle enforced`.
+4. **SPLIT op + task-keyed confirmation** — a `split` consolidate op (mirroring `merge`):
+   one rule → N narrower drafts, parent→`stale`, lineage both ways, each child re-gated for
+   dedupe. `promote` gains a distinct-**task** path: it confirms on ≥3 distinct `task_id`s
+   among provenance observations, falling back to the existing ≥2-distinct-session bar when
+   task ids are absent (so task-id-less usage never regresses).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="schema-shapes" title="Schema additions" summary="The exact new fields/types — all omitempty, no version bump.">
+        <pd-api kind="struct" name="events payloads" lang="go" path="internal/events/model.go" caption="Additive fields (omitempty)">
+          <pd-member kind="field" sig="ObservationPayload.TaskID string `json:&quot;task_id,omitempty&quot;`">Observation-level task identity (set via `--task-id`); drives the distinct-task confirm gate. Optional, but when present must match the task-folder id grammar `^[0-9]{3}-[a-z0-9]+(?:-[a-z0-9]+)*$` (e.g. `049-reflect-audit-lineage-lint`), enforced in `observations.Input.Validate()` with a structured ValidationError.</pd-member>
+          <pd-member kind="field" sig="ObservationEvidence.File string `json:&quot;file,omitempty&quot;`">Repo-relative file the evidence points at (aligns with v1-feedback file-span naming).</pd-member>
+          <pd-member kind="field" sig="ObservationEvidence.LineRange string `json:&quot;line_range,omitempty&quot;`">Optional `start-end` line span within File.</pd-member>
+          <pd-member kind="field" sig="ObservationEvidence.Commit string `json:&quot;commit,omitempty&quot;`">Commit the evidence was observed at (per-evidence, distinct from the envelope's capturing-event git).</pd-member>
+          <pd-member kind="field" sig="RuleCreatedPayload.PredecessorIDs []string `json:&quot;predecessor_ids,omitempty&quot;`">Lineage: rules this one descends from (split children, merge target).</pd-member>
+          <pd-member kind="field" sig="RuleCreatedPayload.SuccessorIDs []string `json:&quot;successor_ids,omitempty&quot;`">Lineage: rules that supersede this one (also set on the retired parent via rule_edited).</pd-member>
+          <pd-member kind="field" sig="RuleCreatedPayload.LintRef *LintRef `json:&quot;lint_ref,omitempty&quot;`">Set when a rule is graduated to a static lint check.</pd-member>
+          <pd-member kind="field" sig="ConsolidationPayload.Op += &quot;split&quot;">New op in the consolidation vocabulary. The op allow-list is validated in `consolidate.ParseDocument()` (NOT `events.Validate()`, which only checks the envelope); an unknown op is rejected there as a structured ValidationError, and the CLI fails fast (non-zero exit) instead of silently skipping it.</pd-member>
+        </pd-api>
+        <pd-thread anchor="schema-shapes" status="resolved" priority="p1" title="Consolidate op validation is planned in the wrong layer">
+          <pd-comment by="review">The plan says `ConsolidationPayload.Op += "split"` is accepted by `Validate()` and Phase 5 says `events/model_test.go` should reject unknown ops, but `events.Validate()` only validates the event envelope and explicitly leaves payload rules to owning packages (`auto-reflect/internal/events/model.go:217-220`). Today `consolidate.ParseDocument()` only rejects unknown JSON fields and empty deltas (`auto-reflect/internal/consolidate/consolidate.go:66-78`), while `internal/cli/consolidate.go` treats missing or unknown ops as skipped deltas with an exit-0 result (`auto-reflect/internal/cli/consolidate.go:155-168`; tests document skips as normal output at `internal/cli/consolidate_integration_test.go:31-32`). That means AC-8's non-zero `ValidationError` for an unknown consolidate op will not be implemented by editing `events.Validate()`. The plan needs an explicit consolidate-domain validation step, likely in `internal/consolidate`, and CLI wiring/tests that convert invalid op usage into stderr diagnostics with non-zero exit.</pd-comment>
+          <pd-comment by="author">Agreed — wrong layer. Fixed: op-vocabulary validation now lands in `consolidate.ParseDocument()` (reject unknown op → structured ValidationError), and `cli/consolidate.go` is changed to fail fast (stderr diagnostic + non-zero exit) instead of the current exit-0 skip at `consolidate.go:155-168`. Updated the schema note, the events/model.go + consolidate.go + cli/consolidate.go File Changes, Phase 4 step 1–2, and Phase 5 step 1 (removed the bogus "events.Validate rejects unknown ops" claim). AC-8 now also traces to `consolidate_test.go` + `consolidate_integration_test.go`. `events.Validate()` stays envelope-only.</pd-comment>
+        </pd-thread>
+        <pd-api kind="struct" name="LintRef (new)" lang="go" path="internal/events/model.go" caption="Record-only structured lint reference">
+          <pd-member kind="field" sig="Linter string `json:&quot;linter&quot;`">Required — e.g. `golangci-lint`, `eslint`, `ast-grep`.</pd-member>
+          <pd-member kind="field" sig="Check string `json:&quot;check&quot;`">Required — the check/rule id, e.g. `errcheck`.</pd-member>
+          <pd-member kind="field" sig="ConfigPath string `json:&quot;config_path,omitempty&quot;`">Optional repo-relative path to the check definition/config.</pd-member>
+          <pd-member kind="field" sig="Commit string `json:&quot;commit,omitempty&quot;`">Optional commit where the check was added.</pd-member>
+          <pd-member kind="field" sig="Note string `json:&quot;note,omitempty&quot;`">Optional free-text. The tool stores all of this verbatim and verifies nothing.</pd-member>
+        </pd-api>
+        <pd-api kind="struct" name="rules.Rule + lifecycle" lang="go" path="internal/rules/model.go" caption="Projection shape">
+          <pd-member kind="field" sig="const LifecycleEnforced = &quot;enforced&quot;">New lifecycle alongside draft|confirmed|stale.</pd-member>
+          <pd-member kind="field" sig="Rule.PredecessorIDs []string / SuccessorIDs []string">Folded lineage.</pd-member>
+          <pd-member kind="field" sig="Rule.LintRef *LintRef">Folded lint reference (present iff lifecycle == enforced).</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="cli-surface" title="CLI surface (final shape)">
+        <pd-cli title="zsh — new + changed commands" caption="Record-only, JSON by default">
+          <pd-cmd note="capture full provenance" status="todo">auto reflect observation add --kind correction --subject "..." --task-id 049-reflect-audit-lineage-lint --evidence-session S --evidence-file internal/rules/match.go --evidence-line-range 136-145 --evidence-commit 6e4b5c8</pd-cmd>
+          <pd-cmd note="graduate a rule to a lint check" status="todo">auto reflect rule graduate r-1a2b3c4d --linter golangci-lint --check errcheck --config-path .golangci.yml</pd-cmd>
+          <pd-cmd note="enforced is hidden from retrieve, listed on demand" status="todo">auto reflect rule list --lifecycle enforced</pd-cmd>
+          <pd-cmd note="split one rule into narrower drafts" status="todo">echo '{"deltas":[{"op":"split","rule_id":"r-1a2b3c4d","into":[{"use_when":"...","content":"...","causal_note":"...","domain":["go"]},{"use_when":"...","content":"...","causal_note":"...","domain":["cli"]}]}]}' | auto reflect consolidate -</pd-cmd>
+        </pd-cli>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="internal/events/model.go" change="edit">Add LintRef type; lineage + lint_ref on RuleCreatedPayload; file/line_range/commit on ObservationEvidence; task_id on ObservationPayload. (Envelope `Validate()` stays as-is — the op vocabulary is validated in consolidate, not here.)</pd-file>
+          <pd-file path="internal/observations/model.go" change="edit">Input gains TaskID + per-evidence file/commit/line-range slices; validateEvidence positional pairing; Payload assembly.</pd-file>
+          <pd-file path="internal/cli/observation.go" change="edit">Flags: --task-id, --evidence-file, --evidence-commit, --evidence-line-range.</pd-file>
+          <pd-file path="internal/observations/model_test.go" change="edit">Validation pairing + Payload projection for new fields.</pd-file>
+          <pd-file path="internal/cli/observation_integration_test.go" change="edit">add→list roundtrip carries new provenance.</pd-file>
+          <pd-file path="cmd/autoreflect/e2e_observation_test.go" change="edit">E2E provenance capture.</pd-file>
+          <pd-file path="internal/rules/model.go" change="edit">LifecycleEnforced const; PredecessorIDs/SuccessorIDs/LintRef on Rule.</pd-file>
+          <pd-file path="internal/rules/validate.go" change="edit">Accept `enforced` in validLifecycles + enum message.</pd-file>
+          <pd-file path="internal/rules/projection.go" change="edit">Fold lineage/lint_ref on create; applyDelta cases for new fields.</pd-file>
+          <pd-file path="internal/rules/match.go" change="edit">surfaceableLifecycle excludes `enforced` from retrieval.</pd-file>
+          <pd-file path="internal/loop/service.go" change="edit">Retrieve surfacing + comment: enforced never surfaces.</pd-file>
+          <pd-file path="internal/rules/projection_test.go" change="edit">Fold lineage + lint_ref + enforced.</pd-file>
+          <pd-file path="internal/rules/match_test.go" change="edit">enforced excluded from match.</pd-file>
+          <pd-file path="internal/cli/rule.go" change="edit">newRuleGraduateCmd; --lifecycle enforced filter on list; lineage flags on create/edit; task-count promote path.</pd-file>
+          <pd-file path="internal/cli/quickstart.go" change="edit">Extend quickstartMarkdown: rule graduate + enforced, `rule list --lifecycle enforced`, provenance flags (--task-id/--evidence-file/--evidence-commit/--evidence-line-range), and the split op.</pd-file>
+          <pd-file path="internal/cli/cli_integration_test.go" change="edit">graduate + enforced list/retrieve behavior.</pd-file>
+          <pd-file path="cmd/autoreflect/e2e_lifecycle_test.go" change="edit">E2E graduate + promote-by-tasks + lineage assertions.</pd-file>
+          <pd-file path="internal/consolidate/consolidate.go" change="edit">OpSplit; op allow-list validation in ParseDocument (unknown op → structured ValidationError); ConfirmMinTasks; distinct-task coverage; split gate/lineage.</pd-file>
+          <pd-file path="internal/cli/consolidate.go" change="edit">split() consolidator method wired into the processor; unknown/missing op now fails fast — stderr diagnostic + non-zero exit (replaces today's exit-0 skip at consolidate.go:155-168).</pd-file>
+          <pd-file path="internal/consolidate/consolidate_test.go" change="edit">split gates + distinct-task coverage.</pd-file>
+          <pd-file path="internal/cli/consolidate_integration_test.go" change="edit">split roundtrip over the event log.</pd-file>
+          <pd-file path="cmd/autoreflect/e2e_consolidate_test.go" change="edit">E2E split flow.</pd-file>
+          <pd-file path="internal/rules/testdata/playbook.golden.json" change="edit">Backward-compat / schema-stability guard (update only if intentionally extended).</pd-file>
+          <pd-file path="internal/events/model_test.go" change="edit">Payload round-trip + Validate accepts split, rejects unknown ops; backward-compat fold.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Retire-reason enum instead of `enforced` lifecycle** — rejected at Requirements (Q
+  round): conflates "graduated to a check" (a win, still true) with "wrong/obsolete".
+- **Nested multi-file evidence with blob SHAs** (the full `v1-feedback` design) — rejected
+  for now: breaks the simple positional CLI pairing and over-builds. One best-effort
+  `file`+`line_range`+`commit` per evidence item; multi-file is a later additive extension.
+- **`graduate` / `split` as the same surface** — rejected: `graduate` is a lifecycle
+  transition (mirrors `promote`/`retire` → rule verb); `split` restructures the rule set
+  (mirrors `merge` → consolidate op). Splitting them matches the established pattern.
+- **Require task_id (drop the session fallback)** — rejected: task_id is optional by
+  decision, so a tasks-only confirm gate would strand task-id-less observations.
+- **Bumping SchemaVersion to 2** — unnecessary; all changes are additive `omitempty`,
+  consistent with every prior schema change in this codebase.
+- **Auto-detect task_id from branch/worktree** — out of scope by decision; explicit flag only.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-1" title="task_id lives on the observation, not per-evidence" status="accepted" by="agent"
+        summary="One observation = one task; simplest gate + matches 'finding from a single task'.">
+        <md><script type="text/plain">
+**Decision:** `task_id` is an observation-level field on `ObservationPayload`.
+**Alternatives:** per-evidence task_id (CB1's first sketch).
+**Consequences:** the distinct-task confirm gate counts task_ids across an evidence-rule's
+provenance observations cleanly; an observation spanning two tasks (rare) must be split.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-2" title="File provenance is flat, one file per evidence item" status="accepted" by="agent"
+        summary="Single file+line_range+commit per evidence, positional-paired like quote/message.">
+        <md><script type="text/plain">
+**Decision:** add scalar `file`/`line_range`/`commit` to `ObservationEvidence`, paired by
+position to sessions exactly like the existing `quote`/`message` slices.
+**Alternatives:** nested list of files per evidence; blob-SHA-anchored snippets.
+**Consequences:** trivial CLI wiring, consistent validation; "capture as much as it can"
+means one primary file per evidence, more files = more evidence items. Multi-file and blob
+anchoring remain additive future work.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-3" title="promote confirms on ≥3 tasks OR ≥2 sessions" status="accepted" by="agent"
+        summary="Task path is the stronger signal; session path retained for backward-compat.">
+        <md><script type="text/plain">
+**Decision:** `rule promote` succeeds if provenance covers ≥3 distinct `task_id`s, OR the
+existing ≥2 distinct sessions, OR `--force`.
+**Alternatives:** tasks-only (strands task-id-less data); replace the session bar.
+**Consequences:** "confirmed" becomes heterogeneous (task- vs session-basis) — documented
+as a known gap. No regression for callers that never set task_id.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-4" title="LintRef requires linter+check; everything else optional; record-only" status="accepted" by="agent"
+        summary="Minimal required identity, no verification.">
+        <md><script type="text/plain">
+**Decision:** `--linter` and `--check` are required on `rule graduate`; `--config-path`,
+`--commit`, `--note` optional. The tool stores and never verifies.
+**Alternatives:** verify the check exists (rejected by decision); free-text only (loses structure).
+**Consequences:** graduation is cheap and linter-agnostic; a stale/renamed check won't be
+caught (known gap).
+        </script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Five vertical slices over the event-sourced core, all additive (`omitempty`, no
+`SchemaVersion` bump). Phase 1 is a walking skeleton that drives a brand-new lifecycle
+(`enforced`) and the `graduate` verb through every layer — events payload → rules model →
+fold → matcher → CLI → e2e — so the add-a-field-through-the-fold pipeline is proven before
+anything is thickened. Run `make check` after every phase (task-019 lesson).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-mermaid caption="Phase dependency DAG">
+flowchart LR
+  P1["P1 enforced + graduate (skeleton)"] --> P2["P2 observation audit trail"]
+  P2 --> P3["P3 task-keyed confirm gate"]
+  P1 --> P4["P4 split op + lineage"]
+  P2 --> P5["P5 backward-compat + docs"]
+  P3 --> P5
+  P4 --> P5
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="enforced lifecycle + graduate (walking skeleton)" status="todo"
+          files="internal/events/model.go,internal/rules/model.go,internal/rules/validate.go,internal/rules/projection.go,internal/rules/match.go,internal/loop/service.go,internal/cli/rule.go,internal/rules/projection_test.go,internal/rules/match_test.go,internal/cli/cli_integration_test.go,cmd/autoreflect/e2e_lifecycle_test.go">
+          <md><script type="text/plain">
+Thin end-to-end path through every layer, plus the lineage struct fields (declared now,
+populated in P4).
+
+1. `events/model.go`: add `LintRef` type; `lint_ref`, `predecessor_ids`, `successor_ids`
+   (omitempty) to `RuleCreatedPayload`. **Verify:** `go build ./...`.
+2. `rules/model.go`: add `LifecycleEnforced = "enforced"`; `PredecessorIDs`/`SuccessorIDs`/
+   `LintRef` on `Rule`. `validate.go`: add `enforced` to validLifecycles + enum message.
+   **Verify:** `go build ./...`.
+3. `rules/projection.go`: set lineage/lint_ref in `Fold()` on create; add `applyDelta`
+   cases (`lifecycle`, `lint_ref`, `successor_ids`, `predecessor_ids`). **Verify:** unit
+   test fold round-trip in `projection_test.go`.
+4. `rules/match.go` + `loop/service.go`: exclude `enforced` from `surfaceableLifecycle` /
+   retrieve surfacing. **Verify:** `match_test.go` asserts enforced never surfaces.
+5. `cli/rule.go`: `newRuleGraduateCmd` (`--linter`/`--check` required, `--config-path`/
+   `--commit`/`--note` optional, `--force`); add `enforced` to `--lifecycle` list filter;
+   wire via `refoldAndGet`/`writeRuleResult`. **Verify:** `cli_integration_test.go`.
+6. E2E in `e2e_lifecycle_test.go`: create→graduate→`rule list --lifecycle enforced` shows
+   it with lint_ref; `retrieve` excludes it. **Verify:** `make check` green.
+7. **Commit** `feat(049): enforced lifecycle + rule graduate (skeleton)`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Observation audit trail (task_id + file/line/commit)" status="todo" depends-on="1"
+          files="internal/events/model.go,internal/observations/model.go,internal/cli/observation.go,internal/observations/model_test.go,internal/cli/observation_integration_test.go,cmd/autoreflect/e2e_observation_test.go">
+          <md><script type="text/plain">
+1. `events/model.go`: add `file`/`line_range`/`commit` (omitempty) to `ObservationEvidence`;
+   `task_id` (omitempty) to `ObservationPayload`. **Verify:** `go build ./...`.
+2. `observations/model.go`: `Input` gains `TaskID` + parallel `EvidenceFiles`/
+   `EvidenceCommits`/`EvidenceLineRanges`; extend `validateEvidence()` positional-pairing
+   (extra entries → `ValidationError`); add a `taskIDRegex = ^[0-9]{3}-[a-z0-9]+(?:-[a-z0-9]+)*$`
+   check in `Input.Validate()` (only when `TaskID` is non-empty — it stays optional);
+   assemble in `Payload()`. **Verify:** `model_test.go` covers pairing, projection, and
+   valid/invalid `task_id`.
+3. `cli/observation.go`: flags `--task-id`, `--evidence-file`, `--evidence-commit`,
+   `--evidence-line-range` (StringArray). **Verify:** `observation_integration_test.go`
+   add→list roundtrip.
+4. E2E in `e2e_observation_test.go`: add with all flags, assert stored provenance.
+   **Verify:** `make check`.
+5. **Commit** `feat(049): observation audit-trail provenance`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Task-keyed confirmation gate" status="todo" depends-on="2"
+          files="internal/consolidate/consolidate.go,internal/cli/rule.go,internal/consolidate/consolidate_test.go,cmd/autoreflect/e2e_lifecycle_test.go">
+          <md><script type="text/plain">
+1. `consolidate/consolidate.go`: add `ConfirmMinTasks = 3`; extend `Coverage` (or add a
+   sibling) to count distinct `task_id`s across provenance observations. **Verify:** unit
+   tests in `consolidate_test.go` (3 tasks pass; 2 tasks + 1 session fail; 0 tasks + 2
+   sessions pass).
+2. `cli/rule.go`: `promote` gate = (≥3 distinct tasks) OR (≥2 distinct sessions) OR
+   `--force`; failure message names both shortfalls + remediation. **Verify:** integration.
+3. E2E in `e2e_lifecycle_test.go`: promote-by-tasks happy path + fallback. **Verify:**
+   `make check`.
+4. **Commit** `feat(049): task-keyed confirm gate with session fallback`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="SPLIT op + lineage wiring" status="todo" depends-on="1"
+          files="internal/consolidate/consolidate.go,internal/cli/consolidate.go,internal/consolidate/consolidate_test.go,internal/cli/consolidate_integration_test.go,cmd/autoreflect/e2e_consolidate_test.go">
+          <md><script type="text/plain">
+1. `consolidate/consolidate.go`: add `OpSplit`; add an **op allow-list** to `ParseDocument()`
+   so an unknown/missing op is rejected as a structured `ValidationError` (not a silent
+   skip); parse the `split` delta (`rule_id` + `into[]` child specs); each child re-runs
+   `DetectDuplicate`. **Verify:** `consolidate_test.go` gates (unknown-op rejection, dedupe
+   rejection, valid split).
+2. `cli/consolidate.go`: `split()` method mirroring `merge()`/`deprecate()` — emits
+   `rule_edited` on parent (lifecycle→stale, `successor_ids=[children]`), `rule_created`
+   per child (draft, `predecessor_ids=[parent]`), and `consolidation` events `op=split`;
+   single post-batch refold. Also change the processor so an invalid op **fails fast**
+   (stderr diagnostic + non-zero exit) instead of the current exit-0 skip. **Verify:**
+   `consolidate_integration_test.go` asserts parent stale + lineage both ways AND that an
+   unknown op yields non-zero exit with a stderr `ValidationError`.
+3. E2E in `e2e_consolidate_test.go`: split one rule into two, assert folded state.
+   **Verify:** `make check`.
+4. **Commit** `feat(049): split consolidate op with two-way lineage`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="5" title="Backward-compat guard + docs" status="todo" depends-on="2,3,4"
+          files="internal/rules/testdata/playbook.golden.json,internal/rules/projection_test.go,internal/events/model_test.go,internal/cli/quickstart.go,internal/cli/cli_integration_test.go,cmd/autoreflect/e2e_lifecycle_test.go">
+          <md><script type="text/plain">
+1. `rules/projection_test.go`: backward-compat **fold** test — fold a pre-change event-log
+   fixture (no new fields) into a Playbook, assert projection identical, all new fields
+   empty/omitted, `SchemaVersion` still `1`. (Must live in `rules` — `events` is
+   `package events` and `rules` imports `events`, so a same-package events test cannot fold
+   a Playbook without an import cycle; an external `events_test` package is the alternative.)
+   `events/model_test.go`: payload JSON round-trip for the new optional fields, envelope
+   `Validate()` unchanged. Unknown-op rejection is covered in `consolidate` (P4). **Verify:** tests.
+2. `playbook.golden.json`: only touch if a fixture intentionally exercises new fields;
+   otherwise confirm it is unchanged (schema-stability guard). **Verify:** golden compare.
+3. `cli/quickstart.go`: extend `quickstartMarkdown` with the new happy path — `rule graduate`
+   (+ a graduated/`enforced` example), `rule list --lifecycle enforced`, the provenance flags
+   (`--task-id`, `--evidence-file`, `--evidence-commit`, `--evidence-line-range`) on
+   `observation add`, and the `split` op. `cli_integration_test.go`: add the new needles to
+   `TestQuickstartIncludesInitAndCoreCommands`. **Verify:** integration (AC-9).
+4. Final full sweep: `go build ./...`, `make check`, all e2e green. **Verify:** clean.
+5. **Commit** `test(049): backward-compat fold guard + docs`.
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **P1** delivers AC-3, AC-6 and the graduate half of AC-2.
+- **P2** delivers AC-5 and the task-id substrate AC-4 needs.
+- **P3** delivers AC-4.
+- **P4** delivers AC-1 and the merge/split half of AC-2.
+- **P5** delivers AC-7 and AC-9 (quickstart); AC-8 is checked throughout (P2/P3/P4 surfaces).
+- Done = all 8 ACs pass, `make check` green, `SchemaVersion == 1`, backward-compat fold test passing.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+  </pd-doc>
+</body>
+</html>
