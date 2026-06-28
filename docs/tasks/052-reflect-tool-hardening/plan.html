@@ -1,0 +1,822 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>052: reflect-tool-hardening</title>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "052",
+    "name": "reflect-tool-hardening",
+    "status": "planning",
+    "created": "2026-06-28"
+  }
+  </script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="052: reflect-tool-hardening" status="pending" pr="pending" generated="2026-06-28" next-prompt="/execute-task 052">
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+The `/reflect-playbook` end-to-end spike on 2026-06-28
+(`.tmp/reflect-playbook-spike-findings.md`) found the `auto reflect` loop's
+**skeleton is solid** — deterministic, gated, append-only, with good error
+remediation — but its **read / output side is untrustworthy**: the loop
+*captures* signal well yet *surfaces* it poorly.
+
+The headline: reported feedback **gaps** (the explicit bridge back to Stage-1
+observation) are persisted to the event log but **cannot be read back through
+any command** — you must `grep` raw JSONL. So the advertised closed loop
+("gap → next observation") is, in practice, open. Alongside it the spike found
+two disagreeing pending-counts, per-command JSON shapes that make id-threading
+error-prone, non-deterministic ids, a self-contradictory git policy for
+`.auto/reflect/`, and a few smaller doc/projection gaps.
+
+This task fixes the **high-priority** findings so the loop becomes
+"trustworthy" rather than "works if you hold it right."
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+Each goal maps to a finding code (`F#`) from the spike report.
+
+| # | Finding | Fix |
+|---|---------|-----|
+| **F4** (P1) | Feedback gaps are write-only | Add `auto reflect gap list` — surfaces each reported gap (report + moment + source feedback id / session / ts), so the gap → observation loop-back has tooling. |
+| **F2** (P1) | `miner status` `pending` (390) ≠ `stats` `pending_to_mine` (396) | Collapse both onto **one shared counting function** (single source of truth); document exactly which session universe it counts. |
+| **F5** (P2) | Each command nests its minted id differently; `rule promote` top-level `.id` is `null` | **Restructure to a uniform output envelope** with a predictable top-level `.id` / `.ids` (and `.[].id` for collection results). Breaking change to the CLI output contract. |
+| **F7** | Dry-run ids ≠ apply ids, so you can't pre-stage `promote` | Mint rule & observation ids as **deterministic content hashes** so `--dry-run` == apply. Existing id *formats* preserved. |
+| **F9** | `.auto/reflect/` git policy is self-contradictory (disposable `playbook.json` tracked; canonical `events/` untracked) | `auto reflect init` writes a `.auto/reflect/.gitignore` that ignores the disposable `playbook.json`; the canonical `events/` log stays **git-tracked**. |
+| **F1** | Stale/partial init state undetected (dir exists, no `events/`; legacy 0-byte `feedback.jsonl`) | Add init / `doctor` detection of stale or partial reflect state with a concrete remediation hint. |
+| **F6** | Rule `created_at` / `updated_at` come back `""` / `null` | Populate them in the rules projection from the underlying event timestamps (`Event.TS`) — no new stored data needed. |
+| **F8 / F3** (P3) | `outcome` enum & `correction_density` undocumented | Document the `outcome` enum (`success\|partial\|fail\|abandoned`) and the `correction_density` signal (definition + scale) in the skill references and `quickstart`. |
+| **F11** | Legacy `docs/reflection/*.yaml` from the superseded process still present | **Remove** the legacy yaml (no migration — old process). |
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions-made" title="Decisions made (with Charlie, 2026-06-28)">
+        <md><script type="text/plain">
+The four load-bearing forks were resolved before drafting; recorded here as ADRs
+so the executor inherits them. Two further constraints (D-5, D-6) are calls the
+agent made to keep the append-only event contract intact.
+        </script></md>
+
+        <pd-decision id="D-1" title="F4 surface = dedicated `gap list`" status="accepted" by="charlie"
+          summary="Dedicated `auto reflect gap list`, not a generic events --full flag.">
+          <md><script type="text/plain">
+**Decision:** Expose gaps via a dedicated `auto reflect gap list` command.
+**Alternatives:** A generic `events list --full/--payload` flag; both.
+**Consequences:** Matches the "gap → observation" mental model and is discoverable;
+the generic payload-dump flag is left out of scope.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-2" title="Event log is git-tracked" status="accepted" by="charlie"
+          summary="events/ tracked; init .gitignore ignores only playbook.json.">
+          <md><script type="text/plain">
+**Decision:** The canonical `.auto/reflect/events/*.jsonl` log is committed
+(shared playbook history; any clone can `rebuild`). The init-written
+`.auto/reflect/.gitignore` ignores only the disposable `playbook.json`.
+**Alternatives:** Ignore events too (machine-local reflect state).
+**Consequences:** Reflect history travels with the repo and across hosts.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-3" title="F5 = restructure to a uniform envelope (breaking)" status="accepted" by="charlie"
+          summary="One uniform output envelope; top-level id/ids. Breaks existing consumers.">
+          <md><script type="text/plain">
+**Decision:** Restructure command output to one uniform envelope rather than
+additively bolting a top-level `.id` onto today's shapes.
+**Alternatives:** Non-breaking additive `.id`/`.ids`.
+**Consequences:** Cleanest end state; existing output consumers (and the skill
+references' documented extraction paths) must be updated in lockstep.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-4" title="Content-derived ids included in 052" status="accepted" by="charlie"
+          summary="Deterministic content-hashed ids ship in this task.">
+          <md><script type="text/plain">
+**Decision:** Implement content-derived ids (F7) in this task, not a follow-up.
+**Consequences:** Adds collision-handling design; fits the output-contract theme
+since deterministic ids make `--dry-run` output actionable.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-5" title="F5 changes CLI output only — not the stored event schema" status="accepted" by="agent"
+          summary="Envelope restructure is presentation-layer; on-disk payloads + schema_version=1 unchanged.">
+          <md><script type="text/plain">
+**Context:** Stored payload field names (`observation_id`, `rule_id`, …) are part
+of the append-only on-disk contract; `events.SchemaVersion` is 1 and must fold
+identically forever.
+**Decision:** F5 restructures only CLI *output* marshalling. Stored event payload
+field names and `schema_version` are untouched.
+**Consequences:** No schema bump; the uniform envelope is a view over canonical
+data, consistent with "playbook is a disposable cache, events are canonical."
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-6" title="Content-derived ids preserve existing id formats" status="accepted" by="agent"
+          summary="Only minting changes (random → content hash); regex formats like ^ob-[0-9a-f]{8}$ stay.">
+          <md><script type="text/plain">
+**Context:** Ids are validated against fixed regexes (`^ev-[0-9a-f]{8}$`,
+`^ob-[0-9a-f]{8}$`, rule `r-…`).
+**Decision:** Keep the formats; change only how the 8 hex chars are produced —
+from random to a prefix of a content hash — with a deterministic collision-suffix
+policy so two distinct entities never collide.
+**Consequences:** Existing ids stay valid; validators unchanged. Exact hash inputs
+and collision rule are settled in `/new-solution`.
+          </script></md>
+        </pd-decision>
+
+        <pd-decisions></pd-decisions>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **F10 ack-nudge** — a "you observed against session X but never `ack`ed it"
+  warning. Nice-to-have; deferred.
+- **Gap *resolution* tracking** — linking a reported gap to the observation that
+  closed it. `gap list` lists all gaps; v1 has no resolution state (no such link
+  exists today).
+- **On-disk event schema changes** — no `schema_version` bump, no stored payload
+  field renames (see D-5).
+- **The `/reflect-playbook` skill prompt/flow redesign** — only its reference docs
+  are touched (F8/F3), not its orchestration.
+- **A generic `events list --full` payload dump** — superseded by the dedicated
+  `gap list` (D-1).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+All four load-bearing forks are resolved (see Decisions). The items below are
+assumptions the plan proceeds on — recorded so they can be revisited, but not
+gating:
+
+- [ ] **`gap list` shape** — lists every reported gap with its source (feedback
+  id, session id, ts, `report`, `moment`); no open/resolved state, since no
+  gap → observation link exists. *(assumption)*
+- [ ] **F2 root cause** — the off-by-6 (390 vs 396) is assumed to be one divergent
+  computation, not two legitimately different universes; fix = collapse both call
+  sites onto a shared function. The exact cause is pinned during implementation.
+  *(assumption)*
+- [ ] **Content-hash inputs** — hash over each entity's canonical content fields
+  (rule: `domain + use_when + content + rule_type`; observation:
+  `kind + subject + evidence`). Finalized in `/new-solution`. *(assumption)*
+- [ ] **Scope size** — this bundles 9 findings; if it proves too large at the
+  solution stage, F8/F3 (docs) + F11 (legacy removal) split cleanly into a
+  follow-up. *(assumption)*
+        </script></md>
+      </pd-section>
+
+      <pd-section id="source" title="Source">
+        <md><script type="text/plain">
+- Spike findings: `.tmp/reflect-playbook-spike-findings.md` (throwaway/demo run,
+  2026-06-28; executor session `518b6d9a`).
+- Tool: `auto-reflect/` (`reflect version v0.24.0-21-ge183760`).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+The module already has the harnesses we need — lean on them rather than inventing
+new ones:
+
+- **Unit** — pure-function changes: content-derived id determinism
+  (`rules`/`observations` model tests), `Fold` timestamp population
+  (`projection_test.go`), the single shared pending-count function
+  (`miner` test), feedback-gap projection for `gap list`.
+- **Integration** — CLI output contracts via the existing
+  `*_integration_test.go` (events, observation, consolidate) and a new
+  `gap`/`doctor` integration test. These assert the **new uniform envelope** and
+  are where most of the F5 churn lands (every output-shape assertion moves to
+  `.id`/`.ids`/`.[].id`).
+- **E2E** — the existing `cmd/autoreflect/e2e_*_test.go` lifecycle/loop suites,
+  extended so the full mine → observe → consolidate → promote → retrieve →
+  select → feedback → **gap list** loop runs against an on-disk fixture
+  (per CLAUDE.md: populate a stable dataset on disk, run the tools as a user).
+- **Manual replay** — re-run the spike's bounded loop and confirm every spike
+  finding (F1–F11 in scope) is closed; reset throwaway artifacts after.
+
+Conventions enforced throughout (CLAUDE.md / `auto-package-patterns.md`):
+JSON default + 2-space indent, stdout = payload only / diagnostics + remediation
+to stderr, non-zero exit on any error, `validate()` structured errors, and
+`go build ./...` clean after every file.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="Testing layers">
+flowchart TD
+  U[Unit: id determinism, Fold timestamps, pending count, gap projection] --> I[Integration: CLI envelope contracts, gap list, doctor]
+  I --> E[E2E: full reflect loop on disk fixture + gap read-back]
+  E --> M[Manual: replay spike loop, confirm F1-F11 closed]
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="gap list surfaces reported gaps (F4)" phases="5" tests="auto-reflect/internal/cli/gap_integration_test.go">
+          <md><script type="text/plain">
+**Given** feedback events that carry a `gap` (`report` + `moment`),
+**When** I run `auto reflect gap list`,
+**Then** stdout is JSON listing each gap with its `report`, `moment`, and source
+provenance (the feedback event id `ev-…`, `session_id`, `ts`) — no raw-JSONL
+grep required. Feedback events without a gap are omitted.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="gap list obeys list conventions (F4)" phases="5" tests="auto-reflect/internal/cli/gap_integration_test.go">
+          <md><script type="text/plain">
+**Given** gaps spanning multiple sessions/domains/times,
+**When** I run `gap list` with no filters,
+**Then** all gaps are returned; **and** `--since`/`--after`/`--before` and
+`--domain` filter correctly (one filter mode at a time), input normalized, JSON
+by default with `--format text` available.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="One pending count, two callers agree (F2)" phases="4" tests="auto-reflect/internal/cli/miner_integration_test.go">
+          <md><script type="text/plain">
+**Given** any repo + ETL state,
+**When** I run `auto reflect miner status` and `auto reflect stats`,
+**Then** `pending` == `pending_to_mine` (both computed by one shared function),
+and the counted universe is documented. A unit test pins them equal on a fixture
+where they previously diverged.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Mutating commands expose a top-level id (F5)" phases="1,2,3" tests="auto-reflect/internal/cli/observation_integration_test.go,auto-reflect/internal/cli/consolidate_integration_test.go">
+          <md><script type="text/plain">
+**Given** the uniform output envelope,
+**When** I run an id-minting / entity mutation (`observation add`, `rule
+create/edit/promote/retire/graduate`, `consolidate`),
+**Then** the relevant id(s) — newly minted, or the affected entity's — are
+reachable at a predictable top-level path (`.id` for single, `.ids` for many),
+never `null` and never only nested. (`feedback` echoes the feedback ids it acted
+on as `ids`; `rebuild` carries counts only — neither mints a new entity id.)
+          </script></md>
+        </pd-ac>
+
+        <pd-thread anchor="AC-4" status="resolved" priority="p2" title="`feedback` can't expose a minted top-level id without a service.go change not in the plan">
+          <pd-comment by="review">AC-4 names `feedback` as a mutating command whose **minted** id must be top-level. But `loop/feedback.go:57` `SubmitFeedback(in FeedbackInput, sessionOverride string) ([]ValidationError, error)` returns **no** event id, and `cli/feedback.go:59` returns `{recorded:true}`. To surface the minted feedback-event id at top level, `SubmitFeedback` must change to return it — yet `loop/feedback.go` is in Phase 7's file set only for the F8 outcome-enum docstring, and no service-layer signature change is listed. Meanwhile Phase 3 step 3 says feedback "echoes `ids` (the feedback ids **acted on**)", i.e. the input rankings' `feedback_id`s — which is a *different* id from the minted event id AC-4 asks for. Pin which one feedback exposes; if it's the minted id, add the `SubmitFeedback` return-value change to the file changes.</pd-comment>
+          <pd-comment by="author">Resolved. AC-4 reworded to scope it to id-minting / entity mutations (observation add, rule create/edit/promote/retire/graduate, consolidate) and to state that `feedback` echoes the feedback ids it *acted on* as `ids` — not a newly minted event id — so no `SubmitFeedback`/`service.go` signature change is needed (and none is in scope).</pd-comment>
+        </pd-thread>
+
+        <pd-thread anchor="AC-4" status="resolved" priority="p2" title="`rebuild` is in AC-4's mutating-command list but mints no id and is absent from the Solution/File Changes">
+          <pd-comment by="review">AC-4's list includes `rebuild`, but `cli/rebuild.go` returns `{rebuilt, rule_count, conflict_count}` and mints no id — it refolds existing events. The Approach (Solution tab, F5) lists the mutations as "observation add, rule create/edit/promote/retire/graduate, consolidate, feedback" with **no** `rebuild`, and `rebuild.go` is not in File Changes or any phase. Either drop `rebuild` from AC-4 (it has no "minted id" to expose), or define what id it should carry and add `rebuild.go` to the plan. As written AC-4 is untestable for `rebuild`.</pd-comment>
+          <pd-comment by="author">Resolved. Dropped `rebuild` from AC-4 — it refolds existing events and mints no id; AC-4 now notes `rebuild` carries counts only. This matches the Solution Approach, which already excludes `rebuild` from the mutation list.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-5" title="Collection commands expose .[].id without data loss (F5)" phases="1,3" tests="auto-reflect/internal/cli/observation_integration_test.go">
+          <md><script type="text/plain">
+**Given** the envelope migration of `retrieve`, `select`, `rule list`,
+`observation list`, `events list`, `gap list`,
+**When** I parse their JSON,
+**Then** each element's id is reachable at a uniform path (`.[].id` or
+`.results[].id`), every field present before the change is still present, and the
+reflect-playbook skill refs + `quickstart` are updated to the new paths.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Content-derived ids make consolidate deterministic + idempotent (F7)" phases="1,2" tests="auto-reflect/internal/cli/consolidate_integration_test.go,auto-reflect/internal/idhash/idhash_test.go">
+          <md><script type="text/plain">
+**Given** one consolidation delta document,
+**When** I run `consolidate --dry-run` and then `consolidate` (separate
+invocations),
+**Then** the rule id is identical across both; **and** re-running the same
+`consolidate` a second time is a no-op (no duplicate rule) because the
+content-derived id already exists.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="Ids keep their format (F7/D-6)" phases="1,2" tests="auto-reflect/internal/idhash/idhash_test.go">
+          <md><script type="text/plain">
+**Given** content-derived minting,
+**When** rule/observation ids are generated,
+**Then** they still match `^r-[0-9a-f]{8}$` / `^ob-[0-9a-f]{8}$`; existing
+validators are unchanged; events already on disk keep their original ids.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="init writes an idempotent .gitignore (F9)" phases="7" tests="auto-reflect/internal/cli/init_test.go">
+          <md><script type="text/plain">
+**Given** a repo,
+**When** I run `auto reflect init` (or `init --project`),
+**Then** `.auto/reflect/.gitignore` exists and ignores `playbook.json` (not
+`events/`); running init again does not overwrite or duplicate it.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="Canonical events tracked, cache ignored (F9/D-2)" phases="7" tests="auto-reflect/internal/cli/init_test.go">
+          <md><script type="text/plain">
+**Given** the repo's own `.auto/reflect/`,
+**When** I check git status after init,
+**Then** `.auto/reflect/events/*.jsonl` is tracked/committable and
+`playbook.json` is untracked (removed from the index with `git rm --cached` if
+previously tracked).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-10" title="doctor detects stale/partial state (F1)" phases="6" tests="auto-reflect/internal/cli/doctor_integration_test.go">
+          <md><script type="text/plain">
+**Given** a partial reflect state (e.g. state dir present but `events/` missing,
+or `playbook.json` stale vs the folded event log),
+**When** I run `auto reflect doctor`,
+**Then** it returns structured JSON `[{check,status,message,hint}]`, each failure
+carries a concrete remediation hint, and the process exits non-zero on any fail.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-11" title="Rule listings carry timestamps (F6)" phases="3" tests="auto-reflect/internal/rules/projection_test.go">
+          <md><script type="text/plain">
+**Given** a folded rule with `created_at`/`updated_at` set by `Fold`,
+**When** I run `auto reflect rule list` and `rule get`,
+**Then** both expose non-empty `created_at`/`updated_at` (list no longer drops
+them in its projection map).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-12" title="outcome enum + correction_density documented (F8/F3)" phases="7" tests="">
+          <md><script type="text/plain">
+**Given** the docs,
+**When** a reader consults `quickstart` and the reflect-playbook references,
+**Then** the feedback `outcome` enum (`success|partial|fail|abandoned`, distinct
+from miner ack status) and `correction_density` (definition + scale) are
+documented; a malformed `outcome` error already names the valid set.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-13" title="Legacy yaml removed (F11)" phases="7" tests="">
+          <md><script type="text/plain">
+**Given** the superseded process artifacts,
+**When** the task lands,
+**Then** `docs/reflection/observations.yaml` is deleted and the reflect-playbook
+"supersedes" note reflects the removal. The only remaining referencers are the
+already-superseded `playbook-observe`/`-refine`/`-search` skills (no Go code
+reads the file); per F11 (no migration) a future run of those would treat it as
+first-run and regenerate an empty file — the discard is intended — so the AC
+confirms the trio is retired rather than asserting a removal a Go-only grep
+can't prove.
+          </script></md>
+        </pd-ac>
+
+        <pd-thread anchor="AC-13" status="resolved" priority="p3" title="`no Go code references it` is too narrow — the live references are in the still-installed `playbook-*` skills">
+          <pd-comment by="review">The deletion is reasonable (reflect-playbook/SKILL.md L31-43 already declares the legacy trio superseded), but AC-13's verification ("no Go code references it") checks the wrong surface. The active references to `docs/reflection/observations.yaml` are in the **still-installed** `playbook-observe` / `playbook-refine` / `playbook-search` skills (e.g. `playbook-observe/SKILL.md` does `yq -i '.observations += …'` and reads it on every run). They remain listed as available skills in CLAUDE.md. Deleting the 389 KB file means a stray `/playbook-observe` run treats it as "first run" and silently re-creates an empty one, discarding the mined data. F11 says "no migration" so the discard is intended — but tighten the AC to also confirm the trio is retired (or note they'll regenerate it), rather than asserting a clean removal a Go-only grep can't prove.</pd-comment>
+          <pd-comment by="author">Resolved. AC-13 reworded so the verification no longer relies on a Go-only grep: it records that the only remaining referencers are the already-superseded `playbook-observe`/`-refine`/`-search` skills, which per F11 (no migration) would regenerate an empty file on a future run — the discard is intended — and confirms the trio is retired. P7 step 4 updated to match.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-14" title="No regressions (cross-cutting)" phases="1,2,3,4,5,6,7" tests="auto-reflect/cmd/autoreflect/e2e_loop_test.go,auto-reflect/cmd/autoreflect/e2e_lifecycle_test.go">
+          <md><script type="text/plain">
+**Given** all changes,
+**When** I run `go build ./...` and the full `auto-reflect` test suite,
+**Then** everything builds and passes (existing assertions updated to the new
+envelope), and the end-to-end reflect loop completes as in `quickstart`.
+          </script></md>
+        </pd-ac>
+
+        <pd-trace caption="Acceptance coverage"></pd-trace>
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **F5 is a breaking output change.** No external consumers are known, but the
+  reflect-playbook skill refs and `quickstart` must move in lockstep (AC-5) or
+  the documented `jq` paths break. Mitigation: update docs in the same task.
+- **Content-id collisions.** Across *distinct* content an 8-hex prefix collision
+  is astronomically unlikely; *identical* content → identical id is intended
+  (idempotency via `projection.go:52-55`). v1 ships **no collision-suffix**;
+  accepted and noted. `retrieve`/`feedback` (`rt-`/`fb-`) stay random — each
+  loop call is a distinct event, not a content identity (see Solution).
+- **F2 root cause not yet pinned.** The off-by-6 is *assumed* to be duplicated
+  logic drift. Before collapsing, confirm it isn't a legitimate dual-universe
+  count (subagents/scope) — the unit test must reproduce the divergence first,
+  then prove the shared function fixes it.
+- **doctor depth.** v1 checks state-dir presence, event decodability, and
+  snapshot staleness (folded-through vs log). Deeper integrity (per-shard seq
+  monotonicity) may be deferred to a follow-up.
+- **No migration of old ids.** Events written before this task keep random ids;
+  only newly minted ids are content-derived. This is intentional (append-only).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Nine fixes across one Go module (`auto-reflect/`), all on the read/output side
+plus two hygiene items. Three design decisions were settled with the user (D-7,
+D-8, D-9 below); the rest follow established repo conventions.
+
+**Read-back & observability**
+- **F4 `gap list`** — new `cli/gap.go` noun. Reads `feedback` events, decodes
+  `FeedbackPayload`, emits one row per event that has a `gap`
+  (`report`, `moment`, source event id `ev-…`/`session_id`/`ts`). List-only
+  (a gap has no large body), filters `--since/--after/--before`/`--domain`,
+  returns all when unfiltered.
+- **F1 `doctor`** — new `cli/doctor.go`, mirroring
+  `auto-graph/internal/cli/doctor.go`: structured `[{check,status,message,hint}]`,
+  exit non-zero on any `fail`. Checks: state dir present, `events/` present &
+  decodable, `playbook.json` snapshot fresh vs the folded log (stale ⇒ warn +
+  `run auto reflect rebuild`), legacy 0-byte `feedback.jsonl` flagged.
+  Preserves the 023 null-vs-zero coverage contract.
+
+**Output contract (F5)** — id always reachable at a predictable path:
+- Mutations (`observation add`, `rule create/edit/promote/retire/graduate`,
+  `consolidate`, `feedback`) gain a top-level `id` (and `ids` when many). Fixes
+  `rule promote`'s misleading `null` `.id`.
+- Collections (`retrieve`, `select`, `rule list`, `observation list`,
+  `events list`, `gap list`) stay top-level arrays, but every element carries a
+  uniform top-level `id` (alongside its descriptive `retrieval_id`/`feedback_id`/…).
+- A small `cli/output.go` houses the convention so commands don't drift.
+
+**Identity (F7)** — `r-`/`ob-` ids become a content hash via a new leaf
+`internal/idhash`: `prefix + first 8 hex of sha256(canonical content)`. Rule
+content = `domain+use_when+content+rule_type`; observation content =
+`kind+subject+evidence+domain+severity` (evidence included so the same finding
+from two sessions stays two observations). Same content ⇒ same id ⇒ `consolidate
+--dry-run` matches apply, and a repeated `consolidate`/`observation add` is an
+idempotent no-op (`projection.go` already ignores a create for an existing id).
+Loop/event ids (`rt-`/`fb-`/`ev-`) stay random.
+
+**Smaller fixes**
+- **F2** — delete `miner status`'s hand-rolled pending loop
+  (`cli/miner.go:280`); call the shared `miner.PendingCount`
+  (`miner/miner.go:223`), the same function `stats` uses. One source of truth.
+- **F6** — `rule list`'s projection map (`cli/rule.go:296`) gains
+  `created_at`/`updated_at` (already populated by `Fold`, just dropped in the
+  list view).
+- **F8/F3** — docstrings + `quickstart`/skill-ref text for the feedback
+  `outcome` enum (`success|partial|fail|abandoned`, distinct from miner ack
+  status) and `correction_density` (corrections per 100 user messages).
+- **F9** — `init` writes an idempotent `.auto/reflect/.gitignore` ignoring
+  `playbook.json` (auto-doc pattern: stat-then-skip-if-exists); the canonical
+  `events/` stays tracked. Repo hygiene: untrack this repo's `playbook.json`.
+- **F11** — delete `docs/reflection/observations.yaml` (no code reads it).
+
+No event `schema_version` bump: stored payload field names are untouched; F5 is
+presentation-only and F7 changes only how the 8 hex chars are produced.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="end-state" title="End-state CLI">
+        <pd-cli title="zsh — the hardened surface" caption="What success looks like">
+          <pd-cmd note="F4: gaps are readable, no more grepping jsonl" status="todo">auto reflect gap list --since 7d</pd-cmd>
+          <pd-out><script type="text/plain">[
+  { "id": "ev-3a9c1d77", "session_id": "518b6d9a…", "ts": "2026-06-28T13:52:…",
+    "report": "no rule covered worktree teardown on complete-task",
+    "moment": "deleting the branch after merge" }
+]</script></pd-out>
+          <pd-cmd note="F7: same id on dry-run and apply (separate runs)" status="todo">auto reflect consolidate --dry-run delta.json | jq -r '.ids[0]'</pd-cmd>
+          <pd-out>r-1a2b3c4d</pd-out>
+          <pd-cmd status="todo">auto reflect consolidate delta.json | jq -r '.ids[0]'</pd-cmd>
+          <pd-out>r-1a2b3c4d   # identical → pre-stage `rule promote r-1a2b3c4d` from the preview</pd-out>
+          <pd-cmd note="F1: structured health, exit 1 on fail" status="todo">auto reflect doctor</pd-cmd>
+          <pd-out><script type="text/plain">[
+  { "check": "events_dir", "status": "pass", "message": "12 shards, all decodable" },
+  { "check": "playbook_freshness", "status": "warn",
+    "message": "snapshot stale vs log", "hint": "run auto reflect rebuild" }
+]</script></pd-out>
+        </pd-cli>
+        <pd-thread anchor="end-state" status="resolved" priority="p2" title="gap list `id`: example shows `fb-…` but feedback events carry `ev-…` ids — and no `feedback_id` field exists">
+          <pd-comment by="review">The `gap list` example emits `"id": "fb-3a9c1d77"`, but feedback events are appended via `events.AppendEvent` and carry envelope ids matching `^ev-[0-9a-f]{8}$` (`events/log.go` `newEventID`). The `fb-` prefix is the **loop** feedback id (`loop/service.go` `newFeedbackID`), which is *not* persisted on the feedback event. `FeedbackPayload` (`events/model.go:152-158`) has no top-level `feedback_id` either — only `Rankings[].feedback_id` (the ranked rule's id). So when `gap list` reads feedback events (`events.ReadAll`), the only id available is the event's `ev-` id. AC-1's projection "(`feedback_id`/event id, …)" is ambiguous about which. Pin it: the row `id` is the `ev-` event id, and fix this example to `ev-…` (or define where a `fb-` id would come from). This also affects AC-5's `.[].id` uniform-path claim for `gap list`.</pd-comment>
+          <pd-comment by="author">Resolved. Fixed the `gap list` example to `ev-…` (the feedback *event* id from `events/log.go newEventID`); the `fb-` loop id isn't persisted on the event. AC-1 now states the row `id` is the feedback event id (`ev-…`), and the Solution Approach + Phase-5 gap.go notes match. AC-5's `.[].id` claim holds with the `ev-` id.</pd-comment>
+        </pd-thread>
+      </pd-section>
+
+      <pd-section id="key-apis" title="Key APIs">
+        <pd-api kind="module" name="idhash" lang="go" path="auto-reflect/internal/idhash/idhash.go" caption="One deterministic id minter, reused by rules + observations">
+          <pd-member kind="function" sig="Derive(prefix string, parts ...string) string">Returns prefix + first 8 hex of sha256 over the newline-joined parts. Deterministic; keeps the `^&lt;prefix&gt;-[0-9a-f]{8}$` shape.</pd-member>
+        </pd-api>
+        <pd-api kind="module" name="cli/output" lang="go" path="auto-reflect/internal/cli/output.go" caption="Uniform mutation-result envelope">
+          <pd-member kind="function" sig="mutationResult(id string, fields map[string]any) map[string]any">Injects a top-level `id` into a command's result map.</pd-member>
+          <pd-member kind="function" sig="mutationResultIDs(ids []string, fields map[string]any) map[string]any">Injects top-level `id` (first) + `ids` for multi-id mutations like `consolidate`.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-reflect/internal/idhash/idhash.go" change="add">Content-hash id helper (F7).</pd-file>
+          <pd-file path="auto-reflect/internal/idhash/idhash_test.go" change="add">Determinism + format tests (F7).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/gap.go" change="add">`gap list` command (F4).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/gap_integration_test.go" change="add">gap list integration tests (F4).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/doctor.go" change="add">`doctor` command (F1).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/doctor_integration_test.go" change="add">doctor integration tests (F1).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/output.go" change="add">Uniform mutation-result envelope helpers (F5).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/root.go" change="edit">Register `gap` + `doctor` commands.</pd-file>
+          <pd-file path="auto-reflect/internal/rules/model.go" change="edit">`NewRuleID(parts…)` content-derived via idhash (F7).</pd-file>
+          <pd-thread anchor="auto-reflect/internal/rules/model.go" status="resolved" priority="p1" title="Third NewRuleID caller (`rule create`) is missed — will silently mint a constant id">
+            <pd-comment by="review">There are **three** production callers of `rules.NewRuleID()`, not two: `consolidate.go:202` (createDraft), `consolidate.go:485` (split), and **`rule.go:61` (`rule create`)**. Phase 2 and the File Changes only feed content parts to `rules/model.go` + `consolidate.go`; `rule.go:61` (`id := rules.NewRuleID()`) is untouched. The `rule.go` pd-file scopes its edit to "top-level id + timestamps (F5/F6)" only. Since the new signature is variadic (`Derive(prefix string, parts ...string)` → `NewRuleID(parts…)`), the zero-arg call at `rule.go:61` **still compiles** — so Phase 2's `go build` will NOT catch it — but it hashes empty content, producing the *same* `r-` id for every manually-created rule. `projection.go:52-55` then drops all but the first ("a create for an existing id is ignored; the original wins"), so subsequent `rule create`s silently vanish. Either feed `rule create`'s `domain+use_when+content+rule_type` to `NewRuleID` in Phase 2/3 (and add `rule.go` to Phase 2's file set), or document why manual creates keep a random id. This is the strongest correctness gap in the plan.</pd-comment>
+            <pd-comment by="author">Resolved — strongest catch. `rule create` (`rule.go:61`) is the third `NewRuleID` caller and a zero-arg variadic call compiles while minting a constant id (then `projection.go:52-55` keeps only the first). Moved rule-create content-feeding into Phase 2 (added `rule.go` to P2's file set with a step covering all three callers — consolidate createDraft/split + rule create), and set Phase 3 `depends-on=1,2` so its later rule.go envelope/timestamp edits serialize after P2.</pd-comment>
+          </pd-thread>
+          <pd-file path="auto-reflect/internal/observations/model.go" change="edit">`NewObservationID(parts…)` content-derived incl. evidence (F7).</pd-file>
+          <pd-file path="auto-reflect/internal/observations/model_test.go" change="edit">Update zero-arg id test for the variadic signature (F7).</pd-file>
+          <pd-file path="auto-reflect/internal/loop/service_test.go" change="edit">Update zero-arg `NewRuleID` call for the variadic signature (F7).</pd-file>
+          <pd-thread anchor="auto-reflect/internal/observations/model.go" status="resolved" priority="p3" title="Existing zero-arg id tests will assert against an empty-content hash and aren't in the file set">
+            <pd-comment by="review">Two existing tests call the id minters with no args: `observations/model_test.go:248` (`TestNewObservationIDFormat`) and `loop/service_test.go:28` (`rules.NewRuleID()`). After the variadic signature change they'll still compile but now hash empty content, so `TestNewObservationIDFormat` would be asserting format on a constant id. Neither test file is in File Changes. Minor (the executor hits them at phase build/test), but add them to the Phase 1/2 file sets so the determinism contract (AC-7) is updated deliberately rather than discovered.</pd-comment>
+            <pd-comment by="author">Resolved. Added `observations/model_test.go` to Phase 1 and `loop/service_test.go` to Phase 2 (both call the minters zero-arg today), each with a step to update it for the variadic signature, and both added to File Changes — so the AC-7 determinism contract changes deliberately.</pd-comment>
+          </pd-thread>
+          <pd-file path="auto-reflect/internal/cli/consolidate.go" change="edit">Feed content to id mint; top-level `ids`; deterministic dry-run id (F5/F7).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/observation.go" change="edit">Top-level `id` on add; per-element `id` on list (F5).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/rule.go" change="edit">Top-level `id` on mutations; `created_at`/`updated_at` in list map (F5/F6).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/retrieve.go" change="edit">Per-element top-level `id` (F5).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/select.go" change="edit">Per-element top-level `id` (F5).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/feedback.go" change="edit">Top-level `id`/`ids` on the recorded feedback (F5).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/miner.go" change="edit">Replace hand-rolled pending loop with `miner.PendingCount` (F2).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/miner_integration_test.go" change="add">Pin `miner status` pending == `stats` pending_to_mine (F2).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/init.go" change="edit">Write idempotent `.auto/reflect/.gitignore` (F9).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/init_test.go" change="add">init writes/keeps `.gitignore`; idempotent (F9).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/quickstart.go" change="edit">Docs: gap list, doctor, outcome enum, correction_density, id paths (F4/F1/F8/F3/F5).</pd-file>
+          <pd-file path="auto-reflect/internal/loop/feedback.go" change="edit">Docstring for the `outcome` enum (F8).</pd-file>
+          <pd-file path="auto-reflect/internal/miner/score.go" change="edit">Docstring for `correction_density` (F3).</pd-file>
+          <pd-file path="auto-reflect/internal/rules/projection_test.go" change="edit">Assert folded timestamps surface (F6).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/consolidate_integration_test.go" change="edit">Assert deterministic ids + new envelope (F5/F7).</pd-file>
+          <pd-file path="auto-reflect/internal/cli/observation_integration_test.go" change="edit">Assert new envelope + content ids (F5/F7).</pd-file>
+          <pd-file path="auto-reflect/cmd/autoreflect/e2e_loop_test.go" change="edit">Extend the loop through `gap list`; new envelope paths (F4/F5).</pd-file>
+          <pd-file path="auto-reflect/cmd/autoreflect/e2e_lifecycle_test.go" change="edit">Update output-shape assertions (F5).</pd-file>
+          <pd-file path="auto-reflect/CLAUDE.md" change="edit">Autodoc index: new `gap`/`doctor` commands.</pd-file>
+          <pd-file path=".claude/skills/reflect-playbook/SKILL.md" change="edit">Id-threading invariant, gap list, health check (F4/F5).</pd-file>
+          <pd-file path=".claude/skills/reflect-playbook/references/retrieve.md" change="edit">jq id paths, gap list, outcome enum (F5/F4/F8).</pd-file>
+          <pd-file path=".claude/skills/reflect-playbook/references/observe.md" change="edit">Clarify observation `--kind gap` vs feedback gap (F4).</pd-file>
+          <pd-file path=".claude/skills/reflect-playbook/references/mine.md" change="edit">Document correction_density (F3).</pd-file>
+          <pd-file path=".claude/skills/reflect-playbook/references/consolidate.md" change="edit">Id-threading examples to new envelope (F5).</pd-file>
+          <pd-file path="docs/reflection/observations.yaml" change="delete">Legacy superseded-process artifact (F11).</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **F4 via a generic `events list --full` flag** — rejected (D-1): a dedicated
+  `gap list` matches the gap→observation mental model and is discoverable.
+- **F5 wrap every command in `{ok,data}`** — rejected: over-wraps reads, breaks
+  more consumers, and fights the repo's "list returns a plain payload of all
+  items" convention. Top-level id on mutations + per-element id on reads solves
+  the threading pain with the least breakage.
+- **F5 additive-only (keep all current shapes, just add `.id`)** — rejected
+  (D-3): leaves the inconsistent nesting in place; we still normalize the shapes.
+- **F7 content-derive all ids (`rt-`/`fb-`/`ev-` too)** — rejected (D-8): loop
+  and event ids are distinct-in-time records; hashing would collapse them.
+- **F7 hash + collision suffix** — rejected (D-9): 32-bit distinct-content
+  collision is negligible; a suffix breaks the idempotency property and adds a
+  state read at mint.
+- **F9 append to repo-root `.gitignore`** (auto-skill style) — rejected: a
+  per-state-dir `.gitignore` (auto-doc style) keeps the policy with the state.
+- **F1 extend `gate check` instead of a new `doctor`** — rejected: `doctor` is
+  the conventional health command across auto-* tools.
+- **F6 "fix" inside `Fold`** — rejected: `Fold` already sets the timestamps; the
+  only gap is the list view dropping them.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="solution-decisions" title="Decisions">
+        <pd-decision id="D-7" title="F5 final shape: top-level id on mutations, per-element id on reads" status="accepted" by="charlie"
+          summary="Mutations expose .id/.ids; collections stay arrays with a uniform .[].id.">
+          <md><script type="text/plain">
+**Decision:** Mutations gain a top-level `id` (and `ids` when many); collection
+commands stay top-level arrays but every element carries a uniform top-level
+`id` alongside its descriptive id field.
+**Alternatives:** Wrap everything in `{ok,data}` (rejected — over-wraps reads).
+**Consequences:** Predictable id threading everywhere; minimal breakage; reads
+keep returning all items as a plain array.
+          </script></md>
+        </pd-decision>
+        <pd-decision id="D-8" title="Content-derived ids: rules + observations only" status="accepted" by="charlie"
+          summary="r-/ob- become content hashes; rt-/fb-/ev- stay random.">
+          <md><script type="text/plain">
+**Decision:** Only persistent identities (`r-`, `ob-`) are content-derived.
+**Consequences:** Fixes dry-run==apply and gives idempotent re-runs; loop/event
+records stay distinct-in-time with random ids.
+          </script></md>
+        </pd-decision>
+        <pd-decision id="D-9" title="Pure content hash, no collision suffix" status="accepted" by="charlie"
+          summary="id = prefix + first 8 hex of sha256(content); identical content → identical id is intended.">
+          <md><script type="text/plain">
+**Decision:** No collision suffix. Observation hashes include evidence so
+distinct-evidence findings stay distinct.
+**Alternatives:** Suffix-on-collision (rejected — breaks idempotency, negligible
+risk).
+**Consequences:** Clean idempotency; an astronomically rare distinct-content
+collision would drop the second entry (accepted, noted in Verification risks).
+          </script></md>
+        </pd-decision>
+        <pd-decisions></pd-decisions>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Stand up the two shared primitives (content-hash ids + the output-envelope
+convention) on one command as a walking skeleton, then roll the same patterns
+across the remaining commands, add the two new nouns (`gap`, `doctor`),
+collapse the duplicate pending count, and finish with docs/hygiene + an extended
+end-to-end loop. Every phase ends `go build ./...`, package tests, and
+`golangci-lint` clean (019 lesson: full check every phase), then commits.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-mermaid caption="Phase dependency DAG">
+flowchart LR
+  P1[P1 Foundations + skeleton] --> P2[P2 Rule content ids]
+  P1 --> P3[P3 Envelope rollout + timestamps]
+  P1 --> P4[P4 Pending count]
+  P1 --> P5[P5 gap list]
+  P5 --> P6[P6 doctor]
+  P2 --> P7[P7 Docs, init, cleanup, e2e]
+  P3 --> P7
+  P4 --> P7
+  P6 --> P7
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="phases" title="Phases">
+        <pd-stepper>
+
+          <pd-phase n="1" title="Foundations + walking skeleton" status="todo"
+            files="auto-reflect/internal/idhash/idhash.go,auto-reflect/internal/idhash/idhash_test.go,auto-reflect/internal/cli/output.go,auto-reflect/internal/observations/model.go,auto-reflect/internal/observations/model_test.go,auto-reflect/internal/cli/observation.go,auto-reflect/internal/cli/observation_integration_test.go">
+            <md><script type="text/plain">
+Thin path through every layer the task touches: id minting → command → output
+→ test.
+
+1. Add `internal/idhash/idhash.go`: `Derive(prefix string, parts ...string)
+   string` = `prefix + first 8 hex of sha256(strings.Join(parts,"\n"))`.
+   **Verify:** `idhash_test.go` — same parts → same id; format `^p-[0-9a-f]{8}$`;
+   different parts → different id.
+2. Add `cli/output.go`: `mutationResult(id, fields)` and
+   `mutationResultIDs(ids, fields)` injecting top-level `id`/`ids`.
+   **Verify:** unit/compile.
+3. `observations/model.go`: `NewObservationID` takes canonical parts
+   (`kind,subject,evidence…,domain,severity`) and calls `idhash.Derive("ob",…)`.
+   Update the existing zero-arg `TestNewObservationIDFormat`
+   (`observations/model_test.go`) for the new signature.
+   **Verify:** `go test ./internal/observations/...`.
+4. `observation.go`: `observation add` returns top-level `.id`
+   (via `mutationResult`); `observation list` elements carry top-level `id`.
+   **Verify:** `observation_integration_test.go` — `add` exposes `.id` matching
+   `^ob-[0-9a-f]{8}$`; re-adding identical observation is idempotent (same id);
+   `list | jq '.observations[].id'` non-empty.
+5. **Phase verify:** `go build ./...`; `go test ./internal/observations/...
+   ./internal/cli/... -run 'Observation|Idhash'`; `golangci-lint run`.
+6. **Commit:** `feat(052): content-hash ids + output envelope (skeleton on observation)`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="2" title="Rule content ids + consolidate determinism" status="todo" depends-on="1"
+            files="auto-reflect/internal/rules/model.go,auto-reflect/internal/cli/consolidate.go,auto-reflect/internal/cli/rule.go,auto-reflect/internal/cli/consolidate_integration_test.go,auto-reflect/internal/loop/service_test.go">
+            <md><script type="text/plain">
+1. `rules/model.go`: `NewRuleID` takes canonical parts
+   (`domain,use_when,content,rule_type`) → `idhash.Derive("r",…)`.
+   **Verify:** `go test ./internal/rules/...`.
+2. Feed content to **every** `NewRuleID` caller — the signature is variadic, so a
+   missed zero-arg call still compiles but mints a constant id: `consolidate.go`
+   `createDraft`/`split`, **and `rule.go` `rule create`** (the third caller).
+   Emit top-level `ids` from `consolidate` via `mutationResultIDs`; dry-run and
+   apply now mint the same id from the same content. Update `loop/service_test.go`
+   (calls `NewRuleID` zero-arg today) for the new signature.
+   **Verify (the F7 acceptance):** `consolidate_integration_test.go` — run
+   `--dry-run` then apply on one delta in separate command calls; assert
+   `ids[0]` identical; assert a second apply is a no-op (no duplicate rule in
+   the refold); plus a `rule create` smoke check that two distinct creates get
+   distinct ids.
+3. **Phase verify:** `go build ./...`; `go test ./internal/rules/...
+   ./internal/loop/... ./internal/cli/... -run 'Rule|Consolidate|Service'`;
+   `golangci-lint run`.
+4. **Commit:** `feat(052): deterministic content-derived rule ids (F7)`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="3" title="Envelope rollout + rule timestamps" status="todo" depends-on="1,2"
+            files="auto-reflect/internal/cli/rule.go,auto-reflect/internal/cli/retrieve.go,auto-reflect/internal/cli/select.go,auto-reflect/internal/cli/feedback.go,auto-reflect/internal/rules/projection_test.go">
+            <md><script type="text/plain">
+1. `rule.go`: `create/edit/promote/retire/graduate` return top-level `.id`
+   (fixes the `null`); `rule list` projection map gains `created_at`/`updated_at`
+   (F6 — values already on the folded `Rule`).
+   **Verify:** `rule get`/`list | jq '.rules[].created_at'` non-empty.
+2. `retrieve.go`, `select.go`: each array element gains a top-level `id`
+   (aliasing `retrieval_id`/`feedback_id`, which stay).
+   **Verify:** `retrieve|select | jq '.[].id'` non-empty.
+3. `feedback.go`: recorded result echoes `ids` (the feedback ids acted on).
+4. `projection_test.go`: assert `Fold` surfaces `created_at`/`updated_at` and
+   `rule list` carries them.
+   **Verify (F6).**
+5. **Phase verify:** `go build ./...`; `go test ./internal/...
+   -run 'Rule|Retrieve|Select|Feedback|Projection'`; `golangci-lint run`.
+6. **Commit:** `feat(052): uniform id access on commands + rule timestamps (F5,F6)`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="4" title="Single-source pending count" status="todo" depends-on="1"
+            files="auto-reflect/internal/cli/miner.go,auto-reflect/internal/cli/miner_integration_test.go">
+            <md><script type="text/plain">
+1. **First reproduce** the divergence: a test that drives `miner status` and
+   `stats` on a fixture and asserts they currently differ (pin the bug before
+   fixing — Verification risk note).
+2. `miner.go`: delete the hand-rolled pending loop (~L280); call
+   `miner.PendingCount(repoRoot, etlRoot)` — the same function `stats` uses.
+   Preserve the 023 null-vs-zero coverage contract in the status output.
+3. **Verify (F2):** `miner_integration_test.go` — `miner status` `pending` ==
+   `stats` `pending_to_mine` on the same fixture.
+4. **Phase verify:** `go build ./...`; `go test ./internal/cli/... ./internal/miner/...
+   -run 'Miner|Stats|Pending'`; `golangci-lint run`.
+5. **Commit:** `fix(052): one pending-count source for miner status + stats (F2)`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="5" title="gap list command" status="todo" depends-on="1"
+            files="auto-reflect/internal/cli/gap.go,auto-reflect/internal/cli/gap_integration_test.go,auto-reflect/internal/cli/root.go">
+            <md><script type="text/plain">
+1. Add `cli/gap.go` `newGapCmd` → `gap list`: read `feedback` events
+   (`events.ReadAll`), decode `FeedbackPayload`, skip when `Gap == nil`, project
+   `{id (feedback event id, ev-…), session_id, ts, report, moment}` as an array with
+   per-element `id`. Flags `--since/--after/--before`, `--domain`,
+   `--format json|text`; return all when unfiltered (one filter mode at a time).
+2. Register `gap` in `root.go`.
+3. **Verify (F4):** `gap_integration_test.go` — events with gaps surface
+   (report+moment+source); gapless feedback omitted; `--since` filters; empty
+   state returns `[]`; text mode works.
+4. **Phase verify:** `go build ./...`; `go test ./internal/cli/... -run 'Gap'`;
+   `golangci-lint run`.
+5. **Commit:** `feat(052): auto reflect gap list — readable feedback gaps (F4)`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="6" title="doctor command" status="todo" depends-on="5"
+            files="auto-reflect/internal/cli/doctor.go,auto-reflect/internal/cli/doctor_integration_test.go,auto-reflect/internal/cli/root.go">
+            <md><script type="text/plain">
+1. Add `cli/doctor.go` mirroring `auto-graph/internal/cli/doctor.go`:
+   `[]{check,status(pass|warn|fail),message,hint}` JSON, exit non-zero on any
+   `fail`. Checks: state dir present; `events/` present & decodable; snapshot
+   fresh vs folded log (stale ⇒ warn + `run auto reflect rebuild`); legacy
+   0-byte `feedback.jsonl` flagged. Preserve null-vs-zero coverage.
+2. Register `doctor` in `root.go` (after P5's gap registration — serialized to
+   avoid a root.go conflict).
+3. **Verify (F1):** `doctor_integration_test.go` — healthy state all `pass`
+   exit 0; missing `events/` ⇒ `fail` + hint + exit 1; stale snapshot ⇒ `warn`.
+4. **Phase verify:** `go build ./...`; `go test ./internal/cli/... -run 'Doctor'`;
+   `golangci-lint run`.
+5. **Commit:** `feat(052): auto reflect doctor — state health checks (F1)`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="7" title="Docs, init gitignore, cleanup, e2e" status="todo" depends-on="2,3,4,6"
+            files="auto-reflect/internal/cli/init.go,auto-reflect/internal/cli/init_test.go,auto-reflect/internal/cli/quickstart.go,auto-reflect/internal/loop/feedback.go,auto-reflect/internal/miner/score.go,auto-reflect/cmd/autoreflect/e2e_loop_test.go,auto-reflect/cmd/autoreflect/e2e_lifecycle_test.go,auto-reflect/CLAUDE.md,.claude/skills/reflect-playbook/SKILL.md,.claude/skills/reflect-playbook/references/retrieve.md,.claude/skills/reflect-playbook/references/observe.md,.claude/skills/reflect-playbook/references/mine.md,.claude/skills/reflect-playbook/references/consolidate.md,docs/reflection/observations.yaml">
+            <md><script type="text/plain">
+1. `init.go`: after `MkdirAll(eventsDir)`, write `.auto/reflect/.gitignore`
+   (`playbook.json\n`) only if absent (auto-doc stat-then-skip pattern).
+   **Verify (F9):** `init_test.go` — file created with `playbook.json`; second
+   init doesn't overwrite/duplicate; `events/` not ignored.
+2. Repo hygiene: `git rm --cached .auto/reflect/playbook.json`; commit the new
+   `.auto/reflect/.gitignore` and the existing `events/` log (D-2).
+3. Docstrings: `loop/feedback.go` (outcome enum), `miner/score.go`
+   (correction_density). (F8/F3)
+4. Delete `docs/reflection/observations.yaml`. The only live referencers are the
+   already-superseded `playbook-observe`/`-refine`/`-search` skills (no Go code
+   reads it); per F11 no migration — confirm the trio is retired. (F11)
+5. Docs: `quickstart.go` + skill refs (`SKILL.md`, `retrieve.md`, `observe.md`,
+   `mine.md`, `consolidate.md`) — new `jq` id paths, `gap list`, `doctor`,
+   outcome enum, correction_density, observation-`kind gap` vs feedback-gap.
+   `CLAUDE.md` autodoc index (run `auto doc fix`).
+6. Extend `e2e_loop_test.go` through `gap list`; update `e2e_lifecycle_test.go`
+   output-shape assertions to the new envelope.
+   **Verify (F4/F5/AC-14):** full loop mine→…→feedback→gap list passes.
+7. **Phase verify:** `go build ./...`; **full** `go test ./...`;
+   `golangci-lint run`; `auto reflect quickstart` happy path by hand.
+8. **Commit:** `docs(052): gap/doctor/enum docs, init gitignore, drop legacy yaml (F8,F3,F9,F11)`.
+            </script></md>
+          </pd-phase>
+
+        </pd-stepper>
+      </pd-section>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **P1** → AC-4, AC-5 (observation), AC-7
+- **P2** → AC-6, AC-7
+- **P3** → AC-4, AC-5, AC-11
+- **P4** → AC-3
+- **P5** → AC-1, AC-2
+- **P6** → AC-10
+- **P7** → AC-8, AC-9, AC-12, AC-13, and AC-14 (full-suite + e2e green)
+
+All 14 acceptance criteria pass; `go build ./...` and `go test ./...` clean;
+`golangci-lint` clean; the end-to-end reflect loop completes through `gap list`.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+  </pd-doc>
+</body>
+</html>
