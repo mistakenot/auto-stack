@@ -93,5 +93,8 @@
         ]
       }
     ]
+  },
+  "worktree": {
+    "bgIsolation": "none"
   }
 }
