@@ -6,6 +6,7 @@ require (
 	github.com/mistakenot/auto-shared v0.0.0
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1
+	pgregory.net/rapid v1.3.0
 )
 
 require (

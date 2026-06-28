@@ -229,11 +229,19 @@ func Render(in RenderInput) (Tree, error) {
 	}, nil
 }
 
-// normalizePath converts a path to slash form and trims leading "./".
+// normalizePath converts a path to slash form and strips leading "./" segments.
+// It trims surrounding slashes first, then loops stripping any leading "./" so
+// inputs like "/./x" or "././x" reach a fixed point (normalizePath is
+// idempotent). It deliberately does NOT use path.Clean — ".." and "//" keep
+// their original meaning; only leading "./" and surrounding slashes are removed.
 func normalizePath(p string) string {
 	p = strings.ReplaceAll(p, "\\", "/")
-	p = strings.TrimPrefix(p, "./")
-	return strings.Trim(p, "/")
+	p = strings.Trim(p, "/")
+	for strings.HasPrefix(p, "./") {
+		p = strings.TrimPrefix(p, "./")
+		p = strings.Trim(p, "/")
+	}
+	return p
 }
 
 // splitFrontmatter splits SKILL.md content into its raw YAML frontmatter block
