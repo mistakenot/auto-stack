@@ -68,6 +68,50 @@ func buildManifest(staged []*StagedSkill, targets []Target) (*skill.Manifest, []
 	return m, skill.ValidateManifest(m)
 }
 
+// mergeScopedManifest preserves the manifest ownership of skills OUTSIDE the
+// scoped --target set. A scoped run stages (and so rebuilds the manifest for)
+// only the targeted skills plus authored skills, so every non-targeted vendored
+// skill is absent from `fresh`. Without this merge the manifest write would drop
+// them, and a later full sync — which reads manifest.json as the "managed" set —
+// would reclassify their on-disk dirs as foreign and refuse to overwrite them
+// (detectForeignCollisions), wedging normal sync. This mirrors how buildReceipts
+// already merges prior ownership so a partial sync never disowns a skill it
+// still manages.
+//
+// For names IN scope, `fresh` is authoritative: a targeted skill that was staged
+// is updated, and one that was intentionally dropped (removed from the lock,
+// pruned this run) stays dropped. For names OUT of scope, the prior manifest
+// entry is carried forward whenever `fresh` does not already supply one.
+func mergeScopedManifest(old, fresh *skill.Manifest, scope map[string]bool) *skill.Manifest {
+	if old == nil {
+		return fresh
+	}
+	for name, ms := range old.Skills {
+		if scope[name] {
+			continue
+		}
+		if _, ok := fresh.Skills[name]; !ok {
+			fresh.Skills[name] = ms
+		}
+	}
+	for tname, ot := range old.Targets {
+		ft, ok := fresh.Targets[tname]
+		if !ok || ft.ManagedSkills == nil {
+			ft = skill.ManifestTarget{ManagedSkills: map[string]string{}}
+		}
+		for name, ver := range ot.ManagedSkills {
+			if scope[name] {
+				continue
+			}
+			if _, ok := ft.ManagedSkills[name]; !ok {
+				ft.ManagedSkills[name] = ver
+			}
+		}
+		fresh.Targets[tname] = ft
+	}
+	return fresh
+}
+
 // joinValidation renders validation errors into a single remediation string.
 func joinValidation(errs []config.ValidationError) string {
 	msgs := make([]string, len(errs))
