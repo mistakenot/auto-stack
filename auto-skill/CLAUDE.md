@@ -81,6 +81,7 @@ are guarded by `.auto/skills/lock.json` presence (and `command -v auto`), so the
 - [autoskill — Requirements](auto-skill/docs/requirements.md): Requirements for autoskill: agent skill management, linting, and scaffolding. Read when: implementing autoskill create, lint, and skill validation commands
 - [SCIP Notes for auto-skill](auto-skill/docs/scip-code-notes.md): Technical notes on SCIP (scip-code.org) with practical adoption guidance for auto-skill. Read when: adding symbol-aware code context and navigation features to autoskill
 - [SkillOpt Paper Notes for auto-skill](auto-skill/docs/skillopt-paper-notes.md): Technical implementation notes from SkillOpt (arXiv:2605.23904), focused on what to adopt in auto-skill. Read when: designing automated skill optimization loops for autoskill
+- [auto-skill vs. vercel-labs/skills — Feature Gap & Path to Parity](auto-skill/docs/vercel-skills-gap-analysis.md): What the vercel skills CLI does that auto-skill doesn't, and the concrete pieces needed to make auto-skill a native tool for installing, updating, and managing skills from remote repos. Read when: scoping auto-skill toward remote skill install/update/distribution, or deciding what to build to replace the npx skills shell-out
 <!-- autodoc: end -->
 
 

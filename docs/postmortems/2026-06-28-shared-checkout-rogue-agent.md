@@ -1,5 +1,6 @@
 ---
 hash: "0ed91648"
+id: "59a206e2"
 read_when: "running multiple autonomous agents (tmux/ntm planner+executor split) against one repo, debugging why HEAD/branch changes under an agent, or deciding worktree isolation for background Claude sessions"
 summary: "Eight planner/executor Claude panes all shared the ONE primary checkout as their cwd, so when a leftover unattended planner session (the task-048 PBT planner, running --dangerously-skip-permissions) ran git checkout, HEAD flipped for all eight at once and then oscillated between main and a feature branch — the upstream cause of the same-day main-branch-divergence incident."
 title: "Postmortem: a shared working tree + a rogue autonomous planner flipped HEAD under 8 agents"

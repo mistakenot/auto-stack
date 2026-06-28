@@ -27,6 +27,10 @@ The merged `auto` binary is built from the repo root with `make build` (the env 
 
 - [AutoEnv V1 Requirements](auto-env/docs/requirements-v1.md): V1 spec for autoenv: template-based config file generation with deterministic per-worktree port allocation, supporting init/up/down/status commands with auto-restart and file-only manifest tracking. Read when: implementing autoenv v1 or understanding the simplified environment management design
 - [AutoEnv Requirements](auto-env/docs/requirements.md): Requirements for autoenv: manage isolated development environments for worktree-based coding agents, handling port allocation, databases, logs, and service lifecycle to avoid conflicts across concurrent instances. Read when: implementing autoenv or managing multi-worktree development environments
+
+**auto-env/docs/research**
+
+- [Hack Env Architecture — A Deep Dive](auto-env/docs/research/hack-env-architecture.md): Architectural study of how hack-dance/hack models, resolves, encrypts, and injects per-project/per-worktree environment configuration: the four-layer YAML overlay model, scope flattening, AES-256-GCM secrets with a worktree-aware key chain, the modern-vs-legacy compose injection paths, host/session/lifecycle injection surfaces, and materialization/drift detection — with lessons for auto-env. Read when: designing auto-env's environment/config resolution layer, an env-overlay model, a secrets story, or worktree-shared key handling; or comparing auto-env's template model against a mature sibling
 <!-- autodoc: end -->
 
 **auto env** — Standalone dev environments for worktree branches. Run `auto env quickstart` to learn how to stand up an isolated environment.

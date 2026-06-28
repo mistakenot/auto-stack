@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>050: Model-Based Sync Testing</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="050: Model-Based Sync Testing" status="draft" pr="pending" generated="2026-06-28"
+          next-prompt="/new-solution 050">
+
+    <script type="application/json" id="pd-meta">
+    {
+      "id": "050",
+      "name": "model-based-sync-testing",
+      "status": "planning",
+      "created": "2026-06-28"
+    }
+    </script>
+
+    <pd-tab name="Requirements">
+      <pd-scope></pd-scope>
+      <pd-decisions></pd-decisions>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+`auto skill sync --target X` silently deleted **988 files** — every rendered skill except the
+one targeted — because the orphan pruning classifier treats non-targeted skills as orphans when
+the desired set is intentionally scoped down. The bug shipped despite existing property-based
+tests (PBT) because the current PBT suite covers **data-model invariants** (lock round-trips,
+render determinism, URL canonicalization) but not **pipeline orchestration interactions** —
+specifically, how the plan-phase scope filter composes with the classify/prune phases.
+
+This is a class of bug where individually correct subsystems produce destructive results when
+composed in sequence. The existing test matrix has:
+- 14 PBT properties across 3 prop test files — all stateless, single-function properties
+- 11 sync integration tests — but `TestRunTargetImpliesLocked` only checks lock advancement, not prune scoping
+- 11 prune tests — comprehensive decision table, but none test the "scoped run shrinks desired set → non-targeted skills classified as orphans" interaction
+- 4 ownership/classify tests — `TestClassify_StateMatrix` covers 9 verdict cases but assumes the desired set is always complete
+
+No test exercises a **sequence of sync operations** (full sync → scoped sync → full sync) to
+verify that each operation's blast radius is bounded to its scope. This is the gap model-based
+testing fills.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **Catch pipeline interaction bugs** by testing the sync engine as a state machine — generating
+  random sequences of operations (full sync, scoped sync, add skill, remove skill, update lock)
+  and asserting invariants after each step.
+- **Reuse existing generators** (`lockGen`, `manifestGen`, `skillNameGen`, `renderInputGen` from
+  `skill_prop_test.go` / `render_prop_test.go`) composed into a new `syncStateMachine` test
+  harness using `rapid.StateMachine`.
+- **Prevent the specific bug class** where a scoped operation's filter doesn't propagate to
+  downstream pipeline phases (plan → classify → prune), causing unintended side effects on
+  non-targeted state.
+- **Establish the pattern** for stateful PBT in auto-skill so future pipeline features (journal
+  recovery, crash rollback, concurrent syncs) can be tested the same way.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Fixing the sync --target bug itself** — that's a separate task (delegated to executor pane).
+  This task adds the testing harness that would have caught it and prevents the class from recurring.
+- **Fuzzing** — Go's native fuzzer targets byte-parsing; the sync pipeline's inputs are structured
+  options + filesystem state, not byte buffers. The bug is a silent wrong answer on valid inputs,
+  not a crash on malformed input.
+- **Formal verification (TLA+/Alloy)** — the modeling effort (days) dwarfs the pipeline's
+  complexity (~500 lines). The state machine test captures the same invariant
+  ("prune scope ⊆ render scope") at lower cost.
+- **Network/fetch-layer testing** — the state machine operates on the plan→classify→prune→commit
+  phases with mocked fetch results, not real git transport.
+- **Mutation testing** — valuable as a follow-up quality audit of the property suite, but not
+  in scope for this task.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="approach" title="Approach: rapid.StateMachine">
+        <md><script type="text/plain">
+The sync pipeline is a state machine with well-defined states (skills rendered, receipts
+written, manifest current) and operations (full sync, scoped sync, add, remove, update).
+`rapid.StateMachine` — already available via `pgregory.net/rapid` (used in 3 existing prop
+test files) — generates random sequences of these operations and checks invariants after each.
+
+**The model** is deliberately simple: a `map[string]bool` of which skills should exist per
+target directory. The **system under test** is the real sync pipeline operating on a real
+(temporary) filesystem. After each operation, the test compares the model's expected skill set
+against the actual files on disk.
+
+**Why this catches the bug:** the model says "after scoped sync of skill X, all other skills
+remain present." The real system deletes them. The state machine finds the divergence on the
+first sequence that includes a full sync followed by a scoped sync — typically within a few
+generated sequences.
+
+**Why model-based over other approaches:**
+- Unit/integration tests require the developer to anticipate the dangerous sequence. The
+  `--target` test existed but only checked lock behavior, not prune behavior.
+- Stateless PBT (current suite) generates random *inputs* but not random *operation sequences*.
+  The bug only surfaces after a specific sequence: (1) populate state via full sync, then
+  (2) run a scoped sync that shrinks the desired set.
+- Model-based testing generates both random inputs AND random operation sequences, catching
+  interaction bugs the developer didn't anticipate.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-1" title="rapid.StateMachine over custom loop" status="accepted" by="agent"
+        summary="Use rapid's built-in StateMachine API — shrinking, sequence generation, and seed capture come free.">
+        <md><script type="text/plain">
+**Context:** Need to generate random operation sequences against the sync pipeline. Two options:
+write a custom `while` loop with `rapid.Draw`, or use `rapid.StateMachine`.
+
+**Decision:** Use `rapid.StateMachine`. It provides built-in sequence generation, shrinking of
+operation sequences to minimal failing cases, and seed capture — all critical for actionable
+counterexamples.
+
+**Alternatives:** Custom loop with `rapid.Draw` (more flexible but loses sequence shrinking);
+`gopter` state machine (different library, would add a dependency); hand-written sequence
+enumeration (doesn't scale, misses unexpected interactions).
+
+**Consequences:** The test struct must implement `rapid.StateMachine` interface (`Init`, `Check`,
+plus one method per operation). The `rapid` library is already in `go.mod`.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-2" title="Real filesystem over mocked state" status="accepted" by="agent"
+        summary="Run the real sync pipeline against a temp directory — catches bugs mocks would hide.">
+        <md><script type="text/plain">
+**Context:** The state machine test needs a system under test. Options: (a) call `sync.Run()`
+against a real temp directory, or (b) mock the filesystem and test internal functions.
+
+**Decision:** Real filesystem in a `t.TempDir()`. The bug was in how real pipeline phases
+compose — mocking the filesystem would test a different composition than the one that broke.
+The existing sync integration tests already use real filesystems (via `newTestEnv`), so the
+pattern is established.
+
+**Alternatives:** Mock filesystem (faster but tests a different code path); in-memory fs
+abstraction (the sync engine doesn't use one — would require refactoring production code for
+testing).
+
+**Consequences:** Tests are ~10-50ms per operation (disk I/O), so 100 sequences × 10 ops ×
+50ms ≈ 50 seconds worst case. Acceptable for CI; can reduce iteration count for local runs.
+        </script></md>
+      </pd-decision>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [x] **Library choice:** `rapid.StateMachine` vs `gopter` — resolved: `rapid` is already in
+  `go.mod` and used in 3 test files. No new dependency needed.
+- [x] **Test placement:** same `sync` package (white-box) vs separate `sync_test` package
+  (black-box) — resolved: same package, matching the existing `sync_test.go` pattern.
+  White-box access lets us call `planPrune` and `ScanOwnership` directly for intermediate
+  assertions if needed.
+- [ ] **Operation set size:** start with 4-5 operations (full sync, scoped sync, add authored
+  skill, remove skill, edit skill config). May expand later. The initial set should be the
+  minimum that reproduces the --target bug class.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="State Machine Design">
+      <pd-section id="state-machine-model" title="State Machine Model">
+        <md><script type="text/plain">
+The model tracks what the **user expects** to see after each operation. The SUT (sync pipeline
+on a real filesystem) tracks what **actually happens**. Divergence = bug.
+        </script></md>
+
+        <pd-mermaid caption="State machine: model vs SUT">
+stateDiagram-v2
+    [*] --> Empty: Init (temp dir + fixture repo)
+    Empty --> Populated: FullSync (renders all locked skills)
+    Populated --> Populated: FullSync (idempotent)
+    Populated --> Populated: ScopedSync(X) (renders X, others unchanged)
+    Populated --> Populated: AddSkill(Y) (add to lock, not yet rendered)
+    Populated --> Partial: RemoveSkill(Z) (remove from lock + config)
+    Partial --> Populated: FullSync (re-renders remaining)
+    Populated --> Populated: EditConfig(X) (change replacements)
+
+    state Populated {
+        [*] --> Check
+        Check: model[skill] == exists_on_disk(skill) ∀ skill, target
+    }
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="operations" title="Operations (State Machine Methods)">
+        <md><script type="text/plain">
+Each operation maps to one method on the `rapid.StateMachine` implementation. Rapid generates
+random sequences of these, choosing which to call and with what arguments at each step.
+
+| # | Operation | Model effect | SUT call | Invariant checked |
+|---|-----------|-------------|----------|-------------------|
+| 1 | `FullSync` | model = all skills in lock | `sync.Run(opts{Locked: true})` | All locked skills rendered in all targets |
+| 2 | `ScopedSync(name)` | model unchanged (scoped render, no deletions) | `sync.Run(opts{Targets: [name], Locked: true})` | **Only named skill touched; all others unchanged** |
+| 3 | `AddSkill(name)` | model[name] = false (added to lock, not yet synced) | Write lock entry + skills.yaml | Lock valid; no filesystem change until next sync |
+| 4 | `RemoveSkill(name)` | delete model[name] | Remove from lock + skills.yaml | Removed from config; rendered copy pruned on next full sync |
+| 5 | `EditConfig(name)` | model unchanged (config change, not yet synced) | Modify replacements in skills.yaml | Config valid; rendered copy unchanged until next sync |
+
+**The critical property** (the one the --target bug violates):
+
+> After any operation, for every skill S not named in that operation's target scope:
+> `exists_on_disk(S, target) == model[S]` — the operation did not change S's presence.
+
+This is the "no collateral damage" invariant. The model-based test checks it after every
+generated operation, so any operation that has unintended side effects on non-targeted state
+will be caught.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="generator-composition" title="Generator Composition">
+        <md><script type="text/plain">
+Existing generators reused directly (no new generators needed for the model):
+
+| Generator | Source | Used for |
+|-----------|--------|----------|
+| `skillNameGen()` | `skill_prop_test.go:14` | Operation arguments (which skill to target) |
+| `lockEntryGen()` | `skill_prop_test.go:42` | AddSkill operation (new lock entry) |
+| `replacementMapGen()` | `skill_prop_test.go:113` | EditConfig operation (new replacements) |
+| `versionSpecGen()` | `skill_prop_test.go:24` | AddSkill lock entry version |
+
+New composition needed:
+
+| Generator | Purpose |
+|-----------|---------|
+| `initialLockGen()` | 2-6 skill lock entries with unique names, all pointing at the fixture repo |
+| `initialSkillsYAMLGen()` | Matching skills.yaml with targets `[".claude/skills", ".agents/skills"]` |
+
+These are thin wrappers over `lockGen()` and `skillsYAMLGen()`, constrained to produce
+consistent state (every skill in the YAML has a matching lock entry, and vice versa).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="invariants" title="Invariants Checked After Each Step">
+        <md><script type="text/plain">
+The `Check()` method on the state machine runs after every operation:
+
+1. **Presence invariant:** For every skill in the model marked as "should exist on disk,"
+   the rendered directory exists in every target. For every skill marked as "should not exist,"
+   the directory is absent.
+
+2. **No collateral damage:** Skills not named in the most recent operation's scope have the
+   same on-disk presence as before the operation ran. (This is the invariant the --target
+   bug violates.)
+
+3. **Manifest consistency:** If a full sync has been run at least once, the manifest on disk
+   lists exactly the skills the model says should be rendered.
+
+4. **Lock stability under scoped sync:** After a scoped sync, the lock file is byte-identical
+   to before the sync (scoped syncs don't advance the lock — this is already tested by
+   `TestRunTargetImpliesLocked` but the state machine verifies it holds across arbitrary
+   operation sequences).
+        </script></md>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Solution">
+      <pd-scope></pd-scope>
+
+      <pd-section id="files" title="Files">
+        <pd-files>
+          <pd-file path="auto-skill/internal/sync/sync_statemachine_test.go" change="add">State machine test: model, operations, invariants, generators</pd-file>
+          <pd-file path="auto-skill/internal/sync/testutil_test.go" change="edit">Extract shared test env setup for reuse by state machine test</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="test-structure" title="Test Structure">
+        <pd-api kind="struct" name="syncStateMachine" lang="go"
+                path="auto-skill/internal/sync/sync_statemachine_test.go"
+                caption="rapid.StateMachine implementation">
+          <pd-member kind="field" sig="model map[string]bool">Expected skill presence: name → should-exist-on-disk</pd-member>
+          <pd-member kind="field" sig="env *testEnv">Real filesystem environment (temp dir + fixture repo)</pd-member>
+          <pd-member kind="field" sig="lock *skill.Lock">Current lock state (mutated by Add/Remove)</pd-member>
+          <pd-member kind="field" sig="skillsYAML *skill.SkillsYAML">Current config (mutated by Add/Remove/Edit)</pd-member>
+          <pd-member kind="field" sig="hasFullSynced bool">Whether a full sync has established baseline state</pd-member>
+          <pd-member kind="field" sig="lastOp string">Last operation name (for collateral-damage check)</pd-member>
+          <pd-member kind="field" sig="lastScope []string">Last operation's target scope (for collateral-damage check)</pd-member>
+          <pd-member kind="field" sig="preOpSnapshot map[string]bool">Snapshot before last op (for collateral-damage check)</pd-member>
+          <pd-member kind="method" sig="Init(t *rapid.T)">Create temp dir, write initial lock + skills.yaml with 3-5 skills</pd-member>
+          <pd-member kind="method" sig="FullSync(t *rapid.T)">Run sync.Run(Locked: true), update model to mark all locked skills as present</pd-member>
+          <pd-member kind="method" sig="ScopedSync(t *rapid.T)">Pick a random existing skill, run sync.Run(Targets: [name]), model unchanged</pd-member>
+          <pd-member kind="method" sig="AddSkill(t *rapid.T)">Generate new lock entry + config, write to disk, model[name] = false</pd-member>
+          <pd-member kind="method" sig="RemoveSkill(t *rapid.T)">Remove a random skill from lock + config, model[name] = false</pd-member>
+          <pd-member kind="method" sig="Check(t *rapid.T)">Assert all 4 invariants (presence, collateral, manifest, lock stability)</pd-member>
+        </pd-api>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Plan">
+      <pd-scope></pd-scope>
+      <pd-dag caption="Execution order"></pd-dag>
+
+      <pd-stepper>
+        <pd-phase n="1" title="Extract shared test utilities"
+                  files="auto-skill/internal/sync/testutil_test.go"
+                  status="todo">
+          <md><script type="text/plain">
+Extract the `newTestEnv` helper and fixture repo setup from `sync_test.go` into
+`testutil_test.go` so both the existing integration tests and the new state machine test
+can share the same environment creation code. The existing tests must continue passing
+unchanged.
+
+**Acceptance:** `go test ./auto-skill/internal/sync/...` passes. No behavior change.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Implement state machine test"
+                  files="auto-skill/internal/sync/sync_statemachine_test.go"
+                  status="todo"
+                  depends-on="1">
+          <md><script type="text/plain">
+Write the `syncStateMachine` struct implementing `rapid.StateMachine`:
+
+1. **Init:** Create a temp dir with a fixture git repo containing 3-5 skill sources. Write
+   a valid lock file and skills.yaml referencing those skills. Initialize the model with all
+   skills marked as "not yet rendered."
+
+2. **Operations:** Implement `FullSync`, `ScopedSync`, `AddSkill`, `RemoveSkill` as described
+   in the State Machine Design tab. Each operation:
+   - Snapshots pre-op state
+   - Calls the real `sync.Run()` with appropriate options
+   - Updates the model accordingly
+
+3. **Check:** After each operation, assert the 4 invariants (presence, no collateral damage,
+   manifest consistency, lock stability).
+
+4. **Test function:** `TestSyncStateMachine` calls `rapid.Check(t, rapid.Run[syncStateMachine]())`
+   with default settings (100 sequences).
+
+**Kill test:** Before the --target bug is fixed, `ScopedSync` after `FullSync` should produce
+a failing counterexample showing the collateral damage. After the fix, the test should pass.
+This validates the test catches the exact bug class.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Verify and tune"
+                  files="auto-skill/internal/sync/sync_statemachine_test.go"
+                  status="todo"
+                  depends-on="2">
+          <md><script type="text/plain">
+1. **Run against the unfixed code** to confirm the test catches the --target bug. Record the
+   shrunk counterexample (expected: "FullSync → ScopedSync(X) → Check fails: skill Y missing
+   from disk but model says present").
+
+2. **Run against the fixed code** (once the --target fix PR lands) to confirm the test passes.
+
+3. **Tune iteration count:** if 100 sequences × ~10 ops takes > 60 seconds, reduce to 50 for
+   local runs. CI can use the full count via a build tag or env var.
+
+4. **Add regression seed:** record the seed that found the --target counterexample in a
+   comment or checked-in seed file so it replays on every run.
+
+**Acceptance:** `go test -run TestSyncStateMachine ./auto-skill/internal/sync/` passes on
+fixed code, fails on unfixed code. `go build ./...` clean.
+          </script></md>
+        </pd-phase>
+      </pd-stepper>
+    </pd-tab>
+
+    <pd-tab name="Verification">
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+        <pd-ac id="AC-1" title="State machine test catches the --target prune bug"
+               phases="2,3"
+               tests="auto-skill/internal/sync/sync_statemachine_test.go">
+          <md><script type="text/plain">
+- Given the sync engine with the --target prune scoping bug present
+- When the state machine generates a sequence containing FullSync → ScopedSync(X)
+- Then Check() fails: non-targeted skills are missing from disk but present in the model
+- And the shrunk counterexample is minimal (≤ 3 operations)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="State machine test passes on correct implementation"
+               phases="2,3"
+               tests="auto-skill/internal/sync/sync_statemachine_test.go">
+          <md><script type="text/plain">
+- Given the sync engine with the --target prune scoping bug fixed
+- When the state machine runs 100 random sequences of 5-15 operations each
+- Then all 4 invariants hold after every operation in every sequence
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="Existing tests unaffected"
+               phases="1"
+               tests="auto-skill/internal/sync/sync_test.go,auto-skill/internal/sync/prune_test.go">
+          <md><script type="text/plain">
+- Given the test utility extraction in phase 1
+- When `go test ./auto-skill/internal/sync/...` runs
+- Then all 22 existing tests (11 sync + 11 prune) pass unchanged
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="No new dependencies"
+               phases="2">
+          <md><script type="text/plain">
+- The state machine test uses only `pgregory.net/rapid` (already in go.mod)
+- No new test dependencies added
+- Existing generators from `skill_prop_test.go` / `render_prop_test.go` are reused or composed
+          </script></md>
+        </pd-ac>
+      </pd-section>
+
+      <pd-trace caption="Acceptance coverage"></pd-trace>
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>

@@ -166,6 +166,10 @@ Use claud read tools to build heat maps of what files it's reading a lot, what d
 - Check doc freshness with `auto doc stale`, fix issues with `auto doc fix`.
 - Link code to docs with `[autodoc()]` tags — run `auto doc fix` for details.
 
+**auto-artifact/docs**
+
+- [Auto Artifact Requirements](auto-artifact/docs/requirements.md): Requirements for `auto artifact`, a CLI command group for AI agents to upload evidence files (screenshots, videos, logs) to a public-read S3 bucket and get back permanent URLs for embedding in PR comments. Read when: designing or implementing the auto-artifact CLI, its S3 upload/retention model, or evidence-file linking in PRs
+
 **auto-web/docs**
 
 - [Autoweb Requirements](auto-web/docs/requirements.md): Requirements for autoweb, a safe web research portal for AI coding agents with pluggable backends and result deduplication. Read when: designing safe web research portals for coding agents
@@ -183,12 +187,26 @@ Use claud read tools to build heat maps of what files it's reading a lot, what d
 - [Better Questions: Five Deep Extensions](docs/codex-better-questions-deep-ideas.md): Five advanced extensions to the better-questions framework — decision frontier compiler, regret ledger, workflow wind tunnel, workflow genome compiler, and ghost user critic — plus a rigorous addendum on orthogonal questioning as Bayesian posterior collapse over user intent. Read when: designing question-selection systems, building agent decision intelligence, or extending the auto-reflect planning loop
 - [Doc File Usage in Agent Sessions: Findings and Structural Insights](docs/doc-file-usage-findings.md): Analysis of how agents interact with documentation files across 420 coding sessions, revealing that docs are seen constantly but read rarely, discovery bypasses the tooling, and user direction is the primary driver of doc consumption. Read when: analyzing doc discovery patterns or improving doc tooling
 - [End-to-End Problems: autosearch session get Rendering](docs/end-to-end-problems.md): Identified rendering problems in autosearch session output, including missing closing tags, absent tool command previews, empty tool-use blocks, and message truncation. Read when: debugging autosearch session rendering or ETL data flow
+- [Live Tier Architecture: One Transform, Many Materializations](docs/live-tier-architecture.md): Architecture note resolving the tension between batch ETL (parquet) and live event-stream monitoring: one schema, one transform, many materializations, with a hot tier in front of the same data behind a single query surface. Read when: deciding how to serve live/monitoring queries over hook events without duplicating auto-etl, or designing the hot/cold data tiering and streaming transform spine
 - [Auto — Agentic Coding Intelligence Platform](docs/random.md): High-level product overview of the Auto platform: architecture, data format, tool suite, query examples, security model, and roadmap. Read when: learning the auto-stack architecture and product vision
+- [Remote Skill Management — Design](docs/remote-skills-design.md): End-to-end design for turning auto-skill into a native tool for installing, customizing, updating, and exporting agent skills from remote repos: a global git cache, deterministic templating with literal/file-ref replacements, section-level doc extraction, a composite skill_version hash, version pinning policy, the skills.yaml + lock.json schemas, the full CLI surface, and a migrate-from-vercel path. Read when: implementing auto-skill's remote install/customize/update/export pipeline, the skills.yaml/lock.json formats, the git cache, deterministic skill hashing, or the migrate-from-vercel command
 - [Requirements Mining](docs/requirements-mining.md): Concept for building a reusable requirements playbook by mining past agent sessions to extract standards and rules for fleshing out future task requirements. Read when: designing requirement extraction or requirements playbook systems from agent session history
 - [Signals](docs/signals.md): Exploration of how raw coding session data can be transformed into actionable signals indicating what is working well or poorly in a codebase. Read when: designing metrics or feedback signals from session data
 - [Review: user-journey.md](docs/user-journey.claude.md): Open questions and action items from reviewing the auto-stack user journey document for consistency and end-to-end coherence. Read when: reviewing user-journey open questions or implementation roadmap
 - [User Journey Consistency Review](docs/user-journey.codex.md): Consistency review of the auto-stack user journey, confirming directional decisions and capturing open planning-stage questions for future resolution. Read when: confirming auto-stack direction or resolving planning questions
 - [Auto Stack User Journey](docs/user-journey.md): End-to-end walkthrough of the Auto stack: from doc management and session ETL through search, reflection, and automated task scheduling. Read when: understanding the end-to-end auto-stack workflow and architecture
+
+**docs/concepts**
+
+- [Ubiquitous Language](docs/concepts/UBIQUITOUS_LANGUAGE.md): The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack) with the terms to avoid for each. Read when: naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept
+
+**docs/how-to**
+
+- [How to Set Up NTM for Multi-Agent Development](docs/how-to/set-up-ntm.md): Step-by-step guide to spawning planner and worker agent pools using NTM labels, adding workers on demand, and sending prompts to specific pools. Read when: setting up NTM tmux sessions, configuring planner/worker agent pools, or spawning multi-agent sessions with labels
+
+**docs/postmortems**
+
+- [Postmortem: main-branch divergence during doc commit + merge](docs/postmortems/2026-06-28-main-branch-divergence.md): A routine doc commit hit a three-way divergence of main (remote merge + unpushed local autodoc commit + a fresh feature branch), caused by treating ff-merge as the default without checking for divergence; resolved by linearising in a clean worktree and pushing as a fast-forward. Read when: merging to main while background jobs or pre-commit hooks may be committing concurrently, or debugging a non-fast-forward / diverged main
 
 **docs/reference**
 
@@ -197,8 +215,10 @@ Use claud read tools to build heat maps of what files it's reading a lot, what d
 **docs/research**
 
 - [AskUserQuestion Analytics — Pipeline Investigation](docs/research/askuserquestion-analytics.md): How AskUserQuestion data flows through the auto-etl / auto-search pipeline, where the structured payload is lost, and a phased plan to surface the five target analytics metrics (frequency, question text, options, recommended option, picked option) for tuning Claude's question-asking against latent user intent. Read when: investigating AskUserQuestion analytics, planning ETL schema changes for structured tool envelopes, or scoping autosearch CLI work around tool filtering
+- [Autonomous Planning for Software Factories — 2026 Update](docs/research/better-planning-autonomy.md): Recency-biased survey of 2026 spec-driven development and autonomous-planning practice (Spec Kit, OpenSpec, Antigravity artifacts, human-on-the-loop, software constitutions) with concrete moves to reduce gatekeeping. Read when: designing the planning pipeline, autonomy levels, or review/gatekeeping policy for an agent software factory
 - [Research: Blogs](docs/research/blogs.md): Collected blog and reference links relevant to the auto-stack research and development process. Read when: researching external references on agent engineering or tooling
 - [Research: Effective Feedback Compute (EFC) as a Session-Quality Signal](docs/research/efc-scaling-laws.md): Distillation of the Effective Feedback Compute (EFC) scaling-law paper into a concrete scoring spec for auto-reflect, mapping the paper's deterministic gate tables to our parquet schema, and naming the success-label gap as the blocker. Read when: designing session-quality signals or scoring agent traces by feedback quality
+- [Multi-Project / Multi-Host Architecture](docs/research/multi-host-architecture.md): Design exploration for supporting multiple projects, users, and hosts through a single auto-ui, with autowatch as the per-user RPC executor and an abstracted transport layer. Read when: planning multi-project UI support, adding RPC to autowatch, designing cross-host connectivity, or extending the bus event envelope
 - [Research: Agent Engineering Principles (Tweets)](docs/research/tweets.md): Curated research notes on agent engineering principles covering progressive disclosure, worktree isolation, spec-first development, architecture enforcement, and integrated feedback loops. Read when: understanding core agent engineering principles
 <!-- autodoc: end -->
 
