@@ -114,6 +114,13 @@
       "skill_version": "86f06f47c77cc7fa813f6da24b8e219f1f82cd3cfb875b7ee89d2ca3d275af68",
       "render_version": "1"
     },
+    "grill-me": {
+      "template_hash": "6caf9d877b7a8aa106da5af3dfe112326896edf6cac0fb85d9c7fa7771c475fa",
+      "replacements": {},
+      "file_refs": [],
+      "skill_version": "11a309cc566fd64ad8d2f511dcd2d7617fc2abdfb7f2dc40fea6bcaf3bba7307",
+      "render_version": "1"
+    },
     "improve-claude-md": {
       "template_hash": "dbc3019c52f2409c031c4261664381c338d206b53ed700120743e374a87a9b8c",
       "replacements": {},
@@ -316,6 +323,7 @@
         "fan-out-user-simulation": "79e097a4c022aacb366989c30414fae88834e21d7ad0c9901c39ff4aaa884709",
         "frontend-design": "60d34deae5c01b2b88eb033a2c691c15162b7b1bc4c5c936bd02af9c8045d9c8",
         "generate-10-ideas": "86f06f47c77cc7fa813f6da24b8e219f1f82cd3cfb875b7ee89d2ca3d275af68",
+        "grill-me": "11a309cc566fd64ad8d2f511dcd2d7617fc2abdfb7f2dc40fea6bcaf3bba7307",
         "improve-claude-md": "36fc2ed490796c58f4eb828dc7fbb97759b2f52c86ec3058415d94d64ac08698",
         "learning-diary": "562de1c03280fc192012f69eabf7010d156c06847b6859cbd7804031531fe6d7",
         "new-epic": "b8eec11b66fc041a293a1c391aa1248738d4e7c39fd01b157b109434a29400aa",
@@ -362,6 +370,7 @@
         "fan-out-user-simulation": "79e097a4c022aacb366989c30414fae88834e21d7ad0c9901c39ff4aaa884709",
         "frontend-design": "60d34deae5c01b2b88eb033a2c691c15162b7b1bc4c5c936bd02af9c8045d9c8",
         "generate-10-ideas": "86f06f47c77cc7fa813f6da24b8e219f1f82cd3cfb875b7ee89d2ca3d275af68",
+        "grill-me": "11a309cc566fd64ad8d2f511dcd2d7617fc2abdfb7f2dc40fea6bcaf3bba7307",
         "improve-claude-md": "36fc2ed490796c58f4eb828dc7fbb97759b2f52c86ec3058415d94d64ac08698",
         "learning-diary": "562de1c03280fc192012f69eabf7010d156c06847b6859cbd7804031531fe6d7",
         "new-epic": "b8eec11b66fc041a293a1c391aa1248738d4e7c39fd01b157b109434a29400aa",

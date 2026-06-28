@@ -177,6 +177,17 @@
       "local": false,
       "state": "unresolved"
     },
+    "grill-me": {
+      "source": "https://github.com/mistakenot/skills",
+      "url": "https://github.com/mistakenot/skills",
+      "version_spec": "latest",
+      "ref": "f7f9b4e19ac9c09693c1acde0e7bd71549fbca68",
+      "commit": "f7f9b4e19ac9c09693c1acde0e7bd71549fbca68",
+      "subpath": "skills/grill-me",
+      "private": false,
+      "local": false,
+      "state": "resolved"
+    },
     "improve-claude-md": {
       "source": "humanlayer/skills",
       "url": "https://github.com/humanlayer/skills",
