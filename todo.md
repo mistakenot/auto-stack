@@ -42,6 +42,10 @@ Align with user-journey spec.
 - [ ] import GitHub PR feedback (comments, reviews) as an additional data source — contains valuable signal (code review insights, design decisions, bug context). Spec: `auto-etl/docs/github-pr-etl.md`
 - [ ] **[PARKED — needs more design]** Live tier for monitoring: batch ETL (parquet) is too stale for live queries ("what is job X doing now?"); building a separate monitoring store would recreate data auto-etl already owns. Direction: one schema / one transform / many materializations — a hot tier (pure-Go SQLite, fed by a continuous tailer of the JSONL log) in front of parquet, behind one query surface; ETL becomes a compaction flush, not a daily job. DRAFT/RFC: `docs/live-tier-architecture.md`. Open questions to resolve before building: hot-store retention window, compaction trigger, multi-host query scope, hot/cold schema unification, replay-on-restart.
 
+## auto-reflect
+
+- [ ] Capture requirements-scoping decisions as minable signal. Today the tool models `observation` (kind: `correction|pattern|gap|incident`) and `rule` — there is **no `decision` concept**, and nothing captures the answers a user gives to scoping questions (e.g. AskUserQuestion during `/new-task`). Those answers currently live only in the planning doc (`<pd-decision>`/`<pd-question>`/`<pd-answer>`), contextual commits, and the raw transcript — and the structured AskUserQuestion payload is dropped during ETL (see `docs/research/askuserquestion-analytics.md`). Proposal: add a `decision` observation kind (or a dedicated decision event) so scoping Q&A becomes first-class, queryable signal that can feed back into asking better questions. Related design: `docs/better-questions.md`, `docs/claude-decision-intelligence-deep-dive.md`.
+
 ## auto-search
 
 - [ ] `truncateStr` in `auto-search/internal/cli/session.go` slices by bytes, not runes — same UTF-8 bug as the `search.TruncateAtRune` fix in PR #47 (`messages.go` / `cli/search.go` snippets). Fires at the 80-char tool-arg preview when args contain emoji, accented chars, or unicode in commands/paths. Route through `search.TruncateAtRune` (or duplicate the `utf8.RuneStart` advance loop) so tool tags in `session get` output stay valid UTF-8.
@@ -101,3 +105,8 @@ Align with user-journey spec.
 ## auto-mail (planned)
 
 - [ ] Using Using our existing RPC stuff that allows cross-host communication I'm interested in creating a very simple mail inbox system where agents can push messages to inboxes They can then also read from inboxes, pull messages from inboxes etc so that different projects can cross-communicate to each other We maybe keep this really flexible to begin with We have threads, which are a bit like threads and slack or whatever which have topic names or IDs Yeah, I'm not sure when you think about this more
+
+## auto-hook
+
+- [ ] capture codex / opencode hooks the same way we capture claude hooks.
+- [ ] higher level abstraction for hooks. e.g: whenever an agent opens a pr or pushes to a pr, we want to hint it with some text to say "If you just pushed to a PR and have finished other work, check back in a few minutes and run /address-feedback", but we define this once and it works across all agents.
