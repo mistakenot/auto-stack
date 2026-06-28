@@ -105,6 +105,108 @@ func TestValidateFewerQuotesIsFine(t *testing.T) {
 	}
 }
 
+func TestValidateTooManyEvidenceFiles(t *testing.T) {
+	in := validInput()
+	in.EvidenceFiles = []string{"a.go", "b.go"} // 2 files, 1 session
+	errs := in.Validate()
+	if !hasFieldCode(errs, "evidence", "range") {
+		t.Fatalf("expected range error on evidence for too many files, got %+v", errs)
+	}
+}
+
+func TestValidateTooManyEvidenceCommits(t *testing.T) {
+	in := validInput()
+	in.EvidenceCommits = []string{"abc123", "def456"} // 2 commits, 1 session
+	errs := in.Validate()
+	if !hasFieldCode(errs, "evidence", "range") {
+		t.Fatalf("expected range error on evidence for too many commits, got %+v", errs)
+	}
+}
+
+func TestValidateTooManyEvidenceLineRanges(t *testing.T) {
+	in := validInput()
+	in.EvidenceLineRanges = []string{"1-2", "3-4"} // 2 line ranges, 1 session
+	errs := in.Validate()
+	if !hasFieldCode(errs, "evidence", "range") {
+		t.Fatalf("expected range error on evidence for too many line ranges, got %+v", errs)
+	}
+}
+
+func TestValidateFewerEvidenceProvenanceIsFine(t *testing.T) {
+	in := validInput()
+	in.Sessions = []string{"s1", "s2"}
+	in.EvidenceFiles = []string{"a.go"} // fewer than sessions is allowed
+	in.EvidenceCommits = []string{"abc1234"}
+	in.EvidenceLineRanges = []string{"1-10"}
+	if errs := in.Validate(); len(errs) != 0 {
+		t.Fatalf("expected no errors for fewer provenance entries, got %+v", errs)
+	}
+}
+
+func TestValidateEmptyTaskIDIsFine(t *testing.T) {
+	in := validInput()
+	in.TaskID = ""
+	if errs := in.Validate(); len(errs) != 0 {
+		t.Fatalf("expected empty task_id to be valid, got %+v", errs)
+	}
+}
+
+func TestValidateValidTaskID(t *testing.T) {
+	in := validInput()
+	in.TaskID = "049-reflect-audit-lineage-lint"
+	if errs := in.Validate(); len(errs) != 0 {
+		t.Fatalf("expected valid task_id to pass, got %+v", errs)
+	}
+}
+
+func TestValidateInvalidTaskID(t *testing.T) {
+	for _, bad := range []string{"bad id", "49-x", "049-Bad", "abc-def", "049-"} {
+		in := validInput()
+		in.TaskID = bad
+		errs := in.Validate()
+		if !hasFieldCode(errs, "task_id", "invalid_format") {
+			t.Fatalf("expected invalid_format error on task_id for %q, got %+v", bad, errs)
+		}
+	}
+}
+
+func TestPayloadSetsProvenanceAndTaskID(t *testing.T) {
+	in := Input{
+		Kind:               KindIncident,
+		Subject:            "build broke",
+		Sessions:           []string{"s1", "s2"},
+		EvidenceFiles:      []string{" main.go "},
+		EvidenceLineRanges: []string{" 10-20 "},
+		EvidenceCommits:    []string{" abc1234 "},
+		TaskID:             " 049-reflect-audit-lineage-lint ",
+		Severity:           SeverityNormal,
+	}
+	if errs := in.Validate(); len(errs) != 0 {
+		t.Fatalf("expected valid input, got %+v", errs)
+	}
+
+	payload := in.Payload("ob-deadbeef")
+	if payload.TaskID != "049-reflect-audit-lineage-lint" {
+		t.Fatalf("task_id not trimmed/set: %q", payload.TaskID)
+	}
+	if len(payload.Evidence) != 2 {
+		t.Fatalf("expected 2 evidence items, got %d", len(payload.Evidence))
+	}
+	if payload.Evidence[0].File != "main.go" {
+		t.Fatalf("evidence[0] file not trimmed/set: %q", payload.Evidence[0].File)
+	}
+	if payload.Evidence[0].LineRange != "10-20" {
+		t.Fatalf("evidence[0] line_range not trimmed/set: %q", payload.Evidence[0].LineRange)
+	}
+	if payload.Evidence[0].Commit != "abc1234" {
+		t.Fatalf("evidence[0] commit not trimmed/set: %q", payload.Evidence[0].Commit)
+	}
+	// Second session has no provenance paired.
+	if payload.Evidence[1].File != "" || payload.Evidence[1].LineRange != "" || payload.Evidence[1].Commit != "" {
+		t.Fatalf("unexpected provenance on evidence[1]: %+v", payload.Evidence[1])
+	}
+}
+
 func TestValidateBadDomainTag(t *testing.T) {
 	in := validInput()
 	in.Domain = []string{"Not_A_Tag"}

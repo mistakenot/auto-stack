@@ -44,6 +44,19 @@ auto reflect observation add \
 # moment; --evidence-session alone is fine for a whole-session observation.
 # Repeat --evidence-session/-message/-quote (paired by position) to cite several moments.
 
+# Optional source provenance pins evidence to a concrete file/line/commit, and
+# --task-id records the task the observation arose from:
+auto reflect observation add \
+  --kind correction \
+  --subject "swallowed error hid a real bug" \
+  --evidence-session "$SID" \
+  --evidence-file internal/cli/rule.go \
+  --evidence-line-range 12-20 \
+  --evidence-commit "$(git rev-parse --short HEAD)" \
+  --task-id 049-reflect-audit-lineage-lint \
+  --domain go
+# --evidence-file/-line-range/-commit are paired by position to --evidence-session.
+
 # List / filter observations. --unconsolidated shows only those not yet folded into a rule.
 auto reflect observation list --kind gap --domain go --since 14d --unconsolidated
 ` + "```" + `
@@ -67,6 +80,19 @@ auto reflect consolidate - --dry-run <<'JSON'
 JSON
 # Drop --dry-run to apply. Output: {applied, skipped (with reasons), conflicts}.
 # Other ops: attach-evidence (rule_id + observation_ids), merge (rule_ids), deprecate (rule_id).
+
+# split: retire one too-broad rule into narrower drafts. The parent is deprecated
+# and each child is minted as a draft with lineage back to the parent.
+auto reflect consolidate - <<'JSON'
+{ "deltas": [
+  { "op": "split", "rule_id": "r-1a2b3c4d", "into": [
+    { "use_when": "editing go files", "content": "run go build ./... from the module dir",
+      "causal_note": "module-scoped builds catch errors fast", "domain": ["go"] },
+    { "use_when": "editing go tests", "content": "run go test ./... from the module dir",
+      "causal_note": "split off the test-specific guidance", "domain": ["go"] }
+  ] }
+] }
+JSON
 ` + "```" + `
 
 Drafts are candidate state. Promote what earns it; retire what doesn't.
@@ -74,6 +100,17 @@ Drafts are candidate state. Promote what earns it; retire what doesn't.
 ` + "```" + `bash
 auto reflect rule promote <r-id>   # draft -> confirmed; refuses if provenance < 2 sessions (--force overrides)
 auto reflect rule retire  <r-id>   # any -> stale (never surfaced by retrieve again)
+` + "```" + `
+
+Graduate a confirmed rule into a deterministic static check. The rule stays true
+but is now enforced by a linter, so it no longer needs to ride along in retrieval.
+
+` + "```" + `bash
+auto reflect rule graduate <r-id> --linter golangci-lint --check errcheck \
+  --config-path .golangci.yml   # records a lint_ref and sets lifecycle=enforced
+
+# enforced rules are EXCLUDED from retrieve (the linter covers them); list them with:
+auto reflect rule list --lifecycle enforced
 ` + "```" + `
 
 ## Author rules directly (optional)

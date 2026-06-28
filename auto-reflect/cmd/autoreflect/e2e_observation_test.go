@@ -142,3 +142,102 @@ func TestE2EObservationAddList(t *testing.T) {
 		t.Fatalf("no observation event found in shard body:\n%s", body)
 	}
 }
+
+// TestE2EObservationAuditTrail drives observation capture with the full audit
+// trail: an originating task id plus per-evidence source provenance
+// (file/line-range/commit), then verifies the stored event carries them.
+func TestE2EObservationAuditTrail(t *testing.T) {
+	repo := initE2ERepo(t)
+	writeE2EFile(t, filepath.Join(repo, "README.md"), "seed\n")
+	runCmd(t, repo, "git", "add", ".")
+	runCmd(t, repo, "git", "commit", "-m", "seed")
+
+	t.Setenv("AUTO_SESSION_ID", "e2e-obs-audit")
+
+	if stdout, stderr, err := runBinary(repo, "init", "--project"); err != nil {
+		t.Fatalf("init failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	addStdout, addStderr, err := runBinary(repo, "observation", "add",
+		"--kind", "incident",
+		"--subject", "build broke on a stale worktree",
+		"--task-id", "049-reflect-audit-lineage-lint",
+		"--evidence-session", "sess-123",
+		"--evidence-file", "internal/app/build.go",
+		"--evidence-line-range", "42-58",
+		"--evidence-commit", "deadbeef",
+		"--severity", "high",
+	)
+	if err != nil {
+		t.Fatalf("observation add failed: %v\nstdout:\n%s\nstderr:\n%s", err, addStdout, addStderr)
+	}
+	var added struct {
+		Created     bool `json:"created"`
+		Observation struct {
+			ObservationID string `json:"observation_id"`
+		} `json:"observation"`
+	}
+	if jerr := json.Unmarshal([]byte(addStdout), &added); jerr != nil {
+		t.Fatalf("observation add stdout not JSON: %v\nraw:\n%s", jerr, addStdout)
+	}
+	if !added.Created || !strings.HasPrefix(added.Observation.ObservationID, "ob-") {
+		t.Fatalf("unexpected add response: %#v", added)
+	}
+
+	// Decode the stored event and assert the audit-trail fields.
+	eventsDir := filepath.Join(repo, ".auto", "reflect", "events")
+	entries, err := os.ReadDir(eventsDir)
+	if err != nil {
+		t.Fatalf("read events dir %s: %v", eventsDir, err)
+	}
+	var shardFiles []string
+	for _, e := range entries {
+		if !e.IsDir() && shardNameShape.MatchString(e.Name()) {
+			shardFiles = append(shardFiles, e.Name())
+		}
+	}
+	if len(shardFiles) == 0 {
+		t.Fatalf("expected an event shard under %s, found %v", eventsDir, namesOf(entries))
+	}
+
+	body := readShards(t, eventsDir, shardFiles)
+	var found bool
+	for line := range strings.SplitSeq(strings.TrimSpace(body), "\n") {
+		if line == "" {
+			continue
+		}
+		var env struct {
+			Type    string `json:"type"`
+			Payload struct {
+				ObservationID string `json:"observation_id"`
+				TaskID        string `json:"task_id"`
+				Evidence      []struct {
+					SessionID string `json:"session_id"`
+					File      string `json:"file"`
+					LineRange string `json:"line_range"`
+					Commit    string `json:"commit"`
+				} `json:"evidence"`
+			} `json:"payload"`
+		}
+		if jerr := json.Unmarshal([]byte(line), &env); jerr != nil {
+			t.Fatalf("decode event line: %v\nline:\n%s", jerr, line)
+		}
+		if env.Type != "observation" {
+			continue
+		}
+		found = true
+		if env.Payload.TaskID != "049-reflect-audit-lineage-lint" {
+			t.Errorf("expected task_id provenance, got %q", env.Payload.TaskID)
+		}
+		if len(env.Payload.Evidence) != 1 {
+			t.Fatalf("expected 1 evidence item, got %d", len(env.Payload.Evidence))
+		}
+		ev := env.Payload.Evidence[0]
+		if ev.SessionID != "sess-123" || ev.File != "internal/app/build.go" || ev.LineRange != "42-58" || ev.Commit != "deadbeef" {
+			t.Errorf("unexpected evidence provenance: %#v", ev)
+		}
+	}
+	if !found {
+		t.Fatalf("no observation event found in shard body:\n%s", body)
+	}
+}

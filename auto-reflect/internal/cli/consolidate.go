@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/mistakenot/auto-reflect/internal/app"
@@ -58,6 +59,11 @@ func newConsolidateCmd(application *app.App) *cobra.Command {
 			}
 			doc, err := consolidate.ParseDocument(raw)
 			if err != nil {
+				var de *consolidate.DocumentError
+				if errors.As(err, &de) {
+					writeValidationErrors(cmd.ErrOrStderr(), de.Errors)
+					return &ExitError{Code: 1}
+				}
 				return &ExitError{Code: 1, Err: err}
 			}
 
@@ -162,6 +168,8 @@ func (c *consolidator) process(d *consolidate.Delta) {
 		c.merge(d)
 	case consolidate.OpDeprecate:
 		c.deprecate(d)
+	case consolidate.OpSplit:
+		c.split(d)
 	case "":
 		c.skip(d, "missing op: each delta needs op (create-draft|attach-evidence|merge|deprecate)")
 	default:
@@ -426,6 +434,142 @@ func (c *consolidator) deprecate(d *consolidate.Delta) {
 	if err := c.appendRuleEdited(&current, deltas); err != nil {
 		c.skip(d, "write rule_edited failed: "+err.Error())
 		return
+	}
+	c.wrote = true
+	c.touched[current.ID] = struct{}{}
+	c.appliedT = append(c.appliedT, entry)
+}
+
+// split retires one rule into >=2 narrower drafts, wiring lineage both ways: the
+// parent folds to stale with successor_ids pointing at the children, and each
+// child is a draft carrying predecessor_ids=[parent] and the parent's inherited
+// provenance. Mirrors merge(): all gate/dedupe failures are exit-0 skips.
+func (c *consolidator) split(d *consolidate.Delta) {
+	if strings.TrimSpace(d.RuleID) == "" {
+		c.skip(d, "split requires rule_id")
+		return
+	}
+	if len(d.Into) < 2 {
+		c.skip(d, "split requires at least two children in `into`")
+		return
+	}
+	current, ok := c.findRule(d.RuleID)
+	if !ok {
+		c.skip(d, fmt.Sprintf("rule %q not found: run `auto reflect rule list`", d.RuleID))
+		return
+	}
+	if _, dup := c.touched[d.RuleID]; dup {
+		c.skip(d, fmt.Sprintf("rule %s was already modified earlier in this document; submit as a separate consolidate", d.RuleID))
+		return
+	}
+	if current.Lifecycle == rules.LifecycleStale {
+		c.skip(d, fmt.Sprintf("rule %s is already stale", d.RuleID))
+		return
+	}
+
+	// Children inherit the parent's provenance, so no evidence is stranded when the
+	// parent retires to stale.
+	inheritedObs := consolidate.UnionObservationIDs(nil, current.ObservationIDs)
+
+	// Mint each child up front so successor_ids on the parent edit is correct, then
+	// validate it like a create-draft.
+	children := make([]rules.Rule, 0, len(d.Into))
+	childIDs := make([]string, 0, len(d.Into))
+	for i := range d.Into {
+		spec := &d.Into[i]
+		ruleType := strings.ToLower(strings.TrimSpace(spec.Type))
+		if ruleType == "" {
+			ruleType = rules.RuleTypeSoft
+		}
+		child := rules.Rule{
+			ID:             rules.NewRuleID(),
+			Domain:         rules.NormalizeDomain(spec.Domain),
+			UseWhen:        strings.TrimSpace(spec.UseWhen),
+			Content:        strings.TrimSpace(spec.Content),
+			CausalNote:     strings.TrimSpace(spec.CausalNote),
+			RuleType:       ruleType,
+			Lifecycle:      rules.LifecycleDraft,
+			Version:        1,
+			ObservationIDs: inheritedObs,
+			PredecessorIDs: []string{current.ID},
+		}
+		if errs := rules.ValidateRule("", 0, &child); len(errs) > 0 {
+			c.skip(d, fmt.Sprintf("invalid split child %d: %s", i, joinValidation(errs)))
+			return
+		}
+		children = append(children, child)
+		childIDs = append(childIDs, child.ID)
+	}
+
+	// Dedupe gate: each child's use_when must not strongly match a live rule OUTSIDE
+	// the parent (mirrors merge's candidate exclusion so the soon-to-be-stale parent
+	// can't trivially match its children).
+	candidates := make([]rules.Rule, 0, len(c.rules))
+	for i := range c.rules {
+		if c.rules[i].ID == current.ID {
+			continue
+		}
+		candidates = append(candidates, c.rules[i])
+	}
+	for i := range children {
+		if dup, isDup := consolidate.DetectDuplicate(candidates, children[i].UseWhen, children[i].Domain); isDup {
+			c.skip(d, fmt.Sprintf("split child %d duplicates existing rule %s (score %.2f); narrow the use_when or use attach-evidence", i, dup.RuleID, dup.Score))
+			return
+		}
+	}
+	// Sibling dedupe: two children sharing the same normalized use_when + domain
+	// would mint indistinguishable draft successors from one parent. The fuzzy
+	// live-rule gate above can't see them (siblings are drafts the matcher excludes
+	// and not yet written), so reject exact in-batch collisions explicitly.
+	siblingKeys := make(map[string]int, len(children))
+	for i := range children {
+		domain := append([]string{}, children[i].Domain...)
+		sort.Strings(domain)
+		key := strings.ToLower(strings.TrimSpace(children[i].UseWhen)) + "\x00" + strings.Join(domain, ",")
+		if prev, ok := siblingKeys[key]; ok {
+			c.skip(d, fmt.Sprintf("split child %d duplicates sibling child %d (same use_when + domain); give each child a distinct use_when", i, prev))
+			return
+		}
+		siblingKeys[key] = i
+	}
+
+	entry := applied{Op: consolidate.OpSplit, RuleID: current.ID, ObservationIDs: inheritedObs, Note: "split into " + strings.Join(childIDs, ", ")}
+	if c.dryRun {
+		c.appliedT = append(c.appliedT, entry)
+		return
+	}
+
+	// Parent: one rule_edited folding it to stale and recording the forward lineage.
+	parentDeltas := []events.FieldDelta{
+		{Field: rules.FieldLifecycle, Old: current.Lifecycle, New: rules.LifecycleStale},
+		{Field: rules.FieldSuccessorIDs, Old: current.SuccessorIDs, New: childIDs},
+	}
+	if err := c.appendRuleEdited(&current, parentDeltas); err != nil {
+		c.skip(d, "write rule_edited (parent) failed: "+err.Error())
+		return
+	}
+	for i := range children {
+		child := &children[i]
+		createdPayload := events.RuleCreatedPayload{
+			RuleID:         child.ID,
+			Domain:         child.Domain,
+			UseWhen:        child.UseWhen,
+			Content:        child.Content,
+			CausalNote:     child.CausalNote,
+			RuleType:       child.RuleType,
+			Lifecycle:      child.Lifecycle,
+			ObservationIDs: inheritedObs,
+			PredecessorIDs: []string{current.ID},
+		}
+		if _, err := events.AppendEvent(c.cwd, events.TypeRuleCreated, createdPayload, events.AppendOptions{}); err != nil {
+			c.skip(d, "write rule_created (child) failed: "+err.Error())
+			return
+		}
+		if err := c.appendConsolidation(child.ID, inheritedObs, consolidate.OpSplit); err != nil {
+			c.skip(d, "write consolidation failed: "+err.Error())
+			return
+		}
+		c.touched[child.ID] = struct{}{}
 	}
 	c.wrote = true
 	c.touched[current.ID] = struct{}{}

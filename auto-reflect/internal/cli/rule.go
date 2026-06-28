@@ -27,6 +27,7 @@ func newRuleCmd(application *app.App) *cobra.Command {
 		newRuleGetCmd(application),
 		newRulePromoteCmd(application),
 		newRuleRetireCmd(application),
+		newRuleGraduateCmd(application),
 	)
 	return ruleCmd
 }
@@ -259,10 +260,10 @@ func newRuleListCmd(application *app.App) *cobra.Command {
 			}
 			lifecycleFilter := strings.ToLower(strings.TrimSpace(lifecycle))
 			switch lifecycleFilter {
-			case "", rules.LifecycleDraft, rules.LifecycleConfirmed, rules.LifecycleStale:
+			case "", rules.LifecycleDraft, rules.LifecycleConfirmed, rules.LifecycleStale, rules.LifecycleEnforced:
 				// ok: empty means no filter (list-returns-all).
 			default:
-				return &ExitError{Code: 1, Err: fmt.Errorf("invalid --lifecycle %q: use one of %s|%s|%s", lifecycle, rules.LifecycleDraft, rules.LifecycleConfirmed, rules.LifecycleStale)}
+				return &ExitError{Code: 1, Err: fmt.Errorf("invalid --lifecycle %q: use one of %s|%s|%s|%s", lifecycle, rules.LifecycleDraft, rules.LifecycleConfirmed, rules.LifecycleStale, rules.LifecycleEnforced)}
 			}
 			repo, err := gitutil.DetectRepoLenient(application.CWD)
 			if err != nil {
@@ -309,7 +310,7 @@ func newRuleListCmd(application *app.App) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&lifecycle, "lifecycle", "", "filter by lifecycle: draft|confirmed|stale (default: all)")
+	cmd.Flags().StringVar(&lifecycle, "lifecycle", "", "filter by lifecycle: draft|confirmed|stale|enforced (default: all)")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
 	return cmd
 }
@@ -359,7 +360,7 @@ func newRulePromoteCmd(application *app.App) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "promote <r-id>",
-		Short: "Promote a draft rule to confirmed (gated on >=2 distinct evidence sessions)",
+		Short: "Promote a draft rule to confirmed (gated on >=3 distinct tasks or >=2 distinct evidence sessions)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			outputFormat, err := normalizeFormat(format)
@@ -394,8 +395,8 @@ func newRulePromoteCmd(application *app.App) *cobra.Command {
 					return &ExitError{Code: 1, Err: rerr}
 				}
 				cov := consolidate.NewObservationIndex(all).Coverage(current.ObservationIDs)
-				if len(cov.Sessions) < consolidate.EvidenceMinSessions {
-					return &ExitError{Code: 1, Err: fmt.Errorf("rule %s provenance covers %d distinct session(s); promotion needs >=%d (attach more evidence with `auto reflect consolidate`, or pass --force)", current.ID, len(cov.Sessions), consolidate.EvidenceMinSessions)}
+				if len(cov.Tasks) < consolidate.ConfirmMinTasks && len(cov.Sessions) < consolidate.EvidenceMinSessions {
+					return &ExitError{Code: 1, Err: fmt.Errorf("rule %s provenance covers %d distinct task(s) and %d distinct session(s); promotion needs >=%d tasks or >=%d sessions (attach more evidence with `auto reflect consolidate`, or pass --force)", current.ID, len(cov.Tasks), len(cov.Sessions), consolidate.ConfirmMinTasks, consolidate.EvidenceMinSessions)}
 				}
 			}
 
@@ -406,7 +407,7 @@ func newRulePromoteCmd(application *app.App) *cobra.Command {
 			return writeRuleResult(cmd, outputFormat, "Promoted rule", "promoted", &updated)
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "promote even when provenance covers fewer than two distinct sessions")
+	cmd.Flags().BoolVar(&force, "force", false, "promote even when provenance covers fewer than three distinct tasks or two distinct sessions")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
 	return cmd
 }
@@ -445,6 +446,96 @@ func newRuleRetireCmd(application *app.App) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
+	return cmd
+}
+
+func newRuleGraduateCmd(application *app.App) *cobra.Command {
+	var (
+		linter     string
+		check      string
+		configPath string
+		commit     string
+		note       string
+		force      bool
+		format     string
+	)
+	cmd := &cobra.Command{
+		Use:   "graduate <r-id>",
+		Short: "Graduate a rule into a static lint check (record-only; sets lifecycle=enforced)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			outputFormat, err := normalizeFormat(format)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			repo, err := gitutil.DetectRepoLenient(application.CWD)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			playbook, err := rules.Load(repo.Root, store.PlaybookPath(repo.Root))
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			current, ok := findRule(playbook, args[0])
+			if !ok {
+				return &ExitError{Code: 1, Err: fmt.Errorf("rule %q not found: run `auto reflect rule list` to see available ids", args[0])}
+			}
+			if current.Lifecycle == rules.LifecycleEnforced {
+				return &ExitError{Code: 1, Err: fmt.Errorf("rule %s is already enforced", current.ID)}
+			}
+			// Retire is terminal: a stale rule is one we retired for being wrong;
+			// graduating it would revive it as an enforced check. Require --force.
+			if current.Lifecycle == rules.LifecycleStale && !force {
+				return &ExitError{Code: 1, Err: fmt.Errorf("rule %s is stale; cannot graduate a retired rule (pass --force to override)", current.ID)}
+			}
+
+			lintRef := &events.LintRef{
+				Linter:     strings.TrimSpace(linter),
+				Check:      strings.TrimSpace(check),
+				ConfigPath: strings.TrimSpace(configPath),
+				Commit:     strings.TrimSpace(commit),
+				Note:       strings.TrimSpace(note),
+			}
+			var validationErrs []rules.ValidationError
+			if lintRef.Linter == "" {
+				validationErrs = append(validationErrs, rules.ValidationError{Code: "required", Field: "linter", Message: "linter is required"})
+			}
+			if lintRef.Check == "" {
+				validationErrs = append(validationErrs, rules.ValidationError{Code: "required", Field: "check", Message: "check is required"})
+			}
+			if len(validationErrs) > 0 {
+				writeValidationErrors(cmd.ErrOrStderr(), validationErrs)
+				return &ExitError{Code: 1}
+			}
+
+			payload := events.RuleEditedPayload{
+				RuleID:      current.ID,
+				FromVersion: current.Version,
+				ToVersion:   current.Version + 1,
+				Deltas: []events.FieldDelta{
+					{Field: rules.FieldLifecycle, Old: current.Lifecycle, New: rules.LifecycleEnforced},
+					{Field: rules.FieldLintRef, Old: nil, New: lintRef},
+				},
+			}
+			if _, err := events.AppendEvent(application.CWD, events.TypeRuleEdited, payload, events.AppendOptions{}); err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			updated, err := refoldAndGet(repo.Root, current.ID)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			return writeRuleResult(cmd, outputFormat, "Graduated rule", "graduated", &updated)
+		},
+	}
+	cmd.Flags().StringVar(&linter, "linter", "", "linter the rule graduated into, e.g. golangci-lint")
+	cmd.Flags().StringVar(&check, "check", "", "lint check name, e.g. errcheck")
+	cmd.Flags().StringVar(&configPath, "config-path", "", "path to the lint config that enforces the check")
+	cmd.Flags().StringVar(&commit, "commit", "", "commit that introduced the lint check")
+	cmd.Flags().StringVar(&note, "note", "", "free-text note about the graduation")
+	cmd.Flags().BoolVar(&force, "force", false, "graduate even a stale (retired) rule")
+	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
+	_ = cmd.MarkFlagRequired("linter")
+	_ = cmd.MarkFlagRequired("check")
 	return cmd
 }
 
@@ -510,5 +601,14 @@ func printRuleText(cmd *cobra.Command, header string, r *rules.Rule) {
 	fmt.Fprintf(out, "Causal note: %s\n", r.CausalNote)
 	if len(r.ObservationIDs) > 0 {
 		fmt.Fprintf(out, "Observations: %s\n", strings.Join(r.ObservationIDs, ", "))
+	}
+	if len(r.PredecessorIDs) > 0 {
+		fmt.Fprintf(out, "Predecessors: %s\n", strings.Join(r.PredecessorIDs, ", "))
+	}
+	if len(r.SuccessorIDs) > 0 {
+		fmt.Fprintf(out, "Successors: %s\n", strings.Join(r.SuccessorIDs, ", "))
+	}
+	if r.LintRef != nil {
+		fmt.Fprintf(out, "Lint ref: %s/%s\n", r.LintRef.Linter, r.LintRef.Check)
 	}
 }

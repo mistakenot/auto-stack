@@ -31,11 +31,14 @@ func newObservationCmd(application *app.App) *cobra.Command {
 
 func newObservationAddCmd(application *app.App) *cobra.Command {
 	var (
-		in       observations.Input
-		quotes   []string
-		messages []string
-		domain   []string
-		format   string
+		in         observations.Input
+		quotes     []string
+		messages   []string
+		files      []string
+		commits    []string
+		lineRanges []string
+		domain     []string
+		format     string
 	)
 
 	cmd := &cobra.Command{
@@ -50,6 +53,9 @@ func newObservationAddCmd(application *app.App) *cobra.Command {
 
 			in.Quotes = quotes
 			in.Messages = messages
+			in.EvidenceFiles = files
+			in.EvidenceCommits = commits
+			in.EvidenceLineRanges = lineRanges
 			in.Domain = domain
 
 			if validationErrs := in.Validate(); len(validationErrs) > 0 {
@@ -86,6 +92,10 @@ func newObservationAddCmd(application *app.App) *cobra.Command {
 	cmd.Flags().StringArrayVar(&in.Sessions, "evidence-session", nil, "evidence session id (repeatable; >=1 required)")
 	cmd.Flags().StringArrayVar(&quotes, "evidence-quote", nil, "evidence quote, paired by position to --evidence-session (repeatable)")
 	cmd.Flags().StringArrayVar(&messages, "evidence-message", nil, "evidence message id, paired by position to --evidence-session (repeatable)")
+	cmd.Flags().StringArrayVar(&files, "evidence-file", nil, "evidence source file, paired by position to --evidence-session (repeatable)")
+	cmd.Flags().StringArrayVar(&lineRanges, "evidence-line-range", nil, "evidence line range (e.g. 12-20), paired by position to --evidence-session (repeatable)")
+	cmd.Flags().StringArrayVar(&commits, "evidence-commit", nil, "evidence commit hash, paired by position to --evidence-session (repeatable)")
+	cmd.Flags().StringVar(&in.TaskID, "task-id", "", "originating task id (e.g. 049-reflect-audit-lineage-lint)")
 	cmd.Flags().StringVar(&in.Context, "context", "", "situational context for the observation")
 	cmd.Flags().StringVar(&in.SuggestedGeneralization, "suggested-generalization", "", "a candidate rule this observation might generalize to")
 	cmd.Flags().StringSliceVar(&domain, "domain", nil, "domain tag(s); repeatable or comma-separated")

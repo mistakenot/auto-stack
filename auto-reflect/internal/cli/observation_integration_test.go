@@ -34,10 +34,19 @@ type observationListResp struct {
 	Observations []struct {
 		ID            string   `json:"id"`
 		ObservationID string   `json:"observation_id"`
+		TaskID        string   `json:"task_id"`
 		Kind          string   `json:"kind"`
 		Subject       string   `json:"subject"`
 		Domain        []string `json:"domain"`
 		TS            string   `json:"ts"`
+		Evidence      []struct {
+			SessionID string `json:"session_id"`
+			MessageID string `json:"message_id"`
+			Quote     string `json:"quote"`
+			File      string `json:"file"`
+			LineRange string `json:"line_range"`
+			Commit    string `json:"commit"`
+		} `json:"evidence"`
 	} `json:"observations"`
 }
 
@@ -220,6 +229,74 @@ func TestObservationListFiltersAndOrder(t *testing.T) {
 	unconsolidated := listObservations(t, repo, "--unconsolidated")
 	if len(unconsolidated.Observations) != 3 {
 		t.Fatalf("expected 3 unconsolidated observations, got %d", len(unconsolidated.Observations))
+	}
+}
+
+// TestObservationAddProvenanceAndTaskID adds an observation with per-evidence
+// source provenance (file/line-range/commit) and an originating task id, then
+// asserts `observation list` surfaces all of it.
+func TestObservationAddProvenanceAndTaskID(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AUTO_SESSION_ID", "obs-prov")
+	repo := initGitRepo(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	gitAddCommit(t, repo, "seed")
+
+	added := addObservation(t, repo,
+		"--kind", "incident",
+		"--subject", "build broke on stale worktree",
+		"--task-id", "049-reflect-audit-lineage-lint",
+		"--evidence-session", "s1",
+		"--evidence-file", "main.go",
+		"--evidence-line-range", "10-20",
+		"--evidence-commit", "abc1234",
+	)
+	if !added.Created {
+		t.Fatalf("expected created=true, got %#v", added)
+	}
+
+	listed := listObservations(t, repo)
+	if len(listed.Observations) != 1 {
+		t.Fatalf("expected 1 observation, got %d", len(listed.Observations))
+	}
+	obs := listed.Observations[0]
+	if obs.TaskID != "049-reflect-audit-lineage-lint" {
+		t.Fatalf("expected task_id surfaced, got %q", obs.TaskID)
+	}
+	if len(obs.Evidence) != 1 {
+		t.Fatalf("expected 1 evidence item, got %d", len(obs.Evidence))
+	}
+	ev := obs.Evidence[0]
+	if ev.SessionID != "s1" || ev.File != "main.go" || ev.LineRange != "10-20" || ev.Commit != "abc1234" {
+		t.Fatalf("provenance not surfaced on evidence: %#v", ev)
+	}
+}
+
+// TestObservationAddTooManyEvidenceFiles asserts that supplying more
+// --evidence-file than --evidence-session is a validation error on stderr.
+func TestObservationAddTooManyEvidenceFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AUTO_SESSION_ID", "obs-prov-fail")
+	repo := initGitRepo(t)
+	writeFile(t, filepath.Join(repo, "README.md"), "hello\n")
+	gitAddCommit(t, repo, "seed")
+
+	stdout, stderr, code := runCLIAt(t, repo,
+		"observation", "add",
+		"--kind", "gap", "--subject", "x",
+		"--evidence-session", "s1",
+		"--evidence-file", "a.go", "--evidence-file", "b.go",
+	)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit\nstdout:\n%s", stdout)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("expected empty stdout on validation error, got:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "evidence-file") {
+		t.Fatalf("expected stderr to mention evidence-file, got:\n%s", stderr)
 	}
 }
 

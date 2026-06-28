@@ -130,12 +130,14 @@ func MatchRules(rules []Rule, intent string, domainFilter []string, includeDraft
 }
 
 // surfaceableLifecycle reports whether a rule with the given lifecycle may be
-// surfaced by retrieval. Stale rules are never surfaceable; draft rules only when
-// includeDrafts is set. Any other value (confirmed, or an empty/legacy lifecycle)
-// is treated as surfaceable so unset rules are not accidentally hidden.
+// surfaced by retrieval. Stale and enforced rules are never surfaceable (stale is
+// retired; enforced has graduated into a static lint check, so re-surfacing it as
+// guidance would be redundant). Draft rules surface only when includeDrafts is
+// set. Any other value (confirmed, or an empty/legacy lifecycle) is treated as
+// surfaceable so unset rules are not accidentally hidden.
 func surfaceableLifecycle(lifecycle string, includeDrafts bool) bool {
 	switch lifecycle {
-	case LifecycleStale:
+	case LifecycleStale, LifecycleEnforced:
 		return false
 	case LifecycleDraft:
 		return includeDrafts

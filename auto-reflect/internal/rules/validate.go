@@ -14,7 +14,7 @@ var (
 // validRuleTypes / validLifecycles back the enum checks.
 var (
 	validRuleTypes  = map[string]struct{}{RuleTypeHard: {}, RuleTypeSoft: {}}
-	validLifecycles = map[string]struct{}{LifecycleDraft: {}, LifecycleConfirmed: {}, LifecycleStale: {}}
+	validLifecycles = map[string]struct{}{LifecycleDraft: {}, LifecycleConfirmed: {}, LifecycleStale: {}, LifecycleEnforced: {}}
 )
 
 // NormalizeDomain trims and lowercases each entry, dropping empties. Order is
@@ -101,9 +101,24 @@ func ValidateRule(path string, index int, rule *Rule) []ValidationError {
 			Code:    "enum",
 			Path:    path,
 			Field:   prefix + ".lifecycle",
-			Message: "lifecycle must be one of draft, confirmed, stale",
+			Message: "lifecycle must be one of draft, confirmed, stale, enforced",
 			Value:   rule.Lifecycle,
 		})
+	}
+
+	// An enforced rule must carry a lint reference: enforced means "now guarded by a
+	// static check", and the only path that records the check is `rule graduate`.
+	// This blocks `rule create`/`rule edit --lifecycle enforced` from minting an
+	// enforced rule that is hidden from retrieve with no linter/check provenance.
+	if rule.Lifecycle == LifecycleEnforced {
+		if rule.LintRef == nil || strings.TrimSpace(rule.LintRef.Linter) == "" || strings.TrimSpace(rule.LintRef.Check) == "" {
+			errs = append(errs, ValidationError{
+				Code:    "required",
+				Path:    path,
+				Field:   prefix + ".lint_ref",
+				Message: "enforced rules require a lint reference (linter + check): use `auto reflect rule graduate` instead of setting lifecycle=enforced directly",
+			})
+		}
 	}
 
 	if rule.RuleType == RuleTypeHard && len(rule.Domain) == 0 {

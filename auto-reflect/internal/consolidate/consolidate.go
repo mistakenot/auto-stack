@@ -15,6 +15,7 @@ import (
 
 	"github.com/mistakenot/auto-reflect/internal/events"
 	"github.com/mistakenot/auto-reflect/internal/rules"
+	"github.com/mistakenot/auto-shared/config"
 )
 
 // Delta operations.
@@ -23,12 +24,42 @@ const (
 	OpAttachEvidence = "attach-evidence"
 	OpMerge          = "merge"
 	OpDeprecate      = "deprecate"
+	OpSplit          = "split"
 )
+
+// allowedOps is the consolidation op vocabulary, validated in ParseDocument so a
+// typo'd or missing op fails fast as a structured error rather than skipping.
+var allowedOps = map[string]struct{}{
+	OpCreateDraft:    {},
+	OpAttachEvidence: {},
+	OpMerge:          {},
+	OpDeprecate:      {},
+	OpSplit:          {},
+}
+
+// DocumentError reports structural problems with a delta document (e.g. an
+// unknown op) as structured ValidationErrors so the CLI can fail fast with a
+// non-zero exit instead of silently skipping the delta.
+type DocumentError struct{ Errors []config.ValidationError }
+
+func (e *DocumentError) Error() string {
+	parts := make([]string, 0, len(e.Errors))
+	for _, ve := range e.Errors {
+		parts = append(parts, fmt.Sprintf("%s: %s", ve.Field, ve.Message))
+	}
+	return strings.Join(parts, "; ")
+}
 
 // EvidenceMinSessions is the number of distinct evidence sessions a create-draft
 // must cover before it may mint a rule without --force or a high-severity
 // (incident) observation.
 const EvidenceMinSessions = 2
+
+// ConfirmMinTasks is the number of distinct evidence task_ids a draft's
+// provenance must cover for `rule promote` to confirm it via the task-keyed path,
+// an alternative to the EvidenceMinSessions session path. task_id is optional, so
+// task-id-less provenance simply falls back to the session gate.
+const ConfirmMinTasks = 3
 
 // severityHigh marks an incident observation, which auto-bypasses the evidence
 // threshold for the delta that cites it. Mirrors observations.SeverityHigh,
@@ -50,17 +81,28 @@ type Document struct {
 // Delta is one consolidation operation. Fields are a union across ops; Validate
 // enforces which are required per Op.
 type Delta struct {
-	Op             string   `json:"op"`
-	UseWhen        string   `json:"use_when,omitempty"`
-	Content        string   `json:"content,omitempty"`
-	CausalNote     string   `json:"causal_note,omitempty"`
-	Domain         []string `json:"domain,omitempty"`
-	Type           string   `json:"type,omitempty"`
-	RuleID         string   `json:"rule_id,omitempty"`
-	RuleIDs        []string `json:"rule_ids,omitempty"`
-	IntoUseWhen    string   `json:"into_use_when,omitempty"`
-	Reason         string   `json:"reason,omitempty"`
-	ObservationIDs []string `json:"observation_ids,omitempty"`
+	Op             string       `json:"op"`
+	UseWhen        string       `json:"use_when,omitempty"`
+	Content        string       `json:"content,omitempty"`
+	CausalNote     string       `json:"causal_note,omitempty"`
+	Domain         []string     `json:"domain,omitempty"`
+	Type           string       `json:"type,omitempty"`
+	RuleID         string       `json:"rule_id,omitempty"`
+	RuleIDs        []string     `json:"rule_ids,omitempty"`
+	IntoUseWhen    string       `json:"into_use_when,omitempty"`
+	Reason         string       `json:"reason,omitempty"`
+	ObservationIDs []string     `json:"observation_ids,omitempty"`
+	Into           []SplitChild `json:"into,omitempty"`
+}
+
+// SplitChild is one narrower draft a split op mints from its parent rule. It
+// mirrors the create-draft fields; Type defaults to soft when empty.
+type SplitChild struct {
+	UseWhen    string   `json:"use_when"`
+	Content    string   `json:"content"`
+	CausalNote string   `json:"causal_note"`
+	Domain     []string `json:"domain,omitempty"`
+	Type       string   `json:"type,omitempty"`
 }
 
 // ParseDocument strictly decodes a delta document, rejecting unknown fields so a
@@ -74,6 +116,30 @@ func ParseDocument(raw []byte) (Document, error) {
 	}
 	if len(doc.Deltas) == 0 {
 		return Document{}, errors.New("no deltas: supply {\"deltas\":[{\"op\":\"create-draft\",...}]}")
+	}
+	var errs []config.ValidationError
+	for i := range doc.Deltas {
+		op := strings.TrimSpace(doc.Deltas[i].Op)
+		field := fmt.Sprintf("deltas[%d].op", i)
+		if op == "" {
+			errs = append(errs, config.ValidationError{
+				Code:    "required",
+				Field:   field,
+				Message: "op is required: one of create-draft, attach-evidence, merge, deprecate, split",
+			})
+			continue
+		}
+		if _, ok := allowedOps[op]; !ok {
+			errs = append(errs, config.ValidationError{
+				Code:    "enum",
+				Field:   field,
+				Message: "op must be one of create-draft, attach-evidence, merge, deprecate, split",
+				Value:   doc.Deltas[i].Op,
+			})
+		}
+	}
+	if len(errs) > 0 {
+		return Document{}, &DocumentError{Errors: errs}
 	}
 	return doc, nil
 }
@@ -111,14 +177,16 @@ func (idx ObservationIndex) Lookup(id string) (events.ObservationPayload, bool) 
 // Coverage is the resolved evidence picture for a set of observation ids.
 type Coverage struct {
 	Sessions     []string // distinct evidence session ids, sorted
+	Tasks        []string // distinct evidence task_ids, sorted (empty task_ids skipped)
 	HighSeverity bool     // any referenced observation is severity high (incident)
 	Missing      []string // ids with no matching observation event
 }
 
-// Coverage resolves observation ids to their distinct evidence sessions and flags
-// whether any is high severity or unknown.
+// Coverage resolves observation ids to their distinct evidence sessions and
+// task_ids and flags whether any is high severity or unknown.
 func (idx ObservationIndex) Coverage(obIDs []string) Coverage {
 	sessionSet := make(map[string]struct{})
+	taskSet := make(map[string]struct{})
 	var cov Coverage
 	for _, id := range obIDs {
 		p, ok := idx.byID[strings.TrimSpace(id)]
@@ -128,6 +196,9 @@ func (idx ObservationIndex) Coverage(obIDs []string) Coverage {
 		}
 		if p.Severity == severityHigh {
 			cov.HighSeverity = true
+		}
+		if task := strings.TrimSpace(p.TaskID); task != "" {
+			taskSet[task] = struct{}{}
 		}
 		for _, ev := range p.Evidence {
 			s := strings.TrimSpace(ev.SessionID)
@@ -142,6 +213,11 @@ func (idx ObservationIndex) Coverage(obIDs []string) Coverage {
 		cov.Sessions = append(cov.Sessions, s)
 	}
 	sort.Strings(cov.Sessions)
+	cov.Tasks = make([]string, 0, len(taskSet))
+	for task := range taskSet {
+		cov.Tasks = append(cov.Tasks, task)
+	}
+	sort.Strings(cov.Tasks)
 	return cov
 }
 

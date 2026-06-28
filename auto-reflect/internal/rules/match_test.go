@@ -134,6 +134,25 @@ func TestMatchStaleRuleNeverSurfaces(t *testing.T) {
 	}
 }
 
+func TestMatchEnforcedRuleNeverSurfaces(t *testing.T) {
+	// An enforced soft rule that scores on keywords, and an enforced hard rule that
+	// would otherwise be domain-injected. Neither may surface, with or without
+	// drafts: an enforced rule has graduated into a static lint check.
+	rules := []Rule{
+		ruleWithLifecycle("r-aaaaaaaa", "writing tests with logs", RuleTypeSoft, LifecycleEnforced, "logs"),
+		ruleWithLifecycle("r-bbbbbbbb", "no keyword overlap", RuleTypeHard, LifecycleEnforced, "logs"),
+	}
+	for _, includeDrafts := range []bool{true, false} {
+		matches := MatchRules(rules, "tests logs", []string{"logs"}, includeDrafts)
+		if _, ok := findMatch(matches, "r-aaaaaaaa"); ok {
+			t.Fatalf("enforced soft rule surfaced (includeDrafts=%v): %#v", includeDrafts, matches)
+		}
+		if _, ok := findMatch(matches, "r-bbbbbbbb"); ok {
+			t.Fatalf("enforced hard rule injected (includeDrafts=%v): %#v", includeDrafts, matches)
+		}
+	}
+}
+
 func TestMatchDraftRuleRespectsIncludeDrafts(t *testing.T) {
 	rules := []Rule{
 		ruleWithLifecycle("r-aaaaaaaa", "writing tests with logs", RuleTypeSoft, LifecycleDraft, "logs"),

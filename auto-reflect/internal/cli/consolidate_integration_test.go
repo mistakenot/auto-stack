@@ -253,6 +253,128 @@ func TestConsolidateMerge(t *testing.T) {
 	}
 }
 
+// splitDoc builds a split delta retiring ruleID into the given children, each a
+// {use_when, content, causal_note, domain} draft spec.
+func splitDoc(t *testing.T, ruleID string, children ...[2]string) string {
+	t.Helper()
+	type child struct {
+		UseWhen    string   `json:"use_when"`
+		Content    string   `json:"content"`
+		CausalNote string   `json:"causal_note"`
+		Domain     []string `json:"domain"`
+		Type       string   `json:"type"`
+	}
+	specs := make([]child, 0, len(children))
+	for _, c := range children {
+		specs = append(specs, child{
+			UseWhen:    c[0],
+			Content:    "narrower durable guidance",
+			CausalNote: "a specific failure it prevents",
+			Domain:     []string{c[1]},
+			Type:       "soft",
+		})
+	}
+	doc := map[string]any{"deltas": []map[string]any{{"op": "split", "rule_id": ruleID, "into": specs}}}
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal split doc: %v", err)
+	}
+	return string(raw)
+}
+
+// ruleLineage is the subset of `rule get` JSON needed to assert lineage links.
+type ruleLineage struct {
+	ID             string   `json:"id"`
+	Lifecycle      string   `json:"lifecycle"`
+	PredecessorIDs []string `json:"predecessor_ids"`
+	SuccessorIDs   []string `json:"successor_ids"`
+}
+
+func getRule(t *testing.T, repo, id string) ruleLineage {
+	t.Helper()
+	stdout, stderr, code := runCLIAt(t, repo, "rule", "get", id)
+	if code != 0 {
+		t.Fatalf("rule get %s failed: code=%d\nstderr:\n%s", id, code, stderr)
+	}
+	var r ruleLineage
+	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+		t.Fatalf("decode rule get json: %v\nraw:\n%s", err, stdout)
+	}
+	return r
+}
+
+func TestConsolidateSplit(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AUTO_SESSION_ID", "consolidate-split")
+	repo := initGitRepo(t)
+	gitAddCommitSeed(t, repo)
+
+	ob1 := addObservation(t, repo, "--kind", "pattern", "--subject", "s1", "--evidence-session", "ssess-1", "--domain", "splitdom").Observation.ObservationID
+	ob2 := addObservation(t, repo, "--kind", "pattern", "--subject", "s2", "--evidence-session", "ssess-2", "--domain", "splitdom").Observation.ObservationID
+
+	// A two-session draft, promoted to confirmed so it is a live split target.
+	parent := consolidateOK(t, repo, draftDocDomain(t, "handling worker retries across the board", "splitdom", ob1, ob2)).Applied[0].RuleID
+	if _, _, code := runCLIAt(t, repo, "rule", "promote", parent); code != 0 {
+		t.Fatalf("promote of two-session parent should succeed, code=%d", code)
+	}
+
+	// (a) split-with-one-child is refused before any write.
+	resp := consolidateOK(t, repo, splitDoc(t, parent, [2]string{"handling worker retry backoff", "splitdom"}))
+	if len(resp.Applied) != 0 || len(resp.Skipped) != 1 || !strings.Contains(resp.Skipped[0].Reason, "two children") {
+		t.Fatalf("single-child split should be skipped: %#v", resp)
+	}
+
+	// (b) happy path: split into two narrower drafts.
+	resp = consolidateOK(t, repo, splitDoc(t, parent,
+		[2]string{"handling worker retry backoff", "splitdom"},
+		[2]string{"handling worker retry jitter", "splitdom"},
+	))
+	if len(resp.Applied) != 1 || len(resp.Skipped) != 0 || resp.Applied[0].RuleID != parent {
+		t.Fatalf("split should apply once with the parent as the subject: %#v", resp)
+	}
+
+	// Parent folds to stale with successor_ids pointing at exactly two children.
+	p := getRule(t, repo, parent)
+	if p.Lifecycle != "stale" {
+		t.Fatalf("split parent should be stale, got %q", p.Lifecycle)
+	}
+	if len(p.SuccessorIDs) != 2 {
+		t.Fatalf("parent should have two successor_ids, got %#v", p.SuccessorIDs)
+	}
+
+	// Each child folds to draft with predecessor_ids=[parent] (lineage both ways).
+	for _, childID := range p.SuccessorIDs {
+		ch := getRule(t, repo, childID)
+		if ch.Lifecycle != "draft" {
+			t.Fatalf("split child %s should be a draft, got %q", childID, ch.Lifecycle)
+		}
+		if len(ch.PredecessorIDs) != 1 || ch.PredecessorIDs[0] != parent {
+			t.Fatalf("child %s predecessor_ids should be [%s], got %#v", childID, parent, ch.PredecessorIDs)
+		}
+	}
+}
+
+func TestConsolidateUnknownOpFailsFast(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AUTO_SESSION_ID", "consolidate-badop")
+	repo := initGitRepo(t)
+	gitAddCommitSeed(t, repo)
+
+	// An unknown op is a fail-fast structured error (non-zero exit), not a skip.
+	stdout, stderr, code := runCLIAt(t, repo, "consolidate", `{"deltas":[{"op":"bogus"}]}`)
+	if code == 0 {
+		t.Fatalf("unknown op should exit non-zero, got code=0\nstdout:\n%s", stdout)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("unknown op should produce empty stdout, got:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "deltas[0].op") || !strings.Contains(stderr, "enum") {
+		t.Fatalf("stderr should carry the structured op ValidationError, got:\n%s", stderr)
+	}
+}
+
 func draftDocDomain(t *testing.T, useWhen, domain string, obIDs ...string) string {
 	t.Helper()
 	ids, err := json.Marshal(obIDs)

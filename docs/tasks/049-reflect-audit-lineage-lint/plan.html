@@ -12,7 +12,7 @@
 {"id":"049","name":"reflect-audit-lineage-lint","status":"planning","created":"2026-06-28"}
   </script>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="049: reflect-audit-lineage-lint" status="executing" pr="pending" generated="2026-06-28">
+  <pd-doc title="049: reflect-audit-lineage-lint" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/110" generated="2026-06-28">
     <pd-tab name="Requirements">
 
       <pd-section id="problem" title="Problem">
@@ -500,7 +500,7 @@ flowchart LR
 
       <pd-stepper>
 
-        <pd-phase n="1" title="enforced lifecycle + graduate (walking skeleton)" status="todo"
+        <pd-phase n="1" title="enforced lifecycle + graduate (walking skeleton)" status="done"
           files="internal/events/model.go,internal/rules/model.go,internal/rules/validate.go,internal/rules/projection.go,internal/rules/match.go,internal/loop/service.go,internal/cli/rule.go,internal/rules/projection_test.go,internal/rules/match_test.go,internal/cli/cli_integration_test.go,cmd/autoreflect/e2e_lifecycle_test.go">
           <md><script type="text/plain">
 Thin end-to-end path through every layer, plus the lineage struct fields (declared now,
@@ -525,7 +525,7 @@ populated in P4).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="Observation audit trail (task_id + file/line/commit)" status="todo" depends-on="1"
+        <pd-phase n="2" title="Observation audit trail (task_id + file/line/commit)" status="done" depends-on="1"
           files="internal/events/model.go,internal/observations/model.go,internal/cli/observation.go,internal/observations/model_test.go,internal/cli/observation_integration_test.go,cmd/autoreflect/e2e_observation_test.go">
           <md><script type="text/plain">
 1. `events/model.go`: add `file`/`line_range`/`commit` (omitempty) to `ObservationEvidence`;
@@ -545,7 +545,7 @@ populated in P4).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Task-keyed confirmation gate" status="todo" depends-on="2"
+        <pd-phase n="3" title="Task-keyed confirmation gate" status="done" depends-on="2"
           files="internal/consolidate/consolidate.go,internal/cli/rule.go,internal/consolidate/consolidate_test.go,cmd/autoreflect/e2e_lifecycle_test.go">
           <md><script type="text/plain">
 1. `consolidate/consolidate.go`: add `ConfirmMinTasks = 3`; extend `Coverage` (or add a
@@ -560,7 +560,7 @@ populated in P4).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="SPLIT op + lineage wiring" status="todo" depends-on="1"
+        <pd-phase n="4" title="SPLIT op + lineage wiring" status="done" depends-on="1"
           files="internal/consolidate/consolidate.go,internal/cli/consolidate.go,internal/consolidate/consolidate_test.go,internal/cli/consolidate_integration_test.go,cmd/autoreflect/e2e_consolidate_test.go">
           <md><script type="text/plain">
 1. `consolidate/consolidate.go`: add `OpSplit`; add an **op allow-list** to `ParseDocument()`
@@ -581,7 +581,7 @@ populated in P4).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="5" title="Backward-compat guard + docs" status="todo" depends-on="2,3,4"
+        <pd-phase n="5" title="Backward-compat guard + docs" status="done" depends-on="2,3,4"
           files="internal/rules/testdata/playbook.golden.json,internal/rules/projection_test.go,internal/events/model_test.go,internal/cli/quickstart.go,internal/cli/cli_integration_test.go,cmd/autoreflect/e2e_lifecycle_test.go">
           <md><script type="text/plain">
 1. `rules/projection_test.go`: backward-compat **fold** test — fold a pre-change event-log
