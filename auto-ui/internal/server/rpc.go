@@ -18,11 +18,10 @@ import (
 
 // Standard JSON-RPC 2.0 error codes (https://www.jsonrpc.org/specification).
 const (
-	codeParseError     = -32700
-	codeInvalidRequest = -32600
-	codeMethod         = -32601
-	codeInvalidParams  = -32602
-	codeInternalError  = -32603
+	codeParseError    = -32700
+	codeMethod        = -32601
+	codeInvalidParams = -32602
+	codeInternalError = -32603
 )
 
 // rpcRequest is an incoming JSON-RPC message. A nil ID marks a notification,

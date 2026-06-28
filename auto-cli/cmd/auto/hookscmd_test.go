@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -103,20 +102,30 @@ func TestMapEventType(t *testing.T) {
 }
 
 func TestPostBusEventDelivers(t *testing.T) {
-	received := make(chan bus.Notification, 1)
+	type captured struct {
+		notif       bus.Notification
+		path        string
+		contentType string
+		origin      string
+	}
+	received := make(chan captured, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/rpc" || r.Method != http.MethodPost {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		if r.Method != http.MethodPost {
+			t.Errorf("unexpected method: %s", r.Method)
 		}
 		var notif bus.Notification
 		_ = json.NewDecoder(r.Body).Decode(&notif)
-		received <- notif
+		received <- captured{
+			notif:       notif,
+			path:        r.URL.Path,
+			contentType: r.Header.Get("Content-Type"),
+			origin:      r.Header.Get("Origin"),
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
 
 	u, _ := url.Parse(srv.URL)
-	port, _ := strconv.Atoi(u.Port())
 
 	// Build a realistic event with paths.
 	tp := bus.ToolPost{
@@ -127,10 +136,23 @@ func TestPostBusEventDelivers(t *testing.T) {
 	ev, _ := bus.NewEvent("agent.tool.post", "auto/hooks/claude", tp)
 	ev.Project = "widgets"
 
-	postBusEvent(port, ev)
+	// autowatch's HookIngest is mounted as the root handler — post to the bare host.
+	postBusEvent(u.Host, ev)
 
 	select {
-	case notif := <-received:
+	case got := <-received:
+		// autowatch mounts HookIngest at the root path (no /api/rpc segment).
+		if got.path != "/" {
+			t.Errorf("post path = %q, want / (autowatch hook-ingest root)", got.path)
+		}
+		if got.contentType != "application/json" {
+			t.Errorf("content-type = %q, want application/json", got.contentType)
+		}
+		// autowatch rejects browser-origin (CSRF) requests; the CLI must not send one.
+		if got.origin != "" {
+			t.Errorf("Origin = %q, want absent", got.origin)
+		}
+		notif := got.notif
 		// Verify it's a valid JSON-RPC notification wrapping a bus.Event.
 		if notif.JSONRPC != "2.0" {
 			t.Errorf("jsonrpc = %q, want 2.0", notif.JSONRPC)
@@ -167,18 +189,42 @@ func TestPostBusEventDelivers(t *testing.T) {
 	}
 }
 
-// TestFireExitsZeroWhenUIDown verifies the command never errors at runtime, even
-// when no UI server is listening — a hook must not break the agent.
-func TestFireExitsZeroWhenUIDown(t *testing.T) {
-	t.Setenv("HOME", t.TempDir()) // no ui/settings.json → default port, nothing listening
+// TestFireExitsZeroWhenDaemonDown verifies the command never errors at runtime,
+// even when no autowatch daemon is listening — a hook must not break the agent.
+// It also confirms the durable append (the canonical record) is still written
+// when the best-effort live post is dropped.
+func TestFireExitsZeroWhenDaemonDown(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// No daemon.pid.json → default addr; nothing listening there. Point at an
+	// addr guaranteed to refuse so the post fails fast within the timeout.
+	t.Setenv("AUTO_WATCH_HOOK_ADDR", "127.0.0.1:0")
 
 	cmd := newHooksFireCmd()
 	cmd.SetArgs([]string{"--agent", "claude"})
 	cmd.SetIn(strings.NewReader(claudePostToolUse))
+	var errBuf bytes.Buffer
 	cmd.SetOut(io.Discard)
-	cmd.SetErr(io.Discard)
+	cmd.SetErr(&errBuf)
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("expected exit 0 when UI is down, got error: %v", err)
+		t.Fatalf("expected exit 0 when daemon is down, got error: %v", err)
+	}
+	// A dropped live post is silent — nothing should be emitted to the agent.
+	if errBuf.Len() != 0 {
+		t.Errorf("expected no error output when daemon down, got: %q", errBuf.String())
+	}
+
+	// The durable append must still have been written despite the dropped post.
+	rawDir, err := hooks.RawDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(rawDir)
+	if err != nil {
+		t.Fatalf("durable append not written when daemon down: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 durable log file, got %d", len(entries))
 	}
 }
 
@@ -269,20 +315,9 @@ func TestFireSwallowsLogFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Write UI settings to point at the test server.
+	// Point the hook at the test server standing in for autowatch hook-ingest.
 	u, _ := url.Parse(srv.URL)
-	port, _ := strconv.Atoi(u.Port())
-	uiDir := filepath.Join(home, ".auto", "ui")
-	if err := os.MkdirAll(uiDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	settingsJSON, err := json.Marshal(map[string]int{"port": port})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(uiDir, "settings.json"), settingsJSON, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("AUTO_WATCH_HOOK_ADDR", u.Host)
 
 	cmd := newHooksFireCmd()
 	cmd.SetArgs([]string{"--agent", "claude"})
@@ -298,43 +333,60 @@ func TestFireSwallowsLogFailure(t *testing.T) {
 	}
 }
 
-// TestUIPortHonorsEnv covers AC-5 (hook side): uiPort() resolves AUTO_UI_PORT
-// before reading ~/.auto/ui/settings.json, lets an agent harness point hooks at
-// an isolated server, and ignores absent/invalid/non-positive values.
-func TestUIPortHonorsEnv(t *testing.T) {
-	// Redirect HOME so the settings.json fallback resolves to an empty dir; any
-	// non-default result must therefore come from AUTO_UI_PORT.
-	t.Setenv("HOME", t.TempDir())
-
-	t.Run("valid env wins over default", func(t *testing.T) {
-		t.Setenv("AUTO_UI_PORT", "54321")
-		if got := uiPort(); got != 54321 {
-			t.Errorf("uiPort() = %d, want 54321", got)
+// TestWatchHookAddrPrecedence covers AC-2: watchHookAddr() resolves
+// AUTO_WATCH_HOOK_ADDR before reading ~/.auto/watch/daemon.pid.json `.hookAddr`,
+// falls back to the built-in default when both are absent, and degrades to the
+// default for malformed/missing metadata. The env override lets an agent harness
+// point hooks at an isolated daemon instance.
+func TestWatchHookAddrPrecedence(t *testing.T) {
+	// writePIDMeta writes a daemon.pid.json under home with the given hookAddr.
+	writePIDMeta := func(t *testing.T, home string, body string) {
+		t.Helper()
+		watchDir := filepath.Join(home, ".auto", "watch")
+		if err := os.MkdirAll(watchDir, 0o755); err != nil {
+			t.Fatal(err)
 		}
-	})
+		if err := os.WriteFile(filepath.Join(watchDir, "daemon.pid.json"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
-	t.Run("settings.json used when env unset", func(t *testing.T) {
-		t.Setenv("AUTO_UI_PORT", "")
+	t.Run("env wins over pid metadata and default", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)
-		uiDir := filepath.Join(home, ".auto", "ui")
-		if err := os.MkdirAll(uiDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(uiDir, "settings.json"), []byte(`{"port":7777}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if got := uiPort(); got != 7777 {
-			t.Errorf("uiPort() = %d, want 7777 (from settings.json)", got)
+		writePIDMeta(t, home, `{"hookAddr":"127.0.0.1:9999"}`)
+		t.Setenv("AUTO_WATCH_HOOK_ADDR", "127.0.0.1:5555")
+		if got := watchHookAddr(); got != "127.0.0.1:5555" {
+			t.Errorf("watchHookAddr() = %q, want 127.0.0.1:5555 (env)", got)
 		}
 	})
 
-	t.Run("invalid env falls through to default", func(t *testing.T) {
+	t.Run("pid metadata hookAddr used when env unset", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("AUTO_WATCH_HOOK_ADDR", "")
+		writePIDMeta(t, home, `{"pid":42,"hookAddr":"127.0.0.1:7001","rpcAddr":"127.0.0.1:7002"}`)
+		if got := watchHookAddr(); got != "127.0.0.1:7001" {
+			t.Errorf("watchHookAddr() = %q, want 127.0.0.1:7001 (from daemon.pid.json)", got)
+		}
+	})
+
+	t.Run("default when pid metadata absent", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
-		for _, v := range []string{"", "abc", "0", "-5"} {
-			t.Setenv("AUTO_UI_PORT", v)
-			if got := uiPort(); got != defaultUIPort {
-				t.Errorf("uiPort() with AUTO_UI_PORT=%q = %d, want default %d", v, got, defaultUIPort)
+		t.Setenv("AUTO_WATCH_HOOK_ADDR", "")
+		if got := watchHookAddr(); got != defaultWatchHookAddr {
+			t.Errorf("watchHookAddr() = %q, want default %q", got, defaultWatchHookAddr)
+		}
+	})
+
+	t.Run("default for malformed or empty metadata", func(t *testing.T) {
+		t.Setenv("AUTO_WATCH_HOOK_ADDR", "")
+		for _, body := range []string{`not json`, `{}`, `{"hookAddr":""}`, `{"rpcAddr":"127.0.0.1:1"}`} {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			writePIDMeta(t, home, body)
+			if got := watchHookAddr(); got != defaultWatchHookAddr {
+				t.Errorf("watchHookAddr() with metadata %q = %q, want default %q", body, got, defaultWatchHookAddr)
 			}
 		}
 	})

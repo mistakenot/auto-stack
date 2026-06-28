@@ -45,7 +45,7 @@ Every bus event is a self-contained envelope carrying metadata, workspace proven
 | `commit` | string | no | HEAD commit SHA at event time. |
 | `data` | JSON | no | Opaque payload. Typed only where the bus authors it (see section 2.3). |
 
-**Exception — derived event ids are deterministic.** Events minted by `bus.DeriveDocChanged` (`source` = `auto/bus/derive`) do **not** carry a random `id`. Their `id` is a deterministic hash of the source event's `id`, the derived `type`, and the derived path (`sha256(srcID:type:path)`, first 8 bytes hex). This is intentional: when independent sites derive the same `doc.changed` from the same source event (e.g. auto-ui's local `/api/rpc` ingest and autowatch's relay both deriving it), they mint an **identical** `id` and collide, so a consumer that dedups by `id` collapses the duplicate. Non-derived events keep the randomly-generated `id` above.
+**Exception — derived event ids are deterministic.** Events minted by `bus.DeriveDocChanged` (`source` = `auto/bus/derive`) do **not** carry a random `id`. Their `id` is a deterministic hash of the source event's `id`, the derived `type`, and the derived path (`sha256(srcID:type:path)`, first 8 bytes hex). Non-derived events keep the randomly-generated `id` above. The deterministic id was introduced (task 045) so that when independent sites derived the same `doc.changed` from one source event — back when auto-ui's local `/api/rpc` ingest derived in parallel with autowatch's relay — both minted an **identical** `id`, letting a dedup-by-`id` consumer collapse the duplicate. Task 047 removed auto-ui's local ingest, leaving **autowatch as the sole derive site**, so this collision property is no longer load-bearing for dedup; it remains a stable, reproducible id for derived events.
 
 ### 2.2 Workspace provenance attributes
 
@@ -131,7 +131,7 @@ The inbound frame carries both `method` (JSON-RPC level) and `params.type` (enve
 
 ### 3.4 HTTP deviation: error responses for notifications
 
-Per JSON-RPC 2.0 section 4.1, a notification (no `id`) must not receive a response. The `/api/rpc` HTTP endpoint **deliberately deviates** from this rule: malformed or invalid frames receive an HTTP 400 response with a JSON-RPC error body (`id: null`). This is justified for an HTTP one-shot binding where the producer needs feedback on structural errors (the producer has no other channel to learn its payload was rejected). Valid frames receive HTTP 204 No Content.
+Per JSON-RPC 2.0 section 4.1, a notification (no `id`) must not receive a response. The hook-ingest HTTP endpoint (autowatch's hook-ingest — section 4.1) **deliberately deviates** from this rule: malformed or invalid frames receive an HTTP 400 response with a JSON-RPC error body. This is justified for an HTTP one-shot binding where the producer needs feedback on structural errors (the producer has no other channel to learn its payload was rejected). Valid frames receive HTTP 204 No Content.
 
 On WebSocket, the standard rule holds: notifications dispatched via the shared `Dispatcher` return no response (the dispatch function returns `nil, false` for id-less frames).
 
@@ -158,29 +158,38 @@ What this assumption lets us *not* build (and why the code is correct to omit it
 
 **What this does *not* excuse.** Reliable, in-order, intra-VPC delivery says nothing about the *connection staying up* or the *application keeping pace*. These failure modes are fully present on TCP and are handled at the application layer, not assumed away: connection drop / half-open mid-call (pending callers are released — section 5), backpressure / slow consumer (drop-on-full — section 4.2 / 4.3), and concurrent call correlation (the `pending` map). At-most-once delivery (section 5) is an *application* policy delivered by drop-on-full, **not** an inheritance from the transport — TCP is reliable; the relay deliberately is not.
 
-### 4.1 HTTP POST `/api/rpc` (one-shot publish)
+### 4.1 HTTP POST to the autowatch hook-ingest (one-shot publish)
 
-The primary ingest endpoint for fire-and-forget event publishing.
+The single ingest endpoint for fire-and-forget event publishing. Hosted by the **autowatch daemon**
+(`auto-watch/internal/rpcserver/HookIngest`), mounted as the **root handler** of its hook server, so
+producers POST to `http://<hookAddr>/` (any path; default `127.0.0.1:7787`, discoverable from the
+daemon's PID metadata). `auto hooks fire` is the producer.
+
+> **Task 047:** this endpoint was previously auto-ui's `POST /api/rpc`. auto-ui no longer hosts a
+> local ingest — hooks post to autowatch, which is now the **sole** ingest and derive site; auto-ui
+> receives events only over the backend relay (`bus.subscribe`, task 045).
 
 | Aspect | Detail |
 |--------|--------|
+| Path | Root `/` (any path) on the daemon's hook server |
 | Method | `POST` only (405 on others) |
-| Content-Type | `application/json` |
+| Content-Type | `application/json` (else 415) |
+| Origin | Must be **absent** — a present `Origin` header is rejected (403, anti-CSRF) |
+| Auth | Loopback only (`127.0.0.1`/`::1`/`localhost`, else 403); remote access via Tailscale serve |
 | Body | A single JSON-RPC notification (see section 3.1) |
 | Body limit | 1 MiB |
 | Success | `204 No Content` (no body) |
 | Error | `400 Bad Request` + JSON-RPC error body (see section 3.4) |
-| Auth | Loopback only (`127.0.0.1`); remote access via Tailscale serve |
 
 **Processing pipeline:**
-1. Parse JSON-RPC notification frame.
-2. Validate `jsonrpc` is `"2.0"`.
-3. Extract `params` as `bus.Event`; `params.type` is authoritative.
-4. Run `ev.Validate()` -- reject on failure (400).
-5. `hub.Broadcast(ev)` -- fan out the raw event to all WebSocket clients.
-6. `DeriveDocChanged(ev, registry)` -- derive secondary events.
+1. Reject non-POST (405), non-loopback (403), browser-`Origin` (403), non-JSON `Content-Type` (415).
+2. Parse JSON-RPC notification frame; validate `jsonrpc` is `"2.0"`.
+3. Extract `params` as `bus.Event`; `params.type` is authoritative. Run `ev.Validate()` -- reject on failure (400).
+4. Stamp `ev.Host` with the daemon's hostId (overwrite-always).
+5. `hub.Broadcast(ev)` -- fan out the raw event.
+6. `DeriveDocChanged(ev, registry)` -- derive secondary `doc.changed` events (sole derive site).
 7. `hub.Broadcast(derived)` for each derived event.
-8. Return 204.
+8. The hub relays raw + derived events to subscribed peers (e.g. auto-ui). Return 204.
 
 ### 4.2 WebSocket `/api/ws` (bidirectional)
 
@@ -268,13 +277,13 @@ The bus provides **at-most-once, explicitly lossy** delivery. This is an *applic
 | Acks | None. Producers fire-and-forget; consumers receive or don't. |
 | Idempotency | Not guaranteed. Each event has a unique `id`, but no deduplication is performed. |
 
-**Consumer-side dedup is an extension, not a bus guarantee.** The bus itself performs **no deduplication** (the contract above is unchanged). The **auto-ui consumer** layers its own dedup-by-`id` over a short TTL window in front of its Hub, so an event reaching the UI via both the local `/api/rpc` ingest and a relayed backend (`bus.subscribe`) is broadcast to browsers once. This relies on the deterministic derived `id` (section 2.1) to also collapse the derived `doc.changed` pair. It is an explicit, documented extension at the consumer layer — the bus and autowatch hub contracts are untouched.
+**No consumer-side dedup (single ingest path).** The bus performs **no deduplication**, and as of **task 047** neither does the auto-ui consumer. Earlier (task 045), auto-ui layered a dedup-by-`id` `eventGate` over a short TTL window because an event could reach it via two routes — its own local `/api/rpc` ingest **and** a relayed backend (`bus.subscribe`). Task 047 removed the local ingest (hooks now post only to autowatch), so a single ingest path remains and no event can arrive twice; the `eventGate` was deleted and auto-ui's `SetEventSink` now broadcasts relayed events straight to its Hub. The deterministic derived `id` (section 2.1) survives but is no longer load-bearing for dedup.
 
 **Events are invalidations, not state transfer.** A `doc.changed` event tells the client "this document changed" -- it does not carry the new content. The client must call `doc.get` to fetch the updated state. This keeps events small and avoids stale-data races when events arrive out of order.
 
 **Slow-client policy:** If a WebSocket client's outbound buffer (16 slots) fills, the connection is cancelled and the client is deregistered. The hub never blocks waiting for a slow consumer.
 
-**Producer resilience:** The `auto hooks fire` producer uses a 150ms HTTP timeout and swallows all errors (UI down, timeout, marshal failure). It always exits 0 so it cannot disrupt the agent's critical path.
+**Producer resilience:** The `auto hooks fire` producer uses a 150ms HTTP timeout and swallows all errors (autowatch daemon down, timeout, marshal failure). It always exits 0 so it cannot disrupt the agent's critical path. The durable hook-event append (`hooks.Append`) runs **before** the live post and is the canonical record, so a dropped live post never loses the event.
 
 ---
 
@@ -557,16 +566,30 @@ Read a single documentation file's raw markdown content.
 ```
 Producer (auto hooks fire)
     |
-    | HTTP POST /api/rpc
+    | HTTP POST http://<hookAddr>/   (autowatch hook-ingest, default 127.0.0.1:7787)
     v
 +---------------------------+
-| auto-ui server            |
+| autowatch daemon          |
 |                           |
-|  handleRPC                |
+|  HookIngest               |
 |    parse -> validate      |
+|    stamp ev.Host          |
 |    hub.Broadcast(raw)     |
 |    DeriveDocChanged()     |
 |    hub.Broadcast(derived) |
+|                           |
+|  Hub  -> relay (bus.subscribe) to subscribed peers
++-----------|---------------+
+            |
+            | relayed raw + derived events
+            v
++---------------------------+
+| auto-ui server            |
+|                           |
+|  BackendManager           |
+|    SetEventSink ->        |
+|    hub.Broadcast(ev)      |
+|    (no local ingest/derive; no eventGate — task 047)
 |                           |
 |  Hub                      |
 |    Subscribe(Sink) cancel |

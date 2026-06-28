@@ -12,12 +12,12 @@
     "id": "047",
     "name": "hook-retarget-autowatch",
     "epic": "003-multi-host-architecture",
-    "status": "executing",
+    "status": "complete",
     "created": "2026-06-27"
   }
   </script>
   <!-- AI: When a PR is created for this work, update pr="..." below with the PR URL -->
-  <pd-doc title="047: hook-retarget-autowatch" status="executing" pr="pending" generated="2026-06-27">
+  <pd-doc title="047: hook-retarget-autowatch" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/108" generated="2026-06-27">
 
     <pd-tab name="Requirements">
 
@@ -220,7 +220,7 @@ Strictly sequential. P1 is the walking skeleton — after it, hook events reach 
       <pd-section id="plan-phases" title="Phases">
         <pd-stepper>
 
-          <pd-phase n="1" title="Retarget hooks → autowatch (walking skeleton)" files="auto-cli/cmd/auto/hookscmd.go,auto-cli/cmd/auto/hookscmd_test.go" status="todo">
+          <pd-phase n="1" title="Retarget hooks → autowatch (walking skeleton)" files="auto-cli/cmd/auto/hookscmd.go,auto-cli/cmd/auto/hookscmd_test.go" status="done">
             <md><script type="text/plain">
 After this phase, an agent edit fires a hook → autowatch ingests + derives → relays → auto-ui hub → browser, with NO auto-ui change (045 already subscribes). That is the end-to-end skeleton.
 1. Add `watchHookAddr() string`: `AUTO_WATCH_HOOK_ADDR` env (non-empty) → read `~/.auto/watch/daemon.pid.json` via `sharedconfig.DecodeJSONFile`, take `.hookAddr` → fallback `"127.0.0.1:7787"`. Mirror `uiPort()`'s structure/error-swallowing.
@@ -231,7 +231,7 @@ After this phase, an agent edit fires a hook → autowatch ingests + derives →
             </script></md>
           </pd-phase>
 
-          <pd-phase n="2" title="Remove auto-ui /api/rpc + eventGate" files="auto-ui/internal/server/server.go,auto-ui/internal/server/rpc_ingest.go,auto-ui/internal/server/rpc_ingest_test.go,auto-ui/internal/server/eventgate.go,auto-ui/internal/server/eventgate_test.go,auto-ui/internal/server/event_flow_test.go" status="todo">
+          <pd-phase n="2" title="Remove auto-ui /api/rpc + eventGate" files="auto-ui/internal/server/server.go,auto-ui/internal/server/rpc_ingest.go,auto-ui/internal/server/rpc_ingest_test.go,auto-ui/internal/server/eventgate.go,auto-ui/internal/server/eventgate_test.go,auto-ui/internal/server/event_flow_test.go" status="done">
             <md><script type="text/plain">
 Depends on P1 (hooks no longer post to `/api/rpc`).
 1. `server.go`: delete the `newEventGate` line and the `/api/rpc` `mux.HandleFunc`; rewire `o.mgr.SetEventSink` to a sink func that calls `hub.Broadcast(ev)` AND records into `buf` (keep `/api/debug/recent` populated — D-3). Drop now-unused params/imports.
@@ -242,7 +242,7 @@ Depends on P1 (hooks no longer post to `/api/rpc`).
             </script></md>
           </pd-phase>
 
-          <pd-phase n="3" title="Docs" files="auto-ui/CLAUDE.md,docs/auto-bus-spec.md" status="todo">
+          <pd-phase n="3" title="Docs" files="auto-ui/CLAUDE.md,docs/auto-bus-spec.md" status="done">
             <md><script type="text/plain">
 Depends on P2.
 1. `auto-ui/CLAUDE.md`: rewrite Live-updates — hooks post to autowatch; auto-ui receives events ONLY via the relay; `/api/rpc` + eventGate removed; `/api/debug/recent` sourced from relayed events.

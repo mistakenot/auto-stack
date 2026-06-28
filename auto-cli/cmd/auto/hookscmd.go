@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -25,9 +24,10 @@ import (
 // we give up quickly and exit 0.
 const hookPostTimeout = 150 * time.Millisecond
 
-// defaultUIPort mirrors auto-ui's built-in default; used when ~/.auto/ui/settings.json
-// is absent or unreadable.
-const defaultUIPort = 8080
+// defaultWatchHookAddr mirrors autowatch's built-in `--hook-addr` default; used
+// when AUTO_WATCH_HOOK_ADDR is unset and ~/.auto/watch/daemon.pid.json is absent
+// or unreadable (daemon not running).
+const defaultWatchHookAddr = "127.0.0.1:7787"
 
 // maxHookPayloadBytes bounds how much of stdin we read. Real hook payloads are a
 // few KB; this is generous headroom while still guarding against a runaway pipe.
@@ -47,14 +47,14 @@ func newHooksCmd() *cobra.Command {
 
 // newHooksFireCmd implements `auto hooks fire --agent <claude|codex>`. It reads a
 // hook payload on stdin, normalizes it into a bus.Event with workspace provenance,
-// and best-effort POSTs the event to the running auto-ui server at /api/rpc.
-// It ALWAYS exits 0 for any runtime condition (bad payload, UI down) so it cannot
-// disrupt the agent.
+// and best-effort POSTs the event to the autowatch daemon's hook-ingest handler.
+// It ALWAYS exits 0 for any runtime condition (bad payload, daemon down) so it
+// cannot disrupt the agent.
 func newHooksFireCmd() *cobra.Command {
 	var agent string
 	cmd := &cobra.Command{
 		Use:   "fire",
-		Short: "Normalize a hook payload from stdin and notify the auto-ui server (fire-and-forget)",
+		Short: "Normalize a hook payload from stdin and notify the autowatch daemon (fire-and-forget)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Invalid --agent is setup-time misconfiguration: fail fast.
@@ -112,7 +112,7 @@ func newHooksFireCmd() *cobra.Command {
 
 			ev := buildBusEvent(agent, raw, registry)
 			ev.Env = hookCtx
-			postBusEvent(uiPort(), ev)
+			postBusEvent(watchHookAddr(), ev)
 			return nil
 		},
 	}
@@ -330,44 +330,47 @@ func hostIDQuietly() string {
 	return "unknown"
 }
 
-// uiPort resolves the auto-ui port with precedence: AUTO_UI_PORT env >
-// ~/.auto/ui/settings.json > built-in default. AUTO_UI_PORT lets an agent
-// harness point hooks at an isolated server instance (e.g. one bound to an
-// OS-assigned port).
-func uiPort() int {
-	if v := os.Getenv("AUTO_UI_PORT"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			return n
-		}
+// watchHookAddr resolves the autowatch hook-ingest address with precedence:
+// AUTO_WATCH_HOOK_ADDR env > ~/.auto/watch/daemon.pid.json `.hookAddr` >
+// built-in default. The PID metadata's hookAddr is the daemon's actually-bound
+// address, so it is correct even when the daemon was started with an ephemeral
+// port (--hook-addr :0). AUTO_WATCH_HOOK_ADDR lets an agent harness point hooks
+// at an isolated daemon instance. Resolution failures (env unset, daemon down,
+// malformed metadata) degrade silently to the default — this runs in the agent's
+// hot path and must never fail.
+func watchHookAddr() string {
+	if v := os.Getenv("AUTO_WATCH_HOOK_ADDR"); v != "" {
+		return v
 	}
 	autoDir, err := sharedconfig.AutoDir()
 	if err != nil {
-		return defaultUIPort
+		return defaultWatchHookAddr
 	}
-	var settings struct {
-		Port int `json:"port"`
+	var meta struct {
+		HookAddr string `json:"hookAddr"`
 	}
-	if err := sharedconfig.DecodeJSONFile(filepath.Join(autoDir, "ui", "settings.json"), &settings); err != nil {
-		return defaultUIPort
+	if err := sharedconfig.DecodeJSONFile(filepath.Join(autoDir, "watch", "daemon.pid.json"), &meta); err != nil {
+		return defaultWatchHookAddr
 	}
-	if settings.Port <= 0 {
-		return defaultUIPort
+	if meta.HookAddr == "" {
+		return defaultWatchHookAddr
 	}
-	return settings.Port
+	return meta.HookAddr
 }
 
-// postBusEvent best-effort POSTs the event as a JSON-RPC notification to the
-// auto-ui server's /api/rpc endpoint on loopback. All failures (UI down,
-// timeout, marshal) are swallowed: the live channel is optional, and the hook
-// must not delay or fail the agent.
-func postBusEvent(port int, ev bus.Event) {
+// postBusEvent best-effort POSTs the event as a JSON-RPC notification on loopback
+// to the autowatch daemon's hook-ingest handler. That handler is mounted at the
+// root path, so the post targets http://<addr>/ (no path segment). All failures
+// (daemon down, timeout, marshal) are swallowed: the live channel is optional, and
+// the hook must not delay or fail the agent.
+func postBusEvent(addr string, ev bus.Event) {
 	body, err := json.Marshal(ev.AsNotification())
 	if err != nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), hookPostTimeout)
 	defer cancel()
-	url := fmt.Sprintf("http://127.0.0.1:%d/api/rpc", port)
+	url := "http://" + addr + "/"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return

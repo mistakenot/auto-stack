@@ -101,8 +101,17 @@ The explorer is composed from four `web/static/` modules:
 ## Live updates (tasks 026, 027, 029)
 
 The explorer refreshes itself when an agent edits a planning doc — no polling, no file watcher. The
-only signal is the existing bus `doc.changed` notification: agent edit → hook → `agent.tool.post` →
-`/api/rpc` ingest → `bus.DeriveDocChanged` → a `doc.changed` on the WS.
+only signal is the existing bus `doc.changed` notification. Since **task 047**, auto-ui no longer
+ingests hook events locally: `auto hooks fire` posts to the **autowatch** daemon's hook-ingest (the
+old auto-ui `POST /api/rpc` route is removed). autowatch stamps `hostId`, derives `doc.changed` via
+`bus.DeriveDocChanged` (now the **sole** derive site), and **relays** the events to every subscribed
+backend. auto-ui has subscribed to each backend since **task 045**, so its `BackendManager`
+forwards relayed events straight into the Hub (`SetEventSink` → `hub.Broadcast`). The 045
+transition-window `eventGate` id-dedup is gone (task 047): with a single ingest path an event can no
+longer arrive by two routes, so there is nothing to dedup. The same sink also records into the
+server debug ring so `/api/debug/recent` keeps reflecting received events now that local ingest is
+gone. End to end: agent edit → hook → autowatch ingest + derive → relay → auto-ui Hub →
+`doc.changed` on the WS.
 
 Post-029, **all bus subscriptions live in `store.js`** (grep gate: `on("` only in `store.js`;
 `onAny(` only in `rpc.js` + `store.js`). Views are presentational and read state via
@@ -137,9 +146,12 @@ meta?.branch))`.
 top-level `ev.path`. `Event.AsNotification` (`auto-shared/bus/event.go`) puts the whole event
 envelope under JSON-RPC `params`; the envelope carries top-level `project`/`worktree` but `path`/
 `abs_path`/`branch` live under `data`. The retired `doc.js` read `ev.path` (always `undefined`), so
-its live refresh never fired — reading `ev.data.path` (via `docevents.js`) is the fix.
-`rpc_ingest_test.go`'s `TestRPCIngestBroadcastAndDerive` pins `params.data.path` so the shape can't
-silently regress.
+its live refresh never fired — reading `ev.data.path` (via `docevents.js`) is the fix. Since task
+047 moved the sole derive site to autowatch, the shape pin lives there:
+`TestHookIngest_DeriveDocChanged_RegisteredProject`
+(`auto-watch/internal/rpcserver/ingest_test.go`) asserts the derived `doc.changed` carries
+`data.path`, so it can't silently regress. (It replaced auto-ui's deleted
+`rpc_ingest_test.go`/`TestRPCIngestBroadcastAndDerive`.)
 
 ## Host dimension (task 046)
 
