@@ -374,6 +374,73 @@ func TestAC9_DeleteRemovesObject(t *testing.T) {
 	}
 }
 
+// TestAC11_InitStoresConfig: init under a throwaway HOME writes settings.json
+// with all required fields (D-4 keeps it off the real settings file).
+func TestAC11_InitStoresConfig(t *testing.T) {
+	gate(t)
+	home := t.TempDir()
+	res := runArtifact(t, []string{"HOME=" + home}, "init",
+		"--endpoint", "https://s3.us-east-1.amazonaws.com",
+		"--bucket", "test-bucket",
+		"--region", "us-east-1",
+		"--access-key-id", "AKIATEST",
+		"--secret-access-key", "secret",
+	)
+	if res.exitCode != 0 {
+		t.Fatalf("init exit %d; stderr: %s", res.exitCode, res.stderr)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".auto", "artifact", "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("decode settings: %v", err)
+	}
+	for _, f := range []string{"endpoint", "bucket", "region", "access_key_id", "secret_access_key", "default_retention"} {
+		if _, ok := m[f]; !ok {
+			t.Errorf("settings.json missing field %q", f)
+		}
+	}
+}
+
+// TestAC12a_DoctorValid: with valid config + bucket access, doctor exits 0.
+func TestAC12a_DoctorValid(t *testing.T) {
+	gate(t)
+	res := runArtifact(t, nil, "doctor")
+	if res.exitCode != 0 {
+		t.Errorf("doctor with valid config exit %d; stdout: %s stderr: %s", res.exitCode, res.stdout, res.stderr)
+	}
+}
+
+// TestAC12b_DoctorMissing: with no config (temp HOME), doctor exits non-zero
+// with a diagnostic mentioning the problem.
+func TestAC12b_DoctorMissing(t *testing.T) {
+	gate(t)
+	res := runArtifact(t, []string{"HOME=" + t.TempDir()}, "doctor")
+	if res.exitCode == 0 {
+		t.Fatalf("doctor with no config should exit non-zero")
+	}
+	combined := strings.ToLower(res.stdout + res.stderr)
+	if !strings.Contains(combined, "missing") && !strings.Contains(combined, "invalid") && !strings.Contains(combined, "init") {
+		t.Errorf("doctor diagnostic did not mention the problem: %s", combined)
+	}
+}
+
+// TestAC14_UploadWithoutConfig: upload with no config (temp HOME) exits
+// non-zero and directs the user to run init.
+func TestAC14_UploadWithoutConfig(t *testing.T) {
+	gate(t)
+	file := writeTempFile(t, "ac14.txt", "hi\n")
+	res := runArtifact(t, []string{"HOME=" + t.TempDir()}, "upload", file)
+	if res.exitCode == 0 {
+		t.Fatalf("upload without config should exit non-zero")
+	}
+	if !strings.Contains(strings.ToLower(res.stderr+res.stdout), "init") {
+		t.Errorf("upload error did not mention init: %s", res.stderr)
+	}
+}
+
 func countLines(path string) int {
 	data, err := os.ReadFile(path)
 	if err != nil {

@@ -4,8 +4,13 @@
 package config
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/mistakenot/auto-artifact/internal/artifact"
 	sharedconfig "github.com/mistakenot/auto-shared/config"
 )
 
@@ -65,4 +70,90 @@ func Load(path string) (Settings, error) {
 		return Settings{}, err
 	}
 	return cfg, nil
+}
+
+// LoadValidated loads the settings file and validates it, returning a
+// ValidationErrorsError if any required field is missing or malformed.
+func LoadValidated(path string) (Settings, error) {
+	cfg, err := Load(path)
+	if err != nil {
+		return Settings{}, err
+	}
+	if errs := Validate(path, cfg); len(errs) > 0 {
+		return Settings{}, &ValidationErrorsError{Path: path, Errors: errs}
+	}
+	return cfg, nil
+}
+
+// Validate enforces the required fields (endpoint/bucket/region/credentials)
+// and that default_retention, when set, is one of the four tiers. Returns a
+// structured error per the shared ValidationError shape mandated by CLAUDE.md.
+func Validate(path string, cfg Settings) []ValidationError {
+	var errs []ValidationError
+	required := []struct {
+		field, value string
+	}{
+		{"endpoint", cfg.Endpoint},
+		{"bucket", cfg.Bucket},
+		{"region", cfg.Region},
+		{"access_key_id", cfg.AccessKeyID},
+		{"secret_access_key", cfg.SecretAccessKey},
+	}
+	for _, r := range required {
+		if strings.TrimSpace(r.value) == "" {
+			errs = append(errs, ValidationError{
+				Code:    "required",
+				Path:    path,
+				Field:   r.field,
+				Message: r.field + " is required and must be a non-empty string",
+				Value:   r.value,
+			})
+		}
+	}
+	if v := strings.TrimSpace(cfg.Endpoint); v != "" && !strings.HasPrefix(v, "https://") {
+		errs = append(errs, ValidationError{
+			Code:    "format",
+			Path:    path,
+			Field:   "endpoint",
+			Message: "endpoint must be an https:// URL (the tool never emits http URLs)",
+			Value:   cfg.Endpoint,
+		})
+	}
+	if v := strings.TrimSpace(cfg.DefaultRetention); v != "" && !artifact.ValidRetention(v) {
+		errs = append(errs, ValidationError{
+			Code:    "enum",
+			Path:    path,
+			Field:   "default_retention",
+			Message: "default_retention must be one of " + strings.Join(artifact.RetentionTiers, ", "),
+			Value:   cfg.DefaultRetention,
+		})
+	}
+	return errs
+}
+
+// WriteSecure writes settings as indented JSON with mode 0600 and ensures the
+// parent ~/.auto/artifact directory is 0700. The shared JSON writers force
+// 0644, which is unsafe for a file holding secret_access_key — hence this
+// dedicated writer. Chmod is applied unconditionally so an existing file/dir
+// with looser permissions is tightened.
+func WriteSecure(path string, cfg Settings) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("chmod %s: %w", dir, err)
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal settings: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("chmod %s: %w", path, err)
+	}
+	return nil
 }

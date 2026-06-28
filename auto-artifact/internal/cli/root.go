@@ -71,6 +71,8 @@ func NewRootCmd(application *app.App) *cobra.Command {
 	rootCmd.AddCommand(
 		newUploadCmd(application),
 		newDeleteCmd(application),
+		newInitCmd(application),
+		newDoctorCmd(application),
 	)
 
 	return rootCmd

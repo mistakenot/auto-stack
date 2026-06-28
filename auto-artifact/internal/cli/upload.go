@@ -125,7 +125,7 @@ func loadSettingsForUpload() (config.Settings, error) {
 	if err != nil {
 		return config.Settings{}, &ExitError{Code: 1, Err: err}
 	}
-	cfg, err := config.Load(settingsPath)
+	cfg, err := config.LoadValidated(settingsPath)
 	if err != nil {
 		return config.Settings{}, &ExitError{Code: 1, Err: fmt.Errorf(
 			"no usable artifact config at %s (%w) — run `auto artifact init`", settingsPath, err)}
