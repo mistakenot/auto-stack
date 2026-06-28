@@ -7,6 +7,7 @@ package add
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/mistakenot/auto-shared/config"
@@ -169,7 +170,7 @@ func Run(env skill.Env, opts Options) (Result, error) {
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	subpath := src.Subpath
-	if err := repo.Extract(sha, subpath, tmpDir); err != nil {
+	if err := extractForDiscovery(repo, sha, subpath, tmpDir); err != nil {
 		return Result{Source: src.URL}, fmt.Errorf("extract: %w", err)
 	}
 
@@ -297,6 +298,27 @@ func Run(env skill.Env, opts Options) (Result, error) {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
+
+// extractForDiscovery materializes the repo content discovery needs into tmpDir.
+// When the source pins a subpath (a deep-link URL), only that subtree is
+// extracted. Otherwise, rather than archive the whole tree — which for a large
+// monorepo is slow and may contain unrelated symlinks the safe extractor
+// rejects — it lists the skill subtrees in the commit and extracts only those.
+func extractForDiscovery(repo *cache.Repo, sha, subpath, tmpDir string) error {
+	if subpath != "" {
+		return repo.Extract(sha, subpath, tmpDir)
+	}
+	dirs, err := repo.ListSkillDirs(sha)
+	if err != nil {
+		return err
+	}
+	// No skill trees found, or a skill lives at the repo root: fall back to a
+	// full extract so discovery (and its error reporting) behaves as before.
+	if len(dirs) == 0 || slices.Contains(dirs, "") {
+		return repo.Extract(sha, "", tmpDir)
+	}
+	return repo.ExtractPaths(sha, dirs, tmpDir)
+}
 
 // repoRefResolver adapts a cache.Repo to source.RefResolver for deep-link
 // splitting: a candidate prefix is a ref iff the repo can resolve it.
