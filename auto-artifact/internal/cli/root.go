@@ -75,6 +75,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newDoctorCmd(application),
 		newSetupCmd(application),
 		newQuickstartCmd(),
+		newAgentsCmd(application),
 		newDocsCmd(),
 		newUpdateCmd(),
 	)

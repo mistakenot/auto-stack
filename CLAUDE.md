@@ -325,3 +325,7 @@ Use the /cass skill for cross-tool session indexing and search. Complements auto
 - Always sync before ending session
 
 <!-- end-br-agent-instructions -->
+
+<!-- BEGIN auto-artifact (managed) -->
+Use `auto artifact quickstart` to upload evidence files (screenshots, videos, logs) to S3 and get a permanent public URL you can embed in a PR comment.
+<!-- END auto-artifact (managed) -->
