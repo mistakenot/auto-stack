@@ -525,7 +525,7 @@ populated in P4).
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="Observation audit trail (task_id + file/line/commit)" status="todo" depends-on="1"
+        <pd-phase n="2" title="Observation audit trail (task_id + file/line/commit)" status="done" depends-on="1"
           files="internal/events/model.go,internal/observations/model.go,internal/cli/observation.go,internal/observations/model_test.go,internal/cli/observation_integration_test.go,cmd/autoreflect/e2e_observation_test.go">
           <md><script type="text/plain">
 1. `events/model.go`: add `file`/`line_range`/`commit` (omitempty) to `ObservationEvidence`;
