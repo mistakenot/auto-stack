@@ -1,14 +1,15 @@
 {
-  "docsDir": "docs",
-  "agentFiles": ["AGENTS.md", "CLAUDE.md"],
-  "parallelism": 4,
-  "ignores": [
-    "docs/session-problems-*.md",
-    "docs/high-priority-workflow-issues-*.md",
-    "docs/workflow-issues-*.md",
-    "docs/improvement-opportunities-*.md",
-    "docs/stack-probe-findings-*.md",
-    "docs/self-improve-*.md",
-    "docs/gemini-session-analysis.md"
-  ]
+    "docsDir": "docs",
+    "agentFiles": ["AGENTS.md", "CLAUDE.md"],
+    "parallelism": 4,
+    "ignores": [
+        "docs/session-problems-*.md",
+        "docs/high-priority-workflow-issues-*.md",
+        "docs/workflow-issues-*.md",
+        "docs/improvement-opportunities-*.md",
+        "docs/stack-probe-findings-*.md",
+        "docs/self-improve-*.md",
+        "docs/gemini-session-analysis.md",
+        "docs/tasks/*"
+    ]
 }
