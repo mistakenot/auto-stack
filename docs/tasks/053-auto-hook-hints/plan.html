@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>053: auto-hook-hints</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="053: auto-hook-hints" status="pending" pr="pending" generated="2026-06-28"
+          next-prompt="/commit-task 053">
+
+    <script type="application/json" id="pd-meta">
+    {
+      "id": "053",
+      "name": "auto-hook-hints",
+      "status": "planning",
+      "created": "2026-06-28"
+    }
+    </script>
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Coding agents (Claude, Codex) fire low-level hook events (`PostToolUse`, `Stop`, etc.) that `auto hooks fire` already normalises and logs. But there is no mechanism to **respond** to those hooks with contextual guidance. When an agent pushes code to a PR, there is no way to nudge it — across all agents, defined once — to check back for review feedback.
+
+Today each agent's hook config is wired identically to `auto hooks fire --agent <name>`, which is fire-and-forget: it logs the event to JSONL, POSTs to autowatch, and prints nothing to stdout. The agents never receive any response.
+
+Both Claude and Codex support an `additionalContext` field in hook JSON responses that gets injected into the agent's context window. This channel exists but is unused.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="problem" status="resolved" priority="p1" title="Stdout emission breaks task 020 telemetry-safe contract">
+        <pd-comment by="review">Task 020 explicitly requires `auto hooks fire` to be a pure observer on the installed allowlist: always exit 0, **writes nothing to stdout** (errors to stderr only). See `docs/tasks/020-auto-hooks-install/requirements.md` → Event allowlist. `auto-cli/cmd/auto/hookscmd.go` currently never writes to `cmd.OutOrStdout()`. Emitting `hookSpecificOutput` JSON changes that invariant. `auto hooks install` wires fire onto 9 Claude + 10 Codex events (Stop, SessionStart, PreToolUse, …), not just PostToolUse. Requirements must state the stdout rule: **only** emit JSON on PostToolUse when a trigger matches; all other events remain silent (exit 0, no stdout) so we don't break events like Codex Stop/SubagentStop (which reject invalid stdout) or re-open the WorktreeCreate class of failures.</pd-comment>
+        <pd-comment by="author">Valid. Trigger detection is scoped to PostToolUse only — all other events remain silent (exit 0, no stdout). The hint matching function checks `hook_event_name` first and returns immediately for non-PostToolUse events. Added as explicit AC-6 in Verification tab.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **Cross-agent hint emission:** When a semantic action is detected (e.g. "agent pushed to a PR"), emit a configurable hint as `additionalContext` in the hook's JSON response, injected into the agent's context window. Works for both Claude and Codex.
+- **Project-scoped config:** Trigger-to-hint mappings defined in `.auto/hooks/hooks.yaml`, version-controlled, discovered from cwd. Users customise hint text per project without rebuilding.
+- **Semantic trigger detection:** Built-in named triggers (starting with `pushed-to-pr`) with detection logic in Go, pattern-matching tool args in PostToolUse payloads. Users reference triggers by name, not regex.
+- **Best-effort error filtering:** Check `is_error` boolean if present in PostToolUse payloads. Claude PostToolUse only fires on success (failures go to PostToolUseFailure), so filtering is a no-op. For Codex, accept false positives on failed commands for v1 — hint text uses conditional language making spurious hints low-cost.
+- **Template interpolation:** Hint text supports `{{field}}` template variables interpolated from the hook payload. A documented set of available fields (branch, remote, project, session_id, etc.) lets hints include dynamic context like the branch name or project.
+- **Thin layer, not a new system:** Extend the existing `auto hooks fire` command. No new binary, no new daemon, no new event bus.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="goals" status="resolved" priority="p1" title="is_error filtering does not match upstream PostToolUse semantics">
+        <pd-comment by="review">The grilling decision assumes PostToolUse payloads carry a top-level `is_error` boolean. Upstream docs don't support that uniformly. Claude: PostToolUse fires only after a tool **succeeds**; failures go to PostToolUseFailure (https://code.claude.com/docs/en/hooks — PostToolUse section). `is_error` appears only in deferred-tool edge cases, not as a standard PostToolUse input field. Codex: PostToolUse **does** fire after failed Bash (non-zero exit), but the documented input schema lists `tool_input` / `tool_response` only — no `is_error` field (https://developers.openai.com/codex/hooks#posttooluse). False-positive filtering needs an agent-specific rule: Claude can rely on the event split (PostToolUse vs PostToolUseFailure); Codex likely needs parsing `tool_response` (exit code / stderr) for Bash. Please replace the single `is_error` goal with concrete per-agent success signals.</pd-comment>
+        <pd-comment by="author">Good catch. Revised approach: check `is_error` if present (best-effort), but don't rely on it. Claude PostToolUse only fires on success, so no filtering needed. For Codex, accept false positives on failed pushes for v1 — the hint text uses conditional language ("if you just pushed...") making a spurious hint low-cost. Updated error filtering goal and AC-2 accordingly.</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="goals" status="resolved" priority="p2" title="Config path diverges from auto-package-patterns">
+        <pd-comment by="review">Project-scoped tool config elsewhere uses `.auto/{tool}/settings.json` per `docs/auto-package-patterns.md` (e.g. `.auto/watch/project.json`, `.auto/env/config.json`). This task proposes `.auto/hooks/hooks.yaml`. That's a new convention and also sits beside the global hook **log** at `~/.auto/hooks/raw/` (task 022). Either justify YAML + path (schema command, `doctor`, `init --project`) or align with `.auto/hooks/settings.json` / shared config loading helpers in `auto-shared/config`.</pd-comment>
+        <pd-comment by="author">Acknowledged divergence. YAML chosen deliberately in grilling: hint text is user-authored prose with multi-line strings and comments — YAML is better suited than JSON for this. Path `.auto/hooks/hooks.yaml` co-locates with the hook tool's project config namespace. The global log at `~/.auto/hooks/raw/` is a different concern (data, not config). Recorded as a decision in the Solution tab.</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="goals" status="resolved" priority="p2" title="pushed-to-pr detection patterns undefined">
+        <pd-comment by="review">Goals name `pushed-to-pr` but don't define what matches. Load-bearing unknowns for the solution: which `tool_name` values (Claude `Bash` vs Codex `Bash`/`apply_patch`?), which command substrings (`git push`, `git push -u`, `gh pr create`, `gh pr merge`?), and whether `git push --dry-run` / failed pushes count. `buildBusEvent` already extracts Bash commands via `tool_input.command` — requirements should list the v1 pattern set and explicit false-positive exclusions so verification can write fixture payloads.</pd-comment>
+        <pd-comment by="author">Defined in Solution tab → Built-in Triggers section. v1 patterns: tool_name is `Bash` (covers both Claude and Codex), tool_input.command contains `git push` or `gh pr create` or `gh pr merge`. `--dry-run` is not excluded (low-cost false positive). Failed pushes accepted for v1 per the is_error discussion above.</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="goals" status="resolved" priority="p2" title="Template field sources ambiguous">
+        <pd-comment by="review">Goals say `{{field}}` variables are "interpolated from the hook payload", but several named fields (`branch`, `remote`, `project`) are **not** in the raw stdin payload today — `buildBusEvent` / `hookscmd.go` resolves them via `sharedgit.Provenance`, `sharedgit.OriginRemote`, and `ProjectsConfig.FindProjectByPath`. Requirements should define the template context as payload fields **plus** resolved provenance (and whether missing values render empty or fail validation).</pd-comment>
+        <pd-comment by="author">Clarified in Solution tab → Config Schema section. Template fields come from both the raw payload (session_id, tool, event, cwd, agent) AND the resolved bus event (branch, remote, project). Missing values render as empty string — no validation errors. The `buildHintFields` function assembles the flat map from both sources.</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="goals" status="resolved" priority="p2" title="Delivery JSON envelope not specified">
+        <pd-comment by="review">Goals reference `additionalContext` in `hookSpecificOutput` but not the full stdout envelope. Codex examples require `hookEventName: "PostToolUse"` inside `hookSpecificOutput` (https://developers.openai.com/codex/hooks#posttooluse). Claude uses the same wrapper for PreToolUse/PostToolUse examples. Requirements should pin the exact JSON shape (top-level fields, `hookEventName` value, whether Claude PostToolUse uses top-level `decision` or only `hookSpecificOutput`) so both agents parse the response identically.</pd-comment>
+        <pd-comment by="author">Pinned in Solution tab → Response Format section. Exact shape: `{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "..."}}`. Both Claude and Codex parse this identically per upstream docs.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Blocking or modifying tool calls** — auto-hook emits hints only (`additionalContext`). Blocking (`permissionDecision: deny`), input modification (`updatedInput`), and stop signals (`continue: false`) stay in per-agent hook config.
+- **OpenCode support** — OpenCode uses TypeScript plugins with no command-hook equivalent. Deferred until a delivery channel exists.
+- **Custom regex patterns in YAML** — users cannot define arbitrary match patterns in config. Detection logic lives in Go code. Custom patterns are YAGNI given the small trigger set.
+- **Stop-time delivery / session state** — hints fire on PostToolUse (stateless). No marker files, no cross-hook session state. Accept the timing risk that mid-session hints may scroll out of agent attention.
+- **Autowatch integration** — this is not a new trigger type in autowatch. It runs entirely within `auto hooks fire`.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [x] **Detection mechanism:** Pattern-match tool args (substring/regex on known git/gh commands). Decided in grilling 2026-06-28.
+- [x] **Delivery format:** JSON `additionalContext` in `hookSpecificOutput`, same for Claude+Codex. Confirmed by upstream docs.
+- [x] **Config location:** `.auto/hooks/hooks.yaml`, project-scoped. Decided in grilling 2026-06-28.
+- [x] **False positive handling:** Check `is_error` boolean, skip hints on failed commands. Decided in grilling 2026-06-28.
+- [x] **Scope:** Hints only, no blocking/modification. Decided in grilling 2026-06-28.
+- [ ] **Timing risk (accepted):** PostToolUse hints fire mid-session and may get buried by subsequent tool results. This was identified as the most likely failure mode. Accepted: ship simple, observe whether agents act on it, iterate if needed. Easy to rip out (~50 lines + config file).
+- [x] **Dynamic hint content:** Yes — hint text supports `{{field}}` template variables interpolated from the hook payload. A defined set of available fields (branch, remote, project, session_id, etc.) is documented. Answered by Charlie 2026-06-28.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="open-questions" status="resolved" priority="p3" title="No acceptance criteria yet">
+        <pd-comment by="review">Expected at draft stage (`next-prompt="/new-solution 053"`), but flagging for the solution pass: there are no `<pd-ac>` cards or testable ACs yet. When `/new-solution` runs, trace at minimum: (1) hint emitted on matched PostToolUse Bash payload, (2) no stdout on non-matching PostToolUse, (3) no stdout on other installed events (Stop, SessionStart, …), (4) config override per project, (5) template interpolation, (6) Codex failed-push suppression. The timing-risk open question should become an explicit non-blocking AC or observability note, not a silent assumption.</pd-comment>
+        <pd-comment by="author">AC-1 through AC-8 added in the Verification tab, covering all six suggested criteria plus latency and malformed config handling.</pd-comment>
+      </pd-thread>
+
+      <pd-question id="Q-1" status="answered" priority="p2" for="charlie"
+                   title="Should hints include dynamic context from the payload?"
+                   recommendedAnswer="Static text for v1 — the hint is a nudge ('check for PR feedback'), not a command. Dynamic interpolation (PR URL, branch name) adds template syntax complexity for marginal benefit. Add interpolation in a future version if agents need more specific context to act on the hint.">
+        The hook payload contains rich context: branch name, PR URL (if detectable), session ID, project name.
+        Should the hint text support template variables like `{{branch}}` or `{{remote}}` interpolated from
+        the payload? Or should v1 hints be static strings defined in YAML?
+        <pd-answer by="charlie">Yes, use templating with a set of available fields.</pd-answer>
+      </pd-question>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+Unit tests for each layer (trigger detection, config loading, template rendering) plus integration tests exercising the full `auto hooks fire` path — stdin payload in, hint JSON on stdout out.
+
+All tests follow the existing `hookscmd_test.go` pattern: construct the cobra command directly via `newHooksFireCmd()`, set stdin/args, capture stdout, assert. Use `t.TempDir()` + `t.Setenv("HOME", ...)` for file isolation. No external dependencies.
+        </script></md>
+      </pd-section>
+
+      <pd-mermaid caption="Testing layers">
+flowchart LR
+  U[Unit: triggers] --> I[Integration: fire cmd]
+  C[Unit: config] --> I
+  T[Unit: templates] --> I
+      </pd-mermaid>
+
+      <pd-ac id="AC-1" title="Hint emitted on git push" phases="1" tests="auto-cli/cmd/auto/hints_test.go">
+        <md><script type="text/plain">
+- Given a `.auto/hooks/hooks.yaml` with a `pushed-to-pr` trigger and hint text
+- When `auto hooks fire --agent claude` receives a PostToolUse payload where tool_input.command contains `git push`
+- Then stdout contains valid JSON with `hookSpecificOutput.additionalContext` matching the configured hint
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="Best-effort error filtering" phases="2" tests="auto-cli/cmd/auto/hints_test.go">
+        <md><script type="text/plain">
+- Given the same config
+- When `auto hooks fire` receives a PostToolUse payload where `is_error` is true
+- Then stdout is empty (no hint emitted)
+- Note: if `is_error` is absent (common for Codex), the hint fires — accept false positives on failed commands
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-3" title="Template interpolation works" phases="1,2" tests="auto-cli/cmd/auto/hints_test.go">
+        <md><script type="text/plain">
+- Given a hint with `{{.branch}}` and `{{.project}}` template variables
+- When the trigger fires with branch `feat/login` and project `my-app`
+- Then the emitted additionalContext contains the interpolated values
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-4" title="Missing config degrades silently" phases="2" tests="auto-cli/cmd/auto/hints_test.go">
+        <md><script type="text/plain">
+- Given no `.auto/hooks/hooks.yaml` exists
+- When `auto hooks fire` receives any payload
+- Then the command exits 0 with no stdout — no hint, no error
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="Malformed config degrades silently" phases="2" tests="auto-cli/cmd/auto/hints_test.go">
+        <md><script type="text/plain">
+- Given a `.auto/hooks/hooks.yaml` with invalid YAML
+- When `auto hooks fire` receives any payload
+- Then the command exits 0 with no stdout — config errors are swallowed
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="Non-matching events produce no output" phases="2" tests="auto-cli/cmd/auto/hints_test.go">
+        <md><script type="text/plain">
+- Given a valid config with `pushed-to-pr` trigger
+- When `auto hooks fire` receives a PostToolUse for `Edit` or `Read`, or a SessionStart/Stop event
+- Then stdout is empty — only PostToolUse with matching Bash commands emits hints
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-7" title="Works for both Claude and Codex" phases="2" tests="auto-cli/cmd/auto/hints_test.go">
+        <md><script type="text/plain">
+- Given the same config
+- When `auto hooks fire --agent claude` and `auto hooks fire --agent codex` both receive a matching PostToolUse
+- Then both emit the same hint JSON format
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-8" title="Existing behavior unchanged" phases="1" tests="auto-cli/cmd/auto/hints_test.go">
+        <md><script type="text/plain">
+- Given any hook payload
+- When `auto hooks fire` processes it
+- Then JSONL durable log append and autowatch POST still happen exactly as before — hint emission is additive, not a replacement
+        </script></md>
+      </pd-ac>
+
+      <pd-trace caption="Acceptance coverage"></pd-trace>
+
+      <pd-section id="verification-gaps" title="Known Gaps & Risks">
+        <md><script type="text/plain">
+- **Timing risk:** No test can verify that agents *act on* the hint. We verify emission, not consumption.
+- **Cross-agent format parity:** We test JSON format but cannot verify Claude and Codex parse `additionalContext` identically — we rely on upstream docs.
+- **Codex false positives:** Codex PostToolUse fires on failed Bash; v1 accepts these false positives rather than parsing `tool_response`.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Add a hint-matching layer to the existing `auto hooks fire` command. After logging and posting the event (existing behavior), the command checks the parsed payload against built-in trigger detectors. If a trigger matches, it loads `.auto/hooks/hooks.yaml` from the project root, finds the matching hint template, renders it with context fields, and prints the response JSON to stdout.
+
+The response uses the `hookSpecificOutput.additionalContext` format supported by both Claude and Codex. All hint logic lives in a new `hints.go` file alongside `hookscmd.go`. No new packages, no new dependencies beyond promoting `yaml.v3` from indirect to direct.
+        </script></md>
+
+        <pd-mermaid caption="Hint emission flow">
+sequenceDiagram
+  participant Agent
+  participant Fire as auto hooks fire
+  participant Log as JSONL log
+  participant Watch as autowatch
+  participant Config as hooks.yaml
+
+  Agent->>Fire: stdin (hook payload)
+  Fire->>Log: Append envelope (existing)
+  Fire->>Watch: POST bus event (existing)
+  Fire->>Fire: Match triggers against payload
+  alt Trigger matches + no is_error
+    Fire->>Config: Load .auto/hooks/hooks.yaml
+    Config-->>Fire: hint template
+    Fire->>Fire: Render template with context fields
+    Fire-->>Agent: stdout JSON (additionalContext)
+  else No match or is_error
+    Fire-->>Agent: (no output)
+  end
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="config-schema" title="Config Schema">
+        <pd-code lang="yaml" path=".auto/hooks/hooks.yaml" caption="Example config">
+hints:
+  - trigger: pushed-to-pr
+    hint: >-
+      You just pushed to branch {{.branch}} in project {{.project}}.
+      If you've finished your current work, check for code review feedback
+      in a few minutes. Run /address-feedback to handle any comments.
+        </pd-code>
+        <md><script type="text/plain">
+**Template fields** (from raw payload + resolved provenance):
+
+| Field | Source | Example |
+|-------|--------|---------|
+| `{{.agent}}` | `--agent` flag | `claude` |
+| `{{.branch}}` | `sharedgit.Provenance` via bus event | `feat/login` |
+| `{{.remote}}` | `sharedgit.OriginRemote` (normalized) | `github.com/org/repo` |
+| `{{.project}}` | project registry lookup | `auto-stack` |
+| `{{.session_id}}` | raw payload `session_id` | `sess-abc123` |
+| `{{.tool}}` | raw payload `tool_name` | `Bash` |
+| `{{.event}}` | raw payload `hook_event_name` | `PostToolUse` |
+| `{{.cwd}}` | raw payload `cwd` | `/home/user/repo` |
+
+Unknown fields render as empty string (Go `text/template` with `missingkey=zero`). Template uses a flat `.field` access pattern.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="trigger-registry" title="Built-in Triggers">
+        <md><script type="text/plain">
+v1 ships with one trigger:
+
+**`pushed-to-pr`** — fires on PostToolUse where:
+- `hook_event_name` is `PostToolUse`
+- `tool_name` is `Bash` (both Claude and Codex use this name)
+- `tool_input.command` contains one of: `git push`, `gh pr create`, `gh pr merge`
+- `is_error` is absent or `false`
+
+Each trigger is a Go function: `func(payload map[string]any) bool`. New triggers are added as functions and registered in a `map[string]TriggerFunc`.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="response-format" title="Response Format">
+        <pd-code lang="json" caption="Hint response JSON (stdout)">
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PostToolUse",
+    "additionalContext": "You just pushed to branch feat/login..."
+  }
+}
+        </pd-code>
+        <md><script type="text/plain">
+This is the exact envelope both Claude and Codex parse for PostToolUse hook responses. `hookEventName` must match the event. Only emitted for PostToolUse; all other events produce no stdout.
+        </script></md>
+      </pd-section>
+
+      <pd-files>
+        <pd-file path="auto-cli/cmd/auto/hints.go" change="add">Hint config loading, trigger registry, template rendering, response formatting</pd-file>
+        <pd-file path="auto-cli/cmd/auto/hints_test.go" change="add">Unit tests for triggers, config, templates; integration test for full fire-with-hint path</pd-file>
+        <pd-file path="auto-cli/cmd/auto/hookscmd.go" change="edit">Wire hint matching into the fire command's RunE after existing log+post</pd-file>
+        <pd-file path="auto-cli/go.mod" change="edit">Promote yaml.v3 from indirect to direct dependency</pd-file>
+        <pd-file path=".auto/hooks/hooks.yaml" change="add">Default hint config for this project (pushed-to-pr trigger)</pd-file>
+      </pd-files>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **New autowatch trigger type** — adds complexity to autowatch for a simple hint. The hook fire command already has the payload.
+- **Separate auto-hook binary** — no new system. The feature is ~150 lines of Go in the existing command.
+- **Stop-time delivery** — requires session state (marker files). Added complexity for uncertain benefit. PostToolUse is simpler.
+- **Custom regex patterns in YAML** — YAGNI. One trigger for now.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-1" title="YAML config instead of JSON" status="accepted" by="charlie"
+        summary="YAML for user-authored hint text; diverges from JSON convention but better suited.">
+        <md><script type="text/plain">
+**Context:** All existing `.auto/` config uses JSON. This task introduces `.auto/hooks/hooks.yaml`.
+**Decision:** YAML for hint config. Hint text is user-authored prose with multi-line strings and comments — YAML handles this better than JSON.
+**Alternatives:** JSON (consistent with convention, but awkward for multi-line prose); TOML (less common in Go ecosystem).
+**Consequences:** Adds `yaml.v3` as a direct dependency in auto-cli. New convention for user-authored config files.
+        </script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Three-phase vertical build: Phase 1 wires the complete end-to-end path (config loading, trigger detection, template rendering, JSON output, hookscmd wiring) with one passing integration test. Phase 2 adds comprehensive tests and edge-case hardening. Phase 3 ships the default config for this project.
+        </script></md>
+      </pd-section>
+
+      <pd-dag caption="Execution order"></pd-dag>
+
+      <pd-stepper>
+        <pd-phase n="1" title="Walking skeleton" files="auto-cli/cmd/auto/hints.go,auto-cli/cmd/auto/hints_test.go,auto-cli/cmd/auto/hookscmd.go,auto-cli/go.mod" status="todo">
+          <md><script type="text/plain">
+Wire the complete hint path end-to-end with one trigger and one integration test.
+
+1. Promote `yaml.v3` from indirect to direct in `auto-cli/go.mod` (`go get gopkg.in/yaml.v3`)
+2. Create `hints.go` with:
+   - `HintsConfig` struct: `Hints []HintRule` where `HintRule` has `Trigger string` and `Hint string` (YAML tags)
+   - `loadHintsConfig(root string) *HintsConfig` — reads `.auto/hooks/hooks.yaml`, returns nil on missing/malformed
+   - `triggerRegistry` map of `string → func(map[string]any) bool`
+   - `pushedToPR` detector: checks hook_event_name == PostToolUse, tool_name == Bash, command contains `git push`/`gh pr create`/`gh pr merge`, is_error is not true
+   - `buildHintFields(agent string, payload map[string]any, ev bus.Event) map[string]string`
+   - `renderHint(tmpl string, fields map[string]string) (string, error)` using Go `text/template` with `missingkey=zero`
+   - `matchAndEmitHint(out io.Writer, agent string, payload map[string]any, ev bus.Event, root string)` — orchestrates the full path
+3. Edit `hookscmd.go` RunE: after `postBusEvent`, call `matchAndEmitHint(cmd.OutOrStdout(), agent, payload, ev, root)`
+4. Create `hints_test.go` with:
+   - `TestPushedToPRDetector` — matching/non-matching payloads
+   - `TestRenderHint` — template with known fields
+   - `TestFireEmitsHintOnGitPush` — integration: temp hooks.yaml + git push payload → hint JSON on stdout
+5. `go build ./...` and `go test ./cmd/auto/...` in auto-cli
+6. Commit: `feat(053): walking skeleton — hint emission on git push`
+
+**Verify:** `TestFireEmitsHintOnGitPush` passes. PostToolUse with `git push` produces `hookSpecificOutput.additionalContext` on stdout. Existing `TestFire*` tests still pass (no stdout regression).
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Full test coverage + hardening" files="auto-cli/cmd/auto/hints.go,auto-cli/cmd/auto/hints_test.go" status="todo" depends-on="1">
+          <md><script type="text/plain">
+Comprehensive tests and edge-case handling for all acceptance criteria.
+
+1. AC-2: `is_error` suppression — payload with `"is_error": true` → no output
+2. AC-3: all template fields render correctly (`branch`, `project`, `agent`, `remote`, `session_id`, `tool`, `event`, `cwd`)
+3. AC-4: missing config → no output, exit 0
+4. AC-5: malformed YAML → no output, exit 0
+5. AC-6: non-matching events (Edit, Read, SessionStart, Stop) → no output
+6. AC-7: same test with `--agent codex`
+7. Unknown template fields → render as empty string
+8. `gh pr create` and `gh pr merge` patterns (not just `git push`)
+9. AC-8: verify JSONL append + bus POST still happen alongside hints
+10. Harden `loadHintsConfig`: skip unknown trigger names with stderr warning
+11. `go test -v ./cmd/auto/...`
+12. Commit: `test(053): full hint coverage — error filtering, templates, edge cases`
+
+**Verify:** All AC-1 through AC-8 have passing tests.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Default config + docs" files=".auto/hooks/hooks.yaml" status="todo" depends-on="2">
+          <md><script type="text/plain">
+Ship the default config for this project.
+
+1. Create `.auto/hooks/hooks.yaml` with `pushed-to-pr` trigger and default hint message including `{{.branch}}` and `{{.project}}`
+2. `go build ./...` and `go test ./...` to verify nothing broke
+3. Commit: `feat(053): default hooks.yaml for auto-stack`
+
+**Verify:** `auto hooks fire --agent claude` with a git-push payload in this project emits the configured hint.
+          </script></md>
+        </pd-phase>
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- AC-1 through AC-8 pass
+- `auto hooks fire` emits hint JSON on matching PostToolUse payloads with a valid `.auto/hooks/hooks.yaml`
+- Existing hook behavior (JSONL logging, autowatch POST) is unchanged
+- No new runtime dependencies beyond yaml.v3
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
