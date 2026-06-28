@@ -73,6 +73,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newDeleteCmd(application),
 		newInitCmd(application),
 		newDoctorCmd(application),
+		newSetupCmd(application),
 	)
 
 	return rootCmd

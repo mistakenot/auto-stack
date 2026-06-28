@@ -441,6 +441,32 @@ func TestAC14_UploadWithoutConfig(t *testing.T) {
 	}
 }
 
+// TestAC10_SetupScript: `setup` emits a script containing all required AWS
+// calls that passes `bash -n`. This needs no AWS access.
+func TestAC10_SetupScript(t *testing.T) {
+	gate(t)
+	res := runArtifact(t, nil, "setup", "--region", "us-east-1", "--bucket", "test-bucket", "--profile", "default")
+	if res.exitCode != 0 {
+		t.Fatalf("setup exit %d; stderr: %s", res.exitCode, res.stderr)
+	}
+	for _, call := range []string{
+		"create-bucket", "put-bucket-policy", "put-bucket-lifecycle-configuration",
+		"create-role", "create-user", "create-access-key",
+	} {
+		if !strings.Contains(res.stdout, call) {
+			t.Errorf("setup script missing %q", call)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "setup.sh")
+	if err := os.WriteFile(path, []byte(res.stdout), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("bash", "-n", path).CombinedOutput(); err != nil {
+		t.Errorf("bash -n on setup script failed: %v\n%s", err, out)
+	}
+}
+
 func countLines(path string) int {
 	data, err := os.ReadFile(path)
 	if err != nil {
