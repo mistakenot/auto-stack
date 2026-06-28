@@ -25,7 +25,8 @@ func mustAppend(t *testing.T, repo, eventType string, payload any) {
 // rule id.
 func seedRule(t *testing.T, repo, useWhen, content, domain, ruleType string) string {
 	t.Helper()
-	id := rules.NewRuleID()
+	seed := rules.Rule{Domain: []string{domain}, UseWhen: useWhen, Content: content, RuleType: ruleType}
+	id := rules.NewRuleID(seed.CanonicalParts()...)
 	payload := events.RuleCreatedPayload{
 		RuleID:     id,
 		Domain:     []string{domain},

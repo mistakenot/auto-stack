@@ -58,9 +58,7 @@ func newRuleCreateCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 
-			id := rules.NewRuleID()
 			candidate := rules.Rule{
-				ID:         id,
 				Domain:     rules.NormalizeDomain(domain),
 				UseWhen:    strings.TrimSpace(useWhen),
 				Content:    strings.TrimSpace(content),
@@ -69,6 +67,8 @@ func newRuleCreateCmd(application *app.App) *cobra.Command {
 				Lifecycle:  strings.ToLower(strings.TrimSpace(lifecycle)),
 				Version:    1,
 			}
+			// Content-derived id: creating the same rule twice is idempotent.
+			candidate.ID = rules.NewRuleID(candidate.CanonicalParts()...)
 			if validationErrs := rules.ValidateRule("", 0, &candidate); len(validationErrs) > 0 {
 				writeValidationErrors(cmd.ErrOrStderr(), validationErrs)
 				return &ExitError{Code: 1}

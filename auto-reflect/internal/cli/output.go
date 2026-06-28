@@ -24,8 +24,6 @@ func mutationResult(id string, fields map[string]any) map[string]any {
 // and a top-level "id" set to the first id, so single-id consumers keep working
 // while multi-id consumers can read the full set. An empty ids slice yields an
 // empty-string "id".
-//
-//nolint:unused // consolidate's multi-id envelope adopts this in a later 052 phase.
 func mutationResultIDs(ids []string, fields map[string]any) map[string]any {
 	out := make(map[string]any, len(fields)+2)
 	maps.Copy(out, fields)
