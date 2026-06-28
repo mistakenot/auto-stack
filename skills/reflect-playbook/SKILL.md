@@ -33,8 +33,11 @@ Read **only** the reference(s) for the stage you're running. Don't load all four
 This replaces `playbook-observe` / `playbook-refine` / `playbook-search`, which
 wrote hand-rolled YAML (`docs/reflection/observations.yaml`, `rules.yaml`,
 `retrievals.ndjson`) and a hand-maintained `cursors:` ledger via a bundled
-`reflect.py`. **Use this skill instead** for any repo where `auto reflect init`
-has been run. Everything those skills did by hand the tool now owns:
+`reflect.py`. The legacy `docs/reflection/observations.yaml` has been **removed**
+(no migration — the event store is authoritative); a stray run of the old trio
+would regenerate an empty one, so don't run them in a repo on `auto reflect`.
+**Use this skill instead** for any repo where `auto reflect init` has been run.
+Everything those skills did by hand the tool now owns:
 
 | Legacy (yaml + reflect.py) | Now (`auto reflect`) |
 |---|---|
@@ -71,13 +74,21 @@ Creates `.auto/reflect/events/` (append-only canonical log), `.auto/reflect/play
   generalize later.
 - **Default output is JSON.** Thread minted ids between steps with `jq`. Add
   `--format text` only for human reading.
+- **Uniform id envelope.** Every command exposes a top-level `id` regardless of
+  its bespoke payload: mutations carry `.id` (plus `.ids` when several entities
+  are touched, e.g. `consolidate`, `feedback`); collection commands stay arrays
+  but each element carries `.[].id` alongside its descriptive id (`retrieval_id`,
+  `feedback_id`, `observation_id`, `rule_id`, or the `ev-` event id). `jq -r
+  '.id'` / `'.[0].id'` works everywhere — you don't need each command's nesting.
 
 ## Health check (any time)
 
 ```bash
+auto reflect doctor                      # structured state health [{check,status,message,hint}]; non-zero on fail
 auto reflect stats                       # per-rule surfaced/selected/feedback + unconsolidated backlog
 auto reflect miner status                # how much session history is still unmined
 auto reflect events list --type feedback --since 7d   # raw, read-only audit of recent loop signal
+auto reflect gap list --since 7d         # feedback gaps captured during the loop (guidance that was missing)
 ```
 
 ## Typical entry points

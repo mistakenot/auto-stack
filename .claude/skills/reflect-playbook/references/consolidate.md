@@ -37,8 +37,13 @@ auto reflect consolidate - --dry-run <<'JSON'
 JSON
 ```
 
-Drop `--dry-run` to apply. Output is `{ applied, skipped (with reasons), conflicts }`.
-Unknown ops/fields fail fast (the decoder rejects unknown fields).
+Drop `--dry-run` to apply. Output is `{ applied, skipped (with reasons), conflicts }`,
+plus a top-level `.ids` (every applied rule id, in order) and `.id` (the first) so
+you can thread minted ids without walking `applied[]`:
+`auto reflect consolidate - <<<"$DOC" | jq -r '.ids[]'`. Because rule ids are now
+**content-derived**, `--dry-run` yields the same ids as the apply, and re-running an
+identical consolidate is **idempotent** (the existing rule wins). Unknown ops/fields
+fail fast (the decoder rejects unknown fields).
 
 ### Ops
 
@@ -123,6 +128,9 @@ auto reflect rule create \
   --content "Keep passing test logs short so failing E2E tests are easy to debug" \
   --causal-note "noisy passing logs hid the real failure during a debug session" \
   --domain testing --type soft          # --causal-note is required; --lifecycle defaults to draft
+# rule create/edit/promote/retire/graduate all expose the rule id at top-level .id:
+#   RID=$(auto reflect rule create ... | jq -r '.id')
+# and `rule list` rows carry .id plus created_at/updated_at metadata.
 auto reflect rebuild                     # force a refold of playbook.json (it's a disposable cache)
 ```
 

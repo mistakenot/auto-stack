@@ -62,20 +62,36 @@ func TestE2ELoopQuickstart(t *testing.T) {
 	}
 
 	// Close the loop with a complete feedback payload ranking the outstanding fb-id.
+	// Include a grounded gap so `gap list` (below) has something to surface.
 	payload := map[string]any{
 		"outcome": "success",
 		"summary": "shipped the fix",
 		"rankings": []map[string]any{
 			{"feedback_id": feedbackID, "rank": 1, "reason": "told me to keep passing logs short"},
 		},
-		"gap": nil,
+		"gap": map[string]any{
+			"report": "no rule on trimming flaky assertion output",
+			"moment": "while triaging the failing end-to-end test",
+		},
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal feedback payload: %v", err)
 	}
-	if fbStdout, fbStderr, fbErr := runBinary(repo, "feedback", string(raw)); fbErr != nil {
+	fbStdout, fbStderr, fbErr := runBinary(repo, "feedback", string(raw))
+	if fbErr != nil {
 		t.Fatalf("feedback failed: %v\nstdout:\n%s\nstderr:\n%s", fbErr, fbStdout, fbStderr)
+	}
+	// Uniform envelope: feedback echoes the acted-on ids at top-level .id / .ids.
+	var fbResp struct {
+		ID  string   `json:"id"`
+		IDs []string `json:"ids"`
+	}
+	if jerr := json.Unmarshal([]byte(fbStdout), &fbResp); jerr != nil {
+		t.Fatalf("feedback stdout not JSON: %v\nraw:\n%s", jerr, fbStdout)
+	}
+	if fbResp.ID != feedbackID || len(fbResp.IDs) != 1 || fbResp.IDs[0] != feedbackID {
+		t.Fatalf("feedback envelope should echo the acted-on feedback id %q, got id=%q ids=%v", feedbackID, fbResp.ID, fbResp.IDs)
 	}
 
 	// Gate must now be CLEAN (exit 0) after feedback (AC-7).
@@ -135,6 +151,37 @@ func TestE2ELoopQuickstart(t *testing.T) {
 	}
 	if len(statsReport.Rules) != 1 || statsReport.Rules[0]["rule_id"] != ruleID {
 		t.Fatalf("expected stats for rule %s, got %#v", ruleID, statsReport)
+	}
+
+	// gap list surfaces the feedback gap submitted above as one row carrying the
+	// uniform top-level `id` (the ev- feedback event id), session, ts, and the
+	// grounded report/moment (F4/AC-5).
+	gapStdout, gapStderr, gapErr := runBinary(repo, "gap", "list")
+	if gapErr != nil {
+		t.Fatalf("gap list failed: %v\nstdout:\n%s\nstderr:\n%s", gapErr, gapStdout, gapStderr)
+	}
+	var gaps []map[string]any
+	if jerr := json.Unmarshal([]byte(gapStdout), &gaps); jerr != nil {
+		t.Fatalf("gap list stdout not JSON: %v\nraw:\n%s", jerr, gapStdout)
+	}
+	if len(gaps) != 1 {
+		t.Fatalf("expected exactly one feedback gap, got %d: %#v", len(gaps), gaps)
+	}
+	gapRow := gaps[0]
+	requireFields(t, gapRow, "id", "session_id", "ts", "report", "moment")
+	if id, _ := gapRow["id"].(string); !strings.HasPrefix(id, "ev-") {
+		t.Fatalf("gap row id should be the ev- feedback event id, got %q", gapRow["id"])
+	}
+	if gapRow["report"] != "no rule on trimming flaky assertion output" {
+		t.Fatalf("unexpected gap report: %#v", gapRow["report"])
+	}
+	if gapRow["moment"] != "while triaging the failing end-to-end test" {
+		t.Fatalf("unexpected gap moment: %#v", gapRow["moment"])
+	}
+
+	// --domain is fail-fast on gap list (feedback gaps carry no domain).
+	if dStdout, _, dErr := runBinary(repo, "gap", "list", "--domain", "testing"); dErr == nil {
+		t.Fatalf("gap list --domain should fail fast, got success:\n%s", dStdout)
 	}
 }
 
@@ -203,6 +250,7 @@ func e2eCreateRule(t *testing.T, repo string, args ...string) string {
 		t.Fatalf("rule create failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
 	var resp struct {
+		ID   string `json:"id"` // uniform envelope top-level id (AC-4)
 		Rule struct {
 			ID string `json:"id"`
 		} `json:"rule"`
@@ -212,6 +260,9 @@ func e2eCreateRule(t *testing.T, repo string, args ...string) string {
 	}
 	if resp.Rule.ID == "" {
 		t.Fatalf("rule create returned no id\nraw:\n%s", stdout)
+	}
+	if resp.ID != resp.Rule.ID {
+		t.Fatalf("rule create top-level .id %q != .rule.id %q", resp.ID, resp.Rule.ID)
 	}
 	return resp.Rule.ID
 }
@@ -230,8 +281,13 @@ func e2eRetrieve(t *testing.T, repo, intent string) string {
 		t.Fatalf("retrieve returned no results\nraw:\n%s", stdout)
 	}
 	row := results[0]
-	requireFields(t, row, "retrieval_id", "use_when", "rule_type")
-	return row["retrieval_id"].(string)
+	// Uniform envelope: each collection row carries a top-level `id` alongside its
+	// descriptive id, and the two agree.
+	requireFields(t, row, "id", "retrieval_id", "use_when", "rule_type")
+	if row["id"] != row["retrieval_id"] {
+		t.Fatalf("retrieve row .id %v != .retrieval_id %v", row["id"], row["retrieval_id"])
+	}
+	return row["id"].(string)
 }
 
 func e2eSelect(t *testing.T, repo, retrievalID string) string {
@@ -248,8 +304,12 @@ func e2eSelect(t *testing.T, repo, retrievalID string) string {
 		t.Fatalf("select returned no results\nraw:\n%s", stdout)
 	}
 	row := results[0]
-	requireFields(t, row, "feedback_id", "content")
-	return row["feedback_id"].(string)
+	// Uniform envelope: top-level `id` mirrors the descriptive `feedback_id`.
+	requireFields(t, row, "id", "feedback_id", "content")
+	if row["id"] != row["feedback_id"] {
+		t.Fatalf("select row .id %v != .feedback_id %v", row["id"], row["feedback_id"])
+	}
+	return row["id"].(string)
 }
 
 func readShards(t *testing.T, dir string, names []string) string {

@@ -54,7 +54,12 @@ you pick up exactly where you left off — already-acked sessions never reappear
 ## Friction signals (why a session is ranked high)
 
 `miner next` orders by signals that correlate with "something went wrong here and
-there's a lesson in it." Inspect them before committing time:
+there's a lesson in it." The dominant one is **`correction_density`** — user
+corrections (the human telling the agent "no", "wrong", "actually", "fix this",
+…) per 100 user messages, normalized for length. It carries weight **0.4** in the
+score, ahead of tool errors (0.25), failure markers (0.2), and AskUser (0.15), so
+sessions where the human had to course-correct a lot rank highest. Inspect the
+signals before committing time:
 
 ```bash
 auto reflect miner signals <session-id> [<session-id> ...]

@@ -27,6 +27,22 @@ Game scenarios are adversarial environments with clear win conditions. Think cap
 Agent tasks are the open-ended problems that look more like real work. Things like write an incident postmortem, design a clinical trial protocol, construct a formal mathematical proof, draft a cybersecurity incident response plan. These use LLM judges with multi-dimensional rubrics. Describe what you want in natural language and autocontext generates a spec, builds a rubric, and starts the improvement loop.
 The two are complementary. Games give you hard guarantees the harness can't fake - if knowledge accumulation is working, scores go up against real opponents. Agent tasks give you domain flexibility to point the same loop at any problem you can describe.
 
+## Command surface
+
+Run `auto reflect quickstart` for the happy-path loop. Beyond the core
+`observation` / `consolidate` / `rule` / `retrieve` / `select` / `feedback` /
+`gate` / `miner` commands, two read-only diagnostics are available:
+
+- `auto reflect gap list` — list feedback gaps captured during the loop (guidance
+  that should have existed): `[{id (ev-…), session_id, ts, report, moment}]`,
+  newest-first, with `--since/--after/--before`. Feedback gaps carry no domain
+  (distinct from an `observation --kind gap`, which does).
+- `auto reflect doctor` — structured state health check
+  (`[{check,status,message,hint}]`); exits non-zero on any failed check.
+
+All commands share a uniform id envelope: mutations expose top-level `.id`/`.ids`,
+collection rows carry `.[].id` alongside their descriptive ids.
+
 <!-- autodoc: start -->
 ## Documentation Index
 
