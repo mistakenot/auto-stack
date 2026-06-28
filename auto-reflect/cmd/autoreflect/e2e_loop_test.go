@@ -21,6 +21,16 @@ var shardNameShape = regexp.MustCompile(`^.+-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}\.json
 func TestE2ELoopQuickstart(t *testing.T) {
 	repo := initE2ERepo(t)
 
+	// Run the whole loop under a deterministic session id (as a real agent always
+	// would), so selection/feedback share one scope and the feedback event carries
+	// a session_id for `gap list` provenance to surface. Without this the detected
+	// session is whatever the host env happens to expose — present locally, empty
+	// on a clean CI runner — making the gap-row session_id non-deterministic.
+	// AUTO_SESSION_ID is first in events.DetectSessionID precedence, so it wins
+	// over any inherited CLAUDE_*/CODEX_* var.
+	const e2eSessionID = "e2e-loop-session"
+	t.Setenv("AUTO_SESSION_ID", e2eSessionID)
+
 	// Event git-provenance / shard naming needs a resolvable repo; the happy path
 	// exercises the committed-repo case. Seed an initial commit (matching the
 	// legacy TestE2EFeedbackAddList pattern).
@@ -171,6 +181,9 @@ func TestE2ELoopQuickstart(t *testing.T) {
 	requireFields(t, gapRow, "id", "session_id", "ts", "report", "moment")
 	if id, _ := gapRow["id"].(string); !strings.HasPrefix(id, "ev-") {
 		t.Fatalf("gap row id should be the ev- feedback event id, got %q", gapRow["id"])
+	}
+	if gapRow["session_id"] != e2eSessionID {
+		t.Fatalf("gap row session_id should be the loop session %q, got %#v", e2eSessionID, gapRow["session_id"])
 	}
 	if gapRow["report"] != "no rule on trimming flaky assertion output" {
 		t.Fatalf("unexpected gap report: %#v", gapRow["report"])
