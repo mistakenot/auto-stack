@@ -1212,8 +1212,10 @@ func TestSyncTextMode(t *testing.T) {
 	if strings.HasPrefix(strings.TrimSpace(stdout), "{") {
 		t.Fatalf("expected human text, got JSON:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "mode: sync") {
-		t.Fatalf("expected 'mode: sync' in text output, got:\n%s", stdout)
+	// The fresh render writes the authored skill into each target; the human
+	// summary lists what it wrote and names the skill.
+	if !strings.Contains(stdout, "Wrote") || !strings.Contains(stdout, "alpha") {
+		t.Fatalf("expected a 'Wrote ... alpha' summary in text output, got:\n%s", stdout)
 	}
 }
 

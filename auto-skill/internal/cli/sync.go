@@ -115,43 +115,62 @@ func newSyncCmd(resolveEnv envResolver) *cobra.Command {
 	return cmd
 }
 
-// writeSyncText prints a compact human-readable summary of a sync result.
+// writeSyncText prints a human-readable summary of a sync result that makes the
+// outcome unambiguous: which skills advanced upstream (short before→after
+// commits), what was written or pruned, how many targets were already current,
+// and an explicit "nothing to do" line when the tree is already in sync — so a
+// no-op run reads as success rather than silence.
 func writeSyncText(w io.Writer, r *sync.Result) {
-	fmt.Fprintf(w, "mode: %s\n", r.Mode)
+	moves := planMoves(r.Plan)
+	active := planActive(r.Plan)
+
 	if r.Recovered {
-		fmt.Fprintln(w, "recovered a pending sync journal")
+		fmt.Fprintln(w, "Recovered a pending sync journal.")
 	}
+
+	// --check is an offline dry-run gate: report staleness, write nothing.
 	if r.Check {
 		if len(r.Stale) == 0 {
-			fmt.Fprintln(w, "up to date")
-		} else {
-			fmt.Fprintf(w, "stale: %d\n", len(r.Stale))
-			for _, s := range r.Stale {
-				if s.Target != "" {
-					fmt.Fprintf(w, "  ! %s/%s (%s)\n", s.Target, s.Skill, s.Reason)
-				} else {
-					fmt.Fprintf(w, "  ! %s (%s)\n", s.Skill, s.Reason)
-				}
-			}
+			fmt.Fprintf(w, "All %d skill(s) in sync — nothing to render.\n", active)
+			return
 		}
+		fmt.Fprintf(w, "Stale: %d target(s) need rendering:\n", len(r.Stale))
+		for i := range r.Stale {
+			s := &r.Stale[i]
+			fmt.Fprintf(w, "  ! %s (%s)\n", staleLabel(s), s.Reason)
+		}
+		fmt.Fprintln(w, "Run `auto skill sync` to update them.")
 		return
 	}
+
+	if len(moves) > 0 {
+		fmt.Fprintf(w, "Upstream advanced for %d skill(s):\n", len(moves))
+		for _, m := range moves {
+			fmt.Fprintf(w, "  ↑ %s  %s\n", m.Name, m.arrow())
+		}
+	}
 	if len(r.Written) > 0 {
-		fmt.Fprintf(w, "written: %d\n", len(r.Written))
+		fmt.Fprintf(w, "Wrote %d target file(s):\n", len(r.Written))
 		for _, p := range r.Written {
 			fmt.Fprintf(w, "  + %s\n", p)
 		}
 	}
-	if len(r.Skipped) > 0 {
-		fmt.Fprintf(w, "skipped (already up to date): %d\n", len(r.Skipped))
+	if len(r.Pruned) > 0 {
+		fmt.Fprintf(w, "Removed %d orphaned target(s):\n", len(r.Pruned))
+		for _, p := range r.Pruned {
+			fmt.Fprintf(w, "  - %s\n", p)
+		}
 	}
-	if r.ManifestWritten {
-		fmt.Fprintln(w, "manifest written")
+	if len(r.Skipped) > 0 {
+		fmt.Fprintf(w, "Unchanged: %d target(s) already up to date.\n", len(r.Skipped))
 	}
 	if r.LockRewritten {
-		fmt.Fprintln(w, "lock rewritten")
+		fmt.Fprintln(w, "Lock file updated.")
 	}
-	if len(r.Written) == 0 && len(r.Skipped) == 0 {
-		fmt.Fprintln(w, "no skills to render")
+	if r.ManifestWritten {
+		fmt.Fprintln(w, "Manifest written.")
+	}
+	if len(r.Written) == 0 && len(r.Pruned) == 0 {
+		fmt.Fprintf(w, "Nothing to render — everything already in sync (%d target(s) checked).\n", len(r.Skipped))
 	}
 }
