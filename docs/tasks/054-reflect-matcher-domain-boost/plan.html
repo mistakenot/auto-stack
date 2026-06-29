@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>054: reflect-matcher-domain-boost</title>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+  <script type="application/json" id="pd-meta">
+  {"id":"054","name":"reflect-matcher-domain-boost","status":"planning","created":"2026-06-29"}
+  </script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="054: reflect-matcher-domain-boost" status="pending" pr="pending" generated="2026-06-29" next-prompt="/execute-task 054">
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+`auto reflect`'s rule matcher (`auto-reflect/internal/rules/match.go`,
+`MatchRules`) treats the caller's domain guess as a **hard ANY-of exclusion
+gate**: when `--domain` is non-empty, every rule whose `domain` tags don't
+intersect the guess is dropped *before* scoring.
+
+The retrieval-eval experiment (`auto-reflect/experiments/retrieval-eval/`) showed
+this is the matcher's one genuinely dangerous failure mode: on a **wrong or absent
+domain guess, nDCG@10 collapses to 0.000** — the relevant rules are deleted before
+they can be ranked, a silent and unrecoverable miss. A **non-excluding,
+IDF-weighted domain boost** ties the gate's good-guess ranking quality *and*
+removes the catastrophe. The finding was validated by a second-judge reliability
+study (codex + grok, no self-preference, verdict judge-robust). This task ports
+that change — variant **`idf-tag`** — into the shipped Go matcher.
+        </script></md>
+
+        <pd-mermaid caption="Domain handling: today (delete) vs proposed (re-rank)">
+flowchart LR
+  subgraph Today["hard-gate (today)"]
+    A[candidate rules] -->|domain ∉ guess| X[DELETED before scoring]
+    A -->|domain ∈ guess| B[scored + ranked]
+  end
+  subgraph Proposed["idf-tag (proposed)"]
+    C[candidate rules] --> D[all scored]
+    D -->|domain ∈ guess| E["+ Σ IDF(matched tag) boost"]
+    D -->|domain ∉ guess| F[no boost, still surfaced]
+    E --> G[ranked]
+    F --> G
+  end
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- Replace the hard domain-exclusion gate in `MatchRules` with a **non-excluding,
+  IDF-weighted in-domain boost**: a rule gains `Σ IDF(tag)` over the tags in
+  `rule.Domain ∩ domainFilter`, where `IDF(tag) = log(N / df(tag))` over the
+  current rule set. Off-domain rules are never dropped — they simply aren't
+  boosted.
+- **Eliminate the wrong-guess recall-0 failure** while preserving good-guess
+  ranking quality (the experiment shows `idf-tag` ties `hard-gate` on good guesses
+  and recovers wrong-guess nDCG@10 from 0.000 to ~0.23).
+- Leave the rest of the matcher **unchanged**: the lexical `use_when`(+3)/tag(+1)
+  scorer, the score>0 surfacing floor, hard-rule injection, and the lifecycle
+  filter.
+- Keep the retrieval-eval **Go↔Python conformance green** *without touching the
+  frozen v1 `baseline.py`* (decision D-1): pin the Go CLI against
+  `variants[SHIPPED="idf-tag"]`, update the conformance harness + any docs/runner
+  text that still calls `baseline.py` "lockstep with the shipped matcher", and
+  re-run `pytest -m baseline`.
+- Update the Go unit tests in `auto-reflect/internal/rules/` to assert the new
+  non-excluding domain semantics (no off-domain deletion; boost ordering).
+        </script></md>
+      </pd-section>
+      <pd-thread anchor="goals" status="resolved" priority="p2" title="Baseline freeze is contradicted by the goals and affected docs">
+        <pd-comment by="review">D-1 says `baseline.py` is frozen as the v1 hard-gate system of record, and the file-change list omits `baseline.py`, but this Goals bullet says to update `baseline.py` / the conformance reference so it pins against the new matcher. I checked the current files: `baseline.py` still mirrors `match.go`, while `README.md:50-52`, `conformance/run_conformance.py:1-6`, `pyproject.toml:19`, and `src/retrieval_eval/__init__.py:5-6` all describe baseline.py as lockstep with the shipped Go matcher. Please make the goal unambiguous ("leave baseline.py unchanged; pin Go against variants[SHIPPED]") and add the stale conformance docs/runner messages to the file-change plan so D-1 is not accidentally violated.</pd-comment>
+        <pd-comment by="author">Fixed. Rewrote the Goals bullet to be explicit — leave the frozen v1 `baseline.py` untouched, pin the Go CLI against `variants[SHIPPED="idf-tag"]`, and update the stale lockstep wording. Added all four flagged files to the Solution file tree and to Plan phase 4: `README.md`, `conformance/run_conformance.py`, `pyproject.toml`, `src/retrieval_eval/__init__.py`. Good catch — that wording would have nudged an executor into violating D-1.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **The BM25 scorer swap** (`bm25+idf-tag`). Best point-estimate in the experiment
+  and its lead grew under independent judges, but not significance-confirmed at
+  n=53 — a separate, riskier change to the scoring core. Gated behind more
+  statistical power. (See the scope question below.)
+- **Live feedback-loop A/B validation** — whether the offline nDCG gain translates
+  to better agent outcomes is the real test, but it's a separate post-merge effort
+  (offline metrics are a proxy; IIR §8.6).
+- **The query-interface question** (keyword vs bash-hook vs live sidecar),
+  **faceted verb/noun tags**, and **observation-time trigger capture** — all parked
+  future work in the diary / `todo.md`, not this task.
+- The **`select` stage** and **draft-vs-confirmed** surfacing the live loop layers
+  on top of `MatchRules` — untouched here.
+- Re-mining queries or expanding the eval corpus.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Two load-bearing decisions gate the design (raised as questions below). Plus
+assumptions I'm comfortable proceeding on:
+
+- **IDF formula is settled** by the experiment: `Σ IDF(tag)` over `rule.Domain ∩
+  filter`, `IDF(tag)=log(N/df)`. `go` (df 94/120) ≈ 0.24; a df-2 tag ≈ 4.1.
+- **Keep unchanged:** score>0 floor, hard-rule injection (still keyed on
+  `filter || keywords`), lifecycle filter.
+- **MatchScore range:** the additive boost pushes raw scores past the current
+  `4·len(keywords)` normalizer, so `MatchScore` may exceed 1.0. Ranking is
+  unaffected (per-query monotonic). **Assumption to verify in the solution stage:**
+  no caller / `select`-stage threshold depends on `MatchScore` being in [0,1]; if
+  one does, renormalize (e.g. divide by an updated max that includes max boost).
+        </script></md>
+
+        <pd-question id="Q-1" status="answered" priority="p1" for="charlie"
+                     title="Port scope: idf-tag only, or also the BM25 scorer?"
+                     recommendedAnswer="idf-tag only — port just the non-excluding IDF-weighted domain boost; keep the substring scorer; defer BM25 to a separate task gated on more statistical power.">
+          <md><script type="text/plain">
+The experiment produced two candidate ports:
+
+- **`idf-tag`** — replace only the domain gate with the IDF-weighted boost.
+  Validated, judge-robust, low-risk; leaves the scorer untouched.
+- **`bm25+idf-tag`** — also swap the substring scorer for BM25. Best
+  point-estimate on every slice (lead *grew* under independent judges), but **not
+  significance-confirmed** at n=53, and a bigger change to the scoring core.
+
+**Recommended: idf-tag only.** It's the proven, low-risk win and keeps this task
+small. BM25 becomes a follow-up task once we have the statistical power (more
+held-out queries) to confirm the scorer lever.
+          </script></md>
+          <pd-answer by="review">yes save bm25 for later</pd-answer>
+        </pd-question>
+
+        <pd-question id="Q-2" status="answered" priority="p1" for="charlie"
+                     title="Does --domain stop excluding entirely, or keep an opt-in hard-filter mode?"
+                     recommendedAnswer="Pure boost — --domain never excludes anymore; drop the gate outright. No separate hard-filter flag until a concrete need appears (avoids carrying an ambiguous dual-mode flag).">
+          <md><script type="text/plain">
+Removing the gate changes the **observable behavior** of the `--domain` flag (and
+the `domainFilter` arg / `domain_guess`): it stops filtering and becomes a ranking
+boost. Two options:
+
+- **Pure boost (recommended)** — `--domain` only boosts; nothing is ever excluded
+  by domain. Simplest surface; matches the project's "explicit CLI, no ambiguous
+  dual-mode flags" guidance. The wrong-guess catastrophe is fully removed.
+- **Keep an opt-in hard filter** — add a separate flag (e.g. `--domain-strict`)
+  for callers who genuinely want exclusion, leaving `--domain` as a boost.
+
+**Recommended: pure boost, drop the gate.** No evidence any caller needs hard
+domain exclusion; the experiment's whole point is that exclusion is the harmful
+mechanism. Add a strict mode later only if a real need surfaces.
+          </script></md>
+          <pd-answer by="review">drop gate, i think the search user should assume that the classifyer isnt perfect, so be more lax</pd-answer>
+        </pd-question>
+      </pd-section>
+
+      <pd-section id="evidence" title="Evidence &amp; references" summary="Where the recommendation comes from — the frozen experiment artifacts.">
+        <md><script type="text/plain">
+- **Research log:** `auto-reflect/experiments/retrieval-eval/DIARY.md` → "Phase 4
+  results" (the variant bench) and "Second-judge results" (the reliability gate).
+- **Bench output:** `data/results/phase4.json` — `idf-tag` ties `hard-gate` on
+  good guesses (Δ nDCG@10 +0.015, n.s.) and recovers wrong-guess nDCG@10 0.000→0.23.
+- **Reliability:** `data/results/second_judge.json` — binary κ 0.62–0.82 across
+  Claude/codex/grok, no self-preference, variant ordering preserved (Spearman
+  0.83–1.0).
+- **Reference implementation:** the `idf-tag` variant in
+  `src/retrieval_eval/variants.py` (`boost_idf_tag` + `corpus_stats.tag_idf`) is
+  the exact behavior to port; `baseline.py` mirrors today's `match.go`.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+The change has **two independent test harnesses already in place** — this task
+extends them rather than inventing a strategy:
+
+1. **Go unit tests** (`auto-reflect/internal/rules/match_test.go`) — fast, behavioral.
+   Update the exclusion assertions, add boost-ordering + IDF-weighting + dedupe-safety
+   cases. Run with `go test ./...` in `auto-reflect/`.
+2. **Python conformance** (`experiments/retrieval-eval/`, `pytest -m baseline`) — pins
+   the matcher's exact ranking. **`baseline.py` stays FROZEN as the v1 system of
+   record** (hard-gate, never rewritten). `variants.py` is the version registry
+   (`hard-gate`=v1, `idf-tag`=v2, …); add a `SHIPPED="idf-tag"` pointer. The
+   Go-CLI-vs-Python parity test is repointed to pin **`variants[SHIPPED]` == Go CLI**;
+   `test_variant_conformance` keeps asserting `hard-gate == baseline` as the v1
+   self-check. Synthetic fixtures are re-derived against the shipped variant. This is
+   the *faithfulness* gate: it proves the Go port reproduces the validated `idf-tag`
+   variant exactly, while v1 remains intact for A/B against future versions.
+3. **IDF core — data-driven + property-based unit tests** (`internal/rules/idf_test.go`).
+   The `tagIDF`/`domainBoost` math is pure and deterministic, so it gets both: a
+   **table** of hand-computed cases (tiny corpus, known `log(N/df)` values) to pin the
+   exact formula, and **property tests** over randomly generated corpora/filters
+   asserting the invariants (monotonic-in-rarity, IDF≥0, universal-tag⇒0, boost
+   non-negative, empty/disjoint-filter⇒0, boost-monotonic, normalization invariance,
+   duplicate-tag idempotence, and the anti-catastrophe property: a filter never lowers
+   any rule's score). Use stdlib **`testing/quick`** or a seeded-random generator —
+   **no new dependency**.
+4. **Offline evidence (already done, not re-run here):** the variant bench +
+   second-judge gate validated `idf-tag` itself; this task only ports it. Live A/B is
+   explicitly out of scope.
+
+All retrieval-invoking tests must use a **hermetic temp store** (`auto reflect`
+`retrieve` appends an event — never touch the live `.auto/reflect` store).
+        </script></md>
+
+        <pd-decision id="D-1" title="Freeze baseline.py as v1 system-of-record; conformance pins the shipped variant" status="accepted" by="charlie" summary="Don't mutate the v1 reference — repoint conformance at variants[SHIPPED] so every version stays A/B-able against the original.">
+          <md><script type="text/plain">
+**Decision.** `baseline.py` is the immutable v1 (hard-gate) system of record — never
+rewritten. `variants.py` is the single version registry; the shipped matcher is named
+by `SHIPPED` (now `idf-tag`). The Go↔Python parity test pins `variants[SHIPPED]` vs the
+Go CLI; `hard-gate == baseline` stays as the v1 self-consistency check.
+
+**Why.** Preserves the ability to A/B v3/v4/v5 against the original v1 (the bench's whole
+purpose), and the qrels-backed `evaluate.py` already consumes the registry — so new
+versions are comparable for free.
+
+**Alternatives rejected.** (a) *Rewrite baseline.py to idf-tag* — destroys the v1 record.
+(b) *Explicit per-version files (`v1.py`, `v2.py`…)* — forks the version system in two;
+`evaluate.py`/the bench only read `variants.py`, so the files wouldn't be A/B-able without
+re-plumbing. The registry already gives immutable-v1 + add-vN + compare with no duplication.
+
+**Consequences.** `baseline.py` untouched; small change to the conformance harness to read
+`SHIPPED`; fixtures re-derived against the shipped variant rather than hand-coded.
+          </script></md>
+        </pd-decision>
+
+        <pd-mermaid caption="Verification layers">
+flowchart TD
+  U[Go unit tests: match_test.go] --> B[go build ./... + go test ./...]
+  C[Python conformance: pytest -m baseline] --> P[Go CLI == updated baseline.py]
+  P -.proves.-> F["faithful idf-tag port"]
+  U -.proves.-> N["no exclusion + boost ordering + dedupe safe"]
+</pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="Off-domain rules are never excluded" phases="1,3" tests="auto-reflect/internal/rules/match_test.go">
+          <md><script type="text/plain">
+- **Given** a query whose domain filter intersects none of a lexically-matching rule's tags
+- **When** `MatchRules` runs with that filter
+- **Then** the rule is still surfaced (ranked, not dropped) — the wrong-guess recall-0 collapse is gone.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="In-domain rules get an IDF-weighted boost" phases="1,3" tests="auto-reflect/internal/rules/match_test.go,auto-reflect/internal/rules/idf_test.go">
+          <md><script type="text/plain">
+- **Given** two rules with equal lexical score, one carrying a tag in the domain filter and one not
+- **When** `MatchRules` runs with that filter
+- **Then** the in-domain rule ranks strictly higher; and a rule matching a **rare** tag is boosted more than one matching a near-universal tag (`go`), per `IDF=log(N/df)`.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="Faithful idf-tag port (conformance), v1 preserved" phases="1" tests="auto-reflect/experiments/retrieval-eval/tests/test_baseline_conformance.py">
+          <md><script type="text/plain">
+- **Given** the pinned corpus + held-out queries, with `baseline.py` frozen as v1
+- **When** the Go CLI retrieves and `variants[SHIPPED="idf-tag"]` scores the same inputs
+- **Then** their ordered rule-id lists are identical (`pytest -m baseline` green), AND `hard-gate == baseline` still holds (v1 self-check) — so v1 stays A/B-able against this and future versions.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Dedupe gate is unaffected by the boost" phases="2" tests="auto-reflect/internal/consolidate/consolidate_test.go">
+          <md><script type="text/plain">
+- **Given** `DetectDuplicate` checking a use_when against an existing rule of the same domain
+- **When** it runs under the new matcher
+- **Then** it still flags true near-duplicates at the `0.5` threshold and does **not** false-positive from boost-inflated scores (the boost never enters the dedupe scoring path).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="Hard-injection invariant preserved" phases="1,3" tests="auto-reflect/internal/rules/match_test.go">
+          <md><script type="text/plain">
+- **Given** an in-domain hard rule (with or without keyword overlap)
+- **When** `MatchRules` runs with a domain filter
+- **Then** the hard rule is always present in the results (admissibility constraint), exactly as before.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Untouched behaviors stay intact" phases="1,2,3" tests="auto-reflect/internal/rules/match_test.go">
+          <md><script type="text/plain">
+- **Given** the existing matcher contract
+- **When** `MatchRules` runs
+- **Then** lifecycle filtering (stale/enforced never surface; drafts gated by `includeDrafts`), the score>0 surfacing floor, and deterministic tie-break (id ASC) all behave as before; `go build ./...` and the full Go suite pass.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="Docs + flag semantics updated, no drift" phases="4" tests="">
+          <md><script type="text/plain">
+- **Given** the behavior change to `--domain` (filter → boost)
+- **When** the change ships
+- **Then** the `--domain` flag help, the `MatchRules` doc comment, and `self-improving-playbook-retrieval.md` (Phase 1 "filters by domain first") are updated to describe a non-excluding boost — design and code do not drift.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="IDF core satisfies its invariants (data-driven + property)" phases="3" tests="auto-reflect/internal/rules/idf_test.go">
+          <md><script type="text/plain">
+- **Given** `tagIDF` and `domainBoost`
+- **When** exercised by a hand-computed table AND property tests over random corpora/filters
+- **Then** all invariants hold: IDF monotonic in rarity, `IDF ≥ 0`, universal-tag ⇒ `IDF = 0`, boost `≥ 0`, empty/disjoint filter ⇒ `boost = 0`, boost monotonic under added matching tags, case/whitespace/order invariance, duplicate-tag idempotence, and **a filter never lowers any rule's score** (no exclusion). Stdlib `testing/quick`; no new dependency.
+          </script></md>
+        </pd-ac>
+
+      </pd-section>
+      <pd-thread anchor="acceptance-criteria" status="resolved" priority="p1" title="Acceptance criteria have no phase or test traceability">
+        <pd-comment by="review">All eight AC cards currently have `phases="" tests=""`. For HTML task docs the review contract requires each `&lt;pd-ac&gt;` to carry accurate phase and test chips, not placeholders. This blocks checking that every criterion maps to an execution phase and a concrete verification command/test, especially AC-3 and AC-4 where the Go unit tests and Python conformance harness are both load-bearing.</pd-comment>
+        <pd-comment by="author">Resolved. All eight AC cards now carry phase + test chips (backfilled in the Plan stage). AC-3 → P1 / `test_baseline_conformance.py`; AC-4 → P2 / `consolidate_test.go`; AC-8 → P3 / `idf_test.go`; etc. The placeholders were empty only because the Plan tab hadn't been written yet (the planning workflow backfills traceability after the phases exist).</pd-comment>
+      </pd-thread>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **Offline proxy only.** Verification proves the port is *faithful to the validated
+  variant*, not that it improves live agent outcomes — the live feedback-loop A/B is
+  the real test and is out of scope (deferred).
+- **`MatchScore` scale change in the event log.** On the retrieve path the persisted
+  `match_score` may now exceed 1.0 (lexical + raw IDF boost). No current consumer
+  depends on its range there, but any future signal-aggregation over `match_score`
+  values should be aware the scale shifted. (Dedupe, the one [0,1] consumer, is
+  insulated by AC-4.)
+- **Interface-validity caveat.** The `idf-tag` win is validated on *intent-shaped*
+  queries; the matcher serves other (keyword/bash) query shapes whose distribution
+  wasn't tested. `idf-tag` is the most interface-robust finding, so risk is low, but
+  not zero.
+- **BM25 deferred (Q-1).** The higher-upside `bm25+idf-tag` is not in this task; the
+  scorer remains the substring scorer.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Port the validated `idf-tag` variant into `MatchRules`: **delete the domain
+exclusion gate** and **add an IDF-weighted in-domain boost to the raw score**. The
+change is small and local; the bulk of the work is keeping the two non-retrieve
+consumers correct (dedupe's [0,1] threshold) and re-syncing the conformance harness.
+
+**Scale faithfulness (the one subtlety).** The validated variant ranks by
+**raw lexical + raw IDF boost** (`variants.py` keeps scores raw). So the Go code adds
+the raw boost to the raw lexical score *before* normalizing, and normalizes by the
+existing `maxRaw = 4·len(keywords)` (guarded to ≥1). Because `maxRaw` is a per-call
+constant, sorting by the normalized `MatchScore` is order-identical to sorting by the
+raw composite — so the existing sort stays, and the ranking matches the variant
+exactly. `MatchScore` may now exceed 1.0 on the retrieve path (logged to the event,
+used for ordering — no [0,1] consumer there). See decisions D-2, D-3.
+
+Conformance is the acceptance gate: after the Go change, `variants[SHIPPED="idf-tag"]`
+is pinned against the Go CLI (`pytest -m baseline`), proving the port reproduces the
+eval'd variant; `hard-gate == baseline` keeps v1 intact (D-1).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File changes">
+        <pd-files>
+          <pd-file path="auto-reflect/internal/rules/match.go" change="edit">Remove the domain exclusion gate; add `tagIDF` + `domainBoost` helpers; add boost to the raw score; guard `maxRaw`≥1; `import math`; rewrite the doc comment (filter → boost).</pd-file>
+          <pd-file path="auto-reflect/internal/consolidate/consolidate.go" change="edit">Insulate `DetectDuplicate` from the boost: pre-filter the playbook to domain-intersecting rules, then call `MatchRules(..., nil, false)` so no boost fires and the `0.5` threshold on the [0,1] lexical score stays valid (D-2).</pd-file>
+          <pd-file path="auto-reflect/internal/rules/match_test.go" change="edit">Flip the exclusion assertion in `TestMatchDomainFilterIsAnyOfNotAllOf` (off-domain rule now surfaces, unboosted); add tests: no-exclusion under wrong guess, in-domain boost ordering, rare-tag &gt; `go`-tag boost, hard-injection still holds.</pd-file>
+          <pd-file path="auto-reflect/internal/rules/idf_test.go" change="add">Data-driven + property-based tests for the IDF core (`tagIDF`, `domainBoost`): hand-computed `log(N/df)` table + `testing/quick` invariants (monotonic-in-rarity, bounds, insulation, boost monotonicity, normalization invariance, duplicate-tag idempotence, anti-catastrophe). No new dependency.</pd-file>
+          <pd-file path="auto-reflect/internal/consolidate/consolidate_test.go" change="edit">Add/confirm a dedupe-safety test: a near-duplicate use_when still trips the `0.5` gate and the boost does not cause false positives.</pd-file>
+          <pd-file path="auto-reflect/internal/cli/retrieve.go" change="edit">Update `--domain` flag help: "ANY-of filter" → "domain tag(s); ranking boost (non-excluding), repeatable or comma-separated".</pd-file>
+          <pd-file path="auto-reflect/docs/self-improving-playbook-retrieval.md" change="edit">Phase 1: "filters by domain first" → IDF-weighted non-excluding boost; preserve the hard-injection invariant wording.</pd-file>
+          <pd-file path="auto-reflect/experiments/retrieval-eval/src/retrieval_eval/variants.py" change="edit">Add `SHIPPED = "idf-tag"` pointer (the version the Go matcher now ships).</pd-file>
+          <pd-file path="auto-reflect/experiments/retrieval-eval/conformance/harness.py" change="edit">Pin `variants[SHIPPED]` against the Go CLI instead of `baseline.match_rules`.</pd-file>
+          <pd-file path="auto-reflect/experiments/retrieval-eval/conformance/fixtures.py" change="edit">Re-derive the synthetic-fixture expectations against the shipped variant (the two cases that encoded hard-gate exclusion).</pd-file>
+          <pd-file path="auto-reflect/experiments/retrieval-eval/tests/test_baseline_conformance.py" change="edit">Repoint the Go-vs-Python parity assertions at the shipped variant; keep `baseline.py` (v1) frozen and `hard-gate == baseline` as the self-check.</pd-file>
+          <pd-file path="auto-reflect/experiments/retrieval-eval/README.md" change="edit">Update the stale "baseline.py is lockstep with the shipped matcher" wording → baseline.py is frozen v1; conformance pins `variants[SHIPPED]` (D-1).</pd-file>
+          <pd-file path="auto-reflect/experiments/retrieval-eval/conformance/run_conformance.py" change="edit">Update runner messaging that describes baseline.py as the shipped-matcher mirror.</pd-file>
+          <pd-file path="auto-reflect/experiments/retrieval-eval/src/retrieval_eval/__init__.py" change="edit">Fix the module docstring describing baseline.py as lockstep with match.go.</pd-file>
+          <pd-file path="auto-reflect/experiments/retrieval-eval/pyproject.toml" change="edit">Update the comment describing baseline.py's lockstep role.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="code-outline" title="Code outline">
+        <md><script type="text/plain">
+The new helpers (mirror `variants.py` `tag_idf` + `boost_idf_tag`):
+        </script></md>
+        <pd-code lang="go" path="auto-reflect/internal/rules/match.go" caption="IDF table + in-domain boost (new)">
+// tagIDF builds log(N/df) over the rule set's domain-tag vocabulary, so a rare
+// in-domain tag boosts far more than a near-universal one (`go` is on ~78% of rules).
+func tagIDF(rules []Rule) map[string]float64 {
+	n := float64(len(rules))
+	df := map[string]int{}
+	for i := range rules {
+		seen := map[string]struct{}{}
+		for _, d := range rules[i].Domain {
+			t := strings.ToLower(strings.TrimSpace(d))
+			if t == "" {
+				continue
+			}
+			if _, ok := seen[t]; ok {
+				continue // df counts rules, once per tag per rule
+			}
+			seen[t] = struct{}{}
+			df[t]++
+		}
+	}
+	idf := make(map[string]float64, len(df))
+	for t, c := range df {
+		idf[t] = math.Log(n / float64(c))
+	}
+	return idf
+}
+
+// domainBoost = Σ IDF(tag) over rule.Domain ∩ filter. Zero when no filter — so
+// callers that pass no domain (e.g. dedupe) get the pure lexical score.
+func domainBoost(domain, filter []string, idf map[string]float64) float64 {
+	if len(filter) == 0 {
+		return 0
+	}
+	want := map[string]struct{}{}
+	for _, f := range filter {
+		want[strings.ToLower(strings.TrimSpace(f))] = struct{}{}
+	}
+	b := 0.0
+	for _, d := range domain {
+		t := strings.ToLower(strings.TrimSpace(d))
+		if _, ok := want[t]; ok {
+			b += idf[t]
+		}
+	}
+	return b
+}
+        </pd-code>
+
+        <pd-code lang="go" path="auto-reflect/internal/rules/match.go" caption="MatchRules: gate removed, boost added (changed lines)">
+	keywords := NormalizeKeywords(intent)
+	filter := normalizeDomainFilter(domainFilter)
+	idf := tagIDF(rules)
+
+	// Candidates: NO domain exclusion — every surfaceable rule is a candidate.
+	candidates := make([]Rule, 0, len(rules))
+	for i := range rules {
+		if !surfaceableLifecycle(rules[i].Lifecycle, includeDrafts) {
+			continue
+		}
+		candidates = append(candidates, rules[i])
+	}
+
+	maxRaw := float64(4 * len(keywords))
+	if maxRaw == 0 {
+		maxRaw = 1 // keep boost-only ordering meaningful when intent has no keywords
+	}
+	for i := range candidates {
+		raw := scoreRule(&candidates[i], keywords) +
+			domainBoost(candidates[i].Domain, filter, idf)
+		if raw <= 0 {
+			continue
+		}
+		score := raw / maxRaw // monotonic in raw (maxRaw constant per call) ⇒ sort unchanged
+		scored = append(scored, Match{Rule: candidates[i], MatchScore: score})
+		inResults[candidates[i].ID] = len(scored) - 1
+	}
+	// hard-rule injection + sort by MatchScore DESC, id ASC — UNCHANGED.
+        </pd-code>
+
+        <pd-code lang="go" path="auto-reflect/internal/consolidate/consolidate.go" caption="DetectDuplicate: insulate from the boost (D-2)">
+// Pre-filter to domain-intersecting rules (what the old gate did implicitly),
+// then score with NO domain filter so the boost never fires — keeping MatchScore
+// in [0,1] and the DedupeScoreThreshold (0.5) calibration valid.
+candidates := playbook
+if len(domain) > 0 {
+	candidates = candidates[:0:0]
+	for _, r := range playbook {
+		if rules.DomainsIntersect(r.Domain, domain) { // small exported helper, or inline
+			candidates = append(candidates, r)
+		}
+	}
+}
+matches := rules.MatchRules(candidates, useWhen, nil, false)
+        </pd-code>
+        <md><script type="text/plain">
+*(`domainsIntersect` is currently unexported in `rules`; either export a thin
+`DomainsIntersect` or inline the 4-line set check in consolidate — executor's call,
+no behavior difference.)*
+        </script></md>
+      </pd-section>
+
+      <pd-section id="solution-decisions" title="Design decisions">
+        <pd-decision id="D-2" title="Insulate DetectDuplicate from the boost via pre-filter + nil domain" status="accepted" by="author" summary="Dedupe pre-filters to in-domain rules then scores with no domain, so the boost never fires and its 0.5 [0,1] threshold stays valid.">
+          <md><script type="text/plain">
+**Decision.** `DetectDuplicate` pre-filters the playbook to domain-intersecting rules
+(replicating what the old gate did), then calls `MatchRules(candidates, useWhen, nil,
+false)`. With no domain filter, `domainBoost` returns 0, so `MatchScore` stays the pure
+normalized lexical score in [0,1] and `DedupeScoreThreshold = 0.5` remains valid.
+
+**Why.** The domain gate served two callers; dedupe used it for candidate-scoping AND
+relied on the [0,1] score. Removing the gate from `MatchRules` (a retrieval concern)
+must not change dedupe. This keeps dedupe's candidate set and score scale identical to
+today — behavior-preserving.
+
+**Alternatives rejected.** (a) *Pass `nil` without pre-filtering* — dedupes cross-domain,
+a behavior change. (b) *Renormalize the boost into [0,1]* — the boost always fires in
+dedupe (rule's own domain), so it would still shift the baseline and need threshold
+recalibration; fragile. (c) *Add a `boost bool` param to `MatchRules`* — more API surface
+for one caller.
+
+**Consequences.** A ~5-line pre-filter in consolidate; possibly export a thin
+`DomainsIntersect` helper from `rules`.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-3" title="MatchScore = (lexical + raw IDF boost) / maxRaw; may exceed 1.0 on retrieve" status="accepted" by="author" summary="Add the raw boost to the raw lexical score before normalizing; sort stays faithful because maxRaw is a per-call constant.">
+          <md><script type="text/plain">
+**Decision.** Combine `raw lexical + raw IDF boost`, then normalize by `maxRaw =
+max(1, 4·len(keywords))`. Keep sorting by `MatchScore` (DESC, id ASC).
+
+**Why.** The validated `idf-tag` variant ranks by the raw composite. Normalizing by a
+per-call constant is monotonic, so sorting by `MatchScore` is order-identical to sorting
+by the raw composite — the existing sort needs no change and the ranking matches the
+variant exactly. The `maxRaw`≥1 guard preserves boost ordering in the degenerate
+no-keyword case (where the old code surfaced nothing at all).
+
+**Consequences.** On the retrieve path `MatchScore` (persisted to the `retrieval` event)
+can exceed 1.0. No consumer there depends on its range (CLI omits it; ordering is
+relative). The one [0,1] consumer, dedupe, is insulated by D-2. Future signal aggregation
+over `match_score` should note the scale shift (logged in Verification → Known Gaps).
+          </script></md>
+        </pd-decision>
+      </pd-section>
+      <pd-thread anchor="solution-decisions" status="resolved" priority="p1" title="Plan tab is missing">
+        <pd-comment by="review">This HTML task has Requirements, Verification, and Solution tabs only. I checked the source with `rg`: there is no `&lt;pd-tab name=&quot;Plan&quot;&gt;`, `&lt;pd-phase&gt;`, or `&lt;pd-stepper&gt;`. Without the execution sequence, implementers do not have phase ordering, per-phase file lists, build/test commands, or success criteria, and the AC phase chips cannot be filled.</pd-comment>
+        <pd-comment by="author">Resolved. The Plan tab now exists with a 4-phase walking-skeleton stepper (P1 core+conformance retires integration risk; P2 dedupe insulation; P3 matcher+IDF tests; P4 docs), an execution DAG, per-phase file lists + build/test verify commands + commit steps, and a Success Criteria → AC map. The review caught this mid-workflow — the Plan stage simply hadn't run yet.</pd-comment>
+      </pd-thread>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Port the validated `idf-tag` variant into `MatchRules` as a walking skeleton first
+(matcher change + conformance proof it equals the eval'd variant — retiring the one
+real integration risk), then fan out dedupe insulation, exhaustive tests, and docs
+in parallel on top of a proven spine.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-mermaid caption="Phase DAG — P1 is the skeleton; P2–P4 parallelize">
+flowchart LR
+  P1["P1 · core + conformance<br/>(walking skeleton)"] --> P2["P2 · dedupe insulation"]
+  P1 --> P3["P3 · matcher + IDF tests"]
+  P1 --> P4["P4 · docs + flag semantics"]
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-stepper>
+        <pd-phase n="1" title="Core boost + conformance (walking skeleton)" status="todo"
+          files="auto-reflect/internal/rules/match.go,auto-reflect/internal/rules/match_test.go,auto-reflect/experiments/retrieval-eval/src/retrieval_eval/variants.py,auto-reflect/experiments/retrieval-eval/conformance/harness.py,auto-reflect/experiments/retrieval-eval/conformance/fixtures.py,auto-reflect/experiments/retrieval-eval/tests/test_baseline_conformance.py">
+          <md><script type="text/plain">
+The thin end-to-end slice: change the Go matcher AND prove it reproduces the eval'd
+`idf-tag` variant, so the central integration risk ("does my port match the variant?")
+is retired in phase 1.
+
+1. **`match.go`** — `import "math"`; add `tagIDF(rules)` and `domainBoost(domain, filter, idf)` helpers (per Solution code outline); **remove** the domain exclusion (`match.go:76-78`); in the scoring loop set `raw := scoreRule(...) + domainBoost(candidate.Domain, filter, idf)`; guard `maxRaw` to ≥1. Keep injection + sort untouched. **Verify:** `cd auto-reflect && go build ./...`.
+2. **`match_test.go`** — flip the exclusion assertion in `TestMatchDomainFilterIsAnyOfNotAllOf` (off-domain rule now surfaces, unboosted); confirm `TestMatchScoringAndOrdering`'s `0.75` still holds (lexical path unchanged at no-filter). **Verify:** `go test ./internal/rules/...` green.
+3. **Conformance repoint (D-1):** `variants.py` add `SHIPPED = "idf-tag"`; `harness.py` pin `variants[SHIPPED]` vs the Go CLI (not `baseline`); `fixtures.py` re-derive the two exclusion-encoding expectations against the shipped variant; `test_baseline_conformance.py` assert Go CLI == `variants[SHIPPED]`, keep `hard-gate == baseline` as the v1 self-check. **`baseline.py` is NOT touched.** **Verify:** `cd auto-reflect/experiments/retrieval-eval && .venv/bin/python -m pytest -m baseline` green (needs `auto` on PATH).
+4. **Commit:** `feat(054): IDF-weighted non-excluding domain boost in MatchRules + conformance repoint`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Dedupe insulation" status="todo" depends-on="1"
+          files="auto-reflect/internal/consolidate/consolidate.go,auto-reflect/internal/consolidate/consolidate_test.go">
+          <md><script type="text/plain">
+Keep `DetectDuplicate` on the [0,1] scale so its `0.5` threshold stays valid (D-2).
+
+1. **`consolidate.go`** — in `DetectDuplicate`, pre-filter `playbook` to domain-intersecting rules (replicating the old gate), then call `rules.MatchRules(candidates, useWhen, nil, false)` so no boost fires. Export a thin `rules.DomainsIntersect` (or inline the 4-line set check). **Verify:** `go build ./...`.
+2. **`consolidate_test.go`** — add a dedupe-safety test: a near-duplicate `use_when` still trips `0.5`, and an in-domain but lexically-weak rule does NOT false-positive from a boost. **Verify:** `go test ./internal/consolidate/... ./internal/rules/...` green.
+3. **Commit:** `fix(054): insulate DetectDuplicate from the domain boost (preserve 0.5 dedupe gate)`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Matcher + IDF tests (data-driven + property)" status="todo" depends-on="1"
+          files="auto-reflect/internal/rules/match_test.go,auto-reflect/internal/rules/idf_test.go">
+          <md><script type="text/plain">
+Thicken behavioral coverage and pin the IDF core's invariants.
+
+1. **`match_test.go`** — add: no-exclusion under a wrong guess; in-domain boost raises rank; rare-tag boost &gt; `go`-tag boost; hard-injection still always surfaces an in-domain hard rule. **Verify:** `go test ./internal/rules/...`.
+2. **`idf_test.go` (new)** — hand-computed `log(N/df)` table for `tagIDF`/`domainBoost`, plus `testing/quick` property tests: monotonic-in-rarity, `IDF≥0`, universal-tag⇒0, boost≥0, empty/disjoint-filter⇒0, boost monotonic, case/whitespace/order invariance, duplicate-tag idempotence, and the anti-catastrophe property (a filter never lowers any rule's score). **No new dependency.** **Verify:** `go test ./internal/rules/...` green.
+3. **Commit:** `test(054): data-driven + property tests for the IDF core and boost ranking`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="Docs + flag semantics + conformance wording" status="todo" depends-on="1"
+          files="auto-reflect/internal/rules/match.go,auto-reflect/internal/cli/retrieve.go,auto-reflect/docs/self-improving-playbook-retrieval.md,auto-reflect/experiments/retrieval-eval/README.md,auto-reflect/experiments/retrieval-eval/conformance/run_conformance.py,auto-reflect/experiments/retrieval-eval/src/retrieval_eval/__init__.py,auto-reflect/experiments/retrieval-eval/pyproject.toml">
+          <md><script type="text/plain">
+Remove all filter→boost drift (no code-behavior change here).
+
+1. **`match.go`** doc comment + **`retrieve.go`** `--domain` flag help: "ANY-of filter" → non-excluding ranking boost; preserve the hard-injection wording.
+2. **`self-improving-playbook-retrieval.md`** — Phase 1 "filters by domain first" → IDF-weighted non-excluding boost; keep the hard-injection invariant.
+3. **`README.md` / `__init__.py` / `pyproject.toml` / `run_conformance.py`** — fix the stale "baseline.py is lockstep with the shipped matcher" wording → baseline.py frozen v1; conformance pins `variants[SHIPPED]` (D-1). *(Codex P2.)*
+4. **Verify:** `go build ./...`; `pytest -m baseline` still green; doc reads correctly.
+5. **Commit:** `docs(054): describe --domain as a non-excluding boost; fix baseline-lockstep wording`.
+          </script></md>
+        </pd-phase>
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **P1** → AC-1 (no exclusion), AC-3 (faithful port / conformance), AC-5 (hard injection), AC-6 (untouched behaviors).
+- **P2** → AC-4 (dedupe unaffected).
+- **P3** → AC-1, AC-2 (IDF boost), AC-5, AC-6, AC-8 (IDF invariants).
+- **P4** → AC-7 (docs + flag semantics, no drift).
+- All eight ACs pass; `go build ./...` + full Go suite + `pytest -m baseline` green.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+  </pd-doc>
+</body>
+</html>
