@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>055: autowatch-daemon-hardening</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="055: autowatch-daemon-hardening" status="executing" pr="pending" generated="2026-06-29"
+          next-prompt="/commit-task 055">
+
+    <script type="application/json" id="pd-meta">
+    {
+      "id": "055",
+      "name": "autowatch-daemon-hardening",
+      "status": "executing",
+      "created": "2026-06-29"
+    }
+    </script>
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+The autowatch daemon has a 2 GB RSS / 1.7 GB SQLite footprint after 18 hours of uptime. Three root causes were identified by investigation:
+
+1. **worktree_removed spam** — `Clean()` re-queries ALL terminal runs older than 24 h every 60 s tick. For each run with a non-empty `worktree_path`, it calls `removeWorktree()`, which returns nil when the path is already gone — but logs a `worktree_removed` event regardless. Runs are never deleted, so the same runs are reprocessed every tick forever. 1,748,739 of 1,937,502 events (90%) are this single bug.
+2. **No retention** — the events table is INSERT-only with no pruning. The runs table and on-disk run directories (13,508) are never cleaned up. The WAL is never checkpointed.
+3. **No failure backoff** — a broken TaskDef retries every 60 s indefinitely (144 failed `run-etl` runs in 24 h). `trigger_evaluated` events are logged at info level for every Trigger on every tick even when nothing fires (134,917 rows). Config warnings are re-logged every tick (14,466 rows).
+
+The daemon is the backbone for upcoming scheduled automation and needs to be operationally solid before that work proceeds.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **Stop the worktree_removed spam**: fix `Clean()` so it doesn't reprocess already-removed worktrees
+- **Add event retention**: prune events older than a configurable retention period
+- **Add run retention**: prune old run records and their on-disk directories
+- **Checkpoint WAL**: call WAL checkpoint on each tick to bound WAL file growth
+- **Add failure backoff**: per-(Project, TaskDef) exponential backoff so broken tasks don't retry every 60 s
+- **Reduce event noise**: drop `trigger_evaluated` events entirely; stop re-logging config warnings every tick
+- **Multi-tick test coverage**: all bugs are temporal/stateful (manifest only across multiple tick cycles); add integration tests that simulate multiple ticks using the existing `testutil.Env` infra
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- Schema migrations or SQLite version changes — this is pruning and bug fixes only
+- Daemon config schema changes beyond a retention-days setting
+- Stateful property-based testing with `rapid` — deferred to a follow-up task once fixes land
+- Soak/benchmark testing — deferred
+- Live-tier / hot-store monitoring architecture (parked RFC, separate initiative)
+- Changes to the event bus relay or RPC server
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- [x] Single task or split? — Single task; fixes are tightly coupled (all touch daemon tick loop + store) and individually small
+- [ ] Assume event retention default of 7 days is reasonable for a local daemon (configurable via settings)
+- [ ] Assume run directory retention matches event retention (same age threshold)
+- [ ] Assume failure backoff caps at ~1 hour (exponential from 60 s base: 1 min → 2 min → 4 min → … → 64 min cap)
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+All six bugs are **temporal/stateful** — they only manifest across multiple daemon tick cycles. The existing test suite is single-tick and structurally cannot catch them. The test strategy has two layers:
+
+1. **Multi-tick integration tests** (primary) — use the existing `testutil.Env` + `fakeBackend` infra to create a daemon, run N ticks with controlled time progression, and assert on store state (event counts, run records, WAL size). Each AC below maps to one or more multi-tick scenarios.
+2. **Store unit tests** — test the new pruning and checkpoint functions in isolation against a real SQLite DB (no mocks).
+
+All tests use `-race` and run in `go test ./...` alongside the existing suite.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="Test layers">
+flowchart TB
+    MT["Multi-tick integration tests<br/>(daemon + store + gitx)"]
+    SU["Store unit tests<br/>(prune, checkpoint)"]
+    EX["Existing single-tick tests<br/>(dispatch, reap, cancel, concurrency)"]
+    MT --> SU
+    MT --> EX
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-ac id="AC-1" title="Clean() is idempotent across ticks" phases="1" tests="auto-watch/internal/daemon/clean_test.go">
+        <md><script type="text/plain">
+- Given a run with WorktreePath set, completed > 24 h ago, whose worktree directory is already gone
+- When `Tick()` runs 5 consecutive times
+- Then exactly 0 new `worktree_removed` events are logged after the first tick that removed it
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="Events are pruned by retention" phases="2" tests="auto-watch/internal/daemon/clean_test.go,auto-watch/internal/store/store_test.go">
+        <md><script type="text/plain">
+- Given 100 events older than the retention threshold and 10 events within retention
+- When the daemon ticks
+- Then only the 10 recent events remain in the events table
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-3" title="Terminal runs and directories are pruned" phases="2" tests="auto-watch/internal/daemon/clean_test.go,auto-watch/internal/store/store_test.go">
+        <md><script type="text/plain">
+- Given 5 terminal runs older than retention, each with an on-disk run directory
+- When the daemon ticks
+- Then the run records are deleted, the run directories are removed, and active runs are untouched
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-4" title="WAL is checkpointed each tick" phases="1" tests="auto-watch/internal/daemon/clean_test.go">
+        <md><script type="text/plain">
+- Given a daemon with WAL mode enabled and accumulated WAL data
+- When the daemon ticks
+- Then a WAL checkpoint is executed (PRAGMA wal_checkpoint returns non-error)
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="Broken tasks back off exponentially" phases="3" tests="auto-watch/internal/daemon/backoff_test.go">
+        <md><script type="text/plain">
+- Given a TaskDef whose last 3 consecutive runs failed
+- When the daemon evaluates its Trigger on the next tick
+- Then the TaskDef is skipped with a backoff reason, and the backoff interval doubles each consecutive failure up to a cap (~1 hour)
+        </script></md>
+      </pd-ac>
+      <pd-thread anchor="AC-5" status="resolved" priority="p2" title="Backoff formula is off by one">
+        <pd-comment by="review">AC-5 and the open questions describe a base sequence of 1 min, 2 min, 4 min, etc., but Phase 3 later specifies `min(1min * 2^failures, 64min)`. Once `Reap()` increments `consecutiveFailures` to 1, that formula starts at 2 minutes, not 1. Please align the formula and the test expectation, likely `base * 2^(failures-1)` for failures &gt;= 1.</pd-comment>
+        <pd-comment by="author">Fixed. Formula updated to `min(1min * 2^(failures-1), 64min)` in both Fix 5 and Phase 3, giving the intended sequence 1, 2, 4, 8, 16, 32, 64 min.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-6" title="trigger_evaluated events are no longer emitted" phases="3" tests="auto-watch/internal/daemon/noise_test.go">
+        <md><script type="text/plain">
+- Given a daemon with 3 configured Triggers
+- When the daemon runs 10 ticks
+- Then 0 events with type `trigger_evaluated` exist in the events table
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-7" title="Config warnings are not re-logged every tick" phases="3" tests="auto-watch/internal/daemon/noise_test.go">
+        <md><script type="text/plain">
+- Given a Project with an invalid config
+- When the daemon runs 10 ticks
+- Then at most 1 `config_warning` event per distinct warning is logged (not 10)
+        </script></md>
+      </pd-ac>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **No soak/load test**: we don't verify long-running memory stability (deferred to follow-up). The multi-tick tests use 5–10 ticks, not thousands.
+- **No property-based testing**: stateful PBT with `rapid` is deferred until fixes land and the state machine is stable.
+- **Backoff state is in-memory**: daemon restart resets backoff counters. Acceptable for v1 — a persistent backoff ledger is future work if needed.
+- **Retention config not tested at boundary**: we test the default (7 days) but not custom values or edge cases like retention=0.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Six targeted fixes to the daemon tick loop and store, plus multi-tick integration tests. Each fix is small and localised — no new abstractions, no schema migrations.
+
+**Fix 1 — Stop worktree_removed spam**: After `removeWorktree()` succeeds, clear the run's `WorktreePath` field in the DB via a new `Store.ClearRunWorktreePath(id)` method. On subsequent ticks, the empty WorktreePath causes the early-return in `removeWorktree()`, stopping the re-processing loop.
+
+**Fix 2 — Event retention**: Add `Store.PruneEventsOlderThan(cutoff)` — a single `DELETE FROM events WHERE timestamp < ?`. Called from `Clean()` using a 7-day default (configurable).
+
+**Fix 3 — Run retention**: Three-step safe order: (1) `Store.ListTerminalRunsOlderThan(cutoff)` (already exists) returns candidates, (2) `Clean()` calls `os.RemoveAll(run.RuntimeDir)` for each, collecting successfully cleaned IDs, (3) new `Store.DeleteRuns(ctx, ids)` deletes only the rows whose directories were removed. Failed directory removals are skipped and retried next tick.
+
+**Fix 4 — WAL checkpoint**: Add `Store.WALCheckpoint()` — executes `PRAGMA wal_checkpoint(TRUNCATE)`. Called at the end of `Clean()` after pruning, so the checkpoint covers the deletes.
+
+**Fix 5 — Failure backoff**: In-memory `map[string]*backoffState` on the daemon struct, keyed by `projectID:taskID`. In `Reap()`, increment consecutive failure count on failure, reset on success. In both `evaluateTrigger()` and `evaluateFileCreatedTrigger()`, check backoff before dispatching — skip with `task_backoff` log (stderr only, no event) if within the backoff window. Exponential: `min(1min * 2^(failures-1), 64min)` giving the sequence 1, 2, 4, 8, 16, 32, 64 min.
+
+**Fix 6 — Reduce event noise**: Remove all `trigger_evaluated` event logging from `evaluateTrigger()` and `evaluateFileCreatedTrigger()`. Add a `configWarningsSeen map[string]bool` to the daemon struct — only log `config_warning` events on first occurrence per distinct warning key (project ID + message).
+        </script></md>
+      </pd-section>
+      <pd-thread anchor="approach" status="resolved" priority="p2" title="Run pruning order is inconsistent">
+        <pd-comment by="review">Fix 3 says `Clean()` removes run directories first and then deletes DB rows, but Phase 2 defines `PruneTerminalRunsOlderThan` as a `DELETE FROM runs ...` method that returns deleted `RunRecord`s, and then has `Clean()` call `os.RemoveAll` after that. If directory removal fails after the row is deleted, AC-3 loses the cleanup target and cannot retry. Please specify a safe order/API, for example select candidates, remove directories, then delete rows that were successfully cleaned.</pd-comment>
+        <pd-comment by="author">Fixed. Replaced `PruneTerminalRunsOlderThan` with a safe three-step approach: (1) reuse existing `ListTerminalRunsOlderThan` to SELECT candidates, (2) `os.RemoveAll` each dir collecting successes, (3) new `DeleteRuns(ctx, ids)` deletes only cleaned rows. Failed dir removals are skipped and retried next tick.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="approach-diagram" title="Tick lifecycle after fixes">
+        <pd-mermaid caption="Clean() flow after hardening">
+flowchart TD
+    T["Tick()"] --> R["Reap() — update backoff state"]
+    R --> P["tickProject() — dedup config warnings"]
+    P --> E["evaluateTrigger() — check backoff, no trigger_evaluated events"]
+    E --> C["Clean()"]
+    C --> W["removeWorktree() — clear WorktreePath after removal"]
+    W --> PR["Prune terminal runs + directories"]
+    PR --> PE["Prune old events"]
+    PE --> WAL["WAL checkpoint"]
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-files>
+        <pd-file path="auto-watch/internal/store/store.go" change="edit">Add ClearRunWorktreePath, PruneEventsOlderThan, DeleteRuns, WALCheckpoint methods</pd-file>
+        <pd-file path="auto-watch/internal/store/store_test.go" change="edit">Unit tests for new store pruning and checkpoint methods</pd-file>
+        <pd-file path="auto-watch/internal/daemon/daemon.go" change="edit">Fix removeWorktree to clear WorktreePath; update Clean to call pruning + checkpoint; add backoff map + check in evaluateTrigger; remove trigger_evaluated logging; add config warning dedup</pd-file>
+        <pd-file path="auto-watch/internal/daemon/clean_test.go" change="add">Multi-tick integration tests for Clean idempotency, event/run pruning, WAL checkpoint (AC-1 through AC-4)</pd-file>
+        <pd-file path="auto-watch/internal/daemon/backoff_test.go" change="add">Multi-tick integration tests for failure backoff (AC-5)</pd-file>
+        <pd-file path="auto-watch/internal/daemon/noise_test.go" change="add">Multi-tick integration tests for trigger_evaluated removal and config warning dedup (AC-6, AC-7)</pd-file>
+        <pd-file path="auto-watch/internal/cli/ops.go" change="edit">Wire --retention-days flag through autowatch start command to daemon constructor</pd-file>
+      </pd-files>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Delete run records in Clean instead of clearing WorktreePath**: would fix the spam but loses run history before the retention window. Clearing WorktreePath is the minimal fix — retention handles actual deletion later.
+- **Persistent backoff state in SQLite**: more durable but adds schema complexity for a daemon that restarts rarely. In-memory is simpler and restart-resets are acceptable (a restart is itself a manual intervention).
+- **Rate-limit trigger_evaluated instead of removing it**: the v1-solution spec designed this event for every evaluation, but it provides no actionable signal at 134K rows/day. Debug logging to stderr is sufficient if needed.
+- **Per-project retention config**: adds config schema complexity. A single global default is sufficient for v1 — all projects on a single machine share the same storage constraint.
+- **Separate daemon config file**: a new `~/.auto/watch/daemon.json` would be cleaner long-term, but the only setting needed now is retention days. Hardcode with a CLI flag override on `autowatch start` instead.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-1" title="Retention as hardcoded default + CLI flag, not config file" status="accepted" by="agent"
+        summary="7-day hardcoded default with --retention-days flag; no new config file.">
+        <md><script type="text/plain">
+**Context:** Retention needs to be configurable but there's no daemon-level config struct today.
+**Decision:** Hardcode 7 days as the default. Add a `--retention-days` flag to `autowatch start`. No new config file.
+**Alternatives:** New daemon config file at `~/.auto/watch/daemon.json` (cleaner but over-engineered for one setting); per-project retention in ProjectConfig (different projects rarely need different retention on the same machine).
+**Consequences:** If more daemon-level settings are needed later, a config file can be introduced and the flag kept as an override. One setting doesn't justify the scaffolding.
+        </script></md>
+      </pd-decision>
+      <pd-thread anchor="D-1" status="resolved" priority="p2" title="Retention flag is not traced to files or tests">
+        <pd-comment by="review">D-1 and Phase 2 require wiring `--retention-days` through `autowatch start`, but the Solution file list and Phase 2 `files` attribute omit `auto-watch/internal/cli/ops.go` and any CLI test. The current start command defines its flags in `auto-watch/internal/cli/ops.go` lines 34-222, so an implementer following the traceability chips can miss the configurability part of AC-2/AC-3. Please add the CLI file and a small flag-wiring verification, or explicitly make retention non-configurable in this task.</pd-comment>
+        <pd-comment by="author">Added `auto-watch/internal/cli/ops.go` to the Solution file list and Phase 2 files attribute. The flag wiring is a one-line addition to the existing start command — verification is covered by `go build ./...` (compile check) in Phase 2.</pd-comment>
+      </pd-thread>
+
+      <pd-decision id="D-2" title="Backoff keyed by projectID:taskID, not by trigger" status="accepted" by="agent"
+        summary="Backoff tracks the failing task, not the trigger that launched it.">
+        <md><script type="text/plain">
+**Context:** A trigger can launch multiple different tasks. A task can be launched by multiple triggers.
+**Decision:** Key backoff by `projectID:taskID` because the failure is a property of the task, not the trigger. If task X fails, all triggers that would launch task X are suppressed.
+**Alternatives:** Key by trigger ID (simpler but misses the case where two triggers launch the same broken task); key by run resource key (more granular but the resource key is trigger-specific, not task-specific).
+**Consequences:** A task that fails for one trigger's parameters will be suppressed for all triggers. This is conservative and correct — if the task binary is broken, no trigger should keep launching it.
+        </script></md>
+      </pd-decision>
+      <pd-thread anchor="D-2" status="resolved" priority="p1" title="Backoff omits file_created Triggers">
+        <pd-comment by="review">D-2 says all Triggers that would launch the same TaskDef are suppressed, but the approach and Phase 3 only add the backoff check in `evaluateTrigger()`. The current code has a separate `evaluateFileCreatedTrigger()` dispatch path at `auto-watch/internal/daemon/daemon.go` lines 645-825 that also launches TaskDefs, so implementing the plan as written leaves `file_created` Triggers outside the accepted `projectID:taskID` backoff contract. Please either add the same check to both dispatch paths or narrow D-2/AC-5 to cron Triggers only.</pd-comment>
+        <pd-comment by="author">Good catch. Updated Fix 5, Phase 3, and AC-5 to add the backoff check to both `evaluateTrigger()` and `evaluateFileCreatedTrigger()`. The backoff is keyed by task, so it naturally covers both dispatch paths.</pd-comment>
+      </pd-thread>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Three phases, walking-skeleton first: Phase 1 fixes the highest-impact bug (worktree spam, 90% of events) end-to-end through store → daemon → multi-tick test, proving the test pattern. Phase 2 adds retention pruning. Phase 3 adds backoff and noise reduction.
+        </script></md>
+      </pd-section>
+
+      <pd-dag caption="Execution order"></pd-dag>
+
+      <pd-stepper>
+        <pd-phase n="1" title="Walking skeleton: worktree spam fix + WAL checkpoint"
+                  files="auto-watch/internal/store/store.go,auto-watch/internal/store/store_test.go,auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/clean_test.go"
+                  status="todo">
+          <md><script type="text/plain">
+Fixes the 90% bug end-to-end and proves the multi-tick test pattern works.
+
+**Store layer:**
+1. Add `ClearRunWorktreePath(ctx, runID)` — `UPDATE runs SET worktree_path = '' WHERE id = ?`
+2. Add `WALCheckpoint(ctx)` — `PRAGMA wal_checkpoint(TRUNCATE)`
+3. Add `CountEventsByType(ctx, eventType)` — helper for test assertions
+4. Write store unit tests for all three methods
+5. Verify: `go test -race ./internal/store/...` passes
+
+**Daemon layer:**
+6. In `removeWorktree()` (line ~996): after successful `gitx.RemoveWorktree`, call `s.store.ClearRunWorktreePath(ctx, run.ID)` — this prevents re-processing on subsequent ticks
+7. At end of `Clean()`: call `s.store.WALCheckpoint(ctx)` — bounds WAL growth
+8. Verify: `go build ./...` compiles
+
+**Multi-tick test:**
+9. Create `clean_test.go` — `TestCleanWorktreeIdempotent`: set up daemon, create a completed run with WorktreePath, advance time past 24h, call `Tick()` 5 times, assert only 1 `worktree_removed` event total
+10. Add `TestWALCheckpointOnTick`: verify WAL checkpoint is called during tick
+11. Verify: `go test -race ./internal/daemon/...` passes (existing + new tests)
+
+**Commit:** `fix(watch): stop worktree_removed spam + WAL checkpoint`
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Event and run retention pruning"
+                  files="auto-watch/internal/store/store.go,auto-watch/internal/store/store_test.go,auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/clean_test.go,auto-watch/internal/cli/ops.go"
+                  status="todo" depends-on="1">
+          <md><script type="text/plain">
+Adds retention-based pruning for events and terminal runs.
+
+**Store layer:**
+1. Add `PruneEventsOlderThan(ctx, cutoff)` — `DELETE FROM events WHERE timestamp < ?`, returns count deleted
+2. Add `DeleteRuns(ctx, ids)` — `DELETE FROM runs WHERE id IN (?)`, returns count deleted
+3. Write store unit tests: insert N old + M recent events/runs, prune events, assert only M remain; delete runs by ID, assert deleted; assert active runs are untouched
+4. Verify: `go test -race ./internal/store/...` passes
+
+**Daemon layer:**
+5. Add `retentionDays int` field to daemon struct, default 7
+6. In `Clean()`, after worktree processing: call existing `ListTerminalRunsOlderThan(cutoff)` to get candidates, `os.RemoveAll(run.RuntimeDir)` for each (collect successfully cleaned IDs), call new `DeleteRuns(ctx, cleanedIDs)`, then call `PruneEventsOlderThan` with the same cutoff
+7. Move WAL checkpoint call to after pruning (so checkpoint covers the deletes)
+8. Wire `--retention-days` flag through the `autowatch start` command to the daemon constructor
+9. Verify: `go build ./...` compiles
+
+**Multi-tick test:**
+10. Add `TestEventRetentionPrune` to `clean_test.go`: insert events with timestamps spanning the retention window, tick, assert old events are gone and recent ones remain (AC-2)
+11. Add `TestRunRetentionPrune`: create terminal runs with RuntimeDir on disk, tick, assert run records deleted + directories removed + active runs untouched (AC-3)
+12. Verify: `go test -race ./internal/daemon/...` passes
+
+**Commit:** `feat(watch): event and run retention pruning`
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Failure backoff + noise reduction"
+                  files="auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/backoff_test.go,auto-watch/internal/daemon/noise_test.go"
+                  status="todo" depends-on="1">
+          <md><script type="text/plain">
+Adds failure backoff and eliminates event noise. Independent of Phase 2 (both depend only on Phase 1).
+
+**Backoff:**
+1. Define `backoffState` struct: `consecutiveFailures int`, `lastFailure time.Time`
+2. Add `backoff map[string]*backoffState` field to daemon struct (key: `projectID:taskID`)
+3. In `Reap()`: when a run transitions to failed, increment `backoff[key].consecutiveFailures` and set `lastFailure`; when a run succeeds, delete the key (reset)
+4. In both `evaluateTrigger()` and `evaluateFileCreatedTrigger()`: before dispatching, compute backoff window (`min(1min * 2^(failures-1), 64min)` for failures >= 1). If `now < lastFailure + window`, skip dispatch and log to stderr (no event). Add `task_backoff` stderr log with next-eligible time
+5. Verify: `go build ./...` compiles
+
+**Noise reduction:**
+6. In `evaluateTrigger()` and `evaluateFileCreatedTrigger()`: remove all `logEvent("trigger_evaluated", ...)` calls
+7. Add `configWarningsSeen map[string]bool` field to daemon struct
+8. In `Tick()` / `tickProject()` / `logValidationErrors()`: before logging `config_warning`, check `configWarningsSeen[key]` (key = `projectID:message`). Skip if already seen. Mark seen after logging.
+9. Verify: `go build ./...` compiles
+
+**Tests:**
+10. Create `backoff_test.go` — `TestFailureBackoffExponential`: set up daemon with fakeBackend that always fails, run N ticks, assert runs are spaced by exponential intervals, verify backoff caps at 64 min (AC-5)
+11. Add `TestBackoffResetsOnSuccess`: fail 3 times then succeed, assert next dispatch is immediate
+12. Create `noise_test.go` — `TestNoTriggerEvaluatedEvents`: configure 3 triggers, run 10 ticks, assert 0 `trigger_evaluated` events in store (AC-6)
+13. Add `TestConfigWarningDedup`: configure a project with invalid config, run 10 ticks, assert exactly 1 `config_warning` event (AC-7)
+14. Verify: `go test -race ./internal/daemon/...` passes (all tests including existing)
+
+**Commit:** `feat(watch): failure backoff + noise reduction`
+          </script></md>
+        </pd-phase>
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- AC-1 through AC-7 pass
+- `go test -race ./...` passes in `auto-watch/` (existing + new tests)
+- `go build ./...` compiles clean
+- `go vet ./...` reports no issues
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
