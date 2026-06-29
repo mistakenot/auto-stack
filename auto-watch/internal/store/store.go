@@ -91,6 +91,15 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// WALCheckpoint truncates the write-ahead log back into the main database file.
+// Called on each daemon tick to bound unbounded WAL growth.
+func (s *Store) WALCheckpoint(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE);"); err != nil {
+		return fmt.Errorf("wal checkpoint: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) Migrate(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -240,6 +249,16 @@ func (s *Store) MarkRunTerminal(ctx context.Context, id int64, state model.RunSt
 	return nil
 }
 
+// ClearRunWorktreePath blanks a run's worktree_path after its worktree has been
+// removed, so subsequent Clean ticks early-return instead of re-processing the
+// already-removed worktree and re-logging worktree_removed events.
+func (s *Store) ClearRunWorktreePath(ctx context.Context, id int64) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE runs SET worktree_path = '' WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("clear run worktree path: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) UpsertTriggerState(ctx context.Context, state *model.TriggerStateRecord) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO trigger_state (
 		project_id, trigger_id, last_due_minute, last_branch_sha, updated_at
@@ -314,6 +333,16 @@ func (s *Store) InsertEvent(ctx context.Context, input *EventInput) (int64, erro
 		return 0, fmt.Errorf("read event id: %w", err)
 	}
 	return id, nil
+}
+
+// CountEventsByType returns the number of events with the given event_type. It
+// is a small helper used by tests to assert on event-noise behaviour.
+func (s *Store) CountEventsByType(ctx context.Context, eventType string) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE event_type = ?`, eventType).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count events by type: %w", err)
+	}
+	return count, nil
 }
 
 func (s *Store) ListEvents(ctx context.Context, filter *EventFilter) ([]model.EventRecord, error) {

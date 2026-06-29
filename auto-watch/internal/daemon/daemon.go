@@ -434,6 +434,11 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 			return err
 		}
 	}
+	// Checkpoint the WAL each tick to bound its growth. Phase 2 will move this
+	// after retention pruning so the checkpoint also covers the deletes.
+	if err := s.Store.WALCheckpoint(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -990,7 +995,7 @@ func (s *Service) removeWorktree(ctx context.Context, run *model.RunRecord, reas
 	if err := gitx.RemoveWorktree(run.ProjectPath, run.WorktreePath); err != nil {
 		return err
 	}
-	return s.logEvent(ctx, &store.EventInput{
+	if err := s.logEvent(ctx, &store.EventInput{
 		Timestamp: s.Now(),
 		Level:     "info",
 		EventType: "worktree_removed",
@@ -1003,7 +1008,16 @@ func (s *Service) removeWorktree(ctx context.Context, run *model.RunRecord, reas
 			"reason":        reason,
 			"worktree_path": run.WorktreePath,
 		},
-	})
+	}); err != nil {
+		return err
+	}
+	// Clear the now-stale WorktreePath so subsequent Clean ticks early-return
+	// instead of re-removing an already-gone worktree and re-logging the event.
+	if err := s.Store.ClearRunWorktreePath(ctx, run.ID); err != nil {
+		return err
+	}
+	run.WorktreePath = ""
+	return nil
 }
 
 func (s *Service) logValidationErrors(ctx context.Context, now time.Time, projectID, triggerID, taskID, eventType string, errs []model.ValidationError) error {

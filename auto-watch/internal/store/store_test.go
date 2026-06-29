@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -67,6 +68,139 @@ func openTestDB(t *testing.T) *store.Store {
 		t.Fatalf("migrate store: %v", err)
 	}
 	return db
+}
+
+func TestClearRunWorktreePath(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	runID, err := db.ReserveRun(ctx, &store.ReserveRunInput{
+		ProjectID:   "demo",
+		ProjectPath: "/tmp/demo",
+		TriggerID:   "daily",
+		TriggerType: "cron",
+		TaskID:      "review",
+		TaskType:    "claude",
+		ResourceKey: "cron:daily",
+		StartedAt:   time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("reserve run: %v", err)
+	}
+	if err := db.UpdateRunStarted(ctx, runID, &store.RunStartUpdate{
+		SessionName:  "session",
+		WorktreePath: "/tmp/demo/.worktrees/old-run",
+		Branch:       "main",
+	}); err != nil {
+		t.Fatalf("update run started: %v", err)
+	}
+
+	run, err := db.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if run.WorktreePath == "" {
+		t.Fatalf("expected worktree_path set before clear")
+	}
+
+	if err := db.ClearRunWorktreePath(ctx, runID); err != nil {
+		t.Fatalf("clear run worktree path: %v", err)
+	}
+
+	run, err = db.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("get run after clear: %v", err)
+	}
+	if run.WorktreePath != "" {
+		t.Fatalf("expected worktree_path cleared, got %q", run.WorktreePath)
+	}
+}
+
+func TestCountEventsByType(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	insert := func(eventType string) {
+		if _, err := db.InsertEvent(ctx, &store.EventInput{
+			Timestamp: now,
+			Level:     "info",
+			EventType: eventType,
+			Message:   "x",
+		}); err != nil {
+			t.Fatalf("insert %s: %v", eventType, err)
+		}
+	}
+	insert("worktree_removed")
+	insert("worktree_removed")
+	insert("worktree_removed")
+	insert("task_completed")
+
+	count, err := db.CountEventsByType(ctx, "worktree_removed")
+	if err != nil {
+		t.Fatalf("count worktree_removed: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("expected 3 worktree_removed, got %d", count)
+	}
+	count, err = db.CountEventsByType(ctx, "task_completed")
+	if err != nil {
+		t.Fatalf("count task_completed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 task_completed, got %d", count)
+	}
+	count, err = db.CountEventsByType(ctx, "nonexistent")
+	if err != nil {
+		t.Fatalf("count nonexistent: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected 0 nonexistent, got %d", count)
+	}
+}
+
+func TestWALCheckpoint(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "logs.sqlite")
+	db, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	ctx := context.Background()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("migrate store: %v", err)
+	}
+
+	now := time.Now().UTC()
+	for i := range 200 {
+		if _, err := db.InsertEvent(ctx, &store.EventInput{
+			Timestamp: now,
+			Level:     "info",
+			EventType: "filler",
+			Message:   "noise",
+		}); err != nil {
+			t.Fatalf("insert event %d: %v", i, err)
+		}
+	}
+
+	walPath := dbPath + "-wal"
+	before, err := os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("stat wal before checkpoint: %v", err)
+	}
+	if before.Size() == 0 {
+		t.Fatalf("expected WAL to contain data before checkpoint")
+	}
+
+	if err := db.WALCheckpoint(ctx); err != nil {
+		t.Fatalf("wal checkpoint: %v", err)
+	}
+
+	after, err := os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("stat wal after checkpoint: %v", err)
+	}
+	if after.Size() >= before.Size() {
+		t.Fatalf("expected WAL truncated by checkpoint: before=%d after=%d", before.Size(), after.Size())
+	}
 }
 
 func TestFileSnapshotCRUD(t *testing.T) {
