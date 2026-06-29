@@ -1,0 +1,23 @@
+[project]
+name = "retrieval-eval"
+version = "0.1.0"
+description = "Offline IR evaluation harness for auto-reflect playbook retrieval"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+# Statistical analysis (Wilcoxon, bootstrap CIs) — added when the oracle lands.
+analysis = ["numpy>=2.0", "scipy>=1.13"]
+# LLM oracle client(s) for building golden relevance judgments.
+oracle = ["anthropic>=0.40"]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "conformance"]
+testpaths = ["tests"]
+markers = [
+    "baseline: pins the Python baseline to the shipped Go matcher (pass/fail regression, NOT variant evaluation)",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
