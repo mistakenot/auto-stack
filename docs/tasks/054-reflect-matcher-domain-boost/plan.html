@@ -11,7 +11,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="054: reflect-matcher-domain-boost" status="executing" pr="pending" generated="2026-06-29" next-prompt="/execute-task 054">
+  <pd-doc title="054: reflect-matcher-domain-boost" status="complete" pr="pending" generated="2026-06-29" next-prompt="/execute-task 054">
     <pd-tab name="Requirements">
 
       <pd-section id="problem" title="Problem">
@@ -580,7 +580,7 @@ Thicken behavioral coverage and pin the IDF core's invariants.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="Docs + flag semantics + conformance wording" status="todo" depends-on="1"
+        <pd-phase n="4" title="Docs + flag semantics + conformance wording" status="done" depends-on="1"
           files="auto-reflect/internal/rules/match.go,auto-reflect/internal/cli/retrieve.go,auto-reflect/docs/self-improving-playbook-retrieval.md,auto-reflect/experiments/retrieval-eval/README.md,auto-reflect/experiments/retrieval-eval/conformance/run_conformance.py,auto-reflect/experiments/retrieval-eval/src/retrieval_eval/__init__.py,auto-reflect/experiments/retrieval-eval/pyproject.toml">
           <md><script type="text/plain">
 Remove all filter→boost drift (no code-behavior change here).
