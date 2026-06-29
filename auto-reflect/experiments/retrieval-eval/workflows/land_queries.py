@@ -14,7 +14,8 @@ src = sys.argv[1]
 data = json.loads(Path(src).read_text())
 queries = data.get("queries", data) if isinstance(data, dict) else data
 
-OUT_DIR = Path("/home/vscode/src/auto-stack/auto-reflect/experiments/retrieval-eval/data/queries")
+# this file lives at retrieval-eval/workflows/land_queries.py
+OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "queries"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
