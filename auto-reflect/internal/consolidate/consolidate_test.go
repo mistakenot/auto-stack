@@ -3,6 +3,7 @@ package consolidate
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/mistakenot/auto-reflect/internal/events"
@@ -192,6 +193,51 @@ func TestDetectDuplicate(t *testing.T) {
 	}
 	if _, ok := DetectDuplicate(draftbook, "wiring a cobra command flag", []string{"go"}); ok {
 		t.Fatal("draft rules should not trigger dedupe (matched with includeDrafts=false)")
+	}
+}
+
+// TestDetectDuplicateInsulatedFromDomainBoost is the AC-4 regression guard: the
+// Phase-1 IDF domain boost must never enter the dedupe scoring path. The 0.5
+// DedupeScoreThreshold is calibrated to the pure [0,1] lexical scale, so
+// DetectDuplicate pre-filters to in-domain rules then scores with no domain
+// filter — the boost stays out of the score.
+func TestDetectDuplicateInsulatedFromDomainBoost(t *testing.T) {
+	// True positive preserved: a strong use_when overlap against a same-domain rule
+	// still trips the 0.5 gate.
+	pb := []rules.Rule{
+		{ID: "r-aaaaaaaa", UseWhen: "wiring a cobra command flag", Domain: []string{"go", "cli"}, RuleType: rules.RuleTypeSoft, Lifecycle: rules.LifecycleConfirmed},
+	}
+	if dup, ok := DetectDuplicate(pb, "wiring a cobra command flag", []string{"cli"}); !ok || dup.RuleID != "r-aaaaaaaa" {
+		t.Fatalf("strong use_when overlap should still trip the dedupe gate, got %#v ok=%v", dup, ok)
+	}
+
+	// Regression guard: an in-domain but lexically-weak rule must NOT false-positive.
+	// "metrics" is a rare tag (1 of 8 rules → high IDF), so if the boost fired it
+	// would inflate the score past 0.5 even with zero keyword overlap.
+	weak := rules.Rule{ID: "r-00000001", UseWhen: "dashboards and alerting", Domain: []string{"metrics"}, RuleType: rules.RuleTypeSoft, Lifecycle: rules.LifecycleConfirmed}
+	playbook := []rules.Rule{weak}
+	for i := 2; i <= 8; i++ {
+		playbook = append(playbook, rules.Rule{
+			ID:        fmt.Sprintf("r-0000000%d", i),
+			UseWhen:   "unrelated guidance",
+			Domain:    []string{fmt.Sprintf("other-%d", i)},
+			RuleType:  rules.RuleTypeSoft,
+			Lifecycle: rules.LifecycleConfirmed,
+		})
+	}
+
+	// Sanity: passing the domain as a filter (the un-insulated path) lets the boost
+	// alone push the lexically-empty rule at/over 0.5 — exactly the false positive
+	// the insulation must prevent.
+	boosted := rules.MatchRules(playbook, "telemetry", []string{"metrics"}, false)
+	if len(boosted) == 0 || boosted[0].Rule.ID != "r-00000001" || boosted[0].MatchScore < DedupeScoreThreshold {
+		t.Fatalf("expected the boost to push the in-domain rule >= %.2f when domain is a filter, got %#v", DedupeScoreThreshold, boosted)
+	}
+
+	// Insulated path: DetectDuplicate scores with nil domain, so the boost never
+	// fires and the lexically-weak candidate is not flagged.
+	if dup, ok := DetectDuplicate(playbook, "telemetry", []string{"metrics"}); ok {
+		t.Fatalf("in-domain but lexically-weak candidate must not be a duplicate (boost must not enter dedupe), got %#v", dup)
 	}
 }
 

@@ -223,6 +223,14 @@ func scoreRule(r *Rule, keywords []string) float64 {
 	return raw
 }
 
+// DomainsIntersect reports whether any normalized domain tag in domain appears in
+// set. Exported for callers (e.g. consolidate dedupe) that replicate the old
+// domain pre-filter; it mirrors the matcher's internal intersection check exactly
+// (case-insensitive, trimmed).
+func DomainsIntersect(domain, set []string) bool {
+	return domainsIntersect(domain, set)
+}
+
 // domainsIntersect reports whether any normalized domain tag appears in the set.
 func domainsIntersect(domain, set []string) bool {
 	if len(domain) == 0 || len(set) == 0 {
