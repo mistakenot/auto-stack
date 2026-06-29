@@ -9,7 +9,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="053: auto-hook-hints" status="executing" pr="pending" generated="2026-06-28"
+  <pd-doc title="053: auto-hook-hints" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/115" generated="2026-06-28"
           next-prompt="/commit-task 053">
 
     <script type="application/json" id="pd-meta">
@@ -337,7 +337,7 @@ Three-phase vertical build: Phase 1 wires the complete end-to-end path (config l
       <pd-dag caption="Execution order"></pd-dag>
 
       <pd-stepper>
-        <pd-phase n="1" title="Walking skeleton" files="auto-cli/cmd/auto/hints.go,auto-cli/cmd/auto/hints_test.go,auto-cli/cmd/auto/hookscmd.go,auto-cli/go.mod" status="todo">
+        <pd-phase n="1" title="Walking skeleton" files="auto-cli/cmd/auto/hints.go,auto-cli/cmd/auto/hints_test.go,auto-cli/cmd/auto/hookscmd.go,auto-cli/go.mod" status="done">
           <md><script type="text/plain">
 Wire the complete hint path end-to-end with one trigger and one integration test.
 
@@ -362,7 +362,7 @@ Wire the complete hint path end-to-end with one trigger and one integration test
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="Full test coverage + hardening" files="auto-cli/cmd/auto/hints.go,auto-cli/cmd/auto/hints_test.go" status="todo" depends-on="1">
+        <pd-phase n="2" title="Full test coverage + hardening" files="auto-cli/cmd/auto/hints.go,auto-cli/cmd/auto/hints_test.go" status="done" depends-on="1">
           <md><script type="text/plain">
 Comprehensive tests and edge-case handling for all acceptance criteria.
 
@@ -383,7 +383,7 @@ Comprehensive tests and edge-case handling for all acceptance criteria.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Default config + docs" files=".auto/hooks/hooks.yaml" status="todo" depends-on="2">
+        <pd-phase n="3" title="Default config + docs" files=".auto/hooks/hooks.yaml" status="done" depends-on="2">
           <md><script type="text/plain">
 Ship the default config for this project.
 

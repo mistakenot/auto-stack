@@ -113,6 +113,15 @@ func newHooksFireCmd() *cobra.Command {
 			ev := buildBusEvent(agent, raw, registry)
 			ev.Env = hookCtx
 			postBusEvent(watchHookAddr(), ev)
+
+			// Additive: after logging+posting, emit a contextual hint to the agent
+			// if the payload matches a built-in trigger and the project configures
+			// one. Scoped to PostToolUse inside matchAndEmitHint; silent otherwise.
+			root := ev.Worktree
+			if root == "" {
+				root = cwd
+			}
+			matchAndEmitHint(cmd.OutOrStdout(), cmd.ErrOrStderr(), agent, payload, ev, root)
 			return nil
 		},
 	}
