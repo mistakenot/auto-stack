@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -97,30 +98,32 @@ func fmtMsgs(msgs []MessageRecord) string {
 	if len(msgs) == 0 {
 		return "[]"
 	}
-	s := "["
+	var sb strings.Builder
+	sb.WriteString("[")
 	for i, m := range msgs {
 		if i > 0 {
-			s += ", "
+			sb.WriteString(", ")
 		}
-		s += fmt.Sprintf("{id:%s sv:%d del:%d}", m.ID, m.SchemaVersion, m.DeletedAt)
+		sb.WriteString(fmt.Sprintf("{id:%s sv:%d del:%d}", m.ID, m.SchemaVersion, m.DeletedAt))
 	}
-	s += "]"
-	return s
+	sb.WriteString("]")
+	return sb.String()
 }
 
 func fmtSess(sess []SessionRecord) string {
 	if len(sess) == 0 {
 		return "[]"
 	}
-	s := "["
+	var sb strings.Builder
+	sb.WriteString("[")
 	for i, r := range sess {
 		if i > 0 {
-			s += ", "
+			sb.WriteString(", ")
 		}
-		s += fmt.Sprintf("{id:%s sv:%d lma:%d mc:%d del:%d}", r.ID, r.SchemaVersion, r.LastMessageAt, r.MessageCount, r.DeletedAt)
+		sb.WriteString(fmt.Sprintf("{id:%s sv:%d lma:%d mc:%d del:%d}", r.ID, r.SchemaVersion, r.LastMessageAt, r.MessageCount, r.DeletedAt))
 	}
-	s += "]"
-	return s
+	sb.WriteString("]")
+	return sb.String()
 }
 
 // MergeFuncs abstracts the merge implementation to allow testing different strategies.
@@ -272,7 +275,7 @@ func collectTraceFiles(t *testing.T) []string {
 	var files []string
 
 	// Always include testdata/ files (checked in)
-	testdataDir := filepath.Join("testdata")
+	testdataDir := "testdata"
 	entries, err := os.ReadDir(testdataDir)
 	if err != nil {
 		t.Fatalf("reading testdata dir: %v", err)

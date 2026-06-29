@@ -30,10 +30,7 @@ func ResolveMessage(left, right MessageRecord) MessageRecord {
 	if right.SchemaVersion > left.SchemaVersion {
 		winner = right
 	}
-	tombstone := left.DeletedAt
-	if right.DeletedAt > tombstone {
-		tombstone = right.DeletedAt
-	}
+	tombstone := max(right.DeletedAt, left.DeletedAt)
 	winner.DeletedAt = tombstone
 	return winner
 }
@@ -98,10 +95,7 @@ func ResolveSession(left, right SessionRecord) SessionRecord {
 	} else {
 		winner = left
 	}
-	tombstone := left.DeletedAt
-	if right.DeletedAt > tombstone {
-		tombstone = right.DeletedAt
-	}
+	tombstone := max(right.DeletedAt, left.DeletedAt)
 	winner.DeletedAt = tombstone
 	return winner
 }
