@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/mistakenot/auto-search/internal/config"
+	sharedconfig "github.com/mistakenot/auto-shared/config"
 	"github.com/spf13/cobra"
 )
 
@@ -13,6 +14,10 @@ func newInitCmd() *cobra.Command {
 		Short: "Initialize shared and auto search settings",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			hostPath, _, hostCreated, err := sharedconfig.EnsureHost()
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
 			sharedPath, _, sharedCreated, err := config.EnsureSharedSettings()
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
@@ -22,17 +27,24 @@ func newInitCmd() *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Shared settings: %s\n", sharedPath)
-			if sharedCreated {
-				fmt.Fprintln(cmd.OutOrStdout(), "Created shared settings.json.")
+			w := cmd.OutOrStdout()
+			fmt.Fprintf(w, "Host config: %s\n", hostPath)
+			if hostCreated {
+				fmt.Fprintln(w, "Created host.json.")
 			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "Shared settings.json already exists.")
+				fmt.Fprintln(w, "host.json already exists.")
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Search settings: %s\n", searchPath)
-			if searchCreated {
-				fmt.Fprintln(cmd.OutOrStdout(), "Created auto search settings.json.")
+			fmt.Fprintf(w, "Shared settings: %s\n", sharedPath)
+			if sharedCreated {
+				fmt.Fprintln(w, "Created shared settings.json.")
 			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), "Autosearch settings.json already exists.")
+				fmt.Fprintln(w, "Shared settings.json already exists.")
+			}
+			fmt.Fprintf(w, "Search settings: %s\n", searchPath)
+			if searchCreated {
+				fmt.Fprintln(w, "Created auto search settings.json.")
+			} else {
+				fmt.Fprintln(w, "Autosearch settings.json already exists.")
 			}
 			return nil
 		},

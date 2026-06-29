@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	sharedconfig "github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-skill/internal/skill"
 	"github.com/spf13/cobra"
 )
@@ -40,8 +41,13 @@ func newInitCmd(resolveEnv envResolver) *cobra.Command {
 				return &ExitError{Code: 1, Err: errors.New("invalid flags: --commit-targets and --no-commit-targets cannot be combined")}
 			}
 
+			hostPath, _, hostCreated, err := sharedconfig.EnsureHost()
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+
 			if !project {
-				return runGlobalInit(cmd, env, textOutput)
+				return runGlobalInit(cmd, env, hostPath, hostCreated, textOutput)
 			}
 
 			if !yes && !isTerminal() {
@@ -73,6 +79,12 @@ func newInitCmd(resolveEnv envResolver) *cobra.Command {
 			}
 
 			if textOutput {
+				fmt.Fprintf(cmd.OutOrStdout(), "Host config: %s\n", displayPath(hostPath))
+				if hostCreated {
+					fmt.Fprintln(cmd.OutOrStdout(), "  Created.")
+				} else {
+					fmt.Fprintln(cmd.OutOrStdout(), "  Already exists.")
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "skills.yaml: %s\n", displayPath(result.SkillsYAMLPath))
 				if result.SkillsYAMLCreated {
 					fmt.Fprintln(cmd.OutOrStdout(), "  Created.")
@@ -102,6 +114,10 @@ func newInitCmd(resolveEnv envResolver) *cobra.Command {
 
 			payload := map[string]any{
 				"mode": "project",
+				"host": map[string]any{
+					"path":    filepath.ToSlash(hostPath),
+					"created": hostCreated,
+				},
 				"skills_yaml": map[string]any{
 					"path":    filepath.ToSlash(result.SkillsYAMLPath),
 					"created": result.SkillsYAMLCreated,
@@ -133,13 +149,19 @@ func newInitCmd(resolveEnv envResolver) *cobra.Command {
 	return cmd
 }
 
-func runGlobalInit(cmd *cobra.Command, env skill.Env, textOutput bool) error {
+func runGlobalInit(cmd *cobra.Command, env skill.Env, hostPath string, hostCreated, textOutput bool) error {
 	result, err := skill.InitGlobal(env)
 	if err != nil {
 		return &ExitError{Code: 1, Err: err}
 	}
 
 	if textOutput {
+		fmt.Fprintf(cmd.OutOrStdout(), "Host config: %s\n", displayPath(hostPath))
+		if hostCreated {
+			fmt.Fprintln(cmd.OutOrStdout(), "  Created.")
+		} else {
+			fmt.Fprintln(cmd.OutOrStdout(), "  Already exists.")
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Global settings: %s\n", displayPath(result.SettingsPath))
 		if result.SettingsCreated {
 			fmt.Fprintln(cmd.OutOrStdout(), "  Created.")
@@ -154,6 +176,10 @@ func runGlobalInit(cmd *cobra.Command, env skill.Env, textOutput bool) error {
 
 	payload := map[string]any{
 		"mode": "global",
+		"host": map[string]any{
+			"path":    filepath.ToSlash(hostPath),
+			"created": hostCreated,
+		},
 		"global": map[string]any{
 			"path":    filepath.ToSlash(result.SettingsPath),
 			"created": result.SettingsCreated,
