@@ -40,6 +40,39 @@ type Service struct {
 	hub           *bus.Hub
 	workerWG      sync.WaitGroup
 	retentionDays int
+
+	// backoff tracks per-(Project, TaskDef) consecutive failures so a broken
+	// task does not redispatch every tick. Keyed by projectID:taskID. Guarded by
+	// dispatchMu (Reap updates it; the dispatch paths read it).
+	backoff map[string]*backoffState
+	// configWarningsSeen dedups repeated config_warning / validation events so the
+	// same warning is logged once rather than every tick. Guarded by dispatchMu.
+	configWarningsSeen map[string]bool
+}
+
+// backoffState records the failure streak for a single projectID:taskID key.
+type backoffState struct {
+	consecutiveFailures int
+	lastFailure         time.Time
+}
+
+func backoffKey(projectID, taskID string) string {
+	return projectID + ":" + taskID
+}
+
+// backoffWindow returns the suppression window for the given consecutive-failure
+// count: min(1min * 2^(failures-1), 64min), i.e. 1, 2, 4, 8, 16, 32, 64 minutes.
+// A non-positive failure count yields a zero window (dispatch allowed).
+func backoffWindow(failures int) time.Duration {
+	if failures < 1 {
+		return 0
+	}
+	shift := failures - 1
+	const maxShift = 6 // 2^6 = 64 minutes (the cap)
+	if shift > maxShift {
+		shift = maxShift
+	}
+	return time.Minute * time.Duration(int64(1)<<uint(shift))
 }
 
 type Lock struct {
@@ -51,12 +84,14 @@ func New(db *store.Store, backend runner.Backend, output io.Writer, now func() t
 		now = time.Now
 	}
 	return &Service{
-		Store:         db,
-		Backend:       backend,
-		Output:        output,
-		Now:           now,
-		hub:           hub,
-		retentionDays: defaultRetentionDays,
+		Store:              db,
+		Backend:            backend,
+		Output:             output,
+		Now:                now,
+		hub:                hub,
+		retentionDays:      defaultRetentionDays,
+		backoff:            map[string]*backoffState{},
+		configWarningsSeen: map[string]bool{},
 	}
 }
 
@@ -258,6 +293,11 @@ func (s *Service) Tick(ctx context.Context) error {
 
 	for _, project := range projects {
 		if err := s.tickProject(ctx, now, &project); err != nil {
+			// Dedup so the same invalid-config warning is logged once, not every
+			// tick (Phase 3 noise reduction). The error text distinguishes warnings.
+			if s.warningSeen("config_warning:" + project.ID + ":" + err.Error()) {
+				continue
+			}
 			if logErr := s.logEvent(ctx, &store.EventInput{
 				Timestamp: now,
 				Level:     "warn",
@@ -341,6 +381,9 @@ func (s *Service) Reap(ctx context.Context) error {
 			s.dispatchMu.Unlock()
 			return err
 		}
+		// Maintain failure backoff (dispatchMu already held): a failed run extends
+		// the projectID:taskID streak; a successful run clears it.
+		s.recordRunOutcome(run.ProjectID, run.TaskID, state, now)
 		logErr := s.logEvent(ctx, &store.EventInput{
 			Timestamp: now,
 			Level:     level,
@@ -381,6 +424,9 @@ func (s *Service) Reap(ctx context.Context) error {
 			s.dispatchMu.Unlock()
 			return err
 		}
+		// Abandoned pending runs are failures too — extend the backoff streak
+		// (dispatchMu already held).
+		s.recordRunOutcome(run.ProjectID, run.TaskID, model.RunFailed, now)
 		logErr := s.logEvent(ctx, &store.EventInput{
 			Timestamp: now,
 			Level:     "error",
@@ -550,19 +596,8 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 		return err
 	}
 	if !state.LastDueMinute.IsZero() && state.LastDueMinute.Equal(tickMinute) {
-		return s.logEvent(ctx, &store.EventInput{
-			Timestamp: now,
-			Level:     "info",
-			EventType: "trigger_evaluated",
-			ProjectID: projectID,
-			TriggerID: triggerID,
-			Message:   "trigger already processed for this minute",
-			Metadata: map[string]any{
-				"outcome":      "already_processed",
-				"cron":         trigger.When,
-				"resource_key": "cron:" + triggerID,
-			},
-		})
+		// Already processed this minute — no event (Phase 3 noise reduction).
+		return nil
 	}
 	schedule, err := config.ParseCron(trigger.When)
 	if err != nil {
@@ -571,19 +606,8 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 	prev := tickMinuteLocal.Add(-1 * time.Minute)
 	due := schedule.Next(prev).Equal(tickMinuteLocal)
 	if !due {
-		return s.logEvent(ctx, &store.EventInput{
-			Timestamp: now,
-			Level:     "info",
-			EventType: "trigger_evaluated",
-			ProjectID: projectID,
-			TriggerID: triggerID,
-			Message:   "trigger not due",
-			Metadata: map[string]any{
-				"outcome":      "not_due",
-				"cron":         trigger.When,
-				"resource_key": "cron:" + triggerID,
-			},
-		})
+		// Not due this minute — no event (Phase 3 noise reduction).
+		return nil
 	}
 
 	currentSHA := ""
@@ -602,27 +626,18 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 			}); err != nil {
 				return err
 			}
-			return s.logEvent(ctx, &store.EventInput{
-				Timestamp: now,
-				Level:     "info",
-				EventType: "trigger_evaluated",
-				ProjectID: projectID,
-				TriggerID: triggerID,
-				Message:   "branch unchanged",
-				Metadata: map[string]any{
-					"outcome":      "branch_unchanged",
-					"branch":       trigger.OnlyIfBranchChanged,
-					"cron":         trigger.When,
-					"resource_key": "cron:" + triggerID,
-				},
-			})
+			// Branch unchanged — no event (Phase 3 noise reduction).
+			return nil
 		}
 	}
 
-	launched := 0
 	taskIDs := append([]string(nil), trigger.Tasks...)
 	sort.Strings(taskIDs)
 	for _, taskID := range taskIDs {
+		if skip, nextEligible := s.shouldBackoff(projectID, taskID, now); skip {
+			fmt.Fprintf(os.Stderr, "task_backoff project=%s task=%s next_eligible=%s\n", projectID, taskID, nextEligible.Format(time.RFC3339))
+			continue
+		}
 		task := tasks[taskID]
 		_, err := s.Dispatch(ctx, &store.ReserveRunInput{
 			ProjectID:   projectID,
@@ -655,35 +670,16 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 			}
 			return err
 		}
-		launched++
 	}
 
-	if err := s.Store.UpsertTriggerState(ctx, &model.TriggerStateRecord{
+	// Trigger processing produces no event (Phase 3 noise reduction); dispatch,
+	// dedup-skip, and backoff outcomes are observable via task_* events / stderr.
+	return s.Store.UpsertTriggerState(ctx, &model.TriggerStateRecord{
 		ProjectID:     projectID,
 		TriggerID:     triggerID,
 		LastDueMinute: tickMinute,
 		LastBranchSHA: currentSHA,
 		UpdatedAt:     now,
-	}); err != nil {
-		return err
-	}
-	outcome := "launched"
-	if launched == 0 {
-		outcome = "dedup"
-	}
-	return s.logEvent(ctx, &store.EventInput{
-		Timestamp: now,
-		Level:     "info",
-		EventType: "trigger_evaluated",
-		ProjectID: projectID,
-		TriggerID: triggerID,
-		Message:   "trigger processed with outcome " + outcome,
-		Metadata: map[string]any{
-			"outcome":      outcome,
-			"cron":         trigger.When,
-			"resource_key": "cron:" + triggerID,
-			"launched":     launched,
-		},
 	})
 }
 
@@ -777,43 +773,23 @@ func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time,
 	}
 
 	if seeding {
-		return s.logEvent(ctx, &store.EventInput{
-			Timestamp: now,
-			Level:     "info",
-			EventType: "trigger_evaluated",
-			ProjectID: projectID,
-			TriggerID: triggerID,
-			Message:   "file_created trigger seeded baseline snapshot",
-			Metadata: map[string]any{
-				"outcome":      "seeded",
-				"glob":         trigger.Glob,
-				"resource_key": resourceKey,
-				"file_count":   len(currentFiles),
-			},
-		})
+		// Baseline snapshot seeded — no event (Phase 3 noise reduction).
+		return nil
 	}
 
 	if len(newFiles) == 0 {
-		return s.logEvent(ctx, &store.EventInput{
-			Timestamp: now,
-			Level:     "info",
-			EventType: "trigger_evaluated",
-			ProjectID: projectID,
-			TriggerID: triggerID,
-			Message:   "no new files detected",
-			Metadata: map[string]any{
-				"outcome":      "no_new_files",
-				"glob":         trigger.Glob,
-				"resource_key": resourceKey,
-			},
-		})
+		// No new files — no event (Phase 3 noise reduction).
+		return nil
 	}
 
 	// Fire: launch linked tasks.
-	launched := 0
 	taskIDs := append([]string(nil), trigger.Tasks...)
 	sort.Strings(taskIDs)
 	for _, taskID := range taskIDs {
+		if skip, nextEligible := s.shouldBackoff(projectID, taskID, now); skip {
+			fmt.Fprintf(os.Stderr, "task_backoff project=%s task=%s next_eligible=%s\n", projectID, taskID, nextEligible.Format(time.RFC3339))
+			continue
+		}
 		task := tasks[taskID]
 		_, err := s.Dispatch(ctx, &store.ReserveRunInput{
 			ProjectID:   projectID,
@@ -846,28 +822,11 @@ func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time,
 			}
 			return err
 		}
-		launched++
 	}
 
-	outcome := "launched"
-	if launched == 0 {
-		outcome = "dedup"
-	}
-	return s.logEvent(ctx, &store.EventInput{
-		Timestamp: now,
-		Level:     "info",
-		EventType: "trigger_evaluated",
-		ProjectID: projectID,
-		TriggerID: triggerID,
-		Message:   fmt.Sprintf("file_created trigger fired for %d new file(s)", len(newFiles)),
-		Metadata: map[string]any{
-			"outcome":      outcome,
-			"glob":         trigger.Glob,
-			"resource_key": resourceKey,
-			"new_files":    newFiles,
-			"launched":     launched,
-		},
-	})
+	// file_created firing produces no event (Phase 3 noise reduction); dispatch,
+	// dedup-skip, and backoff outcomes are observable via task_* events / stderr.
+	return nil
 }
 
 func (s *Service) startWorker(ctx context.Context, runID int64, task model.TaskDef) error {
@@ -1062,6 +1021,11 @@ func (s *Service) removeWorktree(ctx context.Context, run *model.RunRecord, reas
 
 func (s *Service) logValidationErrors(ctx context.Context, now time.Time, projectID, triggerID, taskID, eventType string, errs []model.ValidationError) error {
 	for _, validationErr := range errs {
+		// Dedup repeated validation warnings so the same problem is logged once
+		// rather than every tick (Phase 3 noise reduction).
+		if s.warningSeen(eventType + ":" + projectID + ":" + triggerID + ":" + taskID + ":" + validationErr.Message) {
+			continue
+		}
 		if err := s.logEvent(ctx, &store.EventInput{
 			Timestamp: now,
 			Level:     "warn",
@@ -1081,6 +1045,57 @@ func (s *Service) logValidationErrors(ctx context.Context, now time.Time, projec
 		}
 	}
 	return nil
+}
+
+// shouldBackoff reports whether dispatch for projectID:taskID must be skipped
+// because the task is within its failure-backoff window, and the time it next
+// becomes eligible. Guarded by dispatchMu so it is consistent with Reap's
+// updates.
+func (s *Service) shouldBackoff(projectID, taskID string, now time.Time) (bool, time.Time) {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	st := s.backoff[backoffKey(projectID, taskID)]
+	if st == nil || st.consecutiveFailures < 1 {
+		return false, time.Time{}
+	}
+	nextEligible := st.lastFailure.Add(backoffWindow(st.consecutiveFailures))
+	if now.Before(nextEligible) {
+		return true, nextEligible
+	}
+	return false, time.Time{}
+}
+
+// recordRunOutcome updates the failure-backoff streak for a run's
+// projectID:taskID when it reaches a terminal state. A failure increments the
+// streak and stamps the failure time; success clears it. The caller MUST hold
+// dispatchMu (Reap already does).
+func (s *Service) recordRunOutcome(projectID, taskID string, state model.RunState, now time.Time) {
+	key := backoffKey(projectID, taskID)
+	if state == model.RunFailed {
+		st := s.backoff[key]
+		if st == nil {
+			st = &backoffState{}
+			s.backoff[key] = st
+		}
+		st.consecutiveFailures++
+		st.lastFailure = now
+		return
+	}
+	delete(s.backoff, key)
+}
+
+// warningSeen reports whether a warning with the given dedup key has already been
+// logged this daemon lifetime, marking it seen on first sight. Guarded by
+// dispatchMu. Used to suppress repeated config_warning / validation noise that
+// would otherwise be re-logged every tick.
+func (s *Service) warningSeen(key string) bool {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+	if s.configWarningsSeen[key] {
+		return true
+	}
+	s.configWarningsSeen[key] = true
+	return false
 }
 
 func (s *Service) logEvent(ctx context.Context, input *store.EventInput) error {
