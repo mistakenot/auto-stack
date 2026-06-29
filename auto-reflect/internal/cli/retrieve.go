@@ -63,7 +63,7 @@ func newRetrieveCmd(application *app.App) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringSliceVar(&domain, "domain", nil, "domain tag(s); ANY-of filter, repeatable or comma-separated")
+	cmd.Flags().StringSliceVar(&domain, "domain", nil, "domain tag(s); ranking boost (non-excluding), repeatable or comma-separated")
 	cmd.Flags().IntVar(&limit, "limit", 0, "maximum rules to surface (0 means all)")
 	cmd.Flags().BoolVar(&noDrafts, "no-drafts", false, "exclude draft rules (drafts are surfaced by default; stale rules are never surfaced)")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")

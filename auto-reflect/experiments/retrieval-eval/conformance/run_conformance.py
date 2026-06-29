@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""BASELINE conformance runner — assert the Python baseline matches the Go CLI.
+"""Conformance runner — pin the Go CLI against the shipped reference variant.
 
-This checks the BASELINE STATE only (does baseline.py reproduce the shipped
-match.go?). It is not a variant evaluation; candidate methods are scored against
-oracle qrels in Phase 4, separately. Exits non-zero on any ranking mismatch.
+This checks parity only: does the Go matcher reproduce `variants[SHIPPED]`
+(`idf-tag`, the non-excluding IDF-weighted boost shipped after task 054)? The
+frozen `baseline.py` is the v1 hard-gate system of record and is NOT the parity
+target here — `hard-gate == baseline` remains a separate v1 self-check
+(`tests/test_variant_conformance.py`). This is not a variant evaluation;
+candidate methods are scored against oracle qrels in Phase 4, separately. Exits
+non-zero on any ranking mismatch.
 
 Usage:
     python conformance/run_conformance.py            # both layers
