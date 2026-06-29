@@ -1,6 +1,9 @@
 package rules
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func softRule(id, useWhen string, domain ...string) Rule {
 	return Rule{ID: id, UseWhen: useWhen, Domain: domain, RuleType: RuleTypeSoft, Lifecycle: LifecycleConfirmed, Version: 1}
@@ -194,5 +197,86 @@ func TestMatchConfirmedAndUnsetLifecycleAlwaysSurface(t *testing.T) {
 	}
 	if _, ok := findMatch(matches, "r-bbbbbbbb"); !ok {
 		t.Fatalf("unset-lifecycle rule should surface (not hidden as draft/stale): %#v", matches)
+	}
+}
+
+// --- Phase 3: boost behavior (AC-1, AC-2, AC-5) ----------------------------
+
+// AC-1: a wrong domain guess that intersects none of a lexically-matching rule's
+// tags must NOT delete it — the wrong-guess recall-0 collapse is gone.
+func TestMatchWrongDomainGuessStillSurfacesLexicalMatch(t *testing.T) {
+	rules := []Rule{
+		softRule("r-aaaaaaaa", "writing flaky e2e tests", "testing"),
+	}
+	// Filter guesses "deploy" — intersects none of the rule's tags — but the rule
+	// matches lexically on "tests". The wrong guess must not exclude it.
+	matches := MatchRules(rules, "tests", []string{"deploy"}, true)
+	if _, ok := findMatch(matches, "r-aaaaaaaa"); !ok {
+		t.Fatalf("wrong domain guess collapsed recall to 0 (rule excluded): %#v", matches)
+	}
+}
+
+// AC-2: of two rules with equal lexical score, the one carrying a tag in the
+// domain filter ranks strictly higher (the in-domain boost lifts it).
+func TestMatchInDomainBoostRaisesRank(t *testing.T) {
+	rules := []Rule{
+		softRule("r-aaaaaaaa", "writing logs", "testing"), // in-domain (filter = testing)
+		softRule("r-bbbbbbbb", "writing logs", "deploy"),  // off-domain, unboosted
+	}
+	// Both use_when "writing logs" → equal lexical score (3+3). Only r-aaaaaaaa is
+	// boosted because its domain intersects the filter.
+	matches := MatchRules(rules, "writing logs", []string{"testing"}, true)
+	a, okA := findMatch(matches, "r-aaaaaaaa")
+	b, okB := findMatch(matches, "r-bbbbbbbb")
+	if !okA || !okB {
+		t.Fatalf("both rules should surface (no exclusion): %#v", matches)
+	}
+	if !(a.MatchScore > b.MatchScore) {
+		t.Fatalf("in-domain rule should score strictly higher: in=%v off=%v", a.MatchScore, b.MatchScore)
+	}
+	if matches[0].Rule.ID != "r-aaaaaaaa" {
+		t.Fatalf("in-domain rule should rank first: %#v", matches)
+	}
+}
+
+// AC-2: a rule matching a rare tag is boosted more than one matching a
+// near-universal tag (`go`), per IDF=log(N/df).
+func TestMatchRareTagBoostBeatsGoTagBoost(t *testing.T) {
+	var rules []Rule
+	// 8 filler rules pin `go` as a near-universal tag (high df ⇒ low IDF). They do
+	// not overlap the intent lexically.
+	for i := range 8 {
+		rules = append(rules, softRule(fmt.Sprintf("r-fill%04d", i), "unrelated filler", "go"))
+	}
+	rules = append(rules,
+		softRule("r-aaaaaaaa", "writing tests", "go"),   // matches the near-universal tag
+		softRule("r-bbbbbbbb", "writing tests", "rare"), // matches the rare tag
+	)
+	// N=10; df(go)=9 ⇒ IDF≈0.105; df(rare)=1 ⇒ IDF≈2.30. Equal lexical (6 each).
+	matches := MatchRules(rules, "writing tests", []string{"go", "rare"}, true)
+	goRule, okGo := findMatch(matches, "r-aaaaaaaa")
+	rareRule, okRare := findMatch(matches, "r-bbbbbbbb")
+	if !okGo || !okRare {
+		t.Fatalf("both test rules should surface: %#v", matches)
+	}
+	if !(rareRule.MatchScore > goRule.MatchScore) {
+		t.Fatalf("rare-tag rule should out-boost the go-tag rule: rare=%v go=%v", rareRule.MatchScore, goRule.MatchScore)
+	}
+}
+
+// AC-5: an in-domain hard rule is always present in the results, with or without
+// keyword overlap (the hard-injection admissibility invariant survives the boost).
+func TestMatchInDomainHardRuleAlwaysSurfaces(t *testing.T) {
+	rules := []Rule{
+		hardRule("r-aaaaaaaa", "totally unrelated guidance", "testing"), // no keyword overlap
+		hardRule("r-bbbbbbbb", "writing tests carefully", "testing"),    // keyword overlap
+	}
+	// --domain testing pins both hard rules regardless of keyword score.
+	matches := MatchRules(rules, "deploying widgets", []string{"testing"}, true)
+	for _, id := range []string{"r-aaaaaaaa", "r-bbbbbbbb"} {
+		m, ok := findMatch(matches, id)
+		if !ok || !m.HardInjected {
+			t.Fatalf("in-domain hard rule %s must always surface (hard_injected): %#v", id, matches)
+		}
 	}
 }
