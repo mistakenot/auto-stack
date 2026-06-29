@@ -80,7 +80,54 @@ alone (this is verified behaviour):**
 A pane whose `.command` is `bash`/a shell is **not** a running agent regardless
 of `.type` — never delegate there.
 
-## 4. Send text to an agent
+## 4. Spin up a new worker when none are available
+
+When `ntm status` shows **no eligible pane** — every agent is busy, on a feature
+branch with a task in flight, or the session only has a `user` shell — add a
+fresh Claude Code pane instead of giving up:
+
+```bash
+ntm add <session> --cc=1 --json
+```
+
+> **Respect the ceiling.** Before adding, count the Claude panes. A session is
+> capped at **6** Claude panes (see [§9](#9-reclaiming-panes-garbage-collection)).
+> If it is already at the ceiling and nothing is eligible, every worker is
+> genuinely busy — report and wait/re-check, do **not** add a seventh pane.
+
+Then bring it online before sending (verified flow):
+
+1. **Re-discover the pane index from `ntm status` — do not trust `ntm add`'s
+   output.** The `new_panes[].index` field in `ntm add --json` is unreliable: it
+   reported `0` while the real new pane was index `1`. Re-query and pick the
+   newly-added Claude pane (the `.command == "claude"` pane that wasn't there
+   before — in practice the highest-index `claude` pane):
+
+   ```bash
+   ntm status <session> --json
+   ```
+
+2. **Wait until it is ready for input.** `.command` flips to `claude` within
+   ~2s, but the TUI is not ready yet. Block on idle:
+
+   ```bash
+   ntm --robot-wait=<session> --wait-until=idle --timeout=60s
+   ```
+
+   It returns when the agent reports `state: WAITING` (ready). If `robot-wait`
+   is unavailable, read the pane and confirm the `❯` input prompt is showing:
+
+   ```bash
+   ntm copy <session>:<index> --last 20 --quiet --output /dev/stdout
+   ```
+
+3. Proceed with `/clear` + send as normal, targeting the new pane explicitly
+   with `--pane=<index>` (not `--smart`).
+
+Add **one** worker per dispatch — never spawn repeatedly in a loop. If `ntm add`
+fails, report the error and stop.
+
+## 5. Send text to an agent
 
 **By pane index — works for every agent type (the universal path):**
 
@@ -129,7 +176,7 @@ with `ack.confirmations[].latency_ms`. This works for **all three** agents,
 including OpenCode (targeted by pane). Use it when you need to confirm the
 message actually landed rather than fire-and-forget.
 
-## 5. Send `/clear` and other slash commands / skills
+## 6. Send `/clear` and other slash commands / skills
 
 A slash command is just text the TUI interprets: send the literal `/command`
 string with `ntm send` and the agent handles it. This is how the delegate-task
@@ -147,7 +194,30 @@ All three accept `/clear`, but the effect and the surrounding quirks differ:
 | **Codex**       | Starts a **new** conversation; prints prior token usage and a `codex resume <id>` line. | `/skills` to list, `/model` to switch; send `/<cmd>` as text. |
 | **OpenCode**    | Returns to the "Ask anything…" splash; context dropped.       | Sent as text; an interactive palette also exists (`ctrl+p`), but for automation send the literal command. |
 
-## 6. Readiness and gotchas
+> **Do NOT reset a pane with in-place process restart.** It is tempting to
+> replace the cooperative `/clear` with an "imperative" restart of the agent
+> process. In this environment (verified on **ntm 1.18.2**, 2026-06-27) all three
+> restart paths are broken and **must not be used to reset a pane for reuse**:
+>
+> - `ntm --robot-smart-restart=<s> --panes=<n>` → `FAILED` with
+>   `can't find window: <n>` — it addresses the flat pane index as a tmux *window*
+>   index. `--hard-kill` fails the same way (`tmux list-panes failed`).
+> - `ntm respawn --panes=<n> --force` → kills the agent, but the relaunched
+>   `claude` **crashes back to a bash shell** (the re-run launch line reuses a
+>   `systemd-run --scope` whose name the exiting process still holds).
+> - `ntm --robot-restart-pane=<s> --panes=<n>` → reports
+>   `success / prompt_sent / process_alive:true` **even though** the agent crashed
+>   to a shell, and sends the `--restart-prompt` **into that shell** where it runs
+>   as a shell command. A silent failure that misroutes the dispatch — strictly
+>   worse than `/clear`.
+>
+> The only reliable way to get a clean-context agent is to **spawn a fresh pane**
+> ([§4](#4-spin-up-a-new-worker-when-none-are-available)) — a new `claude` with
+> empty context and its own scope (verified: a fresh pane answers `NO_CONTEXT` to
+> a prior pane's codeword). Re-verify with that codeword check if a future ntm
+> release claims to fix in-place restart.
+
+## 7. Readiness and gotchas
 
 - **Confirm an agent is actually live before the first send.** Codex can show a
   blocking launch interstitial — e.g. an *"Update available… 1. Update now / 2.
@@ -174,7 +244,7 @@ All three accept `/clear`, but the effect and the surrounding quirks differ:
   --quiet --output /dev/stdout` dumps the last N lines so you can see exactly
   what state the agent is in.
 
-## 7. Headless CLI delegation (Claude, Codex, Grok)
+## 8. Headless CLI delegation (Claude, Codex, Grok)
 
 When you need a second agent to review task docs without an interactive tmux
 pane, invoke the matching CLI headlessly from bash. All three follow the same
@@ -194,3 +264,47 @@ other flags between it and the prompt.
 
 Auth: Claude uses `~/.claude/.credentials.json`; Codex uses `codex login`;
 Grok uses `~/.grok/auth.json` or `XAI_API_KEY`.
+
+## 9. Reclaiming panes (garbage collection)
+
+On-demand workers (§4) accumulate: after a burst of parallel tasks finishes, the
+session is left holding idle Claude panes forever (each is a full `claude`
+process with a ~7.8 GB `MemoryMax`). Reclaim the surplus so the pool shrinks back
+toward a warm floor.
+
+**Policy — shared across delegate, delegate-task, and
+status-report:**
+
+- **Warm floor = 4** — never reap below 4 Claude panes, so the next dispatch
+  reuses one instantly instead of paying spawn + `robot-wait` latency. (The
+  floor is a *don't-shrink-below* line, not a target — panes aren't spawned
+  eagerly to reach it.)
+- **Ceiling = 6** — never let a session exceed 6 Claude panes. At the ceiling
+  with everything busy, dispatch **waits / reports** instead of adding (§4).
+- **GC runs in status-report**, which already inspects every pane.
+
+**A pane is reapable only when it is idle on `main` with no open PR** — exactly
+the dispatch-eligibility check. Never reap a pane that is in progress, stuck,
+completed-with-open-PR, or on a feature branch.
+
+**Mechanism — LIFO-safe scale-down.** `ntm scale <session> --cc=N` reaps the
+**highest-index (newest) panes first** and is **not busy-aware**, so point it
+only at panes already confirmed idle:
+
+1. From `ntm status <session> --json`, count the Claude panes (`cc_total`) and
+   classify each (idle-on-main vs busy / feature-branch / open-PR).
+2. Walk the Claude panes from the **highest index downward** and count the
+   **contiguous run** that are idle-on-main — call it `reapable_top`. Stop at the
+   first busy pane: scale would kill it before reaching idle panes beneath it.
+3. `to_reap = max(0, min(reapable_top, cc_total - 4))`.
+4. If `to_reap > 0`, re-read those top panes to confirm they are *still* idle
+   (guard against one picking up work since step 1), then scale down:
+   ```bash
+   ntm scale <session> --cc=$((cc_total - to_reap)) --force --json
+   ```
+5. Report which panes were reaped and which idle panes were **kept** and why
+   (floor reached, or a busy pane sitting above them).
+
+If a busy pane occupies the highest index, `reapable_top` is 0 and nothing is
+reaped that cycle — idle panes lower in the stack are left alone rather than risk
+killing the busy one. They get reclaimed on a later cycle once the top frees up.

@@ -16,10 +16,16 @@ Dispatch execution to an idle Claude Code pane in a tmux session using `ntm`.
 > Claude Code pane. To discover agents and send to **Codex** or **OpenCode**
 > panes (whose send/clear conventions differ), see
 > [references/delegating-to-agents.md](references/delegating-to-agents.md).
+>
+> **Pool model.** This skill dispatches into the **workers** pool
+> (`<project>--workers`) — worker panes run in worktrees and open PRs, separated
+> by `ntm` label from the `planners` pool that commits to `main`. See
+> [references/ntm-agent-pools.md](references/ntm-agent-pools.md).
 
 ## Input
 
-Task ID (numeric) and optionally a tmux session name (defaults to `$PROJECT--execute`).
+Task ID (numeric) and optionally a tmux session name (defaults to
+`$PROJECT--workers`, formerly `$PROJECT--execute`).
 
 ## Dispatch Workflow
 
@@ -56,7 +62,29 @@ A pane is eligible when **all** of the following are true:
 
 If a candidate is idle but on a feature branch, skip it and report why (e.g. "pane 2 skipped: on branch `task-505` with open PR").
 
-If no panes are eligible, report what each pane is doing and stop. Do not interrupt active work.
+If **no panes are eligible** — all busy, on feature branches, or only a `user`
+shell — **add a fresh worker** instead of stopping. Do not interrupt active work.
+First check the **ceiling**: if the session already has **6** Claude panes (the
+cap) and none are eligible, every worker is genuinely busy — report and stop (or
+wait and re-check); do not add a seventh. Otherwise add one:
+
+```bash
+ntm add $SESSION --cc=1 --json
+```
+
+Then re-query `ntm status $SESSION --json` to find the new pane's index (the
+`add` output's `new_panes[].index` is unreliable — pick the highest-index
+`claude` pane), and wait until it is ready for input:
+
+```bash
+ntm --robot-wait=$SESSION --wait-until=idle --timeout=60s
+```
+
+It returns when the agent reports `state: WAITING`. Set `$PANE` to the new pane.
+A freshly added pane starts on `main`, so it is always eligible. Add **one**
+worker per dispatch; if `ntm add` fails, report and stop. See
+[references/delegating-to-agents.md](references/delegating-to-agents.md#4-spin-up-a-new-worker-when-none-are-available)
+for the full flow.
 
 > **Warning:** A pane sitting in another task's worktree has a stale checkout. If dispatched there, the executor may read outdated task docs before creating its own worktree. Always ensure the target pane is on `main`.
 
@@ -72,10 +100,13 @@ If the task docs are not on `origin/main`, push them first or warn the user.
 
 ### Step 4: Send command
 
-Use `ntm send` with `--smart` to auto-route to the best idle agent (least-loaded strategy):
+If you found an existing idle pane, use `ntm send` with `--smart` to auto-route
+to the best idle agent (least-loaded strategy); if you just added a worker in
+Step 2, target it explicitly with `--pane=$PANE` (not `--smart`):
 
 ```bash
-ntm send $SESSION --smart --cc --json '/clear'
+ntm send $SESSION --smart --cc --json '/clear'       # existing idle pane
+ntm send $SESSION --pane=$PANE --json '/clear'       # freshly added worker
 ```
 
 Wait 5 seconds, then send the execution command and rename:

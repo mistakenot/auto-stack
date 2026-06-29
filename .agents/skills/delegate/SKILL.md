@@ -12,6 +12,10 @@ Send a freeform prompt to an idle coding-agent pane in a tmux session using `ntm
 >
 > For agent discovery, type identification, and send conventions, see
 > [references/delegating-to-agents.md](references/delegating-to-agents.md).
+>
+> Dispatches into the **workers** pool (`<project>--workers`). For the
+> planner/worker pool model and label rules, see
+> [references/ntm-agent-pools.md](references/ntm-agent-pools.md).
 
 ## Input
 
@@ -43,14 +47,38 @@ A pane is eligible when **all** of the following are true:
 
 If a candidate is idle but on a feature branch, skip it and report why (e.g. "pane 2 skipped: on branch `task-505` with open PR").
 
-If no panes are eligible, report what each pane is doing and stop. Do not interrupt active work.
+If **no panes are eligible** — all busy, on feature branches, or only a `user`
+shell — **add a fresh worker** instead of stopping. Do not interrupt active work.
+First check the **ceiling**: if the session already has **6** Claude panes (the
+cap) and none are eligible, every worker is genuinely busy — report and stop (or
+wait and re-check); do not add a seventh. Otherwise add one:
+
+```bash
+ntm add $SESSION --cc=1 --json
+```
+
+Then re-query `ntm status $SESSION --json` to find the new pane's index (the
+`add` output's `new_panes[].index` is unreliable — pick the highest-index
+`claude` pane), and wait until it is ready for input:
+
+```bash
+ntm --robot-wait=$SESSION --wait-until=idle --timeout=60s
+```
+
+It returns when the agent reports `state: WAITING`. Set `$PANE` to the new pane.
+Add **one** worker per dispatch; if `ntm add` fails, report and stop. See
+[references/delegating-to-agents.md](references/delegating-to-agents.md#4-spin-up-a-new-worker-when-none-are-available)
+for the full flow.
 
 ### Step 2: Clear and send
 
-Use `ntm send` with `--smart` to auto-route to the best idle agent:
+If you found an existing idle pane, use `ntm send` with `--smart` to auto-route
+to the best idle agent; if you just added a worker, target it explicitly with
+`--pane=$PANE` (not `--smart`):
 
 ```bash
-ntm send $SESSION --smart --cc --json '/clear'
+ntm send $SESSION --smart --cc --json '/clear'       # existing idle pane
+ntm send $SESSION --pane=$PANE --json '/clear'       # freshly added worker
 ```
 
 Note which pane index was selected from the JSON response. Wait 5 seconds, then send the prompt:

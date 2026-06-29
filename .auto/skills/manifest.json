@@ -10,10 +10,10 @@
       "render_version": "1"
     },
     "assurance-strategist": {
-      "template_hash": "d2edc58e69743beabfbbbdf4aa771cc8fa2aad0e1b58f748bf41f0868e023fad",
+      "template_hash": "d1a17ef6b451849809227d87fbedffefbf0990beff8b7fbe53d55afdc02ed586",
       "replacements": {},
       "file_refs": [],
-      "skill_version": "ae7703e2cd003e989af8beeb1062eb9c3b6adbb921ca87cb638e470f546a2e42",
+      "skill_version": "1d74a812ff1700f33fd114f456cd30a4e4be3be7cbdadb9ea8714ce62836d905",
       "render_version": "1"
     },
     "borrow-from-oss": {
@@ -59,17 +59,17 @@
       "render_version": "1"
     },
     "delegate": {
-      "template_hash": "63269e413813c29166af068386864b3cbc61a485cbe1e2910580f51b8fae2a5b",
+      "template_hash": "49da071efbfe72ec5e239c560c31a5c61d45ae95630fb41bc57cfe5a2cfcffdc",
       "replacements": {},
       "file_refs": [],
-      "skill_version": "cda739bad62e3164cdf7280136289b9fece5c64100da0a9b7ecbd3ec070aa634",
+      "skill_version": "147a705fd63ac747b85d6ce9c23b1cd2e05083b0d075104810961a9d537391a2",
       "render_version": "1"
     },
     "delegate-task": {
-      "template_hash": "b9da496debacfbb8bbb747f5a61c681a27e9a3df61d3d51d42f43125a6a1b63e",
+      "template_hash": "9422435bb69a2565b685532b7b8d9df6def4e53c2200cda49aade982f82a4b45",
       "replacements": {},
       "file_refs": [],
-      "skill_version": "73f76867bd963dbbc98a463910cec7a608c1e925b311a11cf8f6e1312791487c",
+      "skill_version": "31aa5c1f9e036342512d6d5657c509897cefe844b973bb610cc4a3e403830f20",
       "render_version": "1"
     },
     "domain-modelling": {
@@ -118,7 +118,7 @@
       "template_hash": "6caf9d877b7a8aa106da5af3dfe112326896edf6cac0fb85d9c7fa7771c475fa",
       "replacements": {},
       "file_refs": [],
-      "skill_version": "11a309cc566fd64ad8d2f511dcd2d7617fc2abdfb7f2dc40fea6bcaf3bba7307",
+      "skill_version": "a471c7e964a021b3480d4788c265fc6ec26f47043f2b1219ad8ff0f29812430e",
       "render_version": "1"
     },
     "improve-claude-md": {
@@ -290,10 +290,10 @@
       "render_version": "1"
     },
     "status-report": {
-      "template_hash": "2e3220ff4be10ac1d1115b84d6626031d8a1cc9e97ebc8cc473086877f3f5119",
+      "template_hash": "302059d5066b529d520c34d29135611b46a81cc2a97c9fe25b151bce350f8a18",
       "replacements": {},
       "file_refs": [],
-      "skill_version": "c90e52667a10cba8b50e21658afba8467c3dd80a6f80e6948f1fbdb3389a12d3",
+      "skill_version": "7b22dfe0c8231991eec03bbef17ab770273ce0c239921092727653e3f1155dea",
       "render_version": "1"
     },
     "task-feedback-analyser": {
@@ -315,22 +315,22 @@
     "agents": {
       "managed_skills": {
         "address-feedback": "415fbd046aa37f8fad53a1db5be7f90667b3303bae48d69bba7a1d2e6249dd46",
-        "assurance-strategist": "ae7703e2cd003e989af8beeb1062eb9c3b6adbb921ca87cb638e470f546a2e42",
+        "assurance-strategist": "1d74a812ff1700f33fd114f456cd30a4e4be3be7cbdadb9ea8714ce62836d905",
         "borrow-from-oss": "3be3cfdda571aa2dd695578dabce31b918091c1743cdd8fdf9127b8d38f5a258",
         "cass": "b323f02f084f3af2e6d2f24929583fb42e523dfae5658280f5cf7db9ae10bec4",
         "code-review": "6e77e9a99e86e6b77b4510d00627c26bd81fb186cfe22021f11cb12781d4bc72",
         "commit-task": "9d0a5ecba9cc19669ee92558c07153a94b3f0d0eee0e8cea50c6b401782bb800",
         "complete-task": "a4d21dc22ddb56b2cab315f692feb3f8aea8cb1a05b09ec1f90f7851f1036ec3",
         "contextual-commit": "3a99adfc03d77f6bd188f2d85c2a7867be2a385931f31ca03227801b0020da29",
-        "delegate": "cda739bad62e3164cdf7280136289b9fece5c64100da0a9b7ecbd3ec070aa634",
-        "delegate-task": "73f76867bd963dbbc98a463910cec7a608c1e925b311a11cf8f6e1312791487c",
+        "delegate": "147a705fd63ac747b85d6ce9c23b1cd2e05083b0d075104810961a9d537391a2",
+        "delegate-task": "31aa5c1f9e036342512d6d5657c509897cefe844b973bb610cc4a3e403830f20",
         "domain-modelling": "9013bcfed5abd6d32fba5fb0cdba297602d8afb82cb5e14506b48678f87603f8",
         "execute-task": "26ebabea334f5ba2bccbb870d1b807c8504e3b329cf52e07b4bd76e997002ff2",
         "experiment-designer": "359a69773e52993e6b96ac3b1d3cc1a5ab08757864f8a9f5929c096912474b61",
         "fan-out-user-simulation": "79e097a4c022aacb366989c30414fae88834e21d7ad0c9901c39ff4aaa884709",
         "frontend-design": "60d34deae5c01b2b88eb033a2c691c15162b7b1bc4c5c936bd02af9c8045d9c8",
         "generate-10-ideas": "86f06f47c77cc7fa813f6da24b8e219f1f82cd3cfb875b7ee89d2ca3d275af68",
-        "grill-me": "11a309cc566fd64ad8d2f511dcd2d7617fc2abdfb7f2dc40fea6bcaf3bba7307",
+        "grill-me": "a471c7e964a021b3480d4788c265fc6ec26f47043f2b1219ad8ff0f29812430e",
         "improve-claude-md": "36fc2ed490796c58f4eb828dc7fbb97759b2f52c86ec3058415d94d64ac08698",
         "learning-diary": "562de1c03280fc192012f69eabf7010d156c06847b6859cbd7804031531fe6d7",
         "new-epic": "b8eec11b66fc041a293a1c391aa1248738d4e7c39fd01b157b109434a29400aa",
@@ -355,7 +355,7 @@
         "review-task": "1aad6f007f4145eb934447cf4061eddf9e1b78d1a4a8b55292b2f8fa4d86685c",
         "self-improve": "381efd628be83365780ff22ecebe56269238a0bc8c469c2fe9d85dc5a83295cc",
         "skill-reviewer": "d0f30430f598da6e73384ff7b6304a4216899d110611ad9055e2d2d2811eb96b",
-        "status-report": "c90e52667a10cba8b50e21658afba8467c3dd80a6f80e6948f1fbdb3389a12d3",
+        "status-report": "7b22dfe0c8231991eec03bbef17ab770273ce0c239921092727653e3f1155dea",
         "task-feedback-analyser": "c20d97a56c7b1d23cb9f7993d81e81804e0e86d081192bc4581ae3580ecdc206",
         "tech-spike": "1cb07d5004de3966851ed99fa8c74fc81bab28a289abf21e4bdeb72409b56182"
       }
@@ -363,22 +363,22 @@
     "claude": {
       "managed_skills": {
         "address-feedback": "415fbd046aa37f8fad53a1db5be7f90667b3303bae48d69bba7a1d2e6249dd46",
-        "assurance-strategist": "ae7703e2cd003e989af8beeb1062eb9c3b6adbb921ca87cb638e470f546a2e42",
+        "assurance-strategist": "1d74a812ff1700f33fd114f456cd30a4e4be3be7cbdadb9ea8714ce62836d905",
         "borrow-from-oss": "3be3cfdda571aa2dd695578dabce31b918091c1743cdd8fdf9127b8d38f5a258",
         "cass": "b323f02f084f3af2e6d2f24929583fb42e523dfae5658280f5cf7db9ae10bec4",
         "code-review": "6e77e9a99e86e6b77b4510d00627c26bd81fb186cfe22021f11cb12781d4bc72",
         "commit-task": "9d0a5ecba9cc19669ee92558c07153a94b3f0d0eee0e8cea50c6b401782bb800",
         "complete-task": "a4d21dc22ddb56b2cab315f692feb3f8aea8cb1a05b09ec1f90f7851f1036ec3",
         "contextual-commit": "3a99adfc03d77f6bd188f2d85c2a7867be2a385931f31ca03227801b0020da29",
-        "delegate": "cda739bad62e3164cdf7280136289b9fece5c64100da0a9b7ecbd3ec070aa634",
-        "delegate-task": "73f76867bd963dbbc98a463910cec7a608c1e925b311a11cf8f6e1312791487c",
+        "delegate": "147a705fd63ac747b85d6ce9c23b1cd2e05083b0d075104810961a9d537391a2",
+        "delegate-task": "31aa5c1f9e036342512d6d5657c509897cefe844b973bb610cc4a3e403830f20",
         "domain-modelling": "9013bcfed5abd6d32fba5fb0cdba297602d8afb82cb5e14506b48678f87603f8",
         "execute-task": "26ebabea334f5ba2bccbb870d1b807c8504e3b329cf52e07b4bd76e997002ff2",
         "experiment-designer": "359a69773e52993e6b96ac3b1d3cc1a5ab08757864f8a9f5929c096912474b61",
         "fan-out-user-simulation": "79e097a4c022aacb366989c30414fae88834e21d7ad0c9901c39ff4aaa884709",
         "frontend-design": "60d34deae5c01b2b88eb033a2c691c15162b7b1bc4c5c936bd02af9c8045d9c8",
         "generate-10-ideas": "86f06f47c77cc7fa813f6da24b8e219f1f82cd3cfb875b7ee89d2ca3d275af68",
-        "grill-me": "11a309cc566fd64ad8d2f511dcd2d7617fc2abdfb7f2dc40fea6bcaf3bba7307",
+        "grill-me": "a471c7e964a021b3480d4788c265fc6ec26f47043f2b1219ad8ff0f29812430e",
         "improve-claude-md": "36fc2ed490796c58f4eb828dc7fbb97759b2f52c86ec3058415d94d64ac08698",
         "learning-diary": "562de1c03280fc192012f69eabf7010d156c06847b6859cbd7804031531fe6d7",
         "new-epic": "b8eec11b66fc041a293a1c391aa1248738d4e7c39fd01b157b109434a29400aa",
@@ -403,7 +403,7 @@
         "review-task": "1aad6f007f4145eb934447cf4061eddf9e1b78d1a4a8b55292b2f8fa4d86685c",
         "self-improve": "381efd628be83365780ff22ecebe56269238a0bc8c469c2fe9d85dc5a83295cc",
         "skill-reviewer": "d0f30430f598da6e73384ff7b6304a4216899d110611ad9055e2d2d2811eb96b",
-        "status-report": "c90e52667a10cba8b50e21658afba8467c3dd80a6f80e6948f1fbdb3389a12d3",
+        "status-report": "7b22dfe0c8231991eec03bbef17ab770273ce0c239921092727653e3f1155dea",
         "task-feedback-analyser": "c20d97a56c7b1d23cb9f7993d81e81804e0e86d081192bc4581ae3580ecdc206",
         "tech-spike": "1cb07d5004de3966851ed99fa8c74fc81bab28a289abf21e4bdeb72409b56182"
       }

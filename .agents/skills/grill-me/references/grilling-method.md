@@ -66,6 +66,19 @@ get asked.
   one answer: "what's the most important thing about this subject we haven't touched at all?"
   That question is how you escape a shaft you've dug too deep.
 
+## For a new feature, start with use cases — not architecture
+
+When the subject is a *potential new feature* (rather than an existing design or a made decision),
+lead with **use cases and user journeys before deep technical questions**. "Who hits this, and
+what are they trying to do?", "walk me through the journey end-to-end", "what's the moment this
+feature pays off?" are questions the user can almost always answer — and the answers constrain the
+technical space, so the architecture questions get sharper and easier when you reach them.
+Front-loading deep technical questions ("how will you shard this?") on a feature that isn't yet
+grounded in concrete journeys forces the user to invent answers in a vacuum, which produces weak,
+hand-wavy responses and a plan built on sand. So: journeys and use cases first, then technical.
+Once the feature is grounded, the method is unchanged — attack the load-bearing assumptions,
+quantify the load, force the trade-offs.
+
 ## A dodge is not a steer — read which one you got
 
 When an answer is weak, you're at a fork, and picking wrong is the #1 cause of an unproductive

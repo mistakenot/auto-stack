@@ -33,5 +33,6 @@ Every generated testing strategy must say which rung was chosen for each prescri
 | Unit Testing | Verifies individual functions/methods return correct outputs for given inputs | exact | algorithmic-core, crud-surface | C1 | both | [Unit Testing](references/technique-unit-testing.md) |
 | Property-Based Testing | Generates random inputs and asserts invariants hold; shrinking isolates minimal counterexamples | relational | algorithmic-core | C3 | both | [Property-Based Testing](references/technique-property-based-testing.md) |
 | React Unit Testing | Renders a single UI component in a simulated DOM and asserts it displays the right output for given props/state | exact | ui-component, render-surface | C2 | loose | [React Unit Testing](references/technique-react-unit-testing.md) |
+| Model-Based Testing | Builds an abstract model of expected behavior, generates operation sequences from it, and checks the running system conforms — finds ordering bugs hand-picked tests miss | model | stateful-protocol, crud-surface | C3 | both | [Model-Based Testing](references/technique-model-based-testing.md) |
 
 **Rule: read the card before prescribing.** The index is a routing table — it tells you which technique to consider, not how to apply it. Always load and read the full technique card before including a technique in a strategy.
