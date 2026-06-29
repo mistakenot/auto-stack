@@ -119,7 +119,7 @@ def main(argv: list[str]) -> int:
 
     if write:
         QRELS_DIR.mkdir(parents=True, exist_ok=True)
-        out = QRELS_DIR / "pilot.conditions.json"
+        out = QRELS_DIR / (Path(argv[0]).stem + ".conditions.json")
         out.write_text(json.dumps({"summary": summary, "per_query": rows}, indent=2))
         print(f"\nwrote {out}")
     return 0

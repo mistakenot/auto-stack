@@ -26,9 +26,9 @@ set and statistical comparison.
 - [x] **Phase 2 — query mining from held-out sessions** → `data/queries/queries.jsonl`
   (100 queries from 48 held-out sessions; 64 clean / 36 leakage-flagged; see
   `data/queries/QUERIES.md`).
-- [~] **Phase 3 — LLM oracle**: 20-query **coverage pilot** done
-  (`data/qrels/pilot.qrels.jsonl`); coverage healthy (90% of queries have a
-  relevant rule, mean 4.6). Full run gated on the design changes in `DIARY.md`.
+- [x] **Phase 3 — LLM oracle**: full 100-query golden set in `data/qrels/qrels.jsonl`
+  (89% coverage, mean 5.85 relevant/query, 585 labels). Reusable: any variant now
+  scores with zero new oracle calls. See `data/qrels/QRELS.md` + `DIARY.md`.
 - [ ] Phase 4 — variant registry (domain-as-boost, IDF tag weighting, no-filter,
       semantic) + statistical comparison (paired Wilcoxon, bootstrap CIs).
 - [ ] Phase 5 — port the winning method into `match.go`.

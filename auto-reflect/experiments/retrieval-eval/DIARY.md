@@ -188,6 +188,40 @@ Caveats: 20 queries, single oracle (relevance may be generous); `wrong` is
 disjoint-by-construction so its recall=0 is the mechanism's worst case, but the
 realistic near-miss losses above are not constructed.
 
+## Full golden set (100 queries) — the bench is now built
+
+Labeled all 100 queries (pilot 20 + remaining 80, same oracle). `data/qrels/qrels.jsonl`
+is the frozen gold standard; any variant now scores against it with **zero new
+oracle calls**. Coverage holds: **89/100 have a relevant rule**, mean **5.85**
+relevant/query (median 5, max 17), 585 labels (grades 1:115 / 2:303 / 3:167).
+
+Conditions on the full 100 (`qrels.conditions.json`) — *sharper* than the pilot:
+
+| condition | recall | recall@5 | recall@10 | precision@5 | precision(full) | surfaced/120 |
+|---|---|---|---|---|---|---|
+| guess | 0.90 | **0.27** | **0.41** | **0.30** | 0.119 | 64.5 |
+| none  | 0.96 | 0.19 | 0.30 | 0.23 | 0.054 | 107 |
+| wrong | 0.00 | 0.00 | 0.00 | 0.00 | 0.000 | 33.4 |
+
+The bigger N **strengthens** the nuanced verdict:
+
+1. **Surfacing problem confirmed, large:** no-filter surfaces **107 of 120** rules;
+   even with a guess, **64.5**. Full precision 5–12%. recall@10 ≈ 0.41 at best —
+   the scorer still surfaces most of the playbook and ranks weakly.
+2. **The domain gate genuinely helps top-k when the guess is right** — clearer now:
+   precision@5 **0.30 vs 0.23** (+30% rel.), recall@5 **0.27 vs 0.19**, recall@10
+   **0.41 vs 0.30**. Removing off-domain rules ranks the relevant ones higher in
+   the slice an agent actually reads. So the gate is doing real work.
+3. **…and is catastrophic on a wrong guess: recall 0.0.** Full recall cost vs
+   no-filter is only 6pts (0.90 vs 0.96), but the *tail* is total failure.
+
+> **Decision shape (now data-backed on 100):** the gate is a high-variance
+> precision/ranking aid. **domain-as-boost** is the clear win — it keeps the +7pt
+> precision@5 / +10pt recall@10 benefit (rank up in-domain rules) without the
+> wrong-guess catastrophe (never exclude). Separately, the dominant lever is the
+> **scorer** (surfaces 54–89% of the playbook, ranks poorly) — bigger than the
+> filter. The full qrels now let us test scorer variants for free.
+
 ## Open questions / risks
 
 - Will the **full clean-64 set** show a larger gate effect than the pilot's 2/20,
