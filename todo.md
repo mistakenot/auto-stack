@@ -43,6 +43,14 @@ Align with user-journey spec.
 ## auto-reflect
 
 - [ ] Capture requirements-scoping decisions as minable signal. Today the tool models `observation` (kind: `correction|pattern|gap|incident`) and `rule` — there is **no `decision` concept**, and nothing captures the answers a user gives to scoping questions (e.g. AskUserQuestion during `/new-task`). Those answers currently live only in the planning doc (`<pd-decision>`/`<pd-question>`/`<pd-answer>`), contextual commits, and the raw transcript — and the structured AskUserQuestion payload is dropped during ETL (see `docs/research/askuserquestion-analytics.md`). Proposal: add a `decision` observation kind (or a dedicated decision event) so scoping Q&A becomes first-class, queryable signal that can feed back into asking better questions. Related design: `docs/better-questions.md`, `docs/claude-decision-intelligence-deep-dive.md`.
+- [ ] `auto reflect export` — self-contained HTML dump for full human inspection of the playbook, mirroring `auto search session export` (which emits a self-contained HTML work-graph map of a conversation). Today QC requires assembling the picture by hand across `rule get` → `observation list` → `auto search session get` — there is no single artifact to review. The export should render, in one file:
+  - the **playbook**: every rule (all lifecycles) with use_when / content / causal_note / type / domain / lifecycle.
+  - the **observations**: all 266+ observations grouped by kind/domain/severity, with their evidence quotes + file:line.
+  - **lineage**: each rule expandable to the source observations it was distilled from (via `observation_ids`), and each observation linked back to its evidence session(s).
+  - ideally **traces back to original conversations**: deep-link or inline each observation's evidence `session_id`/`message` into the corresponding `auto search session export`/`session get` rendering, so a reviewer can jump rule → observation → the exact transcript moment.
+  - surface **coverage gaps**: which observations are `--unconsolidated` (folded into no rule), and any rules that can't auto-promote (thin/single-session evidence).
+  - reuse the `auto search` HTML export machinery rather than reinventing the renderer.
+- [ ] Human-assisted Playbook curation loop for low-confidence Rules. `auto reflect review` should select Rules/Observations that need judgment (thin evidence, conflicting Observations, vague `use_when`, weak causal_note, low feedback signal, or uncertain promote/merge/split/retire action), emit a rich HTML review doc, let a human label/comment on it in `auto ui`, then let an agent consume those comments and apply deterministic Rule updates. The review doc should support labels like `promote`, `rewrite`, `split`, `merge`, `retire`, `needs-more-evidence`, and `wrong-scope`; inline comments should attach to specific Rule fields, source Observations, and Session evidence. The apply step should produce an auditable Reflect Event trail (`rule_edited`, `consolidation`, `feedback`, or follow-up Observation events) and summarize exactly which Rules changed.
 
 ## auto-search
 
@@ -89,6 +97,9 @@ Align with user-journey spec.
 ## auto-mail (planned)
 
 - [ ] Using Using our existing RPC stuff that allows cross-host communication I'm interested in creating a very simple mail inbox system where agents can push messages to inboxes They can then also read from inboxes, pull messages from inboxes etc so that different projects can cross-communicate to each other We maybe keep this really flexible to begin with We have threads, which are a bit like threads and slack or whatever which have topic names or IDs Yeah, I'm not sure when you think about this more
+- [ ] Thinking of this a bit like slack, where there are channels like #feeature-ideas that agents can post to, then other agents can peek channel messages and ack them to remove them. Or maybe more like email? not sure. I ilke the idea of virtulised channels, so session/agent identity isn't tied to the channels. But maybe we also have ways to target specific sessions to, we just discourage it. 
+- Example use case: agent A is working on tool B. whilst doing this, it has an idea for a feature C. but it can't stop what its doing, so it needs somewhere to sling it where it can be picked up and worked on. Could write to a doc? yes but then you need to nudge another agent to work on it.
+- 
 
 ## auto-hook
 
