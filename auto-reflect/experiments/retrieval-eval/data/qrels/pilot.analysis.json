@@ -1,0 +1,282 @@
+{
+  "summary": {
+    "queries": 20,
+    "label_density": {
+      "with_relevant_grade1+": 18,
+      "with_relevant_grade2+": 18,
+      "pct_with_relevant": 90.0,
+      "mean_relevant_per_query": 4.6,
+      "median_relevant_per_query": 4.0,
+      "max_relevant": 10
+    },
+    "effect_preview_domain_gate": {
+      "mean_recall_with_domain_filter": 0.93,
+      "mean_recall_no_filter": 0.959,
+      "queries_where_domain_gate_excluded_a_relevant_rule": 2,
+      "total_relevant_rules_excluded_by_domain_gate": 2
+    }
+  },
+  "per_query": [
+    {
+      "query_id": "q-08e1fe91",
+      "intent": "squash-merge the base PR in a stacked 3-branch series and rebase depen",
+      "domain_guess": [
+        "git"
+      ],
+      "n_rel1": 4,
+      "n_rel2": 3,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-09583f9f",
+      "intent": "update existing Go tests that fail after adding a new required validat",
+      "domain_guess": [
+        "go",
+        "testing",
+        "doc"
+      ],
+      "n_rel1": 5,
+      "n_rel2": 4,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-0ca2ed00",
+      "intent": "add a quickstart command to the autosearch CLI that outputs agent-orie",
+      "domain_guess": [
+        "cli",
+        "go"
+      ],
+      "n_rel1": 6,
+      "n_rel2": 6,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-2597d789",
+      "intent": "tag a new minor version release and verify GitHub Actions release work",
+      "domain_guess": [
+        "ci",
+        "go",
+        "monorepo"
+      ],
+      "n_rel1": 3,
+      "n_rel2": 3,
+      "recall_dom": 0.6666666666666666,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": [
+        "r-c815ba85"
+      ]
+    },
+    {
+      "query_id": "q-28e89361",
+      "intent": "add a new metadata field to autodoc frontmatter and thread it through ",
+      "domain_guess": [
+        "doc",
+        "go",
+        "cli"
+      ],
+      "n_rel1": 7,
+      "n_rel2": 6,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-32b44d55",
+      "intent": "scaffold a new Go CLI package (auto-env) in the auto-stack monorepo wi",
+      "domain_guess": [
+        "go",
+        "cli",
+        "monorepo"
+      ],
+      "n_rel1": 9,
+      "n_rel2": 7,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-3d9beb57",
+      "intent": "mine session history with autosearch to identify recurring agent failu",
+      "domain_guess": [
+        "search",
+        "reflect"
+      ],
+      "n_rel1": 3,
+      "n_rel2": 2,
+      "recall_dom": 0.6666666666666666,
+      "recall_nodom": 0.6666666666666666,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-588e1e7a",
+      "intent": "mine autosearch session history to identify messages where users are g",
+      "domain_guess": [
+        "search",
+        "reflect"
+      ],
+      "n_rel1": 4,
+      "n_rel2": 4,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-61bb7344",
+      "intent": "run all Go tests across a multi-module monorepo where each sub-project",
+      "domain_guess": [
+        "go",
+        "monorepo",
+        "testing"
+      ],
+      "n_rel1": 3,
+      "n_rel2": 3,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-68901eb7",
+      "intent": "profile autosearch SQLite FTS query performance to identify which filt",
+      "domain_guess": [
+        "search",
+        "go"
+      ],
+      "n_rel1": 4,
+      "n_rel2": 2,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-8832d260",
+      "intent": "write unit tests for ListSessions subagent filter, min-duration filter",
+      "domain_guess": [
+        "search",
+        "testing",
+        "go"
+      ],
+      "n_rel1": 10,
+      "n_rel2": 7,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-9b789703",
+      "intent": "diagnose and recover from a wedged tmux server that hangs on all clien",
+      "domain_guess": [],
+      "n_rel1": 0,
+      "n_rel2": 0,
+      "recall_dom": null,
+      "recall_nodom": null,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-a3df393c",
+      "intent": "clean up untracked files and vendor agent directories scattered by npx",
+      "domain_guess": [
+        "skill",
+        "git"
+      ],
+      "n_rel1": 2,
+      "n_rel2": 2,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-ab0f5e74",
+      "intent": "run autoetl pipeline then rebuild autosearch index before querying ses",
+      "domain_guess": [
+        "etl",
+        "search"
+      ],
+      "n_rel1": 5,
+      "n_rel2": 5,
+      "recall_dom": 0.4,
+      "recall_nodom": 0.6,
+      "excluded_by_domain": [
+        "r-e74f3d09"
+      ]
+    },
+    {
+      "query_id": "q-ac8a2be5",
+      "intent": "recover a wedged tmux server by killing the orphaned client process ho",
+      "domain_guess": [],
+      "n_rel1": 0,
+      "n_rel2": 0,
+      "recall_dom": null,
+      "recall_nodom": null,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-b4bed8a0",
+      "intent": "extend autodoc two-way freshness to support [autodoc()] tags embedded ",
+      "domain_guess": [
+        "doc",
+        "go"
+      ],
+      "n_rel1": 8,
+      "n_rel2": 6,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-cadb5d54",
+      "intent": "fan out parallel background sub-agents for a multi-phase experiment an",
+      "domain_guess": [],
+      "n_rel1": 8,
+      "n_rel2": 6,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-d2cbb4fd",
+      "intent": "write a planning-doc HTML wireframe artifact for a new UI feature desi",
+      "domain_guess": [
+        "ui",
+        "doc"
+      ],
+      "n_rel1": 3,
+      "n_rel2": 2,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-dde26ee7",
+      "intent": "optimize autosearch SQLite FTS5 query to pre-filter messages by worksp",
+      "domain_guess": [
+        "search",
+        "go"
+      ],
+      "n_rel1": 2,
+      "n_rel2": 2,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    },
+    {
+      "query_id": "q-eed931fe",
+      "intent": "add an idempotent agents command to the autosearch CLI that appends a ",
+      "domain_guess": [
+        "cli",
+        "go",
+        "search"
+      ],
+      "n_rel1": 6,
+      "n_rel2": 5,
+      "recall_dom": 1.0,
+      "recall_nodom": 1.0,
+      "excluded_by_domain": []
+    }
+  ]
+}

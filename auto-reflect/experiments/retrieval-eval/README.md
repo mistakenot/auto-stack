@@ -23,11 +23,18 @@ set and statistical comparison.
     `retrieval` event on every call, so running it against the project store
     would pollute the canonical log with experiment artifacts.
   - Metric scaffolding (`src/retrieval_eval/metrics.py`).
-- [ ] Phase 2 — query mining from **held-out** sessions → `data/queries/`.
-- [ ] Phase 3 — LLM **oracle** labels the full playbook per query → `data/qrels/`.
+- [x] **Phase 2 — query mining from held-out sessions** → `data/queries/queries.jsonl`
+  (100 queries from 48 held-out sessions; 64 clean / 36 leakage-flagged; see
+  `data/queries/QUERIES.md`).
+- [~] **Phase 3 — LLM oracle**: 20-query **coverage pilot** done
+  (`data/qrels/pilot.qrels.jsonl`); coverage healthy (90% of queries have a
+  relevant rule, mean 4.6). Full run gated on the design changes in `DIARY.md`.
 - [ ] Phase 4 — variant registry (domain-as-boost, IDF tag weighting, no-filter,
       semantic) + statistical comparison (paired Wilcoxon, bootstrap CIs).
 - [ ] Phase 5 — port the winning method into `match.go`.
+
+See **`DIARY.md`** for the running research log: decisions, pilot findings, the
+Codex + IIR Ch 8 second reads, and the open issues that gate the full oracle.
 
 ## Design decisions
 
