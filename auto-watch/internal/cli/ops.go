@@ -37,6 +37,7 @@ func newStartCmd(application *app.App) *cobra.Command {
 	var readyFile string
 	var hookAddr string
 	var ctlEvents bool
+	var retentionDays int
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the autowatch daemon",
@@ -76,6 +77,7 @@ func newStartCmd(application *app.App) *cobra.Command {
 
 			hub := bus.NewHub()
 			service := daemon.New(db, application.Backend, cmd.OutOrStdout(), application.Now, hub)
+			service.SetRetentionDays(retentionDays)
 			if once {
 				if err := writePIDMetadata(); err != nil {
 					return &ExitError{Code: 1, Err: err}
@@ -219,6 +221,7 @@ func newStartCmd(application *app.App) *cobra.Command {
 	cmd.Flags().StringVar(&readyFile, "ready-file", "", "write {\"addr\":...,\"hookAddr\":...} to this file when listeners are bound")
 	cmd.Flags().StringVar(&hookAddr, "hook-addr", "127.0.0.1:7787", "HTTP hook-ingest listener address")
 	cmd.Flags().BoolVar(&ctlEvents, "ctl-events", false, "emit ctl.* control-plane events to the bus")
+	cmd.Flags().IntVar(&retentionDays, "retention-days", 7, "retention window in days for events and terminal runs before pruning")
 	return cmd
 }
 

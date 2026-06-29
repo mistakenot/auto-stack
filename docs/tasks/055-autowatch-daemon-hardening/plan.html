@@ -9,14 +9,14 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="055: autowatch-daemon-hardening" status="executing" pr="pending" generated="2026-06-29"
+  <pd-doc title="055: autowatch-daemon-hardening" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/118" generated="2026-06-29"
           next-prompt="/commit-task 055">
 
     <script type="application/json" id="pd-meta">
     {
       "id": "055",
       "name": "autowatch-daemon-hardening",
-      "status": "executing",
+      "status": "complete",
       "created": "2026-06-29"
     }
     </script>
@@ -267,7 +267,7 @@ Three phases, walking-skeleton first: Phase 1 fixes the highest-impact bug (work
       <pd-stepper>
         <pd-phase n="1" title="Walking skeleton: worktree spam fix + WAL checkpoint"
                   files="auto-watch/internal/store/store.go,auto-watch/internal/store/store_test.go,auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/clean_test.go"
-                  status="todo">
+                  status="done">
           <md><script type="text/plain">
 Fixes the 90% bug end-to-end and proves the multi-tick test pattern works.
 
@@ -294,7 +294,7 @@ Fixes the 90% bug end-to-end and proves the multi-tick test pattern works.
 
         <pd-phase n="2" title="Event and run retention pruning"
                   files="auto-watch/internal/store/store.go,auto-watch/internal/store/store_test.go,auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/clean_test.go,auto-watch/internal/cli/ops.go"
-                  status="todo" depends-on="1">
+                  status="done" depends-on="1">
           <md><script type="text/plain">
 Adds retention-based pruning for events and terminal runs.
 
@@ -322,7 +322,7 @@ Adds retention-based pruning for events and terminal runs.
 
         <pd-phase n="3" title="Failure backoff + noise reduction"
                   files="auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/backoff_test.go,auto-watch/internal/daemon/noise_test.go"
-                  status="todo" depends-on="1">
+                  status="done" depends-on="1">
           <md><script type="text/plain">
 Adds failure backoff and eliminates event noise. Independent of Phase 2 (both depend only on Phase 1).
 
