@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"math"
 	"sort"
 	"strings"
 )
@@ -47,13 +48,19 @@ func normalizeDomainFilter(domains []string) []string {
 	return out
 }
 
-// Match scores rules against intent keywords, optionally pre-filtered by an
-// ANY-of domain intersection, then injects domain-matching hard rules.
+// Match scores rules against intent keywords, applies a non-excluding IDF-weighted
+// in-domain boost from the domain filter, then injects domain-matching hard rules.
 //
-//   - domainFilter (the --domain flag): when non-empty, a rule is kept only if
-//     its domain intersects the (normalized, deduped) filter list (ANY-of).
+//   - domainFilter (the --domain flag): a non-excluding signal. Off-domain rules
+//     are no longer dropped; instead, a rule whose domain intersects the
+//     (normalized, deduped) filter is boosted by Σ IDF(tag) over the intersection
+//     (rare in-domain tags lift more than near-universal ones). An empty filter
+//     contributes no boost.
 //   - scoring: use_when contributes 3 points per matched keyword, domain 1 point
-//     per matched keyword; the raw score is normalized by 4*len(keywords).
+//     per matched keyword; the domain boost is added to that raw score, then the
+//     composite is normalized by max(1, 4*len(keywords)). Because the normalizer is
+//     a per-call constant, MatchScore is order-identical to the raw composite (it
+//     may exceed 1.0 when a boost fires).
 //   - ordering: score DESC, then id ASC.
 //   - hard injection: the match set is the domain filter when provided, else the
 //     intent keywords; any hard rule whose domain intersects that set is included
@@ -65,32 +72,32 @@ func normalizeDomainFilter(domains []string) []string {
 func MatchRules(rules []Rule, intent string, domainFilter []string, includeDrafts bool) []Match {
 	keywords := NormalizeKeywords(intent)
 	filter := normalizeDomainFilter(domainFilter)
+	idf := tagIDF(rules)
 
-	// Determine the candidate set under the ANY-of domain filter, excluding rules
-	// whose lifecycle makes them non-surfaceable (stale always; draft unless asked).
+	// Candidates: NO domain exclusion — every surfaceable rule is a candidate.
+	// Rules whose lifecycle makes them non-surfaceable (stale/enforced always;
+	// draft unless asked) are still excluded.
 	candidates := make([]Rule, 0, len(rules))
 	for i := range rules {
 		if !surfaceableLifecycle(rules[i].Lifecycle, includeDrafts) {
-			continue
-		}
-		if len(filter) > 0 && !domainsIntersect(rules[i].Domain, filter) {
 			continue
 		}
 		candidates = append(candidates, rules[i])
 	}
 
 	maxRaw := float64(4 * len(keywords))
+	if maxRaw == 0 {
+		maxRaw = 1 // keep boost-only ordering meaningful when intent has no keywords
+	}
 	scored := make([]Match, 0, len(candidates))
 	inResults := make(map[string]int) // rule id -> index in scored
 	for i := range candidates {
-		raw := scoreRule(&candidates[i], keywords)
+		raw := scoreRule(&candidates[i], keywords) +
+			domainBoost(candidates[i].Domain, filter, idf)
 		if raw <= 0 {
 			continue
 		}
-		score := 0.0
-		if maxRaw > 0 {
-			score = raw / maxRaw
-		}
+		score := raw / maxRaw
 		scored = append(scored, Match{Rule: candidates[i], MatchScore: score})
 		inResults[candidates[i].ID] = len(scored) - 1
 	}
@@ -144,6 +151,52 @@ func surfaceableLifecycle(lifecycle string, includeDrafts bool) bool {
 	default:
 		return true
 	}
+}
+
+// tagIDF builds log(N/df) over the rule set's domain-tag vocabulary, so a rare
+// in-domain tag boosts far more than a near-universal one (`go` is on ~78% of rules).
+func tagIDF(rules []Rule) map[string]float64 {
+	n := float64(len(rules))
+	df := map[string]int{}
+	for i := range rules {
+		seen := map[string]struct{}{}
+		for _, d := range rules[i].Domain {
+			t := strings.ToLower(strings.TrimSpace(d))
+			if t == "" {
+				continue
+			}
+			if _, ok := seen[t]; ok {
+				continue // df counts rules, once per tag per rule
+			}
+			seen[t] = struct{}{}
+			df[t]++
+		}
+	}
+	idf := make(map[string]float64, len(df))
+	for t, c := range df {
+		idf[t] = math.Log(n / float64(c))
+	}
+	return idf
+}
+
+// domainBoost = Σ IDF(tag) over rule.Domain ∩ filter. Zero when no filter — so
+// callers that pass no domain (e.g. dedupe) get the pure lexical score.
+func domainBoost(domain, filter []string, idf map[string]float64) float64 {
+	if len(filter) == 0 {
+		return 0
+	}
+	want := map[string]struct{}{}
+	for _, f := range filter {
+		want[strings.ToLower(strings.TrimSpace(f))] = struct{}{}
+	}
+	b := 0.0
+	for _, d := range domain {
+		t := strings.ToLower(strings.TrimSpace(d))
+		if _, ok := want[t]; ok {
+			b += idf[t]
+		}
+	}
+	return b
 }
 
 // scoreRule sums keyword hits: use_when substring = 3, any domain tag substring

@@ -54,16 +54,18 @@ func TestMatchDomainFilterIsAnyOfNotAllOf(t *testing.T) {
 	rules := []Rule{
 		softRule("r-aaaaaaaa", "wiring a cobra command", "go", "cli"),
 	}
-	// Rule domain {go,cli}; filter {cli, deploy}. ANY-of: cli intersects → kept.
+	// Rule domain {go,cli}; filter {cli, deploy}. ANY-of intersection: cli
+	// intersects → the rule is boosted (and surfaces).
 	matches := MatchRules(rules, "command", []string{"cli", "deploy"}, true)
 	if _, ok := findMatch(matches, "r-aaaaaaaa"); !ok {
-		t.Fatalf("ANY-of filter should keep rule sharing one domain, got %#v", matches)
+		t.Fatalf("intersecting filter should surface the rule, got %#v", matches)
 	}
 
-	// ALL-of would require both; confirm a non-intersecting filter excludes it.
+	// Domain filter is a non-excluding boost: a non-intersecting filter no longer
+	// drops the rule — it still surfaces (lexically), just unboosted.
 	none := MatchRules(rules, "command", []string{"python", "deploy"}, true)
-	if _, ok := findMatch(none, "r-aaaaaaaa"); ok {
-		t.Fatalf("rule with no domain intersection should be excluded, got %#v", none)
+	if _, ok := findMatch(none, "r-aaaaaaaa"); !ok {
+		t.Fatalf("non-intersecting filter must NOT exclude the rule (boost, not gate), got %#v", none)
 	}
 }
 
