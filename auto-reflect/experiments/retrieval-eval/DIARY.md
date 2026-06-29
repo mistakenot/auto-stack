@@ -141,6 +141,53 @@ The minimal high-leverage set (resisting textbook gold-plating):
 4. **Cluster by session + report on the clean 64 as primary**; flagged-overlap as
    sensitivity only.
 
+## Pilot extension — precision + domain conditions (free, no new oracle)
+
+`retrieval_eval.conditions` over the 20 pilot qrels, three domain conditions
+(`guess` / `none` / `wrong` — wrong = a real tag disjoint from the query's
+relevant-rule domains). `data/qrels/pilot.conditions.json`.
+
+| condition | mean recall | recall@5 | recall@10 | precision@5 | precision(full) | **surfaced (of 120)** |
+|---|---|---|---|---|---|---|
+| guess | 0.93 | 0.20 | 0.31 | 0.16 | 0.079 | **78** |
+| none  | 0.96 | 0.13 | 0.21 | 0.11 | 0.044 | **108** |
+| wrong | 0.00 | 0.00 | 0.00 | 0.00 | 0.000 | 38 |
+
+**Three findings, in order of importance:**
+
+1. **The real problem isn't the domain gate — it's that the matcher surfaces
+   ~65–90% of the playbook.** No-filter surfaces **108 of 120** rules; even with a
+   domain guess, **78**. Full-set precision is **4–8%**; precision@5 is **11–16%**.
+   The lexical score (use_when/domain substring) is so permissive that almost any
+   keyword overlap surfaces a rule, and the "ranking" barely separates relevant
+   from irrelevant (**recall@10 ≈ 0.31 at best** — only a third of relevant rules
+   reach the top 10). This is a *ranking/precision* problem larger than the domain
+   question.
+
+2. **The domain gate is a precision crutch that helps in the good-guess case** more
+   than the pilot's full-recall number implied: it cuts surfaced 108→78, ~doubles
+   full precision (0.044→0.079), and **raises early recall** (recall@5 0.13→0.20)
+   by pushing off-domain rules out of the top-k. So domain matching *is* doing
+   useful ranking work.
+
+3. **…but the gate is catastrophic under a wrong guess: recall → 0.0** across every
+   query. And it bites on *realistic near-misses* too, not just constructed-wrong:
+   q-2597d789 guess `[ci,go,monorepo]` → recall 0.67 vs 1.0; q-ab0f5e74
+   `[etl,search]` → 0.40 vs 0.60. Two of 18 real queries already lost recall to an
+   imperfect (not even fully wrong) guess.
+
+> **Synthesis:** the domain filter is a **high-variance** mechanism — it helps
+> precision/early-recall when the guess is right and fails totally when wrong.
+> That is a clean, *data-backed* case for **domain-as-boost** (keep the ranking
+> benefit, drop the catastrophic exclusion). It is NOT a case that the gate is the
+> biggest issue — finding #1 (the matcher surfaces most of the playbook and ranks
+> poorly) is the bigger fish, and points at the *scorer* (better lexical or
+> semantic), not the filter.
+
+Caveats: 20 queries, single oracle (relevance may be generous); `wrong` is
+disjoint-by-construction so its recall=0 is the mechanism's worst case, but the
+realistic near-miss losses above are not constructed.
+
 ## Open questions / risks
 
 - Will the **full clean-64 set** show a larger gate effect than the pilot's 2/20,
