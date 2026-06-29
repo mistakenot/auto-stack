@@ -85,6 +85,7 @@ Align with user-journey spec.
   - flag when combined skill descriptions consume too much context budget
   - identify redundant/overlapping skills that could be consolidated
 - [ ] Skill sync checks. Skills can highlite what binaries are required to execute. then on sync, we check if these are installed and warn if not. `depends_on` or similar.
+- [ ] `important_if` skill metadata → agent-file injection (reimplement). Skills opt in via `meta.important_if` / `important_if_body`; `auto skill sync`/`agent` writes `<important if>` blocks into a fenced, tool-owned section of CLAUDE.md so trigger conditions are surfaced to the agent (fixes ~0% adoption of trigger-only skills like contextual-commit/release/recall). Design doc already on main: `auto-skill/docs/important-if-feature.md`. Original implementation was PR #35 (`improve/skill-invocation/3`), closed unmerged on 2026-06-29 because auto-skill was refactored into `internal/sync/` + `internal/render/` after it was opened (its target `internal/cli/agents.go` no longer exists and `internal/skill/skill.go` diverged), so it needs a fresh implementation against the current sync pipeline rather than a rebase.
 
 ## auto-artifact image follow-ups
 
