@@ -1,0 +1,16 @@
+# Feedback: Task 055
+
+## Problems faced
+1. **`failRun` swallows `startWorker`'s error** — the original "record backoff on startup failure" fix was placed in `Dispatch()`'s `if err := s.startWorker(...); err != nil` branch, but that branch is dead code: `startWorker` reports failures via `return s.failRun(...)`, and `failRun` ends with `return s.logEvent(...)` which is `nil` on success. So a start-failing backend returns `nil` to Dispatch. The regression test (`TestStartupFailureBacksOff`) caught it by showing dispatches every minute instead of the exponential schedule. Fix moved to `failRun` itself — the single chokepoint for all dispatch-time terminal failures (all callers hold `dispatchMu`, which `recordRunOutcome` requires).
+2. **`os.RemoveAll("")` is a silent no-op** — a run that fails before `UpdateRunStarted()` has an empty `RuntimeDir` in the DB even though `startWorker` already created `~/.auto/watch/runs/<id>`. The retention loop treated the empty-path removal as success and deleted the only row identifying the orphaned dir. Codex flagged this; fix derives the deterministic path when `RuntimeDir` is empty.
+
+## Reflections
+- **What was tricky?** Both real bugs (found by the Codex reviewer, not the plan) lived on the *startup-failure* path — runs that `failRun` marks terminal during `Dispatch` and that never reach `Reap`. The plan's backoff/retention design only reasoned about the Reap-observed lifecycle, so this whole class of failure was outside the original contract. Tests that only exercise the happy `Backend.Start`→exit-code path can't see it.
+- **What would you tell yourself at the start?** When adding lifecycle accounting (backoff, cleanup, metrics), enumerate *every* path a run can reach a terminal state — here that's three: Reap running→failed, Reap pending→failed, and `failRun` dispatch-time. Put cross-cutting logic at the narrowest common chokepoint (`failRun`), not at one call site.
+- **What did you almost do but didn't?** Almost shipped the backoff fix in `Dispatch`'s error branch without a test proving it fired. The regression test is what exposed that the branch never executes.
+
+## Useful context
+- **Multi-tick test infra**: `testutil.NewEnv` + a fixed/mutable `now func() time.Time` injected into `daemon.New` is the whole story for temporal tests — no clock abstraction needed. A *fixed* clock with a pre-aged `completed_at` proves idempotency; a *mutable* clock advanced per tick proves exponential backoff scheduling.
+- **Backend fakes**: model failure modes the same way `fakeBackend` models success — `failingBackend` writes exit `1`, `exitCodeBackend` flips a code between ticks, `startupFailBackend` returns an error from `Start` (the startup-failure path). The tick path runs synchronously in the test goroutine, so flipping state between ticks is race-free.
+- **`recordRunOutcome` locking**: requires `dispatchMu` held; `Reap` already holds it at its call sites, and `failRun`/`startWorker` are only reachable from `Dispatch` (which holds it), so bare map access is safe.
+- **Retention safe-order**: list candidates → `os.RemoveAll` each → `DeleteRuns` only the rows whose dir removal succeeded → `PruneEventsOlderThan` → WAL checkpoint last (so the checkpoint covers the deletes). A failed dir removal leaves the row for next-tick retry.
