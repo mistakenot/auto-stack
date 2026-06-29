@@ -1,14 +1,16 @@
-"""BASELINE conformance tests — pin the Python port to the shipped Go matcher.
+"""Conformance tests — pin the shipped Python variant to the live Go matcher.
 
-These are PASS/FAIL regression tests asserting one thing: `baseline.py` reproduces
-the *current* behavior of `auto reflect retrieve` (i.e. match.go) exactly. They
-describe the BASELINE STATE only — they say nothing about whether that behavior
-is *good*. Candidate retrieval variants (domain-as-boost, IDF, semantic, …) are
-NOT tested here; they are evaluated against the oracle qrels in Phase 4 and
-produce metrics, not pass/fail assertions.
+These are PASS/FAIL regression tests asserting one thing: `variants[SHIPPED]`
+(the `idf-tag` variant the Go matcher ships after task 054) reproduces the
+*current* behavior of `auto reflect retrieve` (i.e. match.go) exactly. They
+describe the SHIPPED STATE only — they say nothing about whether that behavior
+is *good*. The frozen v1 self-check (`hard-gate == baseline.py`) lives in
+`test_variant_conformance.py`; candidate variants are evaluated against the oracle
+qrels in Phase 4 and produce metrics, not pass/fail assertions.
 
-If one of these fails, either match.go changed (resync baseline.py) or the port
-drifted. Either way the experiment's baseline is no longer trustworthy until fixed.
+If one of these fails, either match.go changed (resync the shipped variant / the
+SHIPPED pointer) or the port drifted. Either way the experiment's conformance gate
+is no longer trustworthy until fixed.
 
 Run just these:  pytest -m baseline
 """
@@ -31,7 +33,7 @@ pytestmark = [
 
 
 def test_baseline_matches_go_cli_on_real_playbook():
-    """Layer 1: Python baseline == live Go CLI across the real 120-rule playbook."""
+    """Layer 1: shipped Python variant == live Go CLI across the real 120-rule playbook."""
     results = harness.run_real_corpus_parity(harness.repo_root())
     mismatches = [r for r in results if not r.ok]
     assert not mismatches, "\n".join(
@@ -41,8 +43,8 @@ def test_baseline_matches_go_cli_on_real_playbook():
 
 
 def test_baseline_matches_go_cli_on_synthetic_edge_cases():
-    """Layer 2: Python baseline == Go CLI in a hermetic store built to exercise
-    ties, hard-injection-on-domain, domain filtering, --no-drafts, and lifecycle."""
+    """Layer 2: shipped Python variant == Go CLI in a hermetic store built to exercise
+    ties, hard-injection-on-domain, domain boost, --no-drafts, and lifecycle."""
     results = harness.run_synthetic_parity()
     mismatches = [r for r in results if not r.ok]
     assert not mismatches, "\n".join(

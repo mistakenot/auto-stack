@@ -1,10 +1,13 @@
-"""Conformance harness: prove the Python baseline ranks identically to the Go CLI.
+"""Conformance harness: prove the shipped Python variant ranks identically to the Go CLI.
 
 Both layers build a HERMETIC, throwaway `auto reflect` store and A/B the shipped
-matcher against the Python baseline. Nothing here touches the live project store
-— important, because `auto reflect retrieve` is NOT read-only: it appends a
-`retrieval` event to the log on every call. Running against the live store would
-pollute it with experiment artifacts.
+matcher against the Python reference variant (`variants[SHIPPED]`). After task 054
+the Go matcher ships the `idf-tag` variant (non-excluding IDF-weighted in-domain
+boost), so the parity target is that variant — not the frozen v1 `baseline.py`
+(which `test_variant_conformance.py` still pins as the `hard-gate` self-check).
+Nothing here touches the live project store — important, because `auto reflect
+retrieve` is NOT read-only: it appends a `retrieval` event to the log on every
+call. Running against the live store would pollute it with experiment artifacts.
 
   Layer 1 — real-corpus parity: rebuild the pinned 120-rule snapshot into a temp
             store, then compare across realistic queries.
@@ -26,7 +29,8 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from retrieval_eval import gocli  # noqa: E402
-from retrieval_eval.baseline import Rule, match_rules, ordered_ids  # noqa: E402
+from retrieval_eval import variants as V  # noqa: E402
+from retrieval_eval.baseline import Rule  # noqa: E402
 from retrieval_eval.corpus import load_rules, use_when_to_id  # noqa: E402
 
 import fixtures  # noqa: E402  (same dir)
@@ -47,11 +51,16 @@ class QueryResult:
 
 def _check(rules: list[Rule], queries, cwd: str) -> list[QueryResult]:
     uw2id = use_when_to_id(rules)
+    shipped = V.VARIANTS[V.SHIPPED]
     results: list[QueryResult] = []
     for intent, domain, no_drafts in queries:
         go_ids = gocli.retrieve_ids(intent, cwd, uw2id, domain=domain, no_drafts=no_drafts)
-        py_ids = ordered_ids(
-            match_rules(rules, intent, domain_filter=domain, include_drafts=not no_drafts)
+        # Pin against the shipped variant. Call rank() directly (not Variant.run)
+        # so the --no-drafts flag threads through as include_drafts.
+        py_ids = V.rank(
+            rules, intent, domain,
+            scorer=shipped.scorer, gate=shipped.gate, boost=shipped.boost,
+            include_drafts=not no_drafts,
         )
         results.append(QueryResult(intent, domain, no_drafts, go_ids, py_ids))
     return results

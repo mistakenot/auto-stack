@@ -1,5 +1,5 @@
 ---
-hash: "6df84843"
+hash: "d63dfafb"
 id: "d0f44004"
 read_when: "designing or implementing the auto-reflect playbook retrieval and self-improvement loop"
 summary: "V2 design for auto-reflect's playbook retrieval loop: 5-phase task lifecycle, probe injection, fresh-reviewer reflection, and bidirectional feedback signal captured in an append-only event log."
@@ -85,7 +85,7 @@ retrieving rules — it appears only later, when the Phase 5 reviewer reads the 
 when Layer 1 derives outcome signals. The `retrieval_id` / `feedback_id` returned here are what later
 link retrieval → usage → feedback across the loop.
 
-Agent calls `auto reflect` with an intent description. It filters by `domain` tags first, then does BM25/keyword match against `use_when`. Returns:
+Agent calls `auto reflect` with an intent description. It does a BM25/keyword match against `use_when` and applies a non-excluding, IDF-weighted boost from any `domain` tags supplied — rules whose domain intersects the query are lifted by `Σ IDF(tag)` (rare in-domain tags lift more than near-universal ones), while off-domain rules are never dropped and still surface. Returns:
 
 ```
 [{ use_when, retrieval_id, domain, confidence, rule_type }]

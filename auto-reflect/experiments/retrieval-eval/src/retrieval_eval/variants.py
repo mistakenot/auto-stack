@@ -255,3 +255,10 @@ VARIANTS: dict[str, Variant] = {
 }
 
 BASELINE = "hard-gate"
+
+# SHIPPED names the variant the Go matcher (match.go) now ships. v1 was the
+# `hard-gate` baseline; task 054 ported the validated `idf-tag` variant
+# (non-excluding IDF-weighted in-domain boost). The Go↔Python conformance harness
+# pins the Go CLI against VARIANTS[SHIPPED], while `hard-gate == baseline` stays a
+# v1 self-check so the original system of record remains A/B-able.
+SHIPPED = "idf-tag"

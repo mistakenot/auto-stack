@@ -11,7 +11,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="054: reflect-matcher-domain-boost" status="executing" pr="pending" generated="2026-06-29" next-prompt="/execute-task 054">
+  <pd-doc title="054: reflect-matcher-domain-boost" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/117" generated="2026-06-29" next-prompt="/execute-task 054">
     <pd-tab name="Requirements">
 
       <pd-section id="problem" title="Problem">
@@ -544,7 +544,7 @@ flowchart LR
       </pd-section>
 
       <pd-stepper>
-        <pd-phase n="1" title="Core boost + conformance (walking skeleton)" status="todo"
+        <pd-phase n="1" title="Core boost + conformance (walking skeleton)" status="done"
           files="auto-reflect/internal/rules/match.go,auto-reflect/internal/rules/match_test.go,auto-reflect/experiments/retrieval-eval/src/retrieval_eval/variants.py,auto-reflect/experiments/retrieval-eval/conformance/harness.py,auto-reflect/experiments/retrieval-eval/conformance/fixtures.py,auto-reflect/experiments/retrieval-eval/tests/test_baseline_conformance.py">
           <md><script type="text/plain">
 The thin end-to-end slice: change the Go matcher AND prove it reproduces the eval'd
@@ -558,7 +558,7 @@ is retired in phase 1.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="2" title="Dedupe insulation" status="todo" depends-on="1"
+        <pd-phase n="2" title="Dedupe insulation" status="done" depends-on="1"
           files="auto-reflect/internal/consolidate/consolidate.go,auto-reflect/internal/consolidate/consolidate_test.go">
           <md><script type="text/plain">
 Keep `DetectDuplicate` on the [0,1] scale so its `0.5` threshold stays valid (D-2).
@@ -569,7 +569,7 @@ Keep `DetectDuplicate` on the [0,1] scale so its `0.5` threshold stays valid (D-
           </script></md>
         </pd-phase>
 
-        <pd-phase n="3" title="Matcher + IDF tests (data-driven + property)" status="todo" depends-on="1"
+        <pd-phase n="3" title="Matcher + IDF tests (data-driven + property)" status="done" depends-on="1"
           files="auto-reflect/internal/rules/match_test.go,auto-reflect/internal/rules/idf_test.go">
           <md><script type="text/plain">
 Thicken behavioral coverage and pin the IDF core's invariants.
@@ -580,7 +580,7 @@ Thicken behavioral coverage and pin the IDF core's invariants.
           </script></md>
         </pd-phase>
 
-        <pd-phase n="4" title="Docs + flag semantics + conformance wording" status="todo" depends-on="1"
+        <pd-phase n="4" title="Docs + flag semantics + conformance wording" status="done" depends-on="1"
           files="auto-reflect/internal/rules/match.go,auto-reflect/internal/cli/retrieve.go,auto-reflect/docs/self-improving-playbook-retrieval.md,auto-reflect/experiments/retrieval-eval/README.md,auto-reflect/experiments/retrieval-eval/conformance/run_conformance.py,auto-reflect/experiments/retrieval-eval/src/retrieval_eval/__init__.py,auto-reflect/experiments/retrieval-eval/pyproject.toml">
           <md><script type="text/plain">
 Remove all filter→boost drift (no code-behavior change here).

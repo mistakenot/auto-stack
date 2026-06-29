@@ -47,9 +47,13 @@ Codex + IIR Ch 8 second reads, and the open issues that gate the full oracle.
 - **Python harness, port winner later.** Variants + stats + oracle are
   Python-native; each variant is ~20 lines here vs a Go rebuild. Only the
   winner gets ported to Go.
-- **Baseline fidelity is asserted, not assumed.** `baseline.py` mirrors
-  `match.go`; the conformance harness pins it against the real CLI. If `match.go`
-  changes, update `baseline.py` and re-run conformance.
+- **Baseline fidelity is asserted, not assumed.** `baseline.py` is the *frozen
+  v1* hard-gate reference (the system of record for the original matcher); it is
+  not changed when the Go matcher evolves. The shipped matcher is now
+  `variants[SHIPPED]` (`idf-tag`, a non-excluding IDF-weighted boost). Go↔Python
+  conformance pins the Go CLI against `variants[SHIPPED]`, while `hard-gate ==
+  baseline` stays a v1 self-check. If a *new* variant ships, repoint `SHIPPED`
+  and re-run conformance — don't rewrite `baseline.py`.
 - **Pinned, independent data.** The corpus snapshot lives here and does not
   auto-sync with `.auto/reflect/`, so runs are reproducible. Re-snapshot
   intentionally (see `data/corpus/SNAPSHOT.md`).
@@ -58,9 +62,9 @@ Codex + IIR Ch 8 second reads, and the open issues that gate the full oracle.
 
 | | **Baseline conformance** (`conformance/`, `tests/`) | **Variant evaluation** (`variants.py` + `evaluate.py`) |
 |---|---|---|
-| Question | Does `baseline.py` (and the `hard-gate` variant) reproduce the *shipped* matcher exactly? | Which retrieval method surfaces the right rules best? |
+| Question | Does the Go CLI reproduce `variants[SHIPPED]` (`idf-tag`) exactly, and does the `hard-gate` variant still reproduce the frozen `baseline.py` (v1 self-check)? | Which retrieval method surfaces the right rules best? |
 | Output | **pass/fail** regression | **metrics** (recall@k, nDCG, excluded-relevant-rate) + significance |
-| Asserts | Python == Go *today* (the BASELINE STATE) | nothing pass/fail — it ranks candidates |
+| Asserts | Go CLI == `variants[SHIPPED]` *today*, and `hard-gate` == frozen `baseline` | nothing pass/fail — it ranks candidates |
 | Run | `pytest -m baseline` / `python conformance/run_conformance.py` | `PYTHONPATH=src python -m retrieval_eval.evaluate` |
 
 Conformance only pins the current state; the bench compares candidates. The
