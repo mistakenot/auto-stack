@@ -232,8 +232,52 @@ The bigger N **strengthens** the nuanced verdict:
 > **scorer** (surfaces 54–89% of the playbook, ranks poorly) — bigger than the
 > filter. The full qrels now let us test scorer variants for free.
 
+## Validity boundary: the query *interface* is still undefined
+
+Surfaced mid-Phase-4 (worth stating plainly because it bounds what every number
+here means). We have been evaluating a **matcher** — `(intent text, domain tags)
+→ ranked rules` — but we have **not** defined how auto-reflect is *triggered* or
+what produces the query. Separate the three layers we'd been collapsing:
+
+- **Matcher** — the ranking function. *This is the only thing Phase 4 measured.*
+  Shared core, reused by every interface.
+- **Query** — the `(intent, domain)` tuple. Its *shape/quality* is set by the
+  interface.
+- **Trigger** — what issues a query, and from what context.
+
+Three candidate interfaces, and they are **not the same retrieval problem**:
+
+| interface | trigger | query shape | same regime as this eval? |
+|---|---|---|---|
+| keyword/intent (current) | agent/skill calls `retrieve` | NL intent + domain guess | ✅ exactly what we mined |
+| bash-command hook | a command fires a hook | terse command + file paths | ⚠️ point-in-time, but tags/paths carry more signal than prose |
+| live sidecar | hooks + transcript stream | rolling, noisy, *continuous* window | ❌ different problem (streaming, stateful) |
+
+Decision (with Charlie, 2026-06-29): **keep the matcher interface-agnostic**; all
+three interfaces are wanted long-term, user picks. So:
+
+- **Phase 4 transfers to the keyword + bash interfaces** (both call a point-in-time
+  matcher; a better matcher helps both) — but every conclusion here is
+  **conditioned on intent-shaped queries**. BM25's edge comes from many query
+  terms; on a 3-word keyword string or a bare bash command it would shrink and the
+  domain signal would matter more. The `idf-tag` win is the most interface-robust
+  finding; the `bm25` win is the most interface-sensitive.
+- **The live sidecar is a separate experiment**, not a variant in this bench:
+  streaming relevance (which rules are *becoming* relevant), dedup against
+  already-surfaced rules, transition detection. Relates to the parked live-tier
+  arch + `self-improving-playbook-retrieval.md`.
+- **The assets are interface-agnostic.** Corpus, qrels, metrics, stats, and the
+  variant scaffold all survive an interface change; only `queries.jsonl` is
+  interface-specific. A second interface = mine a query set in *its* shape and
+  re-run the bench for free — which also tests whether the ranking conclusions
+  hold under a different query distribution.
+
 ## Open questions / risks
 
+- **Does the ranking verdict survive a non-intent query distribution?** Untested.
+  Mine a keyword-shaped and a bash-command-shaped query set and re-run the bench;
+  if BM25's edge collapses on short queries, the recommendation narrows to
+  `idf-tag` only. (See validity boundary above.)
 - Will the **full clean-64 set** show a larger gate effect than the pilot's 2/20,
   or confirm "hard gate isn't the dominant problem"? If the latter, the
   recommendation may be "drop the hard exclusion for a cheap safety win" rather
