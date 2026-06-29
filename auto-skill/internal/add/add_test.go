@@ -29,25 +29,9 @@ func makeGitFixture(t *testing.T, skills map[string]string) (repoDir string, fil
 
 	dir := t.TempDir()
 
-	git := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %s: %s\n%s", strings.Join(args, " "), err, out)
-		}
-	}
-
-	git("init")
-	git("config", "user.email", "test@test.com")
-	git("config", "user.name", "test")
+	runGitFixture(t, dir, "init")
+	runGitFixture(t, dir, "config", "user.email", "test@test.com")
+	runGitFixture(t, dir, "config", "user.name", "test")
 
 	for subpath, content := range skills {
 		full := filepath.Join(dir, subpath, "SKILL.md")
@@ -59,10 +43,27 @@ func makeGitFixture(t *testing.T, skills map[string]string) (repoDir string, fil
 		}
 	}
 
-	git("add", "-A")
-	git("commit", "-m", "initial")
+	runGitFixture(t, dir, "add", "-A")
+	runGitFixture(t, dir, "commit", "-m", "initial")
 
 	return dir, "file://" + dir
+}
+
+func runGitFixture(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test",
+		"GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=test",
+		"GIT_COMMITTER_EMAIL=test@test.com",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %s\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // makeEnv creates an Env rooted at a temp dir.
@@ -349,6 +350,52 @@ func TestSkillFilter(t *testing.T) {
 	lock := readLock(t, env)
 	if _, ok := lock.Skills["beta"]; ok {
 		t.Error("beta should not be in lock when filtered")
+	}
+}
+
+func TestAddLatestRefreshesStaleCacheBeforeDiscovery(t *testing.T) {
+	repoDir, fileURL := makeGitFixture(t, map[string]string{
+		"skills/alpha": skillMD("alpha", "Use when testing the initial cached skill."),
+	})
+	env := makeEnv(t)
+	approveEndpoint(t, env, fileURL)
+
+	if _, err := Run(env, Options{
+		Source:         fileURL,
+		Skills:         []string{"alpha"},
+		TrustRequested: true,
+	}); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	handoffDir := filepath.Join(repoDir, "skills", "handoff")
+	if err := os.MkdirAll(handoffDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(handoffDir, "SKILL.md"),
+		[]byte(skillMD("handoff", "Use when testing stale cache refresh.")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitFixture(t, repoDir, "add", "-A")
+	runGitFixture(t, repoDir, "commit", "-m", "add handoff")
+	newHead := runGitFixture(t, repoDir, "rev-parse", "HEAD")
+
+	result, err := Run(env, Options{
+		Source:         fileURL,
+		Skills:         []string{"handoff"},
+		TrustRequested: true,
+	})
+	if err != nil {
+		t.Fatalf("add handoff after upstream moved: %v", err)
+	}
+	if len(result.Added) != 1 {
+		t.Fatalf("expected 1 added, got %d", len(result.Added))
+	}
+	if result.Added[0].Name != "handoff" {
+		t.Errorf("name = %q, want handoff", result.Added[0].Name)
+	}
+	if result.Added[0].Commit != newHead {
+		t.Errorf("commit = %q, want refreshed upstream HEAD %q", result.Added[0].Commit, newHead)
 	}
 }
 

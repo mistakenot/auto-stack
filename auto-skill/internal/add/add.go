@@ -333,7 +333,7 @@ func (r *repoRefResolver) ResolveRef(ref string) bool {
 func resolveRef(repo *cache.Repo, versionSpec, deepLinkRef string) (string, error) {
 	// Deep-link ref takes precedence if version wasn't explicitly set.
 	if deepLinkRef != "" && versionSpec == "latest" {
-		sha, err := repo.ResolveRef(deepLinkRef)
+		sha, err := resolveRemoteRef(repo, deepLinkRef)
 		if err != nil {
 			return "", fmt.Errorf("resolve deep-link ref %q: %w", deepLinkRef, err)
 		}
@@ -342,7 +342,7 @@ func resolveRef(repo *cache.Repo, versionSpec, deepLinkRef string) (string, erro
 
 	switch {
 	case versionSpec == "latest":
-		sha, err := repo.ResolveRef("HEAD")
+		sha, err := resolveRemoteRef(repo, "HEAD")
 		if err != nil {
 			return "", fmt.Errorf("resolve HEAD: %w", err)
 		}
@@ -350,7 +350,7 @@ func resolveRef(repo *cache.Repo, versionSpec, deepLinkRef string) (string, erro
 
 	case strings.HasPrefix(versionSpec, "branch:"):
 		branch := strings.TrimPrefix(versionSpec, "branch:")
-		sha, err := repo.ResolveRef(branch)
+		sha, err := resolveRemoteRef(repo, branch)
 		if err != nil {
 			return "", fmt.Errorf("resolve branch %q: %w", branch, err)
 		}
@@ -358,7 +358,7 @@ func resolveRef(repo *cache.Repo, versionSpec, deepLinkRef string) (string, erro
 
 	case strings.HasPrefix(versionSpec, "tag:"):
 		tag := strings.TrimPrefix(versionSpec, "tag:")
-		sha, err := repo.ResolveRef(tag)
+		sha, err := resolveRemoteRef(repo, tag)
 		if err != nil {
 			return "", fmt.Errorf("resolve tag %q: %w", tag, err)
 		}
@@ -370,12 +370,25 @@ func resolveRef(repo *cache.Repo, versionSpec, deepLinkRef string) (string, erro
 
 	default:
 		// Bare string — try as ref.
-		sha, err := repo.ResolveRef(versionSpec)
+		sha, err := resolveRemoteRef(repo, versionSpec)
 		if err != nil {
 			return "", fmt.Errorf("resolve ref %q: %w", versionSpec, err)
 		}
 		return sha, nil
 	}
+}
+
+// resolveRemoteRef refreshes a floating remote ref before resolving it. A cached
+// bare repo's HEAD can be stale for long-lived users; fetching the requested ref
+// keeps `add <source> --skill X` aligned with the upstream repository.
+func resolveRemoteRef(repo *cache.Repo, ref string) (string, error) {
+	if err := repo.Realize(ref); err != nil {
+		return "", err
+	}
+	if sha, err := repo.ResolveRef("FETCH_HEAD^{commit}"); err == nil {
+		return sha, nil
+	}
+	return repo.ResolveRef("FETCH_HEAD")
 }
 
 // applySelection filters discovered skills by --skill and validates --as.
