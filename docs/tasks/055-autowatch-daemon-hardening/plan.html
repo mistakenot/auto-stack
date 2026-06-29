@@ -9,14 +9,14 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="055: autowatch-daemon-hardening" status="executing" pr="pending" generated="2026-06-29"
+  <pd-doc title="055: autowatch-daemon-hardening" status="complete" pr="pending" generated="2026-06-29"
           next-prompt="/commit-task 055">
 
     <script type="application/json" id="pd-meta">
     {
       "id": "055",
       "name": "autowatch-daemon-hardening",
-      "status": "executing",
+      "status": "complete",
       "created": "2026-06-29"
     }
     </script>
@@ -322,7 +322,7 @@ Adds retention-based pruning for events and terminal runs.
 
         <pd-phase n="3" title="Failure backoff + noise reduction"
                   files="auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/backoff_test.go,auto-watch/internal/daemon/noise_test.go"
-                  status="todo" depends-on="1">
+                  status="done" depends-on="1">
           <md><script type="text/plain">
 Adds failure backoff and eliminates event noise. Independent of Phase 2 (both depend only on Phase 1).
 
