@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auto UI — Home Page &amp; New Views Exploration</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+
+<pd-doc title="Auto UI — Home Page & New Views Exploration" status="draft" generated="2026-06-28">
+
+<!-- ───────────────────── Overview ───────────────────── -->
+<pd-tab name="Overview">
+
+  <pd-section id="context" title="What auto-ui is today">
+    <md><script type="text/plain">
+Auto-ui is a **self-contained local web dashboard** (Preact + htm SPA, no build step) that serves as a planning-docs explorer. It connects to one or more autowatch daemon backends via WebSocket JSON-RPC 2.0, aggregates projects across hosts, and renders planning documents (markdown + HTML) in a two-pane layout with real-time updates.
+
+**Current views:** Explorer (`#/explore`) with sidebar tree + content pane, and Debug (`#/debug`) with connection/event diagnostics.
+
+**Current aesthetic:** "Drafting table" — warm cream `#f6f2ea`, charcoal `#211e19`, terracotta accent `#c75b39`. Hanken Grotesk / JetBrains Mono / Newsreader type stack.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="data-sources" title="Available data sources">
+    <md><script type="text/plain">
+The broader auto-stack has rich data that auto-ui currently does not surface:
+
+| Source | Tool | What it has |
+|--------|------|-------------|
+| Planning docs + execution state | auto-watch | Task status, branch, PR, review state, executor liveness |
+| Session history | auto-etl + auto-search | Normalized agent sessions (messages, tool calls, files touched, durations) |
+| Reflection rules | auto-reflect | Extracted playbook rules with lifecycle (draft → confirmed → stale) |
+| Code context graphs | auto-graph | File-level import graphs, context packs |
+| Evidence artifacts | auto-artifact | Public S3 URLs for screenshots, videos, logs |
+| Bus events | auto-watch | Real-time typed events (doc.changed, task.start, etc.) |
+    </script></md>
+  </pd-section>
+
+  <pd-section id="scope" title="Scope: what this doc covers">
+    <md><script type="text/plain">
+This exploration is about **layout, views, and functionality** — what zones appear on the home page, what new pages to add, what data they surface, how information is organized.
+
+**Theme / colors / typography is a separate pass.** The visual direction notes in each concept are illustrative placeholders to help imagine the feel, but the actual palette, type stack, and design system will be decided later as its own workstream. Don't treat the hex codes or font names here as decisions.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="exploration-summary" title="What we're exploring">
+    <md><script type="text/plain">
+### Three home page concepts
+
+| Concept | Signature | Vibe |
+|---------|-----------|------|
+| **A: Mission Control** | Live session pulse sparkline | Dense ops dashboard — command center for an agent fleet |
+| **B: The Logbook** | Chronological narrative timeline | Editorial / journal — today's story told through events |
+| **C: Nerve Center** | Live event ticker + keyboard nav | Bloomberg terminal — maximum density, zero clicks |
+
+### Five new page ideas
+
+| Page | Data source | Effort | Impact |
+|------|-------------|--------|--------|
+| **Session Explorer** | auto-etl + auto-search | High | Very high |
+| **Playbook Manager** | auto-reflect rules.yaml | Medium | High |
+| **Agent Timeline** | auto-etl sessions | Medium | High |
+| **Code Heatmap** | auto-graph | Medium | Medium |
+| **Project Overview** | all sources combined | High | High |
+    </script></md>
+  </pd-section>
+
+</pd-tab>
+
+<!-- ───────────────── Concept A: Mission Control ───────────────── -->
+<pd-tab name="A: Mission Control">
+
+  <pd-section id="mc-thesis" title="Thesis">
+    <md><script type="text/plain">
+You're running a fleet of AI coding agents. This is your command center. The home page gives you **operational awareness at a glance** — what's active, what completed, what needs you.
+
+The signature element is the **Session Pulse**: a live sparkline showing agent activity rhythm over the last 24 hours. It answers the question "are my agents working?" without reading a single number.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="mc-visual" title="Visual direction">
+    <md><script type="text/plain">
+- **Background:** Dark charcoal `#1a1a1a` — not black, not navy. Warm enough to feel intentional.
+- **Text:** Warm cream `#e8e0d0` for primary, `#9a9080` for secondary.
+- **Status triad:** Green `#6f9a5f` (healthy/done), amber `#c79030` (in progress/warning), red `#c4452f` (failed/blocked). These are the ONLY colors that pop.
+- **Type:** Hanken Grotesk for labels and section headers. JetBrains Mono for data values (task IDs, durations, counts). Monospace carries the operational feel.
+- **Event stream type color:** Each event type gets its own muted color for the type badge: `#58a6ff` blue for doc events, `#d29922` amber for task events, `#3fb950` green for session events, `#bc8cff` purple for rule events, `#9a9080` grey for system events.
+- **Layout:** Single-column, full-width. Six stacked zones with clear 1px borders. Dense but breathing — generous padding within zones, tight between data rows.
+- **Signature risk:** The sparkline uses Unicode block characters (▁▂▃▅▇█) rendered in a gradient from green (low activity) through amber to the accent color (peak). It's alive — it updates as sessions start and end.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="mc-wireframe" title="Layout wireframe">
+    <pd-code lang="text" caption="Mission Control — zone layout">
+<script type="text/plain">
+┌─────────────────────────────────────────────────────────────┐
+│ AUTO  ── Mission Control              ⚡ 3 active  │ 12:34 │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌─── ACTIVE NOW ──────────────────────────────────────┐   │
+│  │ ● task-052  reflecting...    auto-stack     2m ago  │   │
+│  │ ● task-053  executing plan   auto-stack    45s ago  │   │
+│  │ ○ task-049  waiting review   auto-web       idle    │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  ┌── RECENT ─────────────┐  ┌── ATTENTION ──────────────┐  │
+│  │ ✓ task-051 merged     │  │ ! 3 docs stale > 7d      │  │
+│  │ ✓ task-050 merged     │  │ ! review pending: t-049   │  │
+│  │ ✗ task-048 failed     │  │ ▲ 2 rules need confirm   │  │
+│  │   12 sessions today   │  │                           │  │
+│  └────────────────────────┘  └───────────────────────────┘  │
+│                                                             │
+│  ┌── SESSION PULSE ──────────────┐  ┌── PROJECTS ───────┐  │
+│  │ ▁▂▃▅▇▅▃▂▁▂▃▅▇█▇▅▃▂▁ 24h     │  │ auto-stack  ●●●○  │  │
+│  │ avg: 18m  calls: 2,847       │  │ auto-web    ●●○○  │  │
+│  └───────────────────────────────┘  │ client-app  ●○○○  │  │
+│                                     └───────────────────┘  │
+├─────────────────────────────────────────────────────────────┤
+│  EVENT STREAM                              [pause] [▾ all] │
+│  12:34:22 doc.changed  auto-stack  docs/tasks/052/plan…    │
+│  12:34:01 task.start   auto-stack  executor launched       │
+│  12:33:45 rule.fire    auto-stack  R-12 "real db, not…"    │
+│  12:33:12 doc.changed  auto-stack  docs/tasks/053/plan…    │
+│  12:32:58 session.end  auto-web    #c7d0 (12m)             │
+│  12:32:41 commit.push  auto-stack  feat: doc freshness…    │
+│  12:32:15 hook.fire    auto-stack  pre-commit: lint, vet   │
+│  12:31:50 doc.changed  auto-web    docs/tasks/049/plan…    │
+│  12:31:22 session.start auto-stack #e5f1 auto-reflect      │
+│  12:30:58 hook.fire    auto-stack  post-commit: br sync    │
+└─────────────────────────────────────────────────────────────┘
+</script>
+    </pd-code>
+  </pd-section>
+
+  <pd-section id="mc-zones" title="Zone breakdown">
+    <md><script type="text/plain">
+**Header bar** — Brand mark ("AUTO"), view label ("Mission Control"), active agent count with lightning bolt, current time. Minimal. The active count is the single most important number on the page.
+
+**Active Now** — Live list of executing/waiting tasks. Each row: status dot (● active, ○ waiting), task ID, current phase description, project name, time since last activity. Rows sorted by recency. Clicking drills into the planning doc. This zone disappears when nothing is active (the page breathes).
+
+**Recent + Attention** — Side-by-side split. Recent: last N completed/failed tasks with ✓/✗ markers, plus today's session count. Attention: items that need human input — stale docs, pending reviews, draft rules awaiting confirmation. Attention items are the "to-do list" the dashboard generates for you.
+
+**Session Pulse + Projects** — Side-by-side. Pulse: the 24-hour sparkline of session activity (Unicode blocks) with today's aggregate stats. Projects: one row per registered project with a mini progress bar (filled dots = active tasks). Compact reference panels.
+
+**Event Stream** — Anchored to the bottom of the page, below a full-width separator. Grows downward — newest events at top, older ones scroll off the bottom edge of the viewport. This positioning means it never pushes the actionable zones (Active Now, Attention) out of view, and it feels like a log tail pinned to the floor of the control room.
+
+Each line has three columns:
+
+| Column | Width | Content |
+|--------|-------|---------|
+| Timestamp | fixed | `HH:MM:SS` in secondary text |
+| Event type | fixed | Badge-colored by category: `doc.changed`, `task.start`, `session.end`, `rule.fire`, `commit.push`, `hook.fire` |
+| Context | flex | Project name + snippet preview of the payload — a truncated file path, commit message first line, rule ID + title, session hash + duration, or hook command |
+
+The stream pauses on hover (so you can read/click) and resumes on mouse-out. A `[pause]` toggle pins it. A `[▾ all]` dropdown filters by event type. Clicking any row navigates to the relevant detail (planning doc, session, rule). Connects to the existing WebSocket notifications and extends to all bus event types as they become available.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="mc-strengths" title="Strengths and risks">
+    <md><script type="text/plain">
+**Strengths:**
+- Answers "what's happening?" in under 2 seconds
+- The event stream is addictive — like `tail -f` but structured and color-coded
+- The pulse sparkline is genuinely novel — no other dev tool shows agent activity rhythm this way
+- Scales naturally: more agents = more rows, more events = richer stream
+- Dark theme is practical for always-on monitoring
+- The stream gives the page life even when no tasks are actively executing — hooks, commits, and doc changes keep flowing
+
+**Risks:**
+- Could feel generic "ops dashboard" if the zones aren't curated carefully
+- Event stream needs careful empty-state design (when nothing has happened yet)
+- High event volume could make the stream noisy — the type filter and pause controls are essential
+- The dark charcoal is close to GitHub dark mode — needs the warm cream text and status colors to differentiate
+    </script></md>
+  </pd-section>
+
+</pd-tab>
+
+<!-- ───────────────── Concept B: The Logbook ───────────────── -->
+<pd-tab name="B: The Logbook">
+
+  <pd-section id="lb-thesis" title="Thesis">
+    <md><script type="text/plain">
+This tool records what happened. The home page should *tell the story of the day*. Not in cards, not in grids — in a **chronological narrative** where events from every subsystem interleave into a single timeline. You open the page and read down: here's what your agents did today, in order.
+
+The signature element is **temporal organization itself**. There is no "dashboard" — there's a log. Like a captain's logbook, each entry is a moment in time.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="lb-visual" title="Visual direction">
+    <md><script type="text/plain">
+- **Background:** Warm cream `#f5f1e8` — closer to paper than screen.
+- **Text:** Deep charcoal `#1a1714` for primary. Event metadata in `#8a7f6f`.
+- **Type:** Newsreader (serif) is the star — used for log entries and the date header, giving the page a journal quality. Hanken Grotesk for navigation and instruments (sans-serif ground for the serif figure). The type scale is generous: the date header is large and unhurried.
+- **Layout:** Single column, wide margin, no sidebar. The log is a vertical list. Below it, two small panels (Navigate / Instruments) sit side by side as compact reference — they're the "back pages" of the logbook.
+- **Color:** Almost monochrome. Event types get a thin 3px left border in muted tones: green for completions, amber for starts, blue for extractions, red for failures. But the palette never shouts — it tints.
+- **Signature risk:** The spaced letterspacing on "A U T O" in the header, the serif body, and the single-column flow are this page's personality. It reads like a printed artifact in a world of dashboards. The risk is that it feels too calm for an operational tool — but the argument is: calm *is* the point. If everything is fine, the page should feel quiet.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="lb-wireframe" title="Layout wireframe">
+    <pd-code lang="text" caption="The Logbook — single-column timeline">
+<script type="text/plain">
+┌─────────────────────────────────────────────────────────────┐
+│                                                             │
+│       A U T O                                               │
+│       ─────────────────────                                 │
+│       Saturday, 28 June 2026                                │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │                                                      │   │
+│  │  Today                                               │   │
+│  │  ─────                                               │   │
+│  │  12:34  task-052 began reflecting on hook hints      │   │
+│  │  12:20  task-053 plan approved, execution began      │   │
+│  │  11:45  3 new rules extracted from sessions          │   │
+│  │  10:30  task-051 merged to main                      │   │
+│  │  09:15  session: refactored etl pipeline (18m)       │   │
+│  │                                                      │   │
+│  │  Yesterday                                           │   │
+│  │  ─────────                                           │   │
+│  │  17:20  task-050 merged to main                      │   │
+│  │  15:45  session: fixed search indexing (32m)         │   │
+│  │  ...                                                 │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                             │
+│  ┌── Navigate ────────────┐  ┌── Instruments ────────────┐  │
+│  │ → Tasks (14 open)      │  │ Sessions: 12 today        │  │
+│  │ → Sessions (browse)    │  │ Rules: 47 confirmed       │  │
+│  │ → Playbook (3 drafts)  │  │ Docs: 2 stale             │  │
+│  │ → Projects (3)         │  │ Health: all green          │  │
+│  └────────────────────────┘  └────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+</script>
+    </pd-code>
+  </pd-section>
+
+  <pd-section id="lb-zones" title="Zone breakdown">
+    <md><script type="text/plain">
+**Header** — "A U T O" in wide letterspacing, a thin rule, and today's date in full human format ("Saturday, 28 June 2026"). No status indicators, no counts, no badges. The date IS the header. This is the one moment where the design pauses.
+
+**The Log** — A vertical list of events, grouped by day ("Today", "Yesterday", then ISO dates). Each entry: timestamp (HH:MM), then a single sentence describing what happened. Events come from all subsystems — task lifecycle, session starts/ends, rule extractions, doc changes, merges, failures. They're interleaved into one stream.
+
+Event types are distinguished by a subtle left-border color (3px), not icons:
+- Green: something completed (task merged, session ended)
+- Amber: something started (task began, execution dispatched)
+- Blue: something was learned (rules extracted, playbook updated)
+- Red: something failed (task failed, session errored)
+
+Clicking any log entry navigates to the relevant detail view (planning doc, session transcript, rule).
+
+**Navigate** — Four links to the main views, each with a count in parentheses. This is the site nav — compact, scannable, always at the bottom.
+
+**Instruments** — Four key metrics, no charts. Just numbers and words. "Sessions: 12 today", "Rules: 47 confirmed", "Docs: 2 stale", "Health: all green". The dashboard-in-a-paragraph.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="lb-strengths" title="Strengths and risks">
+    <md><script type="text/plain">
+**Strengths:**
+- Genuinely distinctive — no other developer tool looks like this
+- The single timeline answers "what happened?" with zero cognitive load
+- The editorial aesthetic is memorable and calming
+- Works beautifully at any data scale (few events → clean, many events → rich narrative)
+- The serif type + cream background is a real departure from every developer dashboard
+
+**Risks:**
+- May feel too passive — no operational urgency, no "action items"
+- The Attention/to-do concept from Mission Control has no home here — you discover problems by reading, not by being alerted
+- The lack of structure (no zones, no grids) may frustrate users who want to scan patterns rather than read linearly
+- The warm cream + serif is intentionally close to the current "drafting table" palette — might not feel like a refresh
+    </script></md>
+  </pd-section>
+
+</pd-tab>
+
+<!-- ───────────────── Concept C: Nerve Center ───────────────── -->
+<pd-tab name="C: Nerve Center">
+
+  <pd-section id="nc-thesis" title="Thesis">
+    <md><script type="text/plain">
+For the power user who wants everything visible without clicking. Four quadrants, always on screen. A live event ticker in the center. Keyboard-driven navigation throughout. This is the **Bloomberg terminal for autonomous coding** — maximum information density, minimum interaction cost.
+
+The signature element is the **live event feed**: a real-time ticker streaming every event across all agents and projects, color-coded by type, scrolling like a terminal log but organized and filterable.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="nc-visual" title="Visual direction">
+    <md><script type="text/plain">
+- **Background:** Deep navy `#0d1117` — GitHub dark mode territory, but committed to it. This is a power tool, not a consumer product.
+- **Text:** `#c9d1d9` for primary (cool, readable), `#6e7681` for secondary.
+- **Borders:** 1px `#21262d` hairlines dividing every zone. The grid IS the design — no rounded corners, no shadows, no decorative elements whatsoever.
+- **Type:** JetBrains Mono everywhere. No serif, no display face. Every character aligns to the grid. Column widths are measured in character counts, not pixels. Data is king.
+- **Status colors:** Bright and saturated against the dark: `#3fb950` green, `#d29922` amber, `#f85149` red, `#58a6ff` blue (events). These are the only non-grey elements.
+- **Interaction:** Keyboard shortcuts shown inline: `[/]` search, `[?]` help, `[j]`/`[k]` navigate, `[1-9]` jump to project. Every panel is focusable and scrollable independently. Active panel gets a 1px brighter border.
+- **Signature risk:** All-monospace, all-data, zero decoration. The risk is it feels hostile to newcomers. The payoff is it feels *incredible* to power users — the kind of tool you leave open on a second monitor all day.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="nc-wireframe" title="Layout wireframe">
+    <pd-code lang="text" caption="Nerve Center — four-quadrant grid + status bar">
+<script type="text/plain">
+┌───────────────────────────────────────────────────────────────┐
+│ AUTO │ stack │ web │ client        [/] search    [?] help     │
+├───────────┬───────────────────────┬───────────────────────────┤
+│ TASKS     │ LIVE FEED             │ SESSIONS                  │
+│           │                       │                           │
+│ ▶ 052 ⚡  │ 12:34:22 doc.changed  │ #a8f2 auto-stack  18m    │
+│ ▶ 053 ⚡  │ 12:34:01 task.start   │ #b3c1 auto-stack  45m    │
+│   049 ◔   │ 12:33:45 rule.fire    │ #c7d0 auto-web    12m    │
+│ ✓ 051     │ 12:33:12 doc.changed  │ #d4e2 auto-stack   8m    │
+│ ✓ 050     │ 12:32:58 session.end  │                           │
+│ ✗ 048     │ 12:32:41 commit.push  │ today: 12 sessions        │
+│           │ 12:32:15 doc.changed  │ avg: 22m                  │
+│ 14 open   │                       │ tools: 2847 calls         │
+│  6 done   │ ▁▂▃▅█▅▃▁▂▃▅█▅▃▁     │                           │
+├───────────┴───────────────────────┴───────────────────────────┤
+│ RULES: 47 confirmed  3 draft  │ HEALTH: ● stack ● web       │
+│ last extracted: 2h ago        │ ○ client (no daemon)         │
+└───────────────────────────────────────────────────────────────┘
+</script>
+    </pd-code>
+  </pd-section>
+
+  <pd-section id="nc-zones" title="Zone breakdown">
+    <md><script type="text/plain">
+**Header bar** — Project tabs (clickable, keyboard-navigable with number keys). Each tab shows the project name; the active project is highlighted. Search (`[/]`) opens a command palette. Help (`[?]`) shows the full keymap. The header is 1 row, monospace, no logo.
+
+**Tasks panel (left)** — Compact task list for the active project. Each row: status icon (▶ active, ◔ waiting, ✓ done, ✗ failed), task number, lightning bolt if executing. Summary counts at the bottom ("14 open / 6 done"). `[j]`/`[k]` to move, `[enter]` to open planning doc. Column width: ~12 characters.
+
+**Live Feed (center)** — The heartbeat of the page. Real-time event stream, newest at top. Each line: timestamp (HH:MM:SS), event type (`doc.changed`, `task.start`, `rule.fire`, `session.end`, `commit.push`). Event types are color-coded: blue for doc, amber for task, green for session, red for errors. Below the feed: a mini sparkline of event frequency. This panel auto-scrolls but pauses on hover/focus.
+
+**Sessions panel (right)** — Recent sessions for the active project. Each row: session hash (4 chars), project, duration. Below: today's aggregate stats. Click/enter to drill into session transcript.
+
+**Status bar (bottom)** — Full-width dense strip. Two sections divided by a pipe: rules status (confirmed count, draft count, last extraction time) and backend health (per-project connection dots). Always visible, never scrolls.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="nc-keyboard" title="Keyboard model">
+    <md><script type="text/plain">
+The entire page is navigable without a mouse:
+
+| Key | Action |
+|-----|--------|
+| `1`–`9` | Switch to project tab N |
+| `Tab` / `Shift+Tab` | Cycle focus between panels |
+| `j` / `k` | Move down/up within focused panel |
+| `Enter` | Open selected item |
+| `/` | Open search / command palette |
+| `?` | Show keymap overlay |
+| `r` | Refresh all panels |
+| `Esc` | Close overlay / deselect |
+
+The focused panel gets a slightly brighter border (`#30363d` → `#484f58`). Active item within a panel gets a subtle background highlight.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="nc-strengths" title="Strengths and risks">
+    <md><script type="text/plain">
+**Strengths:**
+- The most information-dense option by far — everything on one screen
+- The live event feed is genuinely addictive to watch (like `tail -f` but structured)
+- Keyboard-first navigation makes it extremely fast for repeat users
+- The monospace-only aesthetic is a strong identity — unmistakable
+- Feels like a tool built by and for engineers
+
+**Risks:**
+- Intimidating for new users — no affordances, no tooltips, no onboarding
+- The all-monospace look is close to "just a terminal" — needs the structured layout and color coding to justify being a web app
+- Deep navy + bright status colors is a well-trodden path (VS Code, GitHub dark)
+- The four-quadrant layout may feel cramped on smaller screens — needs responsive breakpoints
+    </script></md>
+  </pd-section>
+
+</pd-tab>
+
+<!-- ───────────────── New Pages ───────────────── -->
+<pd-tab name="New Pages">
+
+  <pd-section id="pages-overview" title="Five new views">
+    <md><script type="text/plain">
+Beyond the home page, these five new views would transform auto-ui from a docs explorer into a **full agent operations platform**. Each taps into data that already exists in the auto-stack but has no visual surface today.
+
+| Page | Data Source | Exists Today? | Effort | Impact |
+|------|-------------|---------------|--------|--------|
+| Session Explorer | auto-etl + auto-search | No | High | Very High |
+| Playbook Manager | auto-reflect rules.yaml | No | Medium | High |
+| Agent Timeline | auto-etl sessions | No | Medium | High |
+| Code Heatmap | auto-graph | No | Medium | Medium |
+| Project Overview | all sources combined | Partial | High | High |
+    </script></md>
+  </pd-section>
+
+  <pd-section id="page-sessions" title="1. Session Explorer">
+    <md><script type="text/plain">
+**The killer feature.** The data exists — auto-etl normalizes every coding session into parquet, auto-search indexes it with BM25 full-text — but there's no visual way to browse it. This page changes that.
+
+**What it shows:** Every past coding session, browseable and searchable. Each session card: hash (4-char), project, start time, duration, tool call count, files touched, one-line summary. Expandable to full transcript with syntax-highlighted tool calls and file diffs.
+
+**Key interactions:**
+- Full-text search across all sessions (powered by auto-search)
+- Filter by project, date range, duration, tool type
+- Sort by recency, duration, or tool-call density
+- Expand any session to read the full transcript inline
+- Link from session to the planning doc / PR it produced
+
+**Why it matters:** Right now, understanding what agents did requires reading raw JSONL files or running CLI queries. A visual session browser makes the entire history accessible — for debugging, learning, and reflection.
+    </script></md>
+
+    <pd-code lang="text" caption="Session Explorer wireframe">
+<script type="text/plain">
+┌─────────────────────────────────────────────────────────────┐
+│ Sessions                              search: [           ] │
+│ ── auto-stack ── all time ──                   [filters ▾] │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│ ┌─ #a8f2 ──── 28 Jun 12:15 ──── 18m ──── 47 tools ──────┐ │
+│ │ Refactored ETL pipeline to handle new message types     │ │
+│ │ Files: model.go, transform.go, search_test.go           │ │
+│ │                                         [▾ transcript]  │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│                                                             │
+│ ┌─ #b3c1 ──── 28 Jun 10:30 ──── 45m ──── 112 tools ─────┐ │
+│ │ Implemented task-051: doc freshness scoring              │ │
+│ │ Files: freshness.go, score.go, cmd/doc.go               │ │
+│ │                                         [▾ transcript]  │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│                                                             │
+│ ┌─ #c7d0 ──── 27 Jun 17:20 ──── 32m ──── 89 tools ──────┐ │
+│ │ Fixed search indexing for multi-host sessions            │ │
+│ │ Files: index.go, search.go, merge.go                    │ │
+│ │                                         [▾ transcript]  │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│                                                             │
+│                        showing 1–20 of 347 sessions         │
+└─────────────────────────────────────────────────────────────┘
+</script>
+    </pd-code>
+  </pd-section>
+
+  <pd-section id="page-playbook" title="2. Playbook Manager">
+    <md><script type="text/plain">
+**The reflection UI.** auto-reflect extracts rules from past sessions and stores them in `rules.yaml`. Today, curating the playbook means editing YAML by hand. This page makes it visual.
+
+**What it shows:** Every rule in the playbook, displayed as a card with lifecycle badge (draft / confirmed / stale), type (hard / soft), priority, the rule text, and links to source observations.
+
+**Key interactions:**
+- Browse rules by lifecycle stage, type, or domain area
+- Promote a draft rule to confirmed (or demote/archive)
+- See which rules were recently triggered (retrieval log)
+- A "coverage" sidebar showing which areas of the project have rules vs. uncharted territory — mapped to the project's directory structure
+- Click through to the observations that spawned each rule
+
+**Why it matters:** The playbook is the "brain" of the agent fleet — the accumulated wisdom from past sessions. But it's invisible. Making it browseable and editable closes the human-in-the-loop for reflection.
+    </script></md>
+
+    <pd-code lang="text" caption="Playbook Manager wireframe">
+<script type="text/plain">
+┌───────────────────────────────────────────────────────────────┐
+│ Playbook ── auto-stack                                        │
+│ [all] [draft: 3] [confirmed: 47] [stale: 5]                  │
+├────────────────────────────────────┬──────────────────────────┤
+│                                    │ COVERAGE                 │
+│ ┌─ R-12 ── confirmed ── hard ──┐  │                          │
+│ │ Integration tests must hit a  │  │ auto-etl/     ████░ 80% │
+│ │ real database, not mocks.     │  │ auto-search/  ██░░░ 40% │
+│ │                               │  │ auto-ui/      ░░░░░  0% │
+│ │ from: 3 observations          │  │ auto-watch/   ███░░ 60% │
+│ │ last fired: 2h ago            │  │ auto-reflect/ █░░░░ 20% │
+│ │            [promote] [archive]│  │                          │
+│ └───────────────────────────────┘  │                          │
+│                                    │ 47 rules covering        │
+│ ┌─ R-34 ── draft ── soft ──────┐  │ 60% of active dirs       │
+│ │ Prefer zero new runtime deps; │  │                          │
+│ │ reuse already-embedded libs.  │  │                          │
+│ │                               │  │                          │
+│ │ from: 1 observation           │  │                          │
+│ │ never fired                   │  │                          │
+│ │         [confirm] [reject]    │  │                          │
+│ └───────────────────────────────┘  │                          │
+├────────────────────────────────────┴──────────────────────────┤
+│ Recently fired: R-12 (2h ago), R-07 (5h ago), R-22 (1d ago)  │
+└───────────────────────────────────────────────────────────────┘
+</script>
+    </pd-code>
+  </pd-section>
+
+  <pd-section id="page-timeline" title="3. Agent Timeline">
+    <md><script type="text/plain">
+**The rhythm view.** A horizontal Gantt-chart-style visualization of agent sessions over time. Each session is a horizontal bar; overlapping sessions stack vertically. Color-coded by project.
+
+**What it shows:** When agents worked, how long each session lasted, where sessions overlapped (parallel agents), and gaps where nothing happened.
+
+**Key interactions:**
+- Zoom: 1 hour / 6 hours / 24 hours / 7 days
+- Hover any bar to see session summary (hash, project, duration, one-line description)
+- Click to drill into Session Explorer for that session
+- Vertical stacking reveals parallel agent activity — you can see when 3 agents were working simultaneously vs. when only 1 was active
+- A "now" marker shows the current moment
+
+**Why it matters:** Understanding the temporal rhythm of agent work is impossible from lists and tables. The timeline makes patterns visible: when do agents work? How long do sessions take? Are agents overlapping or sequential? Where are the idle gaps?
+    </script></md>
+
+    <pd-code lang="text" caption="Agent Timeline wireframe">
+<script type="text/plain">
+┌─────────────────────────────────────────────────────────────┐
+│ Timeline ── all projects ── 24h          [1h] [6h] [24h] [7d] │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  00:00    06:00    12:00    18:00    now                     │
+│  ├────────┼────────┼────────┼────────┤                      │
+│  │                                                          │
+│  │  ██████░░░░░░░░░░░░████████████░░ auto-stack #a8f2       │
+│  │  ░░░░░░░░████████░░░░░░░░░░░░░░░░ auto-stack #b3c1       │
+│  │  ░░░░░░░░░░░░░░░░░░░░██████░░░░░░ auto-web   #c7d0       │
+│  │  ░░░░░░░░░░░░░░████░░░░░░░░░░░░░░ auto-stack #d4e2       │
+│  │                                                          │
+│  │  ──────────────────────────────── ← now                  │
+│  │                                                          │
+│  └──────────────────────────────────                        │
+│                                                             │
+│  Sessions: 4 today │ Active: 1 │ Peak overlap: 2 at 10:30  │
+└─────────────────────────────────────────────────────────────┘
+</script>
+    </pd-code>
+  </pd-section>
+
+  <pd-section id="page-heatmap" title="4. Code Heatmap">
+    <md><script type="text/plain">
+**The hot-spot finder.** Uses auto-graph data and session file-touch records to visualize which files agents interact with most. A treemap where cell size = touch frequency and color = read-vs-write ratio.
+
+**What it shows:** Which files are "hot" (frequently touched by agents) and whether they're being read (potential documentation gaps) or written (potential refactoring targets or instability).
+
+**Key interactions:**
+- Treemap layout: directory hierarchy as nested rectangles, cell size proportional to agent touch count
+- Color scale: blue (mostly read) → purple (balanced) → red (mostly written)
+- Hover any cell to see: file path, read count, write count, last touched, sessions that touched it
+- Click to open the file in the explorer (or link to repo)
+- Time filter: last 24h / 7d / 30d / all time
+- Toggle between "by touches" (how often) and "by sessions" (how many distinct sessions)
+
+**Why it matters:** Files that agents read repeatedly might need better documentation or extraction into a context pack. Files that agents write repeatedly might be unstable or poorly factored. The heatmap surfaces these patterns visually — impossible to see from git log alone because it includes reads, not just writes.
+    </script></md>
+
+    <pd-code lang="text" caption="Code Heatmap wireframe (treemap)">
+<script type="text/plain">
+┌─────────────────────────────────────────────────────────────┐
+│ Heatmap ── auto-stack ── 7 days           [24h] [7d] [30d] │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌──────────────────────┬──────────┬───────────────────┐    │
+│  │                      │          │                   │    │
+│  │   auto-etl/          │ auto-    │  auto-search/     │    │
+│  │   internal/          │ watch/   │  internal/        │    │
+│  │   model.go           │ daemon/  │  index.go         │    │
+│  │   ████████ 47 reads  │ loop.go  │  ██████ 23 reads  │    │
+│  │   ████ 12 writes     │ 31 total │  ████ 18 writes   │    │
+│  │                      │          │                   │    │
+│  ├──────────────────────┤          ├───────────────────┤    │
+│  │   auto-ui/           ├──────────┤   auto-reflect/   │    │
+│  │   static/            │ auto-    │   rules/          │    │
+│  │   app.js             │ graph/   │   fold.go         │    │
+│  │   18 total           │ 8 total  │   12 total        │    │
+│  └──────────────────────┴──────────┴───────────────────┘    │
+│                                                             │
+│  Legend: ░ read-heavy  ▓ balanced  █ write-heavy            │
+│  Hottest file: auto-etl/internal/model.go (59 touches)      │
+└─────────────────────────────────────────────────────────────┘
+</script>
+    </pd-code>
+  </pd-section>
+
+  <pd-section id="page-project" title="5. Project Overview">
+    <md><script type="text/plain">
+**The deep dive.** A dedicated page per project that combines everything: task board, sessions, docs, health. The single place to understand the full state of one project.
+
+**What it shows:** Four panels — a task kanban board (planning → executing → merged), recent sessions list, the doc tree (from the current explore view), and a health scorecard.
+
+**Key interactions:**
+- Task board: drag tasks between columns (or keyboard-move), click to open planning doc
+- Sessions: scrollable list of recent sessions, click to expand
+- Doc tree: reuses the existing sidebar tree component
+- Health scorecard: backend connected?, docs fresh?, tests passing?, rules coverage%
+
+**Why it matters:** Today, project understanding is scattered across CLI tools and the two-pane explorer. This page unifies everything about a single project in one view. It's especially useful when managing multiple projects — you can jump between project overviews to compare health and progress.
+    </script></md>
+
+    <pd-code lang="text" caption="Project Overview wireframe">
+<script type="text/plain">
+┌─────────────────────────────────────────────────────────────┐
+│ auto-stack                          ● connected  │ health ▾ │
+├──────────────────────────────┬──────────────────────────────┤
+│                              │                              │
+│  TASKS                       │  HEALTH                      │
+│  ┌────────┬────────┬──────┐  │  ┌────────────────────────┐  │
+│  │planning│execut. │merged│  │  │ Backend:  ● connected  │  │
+│  │        │        │      │  │  │ Docs:     2 stale      │  │
+│  │ 049    │ 052 ⚡ │ 051  │  │  │ Rules:    47 confirmed │  │
+│  │        │ 053 ⚡ │ 050  │  │  │ Coverage: 60%          │  │
+│  │        │        │ 048  │  │  └────────────────────────┘  │
+│  └────────┴────────┴──────┘  │                              │
+│                              │  RECENT SESSIONS             │
+│  DOCS                        │  #a8f2  18m  etl pipeline    │
+│  ├─ tasks/                   │  #b3c1  45m  doc freshness   │
+│  │  ├─ 052-reflect/          │  #c7d0  32m  search indexing │
+│  │  ├─ 053-hook-hints/       │  #d4e2   8m  quick fix       │
+│  │  └─ ...                   │                              │
+│  ├─ research/                │  12 sessions this week       │
+│  └─ design/                  │  avg duration: 24m           │
+│                              │                              │
+└──────────────────────────────┴──────────────────────────────┘
+</script>
+    </pd-code>
+  </pd-section>
+
+</pd-tab>
+
+</pd-doc>
+
+</body>
+</html>

@@ -30,7 +30,6 @@ What are the current bottlenecks?
 - [ ] exclude .claude folder by default
 - [ ] support filtering by `tags: []` front matter value (e.g. `tags: [needs-review]`), so autowatch cron triggers can pick up on tagged docs
 - [ ] fix source tag scanning to skip directories (crashes on `.claude/skills/open-prose` directory). The `ignores` config only applies to doc scanning, not source tag scanning.
-- [ ] We need to do a better job of tidying up the index blobs we insert into agents.md and claw.md files I think the best way to do this is maybe to have a optional set of like globs in the config which is like either an exclude from indexing or an include from indexing which will maybe name it better, exclude from memory files, include from... yeah I think... I think maybe... I'm not sure, maybe inclusive, include in memory files and then the files matching those globs are the ones that actually get put into the memory files because right now we're pulling in lots of junk like research files that shouldn't really be in there, we need to keep those really tight and consistent.
 
 ## auto-etl
 
@@ -39,7 +38,6 @@ Align with user-journey spec.
 - [ ] add `quickstart` command
 - [ ] fix: warning: `~/.auto/host.json` not found, using hostname:
 - [ ] ensure sessions/messages include `model_id`
-- [ ] import GitHub PR feedback (comments, reviews) as an additional data source — contains valuable signal (code review insights, design decisions, bug context). Spec: `auto-etl/docs/github-pr-etl.md`
 - [ ] **[PARKED — needs more design]** Live tier for monitoring: batch ETL (parquet) is too stale for live queries ("what is job X doing now?"); building a separate monitoring store would recreate data auto-etl already owns. Direction: one schema / one transform / many materializations — a hot tier (pure-Go SQLite, fed by a continuous tailer of the JSONL log) in front of parquet, behind one query surface; ETL becomes a compaction flush, not a daily job. DRAFT/RFC: `docs/live-tier-architecture.md`. Open questions to resolve before building: hot-store retention window, compaction trigger, multi-host query scope, hot/cold schema unification, replay-on-restart.
 
 ## auto-reflect
@@ -49,11 +47,9 @@ Align with user-journey spec.
 ## auto-search
 
 - [ ] `truncateStr` in `auto-search/internal/cli/session.go` slices by bytes, not runes — same UTF-8 bug as the `search.TruncateAtRune` fix in PR #47 (`messages.go` / `cli/search.go` snippets). Fires at the 80-char tool-arg preview when args contain emoji, accented chars, or unicode in commands/paths. Route through `search.TruncateAtRune` (or duplicate the `utf8.RuneStart` advance loop) so tool tags in `session get` output stay valid UTF-8.
-- [ ] `session render` function, which takes a session id and renders a html file of that session graph to help humans read through it, using planning-doc components.
 
 ### Git-related APIs — low-level primitives
 
-- [ ] list files that are scored as being frequently edited at the same time as a target file.
 - [ ] list files ranked by edit frequency across sessions (most-touched hotspots), filterable by time range and remote.
 - [ ] list files edited multiple times within a single session (rework signal — repeated edits suggest complexity or uncertainty).
 - [ ] list file edit sequences for a target file — what files are typically edited before/after it (workflow adjacency graph).
@@ -63,20 +59,11 @@ Align with user-journey spec.
 
 ### Query gaps — found during requirements-extraction research
 
-- [ ] `search` command: add `--session` filter to scope a search to a single session ID. Currently must use `session get` and parse locally.
 - [ ] `search` command: add `--min-index` / `--max-index` filter on message index. Needed to isolate session-opening messages (e.g. "user messages where index < 5") without post-filtering JSON.
-- [ ] `search` / `stats`: add `--tool-name AskUserQuestion` support — currently tool-name filter exists but AskUserQuestion isn't surfaced as a tool name in the index. Would directly surface Q&A decision pairs.
 - [ ] Skill metadata indexing: `--skill` filter doesn't match skills invoked via `<command-name>` tags in user messages (e.g. `/new-task`, `/process-requirements`). Only ETL-tracked skills appear in `autosearch skills`. Need to extract skill name from `<command-name>` tags during indexing.
 
 ## auto-skill
 
-- [ ] Skill linting: validate skill files against quality rules
-  - description under max character limit
-  - description explicitly mentions when to use the skill (trigger conditions)
-  - total skill file size under max character limit
-  - has explicit prerequisite checks (e.g. required tools, files, env)
-  - frontmatter has required fields
-  - no dead links or references to nonexistent files
 - [ ] Test/eval mode: simulate skill picking across coding agents
   - load skill frontmatter (descriptions, trigger conditions) into different agents
   - run probabilistic tests with synthetic scenarios to verify correct skill selection
@@ -89,15 +76,12 @@ Align with user-journey spec.
   - identify redundant/overlapping skills that could be consolidated
 - [ ] Skill sync checks. Skills can highlite what binaries are required to execute. then on sync, we check if these are installed and warn if not. `depends_on` or similar.
 
-## auto-img (planned — auto artifact)
+## auto-artifact image follow-ups
 
-- [ ] Agent-friendly tool for storing image artifacts long term
-  - uploads to S3, keeps images out of the repository
-  - optional S3 lifecycle rules (e.g. expire after N days, transition to glacier)
+- [ ] Image artifact browsing and progressive disclosure
   - auto-generated descriptions per image (from context or vision model)
   - index file for progressive disclosure (like skill frontmatter — agents see summaries, fetch full images on demand)
-  - `init` command uses a CloudFormation template to create S3 bucket + IAM + lifecycle rules
-  - CLI: `autoimg upload <file>`, `autoimg list`, `autoimg show <id>`, `autoimg init`
+  - list/show commands for existing artifacts
   - namespacing to separate different projects (e.g. S3 prefix per project)
   - auto-generates downsized preview thumbnails so agents can browse before fetching full-size originals
   - metadata includes token cost estimate and file size for budget-aware fetching
