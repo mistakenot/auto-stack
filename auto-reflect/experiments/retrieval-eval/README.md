@@ -29,9 +29,15 @@ set and statistical comparison.
 - [x] **Phase 3 — LLM oracle**: full 100-query golden set in `data/qrels/qrels.jsonl`
   (89% coverage, mean 5.85 relevant/query, 585 labels). Reusable: any variant now
   scores with zero new oracle calls. See `data/qrels/QRELS.md` + `DIARY.md`.
-- [ ] Phase 4 — variant registry (domain-as-boost, IDF tag weighting, no-filter,
-      semantic) + statistical comparison (paired Wilcoxon, bootstrap CIs).
-- [ ] Phase 5 — port the winning method into `match.go`.
+- [x] **Phase 4 — variant bench** (`variants.py` + `evaluate.py` + `stats.py`):
+      6 variants (hard-gate baseline, no-filter, domain-boost, idf-tag, bm25,
+      bm25+idf-tag), session-clustered Wilcoxon + bootstrap CIs + Holm.
+      `data/results/phase4.json`. **Finding:** no variant significantly beats the
+      hard gate on good guesses (two are sig. worse); the gate's only real flaw is
+      the wrong-guess recall-0 collapse, which a non-excluding IDF-weighted domain
+      boost (`idf-tag`) fixes while tying good-guess quality. See `DIARY.md`.
+- [ ] Phase 5 — second-judge kappa pass (gating), then port the winner
+      (`idf-tag`, optionally `bm25+idf-tag`) into `match.go`; live-loop validation.
 
 See **`DIARY.md`** for the running research log: decisions, pilot findings, the
 Codex + IIR Ch 8 second reads, and the open issues that gate the full oracle.
@@ -50,15 +56,16 @@ Codex + IIR Ch 8 second reads, and the open issues that gate the full oracle.
 
 ## Two kinds of checks (don't conflate them)
 
-| | **Baseline conformance** (`conformance/`, `tests/test_baseline_conformance.py`) | **Variant evaluation** (Phase 4, `variants/` — not built yet) |
+| | **Baseline conformance** (`conformance/`, `tests/`) | **Variant evaluation** (`variants.py` + `evaluate.py`) |
 |---|---|---|
-| Question | Does `baseline.py` reproduce the *shipped* matcher exactly? | Which retrieval method surfaces the right rules best? |
+| Question | Does `baseline.py` (and the `hard-gate` variant) reproduce the *shipped* matcher exactly? | Which retrieval method surfaces the right rules best? |
 | Output | **pass/fail** regression | **metrics** (recall@k, nDCG, excluded-relevant-rate) + significance |
 | Asserts | Python == Go *today* (the BASELINE STATE) | nothing pass/fail — it ranks candidates |
-| Run | `pytest -m baseline` / `python conformance/run_conformance.py` | (later) `python -m retrieval_eval.evaluate` |
+| Run | `pytest -m baseline` / `python conformance/run_conformance.py` | `PYTHONPATH=src python -m retrieval_eval.evaluate` |
 
-Everything in this commit is **baseline conformance** — it only pins the current
-state. No variant has been proposed or judged yet.
+Conformance only pins the current state; the bench compares candidates. The
+`hard-gate` variant is itself conformance-pinned (`tests/test_variant_conformance.py`)
+so every Δ is measured against a faithful baseline.
 
 ## Run
 
@@ -73,10 +80,14 @@ pytest -m baseline                                       # same, via pytest
 
 # Re-snapshot the corpus after the playbook materially changes:
 #   (from repo root) regenerate data/corpus/rules.snapshot.json — see SNAPSHOT.md
+
+# Phase-4 variant bench (needs the analysis extra: numpy/scipy):
+uv venv && uv pip install -e ".[analysis,dev]"
+PYTHONPATH=src python -m retrieval_eval.evaluate --write   # → data/results/phase4.json
 ```
 
-`conformance` is stdlib-only. `uv sync --extra analysis --extra oracle` pulls the
-heavier deps once Phases 3–4 land.
+`conformance` is stdlib-only. `uv pip install -e ".[analysis,oracle]"` pulls the
+heavier deps (numpy/scipy for the bench stats; anthropic for the oracle).
 
 ## Layout
 
@@ -90,6 +101,9 @@ src/retrieval_eval/
   gocli.py        wrapper over the real `auto reflect` CLI
   corpus.py       snapshot loader + use_when→id map
   metrics.py      recall@k, ndcg@k, mrr, excluded-relevant-rate
+  variants.py     Phase-4 filter×scorer registry (IDF/BM25); hard-gate==match.go
+  stats.py        cluster bootstrap + clustered Wilcoxon + Holm
+  evaluate.py     the bench runner (metric panel + pre-registered inference)
 conformance/      Go-vs-Python ranking parity (fixtures + harness + runner)
-tests/            pytest entrypoint for conformance
+tests/            pytest: baseline + variant-scaffold conformance
 ```

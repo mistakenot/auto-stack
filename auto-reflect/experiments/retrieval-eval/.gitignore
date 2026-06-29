@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
 .pytest_cache/
 # Run outputs are reproducible artifacts, not source. Pin inputs (corpus/queries/
 # qrels) but regenerate results.

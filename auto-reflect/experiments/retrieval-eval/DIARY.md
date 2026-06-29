@@ -57,9 +57,11 @@ wanted data before touching `match.go`, not intuition.
    Sonnet agent grades all 120 rules per query, graded 1–3). Merged into the
    frozen gold standard `data/qrels/qrels.jsonl` (the pilot-only `pilot.*` files
    were consolidated away). 100 queries, 89% coverage, 585 labels.
-4. **Variant comparison — PENDING (Phase 4).** hard-gate vs domain-as-boost vs
-   IDF vs no-filter, plus ≥1 *scorer* variant; paired stats on the clean 64. See
-   "Next steps" below. This is where the setup pays off.
+4. **Variant comparison — DONE (Phase 4).** 6 variants (hard-gate baseline,
+   no-filter, domain-boost, idf-tag, bm25, bm25+idf-tag) scored on the frozen
+   qrels with session-clustered Wilcoxon + cluster-bootstrap CIs + Holm. New
+   scaffold (`variants.rank`) pinned to reproduce `match.go` exactly (4/4 baseline
+   tests). See "Phase 4 results" below. **It overturned the predicted outcome.**
 
 ## Findings
 
@@ -142,10 +144,10 @@ The minimal set (resisting textbook gold-plating). Status as of this checkpoint:
    judge (different model / human audit on ~20 decision-changing queries) with
    randomized rule order would quantify the self-preference risk. Do before
    treating any Phase-4 result as more than directional.
-4. ⬜ **Cluster by session + clean-64 primary** — PENDING in the *stats* layer.
-   The queries carry `source_session` and `overlaps_mined_task` so the data
-   supports it; the Phase-4 significance code must cluster on `source_session`
-   and report the clean 64 as primary, flagged-overlap as sensitivity.
+4. ✅ **Cluster by session + clean-64 primary** — done in `stats.py` +
+   `evaluate.py`. Wilcoxon runs on session-mean deltas (37 clean sessions),
+   bootstrap resamples sessions, Holm corrects the family; clean 64 is the
+   pre-registered primary, all-100 + flagged are sensitivity.
 
 ## Pilot extension — precision + domain conditions (free, no new oracle)
 
@@ -260,7 +262,10 @@ Everything lives under `auto-reflect/experiments/retrieval-eval/`.
 - **Code:** `src/retrieval_eval/baseline.py` (faithful port of match.go),
   `metrics.py` (recall@k, ndcg@k, mrr, excluded-relevant-rate, precision@k),
   `conditions.py` (per-condition guess/none/wrong analysis), `analyze_pilot.py`
-  (coverage + domain-gate preview), `gocli.py`, `corpus.py`.
+  (coverage + domain-gate preview), `gocli.py`, `corpus.py`. **Phase 4:**
+  `variants.py` (filter×scorer registry + IDF/BM25; `hard-gate` reproduces
+  match.go), `stats.py` (cluster bootstrap + clustered Wilcoxon + Holm),
+  `evaluate.py` (the bench runner; `--write` → `data/results/phase4.json`).
 - **Conformance:** `conformance/` — `run_conformance.py`, `harness.py`,
   `fixtures.py`. Run `python conformance/run_conformance.py` or `pytest -m baseline`.
 - **Method scripts (Claude Code Workflow `.mjs`, run with data injected):**
@@ -271,41 +276,133 @@ Everything lives under `auto-reflect/experiments/retrieval-eval/`.
   `data/qrels/qrels.jsonl` (the gold standard) + `qrels.conditions.json`. Each has
   a sibling `SNAPSHOT.md` / `QUERIES.md` / `QRELS.md` provenance file.
 - **Re-run analyses:** `PYTHONPATH=src python -m retrieval_eval.conditions data/qrels/qrels.jsonl --write`
-  and `... analyze_pilot data/qrels/qrels.jsonl`.
+  and `... analyze_pilot data/qrels/qrels.jsonl`. **Phase-4 bench** (needs the
+  `analysis` extra — numpy/scipy): `PYTHONPATH=src python -m retrieval_eval.evaluate --write`.
 
-## Next steps (Phase 4 — the variant bench)
+## Next steps (Phase 5 — confirm, then port)
 
-The expensive parts (corpus + queries + qrels) are done and frozen, so variants
-are now ~free to evaluate. To pick up cold:
+The bench is built and frozen; variants now re-score for free
+(`PYTHONPATH=src python -m retrieval_eval.evaluate --write`). What's left, in
+order:
 
-1. **Variant registry + `evaluate()`** — a function taking a scorer/filter combo
-   and scoring it against `qrels.jsonl` on the clean 64, emitting the metric panel
-   (recall@k, nDCG@k, precision@k, surfaced-count, excluded-relevant-rate).
-2. **Variants to compare:** `hard-gate` (baseline) · `domain-as-boost` (additive,
-   never exclude) · `IDF tag weighting` (down-weight `go` etc.) · `no-filter` —
-   and **≥1 scorer variant** (better lexical / semantic embedding), because the
-   data says the *scorer* (surfaces 54–89% of the playbook, ranks weakly) is a
-   bigger lever than the filter.
-3. **Stats:** paired Wilcoxon **clustered by `source_session`** + bootstrap CIs +
-   effect sizes; pre-register one primary metric/k; clean 64 primary, flagged-36
-   sensitivity.
-4. **Then:** second-judge kappa pass (change #3 above) before acting; port the
-   winning filter/scorer into `match.go` (Phase 5); validate via the live reflect
-   feedback loop (the real A/B).
+1. **Second-judge kappa pass (change #3 — still PENDING, now gating).** Phase 4
+   found *no significant good-guess beat* of the gate; the recommendation rests on
+   the wrong-guess robustness margin + the `bm25+idf-tag` point-estimate lead. A
+   second judge (different model / human audit on the decision-changing queries,
+   randomized rule order) is now the blocker before porting anything — it quantifies
+   the single-oracle self-preference risk that could be inflating either side.
+2. **Power for the scorer claim.** `bm25+idf-tag` is best on every slice but
+   n.s. after Holm (53 clean queries / 31 sessions). Either accept it as
+   *directional* and lean on robustness, or expand the held-out query set to get
+   the power to confirm/deny the scorer lever.
+3. **Port the winner into `match.go` (Phase 5).** Recommended minimal change:
+   **`idf-tag`** — replace the hard domain-exclusion with an IDF-weighted,
+   non-excluding in-domain boost (ties the gate on good guesses, kills the
+   wrong-guess recall-0 cliff). Optionally also swap the substring scorer for BM25
+   (`bm25+idf-tag`) if step 1–2 confirm it. Re-run conformance after.
+4. **Validate via the live reflect feedback loop** — the real A/B (offline nDCG is
+   a proxy for utility, IIR §8.6).
 
 **Predicted outcome from the data so far:** `domain-as-boost` ≥ `hard-gate`
 (keeps +7pt precision@5 / +10pt recall@10 on good guesses, removes the wrong-guess
-recall-0 catastrophe); the larger win is a better scorer.
+recall-0 catastrophe); the larger win is a better scorer. _(Phase 4 only
+**partly** confirmed this — see below: flat domain-boost is actually **worse** on
+good guesses; only the IDF-weighted boost ties.)_
+
+## Phase 4 results — the bench, and a prediction overturned
+
+Six variants, factored as **filter strategy × scorer** so each result is
+attributable to the one axis it moved (`src/retrieval_eval/variants.py`):
+
+| variant | filter (the `domain_guess`) | scorer |
+|---|---|---|
+| `hard-gate` (baseline) | hard exclusion gate | lexical (+3 use_when, +1 tag) |
+| `no-filter` | ignored | lexical |
+| `domain-boost` | flat +3 in-domain boost, never excludes | lexical |
+| `idf-tag` | IDF-weighted in-domain boost (down-weights `go`), never excludes | lexical |
+| `bm25` | ignored | BM25 over use_when tokens |
+| `bm25+idf-tag` | IDF-weighted boost | BM25 |
+
+**Pre-registered** (fixed before looking): primary metric **nDCG@10** (graded,
+and recall is already saturated so it can't discriminate); primary slice **clean
+64**; primary condition **guess** (the realistic case); each variant vs
+`hard-gate`; inference = **Wilcoxon on session-mean deltas** (clustered by
+`source_session`, 31 sessions / 53 queries-with-relevant) + **cluster-bootstrap**
+95% CI + **Holm** across the family. `data/results/phase4.json`.
+
+**Primary (clean64 / guess / nDCG@10) — Δ vs hard-gate:**
+
+| variant | Δ nDCG@10 | 95% CI | p (Holm) | rank-biserial | verdict |
+|---|---|---|---|---|---|
+| no-filter | **−0.064** | [−0.105,−0.032] | **0.000** | −1.00 | sig. **worse** |
+| domain-boost | **−0.029** | [−0.052,−0.012] | **0.008** | −1.00 | sig. **worse** |
+| idf-tag | +0.015 | [−0.030,+0.060] | 1.00 | +0.12 | ties |
+| bm25 | −0.008 | [−0.072,+0.057] | 1.00 | −0.13 | ties |
+| bm25+idf-tag | **+0.064** | [−0.006,+0.138] | 0.36 | +0.32 | best pt-est, **n.s.** |
+
+**Robustness (clean64 / WRONG guess / nDCG@10) — Δ vs hard-gate:** every
+non-gate variant beats the gate by **+0.19 to +0.31, all reject Holm** (gate
+collapses to nDCG@10 = **0.000**; idf-tag 0.230, bm25+idf-tag 0.278, bm25 0.305).
+
+Three findings, in order of importance:
+
+1. **The hard gate is *better than the diary assumed* in the good-guess case, and
+   the naive replacements are significantly worse.** This is the surprise that
+   overturns the predicted outcome. `no-filter` (−0.064) and flat `domain-boost`
+   (−0.029) are **significantly worse** than the gate on nDCG@10 (both survive
+   Holm). The gate's *exclusion* does real ranking work that a non-excluding boost
+   does not replicate: removing off-domain rules from the pool entirely is what
+   lifts relevant rules into the top-10, and a flat boost that lifts *all*
+   in-domain rules (relevant or not) just dilutes the slice. So "domain-as-boost ≥
+   hard-gate" is **false for the flat boost**.
+2. **The gate's *only* defect is the wrong-guess catastrophe — and the
+   IDF-weighted boost fixes it for free.** `idf-tag` **ties** the gate under good
+   guesses (Δ+0.015 / +0.003 on all100, n.s.) while turning the wrong-guess
+   nDCG@10 from **0.000 → 0.230** (sig.). That is the actual, defensible win: a
+   non-excluding IDF boost matches the gate's good-guess ranking and removes the
+   recall-0 cliff. The *flavor* matters — IDF-weighted, not flat.
+3. **The scorer is a real but conditional lever.** BM25 only clearly helps when
+   there is *no* usable domain signal: in the `none` condition it lifts nDCG@10
+   0.250→0.305 and cuts surfacing 107→85. Under a good guess, gate+lexical (0.314)
+   already edges bm25-no-filter (0.305). The combined **`bm25+idf-tag` has the best
+   point estimate in every slice** (clean 0.378, all100 0.433, flagged 0.516) and
+   is wrong-guess-robust (0.278) — but is **not significant** vs the gate after
+   Holm at this N (p_holm 0.36 / 0.24). It is the candidate to pursue, not yet a
+   proven winner.
+
+> **Decision shape (revised, data-backed on the full bench):** *Do not* drop the
+> domain filter and *do not* use a flat boost — both lose good-guess ranking
+> quality. The safe, recommendable change is **`idf-tag`**: an IDF-weighted,
+> non-excluding domain boost. It ties the shipped gate when the guess is right and
+> eliminates the wrong-guess recall-0 catastrophe. The larger prize is
+> **`bm25+idf-tag`** (better scorer + idf boost), best on every slice and robust,
+> but it needs more statistical power and a second judge before porting to
+> `match.go`. The pre-registered primary did **not** find a significant beat of
+> the gate on good guesses; the case for change rests on **robustness**, which is
+> decisive and significant.
+
+Caveats: single oracle (self-preference unquantified — second-judge pass still
+pending); the `wrong` condition is disjoint-by-construction (worst case); BM25
+params are stock (k1=1.5, b=0.75), deliberately untuned to avoid overfitting the
+eval set; N is modest (53 clean queries / 31 sessions) so the directional bm25
+results lack power. The scaffold applies hard-rule injection uniformly across all
+variants, so it is held constant (not a confound).
 
 ## Status (current — all pushed to origin/main)
 
-- **Phases 1–3 DONE and pushed.** Baseline conformance green (30/30 + 14/14).
-  100 held-out queries. Full 100-query golden qrels (89% coverage, mean 5.85
-  relevant/query, 585 labels). Precision + domain-condition analyses done.
-- **Phase 4 (variant bench) is the next action.** Phase 5 (port winner to
-  match.go) and the live-loop validation follow.
-- **Pending rigor before acting on Phase-4 results:** second-judge kappa;
-  session-clustered significance.
+- **Phases 1–4 DONE.** Baseline conformance green (now 4/4: + the variant
+  scaffold pinned to `match.go` on all 100 queries). 100 held-out queries. Full
+  100-query golden qrels (89% coverage, mean 5.85 relevant/query, 585 labels).
+  Variant bench run with session-clustered Wilcoxon + bootstrap CIs + Holm
+  (`data/results/phase4.json`).
+- **Headline:** no variant *significantly* beats the hard gate on good guesses
+  (two are sig. worse); the gate's only real flaw is the wrong-guess recall-0
+  collapse, which a **non-excluding IDF-weighted domain boost (`idf-tag`)** fixes
+  while tying good-guess quality. `bm25+idf-tag` is best on every slice but n.s.
+- **Phase 5 next:** second-judge kappa (now the gating blocker), then port
+  `idf-tag` into `match.go`, then live-loop validation.
+- **Session-clustered significance: DONE** (`stats.py`). Second-judge kappa: still
+  PENDING.
 - **Commit trail (session):** `cc5db4d` consolidate 266 obs→120 rules · `0d7db62`
   harness+conformance · `7aba6b5` phases 2-3 checkpoint+diary · `ef1f939` pilot
   extension · `a991e63` full golden qrels · `2161559` path fix (HEAD). Earlier:
