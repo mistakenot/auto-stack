@@ -102,6 +102,54 @@ def clustered_wilcoxon(pairs: Sequence[Paired]) -> dict:
     return out
 
 
+def cohen_kappa(a: Sequence[int], b: Sequence[int], *, weights: str | None = None,
+                labels: Sequence[int] | None = None) -> float:
+    """Cohen's κ between two raters. weights=None → unweighted (nominal);
+    weights='quadratic' → quadratic-weighted (for ordinal grades 0–3).
+
+    General form κ = 1 − Σ(W∘O) / Σ(W∘E), W = disagreement weights (0 on diagonal):
+    unweighted W_ij = 1−δ_ij (reduces to (po−pe)/(1−pe)); quadratic
+    W_ij = (vi−vj)² / (vmax−vmin)². NaN if no data or perfect agreement is
+    undefined (pe == observed).
+    """
+    a = list(a)
+    b = list(b)
+    if not a or len(a) != len(b):
+        return float("nan")
+    labs = sorted(set(a) | set(b)) if labels is None else list(labels)
+    k = len(labs)
+    idx = {l: i for i, l in enumerate(labs)}
+    O = np.zeros((k, k))
+    for x, y in zip(a, b):
+        O[idx[x], idx[y]] += 1
+    n = O.sum()
+    if n == 0 or k < 2:
+        return float("nan")
+    E = np.outer(O.sum(1), O.sum(0)) / n
+    span = (labs[-1] - labs[0]) ** 2 or 1
+    W = np.array([[((labs[i] - labs[j]) ** 2) / span if weights == "quadratic"
+                   else (0.0 if i == j else 1.0) for j in range(k)] for i in range(k)])
+    num = (W * O).sum()
+    den = (W * E).sum()
+    return float(1.0 - num / den) if den != 0 else float("nan")
+
+
+def landis_koch(kappa: float) -> str:
+    if kappa != kappa:  # NaN
+        return "undefined"
+    if kappa < 0.0:
+        return "poor"
+    if kappa < 0.20:
+        return "slight"
+    if kappa < 0.40:
+        return "fair"
+    if kappa < 0.60:
+        return "moderate"
+    if kappa < 0.80:
+        return "substantial"
+    return "almost-perfect"
+
+
 def holm(pvalues: dict[str, float | None], alpha: float = 0.05) -> dict[str, dict]:
     """Holm–Bonferroni step-down over a family of comparisons. None p-values are
     passed through (not part of the family). Returns per-key {p, p_adj, reject}.

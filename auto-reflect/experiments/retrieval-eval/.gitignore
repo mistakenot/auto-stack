@@ -4,6 +4,11 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 # Run outputs are reproducible artifacts, not source. Pin inputs (corpus/queries/
-# qrels) but regenerate results.
-data/results/
+# qrels) but regenerate results. (Exclude contents, not the dir, so the negation
+# below can re-include a subpath — git can't un-ignore inside a fully-ignored dir.)
+data/results/*
+# ...except the second-judge raw grades: non-deterministic LLM output that pins the
+# κ finding, so commit them as frozen provenance (like qrels). Logs/derived JSON stay out.
+!data/results/judge_raw/
+data/results/judge_raw/*.log
 .env

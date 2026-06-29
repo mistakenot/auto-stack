@@ -62,6 +62,11 @@ wanted data before touching `match.go`, not intuition.
    qrels with session-clustered Wilcoxon + cluster-bootstrap CIs + Holm. New
    scaffold (`variants.rank`) pinned to reproduce `match.go` exactly (4/4 baseline
    tests). See "Phase 4 results" below. **It overturned the predicted outcome.**
+5. **Second-judge reliability — DONE (Phase 5 gate). PASS.** Two independent
+   non-Claude judges (codex/GPT, grok/xAI) re-graded the decision-relevant pool for
+   all 53 clean+relevant queries. Substantial-to-almost-perfect agreement, **no
+   self-preference detected**, and the Phase-4 verdict survives a judge swap. See
+   "Second-judge results" below.
 
 ## Findings
 
@@ -140,10 +145,11 @@ The minimal set (resisting textbook gold-plating). Status as of this checkpoint:
 2. ✅ **Wrong/empty-domain condition** — done in `conditions.py` ({guess, none,
    wrong}). This already answered the core question (see findings), so we ran the
    full oracle without waiting on #3–#4.
-3. ⬜ **Second-judge kappa spot-check** — PENDING. Single oracle so far; a second
-   judge (different model / human audit on ~20 decision-changing queries) with
-   randomized rule order would quantify the self-preference risk. Do before
-   treating any Phase-4 result as more than directional.
+3. ✅ **Second-judge kappa** — DONE (PASS). Two independent non-Claude judges
+   (codex, grok) over all 53 clean+rel queries, randomized rule order, identical
+   rubric. Substantial-to-almost-perfect κ, no self-preference, verdict
+   judge-robust. See "Second-judge results". `src/retrieval_eval/judge.py` +
+   `second_judge.py`, `second-judge/DESIGN.md`.
 4. ✅ **Cluster by session + clean-64 primary** — done in `stats.py` +
    `evaluate.py`. Wilcoxon runs on session-mean deltas (37 clean sessions),
    bootstrap resamples sessions, Holm corrects the family; clean 64 is the
@@ -231,6 +237,70 @@ The bigger N **strengthens** the nuanced verdict:
 > wrong-guess catastrophe (never exclude). Separately, the dominant lever is the
 > **scorer** (surfaces 54–89% of the playbook, ranks poorly) — bigger than the
 > filter. The full qrels now let us test scorer variants for free.
+
+## Second-judge results — the qrels are trustworthy (Phase-5 gate: PASS)
+
+The Phase-4 verdict rested on a single Sonnet oracle grading Claude-authored rules
+— the "Claude-judged relevance" risk. To quantify it, two **independent, non-Claude**
+judges (`codex`/GPT, `grok`/xAI; gemini was unavailable — ineligible tier)
+re-graded the **decision-relevant pool** (J1-relevant ∪ all-variant top-10 ∪ random
+negatives, ~25–29 rules/query) for all **53 clean+relevant** queries, blind and
+with rule order seeded-shuffled, on the *byte-identical* oracle rubric. 1342 paired
+judgments. Design + pre-registered go/no-go in `second-judge/DESIGN.md`; raw grades
+in `data/results/judge_raw/`, analysis in `data/results/second_judge.json`.
+
+**Agreement (Cohen's κ over all 1342 judgments):**
+
+| pair | binary κ | weighted κ | %exact | band |
+|---|---|---|---|---|
+| J1 (Claude) – codex | 0.623 | 0.678 | 0.78 | substantial |
+| J1 (Claude) – grok | **0.823** | 0.871 | 0.90 | almost-perfect |
+| codex – grok | 0.688 | 0.721 | 0.79 | substantial |
+
+**No self-preference.** The codex↔grok κ (0.688) is the reference ceiling for "how
+much do two independent competent judges agree." Claude's *average* agreement with
+the two independents (0.72) **exceeds** that ceiling — J1–grok (0.823) is the
+single highest pair of all, J1–codex (0.623) sits just below it. If Claude were
+self-preferential, *both* J1 pairs would sit well below 0.688; they don't. The
+clincher is the **relevant-rate: J1 = 0.247, codex = 0.247 (identical), grok =
+0.276** — Claude is *not* more generous than the independents (codex matches it
+exactly; grok is slightly more lenient). Most of the J1–codex disagreement is codex
+being the *strictest* judge (mean grade 0.43 vs J1 0.51), withholding grade-1
+marginals — not Claude inflating relevance.
+
+**Decision robustness — the Phase-4 verdict survives the judge swap:**
+
+| variant | J1 | codex | grok | consensus |
+|---|---|---|---|---|
+| hard-gate | 0.314 | 0.329 | 0.320 | 0.318 |
+| no-filter | 0.250 | 0.264 | 0.256 | 0.254 |
+| domain-boost | 0.284 | 0.300 | 0.294 | 0.292 |
+| idf-tag | 0.329 | 0.339 | 0.328 | 0.333 |
+| bm25 | 0.305 | 0.362 | 0.324 | 0.314 |
+| **bm25+idf-tag** | **0.378** | **0.421** | **0.392** | **0.390** |
+
+(nDCG@10, clean+rel queries, guess condition.) Ordering is stable —
+Spearman(vs J1) = 0.83 (codex) / 0.94 (grok) / **1.0 (consensus)**. Every
+substantive delta is **sign-consistent across all judges**: `no-filter` worse,
+`domain-boost` worse, `idf-tag` a small positive tie, `bm25+idf-tag` the clear best.
+The only wobble is plain `bm25` (j1 −0.008 / codex +0.033 / grok +0.005), which
+hovers at zero — noise, not a flip. Notably **bm25+idf-tag's lead is *larger* under
+the independent judges** (codex +0.092, grok +0.073) than under J1 (+0.064) — the
+single-oracle was, if anything, *conservative* about the combined variant.
+
+**Verdict vs the pre-registered criteria → PASS.** Both J1 pairs clear κ ≥ 0.40
+(0.62, 0.82); Claude is not a low outlier (its mean pair-κ 0.72 > the 0.69 ceiling);
+the variant ordering and key delta signs are preserved under every judge. The
+single-oracle qrels are trustworthy enough to act on — no human re-label needed
+before porting. (Caveat held honestly: κ is computed over the decision-relevant
+pool, not the full 120 — that *removes* the trivial-true-negative mass that would
+inflate κ, so 0.62–0.82 is a conservative floor, not a flattered number.)
+
+> **What this unblocks:** Phase 5 may proceed. The recommended port stands and is
+> now judge-robust — **`idf-tag`** (non-excluding IDF-weighted domain boost) as the
+> safe drop-in, with **`bm25+idf-tag`** the higher-upside option whose lead the
+> independent judges actually *strengthened*. Remaining gate before code: it's
+> still an offline proxy — the live feedback loop is the real A/B (unknown #3).
 
 ## Validity boundary: the query *interface* is still undefined
 
@@ -346,7 +416,8 @@ collected informally) + **file globs** (cheap, autowatch can already act). See
   or confirm "hard gate isn't the dominant problem"? If the latter, the
   recommendation may be "drop the hard exclusion for a cheap safety win" rather
   than "this fixes a big leak."
-- Oracle self-preference magnitude — unknown until a second judge runs.
+- ~~Oracle self-preference magnitude~~ — RESOLVED (Phase 5): two independent judges,
+  no self-preference, κ substantial+. See "Second-judge results".
 - Precision cost of removing the gate — entirely unmeasured; could be the deciding
   factor.
 - The eval ignores the **`select` stage** and **draft-vs-confirmed** surfacing that
@@ -386,30 +457,34 @@ Everything lives under `auto-reflect/experiments/retrieval-eval/`.
 - **Re-run analyses:** `PYTHONPATH=src python -m retrieval_eval.conditions data/qrels/qrels.jsonl --write`
   and `... analyze_pilot data/qrels/qrels.jsonl`. **Phase-4 bench** (needs the
   `analysis` extra — numpy/scipy): `PYTHONPATH=src python -m retrieval_eval.evaluate --write`.
+- **Second-judge** (needs `codex`/`grok` CLIs for collection; analysis is offline):
+  `PYTHONPATH=src python -m retrieval_eval.judge codex` / `... grok` (resumable),
+  then `PYTHONPATH=src python -m retrieval_eval.second_judge --write`. Raw grades
+  pinned in `data/results/judge_raw/{codex,grok}.jsonl`.
 
-## Next steps (Phase 5 — confirm, then port)
+## Next steps (Phase 5 — port, then validate live)
 
-The bench is built and frozen; variants now re-score for free
-(`PYTHONPATH=src python -m retrieval_eval.evaluate --write`). What's left, in
-order:
+The bench is frozen and **the qrels are now judge-validated** (second-judge gate:
+PASS). Remaining, in order:
 
-1. **Second-judge kappa pass (change #3 — still PENDING, now gating).** Phase 4
-   found *no significant good-guess beat* of the gate; the recommendation rests on
-   the wrong-guess robustness margin + the `bm25+idf-tag` point-estimate lead. A
-   second judge (different model / human audit on the decision-changing queries,
-   randomized rule order) is now the blocker before porting anything — it quantifies
-   the single-oracle self-preference risk that could be inflating either side.
-2. **Power for the scorer claim.** `bm25+idf-tag` is best on every slice but
-   n.s. after Holm (53 clean queries / 31 sessions). Either accept it as
-   *directional* and lean on robustness, or expand the held-out query set to get
-   the power to confirm/deny the scorer lever.
-3. **Port the winner into `match.go` (Phase 5).** Recommended minimal change:
+1. ✅ **Second-judge kappa — DONE (PASS).** No self-preference; verdict judge-robust;
+   `bm25+idf-tag`'s lead if anything *grew* under the independent judges. The
+   single-oracle is trustworthy enough to act on. (Optional future: human audit,
+   but not required to proceed.)
+2. **Port the winner into `match.go`.** Now unblocked. Minimal change:
    **`idf-tag`** — replace the hard domain-exclusion with an IDF-weighted,
    non-excluding in-domain boost (ties the gate on good guesses, kills the
-   wrong-guess recall-0 cliff). Optionally also swap the substring scorer for BM25
-   (`bm25+idf-tag`) if step 1–2 confirm it. Re-run conformance after.
+   wrong-guess recall-0 cliff). Higher-upside: also swap the substring scorer for
+   BM25 (`bm25+idf-tag`). Re-run conformance after; `baseline.py` + the `hard-gate`
+   variant pin must be updated in lockstep with `match.go`.
+3. **Power for the scorer claim (optional, pre-port).** `bm25+idf-tag` is best on every slice but
+   n.s. after Holm (53 clean queries / 31 sessions). Either accept it as
+   *directional* and lean on robustness, or expand the held-out query set to get
+   the power to confirm/deny the scorer lever. (Cheap-ish; mine more held-out
+   queries and re-run the bench — but the judge-robust point-estimate lead may be
+   enough to proceed without it.)
 4. **Validate via the live reflect feedback loop** — the real A/B (offline nDCG is
-   a proxy for utility, IIR §8.6).
+   a proxy for utility, IIR §8.6). The remaining unknown after the port.
 
 **Predicted outcome from the data so far:** `domain-as-boost` ≥ `hard-gate`
 (keeps +7pt precision@5 / +10pt recall@10 on good guesses, removes the wrong-guess
@@ -498,19 +573,21 @@ variants, so it is held constant (not a confound).
 
 ## Status (current — all pushed to origin/main)
 
-- **Phases 1–4 DONE.** Baseline conformance green (now 4/4: + the variant
-  scaffold pinned to `match.go` on all 100 queries). 100 held-out queries. Full
-  100-query golden qrels (89% coverage, mean 5.85 relevant/query, 585 labels).
-  Variant bench run with session-clustered Wilcoxon + bootstrap CIs + Holm
-  (`data/results/phase4.json`).
+- **Phases 1–5(gate) DONE.** Baseline conformance green (4/4: + variant scaffold
+  pinned to `match.go` on all 100 queries). 100 held-out queries. Full 100-query
+  golden qrels (89% coverage, 585 labels). Variant bench with session-clustered
+  Wilcoxon + bootstrap CIs + Holm (`data/results/phase4.json`). **Second-judge
+  reliability: PASS** (codex+grok, 53 queries, 1342 judgments, no self-preference,
+  verdict judge-robust; `data/results/second_judge.json`).
 - **Headline:** no variant *significantly* beats the hard gate on good guesses
   (two are sig. worse); the gate's only real flaw is the wrong-guess recall-0
   collapse, which a **non-excluding IDF-weighted domain boost (`idf-tag`)** fixes
-  while tying good-guess quality. `bm25+idf-tag` is best on every slice but n.s.
-- **Phase 5 next:** second-judge kappa (now the gating blocker), then port
-  `idf-tag` into `match.go`, then live-loop validation.
-- **Session-clustered significance: DONE** (`stats.py`). Second-judge kappa: still
-  PENDING.
+  while tying good-guess quality. `bm25+idf-tag` is best on every slice (lead
+  *grew* under the independent judges). Conclusions confirmed trustworthy.
+- **Phase 5 next:** **port `idf-tag` into `match.go`** (now unblocked), then the
+  live reflect feedback loop (the real A/B — the last unknown).
+- **Session-clustered significance: DONE** (`stats.py`). **Second-judge kappa:
+  DONE (PASS).**
 - **Commit trail (session):** `cc5db4d` consolidate 266 obs→120 rules · `0d7db62`
   harness+conformance · `7aba6b5` phases 2-3 checkpoint+diary · `ef1f939` pilot
   extension · `a991e63` full golden qrels · `2161559` path fix (HEAD). Earlier:
