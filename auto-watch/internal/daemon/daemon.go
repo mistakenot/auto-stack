@@ -26,15 +26,20 @@ import (
 
 var ErrDaemonAlreadyRunning = errors.New("daemon lock is already held")
 
+// defaultRetentionDays is the hardcoded retention window for events and
+// terminal runs (Decision D-1). The CLI overrides it via SetRetentionDays.
+const defaultRetentionDays = 7
+
 type Service struct {
 	Store   *store.Store
 	Backend runner.Backend
 	Output  io.Writer
 	Now     func() time.Time
 
-	dispatchMu sync.Mutex
-	hub        *bus.Hub
-	workerWG   sync.WaitGroup
+	dispatchMu    sync.Mutex
+	hub           *bus.Hub
+	workerWG      sync.WaitGroup
+	retentionDays int
 }
 
 type Lock struct {
@@ -46,11 +51,20 @@ func New(db *store.Store, backend runner.Backend, output io.Writer, now func() t
 		now = time.Now
 	}
 	return &Service{
-		Store:   db,
-		Backend: backend,
-		Output:  output,
-		Now:     now,
-		hub:     hub,
+		Store:         db,
+		Backend:       backend,
+		Output:        output,
+		Now:           now,
+		hub:           hub,
+		retentionDays: defaultRetentionDays,
+	}
+}
+
+// SetRetentionDays overrides the default retention window for events and
+// terminal runs. Non-positive values are ignored, keeping the default.
+func (s *Service) SetRetentionDays(days int) {
+	if days > 0 {
+		s.retentionDays = days
 	}
 }
 
@@ -434,8 +448,34 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 			return err
 		}
 	}
-	// Checkpoint the WAL each tick to bound its growth. Phase 2 will move this
-	// after retention pruning so the checkpoint also covers the deletes.
+
+	// Retention pruning: delete terminal runs (and their on-disk directories)
+	// and events older than the retention window. Remove directories first, then
+	// delete only the rows whose directory removal succeeded — a failed removal
+	// is skipped and retried next tick, never orphaning the cleanup target.
+	cutoff := now.Add(-time.Duration(s.retentionDays) * 24 * time.Hour)
+	expired, err := s.Store.ListTerminalRunsOlderThan(ctx, cutoff)
+	if err != nil {
+		return err
+	}
+	cleanedIDs := make([]int64, 0, len(expired))
+	for i := range expired {
+		run := &expired[i]
+		if err := os.RemoveAll(run.RuntimeDir); err != nil {
+			// Leave the row in place so the directory is retried next tick.
+			continue
+		}
+		cleanedIDs = append(cleanedIDs, run.ID)
+	}
+	if _, err := s.Store.DeleteRuns(ctx, cleanedIDs); err != nil {
+		return err
+	}
+	if _, err := s.Store.PruneEventsOlderThan(ctx, cutoff); err != nil {
+		return err
+	}
+
+	// Checkpoint the WAL after pruning so the checkpoint also covers the deletes,
+	// bounding WAL growth.
 	if err := s.Store.WALCheckpoint(ctx); err != nil {
 		return err
 	}
