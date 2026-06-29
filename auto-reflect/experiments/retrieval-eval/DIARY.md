@@ -272,6 +272,29 @@ three interfaces are wanted long-term, user picks. So:
   re-run the bench for free — which also tests whether the ranking conclusions
   hold under a different query distribution.
 
+## Future bench variants (parked — testable in this harness)
+
+Ideas that slot into the Phase-4 framework once the inputs exist; not built yet.
+
+- **Faceted (verb/noun) tags** (Charlie, 2026-06-29). Split the flat `domain`
+  taxonomy into two orthogonal *facets* — an **action** facet (verb, e.g.
+  `Create`/`Update`/`Delete`/`refactor`/`test`/`merge`) and an **entity** facet
+  (noun, e.g. `UnitTest`/`AuthModule`), à la `Create(UnitTest)`. Prior art:
+  frame semantics / FrameNet, intent+slots (Alexa/Dialogflow), faceted
+  classification (Ranganathan), and — in-house — Conventional Commits `type(scope)`
+  + the `contextual-commit` action lines. Design constraints if pursued: **additive,
+  not a replacement** for flat tags; **controlled vocabularies** (entity facet
+  governed by `docs/concepts/UBIQUITOUS_LANGUAGE.md`, verb facet a closed set);
+  IDF weighted **per facet**; facet-to-facet matching is far more selective than
+  substring overlap, so it's really a *structured-scorer* bet (attacks finding #1).
+  Caveats: many rules are invariants/gotchas with no clean verb (so the facet is
+  optional, ~half the corpus may lack it); matching needs the query parsed into
+  verb(noun) too; re-tagging the 120-rule corpus is the only real cost (cheaper
+  angle: derive the action facet from the commits/sessions the rules were mined
+  from). Couples tightly with the **observation-time trigger capture** idea below
+  and the **bash-command query interface** — the verb facet *is* the operation
+  that triggers the rule.
+
 ## Open questions / risks
 
 - **Does the ranking verdict survive a non-intent query distribution?** Untested.
