@@ -295,6 +295,47 @@ Ideas that slot into the Phase-4 framework once the inputs exist; not built yet.
   and the **bash-command query interface** — the verb facet *is* the operation
   that triggers the rule.
 
+## Trigger signatures — the observation-side representation question
+
+(Charlie, 2026-06-29.) The query-interface thread has an observation-side twin:
+today a rule's applicability is a prose `use_when` matched by lexical keyword
+overlap — the **lowest-precision** option, and exactly the source of finding #1
+(the matcher surfaces most of the playbook). A **trigger signature** is anything
+observable *both* when the lesson is learned *and* when the agent is later working;
+the good ones are high-precision and cheap to match. The space, tiered by
+payoff-vs-cost (most of Tier 1 already flows through hooks/ETL/autowatch):
+
+- **Tier 1 (high precision, cheap, on the wire):**
+  - **Error / failure strings** — exit codes, stderr/compiler/lint regex, panic &
+    stack patterns. Highest signal; ~half of `MEMORY.md` *is* error strings
+    ("main is already used by worktree", "216/GROUP"). Exact error → exact rule.
+  - **Tool-use signature** — which tool + input shape (`Edit`/`Write`/`Task`/an MCP
+    tool), independent of prose.
+  - **File path / glob** — `**/match.go`, `go.mod`, `*_test.go`, CI yaml. autowatch
+    already speaks glob Triggers.
+  - **Slash-command / workflow phase** — `/new-task`, commit-time, release-time,
+    session-start (the `<command-name>` tag = where in the lifecycle).
+- **Tier 2 (valuable, machinery partly exists):** git/repo state (branch,
+  worktree-vs-primary, dirty, ahead/behind, open PR, merge-in-progress — many
+  "worktree rules" are really git-state triggers); code/AST patterns (via ast-grep,
+  which auto-graph uses); diff shape (files-touched, signature changed, rework
+  churn — already a session-quality signal in `todo.md`); environment/config
+  (OS, `systemd --user`, CI-vs-local, dep version).
+- **Tier 3 (costly/speculative):** sequence/temporal ("after merge, before rebase";
+  co-edit adjacency — the sidecar's turf); semantic/embedding intent match; data/
+  schema shape (parquet columns, JSON/API shape).
+
+Three framing points that matter more than the list: (1) it's a **precision/recall
+spectrum** — error-string = high-P/low-R, keyword = high-R/low-P (today's flaw);
+capturing several lets you trade along the curve. (2) Signatures **compose** — a
+trigger is a Boolean/weighted combination ("in a worktree AND running `gh pr
+merge`"), far more expressive than one string. (3) Each signature maps to a natural
+query interface (error/cmd/tool → bash-hook + sidecar; glob → autowatch; git-state/
+phase/sequence → sidecar; keyword/semantic → pull), so this taxonomy also fills out
+the interface menu. Start-two pick: **error strings** (highest precision, already
+collected informally) + **file globs** (cheap, autowatch can already act). See
+`todo.md` → auto-reflect trigger-capture entry.
+
 ## Open questions / risks
 
 - **Does the ranking verdict survive a non-intent query distribution?** Untested.
