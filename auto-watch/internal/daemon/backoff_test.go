@@ -2,6 +2,7 @@ package daemon_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,19 @@ import (
 	"github.com/mistakenot/auto-watch/internal/runner"
 	"github.com/mistakenot/auto-watch/internal/store"
 )
+
+// startupFailBackend models a task that fails to start (e.g. backend launch
+// error). startWorker returns the error and Dispatch marks the run terminal
+// immediately, so the run is never seen by Reap.
+type startupFailBackend struct{}
+
+func (startupFailBackend) Start(context.Context, *runner.StartSpec) (runner.Handle, error) {
+	return runner.Handle{}, errors.New("backend start failed")
+}
+func (startupFailBackend) Kill(context.Context, runner.Handle) error { return nil }
+func (startupFailBackend) SessionExists(context.Context, string) (bool, error) {
+	return false, nil
+}
 
 // failingBackend models a task that always exits non-zero, the same way
 // fakeBackend models a passing task (exit 0). Reap reads the exit-code file and
@@ -139,6 +153,40 @@ func TestFailureBackoffExponential(t *testing.T) {
 	want := []int{0, 1, 3, 7, 15, 31, 63, 127, 191}
 	if !reflect.DeepEqual(dispatched, want) {
 		t.Fatalf("dispatch minutes mismatch:\n got %v\nwant %v", dispatched, want)
+	}
+}
+
+// TestStartupFailureBacksOff: a task that fails during startup (Backend.Start
+// errors) is marked terminal inside Dispatch and never reaches Reap. Backoff
+// must still be recorded so a task that is broken before it starts backs off
+// exponentially instead of being re-dispatched on every tick.
+func TestStartupFailureBacksOff(t *testing.T) {
+	db := setupBackoffProject(t)
+	ctx := context.Background()
+
+	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	var clock time.Time
+	service := daemon.New(db, startupFailBackend{}, nil, func() time.Time { return clock }, nil)
+
+	var dispatched []int
+	prev := 0
+	for m := range 8 { // minutes 0..7 inclusive
+		clock = base.Add(time.Duration(m) * time.Minute)
+		if err := service.Tick(ctx); err != nil {
+			t.Fatalf("tick at minute %d failed: %v", m, err)
+		}
+		service.WaitWorkers()
+		if total := countRuns(t, db); total > prev {
+			dispatched = append(dispatched, m)
+			prev = total
+		}
+	}
+
+	// Without recording startup failures in the backoff state, a new run would be
+	// reserved every minute (0..7). With the fix the schedule is exponential.
+	want := []int{0, 1, 3, 7}
+	if !reflect.DeepEqual(dispatched, want) {
+		t.Fatalf("startup-failure dispatch minutes mismatch:\n got %v\nwant %v", dispatched, want)
 	}
 }
 

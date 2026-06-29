@@ -111,6 +111,56 @@ func TestCleanWorktreeIdempotent(t *testing.T) {
 	}
 }
 
+// TestRunRetentionPruneEmptyRuntimeDir guards the startup-failure case: a run
+// that failed before UpdateRunStarted persisted RuntimeDir has an empty path in
+// the DB even though startWorker already created the deterministic runs/<id>
+// directory. Retention must remove that directory via the derived path rather
+// than letting os.RemoveAll("") "succeed" and orphan it forever.
+func TestRunRetentionPruneEmptyRuntimeDir(t *testing.T) {
+	env, repoRoot, db := cleanTestEnv(t)
+	ctx := context.Background()
+	current := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	runID, err := db.ReserveRun(ctx, &store.ReserveRunInput{
+		ProjectID:   "demo",
+		ProjectPath: repoRoot,
+		TriggerID:   "daily",
+		TriggerType: "cron",
+		TaskID:      "broken",
+		TaskType:    "bash",
+		ResourceKey: "cron:broken",
+		StartedAt:   time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("ReserveRun: %v", err)
+	}
+	// Deterministic dir created by startWorker, but RuntimeDir never persisted
+	// (no UpdateRunStarted) — mark terminal directly, as a startup failure does.
+	dir := filepath.Join(env.Home, ".auto", "watch", "runs", strconv.FormatInt(runID, 10))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "output.log"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	if err := db.MarkRunTerminal(ctx, runID, model.RunFailed, nil, time.Date(2026, 3, 1, 11, 0, 0, 0, time.UTC), "startup failed"); err != nil {
+		t.Fatalf("MarkRunTerminal: %v", err)
+	}
+
+	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("tick failed: %v", err)
+	}
+	service.WaitWorkers()
+
+	if _, err := db.GetRun(ctx, runID); err == nil {
+		t.Fatalf("expected terminal run %d record deleted", runID)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("expected orphan run dir %q removed, stat err=%v", dir, err)
+	}
+}
+
 // TestWALCheckpointOnTick covers AC-4: a tick checkpoints the WAL, truncating
 // accumulated WAL data without error.
 func TestWALCheckpointOnTick(t *testing.T) {

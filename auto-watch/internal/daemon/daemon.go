@@ -504,10 +504,22 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 	if err != nil {
 		return err
 	}
+	runsDir, err := config.RunsDir()
+	if err != nil {
+		return err
+	}
 	cleanedIDs := make([]int64, 0, len(expired))
 	for i := range expired {
 		run := &expired[i]
-		if err := os.RemoveAll(run.RuntimeDir); err != nil {
+		// A run that failed before UpdateRunStarted persisted RuntimeDir has an
+		// empty path even though startWorker may have created the deterministic
+		// runs/<id> directory. Fall back to that path so os.RemoveAll("") doesn't
+		// silently "succeed" and orphan the directory past retention forever.
+		dir := strings.TrimSpace(run.RuntimeDir)
+		if dir == "" {
+			dir = filepath.Join(runsDir, strconv.FormatInt(run.ID, 10))
+		}
+		if err := os.RemoveAll(dir); err != nil {
 			// Leave the row in place so the directory is retried next tick.
 			continue
 		}
@@ -955,6 +967,11 @@ func (s *Service) failRun(ctx context.Context, run *model.RunRecord, worktreePat
 	if err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, runErr.Error()); err != nil {
 		return err
 	}
+	// A startup/dispatch-time failure is marked terminal here and never reaches
+	// Reap, so record it for failure backoff at this single chokepoint. All
+	// callers (Dispatch, startWorker) hold dispatchMu, as recordRunOutcome
+	// requires.
+	s.recordRunOutcome(run.ProjectID, run.TaskID, model.RunFailed, now)
 	if worktreePath != "" {
 		run.WorktreePath = worktreePath
 	}
