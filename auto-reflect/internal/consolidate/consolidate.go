@@ -246,8 +246,23 @@ type Duplicate struct {
 // against the candidate use_when+domain. A top score at or above
 // DedupeScoreThreshold means the candidate duplicates an existing rule and the
 // delta should be refused in favour of attach-evidence.
+//
+// To keep MatchScore on the [0,1] normalized lexical scale the threshold is
+// calibrated to, dedupe replicates what the matcher's old domain gate did
+// implicitly — pre-filtering the playbook to domain-intersecting rules — then
+// scores with NO domain filter so the IDF domain boost never fires and inflates
+// the score.
 func DetectDuplicate(playbook []rules.Rule, useWhen string, domain []string) (Duplicate, bool) {
-	matches := rules.MatchRules(playbook, useWhen, domain, false)
+	candidates := playbook
+	if len(domain) > 0 {
+		candidates = candidates[:0:0]
+		for i := range playbook {
+			if rules.DomainsIntersect(playbook[i].Domain, domain) {
+				candidates = append(candidates, playbook[i])
+			}
+		}
+	}
+	matches := rules.MatchRules(candidates, useWhen, nil, false)
 	if len(matches) == 0 {
 		return Duplicate{}, false
 	}

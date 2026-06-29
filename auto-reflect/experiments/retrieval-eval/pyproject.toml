@@ -16,7 +16,7 @@ dev = ["pytest>=8.0"]
 pythonpath = ["src", "conformance"]
 testpaths = ["tests"]
 markers = [
-    "baseline: pins the Python baseline to the shipped Go matcher (pass/fail regression, NOT variant evaluation)",
+    "baseline: conformance pins — Go CLI == variants[SHIPPED] (idf-tag), and hard-gate == frozen baseline.py (v1 self-check); pass/fail regression, NOT variant evaluation",
 ]
 
 [tool.setuptools.packages.find]

@@ -46,8 +46,8 @@ SYNTHETIC_QUERIES: list[tuple[str, list[str] | None, bool]] = [
     ("json cli binary", None, False),
     ("aws signing", None, False),
     ("parquet", ["aws"], False),                 # hard aws injects despite no keyword
-    ("go", ["testing"], False),                  # domain filter
-    ("go", ["nonexistent-domain"], False),       # filter excludes everything scored; hard inject only on filter
+    ("go", ["testing"], False),                  # domain boost: in-domain rules lifted, off-domain still surface
+    ("go", ["nonexistent-domain"], False),       # non-matching filter: no boost, but nothing excluded (lexical results + hard inject)
     ("running go build", None, False),           # tie between two 'go build' rules
     ("git remote url", None, False),
     ("go module layout", None, False),
