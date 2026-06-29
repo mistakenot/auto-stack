@@ -53,11 +53,13 @@ wanted data before touching `match.go`, not intuition.
 2. **Query mining (held-out) — DONE.** 48 agents over held-out sessions →
    **100 queries** (64 clean, 36 leakage-flagged via `overlaps_mined_task`), each
    with a (possibly imperfect/empty) `domain_guess`. See `data/queries/QUERIES.md`.
-3. **Oracle coverage pilot — DONE.** 20 agents grade all 120 rules per query
-   (graded 1–3). `data/qrels/pilot.qrels.jsonl`.
-4. **Full oracle — PENDING** (gated on the design changes below).
-5. **Variant comparison — PENDING.** hard-gate vs domain-as-boost vs IDF vs
-   no-filter; paired stats.
+3. **Oracle — DONE.** 20-query pilot, then the remaining 80, same oracle (one
+   Sonnet agent grades all 120 rules per query, graded 1–3). Merged into the
+   frozen gold standard `data/qrels/qrels.jsonl` (the pilot-only `pilot.*` files
+   were consolidated away). 100 queries, 89% coverage, 585 labels.
+4. **Variant comparison — PENDING (Phase 4).** hard-gate vs domain-as-boost vs
+   IDF vs no-filter, plus ≥1 *scorer* variant; paired stats on the clean 64. See
+   "Next steps" below. This is where the setup pays off.
 
 ## Findings
 
@@ -127,25 +129,31 @@ sensitivity — the snapshot is all-draft rules.
 - _Framing:_ system effectiveness ≠ user utility (§8.6) — offline metrics are a
   proxy; the reflect **feedback loop** is the real A/B test of utility.
 
-## What changes before the full oracle (the intersection of all three reads)
+## The four high-leverage changes (intersection of all three reads) — status
 
-The minimal high-leverage set (resisting textbook gold-plating):
+The minimal set (resisting textbook gold-plating). Status as of this checkpoint:
 
-1. **Measure precision, not just recall** — add `precision@k` + surfaced-count to
-   `metrics.py`. The gate's *job* is precision; we never measured its benefit.
-2. **Add a wrong/empty-domain condition** — run each query under {agent guess, no
-   domain, deliberately-wrong domain} to isolate where the gate actually hurts.
-3. **Second-judge kappa spot-check** (~20 queries, different model or a human
-   audit) — validate the gold standard isn't one model's idiosyncrasy; randomize
-   rule order to debias.
-4. **Cluster by session + report on the clean 64 as primary**; flagged-overlap as
-   sensitivity only.
+1. ✅ **Measure precision, not just recall** — done in `metrics.py` +
+   `conditions.py` (precision@k, full-set precision, surfaced-count).
+2. ✅ **Wrong/empty-domain condition** — done in `conditions.py` ({guess, none,
+   wrong}). This already answered the core question (see findings), so we ran the
+   full oracle without waiting on #3–#4.
+3. ⬜ **Second-judge kappa spot-check** — PENDING. Single oracle so far; a second
+   judge (different model / human audit on ~20 decision-changing queries) with
+   randomized rule order would quantify the self-preference risk. Do before
+   treating any Phase-4 result as more than directional.
+4. ⬜ **Cluster by session + clean-64 primary** — PENDING in the *stats* layer.
+   The queries carry `source_session` and `overlaps_mined_task` so the data
+   supports it; the Phase-4 significance code must cluster on `source_session`
+   and report the clean 64 as primary, flagged-overlap as sensitivity.
 
 ## Pilot extension — precision + domain conditions (free, no new oracle)
 
-`retrieval_eval.conditions` over the 20 pilot qrels, three domain conditions
-(`guess` / `none` / `wrong` — wrong = a real tag disjoint from the query's
-relevant-rule domains). `data/qrels/pilot.conditions.json`.
+`retrieval_eval.conditions` over the (then 20-query) pilot qrels, three domain
+conditions (`guess` / `none` / `wrong` — wrong = a real tag disjoint from the
+query's relevant-rule domains). _(This pilot table is kept for the record; the
+full-100 numbers below supersede it. The pilot-only derived file was later
+consolidated into `qrels.conditions.json`.)_
 
 | condition | mean recall | recall@5 | recall@10 | precision@5 | precision(full) | **surfaced (of 120)** |
 |---|---|---|---|---|---|---|
@@ -234,7 +242,71 @@ The bigger N **strengthens** the nuanced verdict:
 - The eval ignores the **`select` stage** and **draft-vs-confirmed** surfacing that
   the live loop uses.
 
-## Status
+## Secrets / public-repo review (done before pushing)
 
-- Phases 1–3 done. Baseline conformance green. 100 held-out queries + 20-query
-  oracle pilot landed. Full oracle gated on the four changes above.
+Scanned all committed reflect-eval + `.auto/reflect/events` files. **No live
+secrets**: the only `github_pat_…` strings are *truncated* illustrative examples
+(`github_pat_11AB35...`) inside the playbook's own defensive credential-stripping
+rules — not usable tokens. No AWS/private keys, no personal email/PII. Fixed one
+hardcoded `/home/vscode` absolute path in `workflows/land_queries.py` (now
+file-relative). Content caveat: the reflect data is a candid internal mistake-log
+(security incidents, post-mortems) — not secret, and the source `feedback.md`
+files were already in the repo, so nothing fundamentally new is exposed.
+
+## Reproducibility / artifact map
+
+Everything lives under `auto-reflect/experiments/retrieval-eval/`.
+
+- **Code:** `src/retrieval_eval/baseline.py` (faithful port of match.go),
+  `metrics.py` (recall@k, ndcg@k, mrr, excluded-relevant-rate, precision@k),
+  `conditions.py` (per-condition guess/none/wrong analysis), `analyze_pilot.py`
+  (coverage + domain-gate preview), `gocli.py`, `corpus.py`.
+- **Conformance:** `conformance/` — `run_conformance.py`, `harness.py`,
+  `fixtures.py`. Run `python conformance/run_conformance.py` or `pytest -m baseline`.
+- **Method scripts (Claude Code Workflow `.mjs`, run with data injected):**
+  `workflows/mine_queries.mjs`, `workflows/oracle.mjs`, `workflows/land_queries.py`
+  (+ `workflows/README.md`).
+- **Data (pinned, committed):** `data/corpus/rules.snapshot.json` (120 rules,
+  commit cc5db4d) · `data/queries/queries.jsonl` (100 held-out) ·
+  `data/qrels/qrels.jsonl` (the gold standard) + `qrels.conditions.json`. Each has
+  a sibling `SNAPSHOT.md` / `QUERIES.md` / `QRELS.md` provenance file.
+- **Re-run analyses:** `PYTHONPATH=src python -m retrieval_eval.conditions data/qrels/qrels.jsonl --write`
+  and `... analyze_pilot data/qrels/qrels.jsonl`.
+
+## Next steps (Phase 4 — the variant bench)
+
+The expensive parts (corpus + queries + qrels) are done and frozen, so variants
+are now ~free to evaluate. To pick up cold:
+
+1. **Variant registry + `evaluate()`** — a function taking a scorer/filter combo
+   and scoring it against `qrels.jsonl` on the clean 64, emitting the metric panel
+   (recall@k, nDCG@k, precision@k, surfaced-count, excluded-relevant-rate).
+2. **Variants to compare:** `hard-gate` (baseline) · `domain-as-boost` (additive,
+   never exclude) · `IDF tag weighting` (down-weight `go` etc.) · `no-filter` —
+   and **≥1 scorer variant** (better lexical / semantic embedding), because the
+   data says the *scorer* (surfaces 54–89% of the playbook, ranks weakly) is a
+   bigger lever than the filter.
+3. **Stats:** paired Wilcoxon **clustered by `source_session`** + bootstrap CIs +
+   effect sizes; pre-register one primary metric/k; clean 64 primary, flagged-36
+   sensitivity.
+4. **Then:** second-judge kappa pass (change #3 above) before acting; port the
+   winning filter/scorer into `match.go` (Phase 5); validate via the live reflect
+   feedback loop (the real A/B).
+
+**Predicted outcome from the data so far:** `domain-as-boost` ≥ `hard-gate`
+(keeps +7pt precision@5 / +10pt recall@10 on good guesses, removes the wrong-guess
+recall-0 catastrophe); the larger win is a better scorer.
+
+## Status (current — all pushed to origin/main)
+
+- **Phases 1–3 DONE and pushed.** Baseline conformance green (30/30 + 14/14).
+  100 held-out queries. Full 100-query golden qrels (89% coverage, mean 5.85
+  relevant/query, 585 labels). Precision + domain-condition analyses done.
+- **Phase 4 (variant bench) is the next action.** Phase 5 (port winner to
+  match.go) and the live-loop validation follow.
+- **Pending rigor before acting on Phase-4 results:** second-judge kappa;
+  session-clustered significance.
+- **Commit trail (session):** `cc5db4d` consolidate 266 obs→120 rules · `0d7db62`
+  harness+conformance · `7aba6b5` phases 2-3 checkpoint+diary · `ef1f939` pilot
+  extension · `a991e63` full golden qrels · `2161559` path fix (HEAD). Earlier:
+  `60faf31` seed 266 observations. All on `origin/main`.
