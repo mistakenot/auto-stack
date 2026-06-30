@@ -572,6 +572,17 @@ func TestQuickstartAndDocs(t *testing.T) {
 	if !strings.Contains(stdout, "auto skill init") {
 		t.Fatalf("quickstart output missing expected command:\n%s", stdout)
 	}
+	for _, want := range []string{
+		"auto skill add mistakenot/skills --skill handoff",
+		"auto skill sync --check",
+		"auto skill update --check",
+		"auto skill remove old-name --vendored",
+		"auto-skill deletes only target copies it previously rendered",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("quickstart output missing %q:\n%s", want, stdout)
+		}
+	}
 
 	stdout, stderr, code = runCLI(t, "--root", root, "docs")
 	if code != 0 {
@@ -579,6 +590,9 @@ func TestQuickstartAndDocs(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "`doctor`") {
 		t.Fatalf("docs output missing doctor command:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "`remove <name>") {
+		t.Fatalf("docs output missing remove command:\n%s", stdout)
 	}
 }
 
