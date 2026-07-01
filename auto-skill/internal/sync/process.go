@@ -119,7 +119,8 @@ func Process(env skill.Env, plan *Plan, fetch *FetchResult, opts Options) (*Proc
 	result := &ProcessResult{Targets: targets}
 
 	done = trace.Spanf(tr, "sync gather sources")
-	sources, srcErrs := gatherSources(env, plan, fetch, tr)
+	sources, srcWarns, srcErrs := gatherSources(env, plan, fetch, tr)
+	result.Warnings = append(result.Warnings, srcWarns...)
 	result.Errors = append(result.Errors, srcErrs...)
 	done("sources=%d errors=%d", len(sources), len(srcErrs))
 	defer func() {
@@ -237,7 +238,8 @@ func Process(env skill.Env, plan *Plan, fetch *FetchResult, opts Options) (*Proc
 // shadowing vendored on a name clash. Vendored skills are extracted from the
 // cache into temp dirs (cleaned up by the caller via cleanup); authored skills
 // point at their working-tree directory.
-func gatherSources(env skill.Env, plan *Plan, fetch *FetchResult, tr *trace.Logger) ([]*skillSource, []error) {
+func gatherSources(env skill.Env, plan *Plan, fetch *FetchResult, tr *trace.Logger) ([]*skillSource, []string, []error) {
+	var warnings []string
 	var errs []error
 	byName := map[string]*skillSource{}
 
@@ -275,6 +277,9 @@ func gatherSources(env skill.Env, plan *Plan, fetch *FetchResult, tr *trace.Logg
 		if prev, ok := byName[src.name]; ok && prev.cleanup != nil {
 			prev.cleanup() // drop the shadowed vendored extract
 			trace.Logf(tr, "sync source authored shadows vendored skill=%s", src.name)
+			warnings = append(warnings, fmt.Sprintf(
+				"authored skill '%s' shadows vendored — the vendored copy from %s will not be rendered",
+				src.name, prev.sourceID))
 		}
 		byName[src.name] = src
 	}
@@ -284,7 +289,7 @@ func gatherSources(env skill.Env, plan *Plan, fetch *FetchResult, tr *trace.Logg
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
-	return out, errs
+	return out, warnings, errs
 }
 
 // extractVendored materializes a vendored skill's subtree from the cache into a

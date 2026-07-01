@@ -226,15 +226,7 @@ func TestRunBudgetWarnsExitsZero(t *testing.T) {
 	if len(res.Errors) != 0 {
 		t.Fatalf("budget overflow must not produce errors: %v", res.Errors)
 	}
-	found := false
-	for _, w := range res.Warnings {
-		if strings.Contains(w, "advisory budget") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected an advisory budget warning, got %v", res.Warnings)
-	}
+	containsWarning(t, res.Warnings, "advisory budget")
 }
 
 // TestRunCheckStaleExitsNonZero: --check is an offline dry-run that writes

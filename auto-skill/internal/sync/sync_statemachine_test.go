@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/mistakenot/auto-skill/internal/skill"
@@ -56,6 +57,15 @@ type syncStateMachine struct {
 	nextID        int    // counter for unique synthetic skill names
 	hasFullSynced bool   // a full sync has established baseline state at least once
 	lastOp        string // last operation (for failure messages)
+
+	// Diagnostic model: expected warning substrings after the most recent sync.
+	// Reset (to nil) at the start of each operation that calls Run(). Check()
+	// asserts every expected substring appears in the actual Result.Warnings.
+	// lastResult is the *Result of the most recent sync op, or nil for a
+	// non-sync op (Remove/disk mutation) — a nil lastResult makes the diagnostic
+	// check vacuous, so those steps assert nothing about warnings.
+	expectedWarnings []string
+	lastResult       *Result
 }
 
 // ── construction (the "Init" the rapid.StateMachine interface lacks) ─────────
@@ -119,6 +129,7 @@ func newSyncSM(t *testing.T, rt *rapid.T) *syncStateMachine {
 // every render dir, and every receipt-gated orphan is pruned. The model
 // converges to exactly the renderable set in every render dir.
 func (sm *syncStateMachine) FullSync(t *rapid.T) {
+	sm.expectedWarnings = nil // reset the diagnostic model before this sync
 	res, err := Run(sm.env, Options{Locked: true})
 	if err != nil {
 		t.Fatalf("FullSync: Run: %v", err)
@@ -126,6 +137,7 @@ func (sm *syncStateMachine) FullSync(t *rapid.T) {
 	if res.ExitCode() != 0 {
 		t.Fatalf("FullSync: non-zero exit, errors=%v", res.Errors)
 	}
+	sm.lastResult = res
 	rs := sm.renderableSet()
 	for _, tg := range sm.targets {
 		next := make(map[string]bool, len(rs))
@@ -154,6 +166,7 @@ func (sm *syncStateMachine) ScopedSync(t *rapid.T) {
 	}
 	name := rapid.SampledFrom(names).Draw(t, "scope_name")
 
+	sm.expectedWarnings = nil // reset the diagnostic model before this sync
 	lockBefore, _ := os.ReadFile(sm.env.LockPath())
 	res, err := Run(sm.env, Options{Targets: []string{name}})
 	if err != nil {
@@ -162,6 +175,7 @@ func (sm *syncStateMachine) ScopedSync(t *rapid.T) {
 	if res.ExitCode() != 0 {
 		t.Fatalf("ScopedSync(%s): non-zero exit, errors=%v", name, res.Errors)
 	}
+	sm.lastResult = res
 	// Model: the targeted skill and every authored skill are (re)rendered into
 	// all render dirs; every other vendored skill is left exactly as it was.
 	sm.setRendered(name)
@@ -185,6 +199,7 @@ func (sm *syncStateMachine) AddSkill(t *rapid.T) {
 	head := sm.fix.commitSkill(name, "v1")
 	sm.lock[name] = lockEntry(sm.fix.url, name, "latest", head)
 	writeLock(sm.t, sm.env, sm.lock)
+	sm.lastResult = nil // non-sync op ⇒ diagnostic check is vacuous
 	sm.lastOp = "AddSkill(" + name + ")"
 }
 
@@ -200,6 +215,7 @@ func (sm *syncStateMachine) RemoveSkill(t *rapid.T) {
 	delete(sm.cfg.Skills, name)
 	writeLock(sm.t, sm.env, sm.lock)
 	writeSkillsYAML(sm.t, sm.env, sm.cfg)
+	sm.lastResult = nil // non-sync op ⇒ diagnostic check is vacuous
 	sm.lastOp = "RemoveSkill(" + name + ")"
 }
 
@@ -222,6 +238,7 @@ func (sm *syncStateMachine) EditConfig(t *rapid.T) {
 	}
 	sm.cfg.Skills[name] = sc
 	writeSkillsYAML(sm.t, sm.env, sm.cfg)
+	sm.lastResult = nil // non-sync op ⇒ diagnostic check is vacuous
 	sm.lastOp = "EditConfig(" + name + ")"
 }
 
@@ -238,6 +255,7 @@ func (sm *syncStateMachine) AddAuthoredSkill(t *rapid.T) {
 	sm.authored[name] = true
 	sm.cfg.Skills[name] = skill.SkillConfig{}
 	writeSkillsYAML(sm.t, sm.env, sm.cfg)
+	sm.lastResult = nil // non-sync op ⇒ diagnostic check is vacuous
 	sm.lastOp = "AddAuthoredSkill(" + name + ")"
 }
 
@@ -258,6 +276,7 @@ func (sm *syncStateMachine) RenameSkill(t *rapid.T) {
 	sm.lock[newName] = lockEntry(sm.fix.url, newName, "latest", head)
 	writeLock(sm.t, sm.env, sm.lock)
 	writeSkillsYAML(sm.t, sm.env, sm.cfg)
+	sm.lastResult = nil // non-sync op ⇒ diagnostic check is vacuous
 	sm.lastOp = "RenameSkill(" + old + "->" + newName + ")"
 }
 
@@ -291,6 +310,7 @@ func (sm *syncStateMachine) DeleteRenderDir(t *rapid.T) {
 		t.Fatalf("DeleteRenderDir: %v", err)
 	}
 	delete(sm.model[p.tg.Name], p.name)
+	sm.lastResult = nil // non-sync op ⇒ diagnostic check is vacuous
 	sm.lastOp = "DeleteRenderDir(" + p.tg.Name + "/" + p.name + ")"
 }
 
@@ -315,7 +335,116 @@ func (sm *syncStateMachine) DeleteAllRenderDirs(t *rapid.T) {
 		}
 		delete(sm.model[tg.Name], name)
 	}
+	sm.lastResult = nil // non-sync op ⇒ diagnostic check is vacuous
 	sm.lastOp = "DeleteAllRenderDirs(" + name + ")"
+}
+
+// ── diagnostic + remove operations (task 057 phase 3) ────────────────────────
+
+// AuthoredShadowsVendored writes an authored ./skills/<name> copy of an existing
+// VENDORED-only skill and full-syncs. The authored copy silently takes precedence
+// (the vendored extract is dropped) — but the sync now emits a warning saying so.
+// The skill stays rendered (sourced from authored). This op arms the diagnostic
+// model: expectedWarnings gets "shadows vendored", which Check() then asserts is
+// present in the resulting Result.Warnings.
+func (sm *syncStateMachine) AuthoredShadowsVendored(t *rapid.T) {
+	// Candidates: locked skills that do NOT already have an authored copy (so the
+	// authored write introduces a genuine authored-shadows-vendored clash).
+	var cands []string
+	for name := range sm.lock {
+		if !sm.authored[name] {
+			cands = append(cands, name)
+		}
+	}
+	sort.Strings(cands)
+	if len(cands) == 0 {
+		return
+	}
+	name := rapid.SampledFrom(cands).Draw(t, "shadow_name")
+
+	writeAuthoredSkill(sm.t, sm.env, name, "authored shadow "+name)
+	sm.authored[name] = true
+
+	// FullSync resets expectedWarnings, runs the sync, captures lastResult, and
+	// converges the model to the renderable set (which still contains name).
+	sm.FullSync(t)
+	sm.expectedWarnings = []string{"shadows vendored"}
+	sm.lastOp = "AuthoredShadowsVendored(" + name + ")"
+}
+
+// RemoveLocal drops a random authored skill via Remove(SelLocal). Remove deletes
+// the ./skills/<name> source and re-runs a full locked sync, whose receipt-gated
+// prune converges every target: the skill's rendered copies are pruned UNLESS a
+// vendored source with the same name still exists (then it re-renders from the
+// lock). The post-remove disk state is exactly the (lock ∪ authored) renderable
+// set, so the model converges there. Remove returns RemoveResult, not *Result, so
+// the diagnostic check is vacuous for this step (lastResult = nil).
+func (sm *syncStateMachine) RemoveLocal(t *rapid.T) {
+	var names []string
+	for name := range sm.authored {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return
+	}
+	name := rapid.SampledFrom(names).Draw(t, "remove_local_name")
+
+	res, err := Remove(sm.env, name, SelLocal)
+	if err != nil {
+		t.Fatalf("RemoveLocal(%s): Remove: %v", name, err)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("RemoveLocal(%s): reconcile errors=%v", name, res.Errors)
+	}
+	delete(sm.authored, name)
+	sm.convergeModelToRenderable()
+	sm.lastResult = nil // Remove returns RemoveResult, not *Result ⇒ vacuous
+	sm.lastOp = "RemoveLocal(" + name + ")"
+}
+
+// RemoveVendored drops a random vendored skill via Remove(SelVendored). Remove
+// rewrites the lock + skills.yaml without name and re-runs a full locked sync. If
+// an authored copy with the same name still exists, the skill survives and
+// re-renders from authored; otherwise its rendered copies are pruned. The
+// post-remove disk state is the (lock ∪ authored) renderable set. lock/cfg model
+// maps are updated so later wholesale writeLock/writeSkillsYAML calls don't
+// resurrect the entry. Remove returns RemoveResult, so lastResult = nil.
+func (sm *syncStateMachine) RemoveVendored(t *rapid.T) {
+	names := sortedKeys(sm.lock)
+	if len(names) == 0 {
+		return
+	}
+	name := rapid.SampledFrom(names).Draw(t, "remove_vendored_name")
+
+	res, err := Remove(sm.env, name, SelVendored)
+	if err != nil {
+		t.Fatalf("RemoveVendored(%s): Remove: %v", name, err)
+	}
+	if len(res.Errors) != 0 {
+		t.Fatalf("RemoveVendored(%s): reconcile errors=%v", name, res.Errors)
+	}
+	delete(sm.lock, name)
+	delete(sm.cfg.Skills, name)
+	sm.convergeModelToRenderable()
+	sm.lastResult = nil // Remove returns RemoveResult, not *Result ⇒ vacuous
+	sm.lastOp = "RemoveVendored(" + name + ")"
+}
+
+// convergeModelToRenderable sets every render dir's model to the current
+// renderable set (lock ∪ authored). Valid after any operation that runs a full
+// locked sync (FullSync, Remove's internal reconcile): that sync renders every
+// renderable skill and receipt-gated-prunes every orphan, so on-disk presence
+// equals the renderable set in every target.
+func (sm *syncStateMachine) convergeModelToRenderable() {
+	rs := sm.renderableSet()
+	for _, tg := range sm.targets {
+		next := make(map[string]bool, len(rs))
+		for name := range rs {
+			next[name] = true
+		}
+		sm.model[tg.Name] = next
+	}
 }
 
 // ── invariant check (runs after every operation) ─────────────────────────────
@@ -337,6 +466,25 @@ func (sm *syncStateMachine) Check(t *rapid.T) {
 			if !sm.model[tg.Name][name] {
 				t.Fatalf("presence invariant: %s/%s on disk but absent from model (lastOp=%s)",
 					tg.Name, name, sm.lastOp)
+			}
+		}
+	}
+
+	// Diagnostic model: every expected warning substring must appear in the most
+	// recent sync's Result.Warnings. Vacuous when the last op was not a sync
+	// (lastResult == nil) or emitted no expected warnings (expectedWarnings nil).
+	if sm.lastResult != nil {
+		for _, want := range sm.expectedWarnings {
+			found := false
+			for _, w := range sm.lastResult.Warnings {
+				if strings.Contains(w, want) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("diagnostic invariant: expected warning %q not in %v (lastOp=%s)",
+					want, sm.lastResult.Warnings, sm.lastOp)
 			}
 		}
 	}

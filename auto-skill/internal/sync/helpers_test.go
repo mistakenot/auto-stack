@@ -169,6 +169,23 @@ func mustCanonical(t *testing.T, url string) (string, transport.CacheIdentity, s
 	return canonical, id, ep
 }
 
+func containsWarning(t *testing.T, warnings []string, substr string) {
+	t.Helper()
+	for _, w := range warnings {
+		if strings.Contains(w, substr) {
+			return
+		}
+	}
+	t.Errorf("expected warning containing %q, got %v", substr, warnings)
+}
+
+func noWarnings(t *testing.T, warnings []string) {
+	t.Helper()
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings, got %v", warnings)
+	}
+}
+
 func findSkill(plan *Plan, name string) (SkillPlan, bool) {
 	for i := range plan.Skills {
 		if plan.Skills[i].Name == name {
