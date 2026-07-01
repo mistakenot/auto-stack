@@ -1,0 +1,794 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>057: auto-skill-edge-case-assurance</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="057: auto-skill-edge-case-assurance" status="pending" pr="pending" generated="2026-07-01"
+          next-prompt="/execute-task 057">
+
+    <script type="application/json" id="pd-meta">
+    {
+      "id": "057",
+      "name": "auto-skill-edge-case-assurance",
+      "status": "pending",
+      "created": "2026-07-01"
+    }
+    </script>
+
+    <pd-tab name="Requirements">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+auto-skill is now depended on in real projects, but silent edge-case behavior keeps surfacing in production. The tool does the *right thing* in many multi-source scenarios, but tells the user *nothing* about it — so the behavior reads as a bug, not a feature.
+
+**Canonical example:** if `./skills/foo/` contains an authored skill with the same name as a vendored (locked) skill `foo`, the authored copy silently takes precedence during sync. The vendored copy is extracted, then discarded. The only trace is a `trace.Logf` line that requires `--trace` to see. A user who runs `auto skill remove foo` (expecting to remove the vendored copy) finds `foo` reappearing on the next sync — the authored copy is still there, and nothing warned them.
+
+This is one instance of a broader class: **stateful composition surprises** — individually correct phases that compose into behavior the user didn't expect, with no diagnostic output to explain what happened.
+
+The existing test suite (42 test files, a model-based state machine, property tests) covers functional correctness well, but does not assert on *diagnostic output* — warnings, reported conflicts, surviving copies. The tests verify "the right files end up on disk" but not "the user was told what happened."
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+1. **Surface silent edge cases systematically** — extend the test infrastructure to catch the class of bugs where behavior is correct but diagnostics are missing.
+2. **Pin every known edge case** — each discovered-in-production surprise gets a named regression test that asserts both behavior AND diagnostic output.
+3. **Emit warnings for silent precedence** — the sync engine should warn when authored skills shadow vendored ones, and when remove leaves surviving copies.
+4. **Extend the model-based state machine** — add operations (remove, authored-shadows-vendored) and invariants (diagnostic model, source provenance, artifact consistency) to the existing `syncStateMachine`.
+5. **Add property-based invariants for pure decision logic** — the `ownership.Classify` function and `gatherSources` precedence logic have complex input spaces that hand-picked tests cannot exhaustively cover.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="edge-case-matrix" title="Edge Case Matrix" summary="The 12 scenarios this task must cover with pinned tests, each asserting behavior + diagnostics.">
+        <md><script type="text/plain">
+| # | Scenario | Expected behavior | Expected diagnostic |
+|---|---|---|---|
+| 1 | Authored `./skills/foo` + vendored `foo` → sync | Authored content rendered, vendored ignored | Warning: "authored skill 'foo' shadows vendored" |
+| 2 | `remove --vendored foo` when authored `foo` exists | Lock entry removed, authored survives | `RemoveResult.Reported` lists surviving copies |
+| 3 | `remove --local foo` when vendored `foo` exists | Authored dir deleted, vendored renders on next sync | No spurious warnings |
+| 4 | `remove foo` (SelUnset) when both exist | Error returned, nothing mutated | Error suggests `--local` or `--vendored` |
+| 5 | `add` skill with same name as existing authored | Lock entry created, authored shadows on sync | Warning on sync about shadowing |
+| 6 | `sync --target foo` when `foo` not in lock | No crash, empty plan | Appropriate "no matching skills" message |
+| 7 | `sync --check` with pending journal | Non-zero exit | Error: "run auto skill sync to recover" |
+| 8 | `sync` with empty lock + no authored skills | Clean zero exit | No crash, no empty manifest |
+| 9 | `sync --locked` after intent changed in skills.yaml | Intent reported, lock untouched | `StaleItem` with reason `stale_by_intent` |
+| 10 | Authored skill with invalid name → sync | Skipped with error | Error includes invalid name and path |
+| 11 | `remove` non-existent skill | Error returned, nothing mutated | Error: "no skill named ... found" |
+| 12 | Foreign dir collides with desired skill → sync | Refused without `--force` | Conflict with remediation hint |
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **Performance testing** — sync timing, cache hit rates, git operation latency (separate concern; task 056 covers perf).
+- **Trust/security testing** — trust gate behavior, credential handling (covered by existing `trust_test.go`).
+- **CLI text formatting** — human-readable `--text` output rendering (not a correctness concern).
+- **Concurrent access** — multiple sync processes running simultaneously (not a supported use case).
+- **New feature work** — this task adds tests and warnings, not new sync/add/remove capabilities.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="existing-infrastructure" title="Existing Infrastructure" summary="What's already in place — the foundation this task extends, not replaces.">
+        <md><script type="text/plain">
+**Model-based state machine** (`sync_statemachine_test.go`, 507 lines):
+- 9 operations: FullSync, ScopedSync, AddSkill, RemoveSkill, EditConfig, AddAuthoredSkill, RenameSkill, DeleteRenderDir, DeleteAllRenderDirs
+- Invariant: bidirectional disk-presence check after every operation
+- Already caught the `--target` scoped-prune bug
+- Uses `rapid` (Go PBT library) with shrinking
+
+**Property tests** (3 files):
+- `skill_prop_test.go` — lock round-trip, skills.yaml round-trip
+- `render_prop_test.go` — render determinism
+- `transport_prop_test.go` — URL canonicalization
+
+**Test helpers** (`helpers_test.go`):
+- `newFixture(t)` — creates a real on-disk git repo reachable via `file://`
+- `newEnv(t)` — isolated `skill.Env` with `RootOverride: true`
+- `approve(t, env, url)` — pre-approves a trust endpoint
+- `writeLock()` / `writeSkillsYAML()` — writes config files
+- `writeAuthoredSkill()` — writes an authored skill under `./skills/<name>`
+
+**42 test files** across all packages with good functional coverage.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="technical-context" title="Technical Context" summary="Where in the codebase the changes concentrate.">
+        <md><script type="text/plain">
+**The silent shadowing gap** — `process.go:249-252`: `gatherSources()` overwrites vendored with authored in `byName` map. The only output is `trace.Logf(tr, "sync source authored shadows vendored skill=%s", src.name)` — requires `--trace` flag. No warning reaches `Result.Warnings`.
+
+**The ownership model** — `ownership/classify.go`: pure I/O-free decision table with 5 states (managed-current, managed-orphan, managed-unestablished, modified, foreign). The `classifyOne` function is the core decision — 2 boolean inputs × 2 string comparisons = a combinatorial space that PBT generators can cover exhaustively.
+
+**The remove reconcile** — `sync/remove.go:51-129`: drops source of truth, then re-runs `sync.Run()` to prune orphans. `survivingTargetCopies()` already computes which copies survived, but the result is only in `RemoveResult.Reported` — it's the right data, just not prominent enough in some flows.
+
+**The result struct** — `sync.Result` already carries `Warnings []string`, `Errors []string`, `Conflicts []Conflict`, and `Stale []StaleItem`. The plumbing for warnings exists; the gap is that `gatherSources` doesn't write to it.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="approach-overview" title="Approach Overview">
+        <md><script type="text/plain">
+Three layers, in priority order:
+
+| Priority | Layer | Technique | Effort | What it catches |
+|---|---|---|---|---|
+| **P0** | Edge case pinning | Unit tests (12 scenarios) | 2-3h | Immediate regression for every known surprise |
+| **P1** | State machine extension | Model-based testing | 4-6h | The *next* shadowing/precedence bug before production |
+| **P2** | Decision logic invariants | Property-based testing | 2-3h | Exhaustive coverage of pure ownership/precedence logic |
+
+Plus a small production code change: emit `Result.Warnings` entries for authored-shadows-vendored in `gatherSources`.
+
+Detailed technique prescriptions are in `auto-skill/docs/assurance-strategy.md`.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+        <pd-ac id="AC-1" title="All 12 edge cases have pinned regression tests" phases="1,2" tests="auto-skill/internal/sync/edgecase_test.go">
+          <md><script type="text/plain">
+- Each scenario from the edge case matrix has a named `TestEdgeCase_*` test
+- Each test asserts both behavior (disk state / artifact state) AND diagnostic output (warnings, errors, reported copies)
+- All 12 tests pass with `go test ./internal/sync/ -run TestEdgeCase`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="Sync warns when authored shadows vendored" phases="1" tests="auto-skill/internal/sync/edgecase_test.go">
+          <md><script type="text/plain">
+- When `gatherSources` overwrites a vendored skill with an authored one, a warning is appended to `ProcessResult.Warnings`
+- The warning message includes the skill name and says "authored shadows vendored"
+- The warning propagates to `sync.Result.Warnings` and appears in JSON output
+- `TestEdgeCase_AuthoredShadowsVendored` asserts this
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="State machine extended with diagnostic model" phases="3" tests="auto-skill/internal/sync/sync_statemachine_test.go">
+          <md><script type="text/plain">
+- `syncStateMachine` tracks expected warnings per operation in the model
+- `Check()` asserts `Result.Warnings` contains the expected set after every `Run`
+- New operations added: `RemoveVendored`, `RemoveLocal`, `AuthoredShadowsVendored`
+- `TestSyncStateMachine` passes with `-rapid.checks=200`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Ownership.Classify has property-based invariants" phases="4" tests="auto-skill/internal/ownership/classify_prop_test.go">
+          <md><script type="text/plain">
+- At least 5 properties: totality, prune safety, foreign exclusivity, desired-never-orphaned, receipt necessity
+- Uses `rapid` generators for `ownership.Inputs`
+- Each property has a kill test (inject a bug, verify at least one generated input catches it)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="No test regressions" phases="1,2,3,4" tests="">
+          <md><script type="text/plain">
+- `go test ./...` in auto-skill passes (including existing tests + new tests)
+- `go build ./...` succeeds
+- No `-skip` flags needed for new tests
+          </script></md>
+        </pd-ac>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+- **Warning verbosity policy:** should the shadowing warning appear on every sync (including `--check` and `--locked`), or only on full syncs? Leaning toward: always, since it's a state the user should know about regardless of sync mode.
+- **Warning vs error:** should authored-shadows-vendored be a warning (exit 0) or a soft error? Leaning toward: warning — the behavior is intentional, and an error would break existing workflows that depend on the shadowing.
+- **State machine scope:** should the extended state machine also cover `add` operations (the full `add.Run` pipeline), or stay scoped to `sync.Run` + `Remove`? Leaning toward: sync + remove for this task, add in a follow-up — the add pipeline involves network/cache interactions that make the fixture setup heavier.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+### Approach
+
+Three complementary testing layers, each targeting a different class of defect:
+
+1. **Pinned edge-case tests** (P0) — deterministic unit tests for each of the 12 known scenarios. Each test asserts both **behavior** (disk/artifact state) and **diagnostics** (warnings, errors, reported copies). Uses the existing `newEnv(t)` + `newFixture(t)` infrastructure. File: `edgecase_test.go`.
+
+2. **Extended model-based state machine** (P1) — adds a **diagnostic model** (expected warnings per operation) and 3 new operations (`RemoveVendored`, `RemoveLocal`, `AuthoredShadowsVendored`) to the existing `syncStateMachine`. The `Check()` invariant is extended to assert `Result.Warnings` matches the model's expected set after every step. File: `sync_statemachine_test.go`.
+
+3. **Property-based invariants** (P2) — 5 relational invariants for `ownership.Classify` using `rapid` generators over `ownership.Inputs`. Each property has a kill test (inject a known bug, confirm the property catches it). File: `classify_prop_test.go`.
+
+### Production code change
+
+A single change to `process.go:gatherSources` — when an authored skill shadows a vendored one, append a structured warning to a new `warnings` return value (or accumulate in `ProcessResult.Warnings` in the caller). The warning propagation chain already exists: `ProcessResult.Warnings` → `Result.Warnings` (sync.go:268) → JSON output.
+
+### Tooling
+
+- Test framework: Go `testing` + `pgregory.net/rapid` v1.3.0 (already in go.mod)
+- Warning assertion pattern: new `containsWarning(t, warnings []string, substr string)` helper in `helpers_test.go`, replacing the inline `for` + `strings.Contains` loop used in existing tests
+- Run: `go test ./internal/sync/ ./internal/ownership/ -count=1`
+- Model-based: `go test ./internal/sync/ -run TestSyncStateMachine -rapid.checks=200`
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="Testing layers and what they cover">
+flowchart TB
+    subgraph P0["P0: Pinned Edge Cases"]
+        EC1["12 named TestEdgeCase_* tests"]
+        EC1 --> BEH["Behavior: disk + artifact state"]
+        EC1 --> DIAG["Diagnostics: warnings, errors, reported copies"]
+    end
+
+    subgraph P1["P1: Model-Based State Machine"]
+        SM["syncStateMachine + rapid"]
+        SM --> DISKP["Disk presence invariant (existing)"]
+        SM --> DIAGM["Diagnostic model (new)"]
+        SM --> NEWOPS["New ops: RemoveVendored, RemoveLocal, AuthoredShadows"]
+    end
+
+    subgraph P2["P2: Property-Based Invariants"]
+        PBT["ownership.Classify properties"]
+        PBT --> TOT["Totality"]
+        PBT --> PRUNE["Prune safety"]
+        PBT --> FRGN["Foreign exclusivity"]
+        PBT --> DNEV["Desired-never-orphaned"]
+        PBT --> RCPT["Receipt necessity"]
+    end
+
+    subgraph PROD["Production Code"]
+        GS["gatherSources warning emission"]
+        GS --> PROCW["ProcessResult.Warnings"]
+        PROCW --> RESW["Result.Warnings"]
+    end
+
+    EC1 -. "asserts" .-> RESW
+    SM -. "asserts" .-> RESW
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-ac id="AC-1" title="All 12 edge cases have pinned regression tests" phases="1,2" tests="auto-skill/internal/sync/edgecase_test.go">
+        <md><script type="text/plain">
+**Given** the 12 scenarios in the edge case matrix
+**When** each is exercised in a `TestEdgeCase_*` test using `newEnv(t)` + seed `Run` + operation
+**Then** each test asserts both:
+- Behavior: correct disk state, artifact state (lock, manifest, receipts)
+- Diagnostics: expected warnings present in `Result.Warnings`, expected errors in `Result.Errors`, expected entries in `RemoveResult.Reported`
+
+All 12 pass with `go test ./internal/sync/ -run TestEdgeCase -count=1`.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="gatherSources emits shadow warning" phases="1" tests="auto-skill/internal/sync/edgecase_test.go">
+        <md><script type="text/plain">
+**Given** a vendored skill `foo` in the lock AND an authored `./skills/foo/SKILL.md`
+**When** `sync.Run()` is called (any mode: default, `--check`, `--locked`)
+**Then** `Result.Warnings` contains a string matching `"authored skill 'foo' shadows vendored"`
+
+The warning propagates through: `gatherSources` → `ProcessResult.Warnings` → `Result.Warnings` → JSON output. Exit code remains 0.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-3" title="State machine extended with diagnostic model" phases="3" tests="auto-skill/internal/sync/sync_statemachine_test.go">
+        <md><script type="text/plain">
+**Given** the existing `syncStateMachine` with its 9 operations
+**When** extended with:
+- A diagnostic model tracking expected warnings per operation
+- 3 new operations: `RemoveVendored`, `RemoveLocal`, `AuthoredShadowsVendored`
+- A `Check()` invariant asserting `Result.Warnings` matches the expected set
+**Then** `TestSyncStateMachine` passes with `-rapid.checks=200` and the diagnostic model catches missing warnings (verified by a kill test where the shadow warning is suppressed → the model fails).
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-4" title="Ownership.Classify property invariants" phases="4" tests="auto-skill/internal/ownership/classify_prop_test.go">
+        <md><script type="text/plain">
+**Given** `rapid` generators producing random `ownership.Inputs`
+**When** 5 properties are checked:
+1. **Totality** — every `(target, dir)` pair produces exactly one State
+2. **Prune safety** — `PruneEligible()` returns only `StateManagedOrphan` entries
+3. **Foreign exclusivity** — unmanaged dirs are always `StateForeign`
+4. **Desired-never-orphaned** — desired dirs never classify as `StateManagedOrphan`
+5. **Receipt necessity** — without a receipt, state is never `StateManagedOrphan` or `StateModified`
+**Then** all 5 pass with `-rapid.checks=1000`, and each has a kill test proving detection power.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="No test regressions" phases="1,2,3,4" tests="">
+        <md><script type="text/plain">
+**Given** all existing tests in auto-skill (`go test ./...`)
+**When** the production code change (shadow warning in `gatherSources`) and new test files are added
+**Then** `go test ./...` passes, `go build ./...` succeeds, and no `-skip` flags are needed.
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="containsWarning helper replaces inline pattern" phases="1" tests="auto-skill/internal/sync/helpers_test.go,auto-skill/internal/sync/sync_test.go">
+        <md><script type="text/plain">
+**Given** the existing inline `for` + `strings.Contains` warning assertion pattern
+**When** a `containsWarning(t *testing.T, warnings []string, substr string)` helper is added to `helpers_test.go`
+**Then** all new edge-case tests use the helper, and at least one existing warning test (`TestRunBudgetWarnsExitsZero`) is updated to use it for consistency.
+        </script></md>
+      </pd-ac>
+
+      <pd-section id="verification-gaps" title="Known Gaps & Risks">
+        <md><script type="text/plain">
+1. **`add` pipeline not in state machine scope** — the `add.Run` pipeline involves network/cache interactions that make fixture setup heavier. Covered by individual edge-case tests (scenarios 5, 10) but not by the model-based walk. Upgrade trigger: if add-related edge cases continue escaping.
+
+2. **Concurrent sync not tested** — multiple sync processes running simultaneously is not a supported use case and is not covered. If it becomes supported, escalate to model checking.
+
+3. **CLI output formatting not verified** — tests assert on `Result.Warnings` (structured data), not on the CLI text/JSON rendering of those warnings. The rendering layer (`cmd/` package) is out of scope for this task.
+
+4. **Property kill tests are proof-of-concept** — each property gets one injected bug to demonstrate detection power. Full mutation testing (systematic detection power audit) is deferred unless properties pass but bugs continue escaping.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+### Production code change
+
+One change in `process.go`: modify `gatherSources()` to return a warnings slice alongside sources and errors. When an authored skill shadows a vendored one (the existing `byName` overwrite at line 249), append a structured warning instead of only logging via `trace.Logf`. The caller (`Process()` at line 114) appends these warnings to `ProcessResult.Warnings`, which already flows through to `Result.Warnings` at `sync.go:268` and out to the CLI layer.
+
+**Signature change:** `gatherSources` moves from `([]*skillSource, []error)` to `([]*skillSource, []string, []error)`. This is unexported with a single call site — zero external impact.
+
+**Warning format:** `"authored skill '%s' shadows vendored — the vendored copy from %s will not be rendered"` — includes both the skill name and the vendored source URL for disambiguation.
+
+**Warning verbosity:** emitted on every sync mode (`--check`, `--locked`, default). The warning describes persistent state (an authored skill existing alongside a vendored lock entry), not a transient condition, so suppressing it in any mode would hide the surprise.
+
+### Test infrastructure
+
+Add a `containsWarning(t, warnings, substr)` helper to `helpers_test.go` that replaces the inline `for` + `strings.Contains` loop. Refactor the existing `TestRunBudgetWarnsExitsZero` test to use it.
+
+### Three test layers (priority order)
+
+**P0 — Pinned edge cases** (`edgecase_test.go`): 12 named `TestEdgeCase_*` tests, one per scenario in the edge case matrix. Each uses the existing `newEnv(t)` + `newFixture(t)` + seed `Run()` pattern, then exercises the operation and asserts both behavior (disk/artifact state) and diagnostics (warnings, errors, reported copies).
+
+**P1 — State machine diagnostic model** (`sync_statemachine_test.go`): Extend the existing `syncStateMachine` struct with an `expectedWarnings []string` field reset per operation. Three new operations: `RemoveVendored`, `RemoveLocal`, `AuthoredShadowsVendored`. The `Check()` invariant is extended to assert that the last `Run`'s `Result.Warnings` contains every expected warning substring. The model tracks warnings only for the most recent sync operation (not cumulative).
+
+**P2 — Ownership property invariants** (`classify_prop_test.go`): Five relational properties for `ownership.Classify` using `rapid` generators. Each property is paired with a kill test that injects a bug into a wrapper function and asserts the property catches it.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-skill/internal/sync/process.go" change="edit">Modify gatherSources return signature to ([]*skillSource, []string, []error). Add shadow warning when authored overwrites vendored in byName map. Update Process() call site to capture and append warnings.</pd-file>
+          <pd-file path="auto-skill/internal/sync/edgecase_test.go" change="add">12 pinned edge-case regression tests (TestEdgeCase_AuthoredShadowsVendored through TestEdgeCase_ForeignDirCollision). Each asserts behavior + diagnostics.</pd-file>
+          <pd-file path="auto-skill/internal/sync/sync_statemachine_test.go" change="edit">Add expectedWarnings field to syncStateMachine. Add lastResult to capture Run output. Extend Check() with warning assertion. Add 3 new operations: RemoveVendored, RemoveLocal, AuthoredShadowsVendored.</pd-file>
+          <pd-file path="auto-skill/internal/ownership/classify_prop_test.go" change="add">5 property-based invariants (totality, prune safety, foreign exclusivity, desired-never-orphaned, receipt necessity) with rapid generators and kill tests.</pd-file>
+          <pd-file path="auto-skill/internal/sync/helpers_test.go" change="edit">Add containsWarning(t, warnings, substr) and noWarnings(t, warnings) test helpers.</pd-file>
+          <pd-file path="auto-skill/internal/sync/sync_test.go" change="edit">Refactor TestRunBudgetWarnsExitsZero to use containsWarning helper.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="solution-detail" title="Solution Detail">
+
+        <pd-section id="production-change" title="Production Code Change">
+          <pd-code lang="go" path="auto-skill/internal/sync/process.go" lines="215-263" caption="gatherSources — before and after">
+            <script type="text/plain">
+// BEFORE: returns sources + errors only
+func gatherSources(env skill.Env, plan *Plan, fetch *FetchResult,
+    tr *trace.Logger) ([]*skillSource, []error) {
+
+// AFTER: returns sources + warnings + errors
+func gatherSources(env skill.Env, plan *Plan, fetch *FetchResult,
+    tr *trace.Logger) ([]*skillSource, []string, []error) {
+    var errs []error
+    var warnings []string    // ← new
+    byName := map[string]*skillSource{}
+
+    // ... vendored extraction unchanged ...
+
+    authored, aerrs := discoverAuthored(env)
+    errs = append(errs, aerrs...)
+    for _, src := range authored {
+        if prev, ok := byName[src.name]; ok && prev.cleanup != nil {
+            prev.cleanup()
+            trace.Logf(tr, "sync source authored shadows vendored skill=%s", src.name)
+            warnings = append(warnings, fmt.Sprintf(
+                "authored skill '%s' shadows vendored — "+
+                "the vendored copy from %s will not be rendered",
+                src.name, prev.sourceID))    // ← new
+        }
+        byName[src.name] = src
+    }
+
+    // ... sort + return ...
+    return out, warnings, errs    // ← changed
+}
+            </script>
+          </pd-code>
+          <pd-code lang="go" path="auto-skill/internal/sync/process.go" lines="113-116" caption="Process() call site update">
+            <script type="text/plain">
+// BEFORE:
+sources, srcErrs := gatherSources(env, plan, fetch, tr)
+result.Errors = append(result.Errors, srcErrs...)
+
+// AFTER:
+sources, srcWarns, srcErrs := gatherSources(env, plan, fetch, tr)
+result.Warnings = append(result.Warnings, srcWarns...)
+result.Errors = append(result.Errors, srcErrs...)
+            </script>
+          </pd-code>
+        </pd-section>
+
+        <pd-section id="edge-case-tests" title="Edge Case Test Skeletons">
+          <md><script type="text/plain">
+Each test follows the same structure: setup env → seed sync → exercise operation → assert behavior + diagnostics.
+
+| Test name | Setup | Operation | Behavior assertion | Diagnostic assertion |
+|---|---|---|---|---|
+| `TestEdgeCase_AuthoredShadowsVendored` | vendored `foo` in lock + authored `./skills/foo` | `Run(Locked)` | Authored content rendered | Warning contains `"shadows vendored"` |
+| `TestEdgeCase_RemoveVendoredWithAuthored` | both exist, seeded | `Remove(foo, SelVendored)` | Lock entry gone, authored survives | `Reported` lists authored copies |
+| `TestEdgeCase_RemoveLocalWithVendored` | both exist, seeded | `Remove(foo, SelLocal)` | Authored dir deleted | No warnings; vendored renders on next sync |
+| `TestEdgeCase_RemoveAmbiguous` | both exist, seeded | `Remove(foo, SelUnset)` | Error, nothing mutated | Error contains `"both"` or `"--local"` |
+| `TestEdgeCase_AddSameNameAsAuthored` | authored `foo` exists | Add vendored `foo` to lock → `Run` | Lock entry created, authored renders | Warning on sync about shadowing |
+| `TestEdgeCase_SyncTargetNotInLock` | lock has `bar` only | `Run(Targets: ["missing"])` | No crash, empty plan | `len(res.Installs) == 0` |
+| `TestEdgeCase_SyncCheckWithPendingJournal` | write a journal file | `Run(Check: true)` | Non-zero exit | Error contains `"recover"` |
+| `TestEdgeCase_SyncEmptyLockNoAuthored` | empty lock, no `./skills/` | `Run(Locked)` | Exit 0, no manifest | No errors, no warnings |
+| `TestEdgeCase_SyncLockedIntentChanged` | lock pinned at v1, yaml wants `latest` | `Run(Locked)` | Lock untouched | `Stale` contains intent-changed entry |
+| `TestEdgeCase_AuthoredInvalidName` | `./skills/INVALID NAME/` | `Run(Locked)` | Skipped | Error includes invalid name |
+| `TestEdgeCase_RemoveNonExistent` | no skill named `ghost` | `Remove(ghost, SelUnset)` | Error, nothing mutated | Error contains `"ghost"` |
+| `TestEdgeCase_ForeignDirCollision` | foreign dir at target path | `Run(Locked)` | Refused | Conflict in `res.Conflicts` |
+          </script></md>
+        </pd-section>
+
+        <pd-section id="state-machine-ext" title="State Machine Extension">
+          <pd-code lang="go" path="auto-skill/internal/sync/sync_statemachine_test.go" caption="New fields and diagnostic model">
+            <script type="text/plain">
+type syncStateMachine struct {
+    // ... existing fields ...
+
+    // Diagnostic model: expected warning substrings after the most recent sync.
+    // Reset at the start of each operation that calls Run(). Check() asserts
+    // every expected substring appears in the actual Result.Warnings.
+    expectedWarnings []string
+    lastResult       *Result  // captured from the most recent Run() call
+}
+            </script>
+          </pd-code>
+          <md><script type="text/plain">
+**New operations:**
+
+- `RemoveVendored` — picks a random vendored skill that also has an authored copy, calls `Remove(env, name, SelVendored)`, model: lock entry removed, authored still renderable, no model change until next sync.
+- `RemoveLocal` — picks a random authored skill, calls `Remove(env, name, SelLocal)`, model: authored map entry removed, rendered copies pruned.
+- `AuthoredShadowsVendored` — picks a random vendored-only skill, writes an authored copy with `writeAuthoredSkill`, runs `FullSync`. Model: skill still rendered (now from authored source), `expectedWarnings` gets `"shadows vendored"`.
+
+**Extended `Check()`:**
+```go
+func (sm *syncStateMachine) Check(t *rapid.T) {
+    // ... existing disk presence check ...
+
+    // Diagnostic model: every expected warning must appear in the result.
+    if sm.lastResult != nil {
+        for _, want := range sm.expectedWarnings {
+            found := false
+            for _, w := range sm.lastResult.Warnings {
+                if strings.Contains(w, want) {
+                    found = true
+                    break
+                }
+            }
+            if !found {
+                t.Fatalf("diagnostic invariant: expected warning %q "+
+                    "not in %v (lastOp=%s)", want, sm.lastResult.Warnings, sm.lastOp)
+            }
+        }
+    }
+}
+```
+          </script></md>
+        </pd-section>
+
+        <pd-section id="ownership-props" title="Ownership Property Invariants">
+          <pd-code lang="go" path="auto-skill/internal/ownership/classify_prop_test.go" caption="Generator and property skeleton">
+            <script type="text/plain">
+func ownershipInputsGen(t *rapid.T) Inputs {
+    nTargets := rapid.IntRange(1, 3).Draw(t, "nTargets")
+    nDirs := rapid.IntRange(1, 8).Draw(t, "nDirs")
+    // ... generate targets, desired set, manifest, receipts, onDiskDigests ...
+    return Inputs{...}
+}
+
+func TestClassifyProp_Totality(t *testing.T) {
+    rapid.Check(t, func(rt *rapid.T) {
+        in := ownershipInputsGen(rt)
+        verdicts := Classify(in)
+        // Every (target, dir) pair produces exactly one verdict
+        seen := map[string]bool{}
+        for _, v := range verdicts {
+            key := v.Target + "/" + v.Name
+            if seen[key] { rt.Fatalf("duplicate verdict for %s", key) }
+            seen[key] = true
+        }
+    })
+}
+            </script>
+          </pd-code>
+          <md><script type="text/plain">
+**Kill test pattern:** for each property, define a `buggy` wrapper that introduces a specific defect, then assert the property catches it:
+
+```go
+func TestClassifyProp_PruneSafety_Kill(t *testing.T) {
+    // Inject: PruneEligible returns StateForeign entries too
+    buggyPrune := func(vs []DirStatus) []DirStatus {
+        var out []DirStatus
+        for _, v := range vs {
+            if v.State == StateManagedOrphan || v.State == StateForeign {
+                out = append(out, v)
+            }
+        }
+        return out
+    }
+    // Assert: at least one generated input makes buggyPrune disagree with PruneEligible
+    rapid.Check(t, func(rt *rapid.T) {
+        in := ownershipInputsGen(rt)
+        verdicts := Classify(in)
+        if len(buggyPrune(verdicts)) != len(PruneEligible(verdicts)) {
+            return // property caught the bug — pass
+        }
+        // If they match on this input, keep generating
+    })
+}
+```
+          </script></md>
+        </pd-section>
+
+        <pd-section id="test-helpers" title="Test Helpers">
+          <pd-code lang="go" path="auto-skill/internal/sync/helpers_test.go" caption="New warning assertion helpers">
+            <script type="text/plain">
+func containsWarning(t *testing.T, warnings []string, substr string) {
+    t.Helper()
+    for _, w := range warnings {
+        if strings.Contains(w, substr) {
+            return
+        }
+    }
+    t.Errorf("expected warning containing %q, got %v", substr, warnings)
+}
+
+func noWarnings(t *testing.T, warnings []string) {
+    t.Helper()
+    if len(warnings) != 0 {
+        t.Errorf("expected no warnings, got %v", warnings)
+    }
+}
+            </script>
+          </pd-code>
+        </pd-section>
+
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Pass `*ProcessResult` into `gatherSources`** — would let `gatherSources` append warnings directly to the result, avoiding the 3-return signature. Rejected because it makes `gatherSources` mutate external state, breaking the current pattern where it returns data and the caller assembles the result. The 3-return signature is more Go-idiomatic and keeps the function pure.
+
+- **Emit warnings as errors with a severity tag** — would unify the return type as `[]error` with a `Warning` interface. Rejected because the existing code cleanly separates `Warnings` (exit 0) from `Errors` (exit non-zero), and mixing them into a single slice with type assertions adds complexity without benefit.
+
+- **Log-based warning detection in tests** — capture `trace.Logf` output and assert on log lines instead of structured `Result.Warnings`. Rejected because trace logs require `--trace` and are implementation details, not user-facing diagnostics. Tests should assert on the same structured output the user sees.
+
+- **Separate `gatherSources` into two functions** (one for vendored, one for authored with merge) — would make the shadowing explicit in the call structure. Rejected because the merge logic is 6 lines and the two halves share the `byName` map; splitting would add indirection without reducing complexity.
+
+- **Track cumulative warnings in the state machine model** — accumulate expected warnings across all operations in a sequence. Rejected because `Result.Warnings` is per-`Run()` call, not cumulative. Tracking per-operation is simpler and matches the SUT's behavior.
+        </script></md>
+      </pd-section>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Implement the shadow warning production change and test infrastructure as a walking skeleton first (Phase 1: one production change + helper + 2 edge case tests proving end-to-end warning flow), then add breadth with remaining edge cases (Phase 2), state machine extension (Phase 3), and ownership property invariants (Phase 4). Phases 3 and 4 are independent and can run in parallel after Phase 1.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-mermaid caption="Phase dependency DAG">
+flowchart LR
+    P1["Phase 1: Walking Skeleton"]
+    P2["Phase 2: Edge Case Breadth"]
+    P3["Phase 3: State Machine"]
+    P4["Phase 4: Ownership Properties"]
+    P1 --> P2
+    P1 --> P3
+    P1 --> P4
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="Walking Skeleton — shadow warning + first edge cases" status="todo"
+                  files="auto-skill/internal/sync/process.go,auto-skill/internal/sync/helpers_test.go,auto-skill/internal/sync/edgecase_test.go,auto-skill/internal/sync/sync_test.go">
+          <md><script type="text/plain">
+Wire the thinnest end-to-end path: production code change → warning propagation → test assertion.
+
+**Steps:**
+
+1. **Add warning helpers** to `helpers_test.go`:
+   - Add `containsWarning(t *testing.T, warnings []string, substr string)` — calls `t.Helper()`, loops with `strings.Contains`, calls `t.Errorf` on miss.
+   - Add `noWarnings(t *testing.T, warnings []string)` — calls `t.Helper()`, asserts `len == 0`.
+   - **Verify:** `go build ./internal/sync/`
+
+2. **Modify `gatherSources` in `process.go`** to emit shadow warnings:
+   - Change return signature from `([]*skillSource, []error)` to `([]*skillSource, []string, []error)`.
+   - Add `var warnings []string` at function start.
+   - In the authored-shadows-vendored block (line ~250), append: `warnings = append(warnings, fmt.Sprintf("authored skill '%s' shadows vendored — the vendored copy from %s will not be rendered", src.name, prev.sourceID))`.
+   - Change return to `return out, warnings, errs`.
+   - **Update call site** in `Process()` (line ~114): `sources, srcWarns, srcErrs := gatherSources(...)` and `result.Warnings = append(result.Warnings, srcWarns...)`.
+   - **Verify:** `go build ./internal/sync/`
+
+3. **Create `edgecase_test.go`** with the first 2 pinned tests:
+   - `TestEdgeCase_AuthoredShadowsVendored` (scenario 1): vendored `foo` in lock + authored `./skills/foo` → `Run(Locked)` → assert authored content rendered + warning contains `"shadows vendored"`.
+   - `TestEdgeCase_RemoveVendoredWithAuthored` (scenario 2): both exist, seeded → `Remove(foo, SelVendored)` → assert lock entry removed, authored survives, `Reported` lists surviving copies.
+   - **Verify:** `go test ./internal/sync/ -run TestEdgeCase -count=1 -v`
+
+4. **Refactor existing warning test** in `sync_test.go`:
+   - Update `TestRunBudgetWarnsExitsZero` to use `containsWarning` helper instead of inline loop.
+   - **Verify:** `go test ./internal/sync/ -run TestRunBudget -count=1`
+
+5. **Full verification:**
+   - `go test ./internal/sync/ -count=1` — all existing + new tests pass
+   - `go build ./...` — no build errors across the module
+   - `go vet ./internal/sync/` — no vet warnings
+
+6. **Commit:** `feat(057): shadow warning + walking skeleton edge case tests`
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Edge Case Breadth — scenarios 3-12" status="todo" depends-on="1"
+                  files="auto-skill/internal/sync/edgecase_test.go">
+          <md><script type="text/plain">
+Add the remaining 10 pinned edge-case tests to `edgecase_test.go`.
+
+**Steps:**
+
+1. **Add remove edge cases** (scenarios 3-4):
+   - `TestEdgeCase_RemoveLocalWithVendored` (scenario 3): both exist → `Remove(foo, SelLocal)` → authored dir deleted, `noWarnings`, vendored renders on next sync.
+   - `TestEdgeCase_RemoveAmbiguous` (scenario 4): both exist → `Remove(foo, SelUnset)` → error returned, nothing mutated, error contains `"both"` or `"--local"`.
+   - **Verify:** `go test ./internal/sync/ -run 'TestEdgeCase_(RemoveLocal|RemoveAmbig)' -count=1 -v`
+
+2. **Add add/sync edge cases** (scenarios 5-9):
+   - `TestEdgeCase_AddSameNameAsAuthored` (scenario 5): authored `foo` exists, add vendored `foo` to lock → `Run` → warning about shadowing.
+   - `TestEdgeCase_SyncTargetNotInLock` (scenario 6): lock has `bar` only → `Run(Targets: ["missing"])` → no crash, empty installs.
+   - `TestEdgeCase_SyncCheckWithPendingJournal` (scenario 7): write journal file → `Run(Check: true)` → non-zero exit, error contains `"recover"`.
+   - `TestEdgeCase_SyncEmptyLockNoAuthored` (scenario 8): empty lock, no `./skills/` → `Run(Locked)` → exit 0, no errors, no warnings.
+   - `TestEdgeCase_SyncLockedIntentChanged` (scenario 9): lock pinned at commit, yaml wants `latest` → `Run(Locked)` → `Stale` contains intent-changed entry.
+   - **Verify:** `go test ./internal/sync/ -run 'TestEdgeCase_(Add|SyncTarget|SyncCheck|SyncEmpty|SyncLocked)' -count=1 -v`
+
+3. **Add validation/boundary edge cases** (scenarios 10-12):
+   - `TestEdgeCase_AuthoredInvalidName` (scenario 10): `./skills/INVALID NAME/SKILL.md` → `Run(Locked)` → skipped with error including invalid name.
+   - `TestEdgeCase_RemoveNonExistent` (scenario 11): `Remove("ghost", SelUnset)` → error containing `"ghost"`.
+   - `TestEdgeCase_ForeignDirCollision` (scenario 12): foreign dir at target path matching desired skill name → `Run(Locked)` → conflict in `res.Conflicts`.
+   - **Verify:** `go test ./internal/sync/ -run 'TestEdgeCase_(AuthoredInvalid|RemoveNon|Foreign)' -count=1 -v`
+
+4. **Full verification:**
+   - `go test ./internal/sync/ -run TestEdgeCase -count=1` — all 12 pass
+   - `go test ./internal/sync/ -count=1` — no regressions
+
+5. **Commit:** `test(057): pin remaining 10 edge case scenarios`
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="State Machine Diagnostic Model" status="todo" depends-on="1"
+                  files="auto-skill/internal/sync/sync_statemachine_test.go">
+          <md><script type="text/plain">
+Extend the existing `syncStateMachine` with a diagnostic model and new operations.
+
+**Steps:**
+
+1. **Add model fields** to `syncStateMachine`:
+   - `expectedWarnings []string` — expected warning substrings after the most recent `Run()`.
+   - `lastResult *Result` — captured from the most recent `Run()` call.
+   - Update `newSyncSM` to initialize these fields.
+
+2. **Capture `Result` in existing operations** — update `FullSync` and `ScopedSync` to store `res` in `sm.lastResult` and reset `sm.expectedWarnings` before each `Run()`.
+
+3. **Extend `Check()` invariant** — after the existing disk-presence loop, add:
+   ```
+   if sm.lastResult != nil {
+       for _, want := range sm.expectedWarnings {
+           // substring search in sm.lastResult.Warnings
+           // Fatalf on miss
+       }
+   }
+   ```
+   - **Verify:** `go test ./internal/sync/ -run TestSyncStateMachine -rapid.checks=50 -count=1` — passes (no expected warnings yet, so new check is vacuously true).
+
+4. **Add `AuthoredShadowsVendored` operation:**
+   - Pick a random vendored-only skill (not already authored).
+   - Call `writeAuthoredSkill` with same name.
+   - Record in `sm.authored`.
+   - Run `FullSync` logic (call `Run`, update model).
+   - Set `sm.expectedWarnings = []string{"shadows vendored"}`.
+   - **Verify:** `go test ./internal/sync/ -run TestSyncStateMachine -rapid.checks=100 -count=1`
+
+5. **Add `RemoveLocal` operation:**
+   - Pick a random authored skill.
+   - Call `Remove(env, name, SelLocal)`.
+   - Remove from `sm.authored`.
+   - For each target, delete model entry (prune happened via reconcile).
+   - Set `sm.lastResult` to nil (Remove returns `RemoveResult`, not `Result`).
+   - **Verify:** `go test ./internal/sync/ -run TestSyncStateMachine -rapid.checks=100 -count=1`
+
+6. **Add `RemoveVendored` operation:**
+   - Pick a random vendored skill.
+   - Call `Remove(env, name, SelVendored)`.
+   - Remove from `sm.lock`, rewrite lock file.
+   - Set `sm.lastResult` to nil.
+   - **Verify:** `go test ./internal/sync/ -run TestSyncStateMachine -rapid.checks=100 -count=1`
+
+7. **Full verification:**
+   - `go test ./internal/sync/ -run TestSyncStateMachine -rapid.checks=200 -count=1` — passes
+   - `go test ./internal/sync/ -count=1` — no regressions
+
+8. **Commit:** `test(057): extend state machine with diagnostic model and remove ops`
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="Ownership Property Invariants" status="todo" depends-on="1"
+                  files="auto-skill/internal/ownership/classify_prop_test.go">
+          <md><script type="text/plain">
+Add property-based invariants for `ownership.Classify` in a new test file.
+
+**Steps:**
+
+1. **Create `classify_prop_test.go`** with the `ownershipInputsGen` generator:
+   - Generate 1-3 targets (absolute paths).
+   - Generate 1-8 skill dir names.
+   - Generate a manifest with random managed/unmanaged skills and versions.
+   - Generate a desired set (subset of dir names).
+   - Generate receipt maps (random digests, some matching on-disk, some not).
+   - Generate on-disk digest maps.
+   - Return an `Inputs` struct.
+   - **Verify:** `go build ./internal/ownership/`
+
+2. **Add 5 property tests:**
+   - `TestClassifyProp_Totality` — every `(target, dir)` pair produces exactly one `DirStatus`.
+   - `TestClassifyProp_PruneSafety` — `PruneEligible()` ⊆ `{StateManagedOrphan}`.
+   - `TestClassifyProp_ForeignExclusivity` — unmanaged dirs are always `StateForeign`.
+   - `TestClassifyProp_DesiredNeverOrphaned` — desired dirs never `StateManagedOrphan`.
+   - `TestClassifyProp_ReceiptNecessity` — without receipt, state ∉ `{StateManagedOrphan, StateModified}`.
+   - **Verify:** `go test ./internal/ownership/ -run TestClassifyProp -rapid.checks=1000 -count=1`
+
+3. **Add kill tests** (one per property):
+   - Each defines a `buggy` wrapper that introduces a specific defect.
+   - Assert that at least one generated input makes the buggy version disagree with the real implementation.
+   - Example: `TestClassifyProp_PruneSafety_Kill` — buggy `PruneEligible` that also returns `StateForeign` entries.
+   - **Verify:** `go test ./internal/ownership/ -run 'TestClassifyProp.*Kill' -count=1`
+
+4. **Full verification:**
+   - `go test ./internal/ownership/ -count=1` — all existing + new tests pass
+   - `go test ./... -count=1` in auto-skill — no regressions across the module
+
+5. **Commit:** `test(057): add ownership.Classify property invariants with kill tests`
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **AC-1** (12 pinned edge cases): covered by Phases 1 + 2
+- **AC-2** (shadow warning emission): covered by Phase 1
+- **AC-3** (state machine diagnostic model): covered by Phase 3
+- **AC-4** (ownership property invariants): covered by Phase 4
+- **AC-5** (no test regressions): verified at end of every phase
+- **AC-6** (containsWarning helper): covered by Phase 1
+
+Final gate: `go test ./... -count=1` in `auto-skill/` passes clean.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
