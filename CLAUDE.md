@@ -167,16 +167,13 @@ Use claud read tools to build heat maps of what files it's reading a lot, what d
 - Check doc freshness with `auto doc stale`, fix issues with `auto doc fix`.
 - Link code to docs with `[autodoc()]` tags — run `auto doc fix` for details.
 
-**auto-artifact/docs**
-
-- [Auto Artifact Requirements](auto-artifact/docs/requirements.md): Requirements for `auto artifact`, a CLI command group for AI agents to upload evidence files (screenshots, videos, logs) to a public-read S3 bucket and get back permanent URLs for embedding in PR comments. Read when: designing or implementing the auto-artifact CLI, its S3 upload/retention model, or evidence-file linking in PRs
-
 **auto-web/docs**
 
 - [Autoweb Requirements](auto-web/docs/requirements.md): Requirements for autoweb, a safe web research portal for AI coding agents with pluggable backends and result deduplication. Read when: designing safe web research portals for coding agents
 
 **docs**
 
+- [Tech Spike Report: Alloy Core Data Model Conformance](docs/SPIKE-REPORT.md): Alloy 6.2.0 structural conformance spike validating Session/Message invariants in auto-etl, with five concrete edge cases found and ETL-probe evidence. Read when: investigating auto-etl data quality, Session/Message schema invariants, or considering formal model verification for the ETL pipeline
 - [Auto API V2 Design](docs/api-v2.md): Long-term aspirational API shape for the auto-stack: unified binary, consistent command structure, and agent-first design principles. Read when: designing the unified auto binary API shape or planning cross-tool command consistency
 - [Auto Bus Specification](docs/auto-bus-spec.md): The auto-bus standard: CloudEvents-shaped envelope, JSON-RPC 2.0 framing, HTTP and WebSocket transport bindings, at-most-once delivery contract, dotted event-type registry, and watch.task.* paper mapping. Read when: implementing or consuming bus events, adding a new event type, understanding the wire format or delivery guarantees
 - [auto-img Research: Context-Protective Image Access for Coding Agents](docs/auto-img-research.md): Research on optimising image storage and retrieval for AI coding agents, covering token costs, progressive disclosure, and S3 patterns. Read when: designing image storage or progressive disclosure patterns
@@ -201,6 +198,10 @@ Use claud read tools to build heat maps of what files it's reading a lot, what d
 
 - [Ubiquitous Language](docs/concepts/UBIQUITOUS_LANGUAGE.md): The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack) with the terms to avoid for each. Read when: naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept
 
+**docs/grilling**
+
+- [Grilling Log](docs/grilling/grilling-log.md): Log of grill-me design interrogation sessions, capturing questions, answers, and decisions for auto-stack design proposals. Read when: reviewing past design-grilling rationale or decisions
+
 **docs/how-to**
 
 - [How to Set Up NTM for Multi-Agent Development](docs/how-to/set-up-ntm.md): Step-by-step guide to spawning planner and worker agent pools using NTM labels, adding workers on demand, and sending prompts to specific pools. Read when: setting up NTM tmux sessions, configuring planner/worker agent pools, or spawning multi-agent sessions with labels
@@ -208,14 +209,18 @@ Use claud read tools to build heat maps of what files it's reading a lot, what d
 **docs/postmortems**
 
 - [Postmortem: main-branch divergence during doc commit + merge](docs/postmortems/2026-06-28-main-branch-divergence.md): A routine doc commit hit a three-way divergence of main (remote merge + unpushed local autodoc commit + a fresh feature branch), caused by treating ff-merge as the default without checking for divergence; resolved by linearising in a clean worktree and pushing as a fast-forward. Read when: merging to main while background jobs or pre-commit hooks may be committing concurrently, or debugging a non-fast-forward / diverged main
+- [Postmortem: a shared working tree + a rogue autonomous planner flipped HEAD under 8 agents](docs/postmortems/2026-06-28-shared-checkout-rogue-agent.md): Eight planner/executor Claude panes all shared the ONE primary checkout as their cwd, so when a leftover unattended planner session (the task-048 PBT planner, running --dangerously-skip-permissions) ran git checkout, HEAD flipped for all eight at once and then oscillated between main and a feature branch — the upstream cause of the same-day main-branch-divergence incident. Read when: running multiple autonomous agents (tmux/ntm planner+executor split) against one repo, debugging why HEAD/branch changes under an agent, or deciding worktree isolation for background Claude sessions
 
 **docs/reference**
 
 - [Claude Code Project Files Schema](docs/reference/claude-project-files-schema.md): Reference for the on-disk JSONL file format produced by Claude Code sessions, covering directory structure, line types, content blocks, token usage, subagent files, and tool-results directories. Read when: parsing Claude Code session files or understanding ETL data
+- [Coding Agent Hooks — API Reference Links](docs/reference/coding-agents-hooks-reference.md): Upstream API reference links for the hook/plugin systems of Claude Code, Codex, and OpenCode. Read when: implementing or comparing hooks across AI coding agents
 
 **docs/research**
 
+- [Alloy Conformance Model for auto-etl Session Data](docs/research/alloy-core-data-model-conformance.md): Research artifact on using Alloy to model the core auto-etl Session and Message data contract, generate counterexamples, confirm five concrete conformance gaps with synthetic ETL fixtures, and identify Project areas where Alloy is or is not a good fit. Read when: designing auto-etl validation, hardening Session/Message integrity, choosing when to use Alloy, or evaluating lightweight formal models for auto-stack data contracts
 - [AskUserQuestion Analytics — Pipeline Investigation](docs/research/askuserquestion-analytics.md): How AskUserQuestion data flows through the auto-etl / auto-search pipeline, where the structured payload is lost, and a phased plan to surface the five target analytics metrics (frequency, question text, options, recommended option, picked option) for tuning Claude's question-asking against latent user intent. Read when: investigating AskUserQuestion analytics, planning ETL schema changes for structured tool envelopes, or scoping autosearch CLI work around tool filtering
+- [Auto-Skill Harness Fuzz Test Report](docs/research/auto-skill-harness-fuzz-test.md): Findings from an 8-agent, 353-probe fuzz campaign against the auto-skill CLI over the Docker Compose harness, ranked by severity with prioritized fixes. Read when: triaging or fixing auto-skill robustness/security findings, or planning further fuzz-test coverage
 - [Autonomous Planning for Software Factories — 2026 Update](docs/research/better-planning-autonomy.md): Recency-biased survey of 2026 spec-driven development and autonomous-planning practice (Spec Kit, OpenSpec, Antigravity artifacts, human-on-the-loop, software constitutions) with concrete moves to reduce gatekeeping. Read when: designing the planning pipeline, autonomy levels, or review/gatekeeping policy for an agent software factory
 - [Research: Blogs](docs/research/blogs.md): Collected blog and reference links relevant to the auto-stack research and development process. Read when: researching external references on agent engineering or tooling
 - [Research: Effective Feedback Compute (EFC) as a Session-Quality Signal](docs/research/efc-scaling-laws.md): Distillation of the Effective Feedback Compute (EFC) scaling-law paper into a concrete scoring spec for auto-reflect, mapping the paper's deterministic gate tables to our parquet schema, and naming the success-label gap as the blocker. Read when: designing session-quality signals or scoring agent traces by feedback quality

@@ -75,6 +75,7 @@ are guarded by `.auto/skills/lock.json` presence (and `command -v auto`), so the
 
 **auto-skill/docs**
 
+- [auto-skill Assurance Strategy](auto-skill/docs/assurance-strategy.md): Four-axis assurance diagnosis and prescribed testing techniques (model-based, property-based, edge-case pinning) for auto-skill's sync pipeline edge cases. Read when: designing verification strategy for auto-skill, adding new test techniques, or diagnosing silent edge-case bug classes
 - [Coding Agents Skill Guidance](auto-skill/docs/coding_agents_guidance.md): Comprehensive reference for Claude Code, Codex, and OpenCode skill architecture, discovery, loading, and best practices for skill authors. Read when: authoring agent skills or designing skill discovery systems
 - [important_if Skill Metadata for Agent File Injection](auto-skill/docs/important-if-feature.md): Design for skills to declare trigger conditions that get auto-injected as important-if blocks in CLAUDE.md. Read when: implementing skill-to-agent-file injection or important_if metadata
 - [Meta Skill (ms) — Reference](auto-skill/docs/meta_skill.md): Technical reference for the meta_skill Rust CLI: architecture, data model, mining pipeline, search, security, and distribution. Read when: implementing autoskill mining, search, and skill distribution

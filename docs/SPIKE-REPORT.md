@@ -1,5 +1,6 @@
 ---
 hash: "8f02c388"
+id: "1c01932d"
 read_when: "investigating auto-etl data quality, Session/Message schema invariants, or considering formal model verification for the ETL pipeline"
 summary: "Alloy 6.2.0 structural conformance spike validating Session/Message invariants in auto-etl, with five concrete edge cases found and ETL-probe evidence."
 title: "Tech Spike Report: Alloy Core Data Model Conformance"
