@@ -70,14 +70,41 @@ harness/
 │   └── cli.py                   # Click CLI (up/down/status/run/skill)
 ├── tests/
 │   ├── conftest.py              # Session-scoped harness fixture
-│   └── test_add_sync.py         # 6 E2E tests covering init → add → sync
+│   └── test_add_sync.py         # 7 E2E tests covering init → add → sync → rename
 └── pyproject.toml
 ```
 
 ## Open Questions
 
-- **Coverage targets (post-V1)**: Template rendering with `customize:` vars, `update --check` for drift detection, upstream rename handling.
+- **Coverage targets (post-V1)**: Template rendering with `customize:` vars, `update --check` for drift detection.
 - **Parallel test isolation**: Each test creates its own workspace, but they share the SUT container. If tests need true isolation, we could add per-test workspace cleanup.
+
+## Upstream Rename Flow — Current Behavior and Gaps
+
+The rename E2E test (`test_upstream_rename_detected_and_remediated`) exercises the full path and exposed real behavior:
+
+### Current user path after a remote skill rename
+
+1. `auto skill sync` → floats to new commit → `RenamedUpstreamError`: *"deploy-checklist not found at its locked path — renamed or removed upstream?"*
+2. User must discover the new name on their own (the error doesn't say what it was renamed to)
+3. Quickstart prescribes: `auto skill add <source> --skill new-name` → `auto skill remove old-name --vendored` → `auto skill doctor`
+4. Old target dirs survive as "foreign" (reported, not pruned) — user must manually `rm -rf` them
+
+### Why old targets survive (the manifest gap)
+
+When sync fails with `RenamedUpstreamError`, `buildManifest()` in `process.go:189` only includes successfully-staged skills. The old skill drops out of the manifest. By the time `remove` runs its internal sync, the old targets are classified as `StateForeign` (not `StateManagedOrphan`) because they're no longer in the manifest's managed union — so the receipt-gated prune can't touch them.
+
+### Three gaps to address
+
+1. **No new-name discovery.** When `RenamedUpstreamError` fires, we already have the commit. `ListSkillDirs` could list available skills and suggest likely renames.
+
+2. **Manifest drops old skill too early.** `buildManifest` should carry forward entries for skills that failed with `RenamedUpstreamError` (e.g. with a `state: "stale"` marker) so they remain prune-eligible after the user runs `remove`. This is the most impactful fix — it's a correctness issue where the designed prune path silently breaks.
+
+3. **No single command.** The 3-step remediation (add new, remove old, doctor/manual cleanup) could be a single `auto skill rename old-name new-name` or an interactive flow when the error is detected.
+
+### Key implementation detail
+
+`git mv` only renames the directory. The skill NAME comes from the `name:` field in SKILL.md frontmatter, not the directory name. Both must change for a rename to be detected by `--skill` filtering. The test helper `_rename_skill_upstream` does both.
 
 ## DSL Improvement
 
