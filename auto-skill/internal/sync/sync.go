@@ -15,6 +15,7 @@ import (
 
 	"github.com/mistakenot/auto-skill/internal/ownership"
 	"github.com/mistakenot/auto-skill/internal/skill"
+	"github.com/mistakenot/auto-skill/internal/trace"
 	"github.com/mistakenot/auto-skill/internal/transport"
 )
 
@@ -34,6 +35,7 @@ type Options struct {
 	IsTTY          bool     // trust-gate interactive context
 	Force          bool     // overwrite a foreign-dir collision instead of refusing (AC-4)
 	As             string   // TODO(phase 6): rename the incoming skill on a collision (--as); unused in phase 2
+	Trace          *trace.Logger
 }
 
 func (o Options) jobs() int {
@@ -170,10 +172,16 @@ func (r *Result) ExitCode() int {
 // recovery failure, manifest validation, a failed commit); per-skill / per-repo
 // issues are collected in Result.Errors and drive the exit code, not the error.
 func Run(env skill.Env, opts Options) (*Result, error) {
+	tr := opts.Trace
+	doneRun := trace.Spanf(tr, "sync run check=%t locked=%t no_update=%t auto_update=%t targets=%d jobs=%d",
+		opts.Check, opts.Locked, opts.NoUpdate, opts.AutoUpdate, len(opts.Targets), opts.jobs())
+	defer doneRun("")
+
 	// --target is a scoped partial/repair op: it implies --locked so it never
 	// floats or advances the project-wide lock.
 	if len(opts.Targets) > 0 {
 		opts.Locked = true
+		trace.Logf(tr, "sync target scope implies locked targets=%v", opts.Targets)
 	}
 
 	result := &Result{
@@ -187,23 +195,31 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 	// writing recovery; instead a pending journal is reported as an error so the
 	// gate fails until a real `sync` reconciles it.
 	if opts.Check {
+		done := trace.Spanf(tr, "sync check pending journal")
 		if journalPending(env) {
 			result.Errors = append(result.Errors,
 				"pending sync journal detected; run `auto skill sync` to recover before checking")
 		}
+		done("pending_errors=%d", len(result.Errors))
 	} else {
+		done := trace.Spanf(tr, "sync recover journal")
 		recovered, err := recoverJournal(env)
 		if err != nil {
+			done("error=%v", err)
 			return result, fmt.Errorf("recover pending sync journal: %w", err)
 		}
 		result.Recovered = recovered
+		done("recovered=%t", recovered)
 	}
 
 	// Phase A — plan.
+	done := trace.Spanf(tr, "sync phase A build plan")
 	plan, err := BuildPlan(env, opts)
 	if err != nil {
+		done("error=%v", err)
 		return result, err
 	}
+	done("skills=%d repos=%d errors=%d", len(plan.Skills), len(plan.Repos), len(plan.Errors))
 	result.Plan = plan.Skills
 	for _, e := range plan.Errors {
 		result.Errors = append(result.Errors, e.Error())
@@ -212,14 +228,19 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 	// Phase B — fetch (skipped under --check, which is offline).
 	fetch := &FetchResult{}
 	if !opts.Check {
+		done = trace.Spanf(tr, "sync phase B fetch repos=%d", len(plan.Repos))
 		fetch, err = Fetch(env, plan, opts)
 		if err != nil {
+			done("error=%v", err)
 			return result, err
 		}
+		done("fetched=%d failed=%d", len(fetch.Fetched), len(fetch.Failed))
 		result.ReposFetched = append(result.ReposFetched, fetch.Fetched...)
 		for _, f := range fetch.Failed {
 			result.Errors = append(result.Errors, f.Error())
 		}
+	} else {
+		trace.Logf(tr, "sync phase B fetch skipped check=true")
 	}
 
 	// The desired set is complete only when nothing errored or failed to fetch;
@@ -227,6 +248,7 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 	desiredComplete := !plan.HasErrors() && !fetch.HasErrors()
 
 	// Phase C — process (pure: render + on-disk-digest compare, no writes).
+	done = trace.Spanf(tr, "sync phase C process")
 	proc, err := Process(env, plan, fetch, opts)
 	if err != nil {
 		if proc != nil {
@@ -234,8 +256,11 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 				result.Errors = append(result.Errors, e.Error())
 			}
 		}
+		done("error=%v", err)
 		return result, err
 	}
+	done("targets=%d staged=%d installs=%d warnings=%d errors=%d",
+		len(proc.Targets), len(proc.Staged), len(proc.Installs), len(proc.Warnings), len(proc.Errors))
 	for _, e := range proc.Errors {
 		result.Errors = append(result.Errors, e.Error())
 		desiredComplete = false
@@ -251,13 +276,29 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 	// are merely reported). The desired set is exactly what sync WILL manage this
 	// run — the staged skill names.
 	desired := desiredSetFromStaged(proc.Staged)
+	done = trace.Spanf(tr, "sync ownership scan desired=%d", len(desired))
 	inputs, err := ScanOwnership(env, desired)
 	if err != nil {
+		done("error=%v", err)
 		return result, fmt.Errorf("scan target ownership: %w", err)
 	}
+	manifestSkills := 0
+	if inputs.Manifest != nil {
+		manifestSkills = len(inputs.Manifest.Skills)
+	}
+	receiptEntries := 0
+	for _, receipts := range inputs.Receipts {
+		receiptEntries += len(receipts)
+	}
+	targetEntries := 0
+	for _, target := range inputs.Targets {
+		targetEntries += len(target.Dirs)
+	}
+	done("manifest_skills=%d receipt_entries=%d target_dirs=%d", manifestSkills, receiptEntries, targetEntries)
 	verdicts := ownership.Classify(inputs)
 	conflicts := detectForeignCollisions(desired, verdicts)
 	result.Conflicts = conflicts
+	trace.Logf(tr, "sync ownership classified verdicts=%d conflicts=%d", len(verdicts), len(conflicts))
 
 	// AC-4: a desired name landing on a foreign dir is a hard refusal unless
 	// --force overwrites it. Without --force we report the conflict, drop the
@@ -280,12 +321,16 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 	// targeted set so a partial sync never reaps non-targeted renders; a full
 	// sync (no targets → nil scope) prunes every receipt-gated orphan as before.
 	pruneScope := normalizeNames(opts.Targets)
+	done = trace.Spanf(tr, "sync plan prunes")
 	prunes := planPrune(verdicts, proc.Targets, desiredComplete, pruneScope)
+	done("prunes=%d desired_complete=%t", len(prunes), desiredComplete)
 
 	// --check — offline dry-run: report stale + would-be prunes, write nothing.
 	if opts.Check {
+		done = trace.Spanf(tr, "sync compute stale")
 		result.Pruned = prunedNames(prunes)
 		result.Stale = computeStale(plan, proc)
+		done("stale=%d pruned=%d", len(result.Stale), len(result.Pruned))
 		return result, nil
 	}
 
@@ -293,13 +338,19 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 	// never does — the "lock unchanged" contract).
 	var lock *skill.Lock
 	if planWantsLockRewrite(plan) {
+		done = trace.Spanf(tr, "sync rebuild lock")
 		lock, err = buildUpdatedLock(env, plan)
 		if err != nil {
+			done("error=%v", err)
 			return result, fmt.Errorf("rebuild lock: %w", err)
 		}
+		done("entries=%d", len(lock.Skills))
+	} else {
+		trace.Logf(tr, "sync lock rewrite skipped")
 	}
 
 	// Journaled commit.
+	done = trace.Spanf(tr, "sync journaled commit installs=%d prunes=%d", len(proc.Installs), len(prunes))
 	out, err := commit(commitInput{
 		env:             env,
 		installs:        proc.Installs,
@@ -310,8 +361,11 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 		desiredComplete: desiredComplete,
 	}, faultNone)
 	if err != nil {
+		done("error=%v", err)
 		return result, fmt.Errorf("journaled commit failed: %w", err)
 	}
+	done("written=%d skipped=%d pruned=%d manifest=%t lock=%t",
+		len(out.Written), len(out.Skipped), len(out.Pruned), out.ManifestWritten, out.LockRewritten)
 	result.Written = out.Written
 	result.Skipped = out.Skipped
 	result.Pruned = out.Pruned

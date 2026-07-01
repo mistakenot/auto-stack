@@ -10,6 +10,8 @@ import (
 	gopath "path"
 	"path/filepath"
 	"strings"
+
+	"github.com/mistakenot/auto-skill/internal/trace"
 )
 
 // ErrSubpathNotFound is returned (wrapped) by Extract when the requested
@@ -53,11 +55,18 @@ func (e *ExtractError) Error() string { return e.Message }
 // leaves dest empty. A non-empty subpath scopes the archive to that subtree
 // (entries are written relative to dest, stripped of the subpath prefix).
 func (r *Repo) Extract(sha, subpath, dest string) error {
+	done := traceExtractSpan(r, "git extract", sha, subpath, dest)
 	treeish := sha
 	if subpath != "" {
 		treeish = sha + ":" + subpath
 	}
-	return r.extractArchive([]string{"archive", "--format=tar", treeish}, subpath, dest)
+	err := r.extractArchive([]string{"archive", "--format=tar", treeish}, subpath, dest)
+	if err != nil {
+		done("error=%v", err)
+	} else {
+		done("")
+	}
+	return err
 }
 
 // ExtractPaths archives only the given repo-relative paths in a single
@@ -70,6 +79,7 @@ func (r *Repo) ExtractPaths(sha string, paths []string, dest string) error {
 	if len(paths) == 0 {
 		return nil
 	}
+	done := traceExtractSpan(r, "git extract paths", sha, fmt.Sprintf("%d paths", len(paths)), dest)
 	// git archive's trailing operands are pathspecs, so a repo-derived directory
 	// name that begins with pathspec magic (e.g. ":!foo" exclude or ":(glob)*")
 	// would be read as a selector rather than a literal path — re-including
@@ -79,7 +89,13 @@ func (r *Repo) ExtractPaths(sha string, paths []string, dest string) error {
 	for _, p := range paths {
 		args = append(args, ":(literal)"+p)
 	}
-	return r.extractArchive(args, "", dest)
+	err := r.extractArchive(args, "", dest)
+	if err != nil {
+		done("error=%v", err)
+	} else {
+		done("")
+	}
+	return err
 }
 
 // ListSkillDirs lists the repo-relative directories that directly contain a
@@ -88,8 +104,10 @@ func (r *Repo) ExtractPaths(sha string, paths []string, dest string) error {
 // directories are not reported, so the result is symlink-free and safe to pass
 // to ExtractPaths. A SKILL.md at the repo root yields "" (the whole tree).
 func (r *Repo) ListSkillDirs(sha string) ([]string, error) {
+	done := traceExtractSpan(r, "git list skill dirs", sha, "", "")
 	out, err := runGitOffline(r.Path, "ls-tree", "-r", "--name-only", sha)
 	if err != nil {
+		done("error=%v", err)
 		return nil, err
 	}
 	var dirs []string
@@ -108,7 +126,22 @@ func (r *Repo) ListSkillDirs(sha string) ([]string, error) {
 			dirs = append(dirs, dir)
 		}
 	}
+	done("dirs=%d", len(dirs))
 	return dirs, nil
+}
+
+func traceExtractSpan(r *Repo, label, sha, subpath, dest string) func(string, ...any) {
+	args := []any{label, shortTraceSHA(sha)}
+	format := "%s %s"
+	if subpath != "" {
+		format += " subpath=%s"
+		args = append(args, subpath)
+	}
+	if dest != "" {
+		format += " dest=%s"
+		args = append(args, dest)
+	}
+	return trace.Spanf(r.trace, format, args...)
 }
 
 // extractArchive runs the validate pass and then the write pass for a

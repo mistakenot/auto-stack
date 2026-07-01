@@ -10,6 +10,7 @@ import (
 type execCmd = exec.Cmd
 
 func newGitCmd(dir string, extraEnv []string, args ...string) *execCmd {
+	args = append([]string{"-c", "maintenance.auto=false"}, args...)
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(cmd.Environ(), "GIT_TERMINAL_PROMPT=0")

@@ -13,7 +13,7 @@ import (
 // rewriting the lock and re-rendering each target via the native sync engine's
 // write path. The binary self-update this name used to run is now reachable ONLY
 // at the root `auto update` command; no auto-shared/update call remains under skill.
-func newUpdateCmd(resolveEnv envResolver) *cobra.Command {
+func newUpdateCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Command {
 	var (
 		check  bool
 		format string
@@ -51,6 +51,7 @@ func newUpdateCmd(resolveEnv envResolver) *cobra.Command {
 				Targets:    args,
 				AutoUpdate: true,
 				Check:      check,
+				Trace:      resolveTrace(cmd),
 			})
 			if result == nil {
 				result = &sync.Result{}

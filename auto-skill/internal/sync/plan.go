@@ -10,6 +10,7 @@ import (
 
 	"github.com/mistakenot/auto-skill/internal/cache"
 	"github.com/mistakenot/auto-skill/internal/skill"
+	"github.com/mistakenot/auto-skill/internal/trace"
 	"github.com/mistakenot/auto-skill/internal/transport"
 	"github.com/mistakenot/auto-skill/internal/trust"
 )
@@ -22,10 +23,13 @@ var hexShaRE = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 // by repo, skip cache-satisfied commits offline, perform locked materialization
 // or (when auto_update) float re-resolution, and reconcile intent drift.
 func BuildPlan(env skill.Env, opts Options) (*Plan, error) {
+	done := trace.Spanf(opts.Trace, "sync load skills.yaml")
 	syaml, err := loadSkillsYAML(env)
 	if err != nil {
+		done("error=%v", err)
 		return nil, err
 	}
+	done("skills=%d auto_update=%t", len(syaml.Skills), syaml.AutoUpdate)
 	autoUpdate := opts.AutoUpdate || syaml.AutoUpdate
 	mode := planMode{
 		offline:   opts.Check,
@@ -33,6 +37,7 @@ func BuildPlan(env skill.Env, opts Options) (*Plan, error) {
 		floatTags: false,
 		rewrite:   autoUpdate && !opts.Locked && !opts.NoUpdate && !opts.Check,
 	}
+	trace.Logf(opts.Trace, "sync plan mode offline=%t float_refs=%t float_tags=%t rewrite=%t", mode.offline, mode.floatRefs, mode.floatTags, mode.rewrite)
 	return planRepos(env, opts, syaml, mode)
 }
 
@@ -44,9 +49,11 @@ func planRepos(env skill.Env, opts Options, syaml *skill.SkillsYAML, mode planMo
 	}
 
 	scope := normalizeNames(opts.Targets)
+	trace.Logf(opts.Trace, "sync plan loaded lock entries=%d scoped=%t", len(lock.Skills), len(scope) > 0)
 	groups, order, planErrs := groupByRepo(lock, scope)
+	trace.Logf(opts.Trace, "sync plan grouped repos=%d grouping_errors=%d", len(order), len(planErrs))
 
-	c := cache.NewCache(env.UpstreamCacheDir())
+	c := cache.NewCache(env.UpstreamCacheDir()).WithTrace(opts.Trace)
 	store := trust.NewStore(env.TrustPath())
 	gate := &trust.Gate{Store: store}
 	gio := trust.GateIO{IsTTY: opts.IsTTY, TrustRequested: opts.TrustRequested}
@@ -55,7 +62,7 @@ func planRepos(env skill.Env, opts Options, syaml *skill.SkillsYAML, mode planMo
 
 	for _, key := range order {
 		g := groups[key]
-		planRepoGroup(c, gate, gio, syaml, mode, g, plan)
+		planRepoGroup(c, gate, gio, syaml, mode, g, plan, opts.Trace)
 	}
 
 	sort.Slice(plan.Skills, func(i, j int) bool { return plan.Skills[i].Name < plan.Skills[j].Name })
@@ -79,8 +86,13 @@ type groupedSkill struct {
 }
 
 // planRepoGroup resolves one distinct repo and appends its per-skill decisions.
-func planRepoGroup(c *cache.Cache, gate *trust.Gate, gio trust.GateIO, syaml *skill.SkillsYAML, mode planMode, g *repoGroup, plan *Plan) {
+func planRepoGroup(c *cache.Cache, gate *trust.Gate, gio trust.GateIO, syaml *skill.SkillsYAML, mode planMode, g *repoGroup, plan *Plan, tr *trace.Logger) {
+	doneRepo := trace.Spanf(tr, "sync plan repo %s skills=%d offline=%t", g.key, len(g.skills), mode.offline)
+	defer func() {
+		doneRepo("plan_skills=%d repos_to_fetch=%d errors=%d", len(plan.Skills), len(plan.Repos), len(plan.Errors))
+	}()
 	repoExists := pathExists(repoCachePath(c, g.cacheID))
+	trace.Logf(tr, "sync plan repo %s cache_exists=%t", g.key, repoExists)
 
 	// Offline mode (sync --check): never clone or fetch. Only verify already
 	// cached commits; anything missing reports an incomplete cache.
@@ -97,15 +109,19 @@ func planRepoGroup(c *cache.Cache, gate *trust.Gate, gio trust.GateIO, syaml *sk
 				plan.Errors = append(plan.Errors, sp.Err)
 			}
 			plan.Skills = append(plan.Skills, sp)
+			traceSkillPlan(tr, sp)
 		}
 		return
 	}
 
 	// Online mode: gate trust before any clone/fetch, then open (clone-on-miss).
+	done := trace.Spanf(tr, "sync authorize repo %s", g.endpoint)
 	if err := gate.Authorize(g.endpoint, syaml.TrustedHosts, gio); err != nil {
+		done("error=%v", err)
 		appendRepoError(plan, g, err)
 		return
 	}
+	done("")
 	repo, err := c.Open(g.cacheID, g.url)
 	if err != nil {
 		appendRepoError(plan, g, fmt.Errorf("open cache for %s: %w", g.url, err))
@@ -124,10 +140,17 @@ func planRepoGroup(c *cache.Cache, gate *trust.Gate, gio trust.GateIO, syaml *sk
 			target.Commits = appendUnique(target.Commits, sp.TargetCommit)
 		}
 		plan.Skills = append(plan.Skills, sp)
+		traceSkillPlan(tr, sp)
 	}
 	if needFetch {
 		plan.Repos = append(plan.Repos, target)
+		trace.Logf(tr, "sync plan repo %s fetch_commits=%d", g.key, len(target.Commits))
 	}
+}
+
+func traceSkillPlan(tr *trace.Logger, sp SkillPlan) {
+	trace.Logf(tr, "sync plan skill=%s action=%s cached=%t rewrite=%t target=%s message=%s",
+		sp.Name, sp.Action, sp.Cached, sp.LockRewrite, short(sp.TargetCommit), sp.Message)
 }
 
 // planOnlineSkill decides a single skill with the cache repo opened.

@@ -13,7 +13,7 @@ import (
 // skills into every configured output target using the native sync engine. The
 // former Node-based shell-out is gone entirely — there is no longer any
 // dependency on an external toolchain.
-func newSyncCmd(resolveEnv envResolver) *cobra.Command {
+func newSyncCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Command {
 	var (
 		check      bool
 		locked     bool
@@ -51,6 +51,7 @@ func newSyncCmd(resolveEnv envResolver) *cobra.Command {
 				NoUpdate: noUpdate,
 				Targets:  targets,
 				Jobs:     jobs,
+				Trace:    resolveTrace(cmd),
 				// AutoUpdate (float-then-render) is driven by skills.yaml's
 				// auto_update (default true, written by `init`); the engine ORs
 				// opts.AutoUpdate with the parsed value. We deliberately do NOT

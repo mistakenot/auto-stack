@@ -7,12 +7,13 @@ import (
 	"github.com/mistakenot/auto-skill/internal/add"
 	"github.com/mistakenot/auto-skill/internal/skill"
 	"github.com/mistakenot/auto-skill/internal/sync"
+	"github.com/mistakenot/auto-skill/internal/trace"
 	"github.com/mistakenot/auto-skill/internal/transport"
 	"github.com/mistakenot/auto-skill/internal/trust"
 	"github.com/spf13/cobra"
 )
 
-func newAddCmd(resolveEnv envResolver) *cobra.Command {
+func newAddCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Command {
 	var (
 		skills         []string
 		paths          []string
@@ -47,6 +48,7 @@ func newAddCmd(resolveEnv envResolver) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 
+			tr := resolveTrace(cmd)
 			opts := add.Options{
 				Source:         args[0],
 				Skills:         skills,
@@ -58,6 +60,7 @@ func newAddCmd(resolveEnv envResolver) *cobra.Command {
 				NoSync:         noSync,
 				Force:          force,
 				TrustRequested: trustRequested,
+				Trace:          tr,
 			}
 
 			result, err := add.Run(env, opts)
@@ -85,7 +88,7 @@ func newAddCmd(resolveEnv envResolver) *cobra.Command {
 			// diagnostics go to stderr; add's stdout payload (already written
 			// above) is left untouched so it stays strictly parseable.
 			if !noSync && !list {
-				runPostAddSync(cmd, env, result, trustRequested)
+				runPostAddSync(cmd, env, result, trustRequested, tr)
 			}
 
 			return nil
@@ -115,7 +118,7 @@ func newAddCmd(resolveEnv envResolver) *cobra.Command {
 // pointed `add` at that source. The render is best-effort: every outcome is
 // reported on stderr, but add's exit code is owned by the add operation
 // itself, never by this follow-on render.
-func runPostAddSync(cmd *cobra.Command, env skill.Env, result add.Result, trustRequested bool) {
+func runPostAddSync(cmd *cobra.Command, env skill.Env, result add.Result, trustRequested bool, tr *trace.Logger) {
 	// Make the just-added source trustable for the render step (idempotent for
 	// an already-approved remote endpoint; best-effort — a non-approvable
 	// source simply surfaces as a sync diagnostic below).
@@ -125,7 +128,7 @@ func runPostAddSync(cmd *cobra.Command, env skill.Env, result add.Result, trustR
 		}
 	}
 
-	syncRes, syncErr := sync.Run(env, sync.Options{TrustRequested: trustRequested})
+	syncRes, syncErr := sync.Run(env, sync.Options{TrustRequested: trustRequested, Trace: tr})
 	if syncRes != nil {
 		for _, w := range syncRes.Warnings {
 			fmt.Fprintf(cmd.ErrOrStderr(), "sync warning: %s\n", w)

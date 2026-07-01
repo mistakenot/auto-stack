@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mistakenot/auto-shared/git"
+	"github.com/mistakenot/auto-skill/internal/trace"
 	"github.com/mistakenot/auto-skill/internal/transport"
 )
 
@@ -26,7 +27,8 @@ var platformReserved = map[string]bool{
 
 // Cache manages a content-addressed bare blobless git cache.
 type Cache struct {
-	Root string
+	Root  string
+	Trace *trace.Logger
 }
 
 // Repo represents a single cached bare git repository.
@@ -34,6 +36,7 @@ type Repo struct {
 	Path         string
 	CanonicalURL string
 	cache        *Cache
+	trace        *trace.Logger
 }
 
 // RepoInfo holds metadata about a cached repo for listing.
@@ -64,6 +67,12 @@ func NewCache(root string) *Cache {
 	return &Cache{Root: root}
 }
 
+// WithTrace enables trace output for this cache instance.
+func (c *Cache) WithTrace(logger *trace.Logger) *Cache {
+	c.Trace = logger
+	return c
+}
+
 // Open returns a Repo handle for the given identity and canonical URL.
 // If absent, clones bare+blobless. If present, verifies origin.
 func (c *Cache) Open(id transport.CacheIdentity, canonicalURL string) (*Repo, error) {
@@ -76,15 +85,30 @@ func (c *Cache) Open(id transport.CacheIdentity, canonicalURL string) (*Repo, er
 		Path:         repoPath,
 		CanonicalURL: canonicalURL,
 		cache:        c,
+		trace:        c.Trace,
 	}
 
-	return repo, repo.withLock(func() error {
+	done := trace.Spanf(c.Trace, "cache open %s path=%s", id.RelPath(), repoPath)
+	status := "hit"
+	var openedErr error
+	defer func() {
+		if openedErr != nil {
+			status = "error=" + openedErr.Error()
+		}
+		done("%s final_path=%s", status, repo.Path)
+	}()
+
+	openedErr = repo.withLock(func() error {
 		if _, err := os.Stat(repoPath); os.IsNotExist(err) {
+			status = "miss"
+			trace.Logf(c.Trace, "cache miss %s", repoPath)
 			return repo.cloneBare(canonicalURL)
 		}
 
+		trace.Logf(c.Trace, "cache hit %s", repoPath)
 		origin, err := runGit(repoPath, nil, "remote", "get-url", "--", "origin")
 		if err != nil {
+			openedErr = fmt.Errorf("verify origin: %w", err)
 			return fmt.Errorf("verify origin: %w", err)
 		}
 		origin = strings.TrimSpace(origin)
@@ -95,31 +119,46 @@ func (c *Cache) Open(id transport.CacheIdentity, canonicalURL string) (*Repo, er
 			suffix := id.HashSuffix(canonicalURL)
 			suffixedPath := repoPath + "-" + suffix
 			repo.Path = suffixedPath
+			trace.Logf(c.Trace, "cache origin mismatch using suffixed path=%s", suffixedPath)
 
 			if _, err := os.Stat(suffixedPath); os.IsNotExist(err) {
+				status = "miss"
+				trace.Logf(c.Trace, "cache miss %s", suffixedPath)
 				return repo.cloneBare(canonicalURL)
 			}
 		}
 		return nil
 	})
+	return repo, openedErr
 }
 
 func (r *Repo) cloneBare(url string) error {
+	done := trace.Spanf(r.trace, "git clone bare %s", r.Path)
 	if err := os.MkdirAll(filepath.Dir(r.Path), 0o755); err != nil {
+		done("error=%v", err)
 		return fmt.Errorf("create cache parent: %w", err)
 	}
 	_, err := runGit(filepath.Dir(r.Path), nil,
 		"clone", "--bare", "--filter=blob:none", "--", url, r.Path)
+	if err != nil {
+		done("error=%v", err)
+	} else {
+		done("")
+	}
 	return err
 }
 
 // ResolveRef resolves a ref to a commit SHA.
 func (r *Repo) ResolveRef(ref string) (string, error) {
+	done := trace.Spanf(r.trace, "git resolve ref %s", ref)
 	out, err := runGit(r.Path, nil, "rev-parse", "--verify", ref)
 	if err != nil {
+		done("error=%v", err)
 		return "", fmt.Errorf("resolve ref %q: %w", ref, err)
 	}
-	return strings.TrimSpace(out), nil
+	sha := strings.TrimSpace(out)
+	done("sha=%s", shortTraceSHA(sha))
+	return sha, nil
 }
 
 // Realize fully materializes a commit in the cache — commit, trees, AND blobs —
@@ -136,37 +175,61 @@ func (r *Repo) ResolveRef(ref string) (string, error) {
 // what is already local. The override is per-invocation (`-c`), so the repo stays
 // a partial clone for commits we never pin.
 func (r *Repo) Realize(sha string) error {
-	return r.withLock(func() error {
+	done := trace.Spanf(r.trace, "git realize %s", shortTraceSHA(sha))
+	err := r.withLock(func() error {
 		if _, err := runGit(r.Path, nil,
 			"-c", "remote.origin.partialclonefilter=",
 			"fetch", "--refetch", "origin", sha); err == nil {
+			done("refetch")
 			return nil
 		}
+		trace.Logf(r.trace, "git realize %s refetch failed; trying fallback fetch", shortTraceSHA(sha))
 		// Fallback for git versions without --refetch or servers that reject
 		// fetch-by-sha: pull the commit, then all refs. Best effort — if blobs
 		// stay filtered, CommitPresent reports the cache as incomplete (no
 		// regression versus the previous behavior).
 		if _, err := runGit(r.Path, nil, "fetch", "origin", sha); err == nil {
+			done("fetch")
 			return nil
 		}
 		_, err := runGit(r.Path, nil, "fetch", "origin")
+		if err != nil {
+			done("error=%v", err)
+		} else {
+			done("fetch-origin")
+		}
 		return err
 	})
+	if err != nil {
+		done("error=%v", err)
+	}
+	return err
 }
 
 // CommitPresent checks whether a commit's objects are fully present
 // without making any network calls (GIT_NO_LAZY_FETCH=1).
 func (r *Repo) CommitPresent(sha string) (bool, error) {
+	done := trace.Spanf(r.trace, "git check commit present %s", shortTraceSHA(sha))
 	_, err := runGitOffline(r.Path, "cat-file", "-t", sha)
 	if err != nil {
+		done("present=false error=%v", err)
 		return false, fmt.Errorf("incomplete cache for commit %s; run: auto skill sync", sha)
 	}
 
 	_, err = runGitOffline(r.Path, "rev-list", "--objects", "--quiet", sha)
 	if err != nil {
+		done("present=false error=%v", err)
 		return false, fmt.Errorf("incomplete cache for commit %s (missing objects); run: auto skill sync", sha)
 	}
+	done("present=true")
 	return true, nil
+}
+
+func shortTraceSHA(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }
 
 // List returns metadata for all cached repos.

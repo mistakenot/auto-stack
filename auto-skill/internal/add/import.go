@@ -12,6 +12,7 @@ import (
 	"github.com/mistakenot/auto-skill/internal/discovery"
 	"github.com/mistakenot/auto-skill/internal/skill"
 	"github.com/mistakenot/auto-skill/internal/source"
+	"github.com/mistakenot/auto-skill/internal/trace"
 	"github.com/mistakenot/auto-skill/internal/transport"
 )
 
@@ -27,18 +28,22 @@ const (
 
 // handleLocal routes local sources to git-repo or plain-dir import paths.
 func handleLocal(env skill.Env, src source.Source, opts Options) (Result, error) {
+	done := trace.Spanf(opts.Trace, "add local source")
 	absPath := src.URL
 	if !filepath.IsAbs(absPath) {
 		var err error
 		absPath, err = filepath.Abs(absPath)
 		if err != nil {
+			done("error=%v", err)
 			return Result{Source: src.URL}, fmt.Errorf("resolve local path: %w", err)
 		}
 	}
 
 	if isGitRepo(absPath) {
+		done("path=%s kind=git", absPath)
 		return handleLocalGit(env, absPath, opts)
 	}
+	done("path=%s kind=plain", absPath)
 	return handleLocalPlain(env, absPath, opts)
 }
 
@@ -60,12 +65,15 @@ func isGitRepo(path string) bool {
 // handleLocalGit imports skills from a local git repository.
 func handleLocalGit(env skill.Env, absPath string, opts Options) (Result, error) {
 	// Resolve HEAD commit.
+	done := trace.Spanf(opts.Trace, "add local git resolve HEAD")
 	cmd := exec.Command("git", "-C", absPath, "rev-parse", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: absPath}, fmt.Errorf("resolve local HEAD: %w", err)
 	}
 	sha := strings.TrimSpace(string(out))
+	done("commit=%s", shortTraceSHA(sha))
 
 	// Store the lock URL as a canonical file:// URL. A bare filesystem path is
 	// mis-parsed by transport.CanonicalizeURL as an empty-host https:// URL, so
@@ -77,23 +85,30 @@ func handleLocalGit(env skill.Env, absPath string, opts Options) (Result, error)
 	}
 
 	// Discover.
+	done = trace.Spanf(opts.Trace, "add local git discover")
 	discOpts := discovery.Options{
 		Paths:     opts.Paths,
 		FullDepth: opts.FullDepth,
 	}
 	discovered, err := discovery.Discover(absPath, discOpts)
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: absPath}, fmt.Errorf("discover: %w", err)
 	}
+	done("discovered=%d", len(discovered))
 
 	// Selection.
+	done = trace.Spanf(opts.Trace, "add local git select")
 	selected, err := applySelection(discovered, opts)
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: absPath}, err
 	}
+	done("selected=%d", len(selected))
 
 	// List mode.
 	if opts.List {
+		trace.Logf(opts.Trace, "add local git list mode selected=%d", len(selected))
 		listed := make([]ListedSkill, len(selected))
 		for i, d := range selected {
 			listed[i] = ListedSkill{
@@ -113,14 +128,18 @@ func handleLocalGit(env skill.Env, absPath string, opts Options) (Result, error)
 	}
 
 	// Write lock + skills.yaml.
+	done = trace.Spanf(opts.Trace, "add local git load config")
 	lock, err := loadOrCreateLock(env)
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: absPath}, err
 	}
 	syaml, err := loadOrCreateSkillsYAML(env)
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: absPath}, err
 	}
+	done("lock_entries=%d skills_yaml=%d", len(lock.Skills), len(syaml.Skills))
 
 	var added []AddedSkill
 	for _, d := range selected {
@@ -176,23 +195,30 @@ func handleLocalGit(env skill.Env, absPath string, opts Options) (Result, error)
 	}
 
 	// Validate and write.
+	done = trace.Spanf(opts.Trace, "add local git write config")
 	if err := os.MkdirAll(env.SkillsConfigDir(), 0o755); err != nil {
+		done("error=%v", err)
 		return Result{Source: absPath}, fmt.Errorf("create config dir: %w", err)
 	}
 
 	if lockErrs := skill.ValidateLock(lock); len(lockErrs) > 0 {
+		done("lock_errors=%d", len(lockErrs))
 		return Result{Source: absPath}, fmt.Errorf("lock validation: %v", lockErrs)
 	}
 	if yamlErrs := skill.ValidateSkillsYAML(syaml); len(yamlErrs) > 0 {
+		done("yaml_errors=%d", len(yamlErrs))
 		return Result{Source: absPath}, fmt.Errorf("skills.yaml validation: %v", yamlErrs)
 	}
 
 	if err := writeJSONLock(env.LockPath(), lock); err != nil {
+		done("error=%v", err)
 		return Result{Source: absPath}, err
 	}
 	if err := writeSkillsYAML(env.SkillsYAMLPath(), syaml); err != nil {
+		done("error=%v", err)
 		return Result{Source: absPath}, err
 	}
+	done("added=%d", len(added))
 
 	return Result{Added: added, Source: absPath}, nil
 }
@@ -200,21 +226,28 @@ func handleLocalGit(env skill.Env, absPath string, opts Options) (Result, error)
 // handleLocalPlain imports a non-git directory by copying into ./skills/<name>.
 func handleLocalPlain(env skill.Env, absPath string, opts Options) (Result, error) {
 	// Discover.
+	done := trace.Spanf(opts.Trace, "add local plain discover")
 	discOpts := discovery.Options{
 		Paths:     opts.Paths,
 		FullDepth: opts.FullDepth,
 	}
 	discovered, err := discovery.Discover(absPath, discOpts)
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: absPath}, fmt.Errorf("discover: %w", err)
 	}
+	done("discovered=%d", len(discovered))
 
+	done = trace.Spanf(opts.Trace, "add local plain select")
 	selected, err := applySelection(discovered, opts)
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: absPath}, err
 	}
+	done("selected=%d", len(selected))
 
 	if opts.List {
+		trace.Logf(opts.Trace, "add local plain list mode selected=%d", len(selected))
 		listed := make([]ListedSkill, len(selected))
 		for i, d := range selected {
 			listed[i] = ListedSkill{
@@ -229,9 +262,12 @@ func handleLocalPlain(env skill.Env, absPath string, opts Options) (Result, erro
 	}
 
 	skillsDir := env.SkillsDir()
+	done = trace.Spanf(opts.Trace, "add local plain prepare skills dir")
 	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		done("error=%v", err)
 		return Result{Source: absPath}, fmt.Errorf("create skills dir: %w", err)
 	}
+	done("dir=%s", skillsDir)
 
 	var added []AddedSkill
 	for _, d := range selected {
@@ -257,6 +293,7 @@ func handleLocalPlain(env skill.Env, absPath string, opts Options) (Result, erro
 			if err := os.RemoveAll(destDir); err != nil {
 				return Result{Source: absPath}, fmt.Errorf("remove existing %s: %w", destDir, err)
 			}
+			trace.Logf(opts.Trace, "add local plain removed existing skill=%s", name)
 		}
 
 		// Copy source skill directory into ./skills/<name>.
@@ -264,9 +301,12 @@ func handleLocalPlain(env skill.Env, absPath string, opts Options) (Result, erro
 		if d.Subpath == "." {
 			srcDir = absPath
 		}
+		done = trace.Spanf(opts.Trace, "add local plain copy skill=%s", name)
 		if err := safeCopyDir(srcDir, destDir); err != nil {
+			done("error=%v", err)
 			return Result{Source: absPath}, fmt.Errorf("copy skill %q: %w", name, err)
 		}
+		done("src=%s dest=%s", srcDir, destDir)
 
 		added = append(added, AddedSkill{
 			Name:    name,

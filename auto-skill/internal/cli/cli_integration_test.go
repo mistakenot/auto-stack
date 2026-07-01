@@ -623,6 +623,20 @@ func runCLI(t *testing.T, args ...string) (stdout string, stderr string, code in
 	return out.String(), errOut.String(), code
 }
 
+func assertTraceOnStderrAndJSONStdout(t *testing.T, stdout, stderr, wantTrace string) {
+	t.Helper()
+	decodeJSONMap(t, stdout)
+	if strings.Contains(stdout, "[trace ") {
+		t.Fatalf("trace output must not pollute stdout JSON:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "[trace +") {
+		t.Fatalf("expected trace lines on stderr, got:\n%s", stderr)
+	}
+	if wantTrace != "" && !strings.Contains(stderr, wantTrace) {
+		t.Fatalf("expected trace %q on stderr, got:\n%s", wantTrace, stderr)
+	}
+}
+
 func decodeDiagnostics(t *testing.T, raw string) []map[string]any {
 	t.Helper()
 	var diags []map[string]any
@@ -952,6 +966,19 @@ func TestAddLocalHappyPathJSON(t *testing.T) {
 	assertExists(t, yamlPath)
 }
 
+func TestAddTraceWritesStderrAndKeepsStdoutJSON(t *testing.T) {
+	fixture := makeAddFixture(t, map[string]string{
+		"skills/my-skill": addSkillMD("my-skill", "Use when testing add trace."),
+	})
+	root := t.TempDir()
+
+	stdout, stderr, code := runCLI(t, "--root", root, "add", fixture, "--no-sync", "--trace")
+	if code != 0 {
+		t.Fatalf("add --trace failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertTraceOnStderrAndJSONStdout(t, stdout, stderr, "add local git")
+}
+
 func TestAddLocalListJSON(t *testing.T) {
 	fixture := makeAddFixture(t, map[string]string{
 		"skills/alpha": addSkillMD("alpha", "Use when testing alpha list."),
@@ -1181,6 +1208,30 @@ func TestSyncAuthoredRendersIntoTargets(t *testing.T) {
 	}
 	assertExists(t, filepath.Join(root, ".claude", "skills", "alpha", "SKILL.md"))
 	assertExists(t, filepath.Join(root, ".agents", "skills", "alpha", "SKILL.md"))
+}
+
+func TestSyncTraceWritesStderrAndKeepsStdoutJSON(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "alpha", "SKILL.md"),
+		validSkill("alpha", "Use when testing sync trace.", "## Workflow\n\n1. Step.\n"))
+
+	stdout, stderr, code := runCLI(t, "--root", root, "sync", "--trace")
+	if code != 0 {
+		t.Fatalf("sync --trace failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertTraceOnStderrAndJSONStdout(t, stdout, stderr, "sync phase A build plan")
+}
+
+func TestUpdateTraceWritesStderrAndKeepsStdoutJSON(t *testing.T) {
+	root := t.TempDir()
+	seedAndSync(t, root)
+
+	stdout, stderr, code := runCLI(t, "--root", root, "update", "--trace")
+	if code != 0 {
+		t.Fatalf("update --trace failed: code=%d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	assertTraceOnStderrAndJSONStdout(t, stdout, stderr, "sync run")
 }
 
 // TestSyncCheckStaleExitsNonZero: --check is an offline dry-run that writes

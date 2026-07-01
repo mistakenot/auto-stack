@@ -13,6 +13,7 @@ import (
 	"github.com/mistakenot/auto-skill/internal/discovery"
 	"github.com/mistakenot/auto-skill/internal/render"
 	"github.com/mistakenot/auto-skill/internal/skill"
+	"github.com/mistakenot/auto-skill/internal/trace"
 	"github.com/mistakenot/auto-skill/internal/transport"
 	"gopkg.in/yaml.v3"
 )
@@ -91,17 +92,28 @@ type skillSource struct {
 // order (determinism). It performs NO writes — staging + the journaled commit are
 // phase 5's job; Process only renders, reads on-disk digests, and plans.
 func Process(env skill.Env, plan *Plan, fetch *FetchResult, opts Options) (*ProcessResult, error) {
+	tr := opts.Trace
+	done := trace.Spanf(tr, "sync process load config")
 	syaml, err := loadSkillsYAML(env)
 	if err != nil {
+		done("error=%v", err)
 		return nil, err
 	}
+	done("skills=%d", len(syaml.Skills))
 	targets := resolveTargets(env, syaml)
 	oldManifest := loadManifestBestEffort(env)
+	oldManifestSkills := 0
+	if oldManifest != nil {
+		oldManifestSkills = len(oldManifest.Skills)
+	}
+	trace.Logf(tr, "sync process targets=%d old_manifest_skills=%d", len(targets), oldManifestSkills)
 
 	result := &ProcessResult{Targets: targets}
 
-	sources, srcErrs := gatherSources(env, plan, fetch)
+	done = trace.Spanf(tr, "sync gather sources")
+	sources, srcErrs := gatherSources(env, plan, fetch, tr)
 	result.Errors = append(result.Errors, srcErrs...)
+	done("sources=%d errors=%d", len(sources), len(srcErrs))
 	defer func() {
 		for _, s := range sources {
 			if s.cleanup != nil {
@@ -116,9 +128,11 @@ func Process(env skill.Env, plan *Plan, fetch *FetchResult, opts Options) (*Proc
 	renderErrs := make([]error, len(sources))
 	boundedRun(opts.jobs(), indexes(len(sources)), func(i int) error {
 		s := sources[i]
+		done := trace.Spanf(tr, "sync render skill %s source=%s", s.name, s.sourceID)
 		st, rerr := renderSource(syaml, s)
 		if rerr != nil {
 			renderErrs[i] = fmt.Errorf("render %s: %w", s.name, rerr)
+			done("error=%v", rerr)
 			return nil
 		}
 		// render_version lazy re-render: a manifest entry recorded below the
@@ -126,6 +140,8 @@ func Process(env skill.Env, plan *Plan, fetch *FetchResult, opts Options) (*Proc
 		// the on-disk digest still matches the old output.
 		st.ForcedRender = renderVersionStale(oldManifest, s.name)
 		staged[i] = st
+		done("files=%d refs=%d warnings=%d forced=%t version=%s",
+			len(st.Files), len(st.FileRefs), len(st.Warnings), st.ForcedRender, short(st.SkillVersion))
 		return nil
 	})
 
@@ -146,6 +162,7 @@ func Process(env skill.Env, plan *Plan, fetch *FetchResult, opts Options) (*Proc
 
 	// Per-target install decisions (deterministic order: target, then skill).
 	for _, t := range targets {
+		trace.Logf(tr, "sync install compare target=%s dir=%s staged=%d", t.Name, t.Dir, len(result.Staged))
 		for _, st := range result.Staged {
 			inst := Install{
 				Target: t.Name,
@@ -163,13 +180,18 @@ func Process(env skill.Env, plan *Plan, fetch *FetchResult, opts Options) (*Proc
 				inst.Action = InstallSkip
 			}
 			result.Installs = append(result.Installs, inst)
+			trace.Logf(tr, "sync install decision target=%s skill=%s action=%s on_disk=%s want=%s",
+				inst.Target, inst.Skill, inst.Action, short(inst.OnDisk), short(inst.Want))
 		}
 	}
 
+	done = trace.Spanf(tr, "sync build manifest")
 	manifest, mErrs := buildManifest(result.Staged, targets)
 	if len(mErrs) > 0 {
+		done("errors=%d", len(mErrs))
 		return result, fmt.Errorf("manifest validation failed: %s", joinValidation(mErrs))
 	}
+	done("skills=%d targets=%d", len(manifest.Skills), len(manifest.Targets))
 	// A scoped (--target) run stages only the targeted skills (plus authored), so
 	// the freshly built manifest omits every non-targeted vendored skill. Carry
 	// their prior ownership forward so the write does not disown them — a dropped
@@ -179,6 +201,7 @@ func Process(env skill.Env, plan *Plan, fetch *FetchResult, opts Options) (*Proc
 		if vErrs := skill.ValidateManifest(manifest); len(vErrs) > 0 {
 			return result, fmt.Errorf("merged manifest validation failed: %s", joinValidation(vErrs))
 		}
+		trace.Logf(tr, "sync merged scoped manifest preserved_scope=%d skills=%d", len(scope), len(manifest.Skills))
 	}
 	result.Manifest = manifest
 	return result, nil
@@ -189,38 +212,44 @@ func Process(env skill.Env, plan *Plan, fetch *FetchResult, opts Options) (*Proc
 // shadowing vendored on a name clash. Vendored skills are extracted from the
 // cache into temp dirs (cleaned up by the caller via cleanup); authored skills
 // point at their working-tree directory.
-func gatherSources(env skill.Env, plan *Plan, fetch *FetchResult) ([]*skillSource, []error) {
+func gatherSources(env skill.Env, plan *Plan, fetch *FetchResult, tr *trace.Logger) ([]*skillSource, []error) {
 	var errs []error
 	byName := map[string]*skillSource{}
 
 	// Vendored skills first (authored will overwrite on clash).
 	if plan != nil {
 		failed := failedRepoKeys(fetch)
-		c := cache.NewCache(env.UpstreamCacheDir())
+		c := cache.NewCache(env.UpstreamCacheDir()).WithTrace(tr)
 		for i := range plan.Skills {
 			sp := plan.Skills[i]
 			if !sp.processable() {
+				trace.Logf(tr, "sync source skip skill=%s action=%s", sp.Name, sp.Action)
 				continue
 			}
 			if failed[sp.Repo] {
 				errs = append(errs, fmt.Errorf("skip %s: repo %s failed to fetch", sp.Name, sp.Repo))
+				trace.Logf(tr, "sync source skip skill=%s failed_repo=%s", sp.Name, sp.Repo)
 				continue
 			}
-			src, err := extractVendored(c, sp)
+			src, err := extractVendored(c, sp, tr)
 			if err != nil {
 				errs = append(errs, err)
+				trace.Logf(tr, "sync source vendored error skill=%s error=%v", sp.Name, err)
 				continue
 			}
 			byName[src.name] = src
+			trace.Logf(tr, "sync source vendored skill=%s root=%s", src.name, src.rootDir)
 		}
 	}
 
 	// Authored ./skills/** shadow vendored on a name clash.
 	authored, aerrs := discoverAuthored(env)
 	errs = append(errs, aerrs...)
+	trace.Logf(tr, "sync source authored discovered=%d errors=%d", len(authored), len(aerrs))
 	for _, src := range authored {
 		if prev, ok := byName[src.name]; ok && prev.cleanup != nil {
 			prev.cleanup() // drop the shadowed vendored extract
+			trace.Logf(tr, "sync source authored shadows vendored skill=%s", src.name)
 		}
 		byName[src.name] = src
 	}
@@ -235,23 +264,28 @@ func gatherSources(env skill.Env, plan *Plan, fetch *FetchResult) ([]*skillSourc
 
 // extractVendored materializes a vendored skill's subtree from the cache into a
 // temp directory rooted at the skill itself (the file-ref resolver root).
-func extractVendored(c *cache.Cache, sp SkillPlan) (*skillSource, error) {
+func extractVendored(c *cache.Cache, sp SkillPlan, tr *trace.Logger) (*skillSource, error) {
+	done := trace.Spanf(tr, "sync extract vendored skill=%s commit=%s subpath=%s", sp.Name, short(sp.TargetCommit), sp.Subpath)
 	canonical, cacheID, err := transport.CanonicalizeURL(sp.URL)
 	if err != nil {
+		done("error=%v", err)
 		return nil, fmt.Errorf("canonicalize %s (%s): %w", sp.Name, sp.URL, err)
 	}
 	repo, err := c.Open(cacheID, sp.URL)
 	if err != nil {
+		done("error=%v", err)
 		return nil, fmt.Errorf("open cache for %s: %w", sp.Name, err)
 	}
 	if present, perr := repo.CommitPresent(sp.TargetCommit); perr != nil || !present {
 		if perr == nil {
 			perr = errors.New("missing objects")
 		}
+		done("error=%v", perr)
 		return nil, fmt.Errorf("skip %s: commit %s not present in cache: %w", sp.Name, short(sp.TargetCommit), perr)
 	}
 	dest, err := os.MkdirTemp("", "auto-skill-extract-"+sp.Name+"-*")
 	if err != nil {
+		done("error=%v", err)
 		return nil, fmt.Errorf("temp dir for %s: %w", sp.Name, err)
 	}
 	if err := repo.Extract(sp.TargetCommit, sp.Subpath, dest); err != nil {
@@ -260,11 +294,14 @@ func extractVendored(c *cache.Cache, sp SkillPlan) (*skillSource, error) {
 		// path was renamed or removed upstream — report it with remediation
 		// instead of a raw extract failure.
 		if errors.Is(err, cache.ErrSubpathNotFound) {
+			done("error=%v", err)
 			return nil, &RenamedUpstreamError{Name: sp.Name, Subpath: sp.Subpath, Commit: sp.TargetCommit}
 		}
+		done("error=%v", err)
 		return nil, fmt.Errorf("extract %s (%s:%s): %w", sp.Name, short(sp.TargetCommit), sp.Subpath, err)
 	}
 	d := dest
+	done("root=%s", dest)
 	return &skillSource{
 		name:     sp.Name,
 		authored: false,

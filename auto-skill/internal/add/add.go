@@ -15,6 +15,7 @@ import (
 	"github.com/mistakenot/auto-skill/internal/discovery"
 	"github.com/mistakenot/auto-skill/internal/skill"
 	"github.com/mistakenot/auto-skill/internal/source"
+	"github.com/mistakenot/auto-skill/internal/trace"
 	"github.com/mistakenot/auto-skill/internal/transport"
 	"github.com/mistakenot/auto-skill/internal/trust"
 	"gopkg.in/yaml.v3"
@@ -33,6 +34,7 @@ type Options struct {
 	Version        string // --version override
 	As             string // --as rename (single-skill only)
 	Format         string // "json" or "text"
+	Trace          *trace.Logger
 }
 
 // Result is the pipeline output.
@@ -82,16 +84,24 @@ const (
 
 // Run orchestrates: parse → resolve → discover → select → write lock + stub.
 func Run(env skill.Env, opts Options) (Result, error) {
+	tr := opts.Trace
+	doneRun := trace.Spanf(tr, "add run")
+	defer doneRun("")
+
 	// 1. Parse source.
+	done := trace.Spanf(tr, "add parse source")
 	src, err := source.ParseSource(opts.Source, source.ParseOptions{
 		Version: opts.Version,
 	})
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: opts.Source}, err
 	}
+	done("local=%t url=%s subpath=%s ref=%s", src.Local, src.URL, src.Subpath, src.Ref)
 
 	// 2. Local source split.
 	if src.Local {
+		trace.Logf(tr, "add handling local source")
 		return handleLocal(env, src, opts)
 	}
 
@@ -103,33 +113,44 @@ func Run(env skill.Env, opts Options) (Result, error) {
 	if ve := skill.ValidateVersionSpec(versionSpec); ve != nil {
 		return Result{Source: src.URL}, fmt.Errorf("invalid version spec: %s", ve.Message)
 	}
+	trace.Logf(tr, "add version spec=%s", versionSpec)
 
 	// Load skills.yaml up front so the trust gate can honor the project's
 	// declared trusted_hosts: in non-TTY usage --trust-requested only
 	// auto-approves an endpoint that the project opted into here.
+	done = trace.Spanf(tr, "add load skills.yaml")
 	syaml, err := loadOrCreateSkillsYAML(env)
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: src.URL}, err
 	}
+	done("skills=%d trusted_hosts=%d", len(syaml.Skills), len(syaml.TrustedHosts))
 
 	// Trust gate.
+	done = trace.Spanf(tr, "add authorize source")
 	ep, err := transport.Endpoint(src.URL)
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: src.URL}, err
 	}
 	store := trust.NewStore(env.TrustPath())
 	gate := &trust.Gate{Store: store}
 	gio := trust.GateIO{IsTTY: false, TrustRequested: opts.TrustRequested}
 	if err := gate.Authorize(ep, syaml.TrustedHosts, gio); err != nil {
+		done("endpoint=%s error=%v", ep, err)
 		return Result{Source: src.URL}, err
 	}
+	done("endpoint=%s", ep)
 
 	// Open repo in cache.
+	done = trace.Spanf(tr, "add canonicalize source")
 	_, cacheID, err := transport.CanonicalizeURL(src.URL)
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: src.URL}, err
 	}
-	c := cache.NewCache(env.UpstreamCacheDir())
+	done("cache_id=%s", cacheID.RelPath())
+	c := cache.NewCache(env.UpstreamCacheDir()).WithTrace(tr)
 	repo, err := c.Open(cacheID, src.URL)
 	if err != nil {
 		return Result{Source: src.URL}, fmt.Errorf("open cache: %w", err)
@@ -141,21 +162,27 @@ func Run(env skill.Env, opts Options) (Result, error) {
 	// (we needed the canonical URL first to open the cache). An explicit
 	// --version pins the ref and takes precedence, so skip when it is set.
 	if opts.Version == "" {
+		done = trace.Spanf(tr, "add resolve deep-link source")
 		resolved, err := source.ParseSource(opts.Source, source.ParseOptions{
 			RefResolver: &repoRefResolver{repo: repo},
 		})
 		if err != nil {
+			done("error=%v", err)
 			return Result{Source: src.URL}, err
 		}
 		src.Ref = resolved.Ref
 		src.Subpath = resolved.Subpath
+		done("subpath=%s ref=%s", src.Subpath, src.Ref)
 	}
 
 	// Resolve ref.
+	done = trace.Spanf(tr, "add resolve ref")
 	sha, err := resolveRef(repo, versionSpec, src.Ref)
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: src.URL}, err
 	}
+	done("commit=%s", shortTraceSHA(sha))
 
 	// Realize objects.
 	if err := repo.Realize(sha); err != nil {
@@ -163,35 +190,48 @@ func Run(env skill.Env, opts Options) (Result, error) {
 	}
 
 	// 4. Extract to temp dir.
+	done = trace.Spanf(tr, "add create temp dir")
 	tmpDir, err := os.MkdirTemp("", "auto-skill-add-*")
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: src.URL}, fmt.Errorf("create temp dir: %w", err)
 	}
+	done("dir=%s", tmpDir)
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	subpath := src.Subpath
+	done = trace.Spanf(tr, "add extract for discovery")
 	if err := extractForDiscovery(repo, sha, subpath, tmpDir); err != nil {
+		done("error=%v", err)
 		return Result{Source: src.URL}, fmt.Errorf("extract: %w", err)
 	}
+	done("subpath=%s", subpath)
 
 	// 5. Discover.
+	done = trace.Spanf(tr, "add discover skills")
 	discOpts := discovery.Options{
 		Paths:     opts.Paths,
 		FullDepth: opts.FullDepth,
 	}
 	discovered, err := discovery.Discover(tmpDir, discOpts)
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: src.URL}, fmt.Errorf("discover: %w", err)
 	}
+	done("discovered=%d paths=%d full_depth=%t", len(discovered), len(opts.Paths), opts.FullDepth)
 
 	// 6. Selection.
+	done = trace.Spanf(tr, "add select skills")
 	selected, err := applySelection(discovered, opts)
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: src.URL}, err
 	}
+	done("selected=%d", len(selected))
 
 	// 7. List mode.
 	if opts.List {
+		trace.Logf(tr, "add list mode selected=%d", len(selected))
 		listed := make([]ListedSkill, len(selected))
 		for i, d := range selected {
 			listed[i] = ListedSkill{
@@ -206,10 +246,13 @@ func Run(env skill.Env, opts Options) (Result, error) {
 	}
 
 	// 8. Write lock + skills.yaml stubs.
+	done = trace.Spanf(tr, "add load lock")
 	lock, err := loadOrCreateLock(env)
 	if err != nil {
+		done("error=%v", err)
 		return Result{Source: src.URL}, err
 	}
+	done("entries=%d", len(lock.Skills))
 
 	var added []AddedSkill
 	for _, d := range selected {
@@ -281,20 +324,33 @@ func Run(env skill.Env, opts Options) (Result, error) {
 			Errors: yamlErrs,
 		}
 	}
+	trace.Logf(tr, "add validation passed lock_entries=%d skills_yaml=%d", len(lock.Skills), len(syaml.Skills))
 
 	// Ensure config dir exists.
+	done = trace.Spanf(tr, "add write config")
 	if err := os.MkdirAll(env.SkillsConfigDir(), 0o755); err != nil {
+		done("error=%v", err)
 		return Result{Source: src.URL}, fmt.Errorf("create config dir: %w", err)
 	}
 
 	if err := config.WriteJSONFileAtomic(env.LockPath(), lock); err != nil {
+		done("error=%v", err)
 		return Result{Source: src.URL}, fmt.Errorf("write lock: %w", err)
 	}
 	if err := writeSkillsYAML(env.SkillsYAMLPath(), syaml); err != nil {
+		done("error=%v", err)
 		return Result{Source: src.URL}, fmt.Errorf("write skills.yaml: %w", err)
 	}
+	done("added=%d", len(added))
 
 	return Result{Added: added, Source: src.URL}, nil
+}
+
+func shortTraceSHA(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ import (
 	"github.com/mistakenot/auto-skill/internal/ownership"
 	"github.com/mistakenot/auto-skill/internal/skill"
 	"github.com/mistakenot/auto-skill/internal/sync"
+	"github.com/mistakenot/auto-skill/internal/trace"
 	"github.com/spf13/cobra"
 )
 
@@ -59,8 +60,11 @@ func Execute(ctx context.Context, stdout, stderr io.Writer) int {
 
 type envResolver func() (skill.Env, error)
 
+type traceResolver func(*cobra.Command) *trace.Logger
+
 func NewRootCmd(application *app.App) *cobra.Command {
 	var rootFlag string
+	var traceFlag bool
 
 	resolveEnv := func() (skill.Env, error) {
 		root, overridden, err := skill.ResolveRoot(application.CWD, rootFlag)
@@ -68,6 +72,12 @@ func NewRootCmd(application *app.App) *cobra.Command {
 			return skill.Env{}, err
 		}
 		return skill.Env{Root: root, RootOverride: overridden}, nil
+	}
+	resolveTrace := func(cmd *cobra.Command) *trace.Logger {
+		if !traceFlag {
+			return nil
+		}
+		return trace.New(cmd.ErrOrStderr())
 	}
 
 	cmd := &cobra.Command{
@@ -80,9 +90,10 @@ func NewRootCmd(application *app.App) *cobra.Command {
 	cmd.SetOut(application.Stdout)
 	cmd.SetErr(application.Stderr)
 	cmd.PersistentFlags().StringVar(&rootFlag, "root", "", "project root override for skills/ and .auto/")
+	cmd.PersistentFlags().BoolVar(&traceFlag, "trace", false, "emit detailed trace logs to stderr")
 
 	cmd.AddCommand(
-		newAddCmd(resolveEnv),
+		newAddCmd(resolveEnv, resolveTrace),
 		newInitCmd(resolveEnv),
 		newCreateCmd(resolveEnv),
 		newLintCmd(resolveEnv),
@@ -94,8 +105,8 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newDoctorCmd(resolveEnv),
 		newQuickstartCmd(),
 		newDocsCmd(),
-		newUpdateCmd(resolveEnv),
-		newSyncCmd(resolveEnv),
+		newUpdateCmd(resolveEnv, resolveTrace),
+		newSyncCmd(resolveEnv, resolveTrace),
 		newMigrateCmd(resolveEnv),
 		newAdoptCmd(resolveEnv),
 		newRemoveCmd(resolveEnv),
@@ -322,6 +333,16 @@ func newQuickstartCmd() *cobra.Command {
 				"auto update                      # update the auto binary itself",
 				"```",
 				"",
+				"## Trace slow runs",
+				"",
+				"`--trace` writes detailed phase and git/cache timing logs to stderr while leaving JSON stdout parseable.",
+				"",
+				"```bash",
+				"auto skill sync --trace",
+				"auto skill update --trace",
+				"auto skill add <source> --trace",
+				"```",
+				"",
 				"## Handle renamed Skills",
 				"",
 				"Run a full `auto skill sync` after an authored rename. A scoped `--target` sync is intentionally conservative and will not prune unrelated old target copies.",
@@ -371,6 +392,8 @@ func newDocsCmd() *cobra.Command {
 				"- `remove <name> [--local|--vendored]`: remove a skill source and prune managed rendered copies.",
 				"- `doctor`: verify setup and report issues in JSON.",
 				"- `quickstart`: show a minimal happy-path workflow.",
+				"",
+				"Use persistent `--trace` with slow commands (`add`, `sync`, `update`) to emit detailed timing logs on stderr without changing JSON stdout.",
 				"",
 				"Binary self-update is `auto update` (the root command), not `auto skill update`.",
 			}, "\n")

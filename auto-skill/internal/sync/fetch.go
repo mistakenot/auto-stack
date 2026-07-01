@@ -8,6 +8,7 @@ import (
 
 	"github.com/mistakenot/auto-skill/internal/cache"
 	"github.com/mistakenot/auto-skill/internal/skill"
+	"github.com/mistakenot/auto-skill/internal/trace"
 	"github.com/mistakenot/auto-skill/internal/trust"
 )
 
@@ -58,7 +59,7 @@ func Fetch(env skill.Env, plan *Plan, opts Options) (*FetchResult, error) {
 		return result, nil
 	}
 
-	c := cache.NewCache(env.UpstreamCacheDir())
+	c := cache.NewCache(env.UpstreamCacheDir()).WithTrace(opts.Trace)
 	store := trust.NewStore(env.TrustPath())
 	gate := &trust.Gate{Store: store}
 	gio := trust.GateIO{IsTTY: opts.IsTTY, TrustRequested: opts.TrustRequested}
@@ -68,9 +69,17 @@ func Fetch(env skill.Env, plan *Plan, opts Options) (*FetchResult, error) {
 	if syaml, err := loadSkillsYAML(env); err == nil {
 		trustedHosts = syaml.TrustedHosts
 	}
+	trace.Logf(opts.Trace, "sync fetch jobs=%d repos=%d trusted_hosts=%d", opts.jobs(), len(plan.Repos), len(trustedHosts))
 
 	errs := boundedRun(opts.jobs(), plan.Repos, func(rt RepoTarget) error {
-		return fetchRepo(c, gate, gio, trustedHosts, rt)
+		done := trace.Spanf(opts.Trace, "sync fetch repo %s commits=%d", rt.Key, len(rt.Commits))
+		err := fetchRepo(c, gate, gio, trustedHosts, rt, opts.Trace)
+		if err != nil {
+			done("error=%v", err)
+		} else {
+			done("")
+		}
+		return err
 	})
 
 	for i := range plan.Repos {
@@ -91,10 +100,13 @@ var errPinnedUnavailable = errors.New("pinned commit unavailable upstream")
 
 // fetchRepo materializes every pinned commit for one repo, taking the per-repo
 // cache lock the cache already provides via Realize.
-func fetchRepo(c *cache.Cache, gate *trust.Gate, gio trust.GateIO, trustedHosts []string, rt RepoTarget) error {
+func fetchRepo(c *cache.Cache, gate *trust.Gate, gio trust.GateIO, trustedHosts []string, rt RepoTarget, tr *trace.Logger) error {
+	done := trace.Spanf(tr, "sync fetch authorize %s", rt.Endpoint)
 	if err := gate.Authorize(rt.Endpoint, trustedHosts, gio); err != nil {
+		done("error=%v", err)
 		return err
 	}
+	done("")
 	repo, err := c.Open(rt.CacheID, rt.URL)
 	if err != nil {
 		return fmt.Errorf("open cache: %w", err)
@@ -109,6 +121,7 @@ func fetchRepo(c *cache.Cache, gate *trust.Gate, gio trust.GateIO, trustedHosts 
 		if present, err := repo.CommitPresent(commit); err != nil || !present {
 			return fmt.Errorf("%w: %s", errPinnedUnavailable, short(commit))
 		}
+		trace.Logf(tr, "sync fetch commit present repo=%s commit=%s", rt.Key, short(commit))
 	}
 	return nil
 }

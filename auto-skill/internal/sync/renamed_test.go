@@ -45,7 +45,7 @@ func TestExtractVendoredRenamedSubpath(t *testing.T) {
 		Action:       ActionMaterialize,
 	}
 
-	_, err := extractVendored(c, sp)
+	_, err := extractVendored(c, sp, nil)
 	if err == nil {
 		t.Fatal("expected error for missing subpath")
 	}
