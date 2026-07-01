@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>056: auto-skill-sync-perf</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="056: auto-skill-sync-perf" status="draft" pr="pending" generated="2026-07-01"
+          next-prompt="/new-solution 056">
+
+    <script type="application/json" id="pd-meta">
+    {
+      "id": "056",
+      "name": "auto-skill-sync-perf",
+      "status": "planning",
+      "created": "2026-07-01"
+    }
+    </script>
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+`auto skill sync` is slow. A `--trace` run of a warm-cache, no-fetch sync of the auto-stack
+skill set (44 skills across 5 repos) takes **~1.6s wall / 0.81s system time** — half the CPU
+is spent forking short-lived `git` subprocesses, not doing real work. It is worse on larger
+skill sets in other repos.
+
+The trace pinpoints three structural causes, none of them network:
+
+1. **Extraction is serial.** `gatherSources` (`process.go`) extracts every vendored skill in a
+   plain `for` loop — the 42 extracts run strictly back-to-back (~800ms, 53% of wall time). The
+   `jobs=8` worker pool (`boundedRun`) is wired **only** to the cheap `renderSource` step, which
+   totals ~13ms. The one thing that got parallelized is trivial; the bottleneck runs one-at-a-time.
+2. **Commit presence is checked twice per skill.** `CommitPresent` runs once in Phase A planning
+   (`plan.go`) and again inside `extractVendored` (`process.go`) — 84 checks for 42 skills. Each
+   check spawns 2 git processes (`cat-file -t` + `rev-list --objects --quiet`, the latter walking
+   the whole commit object graph).
+3. **No batching across skills that share a repo+commit.** 32 of the 44 skills come from
+   `mistakenot/skills` at the *same* commit, yet each does its own `c.Open` + `CommitPresent` +
+   `git archive` — 32 separate archive invocations where a single batched extract would do.
+
+Net: ~300 serial git subprocess spawns dominate the runtime. `Repo.ExtractPaths` (batch archive of
+many subpaths in one call) already exists but is unused by the sync path.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **Parallelize vendored extraction** — route `gatherSources` extraction through the same
+  `boundedRun(opts.jobs())` pool that `renderSource` already uses, so extracts overlap instead of
+  serializing.
+- **Remove the redundant commit-presence pass** — a skill that reaches `extractVendored` has
+  already been verified present by Phase A (and materialized by Phase B); drop or downgrade the
+  second `CommitPresent` so each skill is verified once, not twice.
+- **Batch extraction per (repo, commit)** — group vendored skills by cache repo + target commit
+  and extract their subpaths in a single `git archive` via the existing `ExtractPaths`, instead of
+  one archive per skill.
+- **Hit the performance target** — warm-cache full sync of the ~44-skill auto-stack set drops from
+  ~1.6s to **under 500ms** on the dev machine, measured with `--trace`.
+- **Keep behavior identical** — same JSON stdout, same lock/manifest/receipt semantics, same
+  determinism (sorted output), same trust-gate and error handling. This is a pure internal
+  optimization; no user-visible surface changes.
+- **Prove it with the existing `--trace` instrumentation** — before/after phase timings captured as
+  evidence; the trace lines added in v0.27.0 are the measurement tool.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **No structural git-process rework.** No long-lived `git cat-file --batch` process, no
+  libgit2/go-git, no cgo. (Decision D-1: conservative scope — keep the per-op git CLI model and
+  zero new runtime deps.) A batched-git spike can be a future task if 500ms isn't reached.
+- **No cold-cache / network changes.** Clone and fetch (Phase B) are not the bottleneck for the
+  warm-cache case this task targets; fetch parallelism is already in place. Network-path tuning is
+  a separate concern.
+- **No changes to the plan/fetch/process phase contract** or the public `sync.Options` /
+  `sync.Result` shapes beyond what parallelizing internal loops requires.
+- **No CLI flag changes** (e.g. no new tuning flags); `--jobs` and `--trace` already exist.
+- **Not the `add` / `update` / `migrate` paths** except where they share the same extraction code
+  and benefit for free.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="constraints" title="Constraints & Context">
+        <md><script type="text/plain">
+- **`gatherSources` currently mutates a shared `byName` map** and appends to `errs` in loop order;
+  parallelizing it must preserve deterministic final ordering (authored-shadows-vendored on name
+  clash) and collect per-item errors index-aligned, the way `boundedRun` already returns them.
+- **Extraction writes to per-skill temp dirs** (`os.MkdirTemp`) with a registered `cleanup`;
+  concurrency is safe on distinct dirs but the cleanup/defer wiring must stay correct on partial
+  failure.
+- **`c.Open` takes a per-repo file lock briefly** (a `git remote get-url`). Concurrent opens of the
+  same repo serialize on that lock; batching per-repo naturally removes most of those calls.
+- **`CommitPresent`'s `rev-list --objects --quiet`** is the single most expensive git op per check
+  (whole-graph walk on a blobless partial clone). Removing the duplicate call is the cheapest large
+  win after parallelization.
+- Instrumentation already merged (v0.27.0): `internal/trace` + spans through cache/plan/fetch/
+  process. Measure with `auto skill sync --trace` (stderr) — stdout JSON stays parseable.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-1" title="Conservative scope — keep the per-op git CLI model" status="accepted" by="charlie"
+                   summary="Parallelize + de-duplicate + batch within the existing git-CLI-per-op design; no long-lived git process, no new deps.">
+        <md><script type="text/plain">
+**Decision:** Implement the three identified levers (parallelize extraction, drop the duplicate
+commit-present check, batch per-(repo,commit) archives) **without** restructuring the git execution
+model.
+
+**Alternatives considered:** An aggressive path — a long-lived `git cat-file --batch` process and/or
+reusing `cache.Repo` handles across the whole run to cut raw subprocess count further.
+
+**Why:** The three conservative levers are projected to clear the <500ms target on their own, at far
+lower risk to the lock/manifest/determinism contract, and with zero new runtime dependencies
+(consistent with the project's minimal-deps preference). Aggressive restructuring is deferred to a
+follow-up spike only if the target is missed.
+
+**Consequences:** Bounded blast radius (touch `process.go` gather/extract, `cache` extract helpers,
+maybe `plan.go`); the raw git-spawn count still drops sharply via batching, just not to zero.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-2" title="Performance target: warm-cache full sync under 500ms" status="accepted" by="charlie"
+                   summary="Gate on ~3x: the 44-skill auto-stack warm-cache sync goes from ~1.6s to <500ms, measured via --trace.">
+        <md><script type="text/plain">
+**Decision:** Success is warm-cache full sync of the ~44-skill auto-stack set completing in **under
+500ms** on the dev machine, measured with `--trace`.
+
+**Why:** ~3x is reachable from parallelizing extraction (~800ms→~150ms) plus removing the duplicate
+commit-present pass, without the aggressive restructuring D-1 rules out. Sub-300ms would likely
+require the deferred batched-git work.
+
+**Consequences:** The Verification tab's acceptance criteria will assert a measured before/after with
+the 500ms ceiling as the gate; batching per-(repo,commit) is the margin that keeps it under budget
+on repos with many skills in one source.
+        </script></md>
+      </pd-decision>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Both load-bearing decisions were resolved with the user up front (see D-1 scope, D-2 target).
+Remaining items are assumptions the solution stage can proceed on:
+
+- [x] **Scope of change** — conservative (parallelize + dedup + batch, keep git-CLI-per-op). *(D-1)*
+- [x] **Performance target** — warm-cache 44-skill sync under 500ms. *(D-2)*
+- [ ] **Duplicate-check removal vs. downgrade** — assume the second `CommitPresent` in
+  `extractVendored` can be *removed* for skills the plan marked present, with a cheap `cat-file -t`
+  guard retained only if the solution stage finds a plan→process gap where presence isn't
+  guaranteed. To be confirmed while designing the solution.
+- [ ] **Concurrency default** — assume the existing `jobs=8` default and `--jobs` flag are reused
+  for extraction; no new default tuning unless benchmarks show a better sweet spot.
+- [ ] **Batching granularity** — assume grouping by `(cacheID, targetCommit)` and using
+  `ExtractPaths` with the per-skill subpaths, then fanning the extracted subtrees into the existing
+  per-skill temp-dir source model. Exact temp-dir/cleanup shape is a solution-stage detail.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
