@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/mistakenot/auto-skill/internal/add"
 	"github.com/mistakenot/auto-skill/internal/skill"
@@ -82,13 +83,18 @@ func newAddCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Comman
 
 			// Post-add auto-sync (T4): a plain `add` renders the freshly added
 			// skills into every output target by default. Skipped for --list
-			// (nothing was written) and --no-sync. The render is best-effort: it
-			// never overrides add's own exit code (the add itself — lock +
-			// skills.yaml or the authored copy — already succeeded). Its
-			// diagnostics go to stderr; add's stdout payload (already written
-			// above) is left untouched so it stays strictly parseable.
+			// (nothing was written) and --no-sync. The add itself (lock +
+			// skills.yaml or the authored copy) already succeeded and its stdout
+			// payload was written above; sync diagnostics go to stderr so stdout
+			// stays strictly parseable. But a FAILED post-add sync leaves rendered
+			// targets and the lock diverged, so `add` must exit non-zero rather
+			// than reporting success — otherwise callers (and CI) treat a partial,
+			// corrupt add as clean and cascade into foreign-target conflicts on the
+			// next sync (H1).
 			if !noSync && !list {
-				runPostAddSync(cmd, env, result, trustRequested, tr)
+				if syncFailed := runPostAddSync(cmd, env, result, trustRequested, tr); syncFailed {
+					return &ExitError{Code: 1}
+				}
 			}
 
 			return nil
@@ -117,18 +123,47 @@ func newAddCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Comman
 // approved here to keep the subsequent render symmetric — the user explicitly
 // pointed `add` at that source. The render is best-effort: every outcome is
 // reported on stderr, but add's exit code is owned by the add operation
-// itself, never by this follow-on render.
-func runPostAddSync(cmd *cobra.Command, env skill.Env, result add.Result, trustRequested bool, tr *trace.Logger) {
+// itself, never by this follow-on render. It reports whether the sync failed
+// (an orchestration error, or any per-skill/per-repo error) so the caller can
+// propagate a non-zero exit code — a partial render must not read as success.
+func runPostAddSync(cmd *cobra.Command, env skill.Env, result add.Result, trustRequested bool, tr *trace.Logger) (failed bool) {
 	// Make the just-added source trustable for the render step (idempotent for
 	// an already-approved remote endpoint; best-effort — a non-approvable
 	// source simply surfaces as a sync diagnostic below).
 	if result.Source != "" {
-		if ep, err := transport.Endpoint(result.Source); err == nil {
-			_ = trust.NewStore(env.TrustPath()).Add(ep)
+		store := trust.NewStore(env.TrustPath())
+		approve := func(raw string) {
+			if ep, err := transport.Endpoint(raw); err == nil {
+				_ = store.Add(ep)
+			}
+		}
+		approve(result.Source)
+		// A local add records its lock URL as the canonical file:// form, which is
+		// what the render's trust gate checks — but result.Source is the bare path,
+		// whose endpoint differs. Approve the file:// form too so the post-add
+		// render of a local source is not falsely refused.
+		if filepath.IsAbs(result.Source) {
+			approve("file://" + result.Source)
 		}
 	}
 
-	syncRes, syncErr := sync.Run(env, sync.Options{TrustRequested: trustRequested, Trace: tr})
+	// Scope the post-add render to exactly the skills this add wrote, and force
+	// --locked. Scoping means an unrelated pre-existing skill that is broken
+	// upstream (e.g. one renamed away, mid-remediation) does NOT fail this add —
+	// only a just-added skill failing to render does (H1). Locked means the render
+	// never floats or rewrites the lock, so two concurrent adds cannot race on the
+	// lock write outside the add file-lock (H2). A local add renders authored
+	// copies the same way.
+	added := make([]string, 0, len(result.Added))
+	for _, a := range result.Added {
+		added = append(added, a.Name)
+	}
+	syncRes, syncErr := sync.Run(env, sync.Options{
+		Targets:        added,
+		Locked:         true,
+		TrustRequested: trustRequested,
+		Trace:          tr,
+	})
 	if syncRes != nil {
 		for _, w := range syncRes.Warnings {
 			fmt.Fprintf(cmd.ErrOrStderr(), "sync warning: %s\n", w)
@@ -136,10 +171,15 @@ func runPostAddSync(cmd *cobra.Command, env skill.Env, result add.Result, trustR
 		for _, e := range syncRes.Errors {
 			fmt.Fprintf(cmd.ErrOrStderr(), "sync error: %s\n", e)
 		}
+		if len(syncRes.Errors) > 0 {
+			failed = true
+		}
 	}
 	if syncErr != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "sync error: %s\n", syncErr)
+		failed = true
 	}
+	return failed
 }
 
 // formatAddText writes human-readable add output to stdout.

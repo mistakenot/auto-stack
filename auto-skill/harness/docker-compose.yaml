@@ -18,6 +18,10 @@ services:
       context: ../..
       dockerfile: auto-skill/harness/Dockerfile.sut
     hostname: sut
+    # PID 1 (sleep infinity) does not reap children, so every git subprocess the
+    # SUT spawns leaks as a zombie (73+ observed under load). `init: true` runs
+    # tini as PID 1 to reap them.
+    init: true
     depends_on:
       git-server:
         condition: service_healthy

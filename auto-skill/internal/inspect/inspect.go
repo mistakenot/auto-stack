@@ -92,6 +92,13 @@ func Inspect(env skill.Env, filter Filter) ([]SkillView, []string, error) {
 // replacements). An authored skill describes with origin local and no
 // source/commit. An unknown name is a hard error carrying a remediation hint.
 func Describe(env skill.Env, name string) (Provenance, error) {
+	// Validate the name against the skill-name schema up front — the same gate
+	// `get` and `remove` apply — so `describe` rejects an invalid id (path
+	// separators, mixed case, empty) with a clear error instead of a misleading
+	// "unknown skill" (M7).
+	if err := skill.ValidateSkillName(name); err != nil {
+		return Provenance{}, err
+	}
 	authored, _, err := skill.List(env)
 	if err != nil {
 		return Provenance{}, err

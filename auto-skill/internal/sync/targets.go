@@ -69,6 +69,21 @@ func OnDiskDigest(dir string) (digest string, exists bool, err error) {
 	return onDiskDigest(dir)
 }
 
+// guardTargetsWithinRoot fails the sync if any resolved target directory lies
+// outside the project root. It is the render-time enforcement of the H3
+// path-traversal defense: even a hand-edited skills.yaml that slips past
+// skill.ValidateSkillsYAML can never make the engine write outside root.
+func guardTargetsWithinRoot(env skill.Env, targets []Target) error {
+	root := filepath.Clean(env.Root)
+	for _, t := range targets {
+		rel, err := filepath.Rel(root, filepath.Clean(t.Dir))
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			return fmt.Errorf("refusing to render: target %q resolves to %q, outside the project root %q — remove the \"..\" or absolute path from skills.yaml targets", t.Name, t.Dir, root)
+		}
+	}
+	return nil
+}
+
 // targetDir maps a target style name to its skills directory under root. The two
 // canonical styles are "claude" → .claude/skills and "agents" → .agents/skills;
 // a bare token maps to `.<name>/skills` (a leading dot is tolerated so ".codex"

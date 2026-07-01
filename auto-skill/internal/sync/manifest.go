@@ -112,6 +112,62 @@ func mergeScopedManifest(old, fresh *skill.Manifest, scope map[string]bool) *ski
 	return fresh
 }
 
+// intendedNames is the set of skill names sync still intends to manage this run:
+// every planned (locked) skill plus every gathered source (authored or vendored).
+// A skill missing from both was removed from the lock/authored source and is NOT
+// intended, so mergeFailedRenders will let its stale targets be pruned.
+func intendedNames(plan *Plan, sources []*skillSource) map[string]bool {
+	out := map[string]bool{}
+	if plan != nil {
+		for i := range plan.Skills {
+			out[plan.Skills[i].Name] = true
+		}
+	}
+	for _, s := range sources {
+		out[s.name] = true
+	}
+	return out
+}
+
+// mergeFailedRenders carries forward the prior manifest ownership of any intended
+// skill that did NOT stage this run (freshly built manifest omits it because it
+// failed to render/fetch). It mirrors mergeScopedManifest but keys on
+// intended-membership rather than a --target scope: an intended-but-unstaged
+// skill keeps its previous entry (skills + per-target managed row) so its
+// on-disk targets stay classified as managed, never foreign. A skill absent from
+// `intended` is left dropped so a genuine removal still prunes.
+func mergeFailedRenders(old, fresh *skill.Manifest, intended map[string]bool) *skill.Manifest {
+	if old == nil {
+		return fresh
+	}
+	for name, ms := range old.Skills {
+		if !intended[name] {
+			continue
+		}
+		if _, ok := fresh.Skills[name]; ok {
+			continue
+		}
+		fresh.Skills[name] = ms
+	}
+	for tname, ot := range old.Targets {
+		ft, ok := fresh.Targets[tname]
+		if !ok || ft.ManagedSkills == nil {
+			ft = skill.ManifestTarget{ManagedSkills: map[string]string{}}
+		}
+		for name, ver := range ot.ManagedSkills {
+			if !intended[name] {
+				continue
+			}
+			if _, ok := ft.ManagedSkills[name]; ok {
+				continue
+			}
+			ft.ManagedSkills[name] = ver
+		}
+		fresh.Targets[tname] = ft
+	}
+	return fresh
+}
+
 // joinValidation renders validation errors into a single remediation string.
 func joinValidation(errs []config.ValidationError) string {
 	msgs := make([]string, len(errs))

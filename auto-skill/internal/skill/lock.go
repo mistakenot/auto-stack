@@ -3,6 +3,7 @@ package skill
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -31,7 +32,13 @@ type LockEntry struct {
 }
 
 // ParseLock strictly decodes lock.json, rejecting unknown keys (including any
-// derived render fields, which belong in manifest.json).
+// derived render fields, which belong in manifest.json). It also rejects
+// structurally-invalid skill keys at parse time — an empty name, a name failing
+// the canonical `^[a-z0-9]+(-[a-z0-9]+)*$` regex (path separators, mixed case),
+// or two keys that differ only in case — so a hand-edited or merge-corrupted lock
+// can never reach the sync engine and crash it with a raw `rename ... invalid
+// argument` (M8) or silently overwrite one target with another on a
+// case-insensitive filesystem (H4).
 func ParseLock(data []byte) (*Lock, error) {
 	var lock Lock
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -39,7 +46,31 @@ func ParseLock(data []byte) (*Lock, error) {
 	if err := dec.Decode(&lock); err != nil {
 		return nil, err
 	}
+	if err := validateLockSkillKeys(lock.Skills); err != nil {
+		return nil, err
+	}
 	return &lock, nil
+}
+
+// validateLockSkillKeys enforces skill-name integrity on the raw lock keys before
+// any command uses them: each key must be a valid skill name, and no two keys may
+// collide when lowercased.
+func validateLockSkillKeys(skills map[string]LockEntry) error {
+	seen := make(map[string]string, len(skills))
+	for name := range skills {
+		if name == "" {
+			return errors.New("lock.json has a skill with an empty name; remove or rename the entry")
+		}
+		if !skillNameRE.MatchString(name) {
+			return fmt.Errorf("lock.json skill key %q must match %s; rename it to lowercase kebab-case", name, skillNameRE.String())
+		}
+		lower := strings.ToLower(name)
+		if prev, ok := seen[lower]; ok {
+			return fmt.Errorf("lock.json has skill keys %q and %q that differ only in case; keep one", prev, name)
+		}
+		seen[lower] = name
+	}
+	return nil
 }
 
 // ValidateLock checks structural rules and credential-free URLs. It does not
