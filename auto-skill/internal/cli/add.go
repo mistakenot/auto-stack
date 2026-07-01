@@ -91,8 +91,23 @@ func newAddCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Comman
 			// than reporting success — otherwise callers (and CI) treat a partial,
 			// corrupt add as clean and cascade into foreign-target conflicts on the
 			// next sync (H1).
+			//
+			// The sync runs under the same lock.json file lock that the add's
+			// config write uses, so two concurrent adds fully serialize: add A's
+			// sync finishes and writes its manifest before add B's sync reads it.
+			// Without this, each sync reads the same stale manifest and the last
+			// writer drops the other's skill from ownership (H2 manifest race).
 			if !noSync && !list {
-				if syncFailed := runPostAddSync(cmd, env, result, trustRequested, tr); syncFailed {
+				var syncFailed bool
+				lockErr := skill.WithFileLock(env.LockPath(), func() error {
+					syncFailed = runPostAddSync(cmd, env, result, trustRequested, tr)
+					return nil
+				})
+				if lockErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "sync lock error: %s\n", lockErr)
+					return &ExitError{Code: 1}
+				}
+				if syncFailed {
 					return &ExitError{Code: 1}
 				}
 			}
