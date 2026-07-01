@@ -27,8 +27,9 @@ if [ ! -f "$BARE_PATH/HEAD" ]; then
     git push origin HEAD:main
     rm -rf "$WORK"
 
-    # Enable smart HTTP serving
-    git -C "$BARE_PATH" config http.receivepack true
+    # Serve read-only smart HTTP. receivepack stays OFF so the SUT (which has no
+    # auth) cannot push to and mutate the shared fixture repo between tests (M18).
+    git -C "$BARE_PATH" config http.receivepack false
     cp "$BARE_PATH/hooks/post-update.sample" "$BARE_PATH/hooks/post-update" 2>/dev/null || true
     chmod +x "$BARE_PATH/hooks/post-update" 2>/dev/null || true
     cd "$BARE_PATH" && git update-server-info

@@ -21,6 +21,7 @@ func newSyncCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Comma
 		targets    []string
 		jobs       int
 		textOutput bool
+		force      bool
 	)
 
 	cmd := &cobra.Command{
@@ -51,6 +52,7 @@ func newSyncCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Comma
 				NoUpdate: noUpdate,
 				Targets:  targets,
 				Jobs:     jobs,
+				Force:    force,
 				Trace:    resolveTrace(cmd),
 				// AutoUpdate (float-then-render) is driven by skills.yaml's
 				// auto_update (default true, written by `init`); the engine ORs
@@ -112,6 +114,7 @@ func newSyncCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Comma
 	cmd.Flags().StringArrayVar(&targets, "target", nil, "restrict to these skill names (repeatable; implies --locked)")
 	cmd.Flags().IntVar(&jobs, "jobs", sync.DefaultJobs, "fetch + render worker-pool size")
 	cmd.Flags().BoolVar(&textOutput, "text", false, "emit a human-readable summary instead of JSON")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite foreign target dirs and proceed even when a missing/empty lock would prune every target")
 
 	return cmd
 }

@@ -11,6 +11,8 @@ package sync
 
 import (
 	"fmt"
+	"os"
+	"strings"
 	stdsync "sync"
 
 	"github.com/mistakenot/auto-skill/internal/ownership"
@@ -189,6 +191,18 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 		Check:        opts.Check,
 		Locked:       opts.Locked,
 		ScopedSkills: append([]string(nil), opts.Targets...),
+	}
+
+	// Lock-deletion guard (H5): a project-wide `sync --locked` with a missing or
+	// empty lock but a populated manifest would prune every rendered target — a
+	// silent, destructive outcome for the common "lock lost to a merge conflict"
+	// case. Refuse unless --force. (A scoped --target run only touches its named
+	// skills, so it is exempt; --check writes nothing.)
+	if opts.Locked && !opts.Check && !opts.Force && len(opts.Targets) == 0 {
+		if gErr := guardLockedPrune(env); gErr != nil {
+			trace.Logf(tr, "sync locked prune guard tripped: %v", gErr)
+			return result, gErr
+		}
 	}
 
 	// Startup recovery. Under --check (offline, writes nothing) we never run the
@@ -373,6 +387,50 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 	result.LockRewritten = out.LockRewritten
 	result.ReceiptsPath = out.ReceiptsPath
 	return result, nil
+}
+
+// guardLockedPrune returns a non-nil error when a project-wide `sync --locked`
+// would destructively prune targets because the lock was lost. The lost-lock
+// signature is: the lock is missing or empty (so it pins nothing), yet skills.yaml
+// still declares vendored skills that are neither authored nor locked — exactly
+// the stale-skill-refs CheckStaleSkillRefs reports. Those are pins the deleted
+// lock used to hold, and a --locked prune would delete their still-wanted targets.
+//
+// It deliberately does NOT trip for the benign cases that also leave an empty
+// lock: an authored-only project (its skills live under ./skills, so they are not
+// stale) or a `remove` that dropped the entry from skills.yaml too (no longer
+// declared). A corrupt lock or a genuine read error is left to the normal
+// pipeline to surface precisely.
+func guardLockedPrune(env skill.Env) error {
+	lockEmpty := false
+	data, err := env.LoadLockFile()
+	switch {
+	case err != nil:
+		if !os.IsNotExist(err) {
+			return nil // real read error → let the normal path report it
+		}
+		lockEmpty = true
+	default:
+		lock, perr := skill.ParseLock(data)
+		if perr != nil {
+			return nil //nolint:nilerr // intentional: a corrupt lock is reported precisely by the normal pipeline, not this guard
+		}
+		lockEmpty = len(lock.Skills) == 0
+	}
+	if !lockEmpty {
+		return nil
+	}
+	stale, serr := skill.CheckStaleSkillRefs(env)
+	if serr != nil || len(stale) == 0 {
+		return nil //nolint:nilerr // intentional: an unreadable skills.yaml means we cannot prove a lost lock, so do not block
+	}
+	names := make([]string, 0, len(stale))
+	for _, d := range stale {
+		names = append(names, d.Field)
+	}
+	return fmt.Errorf(
+		"refusing to sync --locked: lock.json is missing or empty but skills.yaml still declares %d vendored skill(s) it no longer pins (%s); this would prune their rendered targets. Restore the lock (e.g. `git checkout .auto/skills/lock.json`) or pass --force to proceed",
+		len(stale), strings.Join(names, ", "))
 }
 
 func modeString(check bool) string {

@@ -246,100 +246,113 @@ func Run(env skill.Env, opts Options) (Result, error) {
 	}
 
 	// 8. Write lock + skills.yaml stubs.
-	done = trace.Spanf(tr, "add load lock")
-	lock, err := loadOrCreateLock(env)
-	if err != nil {
-		done("error=%v", err)
-		return Result{Source: src.URL}, err
-	}
-	done("entries=%d", len(lock.Skills))
-
-	var added []AddedSkill
-	for _, d := range selected {
-		name := effectiveName(d, opts.As, len(selected))
-
-		// Validate final name.
-		if err := skill.ValidateSkillName(name); err != nil {
-			return Result{Source: src.URL}, &AddError{
-				Code:    CodeInvalidSkillName,
-				Message: fmt.Sprintf("skill %q has invalid name; use --as to provide a valid name: %s", d.Name, err),
-			}
-		}
-
-		// Check collision from different source.
-		if existing, ok := lock.Skills[name]; ok {
-			if existing.URL != src.URL {
-				return Result{Source: src.URL}, &AddError{
-					Code:    CodeNameCollision,
-					Message: fmt.Sprintf("skill %q already exists from %s; use --as to rename", name, existing.URL),
-				}
-			}
-		}
-
-		entrySubpath := d.Subpath
-		if subpath != "" && entrySubpath != "." {
-			entrySubpath = subpath + "/" + entrySubpath
-		} else if subpath != "" {
-			entrySubpath = subpath
-		}
-
-		lock.Skills[name] = skill.LockEntry{
-			Source:      src.URL,
-			URL:         src.URL,
-			VersionSpec: versionSpec,
-			Ref:         sha,
-			Commit:      sha,
-			Subpath:     entrySubpath,
-			State:       "resolved",
-		}
-
-		// Write skills.yaml stub — preserve existing replacements.
-		if _, exists := syaml.Skills[name]; !exists {
-			if syaml.Skills == nil {
-				syaml.Skills = make(map[string]skill.SkillConfig)
-			}
-			syaml.Skills[name] = skill.SkillConfig{
-				Version: versionSpec,
-			}
-		}
-
-		added = append(added, AddedSkill{
-			Name:        name,
-			Subpath:     entrySubpath,
-			Commit:      sha,
-			VersionSpec: versionSpec,
-		})
-	}
-
-	// Validate before writing.
-	if lockErrs := skill.ValidateLock(lock); len(lockErrs) > 0 {
-		return Result{Source: src.URL}, &config.ValidationErrorsError{
-			Path:   env.LockPath(),
-			Errors: lockErrs,
-		}
-	}
-	if yamlErrs := skill.ValidateSkillsYAML(syaml); len(yamlErrs) > 0 {
-		return Result{Source: src.URL}, &config.ValidationErrorsError{
-			Path:   env.SkillsYAMLPath(),
-			Errors: yamlErrs,
-		}
-	}
-	trace.Logf(tr, "add validation passed lock_entries=%d skills_yaml=%d", len(lock.Skills), len(syaml.Skills))
-
-	// Ensure config dir exists.
+	//
+	// The load→mutate→write of lock.json + skills.yaml runs under an exclusive
+	// file lock so two concurrent `add` runs cannot each read the same base and
+	// clobber the other's entry (H2 TOCTOU). Both files are (re)loaded INSIDE the
+	// lock so we mutate the latest committed state, not the stale snapshot from
+	// before the network round-trips above.
 	done = trace.Spanf(tr, "add write config")
 	if err := os.MkdirAll(env.SkillsConfigDir(), 0o755); err != nil {
 		done("error=%v", err)
 		return Result{Source: src.URL}, fmt.Errorf("create config dir: %w", err)
 	}
 
-	if err := config.WriteJSONFileAtomic(env.LockPath(), lock); err != nil {
-		done("error=%v", err)
-		return Result{Source: src.URL}, fmt.Errorf("write lock: %w", err)
-	}
-	if err := writeSkillsYAML(env.SkillsYAMLPath(), syaml); err != nil {
-		done("error=%v", err)
-		return Result{Source: src.URL}, fmt.Errorf("write skills.yaml: %w", err)
+	var added []AddedSkill
+	writeErr := skill.WithFileLock(env.LockPath(), func() error {
+		lock, err := loadOrCreateLock(env)
+		if err != nil {
+			return err
+		}
+		lockedSyaml, err := loadOrCreateSkillsYAML(env)
+		if err != nil {
+			return err
+		}
+		trace.Logf(tr, "add locked load lock_entries=%d skills_yaml=%d", len(lock.Skills), len(lockedSyaml.Skills))
+
+		added = added[:0]
+		for _, d := range selected {
+			name := effectiveName(d, opts.As, len(selected))
+
+			// Validate final name.
+			if err := skill.ValidateSkillName(name); err != nil {
+				return &AddError{
+					Code:    CodeInvalidSkillName,
+					Message: fmt.Sprintf("skill %q has invalid name; use --as to provide a valid name: %s", d.Name, err),
+				}
+			}
+
+			// Check collision from different source.
+			if existing, ok := lock.Skills[name]; ok {
+				if existing.URL != src.URL {
+					return &AddError{
+						Code:    CodeNameCollision,
+						Message: fmt.Sprintf("skill %q already exists from %s; use --as to rename", name, existing.URL),
+					}
+				}
+			}
+
+			entrySubpath := d.Subpath
+			if subpath != "" && entrySubpath != "." {
+				entrySubpath = subpath + "/" + entrySubpath
+			} else if subpath != "" {
+				entrySubpath = subpath
+			}
+
+			lock.Skills[name] = skill.LockEntry{
+				Source:      src.URL,
+				URL:         src.URL,
+				VersionSpec: versionSpec,
+				Ref:         sha,
+				Commit:      sha,
+				Subpath:     entrySubpath,
+				State:       "resolved",
+			}
+
+			// Write skills.yaml stub — preserve existing replacements.
+			if _, exists := lockedSyaml.Skills[name]; !exists {
+				if lockedSyaml.Skills == nil {
+					lockedSyaml.Skills = make(map[string]skill.SkillConfig)
+				}
+				lockedSyaml.Skills[name] = skill.SkillConfig{
+					Version: versionSpec,
+				}
+			}
+
+			added = append(added, AddedSkill{
+				Name:        name,
+				Subpath:     entrySubpath,
+				Commit:      sha,
+				VersionSpec: versionSpec,
+			})
+		}
+
+		// Validate before writing.
+		if lockErrs := skill.ValidateLock(lock); len(lockErrs) > 0 {
+			return &config.ValidationErrorsError{
+				Path:   env.LockPath(),
+				Errors: lockErrs,
+			}
+		}
+		if yamlErrs := skill.ValidateSkillsYAML(lockedSyaml); len(yamlErrs) > 0 {
+			return &config.ValidationErrorsError{
+				Path:   env.SkillsYAMLPath(),
+				Errors: yamlErrs,
+			}
+		}
+		trace.Logf(tr, "add validation passed lock_entries=%d skills_yaml=%d", len(lock.Skills), len(lockedSyaml.Skills))
+
+		if err := config.WriteJSONFileAtomic(env.LockPath(), lock); err != nil {
+			return fmt.Errorf("write lock: %w", err)
+		}
+		if err := writeSkillsYAML(env.SkillsYAMLPath(), lockedSyaml); err != nil {
+			return fmt.Errorf("write skills.yaml: %w", err)
+		}
+		return nil
+	})
+	if writeErr != nil {
+		done("error=%v", writeErr)
+		return Result{Source: src.URL}, writeErr
 	}
 	done("added=%d", len(added))
 

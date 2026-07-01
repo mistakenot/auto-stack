@@ -835,6 +835,72 @@ func TestTrustAddRejectsUnsupportedScheme(t *testing.T) {
 	}
 }
 
+// TestTrustAddRejectsNonTransportSchemes covers M5/M6: only https:// and file://
+// may be trusted; ssh://, git://, wildcards, and empty hosts are rejected before
+// they pollute the store.
+func TestTrustAddRejectsNonTransportSchemes(t *testing.T) {
+	for _, ep := range []string{
+		"ssh://git@github.com/owner/repo",
+		"git://github.com/owner/repo",
+		"*",
+		"https://*",
+		"https://",
+		"https://https://github.com/owner/repo",
+	} {
+		t.Run(ep, func(t *testing.T) {
+			root := t.TempDir()
+			_, _, code := runCLI(t, "--root", root, "trust", "add", ep)
+			if code == 0 {
+				t.Fatalf("expected non-zero exit for junk endpoint %q", ep)
+			}
+			// The store must stay empty — nothing junk was persisted.
+			out, _, _ := runCLI(t, "--root", root, "trust", "list", "--text")
+			if strings.Contains(out, ep) {
+				t.Fatalf("junk endpoint %q leaked into the store: %s", ep, out)
+			}
+		})
+	}
+}
+
+// TestTrustAddAcceptsHTTPSAndFile confirms the two supported fetch transports are
+// still accepted.
+func TestTrustAddAcceptsHTTPSAndFile(t *testing.T) {
+	for _, ep := range []string{"https://github.com/owner/repo", "file:///tmp/local-skills"} {
+		t.Run(ep, func(t *testing.T) {
+			root := t.TempDir()
+			if _, stderr, code := runCLI(t, "--root", root, "trust", "add", ep); code != 0 {
+				t.Fatalf("expected %q to be accepted, code=%d stderr=%s", ep, code, stderr)
+			}
+		})
+	}
+}
+
+// TestDescribeRejectsInvalidName covers M7: describe applies the same name schema
+// as get/remove instead of returning a misleading "unknown skill".
+func TestDescribeRejectsInvalidName(t *testing.T) {
+	root := t.TempDir()
+	_, stderr, code := runCLI(t, "--root", root, "describe", "../etc/passwd")
+	if code == 0 {
+		t.Fatal("expected non-zero exit for an invalid skill name")
+	}
+	if !strings.Contains(stderr, "invalid skill name") {
+		t.Fatalf("expected invalid-name error, got: %s", stderr)
+	}
+}
+
+// TestUpdateUnknownSkillExitsNonZero covers M14: a named update of a skill that
+// does not exist must fail rather than silently reporting success.
+func TestUpdateUnknownSkillExitsNonZero(t *testing.T) {
+	root := t.TempDir()
+	_, stderr, code := runCLI(t, "--root", root, "update", "does-not-exist")
+	if code == 0 {
+		t.Fatal("expected non-zero exit for unknown skill name")
+	}
+	if !strings.Contains(stderr, "unknown skill") {
+		t.Fatalf("expected unknown-skill error, got: %s", stderr)
+	}
+}
+
 func TestCacheListEmpty(t *testing.T) {
 	root := t.TempDir()
 	stdout, _, code := runCLI(t, "--root", root, "cache", "list")

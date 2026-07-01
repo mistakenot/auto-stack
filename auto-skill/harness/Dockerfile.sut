@@ -10,7 +10,8 @@ FROM alpine:3.21
 
 RUN apk add --no-cache git bash && \
     git config --global user.email "test@harness.local" && \
-    git config --global user.name "Harness Test"
+    git config --global user.name "Harness Test" && \
+    git config --global init.defaultBranch main
 
 COPY --from=builder /usr/local/bin/auto /usr/local/bin/auto
 

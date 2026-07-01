@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/mistakenot/auto-skill/internal/skill"
 	"github.com/mistakenot/auto-skill/internal/sync"
@@ -41,6 +42,28 @@ func newUpdateCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Com
 			env, err := resolveEnv()
 			if err != nil {
 				return &ExitError{Code: 1, Err: err}
+			}
+
+			// A named update must target skills that actually exist (in the lock
+			// or authored). Otherwise the scoped sync silently no-ops and reports
+			// success, misleading the caller into thinking the skill was updated
+			// (M14). Validate membership before running.
+			if len(args) > 0 {
+				desired, derr := sync.DesiredSet(env)
+				if derr != nil {
+					return &ExitError{Code: 1, Err: derr}
+				}
+				var missing []string
+				for _, name := range args {
+					if !desired[name] {
+						missing = append(missing, name)
+					}
+				}
+				if len(missing) > 0 {
+					return &ExitError{Code: 1, Err: fmt.Errorf(
+						"unknown skill(s): %s; run `auto skill list` to see managed skills",
+						strings.Join(missing, ", "))}
+				}
 			}
 
 			// Route through the native sync engine's apply path: AutoUpdate floats

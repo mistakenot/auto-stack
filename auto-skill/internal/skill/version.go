@@ -22,6 +22,7 @@ const (
 	CodeInvalidHash        = "invalid_hash"
 	CodeUnknownSkillRef    = "unknown_skill_ref"
 	CodeDuplicateValue     = "duplicate_value"
+	CodeInvalidTarget      = "invalid_target"
 )
 
 var commitHexRE = regexp.MustCompile(`^[0-9a-f]{7,40}$`)

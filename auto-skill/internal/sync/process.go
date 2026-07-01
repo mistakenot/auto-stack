@@ -101,6 +101,14 @@ func Process(env skill.Env, plan *Plan, fetch *FetchResult, opts Options) (*Proc
 	}
 	done("skills=%d", len(syaml.Skills))
 	targets := resolveTargets(env, syaml)
+	// Hard guard: refuse to render into any target that escapes the project root
+	// (absolute or ".."-traversing). ValidateSkillsYAML rejects these too, but the
+	// sync engine must never write outside root even if a hand-edited skills.yaml
+	// bypasses that check — this is the arbitrary-write defense (H3).
+	if terr := guardTargetsWithinRoot(env, targets); terr != nil {
+		done("error=%v", terr)
+		return nil, terr
+	}
 	oldManifest := loadManifestBestEffort(env)
 	oldManifestSkills := 0
 	if oldManifest != nil {
@@ -202,6 +210,23 @@ func Process(env skill.Env, plan *Plan, fetch *FetchResult, opts Options) (*Proc
 			return result, fmt.Errorf("merged manifest validation failed: %s", joinValidation(vErrs))
 		}
 		trace.Logf(tr, "sync merged scoped manifest preserved_scope=%d skills=%d", len(scope), len(manifest.Skills))
+	} else if oldManifest != nil {
+		// Full (non-scoped) run: a skill that FAILED to materialize this run
+		// (render error, failed fetch, missing commit) but is still declared —
+		// present in the lock plan or authored — must keep its prior manifest
+		// ownership. Otherwise its already-rendered target dirs drop out of the
+		// managed set and the next sync reclassifies them as "foreign", wedging
+		// with a conflict error. This is the transactional-manifest fix for the
+		// foreign-target cluster (H1, H5, M1–M4): the manifest write carries a
+		// failed skill's previous entry forward rather than disowning it. A skill
+		// genuinely removed from the lock/authored source is absent from
+		// `intended`, so it still drops out and is pruned as designed.
+		intended := intendedNames(plan, sources)
+		manifest = mergeFailedRenders(oldManifest, manifest, intended)
+		if vErrs := skill.ValidateManifest(manifest); len(vErrs) > 0 {
+			return result, fmt.Errorf("carried-forward manifest validation failed: %s", joinValidation(vErrs))
+		}
+		trace.Logf(tr, "sync carried forward failed-render manifest intended=%d skills=%d", len(intended), len(manifest.Skills))
 	}
 	result.Manifest = manifest
 	return result, nil

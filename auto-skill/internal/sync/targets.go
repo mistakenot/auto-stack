@@ -69,6 +69,56 @@ func OnDiskDigest(dir string) (digest string, exists bool, err error) {
 	return onDiskDigest(dir)
 }
 
+// guardTargetsWithinRoot fails the sync if any resolved target directory lies
+// outside the project root. It is the render-time enforcement of the H3
+// path-traversal defense: even a hand-edited skills.yaml that slips past
+// skill.ValidateSkillsYAML can never make the engine write outside root.
+//
+// The check resolves symlinks in both root and each target's ancestor chain
+// so an in-project symlink (e.g. .claude -> /tmp/escape) cannot bypass the
+// lexical containment check while MkdirAll follows it to an external path.
+func guardTargetsWithinRoot(env skill.Env, targets []Target) error {
+	root, err := resolveExistingPrefix(env.Root)
+	if err != nil {
+		return fmt.Errorf("resolve project root: %w", err)
+	}
+	for _, t := range targets {
+		resolved, err := resolveExistingPrefix(t.Dir)
+		if err != nil {
+			return fmt.Errorf("resolve target %q: %w", t.Name, err)
+		}
+		rel, err := filepath.Rel(root, resolved)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			return fmt.Errorf("refusing to render: target %q resolves to %q, outside the project root %q — remove the \"..\" or absolute path from skills.yaml targets, or check for symlinks", t.Name, resolved, root)
+		}
+	}
+	return nil
+}
+
+// resolveExistingPrefix resolves symlinks in the longest existing ancestor of
+// path and appends the non-existent tail. This handles the case where a target
+// directory doesn't exist yet (MkdirAll will create it) but an existing parent
+// is a symlink pointing outside the project root.
+func resolveExistingPrefix(path string) (string, error) {
+	cleaned := filepath.Clean(path)
+	resolved, err := filepath.EvalSymlinks(cleaned)
+	if err == nil {
+		return resolved, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", err
+	}
+	parent := filepath.Dir(cleaned)
+	if parent == cleaned {
+		return cleaned, nil
+	}
+	resolvedParent, err := resolveExistingPrefix(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolvedParent, filepath.Base(cleaned)), nil
+}
+
 // targetDir maps a target style name to its skills directory under root. The two
 // canonical styles are "claude" → .claude/skills and "agents" → .agents/skills;
 // a bare token maps to `.<name>/skills` (a leading dot is tolerated so ".codex"

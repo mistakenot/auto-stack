@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
+	"strings"
 
 	"github.com/mistakenot/auto-shared/config"
 	"gopkg.in/yaml.v3"
@@ -109,6 +112,7 @@ func ValidateSkillsYAML(cfg *SkillsYAML) []config.ValidationError {
 
 	errs = append(errs, checkDuplicates(cfg.Targets, "targets", "remove the duplicate target")...)
 	errs = append(errs, checkDuplicates(cfg.TrustedHosts, "trusted_hosts", "remove the duplicate trusted host")...)
+	errs = append(errs, validateTargets(cfg.Targets)...)
 
 	if cfg.Shared.Version != "" {
 		if ve := ValidateVersionSpec(cfg.Shared.Version); ve != nil {
@@ -141,6 +145,52 @@ func ValidateSkillsYAML(cfg *SkillsYAML) []config.ValidationError {
 	}
 
 	return errs
+}
+
+// validateTargets rejects target styles whose on-disk directory would escape the
+// project root: an absolute path, or any relative path with a ".." component.
+// Without this a crafted `targets: ["../../../tmp/escape"]` in skills.yaml makes
+// sync render skill files to an arbitrary directory (the only confirmed
+// arbitrary-write vector). Style names without a separator (e.g. "claude") are
+// always safe — they map to `.<name>/skills` — so only separator-bearing values
+// are inspected.
+func validateTargets(targets []string) []config.ValidationError {
+	var errs []config.ValidationError
+	for i, t := range targets {
+		if ve := ValidateTargetName(t); ve != nil {
+			ve.Path = fmt.Sprintf("targets[%d]", i)
+			ve.Field = "targets"
+			errs = append(errs, *ve)
+		}
+	}
+	return errs
+}
+
+// ValidateTargetName reports whether a single target style is safe to render
+// into: it must not be absolute and must not contain a ".." path component. It
+// returns nil for a safe target. Callers (skills.yaml validation and the sync
+// engine) share this so the CLI rejection and the render-time guard stay
+// identical.
+func ValidateTargetName(name string) *config.ValidationError {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return nil // an empty/whitespace target is dropped by resolveTargets
+	}
+	invalid := func(msg string) *config.ValidationError {
+		return &config.ValidationError{
+			Code:    CodeInvalidTarget,
+			Message: msg,
+			Value:   name,
+		}
+	}
+	if filepath.IsAbs(trimmed) {
+		return invalid(fmt.Sprintf("target %q must be a relative path inside the project; remove the leading %q", name, string(filepath.Separator)))
+	}
+	normalized := filepath.ToSlash(trimmed)
+	if slices.Contains(strings.Split(normalized, "/"), "..") {
+		return invalid(fmt.Sprintf("target %q must not contain a \"..\" path component (it would write outside the project root)", name))
+	}
+	return nil
 }
 
 // validateReplacements checks each named replacement (var name → value): the var
