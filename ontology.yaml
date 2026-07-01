@@ -1,0 +1,16 @@
+types:
+  CodingAgent:
+    description: An Agentic/LLM based coding tool
+    examples:
+      - Claude Code
+      - Codex
+      - OpenCode
+      - Gemini CLI
+    tags: [Entity]
+    hasMany:
+      - CodingAgentSession
+  CodingAgentSession:
+    description: A single multi-turn conversation history session between a coding tool and its user
+    aka:
+      - Session
+    tags: [Entity]
