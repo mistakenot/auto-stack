@@ -1,0 +1,22 @@
+FROM alpine:3.21
+
+RUN apk add --no-cache git git-daemon fcgiwrap nginx spawn-fcgi openssl && \
+    git config --global init.defaultBranch main && \
+    git config --global user.email "fixture@harness.local" && \
+    git config --global user.name "Fixture Setup" && \
+    mkdir -p /repos /run/nginx
+
+# Generate self-signed CA + server cert at build time
+COPY scripts/gen-certs.sh /gen-certs.sh
+RUN chmod +x /gen-certs.sh && /gen-certs.sh
+
+# nginx config for HTTPS git-http-backend
+RUN rm -f /etc/nginx/http.d/default.conf
+COPY scripts/nginx.conf /etc/nginx/http.d/git.conf
+
+COPY fixtures/ /fixtures/
+COPY scripts/init-repos.sh /init-repos.sh
+RUN chmod +x /init-repos.sh
+
+EXPOSE 443
+CMD ["/init-repos.sh"]

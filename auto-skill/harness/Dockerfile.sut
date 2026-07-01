@@ -1,0 +1,25 @@
+FROM golang:1.26-alpine AS builder
+
+RUN apk add --no-cache git
+
+WORKDIR /src
+COPY . .
+RUN cd auto-cli && go build -o /usr/local/bin/auto ./cmd/auto
+
+FROM alpine:3.21
+
+RUN apk add --no-cache git bash && \
+    git config --global user.email "test@harness.local" && \
+    git config --global user.name "Harness Test"
+
+COPY --from=builder /usr/local/bin/auto /usr/local/bin/auto
+
+RUN mkdir -p /workspace && cd /workspace && git init && \
+    git commit --allow-empty -m "init"
+
+COPY auto-skill/harness/scripts/sut-entrypoint.sh /sut-entrypoint.sh
+RUN chmod +x /sut-entrypoint.sh
+
+WORKDIR /workspace
+ENTRYPOINT ["/sut-entrypoint.sh"]
+CMD ["sleep", "infinity"]

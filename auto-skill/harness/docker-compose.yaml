@@ -1,0 +1,34 @@
+services:
+  git-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.git-server
+    hostname: git-server
+    volumes:
+      - shared-certs:/shared-certs
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate -q -O /dev/null https://127.0.0.1/repos/skills.git/info/refs"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  sut:
+    build:
+      context: ../..
+      dockerfile: auto-skill/harness/Dockerfile.sut
+    hostname: sut
+    depends_on:
+      git-server:
+        condition: service_healthy
+    volumes:
+      - shared-certs:/shared-certs:ro
+    healthcheck:
+      test: ["CMD", "auto", "skill", "--help"]
+      interval: 2s
+      timeout: 5s
+      retries: 5
+      start_period: 2s
+
+volumes:
+  shared-certs:

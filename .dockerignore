@@ -1,0 +1,12 @@
+.git
+.tmp
+**/.tmp
+bin
+dist
+.ntm
+node_modules
+.beads
+.claude/worktrees
+docs
+*.env
+*.env.*

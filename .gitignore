@@ -32,3 +32,8 @@ credentials.json
 # autoenv local runtime state
 .auto/env/.generated
 .auto/skills/.sync-journal
+
+# Python (harness)
+__pycache__/
+.venv/
+.pytest_cache/

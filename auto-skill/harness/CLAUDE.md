@@ -7,41 +7,91 @@ I'm thinking that the system under test container will, you know, to actually ta
 
 ---
 
+## V1 Status: COMPLETE
+
+The harness is built and working. Run `uv run pytest -v` to execute the test suite (6 tests, ~70s).
+
+## Architecture
+
+- **git-server**: Alpine container running nginx + fcgiwrap + git-http-backend as an HTTPS smart HTTP git server. Self-signed CA + server cert generated at build time. Seeds a bare repo with fixture skills and serves it over `https://git-server/repos/skills.git`
+- **sut** (system under test): Two-stage Dockerfile — `golang:1.26-alpine` builds the `auto` binary from the monorepo source, `alpine:3.21` runs it. Entrypoint waits for the CA cert from a shared volume before accepting commands
+- **Transport**: Real HTTPS over Docker network — exercises the full auto-skill remote code path: `transport.CanonicalizeURL()` → blobless cache clone (`--filter=blob:none`) → `Realize` (`--refetch`) → `git archive` extraction → render to targets. No shortcuts
+- **TLS trust chain**: `gen-certs.sh` creates an EC CA + server cert with SAN=DNS:git-server. The CA cert is shared via a Docker volume (`shared-certs`). The SUT entrypoint configures `git config --global http.sslCAInfo` to trust it
+- **Python DSL**: `Harness` class wraps Docker Compose lifecycle + `docker compose exec` for command execution. `Result` type with `.stdout`, `.stderr`, `.exit_code`, `.json()`, `.ok`
+
+## Usage
+
+```bash
+# Run the test suite
+cd auto-skill/harness
+uv run pytest -v
+
+# Interactive probing via CLI
+uv run harness up
+uv run harness run sut "auto skill add 'https://git-server/repos/skills.git' --skill deploy-checklist"
+uv run harness run sut "auto skill sync --text"
+uv run harness down
+
+# Import in Python
+from harness.core import Harness, GIT_REMOTE_URL
+h = Harness()
+h.up()
+h.fresh_workspace("my-test")
+h.trust_source("/workspace/my-test")
+r = h.run("sut", f"cd /workspace/my-test && auto skill add '{GIT_REMOTE_URL}' --skill deploy-checklist")
+print(r.json())
+h.down()
+```
+
+## Decisions
+
+- **HTTPS git server**: nginx + fcgiwrap + git-http-backend on Alpine. Self-signed CA with EC keys (prime256v1). This exercises the real transport layer — `CanonicalizeURL()` normalizes all remote URLs to HTTPS, so HTTPS is the only scheme that tests the full cache/clone/realize path.
+- **Build freshness**: Full `COPY . .` from monorepo root. The `.dockerignore` at the monorepo root excludes `.git`, `.tmp` (1.8GB), `bin`, `dist`, and other heavy dirs to keep the build context manageable.
+- **Python DSL scope**: CLI-first (`uv run harness up/run/down`), importable second. Same `Harness` class in both modes.
+- **Fixture skills repo**: Static fixtures in `harness/fixtures/`. Two SKILL.md files (deploy-checklist, code-review). Git-init'd into the bare repo at startup.
+- **Test runner**: pytest with session-scoped fixture for `up()`/`down()`.
+- **Trust gate**: Tests pre-approve `https://git-server` via `auto skill trust add` since the trust gate is fail-closed for non-TTY usage.
+
+## Key Files
+
+```
+harness/
+├── docker-compose.yaml          # Two services: git-server, sut
+├── Dockerfile.git-server        # nginx + fcgiwrap HTTPS git server
+├── Dockerfile.sut               # Two-stage: build auto binary, run in Alpine
+├── fixtures/skills/             # Fixture SKILL.md files seeded into the repo
+├── scripts/
+│   ├── gen-certs.sh             # EC CA + server cert generation
+│   ├── init-repos.sh            # Seed bare repo, start fcgiwrap + nginx
+│   ├── nginx.conf               # HTTPS reverse proxy to git-http-backend
+│   └── sut-entrypoint.sh        # Wait for CA cert, configure git trust
+├── src/harness/
+│   ├── core.py                  # Harness + Result classes
+│   └── cli.py                   # Click CLI (up/down/status/run/skill)
+├── tests/
+│   ├── conftest.py              # Session-scoped harness fixture
+│   └── test_add_sync.py         # 6 E2E tests covering init → add → sync
+└── pyproject.toml
+```
+
 ## Open Questions
 
-- **Git server choice**: Bare git over SSH (simplest, just sshd + bare repos), or something with HTTP like gitea/gogs? Bare SSH is less flaky and closer to real GitHub clones, but HTTP would let us test HTTPS-style remote URLs without extra cert setup.
-  - **Suggest: Bare git over SSH.** `auto skill add` already speaks `git clone` over SSH-style URLs, which is the real-world path. An alpine container with sshd + bare repos is ~5 MB, zero config, and no auth token ceremony. If we later need HTTPS we can add a second service without ripping out the first. **[HIGH confidence]** — gitea/gogs adds a web UI and database we'll never use in automated tests, and every extra moving part is a flakiness vector.
+- **Coverage targets (post-V1)**: Template rendering with `customize:` vars, `update --check` for drift detection, upstream rename handling.
+- **Parallel test isolation**: Each test creates its own workspace, but they share the SUT container. If tests need true isolation, we could add per-test workspace cleanup.
 
-- **Build freshness**: The SUT container builds from source — do we `COPY . /src && go build` on every test run, or cache a binary and rebuild only on changes? Full rebuild is honest but slow; stale binaries defeat the purpose.
-  - **Suggest: Docker layer-cached build with a two-stage Dockerfile.** `COPY go.mod go.sum` first (cacheable), then `COPY . .` + `go build`. Docker's layer cache means a no-code-change rebuild is near-instant, and any code change triggers a real build. Avoids the stale-binary trap while keeping cold starts under ~15s for incremental changes. **[HIGH confidence]** — this is the standard Go-in-Docker pattern, well understood and doesn't need custom cache invalidation logic.
+## DSL Improvement
 
-- **Python DSL scope**: Is the DSL just a thin wrapper over `docker exec` / SSH commands, or does it parse auto-skill JSON output and expose structured assertions (e.g. `harness.sync().assert_rendered("deploy-checklist")`)? The latter is more useful but more surface area to maintain.
-  - **Suggest: CLI-first, importable second.** The primary interface is a self-documenting CLI exposed via `[project.scripts]` in `pyproject.toml` (`uv run harness up`, `uv run harness run <cmd>`, `uv run harness status`, `uv run harness down`). Use click or typer with rich help strings — every subcommand explains what it does, what state it expects, and what it returns. The CLI is the main surface for both agents and humans doing ad-hoc probing. Underneath, the CLI is a thin shell over a `Harness` class with a clean public API (`up()`, `run()`, `status()`, `down()`, `run_skill()`). This class is importable from pytest or any other Python script for scripted test suites. The layering: `Harness` class (core) → CLI (primary UX) → pytest fixtures (thin wrappers that call `Harness`). This way the CLI and the library always behave identically — the CLI is just `harness.run(cmd)` with `click.echo(result.stdout)`. V1 keeps it thin: `run()` returns a `Result` with `.stdout`, `.stderr`, `.exit_code`, `.json()`. Resist domain-specific assertion methods until patterns emerge from real tests. **[HIGH confidence]** — CLI-first matches the dual-use goal (agent probing + scripted tests) and the "import the same thing the CLI uses" pattern avoids divergence between the two modes.
+Aim: make the harness more reusable, easier to maintain, easier to keep up to date when the code base changes.
 
-- **Fixture skills repo**: Do we commit a small fixture skills repo (a few SKILL.md files with `customize:` vars) into `harness/fixtures/`, or generate it dynamically per test? Static fixtures are reproducible; dynamic ones test more edge cases but are harder to debug.
-  - **Suggest: Static fixtures committed to `harness/fixtures/`.** A `fixtures/skills-repo/` directory with 2-3 SKILL.md files (one plain, one with `customize:` vars, one with file-ref replacements) gets git-init'd into the git-server container at startup. Tests that need unusual shapes (malformed SKILL.md, missing required var) can layer on a dynamic commit via the DSL. **[HIGH confidence]** — the voice transcript explicitly called out reproducibility and anti-flakiness, which static fixtures serve directly.
+Can we experiment by layering another API ontop of the CLI to add things like:
+- RenameRemoteSkill("old-name", "new-name")
+- SyncSkillsFromRemote()
 
-- **Test runner**: pytest with plain asserts, or do we want something like `testcontainers-python` to manage the lifecycle? testcontainers adds a dep but handles cleanup/health-checks well.
-  - **Suggest: pytest with plain asserts + a custom fixture, managed by uv.** A `@pytest.fixture(scope="session")` that wraps `docker compose up/down` gives us lifecycle management without pulling in testcontainers. testcontainers is designed for "spin up one container per test" which is the opposite of what we want (a stable multi-container harness shared across a suite). **[HIGH confidence]** — testcontainers' value prop (dynamic single-container-per-test) doesn't match the shared-harness architecture described in the doc.
+Each command class also contains the instructions to _assert each command individually ran ok_ between uses
+Can still drop down to just plain old SSH if you need to
 
-- **CI integration**: Can this run in GitHub Actions (docker compose inside an Actions runner), or is it local-only for now? Actions runners have docker but nested containers can be flaky.
-  - **Suggest: Local-only for the spike, CI as a fast-follow.** Get it green locally first. GitHub Actions ubuntu runners have docker compose and this isn't nested containers (it's compose on the host), so it should work without DinD. Add a `harness-e2e` workflow once the spike is stable, gated behind a path filter on `auto-skill/`. **[MEDIUM confidence]** — compose-on-Actions generally works, but build times and layer cache cold starts on Actions runners might need a pre-built SUT image pushed to GHCR, which is scope creep for a spike.
+We should use pydantic and make each command fully self describing. then in the cli, we make it easy for coding agents to both a. discover all commands with schemas and b. run commands against the harness.
 
-- **Coverage target**: V1 is add→sync from a remote. What's V2? Candidates: `update --check` detecting upstream drift, `migrate vercel` with a mock vercel lock, `lint` on rendered output, template rendering with `customize:` vars.
-  - **Suggest: V2 = template rendering with `customize:` vars + `update --check`.** Template rendering is the highest-value gap in the existing Go unit tests (they mock the git layer; this harness tests it for real). `update --check` is the natural next step after add→sync since it exercises the same remote but detects drift. `migrate vercel` and `lint` are lower priority — migrate is a one-shot command, and lint doesn't need a remote git server. **[MEDIUM confidence]** — V2 scope depends on which commands actually break in production vs. which are well-covered by unit tests; template rendering is the strongest bet but update --check's value depends on how often it regresses.
+This is how we unlock better probing / ad hoc testing experince.
 
-- **Flakiness budget**: What's the acceptable cold-start time? Docker compose + build from source could be 30-60s. Do we keep containers warm across a test suite run, or tear down between tests for isolation?
-  - **Suggest: Warm containers across the suite, fresh project dir per test.** Use pytest `session`-scoped fixture for `docker compose up` (pay the ~30s once), and a `function`-scoped fixture that creates a fresh working directory inside the SUT container per test. This gives sub-second test isolation without container churn. Full teardown only in the finalizer. For agent probe mode, add a `--keep-alive` flag that skips teardown entirely. **[HIGH confidence]** — per-test container restart would make a 10-test suite take 5+ minutes, which kills the feedback loop the doc is optimizing for.
-
-## Spike Steps
-
-1. **Bootstrap the Python project with uv** — `uv init` inside `auto-skill/harness/`, add `pytest`, `click` as dependencies. Define a `[project.scripts]` entry (`harness = "harness.cli:main"`) so `uv run harness` invokes the CLI. Verify `uv run harness --help` prints usage with descriptions for every subcommand.
-2. **Harness class (core)** — a single `Harness` class in `harness/core.py` with methods: `up()`, `down()`, `status()`, `run(container, cmd) -> Result`, `run_skill(subcmd, *args) -> Result`. `Result` has `.stdout`, `.stderr`, `.exit_code`, `.json()`. This is the importable API — everything else is a thin shell over it.
-3. **CLI shell over Harness** — `harness/cli.py` wraps each `Harness` method as a click subcommand: `uv run harness up`, `uv run harness down`, `uv run harness status`, `uv run harness run <cmd>`, `uv run harness skill <subcmd>`. Each subcommand has a rich `--help` string explaining what it does, what state it expects, and what output to expect. The CLI just calls `Harness` methods and prints the `Result`.
-4. **Minimal docker-compose.yaml** — two services: `git-server` (alpine + openssh + bare repo seeded with a fixture skill) and `sut` (golang builder image that compiles auto-skill from the monorepo source). Wire into `Harness.up()`. Verify `uv run harness up && uv run harness run sut "git clone git@git-server:/repos/skills.git"` works.
-5. **Seed script for the git server** — a shell entrypoint that inits a bare repo, commits 2-3 fixture SKILL.md files (one with `customize:` vars, one plain), and starts sshd. Health-check: `uv run harness status` reports both services healthy.
-6. **First end-to-end test (scripted)** — `tests/test_add_sync.py`, run with `uv run pytest`. Imports `Harness` directly: `h = Harness(); h.up()`, then `h.run_skill("init", "--project", "-y")`, then `h.run_skill("add", remote_url, "--skill", "fixture-skill")`, then `h.run_skill("sync")`, then assert the rendered file exists with expected content. Pytest session-scoped fixture manages `up()`/`down()` lifecycle.
-7. **First end-to-end test (CLI)** — the same test but driven entirely via `uv run harness` commands in a shell script or Makefile target, proving an agent can do ad-hoc probing without writing Python.
-8. **Structured output assertions** — extend `Result.json()` to parse JSON stdout from auto-skill commands (most default to JSON). Assert on specific fields rather than grepping strings. Works identically whether called from pytest or the CLI (`uv run harness run sut "auto skill sync" | jq .`).
-9. **Teardown & cleanup** — `Harness.down()` calls `docker compose down -v`. Pytest finalizer calls it automatically. CLI exposes `uv run harness down`. Measure cold-start time and decide if `uv run harness up --keep-alive` (skip teardown on exit) is worth adding for probe sessions.
-10. **Document dual-use patterns** — write a short section in this doc showing both modes side by side: (a) agent probing via CLI commands, (b) pytest suite importing `Harness`. Make it clear they hit the same code and produce the same `Result` objects.
+put all command classes in single file so its easy to see them all
