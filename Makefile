@@ -1,4 +1,4 @@
-.PHONY: build clean test test-race vet fmt lint dist vulncheck install \
+.PHONY: build clean test test-race vet fmt lint dist vulncheck install alloy alloy-models \
        install-hooks install-tools gen-stats check fmt-check stale-refs test-install test-curl-install \
        fixtures verify-fixtures ui-serve \
        fmt-staged lint-staged vulncheck-if-deps-changed autodoc-fix skills-check beads-sync pre-commit \
@@ -14,6 +14,10 @@ INSTALL_DIR ?= $(HOME)/.local/bin
 # All modules participate in the quality/test loops (fmt/vet/lint/vulncheck/test).
 # The single `auto` binary is built from the auto-cli umbrella module.
 PROJECTS := auto-shared auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill auto-graph auto-ui auto-config auto-artifact auto-cli
+
+# Component-owned Alloy models. Keep this ordered by intended run order.
+ALLOY_MODELS := \
+	auto-etl/alloy/session_message_conformance.als
 
 # Modules whose concurrency code must be exercised under the race detector.
 # Kept separate from `test` because -race requires CGO_ENABLED=1 + a C compiler,
@@ -128,6 +132,18 @@ check: fmt-check vet lint stale-refs
 # name (autodoc, autoetl, …) that no longer ships after the merge to `auto`.
 stale-refs:
 	./scripts/check-no-stale-binary-refs.sh
+
+# --- Formal models ---
+
+alloy: alloy-models
+
+alloy-models:
+	@for model in $(ALLOY_MODELS); do \
+		project="$${model%%/alloy/*}"; \
+		echo "=== alloy $$model ==="; \
+		(cd "$$project" && ./alloy/run.sh "$(CURDIR)/$$model") || exit 1; \
+	done
+	@echo "All Alloy models passed"
 
 # --- Test ---
 
