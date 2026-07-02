@@ -1,5 +1,6 @@
 ---
 hash: "785d01e3"
+id: "79a5dddd"
 read_when: "extending the turtle verification pipeline, deciding between SHACL/Alloy/Quint for a verification task, planning struct conformance checking, or designing constraint-to-test traceability"
 summary: "Findings from building and running the RDF/Turtle verification pipeline spike, plus the emerging design for a three-layer verification stack (structural, behavioral, traceability) covering spec-to-code conformance."
 title: "Turtle Spike Findings: Verification Toolchain for Auto-Stack"
