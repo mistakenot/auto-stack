@@ -1,7 +1,7 @@
 .PHONY: build clean test test-race vet fmt lint dist vulncheck install alloy alloy-models \
        install-hooks install-tools gen-stats check fmt-check stale-refs test-install test-curl-install \
        fixtures verify-fixtures ui-serve \
-       fmt-staged lint-staged vulncheck-if-deps-changed autodoc-fix skills-check beads-sync pre-commit \
+       fmt-staged lint-staged vulncheck-if-deps-changed autodoc-fix skills-check turtle-check beads-sync pre-commit \
        skills-sync-locked skills-update-check post-merge post-checkout pre-push
 
 BUILD_DIR := bin
@@ -352,5 +352,20 @@ beads-sync:
 # lint scoped to staged packages (full `make lint` runs in CI), then repo
 # housekeeping. We inline check's gates rather than depend on `check` so we can
 # substitute lint-staged for the full lint without affecting CI's `make check`.
-pre-commit: fmt-staged fmt-check vet lint-staged stale-refs verify-fixtures vulncheck-if-deps-changed autodoc-fix skills-check beads-sync
+# Fast, local guard for the RDF/Turtle spec pipeline. Runs only the cheap
+# stages (parse + lint) and only when turtle-spike/ .ttl files are staged and
+# the spike venv exists. SHACL validate + SPARQL tests are left to CI
+# (.github/workflows/turtle-verify.yml).
+turtle-check:
+	@staged=$$(git diff --cached --name-only --diff-filter=ACM | grep '^turtle-spike/.*\.ttl$$' || true); \
+	if [ -z "$$staged" ]; then \
+		echo "pre-commit: no staged turtle specs — turtle-check skipped"; \
+	elif [ ! -x "$(CURDIR)/turtle-spike/.venv/bin/python3" ]; then \
+		echo "pre-commit: turtle-spike/.venv missing — turtle-check skipped (run 'python3 -m venv turtle-spike/.venv && turtle-spike/.venv/bin/pip install -r turtle-spike/requirements.txt')"; \
+	else \
+		$(MAKE) -C "$(CURDIR)/turtle-spike" --no-print-directory parse lint || exit 1; \
+		echo "pre-commit: turtle parse + lint passed"; \
+	fi
+
+pre-commit: fmt-staged fmt-check vet lint-staged stale-refs verify-fixtures vulncheck-if-deps-changed autodoc-fix skills-check turtle-check beads-sync
 	@echo "pre-commit: all checks passed"

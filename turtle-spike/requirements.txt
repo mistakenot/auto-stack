@@ -1,0 +1,4 @@
+# Verification toolchain for the RDF/Turtle spec pipeline (see Makefile).
+# Pinned to the versions the spike was developed against.
+rdflib==7.6.0
+pyshacl==0.31.0
