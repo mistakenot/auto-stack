@@ -1,0 +1,13 @@
+PREFIX etl: <http://auto.dev/ontology/etl#>
+
+# Every pipeline stage except the first should be fed by another stage.
+# Returns stages with order > 1 that nothing feeds into.
+SELECT ?orphanStage ?order
+WHERE {
+    ?orphanStage a etl:PipelineStage ;
+                 etl:stageOrder ?order .
+    FILTER (?order > 1)
+    FILTER NOT EXISTS {
+        ?upstream etl:feedsInto ?orphanStage .
+    }
+}

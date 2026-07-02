@@ -1,0 +1,132 @@
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix auto: <http://auto.dev/ontology#> .
+@prefix etl:  <http://auto.dev/ontology/etl#> .
+
+# --------------------------------------------------------------------------
+# DatasetShape — every dataset must have fields, a partition, and a version
+# --------------------------------------------------------------------------
+
+etl:DatasetShape
+    a               sh:NodeShape ;
+    sh:targetClass  etl:Dataset ;
+    sh:property [
+        sh:path        etl:hasField ;
+        sh:class       etl:Field ;
+        sh:minCount    1 ;
+        sh:name        "dataset fields" ;
+    ] ;
+    sh:property [
+        sh:path        etl:partitionedBy ;
+        sh:class       etl:PartitionScheme ;
+        sh:minCount    1 ;
+        sh:maxCount    1 ;
+        sh:name        "partition scheme" ;
+    ] ;
+    sh:property [
+        sh:path        etl:schemaVersion ;
+        sh:datatype    xsd:integer ;
+        sh:minCount    1 ;
+        sh:maxCount    1 ;
+        sh:name        "schema version" ;
+    ] ;
+    sh:property [
+        sh:path        etl:outputPath ;
+        sh:datatype    xsd:string ;
+        sh:minCount    1 ;
+        sh:maxCount    1 ;
+        sh:name        "output path" ;
+    ] .
+
+# --------------------------------------------------------------------------
+# FieldShape — every field must have a name and type
+# --------------------------------------------------------------------------
+
+etl:FieldShape
+    a               sh:NodeShape ;
+    sh:targetClass  etl:Field ;
+    sh:property [
+        sh:path        etl:fieldName ;
+        sh:datatype    xsd:string ;
+        sh:minCount    1 ;
+        sh:maxCount    1 ;
+        sh:minLength   1 ;
+        sh:name        "field name" ;
+    ] ;
+    sh:property [
+        sh:path        etl:fieldType ;
+        sh:class       etl:DataType ;
+        sh:minCount    1 ;
+        sh:maxCount    1 ;
+        sh:name        "field type" ;
+    ] ;
+    sh:property [
+        sh:path        etl:isRequired ;
+        sh:datatype    xsd:boolean ;
+        sh:minCount    1 ;
+        sh:maxCount    1 ;
+        sh:name        "is required" ;
+    ] .
+
+# --------------------------------------------------------------------------
+# PipelineStageShape — every stage needs an order
+# --------------------------------------------------------------------------
+
+etl:PipelineStageShape
+    a               sh:NodeShape ;
+    sh:targetClass  etl:PipelineStage ;
+    sh:property [
+        sh:path        etl:stageOrder ;
+        sh:datatype    xsd:integer ;
+        sh:minCount    1 ;
+        sh:maxCount    1 ;
+        sh:name        "stage order" ;
+    ] .
+
+# --------------------------------------------------------------------------
+# ParserShape — every parser must declare what it parses
+# --------------------------------------------------------------------------
+
+etl:ParserShape
+    a               sh:NodeShape ;
+    sh:targetClass  etl:Parser ;
+    sh:property [
+        sh:path        etl:parses ;
+        sh:class       etl:SourceFormat ;
+        sh:minCount    1 ;
+        sh:name        "source format" ;
+    ] .
+
+# --------------------------------------------------------------------------
+# CLICommandShape — every command needs a name
+# --------------------------------------------------------------------------
+
+etl:CLICommandShape
+    a               sh:NodeShape ;
+    sh:targetClass  etl:CLICommand ;
+    sh:property [
+        sh:path        etl:commandName ;
+        sh:datatype    xsd:string ;
+        sh:minCount    1 ;
+        sh:maxCount    1 ;
+        sh:minLength   1 ;
+        sh:name        "command name" ;
+    ] .
+
+# --------------------------------------------------------------------------
+# SourceFormatShape — every format needs a name
+# --------------------------------------------------------------------------
+
+etl:SourceFormatShape
+    a               sh:NodeShape ;
+    sh:targetClass  etl:SourceFormat ;
+    sh:property [
+        sh:path        etl:formatName ;
+        sh:datatype    xsd:string ;
+        sh:minCount    1 ;
+        sh:maxCount    1 ;
+        sh:minLength   1 ;
+        sh:name        "format name" ;
+    ] .

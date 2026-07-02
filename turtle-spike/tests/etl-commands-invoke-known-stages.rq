@@ -1,0 +1,11 @@
+PREFIX etl: <http://auto.dev/ontology/etl#>
+
+# Every stage a CLI command invokes must actually be a PipelineStage.
+# Returns commands invoking non-stages.
+SELECT ?command ?target
+WHERE {
+    ?command etl:invokesStage ?target .
+    FILTER NOT EXISTS {
+        ?target a etl:PipelineStage .
+    }
+}

@@ -4,17 +4,22 @@ from pyshacl import validate
 from rdflib import Graph
 
 if len(sys.argv) < 3:
-    print("Usage: validate.py <data.ttl> <shapes.ttl>", file=sys.stderr)
+    print("Usage: validate.py <data.ttl> <shapes.ttl> [extra_data.ttl ...] [extra_shapes.ttl ...]", file=sys.stderr)
+    print("  Extra files are merged into the data or shapes graph by filename convention:", file=sys.stderr)
+    print("  files in shapes/ are treated as shapes, all others as data.", file=sys.stderr)
     sys.exit(1)
 
-data_path = sys.argv[1]
-shapes_path = sys.argv[2]
-
 data_graph = Graph()
-data_graph.parse(data_path, format="turtle")
-
 shapes_graph = Graph()
-shapes_graph.parse(shapes_path, format="turtle")
+
+data_graph.parse(sys.argv[1], format="turtle")
+shapes_graph.parse(sys.argv[2], format="turtle")
+
+for extra in sys.argv[3:]:
+    if "/shapes/" in extra or extra.startswith("shapes/"):
+        shapes_graph.parse(extra, format="turtle")
+    else:
+        data_graph.parse(extra, format="turtle")
 
 conforms, results_graph, results_text = validate(
     data_graph,

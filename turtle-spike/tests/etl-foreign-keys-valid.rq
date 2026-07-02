@@ -1,0 +1,11 @@
+PREFIX etl: <http://auto.dev/ontology/etl#>
+
+# Every field with a foreignKey must point to a field that actually exists
+# in a different dataset. Returns FK fields pointing at non-fields.
+SELECT ?field ?target
+WHERE {
+    ?field etl:foreignKey ?target .
+    FILTER NOT EXISTS {
+        ?target a etl:Field .
+    }
+}

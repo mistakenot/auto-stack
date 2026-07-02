@@ -1,0 +1,854 @@
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix auto:    <http://auto.dev/ontology#> .
+@prefix etl:     <http://auto.dev/ontology/etl#> .
+
+# ==========================================================================
+# auto-etl component spec — detailed internal structure
+#
+# Models the ETL pipeline's data entities, pipeline stages, CLI commands,
+# parsers, and the relationships between them. Imports the system-level
+# ontology for auto:Component and friends.
+# ==========================================================================
+
+# --------------------------------------------------------------------------
+# Classes
+# --------------------------------------------------------------------------
+
+etl:Dataset
+    a            owl:Class ;
+    rdfs:label   "Dataset" ;
+    rdfs:comment "A named parquet output dataset produced by the ETL pipeline." .
+
+etl:Field
+    a            owl:Class ;
+    rdfs:label   "Field" ;
+    rdfs:comment "A column in a dataset, with a name and data type." .
+
+etl:PipelineStage
+    a            owl:Class ;
+    rdfs:label   "Pipeline Stage" ;
+    rdfs:comment "A discrete phase of the ETL pipeline (discover, parse, transform, write)." .
+
+etl:Parser
+    a            owl:Class ;
+    rdfs:label   "Parser" ;
+    rdfs:comment "A format-specific parser that reads raw session files into the canonical model." .
+
+etl:SourceFormat
+    a            owl:Class ;
+    rdfs:label   "Source Format" ;
+    rdfs:comment "A raw file format that the ETL pipeline can ingest." .
+
+etl:CLICommand
+    a            owl:Class ;
+    rdfs:label   "CLI Command" ;
+    rdfs:comment "A user-facing subcommand of auto etl." .
+
+etl:DataType
+    a            owl:Class ;
+    rdfs:label   "Data Type" ;
+    rdfs:comment "The storage type of a field in the parquet schema." .
+
+etl:PartitionScheme
+    a            owl:Class ;
+    rdfs:label   "Partition Scheme" ;
+    rdfs:comment "How a dataset is partitioned on disk." .
+
+etl:MessageRole
+    a            owl:Class ;
+    rdfs:label   "Message Role" ;
+    rdfs:comment "The role of a message sender within a session." .
+
+# --------------------------------------------------------------------------
+# Properties
+# --------------------------------------------------------------------------
+
+etl:hasDataset
+    a              owl:ObjectProperty ;
+    rdfs:domain    auto:Component ;
+    rdfs:range     etl:Dataset ;
+    rdfs:label     "has dataset" .
+
+etl:hasField
+    a              owl:ObjectProperty ;
+    rdfs:domain    etl:Dataset ;
+    rdfs:range     etl:Field ;
+    rdfs:label     "has field" .
+
+etl:fieldName
+    a              owl:DatatypeProperty ;
+    rdfs:domain    etl:Field ;
+    rdfs:range     xsd:string ;
+    rdfs:label     "field name" .
+
+etl:fieldType
+    a              owl:ObjectProperty ;
+    rdfs:domain    etl:Field ;
+    rdfs:range     etl:DataType ;
+    rdfs:label     "field type" .
+
+etl:isDictEncoded
+    a              owl:DatatypeProperty ;
+    rdfs:domain    etl:Field ;
+    rdfs:range     xsd:boolean ;
+    rdfs:label     "is dictionary encoded" .
+
+etl:isRequired
+    a              owl:DatatypeProperty ;
+    rdfs:domain    etl:Field ;
+    rdfs:range     xsd:boolean ;
+    rdfs:label     "is required" .
+
+etl:hasPipelineStage
+    a              owl:ObjectProperty ;
+    rdfs:domain    auto:Component ;
+    rdfs:range     etl:PipelineStage ;
+    rdfs:label     "has pipeline stage" .
+
+etl:stageOrder
+    a              owl:DatatypeProperty ;
+    rdfs:domain    etl:PipelineStage ;
+    rdfs:range     xsd:integer ;
+    rdfs:label     "stage order" .
+
+etl:feedsInto
+    a              owl:ObjectProperty ;
+    rdfs:domain    etl:PipelineStage ;
+    rdfs:range     etl:PipelineStage ;
+    rdfs:label     "feeds into" .
+
+etl:hasParser
+    a              owl:ObjectProperty ;
+    rdfs:domain    auto:Component ;
+    rdfs:range     etl:Parser ;
+    rdfs:label     "has parser" .
+
+etl:parses
+    a              owl:ObjectProperty ;
+    rdfs:domain    etl:Parser ;
+    rdfs:range     etl:SourceFormat ;
+    rdfs:label     "parses" .
+
+etl:formatName
+    a              owl:DatatypeProperty ;
+    rdfs:domain    etl:SourceFormat ;
+    rdfs:range     xsd:string ;
+    rdfs:label     "format name" .
+
+etl:discoveryPath
+    a              owl:DatatypeProperty ;
+    rdfs:domain    etl:SourceFormat ;
+    rdfs:range     xsd:string ;
+    rdfs:label     "discovery path" .
+
+etl:hasCommand
+    a              owl:ObjectProperty ;
+    rdfs:domain    auto:Component ;
+    rdfs:range     etl:CLICommand ;
+    rdfs:label     "has command" .
+
+etl:commandName
+    a              owl:DatatypeProperty ;
+    rdfs:domain    etl:CLICommand ;
+    rdfs:range     xsd:string ;
+    rdfs:label     "command name" .
+
+etl:commandDescription
+    a              owl:DatatypeProperty ;
+    rdfs:domain    etl:CLICommand ;
+    rdfs:range     xsd:string ;
+    rdfs:label     "command description" .
+
+etl:invokesStage
+    a              owl:ObjectProperty ;
+    rdfs:domain    etl:CLICommand ;
+    rdfs:range     etl:PipelineStage ;
+    rdfs:label     "invokes stage" .
+
+etl:partitionedBy
+    a              owl:ObjectProperty ;
+    rdfs:domain    etl:Dataset ;
+    rdfs:range     etl:PartitionScheme ;
+    rdfs:label     "partitioned by" .
+
+etl:partitionGranularity
+    a              owl:DatatypeProperty ;
+    rdfs:domain    etl:PartitionScheme ;
+    rdfs:range     xsd:string ;
+    rdfs:label     "partition granularity" .
+
+etl:outputPath
+    a              owl:DatatypeProperty ;
+    rdfs:domain    etl:Dataset ;
+    rdfs:range     xsd:string ;
+    rdfs:label     "output path" .
+
+etl:schemaVersion
+    a              owl:DatatypeProperty ;
+    rdfs:domain    etl:Dataset ;
+    rdfs:range     xsd:integer ;
+    rdfs:label     "schema version" .
+
+etl:foreignKey
+    a              owl:ObjectProperty ;
+    rdfs:domain    etl:Field ;
+    rdfs:range     etl:Field ;
+    rdfs:label     "foreign key" ;
+    rdfs:comment   "This field references another field in a different dataset." .
+
+etl:validRoles
+    a              owl:ObjectProperty ;
+    rdfs:domain    etl:Field ;
+    rdfs:range     etl:MessageRole ;
+    rdfs:label     "valid roles" .
+
+# --------------------------------------------------------------------------
+# Data types
+# --------------------------------------------------------------------------
+
+etl:StringType     a etl:DataType ; rdfs:label "string" .
+etl:Int32Type      a etl:DataType ; rdfs:label "int32" .
+etl:Int64Type      a etl:DataType ; rdfs:label "int64" .
+etl:BoolType       a etl:DataType ; rdfs:label "bool" .
+
+# --------------------------------------------------------------------------
+# Message roles (controlled vocabulary)
+# --------------------------------------------------------------------------
+
+etl:RoleUser       a etl:MessageRole ; rdfs:label "user" .
+etl:RoleAssistant  a etl:MessageRole ; rdfs:label "assistant" .
+etl:RoleTool       a etl:MessageRole ; rdfs:label "tool" .
+etl:RoleSystem     a etl:MessageRole ; rdfs:label "system" .
+etl:RoleThinking   a etl:MessageRole ; rdfs:label "thinking" .
+
+# --------------------------------------------------------------------------
+# Partition schemes
+# --------------------------------------------------------------------------
+
+etl:WeeklyPartition
+    a etl:PartitionScheme ;
+    etl:partitionGranularity "week"^^xsd:string ;
+    rdfs:label "Weekly (year + ISO week)" .
+
+etl:MonthlyPartition
+    a etl:PartitionScheme ;
+    etl:partitionGranularity "month"^^xsd:string ;
+    rdfs:label "Monthly (year + month)" .
+
+# --------------------------------------------------------------------------
+# Pipeline stages
+# --------------------------------------------------------------------------
+
+etl:DiscoverStage
+    a etl:PipelineStage ;
+    rdfs:label "Discover" ;
+    etl:stageOrder 1 ;
+    etl:feedsInto etl:ParseStage ;
+    dcterms:description "Scan known paths for raw session files, identify format." .
+
+etl:ParseStage
+    a etl:PipelineStage ;
+    rdfs:label "Parse" ;
+    etl:stageOrder 2 ;
+    etl:feedsInto etl:TransformStage ;
+    dcterms:description "Read raw files using format-specific parser into ParsedSession." .
+
+etl:TransformStage
+    a etl:PipelineStage ;
+    rdfs:label "Transform" ;
+    etl:stageOrder 3 ;
+    etl:feedsInto etl:WriteStage ;
+    dcterms:description "Enrich, validate, truncate, and build transcripts." .
+
+etl:WriteStage
+    a etl:PipelineStage ;
+    rdfs:label "Write" ;
+    etl:stageOrder 4 ;
+    dcterms:description "Partition and write parquet files to output directory." .
+
+# --------------------------------------------------------------------------
+# Source formats + parsers
+# --------------------------------------------------------------------------
+
+etl:ClaudeJSONL
+    a etl:SourceFormat ;
+    etl:formatName "claude_jsonl"^^xsd:string ;
+    etl:discoveryPath "~/.claude/projects/"^^xsd:string ;
+    rdfs:label "Claude Code JSONL" .
+
+etl:CodexJSON
+    a etl:SourceFormat ;
+    etl:formatName "codex_json"^^xsd:string ;
+    rdfs:label "OpenAI Codex JSON" .
+
+etl:ClaudeParser
+    a etl:Parser ;
+    etl:parses etl:ClaudeJSONL ;
+    rdfs:label "Claude JSONL Parser" .
+
+etl:CodexParser
+    a etl:Parser ;
+    etl:parses etl:CodexJSON ;
+    rdfs:label "Codex JSON Parser" .
+
+# --------------------------------------------------------------------------
+# CLI commands
+# --------------------------------------------------------------------------
+
+etl:RunCommand
+    a etl:CLICommand ;
+    etl:commandName "run"^^xsd:string ;
+    etl:commandDescription "Full pipeline: discover → parse → transform → write."^^xsd:string ;
+    etl:invokesStage etl:DiscoverStage ,
+                     etl:ParseStage ,
+                     etl:TransformStage ,
+                     etl:WriteStage ;
+    rdfs:label "auto etl run" .
+
+etl:UpdateCommand
+    a etl:CLICommand ;
+    etl:commandName "update"^^xsd:string ;
+    etl:commandDescription "Incremental update: only transform new/changed raw files."^^xsd:string ;
+    etl:invokesStage etl:ParseStage ,
+                     etl:TransformStage ,
+                     etl:WriteStage ;
+    rdfs:label "auto etl update" .
+
+etl:ZenCommand
+    a etl:CLICommand ;
+    etl:commandName "zen"^^xsd:string ;
+    etl:commandDescription "Display ETL koan."^^xsd:string ;
+    rdfs:label "auto etl zen" .
+
+# --------------------------------------------------------------------------
+# Datasets
+# --------------------------------------------------------------------------
+
+etl:SessionsDataset
+    a etl:Dataset ;
+    rdfs:label "sessions" ;
+    etl:outputPath "~/.auto/etl/output/sessions/"^^xsd:string ;
+    etl:partitionedBy etl:MonthlyPartition ;
+    etl:schemaVersion 6 ;
+    dcterms:description "One row per coding agent session." .
+
+etl:MessagesDataset
+    a etl:Dataset ;
+    rdfs:label "messages" ;
+    etl:outputPath "~/.auto/etl/output/messages/"^^xsd:string ;
+    etl:partitionedBy etl:WeeklyPartition ;
+    etl:schemaVersion 6 ;
+    dcterms:description "One row per message within a session." .
+
+# --------------------------------------------------------------------------
+# Session dataset fields (from AgentSession struct)
+# --------------------------------------------------------------------------
+
+etl:SessionsDataset
+    etl:hasField etl:sess_id ,
+                 etl:sess_parent_session_id ,
+                 etl:sess_host_id ,
+                 etl:sess_agent ,
+                 etl:sess_subagent_name ,
+                 etl:sess_is_subagent ,
+                 etl:sess_workspace ,
+                 etl:sess_git_remote ,
+                 etl:sess_model ,
+                 etl:sess_source_path ,
+                 etl:sess_permission_mode ,
+                 etl:sess_version ,
+                 etl:sess_first_message_at ,
+                 etl:sess_last_message_at ,
+                 etl:sess_total_turn_duration_ms ,
+                 etl:sess_total_input_tokens ,
+                 etl:sess_total_output_tokens ,
+                 etl:sess_total_tokens ,
+                 etl:sess_transcript_full ,
+                 etl:sess_transcript_truncated ,
+                 etl:sess_first_user_intent ,
+                 etl:sess_first_user_intent_truncated ,
+                 etl:sess_year ,
+                 etl:sess_month ,
+                 etl:sess_schema_version .
+
+etl:sess_id
+    a etl:Field ;
+    etl:fieldName "id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "session ID" .
+
+etl:sess_parent_session_id
+    a etl:Field ;
+    etl:fieldName "parent_session_id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "parent session ID" .
+
+etl:sess_host_id
+    a etl:Field ;
+    etl:fieldName "host_id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "host ID" .
+
+etl:sess_agent
+    a etl:Field ;
+    etl:fieldName "agent"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "agent provider" .
+
+etl:sess_subagent_name
+    a etl:Field ;
+    etl:fieldName "subagent_name"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "subagent name" .
+
+etl:sess_is_subagent
+    a etl:Field ;
+    etl:fieldName "is_subagent"^^xsd:string ;
+    etl:fieldType etl:BoolType ;
+    etl:isRequired true ;
+    rdfs:label "is subagent" .
+
+etl:sess_workspace
+    a etl:Field ;
+    etl:fieldName "workspace"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "workspace path" .
+
+etl:sess_git_remote
+    a etl:Field ;
+    etl:fieldName "git_remote"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "git remote URL" .
+
+etl:sess_model
+    a etl:Field ;
+    etl:fieldName "model"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "model name" .
+
+etl:sess_source_path
+    a etl:Field ;
+    etl:fieldName "source_path"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "raw source file path" .
+
+etl:sess_permission_mode
+    a etl:Field ;
+    etl:fieldName "permission_mode"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "permission mode" .
+
+etl:sess_version
+    a etl:Field ;
+    etl:fieldName "version"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "agent version" .
+
+etl:sess_first_message_at
+    a etl:Field ;
+    etl:fieldName "first_message_at"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "first message timestamp (ms)" .
+
+etl:sess_last_message_at
+    a etl:Field ;
+    etl:fieldName "last_message_at"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "last message timestamp (ms)" .
+
+etl:sess_total_turn_duration_ms
+    a etl:Field ;
+    etl:fieldName "total_turn_duration_ms"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired false ;
+    rdfs:label "total turn duration (ms)" .
+
+etl:sess_total_input_tokens
+    a etl:Field ;
+    etl:fieldName "total_input_tokens"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired false ;
+    rdfs:label "total input tokens" .
+
+etl:sess_total_output_tokens
+    a etl:Field ;
+    etl:fieldName "total_output_tokens"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired false ;
+    rdfs:label "total output tokens" .
+
+etl:sess_total_tokens
+    a etl:Field ;
+    etl:fieldName "total_tokens"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired false ;
+    rdfs:label "total tokens" .
+
+etl:sess_transcript_full
+    a etl:Field ;
+    etl:fieldName "transcript_full"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired false ;
+    rdfs:label "full transcript" .
+
+etl:sess_transcript_truncated
+    a etl:Field ;
+    etl:fieldName "transcript_truncated"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired false ;
+    rdfs:label "truncated transcript" .
+
+etl:sess_first_user_intent
+    a etl:Field ;
+    etl:fieldName "first_user_intent"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired false ;
+    rdfs:label "first user intent" .
+
+etl:sess_first_user_intent_truncated
+    a etl:Field ;
+    etl:fieldName "first_user_intent_truncated"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired false ;
+    rdfs:label "first user intent (truncated)" .
+
+etl:sess_year
+    a etl:Field ;
+    etl:fieldName "year"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "partition year" .
+
+etl:sess_month
+    a etl:Field ;
+    etl:fieldName "month"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "partition month" .
+
+etl:sess_schema_version
+    a etl:Field ;
+    etl:fieldName "schema_version"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "schema version" .
+
+# --------------------------------------------------------------------------
+# Message dataset fields (from AgentMessage struct)
+# --------------------------------------------------------------------------
+
+etl:MessagesDataset
+    etl:hasField etl:msg_id ,
+                 etl:msg_session_id ,
+                 etl:msg_host_id ,
+                 etl:msg_index ,
+                 etl:msg_role ,
+                 etl:msg_content ,
+                 etl:msg_content_truncated ,
+                 etl:msg_timestamp ,
+                 etl:msg_tool_name ,
+                 etl:msg_tool_input ,
+                 etl:msg_tool_file_path ,
+                 etl:msg_bash_command ,
+                 etl:msg_bash_exit_code ,
+                 etl:msg_skill_name ,
+                 etl:msg_tool_use_id ,
+                 etl:msg_duration_ms ,
+                 etl:msg_interrupted ,
+                 etl:msg_input_tokens ,
+                 etl:msg_output_tokens ,
+                 etl:msg_stop_reason ,
+                 etl:msg_is_error ,
+                 etl:msg_workspace ,
+                 etl:msg_git_remote ,
+                 etl:msg_git_branch ,
+                 etl:msg_model ,
+                 etl:msg_parent_session_id ,
+                 etl:msg_is_subagent ,
+                 etl:msg_year ,
+                 etl:msg_week ,
+                 etl:msg_month ,
+                 etl:msg_schema_version .
+
+etl:msg_id
+    a etl:Field ;
+    etl:fieldName "id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "message ID" .
+
+etl:msg_session_id
+    a etl:Field ;
+    etl:fieldName "session_id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    etl:foreignKey etl:sess_id ;
+    rdfs:label "session ID (FK)" .
+
+etl:msg_host_id
+    a etl:Field ;
+    etl:fieldName "host_id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "host ID" .
+
+etl:msg_index
+    a etl:Field ;
+    etl:fieldName "index"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "message index within session" .
+
+etl:msg_role
+    a etl:Field ;
+    etl:fieldName "role"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    etl:validRoles etl:RoleUser ,
+                   etl:RoleAssistant ,
+                   etl:RoleTool ,
+                   etl:RoleSystem ,
+                   etl:RoleThinking ;
+    rdfs:label "message role" .
+
+etl:msg_content
+    a etl:Field ;
+    etl:fieldName "content"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired false ;
+    rdfs:label "message content" .
+
+etl:msg_content_truncated
+    a etl:Field ;
+    etl:fieldName "content_truncated"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired false ;
+    rdfs:label "truncated content" .
+
+etl:msg_timestamp
+    a etl:Field ;
+    etl:fieldName "timestamp"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "message timestamp (ms)" .
+
+etl:msg_tool_name
+    a etl:Field ;
+    etl:fieldName "tool_name"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "tool name" .
+
+etl:msg_tool_input
+    a etl:Field ;
+    etl:fieldName "tool_input"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired false ;
+    rdfs:label "tool input" .
+
+etl:msg_tool_file_path
+    a etl:Field ;
+    etl:fieldName "tool_file_path"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "tool file path" .
+
+etl:msg_bash_command
+    a etl:Field ;
+    etl:fieldName "bash_command"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired false ;
+    rdfs:label "bash command" .
+
+etl:msg_bash_exit_code
+    a etl:Field ;
+    etl:fieldName "bash_exit_code"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired false ;
+    rdfs:label "bash exit code" .
+
+etl:msg_skill_name
+    a etl:Field ;
+    etl:fieldName "skill_name"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "skill name" .
+
+etl:msg_tool_use_id
+    a etl:Field ;
+    etl:fieldName "tool_use_id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired false ;
+    rdfs:label "tool use ID (pairing key)" .
+
+etl:msg_duration_ms
+    a etl:Field ;
+    etl:fieldName "duration_ms"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired false ;
+    rdfs:label "tool call duration (ms)" .
+
+etl:msg_interrupted
+    a etl:Field ;
+    etl:fieldName "interrupted"^^xsd:string ;
+    etl:fieldType etl:BoolType ;
+    etl:isRequired false ;
+    rdfs:label "tool call interrupted" .
+
+etl:msg_input_tokens
+    a etl:Field ;
+    etl:fieldName "input_tokens"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired false ;
+    rdfs:label "input tokens" .
+
+etl:msg_output_tokens
+    a etl:Field ;
+    etl:fieldName "output_tokens"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired false ;
+    rdfs:label "output tokens" .
+
+etl:msg_stop_reason
+    a etl:Field ;
+    etl:fieldName "stop_reason"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "stop reason" .
+
+etl:msg_is_error
+    a etl:Field ;
+    etl:fieldName "is_error"^^xsd:string ;
+    etl:fieldType etl:BoolType ;
+    etl:isRequired false ;
+    rdfs:label "is error" .
+
+etl:msg_workspace
+    a etl:Field ;
+    etl:fieldName "workspace"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "workspace (denormalized)" .
+
+etl:msg_git_remote
+    a etl:Field ;
+    etl:fieldName "git_remote"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "git remote (denormalized)" .
+
+etl:msg_git_branch
+    a etl:Field ;
+    etl:fieldName "git_branch"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "git branch" .
+
+etl:msg_model
+    a etl:Field ;
+    etl:fieldName "model"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "model (denormalized)" .
+
+etl:msg_parent_session_id
+    a etl:Field ;
+    etl:fieldName "parent_session_id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired false ;
+    rdfs:label "parent session ID (denormalized)" .
+
+etl:msg_is_subagent
+    a etl:Field ;
+    etl:fieldName "is_subagent"^^xsd:string ;
+    etl:fieldType etl:BoolType ;
+    etl:isRequired false ;
+    rdfs:label "is subagent (denormalized)" .
+
+etl:msg_year
+    a etl:Field ;
+    etl:fieldName "year"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "partition year" .
+
+etl:msg_week
+    a etl:Field ;
+    etl:fieldName "week"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "partition week" .
+
+etl:msg_month
+    a etl:Field ;
+    etl:fieldName "month"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "partition month" .
+
+etl:msg_schema_version
+    a etl:Field ;
+    etl:fieldName "schema_version"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "schema version" .
+
+# --------------------------------------------------------------------------
+# Foreign key: msg_session_id → sess_id
+# (already declared above via etl:foreignKey)
+# --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# Wire auto-etl component to its internals
+# --------------------------------------------------------------------------
+
+auto:AutoETL
+    etl:hasDataset      etl:SessionsDataset ,
+                        etl:MessagesDataset ;
+    etl:hasPipelineStage etl:DiscoverStage ,
+                         etl:ParseStage ,
+                         etl:TransformStage ,
+                         etl:WriteStage ;
+    etl:hasParser       etl:ClaudeParser ,
+                        etl:CodexParser ;
+    etl:hasCommand      etl:RunCommand ,
+                        etl:UpdateCommand ,
+                        etl:ZenCommand .

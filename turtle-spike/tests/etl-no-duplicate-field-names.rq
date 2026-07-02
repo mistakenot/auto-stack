@@ -1,0 +1,11 @@
+PREFIX etl: <http://auto.dev/ontology/etl#>
+
+# Within a single dataset, no two fields should share the same fieldName.
+# Returns the dataset and duplicate name.
+SELECT ?dataset ?name (COUNT(?field) AS ?count)
+WHERE {
+    ?dataset etl:hasField ?field .
+    ?field etl:fieldName ?name .
+}
+GROUP BY ?dataset ?name
+HAVING (COUNT(?field) > 1)

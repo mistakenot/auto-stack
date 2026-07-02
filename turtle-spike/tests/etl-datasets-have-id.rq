@@ -1,0 +1,14 @@
+PREFIX etl: <http://auto.dev/ontology/etl#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+# Every dataset must have a field named "id" that is required.
+# Returns datasets missing a required ID field.
+SELECT ?dataset
+WHERE {
+    ?dataset a etl:Dataset .
+    FILTER NOT EXISTS {
+        ?dataset etl:hasField ?idField .
+        ?idField etl:fieldName "id"^^xsd:string ;
+                 etl:isRequired true .
+    }
+}
