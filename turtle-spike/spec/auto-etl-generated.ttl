@@ -1,0 +1,650 @@
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix auto:    <http://auto.dev/ontology#> .
+@prefix etl:     <http://auto.dev/ontology/etl#> .
+
+# ==========================================================================
+# GENERATED FILE — DO NOT EDIT BY HAND.
+#
+# Produced by tools/schema2ttl from auto-shared/model/schema.go.
+# Regenerate with: make extract
+#
+# Emits etl:Dataset + etl:Field triples derived directly from the parquet
+# struct tags on AgentSession / AgentMessage. Self-contained: re-declares the
+# etl:DataType and etl:PartitionScheme vocabulary it references so it validates
+# standalone against shapes/etl-shapes.ttl.
+# ==========================================================================
+
+# --------------------------------------------------------------------------
+# Data types (Go primitive → etl:DataType → XSD)
+# --------------------------------------------------------------------------
+
+etl:StringType
+    a          etl:DataType ;
+    rdfs:label "string" ;
+    etl:xsdType xsd:string .
+
+etl:Int32Type
+    a          etl:DataType ;
+    rdfs:label "int32" ;
+    etl:xsdType xsd:int .
+
+etl:Int64Type
+    a          etl:DataType ;
+    rdfs:label "int64" ;
+    etl:xsdType xsd:long .
+
+etl:BoolType
+    a          etl:DataType ;
+    rdfs:label "bool" ;
+    etl:xsdType xsd:boolean .
+
+
+# --------------------------------------------------------------------------
+# Partition schemes
+# --------------------------------------------------------------------------
+
+etl:MonthlyPartition
+    a etl:PartitionScheme ;
+    etl:partitionGranularity "month"^^xsd:string ;
+    rdfs:label "MonthlyPartition" .
+
+etl:WeeklyPartition
+    a etl:PartitionScheme ;
+    etl:partitionGranularity "week"^^xsd:string ;
+    rdfs:label "WeeklyPartition" .
+
+
+# --------------------------------------------------------------------------
+# sessions dataset — generated from AgentSession
+# --------------------------------------------------------------------------
+
+etl:SessionsDataset
+    a etl:Dataset ;
+    rdfs:label "sessions" ;
+    etl:outputPath "~/.auto/etl/output/sessions/"^^xsd:string ;
+    etl:partitionedBy etl:MonthlyPartition ;
+    etl:schemaVersion 6 ;
+    dcterms:description "One row per coding agent session (generated from AgentSession)." ;
+    etl:hasField etl:sess_id ,
+                 etl:sess_parent_session_id ,
+                 etl:sess_host_id ,
+                 etl:sess_agent ,
+                 etl:sess_subagent_name ,
+                 etl:sess_is_subagent ,
+                 etl:sess_workspace ,
+                 etl:sess_git_remote ,
+                 etl:sess_model ,
+                 etl:sess_source_path ,
+                 etl:sess_permission_mode ,
+                 etl:sess_version ,
+                 etl:sess_first_message_at ,
+                 etl:sess_last_message_at ,
+                 etl:sess_total_turn_duration_ms ,
+                 etl:sess_total_input_tokens ,
+                 etl:sess_total_output_tokens ,
+                 etl:sess_total_tokens ,
+                 etl:sess_total_bytes ,
+                 etl:sess_total_output_bytes ,
+                 etl:sess_total_input_bytes ,
+                 etl:sess_transcript_full ,
+                 etl:sess_transcript_truncated ,
+                 etl:sess_first_user_intent ,
+                 etl:sess_first_user_intent_truncated ,
+                 etl:sess_year ,
+                 etl:sess_month ,
+                 etl:sess_schema_version .
+
+etl:sess_id
+    a etl:Field ;
+    etl:fieldName "id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "id" .
+
+etl:sess_parent_session_id
+    a etl:Field ;
+    etl:fieldName "parent_session_id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "parent session id" .
+
+etl:sess_host_id
+    a etl:Field ;
+    etl:fieldName "host_id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "host id" .
+
+etl:sess_agent
+    a etl:Field ;
+    etl:fieldName "agent"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "agent" .
+
+etl:sess_subagent_name
+    a etl:Field ;
+    etl:fieldName "subagent_name"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "subagent name" .
+
+etl:sess_is_subagent
+    a etl:Field ;
+    etl:fieldName "is_subagent"^^xsd:string ;
+    etl:fieldType etl:BoolType ;
+    etl:isRequired true ;
+    rdfs:label "is subagent" .
+
+etl:sess_workspace
+    a etl:Field ;
+    etl:fieldName "workspace"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "workspace" .
+
+etl:sess_git_remote
+    a etl:Field ;
+    etl:fieldName "git_remote"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "git remote" .
+
+etl:sess_model
+    a etl:Field ;
+    etl:fieldName "model"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "model" .
+
+etl:sess_source_path
+    a etl:Field ;
+    etl:fieldName "source_path"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "source path" .
+
+etl:sess_permission_mode
+    a etl:Field ;
+    etl:fieldName "permission_mode"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "permission mode" .
+
+etl:sess_version
+    a etl:Field ;
+    etl:fieldName "version"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "version" .
+
+etl:sess_first_message_at
+    a etl:Field ;
+    etl:fieldName "first_message_at"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "first message at" .
+
+etl:sess_last_message_at
+    a etl:Field ;
+    etl:fieldName "last_message_at"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "last message at" .
+
+etl:sess_total_turn_duration_ms
+    a etl:Field ;
+    etl:fieldName "total_turn_duration_ms"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "total turn duration ms" .
+
+etl:sess_total_input_tokens
+    a etl:Field ;
+    etl:fieldName "total_input_tokens"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "total input tokens" .
+
+etl:sess_total_output_tokens
+    a etl:Field ;
+    etl:fieldName "total_output_tokens"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "total output tokens" .
+
+etl:sess_total_tokens
+    a etl:Field ;
+    etl:fieldName "total_tokens"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "total tokens" .
+
+etl:sess_total_bytes
+    a etl:Field ;
+    etl:fieldName "total_bytes"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "total bytes" .
+
+etl:sess_total_output_bytes
+    a etl:Field ;
+    etl:fieldName "total_output_bytes"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "total output bytes" .
+
+etl:sess_total_input_bytes
+    a etl:Field ;
+    etl:fieldName "total_input_bytes"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "total input bytes" .
+
+etl:sess_transcript_full
+    a etl:Field ;
+    etl:fieldName "transcript_full"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "transcript full" .
+
+etl:sess_transcript_truncated
+    a etl:Field ;
+    etl:fieldName "transcript_truncated"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "transcript truncated" .
+
+etl:sess_first_user_intent
+    a etl:Field ;
+    etl:fieldName "first_user_intent"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "first user intent" .
+
+etl:sess_first_user_intent_truncated
+    a etl:Field ;
+    etl:fieldName "first_user_intent_truncated"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "first user intent truncated" .
+
+etl:sess_year
+    a etl:Field ;
+    etl:fieldName "year"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "year" .
+
+etl:sess_month
+    a etl:Field ;
+    etl:fieldName "month"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "month" .
+
+etl:sess_schema_version
+    a etl:Field ;
+    etl:fieldName "schema_version"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "schema version" .
+
+
+# --------------------------------------------------------------------------
+# messages dataset — generated from AgentMessage
+# --------------------------------------------------------------------------
+
+etl:MessagesDataset
+    a etl:Dataset ;
+    rdfs:label "messages" ;
+    etl:outputPath "~/.auto/etl/output/messages/"^^xsd:string ;
+    etl:partitionedBy etl:WeeklyPartition ;
+    etl:schemaVersion 6 ;
+    dcterms:description "One row per message within a session (generated from AgentMessage)." ;
+    etl:hasField etl:msg_id ,
+                 etl:msg_session_id ,
+                 etl:msg_host_id ,
+                 etl:msg_index ,
+                 etl:msg_role ,
+                 etl:msg_content ,
+                 etl:msg_content_truncated ,
+                 etl:msg_timestamp ,
+                 etl:msg_tool_name ,
+                 etl:msg_tool_input ,
+                 etl:msg_tool_file_path ,
+                 etl:msg_tool_file_start_line ,
+                 etl:msg_tool_file_num_lines ,
+                 etl:msg_tool_file_total_lines ,
+                 etl:msg_bash_command ,
+                 etl:msg_bash_exit_code ,
+                 etl:msg_skill_name ,
+                 etl:msg_tool_use_result_json ,
+                 etl:msg_tool_use_id ,
+                 etl:msg_duration_ms ,
+                 etl:msg_interrupted ,
+                 etl:msg_input_tokens ,
+                 etl:msg_cache_input_tokens ,
+                 etl:msg_output_tokens ,
+                 etl:msg_thinking_signature ,
+                 etl:msg_stop_reason ,
+                 etl:msg_is_error ,
+                 etl:msg_cache_creation_input_tokens ,
+                 etl:msg_cache_read_input_tokens ,
+                 etl:msg_workspace ,
+                 etl:msg_git_remote ,
+                 etl:msg_git_branch ,
+                 etl:msg_model ,
+                 etl:msg_parent_session_id ,
+                 etl:msg_is_subagent ,
+                 etl:msg_source_line_index ,
+                 etl:msg_year ,
+                 etl:msg_week ,
+                 etl:msg_month ,
+                 etl:msg_schema_version .
+
+etl:msg_id
+    a etl:Field ;
+    etl:fieldName "id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "id" .
+
+etl:msg_session_id
+    a etl:Field ;
+    etl:fieldName "session_id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "session id" .
+
+etl:msg_host_id
+    a etl:Field ;
+    etl:fieldName "host_id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "host id" .
+
+etl:msg_index
+    a etl:Field ;
+    etl:fieldName "index"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "index" .
+
+etl:msg_role
+    a etl:Field ;
+    etl:fieldName "role"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "role" .
+
+etl:msg_content
+    a etl:Field ;
+    etl:fieldName "content"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "content" .
+
+etl:msg_content_truncated
+    a etl:Field ;
+    etl:fieldName "content_truncated"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "content truncated" .
+
+etl:msg_timestamp
+    a etl:Field ;
+    etl:fieldName "timestamp"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "timestamp" .
+
+etl:msg_tool_name
+    a etl:Field ;
+    etl:fieldName "tool_name"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "tool name" .
+
+etl:msg_tool_input
+    a etl:Field ;
+    etl:fieldName "tool_input"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "tool input" .
+
+etl:msg_tool_file_path
+    a etl:Field ;
+    etl:fieldName "tool_file_path"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "tool file path" .
+
+etl:msg_tool_file_start_line
+    a etl:Field ;
+    etl:fieldName "tool_file_start_line"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "tool file start line" .
+
+etl:msg_tool_file_num_lines
+    a etl:Field ;
+    etl:fieldName "tool_file_num_lines"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "tool file num lines" .
+
+etl:msg_tool_file_total_lines
+    a etl:Field ;
+    etl:fieldName "tool_file_total_lines"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "tool file total lines" .
+
+etl:msg_bash_command
+    a etl:Field ;
+    etl:fieldName "bash_command"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "bash command" .
+
+etl:msg_bash_exit_code
+    a etl:Field ;
+    etl:fieldName "bash_exit_code"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "bash exit code" .
+
+etl:msg_skill_name
+    a etl:Field ;
+    etl:fieldName "skill_name"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "skill name" .
+
+etl:msg_tool_use_result_json
+    a etl:Field ;
+    etl:fieldName "tool_use_result_json"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "tool use result json" .
+
+etl:msg_tool_use_id
+    a etl:Field ;
+    etl:fieldName "tool_use_id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "tool use id" .
+
+etl:msg_duration_ms
+    a etl:Field ;
+    etl:fieldName "duration_ms"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "duration ms" .
+
+etl:msg_interrupted
+    a etl:Field ;
+    etl:fieldName "interrupted"^^xsd:string ;
+    etl:fieldType etl:BoolType ;
+    etl:isRequired true ;
+    rdfs:label "interrupted" .
+
+etl:msg_input_tokens
+    a etl:Field ;
+    etl:fieldName "input_tokens"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "input tokens" .
+
+etl:msg_cache_input_tokens
+    a etl:Field ;
+    etl:fieldName "cache_input_tokens"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "cache input tokens" .
+
+etl:msg_output_tokens
+    a etl:Field ;
+    etl:fieldName "output_tokens"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "output tokens" .
+
+etl:msg_thinking_signature
+    a etl:Field ;
+    etl:fieldName "thinking_signature"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isRequired true ;
+    rdfs:label "thinking signature" .
+
+etl:msg_stop_reason
+    a etl:Field ;
+    etl:fieldName "stop_reason"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "stop reason" .
+
+etl:msg_is_error
+    a etl:Field ;
+    etl:fieldName "is_error"^^xsd:string ;
+    etl:fieldType etl:BoolType ;
+    etl:isRequired true ;
+    rdfs:label "is error" .
+
+etl:msg_cache_creation_input_tokens
+    a etl:Field ;
+    etl:fieldName "cache_creation_input_tokens"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "cache creation input tokens" .
+
+etl:msg_cache_read_input_tokens
+    a etl:Field ;
+    etl:fieldName "cache_read_input_tokens"^^xsd:string ;
+    etl:fieldType etl:Int64Type ;
+    etl:isRequired true ;
+    rdfs:label "cache read input tokens" .
+
+etl:msg_workspace
+    a etl:Field ;
+    etl:fieldName "workspace"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "workspace" .
+
+etl:msg_git_remote
+    a etl:Field ;
+    etl:fieldName "git_remote"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "git remote" .
+
+etl:msg_git_branch
+    a etl:Field ;
+    etl:fieldName "git_branch"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "git branch" .
+
+etl:msg_model
+    a etl:Field ;
+    etl:fieldName "model"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "model" .
+
+etl:msg_parent_session_id
+    a etl:Field ;
+    etl:fieldName "parent_session_id"^^xsd:string ;
+    etl:fieldType etl:StringType ;
+    etl:isDictEncoded true ;
+    etl:isRequired true ;
+    rdfs:label "parent session id" .
+
+etl:msg_is_subagent
+    a etl:Field ;
+    etl:fieldName "is_subagent"^^xsd:string ;
+    etl:fieldType etl:BoolType ;
+    etl:isRequired true ;
+    rdfs:label "is subagent" .
+
+etl:msg_source_line_index
+    a etl:Field ;
+    etl:fieldName "source_line_index"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "source line index" .
+
+etl:msg_year
+    a etl:Field ;
+    etl:fieldName "year"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "year" .
+
+etl:msg_week
+    a etl:Field ;
+    etl:fieldName "week"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "week" .
+
+etl:msg_month
+    a etl:Field ;
+    etl:fieldName "month"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "month" .
+
+etl:msg_schema_version
+    a etl:Field ;
+    etl:fieldName "schema_version"^^xsd:string ;
+    etl:fieldType etl:Int32Type ;
+    etl:isRequired true ;
+    rdfs:label "schema version" .
+
