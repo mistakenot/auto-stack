@@ -1,0 +1,9 @@
+PREFIX auto: <http://auto.dev/ontology#>
+
+SELECT ?orphan
+WHERE {
+    ?orphan a auto:Component .
+    FILTER NOT EXISTS {
+        auto:AutoStack auto:hasComponent ?orphan .
+    }
+}

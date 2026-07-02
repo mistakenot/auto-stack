@@ -1,0 +1,6 @@
+PREFIX auto: <http://auto.dev/ontology#>
+
+SELECT ?component
+WHERE {
+    ?component auto:dependsOn+ ?component .
+}

@@ -1,0 +1,61 @@
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix auto: <http://auto.dev/ontology#> .
+
+# --------------------------------------------------------------------------
+# ComponentShape — every auto:Component must have name, owner, layer, status
+# --------------------------------------------------------------------------
+
+auto:ComponentShape
+    a               sh:NodeShape ;
+    sh:targetClass  auto:Component ;
+    sh:property [
+        sh:path        auto:componentName ;
+        sh:datatype    xsd:string ;
+        sh:minCount    1 ;
+        sh:maxCount    1 ;
+        sh:minLength   1 ;
+        sh:name        "component name" ;
+    ] ;
+    sh:property [
+        sh:path        auto:hasOwner ;
+        sh:datatype    xsd:string ;
+        sh:minCount    1 ;
+        sh:maxCount    1 ;
+        sh:name        "owner" ;
+    ] ;
+    sh:property [
+        sh:path        auto:hasLayer ;
+        sh:class       auto:Layer ;
+        sh:minCount    1 ;
+        sh:maxCount    1 ;
+        sh:name        "layer" ;
+    ] ;
+    sh:property [
+        sh:path        auto:hasStatus ;
+        sh:class       auto:Status ;
+        sh:minCount    1 ;
+        sh:maxCount    1 ;
+        sh:name        "status" ;
+    ] ;
+    sh:property [
+        sh:path        auto:dependsOn ;
+        sh:class       auto:Component ;
+        sh:name        "dependency" ;
+    ] .
+
+# --------------------------------------------------------------------------
+# SystemShape — every auto:System must have at least one component
+# --------------------------------------------------------------------------
+
+auto:SystemShape
+    a               sh:NodeShape ;
+    sh:targetClass  auto:System ;
+    sh:property [
+        sh:path        auto:hasComponent ;
+        sh:class       auto:Component ;
+        sh:minCount    1 ;
+        sh:name        "component membership" ;
+    ] .

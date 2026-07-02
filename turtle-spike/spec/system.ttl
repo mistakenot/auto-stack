@@ -1,0 +1,243 @@
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix auto:    <http://auto.dev/ontology#> .
+
+# --------------------------------------------------------------------------
+# Ontology metadata
+# --------------------------------------------------------------------------
+
+<http://auto.dev/ontology>
+    a                owl:Ontology ;
+    rdfs:label       "Auto-Stack System Ontology" ;
+    dcterms:creator  "charlie" ;
+    dcterms:description
+        "A lightweight ontology modelling the components, layers, and dependency graph of the auto-stack monorepo." .
+
+# --------------------------------------------------------------------------
+# Classes
+# --------------------------------------------------------------------------
+
+auto:System
+    a            owl:Class ;
+    rdfs:label   "System" ;
+    rdfs:comment "A top-level system composed of components." .
+
+auto:Component
+    a            owl:Class ;
+    rdfs:label   "Component" ;
+    rdfs:comment "A deployable sub-project within the auto-stack monorepo." .
+
+auto:Layer
+    a            owl:Class ;
+    rdfs:label   "Layer" ;
+    rdfs:comment "An architectural layer that a component belongs to." .
+
+auto:Status
+    a            owl:Class ;
+    rdfs:label   "Status" ;
+    rdfs:comment "The maturity status of a component." .
+
+# --------------------------------------------------------------------------
+# Properties
+# --------------------------------------------------------------------------
+
+auto:hasComponent
+    a              owl:ObjectProperty ;
+    rdfs:label     "has component" ;
+    rdfs:domain    auto:System ;
+    rdfs:range     auto:Component ;
+    rdfs:comment   "Relates a system to one of its constituent components." .
+
+auto:dependsOn
+    a              owl:ObjectProperty ;
+    rdfs:label     "depends on" ;
+    rdfs:domain    auto:Component ;
+    rdfs:range     auto:Component ;
+    rdfs:comment   "Indicates a runtime data dependency between components." .
+
+auto:hasLayer
+    a              owl:ObjectProperty ;
+    rdfs:label     "has layer" ;
+    rdfs:domain    auto:Component ;
+    rdfs:range     auto:Layer ;
+    rdfs:comment   "The architectural layer a component belongs to." .
+
+auto:hasOwner
+    a              owl:DatatypeProperty ;
+    rdfs:label     "has owner" ;
+    rdfs:domain    auto:Component ;
+    rdfs:range     xsd:string ;
+    rdfs:comment   "The person or team responsible for a component." .
+
+auto:hasStatus
+    a              owl:ObjectProperty ;
+    rdfs:label     "has status" ;
+    rdfs:domain    auto:Component ;
+    rdfs:range     auto:Status ;
+    rdfs:comment   "The current maturity status of a component." .
+
+auto:componentName
+    a              owl:DatatypeProperty ;
+    rdfs:label     "component name" ;
+    rdfs:domain    auto:Component ;
+    rdfs:range     xsd:string ;
+    rdfs:comment   "The canonical short name of a component (e.g. auto-etl)." .
+
+# --------------------------------------------------------------------------
+# Layer instances
+# --------------------------------------------------------------------------
+
+auto:DataLayer
+    a            auto:Layer ;
+    rdfs:label   "Data Layer" ;
+    rdfs:comment "Components that ingest, transform, or index raw data." .
+
+auto:IntelligenceLayer
+    a            auto:Layer ;
+    rdfs:label   "Intelligence Layer" ;
+    rdfs:comment "Components that analyse data and derive higher-order artefacts." .
+
+auto:ToolingLayer
+    a            auto:Layer ;
+    rdfs:label   "Tooling Layer" ;
+    rdfs:comment "Standalone developer-facing tools with no upstream data dependency." .
+
+auto:PresentationLayer
+    a            auto:Layer ;
+    rdfs:label   "Presentation Layer" ;
+    rdfs:comment "Components that expose information to humans via a UI." .
+
+auto:AutomationLayer
+    a            auto:Layer ;
+    rdfs:label   "Automation Layer" ;
+    rdfs:comment "Components that watch for changes and trigger automated work." .
+
+# --------------------------------------------------------------------------
+# Status instances
+# --------------------------------------------------------------------------
+
+auto:Active
+    a            auto:Status ;
+    rdfs:label   "Active" ;
+    rdfs:comment "Component is production-ready and actively maintained." .
+
+auto:Early
+    a            auto:Status ;
+    rdfs:label   "Early" ;
+    rdfs:comment "Component is in early development; API may change." .
+
+auto:Deprecated
+    a            auto:Status ;
+    rdfs:label   "Deprecated" ;
+    rdfs:comment "Component is no longer recommended for use." .
+
+# --------------------------------------------------------------------------
+# Component instances
+# --------------------------------------------------------------------------
+
+auto:AutoETL
+    a                  auto:Component ;
+    auto:componentName "auto-etl"^^xsd:string ;
+    rdfs:label         "auto-etl" ;
+    dcterms:description
+        "ETL for coding agent session histories (SSH, LXC, local)." ;
+    auto:hasLayer      auto:DataLayer ;
+    auto:hasOwner      "charlie"^^xsd:string ;
+    auto:hasStatus     auto:Active .
+
+auto:AutoSearch
+    a                  auto:Component ;
+    auto:componentName "auto-search"^^xsd:string ;
+    rdfs:label         "auto-search" ;
+    dcterms:description
+        "Rich search over normalised session history from auto-etl." ;
+    auto:hasLayer      auto:DataLayer ;
+    auto:hasOwner      "charlie"^^xsd:string ;
+    auto:hasStatus     auto:Active ;
+    auto:dependsOn     auto:AutoETL .
+
+auto:AutoReflect
+    a                  auto:Component ;
+    auto:componentName "auto-reflect"^^xsd:string ;
+    rdfs:label         "auto-reflect" ;
+    dcterms:description
+        "Analyse past sessions, extract rules for future ones." ;
+    auto:hasLayer      auto:IntelligenceLayer ;
+    auto:hasOwner      "charlie"^^xsd:string ;
+    auto:hasStatus     auto:Early ;
+    auto:dependsOn     auto:AutoSearch .
+
+auto:AutoSkill
+    a                  auto:Component ;
+    auto:componentName "auto-skill"^^xsd:string ;
+    rdfs:label         "auto-skill" ;
+    dcterms:description
+        "Agent skill management." ;
+    auto:hasLayer      auto:IntelligenceLayer ;
+    auto:hasOwner      "charlie"^^xsd:string ;
+    auto:hasStatus     auto:Early ;
+    auto:dependsOn     auto:AutoReflect .
+
+auto:AutoDoc
+    a                  auto:Component ;
+    auto:componentName "auto-doc"^^xsd:string ;
+    rdfs:label         "auto-doc" ;
+    dcterms:description
+        "Doc management for AI agents -- freshness checking, search, indexing." ;
+    auto:hasLayer      auto:ToolingLayer ;
+    auto:hasOwner      "charlie"^^xsd:string ;
+    auto:hasStatus     auto:Active .
+
+auto:AutoGraph
+    a                  auto:Component ;
+    auto:componentName "auto-graph"^^xsd:string ;
+    rdfs:label         "auto-graph" ;
+    dcterms:description
+        "Code context graphs -- file-level import graph with ast-grep scanning." ;
+    auto:hasLayer      auto:ToolingLayer ;
+    auto:hasOwner      "charlie"^^xsd:string ;
+    auto:hasStatus     auto:Active .
+
+auto:AutoUI
+    a                  auto:Component ;
+    auto:componentName "auto-ui"^^xsd:string ;
+    rdfs:label         "auto-ui" ;
+    dcterms:description
+        "Local web dashboard and server (self-contained no-build SPA)." ;
+    auto:hasLayer      auto:PresentationLayer ;
+    auto:hasOwner      "charlie"^^xsd:string ;
+    auto:hasStatus     auto:Early ;
+    auto:dependsOn     auto:AutoSearch ,
+                       auto:AutoETL .
+
+auto:AutoWatch
+    a                  auto:Component ;
+    auto:componentName "auto-watch"^^xsd:string ;
+    rdfs:label         "auto-watch" ;
+    dcterms:description
+        "Monitor repo changes, trigger agent prompts in response." ;
+    auto:hasLayer      auto:AutomationLayer ;
+    auto:hasOwner      "charlie"^^xsd:string ;
+    auto:hasStatus     auto:Early ;
+    auto:dependsOn     auto:AutoETL .
+
+# --------------------------------------------------------------------------
+# System root node
+# --------------------------------------------------------------------------
+
+auto:AutoStack
+    a                  auto:System ;
+    rdfs:label         "Auto Stack" ;
+    dcterms:description
+        "Autonomous Coding Stack -- an integrated platform for coding agent intelligence." ;
+    auto:hasComponent  auto:AutoETL ,
+                       auto:AutoSearch ,
+                       auto:AutoReflect ,
+                       auto:AutoSkill ,
+                       auto:AutoDoc ,
+                       auto:AutoGraph ,
+                       auto:AutoUI ,
+                       auto:AutoWatch .
