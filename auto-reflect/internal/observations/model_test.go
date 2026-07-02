@@ -3,6 +3,7 @@ package observations
 import (
 	"encoding/json"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/mistakenot/auto-reflect/internal/events"
@@ -323,6 +324,54 @@ func TestPayloadPairsEvidenceAndNormalizes(t *testing.T) {
 	// Second session has no quote/message paired.
 	if payload.Evidence[1].SessionID != "s2" || payload.Evidence[1].Quote != "" || payload.Evidence[1].MessageID != "" {
 		t.Fatalf("unexpected evidence[1]: %+v", payload.Evidence[1])
+	}
+}
+
+func TestPayloadSetsEvidenceCommandAndTouchedFile(t *testing.T) {
+	in := Input{
+		Kind:                KindIncident,
+		Subject:             "sweep commit included unrelated files",
+		Sessions:            []string{"s1"},
+		Severity:            SeverityHigh,
+		EvidenceCommand:     " git commit -am 'wip' ",
+		EvidenceTouchedFile: " internal/cli/rule.go ",
+	}
+	if errs := in.Validate(); len(errs) != 0 {
+		t.Fatalf("expected valid input, got %+v", errs)
+	}
+	payload := in.Payload("ob-deadbeef")
+	if payload.EvidenceCommand != "git commit -am 'wip'" {
+		t.Fatalf("evidence_command not trimmed/set: %q", payload.EvidenceCommand)
+	}
+	if payload.EvidenceTouchedFile != "internal/cli/rule.go" {
+		t.Fatalf("evidence_touched_file not trimmed/set: %q", payload.EvidenceTouchedFile)
+	}
+}
+
+func TestEvidenceCommandNotInCanonicalParts(t *testing.T) {
+	a := validInput()
+	b := validInput()
+	b.EvidenceCommand = "git commit -am 'wip'"
+	b.EvidenceTouchedFile = "internal/cli/rule.go"
+	idA := NewObservationID(a.CanonicalParts()...)
+	idB := NewObservationID(b.CanonicalParts()...)
+	if idA != idB {
+		t.Fatalf("evidence_command/evidence_touched_file should not affect canonical id: %q vs %q", idA, idB)
+	}
+}
+
+func TestEvidenceCommandAndTouchedFileOmittedWhenEmpty(t *testing.T) {
+	in := validInput()
+	payload := in.Payload("ob-deadbeef")
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(data)
+	for _, key := range []string{"evidence_command", "evidence_touched_file"} {
+		if strings.Contains(s, key) {
+			t.Fatalf("empty payload should omit %q, got: %s", key, s)
+		}
 	}
 }
 

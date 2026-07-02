@@ -241,3 +241,142 @@ func TestE2EObservationAuditTrail(t *testing.T) {
 		t.Fatalf("no observation event found in shard body:\n%s", body)
 	}
 }
+
+// TestE2EObservationEvidenceCommandAndTouchedFile verifies the trigger-instance
+// seed fields (--evidence-command, --evidence-touched-file) round-trip through
+// add → list and are stored on the event, and that omitting them causes no error.
+func TestE2EObservationEvidenceCommandAndTouchedFile(t *testing.T) {
+	repo := initE2ERepo(t)
+	writeE2EFile(t, filepath.Join(repo, "README.md"), "seed\n")
+	runCmd(t, repo, "git", "add", ".")
+	runCmd(t, repo, "git", "commit", "-m", "seed")
+
+	t.Setenv("AUTO_SESSION_ID", "e2e-obs-trigger")
+
+	if stdout, stderr, err := runBinary(repo, "init", "--project"); err != nil {
+		t.Fatalf("init failed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+
+	// Add an observation WITH both trigger-instance fields.
+	addStdout, addStderr, err := runBinary(repo, "observation", "add",
+		"--kind", "correction",
+		"--subject", "sweep commit included unrelated files from other panes",
+		"--evidence-session", "sess-456",
+		"--evidence-quote", "git commit -am grabbed dirty files from executor-2",
+		"--evidence-command", "git commit -am 'wip'",
+		"--evidence-touched-file", "internal/cli/rule.go",
+		"--severity", "high",
+	)
+	if err != nil {
+		t.Fatalf("observation add failed: %v\nstdout:\n%s\nstderr:\n%s", err, addStdout, addStderr)
+	}
+	var added struct {
+		Created     bool `json:"created"`
+		Observation struct {
+			ObservationID       string `json:"observation_id"`
+			EvidenceCommand     string `json:"evidence_command"`
+			EvidenceTouchedFile string `json:"evidence_touched_file"`
+		} `json:"observation"`
+	}
+	if jerr := json.Unmarshal([]byte(addStdout), &added); jerr != nil {
+		t.Fatalf("observation add stdout not JSON: %v\nraw:\n%s", jerr, addStdout)
+	}
+	if !added.Created || !strings.HasPrefix(added.Observation.ObservationID, "ob-") {
+		t.Fatalf("unexpected add response: %#v", added)
+	}
+	if added.Observation.EvidenceCommand != "git commit -am 'wip'" {
+		t.Fatalf("expected evidence_command in add response, got %q", added.Observation.EvidenceCommand)
+	}
+	if added.Observation.EvidenceTouchedFile != "internal/cli/rule.go" {
+		t.Fatalf("expected evidence_touched_file in add response, got %q", added.Observation.EvidenceTouchedFile)
+	}
+
+	// List returns the observation with trigger-instance fields.
+	listStdout, listStderr, err := runBinary(repo, "observation", "list")
+	if err != nil {
+		t.Fatalf("observation list failed: %v\nstderr:\n%s", err, listStderr)
+	}
+	var listed struct {
+		Observations []map[string]any `json:"observations"`
+	}
+	if jerr := json.Unmarshal([]byte(listStdout), &listed); jerr != nil {
+		t.Fatalf("observation list stdout not JSON: %v\nraw:\n%s", jerr, listStdout)
+	}
+	if len(listed.Observations) != 1 {
+		t.Fatalf("expected 1 listed observation, got %d", len(listed.Observations))
+	}
+	if listed.Observations[0]["evidence_command"] != "git commit -am 'wip'" {
+		t.Fatalf("listed observation missing evidence_command: %v", listed.Observations[0])
+	}
+	if listed.Observations[0]["evidence_touched_file"] != "internal/cli/rule.go" {
+		t.Fatalf("listed observation missing evidence_touched_file: %v", listed.Observations[0])
+	}
+
+	// Add a second observation WITHOUT the trigger-instance fields to verify omission is fine.
+	addStdout2, addStderr2, err := runBinary(repo, "observation", "add",
+		"--kind", "pattern",
+		"--subject", "agents rarely read CLAUDE.md unless prompted",
+		"--evidence-session", "sess-789",
+	)
+	if err != nil {
+		t.Fatalf("second observation add failed: %v\nstdout:\n%s\nstderr:\n%s", err, addStdout2, addStderr2)
+	}
+	var added2 struct {
+		Created     bool `json:"created"`
+		Observation struct {
+			ObservationID string `json:"observation_id"`
+		} `json:"observation"`
+	}
+	if jerr := json.Unmarshal([]byte(addStdout2), &added2); jerr != nil {
+		t.Fatalf("second add not JSON: %v\nraw:\n%s", jerr, addStdout2)
+	}
+	if !added2.Created {
+		t.Fatalf("second add should succeed without trigger-instance fields")
+	}
+
+	// Verify the stored event carries the trigger-instance fields.
+	eventsDir := filepath.Join(repo, ".auto", "reflect", "events")
+	entries, err := os.ReadDir(eventsDir)
+	if err != nil {
+		t.Fatalf("read events dir %s: %v", eventsDir, err)
+	}
+	var shardFiles []string
+	for _, e := range entries {
+		if !e.IsDir() && shardNameShape.MatchString(e.Name()) {
+			shardFiles = append(shardFiles, e.Name())
+		}
+	}
+	body := readShards(t, eventsDir, shardFiles)
+	var foundWithFields bool
+	for line := range strings.SplitSeq(strings.TrimSpace(body), "\n") {
+		if line == "" {
+			continue
+		}
+		var env struct {
+			Type    string `json:"type"`
+			Payload struct {
+				ObservationID       string `json:"observation_id"`
+				EvidenceCommand     string `json:"evidence_command"`
+				EvidenceTouchedFile string `json:"evidence_touched_file"`
+			} `json:"payload"`
+		}
+		if jerr := json.Unmarshal([]byte(line), &env); jerr != nil {
+			continue
+		}
+		if env.Type != "observation" {
+			continue
+		}
+		if env.Payload.ObservationID == added.Observation.ObservationID {
+			foundWithFields = true
+			if env.Payload.EvidenceCommand != "git commit -am 'wip'" {
+				t.Errorf("stored event evidence_command mismatch: %q", env.Payload.EvidenceCommand)
+			}
+			if env.Payload.EvidenceTouchedFile != "internal/cli/rule.go" {
+				t.Errorf("stored event evidence_touched_file mismatch: %q", env.Payload.EvidenceTouchedFile)
+			}
+		}
+	}
+	if !foundWithFields {
+		t.Fatalf("observation with trigger-instance fields not found in event log:\n%s", body)
+	}
+}

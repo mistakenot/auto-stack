@@ -73,6 +73,11 @@ type Observation struct {
 // Messages[i], EvidenceFiles[i], EvidenceCommits[i], and EvidenceLineRanges[i]
 // each attach to Sessions[i]. Extra entries beyond the session count are a
 // validation error; fewer is fine. TaskID is an optional originating-task pointer.
+//
+// EvidenceCommand and EvidenceTouchedFile are optional scalar trigger-instance
+// seed fields: the verbatim bash command or file path from the transcript that
+// this observation is about. They are NOT positional — each observation has at
+// most one of each, independent of the evidence session count.
 type Input struct {
 	Kind                    string
 	Subject                 string
@@ -87,6 +92,8 @@ type Input struct {
 	SuggestedGeneralization string
 	Domain                  []string
 	Severity                string
+	EvidenceCommand         string
+	EvidenceTouchedFile     string
 }
 
 // NewObservationID mints a content-derived observation id matching
@@ -298,6 +305,8 @@ func (in *Input) Payload(id string) events.ObservationPayload {
 		SuggestedGeneralization: strings.TrimSpace(in.SuggestedGeneralization),
 		Domain:                  normalizeDomain(in.Domain),
 		Severity:                severity,
+		EvidenceCommand:         strings.TrimSpace(in.EvidenceCommand),
+		EvidenceTouchedFile:     strings.TrimSpace(in.EvidenceTouchedFile),
 	}
 }
 

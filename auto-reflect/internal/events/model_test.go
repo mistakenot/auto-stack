@@ -150,6 +150,45 @@ func TestObservationPayloadTaskIDRoundTrip(t *testing.T) {
 	}
 }
 
+func TestObservationPayloadEvidenceCommandTouchedFileRoundTrip(t *testing.T) {
+	in := ObservationPayload{
+		ObservationID:       "ob-00000001",
+		Kind:                "incident",
+		Subject:             "build broke",
+		Severity:            "normal",
+		Evidence:            []ObservationEvidence{{SessionID: "sess-1"}},
+		EvidenceCommand:     "git commit -am 'wip'",
+		EvidenceTouchedFile: "internal/cli/rule.go",
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var out ObservationPayload
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.EvidenceCommand != "git commit -am 'wip'" {
+		t.Fatalf("evidence_command did not round-trip: %q", out.EvidenceCommand)
+	}
+	if out.EvidenceTouchedFile != "internal/cli/rule.go" {
+		t.Fatalf("evidence_touched_file did not round-trip: %q", out.EvidenceTouchedFile)
+	}
+
+	bare, err := json.Marshal(ObservationPayload{
+		ObservationID: "ob-00000001", Kind: "gap", Subject: "s", Severity: "normal",
+		Evidence: []ObservationEvidence{{SessionID: "sess-1"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal bare: %v", err)
+	}
+	for _, key := range []string{"evidence_command", "evidence_touched_file"} {
+		if strings.Contains(string(bare), key) {
+			t.Fatalf("empty payload should omit %q, got: %s", key, bare)
+		}
+	}
+}
+
 func TestValidateUnchangedForEventWithNewPayloadFields(t *testing.T) {
 	// Envelope validation is payload-agnostic: an event whose payload carries the
 	// new task-049 fields still validates exactly as before.

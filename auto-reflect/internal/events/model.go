@@ -175,6 +175,11 @@ type ObservationEvidence struct {
 // it may later be consolidated into. This shape is a contract that consolidation
 // (1.4) and the reader API (1.5) depend on. TaskID is an optional pointer to the
 // task this observation arose from.
+//
+// EvidenceCommand and EvidenceTouchedFile are optional trigger-instance seed
+// fields: the verbatim bash command or file path from the transcript that this
+// observation is about. Consolidate generalizes these into rule matchers; observe
+// only captures the literal instance.
 type ObservationPayload struct {
 	ObservationID           string                `json:"observation_id"`    // ob-[0-9a-f]{8}
 	TaskID                  string                `json:"task_id,omitempty"` // optional originating task, e.g. 049-reflect-audit-lineage-lint
@@ -185,6 +190,8 @@ type ObservationPayload struct {
 	SuggestedGeneralization string                `json:"suggested_generalization,omitempty"`
 	Domain                  []string              `json:"domain,omitempty"`
 	Severity                string                `json:"severity"` // normal|high
+	EvidenceCommand         string                `json:"evidence_command,omitempty"`
+	EvidenceTouchedFile     string                `json:"evidence_touched_file,omitempty"`
 }
 
 // ConsolidationPayload links observations to the rule produced or amended by a

@@ -30,32 +30,43 @@ Record a situated finding. Cheap, append-only, idempotent — capture first, gen
 Every observation needs at least one evidence session id.
 
 ` + "```" + `bash
+# Minimal observation — just kind, subject, and one evidence session:
 auto reflect observation add \
-  --kind gap \
-  --subject "no guidance on scoping go build to a module" \
-  --evidence-session "$SID" \
-  --evidence-message "$SID-98" \
-  --evidence-quote "go build ./... rebuilt everything and was slow" \
-  --domain go \
-  --severity normal            # kinds: correction|pattern|gap|incident; severity: normal|high
+  --kind gap \                          # required: correction|pattern|gap|incident
+  --subject "no guidance on scoping go build to a module" \  # required: what this is about
+  --evidence-session "$SID" \           # required (>=1): session id this was observed in
+  --domain go \                         # optional: domain tag(s); repeatable or comma-separated
+  --severity normal                     # optional: normal (default) or high
 
-# --evidence-message is optional: paste the messageId from an 'auto search' hit
-# (format {sessionId}-{index}). It pins the observation to the exact transcript
-# moment; --evidence-session alone is fine for a whole-session observation.
-# Repeat --evidence-session/-message/-quote (paired by position) to cite several moments.
-
-# Optional source provenance pins evidence to a concrete file/line/commit, and
-# --task-id records the task the observation arose from:
+# Full observation with all evidence and metadata flags:
 auto reflect observation add \
   --kind correction \
   --subject "swallowed error hid a real bug" \
-  --evidence-session "$SID" \
-  --evidence-file internal/cli/rule.go \
-  --evidence-line-range 12-20 \
-  --evidence-commit "$(git rev-parse --short HEAD)" \
-  --task-id 049-reflect-audit-lineage-lint \
-  --domain go
-# --evidence-file/-line-range/-commit are paired by position to --evidence-session.
+  --evidence-session "$SID" \           # repeatable: cite multiple sessions by repeating
+  --evidence-quote "the error was silently swallowed" \  # optional: verbatim excerpt, paired by position to --evidence-session
+  --evidence-message "$SID-98" \        # optional: message id from 'auto search', paired by position
+  --evidence-file internal/cli/rule.go \  # optional: source file proving the observation, paired by position
+  --evidence-line-range 12-20 \         # optional: line or range (e.g. 12-20), paired by position
+  --evidence-commit "$(git rev-parse --short HEAD)" \  # optional: git commit hash (7-40 hex), paired by position
+  --task-id 049-reflect-audit-lineage-lint \  # optional: originating task id
+  --context "ran build after pulling into a stale worktree" \  # optional: situational context
+  --suggested-generalization "fetch+pull before branching" \  # optional: candidate rule this might generalize to
+  --evidence-command "git commit -am 'wip'" \  # optional: verbatim bash command from transcript — do not edit or reconstruct; omit if not about a command
+  --evidence-touched-file "internal/cli/rule.go" \  # optional: literal file path created/edited in transcript — do not glob; omit if not about a file
+  --domain go \
+  --severity high \
+  --format text                         # optional: json (default) or text
+
+# --evidence-quote/-message/-file/-line-range/-commit are paired by position to
+# --evidence-session. Repeat the group to cite multiple transcript moments.
+#
+# --evidence-command and --evidence-touched-file are NOT positional — each observation
+# has at most one of each, independent of the evidence session count. These are
+# trigger-instance seed fields: consolidate later generalizes them into rule matchers
+# (command regex / file glob) for just-in-time interceptors. Copy-paste verbatim from
+# the transcript; do not edit, normalize, or glob.
+#
+# Run 'auto reflect observation add --help' for full flag details.
 
 # List / filter observations. --unconsolidated shows only those not yet folded into a rule.
 auto reflect observation list --kind gap --domain go --since 14d --unconsolidated

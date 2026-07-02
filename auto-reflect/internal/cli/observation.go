@@ -101,6 +101,8 @@ func newObservationAddCmd(application *app.App) *cobra.Command {
 	cmd.Flags().StringVar(&in.SuggestedGeneralization, "suggested-generalization", "", "a candidate rule this observation might generalize to")
 	cmd.Flags().StringSliceVar(&domain, "domain", nil, "domain tag(s); repeatable or comma-separated")
 	cmd.Flags().StringVar(&in.Severity, "severity", observations.SeverityNormal, "severity: normal|high")
+	cmd.Flags().StringVar(&in.EvidenceCommand, "evidence-command", "", "the exact bash command from the transcript that this observation is about — copy-paste it verbatim from a Bash tool call, do not edit, normalize, or reconstruct it; omit if the lesson is not tied to a specific command")
+	cmd.Flags().StringVar(&in.EvidenceTouchedFile, "evidence-touched-file", "", "the literal path of a file that was created or edited in the transcript that this observation is about — paste the exact path, do not turn it into a glob or pattern; omit if the lesson is not tied to a specific file")
 	cmd.Flags().StringVar(&format, "format", "json", "output format: json|text")
 	_ = cmd.MarkFlagRequired("kind")
 	_ = cmd.MarkFlagRequired("subject")
@@ -313,6 +315,12 @@ func printObservationText(cmd *cobra.Command, header string, obs *observations.O
 	}
 	if obs.Context != "" {
 		fmt.Fprintf(out, "Context: %s\n", obs.Context)
+	}
+	if obs.EvidenceCommand != "" {
+		fmt.Fprintf(out, "Evidence command: %s\n", obs.EvidenceCommand)
+	}
+	if obs.EvidenceTouchedFile != "" {
+		fmt.Fprintf(out, "Evidence touched file: %s\n", obs.EvidenceTouchedFile)
 	}
 	if obs.SuggestedGeneralization != "" {
 		fmt.Fprintf(out, "Suggested generalization: %s\n", obs.SuggestedGeneralization)
