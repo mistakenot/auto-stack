@@ -21,6 +21,14 @@ services:
       retries: 15
       start_period: 3s
 
+  # Second agent with a DISTINCT host id — reuses the agent anchor so the two
+  # containers differ only by identity, exercising multi-host aggregation (AC-5).
+  agent-2:
+    <<: *agent
+    hostname: agent-2
+    environment:
+      HOST_ID: agent-2
+
   auto-ui:
     build:
       context: ../../..
@@ -29,10 +37,12 @@ services:
     hostname: auto-ui
     environment:
       # Space-separated agent service names the entrypoint runs `backends add` for.
-      AGENTS: "agent-1"
+      AGENTS: "agent-1 agent-2"
     init: true
     depends_on:
       agent-1:
+        condition: service_healthy
+      agent-2:
         condition: service_healthy
     healthcheck:
       # Debug ring is served only with AUTO_UI_DEBUG=1 (set in the entrypoint).

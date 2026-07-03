@@ -33,8 +33,8 @@ class EventFlowScenario(Scenario):
     """Multi-agent hook → autowatch → auto-ui event-flow stack."""
 
     name = "event-flow"
-    #: Agent service names, each with a distinct seeded host id. Phase 3 adds more.
-    agents = ["agent-1"]
+    #: Agent service names, each with a distinct seeded host id.
+    agents = ["agent-1", "agent-2"]
 
     # `services` is a read-only view; the auto-ui service plus every agent.
     @property
