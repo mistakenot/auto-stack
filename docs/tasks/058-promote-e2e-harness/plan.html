@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>058: promote-e2e-harness</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+  <script type="application/json" id="pd-meta">
+{"id":"058","name":"promote-e2e-harness","status":"planning","created":"2026-07-03"}
+  </script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="058: promote-e2e-harness" status="pending" pr="pending" generated="2026-07-03"
+          next-prompt="/execute-task 058">
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+The end-to-end test harness lives inside `auto-skill/harness/` and is hardwired to a
+single scenario: a git-server container plus a system-under-test container exercising
+`auto skill add`/`sync` over real HTTPS. It is a genuinely good hermetic harness — real
+Docker network, real transport, flakiness guards — but it is trapped under one tool and
+one test shape.
+
+We want it promoted to a first-class, top-level `./harness` and generalised around a
+**scenario** abstraction, so it can serve long-term as a high-quality, hermetic,
+reproducible harness for automated e2e testing, probing, and fuzzing across *any*
+auto-stack surface — not just auto-skill. The first new scenario stands up `auto-ui` +
+`autowatch` and has multiple "agent" containers fire hooks at them, asserting the events
+arrive in auto-ui.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **Promote** `auto-skill/harness/` → top-level `./harness/`, updating every reference
+  (Dockerfile build contexts, `docker-compose` paths, tests, `CLAUDE.md`, root
+  `.dockerignore` assumptions) so the moved harness runs green with no behaviour change.
+- **Introduce a scenario abstraction.** Each scenario is self-contained under
+  `./harness/scenarios/<name>/` (its own `docker-compose.yaml`, `Dockerfile*`, fixtures,
+  and a thin Python scenario module) and reuses a shared `harness` core package (Compose
+  lifecycle, `Result`, container `exec`, health-gating).
+- **Port the existing auto-skill tests as Scenario 1** ("skill-remote" — git-server + SUT),
+  passing unchanged in observable behaviour.
+- **Add Scenario 2 ("event-flow")**: **multiple** agent containers (distinct host IDs) run
+  `auto hooks fire` pointed via `AUTO_WATCH_HOOK_ADDR` at an `autowatch` daemon container;
+  `auto-ui` subscribes to autowatch (`auto ui backends add tcp://autowatch:PORT`); the DSL
+  can **run commands inside the agent containers**, and we **assert the fired/derived events
+  land in auto-ui** by polling its `/api/debug/recent` ring.
+- **Keep the DSL thin** — reuse the current `Harness`/`Result` shape; the pydantic
+  self-describing command-class refactor is explicitly deferred.
+- **Standardise on `uv`** — one `uv`-managed Python project at `./harness/` (single
+  `pyproject.toml` + `uv.lock`), all invocation via `uv run …`. Scenarios are packages/
+  modules within it, not separate Python projects. No bare `python`/`pip`/`venv`.
+- **Design for extensibility** — adding a third scenario is purely additive (new folder +
+  module), touching no other scenario.
+- Provide a short scenario smoke test per scenario and updated `./harness/CLAUDE.md`
+  documenting the scenario model and how to add one.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="event-flow-primer" title="Scenario 2 — the event path (context)"
+                  summary="Agent containers → autowatch (ingest/derive/relay) → auto-ui (subscribe) → assert on /api/debug/recent.">
+        <md><script type="text/plain">
+The production seams this scenario rides already exist — the harness adds **no** new
+product code, it only wires the existing plumbing across containers:
+
+- `auto hooks fire --agent claude` reads a hook payload on stdin, normalises it, appends a
+  durable log, then best-effort POSTs a JSON-RPC notification to the autowatch hook-ingest
+  HTTP endpoint at `http://<addr>/`. The address is resolved from **`AUTO_WATCH_HOOK_ADDR`**
+  first — the documented seam for "an agent harness pointing hooks at an isolated daemon".
+- `auto watch start --hook-addr 0.0.0.0:7787 --rpc-addr tcp://0.0.0.0:PORT` binds a TCP
+  hook-ingest listener and a TCP RPC listener. autowatch stamps `hostId`, derives
+  `doc.changed` (sole derive site), and **relays** raw + derived events to every subscribed
+  backend.
+- `auto ui serve` + `auto ui backends add tcp://autowatch:PORT` makes auto-ui dial autowatch
+  and `bus.subscribe`; relayed events flow into its Hub and its debug ring.
+- **Assertion surface:** `GET http://auto-ui:PORT/api/debug/recent` returns the last N raw +
+  derived events (gated by `WithDebug` — the harness must start auto-ui with debug enabled).
+        </script></md>
+        <pd-mermaid caption="Scenario 2 event flow (co-located daemon per agent — see Solution D-6)">
+flowchart LR
+  subgraph AG1["agent-1 container (host=agent-1)"]
+    H1[auto hooks fire] -->|loopback POST| W1[autowatch<br/>ingest+derive]
+  end
+  subgraph AG2["agent-2 container (host=agent-2)"]
+    H2[auto hooks fire] -->|loopback POST| W2[autowatch<br/>ingest+derive]
+  end
+  W1 -->|bus.subscribe relay tcp| U[auto-ui<br/>Hub + debug ring]
+  W2 -->|bus.subscribe relay tcp| U
+  T[harness DSL] -.exec fire.-> H1
+  T -.exec fire.-> H2
+  T -.exec poll /api/debug/recent.-> U
+</pd-mermaid>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **The pydantic self-describing command-class DSL** (discoverable schemas, per-command
+  assertions). Deferred to a follow-up task; the current thin `Harness`/`Result` DSL is kept.
+- **WebSocket-based assertions.** We assert via `/api/debug/recent` HTTP polling, not by
+  connecting a `/api/ws` subscriber.
+- **Any change to production `auto-*` code.** The harness must use existing seams
+  (`AUTO_WATCH_HOOK_ADDR`, TCP `--hook-addr`/`--rpc-addr`, `backends add tcp://`,
+  `/api/debug/recent`). A missing seam is *flagged as a finding*, not patched here.
+- **New probe/fuzz campaigns** beyond one smoke test per scenario. This task builds the
+  *harness* for probing/fuzzing; authoring campaigns is later work.
+- **CI wiring** (GitHub Actions) and non-Docker execution backends (SSH/LXC).
+- **Backwards-compatibility shim** at the old `auto-skill/harness/` path — it is fully moved.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions (resolved with the user)">
+        <md><script type="text/plain">
+Four load-bearing questions were resolved before writing this doc. Recorded here as settled
+calls so the solution/plan stages inherit them.
+        </script></md>
+
+        <pd-decision id="D-1" title="Promote + Scenario 2 only; defer the pydantic DSL" status="accepted" by="charlie"
+          summary="Keep the thin Harness/Result DSL; the self-describing pydantic layer is a follow-up.">
+          <md><script type="text/plain">
+**Decision:** Scope this task to the promotion, the scenario abstraction, and the
+event-flow scenario. Keep the existing thin `Harness`/`Result` DSL.
+**Alternatives:** Do the pydantic self-describing command-class refactor now (bigger scope,
+unlocks richer probing immediately).
+**Consequences:** Faster, focused, lower-risk move. The probing/fuzzing DSL upgrade is
+tracked separately and builds on the promoted structure.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-2" title="Independent compose per scenario + shared Python core" status="accepted" by="charlie"
+          summary="Each scenario is a self-contained compose; scenarios share one harness core package.">
+          <md><script type="text/plain">
+**Decision:** `./harness/scenarios/<name>/docker-compose.yaml`, each fully self-contained;
+lifecycle/exec/Result live once in a shared `./harness/src/harness/` core.
+**Alternatives:** Shared base compose + per-scenario overrides; single compose with Compose
+profiles.
+**Consequences:** Maximum hermeticity and per-scenario isolation (run one without the
+others); a little compose duplication is accepted as the price of clarity and extensibility.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-3" title="Assert via /api/debug/recent polling" status="accepted" by="charlie"
+          summary="Poll auto-ui's debug ring; no WebSocket subscriber in V1.">
+          <md><script type="text/plain">
+**Decision:** Scenario 2 asserts events reached auto-ui by polling
+`GET /api/debug/recent` (start auto-ui with debug enabled).
+**Alternatives:** Connect a `/api/ws` WebSocket subscriber; do both.
+**Consequences:** Deterministic and simple. It covers ingest→relay→hub→ring; it does not
+directly cover the final WS push (acceptable for V1, notable as a coverage gap).
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-4" title="Multiple agent containers (multi-host) in V1" status="accepted" by="charlie"
+          summary="Two+ agent containers with distinct host IDs fire into one autowatch/auto-ui.">
+          <md><script type="text/plain">
+**Decision:** Scenario 2 stands up multiple agent containers with distinct host IDs,
+exercising multi-host aggregation from the start.
+**Alternatives:** Single agent container in V1, extend to N later.
+**Consequences:** More realistic and stresses `hostId` stamping/aggregation immediately;
+slightly more compose + fixture setup. Assertions must key on/verify per-host provenance.
+**Refined in Solution D-6:** because hook-ingest is loopback-only and a daemon overwrites
+`ev.Host`, "distinct host IDs" forces a **co-located autowatch daemon per agent container**
+(not a shared central daemon). Confirmed with the user.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-5" title="Standardise on uv for all Python" status="accepted" by="charlie"
+          summary="One uv project at ./harness; every entry point runs via `uv run`.">
+          <md><script type="text/plain">
+**Decision:** The harness is a single `uv`-managed project rooted at `./harness/` — one
+`pyproject.toml`, one `uv.lock`. Shared core and every scenario module live inside it, and
+all commands (`pytest`, the `harness` CLI, scenario smoke tests) run via `uv run …`.
+**Alternatives:** Per-scenario Python projects; plain `venv` + `pip`; Poetry/PDM.
+**Consequences:** One lockfile and one resolver for reproducibility; no bare
+`python`/`pip`/`venv` in docs, scripts, or CI. Matches the existing harness, which already
+uses `uv run pytest` / `uv run harness`.
+          </script></md>
+        </pd-decision>
+
+        <pd-decisions title="Decision log"></pd-decisions>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+No blocking `<pd-question>` gates remain — the four load-bearing decisions are resolved
+(see Decisions). The following are assumptions I am comfortable proceeding on; they can be
+revisited in the solution stage:
+
+- [ ] **Scenario 1 naming.** The existing auto-skill scenario becomes `scenarios/skill-remote/`
+  (git-server + SUT). Behaviour is unchanged; only its location and package wiring move.
+- [ ] **Full move, no shim.** `auto-skill/harness/` is deleted after the move; references in
+  repo docs/tests are updated. (If anything external pins the old path, we add a one-line
+  pointer README instead.)
+- [ ] **Build-context fix.** The SUT `Dockerfile` currently builds with context `../..`
+  (monorepo root); after the move the compose build context is re-pathed to the repo root
+  from `./harness/scenarios/skill-remote/`. Root `.dockerignore` still governs context size.
+- [ ] **Distinct host IDs.** Each Scenario 2 agent container gets a distinct host id (via a
+  seeded `~/.auto/host.json` / hostname in its entrypoint) so autowatch stamps different
+  `hostId`s and multi-host aggregation is observable.
+- [ ] **auto-ui debug enabled.** The auto-ui container is started with debug on so
+  `/api/debug/recent` is served (assertion surface for D-3).
+- [ ] **Hook payload fixtures.** Scenario 2 ships a couple of representative Claude hook
+  payload fixtures (e.g. a session/tool event and a doc edit that derives `doc.changed`) that
+  the DSL pipes into `auto hooks fire` from the agent containers.
+- [ ] **Flakiness gates carry over.** The existing granular health-gating discipline
+  (compose `--wait`, per-service healthchecks, staged validation) is applied to every new
+  service (autowatch reachable, auto-ui subscribed) before the DSL proceeds.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+**E2E-first, real binaries, per-scenario Compose.** Each scenario is verified by `uv run
+pytest` against its own Docker Compose stack, built from monorepo source (the `auto` binary
+is compiled in-image — no mocks, no shortcuts). One shared `Harness` core drives every
+scenario via `docker compose exec`; a session-scoped `up()/down()` fixture per scenario keeps
+run time bounded.
+
+**Two verification jobs, mapped to the two mandated ACs:**
+
+1. **Regression guard for the promotion (Scenario 1 — `skill-remote`).** The 7 pre-existing
+   auto-skill e2e tests are carried over verbatim (behaviour, not location) and must pass in
+   `./harness`. If the move re-paths a build context or entrypoint wrong, these go red — they
+   are the tripwire that the promotion preserved a working harness.
+2. **New event-flow assertion (Scenario 2 — `event-flow`).** Multiple agent containers
+   (distinct host IDs, each running a co-located `auto watch start` daemon) fire
+   `auto hooks fire` for a `docs/**/*.md` edit in a **registered** project; one `auto-ui`
+   container (debug on, subscribed to each agent's autowatch RPC backend) must surface the
+   derived `doc.changed` at `/api/debug/recent`.
+
+**Flakiness discipline (load-bearing).** Every infra stage self-validates before the next:
+`up --wait` + per-service healthchecks, then explicit DSL gates — daemon RPC reachable,
+`backends add` verified, project registered — asserted *before* any event is fired. Event
+assertions poll with a bounded retry (delivery is at-most-once / lossy under backpressure)
+and match on `id`/`data.path`/`host` **presence**, never exact counts.
+
+**Standardised on `uv`.** All invocation is `uv run …` against one `pyproject.toml` +
+`uv.lock` at `./harness/`; no bare `python`/`pip`/`venv`.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="Verification layers">
+flowchart TD
+  subgraph Shared["./harness — shared uv project"]
+    Core["Harness core + Result + pytest fixtures"]
+  end
+  Core --> S1["Scenario 1: skill-remote<br/>(7 carried-over e2e tests)"]
+  Core --> S2["Scenario 2: event-flow<br/>(new hook→ui e2e tests)"]
+  S1 --> A1["assert: skill add/sync over real HTTPS"]
+  S2 --> A2["assert: doc.changed in /api/debug/recent"]
+  S2 --> A3["assert: distinct host ids attributed"]
+</pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="Carried-over auto-skill tests pass in the promoted harness" phases="1" tests="harness/tests/skill_remote/test_add_sync.py,harness/tests/skill_remote/test_fuzz_fixes.py">
+          <md><script type="text/plain">
+- **Given** the harness has been promoted to `./harness/` with the auto-skill tests as the
+  `skill-remote` scenario
+- **When** `uv run pytest` runs the `skill-remote` scenario from `./harness/`
+- **Then** all pre-existing auto-skill e2e tests (init → add → sync → rename, incl. the fuzz-fix
+  cases) pass to completion with no behavioural change from the old `auto-skill/harness/` run.
+
+*(User-mandated: "running the old skill tests to successful completion".)*
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="Scenario abstraction is real and isolated" phases="1,3" tests="harness/tests/skill_remote/test_add_sync.py,harness/tests/event_flow/test_hook_to_ui.py">
+          <md><script type="text/plain">
+- **Given** two scenarios (`skill-remote`, `event-flow`) exist under `./harness/scenarios/`
+- **When** one scenario is brought up
+- **Then** only that scenario's Compose services start (no cross-scenario coupling), and both
+  scenarios reuse the single shared `Harness` core — adding a third scenario requires no edit
+  to existing scenarios.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="Event-flow stack stands up healthy with fail-fast gates" phases="2,3" tests="harness/tests/event_flow/test_hook_to_ui.py">
+          <md><script type="text/plain">
+- **Given** the `event-flow` Compose (N agent containers each with a co-located autowatch
+  daemon bound on `tcp://0.0.0.0:<rpc>`, plus one `auto-ui` container with `AUTO_UI_DEBUG=1`)
+- **When** the harness brings it up and runs its readiness gates
+- **Then** every service reports healthy, `auto-ui backends add` succeeds for each agent's RPC
+  listener, and the DSL asserts each backend is subscribed **before** any hook fires — a failed
+  stage aborts fast with an obvious error rather than a downstream flake.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Hooks fired from an agent container are received by auto-ui" phases="2" tests="harness/tests/event_flow/test_hook_to_ui.py">
+          <md><script type="text/plain">
+- **Given** a registered project in an agent container and `auto-ui` subscribed to that agent's
+  autowatch backend
+- **When** the DSL runs `auto hooks fire --agent claude` inside the agent container for an edit
+  to a `docs/**/*.md` path in that project
+- **Then** within a bounded retry, `GET /api/debug/recent` on `auto-ui` contains a
+  `doc.changed` event whose `data.path` matches the edited doc and whose `host` equals that
+  agent's host id.
+
+*(User-mandated: "a new test validating that auto hooks are received by auto ui".)*
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="Multi-host attribution is preserved end to end" phases="3" tests="harness/tests/event_flow/test_hook_to_ui.py">
+          <md><script type="text/plain">
+- **Given** ≥2 agent containers with **distinct** host IDs, each firing a hook
+- **When** their events reach `auto-ui`
+- **Then** `/api/debug/recent` shows events attributed to each distinct host id — confirming
+  the co-located-daemon topology yields real multi-host aggregation and not a single-daemon
+  host-id collapse.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Agent-container command execution + assertion is a first-class DSL capability" phases="3" tests="harness/tests/event_flow/test_hook_to_ui.py">
+          <md><script type="text/plain">
+- **Given** the promoted `Harness` DSL
+- **When** a test runs an arbitrary command inside a named agent container and then queries
+  `auto-ui`
+- **Then** the DSL returns a `Result` (`.ok`/`.json()`) for the in-container command and exposes
+  a helper to poll `/api/debug/recent`, so probes and scripted tests share one command+assert
+  surface.
+          </script></md>
+        </pd-ac>
+
+        <pd-trace caption="Acceptance coverage"></pd-trace>
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps & Risks">
+        <md><script type="text/plain">
+- **Loopback ingest gate forces the topology.** `HookIngest` rejects non-loopback POSTs (403)
+  and the daemon overwrites `ev.Host`, so a single central autowatch cannot serve separate
+  agent containers with distinct host IDs. We co-locate an autowatch daemon in each agent
+  container (fire hooks loopback-locally; relay to auto-ui over RPC). The *central-autowatch*
+  variant is therefore **not** tested — it would need a product code change (out of scope).
+- **WS push not directly asserted.** Per decision D-3 we assert the `/api/debug/recent` ring,
+  which covers ingest→derive→relay→hub-record but not the final `/api/ws` frame to a browser.
+- **Lossy delivery.** At-most-once with drop-on-full (16-slot buffers): tests keep event volume
+  modest and poll promptly; assertions are presence-based with retry, not exact-count.
+- **Build cost.** Each scenario compiles the `auto` binary from source; first `up` is slow.
+  CI wiring is out of scope, so this is validated locally only for now.
+- **Shared-container isolation.** As today, containers are shared across tests within a
+  scenario; isolation is per-workspace / per-registered-project, not per-container.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="sol-overview" title="Overview"
+                  summary="One uv project at ./harness; a Scenario abstraction over a shared Harness core; scenarios/skill-remote (moved) + scenarios/event-flow (new, co-located daemon per agent).">
+        <md><script type="text/plain">
+`git mv auto-skill/harness ./harness`, then generalise: a thin **Scenario** layer sits over
+the existing `Harness`/`Result` core. Each scenario owns a self-contained Compose stack under
+`harness/scenarios/<name>/` and a Python module under `src/harness/scenarios/`. The auto-skill
+tests move in verbatim as `skill-remote`; a new `event-flow` scenario adds the hook→ui path.
+No product `auto-*` code changes — only container wiring and Python.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="sol-layout" title="Directory layout (end state)">
+        <pd-code lang="bash" path="harness/" caption="Promoted + generalised tree">
+harness/
+├── pyproject.toml                 # single uv project (auto-harness); scripts: harness=...
+├── uv.lock
+├── CLAUDE.md                      # scenario model + "how to add a scenario"
+├── src/harness/
+│   ├── core.py                    # Harness (scenario-parameterized), Result  [moved]
+│   ├── cli.py                     # uv run harness <scenario> up|run|down|status
+│   └── scenarios/
+│       ├── base.py                # Scenario: compose path, services, readiness gates
+│       ├── skill_remote.py        # S1 helpers (add/sync/rename) — from core.py
+│       └── event_flow.py          # S2 DSL: agent exec, fire_hook, edit_doc, poll_ui
+├── scenarios/
+│   ├── skill-remote/              # MOVED from auto-skill/harness/
+│   │   ├── docker-compose.yaml    # git-server + sut (context ../.. → ../../..)
+│   │   ├── Dockerfile.sut         # COPY path fixed
+│   │   ├── Dockerfile.git-server
+│   │   ├── scripts/{gen-certs,init-repos,nginx.conf,sut-entrypoint}
+│   │   └── fixtures/skills/{code-review,deploy-checklist}/SKILL.md
+│   └── event-flow/                # NEW
+│       ├── docker-compose.yaml    # agent-1, agent-2, auto-ui
+│       ├── Dockerfile             # multi-target: builder → agent / autoui
+│       ├── scripts/{agent-entrypoint,autoui-entrypoint}.sh
+│       └── fixtures/hooks/doc-edit.json
+└── tests/
+    ├── conftest.py                # per-scenario session-scoped up/down fixtures
+    ├── skill_remote/{test_add_sync,test_fuzz_fixes}.py   # carried over (AC-1)
+    └── event_flow/test_hook_to_ui.py                     # new (AC-4, AC-5)
+</pd-code>
+      </pd-section>
+
+      <pd-section id="sol-topology" title="event-flow topology & mechanics">
+        <pd-mermaid caption="Co-located autowatch per agent; auto-ui subscribes to each RPC backend">
+flowchart LR
+  subgraph A1["agent-1 (HOST_ID=agent-1)"]
+    F1[auto hooks fire\n--agent claude] -->|POST 127.0.0.1:7787| D1[auto watch start\nhook 127.0.0.1:7787\nrpc tcp://0.0.0.0:7788]
+  end
+  subgraph A2["agent-2 (HOST_ID=agent-2)"]
+    F2[auto hooks fire] -->|POST 127.0.0.1:7787| D2[auto watch start\nrpc tcp://0.0.0.0:7788]
+  end
+  D1 -->|relay| UI[auto-ui\nAUTO_UI_DEBUG=1\nserve 127.0.0.1:8080]
+  D2 -->|relay| UI
+  UI -.records.-> R[/api/debug/recent/]
+</pd-mermaid>
+        <md><script type="text/plain">
+**Why it works within the constraints (see context.md):**
+
+- Hooks fire **loopback-locally** inside each agent container → passes HookIngest's
+  loopback-only gate. Each agent's daemon binds its **RPC** listener on `tcp://0.0.0.0:7788`
+  so `auto-ui` (a peer container) can dial it and `bus.subscribe`.
+- Each agent pre-seeds `~/.auto/host.json` (`{"hostId":"agent-N"}`) and runs
+  `auto init --project` in `/workspace` so its daemon **derives `doc.changed`** for a
+  registered project. Distinct host ids → real multi-host attribution (AC-5).
+- `auto-ui` binds loopback-only and refuses to start with zero backends, so its entrypoint
+  `auto ui backends add tcp://agent-N:7788` for each agent (after they're healthy) **before**
+  `auto ui serve`. The harness never exposes host ports — it **execs into** `auto-ui`
+  (`wget http://127.0.0.1:8080/api/debug/recent`) to assert, mirroring how the SUT is driven.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="sol-dsl" title="DSL surface (event-flow)">
+        <pd-api kind="module" name="EventFlowScenario" lang="python" path="src/harness/scenarios/event_flow.py" caption="Command+assert surface — thin, self-asserting, importable and CLI-driven">
+          <pd-member kind="field" sig="agents: list[str]  # ['agent-1', 'agent-2']">Service names of the agent containers, each with a distinct host id.</pd-member>
+          <pd-member kind="method" sig="up(build=True) -> None">Compose up --wait, then run readiness gates (each daemon RPC up, each backend subscribed, project registered) — fail-fast before any assertion.</pd-member>
+          <pd-member kind="method" sig="edit_doc(agent: str, relpath: str, text: str) -> Result">Write a `docs/**/*.md` file in the agent's registered `/workspace` repo (the change `auto hooks fire` will reference).</pd-member>
+          <pd-member kind="method" sig="fire_hook(agent: str, file_path: str, agent_kind='claude') -> Result">Pipe a PostToolUse hook payload into `auto hooks fire --agent <kind>` inside the agent container; asserts exit 0.</pd-member>
+          <pd-member kind="method" sig="recent_events(match=None, timeout=2.0, interval=0.1) -> list[dict]">Poll `GET /api/debug/recent` on auto-ui (via exec) with bounded retry; returns parsed bus.Event dicts, optionally filtered.</pd-member>
+          <pd-member kind="method" sig="assert_doc_changed(path: str, host: str, timeout=2.0) -> dict">Convenience: wait until a `doc.changed` with matching `data.path` and `host` appears; raise on timeout.</pd-member>
+          <pd-member kind="method" sig="run(agent: str, cmd: str) -> Result">Arbitrary command execution inside a named agent container (AC-6) — the probe primitive.</pd-member>
+        </pd-api>
+        <pd-code lang="python" path="tests/event_flow/test_hook_to_ui.py" caption="AC-4 + AC-5 shape">
+def test_hook_from_agent_received_by_ui(event_flow):
+    s = event_flow
+    s.edit_doc("agent-1", "docs/plan.md", "# hello")
+    s.fire_hook("agent-1", "/workspace/docs/plan.md")
+    ev = s.assert_doc_changed(path="docs/plan.md", host="agent-1")
+    assert ev["type"] == "doc.changed"
+
+def test_multi_host_attribution(event_flow):
+    s = event_flow
+    for a in ("agent-1", "agent-2"):
+        s.edit_doc(a, "docs/plan.md", f"# from {a}")
+        s.fire_hook(a, "/workspace/docs/plan.md")
+    hosts = {e["host"] for e in s.recent_events(match={"type": "doc.changed"})}
+    assert {"agent-1", "agent-2"} <= hosts
+</pd-code>
+      </pd-section>
+
+      <pd-section id="sol-containers" title="Container wiring (key excerpts)">
+        <pd-code lang="bash" path="harness/scenarios/event-flow/scripts/agent-entrypoint.sh" caption="Seed host id, register project, start local daemon">
+#!/bin/sh
+set -e
+mkdir -p "$HOME/.auto"
+printf '{"hostId":"%s"}\n' "$HOST_ID" > "$HOME/.auto/host.json"   # distinct per container
+cd /workspace && git init -q && git commit -q --allow-empty -m init
+auto init --project -y                                            # register in ~/.auto/projects.json
+auto watch start --hook-addr 127.0.0.1:7787 \
+                 --rpc-addr tcp://0.0.0.0:7788 \
+                 --ready-file /tmp/watch-ready.json &amp;
+# fail-fast: block until the daemon actually bound both listeners
+timeout 20 sh -c 'until [ -f /tmp/watch-ready.json ]; do sleep 0.2; done'
+exec sleep infinity
+</pd-code>
+        <pd-code lang="yaml" path="harness/scenarios/event-flow/docker-compose.yaml" caption="Two agents + auto-ui (RPC reachable, loopback assert)">
+services:
+  agent-1: &amp;agent
+    build: { context: ../../.., dockerfile: harness/scenarios/event-flow/Dockerfile, target: agent }
+    hostname: agent-1
+    environment: { HOST_ID: agent-1 }
+    init: true
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/watch-ready.json"]
+      interval: 2s
+      retries: 15
+  agent-2:
+    <<: *agent
+    hostname: agent-2
+    environment: { HOST_ID: agent-2 }
+  auto-ui:
+    build: { context: ../../.., dockerfile: harness/scenarios/event-flow/Dockerfile, target: autoui }
+    hostname: auto-ui
+    environment: { AUTO_UI_DEBUG: "1" }
+    depends_on:
+      agent-1: { condition: service_healthy }
+      agent-2: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/debug/recent >/dev/null"]
+      interval: 2s
+      retries: 15
+</pd-code>
+        <md><script type="text/plain">
+`auto-ui`'s entrypoint runs `auto ui backends add tcp://agent-1:7788` and
+`tcp://agent-2:7788` (agents are healthy via `depends_on`), then
+`AUTO_UI_DEBUG=1 auto ui serve --port 8080`. The single multi-target `Dockerfile` builds the
+`auto` binary once in a shared `builder` stage; `agent` and `autoui` targets copy it and set
+their entrypoints — no double compile.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="sol-changes" title="File changes">
+        <pd-files>
+          <pd-file path="harness/" change="add">Promoted top-level harness (git mv of auto-skill/harness).</pd-file>
+          <pd-file path="auto-skill/harness/" change="delete">Old location removed (no shim; references updated).</pd-file>
+          <pd-file path="harness/pyproject.toml" change="edit">Rename project auto-skill-harness → auto-harness; packages src/harness incl. scenarios; testpaths=["tests"].</pd-file>
+          <pd-file path="harness/src/harness/core.py" change="edit">Drop the single fixed COMPOSE_FILE/GIT_REMOTE_URL constants; Harness takes a scenario compose path.</pd-file>
+          <pd-file path="harness/src/harness/scenarios/base.py" change="add">Scenario base: compose path, service list, readiness gates.</pd-file>
+          <pd-file path="harness/src/harness/scenarios/skill_remote.py" change="add">S1 helpers extracted from core.py (fresh_workspace, trust_source, GIT_REMOTE_URL).</pd-file>
+          <pd-file path="harness/src/harness/scenarios/event_flow.py" change="add">S2 DSL: agent exec, edit_doc, fire_hook, recent_events, assert_doc_changed.</pd-file>
+          <pd-file path="harness/src/harness/cli.py" change="edit">Add a &lt;scenario&gt; selector to up/run/down/status.</pd-file>
+          <pd-file path="harness/scenarios/skill-remote/docker-compose.yaml" change="edit">SUT build context ../.. → ../../.. after the move.</pd-file>
+          <pd-file path="harness/scenarios/skill-remote/Dockerfile.sut" change="edit">Fix COPY harness/scenarios/skill-remote/scripts/sut-entrypoint.sh path.</pd-file>
+          <pd-file path="harness/scenarios/event-flow/docker-compose.yaml" change="add">agent-1, agent-2, auto-ui services.</pd-file>
+          <pd-file path="harness/scenarios/event-flow/Dockerfile" change="add">Multi-target: builder → agent / autoui (auto binary built once).</pd-file>
+          <pd-file path="harness/scenarios/event-flow/scripts/agent-entrypoint.sh" change="add">Seed host.json, auto init --project, start local autowatch, ready-file gate.</pd-file>
+          <pd-file path="harness/scenarios/event-flow/scripts/autoui-entrypoint.sh" change="add">backends add per agent, then AUTO_UI_DEBUG=1 auto ui serve.</pd-file>
+          <pd-file path="harness/scenarios/event-flow/fixtures/hooks/doc-edit.json" change="add">Sample Claude PostToolUse payload for a docs/*.md edit.</pd-file>
+          <pd-file path="harness/tests/conftest.py" change="edit">Per-scenario session-scoped fixtures (skill_remote, event_flow).</pd-file>
+          <pd-file path="harness/tests/skill_remote/test_add_sync.py" change="add">Carried-over auto-skill e2e tests (AC-1).</pd-file>
+          <pd-file path="harness/tests/skill_remote/test_fuzz_fixes.py" change="add">Carried-over fuzz-fix tests (AC-1).</pd-file>
+          <pd-file path="harness/tests/event_flow/test_hook_to_ui.py" change="add">New hook→ui + multi-host tests (AC-4, AC-5).</pd-file>
+          <pd-file path="harness/CLAUDE.md" change="edit">Document the scenario model and how to add one.</pd-file>
+          <pd-file path="CLAUDE.md" change="edit">Update root docs referencing auto-skill/harness → harness.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="sol-decisions" title="Design decisions">
+        <pd-decision id="D-6" title="Co-located autowatch daemon per agent container" status="accepted" by="charlie"
+          summary="Each agent runs its own daemon; auto-ui subscribes to each RPC backend. No product change.">
+          <md><script type="text/plain">
+**Context:** HookIngest rejects non-loopback POSTs (403) and a daemon overwrites `ev.Host`,
+so a single central autowatch can neither accept cross-container hooks nor yield distinct host
+ids.
+**Decision:** Run `auto watch start` inside each agent container (loopback hook-ingest); expose
+its RPC on `tcp://0.0.0.0:7788`; the one auto-ui `backends add`s each and subscribes.
+**Alternatives:** Central autowatch + relax the loopback gate (product code change; still loses
+distinct host ids) — rejected by the user.
+**Consequences:** Mirrors the 045/046 multi-host model; zero product change; more per-agent
+container setup. Supersedes the naive reading of D-4.
+          </script></md>
+        </pd-decision>
+        <pd-decision id="D-7" title="Assert by exec-into-auto-ui, not host-published ports" status="accepted" by="agent"
+          summary="auto-ui binds loopback-only; the DSL execs `wget …/api/debug/recent` inside the container.">
+          <md><script type="text/plain">
+**Decision:** Assertions run `docker compose exec auto-ui wget http://127.0.0.1:8080/...`
+rather than publishing a host port. **Rationale:** `auto ui serve` binds `127.0.0.1` only and
+can't be told to bind `0.0.0.0`; exec-based access matches how the SUT harness already drives
+commands and needs no port mapping. **Consequences:** No host-port collisions across parallel
+runs; assertions go through the same exec path as everything else.
+          </script></md>
+        </pd-decision>
+        <pd-decision id="D-8" title="Single multi-target Dockerfile for event-flow" status="accepted" by="agent"
+          summary="One builder stage compiles auto once; agent/autoui targets reuse it.">
+          <md><script type="text/plain">
+**Decision:** `harness/scenarios/event-flow/Dockerfile` has a shared `builder` stage plus
+`agent` and `autoui` targets. **Alternatives:** Two Dockerfiles (compiles `auto` twice) or a
+prebuilt base image (extra registry/build step). **Consequences:** One compile, cached layer
+shared; compose selects targets via `target:`.
+          </script></md>
+        </pd-decision>
+        <pd-decision id="D-9" title="Scenario = self-contained Compose + Python module over a shared core" status="accepted" by="charlie"
+          summary="scenarios/<name>/ (compose+fixtures) + src/harness/scenarios/<name>.py; core stays generic.">
+          <md><script type="text/plain">
+**Decision:** Keep `Harness`/`Result` generic; each scenario adds a Compose dir and a Python
+module subclassing a small `Scenario` base (compose path + readiness gates + helpers). Tests
+live under `tests/<scenario>/`. **Rationale:** honors decision D-2 (independent compose per
+scenario) and makes a third scenario purely additive (AC-2). **Consequences:** a little compose
+duplication; clear blast radius per scenario.
+          </script></md>
+        </pd-decision>
+        <pd-decisions title="Design decision log"></pd-decisions>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Move the harness (`git mv`), reshape it around a `Scenario` abstraction, and prove the
+promotion by getting the carried-over auto-skill tests green (walking skeleton). Then add the
+`event-flow` scenario as a second vertical slice: stand up the full hook→autowatch→auto-ui
+chain with a single agent and one passing assertion, then thicken to multiple hosts and the
+generic probe surface, and finish with docs + a full two-scenario green run.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-dag caption="Phase dependency DAG (linear: each slice thickens a running system)"></pd-dag>
+      </pd-section>
+
+      <pd-section id="phases" title="Phases">
+        <pd-stepper>
+
+          <pd-phase n="1" title="Promote harness + Scenario abstraction (skill-remote green)"
+            status="todo"
+            files="harness/,auto-skill/harness/,harness/pyproject.toml,harness/src/harness/core.py,harness/src/harness/scenarios/base.py,harness/src/harness/scenarios/skill_remote.py,harness/src/harness/cli.py,harness/scenarios/skill-remote/docker-compose.yaml,harness/scenarios/skill-remote/Dockerfile.sut,harness/tests/conftest.py,harness/tests/skill_remote/test_add_sync.py,harness/tests/skill_remote/test_fuzz_fixes.py">
+            <md><script type="text/plain">
+Walking skeleton for the *structure*: the promoted harness runs end-to-end and Scenario 1 passes.
+
+1. `git mv auto-skill/harness harness` (preserve history). Move scenario-1 Docker assets under
+   `harness/scenarios/skill-remote/` (`docker-compose.yaml`, `Dockerfile.sut`,
+   `Dockerfile.git-server`, `scripts/`, `fixtures/`). **Drop the committed `.venv/` and
+   `.pytest_cache/`** that the old dir carries (don't drag them; `uv sync` rebuilds `.venv`).
+2. Fix the two path breakages: compose SUT `context: ../..` → `../../..`; `Dockerfile.sut`
+   `COPY auto-skill/harness/scripts/...` → `COPY harness/scenarios/skill-remote/scripts/...`.
+   **Verify:** `docker compose -f harness/scenarios/skill-remote/docker-compose.yaml build` succeeds.
+3. `pyproject.toml`: rename project `auto-skill-harness` → `auto-harness`; keep `harness` script;
+   ensure `src/harness` (incl. `scenarios/`) is packaged; `testpaths=["tests"]`.
+4. Add `src/harness/scenarios/base.py` (`Scenario`: compose path, service list, readiness gates)
+   and `skill_remote.py` (extract `fresh_workspace`/`trust_source`/`GIT_REMOTE_URL` from `core.py`).
+   Make `core.py`'s `Harness` take a scenario compose path (drop the single fixed `COMPOSE_FILE`).
+   Update `cli.py` to select a scenario. **Verify:** `uv run harness --help` lists scenarios.
+5. Move tests to `tests/skill_remote/`; make `conftest.py` a per-scenario session-scoped fixture.
+6. **Verify (AC-1):** `cd harness && uv run pytest tests/skill_remote -v` → all carried-over
+   tests pass (init → add → sync → rename + fuzz-fix cases). **Commit.**
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="2" title="event-flow walking skeleton — single agent → auto-ui (AC-4)"
+            status="todo" depends-on="1"
+            files="harness/scenarios/event-flow/Dockerfile,harness/scenarios/event-flow/scripts/agent-entrypoint.sh,harness/scenarios/event-flow/scripts/autoui-entrypoint.sh,harness/scenarios/event-flow/docker-compose.yaml,harness/scenarios/event-flow/fixtures/hooks/doc-edit.json,harness/src/harness/scenarios/event_flow.py,harness/tests/event_flow/test_hook_to_ui.py">
+            <md><script type="text/plain">
+Thinnest end-to-end event path: ONE agent container + one auto-ui, one assertion passing.
+
+1. Add `scenarios/event-flow/Dockerfile` (multi-target `builder` → `agent`/`autoui`; builds
+   `auto` once). **Verify:** `docker build --target agent` and `--target autoui` both succeed.
+2. Add `scripts/agent-entrypoint.sh` (seed `~/.auto/host.json` from `$HOST_ID`; `git init` +
+   `auto init --project -y` in `/workspace`; start `auto watch start --hook-addr 127.0.0.1:7787
+   --rpc-addr tcp://0.0.0.0:7788 --ready-file /tmp/watch-ready.json`; block on the ready-file).
+   Add `scripts/autoui-entrypoint.sh` (`auto ui backends add tcp://agent-1:7788`; then
+   `AUTO_UI_DEBUG=1 auto ui serve --port 8080`).
+3. Add `docker-compose.yaml` with **agent-1** (`HOST_ID=agent-1`, ready-file healthcheck,
+   `init: true`) + **auto-ui** (`depends_on` agent-1 healthy; `/api/debug/recent` healthcheck).
+   Add `fixtures/hooks/doc-edit.json` (Claude PostToolUse payload for a `docs/*.md` edit).
+4. Add `src/harness/scenarios/event_flow.py`: `up()` + readiness gates (daemon RPC up, backend
+   subscribed, project registered), `edit_doc`, `fire_hook`, `recent_events` (poll via
+   `exec auto-ui wget …`, bounded retry), `assert_doc_changed`.
+5. Add `tests/event_flow/test_hook_to_ui.py::test_hook_from_agent_received_by_ui`.
+   **Verify (AC-4, AC-3 thin):** `uv run pytest tests/event_flow -k received_by_ui` passes —
+   a `doc.changed` with matching `data.path` and `host=agent-1` lands in `/api/debug/recent`.
+   **Commit.**
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="3" title="Thicken to multi-host + probe surface (AC-2, AC-5, AC-6)"
+            status="todo" depends-on="2"
+            files="harness/scenarios/event-flow/docker-compose.yaml,harness/src/harness/scenarios/event_flow.py,harness/scenarios/event-flow/scripts/autoui-entrypoint.sh,harness/tests/event_flow/test_hook_to_ui.py">
+            <md><script type="text/plain">
+Add the second host and the generic probe helper on a system that already runs end to end.
+
+1. Add **agent-2** (`HOST_ID=agent-2`) to `docker-compose.yaml` (reuse the agent anchor);
+   `autoui-entrypoint.sh` adds `tcp://agent-2:7788` too; auto-ui `depends_on` both healthy.
+2. `event_flow.py`: generalize to an `agents: list[str]`; readiness gates assert **every**
+   backend subscribed; expose generic `run(agent, cmd) -> Result` (the probe primitive).
+3. Tests: add `test_multi_host_attribution` (AC-5 — both `agent-1` and `agent-2` appear as
+   distinct `host` values in the ring) and a small `run()`-based probe assertion (AC-6).
+4. **Verify (AC-2):** bring up ONLY `event-flow` and confirm no `skill-remote` services start;
+   both scenario suites pass independently. **Verify (AC-5, AC-6):**
+   `uv run pytest tests/event_flow -v` all green. **Commit.**
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="4" title="Docs + reference sweep + full two-scenario green run"
+            status="todo" depends-on="3"
+            files="harness/CLAUDE.md,CLAUDE.md">
+            <md><script type="text/plain">
+1. Rewrite `harness/CLAUDE.md`: the scenario model (self-contained compose + Python module over
+   a shared core), the two scenarios, and a "how to add a scenario" recipe. Fix the stale
+   `cd auto-skill/harness` usage line.
+2. Reference sweep: `grep -rn "auto-skill/harness"` outside the moved subtree and the task docs
+   must return nothing; update the root `CLAUDE.md` sub-projects notes if the harness warrants a
+   mention. (Confirmed: no Makefile/CI references exist.)
+3. **Verify (AC-1…AC-6):** `cd harness && uv run pytest -v` runs BOTH scenarios green; `grep`
+   shows no stale path references. **Commit.**
+            </script></md>
+          </pd-phase>
+
+        </pd-stepper>
+      </pd-section>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **AC-1** passes at the end of Phase 1 (carried-over skill tests green in `./harness`).
+- **AC-4** passes at the end of Phase 2 (hooks from an agent container received by auto-ui).
+- **AC-2, AC-5, AC-6** pass at the end of Phase 3 (isolation, multi-host, probe surface).
+- **AC-3** is exercised from Phase 2 and fully satisfied by Phase 3 (fail-fast stand-up gates).
+- Phase 4 confirms **AC-1…AC-6** together via a full two-scenario `uv run pytest -v` and a clean
+  reference sweep.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+  </pd-doc>
+</body>
+</html>
