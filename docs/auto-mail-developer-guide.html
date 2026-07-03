@@ -1,0 +1,847 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>auto mail Developer Guide</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <pd-doc title="auto mail Developer Guide" status="draft" generated="2026-07-03">
+    <pd-tab name="Overview">
+      <pd-section id="what-it-is" title="What auto mail is" summary="`auto mail` is the CLI-first, agent-first communication layer for agent-to-agent coordination over durable local mail and live Events.">
+        <md><script type="text/plain">
+`auto mail` is a future auto-stack subcommand for agent-to-agent communication.
+
+The feature gives agents a small set of durable primitives:
+
+- send Mail to an address
+- read and acknowledge Mail from an inbox
+- reply using correlation metadata
+- publish broadcasts to a Project or channel
+- claim queue work without direct process coordination
+- stream incremental output as a sequence of Mail Events
+- include artifact URLs in free-text bodies when larger files need to be shared
+
+The product rule is simple: **agents talk through `auto mail`; v1 storage is embedded SQLite with transactional writes; no external bus is required.**
+        </script></md>
+      </pd-section>
+
+      <pd-section id="mental-model" title="Mental Model" summary="Mail is durable first and live second: commit the Event and recipient state in SQLite, then notify online consumers.">
+        <pd-mermaid caption="auto mail mental model">
+flowchart LR
+  Sender["Sending Agent<br/>planner Session"]
+  CLI["auto mail CLI"]
+  Watch["AutoWatch<br/>per-Host authority"]
+  Store[("Mail Store<br/>SQLite")]
+  Export[("JSONL export<br/>debug/backups")]
+  Live["Live Event relay<br/>bus.subscribe"]
+  Receiver["Receiving Agent<br/>reviewer Session"]
+
+  Sender -->|"auto mail send/queue"| CLI
+  CLI -->|"RPC to local AutoWatch"| Watch
+  Watch -->|"transaction: Event + recipients + cursors"| Store
+  Store -->|"optional export"| Export
+  Watch -->|"notify if online"| Live
+  Live --> Receiver
+  Receiver -->|"auto mail inbox/read/ack/reply"| CLI
+  CLI --> Watch
+
+  classDef durable fill:#dcfce7,stroke:#16a34a,color:#0f172a
+  classDef live fill:#e0f2fe,stroke:#0284c7,color:#0f172a
+  classDef actor fill:#fef3c7,stroke:#d97706,color:#0f172a
+  class Sender,Receiver actor
+  class Store,Export durable
+  class Live,Watch live
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+The SQLite Mail Store is the source for delivery and replay. Live Event relay is an optimization for online agents.
+
+If a receiver is offline, nothing special happens: the Mail is still in SQLite. When the receiver starts, it reads from its cursor and catches up.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="core-concepts" title="Core Concepts" summary="The product surface is intentionally small: identity, address, channel, subject, free-text body, Mail Event, cursor, and receipt.">
+        <pd-api kind="concepts" name="auto mail vocabulary" lang="go" caption="Conceptual objects">
+          <pd-member kind="concept" sig="Identity">Stable sender or receiver identity. Usually an agent name plus Host and Project context.</pd-member>
+          <pd-member kind="concept" sig="Address">Where Mail is routed: `agent:reviewer`, `channel:review`, `project:auto-stack`, `session:abc123`, or `queue:review`.</pd-member>
+          <pd-member kind="concept" sig="Channel">A named subscription target. An identity can subscribe to channels so Mail addressed to `channel:review` appears in that agent's inbox.</pd-member>
+          <pd-member kind="concept" sig="Subject">Free-text scan line. It should summarize the body well enough for a consumer to decide whether to read the full Mail.</pd-member>
+          <pd-member kind="concept" sig="Body">Free text intended for an agent to read. Large file references are plain URLs in this text, usually produced by `auto artifact`.</pd-member>
+          <pd-member kind="concept" sig="Mail Event">A durable `bus.Event`-shaped envelope with recipients, free-text subject, reply address, correlation, causation, and a free-text body.</pd-member>
+          <pd-member kind="concept" sig="Cursor">Per-consumer sequence in the Mail Store. Lets agents resume after restart without reprocessing acknowledged Mail.</pd-member>
+          <pd-member kind="concept" sig="Receipt">Delivery or processing state: appended, delivered live, claimed, acknowledged, completed, expired.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="developer-contract" title="Developer Contract" summary="The CLI is the product API; storage and live delivery are interchangeable implementation details behind it.">
+        <pd-mermaid caption="Product contract layers">
+flowchart TB
+  Agent["Agent prompt / harness"]
+  CLI["auto mail CLI<br/>JSON by default"]
+  API["Mail service API<br/>append, read, ack, claim, watch"]
+  Store["Embedded Mail Store<br/>SQLite"]
+  Relay["Live relay<br/>current bus/RPC Events"]
+  UI["AutoUi<br/>observability later"]
+
+  Agent --> CLI
+  CLI --> API
+  API --> Store
+  API --> Relay
+  Relay --> Agent
+  Store --> CLI
+  Store -. "future read model" .-> UI
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+Everything important must be possible from the CLI because agents are the primary users.
+
+The implementation starts with SQLite so Mail append, recipient rows, queue claims, cursors, and acknowledgements can commit atomically. Human-readable output is always explicit, for example `--text`; default output stays parseable JSON.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-1" title="Use embedded SQLite Mail Store first" status="accepted" by="agent" date="2026-07-03" summary="Start with local SQLite transactions; keep JSONL as export/debug, not the v1 source of truth.">
+        <md><script type="text/plain">
+**Context:** The feature needs agent-to-agent communication, offline catch-up, and correlated replies, but the current auto-stack scale does not justify external bus operations.
+
+**Decision:** `auto mail` starts with an embedded SQLite Mail Store. A send/ack/claim operation writes the Mail Event, recipient state, cursor/receipt updates, and queue lease changes in one transaction.
+
+**Alternatives:** JSONL-only append log, NATS JetStream, Redis Streams, Kafka-compatible logs, direct HTTP-only RPC.
+
+**Consequences:** The first version gets durable filtering, queue leases, idempotent acknowledgement, and crash-safe cursor updates without external infrastructure. JSONL remains useful for export, fixtures, and manual inspection, but SQLite is the authoritative v1 store.
+        </script></md>
+      </pd-decision>
+
+      <pd-decisions title="Decision Log"></pd-decisions>
+    </pd-tab>
+
+    <pd-tab name="CLI">
+      <pd-section id="cli-principles" title="CLI Principles" summary="The CLI is explicit, JSON-first, address-oriented, and safe for agents to call from scripts.">
+        <md><script type="text/plain">
+`auto mail` follows auto-stack CLI conventions:
+
+- default output is JSON
+- diagnostics go to stderr
+- human output is opt-in with `--text`
+- filters are explicit and normalized
+- invalid flag combinations fail fast
+- list commands return valid results even when some Mail items are invalid, then exit non-zero with structured errors
+- every hard error includes a remediation hint
+        </script></md>
+      </pd-section>
+
+      <pd-section id="cli-quickstart" title="Quickstart" summary="A minimal two-agent local exchange: initialize the Project store once, initialize identity, send Mail, read it, reply, and acknowledge.">
+        <pd-cli id="CLI-quickstart" title="zsh - local two-agent exchange" caption="Final CLI shape for a local planner and reviewer">
+          <pd-cmd note="initialize mail once for the current Project" status="todo">auto mail init --project</pd-cmd>
+          <pd-out>{
+  "store": ".auto/mail/mail.sqlite",
+  "project": "auto-stack",
+  "projectInferred": true,
+  "schemaVersion": 1
+}</pd-out>
+          <pd-cmd note="set the current agent identity and channel subscriptions" status="todo">auto mail identity init --name planner --subscribe planning --subscribe docs</pd-cmd>
+          <pd-out>{
+  "name": "planner",
+  "agent": "agent:planner",
+  "project": "auto-stack",
+  "host": "devbox-alice",
+  "subscriptions": [
+    "agent:planner",
+    "channel:planning",
+    "channel:docs"
+  ]
+}</pd-out>
+          <pd-cmd note="send durable Mail to another agent with a free-text subject" status="todo">auto mail send --to agent:reviewer --subject "Review the auto mail developer guide" --body "Please review docs/auto-mail-developer-guide.html"</pd-cmd>
+          <pd-out>{
+  "id": "mail_01jz5p7f3f9p4m0b6h9k2a1dxy",
+  "type": "mail.sent",
+  "subject": "Review the auto mail developer guide",
+  "source": "agent:planner",
+  "to": ["agent:reviewer"],
+  "correlationId": "corr_01jz5p7f3f4f9z4q7n2w9r5c3a",
+  "seq": 42,
+  "cursor": "seq:42",
+  "liveDelivered": false
+}</pd-out>
+          <pd-cmd note="the receiver lists unread Mail" status="todo">auto mail inbox --for agent:reviewer --unread</pd-cmd>
+          <pd-out>{
+  "items": [
+    {
+      "id": "mail_01jz5p7f3f9p4m0b6h9k2a1dxy",
+      "from": "agent:planner",
+      "subject": "Review the auto mail developer guide",
+      "receivedAt": "2026-07-03T13:05:44Z"
+    }
+  ]
+}</pd-out>
+          <pd-cmd note="reply keeps correlation metadata" status="todo">auto mail reply mail_01jz5p7f3f9p4m0b6h9k2a1dxy --subject "Review result: cursor risk" --body "Reviewed. Main risk is cursor semantics."</pd-cmd>
+          <pd-out>{
+  "id": "mail_01jz5p8d91nx2ky5jv7hsg0gr7",
+  "type": "mail.sent",
+  "subject": "Review result: cursor risk",
+  "correlationId": "corr_01jz5p7f3f4f9z4q7n2w9r5c3a",
+  "causationId": "mail_01jz5p7f3f9p4m0b6h9k2a1dxy"
+}</pd-out>
+          <pd-cmd note="receiver marks the original Mail processed" status="todo">auto mail ack mail_01jz5p7f3f9p4m0b6h9k2a1dxy</pd-cmd>
+          <pd-out>{ "id": "mail_01jz5p7f3f9p4m0b6h9k2a1dxy", "state": "acknowledged" }</pd-out>
+        </pd-cli>
+      </pd-section>
+      <pd-thread anchor="cli-quickstart" status="resolved" priority="p2" title="Split Project init from identity init">
+        <pd-comment by="review">init should follow contentions and be done once per project setup. we will need a different command for setting up the agent identity. maybe "agent mail identity init --name agent_name". also drop role and project from this, project is infered from the directory, role i dont like, i dont want too much structured data at this point.</pd-comment>
+        <pd-comment by="author">Addressed by making `auto mail init --project` a one-time Project setup command and moving agent setup to `auto mail identity init --name ...`. The CLI examples no longer accept `--role` or `--project` on identity setup; Project context is inferred from the current directory.</pd-comment>
+      </pd-thread>
+      <pd-thread anchor="cli-quickstart" status="resolved" priority="p2" title="Make subject a free-text summary">
+        <pd-comment by="review">im not sure about this subject format, i think subject can just be free text for now. subject should be almost like a summary, thing progressive disclosure. it should be enough for a consumer to think "do i need to read this or not"</pd-comment>
+        <pd-comment by="author">Addressed by changing `subject` from a routing namespace to a free-text scan line. Routing now lives in `to` addresses and subscriptions; inbox examples show subject as the progressive-disclosure summary before the body is read.</pd-comment>
+      </pd-thread>
+      <pd-thread anchor="cli-quickstart" status="resolved" priority="p2" title="Add identity channel subscriptions">
+        <pd-comment by="review">i also think the identity init can include a list of channels that you subscribe to, so you can announce "my agent id is X and i also want to be notified of messages to Y".</pd-comment>
+        <pd-comment by="author">Addressed by adding `--subscribe` flags to `auto mail identity init` and showing subscriptions to the agent address plus named channels such as `channel:planning` and `channel:docs`.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="identity-cli" title="Identity Commands" summary="Agents need stable identities and channel subscriptions so senders can address names instead of Host paths or process IDs.">
+        <pd-cli id="CLI-identity" title="zsh - identity and address discovery" caption="An agent discovers who it is and who can receive Mail">
+          <pd-cmd note="create or update an identity with channel subscriptions" status="todo">auto mail identity init --name reviewer --subscribe review --subscribe docs</pd-cmd>
+          <pd-out>{
+  "name": "reviewer",
+  "agent": "agent:reviewer",
+  "subscriptions": ["agent:reviewer", "channel:review", "channel:docs"]
+}</pd-out>
+          <pd-cmd note="show current identity and default inbox" status="todo">auto mail whoami</pd-cmd>
+          <pd-out>{
+  "agent": "agent:planner",
+  "host": "devbox-alice",
+  "project": "auto-stack",
+  "session": "sess_7d90",
+  "subscriptions": [
+    "agent:planner",
+    "channel:planning",
+    "channel:docs"
+  ]
+}</pd-out>
+          <pd-cmd note="list known local and recently-seen identities" status="todo">auto mail address list --project auto-stack</pd-cmd>
+          <pd-out>{
+  "addresses": [
+    { "address": "agent:planner", "host": "devbox-alice", "lastSeen": "2026-07-03T13:01:02Z" },
+    { "address": "agent:reviewer", "host": "devbox-alice", "lastSeen": "2026-07-03T13:06:15Z" },
+    { "address": "channel:review", "members": ["agent:reviewer"] }
+  ]
+}</pd-out>
+          <pd-cmd note="human-readable address book" status="todo">auto mail address list --project auto-stack --text</pd-cmd>
+          <pd-out>agent:planner    devbox-alice  seen 4m ago
+agent:reviewer   devbox-alice  seen 12s ago
+channel:review   1 member</pd-out>
+        </pd-cli>
+      </pd-section>
+
+      <pd-section id="send-read-cli" title="Send, Read, Reply" summary="The core daily loop is `send`, `inbox`, `read`, `reply`, `ack`.">
+        <pd-cli id="CLI-send-read" title="zsh - direct Mail lifecycle" caption="Direct durable Mail between named agents">
+          <pd-cmd note="send a short direct Mail" status="todo">auto mail send --to agent:reviewer --subject "Review mail store schema" --body "Please check the SQLite shape before implementation."</pd-cmd>
+          <pd-out>{
+  "id": "mail_01jz5q00fwchb0b6m2avvv6p25",
+  "state": "appended",
+  "seq": 88,
+  "cursor": "seq:88"
+}</pd-out>
+          <pd-cmd note="send a longer free-text body from a file" status="todo">auto mail send --to channel:review --subject "Review auto mail guide" --body-file review-request.md</pd-cmd>
+          <pd-out>{
+  "id": "mail_01jz5q0c6sgqc9pjm5br3wnj5w",
+  "state": "appended",
+  "to": ["channel:review"],
+  "seq": 89,
+  "cursor": "seq:89"
+}</pd-out>
+          <pd-cmd note="list unread summaries before reading bodies" status="todo">auto mail inbox --for agent:reviewer --unread --limit 10</pd-cmd>
+          <pd-out>{
+  "items": [
+    {
+      "id": "mail_01jz5q0c6sgqc9pjm5br3wnj5w",
+      "from": "agent:planner",
+      "subject": "Review auto mail guide",
+      "receivedAt": "2026-07-03T13:11:12Z"
+    }
+  ]
+}</pd-out>
+          <pd-cmd note="read full fidelity envelope and free-text body" status="todo">auto mail read mail_01jz5q00fwchb0b6m2avvv6p25</pd-cmd>
+          <pd-out>{
+  "id": "mail_01jz5q00fwchb0b6m2avvv6p25",
+  "type": "mail.sent",
+  "subject": "Review mail store schema",
+  "source": "agent:planner",
+  "to": ["agent:reviewer"],
+  "body": "Please review docs/auto-mail-developer-guide.html.\n\nFocus on cursor semantics and failure modes."
+}</pd-out>
+          <pd-cmd note="reply without manually copying addresses" status="todo">auto mail reply mail_01jz5q00fwchb0b6m2avvv6p25 --subject "Schema review result" --body-file review-response.md</pd-cmd>
+          <pd-out>{
+  "id": "mail_01jz5q0ft4r2w0k982zvkxv61q",
+  "subject": "Schema review result",
+  "to": ["agent:planner"],
+  "correlationId": "corr_01jz5q00f0r9snrtnw3be0ee66",
+  "causationId": "mail_01jz5q00fwchb0b6m2avvv6p25"
+}</pd-out>
+          <pd-cmd note="acknowledge after processing" status="todo">auto mail ack mail_01jz5q00fwchb0b6m2avvv6p25</pd-cmd>
+          <pd-out>{ "id": "mail_01jz5q00fwchb0b6m2avvv6p25", "state": "acknowledged" }</pd-out>
+        </pd-cli>
+      </pd-section>
+      <pd-thread anchor="send-read-cli" status="resolved" priority="p2" title="Show all daily-loop commands">
+        <pd-comment by="review">show examples of all commands pls</pd-comment>
+        <pd-comment by="author">Addressed by expanding this section to show `send`, channel-addressed `send`, `inbox`, `read`, `reply`, and `ack`, with JSON examples for each command in the daily loop.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="request-cli" title="No blocking request/wait in v1" summary="V1 keeps communication asynchronous: send Mail, keep correlation metadata, and let agents read replies from their inbox when they are ready.">
+        <pd-cli id="CLI-request" title="zsh - async reply flow" caption="No `request`, `wait`, or blocking command is part of v1">
+          <pd-cmd note="send work without blocking for a response" status="todo">auto mail send --to channel:review --subject "Please review queue lease semantics" --body-file request.md</pd-cmd>
+          <pd-out>{
+  "id": "mail_01jz5q65p48rb89zj9s2x8rm81",
+  "subject": "Please review queue lease semantics",
+  "to": ["channel:review"],
+  "correlationId": "corr_01jz5q65p1vjmktt07ea2p4gcs"
+}</pd-out>
+          <pd-cmd note="later, read correlated replies like ordinary Mail" status="todo">auto mail inbox --for agent:planner --after-correlation corr_01jz5q65p1vjmktt07ea2p4gcs</pd-cmd>
+          <pd-out>{
+  "items": [
+    {
+      "id": "mail_01jz5q7k62bs25yqhdpxgrh9y4",
+      "from": "agent:reviewer",
+      "subject": "Queue lease review result"
+    }
+  ]
+}</pd-out>
+        </pd-cli>
+      </pd-section>
+      <pd-thread anchor="request-cli" status="resolved" priority="p2" title="Drop blocking request/wait">
+        <pd-comment by="review">hmmm i think we drop this for now, dont like the idea of agents waiting. maybe we include it later. simplify.</pd-comment>
+        <pd-comment by="author">Addressed by removing `auto mail request`, `auto mail wait`, `--wait`, and `--no-wait` from the v1 CLI. The section now documents only asynchronous send plus later inbox lookup by correlation.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="watch-cli" title="Watch and replay" summary="Online agents use `watch`; restarted agents use cursors and `replay`.">
+        <pd-cli id="CLI-watch" title="zsh - live watch and durable replay" caption="Live delivery is optional; cursors provide catch-up">
+          <pd-cmd note="stream matching Mail as JSONL" status="todo">auto mail watch --for agent:reviewer --format jsonl</pd-cmd>
+          <pd-out>{"id":"mail_01jz5qb4...","subject":"Review queue lease semantics","from":"agent:planner"}
+{"id":"mail_01jz5qcw...","subject":"Need decision on channel naming","from":"agent:executor"}</pd-out>
+          <pd-cmd note="resume from a named cursor" status="todo">auto mail replay --consumer reviewer-main --from-cursor --limit 50</pd-cmd>
+          <pd-out>{
+  "consumer": "reviewer-main",
+  "from": "seq:88",
+  "items": [
+    { "id": "mail_01jz5qb4...", "seq": 89 }
+  ],
+  "nextCursor": "seq:90"
+}</pd-out>
+          <pd-cmd note="advance cursor after processing" status="todo">auto mail cursor commit reviewer-main --seq 90</pd-cmd>
+          <pd-out>{ "consumer": "reviewer-main", "cursor": "seq:90" }</pd-out>
+        </pd-cli>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Patterns">
+      <pd-section id="direct-pattern" title="Direct Mail" summary="Send to one address; the receiver can read later or receive a live Event if online.">
+        <pd-mermaid caption="Direct Mail sequence">
+sequenceDiagram
+  participant A as agent:planner
+  participant M as auto mail
+  participant S as Mail Store
+  participant B as agent:reviewer
+
+  A->>M: send --to agent:reviewer
+  M->>S: transaction: mail.sent + recipient
+  M-->>A: id, seq, correlationId
+  M-->>B: live Event if watching
+  B->>M: inbox --for agent:reviewer
+  M->>S: read from cursor
+  M-->>B: unread Mail
+  B->>M: ack mail_id
+  M->>S: transaction: mail.ack + recipient state
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="request-pattern" title="Replies and correlation" summary="Replies are ordinary asynchronous Mail linked by `reply_to`, `correlation_id`, and `causation_id`.">
+        <pd-mermaid caption="Correlation chain">
+flowchart LR
+  Req["mail.sent<br/>Please review queue leases<br/>id: mail_A<br/>correlation: corr_1"]
+  Resp["mail.sent<br/>Queue lease review result<br/>id: mail_B<br/>correlation: corr_1<br/>causation: mail_A"]
+  Ack["mail.ack<br/>id: mail_C<br/>correlation: corr_1<br/>causation: mail_B"]
+
+  Req -->|"reply"| Resp
+  Resp -->|"processed"| Ack
+        </pd-mermaid>
+
+        <pd-code lang="json" path="mail-envelope.json" lines caption="Envelope extensions that make asynchronous replies possible">
+<script type="text/plain">{
+  "specversion": "1.0",
+  "type": "mail.sent",
+  "subject": "Please review queue lease semantics",
+  "source": "agent:planner",
+  "to": ["agent:reviewer"],
+  "id": "mail_01jz5q65p48rb89zj9s2x8rm81",
+  "time": "2026-07-03T13:22:00Z",
+  "host": "devbox-alice",
+  "project": "auto-stack",
+  "session": "sess_planner",
+  "reply_to": "agent:planner",
+  "correlation_id": "corr_01jz5q65p1vjmktt07ea2p4gcs",
+  "causation_id": "",
+  "trace_id": "trace_2f3aa709d5a34c2a",
+  "datacontenttype": "text/plain",
+  "data": "Please review the auto mail guide."
+}</script>
+        </pd-code>
+      </pd-section>
+
+      <pd-section id="broadcast-pattern" title="Broadcast" summary="Broadcast sends one durable Mail Event addressed to a group; each consumer tracks its own cursor.">
+        <pd-cli id="CLI-broadcast" title="zsh - Project and channel broadcast" caption="Broadcast without per-agent direct coupling">
+          <pd-cmd note="announce a new design doc to all agents in the Project" status="todo">auto mail publish --to project:auto-stack --subject "New auto mail guide" --body "New auto mail guide in docs/auto-mail-developer-guide.html"</pd-cmd>
+          <pd-out>{
+  "id": "mail_01jz5qkbkebq6p6n61d63v0s1x",
+  "subject": "New auto mail guide",
+  "audience": "project:auto-stack",
+  "seq": 144,
+  "cursor": "seq:144"
+}</pd-out>
+          <pd-cmd note="broadcast to all subscribers on a review channel" status="todo">auto mail publish --to channel:review --subject "Review capacity available" --body "Review capacity available for one doc in the next 30 minutes."</pd-cmd>
+          <pd-out>{
+  "id": "mail_01jz5qmdrp0waj72c3n6jq0bcn",
+  "subject": "Review capacity available",
+  "audience": "channel:review"
+}</pd-out>
+        </pd-cli>
+      </pd-section>
+
+      <pd-section id="queue-pattern" title="Work Queue" summary="Queue semantics are claim-based Mail state transitions: push, claim with lease, complete or release.">
+        <pd-mermaid caption="Queue claim lifecycle">
+stateDiagram-v2
+  [*] --> available: mail.queue.push
+  available --> claimed: mail.queue.claim lease=15m
+  claimed --> completed: mail.queue.done
+  claimed --> available: mail.queue.release
+  claimed --> expired: lease timeout
+  expired --> available: requeue
+  completed --> [*]
+        </pd-mermaid>
+
+        <pd-cli id="CLI-queue" title="zsh - claim-based queue" caption="Load-balanced work without direct agent coordination">
+          <pd-cmd note="producer pushes work" status="todo">auto mail queue push review --subject "Review cursor and lease semantics" --body "Review docs/auto-mail-developer-guide.html for cursor and lease semantics."</pd-cmd>
+          <pd-out>{
+  "id": "mail_01jz5qta5bxevdcd3r8w39f7gm",
+  "queue": "review",
+  "state": "available"
+}</pd-out>
+          <pd-cmd note="one reviewer claims it with a lease" status="todo">auto mail queue claim review --consumer agent:reviewer --lease 15m</pd-cmd>
+          <pd-out>{
+  "claimId": "claim_01jz5qv0vrpyzn3pg9zzqhk0tq",
+  "mailId": "mail_01jz5qta5bxevdcd3r8w39f7gm",
+  "leaseExpiresAt": "2026-07-03T13:45:00Z",
+  "body": "Review docs/auto-mail-developer-guide.html for cursor and lease semantics."
+}</pd-out>
+          <pd-cmd note="complete the claimed work" status="todo">auto mail queue done claim_01jz5qv0vrpyzn3pg9zzqhk0tq --body-file review-result.md</pd-cmd>
+          <pd-out>{
+  "claimId": "claim_01jz5qv0vrpyzn3pg9zzqhk0tq",
+  "mailId": "mail_01jz5qta5bxevdcd3r8w39f7gm",
+  "state": "completed"
+}</pd-out>
+        </pd-cli>
+      </pd-section>
+
+      <pd-section id="stream-pattern" title="Streaming" summary="Token or log streaming is a sequence of Mail Events sharing one correlation ID and monotonic sequence numbers.">
+        <pd-mermaid caption="Streaming as correlated Mail Events">
+sequenceDiagram
+  participant Writer as agent:executor
+  participant Mail as auto mail
+  participant Reader as agent:observer
+
+  Writer->>Mail: stream open --to agent:observer
+  Mail-->>Writer: streamId, correlationId
+  Writer->>Mail: stream append --seq 1 "running tests"
+  Mail-->>Reader: live mail.stream.chunk seq=1
+  Writer->>Mail: stream append --seq 2 "test failed"
+  Mail-->>Reader: live mail.stream.chunk seq=2
+  Writer->>Mail: stream close --exit-code 1
+  Mail-->>Reader: mail.stream.closed
+        </pd-mermaid>
+
+        <pd-cli id="CLI-stream" title="zsh - stream output to an observer" caption="Useful for long-running agents and TaskDef monitors">
+          <pd-cmd note="open a stream" status="todo">auto mail stream open --to agent:observer --name executor-output</pd-cmd>
+          <pd-out>{
+  "streamId": "stream_01jz5r1p2y3dht4gp7th08ykrj",
+  "correlationId": "corr_01jz5r1p2q37t3xtrj1x9pdpnt"
+}</pd-out>
+          <pd-cmd note="append chunks" status="todo">auto mail stream append stream_01jz5r1p2y3dht4gp7th08ykrj --seq 1 --body "go test ./..."</pd-cmd>
+          <pd-out>{ "streamId": "stream_01jz5r1p2y3dht4gp7th08ykrj", "seq": 1, "state": "appended" }</pd-out>
+          <pd-cmd note="follow a stream" status="todo">auto mail stream follow stream_01jz5r1p2y3dht4gp7th08ykrj --from 0</pd-cmd>
+          <pd-out>{"seq":1,"body":"go test ./..."}
+{"seq":2,"body":"FAIL auto-mail cursor test"}</pd-out>
+        </pd-cli>
+      </pd-section>
+
+      <pd-section id="shared-state-pattern" title="Shared State" summary="Small shared coordination values live behind explicit `kv` commands; large files are shared with `auto artifact` URLs in Mail bodies.">
+        <pd-cli id="CLI-kv" title="zsh - small shared state" caption="A blackboard-style pattern without making Mail bodies mutable">
+          <pd-cmd note="write a small coordination value" status="todo">auto mail kv put project:auto-stack/current-review mail_01jz5qta5bxevdcd3r8w39f7gm</pd-cmd>
+          <pd-out>{
+  "key": "project:auto-stack/current-review",
+  "version": 7,
+  "updatedAt": "2026-07-03T13:31:20Z"
+}</pd-out>
+          <pd-cmd note="read it later" status="todo">auto mail kv get project:auto-stack/current-review</pd-cmd>
+          <pd-out>{
+  "key": "project:auto-stack/current-review",
+  "value": "mail_01jz5qta5bxevdcd3r8w39f7gm",
+  "version": 7
+}</pd-out>
+        </pd-cli>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Storage">
+      <pd-section id="storage-principles" title="Storage Principles" summary="SQLite is the durable v1 Mail Store: Event rows, recipient state, cursors, claims, and receipts commit together.">
+        <pd-mermaid caption="Storage layers">
+flowchart TB
+  Command["auto mail command"]
+  Service["Mail service"]
+  SQLite[("mail.sqlite<br/>authoritative Mail Store")]
+  Export[("exports/*.jsonl<br/>debug/import/export")]
+  Read["read/inbox/replay"]
+  Watch["watch/live relay"]
+
+  Command --> Service
+  Service -->|"transaction"| SQLite
+  SQLite --> Read
+  SQLite -->|"export when requested"| Export
+  Service --> Watch
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+SQLite is v1 because the hard parts are transactional: append the Mail Event, add recipient rows, reserve queue claims, update cursor/receipt state, and commit all of it atomically.
+
+The Mail Store remains append-oriented at the domain level: Mail Events are inserted once and never rewritten. Mutable state such as acknowledgement, queue leases, and consumer cursors lives in separate tables keyed back to immutable Mail Events.
+
+JSONL is still useful, but only as an interchange/debug format: `watch --format jsonl`, `store export`, fixtures, and disaster recovery exports.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="file-layout" title="File Layout" summary="All v1 state is local-first under `~/.auto/mail`, with Project identity carried in each envelope.">
+        <pd-code lang="bash" path="~/.auto/mail layout" lines caption="Proposed local-first layout">
+<script type="text/plain">~/.auto/mail/
+  identities/
+    planner.json
+    reviewer.json
+  mail.sqlite
+  exports/
+    2026-07-03.jsonl
+  settings.json</script>
+        </pd-code>
+      </pd-section>
+
+      <pd-section id="event-schema" title="Mail Event Shape" summary="Mail extends the current `bus.Event` envelope with recipients, a free-text subject, correlation, content schema, and delivery metadata.">
+        <pd-api kind="schema" name="MailEvent" lang="go" caption="Envelope fields">
+          <pd-member kind="field" sig="specversion, type, source, id, time, host">Existing required bus envelope fields.</pd-member>
+          <pd-member kind="field" sig="project, session, remote, branch, worktree, commit">Existing provenance fields for Project and Session context.</pd-member>
+          <pd-member kind="field" sig="to">Address list such as `agent:reviewer`, `channel:review`, `project:auto-stack`, `session:sess_7d90`, or `queue:review`.</pd-member>
+          <pd-member kind="field" sig="subject">Free-text summary shown in lists before the body is read.</pd-member>
+          <pd-member kind="field" sig="reply_to">Address that replies should target.</pd-member>
+          <pd-member kind="field" sig="correlation_id">Stable ID shared by all Mail Events in one exchange.</pd-member>
+          <pd-member kind="field" sig="causation_id">The Mail Event that directly caused this one.</pd-member>
+          <pd-member kind="field" sig="trace_id">Observability correlation across CLI, RPC, Mail Store, and live relay.</pd-member>
+          <pd-member kind="field" sig="datacontenttype">Body media type, `text/plain` in v1.</pd-member>
+          <pd-member kind="field" sig="data">Free-text Mail body. Large file references are ordinary URLs in this text.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="sqlite-shape" title="SQLite Store Shape" summary="SQLite is the authoritative v1 store, with immutable Mail Events and transactional delivery state.">
+        <pd-code lang="sql" path="mail.sqlite schema sketch" lines caption="Proposed canonical store tables">
+<script type="text/plain">CREATE TABLE mail_events (
+  id TEXT PRIMARY KEY,
+  seq INTEGER NOT NULL UNIQUE,
+  type TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  source TEXT NOT NULL,
+  project TEXT,
+  session TEXT,
+  correlation_id TEXT,
+  causation_id TEXT,
+  time TEXT NOT NULL,
+  body_text TEXT NOT NULL
+);
+
+CREATE TABLE mail_recipients (
+  event_id TEXT NOT NULL,
+  address TEXT NOT NULL,
+  state TEXT NOT NULL,
+  acknowledged_at TEXT,
+  PRIMARY KEY (event_id, address)
+);
+
+CREATE TABLE mail_cursors (
+  consumer TEXT PRIMARY KEY,
+  seq INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE mail_claims (
+  claim_id TEXT PRIMARY KEY,
+  queue TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  consumer TEXT NOT NULL,
+  lease_expires_at TEXT NOT NULL,
+  state TEXT NOT NULL
+);
+
+CREATE TABLE mail_receipts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  time TEXT NOT NULL,
+  data_json TEXT NOT NULL
+);</script>
+        </pd-code>
+      </pd-section>
+
+      <pd-section id="transaction-shape" title="Transaction Shape" summary="Every command that changes Mail state should be one SQLite transaction.">
+        <pd-code lang="sql" path="send transaction sketch" lines caption="A send commits Event and delivery state together">
+<script type="text/plain">BEGIN IMMEDIATE;
+
+INSERT INTO mail_events (
+  id, seq, type, subject, source, project, session,
+  correlation_id, causation_id, time, body_text
+) VALUES (?, ?, 'mail.sent', ?, ?, ?, ?, ?, ?, ?, ?);
+
+INSERT INTO mail_recipients (event_id, address, state)
+VALUES (?, ?, 'unread');
+
+INSERT INTO mail_receipts (event_id, kind, time, data_json)
+VALUES (?, 'appended', ?, ?);
+
+COMMIT;</script>
+        </pd-code>
+      </pd-section>
+
+      <pd-section id="delivery-state" title="Delivery State" summary="Delivery is at-least-once for consumers; idempotency comes from Mail IDs and acknowledgements.">
+        <pd-mermaid caption="Consumer processing state">
+stateDiagram-v2
+  [*] --> unread: appended for address
+  unread --> delivered_live: watch active
+  delivered_live --> unread: process restart before ack
+  unread --> acknowledged: auto mail ack
+  unread --> claimed: queue claim
+  claimed --> acknowledged: queue done
+  claimed --> unread: lease expires
+  acknowledged --> [*]
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+Consumers must assume at-least-once delivery. A Mail item may be seen again after a crash, lease expiry, replay, or cursor reset.
+
+Agents should dedupe by `id` and make handlers idempotent. Exactly-once delivery is deliberately not a v1 goal.
+        </script></md>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Integration">
+      <pd-section id="current-infra-fit" title="Fit with current infra" summary="`auto mail` can reuse the existing autowatch RPC and Event relay rather than introducing a new daemon.">
+        <pd-mermaid caption="How auto mail fits into current auto-stack communication">
+flowchart LR
+  AgentA["Agent A"]
+  CLIA["auto mail CLI"]
+  WatchA["AutoWatch Host A<br/>mail RPC methods"]
+  MailA[("Mail Store A<br/>SQLite")]
+  AgentB["Agent B"]
+  CLIB["auto mail CLI"]
+  WatchB["AutoWatch Host B<br/>mail RPC methods"]
+  MailB[("Mail Store B<br/>SQLite")]
+  UI["AutoUi<br/>optional monitor"]
+
+  AgentA --> CLIA --> WatchA
+  WatchA --> MailA
+  WatchA <-->|"existing rpc.Peer transport<br/>unix/tcp/tailnet"| WatchB
+  WatchB --> MailB
+  WatchB --> CLIB --> AgentB
+  WatchA -->|"bus.Event relay"| UI
+  WatchB -->|"bus.Event relay"| UI
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+Same-Host v1 can work entirely through the local autowatch daemon. Cross-Host can use the existing transport abstraction and backend routing model before any external message infrastructure exists.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="rpc-surface" title="RPC Surface" summary="CLI commands call transport-free mail handlers hosted by autowatch.">
+        <pd-api kind="rpc" name="mail.* methods" lang="go" caption="Daemon method surface behind the CLI">
+          <pd-member kind="method" sig="mail.identity.init">Create or update an Identity and its channel subscriptions.</pd-member>
+          <pd-member kind="method" sig="mail.identity.current">Return the active Identity and subscriptions.</pd-member>
+          <pd-member kind="method" sig="mail.address.list">List known identities, channels, Project, Session, and queue addresses.</pd-member>
+          <pd-member kind="method" sig="mail.send">Append direct Mail and optionally live-relay it.</pd-member>
+          <pd-member kind="method" sig="mail.read">Read one Mail Event by ID.</pd-member>
+          <pd-member kind="method" sig="mail.inbox">List Mail for an address with filters and cursor options.</pd-member>
+          <pd-member kind="method" sig="mail.ack">Append acknowledgement and update recipient state.</pd-member>
+          <pd-member kind="method" sig="mail.reply">Send Mail using the original Event's reply and correlation metadata.</pd-member>
+          <pd-member kind="method" sig="mail.watch">Register a live subscription using the current RPC Event path.</pd-member>
+          <pd-member kind="method" sig="mail.queue.claim">Atomically claim available queue Mail with a lease.</pd-member>
+          <pd-member kind="method" sig="mail.kv.put/get">Small mutable coordination values backed by SQLite.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="subject-namespace" title="Address Namespace" summary="Addresses route Mail; subject is only the free-text summary shown for progressive disclosure.">
+        <pd-code lang="text" path="address namespace" lines caption="Proposed address forms">
+<script type="text/plain">agent:<agent-id>
+channel:<channel-name>
+project:<project-id>
+session:<session-id>
+queue:<queue-name></script>
+        </pd-code>
+
+        <md><script type="text/plain">
+`type` remains the Event kind: `mail.sent`, `mail.ack`, `mail.queue.claimed`, `mail.stream.chunk`.
+
+`to` is where the Mail is routed or indexed. `subject` is deliberately free text: it is the inbox summary line an agent scans before deciding whether to read the full body.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="live-versus-durable" title="Live versus durable" summary="Commit first. Notify second. Queries read durable state, not live buffers.">
+        <pd-mermaid caption="Send pipeline with commit-before-notify">
+sequenceDiagram
+  participant CLI as auto mail send
+  participant W as AutoWatch mail service
+  participant S as SQLite Mail Store
+  participant B as bus.Hub
+  participant R as Receiving agent watch
+
+  CLI->>W: mail.send call
+  W->>S: BEGIN IMMEDIATE
+  W->>S: insert Mail Event + recipients + receipt
+  S-->>W: COMMIT seq
+  W->>B: Broadcast live Event
+  B-->>R: Event if online
+  W-->>CLI: id + seq + delivery attempt
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="agent-harness-use" title="Agent Harness Use" summary="Agents should interact through small shell commands with parseable JSON, not by linking Go packages.">
+        <pd-cli id="CLI-agent-harness" title="zsh - agent harness integration" caption="What a prompt wrapper or startup script can do">
+          <pd-cmd note="agent starts and announces readiness" status="todo">auto mail send --to project:auto-stack --subject "agent:reviewer ready" --body "agent:reviewer ready for review queue work"</pd-cmd>
+          <pd-out>{ "id": "mail_01jz5rgn...", "state": "appended" }</pd-out>
+          <pd-cmd note="agent checks for assigned work" status="todo">auto mail queue claim review --consumer agent:reviewer --lease 20m</pd-cmd>
+          <pd-out>{
+  "claimId": "claim_01jz5rhp...",
+  "mailId": "mail_01jz5rgz...",
+  "body": "Review docs/auto-mail-developer-guide.html for cursor and lease semantics."
+}</pd-out>
+          <pd-cmd note="agent publishes result when done" status="todo">auto mail reply mail_01jz5rgz --subject "Review result" --body-file result.md</pd-cmd>
+          <pd-out>{ "id": "mail_01jz5rjw...", "correlationId": "corr_01jz5rgz..." }</pd-out>
+        </pd-cli>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Operations">
+      <pd-section id="doctor-and-debug" title="Doctor and Debug" summary="The feature needs first-class inspection: identities, store health, cursors, leases, and recent Events.">
+        <pd-cli id="CLI-ops" title="zsh - operational commands" caption="Debugging Mail without opening the store manually">
+          <pd-cmd note="check store and identity health" status="todo">auto mail doctor</pd-cmd>
+          <pd-out>{
+  "status": "ok",
+  "checks": [
+    { "name": "identity", "status": "ok", "message": "agent planner configured" },
+    { "name": "store", "status": "ok", "message": "sqlite writable, WAL enabled" },
+    { "name": "schema", "status": "ok", "message": "mail schema version 1" },
+    { "name": "autowatch", "status": "ok", "message": "mail RPC reachable" }
+  ]
+}</pd-out>
+          <pd-cmd note="inspect recent Mail Events" status="todo">auto mail log tail --limit 5 --project auto-stack</pd-cmd>
+          <pd-out>{
+  "events": [
+    { "id": "mail_01jz5qta...", "type": "mail.queue.pushed", "subject": "Review cursor and lease semantics", "queue": "review" },
+    { "id": "mail_01jz5qv0...", "type": "mail.queue.claimed", "subject": "Review cursor and lease semantics", "queue": "review" }
+  ]
+}</pd-out>
+          <pd-cmd note="show stuck leases" status="todo">auto mail queue leases --expired</pd-cmd>
+          <pd-out>{
+  "leases": [
+    {
+      "claimId": "claim_01jz5qv0...",
+      "queue": "review",
+      "consumer": "agent:reviewer",
+      "expiredAt": "2026-07-03T13:45:00Z",
+      "remediation": "run auto mail queue release claim_01jz5qv0..."
+    }
+  ]
+}</pd-out>
+        </pd-cli>
+      </pd-section>
+
+      <pd-section id="failure-modes" title="Failure Modes" summary="The design assumes restarts, duplicate delivery, slow consumers, and partial cross-Host delivery.">
+        <pd-api kind="runbook" name="expected failures" lang="text" caption="Operational behavior">
+          <pd-member kind="failure" sig="receiver offline">Mail remains in SQLite. Receiver catches up from cursor on next read or watch.</pd-member>
+          <pd-member kind="failure" sig="sender crashes after commit">Mail exists. CLI may not print the ID; `auto mail log tail --source agent:name` recovers it.</pd-member>
+          <pd-member kind="failure" sig="live relay drops">Durable read still works. Live relay is not the source of truth.</pd-member>
+          <pd-member kind="failure" sig="duplicate delivery">Consumer dedupes by Mail ID; acknowledgements are idempotent.</pd-member>
+          <pd-member kind="failure" sig="queue consumer dies">Lease expires; another consumer can claim the Mail.</pd-member>
+          <pd-member kind="failure" sig="store corrupt">Restore from SQLite backup or JSONL export with `auto mail store restore`.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="security" title="Identity and access" summary="Start with local file permissions and autowatch authority; leave room for signed cross-Host Mail later.">
+        <pd-mermaid caption="Authority boundary">
+flowchart LR
+  Agent["Agent process"]
+  CLI["auto mail CLI"]
+  Watch["AutoWatch daemon<br/>same user authority"]
+  Store[("~/.auto/mail<br/>0600/0700 files")]
+  Remote["Remote Host<br/>future signed relay"]
+
+  Agent --> CLI
+  CLI -->|"local RPC"| Watch
+  Watch --> Store
+  Watch -. "future cross-Host signed Mail" .-> Remote
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+V1 should keep the trust boundary narrow:
+
+- local agents use local autowatch RPC
+- store files are user-private by default
+- remote delivery is later cross-Host behavior through known Host identities
+- any future cross-Host Mail should be signed by sender identity and validated before commit
+- raw git remotes must remain normalized before entering envelopes
+        </script></md>
+      </pd-section>
+
+      <pd-section id="large-files" title="Large Files" summary="Mail bodies stay free text; large files are uploaded with `auto artifact`, then linked in the body.">
+        <pd-cli id="CLI-artifact-links" title="zsh - share a large file by URL" caption="Use auto artifact for bytes, auto mail for agent-readable context">
+          <pd-cmd note="upload the file with the existing artifact tool" status="todo">auto artifact upload /tmp/test-output.log --json</pd-cmd>
+          <pd-out>{
+  "url": "https://artifacts.example/auto-stack/test-output-01jz5s0z.log",
+  "contentType": "text/plain",
+  "bytes": 928332
+}</pd-out>
+          <pd-cmd note="put the artifact URL in the free-text Mail body" status="todo">auto mail send --to agent:reviewer --subject "Failing test output" --body "Failing test output: https://artifacts.example/auto-stack/test-output-01jz5s0z.log"</pd-cmd>
+          <pd-out>{
+  "id": "mail_01jz5s0z...",
+  "subject": "Failing test output",
+  "body": "Failing test output: https://artifacts.example/auto-stack/test-output-01jz5s0z.log"
+}</pd-out>
+        </pd-cli>
+      </pd-section>
+
+      <pd-section id="retention" title="Retention and maintenance" summary="Mail history should be configurable by Project and address; maintenance exports, vacuums, and prunes SQLite-backed state.">
+        <pd-cli id="CLI-retention" title="zsh - retention and maintenance" caption="Keep local storage bounded without losing active work">
+          <pd-cmd note="show current storage size and retention policy" status="todo">auto mail store status</pd-cmd>
+          <pd-out>{
+  "storeBytes": 1432211,
+  "retention": { "days": 30, "keepUnacknowledged": true }
+}</pd-out>
+          <pd-cmd note="export a portable JSONL backup" status="todo">auto mail store export --format jsonl --out ~/.auto/mail/exports/2026-07-03.jsonl</pd-cmd>
+          <pd-out>{
+  "eventsExported": 144,
+  "path": "~/.auto/mail/exports/2026-07-03.jsonl",
+  "bytes": 291422
+}</pd-out>
+          <pd-cmd note="prune acknowledged Mail older than retention" status="todo">auto mail store prune --older-than 30d --dry-run</pd-cmd>
+          <pd-out>{
+  "wouldPruneEvents": 28,
+  "bytes": 1832219
+}</pd-out>
+        </pd-cli>
+      </pd-section>
+    </pd-tab>
+  </pd-doc>
+</body>
+</html>
