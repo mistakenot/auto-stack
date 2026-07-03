@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from harness.core import Harness, GIT_REMOTE_URL
+from harness.scenarios.skill_remote import GIT_REMOTE_URL, SkillRemoteScenario as Harness
 
 
 def _init_workspace(harness: Harness, name: str) -> str:

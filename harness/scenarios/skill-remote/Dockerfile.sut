@@ -18,7 +18,7 @@ COPY --from=builder /usr/local/bin/auto /usr/local/bin/auto
 RUN mkdir -p /workspace && cd /workspace && git init && \
     git commit --allow-empty -m "init"
 
-COPY auto-skill/harness/scripts/sut-entrypoint.sh /sut-entrypoint.sh
+COPY harness/scenarios/skill-remote/scripts/sut-entrypoint.sh /sut-entrypoint.sh
 RUN chmod +x /sut-entrypoint.sh
 
 WORKDIR /workspace

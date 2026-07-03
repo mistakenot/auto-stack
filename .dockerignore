@@ -10,3 +10,7 @@ node_modules
 docs
 *.env
 *.env.*
+# Python virtualenvs / caches (harness/ lives at repo root inside the SUT build context)
+**/.venv
+**/.pytest_cache
+**/__pycache__

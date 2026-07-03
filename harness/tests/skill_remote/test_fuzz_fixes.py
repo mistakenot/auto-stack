@@ -12,7 +12,7 @@ mutated, so these tests are order-independent.
 
 from __future__ import annotations
 
-from harness.core import Harness, GIT_REMOTE_URL
+from harness.scenarios.skill_remote import GIT_REMOTE_URL, SkillRemoteScenario as Harness
 
 SKILL = "code-review"
 
