@@ -619,6 +619,181 @@ Beyond the home page, these five new views would transform auto-ui from a docs e
 
 </pd-tab>
 
+<!-- ───────────────── Foundations ───────────────── -->
+<pd-tab name="Foundations">
+
+  <pd-section id="fnd-thesis" title="Two things must exist first">
+    <md><script type="text/plain">
+None of the home-page concepts or the five new views are buildable on today's plumbing. Two foundations come first — and they compound: the harness feeds fake data at the seam *below* the data layer, so it exercises the real normalization path rather than a parallel mock.
+
+| Foundation | What it is | Why it gates the views |
+|------------|-----------|------------------------|
+| **1. Unified data layer** | One place in the web-ui code to normalize every source into canonical entities, then project to views | Every advanced view is a *projection* over the same entities. Without it, each view bolts ad-hoc fetch + shaping onto the 27K `store.js` monolith. |
+| **2. E2E test harness** | An agent can boot the UI and drive fake data into it — queued RPC responses + publishable events | No front-end test infrastructure exists today. Can't build dense live views without a way to reproduce their data deterministically. |
+
+**Sequence:** data layer first, harness second (it injects beneath the data layer).
+    </script></md>
+  </pd-section>
+
+  <pd-section id="fnd-today" title="What exists today">
+    <md><script type="text/plain">
+Grounded in a read of the current code (`auto-ui/web/static/` + `auto-ui/internal/server/` + `auto-watch/internal/rpcmethods/`):
+
+- **Client data flow:** `rpc.js` (WebSocket JSON-RPC singleton — `call` / `on` / `onAny`) → `store.js` (a ~27K monolith doing fetch + normalize + cache + view-state + selectors) → Preact components via `useStore(selector)`.
+- **Normalization is scattered:** `parseDocChanged` in `docevents.js`, frontmatter parsing in `content.js`, tree grouping in `tree.js`. No canonical entity types — the same concept gets re-shaped per view.
+- **Server proxy is doc-only:** auto-ui exposes `doc.list`, `doc.get`, `project.list`, `backends.list`. The watch daemon already has `task.*` (unused by the UI). Sessions/rules/graph have **no surface** — they live in auto-etl/auto-search (parquet), auto-reflect (`rules.yaml`), auto-graph.
+- **Tests:** solid Go tests (in-process + binary daemon fixtures, `net.Pipe` fake backends in `project_aggregate_test.go`) but **zero** front-end test infrastructure.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="fnd-data-layer" title="1. Unified data layer">
+    <md><script type="text/plain">
+Split the `store.js` monolith into four layers. The middle two are the single place normalization happens.
+    </script></md>
+
+    <pd-mermaid caption="Four layers — RPC responses and bus events fold into the same entities">
+flowchart LR
+  WS[WebSocket JSON-RPC] --> T[Transport: rpc.js]
+  EV[Bus events] --> T
+  T --> M[Model: normalizers]
+  M --> E[Entity store]
+  E --> P[Projections]
+  P --> V1[Mission Control]
+  P --> V2[Session Explorer]
+  P --> V3[Timeline / Heatmap]
+  P --> V4[Playbook Manager]
+    </pd-mermaid>
+
+    <md><script type="text/plain">
+| Layer | File(s) | Job |
+|-------|---------|-----|
+| **Transport** | `rpc.js` (unchanged) | Dumb wire: `call` / `on` / `onAny` |
+| **Model** *(new)* | `model/*.js` | Canonical entity types + **pure normalizers** — one per RPC method and per event type |
+| **Entity store** *(refactor of store.js)* | `entities.js` | Normalized cache `{type: {id: entity}}`; the single point where **both** RPC responses and bus events fold in |
+| **Projections + view state** | selectors | Pure `entities → viewModel`; one projection per page. Selection/routing/open-doc/pause stay separate from the entity cache |
+
+**Canonical entities speak the ubiquitous language** — `Session`, `Message`, `Host`, `Project`, `Rule`, `Event`, `TaskDef`/Run, `Doc`.
+
+**The decisive rule:** nothing outside `model/` ever touches raw RPC JSON. `parseDocChanged`, frontmatter splitting, and tree grouping all move into `model/` or projections.
+
+**The payoff:**
+- Adding a view = adding a projection file (zero new fetch/normalize).
+- Adding a data source = one normalizer + one fetch.
+- Mission Control's event stream, Timeline's bars, Heatmap's touch counts, and Session Explorer's cards are all projections over the *same* `Session` / `Event` / `Task` entities.
+    </script></md>
+
+    <pd-decision id="D-1" title="Normalize once into canonical entities; views are pure projections" status="accepted" by="agent"
+      summary="RPC responses and bus events fold into the same ubiquitous-language entities; each view is a pure selector.">
+      <md><script type="text/plain">
+**Context:** Every advanced view needs data from multiple sources, and needs live updates. Today normalization is scattered and view-specific.
+**Decision:** A four-layer split (transport → model → entity store → projections). One normalizer per source; RPC snapshots and bus events write to the same entities; each view is a pure projection.
+**Alternatives:** Keep extending `store.js` per view (status quo — scales badly); per-view stores (duplicates normalization); a heavy client DB / state library (violates the no-build-step, minimal-dep ethos).
+**Consequences:** A migration of `store.js`; the explorer view must be ported onto projections to prove the pattern before new views land.
+      </script></md>
+    </pd-decision>
+  </pd-section>
+
+  <pd-section id="fnd-identity" title="Entity identity & reconciliation">
+    <md><script type="text/plain">
+Cross-host is already baked in everywhere, so entity keys must be explicit — this is what lets an RPC snapshot and a live event fold into the *same* entity instead of duplicating:
+
+| Entity | Key | Note |
+|--------|-----|------|
+| `Project` | normalized git **remote** | cross-host identity (per ubiquitous language) |
+| `Session` | `host + hash` | hash alone collides across hosts |
+| `Task`/Run | `host + runId` | runId is daemon-local SQLite |
+| `Doc` | `host + project + worktree + path` | the existing `docsKey` composite |
+| `Event` | CloudEvents `id` | — |
+
+**Snapshot + event reconciliation** — the one subtle bit of the fold. `task.list` gives a snapshot; `watch.task.started/completed/failed` patch it incrementally; on reconnect you miss events. Rule:
+
+- Events **patch** entities; periodic snapshots **reconcile** (snapshot wins on conflict).
+- Every entity carries a `lastUpdated` so a stale patch can't clobber a fresher snapshot.
+
+(The existing `revision` / `nonce` fields on `openDoc` already hint at this discipline.)
+    </script></md>
+  </pd-section>
+
+  <pd-section id="fnd-harness" title="2. E2E test harness">
+    <md><script type="text/plain">
+The `rpc.js` singleton is the one chokepoint — make it injectable. "Queued RPC responses + publishable events" maps exactly onto its `call` / `on` / `onAny` surface.
+
+**Park guard (needed for agent-browser):** an agent driving a headless browser can't reliably inject *before* `rpc.js` runs its module-level `connect()`. So `?mock=1` makes the singleton skip auto-connect and wait for `__autoui.test.load(fixture)`. It doubles as a "frozen UI" mode for manual inspection.
+    </script></md>
+
+    <pd-code lang="json" caption="Fixture format — the stable data set, on disk">
+<script type="text/plain">
+{
+  "responses": { "project.list": [ ... ], "doc.list": { ... } },
+  "events": [
+    { "at": 0,   "method": "doc.changed",        "params": { ... } },
+    { "at": 500, "method": "watch.task.started", "params": { ... } }
+  ]
+}
+</script>
+    </pd-code>
+
+    <md><script type="text/plain">
+`responses` can be a single payload or a FIFO queue per method. `events` is a timed timeline replayed on demand.
+
+**Mock transport API** (present only under `?mock=1`, on `window.__autoui.test`):
+
+- `load(fixture)` — install responses + events, then un-park the app.
+- `publish(method, params)` — fire a notification into `on()` / `onAny()` (drives live updates).
+- `flushEvents()` — replay the scripted `events` timeline.
+- `setResponse(method, payload)` — queue a response mid-test.
+
+**Two tiers (mirror existing repo precedent):**
+
+| Tier | Seam | Speed | Exercises |
+|------|------|-------|-----------|
+| **Component** | mock at `rpc.js`, pure browser, no daemon | fast | every projection |
+| **Integration** | real auto-ui server + a `net.Pipe` fake backend peer that serves scripted responses and pushes events | slower | server proxy + WS + client |
+
+The integration tier extends the **`project_aggregate_test.go`** fake-backend pattern (which already stands up in-process backends) to also push notifications.
+
+**Record mode (fixture factory):** a wrapper records real `call`/response + notifications against a seeded daemon (reuse the `binaryFactory` setup in `conformance_test.go` — temp home, `projects.json`, git repo, stubbed tmux/claude) into a fixture file. Record once, replay forever.
+    </script></md>
+
+    <pd-decision id="D-2" title="Mock at the rpc.js seam; drive with agent-browser (no new dep)" status="accepted" by="agent"
+      summary="Inject a scriptable mock at the single rpc.js chokepoint via a ?mock=1 park guard; an agent drives the headless browser.">
+      <md><script type="text/plain">
+**Context:** No front-end test infra. Need to boot the UI and feed deterministic data including live events.
+**Decision:** A `?mock=1` park guard + `window.__autoui.test.*` API at the `rpc.js` singleton. Browser tier driven by **agent-browser** (an agent evaluating JS in a headless browser — the approach already used for conformance today).
+**Alternatives:** Playwright (best repeatability + CI, but adds a Node/npm dev dependency to a no-build-step project); chromedp/Go (no npm, more verbose). Both rejected for now to stay dependency-free.
+**Consequences:** Less push-button-repeatable in CI than Playwright; relies on the agent-browser flow. Revisit if CI needs headless repeatability.
+      </script></md>
+    </pd-decision>
+  </pd-section>
+
+  <pd-section id="fnd-blocker" title="The real blocker: the source surface">
+    <md><script type="text/plain">
+The client data layer is **necessary but not sufficient**. Session Explorer, Timeline, Heatmap, and Playbook Manager are all blocked on getting non-doc data to the browser *at all* — it lives in separate binaries with no RPC surface (auto-etl/auto-search parquet, auto-reflect `rules.yaml`, auto-graph). This is a genuine architectural fork, and it shapes the whole data layer.
+
+Crucially, the **client normalizers are identical whichever seam delivers the raw payload** — which is exactly why doing the model layer first pays off regardless of how this fork resolves.
+    </script></md>
+
+    <pd-question id="Q-1" status="open" priority="p1" for="charlie"
+                 title="How should non-doc data (sessions, rules, graph) reach the browser?">
+      <md><script type="text/plain">
+Four candidate paths (client normalizers unchanged in all of them):
+
+- **(A) Watch daemon becomes the aggregator** — it grows `session.*`, `rule.*`, `graph.*` RPC reading parquet/yaml/graph daemon-side. Cleanest long-term single query surface; matches the "daemon is the per-host RPC executor" role and the parked live-tier idea. But blocks first views on daemon work + a new dependency on etl/reflect data formats.
+- **(B) auto-ui server fans out across tools** — it already aggregates across hosts; extend to aggregate across *tools* (watch socket + search endpoint + reflect). More moving parts; each tool keeps its own surface.
+- **(C) Static/snapshot tier first** — auto-ui reads parquet/yaml directly (or one-shot CLI shell-out) for read-only views; defer live session streaming. Fastest path to Session Explorer + Playbook; punts the live story.
+- **Live-tier first** — design the streaming event spine (Mission Control) before read-only snapshots, since that's the signature of the home-page concepts.
+
+Author's lean: **(A) long-term, (C) as the first step** — build/dogfood Session Explorer + Playbook without waiting on a daemon RPC expansion. Awaiting your call.
+      </script></md>
+    </pd-question>
+  </pd-section>
+
+  <pd-section id="fnd-decisions" title="Decision log">
+    <pd-decisions></pd-decisions>
+  </pd-section>
+
+</pd-tab>
+
 </pd-doc>
 
 </body>
