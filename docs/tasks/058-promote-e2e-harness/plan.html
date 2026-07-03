@@ -7,12 +7,12 @@
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
   <script type="application/json" id="pd-meta">
-{"id":"058","name":"promote-e2e-harness","status":"planning","created":"2026-07-03"}
+{"id":"058","name":"promote-e2e-harness","status":"complete","created":"2026-07-03"}
   </script>
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="058: promote-e2e-harness" status="pending" pr="pending" generated="2026-07-03"
+  <pd-doc title="058: promote-e2e-harness" status="complete" pr="pending" generated="2026-07-03"
           next-prompt="/execute-task 058">
     <pd-tab name="Requirements">
 
@@ -670,7 +670,7 @@ Add the second host and the generic probe helper on a system that already runs e
           </pd-phase>
 
           <pd-phase n="4" title="Docs + reference sweep + full two-scenario green run"
-            status="todo" depends-on="3"
+            status="done" depends-on="3"
             files="harness/CLAUDE.md,CLAUDE.md">
             <md><script type="text/plain">
 1. Rewrite `harness/CLAUDE.md`: the scenario model (self-contained compose + Python module over

@@ -46,6 +46,7 @@
 - For E2E testing, pick a stable data set and create test harnesses that populate it on disk, then run the tools as a user would.
 - You can use git history from this repo, or create mock code bases as fixtures checked into code.
 - If you create mock data on a per-test basis, do it where it wont get checked into git, and clean up after the test.
+- The top-level `harness/` is a hermetic, Docker-based, scenario-organised e2e/probing harness that builds the real `auto` binary from source and drives it in containers (`uv run harness <scenario> up|run|down`; `uv run pytest`). See `harness/CLAUDE.md` for the scenario model and how to add one.
 
 ### API design for CLI tools
 

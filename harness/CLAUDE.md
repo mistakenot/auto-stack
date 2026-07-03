@@ -1,124 +1,137 @@
-I want to build a reusable end-to-end testing harness for AutoSkill This will cover as much of the functionality as possible like in terms of like the different layers we touch So what I'm thinking is we have a docker compose file that stands up a harness We have we simulate a remote git repository by having a docker container running with like a git server host That's you know other containers can connect to and git pull from we then have the system under test Which it will be a docker file which will you know build? The latest version of the code base from source and then run that inside the containers The way I'm thinking that this will work is that we we have a very kind of basic set of wrapper scripts around this Maybe just Python for now which will basically like stand this up and kind of act as like the You know entry points into this thing so that the actual tests themselves can either be Run using like it like I'm kind of thinking that the Python will take all of the infrastructure abstract over it and create almost like a really simple deep deep DSL and then that DSL can either be scripted for like regular, you know end-to-end tests or You know an a coding agent could just do probes which are like Informal test testing that isn't written down, but it can just play with the DSL and You know kind of in the same way that playwright abstracts over a lot the browser Complications and flakiness that's kind of what I'm thinking maybe this DSL could do But let's just start there and experiment see how far we get
+# auto-stack e2e harness
 
-For the V1, the completion signal will be we can stand up Docker compose with a couple of subcontainers One of those containers builds the latest version of the tool and runs that inside the container Another container acts as like a git server which is hosting a agent skills repository I just want a basic test that can basically simulate setting up a new project with auto skills, cloning skills from that remote repository And that's it
+A hermetic, reproducible, Docker-based harness for end-to-end testing, probing,
+and fuzzing across **any** auto-stack surface. It builds the real `auto` binary
+from monorepo source and drives it inside containers over real transports — no
+mocks, no shortcuts.
 
+The harness is a single [`uv`](https://docs.astral.sh/uv/)-managed Python project
+rooted here. All invocation is `uv run …` — no bare `python`/`pip`/`venv`.
 
-I'm thinking that the system under test container will, you know, to actually take actions within that you go through the Python DSL or the Python library and Python library abstracts around creating, you know, SSH commands that run inside that container. Another thing we need to really try to defend against flakiness as much as possible. So in all places wherever we can like in Docker compose in our Python DSL, we always want like some sort of granular validation that previous class have worked. So like when we set up the Git server, you know, we want that Docker infrastructure to really obviously and quickly fail if that's not working for some reason.
+## Scenario model
 
----
+The harness is organised around **scenarios**. A scenario is a self-contained
+slice of end-to-end coverage:
 
-## V1 Status: COMPLETE
+- **`scenarios/<name>/`** — its own `docker-compose.yaml`, `Dockerfile*`,
+  `scripts/`, and `fixtures/`. Fully self-contained: bring one up without the
+  others. Each runs under its own Compose project name (`harness-<name>`), so
+  scenarios are isolated even when run side by side.
+- **`src/harness/scenarios/<name>.py`** — a thin Python module subclassing
+  `Scenario` (in `base.py`) that declares the services, adds fail-fast readiness
+  gates, and exposes a small command+assert DSL.
 
-The harness is built and working. Run `uv run pytest -v` to execute the test suite (6 tests, ~70s).
+Everything shared lives once in the core:
 
-## Architecture
+- **`src/harness/core.py`** — `Harness` (Compose lifecycle: `up`/`down`/`status`,
+  container `exec` via `run`, health polling) and `Result` (`.stdout`/`.stderr`/
+  `.exit_code`/`.ok`/`.json()`). Scenario-agnostic.
+- **`src/harness/scenarios/base.py`** — `Scenario`: binds a name to its compose
+  stack + a `Harness`, runs `check_ready()` gates after `up`.
+- **`src/harness/cli.py`** — `uv run harness <scenario> up|run|down|status`.
 
-- **git-server**: Alpine container running nginx + fcgiwrap + git-http-backend as an HTTPS smart HTTP git server. Self-signed CA + server cert generated at build time. Seeds a bare repo with fixture skills and serves it over `https://git-server/repos/skills.git`
-- **sut** (system under test): Two-stage Dockerfile — `golang:1.26-alpine` builds the `auto` binary from the monorepo source, `alpine:3.21` runs it. Entrypoint waits for the CA cert from a shared volume before accepting commands
-- **Transport**: Real HTTPS over Docker network — exercises the full auto-skill remote code path: `transport.CanonicalizeURL()` → blobless cache clone (`--filter=blob:none`) → `Realize` (`--refetch`) → `git archive` extraction → render to targets. No shortcuts
-- **TLS trust chain**: `gen-certs.sh` creates an EC CA + server cert with SAN=DNS:git-server. The CA cert is shared via a Docker volume (`shared-certs`). The SUT entrypoint configures `git config --global http.sslCAInfo` to trust it
-- **Python DSL**: `Harness` class wraps Docker Compose lifecycle + `docker compose exec` for command execution. `Result` type with `.stdout`, `.stderr`, `.exit_code`, `.json()`, `.ok`
+```
+harness/
+├── pyproject.toml / uv.lock         # single uv project (auto-harness)
+├── src/harness/
+│   ├── core.py                      # Harness + Result (generic)
+│   ├── cli.py                       # uv run harness <scenario> ...
+│   └── scenarios/
+│       ├── base.py                  # Scenario base (compose path, gates, DSL)
+│       ├── skill_remote.py          # scenario 1 helpers
+│       └── event_flow.py            # scenario 2 DSL
+├── scenarios/
+│   ├── skill-remote/                # compose + Dockerfiles + scripts + fixtures
+│   └── event-flow/
+└── tests/
+    ├── skill_remote/                # per-scenario tests + session fixture
+    └── event_flow/
+```
+
+## Scenarios
+
+### `skill-remote` — auto-skill add/sync/rename over real HTTPS
+
+Two services: a `git-server` (nginx + fcgiwrap + git-http-backend serving a bare
+skills repo over self-signed HTTPS) and a `sut` (the `auto` binary). Exercises the
+full remote code path: canonicalize URL → blobless clone → realize → git-archive
+extraction → render to targets. TLS trust chain via a shared-volume CA cert.
+
+### `event-flow` — agent hooks → autowatch → auto-ui
+
+Multiple `agent` containers, each with a **distinct seeded host id** and a
+**co-located `auto watch start` daemon** (loopback hook-ingest + TCP RPC on
+`0.0.0.0:7788`), plus one `auto-ui` container (debug ring on) that subscribes to
+every agent's RPC backend. The DSL fires `auto hooks fire` inside an agent and
+asserts the derived `doc.changed` lands in auto-ui's `/api/debug/recent`, keyed by
+`(data.path, host)`.
+
+Why co-located daemons: `HookIngest` rejects non-loopback POSTs and a daemon
+overwrites `ev.Host`, so a single central daemon can neither accept cross-container
+hooks nor yield distinct host ids. One daemon per agent (fire loopback-locally,
+relay over RPC) mirrors the 045/046 multi-host model with zero product change.
 
 ## Usage
 
 ```bash
-# Run the test suite
-cd auto-skill/harness
-uv run pytest -v
+# Run a scenario's test suite (builds images from source on first run)
+uv run pytest tests/skill_remote -v
+uv run pytest tests/event_flow -v
+uv run pytest -v                    # both scenarios
 
-# Interactive probing via CLI
-uv run harness up
-uv run harness run sut "auto skill add 'https://git-server/repos/skills.git' --skill deploy-checklist"
-uv run harness run sut "auto skill sync --text"
-uv run harness down
+# Interactive probing via the CLI
+uv run harness skill-remote up
+uv run harness skill-remote run sut "auto skill sync --text"
+uv run harness skill-remote down
 
-# Import in Python
-from harness.core import Harness, GIT_REMOTE_URL
-h = Harness()
-h.up()
-h.fresh_workspace("my-test")
-h.trust_source("/workspace/my-test")
-r = h.run("sut", f"cd /workspace/my-test && auto skill add '{GIT_REMOTE_URL}' --skill deploy-checklist")
-print(r.json())
-h.down()
+uv run harness event-flow up
+uv run harness event-flow run agent-1 "cat /tmp/watch-ready.json"
+uv run harness event-flow down
+
+# Import in Python (probes / scripted tests share the same DSL)
+from harness.scenarios.event_flow import EventFlowScenario
+s = EventFlowScenario(); s.up()
+s.edit_doc("agent-1", "docs/plan.md", "# hi")
+s.fire_hook("agent-1", "/workspace/docs/plan.md")
+s.assert_doc_changed(path="docs/plan.md", host="agent-1")
+s.down()
 ```
 
-## Decisions
+## How to add a scenario
 
-- **HTTPS git server**: nginx + fcgiwrap + git-http-backend on Alpine. Self-signed CA with EC keys (prime256v1). This exercises the real transport layer — `CanonicalizeURL()` normalizes all remote URLs to HTTPS, so HTTPS is the only scheme that tests the full cache/clone/realize path.
-- **Build freshness**: Full `COPY . .` from monorepo root. The `.dockerignore` at the monorepo root excludes `.git`, `.tmp` (1.8GB), `bin`, `dist`, and other heavy dirs to keep the build context manageable.
-- **Python DSL scope**: CLI-first (`uv run harness up/run/down`), importable second. Same `Harness` class in both modes.
-- **Fixture skills repo**: Static fixtures in `harness/fixtures/`. Two SKILL.md files (deploy-checklist, code-review). Git-init'd into the bare repo at startup.
-- **Test runner**: pytest with session-scoped fixture for `up()`/`down()`.
-- **Trust gate**: Tests pre-approve `https://git-server` via `auto skill trust add` since the trust gate is fail-closed for non-TTY usage.
+Adding a scenario is purely additive — it touches no existing scenario.
 
-## Key Files
+1. **`scenarios/<name>/docker-compose.yaml`** (+ any `Dockerfile*`, `scripts/`,
+   `fixtures/`). Give each service an `init: true` if its PID 1 spawns children,
+   and a per-service `healthcheck` so `up --wait` gates on real readiness. Build
+   the `auto` binary from monorepo source (build context `../../..`, the repo
+   root); reference Dockerfiles by their repo-root-relative path.
+2. **`src/harness/scenarios/<name>.py`** — subclass `Scenario`, set `name` (must
+   match the folder) and `services`, override `check_ready()` with fail-fast gates,
+   and add scenario helpers. Reach for `self.run(service, cmd)` for exec.
+3. **Register it** in `src/harness/cli.py`'s `SCENARIOS` dict (one line).
+4. **`tests/<name>/conftest.py`** — a session-scoped fixture that `up()`s the
+   scenario and `down()`s at teardown; add `tests/<name>/test_*.py`.
 
-```
-harness/
-├── docker-compose.yaml          # Two services: git-server, sut
-├── Dockerfile.git-server        # nginx + fcgiwrap HTTPS git server
-├── Dockerfile.sut               # Two-stage: build auto binary, run in Alpine
-├── fixtures/skills/             # Fixture SKILL.md files seeded into the repo
-├── scripts/
-│   ├── gen-certs.sh             # EC CA + server cert generation
-│   ├── init-repos.sh            # Seed bare repo, start fcgiwrap + nginx
-│   ├── nginx.conf               # HTTPS reverse proxy to git-http-backend
-│   └── sut-entrypoint.sh        # Wait for CA cert, configure git trust
-├── src/harness/
-│   ├── core.py                  # Harness + Result classes
-│   └── cli.py                   # Click CLI (up/down/status/run/skill)
-├── tests/
-│   ├── conftest.py              # Session-scoped harness fixture
-│   └── test_add_sync.py         # 7 E2E tests covering init → add → sync → rename
-└── pyproject.toml
-```
+## Discipline
 
-## Open Questions
+- **Flakiness gates are load-bearing.** Every infra stage self-validates before
+  the next: `up --wait` + per-service healthchecks, then explicit DSL gates
+  (`check_ready`: daemon bound, backend subscribed, project registered) *before*
+  any assertion. A poll-to-settle is not an assertion — assert the observable
+  outcome, with bounded retry, matching on presence not counts (delivery is
+  at-most-once / lossy under backpressure).
+- **Real binaries.** The `auto` binary is compiled in-image from source; the first
+  `up` is slow. Shared-container isolation is per-workspace / per-registered
+  project, not per-container.
+- **Missing seams are findings, not patches.** Scenarios use existing product
+  seams only; if one is missing, flag it — don't change `auto-*` code here.
 
-- **Coverage targets (post-V1)**: Template rendering with `customize:` vars, `update --check` for drift detection.
-- **Parallel test isolation**: Each test creates its own workspace, but they share the SUT container. If tests need true isolation, we could add per-test workspace cleanup.
+## Deferred (follow-up tasks)
 
-## Upstream Rename Flow — Current Behavior and Gaps
-
-The rename E2E test (`test_upstream_rename_detected_and_remediated`) exercises the full path and exposed real behavior:
-
-### Current user path after a remote skill rename
-
-1. `auto skill sync` → floats to new commit → `RenamedUpstreamError`: *"deploy-checklist not found at its locked path — renamed or removed upstream?"*
-2. User must discover the new name on their own (the error doesn't say what it was renamed to)
-3. Quickstart prescribes: `auto skill add <source> --skill new-name` → `auto skill remove old-name --vendored` → `auto skill doctor`
-4. Old target dirs survive as "foreign" (reported, not pruned) — user must manually `rm -rf` them
-
-### Why old targets survive (the manifest gap)
-
-When sync fails with `RenamedUpstreamError`, `buildManifest()` in `process.go:189` only includes successfully-staged skills. The old skill drops out of the manifest. By the time `remove` runs its internal sync, the old targets are classified as `StateForeign` (not `StateManagedOrphan`) because they're no longer in the manifest's managed union — so the receipt-gated prune can't touch them.
-
-### Three gaps to address
-
-1. **No new-name discovery.** When `RenamedUpstreamError` fires, we already have the commit. `ListSkillDirs` could list available skills and suggest likely renames.
-
-2. **Manifest drops old skill too early.** `buildManifest` should carry forward entries for skills that failed with `RenamedUpstreamError` (e.g. with a `state: "stale"` marker) so they remain prune-eligible after the user runs `remove`. This is the most impactful fix — it's a correctness issue where the designed prune path silently breaks.
-
-3. **No single command.** The 3-step remediation (add new, remove old, doctor/manual cleanup) could be a single `auto skill rename old-name new-name` or an interactive flow when the error is detected.
-
-### Key implementation detail
-
-`git mv` only renames the directory. The skill NAME comes from the `name:` field in SKILL.md frontmatter, not the directory name. Both must change for a rename to be detected by `--skill` filtering. The test helper `_rename_skill_upstream` does both.
-
-## DSL Improvement
-
-Aim: make the harness more reusable, easier to maintain, easier to keep up to date when the code base changes.
-
-Can we experiment by layering another API ontop of the CLI to add things like:
-- RenameRemoteSkill("old-name", "new-name")
-- SyncSkillsFromRemote()
-
-Each command class also contains the instructions to _assert each command individually ran ok_ between uses
-Can still drop down to just plain old SSH if you need to
-
-We should use pydantic and make each command fully self describing. then in the cli, we make it easy for coding agents to both a. discover all commands with schemas and b. run commands against the harness.
-
-This is how we unlock better probing / ad hoc testing experince.
-
-put all command classes in single file so its easy to see them all
+- The **pydantic self-describing command-class DSL** (discoverable schemas,
+  per-command assertions) — the current thin `Harness`/`Result` DSL is kept.
+- **WebSocket-based assertions** — event-flow asserts via `/api/debug/recent`
+  HTTP polling, which covers ingest→derive→relay→hub-record but not the final
+  `/api/ws` push to a browser.
+- **CI wiring** and non-Docker execution backends (SSH/LXC).
