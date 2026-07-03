@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Write",
+  "session_id": "harness-event-flow",
+  "cwd": "/workspace",
+  "tool_input": {
+    "file_path": "/workspace/docs/plan.md"
+  }
+}

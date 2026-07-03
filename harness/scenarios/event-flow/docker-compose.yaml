@@ -1,0 +1,43 @@
+# event-flow scenario: agent container(s) with a co-located autowatch daemon fire
+# hooks at a loopback ingest; auto-ui subscribes to each agent's RPC backend and
+# records relayed events in its debug ring. See src/harness/scenarios/event_flow.py.
+services:
+  agent-1: &agent
+    build:
+      context: ../../..
+      dockerfile: harness/scenarios/event-flow/Dockerfile
+      target: agent
+    hostname: agent-1
+    environment:
+      HOST_ID: agent-1
+    # The autowatch daemon spawns git subprocesses; tini (init) reaps them so
+    # zombies don't accumulate under the container's PID 1 (carry-forward lesson).
+    init: true
+    healthcheck:
+      # Ready-file is written only after the daemon binds both listeners.
+      test: ["CMD-SHELL", "test -f /tmp/watch-ready.json"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 3s
+
+  auto-ui:
+    build:
+      context: ../../..
+      dockerfile: harness/scenarios/event-flow/Dockerfile
+      target: autoui
+    hostname: auto-ui
+    environment:
+      # Space-separated agent service names the entrypoint runs `backends add` for.
+      AGENTS: "agent-1"
+    init: true
+    depends_on:
+      agent-1:
+        condition: service_healthy
+    healthcheck:
+      # Debug ring is served only with AUTO_UI_DEBUG=1 (set in the entrypoint).
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/debug/recent >/dev/null 2>&1"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 3s

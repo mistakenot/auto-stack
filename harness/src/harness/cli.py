@@ -16,12 +16,14 @@ import sys
 import click
 
 from harness.scenarios.base import Scenario
+from harness.scenarios.event_flow import EventFlowScenario
 from harness.scenarios.skill_remote import SkillRemoteScenario
 
 # Registry of available scenarios. Adding a scenario is one line here plus its
 # module + compose dir — nothing else in the CLI changes.
 SCENARIOS: dict[str, type[Scenario]] = {
     "skill-remote": SkillRemoteScenario,
+    "event-flow": EventFlowScenario,
 }
 
 
