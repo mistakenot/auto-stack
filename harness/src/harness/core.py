@@ -1,4 +1,10 @@
-"""Core harness: wraps Docker Compose lifecycle and command execution."""
+"""Core harness: wraps a Docker Compose lifecycle and command execution.
+
+This layer is scenario-agnostic. It knows how to bring a Compose stack up and
+down, exec commands inside its services, and report health. Scenario-specific
+helpers (which services exist, how to seed a workspace, readiness gates) live in
+`harness.scenarios`.
+"""
 
 from __future__ import annotations
 
@@ -7,10 +13,6 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-
-HARNESS_DIR = Path(__file__).resolve().parent.parent.parent
-COMPOSE_FILE = HARNESS_DIR / "docker-compose.yaml"
-GIT_REMOTE_URL = "https://git-server/repos/skills.git"
 
 
 @dataclass
@@ -38,10 +40,15 @@ class Result:
 
 @dataclass
 class Harness:
-    """Manages the Docker Compose stack and provides a command DSL."""
+    """Manages one scenario's Docker Compose stack and provides a command DSL.
 
-    compose_file: Path = field(default=COMPOSE_FILE)
-    project_name: str = "autoskill-harness"
+    `compose_file` is the absolute path to the scenario's `docker-compose.yaml`;
+    `project_name` isolates this scenario's Compose project from every other one,
+    so scenarios can run side by side without colliding.
+    """
+
+    compose_file: Path
+    project_name: str = "auto-harness"
     _up: bool = field(default=False, repr=False)
 
     def _compose(self, *args: str, check: bool = True, timeout: int = 300) -> subprocess.CompletedProcess:
@@ -60,7 +67,7 @@ class Harness:
         )
 
     def up(self, build: bool = True, timeout: int = 300) -> None:
-        """Start the harness stack. Blocks until all services are healthy."""
+        """Start the stack. Blocks until all services are healthy (`--wait`)."""
         args = ["up", "-d", "--wait"]
         if build:
             args.append("--build")
@@ -105,42 +112,13 @@ class Harness:
             command=cmd,
         )
 
-    def run_skill(self, subcmd: str, *args: str, timeout: int = 60) -> Result:
-        """Run `auto skill <subcmd> [args...]` inside the SUT container."""
-        parts = ["auto", "skill", subcmd] + list(args)
-        cmd = " ".join(parts)
-        return self.run("sut", cmd, timeout=timeout)
-
-    def run_auto(self, *args: str, timeout: int = 60) -> Result:
-        """Run `auto <args...>` inside the SUT container."""
-        cmd = " ".join(["auto"] + list(args))
-        return self.run("sut", cmd, timeout=timeout)
-
-    def fresh_workspace(self, name: str = "test") -> Result:
-        """Create an isolated git-initialized workspace in the SUT container."""
-        cmd = (
-            f"rm -rf /workspace/{name} && "
-            f"mkdir -p /workspace/{name} && "
-            f"cd /workspace/{name} && "
-            f"git init && "
-            f"git commit --allow-empty -m 'init'"
-        )
-        return self.run("sut", cmd)
-
-    def trust_source(self, workspace: str = "/workspace") -> Result:
-        """Pre-approve the HTTPS endpoint so add+sync work without interaction."""
-        return self.run("sut", f"cd {workspace} && auto skill trust add 'https://git-server'")
-
-    def git_server_cmd(self, cmd: str, timeout: int = 30) -> Result:
-        """Run a command on the git-server container."""
-        return self.run("git-server", cmd, timeout=timeout)
-
     def wait_healthy(self, timeout: int = 60) -> None:
         """Poll until all services report healthy."""
         deadline = time.time() + timeout
+        status: dict = {}
         while time.time() < deadline:
             status = self.status()
-            if all(v == "healthy" for v in status.values()):
+            if status and all(v == "healthy" for v in status.values()):
                 return
             time.sleep(1)
         raise TimeoutError(f"Services not healthy after {timeout}s: {status}")

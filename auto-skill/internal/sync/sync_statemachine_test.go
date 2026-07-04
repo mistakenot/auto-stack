@@ -398,6 +398,13 @@ func (sm *syncStateMachine) RemoveLocal(t *rapid.T) {
 		t.Fatalf("RemoveLocal(%s): reconcile errors=%v", name, res.Errors)
 	}
 	delete(sm.authored, name)
+	// Remove(SelLocal) drops the authored-only skills.yaml entry too, so mirror
+	// that in the model — otherwise a later wholesale writeSkillsYAML would
+	// resurrect the now-sourceless entry (a stale vendored ref). Mirrors
+	// RemoveVendored's delete(sm.cfg.Skills, name). Only authored-only skills are
+	// removable here (SelLocal on a both-sourced skill keeps the entry), and this
+	// model has no both-sourced authored skills, so the unconditional delete is safe.
+	delete(sm.cfg.Skills, name)
 	sm.convergeModelToRenderable()
 	sm.lastResult = nil // Remove returns RemoveResult, not *Result ⇒ vacuous
 	sm.lastOp = "RemoveLocal(" + name + ")"

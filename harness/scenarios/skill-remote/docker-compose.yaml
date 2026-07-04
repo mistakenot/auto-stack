@@ -15,8 +15,8 @@ services:
 
   sut:
     build:
-      context: ../..
-      dockerfile: auto-skill/harness/Dockerfile.sut
+      context: ../../..
+      dockerfile: harness/scenarios/skill-remote/Dockerfile.sut
     hostname: sut
     # PID 1 (sleep infinity) does not reap children, so every git subprocess the
     # SUT spawns leaks as a zombie (73+ observed under load). `init: true` runs

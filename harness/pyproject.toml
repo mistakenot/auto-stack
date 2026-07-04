@@ -1,7 +1,7 @@
 [project]
-name = "auto-skill-harness"
+name = "auto-harness"
 version = "0.1.0"
-description = "End-to-end test harness for auto-skill"
+description = "End-to-end, hermetic, scenario-based test harness for the auto-stack"
 requires-python = ">=3.11"
 dependencies = [
     "click>=8.1",
@@ -20,3 +20,5 @@ packages = ["src/harness"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Scenario stacks build real images and can take minutes; keep output verbose.
+addopts = "-ra"

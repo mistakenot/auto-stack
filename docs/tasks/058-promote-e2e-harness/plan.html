@@ -7,12 +7,12 @@
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
   <script type="application/json" id="pd-meta">
-{"id":"058","name":"promote-e2e-harness","status":"planning","created":"2026-07-03"}
+{"id":"058","name":"promote-e2e-harness","status":"complete","created":"2026-07-03"}
   </script>
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="058: promote-e2e-harness" status="pending" pr="pending" generated="2026-07-03"
+  <pd-doc title="058: promote-e2e-harness" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/124" generated="2026-07-03"
           next-prompt="/execute-task 058">
     <pd-tab name="Requirements">
 
@@ -601,7 +601,7 @@ generic probe surface, and finish with docs + a full two-scenario green run.
         <pd-stepper>
 
           <pd-phase n="1" title="Promote harness + Scenario abstraction (skill-remote green)"
-            status="todo"
+            status="done"
             files="harness/,auto-skill/harness/,harness/pyproject.toml,harness/src/harness/core.py,harness/src/harness/scenarios/base.py,harness/src/harness/scenarios/skill_remote.py,harness/src/harness/cli.py,harness/scenarios/skill-remote/docker-compose.yaml,harness/scenarios/skill-remote/Dockerfile.sut,harness/tests/conftest.py,harness/tests/skill_remote/test_add_sync.py,harness/tests/skill_remote/test_fuzz_fixes.py">
             <md><script type="text/plain">
 Walking skeleton for the *structure*: the promoted harness runs end-to-end and Scenario 1 passes.
@@ -626,7 +626,7 @@ Walking skeleton for the *structure*: the promoted harness runs end-to-end and S
           </pd-phase>
 
           <pd-phase n="2" title="event-flow walking skeleton — single agent → auto-ui (AC-4)"
-            status="todo" depends-on="1"
+            status="done" depends-on="1"
             files="harness/scenarios/event-flow/Dockerfile,harness/scenarios/event-flow/scripts/agent-entrypoint.sh,harness/scenarios/event-flow/scripts/autoui-entrypoint.sh,harness/scenarios/event-flow/docker-compose.yaml,harness/scenarios/event-flow/fixtures/hooks/doc-edit.json,harness/src/harness/scenarios/event_flow.py,harness/tests/event_flow/test_hook_to_ui.py">
             <md><script type="text/plain">
 Thinnest end-to-end event path: ONE agent container + one auto-ui, one assertion passing.
@@ -652,7 +652,7 @@ Thinnest end-to-end event path: ONE agent container + one auto-ui, one assertion
           </pd-phase>
 
           <pd-phase n="3" title="Thicken to multi-host + probe surface (AC-2, AC-5, AC-6)"
-            status="todo" depends-on="2"
+            status="done" depends-on="2"
             files="harness/scenarios/event-flow/docker-compose.yaml,harness/src/harness/scenarios/event_flow.py,harness/scenarios/event-flow/scripts/autoui-entrypoint.sh,harness/tests/event_flow/test_hook_to_ui.py">
             <md><script type="text/plain">
 Add the second host and the generic probe helper on a system that already runs end to end.
@@ -670,7 +670,7 @@ Add the second host and the generic probe helper on a system that already runs e
           </pd-phase>
 
           <pd-phase n="4" title="Docs + reference sweep + full two-scenario green run"
-            status="todo" depends-on="3"
+            status="done" depends-on="3"
             files="harness/CLAUDE.md,CLAUDE.md">
             <md><script type="text/plain">
 1. Rewrite `harness/CLAUDE.md`: the scenario model (self-contained compose + Python module over
