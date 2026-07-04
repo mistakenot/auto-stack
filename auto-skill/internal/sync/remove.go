@@ -91,6 +91,15 @@ func Remove(env skill.Env, name string, sel Selector) (RemoveResult, error) {
 		if err := os.RemoveAll(filepath.Join(env.SkillsDir(), name)); err != nil {
 			return res, fmt.Errorf("remove authored skill dir: %w", err)
 		}
+		// When the skill is authored-only, its skills.yaml entry is now dangling
+		// (no ./skills source, no lock pin). Drop it so the reconcile's locked sync
+		// doesn't misread it as a stale vendored ref and refuse to prune. When the
+		// skill is ALSO vendored, the entry still backs the vendored copy — keep it.
+		if !vendored {
+			if err := removeSkillsYAMLEntry(env.SkillsYAMLPath(), name); err != nil {
+				return res, fmt.Errorf("drop skills.yaml entry for %q: %w", name, err)
+			}
+		}
 		res.Removed = append(res.Removed, "local")
 	case SelVendored:
 		delete(lock.Skills, name)
