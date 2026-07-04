@@ -27,6 +27,13 @@ UI_PORT = 8080
 # with a bounded retry and matches on presence — never exact counts (bus-spec §5).
 DEFAULT_POLL_TIMEOUT = 10.0
 DEFAULT_POLL_INTERVAL = 0.25
+# Readiness warm-up: a distinct docs/**/*.md path (derives doc.changed) used only
+# to prove the live relay path end-to-end before real tests fire. Kept separate
+# from any test's path so warm-up events never satisfy a test assertion.
+WARMUP_RELPATH = "docs/_harness_warmup.md"
+# Fail-fast ceiling for the relay-live gate: a backend that never surfaces its
+# warm-up event by now is configured-but-not-subscribed — abort with a clear error.
+RELAY_READY_TIMEOUT = 30.0
 
 
 class EventFlowScenario(Scenario):
@@ -69,6 +76,39 @@ class EventFlowScenario(Scenario):
             uri = f"tcp://{a}:{RPC_PORT}"
             if uri not in listed.stdout:
                 raise RuntimeError(f"auto-ui is not subscribed to {uri}; backends: {listed.stdout}")
+
+        # `backends list` only proves each backend is *configured* — it reads
+        # backends.json, not the running `auto ui serve` process, whose manager
+        # dials and `bus.subscribe`s asynchronously. Delivery is at-most-once, so a
+        # hook fired before that subscription is live is silently dropped and the
+        # first real test flakes. Prove the live path end-to-end: drive a synthetic
+        # warm-up event per agent and wait for it to land in the debug ring before
+        # declaring the scenario ready (assert the observable outcome, not config).
+        for a in self.agents:
+            self._await_relay_live(a)
+
+    def _await_relay_live(self, agent: str, timeout: float = RELAY_READY_TIMEOUT) -> None:
+        """Block until an event fired in `agent` is observed on auto-ui.
+
+        Proves the running auto-ui has actually connected to this agent's RPC
+        backend and completed `bus.subscribe`, not merely that it is configured.
+        Re-fires on each attempt so a single at-most-once loss during the
+        subscription handshake can't wedge the gate; raises on timeout so a
+        never-subscribing backend fails fast rather than as a downstream flake.
+        """
+        self.edit_doc(agent, WARMUP_RELPATH, f"# relay warm-up for {agent}")
+        deadline = time.monotonic() + timeout
+        while True:
+            self.fire_hook(agent, f"/workspace/{WARMUP_RELPATH}")
+            hit = self.recent_events(match={"type": "doc.changed", "host": agent}, timeout=1.0)
+            if any((e.get("data") or {}).get("path") == WARMUP_RELPATH for e in hit):
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"{agent}: auto-ui never surfaced a warm-up doc.changed within {timeout}s — "
+                    f"backend configured but relay subscription not live (auto ui serve not "
+                    f"connected to tcp://{agent}:{RPC_PORT})?"
+                )
 
     # ── produce events ───────────────────────────────────────────────────────
 
