@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Current RPC and Event Communication</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <pd-doc title="Current RPC and Event Communication" status="draft" generated="2026-07-03">
+    <pd-tab name="Map">
+      <pd-section id="purpose" title="Purpose" summary="A scan-first map of how auto-ui, autowatch, hooks, the bus, and RPC peers communicate today.">
+        <md><script type="text/plain">
+This document describes the current shipped communication structure in auto-stack.
+
+It focuses on process boundaries and message paths, not future durable-bus proposals. The important current split is:
+
+- **auto-ui** owns the browser HTTP/WebSocket surface and proxies backend RPCs.
+- **autowatch** owns Project-local filesystem access, TaskDef execution, daemon state, hook ingest, and its local Event hub.
+- **auto-shared/rpc.Peer** is the duplex JSON-RPC endpoint used between auto-ui and autowatch.
+- **bus.Event** is the Event envelope used for live notifications.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="entity-flow" title="Entity Flow" summary="High-level communication between the human-facing UI, coding agents, autowatch, durable hook logs, and later ETL/history.">
+        <pd-mermaid caption="High-level entity communication">
+flowchart LR
+  Human["Human<br/>browser user"]
+  UI["AutoUi<br/>dashboard + backend proxy"]
+  Watch["AutoWatch<br/>per-Host daemon"]
+  Agent["Coding Agent<br/>Claude / Codex"]
+  HookLog[("Hook JSONL<br/>~/.auto/hooks/raw")]
+  WatchDB[("AutoWatch SQLite<br/>runs + daemon Events")]
+  Project["Project files<br/>docs, worktrees, config"]
+  ETL["auto-etl<br/>batch ingest"]
+  History[("Parquet history<br/>~/.auto/etl/output")]
+
+  Human <-->|"views docs, dispatches TaskDefs<br/>WebSocket JSON-RPC"| UI
+  UI <-->|"backend RPC calls<br/>unix:// or tcp://"| Watch
+  Watch -->|"Event notifications<br/>bus.subscribe relay"| UI
+  Agent -->|"hook payloads<br/>auto hooks fire"| HookLog
+  Agent -->|"best-effort live Event POST"| Watch
+  Watch <-->|"read docs, configs, worktrees"| Project
+  Watch <-->|"reserve, run, cancel, status"| WatchDB
+  HookLog -->|"later normalization"| ETL
+  ETL --> History
+
+  classDef live fill:#e0f2fe,stroke:#0284c7,color:#0f172a
+  classDef durable fill:#dcfce7,stroke:#16a34a,color:#0f172a
+  classDef actor fill:#fef3c7,stroke:#d97706,color:#0f172a
+  class Human,Agent actor
+  class UI,Watch live
+  class HookLog,WatchDB,History durable
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+Read this as the highest-level contract:
+
+- **Human ⇄ AutoUi** is the interactive control/read surface.
+- **AutoUi ⇄ AutoWatch** is backend RPC plus reverse Event relay.
+- **Agent → Hook JSONL** is the durable hook record.
+- **Agent → AutoWatch** is the best-effort live hook notification.
+- **AutoWatch ⇄ Project files / SQLite** is the local Host authority boundary.
+- **auto-etl → Parquet** is the later historical materialization path.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="process-map" title="Process Map" summary="The current runtime has three live communication planes: browser RPC, backend RPC, and hook/Event relay.">
+        <pd-mermaid caption="Current runtime boundaries">
+flowchart LR
+  subgraph Browser["Browser / SPA"]
+    SPA["SPA JavaScript"]
+  end
+
+  subgraph UI["auto-ui process"]
+    HTTP["HTTP server<br/>127.0.0.1"]
+    WS["/api/ws<br/>WebSocket JSON-RPC"]
+    UIDispatch["server.Dispatcher"]
+    Manager["backend.Manager"]
+    UIHub["bus.Hub<br/>browser fanout"]
+  end
+
+  subgraph Watch["autowatch process"]
+    RPCServer["rpcserver.Server"]
+    PeerHandlers["rpcmethods.Handlers"]
+    WatchHub["bus.Hub<br/>daemon-local"]
+    HookIngest["HTTP hook ingest<br/>127.0.0.1:7787"]
+    Service["daemon.Service"]
+    Store["SQLite store"]
+    Files["Project files"]
+  end
+
+  subgraph Agent["Coding agent process"]
+    HooksFire["auto hooks fire"]
+    RawLog["~/.auto/hooks/raw/*.jsonl"]
+  end
+
+  SPA <-->|"JSON-RPC over WebSocket"| WS
+  WS --> UIDispatch
+  UIDispatch -->|"proxy doc/task/project calls"| Manager
+  Manager <-->|"NDJSON JSON-RPC over unix/tcp"| RPCServer
+  RPCServer --> PeerHandlers
+  PeerHandlers --> Files
+  PeerHandlers --> Service
+  Service --> Store
+  Service --> WatchHub
+  HooksFire -->|"append first"| RawLog
+  HooksFire -->|"best-effort HTTP POST<br/>JSON-RPC notification"| HookIngest
+  HookIngest --> WatchHub
+  WatchHub -->|"bus.subscribe relay<br/>JSON-RPC notifications"| Manager
+  Manager --> UIHub
+  UIHub --> WS
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+The arrows show the direction of authority:
+
+- Browser clients never read Project files directly.
+- auto-ui does not own local doc or Project data; it routes to the right autowatch backend.
+- autowatch is the authority for files, TaskDef runs, daemon state, and hook-derived live Events.
+- Hook Events are durable before live delivery: `auto hooks fire` appends JSONL, then attempts the live POST.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="current-components" title="Key Components" summary="The main communication pieces and where they live.">
+        <pd-api kind="package" name="current communication surface" lang="go" caption="Runtime components by ownership">
+          <pd-member kind="ui" sig="auto-ui/internal/server.New">Builds the loopback HTTP server, `/api/ws`, `/api/doc/raw`, debug route, static assets, and backend Event sink.</pd-member>
+          <pd-member kind="ui" sig="auto-ui/internal/backend.Manager">Maintains one long-lived `rpc.Peer` per configured autowatch backend and resolves calls by Host or Project.</pd-member>
+          <pd-member kind="shared" sig="auto-shared/rpc.Peer">Symmetric duplex JSON-RPC 2.0 endpoint over a reliable stream; supports calls, notifications, keepalive, and bounded writes.</pd-member>
+          <pd-member kind="shared" sig="auto-shared/transport">URI-selected transport seam for `unix://` and `tcp://` listeners and dialers.</pd-member>
+          <pd-member kind="watch" sig="auto-watch/internal/rpcserver.Server">Accepts backend RPC connections, creates a peer, registers daemon methods and `bus.subscribe`.</pd-member>
+          <pd-member kind="watch" sig="auto-watch/internal/rpcmethods.Handlers">Transport-free daemon method table: docs, projects, tasks, daemon status.</pd-member>
+          <pd-member kind="watch" sig="auto-watch/internal/rpcserver.HookIngest">Loopback HTTP ingest for hook Events; validates envelope, stamps Host, broadcasts and derives doc Events.</pd-member>
+          <pd-member kind="shared" sig="auto-shared/bus.Hub">In-process fanout hub; lossy, no persistence, no replay.</pd-member>
+        </pd-api>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="RPC">
+      <pd-section id="rpc-layers" title="RPC Layers" summary="There are two JSON-RPC layers: browser WebSocket RPC and backend `rpc.Peer` RPC.">
+        <pd-mermaid caption="Two JSON-RPC layers">
+flowchart TB
+  Browser["Browser client"]
+  UIWS["auto-ui /api/ws<br/>server.Dispatcher"]
+  Proxy["proxyCall / aggregateProjectList"]
+  Manager["backend.Manager"]
+  Peer["auto-shared/rpc.Peer"]
+  WatchPeer["autowatch rpc.Peer"]
+  Methods["rpcmethods.Handlers"]
+
+  Browser <-->|"JSON-RPC frames in WebSocket messages"| UIWS
+  UIWS --> Proxy
+  Proxy --> Manager
+  Manager <-->|"JSON-RPC frames as NDJSON stream"| Peer
+  Peer <-->|"same connection"| WatchPeer
+  WatchPeer --> Methods
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+The browser-facing dispatcher and shared `rpc.Peer` use the same JSON-RPC idea but different transports:
+
+| Layer | Transport | Frame boundary | Main code |
+|---|---|---|---|
+| Browser to auto-ui | WebSocket | one WebSocket message | `auto-ui/internal/server/ws.go` |
+| auto-ui to autowatch | Unix/TCP stream | one JSON value per line | `auto-shared/rpc/codec.go` |
+
+Both use request IDs for request/reply and no ID for fire-and-forget notifications.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="backend-handshake" title="Backend Handshake" summary="auto-ui learns the authoritative Host by calling `daemon.status`, then subscribes to Events with `bus.subscribe`.">
+        <pd-mermaid caption="auto-ui backend connection lifecycle">
+sequenceDiagram
+  participant UI as auto-ui backend.Manager
+  participant T as transport.Dial
+  participant P as rpc.Peer
+  participant W as autowatch rpcserver
+  participant H as rpcmethods.Handlers
+  participant B as autowatch bus.Hub
+
+  UI->>T: Dial(uri from backends.json)
+  T-->>UI: net.Conn
+  UI->>P: NewPeer(conn, WithOnNotify)
+  UI->>P: Serve(ctx) in goroutine
+  UI->>W: Call daemon.status
+  W->>H: handleStatus
+  H-->>W: hostId, version, uptime
+  W-->>UI: response
+  UI->>W: Call bus.subscribe
+  W->>B: hub.Subscribe(peerSink)
+  W-->>UI: {"status":"subscribed"}
+  UI->>UI: store peer under learned hostId
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+If `bus.subscribe` fails, the backend can still serve proxied RPC calls. The manager marks the relay degraded and retries subscribe during later reconcile ticks.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="doc-request-flow" title="Doc Request Flow" summary="A browser `doc.get` or `doc.list` is routed through auto-ui to the backend that owns the Project files.">
+        <pd-mermaid caption="Browser doc.get request">
+sequenceDiagram
+  participant SPA as Browser SPA
+  participant WS as auto-ui /api/ws
+  participant D as server.Dispatcher
+  participant PX as proxyCall
+  participant M as backend.Manager
+  participant RP as autowatch rpc.Peer
+  participant DH as doc handler
+  participant FS as Project filesystem
+
+  SPA->>WS: {"id":1,"method":"doc.get","params":{project,path,hostId?}}
+  WS->>D: dispatch
+  D->>PX: proxyCall("doc.get")
+  PX->>M: Resolve(hostId) or ResolveByProject(project)
+  M-->>PX: rpc.Peer
+  PX->>RP: Call("doc.get", same params)
+  RP->>DH: handleDocGet
+  DH->>FS: validate path, read docs file
+  FS-->>DH: markdown bytes
+  DH-->>RP: {path, markdown}
+  RP-->>PX: JSON-RPC result
+  PX-->>D: raw backend result
+  D-->>WS: correlated response
+  WS-->>SPA: {"id":1,"result":...}
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+`project.list` is the main exception to single-backend proxying. auto-ui fans it out to all connected backends, tags results with the authoritative Host, and returns partial results if one backend fails.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="rpc-peer-mechanics" title="rpc.Peer Mechanics" summary="A peer is symmetric: either side can register handlers, call methods, and receive notifications.">
+        <pd-api kind="type" name="rpc.Peer" lang="go" path="auto-shared/rpc/peer.go" caption="Shared RPC shape">
+          <pd-member kind="method" sig="Register(method string, h Handler)">Bind an inbound method before `Serve` starts.</pd-member>
+          <pd-member kind="method" sig="Serve(ctx context.Context) error">Run the read loop, write pump, optional keepalive, and terminal shutdown path.</pd-member>
+          <pd-member kind="method" sig="Call(ctx context.Context, method string, params any) (json.RawMessage, error)">Send an ID-bearing request and wait for the matching response, context cancellation, or peer close.</pd-member>
+          <pd-member kind="method" sig="Notify(method string, params any) error">Send an ID-less JSON-RPC notification.</pd-member>
+          <pd-member kind="option" sig="WithOnNotify(func(Request))">Receive inbound notifications such as relayed `bus.Event`s.</pd-member>
+          <pd-member kind="option" sig="WithKeepAlive(interval, timeout time.Duration)">Send `$keepalive` pings and reap half-open connections.</pd-member>
+        </pd-api>
+
+        <pd-code lang="go" path="auto-shared/rpc/peer.go" lines caption="The conceptual call/notify split">
+<script type="text/plain">raw, err := peer.Call(ctx, "daemon.status", nil)
+err = peer.Notify("watch.task.started", event)</script>
+        </pd-code>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Events">
+      <pd-section id="event-envelope" title="Event Envelope" summary="Events are CloudEvents-shaped envelopes carried inside JSON-RPC notifications.">
+        <pd-api kind="struct" name="bus.Event" lang="go" path="auto-shared/bus/event.go" caption="Current Event envelope">
+          <pd-member kind="field" sig="SpecVersion string">Envelope version, currently `1.0`.</pd-member>
+          <pd-member kind="field" sig="Type string">Dotted Event type such as `agent.tool.post`, `doc.changed`, or `watch.task.started`.</pd-member>
+          <pd-member kind="field" sig="Source string">Producer identity, such as `auto/hooks/claude` or `auto/watch/daemon`.</pd-member>
+          <pd-member kind="field" sig="ID string">Unique Event identifier.</pd-member>
+          <pd-member kind="field" sig="Time string">RFC 3339 Event time.</pd-member>
+          <pd-member kind="field" sig="Host string">Producing Host identity.</pd-member>
+          <pd-member kind="field" sig="Project, Session, Remote, Branch, Worktree, Commit string">Optional provenance used for routing, filtering, and file reads.</pd-member>
+          <pd-member kind="field" sig="Env map[string]string">Optional terminal/orchestrator context from hook execution.</pd-member>
+          <pd-member kind="field" sig="Data json.RawMessage">Opaque payload, typed only where auto-stack authors it.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="hook-ingest-flow" title="Hook Ingest Flow" summary="Hook delivery has a durable JSONL write first, then a best-effort live POST into autowatch.">
+        <pd-mermaid caption="Agent hook to browser live update">
+sequenceDiagram
+  participant Agent as Coding agent
+  participant Fire as auto hooks fire
+  participant Log as hooks JSONL log
+  participant HI as autowatch HookIngest
+  participant HB as autowatch bus.Hub
+  participant UI as auto-ui backend.Manager
+  participant UIB as auto-ui bus.Hub
+  participant SPA as Browser SPA
+
+  Agent->>Fire: hook payload on stdin
+  Fire->>Log: append Envelope to ~/.auto/hooks/raw
+  Fire->>HI: HTTP POST JSON-RPC notification with bus.Event
+  HI->>HI: validate envelope, overwrite Host
+  HI->>HB: Broadcast raw Event
+  HI->>HI: Derive doc.changed when docs path matches registered Project
+  HI->>HB: Broadcast derived Event(s)
+  HB->>UI: bus.subscribe peer.Notify(ev.Type, ev)
+  UI->>UIB: broadcast relayed Event
+  UIB->>SPA: WebSocket JSON-RPC notification
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+The hook live path is explicitly lossy. The durable source for hook payloads is the JSONL append performed before the POST. The bus path is for prompt UI updates and live invalidations.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="watch-task-events" title="Watch Task Events" summary="Task lifecycle Events are emitted by autowatch service code and relayed through the same `bus.subscribe` bridge.">
+        <pd-mermaid caption="Task dispatch and lifecycle Events">
+sequenceDiagram
+  participant SPA as Browser SPA
+  participant UI as auto-ui proxy
+  participant W as autowatch rpc.Peer
+  participant H as task RPC handler
+  participant S as daemon.Service
+  participant DB as SQLite store
+  participant HB as autowatch bus.Hub
+  participant Relay as bus.subscribe relay
+
+  SPA->>UI: task.dispatch(projectId, taskId)
+  UI->>W: Call task.dispatch
+  W->>H: handleTaskDispatch
+  H->>S: Dispatch ReserveRunInput
+  S->>DB: reserve/run state writes
+  S->>HB: watch.task.started
+  HB->>Relay: peer.Notify(Event)
+  Relay-->>SPA: WebSocket notification via auto-ui
+  S->>DB: completed/failed state writes
+  S->>HB: watch.task.completed or watch.task.failed
+  HB->>Relay: peer.Notify(Event)
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+`watch.task.*` Events are always-on data-plane Events. `ctl.*` Events are different: they are daemon/control-plane observability Events and only emit when `--ctl-events` is enabled.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="event-contract" title="Current Event Contract" summary="The live bus is notification-only: no storage, replay, acks, or consumer offsets.">
+        <pd-api kind="contract" name="current bus delivery" lang="go" caption="What the in-process bus guarantees today">
+          <pd-member kind="delivery" sig="at-most-once">Events may be missed when a client is disconnected or too slow.</pd-member>
+          <pd-member kind="durability" sig="none">The bus does not store Events. Hook durability is the separate JSONL log; task state is in SQLite.</pd-member>
+          <pd-member kind="replay" sig="none">Reconnectors must query state again by RPC.</pd-member>
+          <pd-member kind="backpressure" sig="bounded channel">Slow consumers are disconnected instead of blocking producers.</pd-member>
+          <pd-member kind="dedupe" sig="none">The current single-ingest path means auto-ui does not dedupe relayed Events.</pd-member>
+        </pd-api>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Startup">
+      <pd-section id="autowatch-startup" title="autowatch Startup" summary="`auto watch start` binds the backend RPC listener, hook-ingest listener, daemon service, SQLite store, and local bus.">
+        <pd-mermaid caption="auto watch start wiring">
+flowchart TB
+  Start["auto watch start"]
+  Dirs["Ensure global dirs<br/>acquire daemon lock"]
+  DB["open SQLite store"]
+  Doctor["doctor checks"]
+  Hub["bus.NewHub"]
+  Service["daemon.New(..., hub)"]
+  Registry["regProvider reads usable Projects"]
+  Handlers["rpcmethods.New(service, hostId, hub, regProvider)"]
+  RPCListen["transport.Listen(rpcAddr)<br/>unix:// or tcp://"]
+  HookListen["net.Listen tcp hookAddr"]
+  RPCServe["rpcserver.New(...).Serve"]
+  HookServe["http.Server HookIngest"]
+  Tick["60s daemon Tick loop"]
+
+  Start --> Dirs --> DB --> Doctor --> Hub
+  Hub --> Service
+  Hub --> Handlers
+  Registry --> Handlers
+  Handlers --> RPCServe
+  RPCListen --> RPCServe
+  HookListen --> HookServe
+  Hub --> HookServe
+  Service --> Tick
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="autoui-startup" title="auto-ui Startup" summary="`auto ui serve` loads backend config, starts the manager, builds the browser server, and wires relayed Events to the UI hub.">
+        <pd-mermaid caption="auto ui serve wiring">
+flowchart TB
+  Start["auto ui serve"]
+  Config["load backends.json<br/>fail if empty"]
+  Manager["backend.NewManager"]
+  Run["Manager.Run reconcile loop"]
+  Server["server.New(... WithBackendManager)"]
+  Hub["auto-ui bus.Hub"]
+  Sink["mgr.SetEventSink"]
+  Dispatcher["server.Dispatcher"]
+  WS["/api/ws"]
+  Raw["/api/doc/raw"]
+  Assets["SPA static assets"]
+  Listen["HTTP server<br/>127.0.0.1:port"]
+
+  Start --> Config --> Manager --> Run
+  Config --> Server
+  Manager --> Server
+  Server --> Hub
+  Server --> Sink
+  Server --> Dispatcher
+  Server --> WS
+  Server --> Raw
+  Server --> Assets
+  WS --> Listen
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="transport-shape" title="Transport Shape" summary="The backend RPC transport is a small URI-selected seam, currently Unix sockets or TCP.">
+        <pd-api kind="interface" name="transport" lang="go" path="auto-shared/transport/transport.go" caption="Current backend transport seam">
+          <pd-member kind="function" sig="Listen(uri string) (Listener, error)">Create a listener for `unix://...` or `tcp://...`.</pd-member>
+          <pd-member kind="function" sig="Dial(ctx context.Context, uri string) (net.Conn, error)">Dial a backend URI and return a standard duplex connection.</pd-member>
+          <pd-member kind="interface" sig="Listener.Accept() (net.Conn, error)">Accept a connection until the listener is closed.</pd-member>
+          <pd-member kind="interface" sig="Listener.Addr() net.Addr">Return the bound address, including resolved ports for `:0`.</pd-member>
+          <pd-member kind="interface" sig="Listener.Close() error">Release the listener.</pd-member>
+        </pd-api>
+
+        <md><script type="text/plain">
+This is why `rpcmethods` do not know whether a call arrived over Unix socket, TCP, or an in-process pipe test fixture.
+        </script></md>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Seams">
+      <pd-section id="durability-seams" title="Durability Seams" summary="The current code already has a clear place to add JSONL or SQLite-backed EventLog behavior without replacing RPC.">
+        <pd-mermaid caption="Current storage versus live delivery">
+flowchart LR
+  Hook["agent hook payload"] --> Raw["durable JSONL<br/>~/.auto/hooks/raw"]
+  Hook --> Live["live Event POST"]
+  Live --> WatchHub["autowatch bus.Hub"]
+  Task["TaskDef run state"] --> DB["autowatch SQLite store"]
+  Task --> WatchHub
+  WatchHub --> Relay["bus.subscribe relay"]
+  Relay --> UIHub["auto-ui bus.Hub"]
+  UIHub --> Browser["browser notifications"]
+
+  Raw --> ETL["auto-etl hooks ingest"]
+  ETL --> Parquet["parquet history"]
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+If you add a general EventLog, the least disruptive seam is below `bus.Hub.Broadcast` or in front of selected Event producers:
+
+- Hook payload durability already exists as JSONL.
+- Task run truth already lives in SQLite.
+- Live Events are invalidations and status signals.
+- RPC request/reply does not need to become durable.
+
+A small embedded EventLog should probably record selected `bus.Event`s and preserve the current live notification path as a separate concern.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="where-to-hook" title="Where to Hook Future JSONL or SQLite" summary="Candidate integration points ranked by blast radius.">
+        <pd-api kind="extension-points" name="future embedded EventLog seams" lang="go" caption="Potential integration points">
+          <pd-member kind="low-blast" sig="HookIngest after Validate, before Broadcast">Record normalized `bus.Event`s received from hooks. Keeps hook JSONL raw log separate from EventLog.</pd-member>
+          <pd-member kind="low-blast" sig="daemon.Service.emitWatchTask before hub.Broadcast">Record only `watch.task.*` lifecycle Events while task state remains authoritative in SQLite.</pd-member>
+          <pd-member kind="medium" sig="bus.Hub wrapper: Publish = append then Broadcast">Creates a reusable EventLog-backed bus facade, but requires deciding which current broadcasts should be durable.</pd-member>
+          <pd-member kind="medium" sig="backend.Manager.onNotify">Record Events at auto-ui aggregation point for multi-Host UI history, but this makes auto-ui a downstream materializer rather than the source authority.</pd-member>
+          <pd-member kind="avoid" sig="rpc.Peer Call/Response persistence">RPC calls are operational request/reply traffic. Persist domain Events and state changes instead.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="open-design-questions" title="Open Design Questions" summary="These are research questions for the next design pass, not blockers for this current-state doc.">
+        <md><script type="text/plain">
+- Should a future EventLog store only `bus.Event`, or should it also store raw hook envelopes?
+- Are `watch.task.*` Events a derived view of SQLite run state, or first-class log entries?
+- Is the first durable EventLog per Host only, or should auto-ui aggregate multiple Host logs?
+- Do consumers need named offsets immediately, or is append-and-tail enough for the first version?
+- Should JSONL remain the canonical EventLog until query pressure proves SQLite is needed?
+        </script></md>
+      </pd-section>
+    </pd-tab>
+  </pd-doc>
+</body>
+</html>

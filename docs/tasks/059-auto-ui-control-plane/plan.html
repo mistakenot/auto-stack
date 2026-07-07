@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>059: auto-ui-control-plane</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "059",
+    "name": "auto-ui-control-plane",
+    "status": "planning",
+    "created": "2026-07-03"
+  }
+  </script>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="059: auto-ui-control-plane" status="draft" pr="pending" generated="2026-07-03" next-prompt="/new-solution 059">
+    <pd-tab name="Requirements">
+      <pd-section id="problem" title="Problem" summary="The current communication architecture splits controller responsibility across AutoUi and AutoWatch, which now conflicts with the planned Mail and hook Event stores.">
+        <pd-mermaid caption="Current split before the controller decision">
+flowchart LR
+  Agent["Coding Agent"]
+  HookLog[("Hook JSONL<br/>producer durable append")]
+  Watch["AutoWatch<br/>hook ingest + daemon RPC + Event relay"]
+  WatchDB[("AutoWatch SQLite<br/>runs / daemon Events")]
+  UI["AutoUi<br/>browser surface + backend proxy"]
+  Browser["Browser / Agent CLI clients"]
+  Mail["Future Mail Store<br/>currently ambiguous"]
+
+  Agent -->|"auto hooks fire"| HookLog
+  Agent -->|"best-effort hook POST"| Watch
+  Watch --> WatchDB
+  Watch -->|"bus.subscribe relay"| UI
+  Browser <-->|"WebSocket / JSON-RPC"| UI
+  UI <-->|"backend RPC"| Watch
+  Mail -. "draft docs point at AutoWatch" .-> Watch
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+Auto-stack has accumulated a decentralised control plane: AutoUi owns the browser-facing HTTP/WebSocket surface, while AutoWatch owns hook ingest, local Event derivation, backend RPC, and daemon state. The new `auto mail` direction needs one clear controller for agent-to-agent Mail, hook Event storage, and RPC reads.
+
+The target topology is explicit: **AutoUi is a global singleton controller**, while **AutoWatch runs once per Host**. Each Host can own multiple Projects. AutoUi should be the stable RPC endpoint and router; AutoWatch should remain the per-Host backend for Host-local daemon work and Project-local access.
+
+The current docs also conflict with the desired direction: the bus spec and AutoUi/AutoWatch docs describe AutoWatch as the sole hook ingest/relay site, while the Mail developer guide still sketches Mail storage and RPC on AutoWatch. Before implementing Mail or a hook hot store, the architecture needs one explicit owner.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals" summary="Make AutoUi the proposed controller process and narrow AutoWatch back to daemon responsibilities.">
+        <pd-mermaid caption="Proposed controller ownership">
+flowchart LR
+  Agent["Coding Agent"]
+  MailCLI["auto mail CLI"]
+  HookCLI["auto hooks fire"]
+  UI["AutoUi Controller<br/>global singleton<br/>RPC + WebSocket + stores"]
+  MailDB[("Mail SQLite<br/>messages / recipients / cursors")]
+  HookDB[("Hook/Event SQLite<br/>received hook Events + hot state")]
+  Browser["Browser / monitor"]
+  WatchA["AutoWatch<br/>Host A daemon"]
+  WatchB["AutoWatch<br/>Host B daemon"]
+  ProjectsA[("Host A Projects<br/>Project 1..N")]
+  ProjectsB[("Host B Projects<br/>Project 1..N")]
+  WatchDBA[("Host A daemon SQLite<br/>runs / leases / daemon state")]
+  WatchDBB[("Host B daemon SQLite<br/>runs / leases / daemon state")]
+
+  HookCLI -->|"push hook Event"| UI
+  MailCLI <-->|"Mail RPC"| UI
+  Agent --> MailCLI
+  Agent --> HookCLI
+  UI --> MailDB
+  UI --> HookDB
+  Browser <-->|"WebSocket / JSON-RPC"| UI
+  UI <-->|"Host-local daemon RPC"| WatchA
+  UI <-->|"Host-local daemon RPC"| WatchB
+  WatchA --> WatchDBA
+  WatchB --> WatchDBB
+  WatchA --> ProjectsA
+  WatchB --> ProjectsB
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+- **Decide and document AutoUi as the controller.** AutoUi is the central process for controller RPC, browser WebSockets, Mail access, and hook/Event hot-state queries.
+- **Make the topology explicit.** There is one global AutoUi controller. There is one AutoWatch daemon per Host. A Host can own multiple Projects, and AutoUi routes Host-local work to the AutoWatch for that Host.
+- **Move Mail ownership to AutoUi.** The future `auto mail` CLI reads and writes Mail via RPC to AutoUi. AutoUi owns the SQLite Mail Store used for messages, recipients, cursors, acknowledgements, queues, and channel subscriptions.
+- **Move hook/Event hot storage to AutoUi.** Coding agents push hook Events to AutoUi; AutoUi owns the SQLite store of received hook Events and any live/hot materializations needed by the dashboard or later analysis.
+- **Narrow AutoWatch to Host-local backend work.** AutoWatch remains responsible for daemon TaskDef evaluation/execution, run tracking, daemon-specific state, and Project-local operations that require filesystem access on its Host. It should not own global Mail, hook/Event controller state, or browser Event aggregation.
+- **Preserve non-breaking agent hooks.** Hook firing must stay safe for coding agents: failures to reach the controller must not break the agent path. The solution stage should preserve the existing durable-first behavior or replace it with an equivalent spool.
+- **Reconcile current architecture docs.** Update the design surface that currently points at AutoWatch as hook/RPC hub: `docs/auto-bus-spec.md`, `docs/current-rpc-communication.html`, `docs/auto-mail-developer-guide.html`, `auto-ui/CLAUDE.md`, and `auto-watch/CLAUDE.md`.
+- **Define migration boundaries.** The task should identify which current AutoWatch RPCs remain daemon-only and which move to AutoUi, without silently keeping both paths alive long term.
+        </script></md>
+
+        <pd-decision id="D-1" title="AutoUi is the controller process" status="proposed" by="user" date="2026-07-03" summary="AutoUi becomes the central hub for messaging, controller RPC, hook/Event storage, and Mail storage; AutoWatch narrows to daemon TaskDef responsibilities.">
+          <md><script type="text/plain">
+**Context:** `auto mail` and live hook/Event state both need durable SQLite-backed stores plus one RPC surface for agents and the browser. Keeping Mail and hook ingest in AutoWatch would make AutoWatch a broad controller instead of a focused daemon.
+
+**Decision:** Treat AutoUi as the controller process for v1. Agent-facing controller commands talk to AutoUi. AutoUi owns the Mail SQLite store and the hook/Event SQLite store. AutoWatch is used where the operation is Host-local, such as TaskDef execution, run status, cancellation, daemon health, and Project-local filesystem access.
+
+**Implication:** Existing docs and code paths that describe AutoWatch as the hook ingest, Event relay hub, or future Mail RPC host need to be revised or migrated.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-3" title="One AutoUi globally, one AutoWatch per Host" status="proposed" by="user" date="2026-07-03" summary="AutoUi is the singleton controller; AutoWatch is a per-Host backend, and each Host may own multiple Projects.">
+          <md><script type="text/plain">
+**Context:** Controller state needs one stable owner, while execution and filesystem access are naturally Host-local.
+
+**Decision:** Run AutoUi as the global singleton controller. Run one AutoWatch per Host. Each AutoWatch serves the daemon and Project-local responsibilities for every Project owned by that Host.
+
+**Implication:** RPC routing should be controller-first: CLI/browser clients call AutoUi, and AutoUi forwards only Host-local operations to the correct AutoWatch.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-2" title="SQLite stays embedded but controller-owned" status="proposed" by="user" date="2026-07-03" summary="Use embedded SQLite for v1 Mail and hook/Event stores, but place those stores under AutoUi controller ownership rather than AutoWatch.">
+          <md><script type="text/plain">
+**Context:** The Mail developer guide already chose SQLite over JSONL-only storage for transactions. Hook/Event live state has the same need: queryable recent state, transactional writes, and durable inspection without external infrastructure.
+
+**Decision:** Keep SQLite as the v1 embedded store, but make AutoUi the owner of controller data: Mail state and hook/Event hot state.
+
+**Implication:** JSONL can remain an interchange, debug, backup, or producer-side spool format, but it should not be the controller query surface.
+          </script></md>
+        </pd-decision>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope" summary="This task sets the controller architecture and first migration boundaries; it does not build every future Mail feature.">
+        <md><script type="text/plain">
+- **Full `auto mail` product implementation.** Message schemas, all CLI commands, channel semantics, queue leases, and retention policy can be planned after the controller ownership is settled.
+- **External message infrastructure.** No NATS, Redis Streams, Kafka, or new standalone bus process for this task.
+- **AutoWatch removal.** AutoWatch remains the per-Host daemon for TaskDef scheduling/execution, daemon state, and Host-local Project access; the task narrows its role, it does not delete the daemon.
+- **Cross-Host auth and NAT traversal redesign.** Use existing transport assumptions where possible. New auth, signing, or public-network transport work belongs in a separate task.
+- **Cold ETL/parquet redesign.** This task may define how hook Events enter the controller hot store, but it does not replace the historical `auto-etl` pipeline.
+- **Browser UX redesign.** The dashboard may need status updates later, but this task is about process ownership, stores, RPC boundaries, and docs.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions" summary="No blocking question is left open at the Requirements stage; these assumptions should be confirmed or refined in /new-solution.">
+        <md><script type="text/plain">
+- [ ] **Scope assumption:** Treat this as an architecture-and-migration task, not a full Mail implementation task. The first deliverable should make ownership unambiguous and update the first controller paths/docs.
+- [ ] **Hook durability assumption:** Keep the existing "hook must not break the coding agent" invariant. Recommended lean: retain a producer-side durable append/spool if AutoUi is unavailable, then sync into AutoUi's SQLite hook/Event store when reachable.
+- [ ] **RPC routing assumption:** CLI and browser clients should call AutoUi first. AutoUi handles global/controller RPCs itself and forwards Host-local RPCs to the one AutoWatch for the target Host. The solution stage should explicitly classify current `doc.*`, `project.*`, `task.*`, `daemon.*`, `bus.*`, and future `mail.*` RPCs.
+- [ ] **Project ownership assumption:** One Host can own multiple Projects. AutoUi should model Project identity as routed through a Host, not as a direct process target.
+- [ ] **Store placement assumption:** AutoUi-owned SQLite stores should live under the existing auto-stack config/data conventions, with Project identity carried in rows rather than one store per Project unless the solution finds a stronger reason.
+- [ ] **Compatibility assumption:** Existing live doc refresh should remain functional during migration, even if the ingest target moves from AutoWatch back to AutoUi.
+        </script></md>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Verification">
+      <pd-section id="verification-strategy" title="Strategy" summary="Use task 058's promoted e2e harness as the base, then layer controller-specific scenarios and assertions on top.">
+        <pd-mermaid caption="Verification stack built on the promoted harness">
+flowchart TB
+  Harness["Task 058 harness\n./harness\nshared Scenario core"]
+  S1["Scenario 1\nskill-remote\npromotion smoke"]
+  S2["Scenario 2\ncontrol-plane / event-flow\nAutoUi singleton + AutoWatch per Host"]
+  UI["AutoUi controller"]
+  WatchA["AutoWatch host A"]
+  WatchB["AutoWatch host B"]
+  AgentA["Agent container A"]
+  AgentB["Agent container B"]
+
+  Harness --> S1
+  Harness --> S2
+  S2 --> UI
+  S2 --> WatchA
+  S2 --> WatchB
+  S2 --> AgentA
+  S2 --> AgentB
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+The verification strategy is intentionally layered on top of the promoted harness from task 058:
+
+1. **Keep the harness promotion green.** `skill-remote` remains the regression tripwire that the shared `./harness` still works after the move.
+2. **Use a controller scenario for the new architecture.** Add or extend a scenario that stands up one global AutoUi controller, one AutoWatch per Host, and multiple Projects per Host. The harness should drive all interactions through AutoUi, not by calling AutoWatch directly from the test runner.
+3. **Assert the controller boundary, not just behavior.** Tests should prove that Mail and hook/Event writes land in AutoUi-owned SQLite state, while Host-local operations still route to the correct AutoWatch.
+4. **Prefer scenario helpers over ad hoc shell.** The harness should expose explicit helpers for `mail send`, `mail inbox`, `auto hooks fire`, backend registration, and bounded polling against AutoUi debug/state endpoints so the tests read like the user journey.
+5. **Keep the e2e assertion surface local and deterministic.** Reuse the existing debug/recent polling style from task 058 where possible. If the controller needs a new debug endpoint, the harness should consume that endpoint rather than inspect internals directly.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="verification-topology" title="Topology" summary="The controller scenario should model the singleton controller and one AutoWatch per Host with multiple Projects on each Host.">
+        <pd-mermaid caption="Controller verification topology">
+flowchart LR
+  Harness["Harness CLI\nfrom task 058"]
+  UI["AutoUi\nsingleton controller"]
+  HostA["Host A\nAutoWatch + Projects A1..An"]
+  HostB["Host B\nAutoWatch + Projects B1..Bn"]
+  MailDB[("AutoUi Mail SQLite")]
+  HookDB[("AutoUi hook/Event SQLite")]
+  AgentA["Agent container A"]
+  AgentB["Agent container B"]
+
+  Harness --> UI
+  Harness --> AgentA
+  Harness --> AgentB
+  UI --> MailDB
+  UI --> HookDB
+  UI <-->|"Host-local RPC"| HostA
+  UI <-->|"Host-local RPC"| HostB
+  AgentA -->|"hooks / mail"| UI
+  AgentB -->|"hooks / mail"| UI
+        </pd-mermaid>
+
+        <md><script type="text/plain">
+The test topology should keep the controller front and center:
+
+- one AutoUi process is the only direct target for agent-facing Mail and hook submission
+- one AutoWatch process runs per Host and serves Host-local backend work
+- each Host may own multiple Projects, so the harness needs at least one Host with more than one Project to prove routing is not 1:1
+- the harness should verify that agent containers do not need to know about AutoWatch to make progress
+        </script></md>
+      </pd-section>
+
+      <pd-section id="verification-cases" title="E2E Cases" summary="The harness should exercise the controller boundary with a small number of high-signal scenarios.">
+        <md><script type="text/plain">
+- **Case 1: Mail round trip through AutoUi.** Agent container writes a Mail message, AutoUi persists it, and the recipient reads it back through AutoUi RPC.
+- **Case 2: Hook Event lands in AutoUi hot state.** An agent fires a hook, the event is accepted by AutoUi, and the harness observes the new event in the controller-visible ring or debug endpoint.
+- **Case 3: Host-local RPC routes to the correct AutoWatch.** A controller RPC that requires filesystem or daemon authority is forwarded to the AutoWatch for the target Host and returns the Host-local result.
+- **Case 4: Multiple Projects on one Host stay distinct.** The harness registers more than one Project on a single Host and proves that controller routing does not collapse them together.
+- **Case 5: Multiple Hosts stay distinct.** Two Host daemons with different host ids both reach AutoUi, and the controller preserves the host dimension in returned state.
+- **Case 6: The agent path remains safe when the controller is absent.** If the controller is down, the harness should confirm the producer-side durable path still behaves predictably rather than breaking the agent.
+        </script></md>
+      </pd-section>
+    </pd-tab>
+  </pd-doc>
+</body>
+</html>
