@@ -91,6 +91,41 @@ func TestRunAutoUpdateOffLocked(t *testing.T) {
 	}
 }
 
+// TestRunSyncIgnoresYAMLAutoUpdate: skills.yaml auto_update:true no longer makes
+// a plain `sync` float. Floating is `auto skill update`'s job (opts.AutoUpdate);
+// a bare sync (opts.AutoUpdate=false, as the CLI always calls it) renders the
+// locked commit and never advances the lock, even though the yaml opts into
+// auto-update and upstream has moved. This guards the render-from-lock contract.
+func TestRunSyncIgnoresYAMLAutoUpdate(t *testing.T) {
+	f := newFixture(t)
+	old := f.commitSkill("alpha", "v1")
+	f.commitSkill("alpha", "v2") // upstream moves on
+
+	env := newEnv(t)
+	approve(t, env, f.url)
+	writeLock(t, env, map[string]skill.LockEntry{
+		"alpha": lockEntry(f.url, "alpha", "latest", old),
+	})
+	writeSkillsYAML(t, env, &skill.SkillsYAML{AutoUpdate: true})
+	realizeCommit(t, env, f.url, old)
+	lockBefore := readLockBytes(t, env)
+
+	// Bare sync: opts.AutoUpdate is false — exactly how the CLI invokes it.
+	res, err := Run(env, Options{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.LockRewritten {
+		t.Error("bare sync must not rewrite the lock despite skills.yaml auto_update:true")
+	}
+	if got := lockCommit(t, env, "alpha"); got != old {
+		t.Errorf("lock commit = %s, want pinned %s (sync must not float)", short(got), short(old))
+	}
+	if !bytes.Equal(readLockBytes(t, env), lockBefore) {
+		t.Error("lock.json bytes changed under a bare sync")
+	}
+}
+
 // TestRunLockedPrecedenceOverAutoUpdate: --locked beats auto_update:true — the
 // lock stays pinned even though the spec floats and upstream moved.
 func TestRunLockedPrecedenceOverAutoUpdate(t *testing.T) {

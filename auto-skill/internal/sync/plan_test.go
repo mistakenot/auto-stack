@@ -1,10 +1,12 @@
 package sync
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
 	"github.com/mistakenot/auto-skill/internal/skill"
+	"github.com/mistakenot/auto-skill/internal/trace"
 )
 
 // lockEntry builds a resolved lock entry for a fixture skill.
@@ -127,6 +129,51 @@ func TestPlanLockedVsFloat(t *testing.T) {
 	}
 	if !spF.LockRewrite {
 		t.Fatal("float: expected lock rewrite")
+	}
+}
+
+// TestPlanFloatMemoizesResolvePerRef: several skills in one repo sharing a
+// floating ref (latest → HEAD) trigger exactly one upstream fetch, not one per
+// skill. Guards the memoization that keeps `auto skill update` from scaling
+// remote access with skill count (≤1 `git realize HEAD` per repo/ref).
+func TestPlanFloatMemoizesResolvePerRef(t *testing.T) {
+	f := newFixture(t)
+	old := f.commitSkill("alpha", "v1")
+	f.commitSkill("beta", "v1")
+	newSHA := f.commitSkill("gamma", "v1") // HEAD after all three commits
+	if old == newSHA {
+		t.Fatal("fixture did not advance")
+	}
+
+	env := newEnv(t)
+	approve(t, env, f.url)
+	writeLock(t, env, map[string]skill.LockEntry{
+		"alpha": lockEntry(f.url, "alpha", "latest", old),
+		"beta":  lockEntry(f.url, "beta", "latest", old),
+		"gamma": lockEntry(f.url, "gamma", "latest", old),
+	})
+	writeSkillsYAML(t, env, &skill.SkillsYAML{AutoUpdate: true})
+
+	var buf bytes.Buffer
+	plan, err := BuildPlan(env, Options{AutoUpdate: true, Trace: trace.New(&buf)})
+	if err != nil {
+		t.Fatalf("BuildPlan: %v", err)
+	}
+
+	// All three skills float to the same new HEAD.
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		sp, ok := findSkill(plan, name)
+		if !ok {
+			t.Fatalf("missing skill %s in plan", name)
+		}
+		if sp.TargetCommit != newSHA {
+			t.Fatalf("%s: expected target %s, got %s", name, short(newSHA), short(sp.TargetCommit))
+		}
+	}
+
+	// The shared HEAD ref is fetched once (memoized), not once per skill.
+	if got := strings.Count(buf.String(), "git realize HEAD start"); got != 1 {
+		t.Fatalf("expected exactly 1 `git realize HEAD`, got %d\ntrace:\n%s", got, buf.String())
 	}
 }
 

@@ -20,8 +20,9 @@ import (
 var hexShaRE = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
 // BuildPlan computes phase A for a plain `sync`: read lock + skills.yaml, dedupe
-// by repo, skip cache-satisfied commits offline, perform locked materialization
-// or (when auto_update) float re-resolution, and reconcile intent drift.
+// by repo, skip cache-satisfied commits offline, perform locked materialization,
+// and reconcile intent drift. Float re-resolution happens only when the caller
+// sets opts.AutoUpdate (i.e. `auto skill update`), not for an ordinary sync.
 func BuildPlan(env skill.Env, opts Options) (*Plan, error) {
 	done := trace.Spanf(opts.Trace, "sync load skills.yaml")
 	syaml, err := loadSkillsYAML(env)
@@ -30,12 +31,18 @@ func BuildPlan(env skill.Env, opts Options) (*Plan, error) {
 		return nil, err
 	}
 	done("skills=%d auto_update=%t", len(syaml.Skills), syaml.AutoUpdate)
-	autoUpdate := opts.AutoUpdate || syaml.AutoUpdate
+	// Floating re-resolution is the job of `auto skill update` (which sets
+	// opts.AutoUpdate), not of a plain `sync`. A project's skills.yaml auto_update
+	// no longer makes an ordinary sync reach upstream: sync renders the locked
+	// commit (fetching only on a genuine cache miss), so a no-op sync stays offline
+	// and fast, while `auto skill update` is the sole verb that floats + rewrites
+	// the lock. --locked / --no-update / --target continue to suppress floating.
+	floating := opts.AutoUpdate && !opts.Locked && !opts.NoUpdate && !opts.Check
 	mode := planMode{
 		offline:   opts.Check,
-		floatRefs: autoUpdate && !opts.Locked && !opts.NoUpdate && !opts.Check,
+		floatRefs: floating,
 		floatTags: false,
-		rewrite:   autoUpdate && !opts.Locked && !opts.NoUpdate && !opts.Check,
+		rewrite:   floating,
 	}
 	trace.Logf(opts.Trace, "sync plan mode offline=%t float_refs=%t float_tags=%t rewrite=%t", mode.offline, mode.floatRefs, mode.floatTags, mode.rewrite)
 	return planRepos(env, opts, syaml, mode)
@@ -130,8 +137,12 @@ func planRepoGroup(c *cache.Cache, gate *trust.Gate, gio trust.GateIO, syaml *sk
 
 	target := RepoTarget{Key: g.key, URL: g.url, CanonicalURL: g.canonical, CacheID: g.cacheID, Endpoint: g.endpoint}
 	needFetch := false
+	// One float re-resolution per distinct upstream ref within this repo: N skills
+	// sharing a ref (e.g. every `latest` → HEAD) trigger a single git fetch, not
+	// one per skill. Scoped to the group, so distinct repos never collide.
+	resolved := map[string]resolveOutcome{}
 	for i := range g.skills {
-		sp := planOnlineSkill(repo, syaml, mode, g, g.skills[i])
+		sp := planOnlineSkill(repo, syaml, mode, g, g.skills[i], resolved)
 		if sp.Err != nil {
 			plan.Errors = append(plan.Errors, sp.Err)
 		}
@@ -153,8 +164,9 @@ func traceSkillPlan(tr *trace.Logger, sp SkillPlan) {
 		sp.Name, sp.Action, sp.Cached, sp.LockRewrite, short(sp.TargetCommit), sp.Message)
 }
 
-// planOnlineSkill decides a single skill with the cache repo opened.
-func planOnlineSkill(repo *cache.Repo, syaml *skill.SkillsYAML, mode planMode, g *repoGroup, s groupedSkill) SkillPlan {
+// planOnlineSkill decides a single skill with the cache repo opened. resolved
+// memoizes float re-resolution across skills sharing this repo (keyed by ref).
+func planOnlineSkill(repo *cache.Repo, syaml *skill.SkillsYAML, mode planMode, g *repoGroup, s groupedSkill, resolved map[string]resolveOutcome) SkillPlan {
 	lockSpec := s.entry.VersionSpec
 	intent := declaredVersion(syaml, s.name)
 	if intent == "" {
@@ -182,17 +194,17 @@ func planOnlineSkill(repo *cache.Repo, syaml *skill.SkillsYAML, mode planMode, g
 		}
 		// auto_update on: act on the new intent and rewrite the lock entry.
 		sp.VersionSpec = intent
-		return resolveAndDecide(repo, mode, sp, intent, true)
+		return resolveAndDecide(repo, mode, sp, intent, true, resolved)
 	}
 
 	switch classifySpec(lockSpec) {
 	case kindFloat:
 		if mode.floatRefs {
-			return resolveAndDecide(repo, mode, sp, lockSpec, false)
+			return resolveAndDecide(repo, mode, sp, lockSpec, false, resolved)
 		}
 	case kindTag:
 		if mode.floatTags {
-			return resolveAndDecide(repo, mode, sp, lockSpec, false)
+			return resolveAndDecide(repo, mode, sp, lockSpec, false, resolved)
 		}
 	case kindCommit:
 		// A pinned <sha>/commit: never floats.
@@ -202,10 +214,18 @@ func planOnlineSkill(repo *cache.Repo, syaml *skill.SkillsYAML, mode planMode, g
 	return decidePinned(repo, sp)
 }
 
+// resolveOutcome memoizes one upstream ref's float re-resolution within a repo
+// group so sibling skills sharing the ref reuse the result instead of re-fetching.
+type resolveOutcome struct {
+	sha string
+	err error
+}
+
 // resolveAndDecide re-resolves spec to newest upstream and records the outcome.
-// forced marks an intent-driven rewrite (the spec itself changed).
-func resolveAndDecide(repo *cache.Repo, mode planMode, sp SkillPlan, spec string, forced bool) SkillPlan {
-	newSha, err := resolveLatest(repo, refForSpec(spec))
+// forced marks an intent-driven rewrite (the spec itself changed). resolved
+// memoizes the fetch per ref across skills sharing this repo.
+func resolveAndDecide(repo *cache.Repo, mode planMode, sp SkillPlan, spec string, forced bool, resolved map[string]resolveOutcome) SkillPlan {
+	newSha, err := resolveLatestMemo(repo, refForSpec(spec), resolved)
 	if err != nil {
 		sp.Action = ActionUnavailable
 		sp.Err = fmt.Errorf("re-resolve %s for %s: %w", spec, sp.Name, err)
@@ -325,6 +345,24 @@ func refForSpec(spec string) string {
 	default:
 		return s
 	}
+}
+
+// resolveLatestMemo is resolveLatest with per-repo-group memoization: the first
+// call for a ref performs the network fetch (via Realize) and caches the resolved
+// SHA and any error; later skills resolving the same ref reuse it without a second
+// fetch. A nil memo disables caching (each call fetches). This makes float
+// re-resolution cost one fetch per distinct ref per repo, not one per skill.
+func resolveLatestMemo(repo *cache.Repo, ref string, memo map[string]resolveOutcome) (string, error) {
+	if memo != nil {
+		if o, ok := memo[ref]; ok {
+			return o.sha, o.err
+		}
+	}
+	sha, err := resolveLatest(repo, ref)
+	if memo != nil {
+		memo[ref] = resolveOutcome{sha: sha, err: err}
+	}
+	return sha, err
 }
 
 // resolveLatest fetches the newest objects for ref and returns its commit SHA.

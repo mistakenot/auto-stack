@@ -30,11 +30,13 @@ func newSyncCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Comma
 		Long: "Render the union of authored ./skills and vendored (locked) skills into " +
 			"each configured target (e.g. .claude/skills, .agents/skills) using the native " +
 			"sync engine.\n\n" +
-			"By default floating specs (latest/branch:) float to HEAD per skills.yaml " +
-			"auto_update, then render. --locked / --no-update reproduce the locked commit " +
-			"without floating. --target scopes the run to named skills and implies --locked " +
-			"(a scoped sync never advances the project-wide lock). --check is an offline " +
-			"dry-run gate that writes nothing and exits non-zero when any target is stale.",
+			"sync renders the locked commit for every skill, fetching only on a cache " +
+			"miss — it does not reach upstream to advance floating specs. Run `auto skill " +
+			"update` to float latest/branch: specs to newest upstream and rewrite the lock. " +
+			"--locked / --no-update are explicit no-float aliases; --target scopes the run " +
+			"to named skills and implies --locked (a scoped sync never advances the " +
+			"project-wide lock). --check is an offline dry-run gate that writes nothing and " +
+			"exits non-zero when any target is stale.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			env, err := resolveEnv()
@@ -54,13 +56,12 @@ func newSyncCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Comma
 				Jobs:     jobs,
 				Force:    force,
 				Trace:    resolveTrace(cmd),
-				// AutoUpdate (float-then-render) is driven by skills.yaml's
-				// auto_update (default true, written by `init`); the engine ORs
-				// opts.AutoUpdate with the parsed value. We deliberately do NOT
-				// force it true here so that a project with auto_update:false
-				// reproduces its locked commit (AC-11 precedence: --locked >
-				// auto_update). --locked / --no-update / --target suppress
-				// floating regardless.
+				// AutoUpdate (float-then-render) is left false here: a plain
+				// `sync` never floats — it renders the locked commit and fetches
+				// only on a cache miss. Floating latest/branch: to newest upstream
+				// and rewriting the lock is `auto skill update`'s job (it sets
+				// opts.AutoUpdate). skills.yaml auto_update no longer makes sync
+				// reach upstream, keeping a no-op sync offline and fast.
 			}
 
 			result, runErr := sync.Run(env, opts)
