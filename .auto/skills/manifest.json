@@ -275,6 +275,13 @@
       "skill_version": "1aad6f007f4145eb934447cf4061eddf9e1b78d1a4a8b55292b2f8fa4d86685c",
       "render_version": "1"
     },
+    "rich-doc": {
+      "template_hash": "cb38c84c02413bcc772835488084ba4793ecbc3da1025462292cc3c6a5d3ed12",
+      "replacements": {},
+      "file_refs": [],
+      "skill_version": "0f1e8d6d5189cdbb8116deee03707f8f888aa287f315c56f072e2cc41a326975",
+      "render_version": "1"
+    },
     "self-improve": {
       "template_hash": "c4af87e702884d8fa0c78f81afb794fa0d6100995d600b816d42169e300cb571",
       "replacements": {},
@@ -353,6 +360,7 @@
         "request-grok-review": "1217fe986f0524b41f7085c3ac3265ea6b8254ba9a49075a5285c9c1c1024e8f",
         "resolve-comments": "8c11ded8d9133a2b5da4074035263d7ed296b6e3942f88e12292ce31a00fa5a4",
         "review-task": "1aad6f007f4145eb934447cf4061eddf9e1b78d1a4a8b55292b2f8fa4d86685c",
+        "rich-doc": "0f1e8d6d5189cdbb8116deee03707f8f888aa287f315c56f072e2cc41a326975",
         "self-improve": "381efd628be83365780ff22ecebe56269238a0bc8c469c2fe9d85dc5a83295cc",
         "skill-reviewer": "d0f30430f598da6e73384ff7b6304a4216899d110611ad9055e2d2d2811eb96b",
         "status-report": "7b22dfe0c8231991eec03bbef17ab770273ce0c239921092727653e3f1155dea",
@@ -401,6 +409,7 @@
         "request-grok-review": "1217fe986f0524b41f7085c3ac3265ea6b8254ba9a49075a5285c9c1c1024e8f",
         "resolve-comments": "8c11ded8d9133a2b5da4074035263d7ed296b6e3942f88e12292ce31a00fa5a4",
         "review-task": "1aad6f007f4145eb934447cf4061eddf9e1b78d1a4a8b55292b2f8fa4d86685c",
+        "rich-doc": "0f1e8d6d5189cdbb8116deee03707f8f888aa287f315c56f072e2cc41a326975",
         "self-improve": "381efd628be83365780ff22ecebe56269238a0bc8c469c2fe9d85dc5a83295cc",
         "skill-reviewer": "d0f30430f598da6e73384ff7b6304a4216899d110611ad9055e2d2d2811eb96b",
         "status-report": "7b22dfe0c8231991eec03bbef17ab770273ce0c239921092727653e3f1155dea",

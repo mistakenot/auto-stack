@@ -79,6 +79,8 @@ skills:
         version: latest
     review-task:
         version: latest
+    rich-doc:
+        version: latest
     self-improve:
         version: latest
     skill-reviewer:

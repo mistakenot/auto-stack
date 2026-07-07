@@ -408,6 +408,17 @@
       "local": false,
       "state": "unresolved"
     },
+    "rich-doc": {
+      "source": "https://github.com/mistakenot/skills",
+      "url": "https://github.com/mistakenot/skills",
+      "version_spec": "latest",
+      "ref": "e942a10ade40508883f99b13efb9db2c45cb829c",
+      "commit": "e942a10ade40508883f99b13efb9db2c45cb829c",
+      "subpath": "skills/rich-doc",
+      "private": false,
+      "local": false,
+      "state": "resolved"
+    },
     "self-improve": {
       "source": "/home/vscode/src/auto-stack",
       "url": "file:///home/vscode/src/auto-stack",
