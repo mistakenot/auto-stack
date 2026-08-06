@@ -54,15 +54,23 @@ const (
 	importBare
 )
 
-// stripJSONC strips // line comments (that are not inside quoted strings) and
-// trailing commas before } or ] so that the result is valid JSON suitable for
+// stripJSONC strips // line comments, /* ... */ block comments, and trailing
+// commas before } or ] so that the result is valid JSON suitable for
 // json.Unmarshal. This handles the JSONC subset used by tsconfig.json.
-// Both transforms run in a single pass to avoid corrupting string contents.
+//
+// The whole thing runs as a single string-aware pass: comment delimiters and
+// commas are only acted on outside of quoted strings, so glob patterns like
+// "**/*.ts" (which contain the byte pairs /* and */) and comma-bearing strings
+// are never corrupted. pendingComma tracks a comma that has not yet been proven
+// to be a real separator; it is deleted only if the next significant token is a
+// closing } or ], and it is cleared the moment any value token (including a
+// string open) is emitted after it. Newlines inside stripped comments are
+// preserved so json.Unmarshal error positions still line up with the source.
 func stripJSONC(data []byte) []byte {
 	var buf []byte
 	inString := false
 	escaped := false
-	lastCommaIdx := -1
+	pendingComma := -1
 	for i := 0; i < len(data); i++ {
 		ch := data[i]
 		if escaped {
@@ -81,11 +89,16 @@ func stripJSONC(data []byte) []byte {
 		}
 		// Outside a string.
 		if ch == '"' {
+			// A string value proves the preceding comma was a separator.
+			pendingComma = -1
 			inString = true
 			buf = append(buf, ch)
 			continue
 		}
 		if ch == '/' && i+1 < len(data) && data[i+1] == '/' {
+			// Line comment: consume to end of line. Acts as whitespace, so
+			// pendingComma is preserved (a comment may precede a real trailing
+			// comma's closing bracket).
 			for i < len(data) && data[i] != '\n' {
 				i++
 			}
@@ -94,20 +107,43 @@ func stripJSONC(data []byte) []byte {
 			}
 			continue
 		}
+		if ch == '/' && i+1 < len(data) && data[i+1] == '*' {
+			// Block comment: consume to the closing */. Also whitespace-like.
+			i += 2
+			for i+1 < len(data) && !(data[i] == '*' && data[i+1] == '/') {
+				if data[i] == '\n' {
+					buf = append(buf, '\n')
+				}
+				i++
+			}
+			if i+1 < len(data) {
+				i++ // point at the closing '/'; the loop's i++ steps past it.
+			} else {
+				i = len(data) // unterminated comment: consume the rest.
+			}
+			continue
+		}
 		if ch == ',' {
-			lastCommaIdx = len(buf)
+			pendingComma = len(buf)
 			buf = append(buf, ch)
 			continue
 		}
-		if (ch == '}' || ch == ']') && lastCommaIdx >= 0 {
-			buf = append(buf[:lastCommaIdx], buf[lastCommaIdx+1:]...)
-			lastCommaIdx = -1
+		if ch == '}' || ch == ']' {
+			if pendingComma >= 0 {
+				buf = append(buf[:pendingComma], buf[pendingComma+1:]...)
+				pendingComma = -1
+			}
+			buf = append(buf, ch)
+			continue
 		}
 		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+			// Whitespace does not resolve a pending comma.
 			buf = append(buf, ch)
 			continue
 		}
-		lastCommaIdx = -1
+		// Any other value token (number, {, [, :, literal) proves the
+		// preceding comma was a real separator.
+		pendingComma = -1
 		buf = append(buf, ch)
 	}
 	return buf
@@ -123,9 +159,18 @@ type TypeScriptResolver struct {
 	baseURL string
 	// loaded tracks whether tsconfig was successfully parsed.
 	loaded bool
+	// loadErr is non-nil when a tsconfig.json was present but failed to parse.
+	// A missing tsconfig.json leaves this nil (aliases are simply skipped).
+	loadErr error
 	// warn receives diagnostic warnings (e.g. tsconfig parse failures). May be nil.
 	warn io.Writer
 }
+
+// LoadErr reports an error only when tsconfig.json existed but could not be
+// parsed. A missing tsconfig.json returns nil — the resolver still works, it
+// just skips alias substitution. Callers that require correct alias resolution
+// (e.g. graph construction) should treat a non-nil result as fatal.
+func (r *TypeScriptResolver) LoadErr() error { return r.loadErr }
 
 // NewTypeScriptResolver creates a resolver that reads tsconfig.json from the
 // given project root. If tsconfig.json is missing or unparseable, the resolver
@@ -149,9 +194,11 @@ func (r *TypeScriptResolver) loadTSConfig(projectRoot string) {
 
 	var cfg tsconfig
 	if err := json.Unmarshal(cleaned, &cfg); err != nil {
-		if r.warn != nil {
-			fmt.Fprintf(r.warn, "warning: tsconfig.json: failed to parse: %v\n", err)
-		}
+		// tsconfig.json exists but is not parseable. Record it so callers can
+		// fail loudly rather than silently dropping every path-alias edge.
+		// The error is surfaced by the caller (see Build); we do not also write
+		// to warn here to avoid printing the same message twice.
+		r.loadErr = fmt.Errorf("failed to parse: %w", err)
 		return
 	}
 

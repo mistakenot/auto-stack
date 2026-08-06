@@ -36,7 +36,13 @@ func Build(projectRoot, lang string, warn io.Writer) (*graph.Graph, []Diagnostic
 			return nil, nil, errors.New("ast-grep not found: install with npm i -g @ast-grep/cli or brew install ast-grep")
 		}
 		sc = scanner.NewTypeScriptScanner()
-		res = resolver.NewTypeScriptResolver(projectRoot, warn)
+		tsRes := resolver.NewTypeScriptResolver(projectRoot, warn)
+		if err := tsRes.LoadErr(); err != nil {
+			// A present-but-unparseable tsconfig.json would silently drop every
+			// path-alias edge. Fail loudly with no output instead.
+			return nil, nil, fmt.Errorf("tsconfig.json: %w", err)
+		}
+		res = tsRes
 	case "go":
 		sc = scanner.NewGoScanner()
 		var goErr error

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -320,6 +321,69 @@ func TestStripJSONC(t *testing.T) {
 			input: `{"description": "Hello, }"}`,
 			want:  `{"description": "Hello, }"}`,
 		},
+		{
+			// Regression: the separator comma before a string element must
+			// survive. Previously the trailing-comma remover deleted it,
+			// corrupting the array. See auto-graph-tsconfig-bug report.
+			name:  "separator comma before string element preserved",
+			input: `["a", "b"]`,
+			want:  `["a", "b"]`,
+		},
+		{
+			name:  "separator comma before string element no space",
+			input: `["a","b"]`,
+			want:  `["a","b"]`,
+		},
+		{
+			// The exact real-world include array that broke alias resolution.
+			name:  "glob include array preserved",
+			input: `{"include": ["**/*.ts", "**/*.tsx"]}`,
+			want:  `{"include": ["**/*.ts", "**/*.tsx"]}`,
+		},
+		{
+			name:  "multi-target paths preserved",
+			input: `{"paths": {"@/*": ["./src/*", "./gen/*"]}}`,
+			want:  `{"paths": {"@/*": ["./src/*", "./gen/*"]}}`,
+		},
+		{
+			name:  "trailing comma in string array still removed",
+			input: `["a", "b",]`,
+			want:  `["a", "b"]`,
+		},
+		{
+			name:  "block comment stripped",
+			input: "{\n  /* modules */\n  \"a\": 1\n}",
+			want:  "{\n  \n  \"a\": 1\n}",
+		},
+		{
+			name:  "block comment newlines preserved",
+			input: "{\n  /* line one\n     line two */\n  \"a\": 1\n}",
+			want:  "{\n  \n\n  \"a\": 1\n}",
+		},
+		{
+			name:  "block-comment delimiters inside glob string preserved",
+			input: `["**/*.ts"]`,
+			want:  `["**/*.ts"]`,
+		},
+		{
+			// Escaped quote inside a string must not end the string, so the
+			// comma and bracket that follow it stay part of the value.
+			name:  "escaped quote inside string preserved",
+			input: `{"a": "he\"llo, ]"}`,
+			want:  `{"a": "he\"llo, ]"}`,
+		},
+		{
+			// Escaped backslashes (Windows-style path aliases) must survive,
+			// and the trailing \* must not be read as a comment delimiter.
+			name:  "escaped backslash windows path preserved",
+			input: `{"paths": {"@/*": ["C:\\src\\*"]}}`,
+			want:  `{"paths": {"@/*": ["C:\\src\\*"]}}`,
+		},
+		{
+			name:  "unterminated block comment consumed to end",
+			input: `{"a": 1 /* oops`,
+			want:  `{"a": 1 `,
+		},
 	}
 
 	for _, tt := range tests {
@@ -394,13 +458,14 @@ func TestMalformedTSConfigWarning(t *testing.T) {
 	var buf bytes.Buffer
 	r := NewTypeScriptResolver(dir, &buf)
 
-	// Should have written a warning.
-	if buf.Len() == 0 {
-		t.Error("expected warning to be written for malformed tsconfig")
+	// A present-but-unparseable tsconfig must be recorded as a load error so
+	// callers (e.g. graph Build) can fail loudly instead of silently dropping
+	// aliases.
+	if r.LoadErr() == nil {
+		t.Fatal("expected LoadErr for malformed tsconfig")
 	}
-	warning := buf.String()
-	if !bytes.Contains([]byte(warning), []byte("warning: tsconfig.json: failed to parse:")) {
-		t.Errorf("unexpected warning message: %q", warning)
+	if !strings.Contains(r.LoadErr().Error(), "failed to parse:") {
+		t.Errorf("unexpected LoadErr message: %v", r.LoadErr())
 	}
 
 	// Resolver should still work — no panic, just no alias resolution.

@@ -160,6 +160,72 @@ func TestBuildGraphParity(t *testing.T) {
 	}
 }
 
+// writeFile writes content to dir/rel, creating parent directories.
+func writeFile(t *testing.T, dir, rel, content string) {
+	t.Helper()
+	p := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestBuildResolvesAliasWithGlobInclude is a regression test for the tsconfig
+// comma-stripping bug: a multi-element string include array like
+// ["**/*.ts", "**/*.tsx"] used to corrupt the JSON, drop every path alias, and
+// silently produce a graph with no aliased edges. The alias edge must resolve.
+func TestBuildResolvesAliasWithGlobInclude(t *testing.T) {
+	requireAstGrep(t)
+	dir := t.TempDir()
+	writeFile(t, dir, "tsconfig.json", `{
+  "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["./src/*"] } },
+  "include": ["**/*.ts", "**/*.tsx"]
+}`)
+	writeFile(t, dir, "src/util.ts", "export const x = 1;\n")
+	writeFile(t, dir, "src/index.ts", "import { x } from \"@/util\";\nexport const y = x;\n")
+
+	g, diags, err := Build(dir, "typescript", io.Discard)
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	for _, d := range diags {
+		t.Errorf("unexpected unresolved-alias diagnostic: %s:%d %q", d.Source, d.Line, d.Raw)
+	}
+	found := false
+	for _, e := range g.Edges {
+		if strings.Contains(e.Source, "index") && strings.Contains(e.Target, "util") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected an alias-resolved edge index->util; edges: %+v", g.Edges)
+	}
+}
+
+// TestBuildFailsOnUnparseableTSConfig asserts the hard-fail contract: a
+// tsconfig.json that is present but genuinely unparseable must fail Build with
+// no output, rather than silently dropping alias edges.
+func TestBuildFailsOnUnparseableTSConfig(t *testing.T) {
+	requireAstGrep(t)
+	dir := t.TempDir()
+	// Bare `.` is not a valid JSON value; stripJSONC cannot rescue this.
+	writeFile(t, dir, "tsconfig.json", `{ "compilerOptions": { "baseUrl": . } }`)
+	writeFile(t, dir, "src/index.ts", "export const y = 1;\n")
+
+	g, _, err := Build(dir, "typescript", io.Discard)
+	if err == nil {
+		t.Fatal("expected Build to fail on unparseable tsconfig.json")
+	}
+	if g != nil {
+		t.Errorf("expected no graph output on failure, got %d nodes", len(g.Nodes))
+	}
+	if !strings.Contains(err.Error(), "tsconfig.json") {
+		t.Errorf("error should name tsconfig.json, got: %v", err)
+	}
+}
+
 func TestBuildMergedMetadata(t *testing.T) {
 	requireAstGrep(t)
 	dir := fixtureDir(t, "merged-imports")
