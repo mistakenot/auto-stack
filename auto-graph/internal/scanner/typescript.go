@@ -104,12 +104,20 @@ func (s *TypeScriptScanner) Scan(dir string) ([]ImportMatch, error) {
 			}
 
 			for _, m := range matches {
-				importPath := extractImportPath(m.Text, ps.kind)
-				if importPath == "" {
-					continue
-				}
-
 				kind := classifyKind(m.Text, ps.kind)
+				importPath := extractImportPath(m.Text, ps.kind)
+				unresolved := false
+				if importPath == "" {
+					// A dynamic import() or require() with a computed (non-literal)
+					// specifier cannot be statically resolved. Surface it as an
+					// unresolved match instead of dropping it silently, so --strict
+					// can flag the coverage gap. Other empty matches are noise.
+					if ps.kind != "dynamic" && ps.kind != "require" {
+						continue
+					}
+					unresolved = true
+					importPath = collapseWhitespace(m.Text)
+				}
 
 				key := seenKey{file: m.File, importPath: importPath, kind: kind}
 				if seen[key] {
@@ -122,6 +130,7 @@ func (s *TypeScriptScanner) Scan(dir string) ([]ImportMatch, error) {
 					ImportPath: importPath,
 					Kind:       kind,
 					Line:       m.Range.Start.Line + 1, // ast-grep uses 0-based lines
+					Unresolved: unresolved,
 				})
 			}
 		}
@@ -232,6 +241,12 @@ func extractImportPath(text, patternKind string) string {
 	default:
 		return ""
 	}
+}
+
+// collapseWhitespace flattens a multi-line match into a single trimmed line so
+// it reads cleanly in a diagnostic (e.g. "import(getName())").
+func collapseWhitespace(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 // classifyKind refines the import kind based on match text.

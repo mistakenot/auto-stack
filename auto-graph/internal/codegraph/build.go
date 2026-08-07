@@ -16,10 +16,23 @@ import (
 	"github.com/mistakenot/auto-graph/internal/scanner"
 )
 
+// Diagnostic kinds. Each marks an import that produced no edge — a coverage
+// gap that --strict escalates to a non-zero exit.
+const (
+	// DiagUnresolvedAlias: an import matched a tsconfig path alias but the
+	// target file could not be resolved (check compilerOptions.paths/baseUrl).
+	DiagUnresolvedAlias = "unresolved_alias"
+	// DiagUnresolvedDynamic: a dynamic import()/require() used a computed
+	// (non-literal) specifier that cannot be statically analyzed.
+	DiagUnresolvedDynamic = "unresolved_dynamic"
+)
+
 type Diagnostic struct {
 	Source string
 	Line   int
 	Raw    string
+	// Kind is one of the Diag* constants above.
+	Kind string
 }
 
 // Build constructs a file-level import graph for the given project root and
@@ -192,19 +205,30 @@ func buildGraph(projectRoot string, filePaths []string, matches []scanner.Import
 	var diags []Diagnostic
 
 	for _, m := range matches {
+		// A computed dynamic import()/require() has no static specifier to
+		// resolve. Record it as a coverage gap rather than dropping it.
+		if m.Unresolved {
+			diags = append(diags, Diagnostic{
+				Source: relSource(projectRoot, m.SourceFile),
+				Line:   m.Line,
+				Raw:    m.ImportPath,
+				Kind:   DiagUnresolvedDynamic,
+			})
+			continue
+		}
+
 		result, err := res.Resolve(m.ImportPath, m.SourceFile, projectRoot)
 		if err != nil {
 			continue
 		}
 
 		if result.MatchedAlias && result.ResolvedPath == "" {
-			sourceRel, relErr := filepath.Rel(projectRoot, m.SourceFile)
-			if relErr == nil {
-				sourceRel = filepath.ToSlash(sourceRel)
-			} else {
-				sourceRel = m.SourceFile
-			}
-			diags = append(diags, Diagnostic{Source: sourceRel, Line: m.Line, Raw: m.ImportPath})
+			diags = append(diags, Diagnostic{
+				Source: relSource(projectRoot, m.SourceFile),
+				Line:   m.Line,
+				Raw:    m.ImportPath,
+				Kind:   DiagUnresolvedAlias,
+			})
 			continue
 		}
 
@@ -304,4 +328,14 @@ func canonicalizeKind(kind string) string {
 // containsString checks if a slice already contains a given string.
 func containsString(slice []string, s string) bool {
 	return slices.Contains(slice, s)
+}
+
+// relSource returns sourceFile relative to projectRoot in slash form, falling
+// back to the original path if it cannot be made relative.
+func relSource(projectRoot, sourceFile string) string {
+	rel, err := filepath.Rel(projectRoot, sourceFile)
+	if err != nil {
+		return sourceFile
+	}
+	return filepath.ToSlash(rel)
 }

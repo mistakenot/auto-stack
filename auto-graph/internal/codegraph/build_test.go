@@ -226,6 +226,54 @@ func TestBuildFailsOnUnparseableTSConfig(t *testing.T) {
 	}
 }
 
+// TestBuildDiagnosesComputedDynamicImport verifies that a dynamic import with a
+// computed (non-literal) specifier is surfaced as a coverage-gap diagnostic
+// rather than dropped silently, while a sibling static import still resolves.
+func TestBuildDiagnosesComputedDynamicImport(t *testing.T) {
+	requireAstGrep(t)
+	dir := t.TempDir()
+	writeFile(t, dir, "tsconfig.json", `{"compilerOptions":{"baseUrl":".","paths":{"@/*":["./src/*"]}},"include":["**/*.ts"]}`)
+	writeFile(t, dir, "src/dep.ts", "export const x = 1;\n")
+	writeFile(t, dir, "src/main.ts", "const name = String(1);\nconst a = import(name);\nimport { x } from \"@/dep\";\n")
+
+	g, diags, err := Build(dir, "typescript", io.Discard)
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	var dyn *Diagnostic
+	for i := range diags {
+		if diags[i].Kind == DiagUnresolvedDynamic {
+			dyn = &diags[i]
+		}
+	}
+	if dyn == nil {
+		t.Fatalf("expected an unresolved_dynamic diagnostic, got %+v", diags)
+	}
+	if !strings.Contains(dyn.Raw, "import(") {
+		t.Errorf("diagnostic Raw should show the computed expression, got %q", dyn.Raw)
+	}
+	if !strings.Contains(dyn.Source, "main.ts") {
+		t.Errorf("diagnostic Source should point at main.ts, got %q", dyn.Source)
+	}
+
+	// The computed dynamic import must not produce an edge; the static @/dep one must.
+	for _, e := range g.Edges {
+		if e.Attrs["import_kind"] == "dynamic" {
+			t.Errorf("computed dynamic import should not produce an edge, got %+v", e)
+		}
+	}
+	staticFound := false
+	for _, e := range g.Edges {
+		if strings.Contains(e.Source, "main") && strings.Contains(e.Target, "dep") {
+			staticFound = true
+		}
+	}
+	if !staticFound {
+		t.Errorf("expected the static @/dep edge to resolve; edges: %+v", g.Edges)
+	}
+}
+
 func TestBuildMergedMetadata(t *testing.T) {
 	requireAstGrep(t)
 	dir := fixtureDir(t, "merged-imports")

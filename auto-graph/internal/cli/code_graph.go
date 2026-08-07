@@ -16,6 +16,7 @@ func newCodeGraphCmd() *cobra.Command {
 	var formatFlag string
 	var langFlag string
 	var noDocs bool
+	var strict bool
 
 	defaultFormat := "json"
 	if path, err := config.GraphSettingsPath(); err == nil {
@@ -32,21 +33,27 @@ statements and resolving them to actual files. Outputs the graph in
 JSON (default), Graphviz DOT, or Mermaid format.
 
 The language is auto-detected from config files in the target directory
-(e.g. tsconfig.json for TypeScript). Use --lang to override detection.`,
+(e.g. tsconfig.json for TypeScript). Use --lang to override detection.
+
+By default the graph is emitted even when some imports could not be resolved
+(unresolved aliases, computed dynamic imports); those are reported as warnings
+on stderr. Pass --strict to exit non-zero (code 3) when any such coverage gap
+exists, so incomplete graphs cannot pass silently in automation.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCodeGraph(cmd, args[0], formatFlag, langFlag, noDocs)
+			return runCodeGraph(cmd, args[0], formatFlag, langFlag, noDocs, strict)
 		},
 	}
 
 	cmd.Flags().StringVar(&formatFlag, "format", defaultFormat, "output format: json, dot, mermaid")
 	cmd.Flags().StringVar(&langFlag, "lang", "", "language override (auto-detected from config files if omitted)")
 	cmd.Flags().BoolVar(&noDocs, "no-docs", false, "exclude documentation links from graph")
+	cmd.Flags().BoolVar(&strict, "strict", false, "exit non-zero (code 3) if any import could not be resolved into the graph")
 
 	return cmd
 }
 
-func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string, noDocs bool) error {
+func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string, noDocs, strict bool) error {
 	// Resolve the project directory to an absolute path.
 	projectRoot, err := filepath.Abs(dir)
 	if err != nil {
@@ -74,11 +81,8 @@ func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string, noDocs b
 		return &ExitError{Code: 1, Err: err}
 	}
 
-	// Print diagnostics for unresolved alias imports.
-	errW := cmd.ErrOrStderr()
-	for _, d := range diags {
-		fmt.Fprintf(errW, "warning: %s:%d: unresolved alias import %q (check compilerOptions.paths and baseUrl in tsconfig.json)\n", d.Source, d.Line, d.Raw)
-	}
+	// Report imports that produced no edge (coverage gaps) as warnings.
+	printDiagnostics(cmd.ErrOrStderr(), diags)
 
 	// Enrich graph with documentation links unless --no-docs is set.
 	if !noDocs {
@@ -109,6 +113,13 @@ func runCodeGraph(cmd *cobra.Command, dir, formatFlag, langFlag string, noDocs b
 			Code: 1,
 			Err:  fmt.Errorf("unknown format %q; supported formats: json, dot, mermaid", formatFlag),
 		}
+	}
+
+	// In --strict mode a coverage gap is a failure: the valid partial graph has
+	// already been written to stdout, but we exit non-zero so callers cannot
+	// mistake an incomplete graph for a complete one.
+	if strict && len(diags) > 0 {
+		return &ExitError{Code: 3, Err: strictError(diags)}
 	}
 
 	return nil

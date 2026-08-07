@@ -19,6 +19,7 @@ func newCodeContextCmd() *cobra.Command {
 		formatFlag string
 		langFlag   string
 		noDocs     bool
+		strict     bool
 	)
 
 	cmd := &cobra.Command{
@@ -33,7 +34,7 @@ mandatory and must fit within the budget; additional dependencies and
 dependents are included by priority while budget allows.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCodeContext(cmd, args[0], tokenLimit, files, formatFlag, langFlag, noDocs)
+			return runCodeContext(cmd, args[0], tokenLimit, files, formatFlag, langFlag, noDocs, strict)
 		},
 	}
 
@@ -42,13 +43,14 @@ dependents are included by priority while budget allows.`,
 	cmd.Flags().StringVar(&formatFlag, "format", "markdown", "output format: markdown, json")
 	cmd.Flags().StringVar(&langFlag, "lang", "", "language override (auto-detected if omitted)")
 	cmd.Flags().BoolVar(&noDocs, "no-docs", false, "exclude documentation links from graph")
+	cmd.Flags().BoolVar(&strict, "strict", false, "exit non-zero (code 3) if any import could not be resolved into the underlying graph")
 
 	_ = cmd.MarkFlagRequired("token-limit")
 
 	return cmd
 }
 
-func runCodeContext(cmd *cobra.Command, dir string, tokenLimit int, files []string, formatFlag, langFlag string, noDocs bool) error {
+func runCodeContext(cmd *cobra.Command, dir string, tokenLimit int, files []string, formatFlag, langFlag string, noDocs, strict bool) error {
 	// Validate required flags.
 	if tokenLimit <= 0 {
 		return &ExitError{Code: 1, Err: errors.New("--token-limit must be a positive integer")}
@@ -90,10 +92,11 @@ func runCodeContext(cmd *cobra.Command, dir string, tokenLimit int, files []stri
 	}
 
 	// Build the import graph.
-	g, _, err := codegraph.Build(projectRoot, lang, cmd.ErrOrStderr())
+	g, diags, err := codegraph.Build(projectRoot, lang, cmd.ErrOrStderr())
 	if err != nil {
 		return &ExitError{Code: 1, Err: err}
 	}
+	printDiagnostics(cmd.ErrOrStderr(), diags)
 
 	// Enrich graph with documentation links unless --no-docs is set.
 	if !noDocs {
@@ -159,6 +162,13 @@ func runCodeContext(cmd *cobra.Command, dir string, tokenLimit int, files []stri
 			return &ExitError{Code: 1, Err: fmt.Errorf("rendering JSON: %w", err)}
 		}
 		fmt.Fprint(w, output)
+	}
+
+	// In --strict mode a coverage gap in the underlying graph is a failure. The
+	// pack has already been written; exit non-zero so an incomplete context pack
+	// cannot pass silently in automation.
+	if strict && len(diags) > 0 {
+		return &ExitError{Code: 3, Err: strictError(diags)}
 	}
 
 	return nil

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,7 +26,7 @@ func TestAstGrepNotFound(t *testing.T) {
 	}
 
 	cmd := newCodeGraphCmd()
-	err := runCodeGraph(cmd, projDir, "json", "typescript", true)
+	err := runCodeGraph(cmd, projDir, "json", "typescript", true, false)
 	if err == nil {
 		t.Fatal("expected error when ast-grep is not found, got nil")
 	}
@@ -56,7 +57,7 @@ func TestAstGrepNotCheckedForGo(t *testing.T) {
 
 	cmd := newCodeGraphCmd()
 	cmd.SetOut(&bytes.Buffer{})
-	err := runCodeGraph(cmd, projDir, "json", "go", true)
+	err := runCodeGraph(cmd, projDir, "json", "go", true, false)
 	// Should NOT fail with ast-grep error — Go doesn't need it.
 	if err != nil {
 		errMsg := err.Error()
@@ -158,7 +159,7 @@ func TestLanguageOverride(t *testing.T) {
 	cmd.SetOut(&bytes.Buffer{}) // suppress output during test
 	cmd.SetArgs([]string{projDir})
 
-	err := runCodeGraph(cmd, projDir, "json", "typescript", true)
+	err := runCodeGraph(cmd, projDir, "json", "typescript", true, false)
 	// The error should NOT be about language detection.
 	if err != nil {
 		errMsg := err.Error()
@@ -207,7 +208,7 @@ func runGoGraphFixture(t *testing.T, fixtureName string) *graph.Graph {
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 
-	err := runCodeGraph(cmd, dir, "json", "go", true)
+	err := runCodeGraph(cmd, dir, "json", "go", true, false)
 	if err != nil {
 		t.Fatalf("runCodeGraph(%s) failed: %v", fixtureName, err)
 	}
@@ -439,7 +440,7 @@ func TestCodeGraphAliasReexports(t *testing.T) {
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 
-	err := runCodeGraph(cmd, dir, "json", "typescript", true)
+	err := runCodeGraph(cmd, dir, "json", "typescript", true, false)
 	if err != nil {
 		t.Fatalf("runCodeGraph failed: %v", err)
 	}
@@ -499,5 +500,72 @@ func TestCodeGraphAliasReexports(t *testing.T) {
 	}
 	if !strings.Contains(stderrStr, "tsconfig.json") {
 		t.Errorf("stderr should contain remediation hint about tsconfig.json, got: %s", stderrStr)
+	}
+}
+
+// TestCodeGraphStrictExitsNonZero verifies that --strict turns a coverage gap
+// (the alias-reexports fixture has an unresolved @/does-not-exist alias) into a
+// non-zero exit (code 3), while still emitting the valid partial graph.
+func TestCodeGraphStrictExitsNonZero(t *testing.T) {
+	if _, err := findInPath("ast-grep"); err != nil {
+		t.Skip("ast-grep not installed")
+	}
+	dir := fixtureDir(t, "alias-reexports")
+
+	cmd := newCodeGraphCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	err := runCodeGraph(cmd, dir, "json", "typescript", true, true) // strict=true
+	if err == nil {
+		t.Fatal("expected non-zero exit under --strict when imports are unresolved")
+	}
+	var ee *ExitError
+	if !errors.As(err, &ee) || ee.Code != 3 {
+		t.Fatalf("expected ExitError with code 3, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "strict") {
+		t.Errorf("error should mention strict, got: %v", err)
+	}
+
+	// The valid partial graph must still be written to stdout.
+	var g graph.Graph
+	if err := json.Unmarshal(stdout.Bytes(), &g); err != nil {
+		t.Fatalf("--strict should still emit valid JSON graph on stdout: %v\nraw: %s", err, stdout.String())
+	}
+	if len(g.Edges) == 0 {
+		t.Error("expected partial graph edges to be emitted even in --strict mode")
+	}
+}
+
+// TestCodeGraphStrictPassesWhenComplete verifies --strict exits zero when every
+// import resolves cleanly.
+func TestCodeGraphStrictPassesWhenComplete(t *testing.T) {
+	if _, err := findInPath("ast-grep"); err != nil {
+		t.Skip("ast-grep not installed")
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(dir, "tsconfig.json"), `{"compilerOptions":{"baseUrl":".","paths":{"@/*":["./src/*"]}},"include":["**/*.ts"]}`)
+	mustWrite(t, filepath.Join(dir, "src", "util.ts"), "export const x = 1;\n")
+	mustWrite(t, filepath.Join(dir, "src", "index.ts"), "import { x } from \"@/util\";\nexport const y = x;\n")
+
+	cmd := newCodeGraphCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+
+	if err := runCodeGraph(cmd, dir, "json", "typescript", true, true); err != nil {
+		t.Fatalf("--strict should pass on a fully-resolved graph, got: %v (stderr: %s)", err, stderr.String())
+	}
+}
+
+func mustWrite(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
