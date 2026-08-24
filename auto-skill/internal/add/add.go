@@ -5,14 +5,17 @@
 package add
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-skill/internal/cache"
 	"github.com/mistakenot/auto-skill/internal/discovery"
+	"github.com/mistakenot/auto-skill/internal/render"
 	"github.com/mistakenot/auto-skill/internal/skill"
 	"github.com/mistakenot/auto-skill/internal/source"
 	"github.com/mistakenot/auto-skill/internal/trace"
@@ -78,6 +81,7 @@ const (
 	CodeInvalidSkillName = "invalid_skill_name"
 	CodeNameCollision    = "name_collision"
 	CodeImportCollision  = "import_collision"
+	CodeRenderFailed     = "render_failed"
 )
 
 // ── Pipeline ────────────────────────────────────────────────────────────
@@ -245,6 +249,22 @@ func Run(env skill.Env, opts Options) (Result, error) {
 		return Result{Listed: listed, Source: src.URL}, nil
 	}
 
+	// 7.5 Validate that every selected skill renders BEFORE writing any config.
+	//
+	// The lock write below and the CLI's post-add sync render are two separate
+	// steps; historically the lock was committed first and a render failure (e.g.
+	// a SKILL.md body carrying a `{{ … }}` construct outside the restricted
+	// template grammar) left lock.json + skills.yaml mutated for a skill that
+	// never installed. Rendering here — from the already-extracted content, before
+	// any write — makes the add atomic: a skill that cannot render is rejected and
+	// nothing is written.
+	done = trace.Spanf(tr, "add validate renderable")
+	if err := validateRenderable(tmpDir, selected); err != nil {
+		done("error=%v", err)
+		return Result{Source: src.URL}, err
+	}
+	done("validated=%d", len(selected))
+
 	// 8. Write lock + skills.yaml stubs.
 	//
 	// The load→mutate→write of lock.json + skills.yaml runs under an exclusive
@@ -387,6 +407,50 @@ func extractForDiscovery(repo *cache.Repo, sha, subpath, tmpDir string) error {
 		return repo.Extract(sha, "", tmpDir)
 	}
 	return repo.ExtractPaths(sha, dirs, tmpDir)
+}
+
+// validateRenderable renders each selected skill's SKILL.md from the extracted
+// content and returns a typed error on the first skill that fails, so callers can
+// reject the add before mutating lock.json / skills.yaml. root is the directory
+// the skills were discovered under (the extract temp dir for a remote source, or
+// the repo working tree for a local git source); a skill's SKILL.md lives at
+// root/<Subpath>/SKILL.md.
+//
+// The dry render uses no supplied values and no file-ref resolver, which mirrors
+// a fresh add (skills.yaml carries no replacements yet): the failure modes it
+// blocks on — a template outside the {{ .var }} grammar, an undeclared
+// placeholder, malformed frontmatter — are the content-intrinsic ones a skill can
+// never render past, no matter how it is configured. A required var with no value
+// is deliberately allowed through (see below). Side files are not passed because
+// they are copied verbatim, never templated.
+func validateRenderable(root string, selected []discovery.Discovered) error {
+	for _, d := range selected {
+		skillMDPath := filepath.Join(root, filepath.FromSlash(d.Subpath), "SKILL.md")
+		data, err := os.ReadFile(skillMDPath)
+		if err != nil {
+			return &AddError{
+				Code:    CodeRenderFailed,
+				Message: fmt.Sprintf("skill %q could not be read for render validation: %s", d.Name, err),
+			}
+		}
+		if _, err := render.Render(render.RenderInput{SkillMD: data}); err != nil {
+			// A required customize var with no value is a not-yet-configured state,
+			// not a broken skill: the add should still write the lock + a skills.yaml
+			// stub for the user to fill in, and the follow-on sync surfaces the
+			// missing value. Every other render failure (a template outside the
+			// {{ .var }} grammar, an undeclared placeholder, malformed frontmatter)
+			// means the skill can never render as-shipped, so block the add.
+			var ce *render.CustomizeError
+			if errors.As(err, &ce) && ce.Code() == render.CodeRequiredValueMissing {
+				continue
+			}
+			return &AddError{
+				Code:    CodeRenderFailed,
+				Message: fmt.Sprintf("skill %q cannot be rendered, so it was not added and no lock files were changed: %s", d.Name, err),
+			}
+		}
+	}
+	return nil
 }
 
 // repoRefResolver adapts a cache.Repo to source.RefResolver for deep-link

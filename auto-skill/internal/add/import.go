@@ -127,6 +127,17 @@ func handleLocalGit(env skill.Env, absPath string, opts Options) (Result, error)
 		versionSpec = "latest"
 	}
 
+	// Validate every selected skill renders before writing any config, so a
+	// skill that cannot render (e.g. a `{{ … }}` construct outside the restricted
+	// template grammar) fails the add atomically — lock.json + skills.yaml are
+	// left untouched. Local git skills live in the repo working tree at absPath.
+	done = trace.Spanf(opts.Trace, "add local git validate renderable")
+	if err := validateRenderable(absPath, selected); err != nil {
+		done("error=%v", err)
+		return Result{Source: absPath}, err
+	}
+	done("validated=%d", len(selected))
+
 	// Write lock + skills.yaml.
 	done = trace.Spanf(opts.Trace, "add local git load config")
 	lock, err := loadOrCreateLock(env)
