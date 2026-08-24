@@ -3,7 +3,7 @@
   "tasks": {
     "run-etl": {
       "type": "bash",
-      "command": "autoetl run"
+      "command": "auto etl run"
     }
   },
   "triggers": {
