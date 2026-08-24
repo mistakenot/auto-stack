@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>060: auto-skill-file-ref-defaults</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "060",
+    "name": "auto-skill-file-ref-defaults",
+    "status": "planning",
+    "created": "2026-07-09"
+  }
+  </script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="060: auto-skill-file-ref-defaults" status="draft" pr="pending" generated="2026-07-09"
+          next-prompt="/new-solution 060">
+
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+`auto skill` supports **replacements** — filling `{{ .var }}` placeholders in a
+skill's `SKILL.md` at sync time — with two value forms: a **literal** string and
+a **file-ref** (inline a repo file / a markdown section). Today the model has two
+gaps that block a common, valuable pattern:
+
+1. **A skill can't ship a bundled file as a var's default.** The template's
+   `customize.<var>.default` is a **scalar string only**. There is no way for a
+   skill author to say "the default for `conventions` is the contents of my
+   bundled `references/conventions.md`."
+2. **A consumer override can't point at a file in their own project.** The single
+   `FileRefResolver` is scoped to the skill-bundle directory (`s.rootDir`), so
+   every file-ref — author-shipped or consumer-written — resolves *inside the
+   skill bundle*. A consumer cannot inject a file from their own repo.
+
+The desired end state (confirmed with the user): **a var's default comes from a
+reference file bundled with the skill, and a consumer can override it with their
+own value — including a file in their own project.** The feature must also be
+**self-documented by the `auto skill` tool itself**, so an agent can be asked to
+"set up my skill replacements" and do it end-to-end from the tool's own guidance.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- **Bundled-file defaults.** Allow `customize.<var>.default` in a skill's
+  `SKILL.md` to be a **file-ref** (the same mapping shape config already accepts:
+  `file`, optional `section`, `include_heading`, `strip_frontmatter`), not just a
+  scalar string. When the consumer supplies no value, the default resolves to the
+  bundled file's content.
+- **Origin-scoped roots.** A file-ref's containment root is chosen by **where it
+  was written**, not by a path convention:
+  - author-side (`customize.<var>.default`) → **skill-bundle root** (`s.rootDir`)
+  - consumer-side (`skills.yaml`) → **project root** (`env.Root`). This covers
+    **both** consumer-written origins that `replacementValues` merges —
+    `shared.replacements` **and** `skills.<skill>.replacements`: a shared
+    file-ref resolves against the project root exactly like a per-skill one, and
+    the existing precedence (shared = lowest, per-skill var wins) is unchanged.
+  So a consumer's bare path means *their* repo, and an author's bundled default
+  means *the bundle* — the intuitive mapping in both directions.
+- **Explicit `root:` enum escape hatch.** A file-ref may carry an optional
+  `root:` field — a **validated enum** (`project` | `bundle`), NOT string
+  interpolation — to override the origin's natural root for the rare cross-root
+  case. Default = the origin's natural root. Unknown values are a hard validation
+  error via the shared `validate()`.
+- **Containment preserved.** Each resolved root keeps the existing
+  symlink-escape / absolute-path / glob / `{{…}}`-interpolation rejection. No new
+  path-escape surface is introduced.
+- **Self-documentation (first-class requirement).** The `auto skill` tool
+  teaches the whole replacements workflow itself, so an agent can set it up
+  end-to-end from the tool's output:
+  - `auto skill quickstart` and `auto skill docs` cover literals, bundled-file
+    defaults, consumer file-ref overrides, section extraction, and the `root:`
+    enum with copy-pasteable `skills.yaml` examples.
+  - Actionable, structured errors: a missing/invalid ref names *which* root the
+    path is relative to and how to fix it (extend the existing typed
+    `FileRefError` / `CustomizeError` codes + remediation hints).
+  - Author-facing validation: `auto skill lint` (which already reads `SKILL.md`
+    frontmatter) must catch a malformed file-ref default, an invalid `root:`
+    value, and a missing bundled default file **at authoring time** — not only
+    later during a consumer's `sync`. Shared `validate()` / `ValidateSkillsYAML`
+    covers the `skills.yaml` side; `render.ParseCustomize` + lint cover the
+    author (`SKILL.md`) side.
+  - Discoverability: `auto skill list` / `describe <name>` surface each resolved
+    replacement's var, form, and root so an agent (and human) can see what was
+    wired (see Goals → manifest/provenance schema, D-5).
+- **Manifest + provenance schema.** Introspection (above) needs per-replacement
+  var/form/root/`content_hash` that the current schema drops
+  (`skill.ManifestFileRef` keeps only path/hash/heading; `inspect.Provenance`
+  exposes a flat `map[string]string`). This task extends both — additively and
+  backward-compatibly — not just the CLI text (see D-5).
+- **Test coverage (first-class requirement).** Unit + property + on-disk harness
+  coverage for: file-ref defaults, origin-root selection, the `root:` enum
+  (including override + invalid value), containment across both roots,
+  **shared-vs-per-skill replacement precedence with file-refs**,
+  **author-side `lint` of malformed / invalid-`root:` / missing default
+  file-refs**, manifest/provenance round-trip of the new fields,
+  `skill_version` determinism/variance, and the documented end-to-end setup flow.
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="goals" status="resolved" priority="p2" title="Shared replacements need root semantics too">
+        <pd-comment by="review">The origin-root rule names consumer-side `skills.yaml` `replacements.&lt;var&gt;`, but the current config has two consumer-written replacement origins: `shared.replacements` and `skills.&lt;skill&gt;.replacements` (`auto-skill/internal/sync/process.go` merges both in `replacementValues`). Please make the requirement explicit that shared file-ref replacements also default to the project root, and include shared-vs-skill precedence in the origin/root tests.</pd-comment>
+        <pd-comment by="author">Confirmed against `replacementValues` (process.go:463) — it applies `syaml.Shared.Replacements` then `sc.Replacements`. Updated the origin-scoped-roots goal to state that consumer-side = the project root covers **both** origins (`shared.replacements` and `skills.<skill>.replacements`), and that the existing shared-lowest / per-skill-wins precedence is unchanged. Added "shared-vs-per-skill replacement precedence with file-refs" to the test-coverage goal.</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="goals" status="resolved" priority="p2" title="Author-side file-ref defaults need a lint validation surface">
+        <pd-comment by="review">The requirement says unknown `root:` values are hard validation errors via shared `validate()`, but the existing shared validator only covers `.auto/skills/skills.yaml` (`ValidateSkillsYAML` in `auto-skill/internal/skill/skillsyaml.go`). Author-side `customize.&lt;var&gt;.default` is parsed from `SKILL.md` by `render.ParseCustomize`, and `auto skill lint` currently reads only name/description/body/link rules from frontmatter. Please state that malformed file-ref defaults, invalid `root:`, and missing bundled default files must be caught by an author-facing validation path such as `auto skill lint`, not only later during consumer sync.</pd-comment>
+        <pd-comment by="author">Good distinction — the two validation surfaces are separate. Added an explicit "Author-facing validation" bullet to both the self-documentation goal and the detail section: `auto skill lint` (via `render.ParseCustomize` over `SKILL.md` frontmatter) must catch a malformed file-ref default, an invalid `root:`, and a missing bundled default file at authoring time; `ValidateSkillsYAML` stays the `skills.yaml` (consumer) surface. Added author-side lint to the test-coverage goal.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="self-documentation" title="Self-documentation surface (detail)">
+        <md><script type="text/plain">
+This is the requirement that makes "ask my agent to set it up for me" work, so
+it is called out explicitly. An agent should be able to run one discovery
+command and have everything it needs to author a correct `skills.yaml`
+replacement block. Target surfaces:
+
+- **`quickstart`** — add a short "Customize a skill (replacements)" section:
+  literal, bundled-file default (author view), and consumer file-ref override
+  (with `root:`), each as a minimal working snippet.
+- **`docs`** — full reference: the two value forms, the file-ref sub-options,
+  the origin-root rule, the `root:` enum, section extraction, and the error
+  codes with remediation.
+- **Errors as teaching** — every failure (`ref_not_found`, `section_not_found`,
+  `invalid_ref`, `required_value_missing`, unknown `root:`) states the offending
+  var, the root the path was resolved against, and the concrete fix. Per the
+  project's CLI conventions, each hard error carries a remediation hint.
+- **Validation (`lint`)** — author-side `auto skill lint` validates
+  `customize.<var>.default` file-refs (well-formed mapping, known `root:`,
+  bundled file present) so a broken default is caught when the skill is
+  authored, not only when a consumer syncs it.
+- **Introspection** — `list` / `describe <name>` show, per skill, each
+  replacement's var name, form (literal | file-ref), root (project | bundle),
+  and resolved `content_hash`, so the wiring is auditable without re-running
+  sync. This requires the manifest/provenance schema fields in D-5 (today's
+  `describe` payload carries none of form/root/var).
+        </script></md>
+      </pd-section>
+
+      <pd-thread anchor="self-documentation" status="resolved" priority="p2" title="Use the actual describe command, not inspect">
+        <pd-comment by="review">The requirements say `auto skill list` / `inspect` and later `list` / `inspect`, but there is no user-facing `auto skill inspect` command. The read triad from task 036 is `list`, `describe &lt;name&gt;`, and `get`; the current CLI registers `describe &lt;name&gt;` in `auto-skill/internal/cli/list.go`, while `inspect` is only an internal package. Please update the requirement to target `auto skill describe` or explicitly justify adding a new command.</pd-comment>
+        <pd-comment by="author">Correct — verified `describe <name>` (list.go:126) and `get <name>` (list.go:200) are the real read commands; `inspect` is an internal package only. Replaced every `inspect` reference with `describe <name>` in the goals and self-documentation sections. No new command is proposed — introspection rides the existing `describe` payload (`inspect.Provenance`).</pd-comment>
+      </pd-thread>
+
+      <pd-thread anchor="self-documentation" status="resolved" priority="p2" title="Introspection requires manifest/provenance schema work">
+        <pd-comment by="review">The introspection requirement asks for each replacement's var name, form, root, and `content_hash`, but the current persisted/read state cannot provide that. `render.ResolvedFileRefInfo` has `Var`, but `sync.buildManifest` drops it when writing `skill.ManifestFileRef`, and `inspect.Provenance` exposes only `Replacements map[string]string` with no file-ref metadata. Please call out the manifest/provenance schema change and compatibility behavior so the implementation does not only update CLI text.</pd-comment>
+        <pd-comment by="author">Verified: `ManifestFileRef` keeps only Path/ContentHash/MatchedHeading (manifest.go:34 drops `fr.Var`), and `inspect.Provenance.Replacements` is a flat `map[string]string`. Added a dedicated "Manifest + provenance schema" goal and decision **D-5**: extend `ManifestFileRef` (add `var`, `root`) and the `describe` provenance payload with per-replacement form/root/var/`content_hash`, populated from `render.Tree` — additive and backward-compatible (old manifests read with empty fields, a re-sync repopulates), with a manifest/provenance round-trip test. The schema change is now explicitly in scope, not CLI text alone.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **`$PROJECT_ROOT`-style string interpolation in paths.** Explicitly rejected in
+  favour of the typed `root:` enum (see decision D-4); reintroducing interpolation
+  would reopen the path-escape surface the file-ref model deliberately closed.
+- **New root kinds beyond `project` and `bundle`** (e.g. `$HOME`, XDG, host-scoped
+  roots). Deferred — they reintroduce cross-machine non-determinism the containment
+  model closed.
+- **Soft/optional defaults** (a default file-ref that silently resolves to empty
+  when missing). Defaults stay hard-error like all file-refs (D-3); an
+  optional-default mode, if ever wanted, is a separate opt-in.
+- **A dedicated mutating command** that writes `skills.yaml` for the user
+  (e.g. `auto skill customize --set-file …`) — gated behind open question Q-1;
+  the default plan is docs + validation, not a new mutating verb.
+- **Re-templating injected content.** Inlined file content is inserted raw and is
+  never re-run through the template (unchanged from today).
+- **Changes to the literal replacement form or the placeholder syntax.**
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions made so far">
+        <md><script type="text/plain">
+The approach was settled with the user in the design discussion; recording the
+load-bearing calls here as ADRs so the solution stage inherits them.
+        </script></md>
+
+        <pd-decision id="D-1" title="Origin-scoped resolver roots" status="accepted" by="agent"
+          summary="Author-side file-refs resolve against the bundle; consumer-side against the project.">
+          <md><script type="text/plain">
+**Context:** A bundled-file default lives in the skill bundle; a consumer override
+lives in the consumer's repo. A single bundle-scoped resolver can't serve both.
+**Decision:** Choose a file-ref's containment root by its **origin** —
+`customize.default` → bundle root (`s.rootDir`); `skills.yaml replacements` →
+project root (`env.Root`).
+**Alternatives:** One resolver + `$PROJECT_ROOT` path prefix (see D-4, rejected);
+keep bundle-only (blocks consumer-file overrides).
+**Consequences:** `env.Root` must be plumbed into `renderSource`; `RenderInput`
+carries two resolvers (bundle + project). Intuitive bare-path semantics on both
+sides.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-2" title="`root:` enum as the cross-root escape hatch" status="accepted" by="agent"
+          summary="Typed root: project|bundle field, not string interpolation.">
+          <md><script type="text/plain">
+**Context:** Rare cases need a ref to reach the non-default root.
+**Decision:** Add an optional `root:` field to a file-ref, a validated enum
+(`project` | `bundle`), defaulting to the origin's natural root.
+**Alternatives:** `$PROJECT_ROOT/...` string interpolation (D-4, rejected);
+no escape hatch (origin-only).
+**Consequences:** Same expressive power as a path prefix, no parser, no inverted
+footgun; unknown value is a hard `validate()` error.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-3" title="File-ref defaults stay hard-error on miss" status="accepted" by="agent"
+          summary="A missing default file errors; a skill never renders with a hole.">
+          <md><script type="text/plain">
+**Context:** Should a bundled default that is missing fall back to empty?
+**Decision:** No — a missing/invalid default file is a hard error, same as any
+file-ref. A skill never renders with missing content.
+**Alternatives:** Soft fallback to empty string (out of scope).
+**Consequences:** A broken bundle fails loudly at sync; error names the bundle
+root and the offending path.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-4" title="No `$PROJECT_ROOT` path interpolation" status="accepted" by="agent"
+          summary="Rejected: reopens the path-escape surface and inverts the safe default.">
+          <md><script type="text/plain">
+**Context:** Considered encoding the root in the path string (`$PROJECT_ROOT/x`).
+**Decision:** Rejected in favour of D-1 + D-2. `fileref.go` already rejects
+`{{…}}` interpolation and absolute paths on purpose; a string-selected root
+brings back a parser, escaping rules, and — worse — makes the terse bare path
+mean "reach into the bundle" for a consumer, the dangerous default.
+**Consequences:** Root is derived from origin (structured), overridable by a
+typed enum, never by parsing the path.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-5" title="Manifest + provenance carry file-ref var/form/root metadata" status="accepted" by="agent"
+          summary="describe/list introspection needs schema fields the manifest currently drops.">
+          <md><script type="text/plain">
+**Context:** Surfacing each replacement's var, form (literal | file-ref), root
+(project | bundle), and `content_hash` needs state the current schema doesn't
+persist — `skill.ManifestFileRef` drops `render.ResolvedFileRefInfo.Var` (keeps
+only Path/ContentHash/MatchedHeading), and `inspect.Provenance.Replacements` is a
+flat `map[string]string` with no form/root/var.
+**Decision:** Extend `ManifestFileRef` (add `var`, `root`) and the `describe`
+provenance payload with per-replacement form/root/var/`content_hash`, populated
+from the `render.Tree` at sync time.
+**Alternatives:** Re-derive at `describe` time by re-reading `skills.yaml`
+(fragile — drifts from the rendered manifest, and can't see resolved hashes).
+**Consequences:** Manifest/provenance schema gains fields — **additive and
+backward-compatible**: older manifests read with empty new fields; a re-sync
+repopulates. CLI text alone is insufficient; the schema change is in scope and
+must be round-trip tested.
+          </script></md>
+        </pd-decision>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Assumptions I'm comfortable proceeding on (prose, non-gating):
+
+- [ ] Enum value names are `project` and `bundle` (mirroring the two roots).
+      Alternatives `repo`/`skill` considered; `project`/`bundle` matches the
+      ubiquitous language (Project) and the existing "bundle" phrasing. Revisit
+      only if it clashes with a term in the glossary.
+- [ ] The `root:` enum is honoured on BOTH origins (a consumer ref may set
+      `root: bundle`; a default may set `root: project`), not just consumer-side —
+      it's a general override.
+- [ ] Introspection lands in the existing `list` / `describe <name>` output
+      rather than a new command.
+        </script></md>
+
+        <pd-question id="Q-1" status="answered" priority="p2" for="charlie"
+          title="Docs + validation only, or also a mutating `auto skill customize` command?">
+          <md><script type="text/plain">
+You want to "always ask my agent to set up my skill replacements end to end for
+me." Two ways to satisfy that:
+
+- **(A) Docs + validation only (recommended).** The agent edits `skills.yaml`
+  directly, guided by rich `quickstart`/`docs` output, copy-pasteable examples,
+  and actionable validation errors. No new mutating command; smaller surface,
+  and editing YAML is already well within an agent's reach.
+- **(B) Also ship a mutating command**, e.g.
+  `auto skill customize <skill> --set var=value` /
+  `--set-file var=path[#section]`, that writes the `skills.yaml` block
+  deterministically. More guardrails, but a new mutating verb to design, validate,
+  and test.
+
+Which scope do you want for this task? (B) can also be split into a follow-up
+task if you'd rather ship the mechanism + docs first.
+
+**recommendedAnswer:** (A) docs + validation only for this task; defer (B) to a
+follow-up if the docs-driven flow proves insufficient in practice.
+          </script></md>
+          <pd-answer by="charlie">(A) Docs + validation only. The agent edits skills.yaml
+directly, guided by `auto skill docs` / `quickstart` output, copy-pasteable examples, and
+actionable validation errors. No mutating command in this task; a `customize` verb can be a
+follow-up if the docs-driven flow proves insufficient.</pd-answer>
+        </pd-question>
+      </pd-section>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+The change is mostly **pure resolution logic** (render layer) plus **schema +
+persistence + CLI** wiring, so verification leans on the rung model already
+codified in `auto-skill/docs/assurance-strategy.md`:
+
+- **T3 — pinned edge cases (unit).** The primary rung. Each new behavior gets a
+  `TestEdgeCase_*` / table case asserting **both** the rendered/validated result
+  **and** its diagnostic output. Homes: `render/customize_test.go` (default
+  file-refs, resolution order), `render/fileref_test.go` (per-root containment),
+  `skill/skillsyaml_test.go` + `skill/manifest_test.go` (`root:` enum validation,
+  new manifest fields), `sync/process_test.go` (`TestReplacementValuesNamedBinding`
+  → origin roots + shared/per-skill precedence), `cli/cli_integration_test.go`
+  (author-side lint + `describe` introspection, driven in-process with
+  `t.TempDir()`).
+- **T2 — property tests.** `render/render_prop_test.go` (`pgregory.net/rapid`):
+  determinism/idempotence of resolution and root selection; the digest
+  invariant (manifest-only fields never perturb `skill_version`).
+- **T1 — model-based.** Extend the `syncStateMachine` diagnostic/provenance model
+  only if the feature adds a new stateful op; the introspection fields ride the
+  existing manifest write, so this is a light touch (assert manifest keys still
+  match disk + new fields round-trip).
+- **E2E — on-disk harness.** The top-level `harness/scenarios/skill-remote/`
+  (SUT + git-server + fixture skills) drives the real `auto` binary; extend it to
+  prove author-bundled-default + consumer-override end to end. NOTE: the
+  `auto-skill/harness/` dir is stale/untracked — do not target it.
+
+**Diagnostic-coverage contract** (assurance-strategy.md): every path that
+silently overrides, shadows, or rejects user intent MUST emit a structured
+`config.ValidationError` / `Diagnostic` with a remediation hint — asserted, not
+just the happy path. Errors are structured (`{Code,Path,Field,Message,Value}`,
+codes in `internal/skill/version.go`); stdout stays payload-only, diagnostics →
+stderr.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="Testing layers → what each proves">
+flowchart TD
+  U["T3 unit / edge cases<br/>customize · fileref · skillsyaml · manifest"] --> I["Integration<br/>sync process · lint · describe (cli_integration_test)"]
+  P["T2 property (rapid)<br/>determinism · digest invariant"] --> I
+  I --> E["E2E<br/>harness/scenarios/skill-remote"]
+  E --> D["Done: bundled default + consumer override<br/>rendered on disk, provenance surfaced"]
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="Bundled-file default resolves, and overrides follow the documented order" phases="" tests="">
+          <md><script type="text/plain">
+- **Given** a skill whose `customize.<var>.default` is a file-ref to a bundled
+  reference file
+- **When** a consumer syncs it **supplying no value** for `<var>`
+- **Then** the rendered `SKILL.md` contains the bundled file's content;
+  **and when** the consumer supplies a literal or file-ref value it wins over the
+  default; **and** a `required` var with neither value nor default is a hard
+  `required_value_missing` error naming the var.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="Consumer file-ref override resolves against the project root" phases="" tests="">
+          <md><script type="text/plain">
+- **Given** a consumer `skills.yaml` replacement whose file-ref points at a file
+  in the consuming **project** (not bundled with the skill)
+- **When** the skill is synced
+- **Then** that project file's content is injected, resolved against `env.Root`
+  (the project root), and recorded with `root: project` in the manifest.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="Origin selects the root — author default = bundle, consumer = project" phases="" tests="">
+          <md><script type="text/plain">
+- **Given** the same relative path (e.g. `references/x.md`) exists in **both** the
+  skill bundle and the consuming project with **different** content
+- **When** an author-side default file-ref and a consumer-side file-ref each use
+  that bare path
+- **Then** the author default resolves to the **bundle** copy and the consumer
+  ref resolves to the **project** copy — origin decides the root, with no path
+  convention.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Shared and per-skill replacements both use the project root, precedence preserved" phases="" tests="">
+          <md><script type="text/plain">
+- **Given** a `shared.replacements` file-ref and a `skills.<skill>.replacements`
+  file-ref for the same var
+- **When** the skill is synced
+- **Then** both resolve against the **project** root, and the per-skill value
+  overrides the shared one (existing shared-lowest / per-skill-wins precedence
+  unchanged).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="root: enum overrides the origin's natural root, both directions" phases="" tests="">
+          <md><script type="text/plain">
+- **Given** a consumer file-ref with `root: bundle` and an author default
+  file-ref with `root: project`
+- **When** synced
+- **Then** the consumer ref reads from the **bundle** and the author default
+  reads from the **project**; **and** when `root:` is omitted, each resolves to
+  its origin's natural root (AC-3).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Invalid root: value is a structured validation error" phases="" tests="">
+          <md><script type="text/plain">
+- **Given** a file-ref with `root:` set to anything other than `project` or
+  `bundle` (in `skills.yaml` or a `customize` default)
+- **When** it is validated (`ValidateSkillsYAML` / author-side lint)
+- **Then** validation fails with a structured error (e.g. code `invalid_root`),
+  the offending path/field, and a remediation hint — before any render.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="Per-root containment is preserved — no escape via either root or the enum" phases="" tests="">
+          <md><script type="text/plain">
+- **Given** a file-ref (default or override, with or without a `root:` override)
+  whose fully symlink-resolved real path escapes its selected root (symlink out,
+  or `..`)
+- **When** it is resolved
+- **Then** it is rejected with `symlink_escape` on the resolved real path — the
+  `root:` override is not an escape hatch, and both the bundle and project roots
+  enforce containment independently.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="Author-side lint catches broken default file-refs before consumer sync" phases="" tests="">
+          <md><script type="text/plain">
+- **Given** a skill whose `customize.<var>.default` file-ref is malformed, has an
+  invalid `root:`, or points at a missing bundled file
+- **When** `auto skill lint` runs on the skill
+- **Then** it emits an `error`-severity `Diagnostic` (var, bundle-root path,
+  remediation) and exits non-zero — the failure surfaces at authoring time, not
+  only later during a consumer's `sync`.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="Manifest + describe carry var/form/root/content_hash, additive & backward-compatible" phases="" tests="">
+          <md><script type="text/plain">
+- **Given** a rendered skill with literal and file-ref replacements
+- **When** the manifest is written and `auto skill describe <name>` is read
+- **Then** each replacement's var, form (literal | file-ref), root (project |
+  bundle) and resolved `content_hash` are present; **and** an older manifest
+  lacking the new fields still parses (zero values) and a re-sync repopulates
+  them — the fields are additive to `manifest.json` (never `lock.json`).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-10" title="skill_version is deterministic, varies only with rendered content, and ignores manifest metadata" phases="" tests="">
+          <md><script type="text/plain">
+- **Given** identical inputs across two syncs
+- **Then** `skill_version` is byte-identical (deterministic); **and** a consumer
+  file-ref override that changes injected content changes `skill_version`
+  legitimately; **and** the new manifest/provenance metadata fields do NOT enter
+  the hashed tree (adding them alone leaves `skill_version` unchanged).
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-11" title="quickstart/docs teach the full replacements workflow end-to-end" phases="" tests="">
+          <md><script type="text/plain">
+- **Given** `auto skill quickstart` and `auto skill docs`
+- **When** an agent reads only that output
+- **Then** it finds copy-pasteable `skills.yaml` for a literal, a bundled-file
+  default, a consumer file-ref override, section extraction, and the `root:`
+  enum — asserted via a golden/token check so the docs can't silently drop a
+  form.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-12" title="End-to-end on the skill-remote harness" phases="" tests="">
+          <md><script type="text/plain">
+- **Given** the `harness/scenarios/skill-remote/` scenario with a fixture skill
+  that ships a bundled-default file-ref and a consumer project providing an
+  override file
+- **When** `auto skill sync` runs in the container against the real binary
+- **Then** the rendered target `SKILL.md` shows the override content (and the
+  bundled default where not overridden), asserted by `uv run pytest`.
+          </script></md>
+        </pd-ac>
+
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **`describe` output shape stability.** No downstream consumer reads the
+  `describe`/`inspect.Provenance` JSON today (only `internal/cli` imports
+  `inspect`), so extending it is low-risk — the design should still add a new
+  structured field rather than mutate `Replacements map[string]string`, to keep
+  the existing key stable. (Confirmed via grep of auto-ui / auto-watch / bus.)
+- **Lint is a commit gate.** The pre-commit `skills-check` runs `auto skill
+  lint`; new customize-default checks could newly fail commits. Low real risk —
+  no skill uses `customize` yet — but the harness/fixtures must stay lint-clean.
+- **Cross-machine `skill_version` variance is intended, not a bug.** A consumer
+  file-ref override makes the digest depend on project content; `sync --check` in
+  CI will legitimately differ across checkouts with different project files. AC-10
+  pins the determinism half; the variance half is documented, not "fixed".
+- **Harness rebuild cost.** `harness/scenarios/skill-remote/` is Docker-based and
+  slower than Go tests; the T3/T2 rungs carry the bulk of coverage and the E2E is
+  a single confirmatory flow, not exhaustive.
+- **Not covered:** binary-asset defaults (file-refs are text-only, unchanged);
+  new root kinds beyond project/bundle (out of scope); a mutating `customize`
+  command (deferred, Q-1).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+The change threads through four layers — render, sync, schema, CLI — plus docs
+and tests. The core is a **two-resolver render**: origin decides the root, the
+`root:` enum overrides it, and a `customize` default may now be a file-ref.
+
+**1. Render — two roots, default file-refs.**
+`RenderInput` carries two resolvers instead of one: `ConfigResolver` (rooted at
+the project) and `BundleResolver` (rooted at the skill bundle). A `FileRef` gains
+a `Root` field (`"" | project | bundle`). Resolver selection is a pure function
+of *origin* + `Root`:
+- a consumer-supplied ref (from `in.Values`) → `ConfigResolver`, unless
+  `root: bundle`;
+- a `customize` **default** ref (from the schema) → `BundleResolver`, unless
+  `root: project`.
+`ParseCustomize` learns to decode `default:` as a scalar **or** a file-ref
+mapping (`CustomizeVar.DefaultRef *FileRef`). Default file-refs are resolved **in
+`Render`, only when the consumer supplies nothing** (so unused defaults aren't
+hashed), then folded into the schema's scalar `Default` so `ResolveValues` stays
+a pure string function (its existing tests are untouched). Every resolved
+file-ref — consumer or default — is recorded in `Tree.FileRefs` with its `Var`
+and `Root` for provenance. Per-root symlink containment is unchanged: each
+resolver enforces its own root on the `EvalSymlinks` real path; `root:` is not an
+escape hatch.
+
+**2. Sync — plumb the project root.**
+`renderSource` gains the project root (`env.Root`) and constructs both resolvers
+(`ConfigResolver = NewFileRefResolver(env.Root)`, `BundleResolver =
+NewFileRefResolver(s.rootDir)`). `nodeToFileRef` decodes `root:`. Both consumer
+origins that `replacementValues` merges — `shared.replacements` and
+`skills.<skill>.replacements` — flow through `ConfigResolver`, precedence
+unchanged. `buildManifest` stops dropping `Var` and now carries `Var` + `Root`
+into `ManifestFileRef`.
+
+**3. Schema — validate the enum.**
+`knownFileRefKeys` gains `root`; `validateFileRefNode` validates it against
+`{project, bundle}` with a new `invalid_root` code (in `internal/skill/version.go`).
+`ManifestFileRef` gains `var` + `root` (additive; `DisallowUnknownFields` keeps
+old manifests readable with zero values, re-sync repopulates — D-5).
+
+**4. CLI + introspection + docs.**
+`lintSkill` gains an author-side pass: parse the `customize:` block, resolve each
+default file-ref against the **bundle** root, and emit `error` `Diagnostic`s for
+malformed refs, invalid `root:`, or missing bundled files — at authoring time.
+`inspect.Provenance` gains an **additive** `ReplacementDetails` list (var, form,
+root, content_hash) joined from the manifest's `Replacements` + `FileRefs`;
+`describe` surfaces it. `quickstart`/`docs` gain a copy-pasteable replacements
+walkthrough (literal, bundled default, consumer override, section, `root:`).
+        </script></md>
+
+        <pd-mermaid caption="Resolver selection — origin + root: enum">
+flowchart TD
+  R["file-ref"] --> O{origin?}
+  O -->|"consumer (skills.yaml)"| C{"root:?"}
+  O -->|"author (customize default)"| A{"root:?"}
+  C -->|omitted or project| CP["ConfigResolver — project root"]
+  C -->|bundle| BB["BundleResolver — bundle root"]
+  A -->|omitted or bundle| AB["BundleResolver — bundle root"]
+  A -->|project| AP["ConfigResolver — project root"]
+  CP --> K["containment on EvalSymlinks real path"]
+  BB --> K
+  AB --> K
+  AP --> K
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="api-shapes" title="End-state shapes">
+        <pd-api kind="struct" name="render.RenderInput" lang="go" path="auto-skill/internal/render/render.go" caption="Two resolvers replace the single Resolver">
+          <pd-member kind="field" sig="ConfigResolver FileRefResolver">Rooted at the project (env.Root); resolves consumer-side refs (default) and any ref with root: project.</pd-member>
+          <pd-member kind="field" sig="BundleResolver FileRefResolver">Rooted at the skill bundle (s.rootDir); resolves customize defaults (default) and any ref with root: bundle.</pd-member>
+        </pd-api>
+
+        <pd-api kind="struct" name="render.FileRef" lang="go" path="auto-skill/internal/render/render.go" caption="Gains an optional root override">
+          <pd-member kind="field" sig="Root string">"" | "project" | "bundle". Empty = the origin's natural root. Validated upstream; render selects the resolver from it.</pd-member>
+        </pd-api>
+
+        <pd-api kind="struct" name="render.CustomizeVar" lang="go" path="auto-skill/internal/render/customize.go" caption="default may now be a file-ref">
+          <pd-member kind="field" sig="Default string">Scalar default (unchanged).</pd-member>
+          <pd-member kind="field" sig="DefaultRef *FileRef">Non-nil when default: is a file-ref mapping. Resolved against the bundle root only when the var is otherwise unsupplied.</pd-member>
+        </pd-api>
+
+        <pd-api kind="struct" name="skill.ManifestFileRef" lang="go" path="auto-skill/internal/skill/manifest.go" caption="No longer drops Var; adds Root">
+          <pd-member kind="field" sig="Var string `json:\"var\"`">The replacement var this ref fills (previously dropped in buildManifest).</pd-member>
+          <pd-member kind="field" sig="Root string `json:\"root\"`">Resolved root: project | bundle.</pd-member>
+          <pd-member kind="field" sig="Path, ContentHash, MatchedHeading string">Existing fields, unchanged.</pd-member>
+        </pd-api>
+
+        <pd-api kind="struct" name="inspect.ReplacementDetail" lang="go" path="auto-skill/internal/inspect/view.go" caption="Additive describe payload — Replacements map stays">
+          <pd-member kind="field" sig="Var, Form, Root, Path, ContentHash string">Form = literal | file-ref (derived from manifest FileRefs membership); Root/Path/ContentHash empty for literals.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-skill/internal/render/render.go" change="edit">RenderInput: ConfigResolver + BundleResolver; FileRef.Root; ResolvedFileRefInfo.Root; resolve default file-refs (bundle) when unsupplied, fold into schema, record provenance; resolver selection by origin+root; per-side missing-resolver guard.</pd-file>
+          <pd-file path="auto-skill/internal/render/customize.go" change="edit">CustomizeVar.DefaultRef; ParseCustomize decodes default as scalar-or-file-ref; ResolveValues stays string-pure (reads folded Default).</pd-file>
+          <pd-file path="auto-skill/internal/render/fileref.go" change="edit">Root enum constants (RootProject/RootBundle) + defensive rejection of an unknown Root; error messages name which root the path was resolved against.</pd-file>
+          <pd-file path="auto-skill/internal/sync/process.go" change="edit">renderSource takes env.Root; builds both resolvers; nodeToFileRef decodes root; propagate Root through ResolvedFileRefInfo.</pd-file>
+          <pd-file path="auto-skill/internal/sync/manifest.go" change="edit">buildManifest carries Var + Root into ManifestFileRef (stops dropping Var).</pd-file>
+          <pd-file path="auto-skill/internal/skill/skillsyaml.go" change="edit">knownFileRefKeys += root; validateFileRefNode validates root ∈ {project,bundle}.</pd-file>
+          <pd-file path="auto-skill/internal/skill/manifest.go" change="edit">ManifestFileRef.Var + .Root (json); ValidateManifest validates root enum; DisallowUnknownFields back-compat preserved.</pd-file>
+          <pd-file path="auto-skill/internal/skill/version.go" change="edit">Add CodeInvalidRoot = "invalid_root".</pd-file>
+          <pd-file path="auto-skill/internal/skill/skill.go" change="edit">lintSkill: author-side customize validation — ParseCustomize, resolve default file-refs vs bundle root, emit Diagnostics for malformed/invalid-root/missing-file, with remediation.</pd-file>
+          <pd-file path="auto-skill/internal/inspect/view.go" change="edit">Provenance.ReplacementDetails []ReplacementDetail (additive; Replacements map retained).</pd-file>
+          <pd-file path="auto-skill/internal/inspect/inspect.go" change="edit">Describe joins manifest Replacements + FileRefs into ReplacementDetails.</pd-file>
+          <pd-file path="auto-skill/internal/cli/list.go" change="edit">writeDescribeText prints per-replacement form/root/content_hash; JSON carries ReplacementDetails.</pd-file>
+          <pd-file path="auto-skill/internal/cli/root.go" change="edit">quickstart + docs: replacements walkthrough (literal, bundled default, consumer override, section, root: enum).</pd-file>
+          <pd-file path="docs/remote-skills-design.md" change="edit">Update Customization (file-ref default), Section-extraction/file-ref (root enum), origin-root model, skills.yaml + manifest schema examples.</pd-file>
+          <pd-file path="auto-skill/CLAUDE.md" change="edit">Note the new author-side customize lint checks (they gate pre-commit skills-check).</pd-file>
+          <pd-file path="auto-skill/internal/render/customize_test.go" change="edit">Default file-ref resolution, resolution order, root: on defaults.</pd-file>
+          <pd-file path="auto-skill/internal/render/fileref_test.go" change="edit">Per-root containment / symlink-escape for bundle vs project, incl. root: override.</pd-file>
+          <pd-file path="auto-skill/internal/render/render_prop_test.go" change="edit">Determinism of resolver selection; digest invariant (manifest-only fields don't perturb skill_version).</pd-file>
+          <pd-file path="auto-skill/internal/sync/process_test.go" change="edit">Origin roots + shared-vs-per-skill precedence with file-refs (extends TestReplacementValuesNamedBinding).</pd-file>
+          <pd-file path="auto-skill/internal/sync/manifest_test.go" change="add">ManifestFileRef Var/Root round-trip; old-manifest back-compat read.</pd-file>
+          <pd-file path="auto-skill/internal/skill/skillsyaml_test.go" change="edit">root: enum validation (valid + invalid_root).</pd-file>
+          <pd-file path="auto-skill/internal/cli/cli_integration_test.go" change="edit">Author-side lint of broken default file-refs; describe introspection output.</pd-file>
+          <pd-file path="harness/scenarios/skill-remote/fixtures/skills/" change="edit">Fixture skill shipping a bundled-default file-ref + a consumer project override file.</pd-file>
+          <pd-file path="harness/scenarios/skill-remote/tests/" change="edit">pytest asserting rendered target content (default used + override wins) end-to-end.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="design-decisions" title="Design decisions (this stage)">
+        <pd-decision id="D-6" title="Resolve default file-refs in Render, fold into scalar Default" status="accepted" by="agent"
+          summary="Keeps ResolveValues a pure string function; only resolves a default when it's actually used.">
+          <md><script type="text/plain">
+**Context:** Defaults are applied inside `ResolveValues`, which takes flattened
+strings (`customize.go:103-142`); a default file-ref needs the resolver + must
+not be hashed when unused.
+**Decision:** `Render` resolves a var's `DefaultRef` against the bundle root
+**only when the var is unsupplied**, folds the resolved string into that var's
+`Default` (a copied schema), and records it in `Tree.FileRefs`. `ResolveValues`
+signature and semantics are unchanged.
+**Alternatives:** Give `ResolveValues` resolver access (widens a pure function,
+breaks its tests); always resolve defaults (hashes unused content, perturbs
+`skill_version`).
+**Consequences:** Provenance/hashing only reflect content that actually renders;
+`ResolveValues`' existing property/unit tests stay valid.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-7" title="describe payload is additive — new ReplacementDetails, Replacements map kept" status="accepted" by="agent"
+          summary="Extend, don't mutate, the describe JSON so the existing key stays stable.">
+          <md><script type="text/plain">
+**Context:** Introspection needs per-replacement var/form/root/content_hash;
+`Provenance.Replacements` is a flat `map[string]string`. No downstream consumer
+reads this JSON today (only `internal/cli` imports `inspect`).
+**Decision:** Add a new `ReplacementDetails []ReplacementDetail` field; leave
+`Replacements map[string]string` in place.
+**Alternatives:** Replace `Replacements` with a structured map (silently breaks
+any future/text consumer, churns the CLI text contract).
+**Consequences:** Backward-compatible output; `form` is derived (var present in
+manifest `FileRefs` ⇒ file-ref, else literal) so no redundant stored field.
+          </script></md>
+        </pd-decision>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Single resolver + `$PROJECT_ROOT` path interpolation** — rejected in D-4:
+  reopens the path-escape surface `fileref.go` closed and inverts the safe
+  default (terse bare path would mean "reach into the bundle" for a consumer).
+- **One resolver, resolve all refs in the sync layer** (Render becomes
+  resolver-free) — a larger refactor that moves consumer file-ref resolution out
+  of `Render`, losing the single pure render entry point; the two-resolver
+  `RenderInput` is a smaller, more local change.
+- **Store an explicit `form` field in the manifest** — unnecessary; form is
+  derivable from `FileRefs` membership (D-7).
+- **Soft/optional default file-refs** (missing bundled file ⇒ empty) — rejected in
+  D-3: a skill never renders with a hole; a missing default is a hard error.
+- **A mutating `auto skill customize` command** — deferred (Q-1): docs +
+  validation carry the setup workflow for this task.
+        </script></md>
+      </pd-section>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+  </pd-doc>
+</body>
+</html>
