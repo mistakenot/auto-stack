@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mistakenot/auto-search/internal/config"
 	"github.com/mistakenot/auto-search/internal/indexdb"
@@ -466,11 +467,11 @@ func roleTag(m *indexdb.MessageRow) (string, string) {
 		switch m.ToolName {
 		case "Bash":
 			if m.BashCommand != "" {
-				attrs += fmt.Sprintf(" cmd=%q", truncateStr(m.BashCommand, maxToolArgPreview))
+				attrs += fmt.Sprintf(" cmd=%q", search.TruncateAtRune(m.BashCommand, maxToolArgPreview))
 			}
 		case "Read", "Write", "Edit", "Glob":
 			if m.ToolFilePath != "" {
-				attrs += fmt.Sprintf(" path=%q", truncateStr(m.ToolFilePath, maxToolArgPreview))
+				attrs += fmt.Sprintf(" path=%q", search.TruncateAtRune(m.ToolFilePath, maxToolArgPreview))
 			}
 		case "Skill":
 			if m.SkillName != "" {
@@ -492,12 +493,30 @@ func roleTag(m *indexdb.MessageRow) (string, string) {
 	return fmt.Sprintf("<%s%s>", tagName, attrs), fmt.Sprintf("</%s>", tagName)
 }
 
-// truncateStr trims s to maxLen, appending "…" if it was shortened.
-func truncateStr(s string, maxLen int) string {
-	if len(s) <= maxLen {
+// runeSafePrefix returns the prefix of s up to at most n bytes, backing the
+// cut off to the nearest rune boundary at or before n so the result is always
+// valid UTF-8 (never slicing through a multi-byte sequence).
+func runeSafePrefix(s string, n int) string {
+	if n >= len(s) {
 		return s
 	}
-	return s[:maxLen] + "…"
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
+// runeSafeSuffix returns the suffix of s of at most n bytes, advancing the cut
+// forward to the nearest rune boundary so the result is always valid UTF-8.
+func runeSafeSuffix(s string, n int) string {
+	if n >= len(s) {
+		return s
+	}
+	start := len(s) - n
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return s[start:]
 }
 
 // midTruncate truncates long text by cutting from the middle.
@@ -509,7 +528,7 @@ func midTruncate(s string, maxLen int, messageID string) string {
 	marker := fmt.Sprintf("\n…[truncated — run: auto search message get %s]…\n", messageID)
 	half := (maxLen - len(marker)) / 2
 	half = max(half, 0)
-	return s[:half] + marker + s[len(s)-half:]
+	return runeSafePrefix(s, half) + marker + runeSafeSuffix(s, half)
 }
 
 // transcriptSummary builds a bounded summary from the first and last N chars.
@@ -519,5 +538,5 @@ func transcriptSummary(transcript string) string {
 	if len(transcript) <= n*2+10 {
 		return transcript
 	}
-	return transcript[:n] + "\n...\n" + transcript[len(transcript)-n:]
+	return runeSafePrefix(transcript, n) + "\n...\n" + runeSafeSuffix(transcript, n)
 }

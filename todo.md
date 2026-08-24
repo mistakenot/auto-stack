@@ -62,7 +62,7 @@ Align with user-journey spec.
 
 ## auto-search
 
-- [ ] `truncateStr` in `auto-search/internal/cli/session.go` slices by bytes, not runes — same UTF-8 bug as the `search.TruncateAtRune` fix in PR #47 (`messages.go` / `cli/search.go` snippets). Fires at the 80-char tool-arg preview when args contain emoji, accented chars, or unicode in commands/paths. Route through `search.TruncateAtRune` (or duplicate the `utf8.RuneStart` advance loop) so tool tags in `session get` output stay valid UTF-8.
+- [x] `truncateStr` in `auto-search/internal/cli/session.go` slices by bytes, not runes — same UTF-8 bug as the `search.TruncateAtRune` fix in PR #47 (`messages.go` / `cli/search.go` snippets). Fires at the 80-char tool-arg preview when args contain emoji, accented chars, or unicode in commands/paths. Route through `search.TruncateAtRune` (or duplicate the `utf8.RuneStart` advance loop) so tool tags in `session get` output stay valid UTF-8. *(Done: `truncateStr` call sites now use `search.TruncateAtRune`; sibling middle-cut functions `midTruncate`/`transcriptSummary` made rune-safe via `runeSafePrefix`/`runeSafeSuffix`; UTF-8 tests added in `internal/cli/truncate_test.go`.)*
 
 ### Git-related APIs — low-level primitives
 
