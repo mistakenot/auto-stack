@@ -578,6 +578,18 @@ func TestQuickstartAndDocs(t *testing.T) {
 		"auto skill update --check",
 		"auto skill remove old-name --vendored",
 		"auto-skill deletes only target copies it previously rendered",
+		// The customize/templating engine: an agent reading quickstart must
+		// learn both halves — declaring vars as an author, and supplying
+		// values as an installer — without falling back to the README.
+		"## Customize a Skill with variables",
+		"### Authoring: declare the variables",
+		"### Installing: supply the values",
+		"customize:",
+		"{{ .team_name }}",
+		"required: true",
+		"replacements:",
+		"required_value_missing",
+		"file: ",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("quickstart output missing %q:\n%s", want, stdout)
