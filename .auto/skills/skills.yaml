@@ -21,6 +21,8 @@ skills:
         version: latest
     contextual-commit:
         version: latest
+    create-task:
+        version: latest
     delegate:
         version: latest
     delegate-task:

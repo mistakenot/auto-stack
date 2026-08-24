@@ -40,6 +40,10 @@ Align with user-journey spec.
 - [ ] ensure sessions/messages include `model_id`
 - [ ] **[PARKED — needs more design]** Live tier for monitoring: batch ETL (parquet) is too stale for live queries ("what is job X doing now?"); building a separate monitoring store would recreate data auto-etl already owns. Direction: one schema / one transform / many materializations — a hot tier (pure-Go SQLite, fed by a continuous tailer of the JSONL log) in front of parquet, behind one query surface; ETL becomes a compaction flush, not a daily job. DRAFT/RFC: `docs/live-tier-architecture.md`. Open questions to resolve before building: hot-store retention window, compaction trigger, multi-host query scope, hot/cold schema unification, replay-on-restart.
 
+## auto-env
+
+- [ ] **Fix worktree port allocation choosing browser-restricted ports.** A worktree env can allocate a dev service (e.g. an auth emulator) to a port Chrome/Chromium hard-refuses with `ERR_UNSAFE_PORT` (6000 is X11), so any browser-side client fails silently. Best fix: filter `auto env` allocated ports against Chromium's restricted-port list (at minimum 6000, 6665-6669, 6697, 5060/5061, 4045, 10080) — matches `net::IsPortAllowedForScheme`.
+
 ## auto-reflect
 
 - [ ] **Fix `correction_density` false positives in miner signal scoring.** The correction regex is role-gated to `user` messages, but teammate messages, skill reference blobs, session continuations, and system markers all arrive as `role=user` — so agent-authored content like "use X instead of Y" inflates the signal. Approach: build a Python eval script (`.tmp/experiments/`) with an LLM oracle to label true session friction across ~40 sessions on this machine, use that as a calibration dataset, then iterate on content-class filters (exclude `<teammate-message>`, `<local-command-caveat>`, `<command-name>`, skill blobs, continuation summaries) and pattern/weight tuning in `score.go` until rank correlation is good. Upstream data issue tracked in `auto-0zn`. Evidence: top 5 sessions in `miner next` all have correction_density 60-73% with 0 tool errors — all false positives from injected content.

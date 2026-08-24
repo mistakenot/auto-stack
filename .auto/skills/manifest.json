@@ -58,6 +58,13 @@
       "skill_version": "3a99adfc03d77f6bd188f2d85c2a7867be2a385931f31ca03227801b0020da29",
       "render_version": "1"
     },
+    "create-task": {
+      "template_hash": "9639b09e30ca4656f38c96025ee5ef722280879570539d930abfd4a62313a485",
+      "replacements": {},
+      "file_refs": [],
+      "skill_version": "ae0bcb0468d1f412f1fc2100c377152a836c3cf30a08640e225e36ee67be4f3c",
+      "render_version": "1"
+    },
     "delegate": {
       "template_hash": "49da071efbfe72ec5e239c560c31a5c61d45ae95630fb41bc57cfe5a2cfcffdc",
       "replacements": {},
@@ -329,6 +336,7 @@
         "commit-task": "9d0a5ecba9cc19669ee92558c07153a94b3f0d0eee0e8cea50c6b401782bb800",
         "complete-task": "a4d21dc22ddb56b2cab315f692feb3f8aea8cb1a05b09ec1f90f7851f1036ec3",
         "contextual-commit": "3a99adfc03d77f6bd188f2d85c2a7867be2a385931f31ca03227801b0020da29",
+        "create-task": "ae0bcb0468d1f412f1fc2100c377152a836c3cf30a08640e225e36ee67be4f3c",
         "delegate": "147a705fd63ac747b85d6ce9c23b1cd2e05083b0d075104810961a9d537391a2",
         "delegate-task": "31aa5c1f9e036342512d6d5657c509897cefe844b973bb610cc4a3e403830f20",
         "domain-modelling": "9013bcfed5abd6d32fba5fb0cdba297602d8afb82cb5e14506b48678f87603f8",
@@ -378,6 +386,7 @@
         "commit-task": "9d0a5ecba9cc19669ee92558c07153a94b3f0d0eee0e8cea50c6b401782bb800",
         "complete-task": "a4d21dc22ddb56b2cab315f692feb3f8aea8cb1a05b09ec1f90f7851f1036ec3",
         "contextual-commit": "3a99adfc03d77f6bd188f2d85c2a7867be2a385931f31ca03227801b0020da29",
+        "create-task": "ae0bcb0468d1f412f1fc2100c377152a836c3cf30a08640e225e36ee67be4f3c",
         "delegate": "147a705fd63ac747b85d6ce9c23b1cd2e05083b0d075104810961a9d537391a2",
         "delegate-task": "31aa5c1f9e036342512d6d5657c509897cefe844b973bb610cc4a3e403830f20",
         "domain-modelling": "9013bcfed5abd6d32fba5fb0cdba297602d8afb82cb5e14506b48678f87603f8",

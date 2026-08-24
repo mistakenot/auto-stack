@@ -89,6 +89,17 @@
       "local": true,
       "state": "unresolved"
     },
+    "create-task": {
+      "source": "https://github.com/harbor-framework/harbor",
+      "url": "https://github.com/harbor-framework/harbor",
+      "version_spec": "latest",
+      "ref": "25ae8477b9a071c3fc0bb4faddd23f526375f28c",
+      "commit": "25ae8477b9a071c3fc0bb4faddd23f526375f28c",
+      "subpath": "skills/create-task",
+      "private": false,
+      "local": false,
+      "state": "resolved"
+    },
     "delegate": {
       "source": "mistakenot/skills",
       "url": "https://github.com/mistakenot/skills",
