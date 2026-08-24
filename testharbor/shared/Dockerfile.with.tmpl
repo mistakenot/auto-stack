@@ -1,0 +1,15 @@
+FROM ubuntu:24.04
+WORKDIR /app
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates jq python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+# TREATMENT ARM: the static `auto` binary is staged in by render.sh and put on PATH.
+COPY auto /usr/local/bin/auto
+RUN chmod +x /usr/local/bin/auto && auto --version
+
+# Seed repo (pinned) — substituted by render.sh from the case's case.env.
+RUN git clone --quiet __REPO_URL__ /app/__REPO_DIR__ \
+ && git -C /app/__REPO_DIR__ checkout --quiet "__REPO_SHA__" \
+ && rm -rf /app/__REPO_DIR__/.git

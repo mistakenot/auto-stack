@@ -1,0 +1,15 @@
+# Git
+.git/
+
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+
+# Generated task arms (produced by render.sh; contain the staged binary)
+/out/
+
+# Staged auto binary (build artifact), wherever it lands
+**/environment/auto

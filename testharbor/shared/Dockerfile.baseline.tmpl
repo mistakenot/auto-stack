@@ -1,0 +1,13 @@
+FROM ubuntu:24.04
+WORKDIR /app
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates jq python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+# BASELINE ARM: no `auto` binary — only the stock tools the agent ships with.
+
+# Seed repo (pinned) — identical to the treatment arm.
+RUN git clone --quiet __REPO_URL__ /app/__REPO_DIR__ \
+ && git -C /app/__REPO_DIR__ checkout --quiet "__REPO_SHA__" \
+ && rm -rf /app/__REPO_DIR__/.git

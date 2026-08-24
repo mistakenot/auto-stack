@@ -1,0 +1,32 @@
+schema_version = "1.3"
+artifacts = []
+
+[task]
+name = "__NAME__"
+description = "Reverse-dependency (blast-radius) discovery over a pinned Go repo; reward = F1 vs a neutral go-list ground truth."
+authors = []
+keywords = ["auto-graph", "go", "import-graph", "impact-analysis", "ab-eval"]
+
+[metadata]
+difficulty = "medium"
+category = "programming"
+tags = ["auto-stack", "tooling", "differential-eval"]
+
+[verifier]
+timeout_sec = 600.0
+collect = []
+
+[verifier.env]
+
+[agent]
+timeout_sec = 900.0
+
+[environment]
+network_mode = "public"
+build_timeout_sec = 900.0
+os = "linux"
+mcp_servers = []
+
+[environment.env]
+
+[solution.env]

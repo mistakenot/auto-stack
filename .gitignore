@@ -37,3 +37,6 @@ credentials.json
 __pycache__/
 .venv/
 .pytest_cache/
+
+# Agent/daemon run output
+jobs/
