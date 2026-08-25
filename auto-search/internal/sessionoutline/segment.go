@@ -103,15 +103,16 @@ type Segment struct {
 //
 // A cut happens at the first signal that fires, in this precedence:
 //
-//  1. subagent dispatch — an Agent event always stands alone, and the work
-//     resuming after it starts fresh
+//  1. subagent dispatch — an Agent event always stands alone
 //  2. error transition — a run of failures begins, or ends
 //  3. todo / bead marker — explicit bookkeeping the agent itself wrote
 //  4. wall-clock time gap
 //  5. tool burst — the dominant tool kind changed
 //
-// Precedence matters only for the recorded reason; the boundary position is
-// the same whichever signal claimed it.
+// The event after a dispatch always starts a segment too, recorded as
+// "resume" unless one of the signals above describes it better. Precedence
+// matters only for the recorded reason; the boundary position is the same
+// whichever signal claimed it.
 func segment(sessionID string, events []sessionhtml.Event) []Segment {
 	if len(events) == 0 {
 		return nil
@@ -139,8 +140,6 @@ func segment(sessionID string, events []sessionhtml.Event) []Segment {
 		switch {
 		case cur.Kind == "agent":
 			cut = reasonDispatch
-		case prev.Kind == "agent":
-			cut = reasonResume
 		case curFailing && !failing:
 			cut = reasonBashError
 			if cur.Exit == 0 {
@@ -154,6 +153,11 @@ func segment(sessionID string, events []sessionhtml.Event) []Segment {
 			cut = reasonTimeGap
 		case curLane != "" && lane != "" && curLane != lane:
 			cut = reasonToolBurst
+		}
+		// The work always restarts after a dispatch, but a more specific
+		// signal on the resuming event describes it better.
+		if cut == "" && prev.Kind == "agent" {
+			cut = reasonResume
 		}
 
 		if curLane != "" {
@@ -285,9 +289,19 @@ func leadEvent(reason string, events []sessionhtml.Event) *sessionhtml.Event {
 			}
 		}
 	}
+	// Otherwise label the segment after whatever dominates it: the first
+	// tool call in a tool-heavy run, the opening message in a prose one.
+	tools := 0
 	for i := range events {
 		if events[i].Kind == "tool" {
-			return &events[i]
+			tools++
+		}
+	}
+	if tools*2 > len(events) {
+		for i := range events {
+			if events[i].Kind == "tool" {
+				return &events[i]
+			}
 		}
 	}
 	return &events[0]

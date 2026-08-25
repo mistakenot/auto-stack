@@ -143,7 +143,48 @@ file is too large for a browser to load comfortably (the command warns past ~5MB
 ` + "`" + `--exclude-thinking` + "`" + ` drops thinking blocks; ` + "`" + `--light` + "`" + ` drops thinking **and** uses
 truncated message bodies. ` + "`" + `--format html` + "`" + ` is the default (` + "`" + `--format json` + "`" + ` is reserved).
 
-### 4. Drill into a specific message
+### 4. Map a session before reading it (outline)
+
+` + "`" + `session outline` + "`" + ` is the cheap rung between ` + "`" + `describe` + "`" + ` and ` + "`" + `get` + "`" + `: it returns the
+**shape** of a session — the sub-agent spine, each node's timeline cut into labelled
+**segments**, and per-Message ids — with **no message bodies at all**.
+
+` + "```" + `bash
+# Collapsed by default: root segments + immediate sub-agents as one-liners.
+auto search session outline <session_id>
+
+# Human-readable indented tree instead of JSON.
+auto search session outline <session_id> --text
+
+# Open the sub-agents one level deeper.
+auto search session outline <session_id> --depth 2
+
+# Pull one region up to full fidelity (segment id, or a bare message id).
+auto search session outline <session_id> --expand <session_id>#s2
+auto search session outline <session_id> --expand <message_id>
+` + "```" + `
+
+Segments are cut deterministically at: a sub-agent dispatch, a tool failure starting or
+clearing (` + "`" + `is_error` + "`" + ` or a non-zero bash exit), a todo/bead marker (` + "`" + `br update` + "`" + `/` + "`" + `br close` + "`" + `/
+` + "`" + `TodoWrite` + "`" + `), a wall-clock gap over 5 minutes, and a change in the dominant tool kind.
+Each segment carries an ` + "`" + `id` + "`" + ` (` + "`" + `<session_id>#s<n>` + "`" + `), a ` + "`" + `label` + "`" + `, the ` + "`" + `reason` + "`" + ` it was cut,
+its ` + "`" + `index_range` + "`" + `, rolled-up ` + "`" + `counts` + "`" + `, and the exact command that expands it.
+
+**Recovering from a dead worker** — the case this exists for. You have a session id and
+need to know what it did and where it stopped, without burning your own context on the
+whole transcript:
+
+` + "```" + `bash
+auto search session outline <session_id> --text        # where did the work go?
+auto search session outline <session_id> --expand <session_id>#s7   # read only the last phase
+auto search message get <message_id>                   # or one message, full fidelity
+` + "```" + `
+
+Navigation is stateless — every collapsed region prints the flag that opens it, so nothing
+is remembered between invocations. Use ` + "`" + `search --interrupted` + "`" + ` / ` + "`" + `--min-tool-duration` + "`" + ` when
+you already know what you are looking for; use ` + "`" + `outline` + "`" + ` when you need to find out.
+
+### 5. Drill into a specific message
 
 Message IDs follow the format ` + "`" + `{sessionId}-{index}` + "`" + `. The index comes from
 either a search hit (` + "`" + `messageId` + "`" + ` field) or the index shown in ` + "`" + `session get` + "`" + ` output.
@@ -156,7 +197,7 @@ auto search message get abc123-26
 auto search message describe abc123-26
 ` + "```" + `
 
-### 5. List and filter sessions
+### 6. List and filter sessions
 
 ` + "```" + `bash
 # List recent sessions
@@ -211,7 +252,7 @@ Output includes ` + "`" + `duration_ms` + "`" + `, ` + "`" + `is_subagent` + "`"
 user message, with command caveats/wrappers skipped — so you can tell sessions apart at a
 glance (slash-command-only sessions fall back to the invocation, e.g. ` + "`" + `/execute-task 014` + "`" + `).
 
-### 6. Get session metadata
+### 7. Get session metadata
 
 ` + "```" + `bash
 auto search session describe <session_id>
@@ -221,7 +262,7 @@ Returns JSON with message counts (including ` + "`" + `userMessages` + "`" + ` f
 token usage, ` + "`" + `durationMs` + "`" + `, sub-agent relationship fields, the full ` + "`" + `firstUserIntent` + "`" + `
 (untruncated first real user message), and a transcript summary.
 
-### 7. List skills used across sessions
+### 8. List skills used across sessions
 
 ` + "```" + `bash
 auto search skills
@@ -234,7 +275,7 @@ auto search skills --after 2026-01-01 --before 2026-02-01
 
 Returns JSON with each skill name, usage count, and distinct session count.
 
-### 8. Analyze skill adoption patterns with stats
+### 9. Analyze skill adoption patterns with stats
 
 ` + "```" + `bash
 # Rank skills by usage
@@ -247,7 +288,7 @@ auto search stats --scope messages --group-by day --skill contextual-commit --si
 auto search stats --scope messages --group-by workspace --skill release
 ` + "```" + `
 
-### 9. Find files that change together (co-change)
+### 10. Find files that change together (co-change)
 
 Treat co-change as a **phase-one router**, not a report to read instead of the
 files. Phase one: run co-change on a file to get a cheap ranked shortlist of the

@@ -553,6 +553,7 @@ func newSessionOutlineCmd() *cobra.Command {
 		requestID string
 		depth     int
 		expand    string
+		text      bool
 	)
 
 	cmd := &cobra.Command{
@@ -592,6 +593,11 @@ func newSessionOutlineCmd() *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 
+			if text {
+				sessionoutline.RenderText(cmd.OutOrStdout(), outline)
+				return nil
+			}
+
 			out := map[string]any{
 				"_meta": map[string]any{
 					"request_id": requestID,
@@ -608,5 +614,6 @@ func newSessionOutlineCmd() *cobra.Command {
 	cmd.Flags().StringVar(&requestID, "request-id", "", "request identifier to echo in responses")
 	cmd.Flags().IntVar(&depth, "depth", 1, "how many node levels to render expanded; deeper sub-agents collapse to one-liners")
 	cmd.Flags().StringVar(&expand, "expand", "", "segment id (<session_id>#s<n>) or message id to re-emit at full fidelity")
+	cmd.Flags().BoolVar(&text, "text", false, "render an indented tree for humans instead of JSON")
 	return cmd
 }

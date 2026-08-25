@@ -1,8 +1,8 @@
 ---
-hash: "1089e286"
+hash: "933629de"
 id: "1467e318"
 read_when: "naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept"
-summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack) with the terms to avoid for each."
+summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Outline, Segment, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack) with the terms to avoid for each."
 title: "Ubiquitous Language"
 ---
 
@@ -16,9 +16,11 @@ title: "Ubiquitous Language"
 flowchart LR
     Host["Host"]
     Message["Message"]
+    Outline["Outline"]
     Playbook["Playbook"]
     Project["Project"]
     Rule["Rule"]
+    Segment["Segment"]
     Session["Session"]
     Subagent["Subagent"]
     TaskDef["TaskDef"]
@@ -29,6 +31,8 @@ flowchart LR
     Session -->|one| Project
     Subagent -->|one| Session
     Project -->|many| Session
+    Outline -->|many| Segment
+    Outline -->|many| Message
     Playbook -->|many| Rule
     Trigger -->|many| TaskDef
 ```
@@ -62,6 +66,15 @@ _Avoid_: Machine, server, node, instance
 A registered repository with cross-host identity via its git remote. One Project can have many Sessions across many Hosts.
 _Avoid_: Workspace, repo, repository, codebase
 _Has_: many Sessions
+
+**Outline**:
+The bodies-free, navigable map of a Session — the Subagent spine, each node's timeline cut into Segments, and per-Message leaves addressable for full-fidelity expansion. What `auto search session outline` returns. An Outline never carries message bodies; it carries the structure and the commands that recover them.
+_Avoid_: Tree, map, skeleton, summary
+_Has_: many Segments, many Messages
+
+**Segment**:
+A contiguous run of one Session node's timeline, cut at a deterministic structural boundary (subagent dispatch, tool-failure transition, todo/bead marker, wall-clock gap, tool-kind change) and collapsed to a one-line label plus its `message_index` range and counts. Identified as `<session_id>#s<n>`.
+_Avoid_: Phase, chunk, block, step, span
 
 ## Reflection
 
