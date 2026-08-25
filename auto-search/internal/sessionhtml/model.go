@@ -36,6 +36,11 @@ type Event struct {
 	Summary string `json:"summary"`
 	MID     string `json:"mid,omitempty"`
 
+	// Ts is the message timestamp in epoch milliseconds. Carried so
+	// downstream consumers (the outline segmenter) can cut on wall-clock
+	// gaps without re-reading the message rows.
+	Ts int64 `json:"ts,omitempty"`
+
 	// Prose bodies (user / assistant / thinking).
 	Body      string `json:"body,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
@@ -49,6 +54,11 @@ type Event struct {
 	OutputTrunc bool   `json:"output_trunc,omitempty"`
 	Duration    int64  `json:"duration,omitempty"`
 	IsError     bool   `json:"is_error,omitempty"`
+	// ResultMID is the message_id of the paired tool_result row — the row
+	// that actually holds the tool output. MID points at the tool_use row,
+	// whose content is empty, so full-fidelity expansion of a tool event
+	// must go through ResultMID.
+	ResultMID   string `json:"result_mid,omitempty"`
 	Interrupted bool   `json:"interrupted,omitempty"`
 	Exit        int    `json:"exit,omitempty"`
 
