@@ -540,6 +540,73 @@ func TestEveryEnvelopeCarriesAVersion(t *testing.T) {
 	}
 }
 
+// TestSubscriptionsAndBoundDiverge is AC-9's second half, and the reason a
+// sender is handed two numbers instead of one: subscriptions counts durable
+// readers of an address, bound counts those with a binding row. They answer
+// different questions — "will anyone ever read this" versus "is anyone holding
+// it right now" — and a sender that conflated them would read a liveness
+// promise into a count that in T1 makes none (D-062-2).
+//
+// The unbound subscription is made by dropping the binding rather than by
+// inserting a subscription by hand, because that is the shape T3 will produce:
+// a reader whose pane is gone but whose subscription is still durable. Through
+// the Client seam every subscription is bound at creation, which is why this
+// case lives here rather than in the conformance suite.
+func TestSubscriptionsAndBoundDiverge(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	sub, err := st.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/bugs", Caller: caller("/workspace/b")})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	if err := st.WithTx(ctx, func(tx *sql.Tx) error {
+		_, execErr := tx.ExecContext(ctx, `DELETE FROM bindings WHERE subscription_id = ?`, sub.SubscriptionID)
+		return execErr
+	}); err != nil {
+		t.Fatalf("drop the binding: %v", err)
+	}
+
+	sent, err := st.Send(ctx, store.SendParams{To: "auto-web/bugs", From: "auto-stack/reviewer"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if sent.Subscriptions != 1 || sent.Bound != 0 {
+		t.Errorf("send reported subscriptions=%d bound=%d, want 1 and 0 — the counts are distinct",
+			sent.Subscriptions, sent.Bound)
+	}
+	if len(sent.Delivered) != 0 {
+		t.Errorf("send raised a flag for %d bindings, want 0 — there is nowhere to raise one", len(sent.Delivered))
+	}
+
+	// Delivery does not depend on the binding: the subscription is a durable
+	// reader, so the mail is waiting for whoever rebinds to it.
+	var delivered int
+	if err := st.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM deliveries WHERE subscription_id = ? AND mail_id = ?`,
+		sub.SubscriptionID, sent.ID).Scan(&delivered); err != nil {
+		t.Fatalf("count deliveries: %v", err)
+	}
+	if delivered != 1 {
+		t.Errorf("an unbound subscription received %d deliveries, want 1 — it is still a durable reader", delivered)
+	}
+
+	rebound, err := st.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/bugs", Caller: caller("/workspace/b2")})
+	if err != nil {
+		t.Fatalf("resubscribe: %v", err)
+	}
+	if rebound.SubscriptionID == sub.SubscriptionID {
+		t.Fatalf("a caller with no binding row reclaimed subscription %s", sub.SubscriptionID)
+	}
+	after, err := st.Send(ctx, store.SendParams{To: "auto-web/bugs", From: "auto-stack/reviewer"})
+	if err != nil {
+		t.Fatalf("second send: %v", err)
+	}
+	if after.Subscriptions != 2 || after.Bound != 1 {
+		t.Errorf("send reported subscriptions=%d bound=%d, want 2 and 1", after.Subscriptions, after.Bound)
+	}
+}
+
 func countEvents(t *testing.T, st *store.Store, typ string) int {
 	t.Helper()
 	var count int

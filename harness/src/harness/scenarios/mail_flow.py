@@ -32,6 +32,14 @@ WORKSPACE_B = "/workspace/project-b"
 READY_FILE = "/tmp/mail-ready.json"
 #: The alpha store path; `alpha` is in the filename, not only in the docs (G10).
 STORE_PATH = "$HOME/.auto/mail/alpha-store.db"
+#: Where the per-binding pending flags live. The hook stats one of these and
+#: opens nothing (G8), so a stray flag is a false-positive nudge for whatever
+#: runs next — which makes an empty flag directory part of "clean at stand-up".
+FLAGS_DIR = "$HOME/.auto/mail/alpha-flags"
+#: A HOME that no `auto mail init` has ever touched, used to assert the hook's
+#: no-mail path creates no store (AC-10). It is inside the container and
+#: deliberately *not* the container's own HOME, which the entrypoint initialises.
+UNINITIALISED_HOME = "/tmp/no-mail-init"
 #: Bounded-retry budget for observing an outcome. Mail is durable and local, so
 #: the loop normally succeeds on its first pass; the budget exists to absorb a
 #: slow `docker compose exec`, not to wait for eventual consistency.
@@ -91,6 +99,20 @@ class MailFlowScenario(Scenario):
                 raise RuntimeError(
                     f"{workspace}: `auto mail list` is not empty at stand-up: {listed!r}"
                 )
+
+        # The store is one half of the leftover state; the pending flags are the
+        # other. A flag outliving its mail nudges whatever binds to that pair
+        # next, and because the hook never opens the store to check (G8), an
+        # empty `auto mail list` cannot rule one out. Gate on both.
+        flags = self.run(
+            "host", f'if [ -d {FLAGS_DIR} ]; then ls -A {FLAGS_DIR}; else echo __absent__; fi'
+        )
+        if flags.stdout.strip() not in ("", "__absent__"):
+            raise RuntimeError(
+                f"host: stray pending flags under {FLAGS_DIR} at stand-up "
+                f"({flags.stdout.strip()}) — they would produce false-positive nudges; "
+                "run `auto mail reset` or tear the stack down"
+            )
 
     # ── command DSL ──────────────────────────────────────────────────────────
 
@@ -174,7 +196,7 @@ class MailFlowScenario(Scenario):
     def _hooks_dir(self):
         return SCENARIOS_ROOT / self.name / "fixtures" / "hooks"
 
-    def fire_hook(self, agent: str, agent_kind: str = "claude") -> Result:
+    def fire_hook(self, agent: str, agent_kind: str = "claude", home: str | None = None) -> Result:
         """Pipe a PostToolUse payload into `auto hooks fire` for an agent.
 
         This is the real notification path, not a simulation of one: the same
@@ -185,13 +207,19 @@ class MailFlowScenario(Scenario):
 
         A hook must never break the agent, so a non-zero exit here is a genuine
         failure of the property under test rather than a flake to retry.
+
+        `home` overrides $HOME for the fire. The container's own HOME is
+        initialised by the entrypoint, so asserting that the hook creates no
+        store on a host where `auto mail init` never ran needs a HOME where it
+        never did (AC-10).
         """
         payload = json.loads((self._hooks_dir / "post-tool-use.json").read_text())
         workspace = self.workspace(agent)
         payload["cwd"] = workspace
         payload.setdefault("tool_input", {})["file_path"] = f"{workspace}/README.md"
         b64 = base64.b64encode(json.dumps(payload).encode()).decode()
-        r = self.run("host", f"echo {b64} | base64 -d | auto hooks fire --agent {agent_kind}")
+        env = f"HOME={shlex.quote(home)} " if home else ""
+        r = self.run("host", f"echo {b64} | base64 -d | {env}auto hooks fire --agent {agent_kind}")
         if not r.ok:
             raise AssertionError(
                 f"auto hooks fire exited {r.exit_code} in {workspace} — a hook must never "

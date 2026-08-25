@@ -99,3 +99,18 @@ func parseTime(s string) (time.Time, error) {
 	}
 	return t, nil
 }
+
+// CountEvents reports how many events of one type the log holds.
+//
+// It exists for the conformance suite's log-level assertions — "a second ack
+// appends no second event" is a claim about the log, and the only way to check
+// it is to count. It is a read of the authority itself rather than of a
+// projection, which is what makes it a usable oracle (D-1).
+func (s *Store) CountEvents(ctx context.Context, eventType string) (int, error) {
+	var n int
+	if err := s.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM events WHERE type = ?`, eventType).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count %s events: %w", eventType, err)
+	}
+	return n, nil
+}

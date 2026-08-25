@@ -11,7 +11,13 @@ from __future__ import annotations
 
 import json
 
-from harness.scenarios.mail_flow import NUDGE_COMMAND, STORE_PATH, WORKSPACE_A, WORKSPACE_B
+from harness.scenarios.mail_flow import (
+    NUDGE_COMMAND,
+    STORE_PATH,
+    UNINITIALISED_HOME,
+    WORKSPACE_A,
+    WORKSPACE_B,
+)
 
 
 def test_single_host_two_registered_workspaces(mail_flow):
@@ -222,6 +228,42 @@ def test_addresses_carry_no_physical_identity(mail_flow):
     mail_flow.await_no_mail("b", sent["id"], "--address", address)
 
 
+def test_broadcast_gives_each_subscription_its_own_ack_state(mail_flow):
+    """D-7 at the real command surface: one address, two readers, two acks.
+
+    With a single reader the deliveries join looks like pointless indirection.
+    This is the case it exists for — consumer state is keyed by
+    (subscription, mail), never on the mail row (G2), so one agent acking must
+    not retire the other agent's copy.
+    """
+    address = "auto-web/broadcast"
+    first = mail_flow.subscribe("a", address)
+    second = mail_flow.subscribe("b", address)
+    assert first["subscription"] != second["subscription"], (
+        "two agents on one address must get two subscriptions, not one shared row"
+    )
+
+    # The sender is subscribed to this address too, so it is one of the two
+    # readers — a subscription is a reader of an address, not of "other people's
+    # mail", and that is what makes the fan-out observable from one workspace.
+    sent = mail_flow.send("a", address, "both of you")
+    mail_flow.await_mail("a", sent["id"], "--address", address)
+    mail_flow.await_mail("b", sent["id"], "--address", address)
+    assert sent["subscriptions"] == 2, sent
+    assert sent["bound"] == 2, sent
+
+    won = mail_flow.ack("a", sent["id"])
+    assert won["wonTransition"] is True, won
+    mail_flow.await_no_mail("a", sent["id"], "--address", address)
+
+    # Agent b's delivery is untouched, and its own ack wins its own transition.
+    assert sent["id"] in {d["id"] for d in mail_flow.list_mail("b", "--address", address)}, (
+        "agent a's ack retired agent b's delivery; ack state is per subscription"
+    )
+    also_won = mail_flow.ack("b", sent["id"])
+    assert also_won["wonTransition"] is True, also_won
+    mail_flow.await_no_mail("b", sent["id"], "--address", address)
+
 # ── the in-band nudge ────────────────────────────────────────────────────────
 #
 # The riskiest integration in the walking skeleton, and the reason it is inside
@@ -290,3 +332,30 @@ def test_hook_fire_never_breaks_the_agent(mail_flow):
     mail_flow.ack("b", sent["id"])
     mail_flow.await_no_mail("b", sent["id"], "--address", address)
     mail_flow.assert_no_nudge("b")
+
+
+def test_hook_creates_no_store_on_a_host_that_never_ran_init(mail_flow):
+    """AC-10, observable form: the no-mail path opens nothing — and creates nothing.
+
+    The Go test counts store opens over an injected opener; this is the same
+    property in the form a user could check. On a host where `auto mail init`
+    never ran there must be no `alpha-store.db` afterwards, because a hook that
+    created one would have paid an open on every tool call of every agent that
+    has never used mail — which is exactly the cost G8 forbids.
+
+    The container's own HOME is initialised by the entrypoint, so the fire runs
+    under a HOME that nothing has touched.
+    """
+    mail_flow.run("host", f"rm -rf {UNINITIALISED_HOME}")
+
+    fired = mail_flow.fire_hook("a", home=UNINITIALISED_HOME)
+    assert fired.exit_code == 0, fired.stderr
+
+    listing = mail_flow.run("host", f"ls -A {UNINITIALISED_HOME}/.auto/mail 2>/dev/null || echo __absent__")
+    assert "alpha-store.db" not in listing.stdout, (
+        f"firing a hook created a mail store under a HOME that never ran "
+        f"`auto mail init`: {listing.stdout!r}"
+    )
+
+    # And it stayed quiet: with no store there is nothing to nudge about.
+    assert fired.stdout.strip() == "", fired.stdout

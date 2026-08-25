@@ -425,6 +425,13 @@ func TestSendWithNoSubscriptionPersists(t *testing.T) {
 	if !strings.Contains(stderr, "typo") {
 		t.Errorf("stderr carries no likely-typo hint: %q", stderr)
 	}
+	// The hint is stderr-only: stdout in JSON mode is strictly parseable
+	// payload, so a caller piping it into jq never sees a diagnostic. (The
+	// address itself carries the word, so the match is on the hint's own
+	// phrasing rather than on "typo".)
+	if strings.Contains(stdout, "check the address") {
+		t.Errorf("the likely-typo hint leaked into stdout: %q", stdout)
+	}
 
 	// The J2 half: a later subscriber receives it.
 	stdout, stderr, code = runCLI(t, "subscribe", "auto-web/typo")
@@ -438,6 +445,58 @@ func TestSendWithNoSubscriptionPersists(t *testing.T) {
 	listed := decode[[]deliveryPayload](t, stdout)
 	if len(listed) != 1 || listed[0].ID != sent.ID {
 		t.Errorf("late subscriber sees %+v, want the earlier mail %s", listed, sent.ID)
+	}
+}
+
+// TestSubscribeFromNowOptsOutOfTheBacklog is D-10 at the command surface. The
+// default backfills, because an agent that subscribes late still needs what it
+// missed (that is the J2 journey); --from-now is the explicit opt-out for an
+// agent that wants a clean slate, and it must still receive everything sent
+// afterwards or it would be a mute subscription rather than a fresh one.
+func TestSubscribeFromNowOptsOutOfTheBacklog(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	sender := workspace(t, home, "sender")
+	fresh := workspace(t, home, "fresh")
+
+	t.Chdir(sender)
+	stdout, stderr, code := runCLI(t, "send", "--to", "auto-web/backlog", "--message", "before")
+	if code != 0 {
+		t.Fatalf("send exit %d, stderr: %s", code, stderr)
+	}
+	before := decode[sendPayload](t, stdout)
+
+	t.Chdir(fresh)
+	stdout, stderr, code = runCLI(t, "subscribe", "auto-web/backlog", "--from-now")
+	if code != 0 {
+		t.Fatalf("subscribe --from-now exit %d, stderr: %s", code, stderr)
+	}
+	if got := decode[subscribePayload](t, stdout).Backfilled; got != 0 {
+		t.Errorf("--from-now backfilled = %d, want 0", got)
+	}
+	stdout, _, _ = runCLI(t, "list")
+	if listed := decode[[]deliveryPayload](t, stdout); len(listed) != 0 {
+		t.Errorf("--from-now subscriber sees %+v, want nothing before its cursor", listed)
+	}
+
+	t.Chdir(sender)
+	stdout, stderr, code = runCLI(t, "send", "--to", "auto-web/backlog", "--message", "after")
+	if code != 0 {
+		t.Fatalf("second send exit %d, stderr: %s", code, stderr)
+	}
+	after := decode[sendPayload](t, stdout)
+	if after.Subscriptions != 1 || after.Bound != 1 {
+		t.Errorf("send reported subscriptions=%d bound=%d, want 1 and 1", after.Subscriptions, after.Bound)
+	}
+
+	t.Chdir(fresh)
+	stdout, _, _ = runCLI(t, "list")
+	listed := decode[[]deliveryPayload](t, stdout)
+	if len(listed) != 1 || listed[0].ID != after.ID {
+		t.Errorf("--from-now subscriber sees %+v, want only %s", listed, after.ID)
+	}
+	if len(listed) == 1 && listed[0].ID == before.ID {
+		t.Errorf("--from-now subscriber received %s, which predates its cursor", before.ID)
 	}
 }
 
