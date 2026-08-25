@@ -14,6 +14,7 @@ import (
 	"github.com/mistakenot/auto-search/internal/indexdb"
 	"github.com/mistakenot/auto-search/internal/search"
 	"github.com/mistakenot/auto-search/internal/sessionhtml"
+	"github.com/mistakenot/auto-search/internal/sessionoutline"
 	"github.com/spf13/cobra"
 )
 
@@ -35,6 +36,7 @@ func newSessionCmd() *cobra.Command {
 		newSessionListCmd(),
 		newSessionGetCmd(),
 		newSessionDescribeCmd(),
+		newSessionOutlineCmd(),
 		newSessionExportCmd(),
 	)
 	return cmd
@@ -539,4 +541,64 @@ func transcriptSummary(transcript string) string {
 		return transcript
 	}
 	return runeSafePrefix(transcript, n) + "\n...\n" + runeSafeSuffix(transcript, n)
+}
+
+// newSessionOutlineCmd emits a navigable, bodies-free map of a session: the
+// sub-agent spine, each node's timeline cut into structural Segments, and
+// per-Message leaves addressable for full-fidelity expansion. It is the cheap
+// rung between `session describe` and `session get`.
+func newSessionOutlineCmd() *cobra.Command {
+	var (
+		index     string
+		requestID string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "outline <session_id>",
+		Short: "Return a navigable, bodies-free outline of a session",
+		Long: "Return the shape of a session — sub-agent spine, structural " +
+			"segments and addressable Message ids — without any message " +
+			"bodies. Every collapsed region prints the exact command that " +
+			"expands it, so you can drill only where you need to.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			start := time.Now()
+			sessionID := args[0]
+
+			dbPath, err := config.IndexPath(index)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			db, err := indexdb.Open(dbPath)
+			if err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("open index: %w; run: auto search index", err)}
+			}
+			defer func() { _ = db.Close() }()
+
+			// Detect an unknown session before building so we never emit a
+			// partial payload (matches `session export`).
+			if _, err := indexdb.GetSessionByID(db, sessionID); err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("session not found: %s; run: auto search index", sessionID)}
+			}
+
+			outline, err := sessionoutline.Build(db, sessionID, sessionoutline.Options{})
+			if err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("build outline: %w", err)}
+			}
+
+			out := map[string]any{
+				"_meta": map[string]any{
+					"request_id": requestID,
+					"elapsed_ms": time.Since(start).Milliseconds(),
+				},
+				"outline": outline,
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(out)
+		},
+	}
+	cmd.Flags().StringVar(&index, "index", config.DefaultIndexName, "named index to query")
+	cmd.Flags().StringVar(&requestID, "request-id", "", "request identifier to echo in responses")
+	return cmd
 }
