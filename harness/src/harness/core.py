@@ -79,9 +79,20 @@ class Harness:
             )
         self._up = True
 
-    def down(self) -> None:
-        """Tear down the stack and remove volumes."""
-        self._compose("down", "-v", "--remove-orphans", check=False)
+    def down(self, rmi: str | None = None) -> None:
+        """Tear down the stack and remove volumes.
+
+        `rmi` is passed straight through to `docker compose down --rmi`: pass
+        `"local"` to also delete the images Compose built for this stack (the
+        scenario Dockerfiles set no `image:` key, so every one of them is
+        untagged and therefore `local`), or `"all"` to additionally drop pulled
+        base images shared with other stacks. `None` keeps every image, which is
+        what you want while iterating — the next `up` then reuses the layers.
+        """
+        args = ["down", "-v", "--remove-orphans"]
+        if rmi:
+            args += ["--rmi", rmi]
+        self._compose(*args, check=False)
         self._up = False
 
     def status(self) -> dict:

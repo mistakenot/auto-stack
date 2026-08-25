@@ -87,6 +87,7 @@ uv run harness skill-remote down
 uv run harness event-flow up
 uv run harness event-flow run agent-1 "cat /tmp/watch-ready.json"
 uv run harness event-flow down
+uv run harness event-flow down --keep-images   # iterating: reuse layers next up
 
 # Import in Python (probes / scripted tests share the same DSL)
 from harness.scenarios.event_flow import EventFlowScenario
@@ -124,6 +125,14 @@ Adding a scenario is purely additive — it touches no existing scenario.
 - **Real binaries.** The `auto` binary is compiled in-image from source; the first
   `up` is slow. Shared-container isolation is per-workspace / per-registered
   project, not per-container.
+- **Teardown removes the images it built.** `down()` passes `--rmi local`, so a
+  scenario's images do not survive its own test run. Each one is a full `auto`
+  build, and left behind they accumulate per scenario per branch until the host
+  fills up — which takes every agent on the box down with it, not just the tests.
+  Pass `--keep-images` (or set `HARNESS_KEEP_IMAGES=1`) while iterating on a
+  scenario so repeated cycles reuse the layers. This reclaims *images* only: the
+  builder cache is bigger and shared with every other project on the host, so it
+  is never pruned from here — `docker builder prune` is the manual lever.
 - **Missing seams are findings, not patches.** Scenarios use existing product
   seams only; if one is missing, flag it — don't change `auto-*` code here.
 

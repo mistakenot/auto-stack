@@ -10,12 +10,18 @@ than a downstream flake.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from harness.core import Harness, Result
 
 # harness/src/harness/scenarios/base.py -> parents[3] == harness/ (project root)
 SCENARIOS_ROOT = Path(__file__).resolve().parents[3] / "scenarios"
+
+#: Values that count as "set" for HARNESS_KEEP_IMAGES. An unset or empty
+#: variable, or a literal falsey word, means images are still removed — so
+#: `HARNESS_KEEP_IMAGES=0` reads the way it looks.
+_TRUTHY = {"1", "true", "yes", "on"}
 
 
 class Scenario:
@@ -48,9 +54,25 @@ class Scenario:
         self.harness.up(build=build, timeout=timeout)
         self.check_ready()
 
-    def down(self) -> None:
-        """Tear the stack down and remove volumes."""
-        self.harness.down()
+    def down(self, remove_images: bool | None = None) -> None:
+        """Tear the stack down, remove volumes, and delete the images it built.
+
+        Removing the images is the default because a scenario image is a full
+        `auto` build and the stacks are cheap to rebuild but expensive to hoard:
+        left behind, every scenario across every branch accumulates until the
+        host runs out of disk, which takes the agents down with it.
+
+        Pass `remove_images=False` — or set `HARNESS_KEEP_IMAGES=1` — while
+        iterating on a scenario, so repeated `up`/`down` cycles reuse the layers
+        instead of rebuilding from source each time.
+
+        Note this reclaims images only. The builder cache is the larger consumer
+        and is shared across every project on the host, so it is never pruned
+        from here; `docker builder prune` is the (manual, global) lever for it.
+        """
+        if remove_images is None:
+            remove_images = os.environ.get("HARNESS_KEEP_IMAGES", "").strip().lower() not in _TRUTHY
+        self.harness.down(rmi="local" if remove_images else None)
 
     def status(self) -> dict:
         """Health of every service in the stack."""
