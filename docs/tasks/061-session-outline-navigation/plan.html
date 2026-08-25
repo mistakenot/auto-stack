@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>061: session-outline-navigation</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "061",
+    "name": "session-outline-navigation",
+    "status": "planning",
+    "created": "2026-08-24"
+  }
+  </script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="061: session-outline-navigation" status="pending" pr="pending" generated="2026-08-24" next-prompt="/execute-task 061">
+    <pd-tab name="Requirements">
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Reconstructing a past session with `auto search` today forces a choice between
+two bad shapes, with no navigable middle:
+
+- **`session get`** dumps a *flat, truncated* transcript. Every long body is
+  mid-truncated (~20+ `…[truncated — run: auto search message get …]…` markers
+  in a single 171-message session), so full fidelity means firing **N separate
+  `message get` calls**. You either read a lossy wall of text or pay per-leaf.
+- **`session describe`** gives only the goal (`firstUserIntent`) plus a
+  head/tail *character-slice* of the transcript — a peek, not a map.
+- **`session export`** *does* render the real hierarchy (the subagent call
+  tree) — but as a **static HTML artifact**. It's a dead end for an agent or a
+  CLI pipeline: you can't drill it, filter it, or feed it back in.
+
+There is **no navigable, progressively-disclosable, token-cheap way to get the
+*shape* of a session and then drill only where needed.** Two use cases feel
+this most:
+
+1. **Triage / exploration** — "what happened in this 12M-token session?" without
+   loading the whole thing.
+2. **Crashed-worker recovery** — a fresh worker needs to grasp what a dead
+   worker did and *where it stopped* to pick up the thread, without ingesting the
+   entire transcript into its own context. (Cattle, not pets.)
+        </script></md>
+      </pd-section>
+
+      <pd-section id="shape" title="Shape of the output" summary="A hierarchical, collapsible tree: subagent spine → structural segments → message leaves.">
+        <pd-mermaid caption="What `session outline` returns (collapsed by default; each level expandable on demand)">
+flowchart TD
+  R["Session (root node)\nintent · workspace · counts"]
+  R --> S1["segment: setup & read CLAUDE.md\nidx 0–8 · 1 err"]
+  R --> S2["segment: implement gwq harness\nidx 9–74 · green"]
+  R --> S3["segment: implement h1u bounds\nidx 75–140 · 2 err"]
+  R --> A1["subagent: composition-tests\n(dispatched idx 60)"]
+  S3 --> L1["leaf: idx 138 Bash FAIL\nexit 1 · expandable"]
+  A1 --> S4["segment: fake vendor 429\nidx 0–30"]
+        </pd-mermaid>
+        <md><script type="text/plain">
+- **Spine** = the subagent call tree (root coordinator + nested sub-agents).
+- **Mid-tier** = deterministic *structural segments* of each node's event
+  timeline, each collapsed to a one-line summary + its message-index range.
+- **Leaves** = individual events/messages, addressable and expandable to full
+  canonical fidelity.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+1. **New command `auto search session outline <id>`** — a single explicit command
+   surface, **no alias** (per the project's "avoid ambiguous aliases" rule) — that emits a
+   **hierarchical tree** of a session:
+   - **Spine** — reuse `sessionhtml.BuildModel`'s `Node` tree (coordinator +
+     recursively-nested sub-agents) as-is; no re-derivation of the subagent
+     graph.
+   - **Mid-tier** — **deterministic structural segmentation** of each node's
+     flat `Event` timeline into labelled segments. Boundary signals (all
+     cheap, index-only):
+     - todo / bead markers (e.g. `br update`, `TodoWrite`, `br close`)
+     - bash-error transitions (non-zero exit / `is_error` flips)
+     - tool-call bursts grouped by tool kind (Read/Edit runs, Bash runs)
+     - wall-clock time gaps between messages
+     - subagent-dispatch boundaries (`Agent` tool_use)
+   - **Leaves** — each event/message is addressable and expandable to **full
+     fidelity**, falling through to the canonical `content` (same source as
+     `message get`).
+
+2. **Progressive disclosure via stateless flags** (no cursor/server state):
+   - default = collapsed top-level tree — node summaries + segment one-liners
+     only (tiny token cost).
+   - `--depth N` controls how deep the tree renders.
+   - `--expand <segment-or-node-id>` expands one region to full fidelity.
+   - every collapsed region **prints the exact command/flag to expand it**,
+     mirroring `session get`'s truncation-hint convention.
+
+3. **JSON default, `--text` tree mode.** JSON per project convention and
+   agent-first consumption; `--text` renders an indented, collapsible-looking
+   tree for humans.
+
+4. **Complement, don't replace, search/stats.** Outline is for *browse to
+   understand*; `search --interrupted` / `--min-tool-duration` /
+   `--session-id` remain the way to *teleport to a known leaf*. Document this,
+   and have segments reference those queries where natural.
+
+5. **Reuse existing infra — zero schema change.** Build on
+   `sessionhtml.BuildModel` (spine + `Event` timeline), `indexdb`
+   message/session queries, the `message get` full-fidelity path, and the
+   `roleTag` / `toolSummary` helpers. **No ETL or index schema changes for v1.**
+        </script></md>
+      </pd-section>
+      <pd-thread anchor="goals" status="resolved" priority="p2" title="session tree alias is required but unplanned and untested">
+        <pd-comment by="review">Goal 1 requires an alias (`session tree`), but the acceptance criteria, Solution file changes, and Phase 1 CLI wiring only mention `newSessionOutlineCmd()` and `auto search session outline`. Project CLI guidance also says to prefer one explicit command surface and avoid ambiguous aliases. Resolve this by either removing the alias from the goal or adding an explicit Cobra alias plus CLI coverage for `session tree`.</pd-comment>
+        <pd-comment by="author">Removed the alias — `session outline` is the single command surface, matching the "avoid ambiguous aliases" rule (root CLAUDE.md) and how the rest of the plan/ACs/phases are written. Dropped "(alias `session tree`)" from Goal 1 and the "aka session tree" phrasing; no `session tree` remains to plan or test.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="out-of-scope" title="Out of Scope (v1)">
+        <md><script type="text/plain">
+- **Semantic / LLM summaries and their cache** — the lazy on-demand summary
+  overlay is a **separate follow-up task**. v1 is deterministic structural only
+  (no LLM client dependency in auto-search).
+- **Stateful cursor / interactive TUI** — navigation is stateless expansion
+  flags only.
+- **Any ETL or index schema change.**
+- **Recovering data dropped at the ETL boundary** — thinking-block loss, skill
+  attribution, permission-mode, and the full-session-transcript escape hatch
+  are pre-existing gaps tracked in
+  `auto-search/docs/progressive-disclosure-audit.md`; they are not part of this
+  task.
+- **Orchestration/automation of crashed-worker detection & respawn** —
+  explicitly out. This task only makes the *recovery source* legible; someone
+  else passes the session ID.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="references" title="Reference code & docs">
+        <md><script type="text/plain">
+- `auto-search/internal/cli/session.go` — existing `get` / `describe` /
+  `export` commands and the `midTruncate` / `roleTag` / `toolSummary` /
+  `transcriptSummary` helpers to reuse.
+- `auto-search/internal/sessionhtml/build.go` + `model.go` — `BuildModel`
+  produces the `Node`/`Event` work-graph (the spine this command reuses).
+- `auto-search/docs/progressive-disclosure-audit.md` — the disclosure ladder
+  and its documented gaps (motivates this task; scopes what's *not* here).
+- `CLAUDE.md` — resource-subcommand pattern (noun + `list`/`describe`/`get` +
+  `search`; cheap rungs return IDs+metadata, `get` full-fidelity, truncation
+  prints the recover command). `outline` slots in as a new rung on this ladder.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions & Assumptions">
+        <md><script type="text/plain">
+The three load-bearing decisions were made with the user and are baked into
+Goals above: **JSON default + `--text`**, **semantic overlay deferred**, and
+**stateless expansion flags**.
+
+Remaining choices are design details I'm comfortable proceeding on (recorded so
+the solution stage can revisit); each carries my lean:
+
+- [ ] **Segment / leaf ID scheme.** Lean: stable deterministic segment IDs
+  `<sessionId>#s<n>` (numbered within a node) and reuse the existing
+  `<sessionId>-<idx>` for message leaves — so `--expand` accepts either, and a
+  leaf ID is directly usable with `message get`.
+- [ ] **Which boundary signals ship in v1.** Lean: all five listed
+  (todo/bead, bash-error, tool-burst, time-gap, subagent-dispatch) as cheap
+  deterministic defaults; make the set tunable later rather than gating v1 on
+  picking a subset.
+- [ ] **Default `--depth`.** Lean: `depth=1` — root node + its segment
+  summaries + immediate subagent nodes rendered as collapsed one-liners.
+- [ ] **Full-fidelity expansion source.** Lean: `--expand` (optionally
+  `--full`) reads the same canonical `content` as `message get`, so an expanded
+  leaf is byte-identical to drilling it directly — one source of truth.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+This is a **read-only, deterministic** CLI command over an existing SQLite index —
+no ETL/schema changes, no network, no LLM. That makes it cheaply and fully testable
+at the CLI-integration layer, which is where the value lives (the segmentation output
+is what agents/humans consume).
+
+**Layers:**
+- **Segmentation unit tests** (pure Go) — feed a synthetic `[]Event` / `*Node` (or the
+  built model from a fixture) into the segmenter and assert segment boundaries land on
+  the expected signals (bash-error transition, tool-burst, time-gap, todo/bead marker,
+  subagent-dispatch). Boundaries are the core logic and must be tested independently of
+  the CLI envelope.
+- **CLI integration tests** (mirror `TestSessionDescribe`, `cli_integration_test.go:705`)
+  — drive `auto search session outline <id>` through `runCLI` over the committed
+  `testdata/etl-output` fixture (`test-session-1` parent + `test-session-2` subagent);
+  assert the JSON envelope (`_meta` + tree), default collapsed shape, `--depth`,
+  `--expand`, `--text`, and error/remediation paths.
+- **Determinism guard** — same input ⇒ byte-identical output (no `Date.now`/map-order
+  nondeterminism); assert stable segment IDs across runs.
+
+**Tooling:** standard Go `testing` + the existing `runCLI` / `setupIndexedFixtures`
+harness. No new deps (per the deferred-semantic-overlay decision).
+
+**Assurance note:** the `/assurance-strategist` skill is available; for a read-only
+deterministic command the CLI-integration + unit split above is sufficient — a heavier
+assurance framework is not warranted for v1.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="Test layers">
+flowchart TD
+  U["Unit: segmenter\nboundary signals → segments"] --> I["Integration: session outline &lt;id&gt;\nJSON envelope · depth · expand · text"]
+  I --> E["Error paths\nunknown session · missing index · bad flags"]
+  I --> D["Determinism\nstable IDs · byte-identical reruns"]
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="Command exists and returns a hierarchical tree" phases="1" tests="auto-search/internal/cli/session_outline_test.go">
+          <md><script type="text/plain">
+**Given** an indexed session with sub-agents,
+**When** I run `auto search session outline <id>`,
+**Then** stdout is valid JSON with a `_meta` block and a root node whose subagent
+children nest under their dispatching events (spine = the `BuildModel` tree), using
+canonical fields `is_subagent` / `parent_session_id` / `subagent_name`.
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-1" status="resolved" priority="p2" title="Output model omits required parent_session_id">
+          <pd-comment by="review">AC-1 requires `parent_session_id`, but the proposed output shape only shows `session_id`, `is_subagent`, and `subagent_name`, and `auto-search/internal/sessionhtml/model.go:66-84` has no `ParentSessionID` field on `Node`. `indexdb.GetSessionByID` does expose it (`query_sessions.go:286-320`), so either the outline builder needs to add/source this field explicitly or AC-1 should stop requiring it.</pd-comment>
+          <pd-comment by="author">Kept the requirement, sourced it explicitly. Approach now states the builder reads `parent_session_id` from `SessionRow.ParentSessionID` via `GetSessionByID` (already called for the existence pre-check) rather than from `Node`. Added `parent_session_id` to the output-shape example on both the root and child nodes.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-2" title="Deterministic structural segmentation" phases="1,2" tests="auto-search/internal/sessionoutline/segment_test.go">
+          <md><script type="text/plain">
+**Given** a node's linear message timeline,
+**When** the outline is built,
+**Then** each node's events are grouped into labelled **segments** with a one-line
+summary and a `message_index` range, with boundaries at: non-zero bash exit / `is_error`
+transitions, tool-call bursts by tool kind, wall-clock time gaps, todo/bead markers, and
+subagent-dispatch points — and the same input yields byte-identical segments across runs.
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-2" status="resolved" priority="p1" title="Time-gap segmentation cannot be built from Node.Events as planned">
+          <pd-comment by="review">AC-2 and Phase 2 require wall-clock time-gap boundaries, but the planned segmenter input is `[]sessionhtml.Event` and that type has no timestamp field (`auto-search/internal/sessionhtml/model.go:33-62`). The timestamp exists on `indexdb.MessageRow` and is loaded by `SessionMessages` (`query_sessions.go:323-376`), but `BuildModel` drops it when constructing events. Add timestamp propagation to `sessionhtml.Event`/`BuildModel`, or have `sessionoutline` segment from the raw message rows and only reuse `BuildModel` for child placement.</pd-comment>
+          <pd-comment by="author">Adopted your first option (propagate, don't fork). Approach now adds `omitempty` `Event.Ts int64` populated from `MessageRow.Timestamp` in `BuildModel`; the time-gap boundary uses `Event.Ts` deltas against a threshold constant. Added `auto-search/internal/sessionhtml/model.go` and `build.go` to the Solution file changes and to Phase 1 (the Event extension is foundational, so it lands in the walking skeleton before Phase 2 consumes it). Phase 2's segmenter input stays `[]sessionhtml.Event`, now timestamp-bearing.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-3" title="Bodies-free by default (does not duplicate `get`)" phases="1,2,3" tests="auto-search/internal/cli/session_outline_test.go,auto-search/internal/sessionoutline/segment_test.go">
+          <md><script type="text/plain">
+**Given** the default invocation (no `--expand`),
+**When** I read the output,
+**Then** it contains segment/node summaries and Message IDs but **no full message
+bodies**, and every elided region prints the exact recover command per the two-tier
+breadcrumb contract: a collapsed **segment / subagent node** →
+`auto search session outline <id> --expand <segId>`; an individual **Message leaf** body →
+`auto search message get <id>-<index>` (for a tool event, the paired `<resultId>`).
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-3" status="resolved" priority="p2" title="Breadcrumb command contradicts the expansion design">
+          <pd-comment by="review">AC-3 says every elided region should point at `session get` or `message get`, but the Goals and Phase 3 design say collapsed outline regions expand with `auto search session outline &lt;id&gt; --expand &lt;segId&gt;`. The Solution output shape also uses the `session outline --expand` breadcrumb. Pick one exact breadcrumb contract before implementation so the CLI tests assert the same command the plan intends to emit.</pd-comment>
+          <pd-comment by="author">Fixed the contradiction by defining ONE contract with two tiers (not two competing conventions): collapsed **segments/subagent nodes** use `session outline --expand <segId>` (outline navigation); individual **Message leaves** use `message get <id>-<index>` (the canonical full-fidelity rung). `session get` is dropped from the breadcrumb — it's the wrong rung for a leaf. AC-3 text, the Approach ("Two-tier breadcrumb contract"), and the output-shape example are now aligned, and CLI tests assert these exact strings.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-4" title="Stateless progressive disclosure via flags" phases="1,3" tests="auto-search/internal/cli/session_outline_test.go">
+          <md><script type="text/plain">
+**Given** the same session,
+**When** I run with `--depth N` or `--expand <segment-or-message-id>`,
+**Then** `--depth` bounds how deep the tree renders (default depth=1: root + segment
+one-liners + immediate subagent nodes collapsed), and `--expand` expands exactly the
+named region to full fidelity (via `GetMessageByID`, byte-identical to `message get`),
+with no persisted cursor/session state between invocations.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="JSON default, --text tree mode" phases="1,4" tests="auto-search/internal/cli/session_outline_test.go">
+          <md><script type="text/plain">
+**Given** the command,
+**When** I run it without flags vs. with `--text`,
+**Then** default output is JSON on stdout (diagnostics to stderr); `--text` renders an
+indented tree; `--request-id` is echoed in `_meta`; `--since/--after/--before` are absent
+(single-session command) or documented if added.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Error paths with remediation" phases="1,3" tests="auto-search/internal/cli/session_outline_test.go">
+          <md><script type="text/plain">
+**Given** a bad invocation,
+**When** the session is unknown / the index is missing / a flag is invalid,
+**Then** the command exits non-zero with a stderr message carrying a concrete
+remediation hint (`run: auto search index`, "session not found", or a Cobra usage error),
+and emits no partial JSON payload on stdout.
+          </script></md>
+        </pd-ac>
+
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps & Risks">
+        <md><script type="text/plain">
+- **True branch structure is unrecoverable** — ETL drops `uuid`/`parentUuid`, so the
+  outline reflects linear order + subagent nesting only. Tests assert that, not real
+  conversation branching. (Tracked in `progressive-disclosure-audit.md`.)
+- **Segment quality is heuristic** — deterministic boundaries may not always match
+  semantic "phases". Acceptable for v1 (semantic overlay is the deferred follow-up);
+  tests assert boundary *placement on signals*, not semantic correctness.
+- **Error-count semantics divergence** — `sessionhtml Counts.Error` vs `ListSessions
+  error_count` differ; v1 must pick one and a test pins the chosen definition.
+- **Thinking/skill/permission-mode losses** are pre-existing ETL gaps, out of scope; not
+  covered here.
+- **No live-data freshness test** — recovery use case assumes the caller ran
+  `auto etl run && auto search index` first; that ordering is documented, not enforced.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+A new **read-only, deterministic** subcommand `auto search session outline <id>` that
+adds a cheap, bodies-free rung **between `describe` and `get`** on the disclosure ladder.
+
+**Three layers, reusing existing infra:**
+
+1. **Spine (reuse).** Call `sessionhtml.BuildModel(db, id, Options{Light:true})` to get the
+   coordinator + nested-subagent `*Node` tree with each node's ordered `[]Event`. This
+   already solves subagent correlation/nesting — no re-derivation. Root/child
+   `parent_session_id` is sourced from `SessionRow.ParentSessionID` (`GetSessionByID`,
+   which the builder already calls) — `Node` doesn't carry it.
+
+   **Prerequisite (minimal additive change to sessionhtml).** `Event` today carries no
+   timestamp and, for tool events, only the assistant tool-**use** message id — not the
+   paired tool-**result** id (BuildModel consumes the result row at `build.go:158-173`).
+   Both are needed here. So extend `Event` with two `omitempty` fields — `Ts int64`
+   (from `MessageRow.Timestamp`) and `ResultMID string` (the paired result row's
+   `MessageID`) — populated in `BuildModel`. Additive + `omitempty` ⇒ `session export`
+   is unaffected. This unblocks time-gap segmentation and correct leaf expansion without
+   forking to raw-row reads.
+
+2. **Mid-tier (new): a pure segmenter.** A new package `internal/sessionoutline/` walks each
+   node's `[]Event` and groups them into **Segments** at deterministic boundaries:
+   - non-zero `Exit` / `IsError` transition (error enters/leaves)
+   - tool-call **burst** change (run of same tool kind: Read/Edit/Bash…)
+   - wall-clock **time gap** between consecutive events (threshold constant, using the new
+     `Event.Ts`)
+   - **todo/bead** marker (Bash `br `/`bd ` update|close, `TodoWrite`)
+   - **subagent dispatch** (an `Agent` event always starts/ends a segment; its `Child`
+     becomes a child node in the outline)
+   Each Segment gets a stable id `<sessionId>#sN`, a one-line label (derived from the
+   dominant event / boundary reason), the `message_index` range, and rolled-up counts.
+
+3. **Leaves (reuse).** A Segment lists its Message IDs. For a tool event it carries **both**
+   `Event.MID` (tool_use / input) and `Event.ResultMID` (tool_result / output). `--expand`
+   on a tool leaf drops to the **result** row via `indexdb.GetMessageByID(ResultMID)` — the
+   exact content `message get <resultId>` prints; for prose events it expands `MID`. Either
+   way the expanded body is byte-identical to `message get`, so full fidelity is preserved.
+
+**Two-tier breadcrumb contract (the one contract, used everywhere).**
+   - A collapsed **segment or subagent node** prints its outline-navigation command:
+     `auto search session outline <id> --expand <segId>` (or `--depth N`).
+   - An individual **Message leaf** body points at the canonical rung:
+     `auto search message get <id>-<index>` (for a tool event, the `<resultId>`).
+   CLI tests assert exactly these strings.
+
+**Progressive disclosure = stateless flags.** `--depth N` (default 1) bounds tree depth;
+`--expand <id>` expands one region; no persisted state. Output is JSON by default
+(`_meta` + `outline` root), `--text` renders an indented tree. The command follows the
+standard DB-open preamble, `--index`/`--request-id` flags, `ExitError` remediation, and
+pre-checks the session exists (like `session export`) before building.
+
+**No ETL/index schema change. No new runtime deps.** Semantic summaries and any cache are
+explicitly a separate follow-up.
+        </script></md>
+      </pd-section>
+      <pd-thread anchor="approach" status="resolved" priority="p1" title="Tool leaves lose the result Message ID needed for full fidelity">
+        <pd-comment by="review">The proposed leaf path lists Message IDs from `Event.MID` and expands them through `GetMessageByID`, but `BuildModel` skips raw `role == "tool"` result rows and pairs them into the assistant tool-use event (`build.go:56-64`, `build.go:127-130`). For regular tools, `Event.MID` is set to the assistant tool-use message ID while output/error/duration come from the paired result row (`build.go:158-229`); the paired result `MessageID` is not carried. Since `message get` prints only `msg.Content` (`auto-search/internal/cli/message.go:43-49`), expanding a Bash event's `Event.MID` would return the empty tool-use content, not the full tool result. The outline model needs to retain both tool-use and tool-result Message IDs, or build leaves from `SessionMessages` instead of only `Node.Events`.</pd-comment>
+        <pd-comment by="author">Correct — confirmed against `build.go:158-173` (the result row's `MessageID` is dropped). Fixed at the source: the Approach now adds an `omitempty` `Event.ResultMID` field populated in `BuildModel` from the paired result row (the row is already in scope as `res`). A tool leaf now carries both `MID` (tool_use/input) and `ResultMID` (tool_result/output), and `--expand` on a tool event resolves `GetMessageByID(ResultMID)` so the full output is returned, byte-identical to `message get <resultId>`. This keeps the BuildModel-reuse decision (D-1) rather than forking to raw-row leaves. D-1 consequences and the output-shape example were updated to show both ids.</pd-comment>
+      </pd-thread>
+
+      <pd-section id="output-shape" title="Output model (end state)">
+        <pd-code lang="json" caption="session outline <id> — default (depth=1, collapsed)">
+{
+  "_meta": { "request_id": "", "elapsed_ms": 3 },
+  "outline": {
+    "session_id": "088dfe9d-…",
+    "parent_session_id": "",
+    "is_subagent": false,
+    "intent": "You are lane 2 of three parallel workers…",
+    "workspace": "/home/…/lane-composition-harness",
+    "counts": { "bash": 130, "file": 2, "tool": 66, "agent": 1, "error": 7 },
+    "segments": [
+      { "id": "088dfe9d-…#s0", "label": "setup · read CLAUDE.md + br show",
+        "reason": "start", "index_range": [0, 8], "counts": {"error": 1},
+        "message_ids": ["088dfe9d-…-0", "…"],
+        "expand": "auto search session outline 088dfe9d-… --expand 088dfe9d-…#s0" },
+      { "id": "088dfe9d-…#s2", "label": "Bash FAIL — go test ./cmd/gtm/…",
+        "reason": "bash_error", "index_range": [138, 140], "counts": {"error": 2},
+        "leaves": [
+          { "kind": "tool", "tool": "Bash", "mid": "088dfe9d-…-138",
+            "result_mid": "088dfe9d-…-139",
+            "get": "auto search message get 088dfe9d-…-139" }
+        ],
+        "expand": "auto search session outline 088dfe9d-… --expand 088dfe9d-…#s2" }
+    ],
+    "children": [
+      { "session_id": "…", "parent_session_id": "088dfe9d-…", "is_subagent": true,
+        "subagent_name": "composition-tests", "dispatched_at_index": 60, "collapsed": true,
+        "expand": "auto search session outline … --depth 2" }
+    ]
+  }
+}
+        </pd-code>
+        <md><script type="text/plain">
+Each leaf carries `mid` (tool_use / prose) and, for a tool event, `result_mid` (the
+tool_result row) plus the exact `message get` breadcrumb pointing at whichever id holds the
+body (`result_mid` for tools). `--expand <segId>` re-emits that segment with a `messages`
+array of full-fidelity bodies (from `GetMessageByID` on those ids) instead of the leaf
+stubs. `--text` renders the same tree indented. Field names use canonical terms
+(`session_id`, `parent_session_id`, `is_subagent`, `subagent_name`); per-message leaves are
+**Messages** (`<id>-<index>`), never "nodes".
+        </script></md>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-search/internal/sessionhtml/model.go" change="edit">Add two `omitempty` fields to `Event`: `Ts int64` (message timestamp) and `ResultMID string` (paired tool-result message id) — needed for time-gap segmentation and full-fidelity tool-leaf expansion.</pd-file>
+          <pd-file path="auto-search/internal/sessionhtml/build.go" change="edit">Populate `Event.Ts` from `MessageRow.Timestamp` and `Event.ResultMID` from the paired result row (already in scope as `res`) in `BuildModel`. Additive — `session export` output unchanged.</pd-file>
+          <pd-file path="auto-search/internal/sessionoutline/segment.go" change="add">Pure segmenter: walk a *Node's Events, cut Segments at the five deterministic boundary signals (time-gap uses `Event.Ts`), assign stable `#sN` ids + labels + index ranges + counts.</pd-file>
+          <pd-file path="auto-search/internal/sessionoutline/outline.go" change="add">Build the Outline model (root + segments + recursive children) from `sessionhtml.BuildModel`; apply `--depth` collapsing; resolve `--expand` target to full-fidelity Messages via `indexdb.GetMessageByID`.</pd-file>
+          <pd-file path="auto-search/internal/sessionoutline/render_text.go" change="add">`--text` indented-tree renderer (stdout payload; no shared helper exists).</pd-file>
+          <pd-file path="auto-search/internal/sessionoutline/segment_test.go" change="add">Unit tests: each boundary signal, stable ids, determinism (byte-identical reruns), error-count definition pinned.</pd-file>
+          <pd-file path="auto-search/internal/cli/session.go" change="edit">Add `newSessionOutlineCmd()` and register it in the `newSessionCmd` AddCommand block (line ~34); flags: `--depth`, `--expand`, `--text`, `--index`, `--request-id`; DB-open preamble + session pre-check + ExitError remediation.</pd-file>
+          <pd-file path="auto-search/internal/cli/session_outline_test.go" change="add">CLI integration tests over testdata fixtures (mirror TestSessionDescribe + session_export error paths): envelope, depth, expand, text, unknown-session, missing-index.</pd-file>
+          <pd-file path="auto-search/internal/cli/quickstart.go" change="edit">Add a `session outline` section to the quickstart guide (between describe and get on the ladder).</pd-file>
+          <pd-file path="auto-search/internal/cli/cochange_integration_test.go" change="edit">Extend quickstart content assertions to expect the new outline section.</pd-file>
+          <pd-file path="auto-search/docs/progressive-disclosure-audit.md" change="edit">Add the `outline` rung to the disclosure-ladder table (§2).</pd-file>
+          <pd-file path="docs/concepts/UBIQUITOUS_LANGUAGE.md" change="edit">Add a glossary note defining the novel terms Outline and Segment (flagging them per the ubiquitous-language rule).</pd-file>
+        </pd-files>
+        <md><script type="text/plain">
+`auto-search/CLAUDE.md` Documentation-Index is autodoc-generated — regenerate with
+`auto doc fix` (not a hand edit), so it's not listed as a manual change.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="key-decisions" title="Key design decisions">
+
+        <pd-decision id="D-1" title="Reuse sessionhtml.BuildModel for the spine" status="accepted" by="author" summary="Build on the existing work-graph model rather than re-reading rows into a new tree.">
+          <md><script type="text/plain">
+**Rationale:** BuildModel already solves subagent correlation + nesting and is a pure,
+render-independent builder (context.md). Requirements mandate reusing it.
+**Alternative:** read `SessionMessages` + `ListSessions(ParentSessionID)` directly into a
+fresh lightweight tree — more control over summary widths, avoids loading bodies, but
+re-implements the subagent-claim logic (prompt-prefix matching in `build.go:71-94`).
+**Consequences:** we inherit BuildModel's fixed, unexported summary helpers and it loads
+message content we don't strictly need (mitigated by `Light:true`); acceptable for a
+single-session command. Segment labels are re-derived by the segmenter, not from the
+unexported `toolSummary`. **Codex review found `Event` is lossy for two of our needs**
+(no timestamp; drops the paired tool-**result** message id). Rather than fork to raw-row
+reads, we make a **minimal additive extension** to `Event` — `Ts` and `ResultMID`,
+`omitempty`, populated in `BuildModel` — which keeps the reuse decision intact and leaves
+`session export` unaffected. `parent_session_id` (not on `Node`) is sourced from
+`SessionRow` via the `GetSessionByID` pre-check.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-2" title="Error-count definition = is_error OR bash_exit_code != 0" status="accepted" by="author" summary="Adopt sessionhtml's Counts.Error semantics, not ListSessions' bash-only count.">
+          <md><script type="text/plain">
+**Rationale:** we reuse the BuildModel node whose `Counts.Error` already uses
+`is_error || bash_exit_code != 0` (`build.go:212`) — the more complete definition (catches
+non-Bash tool errors). Using it keeps outline counts consistent with `session export`.
+**Consequence:** outline `error` counts may exceed `session list`'s `error_count`
+(bash-only); a test pins this and the divergence is documented.
+          </script></md>
+        </pd-decision>
+
+        <pd-decision id="D-3" title="Segment IDs `<sessionId>#s<n>`; leaves reuse `<sessionId>-<index>`" status="accepted" by="author" summary="Stable, composable IDs; #s avoids colliding with the message-id `-<index>` form.">
+          <md><script type="text/plain">
+**Rationale:** `#s<n>` (n = ordinal within the node) is deterministic and visually
+distinct from message ids (`-<index>`), so `--expand` can accept either unambiguously.
+Message leaves keep the existing ETL id so they're directly usable with `message get`.
+**Alternative:** index-range ids (`s138-140`) — rejected: fragile if ranges shift, less
+stable than an ordinal.
+          </script></md>
+        </pd-decision>
+
+        <pd-decisions></pd-decisions>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Add `--outline` flag to `session get`** instead of a new verb — rejected: `get` is the
+  full-fidelity rung; overloading it muddies the ladder contract. A distinct verb keeps
+  "cheap structural" vs "full bodies" clean.
+- **Emit HTML like `session export`** — rejected: the whole point is a *navigable* CLI/agent
+  surface, not a dead-end artifact (Requirements).
+- **Semantic/LLM segment summaries in v1** — deferred: pulls an LLM dependency + cache into
+  auto-search; structural boundaries prove the spine first (Out of Scope).
+- **Stateful cursor/TUI navigation** — rejected: stateless flags compose better for agents
+  and shells; a cursor adds server/session state for little gain (Requirements).
+- **New dedicated index columns for segments** — rejected: segmentation is cheap to compute
+  on read from existing rows; no schema change needed for v1.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Build the command as a vertical slice: Phase 1 stands up the whole path end-to-end
+(CLI → `BuildModel` reuse → trivial single-segment → JSON → passing integration test),
+then later phases thicken it with real segmentation, disclosure flags, and text/docs —
+each on top of a command that already runs.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-mermaid caption="Phase dependency DAG">
+flowchart LR
+  P1["P1 · Walking skeleton\nCLI + BuildModel + trivial segment + JSON"] --> P2["P2 · Real segmenter\n5 boundary signals + unit tests"]
+  P1 --> P3["P3 · Disclosure flags\n--depth / --expand + breadcrumbs"]
+  P2 --> P3
+  P2 --> P4["P4 · Text mode + docs\n--text · quickstart · ladder · glossary"]
+  P3 --> P4
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="Walking skeleton (end-to-end)" files="auto-search/internal/sessionhtml/model.go,auto-search/internal/sessionhtml/build.go,auto-search/internal/sessionoutline/outline.go,auto-search/internal/cli/session.go,auto-search/internal/cli/session_outline_test.go" status="todo">
+          <md><script type="text/plain">
+Thinnest path through every layer, one integration test green.
+
+1. **Extend the shared model (foundational).** Add `omitempty` `Ts int64` and
+   `ResultMID string` to `sessionhtml.Event` (`model.go`) and populate them in `BuildModel`
+   (`build.go`): `Ts` from `MessageRow.Timestamp`; `ResultMID` from the paired result row
+   (already in scope as `res`). Additive — confirm `session export` tests still pass.
+   **Verify:** `go build ./... && go test ./internal/sessionhtml/...`.
+2. Create `internal/sessionoutline/outline.go`: define `Outline`, `OutlineNode`,
+   `Segment`, `Leaf` structs (json tags per the Solution output-shape, incl.
+   `parent_session_id`, and per-leaf `mid`/`result_mid`/`get`). Add
+   `Build(db, sessionID string, opts Options) (*Outline, error)` that calls
+   `sessionhtml.BuildModel(db, id, sessionhtml.Options{Light:true})`, sources
+   `parent_session_id` from the root `SessionRow` (`GetSessionByID`), and maps the
+   `*Node` tree → `OutlineNode` tree with a **trivial single segment per node**
+   (whole `index_range`, `reason:"all"`, leaves from `Event.MID`/`ResultMID`) and rolled-up
+   `Counts`. Recurse `Event.Child` → `OutlineNode.Children`.
+3. Wire CLI: add `newSessionOutlineCmd()` to `internal/cli/session.go` and register it
+   in the `newSessionCmd` AddCommand block (~line 34). Standard preamble
+   (`config.IndexPath`→`indexdb.Open`, deferred close, `"…; run: auto search index"`
+   error), `GetSessionByID` pre-check for unknown id (mirror `session export`), flags
+   `--index`/`--request-id`, emit `map[string]any{"_meta":…, "outline":…}` via
+   `json.NewEncoder`+`SetIndent`. **Verify:** `cd auto-search && go build ./...`.
+4. Add `internal/cli/session_outline_test.go`: `setupIndexedFixtures(t)`, then
+   `runCLI(t,"session","outline","test-session-1","--request-id","o-1")`; assert
+   `code==0`, `decodeJSON` has `_meta.request_id=="o-1"`, `outline.session_id`,
+   `outline.parent_session_id` present, and a `children` entry for `test-session-2` (the
+   subagent). **Verify:** `cd auto-search && go test ./internal/cli/... ./internal/sessionoutline/...`.
+5. **Verify (phase gate):** `go build ./...`, the tests above pass,
+   `golangci-lint run ./...` clean. **Commit** `feat(061): session outline walking skeleton`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Deterministic segmenter" files="auto-search/internal/sessionoutline/segment.go,auto-search/internal/sessionoutline/segment_test.go" status="todo" depends-on="1">
+          <md><script type="text/plain">
+Replace the trivial segment with real boundary detection (AC-2, AC-3 counts).
+
+1. Create `internal/sessionoutline/segment.go`: `Segment(events []sessionhtml.Event)
+   []Segment` cutting a new segment at each boundary signal — (a) `Exit!=0 || IsError`
+   transition, (b) tool-kind burst change, (c) time gap &gt; threshold const
+   (`Event.Ts` deltas, added in Phase 1), (d) todo/bead marker (Bash `br `/`bd `
+   update|close, `TodoWrite`), (e) `Agent` dispatch (always its own boundary). Assign
+   stable ids `#sN`, a `label` (dominant event / boundary reason), `index_range`,
+   `reason`, and `counts` using the **D-2 error definition** (`is_error ||
+   bash_exit_code!=0`). Point `outline.go` `Build` at this instead of the trivial segment.
+2. Add `internal/sessionoutline/segment_test.go` driven by **synthetic in-memory
+   `[]sessionhtml.Event`** (no index — avoids `verify-fixtures` ripple): one test per
+   signal asserting boundary placement + `reason`; a determinism test (same input ⇒
+   `reflect.DeepEqual` / byte-identical JSON across two runs); a test pinning the
+   error-count definition. **Verify:** `go test ./internal/sessionoutline/...`.
+3. **Verify (phase gate):** `go build ./...`, all sessionoutline + cli tests pass, lint
+   clean. **Commit** `feat(061): deterministic structural segmenter`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Progressive-disclosure flags" files="auto-search/internal/sessionoutline/outline.go,auto-search/internal/cli/session.go,auto-search/internal/cli/session_outline_test.go" status="todo" depends-on="1,2">
+          <md><script type="text/plain">
+Stateless `--depth` and `--expand` (AC-3 breadcrumb, AC-4, AC-6).
+
+1. In `outline.go`: apply `--depth N` (default 1) — beyond depth, child nodes render as
+   collapsed one-liners with an `expand` command string; each collapsed segment carries
+   its `expand` breadcrumb (`auto search session outline <id> --expand <segId>`) mirroring
+   `midTruncate`'s convention. Implement `--expand <id>`: if it matches a `#s<n>` segment,
+   re-emit that segment with a `messages` array of **full bodies via
+   `indexdb.GetMessageByID`** (byte-identical to `message get`); if it matches a message id
+   (`<id>-<idx>`), expand that single Message. Bodies-free otherwise (AC-3).
+2. Add flags `--depth` (int, default 1) and `--expand` (string) to
+   `newSessionOutlineCmd`; fail-fast on a bad `--expand` id via `ExitError` with a
+   remediation hint.
+3. Extend `session_outline_test.go`: default output has **no full bodies** but has
+   `message_ids` + `expand` strings; `--depth 2` reveals subagent segments; `--expand
+   <segId>` returns full `messages`; unknown session → non-zero + "session not found";
+   missing index → "auto search index" hint; bad `--expand` → non-zero. **Verify:**
+   `go test ./internal/cli/...`.
+4. **Verify (phase gate):** build, tests, lint clean. **Commit** `feat(061): stateless
+   depth/expand disclosure`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="Text mode + docs" files="auto-search/internal/sessionoutline/render_text.go,auto-search/internal/cli/quickstart.go,auto-search/internal/cli/cochange_integration_test.go,auto-search/docs/progressive-disclosure-audit.md,docs/concepts/UBIQUITOUS_LANGUAGE.md" status="todo" depends-on="1,2,3">
+          <md><script type="text/plain">
+Human surface + docs (AC-5 text).
+
+1. Create `internal/sessionoutline/render_text.go`: `RenderText(w io.Writer, o *Outline)`
+   — indented tree (node → segments → message-id/expand hints). Add `--text` bool to the
+   command dispatching to it; JSON stays default, diagnostics to stderr.
+2. `internal/cli/quickstart.go`: add a `session outline` section positioned between
+   `describe` and `get` on the ladder, with a recovery-use-case example.
+3. `internal/cli/cochange_integration_test.go`: add an assertion (mirror
+   `TestQuickstartCoChangeSection`) that the quickstart mentions `session outline`.
+4. `auto-search/docs/progressive-disclosure-audit.md`: add the `outline` rung row to the
+   ladder table (§2). `docs/concepts/UBIQUITOUS_LANGUAGE.md`: add a note defining **Outline**
+   and **Segment** (novel terms) and reaffirming Message/Subagent field usage.
+5. Run `auto doc fix` to regenerate the autodoc index (do not hand-edit the CLAUDE.md block).
+6. **Verify (phase gate):** build, `go test ./...` (module), lint clean; from repo root
+   `make check`. **Commit** `feat(061): outline text mode + docs`. Open PR.
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **P1** → AC-1 (tree exists), AC-5 (JSON default) baseline.
+- **P2** → AC-2 (segmentation + determinism), AC-3 counts.
+- **P3** → AC-3 (bodies-free + breadcrumb), AC-4 (depth/expand), AC-6 (error paths).
+- **P4** → AC-5 (`--text`) complete + docs.
+- All six ACs pass; `make check` and `make test` green from repo root.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+  </pd-doc>
+</body>
+</html>
