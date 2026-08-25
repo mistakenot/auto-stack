@@ -27,7 +27,7 @@ ALLOY_MODELS := \
 # Modules whose concurrency code must be exercised under the race detector.
 # Kept separate from `test` because -race requires CGO_ENABLED=1 + a C compiler,
 # which cgo-less local envs may lack; CI (ubuntu-latest, has gcc) runs it.
-RACE_PROJECTS := auto-shared auto-watch
+RACE_PROJECTS := auto-shared auto-watch auto-mail
 
 # Platform defaults (overridable for cross-compilation)
 GOOS   ?= $(shell go env GOOS)

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mistakenot/auto-mail/internal/store"
@@ -615,4 +617,292 @@ func countEvents(t *testing.T, st *store.Store, typ string) int {
 		t.Fatalf("count %s events: %v", typ, err)
 	}
 	return count
+}
+
+// rowSnapshot is every column of every row of one table, rendered as text and
+// ordered deterministically. It is the shape an immutability assertion needs:
+// "the row did not change" is a claim about every column, and naming them
+// individually would let a new column silently escape the check.
+func rowSnapshot(t *testing.T, st *store.Store, table, orderBy string) []string {
+	t.Helper()
+	rows, err := st.QueryContext(context.Background(),
+		fmt.Sprintf(`SELECT * FROM %s ORDER BY %s`, table, orderBy))
+	if err != nil {
+		t.Fatalf("snapshot %s: %v", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("columns of %s: %v", table, err)
+	}
+	var out []string
+	for rows.Next() {
+		cells := make([]any, len(columns))
+		for i := range cells {
+			cells[i] = new(sql.NullString)
+		}
+		if err := rows.Scan(cells...); err != nil {
+			t.Fatalf("scan %s: %v", table, err)
+		}
+		var b strings.Builder
+		for i, name := range columns {
+			cell := cells[i].(*sql.NullString)
+			value := "<null>"
+			if cell.Valid {
+				value = cell.String
+			}
+			fmt.Fprintf(&b, "%s=%q ", name, value)
+		}
+		out = append(out, b.String())
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read %s: %v", table, err)
+	}
+	return out
+}
+
+// TestListAndAckLeaveMailAndEventsByteIdentical is AC-3 in full: a whole
+// list + ack cycle must leave every `mail` row and every previously-appended
+// `events` row byte identical, and must record its state change as a **new**
+// appended event rather than a rewrite of an old one (G1).
+//
+// The rows are compared column by column rather than by a spot check, so a
+// column added later is covered without anybody remembering to add it here.
+func TestListAndAckLeaveMailAndEventsByteIdentical(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	c := caller("/workspace/b")
+
+	if _, err := st.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/bugs", Caller: c}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	sent, err := st.Send(ctx, store.SendParams{To: "auto-web/bugs", From: "auto-stack/reviewer"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	mailBefore := rowSnapshot(t, st, "mail", "id")
+	eventsBefore := rowSnapshot(t, st, "events", "seq")
+	if len(mailBefore) != 1 {
+		t.Fatalf("mail rows before = %d, want 1", len(mailBefore))
+	}
+	if len(eventsBefore) != 2 {
+		t.Fatalf("events before = %d, want 2 (subscribed + sent)", len(eventsBefore))
+	}
+
+	if _, err := st.List(ctx, store.ListParams{Caller: c}); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	acked, err := st.Ack(ctx, store.AckParams{MailID: sent.ID, Caller: c})
+	if err != nil {
+		t.Fatalf("ack: %v", err)
+	}
+	if !acked.Won {
+		t.Fatal("the only ack did not win the transition")
+	}
+
+	if got := rowSnapshot(t, st, "mail", "id"); !slices.Equal(got, mailBefore) {
+		t.Errorf("the mail row changed across list+ack:\nbefore %v\nafter  %v", mailBefore, got)
+	}
+	eventsAfter := rowSnapshot(t, st, "events", "seq")
+	if len(eventsAfter) < len(eventsBefore) {
+		t.Fatalf("events shrank from %d to %d; the log is append-only", len(eventsBefore), len(eventsAfter))
+	}
+	if !slices.Equal(eventsAfter[:len(eventsBefore)], eventsBefore) {
+		t.Errorf("an existing event row changed across list+ack:\nbefore %v\nafter  %v", eventsBefore, eventsAfter[:len(eventsBefore)])
+	}
+
+	// The state change is a new row, and it is the ack.
+	if got := countEvents(t, st, store.TypeAcked); got != 1 {
+		t.Errorf("%s events = %d, want exactly 1 appended by the ack", store.TypeAcked, got)
+	}
+	appended := eventsAfter[len(eventsBefore):]
+	if len(appended) == 0 {
+		t.Fatal("list+ack appended no events at all; the ack must be recorded as a new event")
+	}
+	if !strings.Contains(appended[len(appended)-1], store.TypeAcked) {
+		t.Errorf("the last appended event is %q, want an %s row", appended[len(appended)-1], store.TypeAcked)
+	}
+}
+
+// TestAckTransitionsExactlyOnceUnderConcurrency is AC-6's concurrency half (G13): sixteen callers race for
+// one delivery, exactly one wins the transition, exactly one alpha.mail.acked
+// event exists afterwards, and nobody sees an error — which at the seam is
+// what `acked: true` is, since AckResult sets it whenever Ack returns nil.
+//
+// Run under `-race` (auto-mail is in the Makefile's RACE_PROJECTS), so this
+// asserts the Go-level discipline as well as the SQL-level one.
+func TestAckTransitionsExactlyOnceUnderConcurrency(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	c := caller("/workspace/b")
+
+	sub, err := st.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/bugs", Caller: c})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	sent, err := st.Send(ctx, store.SendParams{To: "auto-web/bugs", From: "auto-stack/reviewer"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	const racers = 16
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		wins     int
+		failures []error
+	)
+	start := make(chan struct{})
+	for range racers {
+		wg.Go(func() {
+			<-start
+			out, err := st.Ack(ctx, store.AckParams{MailID: sent.ID, Caller: c})
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				failures = append(failures, err)
+				return
+			}
+			if out.Won {
+				wins++
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	if len(failures) > 0 {
+		t.Fatalf("%d of %d acks failed; every caller must see the delivery acked: %v",
+			len(failures), racers, failures)
+	}
+	if wins != 1 {
+		t.Errorf("%d of %d acks won the transition, want exactly 1", wins, racers)
+	}
+	if got := countEvents(t, st, store.TypeAcked); got != 1 {
+		t.Errorf("%s events = %d after %d concurrent acks, want exactly 1", store.TypeAcked, got, racers)
+	}
+
+	var ackedAt, ackedBy sql.NullString
+	if err := st.QueryRowContext(ctx,
+		`SELECT acked_at, acked_by FROM deliveries WHERE subscription_id = ? AND mail_id = ?`,
+		sub.SubscriptionID, sent.ID).Scan(&ackedAt, &ackedBy); err != nil {
+		t.Fatalf("read the delivery back: %v", err)
+	}
+	if !ackedAt.Valid || ackedBy.String != sub.SubscriptionID {
+		t.Errorf("delivery acked_at=%v acked_by=%v, want it acked by %s", ackedAt, ackedBy, sub.SubscriptionID)
+	}
+}
+
+// TestConcurrentWritersLoseNoMail is the other half of D-11's concurrency
+// concern: several *separate store handles* on one file — what several
+// processes are, since each `auto mail send` opens its own — writing to one
+// address at once. WAL plus busy_timeout plus one immediate transaction per
+// write is the discipline being asserted, so the handles are deliberately not
+// shared: a single *sql.DB would serialise this in Go and prove nothing about
+// SQLite's locking.
+func TestConcurrentWritersLoseNoMail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mail", "alpha-store.db")
+	ctx := context.Background()
+
+	seed, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := seed.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	reader := caller("/workspace/b")
+	sub, err := seed.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/bugs", Caller: reader})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close the seed handle: %v", err)
+	}
+
+	const writers = 8
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		ids      []string
+		failures []error
+	)
+	start := make(chan struct{})
+	for i := range writers {
+		wg.Go(func() {
+			st, err := store.Open(path)
+			if err != nil {
+				mu.Lock()
+				failures = append(failures, err)
+				mu.Unlock()
+				return
+			}
+			defer func() { _ = st.Close() }()
+			<-start
+			out, err := st.Send(ctx, store.SendParams{
+				To:   "auto-web/bugs",
+				From: "auto-stack/reviewer",
+				Body: map[string]any{"message": fmt.Sprintf("writer %d", i)},
+			})
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				failures = append(failures, err)
+				return
+			}
+			ids = append(ids, out.ID)
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	if len(failures) > 0 {
+		t.Fatalf("%d of %d concurrent sends failed: %v", len(failures), writers, failures)
+	}
+	if len(ids) != writers {
+		t.Fatalf("%d ids returned, want %d", len(ids), writers)
+	}
+
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	// Nothing was lost: one event, one mail row and (after a list materialises
+	// them) one delivery row per send.
+	if got := countEvents(t, st, store.TypeSent); got != writers {
+		t.Errorf("%s events = %d, want %d — a concurrent writer's event was lost",
+			store.TypeSent, got, writers)
+	}
+	listed, err := st.List(ctx, store.ListParams{Caller: reader})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listed) != writers {
+		t.Fatalf("list returned %d deliveries, want %d", len(listed), writers)
+	}
+	seen := map[string]bool{}
+	for _, item := range listed {
+		seen[item.ID] = true
+	}
+	for _, id := range ids {
+		if !seen[id] {
+			t.Errorf("mail %s was sent but never listed", id)
+		}
+	}
+
+	// And the projection agrees with the log: one delivery row per mail, for
+	// the one subscription, none of them acked.
+	var deliveries int
+	if err := st.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM deliveries WHERE subscription_id = ? AND acked_at IS NULL`,
+		sub.SubscriptionID).Scan(&deliveries); err != nil {
+		t.Fatalf("count deliveries: %v", err)
+	}
+	if deliveries != writers {
+		t.Errorf("unacked deliveries = %d, want %d", deliveries, writers)
+	}
 }

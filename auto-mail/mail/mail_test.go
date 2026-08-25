@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -182,19 +183,70 @@ func TestNewDirectOpensTheAlphaStore(t *testing.T) {
 	}
 }
 
-// TestUnimplementedVerbsSaySo: the seam is complete before the implementation
-// is, so a verb a later phase fills must fail loudly rather than silently
-// succeeding with an empty result. Only Reset is still unbuilt — it lands with
-// the rest of the alpha contract.
-func TestUnimplementedVerbsSaySo(t *testing.T) {
-	client, err := mail.NewDirect(t.TempDir())
+// TestResetWipesTheAlphaStore: G10 makes wiping a supported operation rather
+// than a workaround — there are no upcasters and no migrations, so "start
+// again" *is* the migration path. A store that still holds events is refused
+// without Force, so a reset can never quietly discard unacked mail.
+func TestResetWipesTheAlphaStore(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	client, err := mail.NewDirect(home)
 	if err != nil {
 		t.Fatalf("NewDirect: %v", err)
 	}
-	t.Cleanup(func() { _ = client.Close() })
 
-	if _, err := client.Reset(context.Background()); !errors.Is(err, mail.ErrNotImplemented) {
-		t.Errorf("Reset error = %v, want ErrNotImplemented", err)
+	binding := mail.Binding{Manager: "cwd", Target: filepath.Join(home, "workspace")}
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{Address: "auto-web/bugs", Binding: binding}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	if _, err := client.Send(ctx, mail.SendInput{
+		To:      "auto-web/bugs",
+		From:    "auto-stack/reviewer",
+		Body:    map[string]any{"message": "hi"},
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	if _, err := client.Reset(ctx, mail.ResetInput{}); !errors.Is(err, mail.ErrStoreNotEmpty) {
+		t.Fatalf("Reset on a store holding mail = %v, want ErrStoreNotEmpty", err)
+	}
+
+	result, err := client.Reset(ctx, mail.ResetInput{Force: true})
+	if err != nil {
+		t.Fatalf("Reset --yes: %v", err)
+	}
+	storePath := config.StorePathIn(home)
+	flagsDir := config.FlagsDirIn(home)
+	if !slices.Contains(result.Removed, storePath) {
+		t.Errorf("removed = %v, want it to name the store %q", result.Removed, storePath)
+	}
+	if !slices.Contains(result.Removed, flagsDir) {
+		t.Errorf("removed = %v, want it to name the flag directory %q", result.Removed, flagsDir)
+	}
+	for _, path := range []string{storePath, flagsDir} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("%s still exists after reset (stat err = %v)", path, err)
+		}
+	}
+	_ = client.Close()
+
+	// And the tool works normally afterwards, from an empty state.
+	fresh, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect after reset: %v", err)
+	}
+	t.Cleanup(func() { _ = fresh.Close() })
+	deliveries, err := fresh.List(ctx, mail.ListInput{Binding: binding})
+	if err != nil {
+		t.Fatalf("List after reset: %v", err)
+	}
+	if len(deliveries) != 0 {
+		t.Errorf("List after reset returned %d deliveries, want 0", len(deliveries))
+	}
+	// An empty store needs no Force: nothing can be lost.
+	if _, err := fresh.Reset(ctx, mail.ResetInput{}); err != nil {
+		t.Errorf("Reset on an empty store = %v, want it to succeed without Force", err)
 	}
 }
 

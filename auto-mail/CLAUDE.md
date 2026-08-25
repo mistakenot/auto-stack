@@ -42,7 +42,18 @@ store is `~/.auto/mail/alpha-store.db` and every event type is `alpha.mail.*`.
 
 **No upcasters, no migrations, no compatibility guarantee — the store may be
 wiped on upgrade.** `auto mail reset` is a supported operation, not a
-workaround. Nothing outside mail may depend on the store's shape.
+workaround: it removes `alpha-store.db` **and** `alpha-flags/` and reports what
+it removed, refusing a store that still holds events unless `--yes` is given.
+Nothing outside mail may depend on the store's shape.
+
+`auto-mail/conformance/seam_test.go` makes that last sentence executable. It is
+scoped to the **mail store**, not to SQLite: a file is a violation when it names
+the store (`alpha-store.db`, `alpha-flags`, an `.auto/mail` path) *and* reaches
+for a database in the same file, or when it imports `auto-mail/internal/...`
+from outside this module. Naming the store without opening it stays legal —
+`auto-cli`'s hook test and the harness scenario both assert *about* the store
+from outside — and a repo-wide ban on `modernc.org/sqlite` would fail
+`auto-watch` and `auto-search`, which keep their own stores.
 
 ## Layout
 

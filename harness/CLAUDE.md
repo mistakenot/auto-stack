@@ -71,13 +71,39 @@ overwrites `ev.Host`, so a single central daemon can neither accept cross-contai
 hooks nor yield distinct host ids. One daemon per agent (fire loopback-locally,
 relay over RPC) mirrors the 045/046 multi-host model with zero product change.
 
+### `mail-flow` — two agents on one host trading `auto mail`
+
+**One** `host` container: one seeded host id, one `~/.auto`, and **two registered
+project workspaces** (`/workspace/project-a`, `/workspace/project-b`). Each
+"agent" is a separate `auto mail …` invocation with its cwd in one of those
+workspaces. The DSL drives the epic's C1 loop — subscribe, send, list, ack —
+plus the in-band nudge that `auto hooks fire` emits when a working agent has
+mail waiting.
+
+Why one container: the mail store is host-global, and this harness's own
+convention gives each container a **distinct** `HOST_ID`, so two containers
+would be two *hosts* rather than two agents on one (D-062-1). Two workspaces in
+one container is genuinely two agents on one host, and it exercises the
+concurrent-writer case without inventing a shared-`HOME` volume pattern the
+harness does not have. When cross-host mail arrives, `mail-flow` grows a second
+container with its own host id — additive, with the single-host case left as
+the control.
+
+`check_ready()` gates on the ready-file, both workspaces being registered, an
+initialised store, an empty `auto mail list` per workspace, **and** an empty
+pending-flag directory. Both halves of the on-disk state are session-scoped and
+shared by every test in the module, so a new test wants its own address and
+should ack everything it sends; a flag outliving its mail nudges whatever binds
+to that pair next, and the hook never opens the store to double-check (G8).
+
 ## Usage
 
 ```bash
 # Run a scenario's test suite (builds images from source on first run)
 uv run pytest tests/skill_remote -v
 uv run pytest tests/event_flow -v
-uv run pytest -v                    # both scenarios
+uv run pytest tests/mail_flow -v
+uv run pytest -v                    # all three scenarios
 
 # Interactive probing via the CLI
 uv run harness skill-remote up
@@ -88,6 +114,10 @@ uv run harness event-flow up
 uv run harness event-flow run agent-1 "cat /tmp/watch-ready.json"
 uv run harness event-flow down
 uv run harness event-flow down --keep-images   # iterating: reuse layers next up
+
+uv run harness mail-flow up
+uv run harness mail-flow run host "cd /workspace/project-b && auto mail list"
+uv run harness mail-flow down
 
 # Import in Python (probes / scripted tests share the same DSL)
 from harness.scenarios.event_flow import EventFlowScenario

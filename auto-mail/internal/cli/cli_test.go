@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -641,5 +642,159 @@ func TestListFilters(t *testing.T) {
 
 	if _, _, code := runCLI(t, "list", "--address", "auto-web/bugs", "--subscription", "sub_01"); code == 0 {
 		t.Error("combining --address and --subscription exited 0; one filter mode at a time")
+	}
+}
+
+type resetPayload struct {
+	Removed []string `json:"removed"`
+}
+
+// TestResetWipesTheStoreAndTheC1LoopRunsAgain is AC-11's second half (G10):
+// the alpha store is disposable, so `reset` is a supported operation rather
+// than a workaround. It removes both halves of the on-disk state — the store
+// and the pending flags — reports what it removed, and the tool then works
+// normally from empty, which is asserted by running the whole C1 loop again.
+func TestResetWipesTheStoreAndTheC1LoopRunsAgain(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	reader := workspace(t, home, "reader")
+	t.Chdir(reader)
+
+	storePath := filepath.Join(home, ".auto", "mail", "alpha-store.db")
+	flagsDir := filepath.Join(home, ".auto", "mail", "alpha-flags")
+
+	if _, stderr, code := runCLI(t, "subscribe", "auto-web/bugs"); code != 0 {
+		t.Fatalf("subscribe exit %d, stderr: %s", code, stderr)
+	}
+	stdout, stderr, code := runCLI(t, "send", "--to", "auto-web/bugs", "--message", "before the reset")
+	if code != 0 {
+		t.Fatalf("send exit %d, stderr: %s", code, stderr)
+	}
+	sent := decode[sendPayload](t, stdout)
+	// The send raised this binding's pending flag, so both halves of the state
+	// are on disk before the reset.
+	if entries, err := os.ReadDir(flagsDir); err != nil || len(entries) == 0 {
+		t.Fatalf("no pending flag under %s before the reset (err = %v)", flagsDir, err)
+	}
+
+	// A store that still holds mail is refused, with a hint that says what to
+	// do about it — wiping unacked mail must be something a caller asked for.
+	stdout, stderr, code = runCLI(t, "reset")
+	if code == 0 {
+		t.Error("reset on a non-empty store exited 0; it must refuse without --yes")
+	}
+	if stdout != "" {
+		t.Errorf("a refused reset wrote to stdout: %q", stdout)
+	}
+	if !strings.Contains(stderr, "--yes") {
+		t.Errorf("the refusal carries no remediation hint: %q", stderr)
+	}
+	if _, err := os.Stat(storePath); err != nil {
+		t.Errorf("a refused reset removed the store anyway: %v", err)
+	}
+
+	stdout, stderr, code = runCLI(t, "reset", "--yes")
+	if code != 0 {
+		t.Fatalf("reset --yes exit %d, stderr: %s", code, stderr)
+	}
+	removed := decode[resetPayload](t, stdout).Removed
+	for _, want := range []string{storePath, flagsDir} {
+		if !slices.Contains(removed, want) {
+			t.Errorf("removed = %v, want it to name %q", removed, want)
+		}
+		if _, err := os.Stat(want); !os.IsNotExist(err) {
+			t.Errorf("%s survived the reset (stat err = %v)", want, err)
+		}
+	}
+
+	// The old mail is genuinely gone, ids and all.
+	if _, _, code := runCLI(t, "ack", sent.ID); code == 0 {
+		t.Error("acking pre-reset mail succeeded; the store was not wiped")
+	}
+
+	// And the whole C1 loop runs again from empty.
+	stdout, stderr, code = runCLI(t, "subscribe", "auto-web/bugs")
+	if code != 0 {
+		t.Fatalf("subscribe after reset exit %d, stderr: %s", code, stderr)
+	}
+	if backfilled := decode[subscribePayload](t, stdout).Backfilled; backfilled != 0 {
+		t.Errorf("backfilled = %d after a reset, want 0", backfilled)
+	}
+	stdout, stderr, code = runCLI(t, "send", "--to", "auto-web/bugs", "--message", "after the reset")
+	if code != 0 {
+		t.Fatalf("send after reset exit %d, stderr: %s", code, stderr)
+	}
+	fresh := decode[sendPayload](t, stdout)
+	stdout, stderr, code = runCLI(t, "list")
+	if code != 0 {
+		t.Fatalf("list after reset exit %d, stderr: %s", code, stderr)
+	}
+	listed := decode[[]deliveryPayload](t, stdout)
+	if len(listed) != 1 || listed[0].ID != fresh.ID {
+		t.Fatalf("list after reset = %s, want just the new mail %s", stdout, fresh.ID)
+	}
+	stdout, stderr, code = runCLI(t, "ack", fresh.ID)
+	if code != 0 {
+		t.Fatalf("ack after reset exit %d, stderr: %s", code, stderr)
+	}
+	if acked := decode[ackPayload](t, stdout); !acked.Acked || !acked.WonTransition {
+		t.Errorf("ack after reset = %+v, want it acked and the transition won", acked)
+	}
+}
+
+// TestResetOnAFreshHostRemovesNothing: `reset` must not report removing a
+// store it created on its way in. A host with nothing to wipe is answered
+// before anything is opened, so the empty answer is also the honest one.
+func TestResetOnAFreshHostRemovesNothing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Chdir(workspace(t, home, "reader"))
+
+	stdout, stderr, code := runCLI(t, "reset")
+	if code != 0 {
+		t.Fatalf("reset on a fresh host exit %d, stderr: %s", code, stderr)
+	}
+	if removed := decode[resetPayload](t, stdout).Removed; len(removed) != 0 {
+		t.Errorf("removed = %v on a host with no store, want []", removed)
+	}
+	if strings.TrimSpace(stdout) == "" || !strings.Contains(stdout, "removed") {
+		t.Errorf("reset stdout is not the removed payload: %q", stdout)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".auto", "mail", "alpha-store.db")); !os.IsNotExist(err) {
+		t.Errorf("reset created the store it was asked to remove (stat err = %v)", err)
+	}
+}
+
+// TestDocsStatesTheDeliveryContract is AC-7's documented half (G4): the
+// contract has to be discoverable by the agent being asked to honour it, in as
+// many words, alongside the alpha terms G10 requires.
+func TestDocsStatesTheDeliveryContract(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	stdout, _, code := runCLI(t, "docs")
+	if code != 0 {
+		t.Fatalf("docs exit %d", code)
+	}
+	lower := strings.ToLower(stdout)
+	for _, want := range []string{
+		"at-least-once",
+		"unordered",
+		"idempotent",
+		"no upcasters",
+		"no migrations",
+		"no compatibility guarantee",
+		"wiped on upgrade",
+		"## reset",
+		"## subscribe",
+		"## send",
+		"## ack",
+	} {
+		if !strings.Contains(lower, strings.ToLower(want)) {
+			t.Errorf("docs output missing %q", want)
+		}
+	}
+	// Exactly-once and ordering may only ever be mentioned to disclaim them.
+	if strings.Contains(lower, "exactly-once") && !strings.Contains(lower, "promises exactly-once") {
+		t.Error("docs mention exactly-once outside the disclaimer; the contract is at-least-once")
 	}
 }

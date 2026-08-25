@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/mistakenot/auto-mail/internal/config"
@@ -245,8 +246,74 @@ func (d *direct) Ack(ctx context.Context, in AckInput) (AckResult, error) {
 	}, nil
 }
 
-func (d *direct) Reset(_ context.Context) (ResetResult, error) {
-	return ResetResult{}, fmt.Errorf("reset: %w", ErrNotImplemented)
+// Reset wipes the alpha store and the pending flags, and reports what it
+// removed. G10 makes this a supported operation rather than a workaround:
+// there are no upcasters and no migrations, so "start again" is the migration
+// path, and the harness needs it for isolation between runs.
+//
+// Emptiness is decided from the **event log**, not from the projections: the
+// log is the authority (D-1), so "no events" is the only definition of empty
+// that cannot disagree with the store.
+func (d *direct) Reset(ctx context.Context, in ResetInput) (ResetResult, error) {
+	if !in.Force {
+		events, err := d.eventCount(ctx)
+		if err != nil {
+			return ResetResult{}, err
+		}
+		if events > 0 {
+			return ResetResult{}, fmt.Errorf("%w: %d events are still in the log", ErrStoreNotEmpty, events)
+		}
+	}
+	// Close the handle before unlinking the file. Removing an open SQLite file
+	// works on Linux, but the handle would then be writing to an unreachable
+	// inode — a silent, confusing state for anything holding this client.
+	if err := d.store.Close(); err != nil {
+		return ResetResult{}, fmt.Errorf("close the mail store before reset: %w", err)
+	}
+
+	storePath := config.StorePathIn(d.home)
+	flagsDir := config.FlagsDirIn(d.home)
+	removed := make([]string, 0, 2)
+
+	// The -wal and -shm sidecars are part of the store rather than artifacts of
+	// their own, so they are removed with it and not reported separately.
+	for _, sidecar := range []string{storePath + "-wal", storePath + "-shm"} {
+		if err := os.Remove(sidecar); err != nil && !os.IsNotExist(err) {
+			return ResetResult{}, fmt.Errorf("remove %s: %w", sidecar, err)
+		}
+	}
+	switch err := os.Remove(storePath); {
+	case err == nil:
+		removed = append(removed, storePath)
+	case !os.IsNotExist(err):
+		return ResetResult{}, fmt.Errorf("remove %s: %w", storePath, err)
+	}
+	// RemoveAll cannot report whether anything was there, so existence is
+	// sampled first — `removed` is a statement about what was on disk, and an
+	// unconditional entry would make it a statement about what was attempted.
+	_, flagsErr := os.Stat(flagsDir)
+	if err := os.RemoveAll(flagsDir); err != nil {
+		return ResetResult{}, fmt.Errorf("remove %s: %w", flagsDir, err)
+	}
+	if flagsErr == nil {
+		removed = append(removed, flagsDir)
+	}
+	return ResetResult{Removed: removed}, nil
+}
+
+// eventCount totals the T1 vocabulary. Counting by type rather than by table
+// keeps the question inside the seam's own vocabulary: a fifth event type has
+// to be named here, which is the same discipline Append enforces.
+func (d *direct) eventCount(ctx context.Context) (int, error) {
+	total := 0
+	for _, typ := range []string{EventTypeSubscribed, EventTypeSent, EventTypeRead, EventTypeAcked} {
+		n, err := d.store.CountEvents(ctx, typ)
+		if err != nil {
+			return 0, fmt.Errorf("count the alpha mail log: %w", err)
+		}
+		total += n
+	}
+	return total, nil
 }
 
 func (d *direct) Close() error { return d.store.Close() }

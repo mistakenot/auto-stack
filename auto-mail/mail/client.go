@@ -15,10 +15,6 @@ import (
 
 // Sentinel errors callers are expected to branch on.
 var (
-	// ErrNotImplemented marks a seam method whose implementation lands in a
-	// later phase of this task. It exists so the interface can be complete
-	// before every verb is.
-	ErrNotImplemented = errors.New("not implemented in this phase")
 	// ErrUnknownMail is returned when a mail id is not in the store.
 	ErrUnknownMail = errors.New("unknown mail id")
 	// ErrNoDelivery is returned when the caller holds no delivery row for an
@@ -26,6 +22,9 @@ var (
 	ErrNoDelivery = errors.New("no delivery for this caller")
 	// ErrInvalidAddress is returned when an address fails validation.
 	ErrInvalidAddress = errors.New("invalid address")
+	// ErrStoreNotEmpty is returned by Reset when the store still holds events
+	// and the caller has not said explicitly that it may be wiped.
+	ErrStoreNotEmpty = errors.New("the alpha mail store is not empty")
 )
 
 // Binding is the opaque physical pair a Subscription is currently held by
@@ -120,6 +119,14 @@ type AckResult struct {
 	AckedBy string    `json:"-"`
 }
 
+// ResetInput asks for the alpha store to be wiped.
+type ResetInput struct {
+	// Force wipes a store that still holds events. Without it Reset refuses
+	// with ErrStoreNotEmpty rather than silently discarding unacked mail —
+	// wiping is supported (G10), not accidental.
+	Force bool
+}
+
 // ResetResult reports what a reset removed. Wiping the store is a supported
 // operation because this is alpha (G10).
 type ResetResult struct {
@@ -144,8 +151,9 @@ type Client interface {
 	// Ack is a compare-and-set on acked_at inside the append-and-project
 	// transaction; it reports whether this call won the transition (G13).
 	Ack(ctx context.Context, in AckInput) (AckResult, error)
-	// Reset removes the store and the flag directory.
-	Reset(ctx context.Context) (ResetResult, error)
+	// Reset removes the store and the flag directory, and reports what it
+	// removed. It refuses a non-empty store unless Force is set (G10).
+	Reset(ctx context.Context, in ResetInput) (ResetResult, error)
 	// Close releases the store handle.
 	Close() error
 }

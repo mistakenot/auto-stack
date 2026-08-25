@@ -74,6 +74,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newSendCmd(application),
 		newListCmd(application),
 		newAckCmd(application),
+		newResetCmd(application),
 		newDocsCmd(),
 	)
 
