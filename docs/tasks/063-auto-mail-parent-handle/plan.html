@@ -1,0 +1,1610 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>063: auto-mail-parent-handle</title>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "063",
+    "name": "auto-mail-parent-handle",
+    "kind": "task",
+    "epic": "005",
+    "status": "pending",
+    "created": "2026-08-25"
+  }
+  </script>
+
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="063: auto-mail-parent-handle" status="pending" pr="pending" generated="2026-08-25"
+          next-prompt="/commit-task 063">
+
+  <!-- ==================== REQUIREMENTS ==================== -->
+  <pd-tab name="Requirements">
+
+    <pd-scope></pd-scope>
+
+    <pd-section id="problem" title="Problem">
+      <md><script type="text/plain">
+Task 062 (epic 005, T1) shipped mail that works between two agents who each know
+an absolute address. A **sub-agent knows no address at all** — it is handed a
+prompt, not an identity — so today it has no way to tell its supervisor that it
+hit a wall. That is journey **J1**, and it is the reason the epic exists.
+
+Three concrete gaps stand between T1 and J1:
+
+1. There is **no relative handle**. `#` is not reserved, so
+   `auto mail send --to '#parent'` today succeeds and quietly creates a channel
+   literally named `#parent` that nobody reads — the worst possible failure,
+   because it looks like it worked.
+2. The mail CLI **cannot tell whether it is the supervisor or the sub-agent**.
+   An in-process sub-agent shares the parent's process environment, so
+   `CLAUDE_CODE_SESSION_ID` is byte-identical for both (verified on this host
+   while writing this doc). The one place the distinction *is* visible — the
+   `agent_id` on the hook payload — reaches the hook process, never the tool
+   call.
+3. The `from` ladder T1 built ends at a literal `<projectId>/agent`, with a
+   comment saying so: "`config.ProjectRef` carries no agent name and
+   self-identification is deferred to T2 by epic D-13". A supervisor receiving
+   J1's message cannot currently tell **which** child sent it.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="target-transcript" title="The transcript this task must make real (J1)">
+      <pd-cli id="C-J1" title="zsh — a sub-agent reports home" caption="Two of these commands run inside an in-process sub-agent; neither knows an address.">
+        <pd-cmd note="supervisor, once, at the top of its session" status="done">auto mail subscribe auto-stack/supervisor</pd-cmd>
+        <pd-out><script type="text/plain">{ "address": "auto-stack/supervisor", "subscription": "sub_01K9X2M4", "backfilled": 0 }</script></pd-out>
+        <pd-cmd note="sub-agent — knows no identifier, its own or its parent's" status="todo"><script type="text/plain">auto mail send --to '#parent' --message "phase 3 blocked: the fixture has no agent_id"</script></pd-cmd>
+        <pd-out><script type="text/plain">{ "id": "01K9X2QF7M3B0V8N", "to": "auto-stack/supervisor", "resolvedFrom": "#parent", "subscriptions": 1, "bound": 1 }</script></pd-out>
+        <pd-cmd note="supervisor is nudged in-band on its next tool call, then reads" status="todo">auto mail list</pd-cmd>
+        <pd-out><script type="text/plain">[
+  {
+    "id": "01K9X2QF7M3B0V8N",
+    "from": "auto-stack/supervisor",
+    "sentAt": "2026-08-25T10:14:02Z",
+    "attributes": { "senderKind": "subagent", "senderAgentType": "phase3" },
+    "body": { "message": "phase 3 blocked: the fixture has no agent_id" }
+  }
+]</script></pd-out>
+        <pd-cmd note="reading never retires it — the ack is always separate (G3)" status="done">auto mail ack 01K9X2QF7M3B0V8N</pd-cmd>
+        <pd-out><script type="text/plain">{ "id": "01K9X2QF7M3B0V8N", "acked": true, "wonTransition": true }</script></pd-out>
+        <pd-cmd note="the same command from an agent that is nobody's child" status="todo"><script type="text/plain">auto mail send --to '#parent' --message "hello?"</script></pd-cmd>
+        <pd-out><script type="text/plain"># exit 1, stdout empty
+# stderr: cannot resolve "#parent": this process is not an in-process sub-agent —
+#   no active sub-agent is recorded for this agent. `#parent` is available only
+#   inside an Agent/Task sub-agent, whose parentage the hooks carry. Send to an
+#   absolute address instead (`--to auto-stack/supervisor`), or see
+#   `auto mail docs` under "relative handles".</script></pd-out>
+      </pd-cli>
+    </pd-section>
+
+    <pd-section id="scope-statement" title="What this task is" summary="One relative handle, one hook-written self-identification marker, and the fail-fast that makes the handle honest — proven by an extension of T1's harness scenario.">
+      <md><script type="text/plain">
+`#parent` is a **send-time resolver plus a guard**. The resolution itself is
+small — an in-process sub-agent shares its supervisor's pane and working
+directory, so it computes the *same* `(manager, target)` binding pair T1 already
+joins on, and the supervisor's address is a lookup T1 already ships
+(`store.AddressForBinding`, rung 2 of the `from` ladder).
+
+What is genuinely new is the **guard**: without it, `#parent` would resolve for
+*anybody* sharing that binding — including the supervisor itself, and including
+an ordinary agent that is nobody's child — and would silently mail them their
+own address. So the task is really "prove the caller is a sub-agent", and that
+proof is what D-13 calls the self-identification bridge: the hook sees
+`agent_id`, the tool call does not, so the hook writes down which agent is
+currently active and the CLI reads it.
+
+Three things, in order: `#` becomes a reserved prefix across the whole mail
+surface; the hook records active sub-agents at stat-level cost; and `#parent`
+resolves — or fails fast with a remediation hint — proven end to end in the
+harness (G15), not asserted.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="goals" title="Goals">
+      <md><script type="text/plain">
+- **`#parent` resolves at send time** to the supervisor's absolute address, for
+  an in-process sub-agent, with no identifier known to the child and no change
+  to any launcher (D-13).
+- **The stored envelope carries the resolved absolute address** in `to`, never
+  the handle and never any physical identity (G5). `send` reports what it
+  resolved, so the child can see where its message went.
+- **A non-sub-agent fails fast** with a remediation hint that names the
+  constraint (in-process sub-agents only), the alternative (an absolute
+  address), and where to read more.
+- **`#` is reserved** as the relative-handle prefix on every surface that takes
+  an address — `send --to`, `send --from`, `subscribe`, `list --address` — so an
+  unknown handle can never become a real channel by typo.
+- **The supervisor can tell which child wrote** — whenever that can be known for
+  certain — without a second lookup and without physical identity entering an
+  address: the sending Subagent's `agent_type` rides in the envelope's
+  attributes, and is *omitted* rather than guessed when several Subagents are
+  live under one Binding (D-063-11).
+- **The hook stays cheap and unbreakable.** T1's rule holds: no store open, no
+  unbounded work, never an error, in the agent's critical path on every tool
+  call.
+- **The concurrent-sub-agent race D-13 flags is answered, not hoped over** — by
+  design, and then exercised in the harness rather than assumed.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="inherited-rails" title="Inherited guard rails" summary="Three rails from epic 005 (G3, G5, G15), plus G8 and G11 which T2 must not regress even though the epic does not assign them.">
+      <md><script type="text/plain">
+Assigned by the epic's breakdown (`honors="G3,G5,G15"`):
+
+- **G3 — ack is a separate explicit call.** `#parent` must not introduce any
+  implicit retirement. The J1 loop ends with the supervisor calling `ack`, and
+  the mail is still listed after a read.
+- **G5 — addresses are virtual; no physical identity in them.** This is the rail
+  `#parent` is *about*: "relative handles like `#parent` resolve at send time;
+  the stored envelope always carries the resolved absolute address". A sub-agent
+  id is not an address, and never becomes one.
+- **G15 — a capability is done when it passes end to end in the harness.** T1
+  stood the `mail-flow` scenario up precisely so T2 has an oracle. Extending it
+  is part of this task, not a follow-up.
+
+Not assigned, but load-bearing here and must not regress:
+
+- **G8 — the nudge is free when there is no mail.** T2 adds a second thing the
+  hook does. The no-Subagent path must add **no marker syscalls at all** — T1's
+  existing durable `hooks.Append` write and its single pending-flag `os.Stat`
+  still happen, and are not this task's to change — and the Subagent path must be
+  one bounded marker write and no store open.
+- **G11 — nothing outside the mail package reads the store.** T1 made this a
+  compile-time property (D-062-8). The marker is written and read only by
+  `auto-mail/mail`; `auto-cli` passes fields and receives a string.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="out-of-scope" title="Out of Scope">
+      <md><script type="text/plain">
+- **Spawned panes.** A separate agent process gets its own `session_id`, no
+  `agent_id`, and no record of who spawned it. `#parent` from a pane fails fast
+  with the same hint. Launch-time address stamping is parked
+  ([beyond the MVP §2.6](../../auto-mail-beyond-mvp.md)) because it changes
+  herdr / ntm / the delegate skills, not mail.
+- **Every other relative handle.** `#new`, `#children`, `#siblings`, `#swarm`,
+  `#self`, roles. All are resolver cases, all additive, all parked (§2.1–2.3,
+  §2.7). `#` is reserved for them; none is implemented.
+- **Waking a sub-agent (T3).** An in-process sub-agent shares its parent's pane,
+  so it has no separate target to inject into — the epic calls this moot for T2.
+  Keystroke injection, the effector seam, herdr env capture, the liveness
+  heartbeat and the reconcile tick are all T3's.
+- **Liveness.** T1 left `bindings.last_seen` written once at subscribe, so
+  `bound` means "a binding row exists". T2 does not change that; the marker this
+  task adds is about *agent identity*, not about whether anyone is alive.
+- **Cross-project adoption, `quickstart`, `doctor` (T4).** `auto mail docs`
+  gains a "relative handles" section because an agent cannot use a surface it
+  cannot discover, but the adoption work stays T4's.
+- **The RPC `mail.Client` implementation and bus publishing.** Still T3's. T2
+  adds a resolver behind the existing `Client` seam; the conformance suite grows
+  a case, and both implementations will satisfy it when the second one exists.
+- **Any schema migration.** The marker is a file, and the sender attributes ride
+  inside the existing `mail.envelope` JSON blob. No table changes, no new
+  columns (G10 makes the alpha store disposable anyway, but a task that needs no
+  migration is a task that cannot get one wrong).
+      </script></md>
+    </pd-section>
+
+    <pd-section id="references" title="Reference code &amp; docs" summary="Verified in the 062 worktree and against this host's live hook log while writing this doc.">
+      <md><script type="text/plain">
+**Epic and backlog**
+
+- [epic-005-auto-mail-mvp.html](../../epics/epic-005-auto-mail-mvp.html) — T2,
+  J1, G3/G5/G15, **D-13** (the decision that defines this task) and **Q-4** (its
+  full reasoning, including the rejected `AUTO_MAIL_SELF` env-promotion and
+  launch-time-stamping alternatives). **D-5 is superseded — do not build to it.**
+- [auto-mail — Beyond the MVP](../../auto-mail-beyond-mvp.md) — §2.6 (panes,
+  parked), §2.3 (other handles, parked), §9 (why parentage is ambient in hooks).
+
+**The T1 code this task extends** (branch `task/062-auto-mail-walking-skeleton`)
+
+- `auto-mail/mail/binding.go` — `BindingFor(cwd)` / `BindingFromContext(captured, cwd)`
+  and the `tmux → ntm → cwd` ladder. **The join key both the hook and the CLI
+  already compute independently** (D-062-2). An in-process sub-agent shares its
+  parent's pane and cwd, so both sides of `#parent` land on the same pair.
+- `auto-mail/mail/pending.go` — `flagName` (sha256-of-`manager\x00target`, first
+  8 bytes hex), `HasPending`, `NudgeText`. The marker this task adds is the same
+  shape of artifact, in a sibling directory, with the same "errors read as
+  absent, never break the hook" discipline.
+- `auto-mail/mail/direct.go:153-190` — `resolveFrom`, the three-rung ladder
+  (`--from` → the address of a subscription bound to this caller → literal
+  `<projectId>/agent`). Rung 2 is `#parent`'s resolution, already written.
+- `auto-mail/mail/address.go` — `ValidateAddress`, permissive by design (D-9).
+  It accepts `#parent` today; reserving `#` happens *before* validation, not
+  inside it.
+- `auto-mail/internal/store/project.go:213-241` — the envelope is a JSON blob
+  (`version`, `to`, `from`, `sentAt`) in a TEXT column. Adding `attributes` is
+  additive with no schema change.
+- `auto-cli/cmd/auto/hookscmd.go:124-171` — the one call site T1 added:
+  `mailNudge(cwd, hookCtx)` feeding `emitAdditionalContext(...)`. **`auto hooks
+  fire` reads the whole payload already** and never returns an error after the
+  `--agent` check.
+- `auto-cli/cmd/auto/hooksinstallcmd.go:18,23,34,40` — `PreToolUse` **and**
+  `SubagentStop` are both installed events for both agents. Verified: the marker
+  has a writer that runs immediately before the sub-agent's own tool call, and a
+  cleaner that runs when it stops.
+- `harness/src/harness/scenarios/mail_flow.py` — the scenario DSL
+  (`mail()`, `fire_hook()`, `nudge_context()`, `assert_nudge()`) and
+  `harness/scenarios/mail-flow/fixtures/hooks/post-tool-use.json`.
+
+**The hook linkage, re-verified on this host** (`~/.auto/hooks/raw/events-2026-08-25.jsonl`,
+872 payloads carrying `agent_id`)
+
+- A sub-agent's own tool call fires `PreToolUse` / `PostToolUse` carrying the
+  **parent's** `session_id` and `transcript_path`, plus the child's own
+  `agent_id` (e.g. `atask-063-planner-ebd9de6a1b4a8259`) and `agent_type`
+  (`task-063-planner`). No join, no lag — the parent id is a field on the child's
+  own event.
+- The **parent's** own tool calls carry **no `agent_id` at all**. Presence of the
+  field is therefore the discriminator, not a comparison.
+- `SubagentStop` carries the same `agent_id` plus `agent_transcript_path`, which
+  is the marker's natural cleanup signal.
+- The sub-agent's process environment carries `CLAUDE_CODE_SESSION_ID` set to the
+  **parent's** session id and no agent identity of any kind — confirming D-13's
+  premise directly rather than by inference.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="decisions" title="Decisions taken while writing these requirements">
+      <md><script type="text/plain">
+Seven calls the epic left to the task. The one that matters most is
+[D-063-4](#D-063-4): it is where D-13's "known limitation … the
+self-identification bridge races when several sub-agents run concurrently"
+stops being a limitation.
+      </script></md>
+    </pd-section>
+
+    <pd-decision id="D-063-1" title="`#` is a reserved prefix on every surface that takes an address" status="accepted" by="agent"
+      summary="An unknown handle is an error everywhere, not a new channel — reservation happens before validation, so ValidateAddress stays permissive (D-9).">
+      <md><script type="text/plain">
+**Context:** D-9 makes addresses free-form and validation deliberately
+permissive; `ValidateAddress` accepts `#parent` today. So the moment `#parent`
+means something to `send`, every *other* address-taking surface becomes a trap:
+`auto mail subscribe '#parent'` would create a real channel called `#parent`,
+and `auto mail send --to '#parnet'` would silently create another.
+**Decision:** Any address argument beginning with `#` is a **relative handle**,
+resolved (or rejected) *before* `ValidateAddress` ever sees it. `send --to`
+resolves it. `send --from`, `subscribe <address>` and `list --address` reject it
+with a message naming the surface: a handle is a destination, never a durable
+identity. An unrecognised handle (`#nope`) is rejected everywhere, and its error
+lists the handles that exist — today, exactly one.
+**Alternatives:** Reserve `#` only on `send --to` (leaves `subscribe '#parent'`
+as a silent trap, and it is the exact typo an agent reading J1 would make);
+teach `ValidateAddress` to reject `#` (wrong layer — it would make the *stored*
+address rule depend on a resolver concern, and D-9 is explicit that validation
+must not narrow the namespace); escape it (`\#parent`) so `#` stays usable as a
+literal (nothing wants a literal `#` address, and an escape hatch nobody needs
+is a second syntax to document).
+**Consequences:** `#` leaves the free-form namespace, which is a real narrowing
+of D-9 — recorded here rather than discovered later. It is cheap now (mail is
+alpha, and no address on this host starts with `#`) and it is what makes every
+future handle (`#new`, `#children`, §2.1–2.3) free to add. Reservation is one
+check at the CLI boundary, so the stored-data rule is untouched.
+      </script></md>
+    </pd-decision>
+
+    <pd-decision id="D-063-2" title="`#parent` is a send-time destination only — never a subscription, never a `from`" status="accepted" by="agent"
+      summary="G5 says handles resolve at send time and the stored envelope carries the absolute address; anything durable must be absolute.">
+      <md><script type="text/plain">
+**Context:** G5 fixes half of this ("relative handles resolve at send time; the
+stored envelope always carries the resolved absolute address") but not what
+happens when someone points a handle at a durable surface.
+**Decision:** `#parent` is legal in exactly one position: `send --to`. It is
+rejected in `send --from`, in `subscribe <address>`, and in `list --address`.
+The rule stated once: **a handle names a recipient at a moment; a subscription
+names a reader forever, and "forever" cannot be relative.**
+**Alternatives:** Allow `subscribe '#parent'` as sugar for "subscribe to
+whatever my parent's address is" (it stores a resolved address, so the
+subscription silently stops meaning what it said the moment the process is
+re-parented — and there is no re-resolution point); allow `--from '#parent'`
+(the sender would forge its parent's identity as author, which is exactly the
+kind of physical/logical confusion G5 exists to prevent).
+**Consequences:** One rule, four surfaces, three of them a rejection with the
+same explanation. Every future handle inherits the position rule for free.
+      </script></md>
+    </pd-decision>
+
+    <pd-decision id="D-063-3" title="A sub-agent's mail is `from` its supervisor's address; the child rides in envelope attributes" status="accepted" by="agent"
+      summary="An in-process sub-agent has no separate inbox, so it must not have a separate from-address — but J1 still needs the supervisor to know which child wrote.">
+      <md><script type="text/plain">
+**Context:** T1's `from` ladder already gives a sub-agent its parent's bound
+address at rung 2, because they share a binding. Left alone, J1's supervisor
+receives mail apparently *from itself* and cannot tell which of five concurrent
+children sent it — which defeats the journey's outcome ("supervisor learns the
+child failed"). The obvious fix — minting the child a from-address like
+`auto-stack/supervisor/phase3` — is worse than it looks.
+**Decision:** `from` stays the supervisor's absolute address. The child's
+identity travels as **envelope attributes**: `senderKind: "subagent"` always,
+and `senderAgentType: "<agent_type>"` **only when it can be known for certain**
+(D-063-11 — when several Subagents are live under one Binding the name is
+omitted and `senderAmbiguous: true` says so). Both are surfaced by `list`. The
+reasoning: a
+from-address is a *reply-to*, and an in-process sub-agent has no inbox and
+cannot be woken separately (backlog §2.6's asymmetry) — so a reply addressed to
+the child would be undeliverable by construction. The address that can be
+replied to is the parent's, and that is what `from` must say.
+**Alternatives:** Mint a child address (`…/phase3`) — creates an address nothing
+can subscribe to and nothing can deliver to, and every reply to it is silently
+lost; put the child name in the message body (works, but only if every sender
+remembers, which makes it a convention rather than a property, and J1's whole
+point is that the child knows nothing).
+**Consequences:** The envelope gains an open `attributes` map — which the
+backlog (§2.4) already names as a v1 obligation for attribute subscriptions, so
+it is a debt paid rather than a feature added. `agent_type` is a *logical* label
+(`phase3`, `epic-005-reviewer`), not physical identity, so G5 is untouched; the
+opaque `agent_id` is recorded alongside it for debugging but is not what a
+reader is meant to match on.
+      </script></md>
+    </pd-decision>
+    <pd-thread anchor="D-063-3" status="resolved" priority="p1" title="Concurrent markers do not identify which Subagent sent the Mail">
+      <pd-comment by="review">D-063-4 correctly shows that marker races cannot produce a wrong recipient because <code>#parent</code> resolves from the Binding alone, but this decision still promises <code>senderAgentType</code> for "which child wrote". The CLI process has no <code>agent_id</code>, and the proposed <code>CallerSender(home, binding)</code> only reads all live markers under that Binding; when two Subagents run concurrently, a sibling's more recent <code>PreToolUse</code> marker can be the one selected. That would self-deliver to the right Subscription but attribute the Mail to the wrong Subagent, and AC-8's swarm case only asserts recipient equality, not sender attributes. Either define a deterministic exact self-identification mechanism, weaken the attribute contract when multiple markers are live, or add a concurrency AC/test proving the listed <code>senderAgentType</code> belongs to the sending Subagent.</pd-comment>
+      <pd-comment by="author">This is the sharpest finding in the review and it identifies a real hole rather than an ambiguity. D-063-4's race argument is about the <em>recipient</em> — <code>#parent</code> resolves from the Binding, which every sibling shares — and I carried that conclusion across to the <em>sender</em>, where it does not hold: the calling process has no <code>agent_id</code> of its own, so with four siblings live it genuinely cannot tell which marker is itself. Taking the "weaken the contract" option, recorded as new decision <strong>D-063-11</strong>: <code>senderKind</code> stays unconditional (that fact really is race-independent), <code>senderAgentType</code> is emitted <strong>only when exactly one marker is live</strong>, and with several the name is omitted and <code>senderAmbiguous: true</code> says so — an attribute that could name the wrong Subagent is worse than an absent one, because a supervisor acting on a confident wrong name is worse off than one told nothing. D-063-3, the API section and the Phase 5 step are aligned to it. Your third option is taken too rather than instead: <strong>AC-8 now asserts sender attribution, not only recipient equality</strong>, and Phase 4 gains an explicit step, so a future implementation that quietly reverts to "pick the newest marker" fails the swarm test instead of passing it. The "match my own argv" discriminator was reconsidered and rejected again in D-063-11 — it would buy attribution in the swarm case at the price of making the recipient path, which currently cannot be wrong, depend on shell-quoting round-trips.</pd-comment>
+    </pd-thread>
+
+    <pd-decision id="D-063-4" title="Self-identification is a hook-written marker keyed by the T1 binding pair — which makes the concurrency race unable to produce a wrong answer" status="accepted" by="agent"
+      summary="`#parent` is a function of the binding, and every concurrent sub-agent of one supervisor shares it — so racing writers cannot disagree about the answer.">
+      <md><script type="text/plain">
+**Context:** D-13 accepts a known limitation: "the self-identification bridge
+races when several sub-agents run concurrently; it is bounded by concurrent
+sub-agent count". That is exactly the swarm case — and it is happening in this
+repository right now, where task 062's executor is a coordinator dispatching one
+sub-agent per phase. A bridge that races into a *wrong recipient* would be worse
+than no handle at all.
+**Decision:** Two halves.
+
+*The key.* The marker is keyed by the **`(manager, target)` binding pair T1
+already established as the hook↔CLI join key** (D-062-2), not by `session_id`
+and not by an environment variable. The hook computes it from the context it
+already captured; the CLI computes it from its own process. Both get the same
+pair, because an in-process sub-agent shares its supervisor's pane and working
+directory.
+
+*The consequence, which is the point.* `#parent` therefore resolves as
+`AddressForBinding(BindingFor(cwd))` — **a function of the binding alone**. Every
+concurrent sub-agent of one supervisor has the same binding and therefore the
+same parent, so two racing markers cannot disagree about the answer: whichever
+writer wins, the resolved address is identical. The race is not tolerated, it is
+made **unable to express a wrong recipient**. What the marker is consulted for
+is narrower than "who am I" — it is the single boolean *is a sub-agent currently
+active under this binding*, which is precisely the guard, and which every
+concurrent sub-agent also agrees on.
+
+*The residual, stated plainly.* One ambiguity survives: the **supervisor itself**
+running `--to '#parent'` while one of its own children is active resolves
+instead of failing fast, and mails its own address. It is bounded to
+self-delivery inside one binding — never a stranger, never another session — and
+it is the harmless direction of the two. The other direction (a child's
+legitimate send wrongly failing) is designed out by never letting a parent tick
+erase a child's marker: markers are per-`agent_id` files, cleared by that
+child's own `SubagentStop`, with a TTL only as a crash backstop.
+**Alternatives:** Key by `session_id` read from `CLAUDE_CODE_SESSION_ID`
+(verified present and identical for parent and child, so it works — but it
+invents a second join key next to the one T1 built, and hard-codes a
+Claude-specific variable into a package that also serves codex); a single
+most-recent-actor slot per session (the natural first design, and the one that
+actually races: the parent's own tool call overwrites a live child's marker, so
+a child's legitimate `#parent` intermittently fails — the worse of the two error
+directions); recency arbitration between a parent tick and child markers (same
+failure, dressed up); having the hook record the tool command so the CLI can
+match its own argv (a genuinely exact discriminator, and rejected as too clever
+— it makes correctness depend on shell-quoting round-trips, and it writes user
+command text into a file for no gain over a boolean).
+**Consequences:** No new join key, no environment dependency, no schema change.
+The residual ambiguity is documented in `auto mail docs` rather than hidden, and
+it is the case the harness scenario exercises alongside the swarm case, so D-13's
+"exercise it rather than assume it" is discharged. It inherits T1's cwd-rung
+limitation unchanged: two unrelated agents in one checkout share a binding, hence
+a supervisor — already documented, and already the reason T3 replaces the cwd
+rung for panes.
+      </script></md>
+    </pd-decision>
+
+    <pd-decision id="D-063-5" title="The marker is written on hook events that carry `agent_id`, and only those" status="accepted" by="agent"
+      summary="Zero added syscalls when no sub-agent is involved; one bounded write when one is. The parent's path is untouched.">
+      <md><script type="text/plain">
+**Context:** G8 governs this call site: the hook runs in every agent's critical
+path on every tool call, must cost about a `stat` in the common case, and must
+never stall or break the turn. T1 met that with a single `os.Stat`. T2 adds a
+second job to the same hook.
+**Decision:** The hook inspects one field it has already parsed. **No
+`agent_id` → no *marker* filesystem work at all** — the ordinary tool call of an
+ordinary agent pays exactly what it paid under T1 and not one syscall more (T1's
+durable `hooks.Append` write and its one pending-flag `os.Stat` still happen;
+they are T1's cost, not T2's). With an `agent_id`: `PreToolUse`
+and `PostToolUse` write one small marker file; `SubagentStop` removes it. All
+three swallow every error, exactly as T1's pending flag does. `PreToolUse` is
+the load-bearing one: it fires **immediately before** the sub-agent's own
+`auto mail send`, so the marker is always fresh at the moment the CLI reads it,
+whatever the child was doing beforehand.
+**Alternatives:** Write on `PostToolUse` only (a sub-agent whose *first* action
+is to mail its parent has no marker yet — and "I hit a wall immediately" is a
+J1 case, not an edge case); stat-then-write-if-stale (trades one write for a
+stat plus a conditional write, and buys nothing measurable); write on every hook
+event including the parent's (needs a parent tick, which is the design D-063-4
+rejects).
+**Consequences:** The hot path for a non-sub-agent is bit-for-bit T1's. The
+marker's freshness is bounded by the child's own tool-call cadence, which is the
+tightest bound available. `SubagentStop` cleanup means the TTL is a crash
+backstop rather than the primary mechanism, so it can be generous without
+widening the residual ambiguity in D-063-4.
+      </script></md>
+    </pd-decision>
+    <pd-thread anchor="D-063-5" status="resolved" priority="p2" title="No-agent hook cost is still overstated outside AC-7">
+      <pd-comment by="review">The earlier resolved hook thread fixed AC-7 and the <code>hookscmd.go</code> file row to say "zero marker-directory work", but this decision, the coverage map, and <code>end-state-flow</code> still say a no-<code>agent_id</code> hook does "no filesystem work", "zero syscalls", or "no stat". I checked the 062 base: <code>newHooksFireCmd</code> always evaluates <code>mailNudge(cwd, hookCtx)</code> before calling <code>emitAdditionalContext</code>, and <code>mailNudge</code> calls <code>mail.HasPending</code>, whose implementation is an <code>os.Stat</code> of the pending-flag path. The accurate contract is that the new marker observer adds no marker filesystem work when <code>agent_id</code> is absent; T1's durable hook log write and pending-flag stat still happen. Please align all remaining "zero filesystem/syscall/stat" wording, or the tests remain stronger than the shipped hook path can satisfy.</pd-comment>
+      <pd-comment by="author">Correct, and the inconsistency was mine — I fixed AC-7 and the file row in the previous round but left three other places saying something stronger and untrue. `hooks.Append` writes on every valid payload and `mailNudge` stats the pending flag on every `PostToolUse`, both by T1's design and neither this task's to change. D-063-5, the coverage-map node, the end-state-flow note and the inherited-rails G8 bullet all now say <strong>no <em>marker</em> syscalls</strong> and explicitly name T1's two existing costs as T1's rather than T2's. The claim that survives is the one that is both true and worth making: an ordinary agent's tool call pays exactly what it paid under T1 and not one syscall more.</pd-comment>
+    </pd-thread>
+
+    <pd-decision id="D-063-6" title="The harness drives the real hook path with fixtures that carry `agent_id`" status="accepted" by="agent"
+      summary="No Claude in the container; the product seam under test is `auto hooks fire` reading a payload, and that is exactly what the scenario exercises.">
+      <md><script type="text/plain">
+**Context:** G15 makes the harness the verdict, and T1 stood `mail-flow` up for
+this. But a container cannot run Claude Code, so it cannot produce a real
+in-process sub-agent.
+**Decision:** Extend T1's `fire_hook` to accept the sub-agent fields and add
+fixtures for `PreToolUse`-with-`agent_id` and `SubagentStop`. The scenario then
+drives the genuine product path end to end: the real `auto hooks fire` binary
+parses a real-shaped payload, the real mail package writes the real marker, and
+the real `auto mail send --to '#parent'` in the same workspace resolves it. The
+only simulated part is *who typed the payload* — which is the same substitution
+T1 already makes for the nudge, and the fixtures are copied field-for-field from
+this host's live hook log rather than invented.
+**Alternatives:** Unit-test the resolver and call it done (the epic's G15 says in
+as many words that unit tests are supporting evidence, not the verdict); try to
+run a real agent in the harness (a different project, and it would make the
+oracle depend on a model).
+**Consequences:** The swarm case becomes directly testable — several `agent_id`s
+marked live at once, then a send from each — which is how D-13's accepted race
+gets exercised instead of assumed. The scenario also gains the negative case (no
+marker → fail fast) and the cleanup case (`SubagentStop` → fail fast again),
+which are the two halves of the guard.
+      </script></md>
+    </pd-decision>
+
+    <pd-decision id="D-063-7" title="Implementation waits for 062 to merge; planning does not" status="accepted" by="agent"
+      summary="Every file this task touches is created or reshaped by 062. Branching before it lands would fork the walking skeleton.">
+      <md><script type="text/plain">
+**Context:** T2 `depends-on="T1"`. At the time of writing, 062 is **complete on
+its branch** — all five phases landed (`fbefad8`) and **PR #146 is open** — but
+it is **not merged**, and `auto-mail/` does not exist on `main` at all.
+**Decision:** These planning documents are written and committed to `main` now,
+against the 062 branch read as the base. **Execution must not start until 062 is
+merged to `main`**, and the 063 worktree must be cut from `main` after that
+merge, not from the 062 branch. Nothing in this task modifies, rebases or merges
+the 062 branch.
+**Alternatives:** Branch from `task/062-…` and stack (creates a second head on
+an unmerged branch that is still being written by another executor, and this
+repo has a postmortem about exactly that class of divergence); wait for the
+merge before planning (wastes the window, and the planning inputs — the epic,
+the backlog, the hook log — are all stable).
+**Consequences:** Every path and line reference in these docs is verified against
+the 062 branch at `fbefad8` and must be re-checked at execution time, because
+review on PR #146 can still move them. Phase 1's first step is the gate: `auto
+mail --help` resolves on `main` and `auto-mail/` exists there.
+      </script></md>
+    </pd-decision>
+
+    <pd-section id="open-questions" title="Open Questions &amp; Assumptions" summary="No open pd-questions — every fork was resolvable from the epic, the backlog or T1's code. These are the assumptions carried forward.">
+      <md><script type="text/plain">
+- [x] **Does `#parent` need the supervisor to have subscribed first?** Yes, and
+      that is a distinct error from "you are not a sub-agent". A recognised
+      sub-agent whose supervisor holds no subscription gets its own message:
+      *run `auto mail subscribe <address>` in the supervisor first*. Conflating
+      the two would send an agent hunting the wrong problem.
+- [x] **Which subscription, if the supervisor holds several?** T1's
+      `AddressForBinding` already answers deterministically (lowest subscription
+      id). `#parent` reuses it unchanged rather than inventing a second rule;
+      `auto mail docs` states it, and a supervisor that wants a specific inbox
+      subscribes to it first.
+- [x] **Is `agent_type` guaranteed present?** No — `SubagentStop` for an
+      unnamed agent carries `agent_id` with `agent_type: ""` (observed on this
+      host). The marker records both; `senderAgentType` is omitted from the
+      attributes when empty rather than emitted blank — and, per D-063-11, also
+      omitted when several Subagents are live and the sender cannot be told
+      apart from its siblings.
+- [x] **Codex sub-agents?** Codex fires the same `auto hooks fire` entry point
+      and `SubagentStop` is in its installed event list, but no codex payload on
+      this host carries `agent_id`. The mechanism is agent-agnostic by
+      construction (it keys on a field, not on an agent name); it simply does
+      nothing where the field is absent, and `#parent` fails fast there. No
+      codex-specific work is planned or claimed.
+- [x] **Two supervisors in one checkout?** They share a cwd-rung binding, so a
+      child of one could resolve `#parent` to the other. This is T1's documented
+      cwd-rung limitation (D-062-2), inherited unchanged and not made worse; T3
+      replaces the rung. Under tmux — the normal case on this host — panes differ
+      and the problem does not arise.
+- [x] **Does the marker leak anything?** It holds an `agent_id`, an
+      `agent_type` and a timestamp, under `~/.auto/mail/`. No prompt text, no
+      command, no environment. G7's allowlist discipline is about hook *env*
+      capture and is untouched.
+      </script></md>
+    </pd-section>
+
+    <pd-decisions></pd-decisions>
+
+  </pd-tab>
+
+  <!-- ==================== VERIFICATION ==================== -->
+  <pd-tab name="Verification">
+
+    <pd-section id="test-strategy" title="Test Strategy" summary="Conformance-test driven, like T1: the guard rails are written as executable expectations first, and the extended harness scenario is the verdict (G15). Three properties get adversarial treatment — the hook can never fail, the race can never mis-resolve, and `#` can never become a real address.">
+      <md><script type="text/plain">
+The shape is T1's, because T1 built the oracle for exactly this: a `mail-flow`
+harness scenario running the real `auto` binary in a container, extended rather
+than replaced. G15 makes it the verdict; everything below it is supporting
+evidence.
+
+**What is actually risky here is not the resolver.** `#parent`'s resolution is a
+lookup T1 already ships. Three other things carry the risk, and the strategy is
+built around them:
+
+1. **The hook can never fail.** T2 adds a *write* to a path whose entire
+   discipline was "one stat, no store open, no error surface". The tests treat
+   that as adversarial: an unwritable marker directory, a read-only `$HOME`, a
+   `$HOME` where `auto mail init` never ran, a payload with `agent_id` but no
+   `cwd`, and a marker path that is a directory where a file is expected — every
+   one of them must still exit 0, still emit T1's nudge correctly, and still
+   open the store zero times. T1 left the instrument for the last part in place:
+   `openStore` is a package var *so a test can count opens*.
+2. **The race must be unable to mis-resolve** (D-063-4). This is asserted, not
+   argued: N concurrent Subagent markers under one binding, interleaved with
+   parent activity, and every `#parent` send resolves to the same address. Run
+   under `-race`, and driven concurrently rather than in a tidy sequence.
+3. **`#` must never reach the store.** Property-style: for every reserved-prefix
+   input across every address-taking surface, assert both the rejection *and*
+   the absence of any address beginning with `#` in `subscriptions` and
+   `mail.to_address` afterwards. The second half is the one that catches a
+   surface someone forgot to guard.
+
+**Negative cases are first-class here, not an afterthought.** `#parent` is a
+handle whose *headline* behaviour is failing well: the epic's T2 statement gives
+the fail-fast equal billing with the resolution. So each failure mode gets its
+own criterion with its own distinguishable message — "you are not a Subagent",
+"your supervisor has no Subscription", "`#nope` is not a handle", "a handle
+cannot be subscribed to" — because an agent that gets the wrong one of these
+goes hunting the wrong problem.
+
+**Regression is a named criterion, not a hope.** T2 reshapes a call site inside
+a hook that T1 tested hard and edits an envelope T1 stores. AC-15 requires T1's
+whole suite — the C1 transcript, the `mail.Client` conformance suite, the seam
+guard and every `mail-flow` test — to pass **unmodified**, so a change of
+behaviour cannot be laundered through a test edit.
+
+**Layers.** Package tests in `auto-mail/mail` for the resolver, the reservation
+rule and the marker; store tests for the envelope round-trip; CLI tests through
+`Execute()` with captured stdout/stderr for exit codes and message text; the
+`mail.Client` conformance suite for anything a second (RPC) implementation must
+also satisfy; `auto-cli` tests for the hook adapter; and the harness for the
+journey. The conformance suite gains real work here: D-063-8 splits `#parent` so
+that *who the caller is* arrives as an input to `Send` while the resolution
+itself happens inside the `Client` — so the handle contract, its three failure
+modes and the envelope attributes are all things T3's RPC implementation must
+satisfy too, asserted once against the interface rather than twice against
+implementations.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="coverage-map" title="Coverage Map">
+      <pd-mermaid caption="What proves what — the harness is the verdict, the rest is evidence">
+flowchart TB
+  subgraph E2E["harness/tests/mail_flow — the verdict (G15)"]
+    J1["J1: marker → send #parent →<br/>supervisor lists → acks"]
+    NEG["negative: no marker, and<br/>after SubagentStop"]
+    SWARM["swarm: N concurrent<br/>agent_ids, one answer"]
+  end
+  subgraph CLI["auto-mail/internal/cli — surface"]
+    RES["# reserved on 4 surfaces"]
+    MSG["4 distinguishable errors,<br/>exit 1, empty stdout"]
+    DOC["auto mail docs covers handles"]
+  end
+  subgraph PKG["auto-mail/mail — domain"]
+    PAR["ResolveParent: guard + lookup"]
+    MRK["marker: write / read / clear / TTL"]
+    RACE["-race: concurrent markers"]
+  end
+  subgraph HOOK["auto-cli/cmd/auto — the hot path"]
+    G8["no marker syscalls with no agent_id;<br/>one bounded write with one"]
+    SAFE["unwritable dir, read-only HOME,<br/>missing cwd → still exit 0"]
+    INST["PreToolUse + SubagentStop<br/>stay installed"]
+  end
+  subgraph STORE["auto-mail/internal/store + conformance"]
+    ENV["envelope attributes round-trip"]
+    ABS["to_address is never a handle"]
+  end
+  PKG --> CLI
+  HOOK --> E2E
+  CLI --> E2E
+  STORE --> E2E
+      </pd-mermaid>
+    </pd-section>
+
+    <pd-section id="acceptance-criteria" title="Acceptance Criteria" summary="Fifteen criteria: the three inherited rails (G3, G5, G15), the two rails T2 must not regress (G8, G11), the handle's four failure modes, the race, the marker lifecycle, the ontology, discoverability, the installed-event dependency, and a no-regression gate.">
+      <pd-trace caption="Acceptance coverage"></pd-trace>
+
+      <pd-ac id="AC-1" title="G5 — the handle resolves at send time and never enters stored data" phases="1" tests="auto-mail/mail/mail_test.go,auto-mail/internal/store/store_test.go,harness/tests/mail_flow/test_parent_handle.py">
+        <md><script type="text/plain">
+- **Given** a Subagent whose supervisor holds a Subscription to `auto-stack/supervisor`
+- **When** it runs `auto mail send --to '#parent' --message "…"`
+- **Then** stdout is a JSON object whose `to` is `auto-stack/supervisor` and
+  whose `resolvedFrom` is `#parent`, and exit is 0
+- **And** the stored `mail.to_address` and the stored envelope's `to` are both
+  the absolute address — **no row anywhere in the store has an address beginning
+  with `#`**
+- **And** neither `to` nor `from` contains a session id, a pane id, an
+  `agent_id`, a host id or a path
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="J1 travels end to end in the harness (G15)" phases="1" tests="harness/tests/mail_flow/test_parent_handle.py">
+        <md><script type="text/plain">
+- **Given** the `mail-flow` scenario, a supervisor subscribed in one workspace,
+  and a `PreToolUse` payload fired for that workspace carrying an `agent_id` and
+  an `agent_type`
+- **When** `auto mail send --to '#parent'` runs with its cwd in that same
+  workspace, and a hook then fires for the supervisor
+- **Then** the supervisor is nudged in-band, `auto mail list` shows the mail
+  with the resolved absolute `from`, and `auto mail ack <id>` transitions it
+- **And** the assertion matches on **presence of the mail id**, never on a count
+  (G4 permits duplicates), with bounded retry rather than poll-to-settle
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-3" title="A non-Subagent fails fast with a remediation hint" phases="1,2" tests="auto-mail/mail/mail_test.go,auto-mail/internal/cli/cli_test.go,harness/tests/mail_flow/test_parent_handle.py">
+        <md><script type="text/plain">
+- **Given** no active Subagent marker for this binding — either none was ever
+  written, or the only one was cleared by its `SubagentStop`, or every one has
+  aged past the TTL
+- **When** any process runs `auto mail send --to '#parent'`
+- **Then** exit is **1**, **stdout is empty** (no partial JSON), and stderr names
+  three things: the constraint (in-process Subagents only, whose parentage the
+  hooks carry), the alternative (send to an absolute address, with a concrete
+  example), and where to read more (`auto mail docs`)
+- **And** no mail row, no event and no address are created
+- **And** the same input from a *spawned pane* produces the same failure — the
+  out-of-scope case fails identically rather than specially
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-4" title="`#` is reserved on every surface that takes an address" phases="2" tests="auto-mail/mail/handle_test.go,auto-mail/internal/cli/cli_test.go,auto-mail/conformance/conformance_test.go">
+        <md><script type="text/plain">
+- **Given** any of `auto mail subscribe '#parent'`, `auto mail list --address '#parent'`,
+  `auto mail send --from '#parent' --to x`, or an unknown handle `#nope` in any position
+- **When** the command runs, with or without an active Subagent marker
+- **Then** exit is 1, stdout is empty, and stderr distinguishes *the handle is
+  not allowed in this position* from *that handle does not exist* — the latter
+  listing the handles that do (today: `#parent`)
+- **And** afterwards, no row in `subscriptions.address` and no row in
+  `mail.to_address` begins with `#`
+- **And** `ValidateAddress` is unchanged: it still accepts a `#`-prefixed string
+  when called directly, because reservation is a CLI-boundary rule, not a
+  stored-data rule (D-063-1)
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="G3 — reading still never retires; the handle adds no implicit ack" phases="1,5" tests="harness/tests/mail_flow/test_parent_handle.py,auto-mail/conformance/conformance_test.go">
+        <md><script type="text/plain">
+- **Given** mail delivered to the supervisor via `#parent`
+- **When** the supervisor runs `auto mail list` twice without acking
+- **Then** the mail is returned both times
+- **And** only `auto mail ack <id>` retires it, reporting `wonTransition`
+- **And** neither resolving `#parent` nor writing/clearing a Subagent marker
+  changes any `read_at` or `acked_at` value
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="The supervisor can tell which Subagent wrote" phases="5" tests="auto-mail/internal/store/store_test.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/cli_test.go,auto-mail/conformance/conformance_test.go">
+        <md><script type="text/plain">
+- **Given** exactly one live Subagent, with `agent_type: "phase3"`, sending via `#parent`
+- **When** the supervisor runs `auto mail list`
+- **Then** the delivery carries
+  `attributes: {"senderKind": "subagent", "senderAgentType": "phase3"}`
+- **And** when `agent_type` is empty (observed on a real `SubagentStop`),
+  `senderAgentType` is **omitted** rather than emitted blank
+- **And given** two or more live Subagents under one Binding, the delivery
+  carries `senderKind` and `senderAmbiguous: true` and **no `senderAgentType`** —
+  an attribute that could name the wrong Subagent is never emitted (D-063-11)
+- **And** the attributes follow the **sender**, not the handle: a Subagent that
+  sends to an absolute Address is still a Subagent and its mail carries the same
+  attributes, because the supervisor's need to know who wrote does not depend on
+  how the Address was spelled
+- **And** mail sent by a **non-Subagent** carries no `attributes` key at all, so
+  T1's payload shape is unchanged for every existing caller (which is what
+  D-063-10's byte-identity claim actually protects)
+- **And** an envelope written before this task (no `attributes` key) still
+  hydrates without error
+        </script></md>
+      </pd-ac>
+      <pd-thread anchor="AC-6" status="resolved" priority="p2" title="Attribute contract conflicts for Subagent absolute sends">
+        <pd-comment by="review">AC-6 says "mail sent without a handle carries no <code>attributes</code> key at all", but the Solution says <code>Sender</code> becomes the envelope attributes and the API/Phase 5 say <code>Send</code> stamps attributes from <code>in.Sender</code>, not only when <code>in.To</code> was a handle. That leaves Subagent-to-absolute-Address sends undefined: should they carry <code>senderKind</code>/<code>senderAgentType</code>, or should attributes be limited to <code>#parent</code>? D-063-10 protects byte identity for non-Subagents, which is enough for existing T1 callers, but AC-6's "without a handle" wording is broader than that and contradicts the planned implementation path.</pd-comment>
+        <pd-comment by="author">A genuine hole — the Subagent-to-absolute-Address case was simply undefined, and the two statements pointed different ways. Settled toward the Solution's reading, because it is the one that serves J1: <strong>the attributes follow the sender, not the handle</strong>. A Subagent that sends to an absolute Address is still a Subagent, and a supervisor's need to know which child wrote does not depend on how the Address was spelled. AC-6 now says so explicitly and its byte-identity clause is re-scoped to <strong>non-Subagent</strong> senders, which is what D-063-10 actually protects — every existing T1 caller runs with no marker present, so its payload is unchanged.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-7" title="G8 — the hook stays free when no Subagent is involved, and can never break the agent" phases="1,3" tests="auto-cli/cmd/auto/hooksagent_test.go,auto-mail/mail/subagent_test.go">
+        <md><script type="text/plain">
+- **Given** a hook payload with **no** `agent_id`
+- **Then** the **marker path** performs **zero** filesystem operations and zero
+  store opens — the ordinary agent's hot path is bit-for-bit T1's. (The hook
+  command itself still does everything T1 does: `hooks.Append` is deliberately a
+  filesystem write on every valid payload, the bus POST still runs, and the nudge
+  and hint fragments are still emitted. The no-op lives **inside** the mail
+  package's observer, never as a `return` from the hook's `RunE`.)
+- **Given** a payload **with** an `agent_id`
+- **Then** exactly one bounded marker write occurs, the store is opened **zero**
+  times (asserted through T1's `openStore` counter), and nothing shells out
+- **And** in every one of these conditions — marker directory unwritable, `$HOME`
+  read-only, `$HOME` never initialised by `auto mail init`, `agent_id` present
+  with `cwd` absent, marker path occupied by a directory — `auto hooks fire`
+  exits **0**, writes no stray bytes to stdout, and still emits T1's nudge
+  correctly when there is mail
+- **And** stdout still carries **at most one** `hookSpecificOutput` object per
+  event (D-062-9)
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-8" title="Concurrent Subagents cannot produce a different recipient (D-13's race)" phases="4" tests="auto-mail/mail/subagent_test.go,auto-mail/mail/mail_test.go,harness/tests/mail_flow/test_parent_handle.py">
+        <md><script type="text/plain">
+- **Given** N (≥ 4) distinct `agent_id`s marked active under **one** binding,
+  their markers written concurrently and interleaved with parent-level hook
+  fires carrying no `agent_id`
+- **When** `#parent` is resolved from each of them, concurrently
+- **Then** every resolution returns the **same** absolute address, and it is the
+  supervisor's
+- **And** the whole test passes under `-race`
+- **And** the harness runs the same shape for real: several Subagent fixtures
+  fired, then a send from each, all landing on one supervisor Subscription
+- **And** every one of those sends carries `senderAmbiguous: true` and **no**
+  `senderAgentType` — the swarm case asserts sender *attribution*, not only
+  recipient equality, so a mis-named Subagent fails the test rather than passing
+  quietly (D-063-11)
+- **And** the one documented residual — the supervisor's *own* `#parent`
+  resolving while a child is live — is asserted as **self-delivery within the
+  same binding** and never to any other Subscription
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-9" title="The marker's lifecycle is write, refresh, clear, expire" phases="3" tests="auto-mail/mail/subagent_test.go,auto-mail/internal/cli/cli_test.go,harness/tests/mail_flow/test_parent_handle.py">
+        <md><script type="text/plain">
+- **Given** hook payloads carrying `agent_id`
+- **Then** `PreToolUse` and `PostToolUse` create or refresh that agent's marker,
+  and `SubagentStop` removes **only that agent's** marker, leaving other live
+  Subagents under the same binding untouched
+- **And** a marker older than the TTL is ignored by resolution, and an
+  ignored/expired marker is cleaned up opportunistically rather than
+  accumulating
+- **And** an unparseable or truncated marker file reads as absent, never as an
+  error
+- **And** `auto mail reset` removes the marker directory alongside the store and
+  the pending flags (G10 makes wiping a supported operation, and a surviving
+  marker after a reset is exactly the stale state the harness gates on)
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-10" title="A Subagent whose supervisor never subscribed gets its own error" phases="2" tests="auto-mail/mail/mail_test.go,auto-mail/internal/cli/cli_test.go,auto-mail/conformance/conformance_test.go">
+        <md><script type="text/plain">
+- **Given** a recognised Subagent marker, but **no** Subscription bound to that
+  binding
+- **When** it runs `auto mail send --to '#parent'`
+- **Then** exit is 1 and stderr says the supervisor holds no Subscription and
+  names the fix (`auto mail subscribe <address>`, run in the supervisor)
+- **And** that message is **textually distinct** from AC-3's, so the two failures
+  cannot be confused by an agent reading stderr
+- **And** where the supervisor holds several Subscriptions, resolution is
+  deterministic and matches T1's existing rule (lowest subscription id), with
+  the rule stated in `auto mail docs`
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-11" title="G11 / D-062-8 — the seam holds; nothing new is exported" phases="1,3,5" tests="auto-mail/conformance/seam_test.go,auto-cli/cmd/auto/hooksagent_test.go">
+        <md><script type="text/plain">
+- **Given** the repo after this task
+- **Then** the marker is written and read only by `auto-mail/mail`;
+  `auto-cli` passes payload fields in and receives a string or a bool back, and
+  imports nothing under `auto-mail/internal/`
+- **And** the exported surface is still exactly `auto-mail/mail` plus the
+  `auto-mail/rootcmd` façade — T1's seam guard passes unmodified
+- **And** no file outside `auto-mail/` performs **direct database access** to the
+  mail store, and nothing outside the module imports `auto-mail/internal/…` —
+  which is the seam guard's actual scope (062 phase 5). **Observing** a mail path
+  from outside stays legal and is deliberately used: T1's
+  `auto-cli/cmd/auto/hooksmail_test.go` and the harness both stat or list
+  `~/.auto/mail` to prove the hook creates no store, and this task's
+  `hooksagent_test.go` needs the same observation for `alpha-agents`
+        </script></md>
+      </pd-ac>
+      <pd-thread anchor="AC-11" status="resolved" priority="p2" title="Seam wording conflicts with existing outside-path observations">
+        <pd-comment by="review">AC-11 currently says no file outside <code>auto-mail/</code> opens the store, flag directory, or marker directory, but the 062 seam guard is narrower: <code>auto-mail/conformance/seam_test.go</code> only rejects files that name the Mail store and also open a database, plus imports of <code>auto-mail/internal/...</code> from outside the module. It explicitly allows outside observations because <code>auto-cli/cmd/auto/hooksmail_test.go</code> and the harness stat or list <code>~/.auto/mail</code>/<code>alpha-flags</code> to prove the hook does not create a store. This task's planned <code>auto-cli/cmd/auto/hooksagent_test.go</code> will need the same kind of observation for <code>alpha-agents</code>. Please narrow AC-11 to "no direct Mail-store database access and no internal imports", and allow outside tests/harness code to observe Mail paths without treating that as a seam violation.</pd-comment>
+        <pd-comment by="author">Right, and my wording would have made this task's own planned test a seam violation. AC-11 is narrowed to the guard's real scope — no direct database access to the Mail store from outside, and no imports of <code>auto-mail/internal/…</code> — and now records explicitly that <em>observing</em> a Mail path from outside stays legal, citing the two places that already do it (T1's <code>hooksmail_test.go</code> and the harness, both of which stat <code>~/.auto/mail</code> to prove the hook creates no store). <code>hooksagent_test.go</code> needs exactly that for <code>alpha-agents</code>, so the criterion now permits what the plan requires.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-12" title="G16 — the ontology lands before the code that uses it" phases="1" tests="auto-mail/mail/mail_test.go">
+        <md><script type="text/plain">
+- **Given** the glossary as 062 leaves it (Mail, Address, Subscription,
+  Delivery, Binding)
+- **Then** it gains **Handle** — a relative alias resolved at send time, never
+  stored — with its `_Avoid_` line, and the existing **Subagent** entry is reused
+  rather than duplicated
+- **And** `python3 .claude/skills/domain-modelling/scripts/glossary.py check
+  docs/concepts/UBIQUITOUS_LANGUAGE.md` exits 0
+- **And** the generated ER block is regenerated by the `diagram --write`
+  subcommand rather than hand-edited, and the frontmatter `summary` enumeration
+  is updated and refreshed with `auto doc fixed`
+- **And** the word used in code, comments, CLI text and commits is *Subagent* —
+  never "child session", "sub-session" or "nested session"
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-13" title="An agent can discover the handle" phases="5" tests="auto-mail/internal/cli/cli_test.go">
+        <md><script type="text/plain">
+- **Given** `auto mail docs`
+- **Then** it has a "relative handles" section covering: what `#parent` resolves
+  to, that it works only inside an in-process Subagent, the position rule (`send
+  --to` only), the deterministic choice when the supervisor holds several
+  Subscriptions, and the documented residual ambiguity from D-063-4
+- **And** the reserved-prefix rule is stated, so a reader knows why
+  `subscribe '#parent'` is refused
+- **And** `quickstart` and `doctor` are still absent — they remain T4's
+  (D-062-4)
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-14" title="The installed-event dependency is guarded" phases="3" tests="auto-cli/cmd/auto/hooksinstallcmd_test.go">
+        <md><script type="text/plain">
+- **Given** `auto hooks install` for `claude` and for `codex`
+- **Then** the installed event set includes **`PreToolUse`** and
+  **`SubagentStop`** for both, asserted by test
+- **And** the test's failure message says *why* it matters — that `#parent`
+  resolution depends on those two events reaching `auto hooks fire` — so a
+  future edit to the event list cannot silently disable the handle
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-15" title="Nothing already shipped changes behaviour" phases="5" tests="auto-mail/conformance/conformance_test.go,auto-mail/internal/cli/cli_test.go,harness/tests/mail_flow/test_parent_handle.py">
+        <md><script type="text/plain">
+- **Given** the full T1 suite as merged
+- **When** this task's changes are applied
+- **Then** every existing T1 assertion still passes and **none is removed,
+  rewritten or weakened**. New cases may be *added* to T1's test files — several
+  phases do exactly that — but an existing assertion that had to change is a
+  **design finding to report, not a fix to make**
+- **And** that is verified concretely: review `git diff main -- auto-mail
+  auto-cli harness` for deleted or rewritten assertion lines (additions are
+  expected; deletions inside T1 test bodies are not), and run
+  `harness/tests/mail_flow/test_mail_loop.py` — T1's own scenario test —
+  unchanged, alongside the new parent-handle tests
+- **And** `make` (fmt, vet, lint, test, and `-race` for `auto-mail`) is clean
+  across every module
+- **And** `auto mail send` with an absolute `--to` produces byte-identical stdout
+  to T1 for the same inputs
+        </script></md>
+      </pd-ac>
+      <pd-thread anchor="AC-15" status="resolved" priority="p1" title="Regression gate contradicts planned additive test edits">
+        <pd-comment by="review">AC-15 requires the T1 suite to pass "without modification", but the File Changes and phases explicitly edit existing T1 test files: <code>auto-mail/mail/mail_test.go</code>, <code>auto-mail/internal/cli/cli_test.go</code>, <code>auto-mail/internal/store/store_test.go</code>, <code>auto-mail/conformance/conformance.go</code>, and <code>auto-mail/conformance/conformance_test.go</code>. Phase 5 then says to "confirm every T1 test file is unmodified in the diff" and suggests <code>git diff --stat main -- auto-mail</code>, which cannot be true if new tests are added to those files and cannot prove existing assertions were preserved. Please restate this as "existing T1 assertions are not removed or weakened; new tests may be added additively", and name a usable verification, such as reviewing <code>git diff</code> for removed/rewritten assertions plus running the existing <code>harness/tests/mail_flow/test_mail_loop.py</code> as well as the new parent-handle tests. The current wording makes the acceptance gate impossible to satisfy literally.</pd-comment>
+        <pd-comment by="author">Accepted — as written the gate was literally unsatisfiable, since five of the files it protects are files this plan deliberately adds cases to. Restated along the lines you suggest: <strong>no existing T1 assertion may be removed, rewritten or weakened; additions to T1's test files are expected</strong>. The verification is restated as something a reviewer can actually do — read <code>git diff main -- auto-mail auto-cli harness</code> for deleted or rewritten assertion lines inside T1 test bodies, and run <code>harness/tests/mail_flow/test_mail_loop.py</code> unchanged alongside the new parent-handle tests. Phase 5 step 8 is updated to match. The intent the original wording was reaching for is preserved and now stated directly: a T1 assertion that <em>had</em> to change is a design finding to report, not a fix to make.</pd-comment>
+      </pd-thread>
+    </pd-section>
+
+    <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+      <md><script type="text/plain">
+- **No real Claude runs in the harness**, so the *provenance* of the hook payload
+  is simulated even though every other part of the path is real (D-063-6). The
+  mitigation is that fixtures are copied field-for-field from this host's live
+  hook log rather than invented, and the fields used (`agent_id`, `agent_type`,
+  `hook_event_name`) are the three that were directly observed. The residual risk
+  is an upstream change to Claude's payload shape — which would be silent, and
+  is the single most likely way this feature rots. Recorded rather than solved:
+  the honest guard is `doctor`, and `doctor` is T4's.
+- **The cwd-rung collision is inherited, not fixed.** Two unrelated agents in one
+  checkout with no tmux share a binding, so a Subagent of one can resolve
+  `#parent` to the other. This is T1's documented D-062-2 limitation; T2 does not
+  widen it and does not close it. Under tmux — the normal case on this host —
+  panes differ and it does not arise. Tested only to the extent of asserting the
+  behaviour is the documented one.
+- **The residual ambiguity in D-063-4 is asserted as bounded, not eliminated.**
+  A supervisor using `#parent` while its own child is live self-delivers. AC-8
+  pins the bound (same binding, never another Subscription); nothing makes it
+  impossible, and making it impossible would require the "match my own argv"
+  trick D-063-4 rejects.
+- **TTL expiry is tested with an injected clock, not by waiting.** A real
+  wall-clock test would be a slow flake; the marker's time source is faked in
+  package tests, so the harness never exercises expiry — only `SubagentStop`
+  cleanup. That is the right split (the TTL is a crash backstop, and a crash is
+  not reproducible in the harness), but it means the TTL constant itself is
+  covered by unit test only.
+- **Codex Subagents are untested because none exist.** No codex payload on this
+  host carries `agent_id`. The mechanism keys on a field rather than an agent
+  name so it would work if one appeared, but that is a claim about design, not a
+  tested property, and the docs say so.
+- **`bound` still does not mean "alive".** T1 left `bindings.last_seen` written
+  once at subscribe, and T2 does not add a heartbeat (that is T3's). So a
+  Subagent can successfully mail a supervisor that has exited. J1 is about
+  durability rather than liveness, so this is correct for the task — but it means
+  a green AC-2 does not prove anyone read the mail.
+      </script></md>
+    </pd-section>
+
+  </pd-tab>
+
+  <!-- ==================== SOLUTION ==================== -->
+  <pd-tab name="Solution">
+
+    <pd-section id="approach" title="Approach" summary="A per-Binding directory of Subagent markers the hook writes; a `Sender` established caller-side and passed into Send; handle resolution inside the Client; and a reserved `#` prefix enforced at the CLI boundary. No schema change, no new exported package, no launcher touched.">
+      <md><script type="text/plain">
+Four moving parts, and only one of them is new machinery.
+
+**1. The hook writes down which Subagent is acting.** `auto hooks fire` already
+parses the payload and already computes the `(manager, target)` Binding for T1's
+nudge. When — and only when — the payload carries an `agent_id`, it hands the
+mail package that field, the `agent_type`, the `session_id` and the event name.
+The mail package writes one small marker file per `agent_id` under a per-Binding
+directory, refreshing it on `PreToolUse` and `PostToolUse` and removing it on
+`SubagentStop`. Every error is swallowed; the store is never opened; a payload
+with no `agent_id` costs nothing at all.
+
+**2. The CLI establishes who it is, from the filesystem.** Before calling the
+`Client`, `auto mail send` asks `mail.CallerSender(home, binding)`, which reads
+the unexpired markers under its own Binding and answers with a `Sender` —
+`subagent` plus the child's `agent_id` / `agent_type`, or plain `agent`. That is
+the whole self-identification bridge D-13 asks for, and it is a directory read
+with no error surface, in the same spirit as T1's `HasPending`.
+
+**3. The `Client` resolves the handle.** `SendInput` gains `Sender`; `To` may be
+a handle. `Send` resolves `#parent` to `AddressForBinding(in.Binding)` — T1's
+existing lookup, rung 2 of the `from` ladder — but only for a `subagent` sender,
+and it reports the handle it resolved in `SendResult.ResolvedFrom`. Three
+distinct sentinel errors cover the three ways it can fail. The `Sender` also
+becomes the envelope's `attributes`, so the supervisor learns which child wrote.
+
+**4. `#` is reserved at the CLI boundary.** `send --to` resolves it; `send
+--from`, `subscribe` and `list --address` reject it. `ValidateAddress` is
+untouched — reservation is a resolver concern, and D-9 forbids narrowing the
+stored-address namespace.
+
+**What this deliberately is not.** No table, no column, no schema version bump —
+the attributes ride inside the existing envelope JSON blob and the marker is a
+file. No new exported package: everything lands in `auto-mail/mail`, so G11 stays
+a compile-time property. No change to any launcher, which is the reason D-13
+scoped the task this way.
+      </script></md>
+    </pd-section>
+
+    <pd-decision id="D-063-8" title="Identity is an input to `Send`; resolution happens inside the `Client`" status="accepted" by="agent"
+      summary="The filesystem half runs caller-side and the store half runs client-side — so the handle contract is conformance-testable and does not break when T3's RPC client crosses a host boundary.">
+      <md><script type="text/plain">
+**Context:** `#parent` needs two things that live in different places. *Who am
+I* is a local filesystem question — the markers are on the caller's host. *What
+is my supervisor's address* is a store question, and in T3 the store may be
+behind an RPC hop on another machine. Putting both in one place gets one of them
+wrong.
+**Decision:** Split at the seam. The **caller** establishes a `Sender`
+(`mail.CallerSender(home, binding)` — markers only, no store) and passes it in
+`SendInput.Sender`. The **`Client`** resolves the handle inside `Send`, using the
+`Binding` and `Sender` it was given, and returns `SendResult.ResolvedFrom`.
+**Alternatives:** Resolve entirely at the CLI, above the `Client` (the CLI would
+need the store to answer `AddressForBinding`, which G11/D-062-8 forbids — the
+store is unimportable outside the mail package); resolve entirely inside the
+`Client`, reading the markers there (works today because the direct client is
+in-process, and breaks silently the moment T3's RPC client resolves the caller's
+handle against the *daemon's* filesystem — the class of bug that is invisible
+until multi-host, which is precisely what the epic's seams exist to prevent); add
+a `ResolveHandle` method to `Client` (a second round trip, and it invites a
+caller to resolve-then-send with a gap in between, which is a TOCTOU on the
+supervisor's Subscription for no benefit).
+**Consequences:** The handle contract lands in the **conformance suite** rather
+than in one implementation's tests, so T3's RPC client inherits it as a `go test`
+target. `SendInput` grows one field and `SendResult` one, both additive.
+`Sender` does double duty: it gates resolution *and* it is what becomes the
+envelope attributes (D-063-3), so the child's identity is established exactly
+once.
+      </script></md>
+    </pd-decision>
+
+    <pd-decision id="D-063-9" title="One marker file per `agent_id`, in a per-Binding directory, TTL as a crash backstop only" status="accepted" by="agent"
+      summary="Per-agent files are what stop a parent tick or a sibling from erasing a live Subagent's marker — the failure direction D-063-4 designs out.">
+      <md><script type="text/plain">
+**Context:** D-063-4 fixes the *key* (the Binding pair) and the *property* (the
+answer is race-independent). This decision fixes the on-disk shape, and the shape
+is what determines which failure directions are possible at all.
+**Decision:** `~/.auto/mail/alpha-agents/<bindingKey>/<agentKey>`, where
+`bindingKey` is T1's existing `flagName(binding)` — `hex(sha256(manager +
+"\x00" + target)[:8])` — and `agentKey` is the same 8-byte hash of the
+`agent_id`. Each file is a small JSON object: `agentId`, `agentType`,
+`sessionId`, `at`. A marker is created/refreshed by its own agent's hook events
+and removed by its own `SubagentStop`. A marker older than
+`subagentTTL = 15 * time.Minute` is ignored on read and unlinked
+opportunistically.
+**Alternatives:** A single "current agent" file per Binding, overwritten each
+time (the obvious design, and the one that actually races: a parent's own hook
+fire, or a sibling Subagent's, would clobber a live child's marker and make that
+child's legitimate `#parent` fail intermittently — the worse of the two error
+directions, and the reason per-agent files are worth the extra inode); the
+`agent_id` used verbatim as the filename (observed ids are filename-safe today —
+`atask-063-planner-ebd9de6a1b4a8259` — but that is an upstream format nobody
+promised us, and T1 already established hashing for exactly this reason); a TTL
+short enough to be the primary cleanup (it would have to be shorter than a
+Subagent's thinking time between tool calls, which is unbounded, so it would
+expire live agents).
+**Consequences:** Cleanup is precise (`SubagentStop`, which is an installed event
+for both agents) and the TTL is only a backstop for a crashed Subagent — so it
+can be generous without widening D-063-4's residual ambiguity. Reading is one
+`os.ReadDir` plus one small read per entry, which happens on `send` (a
+deliberate action) and never in the hook. The number of files under one Binding
+is bounded by concurrent Subagents, which is single digits.
+      </script></md>
+    </pd-decision>
+
+    <pd-decision id="D-063-10" title="Both new payload fields are `omitempty`, so absolute sends stay byte-identical" status="accepted" by="agent"
+      summary="A caller that does not use a handle must not be able to tell this task shipped.">
+      <md><script type="text/plain">
+**Context:** T2 adds `resolvedFrom` to the `send` payload and `attributes` to a
+`list` delivery. Both are surfaces T1's tests, the epic's C1 transcript and the
+harness already assert on, and both are read by agents whose habits are
+ungreppable.
+**Decision:** `SendResult.ResolvedFrom` and `Delivery.Attributes` are
+`json:",omitempty"`. An absolute `--to` send emits exactly T1's four keys; a
+delivery from a non-Subagent emits exactly T1's four keys. AC-15 asserts
+byte-identity rather than trusting it.
+**Alternatives:** Always emit the fields, with `resolvedFrom: null` and
+`attributes: {}` (more regular, and every existing consumer's assertion changes
+on a task that was supposed to be additive); put `resolvedFrom` on stderr only
+(it is payload data, not a diagnostic — the project convention is explicit that
+stdout carries the parseable payload).
+**Consequences:** The presence of a key becomes meaningful — `resolvedFrom`
+present means "a handle was used" — which is more informative than a null and
+costs nothing. An older stored envelope with no `attributes` key hydrates
+unchanged, so no backfill and no migration.
+      </script></md>
+    </pd-decision>
+
+    <pd-decision id="D-063-11" title="Sender attribution is omitted when several Subagents are live, never guessed" status="accepted" by="agent"
+      summary="`senderKind` is race-independent and always emitted; `senderAgentType` is only emitted when exactly one marker is live, because an attribute that can name the wrong Subagent is worse than an absent one.">
+      <md><script type="text/plain">
+**Context:** Review found a genuine hole between D-063-3 and D-063-4. D-063-4's
+argument is that `#parent` resolves from the Binding alone, so concurrent
+markers cannot disagree about the *recipient*. That argument does not extend to
+the *sender*: the calling process still has no `agent_id` of its own, so with
+four siblings live under one Binding, `CallerSender` can see four markers and
+has no way to tell which one is itself. D-063-3 nevertheless promised
+`senderAgentType` as "which child wrote" — which under the swarm case, the very
+case J1 exists for, could name the wrong Subagent. A supervisor acting on a
+confidently wrong name is worse off than one told nothing.
+**Decision:** Split the attribute contract by what is actually knowable.
+`senderKind: "subagent"` is emitted whenever a live marker exists — that fact is
+race-independent, exactly as D-063-4 argues. `senderAgentType` is emitted **only
+when exactly one live marker exists** under the Binding. With two or more,
+`CallerSender` returns `Ambiguous`, `senderAgentType` is omitted entirely, and
+`senderAmbiguous: true` is emitted in its place so the supervisor knows the name
+is *unknown* rather than *unnamed*. The child's own words in the body remain the
+reliable channel for "who am I", and `auto mail docs` says so.
+**Alternatives:** Pick the newest marker (this is the bug — under concurrency the
+newest is a sibling's as often as it is your own, and it produces a plausible
+wrong answer, the worst kind); list every live `agent_type` (says "one of these
+four wrote", which no supervisor can act on, and invites a reader to treat the
+first as the sender); have the hook record the tool command so the CLI can match
+its own argv (an exact discriminator, and the one D-063-4 already rejected for
+making correctness depend on shell-quoting round-trips — reconsidered here and
+rejected again: it would buy attribution in the swarm case at the cost of making
+the *whole* mechanism fragile, including the recipient path that currently
+cannot be wrong); drop attributes entirely (throws away the single-Subagent
+case, which is the common one and where the name is free and certain).
+**Consequences:** J1's outcome is fully delivered when one Subagent is working,
+and honestly degraded when several are. That asymmetry is now a *tested*
+property (AC-6, AC-8) rather than an unexamined promise, so the swarm case fails
+loudly if attribution ever starts guessing. `Sender` gains one boolean;
+`senderAmbiguous` is one more key in an open map the backlog already required.
+      </script></md>
+    </pd-decision>
+
+    <pd-section id="end-state-flow" title="How a Subagent reaches its supervisor" summary="The hook writes a marker before the Subagent's own tool call; the CLI reads it to establish a Sender; the Client resolves the handle against the shared Binding; the supervisor is nudged by T1's existing path.">
+      <pd-mermaid caption="Everything left of `Send` is new; everything right of it is T1">
+sequenceDiagram
+  participant P as supervisor
+  participant HK as hook (auto hooks fire)
+  participant FS as alpha-agents/&lt;binding&gt;/
+  participant C as sub-agent CLI (auto mail send)
+  participant M as mail.Client (direct)
+  participant DB as alpha-store.db
+
+  P->>M: Subscribe("auto-stack/supervisor")
+  M->>DB: subscription + binding(manager,target)
+  Note over P,HK: parent's own tool calls carry no agent_id — no marker work at all
+  HK->>FS: PreToolUse{agent_id, agent_type} → write one marker
+  C->>C: CallerSender(home, BindingFor(cwd)) → {subagent, agentType}
+  C->>M: Send{To:"#parent", Binding, Sender}
+  M->>DB: AddressForBinding(binding) → "auto-stack/supervisor"
+  M->>DB: append alpha.mail.sent; insert mail(to=absolute,<br/>envelope.attributes={senderKind, senderAgentType?})
+  M-->>C: {id, to:"auto-stack/supervisor", resolvedFrom:"#parent", …}
+  Note over M,P: from here the path is unchanged from T1
+  M->>P: pending flag → next hook stats it → in-band nudge
+  P->>M: List() → Ack(id)
+  HK->>FS: SubagentStop{agent_id} → remove that marker
+      </pd-mermaid>
+      <md><script type="text/plain">
+Two properties are visible in the diagram and both are deliberate.
+
+- **The parent's lane is empty.** A hook event with no `agent_id` touches nothing
+  *of the marker path* — no directory read, no marker stat, no write. T1's own
+  costs (the durable append, the one pending-flag stat) are unchanged. That is
+  AC-7, and it is why adding a write to the hot path does not cost the ordinary
+  hot path anything.
+- **`AddressForBinding` is called with the Binding the Subagent computed for
+  itself**, not with one carried from the marker. The marker answers only *am I
+  a Subagent*; the address comes from the Binding both processes share. That is
+  the split that makes concurrent markers unable to disagree (D-063-4).
+      </script></md>
+    </pd-section>
+
+    <pd-section id="end-state-api" title="The surface at the end of this task">
+      <pd-api kind="module" name="package mail — the Subagent bridge" lang="go" path="auto-mail/mail/subagent.go" caption="New. Free functions, no client, no store — the hook must be able to call these without opening anything.">
+        <pd-member kind="function" sig="CallerSender(home string, b Binding) Sender">Constructs the `Sender` (declared in `client.go`, since it is part of the `Client` input contract) from the unexpired markers under this Binding. Filesystem only — no store, no error return: an unreadable directory reads as `SenderAgent`, exactly as `HasPending` reads an unreadable flag as "no mail". Sets `Ambiguous` when more than one marker is live (D-063-11).</pd-member>
+        <pd-member kind="function" sig="ObserveHookEvent(home string, b Binding, event string, a ActiveAgent)">The hook's one entry point. A no-op when `a.AgentID` is empty, so the ordinary agent's tool call costs nothing (AC-7). `PreToolUse`/`PostToolUse` write; `SubagentStop` clears; every error is swallowed.</pd-member>
+        <pd-member kind="type" sig="type ActiveAgent struct { AgentID, AgentType, SessionID string; At time.Time }">One Subagent the hook has seen acting under a Binding. `SessionID` is recorded for diagnostics only — resolution never keys on it (D-063-4).</pd-member>
+        <pd-member kind="function" sig="ActiveSubagents(home string, b Binding) []ActiveAgent">Unexpired markers, newest first, expired ones unlinked opportunistically. Exported for tests and for T4's `doctor`; the send path goes through `CallerSender`.</pd-member>
+      </pd-api>
+
+      <pd-api kind="module" name="package mail — relative handles" lang="go" path="auto-mail/mail/handle.go" caption="New. The reservation rule and the three ways resolution fails.">
+        <pd-member kind="const" sig="HandlePrefix = &quot;#&quot;; HandleParent = &quot;#parent&quot;">The reserved prefix and the one handle that exists. Every other handle (`#new`, `#children`, …) is parked; the prefix is reserved for all of them (D-063-1).</pd-member>
+        <pd-member kind="function" sig="IsHandle(s string) bool">Reports whether a string is a relative handle rather than an address. Checked *before* `ValidateAddress`, which stays permissive and unchanged (D-9).</pd-member>
+        <pd-member kind="function" sig="KnownHandles() []string">The handles that exist, for the "`#nope` is not a handle" error. One entry today; the point is that adding the second one does not touch an error string.</pd-member>
+        <pd-member kind="var" sig="ErrNotSubagent error">`#parent` used by something that is not an in-process Subagent. A **bare branchable token** — `errors.New("not an in-process subagent")` — matching T1's `ErrUnknownMail` / `ErrInvalidAddress` shape. The remediation prose is added by the wrapper, never baked into the sentinel.</pd-member>
+        <pd-member kind="var" sig="ErrNoSupervisor error">The caller *is* a Subagent, but no Subscription is bound to its Binding. A separate token precisely so the CLI can branch with `errors.Is` rather than match strings — the fix is different (AC-10).</pd-member>
+        <pd-member kind="var" sig="ErrUnknownHandle error">A `#`-prefixed value that is not a known handle. The token is bare; the wrapper interpolates the offending value and `KnownHandles()`.</pd-member>
+        <pd-member kind="var" sig="ErrHandleNotAllowed error">A handle in a position that only takes an absolute address — `subscribe`, `list --address`, `send --from` (D-063-2). Wrapped at the CLI, which is the only layer that knows which position was used.</pd-member>
+        <pd-member kind="function" sig="describeHandleError(err error, handle string) string">Where the four user-facing messages are built: the resolution ones (`ErrNotSubagent`, `ErrNoSupervisor`, `ErrUnknownHandle`) are formatted **inside the mail package**, so T3's RPC client produces the same text; the position one is formatted at the CLI, which alone knows the flag. Callers still branch on the sentinel with `errors.Is`, never on the string.</pd-member>
+      </pd-api>
+
+      <pd-api kind="interface" name="mail.Client — the additive delta" lang="go" path="auto-mail/mail/client.go" caption="Edited. Two new input/output fields and one new delivery field; no method added or changed.">
+        <pd-member kind="type" sig="type Sender struct { Kind SenderKind; AgentID, AgentType string; Ambiguous bool }">**Declared here**, in `client.go`, because it is part of the `Client` input contract — `subagent.go` only constructs it. `SenderSubagent` is the only kind that may use `#parent`; `Ambiguous` suppresses the name attribute (D-063-11).</pd-member>
+        <pd-member kind="field" sig="SendInput.Sender Sender">Established caller-side by `CallerSender` (D-063-8). Gates `#parent` resolution and supplies the envelope attributes.</pd-member>
+        <pd-member kind="field" sig="SendResult.ResolvedFrom string `json:&quot;resolvedFrom,omitempty&quot;`">The handle that was resolved, when one was. Omitted entirely for an absolute send, so T1's payload is byte-identical (D-063-10).</pd-member>
+        <pd-member kind="field" sig="Delivery.Attributes map[string]any `json:&quot;attributes,omitempty&quot;`">`senderKind`, plus either `senderAgentType` (exactly one live Subagent, non-empty type) or `senderAmbiguous` (several). The open map the backlog (§2.4) names as v1's obligation for attribute subscriptions later.</pd-member>
+        <pd-member kind="method" sig="Send(ctx, in SendInput) (SendResult, error)">Unchanged signature. Now: resolve `in.To` if it is a handle (else validate as today), stamp attributes from `in.Sender`, then T1's existing append-and-project.</pd-member>
+      </pd-api>
+    </pd-section>
+
+    <pd-section id="end-state-cli" title="The command surface at the end of this task">
+      <pd-cli title="zsh — the handle and its four refusals" caption="One new capability on `send --to`; everything else is a rejection with its own remediation.">
+        <pd-cmd note="inside an in-process Subagent — the J1 case" status="todo"><script type="text/plain">auto mail send --to '#parent' --message "phase 3 blocked"</script></pd-cmd>
+        <pd-out><script type="text/plain">{ "id": "01K9X2QF7M3B0V8N", "to": "auto-stack/supervisor", "resolvedFrom": "#parent", "subscriptions": 1, "bound": 1 }</script></pd-out>
+        <pd-cmd note="unchanged from T1 — no resolvedFrom key at all (D-063-10)" status="done"><script type="text/plain">auto mail send --to auto-web/bugs --message "…"</script></pd-cmd>
+        <pd-out><script type="text/plain">{ "id": "01K9X2R1…", "to": "auto-web/bugs", "subscriptions": 1, "bound": 1 }</script></pd-out>
+        <pd-cmd note="not a Subagent — exit 1, stdout empty" status="todo"><script type="text/plain">auto mail send --to '#parent' --message "hello?"</script></pd-cmd>
+        <pd-out><script type="text/plain"># stderr: cannot resolve "#parent": this process is not an in-process sub-agent.
+#   `#parent` works inside an Agent/Task sub-agent, whose parentage arrives on its
+#   own hook events; a spawned pane has no recorded parent yet. Send to an absolute
+#   address instead — `auto mail send --to auto-stack/supervisor …` — and see
+#   `auto mail docs` under "relative handles".</script></pd-out>
+        <pd-cmd note="a Subagent, but nobody subscribed — a different problem (AC-10)" status="todo"><script type="text/plain">auto mail send --to '#parent' --message "…"</script></pd-cmd>
+        <pd-out><script type="text/plain"># stderr: cannot resolve "#parent": your supervisor holds no subscription, so it
+#   has no address to be mailed at. Run `auto mail subscribe <address>` in the
+#   supervisor first — it is what binds an agent to an address.</script></pd-out>
+        <pd-cmd note="a handle is not a durable identity (D-063-2)" status="todo"><script type="text/plain">auto mail subscribe '#parent'</script></pd-cmd>
+        <pd-out><script type="text/plain"># stderr: "#parent" is a relative handle, not an address: it names a recipient at a
+#   moment, and a subscription names a reader forever. Subscribe to an absolute
+#   address (for example `auto-stack/supervisor`).</script></pd-out>
+        <pd-cmd note="unknown handle — lists what exists" status="todo"><script type="text/plain">auto mail send --to '#parnet' --message "…"</script></pd-cmd>
+        <pd-out><script type="text/plain"># stderr: "#parnet" is not a known relative handle. Known handles: #parent.
+#   `#` is reserved for handles, so it can never be used as an address — drop the
+#   `#` if you meant a channel called "parnet".</script></pd-out>
+      </pd-cli>
+    </pd-section>
+
+    <pd-section id="file-changes" title="File Changes">
+      <pd-files>
+        <pd-file path="docs/concepts/UBIQUITOUS_LANGUAGE.md" change="edit">G16, first: add **Handle** (a relative alias resolved at send time, never stored) with its `_Avoid_` line; reuse the existing **Subagent** entry rather than coining a synonym; regenerate the ER block with `glossary.py diagram --write`; update the frontmatter `summary` enumeration.</pd-file>
+        <pd-file path="CLAUDE.md" change="edit">Documentation-index block regenerated by **`auto doc agents`** after the glossary edit — never hand-edited. (`auto doc fix` reports issues and tells you to run `agents`; `auto doc fixed &lt;file&gt;` only refreshes the freshness hash. `agents.go` is what rewrites the `&lt;!-- autodoc: start --&gt;` block in `AGENTS.md`/`CLAUDE.md`.)</pd-file>
+        <pd-thread anchor="CLAUDE.md" status="resolved" priority="p2" title="Wrong autodoc command for regenerating CLAUDE.md">
+          <pd-comment by="review">This row and Phase 1 say <code>auto doc fix</code>/<code>auto doc fixed</code> regenerate the root <code>CLAUDE.md</code> documentation index. I checked <code>auto-doc/internal/commands/fix.go</code>: <code>fix</code> reports doc/link issues and its own "After All Groups Complete" text tells the caller to run <code>auto doc agents</code>. The command that actually rewrites <code>AGENTS.md</code>/<code>CLAUDE.md</code> is implemented in <code>auto-doc/internal/commands/agents.go</code>. Add <code>auto doc agents</code> to the Phase 1 verification/update sequence, or remove the <code>CLAUDE.md</code> file-change row if this task should not refresh the agent index.</pd-comment>
+          <pd-comment by="author">Verified and fixed — you are right about the command. <code>auto-doc/internal/commands/fix.go:227</code> literally prints "Run <code>auto doc agents</code> to update agent memory files", and <code>agents.go</code> is what rewrites the <code>&lt;!-- autodoc: start --&gt;</code> block in <code>AGENTS.md</code>/<code>CLAUDE.md</code>. The <code>CLAUDE.md</code> row and Phase 1 step 3 now name all three commands and say what each one does, because their names are easy to conflate: <code>auto doc fixed &lt;file&gt;</code> refreshes the freshness hash, <code>auto doc agents</code> regenerates the index block, and <code>auto doc fix</code> reports what is left. The row stays rather than being dropped — the glossary's frontmatter <code>summary</code> is mirrored into that block, so it does drift when the glossary changes.</pd-comment>
+        </pd-thread>
+
+        <pd-file path="auto-mail/mail/subagent.go" change="add">`ActiveAgent`, `CallerSender`, `ObserveHookEvent`, `ActiveSubagents`, the marker path helpers and `subagentTTL`. **Constructs** `Sender` but does not declare it — that type belongs to the `Client` contract in `client.go`. No store import; every error swallowed on the hook path.</pd-file>
+        <pd-file path="auto-mail/mail/subagent_test.go" change="add">Marker lifecycle (write/refresh/clear-one-not-the-others/expire), the unwritable-directory and occupied-path cases, the truncated-file case, and the `-race` concurrency test that N markers resolve to one answer (AC-8, AC-9).</pd-file>
+        <pd-file path="auto-mail/mail/handle.go" change="add">`HandlePrefix`, `HandleParent`, `IsHandle`, `KnownHandles`, the four **bare** sentinel errors (branchable tokens, per T1's `ErrUnknownMail` shape), and the wrapping helpers that build the user-facing remediation text around them.</pd-file>
+        <pd-thread anchor="auto-mail/mail/handle.go" status="resolved" priority="p2" title="Sentinel errors are mixed with user-facing remediation text">
+          <pd-comment by="review">The context's error-handling pattern is "sentinel errors, then wrap": existing <code>mail.ErrUnknownMail</code>, <code>ErrNoDelivery</code>, <code>ErrInvalidAddress</code>, and <code>ErrStoreNotEmpty</code> are stable branch tokens in <code>client.go</code>, while call sites wrap them with command-specific remediation using <code>errors.Is</code>. The <code>handle.go</code> row and Phase 1/2 instead say the sentinel vars themselves carry full remediation text and that <code>ErrUnknownHandle</code> "lists what is known", which needs dynamic values. Please separate the contract: keep the exported sentinel errors as branchable tokens, and specify where the dynamic/user-facing messages are constructed and wrapped so the CLI can still produce the four distinct stderr messages without string matching.</pd-comment>
+        <pd-comment by="author">Valid, and it would have broken the convention T1 established. The two layers are now separated in the API section, the file row and Phase 1/2: the exported sentinels are <strong>bare branchable tokens</strong> in the shape of T1's <code>ErrUnknownMail</code> / <code>ErrInvalidAddress</code>, and the user-facing prose — including the dynamic parts you name, the offending handle and <code>KnownHandles()</code> — is built at the wrap site with <code>fmt.Errorf("…: %w", Err…)</code>. Where each wrapper lives is specified too, because it is not arbitrary: the three <em>resolution</em> messages are formatted inside the mail package so T3's RPC client emits identical text, while the <em>position</em> message is formatted at the CLI, which is the only layer that knows whether the handle arrived via <code>subscribe</code>, <code>--address</code> or <code>--from</code>. Callers branch with <code>errors.Is</code> throughout; nothing matches a string.</pd-comment>
+        </pd-thread>
+        <pd-file path="auto-mail/mail/address.go" change="edit">One doc-comment line only: `#` is reserved <em>above</em> this function, so a future reader does not "fix" the permissiveness D-9 requires. No behaviour change — `ValidateAddress("#parent")` still returns nil.</pd-file>
+        <pd-file path="auto-mail/mail/handle_test.go" change="add">Reservation and position rules, the unknown-handle message, and proof that `ValidateAddress` is unchanged for `#`-prefixed input (AC-4).</pd-file>
+        <pd-file path="auto-mail/mail/client.go" change="edit">**Declares** `SenderKind` and `Sender` (the sole owner — they are `Client` input contract, alongside T1's other input/result types), plus `SendInput.Sender`, `SendResult.ResolvedFrom` and `Delivery.Attributes` — all additive, all `omitempty` on the wire.</pd-file>
+        <pd-thread anchor="auto-mail/mail/client.go" status="resolved" priority="p2" title="Sender type ownership is inconsistent">
+          <pd-comment by="review">The API section and Phase 1 put <code>Sender</code>/<code>SenderKind</code> in new <code>auto-mail/mail/subagent.go</code>, but this file-change row says <code>auto-mail/mail/client.go</code> owns those types too. I checked the 062 base: <code>client.go</code> currently contains only the public input/result types and sentinel errors; duplicate type definitions would not compile. Pick one file as the owner and make the File Changes, Phase 1 and API sections agree.</pd-comment>
+          <pd-comment by="author">Correct — as written it would not have compiled. <code>client.go</code> is now the sole owner of <code>SenderKind</code> and <code>Sender</code>, because they are part of the <code>Client</code> input contract and sit naturally beside T1's other input/result types; <code>subagent.go</code> only <em>constructs</em> a <code>Sender</code> via <code>CallerSender</code>. The API section, the two File Changes rows and Phase 1 steps 5 and 7 all now say the same thing, and each says it explicitly enough that an implementer reading any one of them alone gets it right.</pd-comment>
+        </pd-thread>
+        <pd-file path="auto-mail/mail/direct.go" change="edit">`Send` resolves a handle before validating, gates on `in.Sender.Kind`, stamps the attributes, and fills `ResolvedFrom`. `Reset` also removes the agents directory.</pd-file>
+        <pd-file path="auto-mail/mail/pending.go" change="edit">One doc-comment line: `flagName` is now the shared Binding key for both the pending flag and the Subagent marker directory, so its collision-safety argument covers both.</pd-file>
+        <pd-file path="auto-mail/mail/export_test.go" change="edit">Expose the marker clock so TTL expiry is tested with an injected time rather than by waiting.</pd-file>
+        <pd-file path="auto-mail/mail/mail_test.go" change="edit">Resolution success and the three failure modes through the `direct` client; T1's existing cases unchanged.</pd-file>
+
+        <pd-file path="auto-mail/internal/config/settings.go" change="edit">`AgentsDirName = "alpha-agents"` plus `AgentsDir()` and its home-relative twin `AgentsDirIn(home)`, matching the existing pair-per-location convention.</pd-file>
+        <pd-file path="auto-mail/internal/store/project.go" change="edit">`SendParams.Attributes` written into the envelope JSON; `hydrate` decodes it; `ListedMail.Attributes` carries it out. No schema statement changes.</pd-file>
+        <pd-file path="auto-mail/internal/store/store_test.go" change="edit">Envelope round-trip with and without attributes, and that a pre-existing envelope with no `attributes` key still hydrates (AC-6).</pd-file>
+
+        <pd-file path="auto-mail/internal/cli/send.go" change="edit">Build the `Sender` via `CallerSender`; reject a handle in `--from`; map the three resolution sentinels onto `ExitError{Code:1}` with stdout left empty.</pd-file>
+        <pd-file path="auto-mail/internal/cli/subscribe.go" change="edit">Reject a `#`-prefixed address with the position message (D-063-2).</pd-file>
+        <pd-file path="auto-mail/internal/cli/list.go" change="edit">Reject a `#`-prefixed `--address`; surface `attributes` on each delivery.</pd-file>
+        <pd-file path="auto-mail/internal/cli/reset.go" change="edit">Report the agents directory among the removed paths.</pd-file>
+        <pd-file path="auto-mail/internal/cli/docs.go" change="edit">A "relative handles" section: what `#parent` resolves to, the in-process-Subagent constraint, the position rule, the deterministic choice among several Subscriptions, and D-063-4's residual ambiguity.</pd-file>
+        <pd-file path="auto-mail/internal/cli/cli_test.go" change="edit">Exit codes, empty stdout on failure, the four distinguishable messages, and the docs coverage assertion (AC-3, AC-4, AC-10, AC-13).</pd-file>
+
+        <pd-file path="auto-mail/conformance/conformance.go" change="edit">Handle cases added to the interface-level suite: resolution for a `subagent` sender, the three failures, attribute round-trip, and `ResolvedFrom` absent on an absolute send (D-063-8).</pd-file>
+        <pd-file path="auto-mail/conformance/conformance_test.go" change="edit">Run the widened suite against the direct implementation.</pd-file>
+        <pd-file path="auto-mail/CLAUDE.md" change="edit">Document the handle, the marker directory, the reserved prefix and the residual ambiguity, alongside T1's alpha contract.</pd-file>
+
+        <pd-file path="auto-cli/cmd/auto/hookscmd.go" change="edit">Extract `agent_id`/`agent_type`/`session_id` and call a new `mailObserveAgent(...)` adapter immediately after the durable append and before the best-effort POST. **Additive only** — no existing statement is removed or reordered, and `mailNudge`'s signature is untouched, so T1's append → POST → emit flow is byte-for-byte intact. The adapter returns before computing a Binding when `agent_id` is empty; `mail.ObserveHookEvent` is a no-op for the same input.</pd-file>
+        <pd-thread anchor="auto-cli/cmd/auto/hookscmd.go" status="resolved" priority="p1" title="No-agent hook path must not return before T1's outputs">
+          <pd-comment by="review">The planned row and Phase 1 step say to return early from <code>hookscmd.go</code> when <code>agent_id</code> is empty. In the 062 base, ordinary <code>PostToolUse</code> payloads normally have no <code>agent_id</code>, and the handler still appends the hook Event, posts the bus Event, and calls <code>emitAdditionalContext(..., mailNudge(...), matchHint(...))</code>; that is how T1's in-band Mail nudge and project hints work. A command-level early return would skip shipped behavior and contradict AC-7's requirement that the nudge still emits correctly when there is Mail. The no-op needs to be inside the marker observer/helper, while the existing no-Subagent hook flow continues. The <code>hooksagent_test.go</code> text should also say zero marker filesystem work, not zero filesystem work for the whole hook command, because <code>hooks.Append</code> is deliberately a filesystem write on every valid payload.</pd-comment>
+          <pd-comment by="author">Accepted, and this was a genuinely dangerous wording: "return early when <code>agent_id</code> is empty" meant the adapter, but an implementer following the text literally would have put the return in <code>RunE</code> and silently killed T1's nudge and every project's hint rules for the overwhelmingly common payload. Phase 1 step 10 now says the change is <strong>purely additive</strong> — one call inserted, nothing removed or reordered — and states that the early return lives inside the new <code>mailObserveAgent</code> adapter while the no-Subagent payload still takes T1's whole path (<code>hooks.Append</code> → <code>postBusEvent</code> → <code>emitAdditionalContext</code>). The File Changes row says the same. Your second point is taken too: AC-7 and the <code>hooksagent_test.go</code> row now say <em>zero marker-directory</em> operations and scope the assertion to <code>~/.auto/mail/</code>, with a parenthetical recording that <code>hooks.Append</code>'s write is expected — an assertion of "zero filesystem work" would have been unsatisfiable and would have sent an implementer looking for a way to break the durable log.</pd-comment>
+        </pd-thread>
+        <pd-file path="auto-cli/cmd/auto/hooksagent_test.go" change="add">AC-7's adversarial set: zero **marker-directory** filesystem work with no `agent_id` (T1's durable `hooks.Append` write still happens and is expected), zero store opens with one, and exit 0 with T1's nudge and hint output unchanged under an unwritable marker directory, a read-only HOME, an uninitialised HOME, a missing `cwd` and an occupied marker path.</pd-file>
+        <pd-file path="auto-cli/cmd/auto/hooksinstallcmd_test.go" change="edit">Assert `PreToolUse` and `SubagentStop` stay installed for both agents, with a failure message naming `#parent` as what breaks (AC-14).</pd-file>
+
+        <pd-file path="harness/scenarios/mail-flow/fixtures/hooks/pre-tool-use-subagent.json" change="add">A `PreToolUse` payload with `agent_id` and `agent_type`, copied field-for-field from this host's live hook log.</pd-file>
+        <pd-file path="harness/scenarios/mail-flow/fixtures/hooks/subagent-stop.json" change="add">A `SubagentStop` payload with `agent_id` and `agent_transcript_path`, for the cleanup half of the guard.</pd-file>
+        <pd-file path="harness/src/harness/scenarios/mail_flow.py" change="edit">`fire_hook` accepts the Subagent fields and a fixture name; new `mark_subagent` / `stop_subagent` DSL helpers; `check_ready` gains a stray-marker gate alongside the stray-flag one.</pd-file>
+        <pd-file path="harness/tests/mail_flow/test_parent_handle.py" change="add">J1 end to end, the two negative cases, and the swarm case — several Subagent fixtures live at once, a send from each, one supervisor.</pd-file>
+        <pd-file path="harness/CLAUDE.md" change="edit">Extend the mail-flow note: the marker directory is a third piece of session-scoped on-disk state, so a test that marks a Subagent should stop it.</pd-file>
+      </pd-files>
+    </pd-section>
+
+    <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+      <md><script type="text/plain">
+Beyond the alternatives recorded inside each decision, four whole-shape options
+were weighed and dropped:
+
+- **Env promotion (`AUTO_MAIL_SELF` → `AUTO_MAIL_PARENT`, the `SHLVL`
+  pattern).** The epic's own review found the bootstrap hole: a supervisor that
+  subscribes mid-session cannot set a variable in its already-running process, so
+  nothing it spawns afterwards inherits anything. Recorded in Q-4 and rejected by
+  D-13 — not re-proposed here.
+- **Launch-time address stamping by herdr / ntm / the delegate skills.** Makes
+  spawned panes work too, which is strictly more capability — and it is a
+  cross-tool dependency the mail epic does not otherwise carry. Parked in
+  [beyond the MVP §2.6](../../auto-mail-beyond-mvp.md), and it should land
+  together with `#new` (§2.1), which needs the same stamping.
+- **Reconstructing parentage from the hook JSONL at send time.** The log has the
+  answer, and `auto-etl` already reads it. Rejected because it makes `send`
+  depend on scanning an append-only log that grows without bound, in the path of
+  a command an agent runs when something has already gone wrong — and because
+  the marker is the same fact, pre-reduced, at a fraction of the cost. (The log
+  remains the right place for `doctor` to *audit* the marker, which is T4's.)
+- **A `#self` handle alongside `#parent`.** Tempting once a `Sender` exists, and
+  useless: an in-process Subagent has no inbox and cannot be woken separately,
+  so `#self` would name something undeliverable. It stays parked with the other
+  handles (§2.3).
+      </script></md>
+    </pd-section>
+
+    <pd-decisions></pd-decisions>
+
+  </pd-tab>
+
+  <!-- ==================== PLAN ==================== -->
+  <pd-tab name="Plan">
+
+    <pd-section id="summary" title="Summary">
+      <md><script type="text/plain">
+Five phases, strictly sequential. **Phase 1 is a walking skeleton**: the
+ontology, a marker written by the real hook, a `Sender` read from it, `#parent`
+resolved inside the real `Client`, and one J1 send proven in the harness — one
+happy path and one refusal, through every layer at once. Phases 2–5 thicken a
+system that already runs: the reservation rule and the four distinguishable
+refusals; the marker's lifecycle and an adversarial hot path; the concurrency
+property under `-race`; and finally the envelope attributes, the conformance
+suite and the docs.
+
+The order is deliberate about risk. The hook write lands in phase 1 — earliest,
+when it is one line and easy to reason about — because it is the only change to
+a path that runs on every tool call of every agent on the host, and deferring it
+would defer the task's only real integration risk. The concurrency property gets
+its own phase rather than riding along, because D-13 named it as the accepted
+limitation and D-063-4 claims to have designed it out: that claim deserves to
+fail loudly on its own if it is wrong.
+
+**Before phase 1 starts:** 062 must be merged to `main`, and the worktree cut
+from `main` afterwards (D-063-7). Do not branch from `task/062-…`.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="execution-sequence" title="Execution Sequence">
+      <pd-dag caption="Execution order — sequential, because phases 2–5 all touch the CLI and the mail package's test files"></pd-dag>
+      <md><script type="text/plain">
+Sequential rather than fanned out, and that is a choice rather than an oversight:
+phases 2, 3 and 5 all edit `auto-mail/internal/cli/cli_test.go` and
+`auto-mail/mail/mail_test.go`, so parallel dispatch would produce conflicts in
+exactly the files that carry the evidence. The dependency chain costs little —
+each phase is small once phase 1 exists.
+      </script></md>
+    </pd-section>
+
+    <pd-stepper>
+
+      <pd-phase n="1" title="Walking skeleton: the ontology, the marker, and one #parent send end to end"
+        files="docs/concepts/UBIQUITOUS_LANGUAGE.md,CLAUDE.md,auto-mail/internal/config/settings.go,auto-mail/mail/subagent.go,auto-mail/mail/subagent_test.go,auto-mail/mail/handle.go,auto-mail/mail/handle_test.go,auto-mail/mail/client.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/send.go,auto-mail/internal/cli/cli_test.go,auto-cli/cmd/auto/hookscmd.go,harness/scenarios/mail-flow/fixtures/hooks/pre-tool-use-subagent.json,harness/src/harness/scenarios/mail_flow.py,harness/tests/mail_flow/test_parent_handle.py"
+        status="todo">
+        <md><script type="text/plain">
+**Gate first.** Confirm 062 is merged: `git log --oneline origin/main | grep 062`
+and `ls auto-mail/mail/binding.go` on `main`. If `auto-mail/` is absent, **stop
+and report** — do not branch from the 062 branch (D-063-7). Then re-verify every
+path in the Solution tab's file tree still exists (for edits) or is absent (for
+adds); PR #146 review may have moved them.
+
+**Ontology first (G16), before any Go.**
+1. Add **Handle** to `docs/concepts/UBIQUITOUS_LANGUAGE.md` in the `## Mail`
+   section: a relative alias for an Address, resolved at send time and never
+   stored, written with a leading `#`. `_Avoid_: alias, shortcut, relative
+   address, magic address`. Do **not** coin a synonym for Subagent — that term
+   is already canonical and must be reused verbatim.
+   *Verify:* `python3 .claude/skills/domain-modelling/scripts/glossary.py check
+   docs/concepts/UBIQUITOUS_LANGUAGE.md` exits 0.
+2. Regenerate the ER block: `python3 .claude/skills/domain-modelling/scripts/glossary.py
+   diagram docs/concepts/UBIQUITOUS_LANGUAGE.md --write`. Never hand-edit it.
+3. Update the frontmatter `summary` enumeration, then run **three** distinct
+   commands — they do different jobs and the names are easy to conflate:
+   `auto doc fixed docs/concepts/UBIQUITOUS_LANGUAGE.md` refreshes the freshness
+   hash; **`auto doc agents`** rewrites the `<!-- autodoc: start -->` index block
+   in the root `CLAUDE.md`; `auto doc fix` reports anything still outstanding.
+   *Verify:* `auto doc stale` is clean, the root `CLAUDE.md` index shows the new
+   summary, and the pre-commit `autodoc-fix` check passes (062 made it blocking).
+
+**Then the thinnest path through every layer.**
+4. `auto-mail/internal/config/settings.go`: add `AgentsDirName = "alpha-agents"`,
+   `AgentsDir()` and `AgentsDirIn(home)`, matching the existing pair-per-location
+   convention exactly.
+5. `auto-mail/mail/subagent.go`: `ActiveAgent`, and the marker path helpers
+   reusing the existing `flagName(b)` as the Binding key;
+   `ObserveHookEvent(home, b, event, a)` — **no-op when `a.AgentID == ""`**,
+   writes on `PreToolUse`/`PostToolUse`, clears on `SubagentStop`, swallows every
+   error, never opens the store; and `CallerSender(home, b)` reading the marker
+   directory. Keep the TTL constant in place but the lifecycle simple here —
+   phase 3 hardens it. **Do not use the word "message" in any identifier, field,
+   JSON tag or type name** (`mail_test.go:63-75` greps for it).
+6. `auto-mail/mail/handle.go`: `HandlePrefix`, `HandleParent`, `IsHandle`, and
+   `ErrNotSubagent` as a **bare sentinel** (`errors.New("not an in-process
+   subagent")`), matching T1's `ErrUnknownMail` / `ErrInvalidAddress` shape.
+   The remediation prose (constraint, alternative, `auto mail docs` pointer) is
+   built by a wrapper that returns `fmt.Errorf("…: %w", ErrNotSubagent)`, so the
+   CLI branches with `errors.Is` and never on a string.
+7. `auto-mail/mail/client.go`: **declare `SenderKind` and `Sender` here** —
+   `client.go` is the sole owner, because they are `Client` input contract
+   alongside T1's other input/result types; `subagent.go` only constructs them.
+   Add `SendInput.Sender` and `SendResult.ResolvedFrom` (`json:",omitempty"`,
+   D-063-10).
+8. `auto-mail/mail/direct.go`: in `Send`, if `IsHandle(in.To)` resolve before
+   validating — `#parent` requires `in.Sender.Kind == SenderSubagent`, else
+   `ErrNotSubagent`; resolve via the existing `d.store.AddressForBinding(ctx,
+   caller(in.Binding))`; set `ResolvedFrom`. Absolute sends take exactly today's
+   path.
+9. `auto-mail/internal/cli/send.go`: build the `Sender` with `mail.CallerSender`,
+   pass it through, and map `ErrNotSubagent` onto `&ExitError{Code: 1, …}` with
+   **stdout left empty** and the hint on stderr.
+10. `auto-cli/cmd/auto/hookscmd.go`: **purely additive** — insert one call, and
+    remove or reorder nothing. Add a `mailObserveAgent(cwd, hookCtx, payload)`
+    adapter beside the existing `mailNudge`, reading `agent_id` / `agent_type` /
+    `session_id` with the existing `stringField`. **The early return is inside
+    that adapter, not in `RunE`**: an ordinary payload with no `agent_id` must
+    still take T1's whole path — `hooks.Append`, `postBusEvent`, and
+    `emitAdditionalContext(..., mailNudge(...), matchHint(...))`. Otherwise call
+    `mail.ObserveHookEvent` with `mail.BindingFromContext(hookCtx, cwd)` — the
+    *already captured* context, never a second `BindingFor(cwd)` (062's
+    `binding-reuse` constraint; `CaptureContext` shells out to tmux). Place the
+    call immediately after `hooks.Append` and **before** `postBusEvent`, so a slow
+    POST cannot delay it. **Emit nothing on stdout from this path** — Codex's
+    `Stop`/`SubagentStop` reject invalid stdout, and `emitAdditionalContext`
+    stays the only writer.
+11. Harness: add `fixtures/hooks/pre-tool-use-subagent.json` (copy the field
+    names from `~/.auto/hooks/raw/events-*.jsonl`, do not invent them); extend
+    `fire_hook` to take a fixture name and Subagent fields; add
+    `harness/tests/mail_flow/test_parent_handle.py` with **two** tests — J1's
+    happy path (mark a Subagent, send `#parent`, supervisor lists and acks) and
+    the refusal with no marker. Match on presence of the mail id with bounded
+    retry, never on counts. Give the test its own address and ack what it sends.
+
+**Verify:** `go build ./...` in `auto-mail` and `auto-cli` after each file;
+`make check` and `make test` clean (the default target is `build` — it runs none
+of these, so name the targets); `uv run pytest harness/tests/mail_flow -k
+parent_handle` green; T1's existing `mail-flow` tests still green **unmodified**.
+**Commit** via `/contextual-commit`.
+        </script></md>
+      </pd-phase>
+
+      <pd-phase n="2" title="The reservation rule and four distinguishable refusals"
+        files="auto-mail/mail/handle.go,auto-mail/mail/handle_test.go,auto-mail/mail/address.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/subscribe.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/send.go,auto-mail/internal/cli/cli_test.go,auto-mail/conformance/conformance.go,auto-mail/conformance/conformance_test.go"
+        status="todo" depends-on="1">
+        <md><script type="text/plain">
+1. `handle.go`: add `KnownHandles()` and the bare sentinels `ErrUnknownHandle`,
+   `ErrNoSupervisor` and `ErrHandleNotAllowed`, plus the wrappers that attach
+   remediation text. Keep the two layers separate, following T1's "sentinel
+   errors, then wrap" convention: the **token** is what `errors.Is` branches on;
+   the **message** is built at the wrap site and interpolates the dynamic parts
+   (the offending handle, `KnownHandles()`, the flag that was used). The three
+   resolution messages are formatted inside the mail package so T3's RPC client
+   emits identical text; the position message is formatted at the CLI, which is
+   the only layer that knows whether it was `subscribe`, `--address` or
+   `--from`. All four must be **textually distinct** — an agent reading stderr
+   has to tell them apart without parsing (AC-3, AC-4, AC-10).
+2. `direct.go`: when the caller *is* a Subagent but `AddressForBinding` returns
+   no address, return `ErrNoSupervisor` — and note the orphaned-Subscription case
+   062 phase 4 flagged (binding row gone, subscription alive) lands here too, and
+   answers the same way.
+3. Position rule (D-063-2): reject a `#`-prefixed value in
+   `internal/cli/subscribe.go` (positional address), `internal/cli/list.go`
+   (`--address`) and `internal/cli/send.go` (`--from`), all with
+   `ErrHandleNotAllowed`. Reject an unrecognised handle in every position with
+   `ErrUnknownHandle`, listing `KnownHandles()`.
+4. **Leave `address.go` semantically unchanged** — add only a doc-comment line
+   recording that `#` is reserved *above* this function, so a future reader does
+   not "fix" the permissiveness D-9 requires. `handle_test.go` asserts
+   `ValidateAddress("#parent")` still returns nil.
+5. `conformance/conformance.go`: add the handle contract to the interface-level
+   suite (D-063-8) — resolution for a `subagent` sender, `ErrNotSubagent`,
+   `ErrNoSupervisor`, `ErrUnknownHandle`, and `ResolvedFrom` **absent** on an
+   absolute send.
+6. `cli_test.go`: exit code 1, **stdout empty**, and the four messages
+   distinguishable — plus the store assertion that closes the loop: after every
+   rejection, no row in `subscriptions.address` or `mail.to_address` begins with
+   `#` (AC-4).
+
+**Verify:** `make check` and `make test`; the conformance suite green; T1's
+tests unmodified. **Commit.**
+        </script></md>
+      </pd-phase>
+
+      <pd-phase n="3" title="Marker lifecycle, and the hot path made adversarial"
+        files="auto-mail/mail/subagent.go,auto-mail/mail/subagent_test.go,auto-mail/mail/pending.go,auto-mail/mail/export_test.go,auto-mail/mail/direct.go,auto-mail/internal/cli/reset.go,auto-mail/internal/cli/cli_test.go,auto-cli/cmd/auto/hooksagent_test.go,auto-cli/cmd/auto/hooksinstallcmd_test.go,harness/scenarios/mail-flow/fixtures/hooks/subagent-stop.json,harness/src/harness/scenarios/mail_flow.py,harness/tests/mail_flow/test_parent_handle.py"
+        status="todo" depends-on="2">
+        <md><script type="text/plain">
+1. `subagent.go`: finish the lifecycle (D-063-9) — one file per `agent_id`
+   (hashed the same way as the Binding key, because the id format is upstream's
+   and nobody promised it stays filename-safe); `SubagentStop` removes **only
+   that agent's** marker; `subagentTTL = 15 * time.Minute` ignored-on-read; and
+   opportunistic unlink of expired entries following 055's safe order — remove,
+   then forget; a failed removal is left for the next pass. A truncated or
+   unparseable marker reads as absent.
+2. `export_test.go`: expose the marker clock so TTL expiry is tested with an
+   injected time. **Never sleep in a test to age a marker.**
+3. `pending.go`: one doc-comment line — `flagName` is now the shared Binding key
+   for both the pending flag and the marker directory, so its collision-safety
+   argument covers both.
+4. `direct.go` + `internal/cli/reset.go`: `Reset` removes the agents directory
+   and reports it among `removed` (G10 — and a marker surviving a reset is
+   exactly the stale state the harness gates on).
+5. `auto-cli/cmd/auto/hooksagent_test.go` (new): AC-7's adversarial set — no
+   `agent_id` → **zero marker-directory** operations (T1's `hooks.Append` write
+   still happens by design, so scope the assertion to `~/.auto/mail/`); with
+   `agent_id` → exactly one marker write and **zero store opens**, counted
+   through T1's `openStore` package var;
+   and exit 0 with correct nudge emission under an unwritable marker directory,
+   a read-only `$HOME`, a `$HOME` where `auto mail init` never ran, a payload
+   with `agent_id` but no `cwd`, and a marker path occupied by a directory.
+   Assert stdout still carries at most one `hookSpecificOutput` object.
+6. `hooksinstallcmd_test.go`: assert `PreToolUse` and `SubagentStop` remain
+   installed for **both** agents, with a failure message naming `#parent` as what
+   breaks (AC-14).
+7. Harness: add `fixtures/hooks/subagent-stop.json`; add `mark_subagent` /
+   `stop_subagent` DSL helpers; extend `check_ready()` with a stray-marker gate
+   alongside the existing stray-flag one; add the after-`SubagentStop` refusal
+   test.
+
+**Verify:** `make check`, `make test`, `make test-race`; the harness mail-flow
+module green end to end. **Commit.**
+        </script></md>
+      </pd-phase>
+
+      <pd-phase n="4" title="The race, proven rather than accepted"
+        files="auto-mail/mail/subagent_test.go,auto-mail/mail/mail_test.go,harness/tests/mail_flow/test_parent_handle.py"
+        status="todo" depends-on="3">
+        <md><script type="text/plain">
+This phase adds no production code. Its job is to make D-063-4's central claim
+falsifiable, because D-13 recorded the race as an *accepted limitation* and this
+task claims to have removed its ability to produce a wrong answer.
+
+1. `subagent_test.go`, under `-race`: N ≥ 4 distinct `agent_id`s writing markers
+   concurrently under one Binding, interleaved with parent-level events carrying
+   no `agent_id`; `CallerSender` called concurrently throughout. Assert every
+   call returns `SenderSubagent` and that **no interleaving makes a live
+   Subagent's marker disappear** — the failure direction D-063-9's per-agent
+   files exist to prevent.
+2. `mail_test.go`: resolve `#parent` concurrently from each of those senders
+   against one store and assert **every resolution returns the same absolute
+   address**. Follow 062 phase 5's rule — use **separate store handles**, because
+   a shared `*sql.DB` is serialised by `database/sql` and proves nothing.
+3. Assert the documented residual explicitly (AC-8): the supervisor's own
+   `#parent` while a child is live resolves to **its own** Subscription and never
+   to any other — bounded self-delivery, which is what D-063-4 claims and what
+   `auto mail docs` will say.
+4. Attribution under concurrency (D-063-11): with several markers live, assert
+   `CallerSender` reports `Ambiguous`, that `senderAgentType` is **absent** from
+   every resulting envelope, and that `senderAmbiguous: true` is present. This is
+   the assertion that stops attribution quietly reverting to "pick the newest
+   marker", which is the bug review caught.
+5. Harness: the swarm case for real — several Subagent fixtures marked live at
+   once, a send from each, all landing on one supervisor Subscription, matched
+   on presence of each mail id, and each carrying `senderAmbiguous` rather than a
+   name.
+
+**Verify:** `make test-race` green, plus `go test -race -count=5 ./...` in
+`auto-mail` to catch a flake masquerading as a pass; harness green. **Commit.**
+        </script></md>
+      </pd-phase>
+
+      <pd-phase n="5" title="The supervisor learns which Subagent wrote — attributes, conformance, docs"
+        files="auto-mail/internal/store/project.go,auto-mail/internal/store/store_test.go,auto-mail/mail/client.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/docs.go,auto-mail/internal/cli/cli_test.go,auto-mail/conformance/conformance.go,auto-mail/conformance/conformance_test.go,auto-mail/CLAUDE.md,harness/CLAUDE.md,harness/tests/mail_flow/test_parent_handle.py"
+        status="todo" depends-on="4">
+        <md><script type="text/plain">
+1. `internal/store/project.go`: `SendParams.Attributes` marshalled into the
+   existing envelope JSON; `hydrate` decodes it; `ListedMail.Attributes` carries
+   it out. **No schema statement changes** — the envelope is a TEXT blob.
+2. `mail/client.go` + `direct.go`: `Delivery.Attributes` (`omitempty`), and
+   `Send` stamps `senderKind: "subagent"` from `in.Sender`, plus
+   `senderAgentType` **only when `in.Sender` is unambiguous and its `agent_type`
+   is non-empty** — otherwise `senderAmbiguous: true` (D-063-11). A real
+   `SubagentStop` on this host carried an empty `agent_type`, so the empty case
+   is not hypothetical.
+3. `internal/cli/list.go`: surface `attributes` on each delivery.
+4. `store_test.go` + `mail_test.go`: round-trip with and without attributes, and
+   that an envelope written **before** this task (no `attributes` key) hydrates
+   unchanged — the migration-free claim, asserted.
+5. `conformance/conformance.go`: the attributes contract, so T3's RPC client
+   inherits it.
+6. `internal/cli/docs.go`: a "relative handles" section — what `#parent`
+   resolves to, the in-process-Subagent constraint, the position rule, the
+   deterministic choice when the supervisor holds several Subscriptions, and
+   D-063-4's residual ambiguity stated plainly. `quickstart` and `doctor` stay
+   absent (T4, D-062-4).
+7. `auto-mail/CLAUDE.md` and `harness/CLAUDE.md`: the handle, the marker
+   directory as a third piece of session-scoped harness state, and the rule that
+   a test which marks a Subagent should stop it.
+8. **The regression gate (AC-15):** assert `auto mail send` with an absolute
+   `--to` from a non-Subagent produces byte-identical stdout to T1, and that such
+   a delivery carries no `attributes` key. Then review `git diff main --
+   auto-mail auto-cli harness` specifically for **deleted or rewritten assertion
+   lines** inside T1's test bodies — additions to those files are expected and
+   planned; removals are not. Run `harness/tests/mail_flow/test_mail_loop.py`
+   unchanged. **A T1 assertion that had to change is a design finding to report,
+   not a fix to make.**
+
+**Verify:** `make check test test-race vulncheck` across every module (named
+explicitly — bare `make` is `build` and gates nothing); `uv run pytest
+harness/tests/mail_flow` green in full; `node
+.claude/skills/planning-doc/scripts/pd-lint.mjs` on this doc clean.
+**Commit**, then open the PR.
+        </script></md>
+      </pd-phase>
+
+    </pd-stepper>
+
+    <pd-section id="success-criteria" title="Success Criteria">
+      <md><script type="text/plain">
+- **Phase 1** — AC-1, AC-2 (happy path), AC-3 (the no-marker case), AC-12 pass.
+  A Subagent mails its supervisor without knowing an identifier, and the
+  ontology landed before the code that uses it.
+- **Phase 2** — AC-4, AC-10 pass, and AC-3 completes. Every refusal is
+  distinguishable and nothing `#`-prefixed can reach the store.
+- **Phase 3** — AC-7, AC-9, AC-14 pass. The hot path survives everything thrown
+  at it and still exits 0; markers are created, cleared and expired precisely.
+- **Phase 4** — AC-8 passes under `-race`, repeated. D-13's accepted race is
+  demonstrated to be unable to produce a wrong recipient.
+- **Phase 5** — AC-5, AC-6, AC-11, AC-13, AC-15 pass. The supervisor learns
+  which Subagent wrote, the contract is in the conformance suite, the surface is
+  discoverable, and nothing already shipped changed behaviour.
+- **Overall** — all fifteen criteria green; `make check`, `make test`,
+  `make test-race` and `make vulncheck` clean across every module (bare `make`
+  is `build` and is not a gate); and the `mail-flow` harness scenario —
+  T1's tests and T2's — passing end to end via `uv run pytest
+  harness/tests/mail_flow` (G15).
+      </script></md>
+    </pd-section>
+    <pd-thread anchor="success-criteria" status="resolved" priority="p2" title="`make` is not the full verification suite">
+      <pd-comment by="review">Phase 5 says <code>full make (fmt, vet, lint, vulncheck, test)</code>, and the success criteria say <code>make</code> clean. I checked both <code>main</code> and the 062 worktree Makefiles: the default target is <code>build</code>; it does not run fmt/vet/lint/vulncheck/test. The plan should list the actual commands/targets, for example <code>make fmt-check vet lint vulncheck test test-race</code> plus the harness command, or define a top-level target before relying on <code>make</code> as the gate.</pd-comment>
+      <pd-comment by="author">Right, and verified against the 062 Makefile: the default target is <code>build</code>, and the real gates are <code>check</code> (which is itself <code>fmt-check vet lint stale-refs</code>), <code>test</code>, <code>test-race</code> and <code>vulncheck</code>. Every phase's verify line and the success criteria now name those targets explicitly, with a note that bare <code>make</code> gates nothing, plus <code>uv run pytest harness/tests/mail_flow</code> for the harness half. Defining a new top-level aggregate target was the alternative and is deliberately not taken — this task should not be the one that reshapes the repo's build entry points.</pd-comment>
+    </pd-thread>
+
+  </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
