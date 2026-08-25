@@ -11,6 +11,11 @@ FIXTURE_DIR := auto-search/testdata/fixtures/auto-stack-snapshot
 DIST_DIR  := dist
 INSTALL_DIR ?= $(HOME)/.local/bin
 
+# Pin golangci-lint: installing @latest drifts the linter version between local and
+# CI, so a new modernizer (e.g. errorsastype under go1.26) reddens previously-green
+# code repo-wide. Bump this deliberately, not silently.
+GOLANGCI_VERSION ?= v2.12.2
+
 # All modules participate in the quality/test loops (fmt/vet/lint/vulncheck/test).
 # The single `auto` binary is built from the auto-cli umbrella module.
 PROJECTS := auto-shared auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill auto-graph auto-ui auto-config auto-artifact auto-mail auto-cli
@@ -239,8 +244,8 @@ install-tools:
 		GOBIN=$(INSTALL_DIR) go install golang.org/x/vuln/cmd/govulncheck@latest; \
 	fi
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
-		echo "installing golangci-lint..."; \
-		GOBIN=$(INSTALL_DIR) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest; \
+		echo "installing golangci-lint $(GOLANGCI_VERSION)..."; \
+		GOBIN=$(INSTALL_DIR) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION); \
 	fi
 	@echo "Developer tooling ready"
 
