@@ -369,3 +369,294 @@ func TestNoPhysicalIdentityInStoredMail(t *testing.T) {
 		t.Errorf("binding row = (%q, %q), want the opaque tmux pair", manager, target)
 	}
 }
+
+// TestHasPendingOpensNoStore is AC-10's central claim, made assertable: the
+// hook's mail check costs one stat and opens the store on **neither** path.
+//
+// A timing assertion could not say this — a fast machine passes a stopwatch
+// test that opens SQLite anyway — so the assertion is structural: the package's
+// only store opener is counted, and the count must stay at zero across a
+// present flag, an absent flag, an absent flag directory and an unreadable one.
+func TestHasPendingOpensNoStore(t *testing.T) {
+	home := t.TempDir()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	opens, restore := mail.CountStoreOpens()
+	t.Cleanup(restore)
+
+	// Absent flag directory entirely — the state of a host that never ran
+	// `auto mail init`.
+	if mail.HasPending(home, binding) {
+		t.Error("HasPending on a home with no mail directory = true, want false")
+	}
+
+	// Present flag.
+	if err := mail.SetPendingFor(home, binding); err != nil {
+		t.Fatalf("SetPendingFor: %v", err)
+	}
+	if !mail.HasPending(home, binding) {
+		t.Error("HasPending with the flag present = false, want true")
+	}
+
+	// Absent flag, present directory.
+	other := mail.BindingFromContext(nil, t.TempDir())
+	if mail.HasPending(home, other) {
+		t.Error("HasPending for an unflagged binding = true, want false")
+	}
+
+	// An unreadable flag directory reads as "no mail" rather than as an error
+	// the hook would have to handle.
+	unreadable := t.TempDir()
+	if err := mail.SetPendingFor(unreadable, binding); err != nil {
+		t.Fatalf("SetPendingFor: %v", err)
+	}
+	dir := filepath.Dir(mail.FlagPathFor(unreadable, binding))
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatalf("chmod %s: %v", dir, err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if os.Geteuid() != 0 {
+		// Root ignores the mode bits, so the assertion is only meaningful for
+		// an ordinary user; the call itself must be safe either way.
+		if mail.HasPending(unreadable, binding) {
+			t.Error("HasPending on an unreadable flag directory = true, want false")
+		}
+	} else {
+		_ = mail.HasPending(unreadable, binding)
+	}
+
+	// An empty binding names nothing and must never match a shared flag.
+	if mail.HasPending(home, mail.Binding{}) {
+		t.Error("HasPending for an empty binding = true, want false")
+	}
+
+	if got := opens(); got != 0 {
+		t.Errorf("the mail check opened the store %d times, want 0 — the hook "+
+			"path must cost one stat (G8/AC-10)", got)
+	}
+}
+
+// TestNudgeTextCarriesNoMailboxContent: the nudge is a constant instruction to
+// go and read mail, never a rendering of what is waiting. It lands in another
+// agent's context window and the sender controls the mail, so interpolating a
+// sender, an address, a subject or a body would make the sender an author of
+// the recipient's context (G14's content rule).
+func TestNudgeTextCarriesNoMailboxContent(t *testing.T) {
+	home := t.TempDir()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	before := mail.NudgeText()
+	if !strings.Contains(before, "auto mail list") {
+		t.Errorf("NudgeText() = %q, want it to name `auto mail list`", before)
+	}
+	if !strings.Contains(before, "auto mail ack") {
+		t.Errorf("NudgeText() = %q, want it to name `auto mail ack`", before)
+	}
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+
+	const secret = "SENDER-CONTROLLED-STRING-4242"
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{Address: secret, Binding: binding}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if _, err := client.Send(ctx, mail.SendInput{
+		To:      secret,
+		From:    secret,
+		Body:    map[string]any{"message": secret},
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	if got := mail.NudgeText(); got != before {
+		t.Errorf("NudgeText() changed after a send: %q, want the constant %q", got, before)
+	}
+	if strings.Contains(mail.NudgeText(), secret) {
+		t.Errorf("NudgeText() interpolated sender-controlled content: %q", mail.NudgeText())
+	}
+}
+
+// TestPendingFlagLifecycle walks send → list → ack. The flag is what a hook
+// stats, so its lifecycle is the notification path's whole contract: raised for
+// every bound subscription a send delivered to, still raised after a read
+// (reading never retires mail, G3), and lowered only once the binding has
+// nothing unacked left.
+func TestPendingFlagLifecycle(t *testing.T) {
+	home := t.TempDir()
+	reader := mail.BindingFromContext(nil, t.TempDir())
+	sender := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+
+	if mail.HasPending(home, reader) {
+		t.Fatal("a fresh home reports pending mail")
+	}
+
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{Address: "auto-web/bugs", Binding: reader}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if mail.HasPending(home, reader) {
+		t.Error("subscribing raised the flag; only a send may raise it")
+	}
+
+	sent, err := client.Send(ctx, mail.SendInput{
+		To:      "auto-web/bugs",
+		From:    "auto-stack/reviewer",
+		Body:    map[string]any{"message": "the port is dropped on ssh:// URLs"},
+		Binding: sender,
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if !mail.HasPending(home, reader) {
+		t.Fatal("send did not raise the reader's flag; no hook would ever nudge")
+	}
+	if mail.HasPending(home, sender) {
+		t.Error("send raised the sender's own flag; it subscribes to nothing")
+	}
+
+	// Reading does not retire mail (G3), so the flag survives a list.
+	listed, err := client.List(ctx, mail.ListInput{Binding: reader})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("List returned %d deliveries, want 1", len(listed))
+	}
+	if !mail.HasPending(home, reader) {
+		t.Error("listing lowered the flag while the mail was still unacked")
+	}
+
+	if _, err := client.Ack(ctx, mail.AckInput{MailID: sent.ID, Binding: reader}); err != nil {
+		t.Fatalf("Ack: %v", err)
+	}
+	if mail.HasPending(home, reader) {
+		t.Error("the flag survived the ack that emptied the mailbox")
+	}
+}
+
+// TestPendingFlagStaysUpWhileAnythingIsUnacked: the flag means "there may be
+// something here", so it may only fall when the binding has nothing left. Two
+// mail items, one ack, and it must still be raised.
+func TestPendingFlagStaysUpWhileAnythingIsUnacked(t *testing.T) {
+	home := t.TempDir()
+	reader := mail.BindingFromContext(nil, t.TempDir())
+	sender := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{Address: "auto-web/bugs", Binding: reader}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	var ids []string
+	for _, text := range []string{"first", "second"} {
+		sent, err := client.Send(ctx, mail.SendInput{
+			To: "auto-web/bugs", From: "auto-stack/reviewer",
+			Body: map[string]any{"message": text}, Binding: sender,
+		})
+		if err != nil {
+			t.Fatalf("Send(%s): %v", text, err)
+		}
+		ids = append(ids, sent.ID)
+	}
+
+	if _, err := client.Ack(ctx, mail.AckInput{MailID: ids[0], Binding: reader}); err != nil {
+		t.Fatalf("Ack: %v", err)
+	}
+	if !mail.HasPending(home, reader) {
+		t.Error("the flag fell with one mail still unacked")
+	}
+	if _, err := client.Ack(ctx, mail.AckInput{MailID: ids[1], Binding: reader}); err != nil {
+		t.Fatalf("Ack: %v", err)
+	}
+	if mail.HasPending(home, reader) {
+		t.Error("the flag survived the ack that emptied the mailbox")
+	}
+}
+
+// TestFalsePositiveFlagHealsItself is the other half of D-062-3's bounded
+// drift. The flag is authoritative for the *decision to nudge* — which is safe
+// precisely because the nudge carries no mailbox content — so a wrong flag can
+// neither leak nor misstate anything. It costs the agent one wasted
+// `auto mail list`, and that list is what removes it.
+func TestFalsePositiveFlagHealsItself(t *testing.T) {
+	home := t.TempDir()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+
+	// Nothing was ever sent to this binding; the flag is a pure false positive.
+	if err := mail.SetPendingFor(home, binding); err != nil {
+		t.Fatalf("SetPendingFor: %v", err)
+	}
+	if !mail.HasPending(home, binding) {
+		t.Fatal("the planted flag is not readable")
+	}
+
+	listed, err := client.List(ctx, mail.ListInput{Binding: binding})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(listed) != 0 {
+		t.Errorf("List returned %d deliveries for a false-positive flag, want 0", len(listed))
+	}
+	if mail.HasPending(home, binding) {
+		t.Error("the false-positive flag survived the list it caused; drift is sticky, not self-healing")
+	}
+}
+
+// TestPendingFlagIsPerBinding: two agents on one host have independent flags,
+// so mail for one never nudges the other. The cwd rung is what makes this
+// observable in a container (D-062-2).
+func TestPendingFlagIsPerBinding(t *testing.T) {
+	home := t.TempDir()
+	a := mail.BindingFromContext(nil, t.TempDir())
+	b := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{Address: "auto-web/bugs", Binding: b}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if _, err := client.Send(ctx, mail.SendInput{
+		To: "auto-web/bugs", From: "auto-stack/reviewer",
+		Body: map[string]any{"message": "for b only"}, Binding: a,
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	if !mail.HasPending(home, b) {
+		t.Error("the subscriber's flag was not raised")
+	}
+	if mail.HasPending(home, a) {
+		t.Error("the sender's flag was raised; flags are per binding")
+	}
+	if mail.FlagPathFor(home, a) == mail.FlagPathFor(home, b) {
+		t.Error("two distinct bindings hash to one flag path")
+	}
+}

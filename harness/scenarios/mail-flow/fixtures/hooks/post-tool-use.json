@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Read",
+  "session_id": "harness-mail-flow",
+  "cwd": "/workspace/project-b",
+  "tool_input": {
+    "file_path": "/workspace/project-b/README.md"
+  }
+}

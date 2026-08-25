@@ -319,6 +319,98 @@ func TestFireHintAlongsideLogAndPost(t *testing.T) {
 	}
 }
 
+// TestMatchHintReturnsTheFragmentWithoutEmitting is the unit half of the
+// D-062-9 split: matching now *returns* a fragment and writes nothing itself,
+// so a second producer (the mail nudge) can ride the same emission. The
+// behavioural rules are unchanged — PostToolUse only, first match wins.
+func TestMatchHintReturnsTheFragmentWithoutEmitting(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repo := initGitRepo(t, "feat/login")
+	writeHooksConfig(t, repo, validHooksConfig)
+
+	payload := map[string]any{
+		"hook_event_name": "PostToolUse",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]any{"command": "git push -u origin HEAD"},
+	}
+	ev := bus.Event{Branch: "feat/login", Project: "my-app"}
+
+	var errBuf bytes.Buffer
+	got := matchHint(&errBuf, "claude", payload, ev, repo)
+	if !strings.Contains(got, "feat/login") {
+		t.Errorf("matchHint = %q, want the rendered hint with the branch interpolated", got)
+	}
+	if strings.Contains(got, "hookSpecificOutput") {
+		t.Errorf("matchHint = %q, want a bare fragment — emission is emitAdditionalContext's job", got)
+	}
+
+	// Every non-matching condition still yields nothing at all.
+	for name, p := range map[string]map[string]any{
+		"nil payload":     nil,
+		"non-PostToolUse": {"hook_event_name": "Stop"},
+		"non-matching":    {"hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_input": map[string]any{"command": "git status"}},
+	} {
+		if got := matchHint(&errBuf, "claude", p, ev, repo); got != "" {
+			t.Errorf("matchHint(%s) = %q, want an empty fragment", name, got)
+		}
+	}
+
+	// And with no config at all, in a directory that has none.
+	if got := matchHint(&errBuf, "claude", payload, ev, t.TempDir()); got != "" {
+		t.Errorf("matchHint without a hooks.yaml = %q, want an empty fragment", got)
+	}
+}
+
+// TestEmitAdditionalContextWritesAtMostOneObject: every fragment rides a single
+// hookSpecificOutput object, in the order given, and zero non-empty fragments
+// means zero bytes on stdout — exactly as before the split. Two JSON objects on
+// one hook's stdout is undefined behaviour in both agents' hook contracts, so
+// "at most one" is the whole contract of this function (D-062-9).
+func TestEmitAdditionalContextWritesAtMostOneObject(t *testing.T) {
+	var out bytes.Buffer
+	emitAdditionalContext(&out, "PostToolUse", "mail first", "hint second")
+
+	if n := strings.Count(strings.TrimSpace(out.String()), "\n"); n != 0 {
+		t.Errorf("emitted %d lines, want exactly one JSON object:\n%s", n+1, out.String())
+	}
+	var resp hookResponse
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("emitted stdout is not one JSON object: %v (%q)", err, out.String())
+	}
+	if resp.HookSpecificOutput.HookEventName != "PostToolUse" {
+		t.Errorf("hookEventName = %q, want PostToolUse", resp.HookSpecificOutput.HookEventName)
+	}
+	ctx := resp.HookSpecificOutput.AdditionalContext
+	first, second := strings.Index(ctx, "mail first"), strings.Index(ctx, "hint second")
+	if first < 0 || second < 0 {
+		t.Fatalf("additionalContext = %q, want both fragments", ctx)
+	}
+	if first > second {
+		t.Errorf("additionalContext = %q, want the first fragment first — the order is fixed", ctx)
+	}
+
+	silent := map[string][]string{
+		"no fragments":    {},
+		"empty fragments": {"", "   "},
+	}
+	for name, fragments := range silent {
+		var buf bytes.Buffer
+		emitAdditionalContext(&buf, "PostToolUse", fragments...)
+		if buf.Len() != 0 {
+			t.Errorf("emitAdditionalContext(%s) wrote %q, want nothing", name, buf.String())
+		}
+	}
+
+	// Non-PostToolUse events stay silent even with a fragment in hand.
+	for _, event := range []string{"Stop", "SessionStart", "PreToolUse", ""} {
+		var buf bytes.Buffer
+		emitAdditionalContext(&buf, event, "something to say")
+		if buf.Len() != 0 {
+			t.Errorf("emitAdditionalContext(%q) wrote %q, want nothing", event, buf.String())
+		}
+	}
+}
+
 // validHooksConfig is a minimal valid config used across edge-case tests.
 const validHooksConfig = "hints:\n  - trigger: pushed-to-pr\n    hint: >-\n      Pushed to {{.branch}} in {{.project}}. Check for review feedback.\n"
 

@@ -189,6 +189,11 @@ type SendOutcome struct {
 	ID            string
 	Subscriptions int
 	Bound         int
+	// Delivered is the binding of every bound subscription this mail was
+	// actually delivered to. It is what the caller raises a pending flag on:
+	// the flag is per binding, so the set has to come back from the same
+	// transaction that decided which subscriptions the cursor admitted.
+	Delivered []Caller
 }
 
 // Send appends alpha.mail.sent, inserts the immutable mail row, and inserts a
@@ -241,16 +246,88 @@ func (s *Store) Send(ctx context.Context, p SendParams) (SendOutcome, error) {
 			out.ID, formatTime(now), p.To, out.ID); err != nil {
 			return fmt.Errorf("materialise deliveries for %s: %w", out.ID, err)
 		}
-		return tx.QueryRowContext(ctx, `
+		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*), COUNT(b.subscription_id)
 			FROM subscriptions s
 			LEFT JOIN bindings b ON b.subscription_id = s.id
-			WHERE s.address = ?`, p.To).Scan(&out.Subscriptions, &out.Bound)
+			WHERE s.address = ?`, p.To).Scan(&out.Subscriptions, &out.Bound); err != nil {
+			return fmt.Errorf("count readers of %q: %w", p.To, err)
+		}
+		delivered, err := deliveredBindings(ctx, tx, p.To, out.ID)
+		if err != nil {
+			return err
+		}
+		out.Delivered = delivered
+		return nil
 	})
 	if err != nil {
 		return SendOutcome{}, err
 	}
 	return out, nil
+}
+
+// deliveredBindings returns the binding of every subscription this mail was
+// delivered to. The cursor predicate is the same one the delivery insert used,
+// so a --from-now subscription that did not receive the mail does not get its
+// flag raised either.
+func deliveredBindings(ctx context.Context, tx *sql.Tx, address, mailID string) ([]Caller, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT b.manager, b.target, COALESCE(b.session, '')
+		FROM bindings b
+		JOIN subscriptions s ON s.id = b.subscription_id
+		WHERE s.address = ? AND ? > s.from_cursor
+		ORDER BY b.subscription_id`, address, mailID)
+	if err != nil {
+		return nil, fmt.Errorf("select bindings for %q: %w", address, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []Caller
+	for rows.Next() {
+		var c Caller
+		if err := rows.Scan(&c.Manager, &c.Target, &c.Session); err != nil {
+			return nil, fmt.Errorf("scan binding for %q: %w", address, err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read bindings for %q: %w", address, err)
+	}
+	return out, nil
+}
+
+// PendingCount reports how much unretired mail this caller's bound
+// subscriptions hold: unacked deliveries plus the mail their cursors admit but
+// which no list has materialised yet.
+//
+// Both halves are needed because the two are the same thing at different ages —
+// counting only delivery rows would report zero for a backlog nobody has listed
+// yet, and clearing the pending flag on that answer would drop a nudge for mail
+// that is genuinely waiting. It is a pure read: nothing is materialised and no
+// read is stamped, because it exists only to decide whether the flag still
+// means anything.
+func (s *Store) PendingCount(ctx context.Context, c Caller) (int, error) {
+	var unacked, admitted int
+	err := s.QueryRowContext(ctx, `
+		SELECT
+		  (SELECT COUNT(*)
+		     FROM deliveries d
+		     JOIN bindings b ON b.subscription_id = d.subscription_id
+		    WHERE d.acked_at IS NULL AND b.manager = ? AND b.target = ?),
+		  (SELECT COUNT(*)
+		     FROM mail m
+		     JOIN subscriptions s ON s.address = m.to_address
+		     JOIN bindings b ON b.subscription_id = s.id
+		    WHERE b.manager = ? AND b.target = ? AND m.id > s.from_cursor
+		      AND NOT EXISTS (
+		        SELECT 1 FROM deliveries d
+		         WHERE d.subscription_id = s.id AND d.mail_id = m.id
+		      ))`,
+		c.Manager, c.Target, c.Manager, c.Target).Scan(&unacked, &admitted)
+	if err != nil {
+		return 0, fmt.Errorf("count pending mail for binding: %w", err)
+	}
+	return unacked + admitted, nil
 }
 
 // ListParams scopes a read. With no filters it covers every subscription the

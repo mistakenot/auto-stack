@@ -23,7 +23,7 @@ import shlex
 import time
 
 from harness.core import Result
-from harness.scenarios.base import Scenario
+from harness.scenarios.base import SCENARIOS_ROOT, Scenario
 
 #: The two registered workspaces, one per agent.
 WORKSPACE_A = "/workspace/project-a"
@@ -37,6 +37,10 @@ STORE_PATH = "$HOME/.auto/mail/alpha-store.db"
 #: slow `docker compose exec`, not to wait for eventual consistency.
 DEFAULT_POLL_TIMEOUT = 10.0
 DEFAULT_POLL_INTERVAL = 0.25
+#: The command the in-band nudge tells a working agent to run. The nudge is a
+#: fixed constant carrying no mailbox content (G14), so this substring is the
+#: whole of what a test can and should assert on.
+NUDGE_COMMAND = "auto mail list"
 
 
 class MailFlowScenario(Scenario):
@@ -163,6 +167,113 @@ class MailFlowScenario(Scenario):
         if not isinstance(payload, dict) or "wonTransition" not in payload:
             raise AssertionError(f"ack returned an unexpected payload: {payload!r}")
         return payload
+
+    # ── the in-band nudge ────────────────────────────────────────────────────
+
+    @property
+    def _hooks_dir(self):
+        return SCENARIOS_ROOT / self.name / "fixtures" / "hooks"
+
+    def fire_hook(self, agent: str, agent_kind: str = "claude") -> Result:
+        """Pipe a PostToolUse payload into `auto hooks fire` for an agent.
+
+        This is the real notification path, not a simulation of one: the same
+        binary, the same entry point and the same payload shape an agent's hook
+        fires with. `cwd` is patched to the agent's workspace because that is
+        what the binding is derived from on the cwd rung — in a container with
+        no tmux, the workspace *is* the agent's identity (D-062-2).
+
+        A hook must never break the agent, so a non-zero exit here is a genuine
+        failure of the property under test rather than a flake to retry.
+        """
+        payload = json.loads((self._hooks_dir / "post-tool-use.json").read_text())
+        workspace = self.workspace(agent)
+        payload["cwd"] = workspace
+        payload.setdefault("tool_input", {})["file_path"] = f"{workspace}/README.md"
+        b64 = base64.b64encode(json.dumps(payload).encode()).decode()
+        r = self.run("host", f"echo {b64} | base64 -d | auto hooks fire --agent {agent_kind}")
+        if not r.ok:
+            raise AssertionError(
+                f"auto hooks fire exited {r.exit_code} in {workspace} — a hook must never "
+                f"break the agent: {r.stderr or r.stdout}"
+            )
+        return r
+
+    def nudge_context(self, agent: str) -> str:
+        """Fire a hook and return `hookSpecificOutput.additionalContext`, or "".
+
+        Stdout is either empty (nothing to say) or exactly one JSON object —
+        two objects on one hook's stdout is undefined behaviour in both agents'
+        hook contracts (D-062-9), so a second line is a finding, not something
+        to parse around.
+        """
+        out = self.fire_hook(agent).stdout.strip()
+        if not out:
+            return ""
+        lines = [line for line in out.splitlines() if line.strip()]
+        if len(lines) != 1:
+            raise AssertionError(
+                f"the hook wrote {len(lines)} lines to stdout for {self.workspace(agent)}; "
+                f"exactly one hookSpecificOutput object is allowed:\n{out}"
+            )
+        try:
+            payload = json.loads(lines[0])
+        except ValueError as exc:
+            raise AssertionError(
+                f"the hook wrote non-JSON to stdout for {self.workspace(agent)}: {exc}\n{out}"
+            ) from exc
+        return payload.get("hookSpecificOutput", {}).get("additionalContext", "")
+
+    def assert_nudge(
+        self,
+        agent: str,
+        *,
+        timeout: float = DEFAULT_POLL_TIMEOUT,
+        interval: float = DEFAULT_POLL_INTERVAL,
+    ) -> str:
+        """Wait until a hook fire nudges this agent about waiting mail.
+
+        Bounded retry on the observable outcome. Each pass is a fresh hook fire,
+        which is safe to repeat: the check is one stat and it neither reads nor
+        retires anything.
+        """
+        deadline = time.monotonic() + timeout
+        seen = ""
+        while True:
+            seen = self.nudge_context(agent)
+            if NUDGE_COMMAND in seen:
+                return seen
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"no hook fire in {self.workspace(agent)} mentioned {NUDGE_COMMAND!r} "
+                    f"within {timeout}s; last additionalContext: {seen!r}"
+                )
+            time.sleep(interval)
+
+    def assert_no_nudge(
+        self,
+        agent: str,
+        *,
+        timeout: float = DEFAULT_POLL_TIMEOUT,
+        interval: float = DEFAULT_POLL_INTERVAL,
+    ) -> None:
+        """Wait until a hook fire is silent for this agent.
+
+        The complement of `assert_nudge`, and the assertion an ack is judged by:
+        once the mailbox is empty the flag falls and the hook goes quiet again.
+        """
+        deadline = time.monotonic() + timeout
+        seen = ""
+        while True:
+            seen = self.nudge_context(agent)
+            if not seen:
+                return
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"hook fires in {self.workspace(agent)} were still emitting context "
+                    f"{timeout}s after the mailbox was emptied: {seen!r}"
+                )
+            time.sleep(interval)
 
     # ── observe the outcome ──────────────────────────────────────────────────
 

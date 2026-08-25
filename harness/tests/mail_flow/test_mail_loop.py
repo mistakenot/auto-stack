@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 
-from harness.scenarios.mail_flow import STORE_PATH, WORKSPACE_A, WORKSPACE_B
+from harness.scenarios.mail_flow import NUDGE_COMMAND, STORE_PATH, WORKSPACE_A, WORKSPACE_B
 
 
 def test_single_host_two_registered_workspaces(mail_flow):
@@ -220,3 +220,73 @@ def test_addresses_carry_no_physical_identity(mail_flow):
 
     mail_flow.ack("b", sent["id"])
     mail_flow.await_no_mail("b", sent["id"], "--address", address)
+
+
+# ── the in-band nudge ────────────────────────────────────────────────────────
+#
+# The riskiest integration in the walking skeleton, and the reason it is inside
+# it rather than deferred: hook → notification, in-band, at stat cost, without
+# breaking the agent's turn. These run against the real `auto hooks fire`, so
+# they exercise the same entry point an agent's hook does.
+
+
+def test_hook_nudges_a_working_agent_that_has_mail(mail_flow):
+    """AC-10: after a send, project-b's next hook fire tells it to read its mail.
+
+    The nudge is what closes the loop between "mail exists" and "an agent knows
+    it does" with no daemon anywhere in the path — and it is silent again once
+    the mail is acked, which is what makes it a notification rather than a
+    permanent banner.
+    """
+    address = "auto-web/nudge"
+    mail_flow.subscribe("b", address)
+
+    # Nothing waiting yet, so the hook has nothing to say.
+    mail_flow.assert_no_nudge("b")
+
+    sent = mail_flow.send("a", address, "you have mail")
+
+    context = mail_flow.assert_nudge("b")
+    assert NUDGE_COMMAND in context, context
+    assert "auto mail ack" in context, context
+
+    # The nudge carries no mailbox content (G14): it says only "go and read".
+    for content in ("you have mail", address, sent["id"], "auto-stack/reviewer"):
+        assert content not in context, (
+            f"the nudge interpolated mailbox content {content!r}: {context!r}"
+        )
+
+    # The sender is not nudged about the mail it sent — the flag is per binding.
+    assert mail_flow.nudge_context("a") == ""
+
+    # Reading does not retire mail (G3), so the nudge survives a list.
+    mail_flow.await_mail("b", sent["id"], "--address", address)
+    assert NUDGE_COMMAND in mail_flow.nudge_context("b")
+
+    mail_flow.ack("b", sent["id"])
+    mail_flow.await_no_mail("b", sent["id"], "--address", address)
+
+    # And once the mailbox is empty the hook goes quiet again.
+    mail_flow.assert_no_nudge("b")
+
+
+def test_hook_fire_never_breaks_the_agent(mail_flow):
+    """AC-10's other half: the mail check can never stall or break the hook.
+
+    Both states are fired — mail waiting and none — and both must exit 0 with
+    stdout that is either empty or exactly one JSON object. `fire_hook` asserts
+    the exit code; `nudge_context` asserts the shape.
+    """
+    address = "auto-web/never-breaks"
+    mail_flow.subscribe("b", address)
+
+    assert mail_flow.fire_hook("b").exit_code == 0
+    assert mail_flow.nudge_context("b") == ""
+
+    sent = mail_flow.send("a", address, "still exits zero")
+    assert mail_flow.fire_hook("b").exit_code == 0
+    assert NUDGE_COMMAND in mail_flow.assert_nudge("b")
+
+    mail_flow.ack("b", sent["id"])
+    mail_flow.await_no_mail("b", sent["id"], "--address", address)
+    mail_flow.assert_no_nudge("b")

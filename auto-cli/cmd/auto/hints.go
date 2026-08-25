@@ -144,22 +144,27 @@ type hookSpecificOutput struct {
 	AdditionalContext string `json:"additionalContext"`
 }
 
-// matchAndEmitHint checks the payload against built-in triggers and, on the first
-// match with a configured hint, renders and writes the hook response JSON to out.
-// Only PostToolUse events can emit — every other installed event (Stop,
-// SessionStart, Codex SubagentStop, …) stays silent so we never write unexpected
-// stdout that an agent might reject. All failures are swallowed: this runs in the
-// agent's hot path and must never break it.
-func matchAndEmitHint(out, errOut io.Writer, agent string, payload map[string]any, ev bus.Event, root string) {
+// matchHint checks the payload against built-in triggers and returns the
+// rendered hint for the first match with a configured hint, or "" when nothing
+// matches. Only PostToolUse events can produce a fragment — every other
+// installed event (Stop, SessionStart, Codex SubagentStop, …) stays silent so
+// we never write unexpected stdout that an agent might reject. All failures are
+// swallowed: this runs in the agent's hot path and must never break it.
+//
+// Matching is split from emission (D-062-9) because the mail nudge is a second
+// producer on the same stdout, and two JSON objects on one hook's stdout is
+// undefined behaviour in both agents' hook contracts. Every fragment now goes
+// through emitAdditionalContext, which writes at most one object.
+func matchHint(errOut io.Writer, agent string, payload map[string]any, ev bus.Event, root string) string {
 	if payload == nil {
-		return
+		return ""
 	}
 	if !strings.EqualFold(stringField(payload, "hook_event_name"), "PostToolUse") {
-		return
+		return ""
 	}
 	cfg := loadHintsConfig(root)
 	if cfg == nil || len(cfg.Hints) == 0 {
-		return
+		return ""
 	}
 	fields := buildHintFields(agent, payload, ev)
 	for _, rule := range cfg.Hints {
@@ -175,14 +180,41 @@ func matchAndEmitHint(out, errOut io.Writer, agent string, payload map[string]an
 		if err != nil {
 			continue
 		}
-		body, err := json.Marshal(hookResponse{HookSpecificOutput: hookSpecificOutput{
-			HookEventName:     "PostToolUse",
-			AdditionalContext: rendered,
-		}})
-		if err != nil {
-			return
-		}
-		fmt.Fprintln(out, string(body))
-		return // emit at most one hint per event
+		return rendered // at most one hint per event
 	}
+	return ""
+}
+
+// fragmentSeparator joins the fragments that ride one emission. A blank line
+// keeps them legible as separate instructions in the agent's context window.
+const fragmentSeparator = "\n\n"
+
+// emitAdditionalContext writes **exactly one** hookSpecificOutput object
+// carrying every non-empty fragment, in the order given, or nothing at all when
+// every fragment is empty — zero fragments means zero bytes on stdout, exactly
+// as before the split (D-062-9).
+//
+// Scoped to PostToolUse for the same reason each producer is: an agent may
+// reject unexpected stdout on an event whose contract has no response shape.
+func emitAdditionalContext(out io.Writer, event string, fragments ...string) {
+	if !strings.EqualFold(event, "PostToolUse") {
+		return
+	}
+	kept := make([]string, 0, len(fragments))
+	for _, fragment := range fragments {
+		if strings.TrimSpace(fragment) != "" {
+			kept = append(kept, fragment)
+		}
+	}
+	if len(kept) == 0 {
+		return
+	}
+	body, err := json.Marshal(hookResponse{HookSpecificOutput: hookSpecificOutput{
+		HookEventName:     "PostToolUse",
+		AdditionalContext: strings.Join(kept, fragmentSeparator),
+	}})
+	if err != nil {
+		return
+	}
+	fmt.Fprintln(out, string(body))
 }

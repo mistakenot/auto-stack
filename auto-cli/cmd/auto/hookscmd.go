@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mistakenot/auto-mail/mail"
 	"github.com/mistakenot/auto-shared/bus"
 	sharedconfig "github.com/mistakenot/auto-shared/config"
 	sharedgit "github.com/mistakenot/auto-shared/git"
@@ -114,20 +115,58 @@ func newHooksFireCmd() *cobra.Command {
 			ev.Env = hookCtx
 			postBusEvent(watchHookAddr(), ev)
 
-			// Additive: after logging+posting, emit a contextual hint to the agent
-			// if the payload matches a built-in trigger and the project configures
-			// one. Scoped to PostToolUse inside matchAndEmitHint; silent otherwise.
+			// Additive: after logging+posting, emit whatever the agent should be
+			// told in-band. Two producers write to this one stdout — the mail
+			// nudge and the project's hint rules — and they share a single
+			// hookSpecificOutput object, because two JSON objects on one hook's
+			// stdout is undefined behaviour in both agents' hook contracts
+			// (D-062-9). Both are scoped to PostToolUse; every other installed
+			// event stays silent.
+			//
+			// Mail goes first, and the ordering is fixed rather than incidental:
+			// a project's hint rules must never be able to suppress or bury the
+			// nudge that tells an agent it has mail waiting.
 			root := ev.Worktree
 			if root == "" {
 				root = cwd
 			}
-			matchAndEmitHint(cmd.OutOrStdout(), cmd.ErrOrStderr(), agent, payload, ev, root)
+			emitAdditionalContext(
+				cmd.OutOrStdout(),
+				stringField(payload, "hook_event_name"),
+				mailNudge(cwd, hookCtx),
+				matchHint(cmd.ErrOrStderr(), agent, payload, ev, root),
+			)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", "agent that fired the hook: claude or codex")
 	_ = cmd.MarkFlagRequired("agent")
 	return cmd
+}
+
+// mailNudge returns the fixed in-band instruction to go and read mail when this
+// agent has mail waiting, and "" otherwise.
+//
+// The whole cost of the common case — no mail — is one os.Stat: the check never
+// opens the mail store on either path, which matters because it runs on every
+// tool call of every agent on the host (G8/D-062-3). There is no error return
+// and nothing here can block: an unresolvable home, a missing flag directory or
+// an unreadable one all read as "no mail", so the mail check can never stall or
+// break the agent's turn.
+//
+// The binding is derived from the context the hook already captured rather than
+// by re-capturing it: CaptureContext shells out to tmux (bounded, but a real
+// process spawn), and asking the same question twice in one hook would double
+// that cost for no new information.
+func mailNudge(cwd string, hookCtx map[string]string) string {
+	home, err := sharedconfig.HomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	if !mail.HasPending(home, mail.BindingFromContext(hookCtx, cwd)) {
+		return ""
+	}
+	return mail.NudgeText()
 }
 
 // mapEventType maps a hook_event_name (and optional tool_name) to a dotted bus

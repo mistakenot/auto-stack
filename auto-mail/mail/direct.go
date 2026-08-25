@@ -42,7 +42,7 @@ func NewDirect(home string) (Client, error) {
 		}
 		home = resolved
 	}
-	st, err := store.Open(config.StorePathIn(home))
+	st, err := openStore(config.StorePathIn(home))
 	if err != nil {
 		return nil, err
 	}
@@ -88,12 +88,36 @@ func (d *direct) Send(ctx context.Context, in SendInput) (SendResult, error) {
 	if err != nil {
 		return SendResult{}, fmt.Errorf("send to %q: %w", in.To, err)
 	}
+	// The flag is raised after the commit, never inside it: it is a hint about
+	// state, and a hint that outlived a rolled-back send would be drift with no
+	// self-healing path. A flag that cannot be written is a missed nudge, not a
+	// failed send — the mail is already durable, and the next send (or, from
+	// T3, the reconcile tick) raises it again.
+	for _, c := range out.Delivered {
+		_ = setPending(d.home, Binding{Manager: c.Manager, Target: c.Target, Session: c.Session})
+	}
 	return SendResult{
 		ID:            out.ID,
 		To:            in.To,
 		Subscriptions: out.Subscriptions,
 		Bound:         out.Bound,
 	}, nil
+}
+
+// settleFlag brings the caller's pending flag back in line with the store after
+// a read or an ack: cleared once nothing is waiting, left alone otherwise.
+//
+// This is the self-healing half of D-062-3. A false-positive flag costs one
+// wasted `auto mail list` — and that list is what removes it, so drift is
+// bounded by a single wasted read rather than sticking until the next send.
+// Failures are swallowed: an agent that has just read its mail must not be
+// handed an error because a marker file would not unlink.
+func (d *direct) settleFlag(ctx context.Context, b Binding) {
+	pending, err := d.store.PendingCount(ctx, caller(b))
+	if err != nil || pending > 0 {
+		return
+	}
+	_ = clearPending(d.home, b)
 }
 
 // resolveFrom walks the three-rung ladder that gives a sender an absolute
@@ -155,6 +179,7 @@ func (d *direct) List(ctx context.Context, in ListInput) ([]Delivery, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list mail: %w", err)
 	}
+	d.settleFlag(ctx, in.Binding)
 	// Never nil: `auto mail list` must print `[]`, not `null`.
 	out := make([]Delivery, 0, len(listed))
 	for _, item := range listed {
@@ -178,6 +203,7 @@ func (d *direct) Ack(ctx context.Context, in AckInput) (AckResult, error) {
 	case err != nil:
 		return AckResult{}, fmt.Errorf("ack %q: %w", in.MailID, err)
 	}
+	d.settleFlag(ctx, in.Binding)
 	// Acked is true for winner and loser alike: it states that the delivery is
 	// acked now, which is what a caller acts on. WonTransition answers the
 	// separate question "was it me" (G13/D-062-7).
