@@ -631,34 +631,49 @@ addresses that are not about a project at all, like a swarm channel.
     </pd-decision>
 
     <pd-question id="Q-4" status="open" priority="p1" for="charlie"
-                 title="How does a sub-agent learn its parent's address, and which spawn shapes are in scope?">
+                 title="Which spawn shapes does #parent cover, and how does the CLI identify which agent it is?">
       <md><script type="text/plain">
-Env promotion (`AUTO_MAIL_SELF` → `AUTO_MAIL_PARENT`, the `SHLVL` pattern) was
-chosen because env inherits automatically without controlling the spawn call.
-Review found the bootstrap hole: that only holds if the parent's address is in
-its process environment **at spawn time**. A supervisor that runs
-`auto mail subscribe` mid-session cannot retroactively set a variable in its own
-running process, so anything it spawns afterwards inherits nothing.
+Review found a bootstrap hole in env promotion (`AUTO_MAIL_SELF` →
+`AUTO_MAIL_PARENT`): it only works if the parent's address is in its process
+environment **at spawn time**, and a supervisor that subscribes mid-session
+cannot set a variable in its own running process. Investigating that against the
+live hook log changed the shape of the question.
 
-Three ways out, with materially different scope:
+**Finding — parentage is already ambient for in-process subagents.** A subagent's
+own tool calls fire hooks stamped with the *parent's* `session_id` and
+`transcript_path`, alongside its own `agent_id` and `agent_type`. Verified
+against this repository's hook log: while a review subagent was working, its
+`Read` events carried the parent session id directly. That is not reconstruction
+across two logs — there is no join and no lag, so the earlier objection that
+"logs lag exactly when it matters" does not apply to this case.
 
-1. **Assign the address at agent launch** — herdr / ntm / the delegate skills
-   stamp it when they create the pane. Cleanest, and makes `#parent` work
-   everywhere, but it is a cross-tool dependency this epic does not otherwise
-   have.
-2. **Spawn-time injection by the supervisor's own tooling** — smallest change,
-   but only covers panes we spawn ourselves, and does nothing for an agent
-   launched by hand.
-3. **Session-tree reconstruction from the hooks log** — no launcher changes, but
-   it is the fragile path already relegated to `doctor`, and it lags exactly
-   when it matters most.
+It splits cleanly by spawn shape, which also answers what J1 can mean:
 
-**Lean: (1), scoped down to (2) for the MVP** — T2 ships spawn-time injection so
-`#parent` works for agents our tooling launches, and launch-time assignment is
-recorded as the direction. A second question rides along: this repo's glossary
-defines **Subagent** as the in-process kind (Task tool), which shares the
-parent's environment *and* pane — so does J1 mean those, spawned panes, or both?
-They have different answers for both inheritance and for waking.
+- **In-process subagent** (Agent/Task tool, and what this repo's glossary means
+  by *Subagent*) — parent is free from hooks. No launcher changes.
+- **Spawned pane** (a separate agent process) — its own `session_id`, no
+  `agent_id`, and nothing records who spawned it. Still needs the address
+  stamped at launch by herdr / ntm / the delegate tooling.
+
+**What is actually still open** is narrower, and it is not "how does the child
+find the parent". The hook payload goes to the hook process, not to arbitrary
+commands, and an in-process subagent shares the parent's environment — so
+`auto mail send --to '#parent'`, running as a tool call, cannot tell whether it
+is the parent or the child. Bridging that means the hook (which does see
+`agent_id`) records which agent is currently active for the session, and the CLI
+reads it. That works, but it races when several subagents run in parallel —
+which is precisely the swarm case.
+
+So the call to make is: **does the MVP scope `#parent` to in-process subagents
+only** — taking parentage free from hooks and accepting the self-identification
+bridge with its parallel-subagent race — **or does T2 also carry launch-time
+address stamping** so spawned panes work, at the cost of a cross-tool dependency
+on herdr / ntm / delegate that this epic does not otherwise have?
+
+**Lean: in-process only for the MVP**, with launch-time stamping recorded as the
+direction for panes. It delivers J1 with no changes outside mail, and the race is
+bounded by how many subagents run concurrently — which T1's harness scenario can
+exercise directly rather than leaving to hope.
       </script></md>
     </pd-question>
 

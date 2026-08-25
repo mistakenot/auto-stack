@@ -1,5 +1,5 @@
 ---
-hash: "d0313ff1"
+hash: "093fe512"
 id: "73ea8a99"
 read_when: "extending auto mail past the MVP — fan-out, leases, multi-host, #new agent spawning — or checking whether a proposed mail feature was already considered and deferred"
 summary: "The parked backlog for auto mail: every capability designed during the v1 riff but deliberately left out of the MVP, what each depends on, and which v1 constraint keeps it buildable. Includes the #new spawn-on-send address and the Orleans-style activation model."
@@ -392,12 +392,17 @@ re-derive.
 - **The alias/absolute split.** Relative handles (`#parent`, `#new`) resolve at
   send time; the envelope always stores the resolved absolute address. This is
   why every future alias is free — none of them enter stored data.
-- **Env inheritance beats log reconstruction.** Resolving a parent from session
-  logs is fragile in exactly the wrong case: logs lag, and the message most
-  likely to hit a cold index is "I crashed". Env promotion (`AUTO_MAIL_SELF` →
-  `AUTO_MAIL_PARENT`, the `SHLVL` pattern) works without controlling the spawn
-  call, because env inherits automatically. Log reconstruction stays as an
-  orphan-repair path for `doctor`.
+- **Parentage is ambient in hooks — for in-process subagents.** Verified against
+  this repo's hook log: a subagent's own tool calls fire hooks stamped with the
+  *parent's* `session_id` and `transcript_path`, plus its own `agent_id`. There
+  is no join and no lag, so the intuitive objection that "session logs lag
+  exactly when it matters" is wrong for this case. It does not extend to spawned
+  panes, which get their own `session_id`, no `agent_id`, and no record of who
+  spawned them — those still need the address stamped at launch. The residual
+  problem is narrower than it first appears: the hook payload reaches the hook
+  process, not arbitrary commands, and an in-process subagent shares the
+  parent's environment, so the CLI cannot tell which of the two it is running
+  as. See Q-4 on the epic.
 - **"I crashed" is the least reliable message in the system.** A dying process
   rarely gets to send mail. Design for its *absence*: a session-end hook posts
   best-effort, and the supervisor infers failure from an expiring lease.
