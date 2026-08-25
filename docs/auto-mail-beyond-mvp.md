@@ -1,5 +1,5 @@
 ---
-hash: "093fe512"
+hash: "0d6a6ae2"
 id: "73ea8a99"
 read_when: "extending auto mail past the MVP — fan-out, leases, multi-host, #new agent spawning — or checking whether a proposed mail feature was already considered and deferred"
 summary: "The parked backlog for auto mail: every capability designed during the v1 riff but deliberately left out of the MVP, what each depends on, and which v1 constraint keeps it buildable. Includes the #new spawn-on-send address and the Orleans-style activation model."
@@ -229,7 +229,27 @@ the outside.
   What mail must guarantee is the other half: a child killed mid-wait must not
   leave a hung process or an un-timed-out receive.
 
-### 2.6 Roles
+### 2.6 Launch-time address stamping for spawned panes
+
+`#parent` is scoped in the MVP to in-process subagents (epic D-13), because their
+parentage is already ambient in hooks. A **spawned pane** — a separate agent
+process — gets its own `session_id`, no `agent_id`, and no record of who spawned
+it, so nothing links it to a supervisor.
+
+Making `#parent` work there means stamping the address at launch: herdr / ntm /
+the delegate skills set it when they create the pane, and the child promotes the
+inherited value (the `SHLVL` pattern). Deferred not because it is hard but
+because it is a **cross-tool dependency** the mail epic does not otherwise carry
+— it changes the launchers, not mail.
+
+Worth doing once panes need to participate, and it is the same stamping `#new`
+(2.1) will need for the agents it creates, so the two should land together.
+
+Note the asymmetry: an in-process subagent shares the parent's pane, so it can be
+mailed but never *woken* separately. A spawned pane is the opposite — it is the
+only shape keystroke escalation can target.
+
+### 2.7 Roles
 
 `role:reviewer@auto-stack` — an address resolved to whoever currently holds a
 role rather than a fixed name. A resolver case over the binding table.

@@ -78,7 +78,7 @@ it buys freedom to get the event vocabulary wrong.
 
     <pd-section id="vision-journeys" title="The two journeys that justify it">
       <pd-journey id="J1" title="Sub-agent reports home" outcome="supervisor learns the child failed, in-band, without polling">
-        <pd-leg actor="supervisor" action="spawns a sub-agent" status="todo">child inherits the parent's address</pd-leg>
+        <pd-leg actor="supervisor" action="spawns an in-process sub-agent" status="todo">the child's hook events already name its parent</pd-leg>
         <pd-leg actor="sub-agent" action="hits a wall and mails <code>#parent</code>" status="todo">message is durable the instant it is accepted</pd-leg>
         <pd-leg actor="supervisor" action="is nudged on its next tool call" status="todo">reads, acts, acks</pd-leg>
       </pd-journey>
@@ -506,7 +506,7 @@ duplicates, because G4 permits them.
 
     <pd-task id="T2" title="#parent resolves for sub-agents" status="todo" deployable depends-on="T1"
              delivers="J1" honors="G3,G5,G15">
-      <md><script type="text/plain">A sub-agent inherits its supervisor's address and can mail it without knowing any identifier; a non-sub-agent using the handle fails fast with a remediation hint. The planner must name both the inheritance mechanism and which spawn shapes are in scope — see Q-4, which the bootstrap problem makes a direction call rather than an implementation detail.</script></md>
+      <md><script type="text/plain">A sub-agent inherits its supervisor's address and can mail it without knowing any identifier; a non-sub-agent using the handle fails fast with a remediation hint. Scoped by D-13 to in-process subagents, resolved from parentage the hooks already carry, so nothing outside the mail package changes.</script></md>
     </pd-task>
 
     <pd-thread anchor="T2" status="resolved" priority="p2" title="How inheritance is established is unstated — env inheritance has a bootstrap problem">
@@ -630,7 +630,7 @@ addresses that are not about a project at all, like a swarm channel.
       </script></md>
     </pd-decision>
 
-    <pd-question id="Q-4" status="open" priority="p1" for="charlie"
+    <pd-question id="Q-4" status="answered" priority="p1" for="charlie"
                  title="Which spawn shapes does #parent cover, and how does the CLI identify which agent it is?">
       <md><script type="text/plain">
 Review found a bootstrap hole in env promotion (`AUTO_MAIL_SELF` →
@@ -675,7 +675,18 @@ direction for panes. It delivers J1 with no changes outside mail, and the race i
 bounded by how many subagents run concurrently — which T1's harness scenario can
 exercise directly rather than leaving to hope.
       </script></md>
+      <pd-answer by="charlie">In-process only.</pd-answer>
     </pd-question>
+
+    <pd-decision id="D-13" title="#parent covers in-process subagents only, resolved from hook-supplied parentage" status="accepted" by="agent"
+      summary="No launcher changes: the parent id is already on the child's own hook events. Panes are deferred.">
+      <md><script type="text/plain">
+**Context:** Q-4, answered in-process only.
+**Decision:** `#parent` resolves from the parentage already carried on an in-process subagent's hook events — the parent's `session_id` alongside the child's `agent_id`. A hook records which agent is currently active for a session so the mail CLI can identify itself, since the hook payload never reaches a tool call and an in-process subagent shares the parent's environment. Used from a spawned pane, or from anything that is not a subagent, `#parent` fails fast with a remediation hint.
+**Alternatives:** Env promotion (`AUTO_MAIL_SELF` → `AUTO_MAIL_PARENT`) — the bootstrap hole review found: a supervisor that subscribes mid-session cannot set a variable in its own running process, so nothing it spawns afterwards inherits anything. Launch-time stamping by herdr/ntm/delegate in the MVP — makes panes work too, but adds a cross-tool dependency this epic does not otherwise carry; parked for later.
+**Consequences:** T2 ships with **no changes outside the mail package**, which is why this scoping is worth taking. J1 is scoped to in-process subagents — which is what this repo's glossary means by *Subagent* anyway, so the journey needs no reinterpretation. The known limitation is that the self-identification bridge races when several subagents run concurrently; it is bounded by concurrent subagent count and T1's harness scenario is the place to exercise it rather than assume it. Waking a sub-agent is moot here: an in-process subagent shares the parent's pane, so it has no separate target to inject into.
+      </script></md>
+    </pd-decision>
 
   </pd-tab>
 
