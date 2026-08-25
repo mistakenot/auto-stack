@@ -55,12 +55,18 @@ def up(ctx: click.Context, no_build: bool) -> None:
 
 
 @main.command()
+@click.option(
+    "--keep-images",
+    is_flag=True,
+    help="Keep the images this stack built, so the next up reuses them. Same effect as HARNESS_KEEP_IMAGES=1.",
+)
 @click.pass_context
-def down(ctx: click.Context) -> None:
-    """Tear down the scenario stack and remove volumes."""
+def down(ctx: click.Context, keep_images: bool) -> None:
+    """Tear down the scenario stack, removing volumes and the images it built."""
     s: Scenario = ctx.obj["scenario"]
-    s.down()
-    click.echo(f"Scenario {s.name!r} is down.")
+    s.down(remove_images=False if keep_images else None)
+    kept = " (images kept)" if keep_images else ""
+    click.echo(f"Scenario {s.name!r} is down{kept}.")
 
 
 @main.command()
