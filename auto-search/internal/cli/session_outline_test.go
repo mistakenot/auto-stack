@@ -323,3 +323,48 @@ func TestSessionOutlineBadDepth(t *testing.T) {
 		t.Errorf("expected a --depth usage error, got:\n%s", stderr)
 	}
 }
+
+// TestSessionOutlineText pins AC-5: --text renders the same tree indented, on
+// stdout, still bodies-free.
+func TestSessionOutlineText(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "session", "outline", "test-session-1", "--text")
+	if code != 0 {
+		t.Fatalf("session outline --text failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	if strings.HasPrefix(strings.TrimSpace(stdout), "{") {
+		t.Fatalf("--text emitted JSON:\n%s", stdout)
+	}
+	for _, want := range []string{
+		"session test-session-1",
+		"test-session-1#s0",
+		"auto search message get ",
+		"expand: auto search session outline test-session-1 --expand ",
+		"collapsed — auto search session outline test-session-1 --depth 2",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("--text output missing %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "End of long content.") {
+		t.Errorf("--text leaked a message body:\n%s", stdout)
+	}
+}
+
+// TestSessionOutlineTextExpand checks that --text --expand prints the full body
+// (the one place the outline is allowed to).
+func TestSessionOutlineTextExpand(t *testing.T) {
+	setupIndexedFixtures(t)
+
+	stdout, stderr, code := runCLI(t, "session", "outline", "test-session-1", "--text", "--expand", "msg-003")
+	if code != 0 {
+		t.Fatalf("session outline --text --expand failed: code=%d\nstderr:\n%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "expanded message msg-003") {
+		t.Errorf("--text --expand missing the expansion header:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "End of long content.") {
+		t.Errorf("--text --expand should print the full body:\n%s", stdout)
+	}
+}
