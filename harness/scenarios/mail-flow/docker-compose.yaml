@@ -1,0 +1,25 @@
+# mail-flow scenario: ONE host container with two registered project workspaces,
+# each standing in for an agent. The mail store is host-global (one ~/.auto), so
+# a second container would be a second *host* — which is what makes event-flow a
+# multi-host scenario and is deliberately not what this one is (D-062-1).
+# See src/harness/scenarios/mail_flow.py.
+services:
+  host:
+    build:
+      context: ../../..
+      dockerfile: harness/scenarios/mail-flow/Dockerfile
+      target: host
+    hostname: mail-host
+    environment:
+      HOST_ID: mail-host
+    # No daemon runs here (D-11 keeps mail off the daemon's critical path), but
+    # `auto` shells out to git; tini reaps those children under PID 1.
+    init: true
+    healthcheck:
+      # Ready-file is written only after both workspaces are registered and the
+      # mail store is initialised.
+      test: ["CMD-SHELL", "test -f /tmp/mail-ready.json"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 3s

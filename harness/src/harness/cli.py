@@ -17,6 +17,7 @@ import click
 
 from harness.scenarios.base import Scenario
 from harness.scenarios.event_flow import EventFlowScenario
+from harness.scenarios.mail_flow import MailFlowScenario
 from harness.scenarios.skill_remote import SkillRemoteScenario
 
 # Registry of available scenarios. Adding a scenario is one line here plus its
@@ -24,6 +25,7 @@ from harness.scenarios.skill_remote import SkillRemoteScenario
 SCENARIOS: dict[str, type[Scenario]] = {
     "skill-remote": SkillRemoteScenario,
     "event-flow": EventFlowScenario,
+    "mail-flow": MailFlowScenario,
 }
 
 

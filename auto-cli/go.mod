@@ -9,6 +9,7 @@ require (
 	github.com/mistakenot/auto-env v0.0.0
 	github.com/mistakenot/auto-etl v0.0.0
 	github.com/mistakenot/auto-graph v0.0.0
+	github.com/mistakenot/auto-mail v0.0.0
 	github.com/mistakenot/auto-reflect v0.0.0
 	github.com/mistakenot/auto-search v0.0.0
 	github.com/mistakenot/auto-shared v0.0.0
@@ -55,15 +56,15 @@ require (
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/twpayne/go-geom v1.6.1 // indirect
-	github.com/yuin/goldmark v1.7.16 // indirect
+	github.com/yuin/goldmark v1.8.2 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
-	modernc.org/libc v1.70.0 // indirect
+	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.47.0 // indirect
+	modernc.org/sqlite v1.53.0 // indirect
 )
 
 replace github.com/datadyne-io/autodoc => ../auto-doc
@@ -77,6 +78,8 @@ replace github.com/mistakenot/auto-env => ../auto-env
 replace github.com/mistakenot/auto-etl => ../auto-etl
 
 replace github.com/mistakenot/auto-graph => ../auto-graph
+
+replace github.com/mistakenot/auto-mail => ../auto-mail
 
 replace github.com/mistakenot/auto-reflect => ../auto-reflect
 

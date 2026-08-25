@@ -13,7 +13,7 @@ INSTALL_DIR ?= $(HOME)/.local/bin
 
 # All modules participate in the quality/test loops (fmt/vet/lint/vulncheck/test).
 # The single `auto` binary is built from the auto-cli umbrella module.
-PROJECTS := auto-shared auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill auto-graph auto-ui auto-config auto-artifact auto-cli
+PROJECTS := auto-shared auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill auto-graph auto-ui auto-config auto-artifact auto-mail auto-cli
 
 # Component-owned Alloy models. Keep this ordered by intended run order.
 ALLOY_MODELS := \
