@@ -551,6 +551,8 @@ func newSessionOutlineCmd() *cobra.Command {
 	var (
 		index     string
 		requestID string
+		depth     int
+		expand    string
 	)
 
 	cmd := &cobra.Command{
@@ -564,6 +566,10 @@ func newSessionOutlineCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			start := time.Now()
 			sessionID := args[0]
+
+			if depth < 1 {
+				return &ExitError{Code: 1, Err: fmt.Errorf("invalid --depth %d (must be 1 or greater)", depth)}
+			}
 
 			dbPath, err := config.IndexPath(index)
 			if err != nil {
@@ -581,9 +587,9 @@ func newSessionOutlineCmd() *cobra.Command {
 				return &ExitError{Code: 1, Err: fmt.Errorf("session not found: %s; run: auto search index", sessionID)}
 			}
 
-			outline, err := sessionoutline.Build(db, sessionID, sessionoutline.Options{})
+			outline, err := sessionoutline.Build(db, sessionID, sessionoutline.Options{Depth: depth, Expand: expand})
 			if err != nil {
-				return &ExitError{Code: 1, Err: fmt.Errorf("build outline: %w", err)}
+				return &ExitError{Code: 1, Err: err}
 			}
 
 			out := map[string]any{
@@ -600,5 +606,7 @@ func newSessionOutlineCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&index, "index", config.DefaultIndexName, "named index to query")
 	cmd.Flags().StringVar(&requestID, "request-id", "", "request identifier to echo in responses")
+	cmd.Flags().IntVar(&depth, "depth", 1, "how many node levels to render expanded; deeper sub-agents collapse to one-liners")
+	cmd.Flags().StringVar(&expand, "expand", "", "segment id (<session_id>#s<n>) or message id to re-emit at full fidelity")
 	return cmd
 }
