@@ -31,6 +31,20 @@ var statements = []string{
 		payload TEXT NOT NULL
 	);`,
 	`CREATE INDEX IF NOT EXISTS idx_events_type_seq ON events (type, seq);`,
+	// G1, enforced by the database rather than by this package remembering it:
+	// the log is append-only, so a state change is a new event, never a rewrite
+	// of an old one. Append() is the only writer of this table; these triggers
+	// are what make that true for anything holding a handle on the file.
+	`CREATE TRIGGER IF NOT EXISTS events_no_update
+		BEFORE UPDATE ON events
+		BEGIN
+			SELECT RAISE(ABORT, 'G1: the mail event log is append-only — append a new event instead of updating one');
+		END;`,
+	`CREATE TRIGGER IF NOT EXISTS events_no_delete
+		BEFORE DELETE ON events
+		BEGIN
+			SELECT RAISE(ABORT, 'G1: the mail event log is append-only — events are never deleted; ` + "`auto mail reset`" + ` wipes the whole alpha store');
+		END;`,
 	`CREATE TABLE IF NOT EXISTS mail (
 		id TEXT PRIMARY KEY,
 		to_address TEXT NOT NULL,
@@ -39,6 +53,20 @@ var statements = []string{
 		sent_at DATETIME NOT NULL
 	);`,
 	`CREATE INDEX IF NOT EXISTS idx_mail_to_address_id ON mail (to_address, id);`,
+	// A mail row is an immutable projection of its alpha.mail.sent event (G1).
+	// Consumer state — read_at, acked_at — lives on `deliveries`, keyed by
+	// (subscription_id, mail_id), never on the mail row (G2), so nothing ever
+	// needs to update one.
+	`CREATE TRIGGER IF NOT EXISTS mail_no_update
+		BEFORE UPDATE ON mail
+		BEGIN
+			SELECT RAISE(ABORT, 'G1: a mail row is immutable — consumer state belongs on deliveries, keyed by (subscription_id, mail_id)');
+		END;`,
+	`CREATE TRIGGER IF NOT EXISTS mail_no_delete
+		BEFORE DELETE ON mail
+		BEGIN
+			SELECT RAISE(ABORT, 'G1: a mail row is immutable — it is never deleted; ` + "`auto mail reset`" + ` wipes the whole alpha store');
+		END;`,
 	`CREATE TABLE IF NOT EXISTS subscriptions (
 		id TEXT PRIMARY KEY,
 		address TEXT NOT NULL,

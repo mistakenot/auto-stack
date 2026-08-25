@@ -2,6 +2,7 @@ package mail_test
 
 import (
 	"context"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mistakenot/auto-mail/internal/config"
+	"github.com/mistakenot/auto-mail/internal/store"
 	"github.com/mistakenot/auto-mail/mail"
 )
 
@@ -180,26 +183,189 @@ func TestNewDirectOpensTheAlphaStore(t *testing.T) {
 }
 
 // TestUnimplementedVerbsSaySo: the seam is complete before the implementation
-// is, so the verbs phase 2 fills must fail loudly rather than silently
-// succeeding with an empty result.
+// is, so a verb a later phase fills must fail loudly rather than silently
+// succeeding with an empty result. Only Reset is still unbuilt — it lands with
+// the rest of the alpha contract.
 func TestUnimplementedVerbsSaySo(t *testing.T) {
 	client, err := mail.NewDirect(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewDirect: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
+
+	if _, err := client.Reset(context.Background()); !errors.Is(err, mail.ErrNotImplemented) {
+		t.Errorf("Reset error = %v, want ErrNotImplemented", err)
+	}
+}
+
+// TestValidateAddressIsPermissive: addresses are virtual and free-form (D-9),
+// so validation rejects only what cannot round-trip or cannot have been meant.
+// Everything else — including a `/`, which is an ordinary character and never a
+// hierarchy — is accepted verbatim.
+func TestValidateAddressIsPermissive(t *testing.T) {
+	accepted := []string{
+		"auto-web/bugs",       // C1's address; the separator is allowed
+		"bugs",                // no separator at all is equally valid
+		"a/b/c/d",             // and neither is the count of separators
+		"Auto-Web/Bugs",       // case is not normalised
+		"team.alpha+urgent#1", // free-form means free-form
+		strings.Repeat("x", mail.MaxAddressLength),
+	}
+	for _, address := range accepted {
+		if err := mail.ValidateAddress(address); err != nil {
+			t.Errorf("ValidateAddress(%q) = %v, want nil", address, err)
+		}
+	}
+
+	rejected := map[string]string{
+		"empty":              "",
+		"leading space":      " auto-web/bugs",
+		"trailing space":     "auto-web/bugs ",
+		"trailing newline":   "auto-web/bugs\n",
+		"embedded control":   "auto-web/\x00bugs",
+		"embedded newline":   "auto-web/\nbugs",
+		"over maximum bytes": strings.Repeat("x", mail.MaxAddressLength+1),
+	}
+	for name, address := range rejected {
+		err := mail.ValidateAddress(address)
+		if err == nil {
+			t.Errorf("ValidateAddress(%q) [%s] = nil, want an error", address, name)
+			continue
+		}
+		if !errors.Is(err, mail.ErrInvalidAddress) {
+			t.Errorf("ValidateAddress(%q) [%s] = %v, want ErrInvalidAddress", address, name, err)
+		}
+		// Every hard error carries a remediation hint, not just a diagnosis.
+		if len(strings.Fields(err.Error())) < 5 {
+			t.Errorf("ValidateAddress(%q) [%s] error %q has no remediation", address, name, err)
+		}
+	}
+}
+
+// TestBindingLadder walks the three rungs D-062-2 documents. The pair is opaque
+// on every rung — a manager is a data value, so T3 adds one without a schema
+// change — and the cwd rung is what makes the harness scenario possible, since
+// a container has no tmux.
+func TestBindingLadder(t *testing.T) {
+	cwd := t.TempDir()
+
+	tmux := mail.BindingFromContext(map[string]string{
+		"TMUX":               "/tmp/tmux-1000/default,123,0",
+		"tmux_pane_id":       "%7",
+		"tmux_session":       "planners",
+		"NTM_SPAWN_BATCH_ID": "batch-9",
+	}, cwd)
+	if tmux.Manager != mail.ManagerTmux || tmux.Target != "%7" {
+		t.Errorf("tmux rung = %+v, want manager=tmux target=%%7", tmux)
+	}
+	if tmux.Session != "planners" {
+		t.Errorf("tmux rung session = %q, want %q", tmux.Session, "planners")
+	}
+
+	ntm := mail.BindingFromContext(map[string]string{
+		"NTM_SPAWN_BATCH_ID": "batch-9",
+		"NTM_SPAWN_ORDER":    "3",
+	}, cwd)
+	if ntm.Manager != mail.ManagerNTM || ntm.Target != "batch-9/3" {
+		t.Errorf("ntm rung = %+v, want manager=ntm target=batch-9/3", ntm)
+	}
+
+	fallback := mail.BindingFromContext(nil, cwd)
+	if fallback.Manager != mail.ManagerCwd {
+		t.Errorf("fallback rung = %+v, want manager=cwd", fallback)
+	}
+	if fallback.Target == "" {
+		t.Error("fallback rung has an empty target; nothing could ever match it")
+	}
+
+	// Two spellings of one directory must read as one agent, not two.
+	nested := filepath.Join(cwd, "sub", "..")
+	if got := mail.BindingFromContext(nil, nested); got.Target != fallback.Target {
+		t.Errorf("BindingFromContext(nil, %q).Target = %q, want %q", nested, got.Target, fallback.Target)
+	}
+}
+
+// TestNoPhysicalIdentityInStoredMail is G5 made executable: a sender running
+// under tmux and ntm must leave no trace of either in what is stored. Physical
+// context belongs on the bindings row, as the opaque pair, and nowhere else —
+// otherwise an address would silently become a machine reference and the
+// virtual-address guarantee would be gone.
+func TestNoPhysicalIdentityInStoredMail(t *testing.T) {
+	home := t.TempDir()
+	// Every fixture value is deliberately distinctive: the assertion below is a
+	// substring search over the stored row, so a short or numeric value (an
+	// order of "7") would match a digit of the timestamp and fail for the wrong
+	// reason.
+	physical := map[string]string{
+		"TMUX":               "/tmp/tmux-1000/default,4242,0",
+		"TMUX_PANE":          "%42",
+		"tmux_pane_id":       "%42",
+		"tmux_session":       "planners-4242",
+		"NTM_SPAWN_BATCH_ID": "ntm-batch-4242",
+		"NTM_SPAWN_ORDER":    "ntm-order-7",
+	}
+	binding := mail.BindingFromContext(physical, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
 	ctx := context.Background()
 
-	if _, err := client.Subscribe(ctx, mail.SubscribeInput{Address: "auto-web/bugs"}); err == nil {
-		t.Error("Subscribe returned nil error in the walking skeleton")
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{Address: "auto-web/bugs", Binding: binding}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
 	}
-	if _, err := client.Send(ctx, mail.SendInput{To: "auto-web/bugs"}); err == nil {
-		t.Error("Send returned nil error in the walking skeleton")
+	sent, err := client.Send(ctx, mail.SendInput{
+		To:      "auto-web/bugs",
+		Body:    map[string]any{"message": "the port is dropped on ssh:// URLs"},
+		Binding: binding,
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
 	}
-	if _, err := client.Ack(ctx, mail.AckInput{MailID: "01K9X2QF7M3B0V8N"}); err == nil {
-		t.Error("Ack returned nil error in the walking skeleton")
+
+	// The resolved from-address is rung 2 — a virtual address, not a pane.
+	listed, err := client.List(ctx, mail.ListInput{Binding: binding})
+	if err != nil {
+		t.Fatalf("List: %v", err)
 	}
-	if _, err := client.Reset(ctx); err == nil {
-		t.Error("Reset returned nil error in the walking skeleton")
+	if len(listed) != 1 {
+		t.Fatalf("List returned %d deliveries, want 1", len(listed))
+	}
+	if listed[0].From != "auto-web/bugs" {
+		t.Errorf("from = %q, want the subscription's address (rung 2 of the ladder)", listed[0].From)
+	}
+
+	// Read the row itself, not the client's view of it: the guarantee is about
+	// what is persisted. The read goes through internal/store rather than a
+	// second sqlite handle, because "nothing outside the store package opens
+	// the mail store" (G11) is a rule this test is not exempt from.
+	st, err := store.Open(config.StorePathIn(home))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	var toAddress, envelope, body string
+	if err := st.QueryRowContext(ctx,
+		`SELECT to_address, envelope, body FROM mail WHERE id = ?`, sent.ID).
+		Scan(&toAddress, &envelope, &body); err != nil {
+		t.Fatalf("read mail row: %v", err)
+	}
+	row := toAddress + "\x00" + envelope + "\x00" + body
+	for key, value := range physical {
+		if strings.Contains(row, value) {
+			t.Errorf("the stored mail row contains the physical identity %s=%q: %s", key, value, row)
+		}
+	}
+
+	// And it is present exactly where it should be: the bindings row.
+	var manager, target string
+	if err := st.QueryRowContext(ctx, `SELECT manager, target FROM bindings LIMIT 1`).Scan(&manager, &target); err != nil {
+		t.Fatalf("read binding row: %v", err)
+	}
+	if manager != mail.ManagerTmux || target != "%42" {
+		t.Errorf("binding row = (%q, %q), want the opaque tmux pair", manager, target)
 	}
 }

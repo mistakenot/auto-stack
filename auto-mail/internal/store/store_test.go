@@ -3,8 +3,11 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mistakenot/auto-mail/internal/store"
@@ -98,4 +101,451 @@ func TestWithTxRollsBackOnError(t *testing.T) {
 	if count != 0 {
 		t.Errorf("events after rollback = %d, want 0", count)
 	}
+}
+
+// open is a migrated store on a fresh temp path.
+func open(t *testing.T) *store.Store {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "mail", "alpha-store.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return st
+}
+
+func caller(target string) store.Caller {
+	return store.Caller{Manager: "cwd", Target: target}
+}
+
+// TestEventLogIsAppendOnly is G1 enforced by the database rather than by this
+// package remembering it: the log's insert path is its only write path, and a
+// handle that tries otherwise is aborted with a message naming the rail.
+func TestEventLogIsAppendOnly(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	if err := st.WithTx(ctx, func(tx *sql.Tx) error {
+		return store.Append(ctx, tx, store.Event{
+			Type:    store.TypeSent,
+			Payload: map[string]any{"mail": "01TEST"},
+		})
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	for _, tc := range []struct{ name, stmt string }{
+		{"update", `UPDATE events SET type = 'alpha.mail.acked'`},
+		{"delete", `DELETE FROM events`},
+	} {
+		err := st.WithTx(ctx, func(tx *sql.Tx) error {
+			_, execErr := tx.ExecContext(ctx, tc.stmt)
+			return execErr
+		})
+		if err == nil {
+			t.Errorf("%s on events succeeded; the log must be append-only", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), "G1") {
+			t.Errorf("%s on events failed with %v; the abort message must name the rail", tc.name, err)
+		}
+	}
+
+	// The event survived both attempts, byte for byte.
+	var typ string
+	if err := st.QueryRowContext(ctx, `SELECT type FROM events`).Scan(&typ); err != nil {
+		t.Fatalf("read event back: %v", err)
+	}
+	if typ != store.TypeSent {
+		t.Errorf("event type = %q after the rejected writes, want %q", typ, store.TypeSent)
+	}
+}
+
+// TestAppendRejectsAnEventOutsideTheAlphaNamespace: every T1 event type carries
+// the alpha. prefix, so no consumer can match a bare `mail.sent` and read a
+// compatibility promise into an alpha store (G10).
+func TestAppendRejectsAnEventOutsideTheAlphaNamespace(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	err := st.WithTx(ctx, func(tx *sql.Tx) error {
+		return store.Append(ctx, tx, store.Event{Type: "mail.sent"})
+	})
+	if err == nil {
+		t.Fatal("appending `mail.sent` succeeded; only alpha.mail.* is appendable")
+	}
+
+	// And the four constants are the complete T1 vocabulary.
+	for _, typ := range []string{store.TypeSubscribed, store.TypeSent, store.TypeRead, store.TypeAcked} {
+		if !strings.HasPrefix(typ, "alpha.mail.") {
+			t.Errorf("event type %q is outside the alpha.mail.* namespace", typ)
+		}
+	}
+}
+
+// TestMailRowIsImmutable: a mail row is an immutable projection of its
+// alpha.mail.sent event. Consumer state lives on deliveries, keyed by
+// (subscription_id, mail_id), so nothing ever needs to update one (G1/G2).
+func TestMailRowIsImmutable(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	sent, err := st.Send(ctx, store.SendParams{To: "auto-web/bugs", From: "auto-stack/reviewer"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	for _, tc := range []struct{ name, stmt string }{
+		{"update", `UPDATE mail SET to_address = 'elsewhere'`},
+		{"delete", `DELETE FROM mail`},
+	} {
+		err := st.WithTx(ctx, func(tx *sql.Tx) error {
+			_, execErr := tx.ExecContext(ctx, tc.stmt)
+			return execErr
+		})
+		if err == nil {
+			t.Errorf("%s on mail succeeded; a mail row is immutable", tc.name)
+		} else if !strings.Contains(err.Error(), "G1") {
+			t.Errorf("%s on mail failed with %v; the abort message must name the rail", tc.name, err)
+		}
+	}
+
+	var to string
+	if err := st.QueryRowContext(ctx, `SELECT to_address FROM mail WHERE id = ?`, sent.ID).Scan(&to); err != nil {
+		t.Fatalf("read mail back: %v", err)
+	}
+	if to != "auto-web/bugs" {
+		t.Errorf("to_address = %q after the rejected writes, want %q", to, "auto-web/bugs")
+	}
+}
+
+// TestNoConsumerStateOnTheMailRow is the structural half of G2: read_at and
+// acked_at exist only on deliveries. A column on mail would make consumer state
+// global to every reader, which is exactly what broadcast forbids.
+func TestNoConsumerStateOnTheMailRow(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	columns := func(table string) map[string]bool {
+		rows, err := st.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
+		if err != nil {
+			t.Fatalf("describe %s: %v", table, err)
+		}
+		defer func() { _ = rows.Close() }()
+		out := map[string]bool{}
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				t.Fatalf("scan column of %s: %v", table, err)
+			}
+			out[name] = true
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("read columns of %s: %v", table, err)
+		}
+		return out
+	}
+
+	mailColumns := columns("mail")
+	for _, forbidden := range []string{"read_at", "acked_at", "acked_by"} {
+		if mailColumns[forbidden] {
+			t.Errorf("mail has a %q column; consumer state belongs on deliveries (G2)", forbidden)
+		}
+	}
+	deliveryColumns := columns("deliveries")
+	for _, required := range []string{"subscription_id", "mail_id", "read_at", "acked_at", "acked_by"} {
+		if !deliveryColumns[required] {
+			t.Errorf("deliveries has no %q column", required)
+		}
+	}
+}
+
+// TestBroadcastFanOut: two subscriptions on one address each get their own
+// delivery and their own ack state, so acking one leaves the other unacked
+// (D-7). The delivery join looks like pointless indirection with one reader —
+// this is the case it exists for.
+func TestBroadcastFanOut(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	first, err := st.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/bugs", Caller: caller("/workspace/a")})
+	if err != nil {
+		t.Fatalf("subscribe a: %v", err)
+	}
+	second, err := st.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/bugs", Caller: caller("/workspace/b")})
+	if err != nil {
+		t.Fatalf("subscribe b: %v", err)
+	}
+	if first.SubscriptionID == second.SubscriptionID {
+		t.Fatalf("two agents on one address share subscription %q; that is not broadcast", first.SubscriptionID)
+	}
+
+	sent, err := st.Send(ctx, store.SendParams{To: "auto-web/bugs", From: "auto-stack/reviewer"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if sent.Subscriptions != 2 || sent.Bound != 2 {
+		t.Errorf("send reported subscriptions=%d bound=%d, want 2 and 2", sent.Subscriptions, sent.Bound)
+	}
+
+	acked, err := st.Ack(ctx, store.AckParams{MailID: sent.ID, Caller: caller("/workspace/a")})
+	if err != nil {
+		t.Fatalf("ack a: %v", err)
+	}
+	if !acked.Won {
+		t.Error("the first ack did not win the transition")
+	}
+
+	listedA, err := st.List(ctx, store.ListParams{Caller: caller("/workspace/a")})
+	if err != nil {
+		t.Fatalf("list a: %v", err)
+	}
+	if len(listedA) != 0 {
+		t.Errorf("agent a still sees %d mail after acking", len(listedA))
+	}
+	listedB, err := st.List(ctx, store.ListParams{Caller: caller("/workspace/b")})
+	if err != nil {
+		t.Fatalf("list b: %v", err)
+	}
+	if len(listedB) != 1 || listedB[0].ID != sent.ID {
+		t.Errorf("agent b sees %+v; acking a's delivery must not retire b's", listedB)
+	}
+}
+
+// TestCursorBackfillAndFromNow is D-10 and the J2 half of G6: a subscription
+// created after a mail was sent still receives it, and --from-now is the
+// explicit opt-out.
+func TestCursorBackfillAndFromNow(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	sent, err := st.Send(ctx, store.SendParams{To: "auto-web/bugs", From: "auto-stack/reviewer"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if sent.Subscriptions != 0 || sent.Bound != 0 {
+		t.Errorf("send with nobody subscribed reported subscriptions=%d bound=%d, want 0 and 0",
+			sent.Subscriptions, sent.Bound)
+	}
+
+	late, err := st.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/bugs", Caller: caller("/workspace/late")})
+	if err != nil {
+		t.Fatalf("subscribe late: %v", err)
+	}
+	if late.Backfilled != 1 {
+		t.Errorf("backfilled = %d, want 1 — a later subscriber must see the earlier mail", late.Backfilled)
+	}
+	listed, err := st.List(ctx, store.ListParams{Caller: caller("/workspace/late")})
+	if err != nil {
+		t.Fatalf("list late: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != sent.ID {
+		t.Errorf("late subscriber sees %+v, want the earlier mail %s", listed, sent.ID)
+	}
+
+	fromNow, err := st.Subscribe(ctx, store.SubscribeParams{
+		Address: "auto-web/bugs", FromNow: true, Caller: caller("/workspace/fromnow"),
+	})
+	if err != nil {
+		t.Fatalf("subscribe --from-now: %v", err)
+	}
+	if fromNow.Backfilled != 0 {
+		t.Errorf("--from-now backfilled = %d, want 0", fromNow.Backfilled)
+	}
+	listed, err = st.List(ctx, store.ListParams{Caller: caller("/workspace/fromnow")})
+	if err != nil {
+		t.Fatalf("list from-now: %v", err)
+	}
+	if len(listed) != 0 {
+		t.Errorf("--from-now subscriber sees %+v, want nothing", listed)
+	}
+}
+
+// TestListDoesNotRetireAndStampsReadOnce is G3 plus the read_at discipline:
+// listing twice returns the same mail twice, and the second list appends no
+// second alpha.mail.read event.
+func TestListDoesNotRetireAndStampsReadOnce(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	if _, err := st.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/bugs", Caller: caller("/workspace/b")}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	sent, err := st.Send(ctx, store.SendParams{To: "auto-web/bugs", From: "auto-stack/reviewer"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	for i := range 2 {
+		listed, err := st.List(ctx, store.ListParams{Caller: caller("/workspace/b")})
+		if err != nil {
+			t.Fatalf("list #%d: %v", i+1, err)
+		}
+		if len(listed) != 1 || listed[0].ID != sent.ID {
+			t.Fatalf("list #%d returned %+v, want the unacked mail; reading must not retire it", i+1, listed)
+		}
+	}
+
+	if got := countEvents(t, st, store.TypeRead); got != 1 {
+		t.Errorf("%s events = %d after two lists, want 1", store.TypeRead, got)
+	}
+	if got := countEvents(t, st, store.TypeAcked); got != 0 {
+		t.Errorf("%s events = %d after listing, want 0 — only ack retires mail", store.TypeAcked, got)
+	}
+}
+
+// TestAckTransitionsExactlyOnce: the affected-row count of an
+// `acked_at IS NULL` update is the wonTransition answer, so a second ack is
+// idempotent — it succeeds, appends no second event, and reports that it lost
+// (G13/G4).
+func TestAckTransitionsExactlyOnce(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	sub, err := st.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/bugs", Caller: caller("/workspace/b")})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	sent, err := st.Send(ctx, store.SendParams{To: "auto-web/bugs", From: "auto-stack/reviewer"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	won, err := st.Ack(ctx, store.AckParams{MailID: sent.ID, Caller: caller("/workspace/b")})
+	if err != nil {
+		t.Fatalf("first ack: %v", err)
+	}
+	if !won.Won {
+		t.Error("the first ack reported that it did not win")
+	}
+	if won.AckedBy != sub.SubscriptionID {
+		t.Errorf("ackedBy = %q, want %q", won.AckedBy, sub.SubscriptionID)
+	}
+
+	lost, err := st.Ack(ctx, store.AckParams{MailID: sent.ID, Caller: caller("/workspace/b")})
+	if err != nil {
+		t.Fatalf("second ack: %v", err)
+	}
+	if lost.Won {
+		t.Error("the second ack reported that it won; a delivery transitions exactly once")
+	}
+	if lost.AckedBy != sub.SubscriptionID || lost.AckedAt.IsZero() {
+		t.Errorf("the loser was not told who won it: %+v", lost)
+	}
+	if got := countEvents(t, st, store.TypeAcked); got != 1 {
+		t.Errorf("%s events = %d after two acks, want exactly 1", store.TypeAcked, got)
+	}
+}
+
+// TestAckDistinguishesUnknownFromUndelivered: two different mistakes, two
+// different errors — a caller can tell "no such mail" from "not yours".
+func TestAckDistinguishesUnknownFromUndelivered(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	if _, err := st.Ack(ctx, store.AckParams{MailID: "01NOPE", Caller: caller("/workspace/b")}); !errors.Is(err, store.ErrUnknownMail) {
+		t.Errorf("ack of an unknown id = %v, want ErrUnknownMail", err)
+	}
+
+	sent, err := st.Send(ctx, store.SendParams{To: "auto-web/bugs", From: "auto-stack/reviewer"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if _, err := st.Ack(ctx, store.AckParams{MailID: sent.ID, Caller: caller("/workspace/b")}); !errors.Is(err, store.ErrNoDelivery) {
+		t.Errorf("ack of a mail the caller holds no delivery for = %v, want ErrNoDelivery", err)
+	}
+}
+
+// TestResubscribeReturnsTheSameSubscription: one agent subscribing twice must
+// not get a second copy of every mail. Two *different* agents do — that is
+// TestBroadcastFanOut.
+func TestResubscribeReturnsTheSameSubscription(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	first, err := st.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/bugs", Caller: caller("/workspace/b")})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	second, err := st.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/bugs", Caller: caller("/workspace/b")})
+	if err != nil {
+		t.Fatalf("re-subscribe: %v", err)
+	}
+	if first.SubscriptionID != second.SubscriptionID {
+		t.Errorf("re-subscribe minted %q over %q", second.SubscriptionID, first.SubscriptionID)
+	}
+	if got := countEvents(t, st, store.TypeSubscribed); got != 1 {
+		t.Errorf("%s events = %d after two subscribes, want 1 — a re-subscribe changes no state",
+			store.TypeSubscribed, got)
+	}
+}
+
+// TestSubscriptionIDsSurviveASameMillisecondBurst pins the collision the
+// canonical `sub_01K9X2M4` form has by construction: eight characters carry only
+// the top 40 bits of the timestamp, so subscriptions created inside one ~256ms
+// window mint the identical short id. Two agents subscribing back to back is
+// ordinary here, so the store lengthens the prefix rather than trusting it.
+func TestSubscriptionIDsSurviveASameMillisecondBurst(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	seen := map[string]bool{}
+	for i := range 8 {
+		out, err := st.Subscribe(ctx, store.SubscribeParams{
+			Address: fmt.Sprintf("auto-web/bugs-%d", i),
+			Caller:  caller(fmt.Sprintf("/workspace/agent-%d", i)),
+		})
+		if err != nil {
+			t.Fatalf("subscribe #%d: %v", i, err)
+		}
+		if seen[out.SubscriptionID] {
+			t.Fatalf("subscription id %q was minted twice", out.SubscriptionID)
+		}
+		seen[out.SubscriptionID] = true
+	}
+}
+
+// TestEveryEnvelopeCarriesAVersion (AC-11): the store is alpha and has no
+// upcasters, so a stored shape must at least say which shape it is.
+func TestEveryEnvelopeCarriesAVersion(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	sent, err := st.Send(ctx, store.SendParams{To: "auto-web/bugs", From: "auto-stack/reviewer"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	var envelope string
+	if err := st.QueryRowContext(ctx, `SELECT envelope FROM mail WHERE id = ?`, sent.ID).Scan(&envelope); err != nil {
+		t.Fatalf("read envelope: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(envelope), &decoded); err != nil {
+		t.Fatalf("envelope is not JSON: %v", err)
+	}
+	if _, ok := decoded["version"]; !ok {
+		t.Errorf("envelope %s carries no version integer", envelope)
+	}
+
+	var version int
+	if err := st.QueryRowContext(ctx, `SELECT version FROM events WHERE type = ?`, store.TypeSent).Scan(&version); err != nil {
+		t.Fatalf("read event version: %v", err)
+	}
+	if version != store.EventVersion {
+		t.Errorf("event version = %d, want %d", version, store.EventVersion)
+	}
+}
+
+func countEvents(t *testing.T, st *store.Store, typ string) int {
+	t.Helper()
+	var count int
+	if err := st.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM events WHERE type = ?`, typ).Scan(&count); err != nil {
+		t.Fatalf("count %s events: %v", typ, err)
+	}
+	return count
 }

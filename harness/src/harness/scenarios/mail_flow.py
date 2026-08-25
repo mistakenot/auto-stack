@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import json
 import shlex
+import time
 
 from harness.core import Result
 from harness.scenarios.base import Scenario
@@ -31,6 +32,11 @@ WORKSPACE_B = "/workspace/project-b"
 READY_FILE = "/tmp/mail-ready.json"
 #: The alpha store path; `alpha` is in the filename, not only in the docs (G10).
 STORE_PATH = "$HOME/.auto/mail/alpha-store.db"
+#: Bounded-retry budget for observing an outcome. Mail is durable and local, so
+#: the loop normally succeeds on its first pass; the budget exists to absorb a
+#: slow `docker compose exec`, not to wait for eventual consistency.
+DEFAULT_POLL_TIMEOUT = 10.0
+DEFAULT_POLL_INTERVAL = 0.25
 
 
 class MailFlowScenario(Scenario):
@@ -125,3 +131,93 @@ class MailFlowScenario(Scenario):
         if not isinstance(listed, list):
             raise AssertionError(f"auto mail list returned {type(listed).__name__}, want a JSON array")
         return listed
+
+    def subscribe(self, agent: str, address: str, *flags: str) -> dict:
+        """`auto mail subscribe <address>` in a workspace; the parsed payload.
+
+        Subscribing is what binds an agent: the CLI derives the opaque
+        (manager, target) pair from its own process, and in a container with no
+        tmux that is the cwd rung — which is exactly why two workspaces are two
+        independently addressable agents here.
+        """
+        payload = self.mail_json(agent, "subscribe", address, *flags)
+        if not isinstance(payload, dict) or "subscription" not in payload:
+            raise AssertionError(f"subscribe returned an unexpected payload: {payload!r}")
+        return payload
+
+    def send(self, agent: str, to: str, text: str, *flags: str) -> dict:
+        """`auto mail send --to <to> --message <text>`; the parsed payload."""
+        payload = self.mail_json(agent, "send", "--to", to, "--message", text, *flags)
+        if not isinstance(payload, dict) or "id" not in payload:
+            raise AssertionError(f"send returned an unexpected payload: {payload!r}")
+        return payload
+
+    def ack(self, agent: str, mail_id: str) -> dict:
+        """`auto mail ack <id>`; the parsed payload.
+
+        Losing an ack race is a reported outcome and still exits 0 (D-062-7), so
+        a non-zero exit here is a genuine failure and `mail_json` raising on it
+        is the right behaviour.
+        """
+        payload = self.mail_json(agent, "ack", mail_id)
+        if not isinstance(payload, dict) or "wonTransition" not in payload:
+            raise AssertionError(f"ack returned an unexpected payload: {payload!r}")
+        return payload
+
+    # ── observe the outcome ──────────────────────────────────────────────────
+
+    def await_mail(
+        self,
+        agent: str,
+        mail_id: str,
+        *args: str,
+        timeout: float = DEFAULT_POLL_TIMEOUT,
+        interval: float = DEFAULT_POLL_INTERVAL,
+    ) -> dict:
+        """Wait until `auto mail list` shows a mail id; return that delivery.
+
+        Bounded retry on the observable outcome, never a sleep-to-settle. The
+        match is on **presence of the id**: mail is at-least-once and unordered
+        (G4), so a duplicate must not fail an assertion that a count would.
+        """
+        deadline = time.monotonic() + timeout
+        seen: list[str] = []
+        while True:
+            listed = self.list_mail(agent, *args)
+            seen = [d.get("id") for d in listed]
+            for delivery in listed:
+                if delivery.get("id") == mail_id:
+                    return delivery
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"mail {mail_id} never appeared in `auto mail list` for "
+                    f"{self.workspace(agent)} within {timeout}s; observed ids: {seen}"
+                )
+            time.sleep(interval)
+
+    def await_no_mail(
+        self,
+        agent: str,
+        mail_id: str,
+        *args: str,
+        timeout: float = DEFAULT_POLL_TIMEOUT,
+        interval: float = DEFAULT_POLL_INTERVAL,
+    ) -> None:
+        """Wait until a mail id is absent from `auto mail list`.
+
+        The complement of `await_mail`, and the assertion an ack is judged by:
+        acked mail leaves the default view. Absence is again a presence test on
+        the id, so an unrelated delivery arriving cannot fail it.
+        """
+        deadline = time.monotonic() + timeout
+        seen: list[str] = []
+        while True:
+            seen = [d.get("id") for d in self.list_mail(agent, *args)]
+            if mail_id not in seen:
+                return
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"mail {mail_id} is still listed for {self.workspace(agent)} "
+                    f"{timeout}s after it was acked; observed ids: {seen}"
+                )
+            time.sleep(interval)

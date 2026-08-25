@@ -68,6 +68,11 @@ type SendInput struct {
 	Body map[string]any
 	// Binding is the caller's physical context, used to resolve From.
 	Binding Binding
+	// Cwd is the caller's working directory, used only by the last rung of the
+	// From ladder to name the project. It is not a Binding: the binding's
+	// target is a pane whenever one exists, and the project lookup needs the
+	// directory itself.
+	Cwd string
 }
 
 // SendResult is the payload `auto mail send` prints. subscriptions counts

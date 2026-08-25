@@ -70,7 +70,10 @@ func NewRootCmd(application *app.App) *cobra.Command {
 
 	rootCmd.AddCommand(
 		newInitCmd(application),
+		newSubscribeCmd(application),
+		newSendCmd(application),
 		newListCmd(application),
+		newAckCmd(application),
 		newDocsCmd(),
 	)
 

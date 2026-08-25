@@ -72,3 +72,151 @@ def test_init_is_idempotent(mail_flow):
     assert payload["alpha"] is True
     assert payload["created"] is False, f"store reported as freshly created: {payload}"
     assert payload["store"].endswith("/.auto/mail/alpha-store.db"), payload
+
+
+# ── the C1 loop ──────────────────────────────────────────────────────────────
+#
+# These run after the baseline tests above, which assert that `auto mail list` is
+# empty from both workspaces. They leave the store with acked mail only, so the
+# baseline still holds on a second run against a live stack.
+
+
+def test_c1_loop_one_message_travels_and_is_acked(mail_flow):
+    """The epic's transcript, end to end, against the real binary (AC-2/AC-13).
+
+    project-a subscribes to its own reply address **first**: that is what makes
+    `from` resolve by rung 2 of the ladder with no `--from` flag, which is the
+    shape C1 shows — and it is also what makes the sender reachable for a reply.
+    """
+    reply_to = mail_flow.subscribe("a", "auto-stack/reviewer")
+    assert reply_to["address"] == "auto-stack/reviewer"
+    assert reply_to["subscription"].startswith("sub_"), reply_to
+    assert reply_to["backfilled"] == 0, reply_to
+
+    inbox = mail_flow.subscribe("b", "auto-web/bugs")
+    assert inbox["address"] == "auto-web/bugs"
+    assert inbox["subscription"] != reply_to["subscription"], (
+        "two agents on one host must get two subscriptions, not one shared row"
+    )
+
+    text = "normalizeRemote drops the port on ssh:// URLs"
+    sent = mail_flow.send("a", "auto-web/bugs", text)
+    assert sent["to"] == "auto-web/bugs"
+    assert sent["id"], sent
+    # The two counts mean different things to a sender and are asserted apart.
+    assert sent["subscriptions"] == 1, sent
+    assert sent["bound"] == 1, sent
+
+    # Presence of the id, never a count: G4 permits duplicates.
+    delivered = mail_flow.await_mail("b", sent["id"])
+    assert delivered["from"] == "auto-stack/reviewer", delivered
+    assert delivered["body"]["message"] == text, delivered
+    assert delivered["sentAt"], delivered
+
+    # Reading does not retire (G3): the same mail is still there.
+    assert sent["id"] in {d["id"] for d in mail_flow.list_mail("b")}
+
+    acked = mail_flow.ack("b", sent["id"])
+    assert acked["id"] == sent["id"]
+    assert acked["acked"] is True, acked
+    assert acked["wonTransition"] is True, acked
+
+    # And acked mail is gone from the default view.
+    mail_flow.await_no_mail("b", sent["id"])
+
+    # The sender never sees the mail it sent — a subscription is a reader of one
+    # address, not a copy of the whole store.
+    assert sent["id"] not in {d["id"] for d in mail_flow.list_mail("a")}
+
+
+def test_ack_is_explicit_and_transitions_exactly_once(mail_flow):
+    """G3 and G13 at the real command surface.
+
+    Listing twice returns the same mail twice, and a second ack still exits 0
+    while reporting that it did not win the transition (D-062-7): losing a race
+    is a correct outcome, not invalid usage.
+    """
+    address = "auto-web/acks"
+    mail_flow.subscribe("b", address)
+    sent = mail_flow.send("a", address, "ack me twice")
+
+    mail_flow.await_mail("b", sent["id"])
+    assert sent["id"] in {d["id"] for d in mail_flow.list_mail("b")}, (
+        "the second list dropped the mail; reading must never retire it"
+    )
+
+    won = mail_flow.ack("b", sent["id"])
+    assert won["wonTransition"] is True, won
+
+    lost = mail_flow.mail("b", "ack", sent["id"])
+    assert lost.ok, f"a losing ack exited {lost.exit_code}: {lost.stderr}"
+    payload = json.loads(lost.stdout)
+    assert payload["acked"] is True, payload
+    assert payload["wonTransition"] is False, payload
+    assert "already acked" in lost.stderr, lost.stderr
+
+    mail_flow.await_no_mail("b", sent["id"])
+
+
+def test_send_with_no_subscription_persists_for_a_later_subscriber(mail_flow):
+    """G6 and D-10's J2 half: mail outlives the absence of a reader.
+
+    The send exits 0 and warns on stderr rather than failing — free-form
+    addresses (D-9) make a typo possible, and a note is the mitigation the
+    design chose over narrowing the namespace.
+    """
+    address = "auto-web/nobody-yet"
+    result = mail_flow.mail("a", "send", "--to", address, "--message", "hello?")
+    assert result.ok, result.stderr
+    sent = json.loads(result.stdout)
+    assert sent["subscriptions"] == 0, sent
+    assert sent["bound"] == 0, sent
+    assert "typo" in result.stderr, result.stderr
+
+    late = mail_flow.subscribe("b", address)
+    assert late["backfilled"] >= 1, late
+    delivered = mail_flow.await_mail("b", sent["id"], "--address", address)
+    assert delivered["body"]["message"] == "hello?", delivered
+
+    mail_flow.ack("b", sent["id"])
+    mail_flow.await_no_mail("b", sent["id"])
+
+
+def test_from_now_opts_out_of_the_backlog(mail_flow):
+    """D-10's opt-out: --from-now starts the cursor at the high-water mark."""
+    address = "auto-web/from-now"
+    sent = mail_flow.send("a", address, "before anyone was listening")
+
+    late = mail_flow.subscribe("b", address, "--from-now")
+    assert late["backfilled"] == 0, late
+    assert sent["id"] not in {d["id"] for d in mail_flow.list_mail("b", "--address", address)}
+
+    # But mail sent afterwards does arrive on that same subscription.
+    after = mail_flow.send("a", address, "after subscribing")
+    delivered = mail_flow.await_mail("b", after["id"], "--address", address)
+    assert delivered["body"]["message"] == "after subscribing", delivered
+
+    mail_flow.ack("b", after["id"])
+    mail_flow.await_no_mail("b", after["id"], "--address", address)
+
+
+def test_addresses_carry_no_physical_identity(mail_flow):
+    """G5: an address names a channel, never a machine, a pane or a session.
+
+    The container has one host id and no tmux, so the assertion here is that
+    neither appears in what a reader is handed — the store-level version of this
+    lives in the package tests.
+    """
+    address = "auto-web/virtual"
+    mail_flow.subscribe("b", address)
+    sent = mail_flow.send("a", address, "no physical identity here")
+    delivered = mail_flow.await_mail("b", sent["id"], "--address", address)
+
+    rendered = json.dumps(delivered)
+    for physical in ("mail-host", "/workspace/project-a", "tmux", "%0"):
+        assert physical not in rendered, (
+            f"the delivered mail carries the physical identity {physical!r}: {rendered}"
+        )
+
+    mail_flow.ack("b", sent["id"])
+    mail_flow.await_no_mail("b", sent["id"], "--address", address)

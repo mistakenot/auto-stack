@@ -2,12 +2,26 @@ package mail
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/mistakenot/auto-mail/internal/config"
 	"github.com/mistakenot/auto-mail/internal/store"
 	sharedconfig "github.com/mistakenot/auto-shared/config"
 )
+
+// UnregisteredProject is the project component of a sender's from-address when
+// the caller's working directory is not a registered project. It is a literal
+// rather than an error: mail must work from anywhere, and a resolved address
+// that says "I could not name this project" is more useful than a refusal.
+const UnregisteredProject = "unregistered"
+
+// AgentHandle is the agent component of the fallback from-address. T1 has no
+// self-identification — an `auto mail send` process sees neither the hook
+// payload's agent nor a session_id, and bridging that is what D-13 defers to
+// T2 — so the fallback names the project and leaves the agent generic.
+const AgentHandle = "agent"
 
 // direct is the direct-store Client implementation D-11 binds the MVP CLI to:
 // send/list/ack work with no daemon running, because a failing agent must be
@@ -42,43 +56,138 @@ func NewDirect(home string) (Client, error) {
 // StorePath is the store file this client is bound to.
 func (d *direct) StorePath() string { return d.store.Path() }
 
-func (d *direct) Subscribe(_ context.Context, in SubscribeInput) (SubscribeResult, error) {
-	return SubscribeResult{}, fmt.Errorf("subscribe %q: %w", in.Address, ErrNotImplemented)
+func (d *direct) Subscribe(ctx context.Context, in SubscribeInput) (SubscribeResult, error) {
+	if err := ValidateAddress(in.Address); err != nil {
+		return SubscribeResult{}, err
+	}
+	out, err := d.store.Subscribe(ctx, store.SubscribeParams{
+		Address: in.Address,
+		Name:    in.Name,
+		FromNow: in.FromNow,
+		Caller:  caller(in.Binding),
+	})
+	if err != nil {
+		return SubscribeResult{}, fmt.Errorf("subscribe to %q: %w", in.Address, err)
+	}
+	return SubscribeResult{
+		Address:      in.Address,
+		Subscription: out.SubscriptionID,
+		Backfilled:   out.Backfilled,
+	}, nil
 }
 
-func (d *direct) Send(_ context.Context, in SendInput) (SendResult, error) {
-	return SendResult{}, fmt.Errorf("send to %q: %w", in.To, ErrNotImplemented)
+func (d *direct) Send(ctx context.Context, in SendInput) (SendResult, error) {
+	if err := ValidateAddress(in.To); err != nil {
+		return SendResult{}, err
+	}
+	from, err := d.resolveFrom(ctx, in)
+	if err != nil {
+		return SendResult{}, err
+	}
+	out, err := d.store.Send(ctx, store.SendParams{To: in.To, From: from, Body: in.Body})
+	if err != nil {
+		return SendResult{}, fmt.Errorf("send to %q: %w", in.To, err)
+	}
+	return SendResult{
+		ID:            out.ID,
+		To:            in.To,
+		Subscriptions: out.Subscriptions,
+		Bound:         out.Bound,
+	}, nil
 }
 
-// List is the one verb the walking skeleton implements end to end. Against a
-// freshly migrated store there is nothing to materialise, so it returns an
-// empty (never nil) slice — `auto mail list` prints `[]`.
+// resolveFrom walks the three-rung ladder that gives a sender an absolute
+// address to be replied to. The result is always resolved and absolute, never a
+// relative handle — relative handles are T2's (G5/D-13).
+//
+//  1. An explicit --from wins.
+//  2. Otherwise the address of a subscription bound to this caller, lowest
+//     subscription id when there are several so the answer is deterministic.
+//     This is C1's case: the sender subscribed to its own reply address first,
+//     which is also what makes it reachable for a reply.
+//  3. Otherwise `<projectId>/agent` from the project registry, or
+//     `unregistered/agent` outside a registered project.
+func (d *direct) resolveFrom(ctx context.Context, in SendInput) (string, error) {
+	if in.From != "" {
+		if err := ValidateAddress(in.From); err != nil {
+			return "", err
+		}
+		return in.From, nil
+	}
+	if address, ok, err := d.store.AddressForBinding(ctx, caller(in.Binding)); err != nil {
+		return "", err
+	} else if ok {
+		return address, nil
+	}
+	return d.projectAddress(in.Cwd), nil
+}
+
+// projectAddress is rung 3. A registry that cannot be read is treated exactly
+// like an unregistered directory: `send` must not fail because the host's
+// project list is missing or malformed.
+func (d *direct) projectAddress(cwd string) string {
+	project := UnregisteredProject
+	if cwd != "" {
+		registry, err := sharedconfig.LoadProjects(filepath.Join(d.home, ".auto", "projects.json"))
+		if err == nil {
+			if ref := registry.FindProjectByPath(resolveDir(cwd)); ref != nil && ref.ID != "" {
+				project = ref.ID
+			}
+		}
+	}
+	return project + "/" + AgentHandle
+}
+
+// List materialises delivery rows lazily from each subscription's cursor,
+// stamps the first read, and returns unacked mail. It never retires anything —
+// ack is always a separate explicit call (G3).
 func (d *direct) List(ctx context.Context, in ListInput) ([]Delivery, error) {
-	rows, err := d.store.QueryContext(ctx, `
-		SELECT m.id, m.envelope, m.body, m.sent_at
-		FROM deliveries d
-		JOIN mail m ON m.id = d.mail_id
-		WHERE d.acked_at IS NULL
-		ORDER BY m.id`)
+	if in.Address != "" {
+		if err := ValidateAddress(in.Address); err != nil {
+			return nil, err
+		}
+	}
+	listed, err := d.store.List(ctx, store.ListParams{
+		Caller:         caller(in.Binding),
+		Address:        in.Address,
+		SubscriptionID: in.Subscription,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list mail: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	if rows.Next() {
-		// Nothing writes `deliveries` until the projection lands in the next
-		// phase, so a row here means the caller is ahead of the implementation
-		// — say so rather than returning a silently wrong empty list.
-		return nil, fmt.Errorf("list mail: %w", ErrNotImplemented)
+	// Never nil: `auto mail list` must print `[]`, not `null`.
+	out := make([]Delivery, 0, len(listed))
+	for _, item := range listed {
+		out = append(out, Delivery{
+			ID:     item.ID,
+			From:   item.From,
+			SentAt: item.SentAt,
+			Body:   item.Body,
+		})
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list mail: %w", err)
-	}
-	return make([]Delivery, 0), nil
+	return out, nil
 }
 
-func (d *direct) Ack(_ context.Context, in AckInput) (AckResult, error) {
-	return AckResult{}, fmt.Errorf("ack %q: %w", in.MailID, ErrNotImplemented)
+func (d *direct) Ack(ctx context.Context, in AckInput) (AckResult, error) {
+	out, err := d.store.Ack(ctx, store.AckParams{MailID: in.MailID, Caller: caller(in.Binding)})
+	switch {
+	case errors.Is(err, store.ErrUnknownMail):
+		return AckResult{}, fmt.Errorf("%w: %s", ErrUnknownMail, in.MailID)
+	case errors.Is(err, store.ErrNoDelivery):
+		return AckResult{}, fmt.Errorf("%w: %s", ErrNoDelivery, in.MailID)
+	case err != nil:
+		return AckResult{}, fmt.Errorf("ack %q: %w", in.MailID, err)
+	}
+	// Acked is true for winner and loser alike: it states that the delivery is
+	// acked now, which is what a caller acts on. WonTransition answers the
+	// separate question "was it me" (G13/D-062-7).
+	return AckResult{
+		ID:            in.MailID,
+		Acked:         true,
+		WonTransition: out.Won,
+		AckedAt:       out.AckedAt,
+		AckedBy:       out.AckedBy,
+	}, nil
 }
 
 func (d *direct) Reset(_ context.Context) (ResetResult, error) {
@@ -86,3 +195,10 @@ func (d *direct) Reset(_ context.Context) (ResetResult, error) {
 }
 
 func (d *direct) Close() error { return d.store.Close() }
+
+// caller converts the public opaque pair into the store's. The conversion is
+// the only place the two vocabularies meet, and it carries nothing but the
+// pair — physical identity never travels further than the bindings row (G5).
+func caller(b Binding) store.Caller {
+	return store.Caller{Manager: b.Manager, Target: b.Target, Session: b.Session}
+}
