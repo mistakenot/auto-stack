@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>005: auto-mail-mvp</title>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+</head>
+<body>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "005",
+    "name": "auto-mail-mvp",
+    "kind": "epic",
+    "status": "planning",
+    "created": "2026-08-25"
+  }
+  </script>
+
+  <pd-doc title="005: auto-mail-mvp" status="draft" generated="2026-08-25">
+
+  <!-- ==================== VISION ==================== -->
+  <pd-tab name="Vision">
+
+    <pd-outcome></pd-outcome>
+
+    <pd-section id="vision-headline" title="What success looks like">
+      <md><script type="text/plain">
+Agents on one host can **address each other by name and get a reply**, without
+knowing what session, pane, project or process the other one is.
+
+Today a supervisor learns its child crashed by noticing silence. An agent in
+`auto-stack` that spots a bug in `auto-web` has nowhere to put that fact. Two
+agents in a swarm rediscover the same thing independently. The stack already
+carries events *outward* (the bus) — nothing carries a message *to a named
+recipient* and guarantees it survives until acted on.
+
+`auto mail` is that missing half: a durable, addressed, at-least-once channel
+between agents. The bus is for events nobody has to receive. Mail is for
+messages someone must act on.
+
+**Why now.** Every dependency already exists and is idle: `auto-shared/rpc` +
+`transport` for the wire, `bus` for notification, `~/.auto/hooks` for liveness,
+autowatch for a running daemon. The one missing primitive is delivery with an
+ack. The MVP is small because the substrate is already built.
+
+**Alpha.** This is explicitly alpha functionality. No compatibility promise, no
+migrations, the store may be wiped on upgrade. That is a deliberate purchase:
+it buys freedom to get the event vocabulary wrong.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="vision-cli" title="The core loop">
+      <pd-cli id="C1" title="zsh — two agents trading a message" caption="Subscribe, send, list, ack — the whole MVP surface">
+        <pd-cmd note="receiver binds a virtual channel" status="todo">auto mail subscribe auto-web/bugs</pd-cmd>
+        <pd-out><script type="text/plain">{ "address": "auto-web/bugs", "subscription": "sub_01K9X2M4", "backfilled": 0 }</script></pd-out>
+        <pd-cmd note="sender is in a different project, same host" status="todo"><script type="text/plain">auto mail send --to auto-web/bugs --message "normalizeRemote drops the port on ssh:// URLs"</script></pd-cmd>
+        <pd-out><script type="text/plain">{ "id": "01K9X2QF7M3B0V8N", "to": "auto-web/bugs", "subscriptions": 1, "bound": 1 }</script></pd-out>
+        <pd-cmd note="receiver is nudged mid-turn, then lists" status="todo">auto mail list</pd-cmd>
+        <pd-out><script type="text/plain">[
+  {
+    "id": "01K9X2QF7M3B0V8N",
+    "from": "auto-stack/reviewer",
+    "sentAt": "2026-08-25T10:14:02Z",
+    "body": { "message": "normalizeRemote drops the port on ssh:// URLs" }
+  }
+]</script></pd-out>
+        <pd-cmd note="explicit ack — separate call, always" status="todo">auto mail ack 01K9X2QF7M3B0V8N</pd-cmd>
+        <pd-out><script type="text/plain">{ "id": "01K9X2QF7M3B0V8N", "acked": true, "wonTransition": true }</script></pd-out>
+        <pd-cmd note="acked mail is gone from the default view" status="todo">auto mail list</pd-cmd>
+        <pd-out>[]</pd-out>
+      </pd-cli>
+      <pd-thread anchor="C1" status="resolved" priority="p3" title="send/subscribe/ack outputs shown as plain text, against the JSON-by-default convention">
+        <pd-comment by="review">Root CLAUDE.md and docs/auto-package-patterns.md say commands default to JSON with stdout strictly parseable payload unless a different default is explicitly documented. In C1, `list` emits JSON but `subscribe`, `send` and `ack` emit bare text (`sent: 01K9X2QF7M3B0V8N`). Either show JSON payloads for all four, or record that mail documents a text default — a T1 planner will otherwise have to guess which convention wins.</pd-comment>
+        <pd-comment by="author">Fixed. All four commands in C1 now emit JSON payloads, per the root CLAUDE.md / auto-package-patterns default. The rewrite also earns its keep twice over: the send payload now shows the <code>subscriptions</code> vs <code>bound</code> split that G6 needed, and the ack payload shows the <code>wonTransition</code> return that G13 mandates — both were decisions a reader previously had to take on trust.</pd-comment>
+      </pd-thread>
+    </pd-section>
+
+    <pd-section id="vision-journeys" title="The two journeys that justify it">
+      <pd-journey id="J1" title="Sub-agent reports home" outcome="supervisor learns the child failed, in-band, without polling">
+        <pd-leg actor="supervisor" action="spawns an in-process sub-agent" status="todo">the child's hook events already name its parent</pd-leg>
+        <pd-leg actor="sub-agent" action="hits a wall and mails <code>#parent</code>" status="todo">message is durable the instant it is accepted</pd-leg>
+        <pd-leg actor="supervisor" action="is nudged on its next tool call" status="todo">reads, acts, acks</pd-leg>
+      </pd-journey>
+
+      <pd-journey id="J2" title="Cross-project bug report" outcome="a fact discovered in one project reaches the project that owns it">
+        <pd-leg actor="agent in project A" action="finds a bug that belongs to project B" status="todo">mails B's channel</pd-leg>
+        <pd-leg actor="mail" action="persists it — nobody in B is running" status="todo">no subscriber is not an error</pd-leg>
+        <pd-leg actor="agent in project B" action="is idle in a pane" status="todo">woken by keystroke injection</pd-leg>
+        <pd-leg actor="agent in project B" action="reads, fixes, acks" status="todo">the loop closes</pd-leg>
+      </pd-journey>
+    </pd-section>
+
+    <pd-section id="vision-nonscope" title="Deliberately not in the MVP" summary="Fan-out, leases, cross-host, file locks, search — all additive, all deferred. Parked in docs/auto-mail-beyond-mvp.md.">
+      <md><script type="text/plain">
+The full backlog — every capability explored while scoping this epic, why each
+was deferred, and which v1 constraint keeps it buildable — is parked in
+[auto mail — Beyond the MVP](../auto-mail-beyond-mvp.md). Read that before
+proposing a mail feature.
+
+Each of these was designed far enough to confirm it is **additive** — a new
+table, a new column, or a new event type — and then dropped:
+
+- **Competing consumers and holds/leases** (visibility timeout, heartbeat
+  extension, fencing tokens, dead-lettering). Arrives as columns on
+  `deliveries` and new event types. Nothing about the MVP forecloses it.
+- **Cross-host delivery.** The MVP is single-host. Every constraint that keeps
+  it possible is a guard rail below, not a feature.
+- **File reservations / advisory locks.** Same lease mechanism, different
+  addressing (glob overlap vs exact id) — and an advisory lock nothing enforces
+  is a convention, not a lock. Separate concern.
+- **Search, threading, priority, attachments, expiry, cc, dead-letter policy,
+  a cron sweep, a web UI.** All additive.
+      </script></md>
+    </pd-section>
+
+    <pd-decisions></pd-decisions>
+
+  </pd-tab>
+
+  <!-- ==================== GUARD RAILS ==================== -->
+  <pd-tab name="Guard rails">
+
+    <pd-section id="rails-intro" title="What every task inherits" summary="Sixteen constraints. Most exist to keep fan-out and multi-host buildable later without touching call sites.">
+      <md><script type="text/plain">
+The dividing line these rails encode: **schema you own is cheap to migrate;
+call sites you don't own are not.** Consumers here include prompts, skills and
+other agents' habits — ungreppable and unmigratable. So anything that changes
+what a *caller must do* is fixed now; anything that only changes tables can wait.
+      </script></md>
+    </pd-section>
+
+    <pd-thread anchor="rails-intro" status="resolved" priority="p3" title="Summary says eight constraints; the tab lists thirteen">
+      <pd-comment by="review">The section summary reads "Eight constraints" but the tab contains thirteen guard rails, G1 through G13. Likely a stale count from before G12/G13 (and others) were added. Worth fixing so a task planner does not wonder whether five rails are non-normative leftovers.</pd-comment>
+      <pd-comment by="author">Fixed — stale count from before G12/G13 were added. Now reads fourteen, which includes the new G14 added in response to the G9 thread.</pd-comment>
+      </pd-thread>
+
+    <pd-guardrail id="G1" kind="functional" title="Messages and events are immutable">
+      <md><script type="text/plain">A message row is never updated after insert, and a delivery event is never rewritten. State changes are appended and re-projected. This is what keeps the log mergeable across hosts later.</script></md>
+    </pd-guardrail>
+
+    <pd-guardrail id="G2" kind="functional" title="Consumer state lives in a deliveries join, never on the message">
+      <md><script type="text/plain">Read and ack state is keyed by (subscription, message), even though the MVP has exactly one subscription per address. That redundancy is the feature: fan-out becomes extra rows, competing consumers become a column. Putting <code>read_at</code> on the message silently encodes "one consumer, forever".</script></md>
+    </pd-guardrail>
+
+    <pd-guardrail id="G3" kind="functional" title="Ack is a separate explicit call, from the first consumer">
+      <md><script type="text/plain">Reading does not retire a message. Ack may do nothing but stamp a timestamp — no timer, no redelivery — but every consumer must call it. Retrofitting that call into N prompts and skills is the migration that cannot be done.</script></md>
+    </pd-guardrail>
+
+    <pd-guardrail id="G14" kind="security" title="Injected keystrokes are a fixed constant, into a verified agent">
+      <md><script type="text/plain">Two rules, both absolute. <strong>Content:</strong> the injected sequence is a fixed constant — an instruction to go and read mail — never interpolated from an envelope or body, or a sender would be typing into a stranger's pane. <strong>Target:</strong> the effector must confirm the pane still runs the bound agent before injecting. Hook silence is also what an <em>exited</em> agent looks like, and a pane that has fallen back to a shell would execute whatever is typed into it.</script></md>
+    </pd-guardrail>
+
+    <pd-guardrail id="G13" kind="functional" title="Ack transitions exactly once and reports whether it won">
+      <md><script type="text/plain">Ack is a conditional update inside the same transaction that appends its event, so concurrent acks on one delivery resolve to exactly one winner. The call returns which it was — a loser is told, never silently treated as success. This is call-site-visible behaviour, so it is fixed now rather than added when leases arrive.</script></md>
+    </pd-guardrail>
+
+    <pd-guardrail id="G4" kind="functional" title="At-least-once and unordered, as documented">
+      <md><script type="text/plain">The MVP delivers exactly once, in order, by accident. The contract promises neither. Consumers are idempotent on message id from day one. Promising the stronger guarantee now means ten consumers quietly depend on it.</script></md>
+    </pd-guardrail>
+
+    <pd-guardrail id="G5" kind="functional" title="Addresses are virtual — no physical identity in them">
+      <md><script type="text/plain">Physical identity (session, host, herdr/ntm pane) appears only as binding metadata, never in an address, never in a stored envelope's <code>to</code> field. Relative handles like <code>#parent</code> resolve at send time; the stored envelope always carries the resolved absolute address. Addresses themselves are free-form strings with no enforced structure — validation must stay permissive enough to allow a separator, so hierarchical names remain expressible and prefix filtering stays buildable.</script></md>
+    </pd-guardrail>
+
+    <pd-thread anchor="G5" status="resolved" priority="p2" title="G5 forbids 'project' in addresses while C1 and D-9 make a project id the conventional leading segment">
+      <pd-comment by="review">The title says addresses contain "no host, session, pane or project", yet the epic's canonical example is `auto-web/bugs` (C1, J2) and D-9 records the leading segment as "conventionally a project id but never enforced". Per the glossary a Project is a cross-host logical identity, not physical identity, so it does not actually threaten the multi-host portability this rail protects — the rail's list is overbroad, not the examples wrong. Suggest dropping "project" from G5 (keeping host/session/pane) or rewording it to "no physical identity", so a T1 planner does not read the guard rail as banning the epic's own addressing convention.</pd-comment>
+      <pd-comment by="author">Agreed, and the diagnosis is exactly right: the glossary defines Project as a cross-host logical identity keyed on the git remote, so it is not physical identity and does not threaten what this rail protects. The rail's list was overbroad, not the examples wrong. Title now reads "no physical identity in them"; the body already scoped itself to session/host/pane and is unchanged.</pd-comment>
+      </pd-thread>
+
+    <pd-guardrail id="G6" kind="reliability" title="Sending to an address with no subscription persists, and a later subscriber sees it">
+      <md><script type="text/plain">The cross-project journey depends on both halves: mail sent to a project nobody is working in must persist, <em>and</em> the agent who subscribes tomorrow must receive it. A send reports two distinct counts — how many <strong>subscriptions</strong> exist (durable readers) and how many are currently <strong>bound</strong> (live agents) — because zero-subscriptions and zero-bound mean different things to a sender, and only the first is a likely address typo.</script></md>
+    </pd-guardrail>
+
+    <pd-decision id="D-10" title="Subscriptions backfill unacked history from a cursor" status="accepted" by="agent"
+      summary="Delivery rows are materialised lazily against a subscription cursor, not eagerly at send time.">
+      <md><script type="text/plain">
+**Context:** G2 keys consumer state by (subscription, message). If delivery rows were created eagerly at send time, a subscription created *later* would have none — and J2 leg 3, where an agent in project B reads mail sent before it existed, could never happen.
+**Decision:** The address holds the mail; a subscription holds a `from_cursor` and its ack state, and delivery rows are materialised **lazily on read**. A new subscription defaults to seeing all unacked mail on the address from the beginning, and can opt to start from now.
+**Alternatives:** Eager rows at send time (silently breaks J2 — the failure only appears when a subscriber arrives late); backfill-from-subscription-time only (breaks J2 for the same reason, just less visibly).
+**Consequences:** A new subscriber to a busy channel inherits the whole unacked backlog — acceptable at alpha volumes, and the cursor is the escape hatch. This is call-site-visible (it determines what `list` returns on a fresh subscription), so it is fixed now rather than discovered by T1.
+      </script></md>
+    </pd-decision>
+
+    <pd-thread anchor="G6" status="resolved" priority="p1" title="Subscribe-after-send semantics are undefined — and J2 depends on the answer">
+      <pd-comment by="review">Under G2/D-7, a delivery row exists per (subscription, message), created for each subscription when a message is sent. G6 lets a message persist with zero subscriptions. J2 then requires that mail to be received later: leg 2's note says "no subscriber is not an error", and in leg 3 an agent in project B reads it — which can only happen if creating a subscription backfills delivery rows for pre-existing messages. Nothing in the epic says whether a new subscription sees history (all of it? unacked only? nothing?). This is call-site-visible behaviour — exactly the class the rails-intro says must be fixed now — and it has a sting under broadcast: a new subscriber to a busy channel would inherit the entire unacked backlog forever. Related terminology slip: G6's title says "no subscriber" (no subscription) but its body says "report that nothing is bound" (no live binding) — different states with different meanings for a sender, and the D-9 typo-detection mitigation only works if the report distinguishes them. A decision on backfill-on-subscribe is needed before T1 shapes the projection.</pd-comment>
+      <pd-comment by="author">Real gap, and correctly classified as call-site-visible. Settled in new decision D-10: delivery rows are materialised <em>lazily on read</em> against a subscription <code>from_cursor</code>, rather than eagerly at send. A new subscription therefore defaults to all unacked mail on the address — which is what J2 leg 3 requires — and can opt to start from now, which is the escape hatch for the backlog sting you identify. The ER diagram gains <code>from_cursor</code>. The terminology slip is fixed too: G6 is retitled around <em>subscription</em>, and its body now requires a send to report both counts, since zero-subscriptions (likely a typo) and zero-bound (nobody home right now) mean different things to a sender.</pd-comment>
+      </pd-thread>
+
+    <pd-guardrail id="G7" kind="security" metric="allowlist only, zero secrets persisted" title="Hook environment capture stays an allowlist">
+      <md><script type="text/plain">Capture widens to reach herdr panes. It must stay a prefix allowlist and never become "everything except known secrets" — agent environments carry live credentials (this host's sessions expose a messaging token in plain env). Captured values land in a host-global store on every hook fire.</script></md>
+    </pd-guardrail>
+
+    <pd-guardrail id="G8" kind="operability" metric="no-mail path is a stat-level check" title="The nudge is free when there is no mail">
+      <md><script type="text/plain">Notification runs in the agent's critical path on tool calls. The common case — no pending mail — must cost about what a <code>stat</code> costs, and must never be able to stall or break the hook. Same discipline as the existing tmux capture timeout.</script></md>
+    </pd-guardrail>
+
+    <pd-guardrail id="G9" kind="functional" title="Delivery never corrupts a working agent">
+      <md><script type="text/plain">Intrusiveness escalates, never leads. Every message first waits for an in-band hook nudge; keystrokes are the last resort, firing only when the agent is idle by hook silence <em>and</em> the message has aged past a threshold. Injection into a running agent can land mid-tool-call or into a permission prompt, so the dangerous mechanism is never spent on the ordinary case.</script></md>
+    </pd-guardrail>
+
+    <pd-thread anchor="G9" status="resolved" priority="p2" title="No rail constrains what the injected keystrokes contain or verifies the target still runs an agent">
+      <pd-comment by="review">G9 covers when keys fire; nothing covers what they type or into what. Two uncovered hazards. (1) Content: if injected text ever includes mail-derived content, a message body becomes keystrokes in another pane — sender-controlled input executed in a foreign context. The injected sequence should be a fixed constant (e.g. a bare instruction to run `auto mail list`), never interpolated from the envelope or body. (2) Target: a binding records where an agent was (`last_seen` from hook fires), but hook silence is also what a dead agent looks like — the pane may now be a bash shell after the agent exited, and send-keys plus enter into a shell executes whatever is typed. The effector needs to verify the pane still runs the bound agent before injecting (D-6's "ask whether it is alive" gestures at this but liveness-of-pane is not agent-still-present). Both fit naturally as a widening of G9 or a sibling security rail; today neither T3's planner nor doctor has a constraint to build against.</pd-comment>
+      <pd-comment by="author">Both hazards accepted; this was a genuine hole. Added G14 as a security rail with two absolute rules: the injected sequence is a fixed constant — an instruction to go read mail, never interpolated from an envelope or body — and the effector must confirm the pane still runs the bound agent before injecting, because hook silence is also what an exited agent looks like and a pane fallen back to a shell would execute whatever is typed. T3 now honors G14.</pd-comment>
+      </pd-thread>
+
+    <pd-guardrail id="G10" kind="compat" title="Alpha: the store may be wiped, nothing may depend on it">
+      <md><script type="text/plain">Event types and the store file carry an <code>alpha</code> marker. No upcasters, no migrations, no compatibility guarantee; reset is a supported operation. The marker lives in the type string and the filename, not only in docs — a doc note does not stop a skill matching on a bare type name.</script></md>
+    </pd-guardrail>
+
+    <pd-guardrail id="G12" kind="compat" title="No session manager is hard-coded into stored data">
+      <md><script type="text/plain">A binding records its physical target as an opaque <code>(manager, target)</code> pair — never a typed <code>tmux_pane_id</code> / <code>herdr_pane_id</code> column. Delivery goes through an effector interface with one implementation per manager. Adding or retiring a manager is then data plus an implementation, never a schema change; and because bindings are a heartbeat-backed projection, retiring one is a delete rather than a migration.</script></md>
+    </pd-guardrail>
+
+    <pd-guardrail id="G15" kind="operability" title="A capability is done when it passes end to end in the harness">
+      <md><script type="text/plain">The guiding oracle is a harness scenario running the real <code>auto</code> binary in containers over real transports, with a realistic but <em>minimal</em> setup. Unit and package tests are supporting evidence, not the verdict — a task whose capability cannot be demonstrated end to end is not finished. Two disciplines carry over from the harness: assert the observable outcome with bounded retry rather than polling to settle, and treat a missing product seam as a finding to raise, never as something to patch around inside the scenario.</script></md>
+    </pd-guardrail>
+
+    <pd-guardrail id="G16" kind="functional" title="The ontology lands before the code that uses it">
+      <md><script type="text/plain">Canonical terms go into the ubiquitous-language glossary <em>first</em>, and then the same word is used everywhere — schema, event types, CLI, RPC methods, prose and commits. Naming is the one decision that propagates into every surface at once, including the ungreppable ones, so it cannot be tidied up afterwards. This epic already demonstrated the failure: the data model was drafted with an entity named MESSAGE immediately after a decision not to use that noun.</script></md>
+    </pd-guardrail>
+
+    <pd-guardrail id="G11" kind="operability" title="Nothing outside the mail package reads the store">
+      <md><script type="text/plain">One client interface is the only API. The moment a skill or hook runs <code>sqlite3</code> against the store, the schema is frozen and the transport swap is dead. Worth a doctor check, not just a convention.</script></md>
+    </pd-guardrail>
+
+  </pd-tab>
+
+  <!-- ==================== ARCHITECTURE ==================== -->
+  <pd-tab name="Architecture">
+
+    <pd-section id="arch-containers" title="Containers and seams">
+      <pd-mermaid caption="Where auto mail sits — every box except the mail store already exists">
+flowchart TB
+  subgraph agent["Agent process"]
+    CLI["auto mail CLI"]
+    HOOK["hook: capture + nudge"]
+  end
+  subgraph shared["auto-shared"]
+    CLIENT["mail.Client<br/>the only API"]
+    RPC["rpc + transport<br/>unix / tcp"]
+    BUS["bus hub"]
+    HOOKS["hooks capture"]
+  end
+  subgraph store["Mail store (host-global)"]
+    LOG["event log<br/>append-only"]
+    PROJ["projections<br/>deliveries, bindings"]
+  end
+  DAEMON["autowatch daemon<br/>notifier / effector"]
+
+  CLI --> CLIENT
+  HOOK --> HOOKS
+  HOOKS --> PROJ
+  CLIENT --> LOG
+  LOG --> PROJ
+  CLIENT --> RPC
+  RPC --> DAEMON
+  DAEMON --> BUS
+  DAEMON -.->|"send-keys, idle only"| agent
+  BUS -.->|"you have mail"| HOOK
+      </pd-mermaid>
+    </pd-section>
+
+    <pd-section id="arch-seams" title="The load-bearing seams" summary="Five contracts. A task may do anything behind one; none may be broken.">
+      <md><script type="text/plain">
+1. **`mail.Client` is the only API.** CLI, hooks, daemon and every other
+   `auto-*` tool go through it. The store is an implementation. An abstraction
+   with one implementation is a guess — the RPC-backed second implementation is
+   what makes the seam real, and it is what multi-host later becomes.
+
+2. **The bus notifies; RPC operates.** "You have mail" is a fire-and-forget
+   bus event — losing one is harmless. Send, list and ack are RPC calls with
+   responses, because they carry the at-least-once guarantee. Conflating them
+   is what would quietly break ack.
+
+3. **Append and re-project in one transaction.** The event log is
+   authoritative and mergeable; the projections are a rebuildable cache. Doing
+   both in a single transaction keeps current-state reads a single indexed
+   lookup and skips the eventual-consistency machinery that makes event
+   sourcing expensive. No projection process, no CQRS.
+
+4. **Hooks feed bindings; bindings are not event-sourced.** Every hook fire
+   upserts the binding row that maps a virtual address to its current physical
+   target and liveness. `~/.auto/hooks/raw/*.jsonl` is *already* an append-only
+   log, so bindings are already a projection of an event stream — duplicating
+   that into the mail log would balloon it for nothing.
+
+5. **The `Notifier` interface, with policy in data.** Three implementations
+   (`noop`, `nudge`, `keys`); which one fires is a config lookup, not a branch
+   in code. Liveness picks: an active agent gets an in-band nudge at a safe
+   point, an idle agent gets keystrokes — because a nudge can never reach an
+   idle agent (no hooks fire) and keystrokes can corrupt an active one. Their
+   failure modes are exactly complementary.
+      </script></md>
+    </pd-section>
+
+    <pd-thread anchor="arch-seams" status="resolved" priority="p1" title="Who owns the store? Seam 2 routes send/list/ack over RPC; D-5 removes the daemon from the walking skeleton's critical path">
+      <pd-comment by="review">Three statements pull in different directions. Seam 2 says "Send, list and ack are RPC calls with responses" and D-3 registers `mail.*` on the daemon's peer — which makes the daemon the store's owner and puts it in the critical path of every operation. D-5's consequences say the walking skeleton "removes the daemon from the critical path". The container diagram draws both `CLIENT --> LOG` (direct store access) and `CLIENT --> RPC --> DAEMON`. Seam 1's "RPC-backed second implementation" hints the direct-store client ships first, but never says which implementation T1's CLI binds to. A T1 planner cannot proceed without the answer, and the two answers have different consequences that deserve recording: direct SQLite means every agent process plus the daemon are concurrent writers to one store (WAL/locking discipline becomes a T1 concern), and it means the seam-2 contract is aspirational in the MVP; RPC-first means mail is down whenever the daemon is (autowatch daemon crash-loops are a documented failure mode on this host), which changes T1's deployability story and testing. State explicitly: which client implementation the MVP CLI uses, whether the daemon must be running for send/list/ack, and who writes the store.</pd-comment>
+      <pd-comment by="author">The contradiction was real. Settled in new decision D-11: the MVP CLI binds the <strong>direct-store</strong> implementation, so send/list/ack work with no daemon running; the RPC implementation is the second one that proves the seam and is what the daemon uses to observe and notify. Seam 2 describes the contract when a call crosses the wire, not a routing requirement. RPC-first was rejected for the reason you name — autowatch crash-loops are documented here — and more fundamentally because a failing agent must be able to post mail with nothing else alive, which is the case this epic exists for. The consequence you flagged is recorded rather than hidden: concurrent writers to one SQLite file make WAL and writer discipline an explicit T1 concern.</pd-comment>
+      </pd-thread>
+
+    <pd-section id="arch-data" title="The shape of the data">
+      <pd-mermaid caption="Immutable facts, derived state">
+erDiagram
+  MAIL ||--o{ DELIVERY : "copied to"
+  SUBSCRIPTION ||--o{ DELIVERY : "owns state of"
+  ADDRESS ||--o{ SUBSCRIPTION : "bound by"
+  SUBSCRIPTION ||--o| BINDING : "currently held by"
+  MAIL {
+    ulid id
+    string to_address
+    json envelope
+    json body
+  }
+  SUBSCRIPTION {
+    string address
+    string name
+    time from_cursor
+  }
+  DELIVERY {
+    ulid mail_id
+    string subscription
+    time read_at
+    time acked_at
+  }
+  BINDING {
+    string subscription
+    string manager
+    string target
+    string session
+    time last_seen
+  }
+      </pd-mermaid>
+      <md><script type="text/plain">
+`MAIL` and the event log are immutable. `DELIVERY` and `BINDING` are
+projections. In the MVP `DELIVERY` looks like pointless indirection — one
+subscription per address, one row per message. That is the point: it is the
+single structural concession that keeps fan-out, competing consumers and leases
+from ever touching a call site.
+      </script></md>
+    </pd-section>
+
+    <pd-thread anchor="arch-data" status="resolved" priority="p2" title="BINDING cardinality (at most one per address) contradicts the broadcast model D-7 settled">
+      <pd-comment by="review">The ER diagram has `ADDRESS ||--o| BINDING` — zero or one binding per address. But Q-1/D-7 settled broadcast: multiple subscriptions per address, each potentially a live agent in its own pane (the swarm case is the argument Q-1 used). Two live subscribers to one channel would fight over a single binding row — last hook fire wins, and notification/wake targets flap between panes. The natural fix is bindings hanging off SUBSCRIPTION rather than ADDRESS (each subscription knows its own current physical target and liveness), which also answers how a binding learns its address at all — the subscribe call records physical context, hook fires refresh `last_seen`. As drawn, the walking skeleton would bake in a one-reader assumption that G2 exists specifically to avoid.</pd-comment>
+      <pd-comment by="author">Correct — as drawn it would have baked in the one-reader assumption G2 exists to prevent. The ER diagram now hangs BINDING off SUBSCRIPTION rather than ADDRESS, which also answers your secondary point about how a binding learns its address: the subscribe call records the physical context, and hook fires refresh <code>last_seen</code>.</pd-comment>
+      </pd-thread>
+
+    <pd-thread anchor="arch-data" status="resolved" priority="p2" title="BINDING lacks the manager half of G12's opaque (manager, target) pair">
+      <pd-comment by="review">G12 mandates that a binding record its physical target as an opaque `(manager, target)` pair, and D-6 repeats it. The ER diagram's BINDING carries `address`, `session`, `local_target`, `last_seen` — there is no manager discriminator. Without it the effector cannot pick which of its per-manager implementations (herdr vs ntm/tmux, per D-6) a `local_target` belongs to. The diagram is the shape tasks will build from, so it should show the pair the guard rail requires.</pd-comment>
+      <pd-comment by="author">Fixed. BINDING now carries <code>manager</code> and <code>target</code> as the separate pair G12 mandates, replacing the undifferentiated <code>local_target</code>. Without the discriminator the effector could not route to its herdr or ntm/tmux implementation, which was D-6's whole point.</pd-comment>
+      </pd-thread>
+
+    <pd-decision id="D-1" title="Event-source the delivery lifecycle, not everything" status="accepted" by="agent"
+      summary="Append-only log + same-transaction projection; bindings excluded.">
+      <md><script type="text/plain">
+**Context:** Storage choice for a low-volume, debugging-heavy, eventually-distributed message store.
+**Decision:** Append-only event log as the authority, projections maintained in the same transaction. Messages immutable. Bindings excluded — the hooks JSONL already is their log.
+**Alternatives:** Mutable tables (simplest, but two hosts' divergent mutable state is a conflict-resolution problem with no good answer); full CQRS with a projection process (rebuild tooling and eventual consistency for a few hundred rows a day).
+**Consequences:** Cross-host merge later is union-and-order-by-ULID rather than conflict resolution. Cost is one extra table and a never-UPDATE discipline. Event types become the most permanent thing in the system — mitigated by D-2.
+      </script></md>
+    </pd-decision>
+
+    <pd-decision id="D-2" title="Alpha marker in the type string and the store filename" status="accepted" by="agent"
+      summary="alpha, not v1 — a disclaimer, not a compatibility promise.">
+      <md><script type="text/plain">
+**Context:** Event sourcing makes the event vocabulary permanent, which raises the stakes on getting it right first time.
+**Decision:** Prefix event types with `alpha` and name the store file with it. Carry a `version` integer on the envelope anyway. Write the alpha contract down explicitly: no upcasters, no migrations, reset supported.
+**Alternatives:** `v1` — implies v2 arrives alongside and obliges upcasters, which is a promise we do not want; a docs-only note — does not stop a skill matching on a bare type name.
+**Consequences:** The versioning tax disappears for now: no upcasting machinery, no closed vocabulary, and a wrong event type can simply be deleted. Cost is an ugly type string, which is load-bearing ugliness. Post-alpha rename touches every subscriber — the accepted price of the disclaimer.
+      </script></md>
+    </pd-decision>
+
+    <pd-decision id="D-3" title="Reuse auto-shared rpc + transport rather than a new wire" status="accepted" by="agent"
+      summary="mail.* methods on the existing peer; tcp transport already exists.">
+      <md><script type="text/plain">
+**Context:** The MVP is single-host but must not foreclose multi-host.
+**Decision:** Register `mail.*` methods on the existing JSON-RPC peer, alongside `doc.*`, `task.*`, `bus.*`. Notification rides the bus; operations ride RPC.
+**Alternatives:** A bespoke socket protocol (rebuilds a solved problem); routing mail over bus events only (at-most-once broadcast cannot carry an ack).
+**Consequences:** Multi-host becomes a dial string rather than a project, and the conformance suite already covers the wire.
+      </script></md>
+    </pd-decision>
+
+    <pd-decision id="D-11" title="The MVP CLI writes the store directly; the daemon is never required" status="accepted" by="agent"
+      summary="Direct-store client is the default implementation; RPC is the second one, used by the daemon.">
+      <md><script type="text/plain">
+**Context:** Seam 2 says send/list/ack are RPC calls, and D-3 registers `mail.*` on the daemon's peer — which would make the daemon the store's owner and put it in the path of every operation.
+**Decision:** `mail.Client` has two implementations. The **direct-store** one is what the MVP CLI binds to: send, list and ack work with no daemon running. The **RPC** one is the second implementation that proves the seam, and is what the daemon uses to observe and notify. Seam 2 describes the contract *when a call crosses the wire*, not a requirement that the MVP route through the daemon.
+**Alternatives:** RPC-first (mail is down whenever the daemon is — and autowatch crash-loops are a documented failure mode on this host; it also breaks the case this epic exists for, since a failing agent must be able to post mail with nothing else alive).
+**Consequences:** Every agent process plus the daemon are concurrent writers to one SQLite file, so WAL and a concurrent-writer discipline become an explicit T1 concern rather than an assumption. G11 still holds — the client is inside the mail package, so "nothing outside reads the store" is unaffected.
+      </script></md>
+    </pd-decision>
+
+    <pd-decision id="D-4" title="No message resource noun on the CLI" status="accepted" by="agent"
+      summary="auto mail send|list|ack — avoids the glossary's Message collision.">
+      <md><script type="text/plain">
+**Context:** `docs/concepts/UBIQUITOUS_LANGUAGE.md` binds **Message** to a role-tagged exchange within a Session. A mail resource of the same name would make `auto search message get` and `auto mail message get` mean unrelated things in one binary.
+**Decision:** `auto mail` is itself the resource noun — flat verbs, no `message` subcommand. The glossary gains **Mail** (the stored unit, named `MAIL` in the schema), **Address**, **Subscription**, **Delivery** and **Binding** — the concepts the epic actually uses.
+**Alternatives:** `auto mail letter …` (unambiguous but coins a term, and the metaphor fights the channel/subscription model); qualification by context as the glossary's **Event** entry does (most conventional, but the in-binary collision remains).
+**Consequences:** A glossary update is in scope for this epic, not optional cleanup.
+      </script></md>
+    </pd-decision>
+
+    <pd-thread anchor="D-4" status="resolved" priority="p2" title="Proposed glossary terms don't match the epic's own concept set — and the ER diagram names its entity MESSAGE">
+      <pd-comment by="review">D-4 exists to dodge the glossary's Message collision (verified: UBIQUITOUS_LANGUAGE.md binds Message to a role-tagged exchange within a Session), yet the arch-data ER diagram names the mail store's core entity `MESSAGE`, and prose throughout the epic says "message" for a mail item. The glossary rule is one word per concept everywhere — chat, code, comments, commits — so avoiding the noun only on the CLI while the schema and prose reuse it recreates the collision in exactly the ungreppable places the rails-intro worries about. The stored entity should presumably be Mail. Separately, the proposed additions (Mail, Mailbox, Address, Binding) don't line up with the concepts the epic actually uses: Mailbox appears nowhere else in the document, while Subscription and Delivery — both load-bearing (G2, D-7, the deliveries projection) — are absent from the list. None of the four conflict with existing glossary entries (verified), but the set needs to be the real one before T4 writes the entries.</pd-comment>
+      <pd-comment by="author">Both halves valid. The ER entity is renamed MAIL (and <code>message_id</code> to <code>mail_id</code>), which was an obvious self-inflicted wound given D-4 exists specifically to avoid the collision. The term set is corrected to Mail, Address, Subscription, Delivery, Binding — dropping Mailbox, which appears nowhere else in the document, and adding Subscription and Delivery, which are load-bearing in G2 and D-7. One caveat left standing deliberately: informal prose in this doc still says "message" in places. The structural surfaces a planner builds from — schema, CLI, term list — are now consistent, and the full prose sweep belongs to T4, which already owns writing the glossary entries.</pd-comment>
+      </pd-thread>
+
+    <pd-decision id="D-6" title="Mail's effector seam is separate from autowatch's execution Backend" status="accepted" by="agent"
+      summary="Two managers exist today, so the seam is forced — but it is not the Backend refactor.">
+      <md><script type="text/plain">
+**Context:** Three session managers are in play (ntm, tmux, herdr), with a long-term intent to consolidate on herdr. autowatch already has a `Backend` interface (`Start` / `Kill` / `SessionExists`) with a single tmux implementation.
+**Decision:** Leave that `Backend` untouched. Mail gets its own narrow effector seam — deliver to a pane, and ask whether it is alive — with one implementation per manager. The manager identity lives in the binding as an opaque `(manager, target)` pair (G12).
+**Alternatives:** Extend the existing `Backend` (wrong lifecycle — it abstracts sessions autowatch *creates and owns*, whereas mail addresses panes created externally by herdr or ntm); hard-code herdr (breaks ntm panes, which hook capture already sees and which the ntm how-to still documents); a general session-manager refactor across autowatch (large, speculative, and unused by this epic).
+**Consequences:** Two implementations are required from day one regardless, because both manager families are live — so naming the interface is free rather than speculative. `#new` maps onto the existing `Backend.Start` when it is built, which is a further reason not to reshape it now on a guess. Doctor becomes manager-aware inside T3/T4.
+      </script></md>
+    </pd-decision>
+
+    <pd-decision id="D-5" title="The sender notifies inline; no cron sweep in the MVP" status="superseded" by="agent"
+      summary="SUPERSEDED by D-12 — cutting the sweep entirely left D-8's escalation with nothing to drive it.">
+      <md><script type="text/plain">
+**Context:** A periodic inbox sweep was the obvious delivery driver, but a one-minute tick sets a 60-second floor on latency and burns work when nothing happened.
+**Decision:** On a single host the sender resolves the binding and notifies inline. The reconciling sweep — which is what heals dropped pushes — is deferred until there are pushes that can drop, i.e. multi-host.
+**Alternatives:** Cron as the primary path (latency floor, and it is the wrong shape even later); no notification at all (mail sits unread, which is the failure mode this epic exists to fix).
+**Consequences:** Removes the daemon from the critical path of the walking skeleton. The effector still lives in the daemon for idle delivery, because keystroke injection needs a process on the owning host.
+      </script></md>
+    </pd-decision>
+
+    <pd-decision id="D-12" title="Inline notify for latency, plus a minimal reconcile tick for correctness" status="accepted" by="agent"
+      summary="Supersedes D-5: escalation needs a re-drive, so a small sweep is in the MVP after all.">
+      <md><script type="text/plain">
+**Context:** D-5 cut the sweep on the premise that on one host there are no pushes to drop. That premise does not survive contact with two facts. D-8 escalates only once mail "has gone unread past an age threshold" — a condition that is *false at send time*, when the inline notification runs, so something must re-evaluate later. And the notification path is the bus, which by its own specification is at-most-once and drops slow subscribers; a daemon restart also loses any in-memory timer.
+**Decision:** Keep inline notification as the fast path, and add a **minimal reconcile tick** in the daemon that re-evaluates unacked mail against the escalation policy. autowatch already owns ticker/cron machinery, so this is small. The sweep is not a scheduler — it is the thing that makes escalation and the nobody-was-running case actually happen.
+**Alternatives:** Keep D-5 as written and accept that escalation is best-effort (silently breaks J2, which is a headline journey, and sits badly against G4's at-least-once promise); an in-memory timer only (lost on the daemon restarts this host is known for).
+**Consequences:** T3 gains a small reconcile loop. Latency is still push-driven; the tick only bounds *escalation*, so its interval does not gate ordinary delivery. This restores the "push for latency, sweep for correctness" split properly, rather than dropping half of it.
+      </script></md>
+    </pd-decision>
+
+    <pd-thread anchor="D-5" status="resolved" priority="p1" title="D-8's age-threshold escalation has no driver once the sweep is cut">
+      <pd-comment by="review">D-8 fires keystrokes only when a message "has gone unread past an age threshold" — a condition that is by definition false at send time, when D-5's inline notification runs. Something must re-evaluate later. With the sweep cut, the only candidates are an in-memory timer in the daemon (lost on daemon restart — and this host's daemon crash-loops are documented) or the "you have mail" bus event (the bus spec, verified, promises at-most-once, explicitly lossy, drop-on-full delivery). So D-5's premise that on one host "there are no pushes that can drop" is contradicted by the bus's own documented contract and by daemon restarts: an idle agent's mail can silently never escalate, which is precisely the J2 failure mode and sits awkwardly against G4's at-least-once promise. J2 also needs a re-drive in another case D-5 doesn't cover: mail sent while nobody in B runs (leg 2) gets its inline notification when there is nothing to notify; when an agent later appears and sits idle, only a periodic reconcile ever wakes it. The MVP needs either a minimal reconcile loop in the daemon (autowatch already has ticker/cron machinery, so this is small) or an explicit recorded acceptance that keystroke escalation is best-effort-until-multi-host — but the epic currently implies reliability the mechanism cannot deliver.</pd-comment>
+      <pd-comment by="author">This is the sharpest finding in the review and it identifies a genuine error in my reasoning, not an ambiguity. D-5's premise that on one host "there are no pushes that can drop" is contradicted by the bus's own documented at-most-once, drop-slow-subscribers contract, and an age threshold is by definition false at send time when the inline notification runs. D-5 is marked <strong>superseded</strong> rather than quietly edited, and D-12 records the correction: inline notify stays as the fast path, plus a minimal reconcile tick in the daemon that re-evaluates unacked mail against the escalation policy. It also covers the second case you raise — mail sent while nobody in B is running, where the inline notification has nothing to notify. autowatch already owns the ticker machinery, so the cost is small, and the tick bounds only escalation, not ordinary delivery latency.</pd-comment>
+      </pd-thread>
+
+  </pd-tab>
+
+  <!-- ==================== BREAKDOWN ==================== -->
+  <pd-tab name="Breakdown">
+
+    <pd-breakdown caption="Build order — T1 is the walking skeleton; T2 and T3 thicken it in parallel"></pd-breakdown>
+
+    <pd-section id="breakdown-shape" title="How this is sliced" summary="T1 runs one message end to end through every layer, including notification. Later tasks add reach, not layers.">
+      <md><script type="text/plain">
+The riskiest integration is not the store — it is **hook to notification**:
+whether a working agent can be told it has mail, in-band, cheaply, without
+breaking its turn. Deferring that would defer all the risk, so it is inside the
+walking skeleton even though it makes T1 slightly fatter.
+
+The same logic puts the harness scenario in T1 rather than last: an oracle that
+arrives at the end can only confirm what was already built, whereas one that
+exists from the start is what the remaining tasks are developed against.
+
+Verified prerequisite folded into T3: the existing hook capture allowlists
+`NTM_*` / `TMUX*` only, so herdr sessions currently produce envelopes with no
+environment at all and are **unaddressable today**. Idle delivery is impossible
+until that gap closes.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="breakdown-oracle" title="How we know it works" summary="Conformance-first, with a harness e2e scenario as the oracle — stood up in T1, not bolted on at the end.">
+      <md><script type="text/plain">
+The work is **conformance-test driven**: for each capability, the executable
+expectation is written before the implementation, and the epic's guard rails are
+the source of those expectations — most of them (explicit ack, at-least-once,
+immutability, ack winning exactly once, addresses free of physical identity) are
+stated as checkable properties precisely so they can be asserted rather than
+merely believed.
+
+**The oracle is the harness.** `harness/` already builds the real `auto` binary
+from source and drives it in containers over real transports. A mail scenario is
+an *extension* of a pattern that exists rather than a new invention — the
+`event-flow` scenario already runs several agent containers with co-located
+`auto watch` daemons, fires hooks, and asserts what came out the other side,
+which is most of the substrate mail needs. The setup should stay **realistic but
+minimal**: enough agents and projects to exercise the journeys, and nothing more.
+
+**Stand it up first.** T1's job is not only the thinnest code path but the
+thinnest *verifiable* one — the scenario comes up in T1 so every later task has
+a working oracle to develop against, rather than arriving at the end when it can
+only confirm what is already built. This is what makes T1 a walking skeleton
+rather than a prototype.
+
+Supporting methods already used elsewhere in the repo carry over where they fit:
+race-enabled package tests, the conformance-suite pattern used for the RPC layer
+(one suite, run against every implementation — a natural fit for the two
+`mail.Client` implementations D-11 settles), and `doctor` as the runtime
+self-check. One nuance worth carrying into assertions: the bus is lossy, so
+event-flow matches on presence rather than counts — but mail promises
+at-least-once, so mail's assertions can be stronger. They must still tolerate
+duplicates, because G4 permits them.
+      </script></md>
+    </pd-section>
+
+    <pd-task id="T1" title="Walking skeleton: subscribe, send, list, ack" status="todo" deployable
+             delivers="C1" honors="G1,G2,G3,G4,G5,G6,G8,G10,G11,G13,G15,G16">
+      <md><script type="text/plain">Three things, in order: the ontology entries land in the glossary; a minimal harness scenario comes up with two agents on one host; and one message then travels between them and is acked — through the client seam, the event log, the projection, and an in-band nudge to a working agent — proven by that scenario rather than asserted.</script></md>
+    </pd-task>
+
+    <pd-task id="T2" title="#parent resolves for sub-agents" status="todo" deployable depends-on="T1"
+             delivers="J1" honors="G3,G5,G15">
+      <md><script type="text/plain">A sub-agent inherits its supervisor's address and can mail it without knowing any identifier; a non-sub-agent using the handle fails fast with a remediation hint. Scoped by D-13 to in-process subagents, resolved from parentage the hooks already carry, so nothing outside the mail package changes.</script></md>
+    </pd-task>
+
+    <pd-thread anchor="T2" status="resolved" priority="p2" title="How inheritance is established is unstated — env inheritance has a bootstrap problem">
+      <pd-comment by="review">The parked backlog's reasoning (§9) picks env promotion (`AUTO_MAIL_SELF` → `AUTO_MAIL_PARENT`, the SHLVL pattern) "without controlling the spawn call, because env inherits automatically". But that only holds if the parent's address is in its process environment at spawn time. A supervisor that runs `auto mail subscribe` mid-session cannot retroactively inject the address into its own already-running process env, so children spawned afterwards inherit nothing — unless the spawn path passes it explicitly, which is exactly "controlling the spawn call". So T2 quietly requires one of: addresses assigned at pane/agent launch (by herdr/ntm/delegate tooling — a cross-tool dependency the epic doesn't name), spawn-time injection by the supervisor's spawn skill, or the log-reconstruction fallback §9 relegates to doctor. Also worth noting which spawn shapes are in scope: an in-process Claude Code subagent (Task tool) shares the parent's env and pane entirely, so J1 presumably means spawned panes — but "sub-agent" in this repo's glossary means the in-process kind. The task planner needs the mechanism and the scope named.</pd-comment>
+      <pd-comment by="author">Genuine bootstrap hole — a supervisor that subscribes mid-session cannot set a variable in its own already-running process, so the SHLVL pattern silently covers nothing for anything it spawns afterwards. Because the three ways out have materially different scope (one of them a cross-tool dependency on herdr/ntm/delegate that this epic does not otherwise carry), this is raised as new open question <strong>Q-4</strong> rather than decided unilaterally, with a lean toward launch-time assignment as the direction and spawn-time injection as the MVP scope. Your glossary observation rides along in the question: Subagent here means the in-process Task-tool kind, which shares the parent's env and pane, so J1's scope needs stating — it changes the answer for both inheritance and waking. T2's body now points at Q-4.</pd-comment>
+      </pd-thread>
+
+    <pd-task id="T3" title="Idle agents get woken" status="todo" deployable depends-on="T1"
+             delivers="J2" honors="G7,G9,G12,G14,G15">
+      <md><script type="text/plain">Herdr and ntm panes become addressable behind one effector seam, liveness is derived from hook activity, and mail for a demonstrably idle agent reaches it by keystroke injection from the daemon.</script></md>
+    </pd-task>
+
+    <pd-task id="T4" title="Cross-project loop, and agents that actually use it" status="todo" deployable depends-on="T2,T3"
+             delivers="J2" honors="G6,G10,G11,G15">
+      <md><script type="text/plain">The project-A-to-project-B journey works end to end in the harness, and quickstart, doctor and agent-facing guidance exist so mail gets used rather than merely shipped.</script></md>
+    </pd-task>
+
+    <pd-section id="breakdown-adoption" title="Why T4 is a task and not a chore">
+      <md><script type="text/plain">
+A messaging system nobody is told to check is a database with extra steps. The
+nudge covers an agent already mid-turn, but *subscribing* and *sending* are
+things an agent only does if something tells it to. Without the adoption half —
+quickstart, doctor, and the guidance that makes an agent reach for mail — the
+MVP would ship complete and unused. It advances J2 because that journey is the
+one that depends on a human never being in the loop.
+      </script></md>
+    </pd-section>
+
+  </pd-tab>
+
+  <!-- ==================== OPEN ==================== -->
+  <pd-tab name="Open">
+
+    <pd-section id="open-intro" title="Direction still to set" summary="Three calls that shape the MVP and are not mine to make.">
+      <md><script type="text/plain">
+Everything else in this epic is either dictated by an existing pattern or
+recorded as a decision. These three are genuine forks — each changes what gets
+built, and each is cheap now and expensive after the first consumer exists.
+      </script></md>
+    </pd-section>
+
+    <pd-question id="Q-1" status="answered" priority="p1" for="charlie"
+                 title="Two subscribers on one channel: a copy each, or compete for it?">
+      <md><script type="text/plain">
+The MVP defers holds and leases, but it cannot defer *defining* what happens
+when two agents subscribe to the same channel — the answer shapes the
+`deliveries` projection from the first row.
+
+**Lean: a copy each (broadcast).** It matches the word "subscribe", it is what
+the two journeys need (a supervisor inbox has one reader; a swarm channel wants
+everyone to see a finding), and competing consumers then arrive later as a mode
+column plus the lease work — additive, no call site touched. The alternative —
+compete by default — makes the swarm case impossible without the lease
+machinery we just deferred.
+      </script></md>
+      <pd-answer by="review">Copy all messages to everyone. An important thing to include though — ack must be atomic. If two agents read the same message, then they race to ack it, only one must succeed. SQLite transaction should back ack. We push to the event log and maybe update a separate lock table.</pd-answer>
+    </pd-question>
+
+    <pd-decision id="D-7" title="Broadcast delivery, with ack as a compare-and-set" status="accepted" by="agent"
+      summary="Every subscription gets its own copy; ack transitions exactly once and says whether it won.">
+      <md><script type="text/plain">
+**Context:** Q-1 settled fan-out as broadcast, and raised ack atomicity.
+**Decision:** Each subscription holds its own `deliveries` row and its own ack, so two *subscriptions* never contend. Ack is a conditional update inside the existing append-and-project transaction (`WHERE acked_at IS NULL`), and **returns whether this call was the one that transitioned it**. Two agents sharing one subscription therefore race safely: exactly one wins, the loser is told so rather than silently succeeding.
+**Alternatives:** A separate lock table (a second thing to keep consistent, and redundant — the transaction discipline from D-1 already makes ack atomic); ack as an unconditional write (idempotent-looking, but it cannot tell a winner from a loser, which is the whole point).
+**Consequences:** The compare-and-set is exactly the primitive competing consumers and leases need later, obtained now for free. Ack's return value is call-site-visible, so it is fixed in the MVP rather than added later. Note the nuance: under pure broadcast two *agents* only contend if they deliberately share one subscription identity — the common case has no race at all, and both acks correctly succeed.
+      </script></md>
+    </pd-decision>
+
+    <pd-question id="Q-2" status="answered" priority="p1" for="charlie"
+                 title="Is keystroke injection on by default in alpha, or opt-in per subscription?">
+      <md><script type="text/plain">
+Waking an idle agent by typing into its pane is the most intrusive thing this
+system does, and the hardest to take back once agents rely on it.
+
+**Lean: on by default, with a per-subscription ceiling available.** The idle
+case is the one where nothing else can reach the agent, and gating it behind
+opt-in means the cross-project journey silently does nothing for anyone who did
+not know to opt in. The ceiling (`poll` / `nudge` / `interrupt` on the
+subscription) is one column and gives an agent a way to refuse. The risk to
+accept: an agent that looks idle but is thinking will get keystrokes — which is
+why idleness must come from hook silence plus a threshold, not from a guess.
+      </script></md>
+      <pd-answer by="review">Agreed, we should be careful and escalate our intrusiveness. Start with hook injection, only use injection as a last resort.</pd-answer>
+    </pd-question>
+
+    <pd-decision id="D-8" title="Escalating intrusiveness: nudge first, keystrokes last" status="accepted" by="agent"
+      summary="Keys fire only when the agent is idle AND the message has aged past a threshold.">
+      <md><script type="text/plain">
+**Context:** Q-2 rejected default-on keystroke injection in favour of escalation.
+**Decision:** Notification escalates in stages. Every message first waits for an in-band hook nudge. Keystrokes fire only when **both** conditions hold: the agent is idle by hook silence, *and* the message has gone unread past an age threshold. Escalation is a policy-table row, not a branch in code.
+**Alternatives:** Keys immediately on idle (reaches the agent fastest, but spends the most dangerous mechanism on the most ordinary case); opt-in per subscription only (the cross-project journey silently does nothing for anyone who did not know to opt in).
+**Consequences:** J2 trades latency for safety — an idle agent is woken after the threshold, not instantly. Acceptable in alpha, and the threshold is data. Two escalation stages also means the `Notifier` seam is exercised by more than one implementation from the start, which is what makes it a real abstraction rather than a guess. **Forward note for T3:** define idleness as a property that can later be *contradicted*, not merely a silence timer — a future blocking receive (`wait`) parks an agent that is emphatically not idle, and escalating into it would be the exact corruption G9 exists to prevent. Leaving room for a binding to declare "blocked on a receive" costs nothing now and is awkward to retrofit into a bare timer.
+      </script></md>
+    </pd-decision>
+
+    <pd-question id="Q-3" status="answered" priority="p2" for="charlie"
+                 title="Is the address namespace hierarchical, and is the project segment meaningful?">
+      <md><script type="text/plain">
+Prefix filtering only means something if addresses have segments, so mentioning
+prefix subscriptions implies a separator — and the separator, plus whether
+segments carry meaning, goes into every stored envelope.
+
+**Lean: hierarchical, purpose-based, with the leading segment conventionally a
+project id but never enforced.** So `auto-web/bugs` reads naturally and
+`auto-web/*` is a sensible future filter, while the store stays host-global and
+flat so cross-project addressing needs no special case. The alternative — a
+flat opaque string — is simpler now and forecloses prefix subscriptions
+forever. Enforcing the project segment is the third option and it breaks
+addresses that are not about a project at all, like a swarm channel.
+      </script></md>
+      <pd-answer by="review">Leave it flexible. Virtual addresses can be anything, but we have prefix-based filtering as an option. Could be a v2 feature to be honest as I can't see a use for it right now.</pd-answer>
+    </pd-question>
+
+    <pd-decision id="D-9" title="Addresses are free-form; structure is convention, filtering is v2" status="accepted" by="agent"
+      summary="Validate permissively so prefix filtering stays possible; enforce nothing.">
+      <md><script type="text/plain">
+**Context:** Q-3 chose flexibility over an enforced namespace, with prefix filtering deferred.
+**Decision:** An address is an opaque string with no enforced structure and no required project segment. Validation is permissive but must **explicitly allow a separator character**, so hierarchical names remain expressible by convention and prefix filtering stays buildable later. Prefix and attribute subscriptions move to the parked backlog.
+**Alternatives:** An enforced `project/name` shape (breaks addresses that are not about a project, like a swarm channel); a strictly opaque token with separators rejected or normalised away — the one variant that *would* foreclose prefix filtering, and therefore the one to avoid.
+**Consequences:** Free-form addresses make typo-collisions silent, mitigated by G6 reporting when a send finds nothing bound. Nothing else in the MVP depends on address structure, so this stays a validation rule rather than a design.
+      </script></md>
+    </pd-decision>
+
+    <pd-question id="Q-4" status="answered" priority="p1" for="charlie"
+                 title="Which spawn shapes does #parent cover, and how does the CLI identify which agent it is?">
+      <md><script type="text/plain">
+Review found a bootstrap hole in env promotion (`AUTO_MAIL_SELF` →
+`AUTO_MAIL_PARENT`): it only works if the parent's address is in its process
+environment **at spawn time**, and a supervisor that subscribes mid-session
+cannot set a variable in its own running process. Investigating that against the
+live hook log changed the shape of the question.
+
+**Finding — parentage is already ambient for in-process subagents.** A subagent's
+own tool calls fire hooks stamped with the *parent's* `session_id` and
+`transcript_path`, alongside its own `agent_id` and `agent_type`. Verified
+against this repository's hook log: while a review subagent was working, its
+`Read` events carried the parent session id directly. That is not reconstruction
+across two logs — there is no join and no lag, so the earlier objection that
+"logs lag exactly when it matters" does not apply to this case.
+
+It splits cleanly by spawn shape, which also answers what J1 can mean:
+
+- **In-process subagent** (Agent/Task tool, and what this repo's glossary means
+  by *Subagent*) — parent is free from hooks. No launcher changes.
+- **Spawned pane** (a separate agent process) — its own `session_id`, no
+  `agent_id`, and nothing records who spawned it. Still needs the address
+  stamped at launch by herdr / ntm / the delegate tooling.
+
+**What is actually still open** is narrower, and it is not "how does the child
+find the parent". The hook payload goes to the hook process, not to arbitrary
+commands, and an in-process subagent shares the parent's environment — so
+`auto mail send --to '#parent'`, running as a tool call, cannot tell whether it
+is the parent or the child. Bridging that means the hook (which does see
+`agent_id`) records which agent is currently active for the session, and the CLI
+reads it. That works, but it races when several subagents run in parallel —
+which is precisely the swarm case.
+
+So the call to make is: **does the MVP scope `#parent` to in-process subagents
+only** — taking parentage free from hooks and accepting the self-identification
+bridge with its parallel-subagent race — **or does T2 also carry launch-time
+address stamping** so spawned panes work, at the cost of a cross-tool dependency
+on herdr / ntm / delegate that this epic does not otherwise have?
+
+**Lean: in-process only for the MVP**, with launch-time stamping recorded as the
+direction for panes. It delivers J1 with no changes outside mail, and the race is
+bounded by how many subagents run concurrently — which T1's harness scenario can
+exercise directly rather than leaving to hope.
+      </script></md>
+      <pd-answer by="charlie">In-process only.</pd-answer>
+    </pd-question>
+
+    <pd-decision id="D-13" title="#parent covers in-process subagents only, resolved from hook-supplied parentage" status="accepted" by="agent"
+      summary="No launcher changes: the parent id is already on the child's own hook events. Panes are deferred.">
+      <md><script type="text/plain">
+**Context:** Q-4, answered in-process only.
+**Decision:** `#parent` resolves from the parentage already carried on an in-process subagent's hook events — the parent's `session_id` alongside the child's `agent_id`. A hook records which agent is currently active for a session so the mail CLI can identify itself, since the hook payload never reaches a tool call and an in-process subagent shares the parent's environment. Used from a spawned pane, or from anything that is not a subagent, `#parent` fails fast with a remediation hint.
+**Alternatives:** Env promotion (`AUTO_MAIL_SELF` → `AUTO_MAIL_PARENT`) — the bootstrap hole review found: a supervisor that subscribes mid-session cannot set a variable in its own running process, so nothing it spawns afterwards inherits anything. Launch-time stamping by herdr/ntm/delegate in the MVP — makes panes work too, but adds a cross-tool dependency this epic does not otherwise carry; parked for later.
+**Consequences:** T2 ships with **no changes outside the mail package**, which is why this scoping is worth taking. J1 is scoped to in-process subagents — which is what this repo's glossary means by *Subagent* anyway, so the journey needs no reinterpretation. The known limitation is that the self-identification bridge races when several subagents run concurrently; it is bounded by concurrent subagent count and T1's harness scenario is the place to exercise it rather than assume it. Waking a sub-agent is moot here: an in-process subagent shares the parent's pane, so it has no separate target to inject into.
+      </script></md>
+    </pd-decision>
+
+  </pd-tab>
+
+  </pd-doc>
+</body>
+</html>

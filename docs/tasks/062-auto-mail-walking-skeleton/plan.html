@@ -1,0 +1,1671 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>062: auto-mail-walking-skeleton</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "062",
+    "name": "auto-mail-walking-skeleton",
+    "status": "pending",
+    "created": "2026-08-25",
+    "epic": "005"
+  }
+  </script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="062: auto-mail-walking-skeleton" status="pending" pr="pending" generated="2026-08-25" next-prompt="/commit-task 062">
+
+    <pd-tab name="Requirements">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+The stack carries events *outward* — `auto-shared/bus` broadcasts what happened
+to whoever is listening — but nothing carries a message **to a named recipient**
+and guarantees it survives until someone acts on it. A supervisor learns its
+child crashed by noticing silence. An agent in `auto-stack` that finds a bug in
+`auto-web` has nowhere to put that fact. Two agents in a swarm rediscover the
+same thing independently.
+
+[Epic 005](../../epics/epic-005-auto-mail-mvp.html) fills that gap with
+`auto mail`: a durable, addressed, at-least-once channel between agents on one
+host. This task is the epic's **T1 — the walking skeleton**.
+
+The risk T1 exists to retire is not the store. It is **hook → notification**:
+whether a working agent can be told it has mail, in-band, cheaply, without
+breaking its turn. Deferring that would defer all the risk, so it is inside the
+skeleton. The second thing it retires is the *oracle*: the harness scenario is
+stood up now so T2–T4 are developed against a working end-to-end test rather
+than one that arrives at the end and can only confirm what was already built.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="scope-statement" title="What this task is" summary="Ontology first, then a harness scenario with two agents on one host, then one message travelling between them and being acked — proven by the scenario.">
+        <md><script type="text/plain">
+Verbatim from the epic's T1:
+
+> Three things, in order: the ontology entries land in the glossary; a minimal
+> harness scenario comes up with two agents on one host; and one message then
+> travels between them and is acked — through the client seam, the event log,
+> the projection, and an in-band nudge to a working agent — proven by that
+> scenario rather than asserted.
+
+It **delivers** the epic's CLI transcript **C1** and **honors** guard rails
+**G1, G2, G3, G4, G5, G6, G8, G10, G11, G13, G15, G16**. Those rails are
+inherited requirements, not aspirations — most are stated as checkable
+properties precisely so they become acceptance criteria, and they do (see the
+Verification tab).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="target-transcript" title="The transcript this task must make real (C1)">
+        <pd-cli id="C1" title="zsh — two agents trading a message" caption="Subscribe, send, list, ack — the whole T1 surface. Copied from epic 005; T1 must reproduce these payload shapes.">
+          <pd-cmd note="receiver binds a virtual channel" status="todo">auto mail subscribe auto-web/bugs</pd-cmd>
+          <pd-out><script type="text/plain">{ "address": "auto-web/bugs", "subscription": "sub_01K9X2M4", "backfilled": 0 }</script></pd-out>
+          <pd-cmd note="sender is in a different project, same host" status="todo"><script type="text/plain">auto mail send --to auto-web/bugs --message "normalizeRemote drops the port on ssh:// URLs"</script></pd-cmd>
+          <pd-out><script type="text/plain">{ "id": "01K9X2QF7M3B0V8N", "to": "auto-web/bugs", "subscriptions": 1, "bound": 1 }</script></pd-out>
+          <pd-cmd note="receiver is nudged mid-turn, then lists" status="todo">auto mail list</pd-cmd>
+          <pd-out><script type="text/plain">[
+  {
+    "id": "01K9X2QF7M3B0V8N",
+    "from": "auto-stack/reviewer",
+    "sentAt": "2026-08-25T10:14:02Z",
+    "body": { "message": "normalizeRemote drops the port on ssh:// URLs" }
+  }
+]</script></pd-out>
+          <pd-cmd note="explicit ack — separate call, always" status="todo">auto mail ack 01K9X2QF7M3B0V8N</pd-cmd>
+          <pd-out><script type="text/plain">{ "id": "01K9X2QF7M3B0V8N", "acked": true, "wonTransition": true }</script></pd-out>
+          <pd-cmd note="acked mail is gone from the default view" status="todo">auto mail list</pd-cmd>
+          <pd-out>[]</pd-out>
+        </pd-cli>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+1. **Ontology first (G16).** `docs/concepts/UBIQUITOUS_LANGUAGE.md` gains
+   **Mail**, **Address**, **Subscription**, **Delivery**, **Binding** — the five
+   terms the epic settled in D-4 — *before* any code uses them. The same word is
+   then used in the schema, the event types, the CLI, the RPC method names and
+   the commit messages. Nothing in mail is called a *Message*: that word is
+   already bound to a role-tagged exchange within a Session.
+
+2. **A new `auto-mail` package, mounted as `auto mail`.** A Go module following
+   `docs/auto-package-patterns.md`, added to `go.work`, the `Makefile` PROJECTS
+   list, and `auto-cli`'s root command — alongside `auto doc`, `auto search`,
+   `auto watch` and the rest.
+
+3. **One client seam (G11).** `mail.Client` is the only API. The CLI, the hook
+   and every future consumer go through it; nothing outside the mail package
+   opens the store. T1 ships the **direct-store** implementation (D-11), so
+   `send` / `list` / `ack` work with **no daemon running**.
+
+4. **An event-sourced store (D-1, D-2).** An append-only event log is the
+   authority; `deliveries` and `bindings` are projections maintained in the
+   **same transaction**. Event types are `alpha.*`-prefixed and the store
+   filename carries `alpha` (G10) — no upcasters, no migrations, `reset` is a
+   supported operation.
+
+5. **The four verbs of C1 (D-4).** `auto mail subscribe|send|list|ack` — flat
+   verbs on `mail` as the resource noun, JSON on stdout, diagnostics on stderr.
+   Plus `init`, `docs` and `reset`.
+
+6. **Broadcast delivery with a compare-and-set ack (D-7, G2, G13).** Consumer
+   state is keyed by `(subscription, mail)`, delivery rows are materialised
+   **lazily against a subscription cursor** (D-10), and `ack` is a conditional
+   update inside the append-and-project transaction that **reports whether this
+   call won the transition**.
+
+7. **An in-band nudge to a working agent (G8).** `auto hooks fire` — the
+   existing PostToolUse adapter that already emits `hookSpecificOutput.
+   additionalContext` for hint rules — also tells an agent it has mail. The
+   no-mail path costs a `stat`, never opens the store, and can never stall or
+   break the hook.
+
+8. **The harness scenario is the verdict (G15).** A new, purely additive
+   `mail-flow` scenario under `harness/scenarios/` brings up two agents on one
+   host, runs the C1 loop against the **real `auto` binary in a container**, and
+   asserts the nudge and the ack. A capability that cannot be demonstrated there
+   is not finished.
+
+9. **Nothing already shipped breaks.** The package is new; the only edits to
+   existing code are additive command registration, the hook's mail check, and
+   the glossary. `make check` and `make test` stay green.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="inherited-rails" title="Inherited guard rails" summary="Twelve rails from epic 005. Each maps to exactly one acceptance criterion in the Verification tab.">
+        <md><script type="text/plain">
+| Rail | Constraint (abridged) | Becomes |
+|---|---|---|
+| **G1** | Mail rows and events are immutable; state changes are appended and re-projected | AC-3 |
+| **G2** | Consumer state lives in a `deliveries` join keyed by `(subscription, mail)`, never on the mail row | AC-4 |
+| **G3** | Ack is a separate explicit call; reading does not retire mail | AC-5 |
+| **G4** | At-least-once and unordered *as documented*; consumers idempotent on mail id | AC-7 |
+| **G5** | Addresses are virtual — no physical identity in them or in a stored envelope's `to` | AC-8 |
+| **G6** | Sending to an address with no subscription persists; a later subscriber sees it; send reports `subscriptions` **and** `bound` | AC-9 |
+| **G8** | The no-mail nudge path is a stat-level check and can never stall or break the hook | AC-10 |
+| **G10** | Alpha: `alpha` marker in the type string *and* the filename; reset is supported; nothing may depend on the store | AC-11 |
+| **G11** | Nothing outside the mail package reads the store | AC-12 |
+| **G13** | Ack transitions exactly once and reports whether it won | AC-6 |
+| **G15** | A capability is done when it passes end to end in the harness | AC-13 |
+| **G16** | The ontology lands before the code that uses it | AC-1 |
+
+Epic decisions this task builds to: **D-1** (event log + same-transaction
+projection), **D-2** (alpha marker), **D-4** (flat verbs, no `message` noun),
+**D-7** (broadcast + compare-and-set ack), **D-9** (free-form addresses),
+**D-10** (lazy delivery rows against a subscription cursor), **D-11** (direct-store
+client; daemon never required). **D-3** (reuse `auto-shared/rpc` + `transport`)
+constrains *how* mail goes over the wire when it does — see D-062-5 for why that
+is not in T1. **D-5 is superseded** by D-12 and is not built to.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+Deferred to later epic tasks — building any of it here would break the vertical
+slice:
+
+- **`#parent` resolution and the self-identification bridge** — epic **T2**
+  (D-13). T1 has no relative handles at all; every address is absolute.
+- **Waking idle agents: keystroke injection, the effector seam, liveness by hook
+  silence, the escalation policy, herdr env capture** — epic **T3** (G7, G9,
+  G12, G14, D-6, D-8). T1's only notification is the in-band hook nudge to an
+  agent that is *already working*.
+- **The reconcile tick in the daemon** — epic **T3** (D-12). T1 notifies inline
+  and nothing else.
+- **The cross-project journey J2 end to end, `quickstart`, `doctor`, and the
+  agent-facing guidance that drives adoption** — epic **T4**. See D-062-4.
+- **The RPC `mail.Client` implementation and `mail.*` methods on the daemon
+  peer** — see D-062-5.
+- **Emitting a "you have mail" bus event** — belongs with the daemon-side
+  notifier in T3. See D-062-6.
+
+Deferred to the parked backlog (`docs/auto-mail-beyond-mvp.md`) — read it before
+proposing any of these:
+
+- Competing consumers / queue mode, holds and visibility timeouts, heartbeat
+  leases, fencing tokens, dead-lettering, `delivery_count`.
+- Cross-host delivery, log merge, store clock authority.
+- `#new` spawn-on-send, implicit activation, `#children` / `#siblings` / roles.
+- Prefix and attribute subscriptions, threading, priority, `kind` vocabulary,
+  refs, expiry, correlation ids, cc/bcc, attachments.
+- Blocking receive (`wait`), file leases, search over mail, a web UI, export or
+  archive, retention.
+
+Also out of scope: any change to autowatch's existing `Backend` interface (D-6),
+and any widening of `hooks.CaptureEnv`'s allowlist (G7 — that is T3's problem).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="references" title="Reference code &amp; docs" summary="Verified paths this task builds on or extends.">
+        <md><script type="text/plain">
+**Source of truth**
+
+- `docs/epics/epic-005-auto-mail-mvp.html` — the epic. Guard rails, decisions,
+  C1, the ER shape.
+- `docs/auto-mail-beyond-mvp.md` — the parked backlog. What is deliberately out.
+- `docs/concepts/UBIQUITOUS_LANGUAGE.md` — the glossary G16 requires updating
+  first. Has autodoc frontmatter and a generated ER block.
+
+**Blueprints and conventions**
+
+- `docs/auto-package-patterns.md` — new-package layout, baseline subcommands,
+  JSON conventions, `go.mod` and Makefile integration.
+- `harness/CLAUDE.md` — the scenario model and the four-step "How to add a
+  scenario" recipe. Adding one is purely additive.
+
+**Code seams this task uses**
+
+- `auto-cli/cmd/auto/main.go` — where each tool's `rootcmd.New(stdout, stderr)`
+  is mounted on the root command.
+- `auto-cli/cmd/auto/hookscmd.go` — `auto hooks fire`: reads the payload,
+  appends the durable envelope, POSTs the bus event, then calls
+  `matchAndEmitHint(...)`. The mail check hooks in at the same point.
+- `auto-cli/cmd/auto/hints.go` — `hookResponse` / `hookSpecificOutput`, the
+  `additionalContext` envelope both Claude and Codex parse. This is the in-band
+  nudge mechanism; it already exists and only needs a second producer.
+- `auto-shared/hooks/log.go` — `CaptureEnv` (allowlists `NTM_*` / `TMUX` /
+  `TMUX_*` only) and `CaptureContext` (adds tmux session / window / pane index
+  and `tmux_pane_id`, behind a 200ms timeout). This is the physical-context
+  capture both `subscribe` and the hook use to derive a binding.
+- `auto-shared/config` — `AutoDir()`, `DecodeJSONFile`, `WriteJSONFile`,
+  `ValidationError`.
+- `auto-shared/rpc/` + `auto-shared/transport/` — the JSON-RPC peer and the
+  unix/tcp transports mail will use when it goes over the wire (D-3). Not used
+  in T1.
+- `modernc.org/sqlite` — pure-Go SQLite, already a direct dependency of
+  `auto-watch` and `auto-search`. No new runtime dependency.
+- `harness/scenarios/event-flow/` — the closest existing pattern: multi-container
+  agents, per-container `HOST_ID` seeding, `auto init --project`, a co-located
+  daemon and a ready-file healthcheck.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="decisions" title="Decisions taken while writing these requirements">
+        <md><script type="text/plain">
+These are calls the epic left to the task. Each is recorded rather than buried,
+with the alternative that was rejected.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-062-1" title="Two agents on one host = two workspaces in one container, not two containers" status="accepted" by="agent"
+        summary="The mail store is host-global, and the harness's own convention gives each container a distinct host id — so two containers would be two hosts.">
+        <md><script type="text/plain">
+**Context:** T1's scenario must bring up "two agents on one host". `event-flow`'s
+pattern is one container per agent, each seeded with a **distinct `HOST_ID`** —
+that is precisely what makes it a *multi-host* scenario.
+**Decision:** The `mail-flow` scenario is a **single container** with one seeded
+host id and one `~/.auto`, containing **two registered project workspaces**
+(`/workspace/project-a`, `/workspace/project-b`). Each "agent" is a separate
+`auto` process invocation run in one of those workspaces. That is genuinely two
+agents on one host, and it exercises the concurrent-writer case D-11 warns about
+without inventing a shared-`HOME` volume pattern the harness does not have.
+**Alternatives:** Two containers sharing a `~/.auto` volume (contradicts the
+harness's one-container-one-host convention, and a shared `HOME` collides on
+ready-files and host identity); two containers with distinct host ids (that is
+multi-host, which the MVP explicitly is not).
+**Consequences:** The scenario is smaller and faster than `event-flow`. When
+cross-host mail arrives, `mail-flow` grows a second container with its own host
+id — additive, and the single-host case stays as the control.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-062-2" title="A binding is keyed by the physical context hooks already capture" status="accepted" by="agent"
+        summary="Both `auto mail subscribe` and `auto hooks fire` derive the same opaque (manager, target) pair from hooks.CaptureContext — so the nudge can join a hook fire to a subscription with no new plumbing.">
+        <md><script type="text/plain">
+**Context:** The nudge needs to answer "does the agent that just fired this hook
+have mail?". The hook payload carries `session_id` and `cwd`; the `auto mail
+subscribe` process does **not** see `session_id` (it is a tool call, not the hook
+process). They need a join key both can compute.
+**Decision:** Binding identity is the **opaque `(manager, target)` pair G12
+mandates**, derived by both sides from the *same* shared helper
+(`auto-shared/hooks.CaptureContext`), on a documented fallback ladder:
+`tmux` + `tmux_pane_id` → `ntm` + the NTM pane identifier → `cwd` + the resolved
+worktree path. **`subscribe` is the only writer of a binding row in T1**, stamping
+the pair and `last_seen` once. The hook never writes one: refreshing `last_seen`
+on every tool call would mean opening the store in the agent's hot path, which
+G8 forbids. Liveness-by-heartbeat therefore arrives with T3, which already owns
+liveness (G9, D-8) and has a daemon to carry the write.
+**Alternatives:** Key on `session_id` (the CLI cannot see it — that is exactly
+the bridge D-13 defers to T2); key on cwd only (breaks the moment two agents work
+in one checkout, which is this host's normal state — documented in the
+shared-checkout postmortem); a new `--as <label>` flag on subscribe (pushes
+physical identity onto the caller, and free-form labels collide silently).
+**Consequences:** The nudge works in a container with no tmux (the `cwd` rung),
+which is what makes the harness scenario possible. Because nothing refreshes
+`last_seen` in T1, **`bound` means "a binding row exists"**, not "an agent is
+alive right now" — a distinction stated in `auto mail docs` so nobody reads a
+liveness promise into the count before T3 makes it one. The `last_seen` column
+is created now and stamped at subscribe, so T3's heartbeat is a new writer
+rather than a schema change. The pair stays opaque, so T3
+adds a `herdr` manager as data plus an effector implementation, never a schema
+change. The `cwd` rung is a *fallback*, not the design — T3 replaces it for
+panes.
+        </script></md>
+      </pd-decision>
+
+      <pd-thread anchor="D-062-2" status="resolved" priority="p1" title="Binding freshness conflicts with the stat-only hook path">
+        <pd-comment by="review">D-062-2 says every hook fire refreshes `last_seen` on the matching binding row, and AC-9 treats stale versus live bindings as observable through the `bound` count. But AC-10, the end-state flow, and Phase 3 require the hook mail check to perform zero store opens and even leave `~/.auto/mail/alpha-store.db` nonexistent on a host that never ran `auto mail init`. A hook cannot update a SQLite `bindings.last_seen` row without opening or creating the store. The current hook code also only captures context and then emits hints (`auto-cli/cmd/auto/hookscmd.go:94-124`); there is no existing binding-refresh sink. Resolve this before execution: either defer `last_seen`/staleness to T3 and define T1 `bound` as current binding rows, or add an explicit refresh mechanism and acceptance coverage that still satisfies G8.</pd-comment>
+      <pd-comment by="author">Correct, and a real contradiction rather than an ambiguity — a `last_seen` refresh is a store write, and G8 forbids one in the hook. Resolved by scoping, not by weakening G8: D-062-2 now states that <strong>`subscribe` is the only writer of a binding row in T1</strong>, and that heartbeat refresh arrives with T3, which already owns liveness (G9, D-8) and has a daemon to carry the write. The consequence you implied is now recorded explicitly: in T1 <code>bound</code> means "a binding row exists", not "an agent is alive right now", and <code>auto mail docs</code> says so, so nobody reads a liveness promise into the count early. AC-9's "stale or absent" wording is corrected to "no binding row". The <code>last_seen</code> column is still created and stamped at subscribe, so T3 adds a writer rather than a schema change.</pd-comment>
+      </pd-thread>
+
+      <pd-decision id="D-062-3" title="The no-mail hook path is gated by a pending-flag file, not a store read" status="accepted" by="agent"
+        summary="G8 demands stat cost. A per-binding marker file, written on send and cleared on ack, means the common case never opens SQLite.">
+        <md><script type="text/plain">
+**Context:** G8: "the common case — no pending mail — must cost about what a
+`stat` costs, and must never be able to stall or break the hook." Opening a
+SQLite file and running an indexed count is milliseconds, not a `stat`, and it
+happens on **every tool call of every agent on the host**.
+**Decision:** The mail package maintains a **pending flag** — an empty marker
+file per bound subscription under `~/.auto/mail/alpha-flags/`. `send` creates the
+flag for each bound subscription inside the same commit path; `ack` removes it
+when that subscription's unacked count reaches zero. The hook computes its
+`(manager, target)` pair and stats **exactly one** path: absent means no nudge,
+present means emit the fixed nudge text. **The hook never opens the store on
+either path.** The flag is authoritative for the *decision to nudge* — which is
+safe precisely because the nudge is a constant instruction to go and read mail,
+carrying no mailbox content that a wrong decision could leak or misstate.
+**Alternatives:** Open the store read-only and count (simple, one source of
+truth — but it is not stat cost, and it puts a SQLite open in every agent's hot
+path); a shared in-memory/daemon cache (reintroduces the daemon into the path
+D-11 removed it from).
+**Consequences:** The flag is a hint about *state*, not a second copy of the
+mailbox. A false positive costs the agent one wasted `auto mail list`, which
+finds nothing and clears the flag itself — so drift is self-healing rather than
+sticky. A false negative delays the nudge until the next `send` and, once T3
+lands, until the reconcile tick. Both directions are tested. G11 is unaffected —
+the flag is written and read only by the mail package.
+        </script></md>
+      </pd-decision>
+
+      <pd-thread anchor="D-062-3" status="resolved" priority="p1" title="Present pending-flag behavior contradicts AC-10">
+        <pd-comment by="review">D-062-3 says an absent flag returns immediately, but "only a present flag causes a store open"; its consequences also say a false positive costs one store open and emits nothing. Later sections require the opposite: the Approach says "The nudge never opens the store", the end-state flow says the hook stats the flag with no DB open, AC-10 requires zero store opens on either path, and Phase 3 tests `HasPending` for zero opens on both paths while emitting a nudge when the flag exists. These are mutually exclusive contracts. Pick whether a present flag is authoritative enough to emit the fixed nudge, or whether the hook confirms through the store, then align D-062-3, AC-10, and Phase 3.</pd-comment>
+      <pd-comment by="author">Accepted — D-062-3 was written before the design settled and kept its earlier "a present flag causes a store open" text while every later section said the opposite. The hook opening the store was the stale half, so D-062-3 is now aligned to the rest: the hook stats exactly one path and <strong>never opens the store on either path</strong>; the flag is authoritative for the <em>decision to nudge</em>. That is safe precisely because the nudge is a fixed constant carrying no mailbox content, so a wrong decision can neither leak nor misstate anything. The consequences are restated to match: a false positive costs the agent one wasted <code>auto mail list</code>, which finds nothing and clears the flag itself, making drift self-healing rather than sticky.</pd-comment>
+      </pd-thread>
+
+      <pd-decision id="D-062-4" title="T1 ships init, docs and reset; quickstart and doctor land in T4" status="accepted" by="agent"
+        summary="The epic makes adoption a task, not a chore — and doctor's most valuable check (G11) needs T4's cross-project surface to be worth writing.">
+        <md><script type="text/plain">
+**Context:** The project's CLI conventions call for `init` / `doctor` /
+`quickstart` / `docs` on every tool. The epic assigns "quickstart, doctor and
+agent-facing guidance" to **T4** and argues explicitly that adoption is a task,
+not a chore.
+**Decision:** T1 ships `init` (creates `~/.auto/mail/` and the store), `docs`
+(the full command reference — an agent must be able to discover the surface it
+is being asked to use) and `reset` (G10 makes wiping a *supported operation*, and
+the harness needs it for isolation). `quickstart` and `doctor` are T4's, as the
+epic assigns them.
+**Alternatives:** Ship stub `quickstart`/`doctor` in T1 (a stub quickstart is
+worse than none — it teaches a workflow that is half-built, and it is exactly the
+"ships complete and unused" failure the epic's T4 rationale names); pull T4's
+adoption work forward (breaks the slice and duplicates work once `#parent` and
+waking exist).
+**Consequences:** The harness readiness gate is `auto mail list` returning `[]`
+against an initialised store rather than a `doctor` call. G11's doctor check is
+named in T4's scope, and T1 enforces the same rule with a repo-wide test instead
+(AC-12), so the constraint is not merely aspirational in the interim.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-062-5" title="T1 defines the Client seam and ships one implementation, with the conformance suite written against the interface" status="accepted" by="agent"
+        summary="D-11 makes the direct-store client the MVP's; the RPC one is the daemon's and arrives with the daemon in T3.">
+        <md><script type="text/plain">
+**Context:** Seam 1 warns that "an abstraction with one implementation is a
+guess". D-11 settles that the MVP CLI binds the **direct-store** implementation
+and the RPC one is what the daemon uses.
+**Decision:** T1 defines `mail.Client` and ships the direct-store implementation
+only. It also ships a **conformance suite written against the interface** (the
+`auto-shared/rpc/conformance` pattern), run against that one implementation now.
+No `mail.*` methods are registered on the daemon peer in T1.
+**Alternatives:** Build both implementations in T1 (drags the daemon, its
+lifecycle and its failure modes into the walking skeleton — and D-11 exists
+precisely to keep the daemon out of the critical path); ship no conformance suite
+until there are two implementations (then the second implementation pays for the
+suite, which is when it is most tempting to skip).
+**Consequences:** The seam is guarded by an executable contract from day one, so
+T3's RPC implementation is a second `go test` target rather than a redesign. When
+it lands it registers `mail.*` on the existing peer per D-3 — no new wire.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-062-6" title="Inline notification in T1 is the pending flag; the bus event waits for the daemon" status="accepted" by="agent"
+        summary="D-12's inline notify needs no bus hop when the receiver's own hook reads the store on the same host.">
+        <md><script type="text/plain">
+**Context:** D-12 keeps inline notification as the fast path. The epic's
+container diagram draws the notification arriving over the bus
+(`DAEMON → BUS ⇢ HOOK`), but D-11 removes the daemon from T1 entirely.
+**Decision:** In T1, "notify inline" means: `send` sets the receiver's pending
+flag inside its commit path, and the receiver's very next tool-call hook picks it
+up. No bus event is published by `auto mail send` in T1. The `alpha.mail.*` bus
+event type is defined and reserved, and publishing it is T3's, alongside the
+notifier and the reconcile tick that consume it.
+**Alternatives:** Publish a bus event from `send` in T1 (buys nothing for the
+in-band path, and adds a live dependency on a daemon that D-11 says must not be
+required); rely on the bus *instead of* the flag (the bus is at-most-once and
+drops slow subscribers by its own spec — that is the D-5 error D-12 corrected).
+**Consequences:** T1's notification latency is bounded by the receiver's next
+tool call, which is exactly what an in-band nudge means. Nothing outside mail is
+touched. `auto-ui`'s future supervisor view still gets its feed when T3 publishes.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-062-7" title="Losing an ack race is a reported outcome, not an error exit" status="accepted" by="agent"
+        summary="wonTransition:false on stdout plus a stderr note; exit 0. Losing a race is not invalid usage.">
+        <md><script type="text/plain">
+**Context:** G13 requires that a losing ack be "told, never silently treated as
+success". That fixes the payload, not the exit code, and the project convention
+reserves fail-fast exits for invalid CLI usage.
+**Decision:** `auto mail ack <id>` always prints
+`{"id":…, "acked":true, "wonTransition":<bool>}` on stdout and exits **0** when
+the delivery exists. A loser gets `wonTransition:false` plus a one-line note on
+stderr naming who won it. Exit non-zero is reserved for a genuine failure: an
+unknown mail id, an id the caller has no delivery row for, or a store error.
+**Alternatives:** Exit non-zero on a lost race (a shell would treat a correct,
+expected outcome as a failure, and under pure broadcast the common case has no
+race at all — two *subscriptions* never contend); exit 0 and say nothing (the
+exact silent-success G13 forbids).
+**Consequences:** `acked:true` means "this delivery is acked now", which is what
+a caller acts on; `wonTransition` answers "was it me". That split is the primitive
+competing consumers need later, obtained now for free.
+        </script></md>
+      </pd-decision>
+
+      <pd-section id="open-questions" title="Open Questions &amp; Assumptions" summary="No open pd-questions — every fork was resolvable from the epic or an existing repo pattern. These are the assumptions carried forward.">
+        <md><script type="text/plain">
+Assumptions this task proceeds on. Each is safe to revisit without redoing work:
+
+- [ ] **The store is one SQLite file at `~/.auto/mail/alpha-store.db`.** The
+  backlog records maildir as "genuinely better for lock-free concurrent append"
+  but superseded by SQLite once subscriptions, read state and bindings exist.
+  `modernc.org/sqlite` is already a direct dependency of two modules, so this
+  adds no runtime dependency.
+- [ ] **Concurrent writers are handled with WAL + `busy_timeout` + a single
+  write connection per process, with every write in one immediate transaction.**
+  D-11 names this as an explicit T1 concern; this is the conventional answer and
+  is asserted under `-race` rather than assumed.
+- [ ] **Mail ids are ULIDs, sender-generated**, per the epic's ER diagram and the
+  cross-host merge argument in the backlog (§3). Subscription ids follow the
+  `sub_<ULID-prefix>` shape C1 shows.
+- [ ] **The body is a JSON object**, and `--message <text>` is sugar for
+  `{"message": "<text>"}` — matching C1's `body: { "message": … }`. A future
+  `kind` vocabulary and the open `attributes` map are additive fields on the
+  envelope.
+- [ ] **`auto mail list` with no filters returns every unacked delivery for every
+  subscription the caller is bound to**, per the project convention that
+  list commands return all items when no filters are given. `--address` scopes it
+  to one subscription.
+- [ ] **The sender's `from` address is resolved by a three-rung ladder**, because
+  a plain `auto mail send` process sees neither the hook payload's `agent` nor a
+  `session_id`, and `config.ProjectRef` carries no agent name: (1) an explicit
+  `--from <address>`; (2) the address of a subscription bound to the caller's
+  `(manager, target)` — lowest subscription id when there is more than one, so it
+  is deterministic; (3) the literal `<projectId>/agent`, with `projectId` from the
+  project registry, or `unregistered/agent` when the cwd is not a registered
+  project. C1's `auto-stack/reviewer` is rung 2 — the sender had subscribed to its
+  own reply address first, which is also how it becomes reachable for a reply. The
+  result is always a resolved absolute address, never a relative handle (G5).
+- [ ] **`--text` output mode is not built in T1.** JSON is the default and the
+  only mode; the consumers in T1 are agents and the harness. It arrives with T4's
+  adoption surface if a human ever needs it.
+        </script></md>
+      </pd-section>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy" summary="Conformance-test driven: the guard rails are written as executable expectations first, and the harness scenario is the verdict.">
+        <md><script type="text/plain">
+The epic sets the method and this task adopts it unchanged: **the work is
+conformance-test driven** — for each capability the executable expectation is
+written before the implementation, and **the guard rails are the source of those
+expectations**. Most of them (explicit ack, at-least-once, immutability, ack
+winning exactly once, addresses free of physical identity) are stated as
+checkable properties precisely so they can be asserted rather than believed.
+
+**The harness is the oracle (G15).** `harness/scenarios/mail-flow/` runs the real
+`auto` binary in a container and drives the C1 loop. Everything below it is
+supporting evidence, not the verdict. A capability that cannot be demonstrated
+there is not finished — and the scenario is stood up **first**, so T2–T4 develop
+against a working oracle instead of one that arrives at the end.
+
+Five layers, each with a distinct job:
+
+1. **Package tests (`auto-mail/internal/...`)** — the store, the projection,
+   address validation, cursor backfill, the envelope, the pending flag. Table
+   driven, against a temp `HOME`. This is where immutability and the
+   `(subscription, mail)` keying are pinned.
+2. **The `mail.Client` conformance suite (`auto-mail/conformance/`)** — one suite
+   written against the *interface*, following `auto-shared/rpc/conformance/`. Run
+   against the direct-store implementation now; T3's RPC implementation becomes a
+   second target rather than a redesign (D-062-5). The suite owns the
+   call-site-visible contracts: explicit ack, `wonTransition`, backfill-on-
+   subscribe, send-with-no-subscription.
+3. **Race tests (`-race`)** — `auto-mail` joins `RACE_PROJECTS` in the Makefile
+   alongside `auto-shared` and `auto-watch`. Two properties: N goroutines acking
+   one delivery yield exactly one `wonTransition:true` (G13), and N concurrent
+   processes writing the store never lose an event or corrupt the projection
+   (the concurrent-writer discipline D-11 makes a T1 concern).
+4. **CLI + hook integration tests** — the cobra commands end to end against a
+   temp `HOME`, asserting the exact C1 payload shapes; and `auto hooks fire`
+   asserting the `hookSpecificOutput.additionalContext` envelope, the
+   single-emission discipline, and the stat-only no-mail path.
+5. **The `mail-flow` harness scenario** — two agents on one host, the C1 loop,
+   the nudge, and the ack, against the real binary in a container.
+
+**Two disciplines carried over from `harness/CLAUDE.md`**, both load-bearing:
+assert the observable outcome with **bounded retry**, never poll-to-settle; and
+treat a **missing product seam as a finding to raise**, never as something to
+patch around inside the scenario. One nuance from the epic: `event-flow` matches
+on presence rather than counts because the bus is lossy — mail promises
+at-least-once so its assertions can be stronger, but they must still tolerate
+duplicates, because G4 permits them.
+
+**Two properties need a test shape that is easy to get wrong**, so they are
+called out here:
+
+- **G8 (stat cost)** cannot be asserted with a stopwatch — a timing assertion is
+  a flake generator. It is asserted structurally instead, two ways: a package
+  test injects a counting store-opener (the repo's existing
+  `hooks.tmuxRunner` package-var stubbing pattern) and asserts **zero opens**
+  when the pending flag is absent; and the harness asserts that firing hooks on a
+  host that never ran `auto mail init` **does not create the store file** —
+  observable, deterministic, and impossible to satisfy by accident.
+- **G11 (nothing outside the mail package reads the store)** is asserted by a
+  repo-wide test that greps every module for the store filename and for
+  `modernc.org/sqlite` imports outside `auto-mail/internal/mail`, failing with
+  the offending path. A convention that is not executable is a comment.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="What each layer proves, and which rails it carries">
+flowchart TB
+  subgraph L5["harness/scenarios/mail-flow — THE VERDICT"]
+    H1["C1 loop end to end<br/>subscribe → send → list → ack → list"]
+    H2["in-band nudge<br/>auto hooks fire emits additionalContext"]
+    H3["no-mail hook never creates the store"]
+    H4["send with no subscription persists<br/>later subscriber sees it"]
+  end
+  subgraph L4["CLI + hook integration (auto-mail, auto-cli)"]
+    C1["exact C1 JSON payload shapes"]
+    C2["single stdout emission, PostToolUse only"]
+    C3["hook exits 0 with a corrupt/absent store"]
+  end
+  subgraph L3["race (-race, RACE_PROJECTS)"]
+    R1["N acks → exactly one wonTransition"]
+    R2["N writer processes → no lost events"]
+  end
+  subgraph L2["conformance suite (auto-mail/conformance)"]
+    F1["explicit ack; list does not retire"]
+    F2["backfill from cursor on subscribe"]
+    F3["subscriptions vs bound counts"]
+  end
+  subgraph L1["package tests (internal/mail)"]
+    U1["append-only log; no UPDATE on events"]
+    U2["deliveries keyed by (subscription, mail)"]
+    U3["free-form addresses; separator allowed"]
+    U4["pending flag: zero store opens when absent"]
+  end
+  L1 --> L2 --> L3 --> L4 --> L5
+  L5 --> V["G15: done"]
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria" summary="Thirteen criteria: one per inherited guard rail, plus the C1 transcript and the harness scenario itself.">
+        <md><script type="text/plain">
+Each criterion names the rail it discharges. The mapping is deliberately
+one-to-one so a rail cannot be quietly dropped.
+        </script></md>
+
+        <pd-ac id="AC-1" title="G16 — the ontology lands before the code that uses it" phases="1" tests="auto-mail/mail/mail_test.go">
+          <md><script type="text/plain">
+- **Given** `docs/concepts/UBIQUITOUS_LANGUAGE.md` with no mail vocabulary
+- **When** the glossary is updated as the task's first change, before any Go file
+  is written
+- **Then** it defines **Mail**, **Address**, **Subscription**, **Delivery** and
+  **Binding**, each with a definition and an `_Avoid_` line, and the `_Has_`
+  relations (Address→Subscription, Subscription→Delivery, Subscription→Binding,
+  Mail→Delivery) resolve to defined terms
+- **And** `python3 .claude/skills/domain-modelling/scripts/glossary.py check docs/concepts/UBIQUITOUS_LANGUAGE.md` exits 0
+- **And** the generated ER block is refreshed by `glossary.py diagram … --write`,
+  not hand-edited
+- **And** `_Avoid_` for **Mail** lists *message* — and no schema table, event
+  type, Go identifier, CLI noun or JSON field in `auto-mail` is named `message`
+  for the stored unit (`--message` remains the *body* flag, which is the body's
+  own field name, not the entity)
+- **And** the frontmatter `summary` names the five new terms and
+  `auto doc fixed docs/concepts/UBIQUITOUS_LANGUAGE.md` leaves the freshness
+  check green
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="C1 — the epic's transcript runs verbatim" phases="1,2" tests="auto-mail/internal/cli/cli_test.go,harness/tests/mail_flow/test_mail_loop.py">
+          <md><script type="text/plain">
+- **Given** an initialised store and two agent workspaces on one host
+- **When** the four commands of C1 are run in order
+- **Then** each emits the documented JSON payload on **stdout only**:
+  - `subscribe <address>` → `{"address":…, "subscription":"sub_…", "backfilled":N}`
+  - `send --to <address> --message <text>` → `{"id":"<ULID>", "to":…, "subscriptions":N, "bound":N}`
+  - `list` → an array of `{"id","from","sentAt","body":{…}}`
+  - `ack <id>` → `{"id":…, "acked":true, "wonTransition":true}`
+  - `list` again → `[]`
+- **And** every payload parses as JSON with no diagnostic text mixed in
+  (diagnostics go to stderr)
+- **And** the ULID in `send`'s `id` is the same id `list` returns and `ack` accepts
+- **And** the `from` field is resolved by the documented three-rung ladder, each
+  rung asserted: `--from` wins; with no flag but a subscription bound to the
+  caller, `from` is that subscription's address (C1's case — which is why the
+  harness has the sender subscribe first); with neither, `from` is
+  `<projectId>/agent`, or `unregistered/agent` outside a registered project
+          </script></md>
+        </pd-ac>
+
+        <pd-thread anchor="AC-2" status="resolved" priority="p1" title="Default `from` address is not derivable today">
+          <pd-comment by="review">C1 omits `--from`, but the expected list payload includes `"from": "auto-stack/reviewer"`. The assumptions and Phase 2 say the fallback is derived from `&lt;project&gt;/&lt;agent&gt;` or `&lt;projectId&gt;/agent` via the registry. Checked `auto-shared/config/projects.go:20-31`: `ProjectRef` stores ID, Path, Remote, Name, Tools, and RegisteredAt, but no agent name. A normal `auto mail send` CLI process also does not receive the hook payload's `agent` or `session_id`, and T2 explicitly defers self-identification. Define the T1 source of `from` before implementation: require `--from` in C1/harness, use a documented env var, use a literal fallback such as `&lt;project&gt;/agent`, or add a subscribe-before-send identity path, then cover that exact behavior in AC-2.</pd-comment>
+        <pd-comment by="author">Correct, and the evidence is right — <code>config.ProjectRef</code> carries no agent name, and a plain <code>auto mail send</code> sees neither the hook payload's <code>agent</code> nor a <code>session_id</code>; self-identification is exactly what D-13 defers to T2, so T1 must not depend on it. Resolved by defining an explicit three-rung ladder rather than leaving it to the implementer: (1) <code>--from &lt;address&gt;</code>; (2) the address of a subscription bound to the caller's <code>(manager, target)</code>, lowest subscription id when several so it is deterministic; (3) the literal <code>&lt;projectId&gt;/agent</code> from the registry, or <code>unregistered/agent</code> outside a registered project. C1's <code>auto-stack/reviewer</code> is rung 2 — the sender subscribed to its own reply address first, which is also what makes it reachable for a reply. AC-2 now asserts all three rungs, and the harness scenario has the sender subscribe first so C1's shape is the shape actually exercised.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-3" title="G1 — mail and events are immutable" phases="2,5" tests="auto-mail/internal/store/store_test.go">
+          <md><script type="text/plain">
+- **Given** a mail row and its `alpha.mail.sent` event
+- **When** the mail is listed and then acked
+- **Then** the `mail` row and every previously-appended event row are **byte
+  identical** before and after (asserted by comparing full row snapshots)
+- **And** the state change appears as a **new appended event**
+  (`alpha.mail.acked`), never as a rewrite
+- **And** the event log's insert path is the only write path to that table: a
+  test asserts no `UPDATE` or `DELETE` statement targets `events` anywhere in the
+  package (source-level check plus a SQLite trigger that raises on either)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="G2 / D-10 — consumer state lives in a deliveries join, materialised lazily from a cursor" phases="2,4" tests="auto-mail/internal/store/store_test.go,auto-mail/conformance/conformance_test.go">
+          <md><script type="text/plain">
+- **Given** the schema
+- **Then** `read_at` and `acked_at` exist **only** on `deliveries`, keyed by
+  `(subscription_id, mail_id)`, and **no** consumer-state column exists on `mail`
+- **Given** mail sent to an address with **no** subscription
+- **When** a subscription is created afterwards with the default cursor
+- **Then** `list` returns that earlier mail and `subscribe` reports
+  `backfilled: 1` (the J2 requirement D-10 exists to satisfy)
+- **And** when the subscription is created with `--from-now`, `list` returns `[]`
+  and `backfilled: 0`
+- **And** two subscriptions on one address each get their **own** delivery row
+  and their own ack state — acking one leaves the other unacked (broadcast, D-7)
+          </script></md>
+        </pd-ac>
+
+        <pd-thread anchor="AC-4" status="resolved" priority="p2" title="Cursor flag spelling is inconsistent">
+          <pd-comment by="review">AC-4 says the opt-out cursor case is created with `--from now`, but the command surface, file-change tree, and Phase 4 all use `--from-now`. Cobra will only accept `--from now` if a separate `--from` flag is implemented, which the plan does not list. Pick one spelling and make the acceptance criterion, CLI examples, and tests agree; if the intended surface is the flat boolean flag, AC-4 should name `--from-now`.</pd-comment>
+        <pd-comment by="author">Correct — a typo in AC-4, not a second flag. Every other surface (the command transcript, the file-change tree, Phase 4) says <code>--from-now</code>, which is the intended boolean flag; AC-4 now says the same. No <code>--from</code> flag exists on <code>subscribe</code>.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-5" title="G3 — ack is a separate explicit call; reading does not retire" phases="2,4" tests="auto-mail/conformance/conformance_test.go,auto-mail/internal/cli/cli_test.go">
+          <md><script type="text/plain">
+- **Given** one unacked mail
+- **When** `auto mail list` is run twice with no `ack` between them
+- **Then** the mail is returned **both** times
+- **And** no `alpha.mail.acked` event is appended by `list`
+- **And** after `auto mail ack <id>`, `list` returns `[]`
+- **And** there is no flag on `list` that acks (checked against the command's
+  flag set), so the call cannot be conflated by a caller
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="G13 / D-7 — ack transitions exactly once and reports whether it won" phases="2,5" tests="auto-mail/internal/store/store_test.go,auto-mail/internal/cli/cli_test.go">
+          <md><script type="text/plain">
+- **Given** one delivery row and N=16 goroutines calling `Ack` on it concurrently
+  under `-race`
+- **When** they all complete
+- **Then** exactly **one** returns `wonTransition: true` and the other fifteen
+  return `wonTransition: false`
+- **And** exactly **one** `alpha.mail.acked` event exists for that delivery
+- **And** every caller — winner and losers — sees `acked: true` and exit code 0,
+  with the losers additionally told on stderr (D-062-7)
+- **And** acking an unknown id, or an id the caller has no delivery row for,
+  exits non-zero with a remediation hint
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="G4 — at-least-once and unordered, as documented" phases="4,5" tests="auto-mail/conformance/conformance_test.go,auto-mail/internal/cli/cli_test.go">
+          <md><script type="text/plain">
+- **Given** `auto mail docs` and the package `CLAUDE.md`
+- **Then** both state the delivery contract in as many words: **at-least-once,
+  unordered, consumers must be idempotent on mail id** — and neither promises
+  exactly-once or ordering
+- **And** `ack` on an already-acked delivery is idempotent: it succeeds, appends
+  no second event, and returns `wonTransition: false`
+- **And** a caller that sees the same mail id twice — simulated at the **client
+  boundary** (a `Client` decorator that repeats one entry in the `List` result),
+  never by inserting a second `deliveries` row, which the
+  `(subscription_id, mail_id)` primary key correctly forbids — still resolves to
+  exactly one transition when it acks both times
+- **And** no test asserts ordering, so nothing in the suite encodes the accidental
+  guarantee the store happens to provide
+          </script></md>
+        </pd-ac>
+
+        <pd-thread anchor="AC-7" status="resolved" priority="p2" title="Duplicate delivery-row test contradicts the delivery key">
+          <pd-comment by="review">AC-7 says duplicate delivery handling is simulated by injecting a duplicate delivery row, but AC-4 and the schema require `deliveries` to be keyed by `(subscription_id, mail_id)`. A duplicate row for the same delivery should be rejected by the schema; a row for another subscription is broadcast fan-out, not a duplicate delivery. If the goal is to prove at-least-once/idempotent handling, simulate duplicate list output at the client/CLI boundary or use two distinct subscriptions deliberately. Do not require a persistent row shape the schema is supposed to forbid.</pd-comment>
+        <pd-comment by="author">Accepted — asking a test to insert a row the <code>(subscription_id, mail_id)</code> primary key is supposed to forbid would have been asserting against the schema G2 requires. The intent was always the caller-facing half of G4, so the simulation moves to where duplicates can actually appear: a <code>Client</code> decorator that repeats one entry in the <code>List</code> result. AC-7 now states that explicitly, and says in as many words that a second <code>deliveries</code> row must not be used.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-8" title="G5 / D-9 — addresses are virtual and free-form" phases="2,3" tests="auto-mail/mail/mail_test.go,auto-mail/internal/store/store_test.go">
+          <md><script type="text/plain">
+- **Given** address validation
+- **Then** `auto-web/bugs` is accepted — the separator `/` is explicitly
+  permitted and never normalised away — as are addresses with no separator at all
+- **And** validation rejects only the empty string, leading/trailing whitespace,
+  control characters and over-length values, each with a remediation message
+- **And** a stored envelope's `to` and `from` contain **no** host id, session id,
+  tmux pane id or NTM identifier: a test sends from a process with `TMUX`,
+  `TMUX_PANE` and `NTM_*` set and asserts none of those values appear anywhere in
+  the `mail` row
+- **And** that physical context is present **only** on the `bindings` row, as the
+  opaque `(manager, target)` pair — with no typed `tmux_pane_id` column (G12's
+  shape, adopted now so T3 adds a manager as data)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="G6 — send with no subscription persists, and reports both counts" phases="4" tests="auto-mail/conformance/conformance_test.go,harness/tests/mail_flow/test_mail_loop.py">
+          <md><script type="text/plain">
+- **Given** an address nobody has subscribed to
+- **When** `auto mail send --to <address> --message …` runs
+- **Then** it exits **0**, the mail is persisted, and the payload reports
+  `"subscriptions": 0, "bound": 0`
+- **And** stderr carries a hint that zero subscriptions is the likely-typo case
+  (the mitigation D-9 relies on for free-form addresses)
+- **Given** a subscription exists but has **no binding row** (in T1 `bound`
+  counts binding rows, not liveness — nothing refreshes `last_seen` until T3, per
+  D-062-2)
+- **Then** the payload reports `"subscriptions": 1, "bound": 0` — the two counts
+  are distinct and mean different things to a sender
+- **And** a later subscriber to that address receives the earlier mail (the J2
+  half that G6 and D-10 jointly guarantee)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-10" title="G8 — the nudge is free when there is no mail, and can never break the hook" phases="3" tests="auto-mail/mail/mail_test.go,auto-cli/cmd/auto/hooksmail_test.go,harness/tests/mail_flow/test_mail_loop.py">
+          <md><script type="text/plain">
+- **Given** any state of the mailbox
+- **When** `auto hooks fire --agent claude` processes a PostToolUse payload
+- **Then** the mail check performs **zero** store opens on **either** path —
+  present flag or absent — asserted with a counting store-opener injected over
+  the package var, and stats at most one path
+- **And** on a host where `auto mail init` was never run, firing hooks **does not
+  create** `~/.auto/mail/alpha-store.db` (asserted in the harness — the
+  observable form of the same property)
+- **Given** pending mail
+- **Then** the hook emits exactly **one** `hookSpecificOutput` JSON object on
+  stdout whose `additionalContext` names `auto mail list`, on `PostToolUse`
+  events only — and when a hint rule also matches, both fragments ride that
+  single emission rather than producing two stdout writes
+- **And** with the store absent, unreadable, locked by another writer, or
+  corrupt, the hook still exits **0**, emits no malformed stdout, and completes
+  within a bounded timeout — the mail check can never stall or break the agent
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-11" title="G10 / D-2 — alpha is in the type string and the filename, and reset works" phases="1,5" tests="auto-mail/internal/cli/cli_test.go,auto-mail/internal/store/store_test.go">
+          <md><script type="text/plain">
+- **Given** the store
+- **Then** its path is `~/.auto/mail/alpha-store.db` — the marker is in the
+  **filename**, not only in docs
+- **And** every event type is `alpha.mail.*` — the T1 vocabulary is exactly
+  `alpha.mail.subscribed`, `alpha.mail.sent`, `alpha.mail.read`,
+  `alpha.mail.acked` — so no consumer can match a bare `mail.sent`. The
+  assertion is that every type emitted carries the `alpha.` prefix, and that
+  these four are the complete T1 set
+- **And** each stored envelope carries a `version` integer
+- **And** `auto mail reset` removes the store and reports what it removed; the
+  tool works normally afterwards, from an empty state
+- **And** `auto mail docs` states the alpha contract explicitly: no upcasters, no
+  migrations, no compatibility guarantee, the store may be wiped on upgrade
+          </script></md>
+        </pd-ac>
+
+        <pd-thread anchor="AC-11" status="resolved" priority="p2" title="`alpha.mail.read` is omitted from the alpha event list">
+          <pd-comment by="review">The Solution and Phase 2 define four event types, including `alpha.mail.read`, and the end-state schema says `read_at` is written in T1 so T3 has escalation history. AC-11's event-type list names only `alpha.mail.subscribed`, `alpha.mail.sent`, and `alpha.mail.acked`. If that list is treated as exhaustive, a correct read event will fail the acceptance test; if it is illustrative, the criterion is ambiguous. Include `alpha.mail.read` explicitly or state that the listed event types are examples.</pd-comment>
+        <pd-comment by="author">Correct — the list was written before the decision to stamp <code>read_at</code> in T1 (taken so T3's escalation predicate has history to read) and was never updated. AC-11 now names the complete T1 vocabulary — <code>alpha.mail.subscribed</code>, <code>alpha.mail.sent</code>, <code>alpha.mail.read</code>, <code>alpha.mail.acked</code> — and states that the assertion is twofold: every emitted type carries the <code>alpha.</code> prefix, and these four are the complete set. No ambiguity about exhaustive versus illustrative is left.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-12" title="G11 — nothing outside the mail package reads the store" phases="5" tests="auto-mail/conformance/seam_test.go">
+          <md><script type="text/plain">
+- **Given** the whole repository
+- **When** a guard test walks every module's Go source, the harness scenarios and
+  the `skills/` tree
+- **Then** nothing outside `auto-mail/internal/store` names the **mail store**:
+  the `alpha-store.db` filename, an `~/.auto/mail` path opened as a database, or a
+  `sqlite3` invocation against either. The guard is scoped to the *mail store*,
+  not to SQLite in general — `auto-watch/internal/store/store.go` and
+  `auto-search/internal/indexdb/schema.go` legitimately import
+  `modernc.org/sqlite` for their own stores, and a repo-wide import ban would fail
+  before this task began
+- **And** no package outside `auto-mail` imports `auto-mail/internal/...`; for the
+  mail store this is already impossible (Go rejects it at compile time), so the
+  test is a regression guard against the internal boundary being widened
+- **And** `auto-cli`'s hook path reaches mail only through the exported
+  `auto-mail/mail` package
+- **And** the failure message names the offending file and the remediation ("go
+  through mail.Client")
+          </script></md>
+        </pd-ac>
+
+        <pd-thread anchor="AC-12" status="resolved" priority="p1" title="SQLite import guard fails against existing modules">
+          <pd-comment by="review">AC-12 says a repo-wide guard should fail on any `modernc.org/sqlite` import outside `auto-mail/internal/mail`; Phase 5 says outside `auto-mail/internal/store`. Both versions fail against the current repo before this task starts: `auto-watch/internal/store/store.go:15`, `auto-search/internal/indexdb/schema.go:9`, and `auto-search/internal/cochange/load.go:23` already import `modernc.org/sqlite`, and `auto-watch`/`auto-search` have direct v1.53.0 requirements in their `go.mod` files. The seam guard should target direct mail-store access instead: `alpha-store.db`, `~/.auto/mail`, `sqlite3` invocations against that path, and `auto-mail/internal/store` imports from outside the allowed mail packages. Also align the allowed path with the Solution, which uses `auto-mail/internal/store`, not `auto-mail/internal/mail`.</pd-comment>
+        <pd-comment by="author">Correct, and this one would have failed on day zero — <code>auto-watch/internal/store/store.go</code> and <code>auto-search/internal/indexdb/schema.go</code> import <code>modernc.org/sqlite</code> for their own stores, entirely legitimately. The guard was aimed at the wrong thing: G11 is about the <em>mail store</em>, not about SQLite. AC-12 and Phase 5 are rewritten to target direct mail-store access — the <code>alpha-store.db</code> filename, an <code>~/.auto/mail</code> path opened as a database, a <code>sqlite3</code> invocation against either — plus an import guard on <code>auto-mail/internal/...</code> from outside the module. Both now say <code>auto-mail/internal/store</code>; the stale <code>internal/mail</code> path in AC-12 is gone. AC-12 also notes that the internal-import half is already a compile-time guarantee, so the test is a regression guard rather than the guarantee itself.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-13" title="G15 — it passes end to end in the harness" phases="1,2,3,4,5" tests="harness/tests/mail_flow/test_mail_loop.py">
+          <md><script type="text/plain">
+- **Given** `uv run harness mail-flow up` from `harness/`
+- **Then** the stack comes up with **one** container, one seeded host id, and two
+  registered project workspaces, and `check_ready()` gates fail-fast with a
+  diagnostic if the store is not initialised or a workspace is not registered
+- **When** `uv run pytest tests/mail_flow -v` runs
+- **Then** the full C1 loop passes against the **real `auto` binary built from
+  monorepo source**: agent B subscribes, agent A sends, agent B's hook fire emits
+  the nudge, `list` shows the mail, `ack` reports `wonTransition: true`, and the
+  second `list` is empty
+- **And** the send-before-subscribe case passes (AC-9's J2 half)
+- **And** every assertion uses bounded retry on the observable outcome, with no
+  `sleep`-to-settle and no assertion on counts that duplicates would break
+- **And** the scenario is registered in `harness/src/harness/cli.py`'s `SCENARIOS`
+  and adding it changed no existing scenario
+- **And** `make check` and `make test` are green from the repo root, with
+  `make test-race` green for the new `auto-mail` entry in `RACE_PROJECTS`
+          </script></md>
+        </pd-ac>
+
+        <pd-trace caption="Acceptance coverage"></pd-trace>
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+Stated rather than hidden. None of these blocks T1; each names who closes it.
+
+- **The `mail.Client` seam has one implementation.** Seam 1 warns that an
+  abstraction with one implementation is a guess. The conformance suite is the
+  mitigation (D-062-5), but the seam is not *proven* until T3's RPC
+  implementation runs against the same suite. Risk accepted: the alternative —
+  dragging the daemon into the walking skeleton — is the thing D-11 exists to
+  prevent.
+- **The `cwd` rung of the binding ladder is weak on this host.** Every pane here
+  shares one primary checkout (see `docs/postmortems/2026-06-28-shared-checkout-
+  rogue-agent.md`), so two agents in the same worktree with no tmux would collide
+  on one binding. T1 tests the tmux rung and the cwd rung separately and
+  documents the collision; T3 replaces the fallback for panes. It does not affect
+  the harness, where each agent has its own workspace.
+- **The pending flag is a second source of truth.** Deliberately a *hint*
+  (D-062-3): a false positive costs one store open, a false negative is healed by
+  the next send and, from T3, by the reconcile tick. Both directions are tested,
+  but a flag that drifts and stays drifted until the next send is a real (bounded)
+  latency hazard with no daemon running.
+- **Escalation is untestable here, because it does not exist yet.** G9, G12, G14
+  and D-8 are T3's. T1 asserts only the in-band nudge to an agent that is already
+  working. An agent that is idle receives nothing in T1 — by design, and stated in
+  `auto mail docs` so nobody builds on a guarantee that is not there.
+- **No cross-host coverage.** Single host is the MVP. The scenario's
+  one-container topology is the control the multi-host case will later be
+  compared against.
+- **The harness is not in CI.** `harness/CLAUDE.md` lists CI wiring as deferred,
+  so the G15 oracle runs locally and on demand. That is a pre-existing gap this
+  task inherits rather than creates; the package, conformance and race tests do
+  run in `make test`.
+- **No load or volume testing.** Alpha volumes are a few hundred rows a day
+  (D-1). Retention is explicitly an alpha non-answer — "wipe it" (G10).
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach" summary="A new auto-mail module whose only exported package is the client seam; an append-only SQLite log with same-transaction projections; a stat-only pending flag driving the hook nudge; and a one-container harness scenario as the oracle.">
+        <md><script type="text/plain">
+Five things exist at the end of this task, in the order the epic demands them.
+
+**1. The glossary carries the vocabulary (G16).** `Mail`, `Address`,
+`Subscription`, `Delivery`, `Binding` land in
+`docs/concepts/UBIQUITOUS_LANGUAGE.md` **before** the first Go file is written,
+with `Mail`'s `_Avoid_` line naming *message* explicitly. Every subsequent
+surface — table names, event types, Go identifiers, CLI text, commit messages —
+uses those words and only those words.
+
+**2. `auto-mail` is a module whose public surface is exactly one package.**
+`auto-mail/mail` exports the `Client` interface, its direct-store constructor,
+the domain types, address validation, binding derivation and the stat-only
+pending check. **Everything else lives under `auto-mail/internal/`** — which
+means G11 is enforced by the Go compiler, not by a convention or a `doctor`
+check: no package outside this module *can* reach the store, because
+`auto-mail/internal/store` is unimportable from anywhere else. The epic called
+G11 "worth a doctor check"; making it a compile-time property is strictly
+stronger, and the repo-wide grep test (AC-12) is then belt-and-braces over a
+guarantee rather than the guarantee itself.
+
+**3. The store is an append-only log with same-transaction projections (D-1).**
+One SQLite file, `~/.auto/mail/alpha-store.db` — the `alpha` marker in the
+filename, per D-2. `events` is the authority and is append-only, enforced by
+`BEFORE UPDATE` / `BEFORE DELETE` triggers that `RAISE(ABORT)`; `mail` is an
+immutable projection under the same discipline; `deliveries` and `bindings` are
+mutable projections rebuildable from the log (bindings excepted — they project
+the hooks JSONL, per seam 4). Every command opens one immediate transaction,
+appends its event, updates its projections and commits. WAL plus a 5s
+`busy_timeout` — the exact pragma set `auto-watch/internal/store/store.go`
+already uses — is the concurrent-writer discipline D-11 makes a T1 concern.
+
+**4. The nudge never opens the store.** `send` writes an empty **pending flag**
+file for each bound subscription; `ack` and `list` remove it when that
+subscription has nothing unacked left. `auto hooks fire` derives the firing
+agent's `(manager, target)` pair from the same `hooks.CaptureContext` the
+envelope already uses, stats **one** path, and emits a **fixed** instruction to
+go and read mail if it is there. No store open on either path, no interpolation
+of anything sender-controlled, and a stale flag self-heals on the next `list`.
+The flag is a hint whose only failure modes are one wasted `list` (false
+positive) or a nudge that waits for the next `send` (false negative).
+
+**5. The harness scenario is the oracle (G15).** `mail-flow` is one container —
+one host id, one `~/.auto`, two registered workspaces — because the mail store
+is host-global and the harness's own convention makes a second container a
+second *host* (D-062-1). It drives the C1 loop with the real binary, asserts the
+nudge on a real `auto hooks fire`, and asserts that a host which never ran
+`auto mail init` never grows a store file.
+
+What is deliberately **not** here: any relative handle, any keystroke effector,
+any liveness policy, any daemon, any bus publish, any RPC method. T1 is the
+thinnest *verifiable* path, not the thinnest possible one — the nudge is inside
+it because hook→notification is the risk, and the scenario is inside it because
+an oracle that arrives last can only confirm what was already built.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-062-8" title="One exported package, `auto-mail/mail`; the store stays internal" status="accepted" by="agent"
+        summary="Makes G11 a compile-time property instead of a convention, at the cost of one deliberate exception to the package blueprint.">
+        <md><script type="text/plain">
+**Context:** `docs/auto-package-patterns.md` says "all implementation lives under
+`internal/` (no public API exports)". But seam 1 makes `mail.Client` the API
+every other `auto-*` tool consumes, and `auto-cli`'s hook is the first consumer —
+so *something* must be exported.
+**Decision:** Export exactly one **domain** package, `auto-mail/mail`: the
+`Client` interface, `NewDirect`, the domain types, address validation, binding
+derivation and the stat-only pending check. Alongside it sits the mandatory
+mounting façade `auto-mail/rootcmd`, which every tool in this monorepo has and
+`auto-cli/cmd/auto/main.go` must import — it holds no domain logic and never
+touches the store, so it is a wiring surface rather than an API. Everything else
+— most importantly `auto-mail/internal/store` — stays internal and is therefore
+**unimportable from any other module**. The invariant the seam guard enforces is
+therefore "one exported domain API plus the `rootcmd` façade", not "one exported
+package".
+**Alternatives:** Export nothing and have `auto-cli` shell out to `auto mail`
+from the hook (a process spawn in the agent's hot path, which G8 forbids); export
+the store too (G11 becomes a convention again, and the schema freezes the moment
+someone reaches past the client); put the client in `auto-shared` (inverts
+ownership — `auto-shared` would depend on mail's domain, and the store would have
+nowhere sensible to live).
+**Consequences:** G11 is enforced by the compiler, which is strictly stronger
+than the doctor check the epic proposed; AC-12's repo-wide grep becomes
+belt-and-braces over a guarantee rather than the guarantee itself. The blueprint
+gains one documented exception, noted in `auto-mail/CLAUDE.md` so the next
+package author does not read it as licence.
+        </script></md>
+      </pd-decision>
+
+      <pd-thread anchor="D-062-8" status="resolved" priority="p2" title="`rootcmd` is a second exported package">
+        <pd-comment by="review">D-062-8 says the public surface is exactly one package, `auto-mail/mail`, and that everything else stays under `internal/`. The file-change tree also adds `auto-mail/rootcmd/rootcmd.go`, and `auto-cli/cmd/auto/main.go` must import that package to mount `auto mail`, matching every existing tool's pattern. Clarify that the invariant is "one exported domain/client API plus the required `rootcmd` mounting facade"; otherwise an implementer could either hide `rootcmd` under `internal/` and break mounting, or write a seam guard that incorrectly treats the facade as a violation.</pd-comment>
+      <pd-comment by="author">Fair, and the wording was genuinely misleading — an implementer following it literally would either have hidden <code>rootcmd</code> under <code>internal/</code> and broken mounting, or written a guard that flagged the façade. D-062-8 now states the invariant as "one exported <strong>domain</strong> API (<code>auto-mail/mail</code>) plus the mandatory <code>rootcmd</code> mounting façade", and records that the façade holds no domain logic and never touches the store — a wiring surface, not an API. The seam guard in Phase 5 is scoped accordingly.</pd-comment>
+      </pd-thread>
+
+      <pd-decision id="D-062-9" title="The hook writes one hookSpecificOutput object, carrying every fragment" status="accepted" by="agent"
+        summary="The existing hint path already emits at most one object per event; a second producer must join it, not write a second line.">
+        <md><script type="text/plain">
+**Context:** `matchAndEmitHint` (`auto-cli/cmd/auto/hints.go`) writes a
+`hookSpecificOutput` JSON object to stdout and returns after the **first**
+matching rule — "emit at most one hint per event" — with a comment explaining
+that unexpected stdout is something an agent might reject. The mail nudge is a
+second producer on that same stdout.
+**Decision:** Split matching from emission. `matchHint` returns the rendered
+fragment (or empty); `emitAdditionalContext` writes **exactly one**
+`hookSpecificOutput` object whose `additionalContext` joins the fragments, mail
+first. Zero fragments means zero bytes on stdout, exactly as today.
+**Alternatives:** Emit a second JSON line (two objects on one hook's stdout is
+undefined behaviour in both agents' hook contracts and is precisely what the
+existing comment guards against); make mail a `triggerRegistry` entry (the
+registry matches on *payload shape*; mail's condition is a filesystem stat, not
+a payload predicate, and it must fire on every PostToolUse rather than a
+specific tool).
+**Consequences:** `hints_test.go` changes shape but not behaviour — the existing
+assertions carry over onto `matchHint`. Ordering is fixed (mail first) so a
+project's hint rules can never suppress the nudge.
+        </script></md>
+      </pd-decision>
+
+      <pd-section id="end-state-flow" title="How one message travels" summary="Send writes an event, a mail row, delivery rows for bound subscriptions and a pending flag; the receiver's next hook stats the flag and nudges; list materialises and ack transitions.">
+        <pd-mermaid caption="The T1 path — no daemon anywhere in it">
+sequenceDiagram
+  participant A as agent A (auto mail send)
+  participant M as mail.Client (direct)
+  participant DB as alpha-store.db
+  participant FL as alpha-flags/
+  participant HK as agent B hook (auto hooks fire)
+  participant B as agent B (auto mail list/ack)
+
+  B->>M: Subscribe("auto-web/bugs")
+  M->>DB: BEGIN IMMEDIATE; append alpha.mail.subscribed;<br/>insert subscription + binding(manager,target); COMMIT
+  A->>M: Send(to, body)
+  M->>DB: BEGIN IMMEDIATE; append alpha.mail.sent;<br/>insert mail; insert deliveries for bound subs; COMMIT
+  M->>FL: touch flag(sha8(manager,target))
+  M-->>A: {id, to, subscriptions:1, bound:1}
+  HK->>FL: stat one path (no DB open)
+  HK-->>B: hookSpecificOutput.additionalContext (fixed text)
+  B->>M: List()
+  M->>DB: materialise deliveries from cursor;<br/>append alpha.mail.read (first read only)
+  M-->>B: [ {id, from, sentAt, body} ]
+  B->>M: Ack(id)
+  M->>DB: BEGIN IMMEDIATE;<br/>UPDATE deliveries SET acked_at=? WHERE acked_at IS NULL;<br/>append alpha.mail.acked; COMMIT
+  M->>FL: rm flag if nothing unacked remains
+  M-->>B: {id, acked:true, wonTransition:true}
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="end-state-schema" title="The store at the end of this task">
+        <pd-mermaid caption="events is the authority; mail is immutable; deliveries and bindings are projections">
+erDiagram
+  MAIL ||--o{ DELIVERY : "copied to"
+  SUBSCRIPTION ||--o{ DELIVERY : "owns state of"
+  ADDRESS ||--o{ SUBSCRIPTION : "bound by"
+  SUBSCRIPTION ||--o| BINDING : "currently held by"
+  EVENT {
+    int seq
+    ulid id
+    string type
+    int version
+    time occurred_at
+    json payload
+  }
+  MAIL {
+    ulid id
+    string to_address
+    json envelope
+    json body
+    time sent_at
+  }
+  SUBSCRIPTION {
+    string id
+    string address
+    string name
+    string from_cursor
+    time created_at
+  }
+  DELIVERY {
+    string subscription_id
+    ulid mail_id
+    time first_seen_at
+    time read_at
+    time acked_at
+    string acked_by
+  }
+  BINDING {
+    string subscription_id
+    string manager
+    string target
+    string session
+    time last_seen
+  }
+        </pd-mermaid>
+        <md><script type="text/plain">
+Notes that are load-bearing rather than descriptive:
+
+- **`EVENT` is standalone in the diagram because it is the authority, not a
+  relation.** Every other table is derivable from it (`bindings` excepted — seam
+  4 makes those a projection of the hooks JSONL, which is already an append-only
+  log).
+- **`BINDING` hangs off `SUBSCRIPTION`, not `ADDRESS`** — the correction the
+  epic's review forced, so two live subscribers on one channel never fight over a
+  single row.
+- **`manager` and `target` are an opaque pair (G12)**, never a typed
+  `tmux_pane_id` column. T3 adds `herdr` as a data value plus an effector
+  implementation, with no schema change.
+- **`DELIVERY` looks like pointless indirection in the MVP** — one subscription
+  per address, one row per mail. That is the point: it is the single structural
+  concession that keeps fan-out, competing consumers and leases from ever
+  touching a call site.
+- **`read_at` is written in T1**, once per delivery, guarded by
+  `WHERE read_at IS NULL` so repeated `list` calls append no further events. It
+  is not needed by T1 itself; it is written now because D-8's escalation
+  predicate — "unread past an age threshold" — is exactly this column, and
+  retrofitting the write into T3 would mean T3 shipping with no history to
+  escalate against.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="end-state-api" title="The client seam">
+        <pd-api kind="interface" name="mail.Client" lang="go" path="auto-mail/mail/client.go" caption="The only API. CLI, hook, daemon and every future auto-* tool go through it.">
+          <pd-member kind="method" sig="Subscribe(ctx context.Context, in SubscribeInput) (SubscribeResult, error)">Creates or returns the subscription for an address, records the caller's binding, and reports how many unacked mail items the cursor backfilled.</pd-member>
+          <pd-member kind="method" sig="Send(ctx context.Context, in SendInput) (SendResult, error)">Appends alpha.mail.sent, inserts the immutable mail row and a delivery row per bound subscription, sets each pending flag. Reports subscriptions and bound as separate counts (G6).</pd-member>
+          <pd-member kind="method" sig="List(ctx context.Context, in ListInput) ([]Delivery, error)">Materialises delivery rows lazily from each subscription's cursor (D-10), stamps first read, and returns unacked mail. Never retires anything (G3).</pd-member>
+          <pd-member kind="method" sig="Ack(ctx context.Context, in AckInput) (AckResult, error)">Compare-and-set on acked_at inside the append-and-project transaction; reports whether this call won the transition (G13).</pd-member>
+          <pd-member kind="method" sig="Reset(ctx context.Context) (ResetResult, error)">Removes the store and the flag directory. A supported operation, because alpha (G10).</pd-member>
+          <pd-member kind="method" sig="Close() error">Releases the store handle.</pd-member>
+        </pd-api>
+        <pd-api kind="module" name="package mail — free functions and types" lang="go" path="auto-mail/mail/pending.go" caption="Deliberately not methods: the nudge must not require a client, because constructing one would open the store.">
+          <pd-member kind="function" sig="NewDirect(home string) (Client, error)">The direct-store implementation D-11 binds the MVP CLI to. Opens the store with WAL + busy_timeout, migrates, and owns the single write connection for this process.</pd-member>
+          <pd-member kind="function" sig="HasPending(home string, b Binding) bool">Stats exactly one flag path and returns. No store open, no error surface a caller could mishandle in a hook — an unreadable flag directory reads as "no mail" (G8).</pd-member>
+          <pd-member kind="function" sig="NudgeText() string">The fixed instruction emitted to a working agent. A constant: never interpolated from an envelope, a body or a sender (G14's content rule, adopted for the in-band channel too).</pd-member>
+          <pd-member kind="function" sig="BindingFor(cwd string) Binding">Derives the opaque (manager, target) pair from hooks.CaptureContext on the documented ladder: tmux pane id → ntm pane → worktree/cwd path (D-062-2).</pd-member>
+          <pd-member kind="function" sig="ValidateAddress(s string) error">Permissive by design (D-9): rejects only empty, whitespace-padded, control-character and over-length values. The `/` separator is explicitly allowed and never normalised away, so prefix filtering stays buildable.</pd-member>
+          <pd-member kind="type" sig="type Binding struct { Manager, Target, Session string }">The opaque physical pair G12 mandates. Never appears in an address or a stored envelope's to/from (G5).</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="end-state-cli" title="The command surface at the end of this task">
+        <pd-cli title="zsh — the full auto mail surface after T1" caption="C1 plus the baseline commands T1 owns. quickstart and doctor are T4's (D-062-4).">
+          <pd-cmd note="creates ~/.auto/mail/ and the alpha store" status="todo">auto mail init</pd-cmd>
+          <pd-out><script type="text/plain">{ "store": "/home/u/.auto/mail/alpha-store.db", "created": true, "alpha": true }</script></pd-out>
+          <pd-cmd note="the full command reference, including the alpha contract" status="todo">auto mail docs</pd-cmd>
+          <pd-cmd note="opt to start from now instead of the backlog (D-10)" status="todo">auto mail subscribe auto-web/bugs --from-now</pd-cmd>
+          <pd-out><script type="text/plain">{ "address": "auto-web/bugs", "subscription": "sub_01K9X2M4", "backfilled": 0 }</script></pd-out>
+          <pd-cmd note="nobody has subscribed — still exits 0, still persists (G6)" status="todo"><script type="text/plain">auto mail send --to auto-web/typo --message "hello?"</script></pd-cmd>
+          <pd-out><script type="text/plain">{ "id": "01K9X2R0000000000", "to": "auto-web/typo", "subscriptions": 0, "bound": 0 }
+# stderr: no subscription exists for "auto-web/typo" — mail is persisted and a later
+# subscriber will receive it, but check the address for a typo.</script></pd-out>
+          <pd-cmd note="scope to one subscription; no filters returns everything bound to you" status="todo">auto mail list --address auto-web/bugs</pd-cmd>
+          <pd-cmd note="a second acker is told it lost, and still exits 0 (D-062-7)" status="todo">auto mail ack 01K9X2QF7M3B0V8N</pd-cmd>
+          <pd-out><script type="text/plain">{ "id": "01K9X2QF7M3B0V8N", "acked": true, "wonTransition": false }
+# stderr: already acked at 2026-08-25T10:15:40Z by sub_01K9X2M4</script></pd-out>
+          <pd-cmd note="alpha means reset is supported, not a workaround (G10)" status="todo">auto mail reset --yes</pd-cmd>
+          <pd-out><script type="text/plain">{ "removed": ["/home/u/.auto/mail/alpha-store.db", "/home/u/.auto/mail/alpha-flags"] }</script></pd-out>
+        </pd-cli>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="docs/concepts/UBIQUITOUS_LANGUAGE.md" change="edit">G16, first: add Mail, Address, Subscription, Delivery, Binding with _Avoid_ and _Has_ lines; refresh the generated ER block; update the frontmatter summary.</pd-file>
+
+          <pd-file path="auto-mail/go.mod" change="add">module github.com/mistakenot/auto-mail; replace auto-shared =&gt; ../auto-shared; modernc.org/sqlite + cobra.</pd-file>
+          <pd-file path="auto-mail/go.sum" change="add">Checksums for the dependency set (all already present elsewhere in the workspace).</pd-file>
+          <pd-file path="auto-mail/CLAUDE.md" change="add">Tool description, build/test instructions, and the alpha contract stated in as many words (at-least-once, unordered, idempotent consumers, store may be wiped).</pd-file>
+          <pd-file path="auto-mail/cmd/automail/main.go" change="add">Minimal entry point delegating to cli.Execute.</pd-file>
+          <pd-file path="auto-mail/rootcmd/rootcmd.go" change="add">New(stdout, stderr) façade so auto-cli can mount `auto mail`.</pd-file>
+          <pd-file path="auto-mail/internal/app/app.go" change="add">App context (stdout, stderr, cwd), per the blueprint.</pd-file>
+          <pd-file path="auto-mail/internal/cli/root.go" change="add">Root cobra command, ExitError, Execute; wires the subcommands.</pd-file>
+          <pd-file path="auto-mail/internal/cli/init.go" change="add">`auto mail init [--project]`: EnsureHost, create ~/.auto/mail/, open+migrate the store.</pd-file>
+          <pd-file path="auto-mail/internal/cli/docs.go" change="add">`auto mail docs`: embedded full command reference incl. the delivery contract and the alpha disclaimer.</pd-file>
+          <pd-file path="auto-mail/internal/cli/subscribe.go" change="add">`auto mail subscribe &lt;address&gt; [--from-now] [--name]`; records the caller's binding.</pd-file>
+          <pd-file path="auto-mail/internal/cli/send.go" change="add">`auto mail send --to --message [--body] [--from]`; resolves the sender's absolute from-address.</pd-file>
+          <pd-file path="auto-mail/internal/cli/list.go" change="add">`auto mail list [--address] [--subscription]`; all bound subscriptions when unfiltered; clears a stale flag.</pd-file>
+          <pd-file path="auto-mail/internal/cli/ack.go" change="add">`auto mail ack &lt;mail-id&gt;`; prints wonTransition, exit 0 on a lost race (D-062-7).</pd-file>
+          <pd-file path="auto-mail/internal/cli/reset.go" change="add">`auto mail reset [--yes]`; removes the store and flag directory, reports what it removed.</pd-file>
+          <pd-file path="auto-mail/internal/cli/cli_test.go" change="add">Command-level tests against a temp HOME asserting the exact C1 payload shapes and the error paths.</pd-file>
+          <pd-file path="auto-mail/internal/config/settings.go" change="add">Store and flag paths under ~/.auto/mail/, settings load/validate via auto-shared/config.</pd-file>
+
+          <pd-file path="auto-mail/mail/client.go" change="add">The public seam: Client interface, inputs/results, domain types, sentinel errors. The only exported package.</pd-file>
+          <pd-file path="auto-mail/mail/direct.go" change="add">NewDirect: the direct-store implementation D-11 binds the MVP CLI to.</pd-file>
+          <pd-file path="auto-mail/mail/address.go" change="add">ValidateAddress — permissive, separator explicitly allowed and never normalised (D-9).</pd-file>
+          <pd-file path="auto-mail/mail/binding.go" change="add">BindingFor: the (manager, target) ladder over hooks.CaptureContext (D-062-2).</pd-file>
+          <pd-file path="auto-mail/mail/pending.go" change="add">The pending-flag file: Set/Clear/HasPending (stat only) and NudgeText (a fixed constant).</pd-file>
+          <pd-file path="auto-mail/mail/mail_test.go" change="add">Address validation, binding ladder, flag lifecycle, and the zero-store-opens assertion via an injected counting opener.</pd-file>
+
+          <pd-file path="auto-mail/internal/store/store.go" change="add">Open (MkdirAll, sql.Open, WAL + busy_timeout + foreign_keys), Close, single write connection, transaction helper.</pd-file>
+          <pd-file path="auto-mail/internal/store/schema.go" change="add">DDL: events (+ append-only triggers), mail (+ immutability trigger), subscriptions, deliveries, bindings, indexes, schema_migrations.</pd-file>
+          <pd-file path="auto-mail/internal/store/events.go" change="add">The alpha.mail.* event types, the versioned envelope, and the append path (the only writer of `events`).</pd-file>
+          <pd-file path="auto-mail/internal/store/project.go" change="add">Same-transaction projection: mail insert, lazy delivery materialisation from the cursor, read stamp, ack compare-and-set, binding upsert.</pd-file>
+          <pd-file path="auto-mail/internal/store/store_test.go" change="add">Immutability (triggers abort UPDATE/DELETE), cursor backfill, broadcast fan-out, and the concurrent-writer test run under -race.</pd-file>
+          <pd-file path="auto-mail/internal/ulid/ulid.go" change="add">Sender-generated, monotonic, lexicographically sortable ids — the cross-host merge property the backlog names.</pd-file>
+
+          <pd-file path="auto-mail/conformance/conformance.go" change="add">The Client contract suite, written against the interface: explicit ack, wonTransition, backfill-on-subscribe, subscriptions-vs-bound, idempotent re-ack.</pd-file>
+          <pd-file path="auto-mail/conformance/conformance_test.go" change="add">Runs the suite against the direct-store implementation; T3 adds the RPC one as a second target.</pd-file>
+          <pd-file path="auto-mail/conformance/seam_test.go" change="add">AC-12 guard: walks the repo (located via go.work) asserting the store filename and sqlite imports appear only under auto-mail/internal/store.</pd-file>
+
+          <pd-file path="auto-cli/cmd/auto/main.go" change="edit">Import mailcmd and add mailcmd.New(stdout, stderr) to root.AddCommand.</pd-file>
+          <pd-file path="auto-cli/cmd/auto/hints.go" change="edit">Split emission from matching: matchHint returns the rendered fragment; emitAdditionalContext writes exactly one hookSpecificOutput object for all fragments.</pd-file>
+          <pd-file path="auto-cli/cmd/auto/hookscmd.go" change="edit">After the existing sinks, stat the pending flag for the firing agent's binding and prepend the fixed mail fragment to the single emission.</pd-file>
+          <pd-file path="auto-cli/cmd/auto/hints_test.go" change="edit">Update for the matchHint/emitAdditionalContext split; existing behaviour assertions unchanged.</pd-file>
+          <pd-file path="auto-cli/cmd/auto/hooksmail_test.go" change="add">Hook-side tests: nudge emitted only with a flag and only on PostToolUse, one emission when a hint also matches, exit 0 with an absent/unreadable store, and no store file created.</pd-file>
+          <pd-file path="auto-cli/go.mod" change="edit">Require github.com/mistakenot/auto-mail with a local replace directive.</pd-file>
+          <pd-file path="auto-cli/go.sum" change="edit">Checksums for the new module edge.</pd-file>
+
+          <pd-file path="go.work" change="edit">Add ./auto-mail to the use block.</pd-file>
+          <pd-file path="Makefile" change="edit">Add auto-mail to PROJECTS and to RACE_PROJECTS (the ack race and concurrent writers must run under -race).</pd-file>
+          <pd-file path="CLAUDE.md" change="edit">Add the auto-mail row to the Sub-Projects table.</pd-file>
+
+          <pd-file path="harness/scenarios/mail-flow/Dockerfile" change="add">Builds the real auto binary from monorepo source (context ../../..) into a single host image.</pd-file>
+          <pd-file path="harness/scenarios/mail-flow/docker-compose.yaml" change="add">One `host` service, init: true, healthcheck gating on the mail-ready file.</pd-file>
+          <pd-file path="harness/scenarios/mail-flow/scripts/host-entrypoint.sh" change="add">Seeds one host id, git-inits and registers /workspace/project-a and project-b, runs auto mail init, writes the ready file.</pd-file>
+          <pd-file path="harness/scenarios/mail-flow/fixtures/hooks/post-tool-use.json" change="add">A minimal PostToolUse payload, patched per-fire with cwd (mirrors event-flow's fixture pattern).</pd-file>
+          <pd-file path="harness/src/harness/scenarios/mail_flow.py" change="add">MailFlowScenario: check_ready gates plus the DSL (subscribe/send/list/ack/fire_hook/assert_nudge) with bounded retry.</pd-file>
+          <pd-file path="harness/src/harness/cli.py" change="edit">One line registering mail-flow in SCENARIOS.</pd-file>
+          <pd-file path="harness/tests/mail_flow/__init__.py" change="add">Package marker, mirroring tests/event_flow.</pd-file>
+          <pd-file path="harness/tests/mail_flow/conftest.py" change="add">Session-scoped fixture: up(build=True) then down() at teardown.</pd-file>
+          <pd-file path="harness/tests/mail_flow/test_mail_loop.py" change="add">AC-13: the C1 loop, the in-band nudge, send-before-subscribe, and the no-store-created assertion.</pd-file>
+          <pd-file path="harness/CLAUDE.md" change="edit">Document the mail-flow scenario alongside skill-remote and event-flow.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Put everything under `internal/` per the package blueprint.** Rejected: the
+  blueprint's "no public API exports" rule assumes a self-contained tool, and
+  mail is explicitly a *seam* other tools consume (seam 1). Exporting exactly one
+  narrow package — and keeping the store internal — turns G11 from a convention
+  into a compile-time guarantee, which is a better outcome than either extreme.
+
+- **Open the store read-only in the hook and count unacked mail.** Rejected under
+  G8: a SQLite open on every tool call of every agent on the host is not stat
+  cost, and it puts a lock-contending reader in the agent's hot path. The flag
+  costs one `stat` and its drift is bounded and self-healing (D-062-3).
+
+- **Interpolate the sender or the subject into the nudge text.** Rejected: G14
+  fixes the injected-keystroke sequence as a constant so a sender cannot type
+  into a stranger's pane. The in-band channel is less dangerous but not
+  categorically different — sender-controlled text would be landing in another
+  agent's context window — so the same rule applies, and `NudgeText()` is a
+  constant.
+
+- **Two containers sharing a `~/.auto` volume for "two agents on one host".**
+  Rejected in D-062-1: the harness gives each container a distinct `HOST_ID`,
+  which is precisely what makes `event-flow` a multi-host scenario; a shared
+  `HOME` also collides on ready files and host identity. One container with two
+  workspaces is what "one host" actually means here.
+
+- **Key the binding on `session_id`.** Rejected: `auto mail subscribe` runs as a
+  tool call and never sees the hook payload, so it cannot know the session id.
+  Bridging that gap is exactly the self-identification problem D-13 scopes to T2;
+  pulling it into T1 would drag `#parent` in with it.
+
+- **Emit a `you have mail` bus event from `send`.** Rejected in D-062-6: it buys
+  nothing for the in-band path (the receiver's own hook already reads the flag),
+  and it adds a live dependency on a daemon that D-11 says must never be
+  required. The bus event type is reserved and T3 publishes it.
+
+- **Route send/list/ack over RPC to the daemon.** Rejected by D-11 upstream of
+  this task, for two reasons worth repeating: autowatch crash-loops are a
+  documented failure mode on this host, and a *failing* agent must be able to
+  post mail with nothing else alive — which is the case this epic exists for.
+
+- **A maildir-style file-per-message store.** Genuinely better for lock-free
+  concurrent append, and recorded as such in the backlog (§8.6) — but once
+  subscriptions, read state, bindings and dedup exist it is a relational problem
+  wanting transactions, and D-1's same-transaction projection is the whole
+  design. Superseded by SQLite.
+
+- **Skip `read_at` in T1.** Rejected: it is one conditional `UPDATE` and one
+  event now, versus T3 shipping an escalation policy whose predicate ("unread
+  past an age threshold") has no column to read.
+
+- **Ship stub `quickstart` and `doctor` to satisfy the CLI convention.**
+  Rejected in D-062-4: the epic makes adoption a task with an argument behind it,
+  and a quickstart that teaches a half-built workflow is worse than none.
+        </script></md>
+      </pd-section>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Five phases in the order the epic's T1 dictates: the ontology lands, then the
+scenario comes up with two agents on one host, then one message travels between
+them and is acked, then the nudge reaches a working agent, then the remaining
+guard rails are made executable. Phase 1 is a walking skeleton in the strict
+sense — glossary, module, CLI, store and container all wired, with a green
+container test — so every later phase thickens a system that already runs end to
+end inside the oracle.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-mermaid caption="Phase dependency DAG — a chain, because each phase is verified inside the oracle the previous one stood up">
+flowchart LR
+  P1["P1 · Ontology + module + scenario up<br/>glossary · auto mail init/docs/list · mail-flow green"]
+  P2["P2 · One message travels<br/>subscribe/send/list/ack · log + projection · C1 in the harness"]
+  P3["P3 · The in-band nudge<br/>pending flag · hooks fire emits additionalContext"]
+  P4["P4 · Delivery semantics<br/>cursor backfill · broadcast · counts · conformance suite"]
+  P5["P5 · Rails made executable<br/>immutability · ack race · reset · seam guard · docs"]
+  P1 --> P2 --> P3 --> P4 --> P5
+        </pd-mermaid>
+        <md><script type="text/plain">
+The chain is deliberate rather than a failure to parallelise. Each phase's
+verification runs **inside the harness scenario the previous phase stood up**
+(G15), and every phase after the first edits files the previous one created, so
+a parallel dispatch would collide on `mail_flow.py`, `test_mail_loop.py`,
+`direct.go` and the store package. The compensating property is that every phase
+boundary is a shippable state: the branch is green and `make check` passes at
+each commit.
+        </script></md>
+      </pd-section>
+
+      <pd-stepper>
+
+        <pd-phase n="1" title="Ontology, module skeleton, and the scenario comes up" files="docs/concepts/UBIQUITOUS_LANGUAGE.md,auto-mail/go.mod,auto-mail/go.sum,auto-mail/CLAUDE.md,auto-mail/cmd/automail/main.go,auto-mail/rootcmd/rootcmd.go,auto-mail/internal/app/app.go,auto-mail/internal/cli/root.go,auto-mail/internal/cli/init.go,auto-mail/internal/cli/docs.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/cli_test.go,auto-mail/internal/config/settings.go,auto-mail/mail/client.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/store/store.go,auto-mail/internal/store/schema.go,auto-cli/cmd/auto/main.go,auto-cli/go.mod,auto-cli/go.sum,go.work,Makefile,CLAUDE.md,harness/scenarios/mail-flow/Dockerfile,harness/scenarios/mail-flow/docker-compose.yaml,harness/scenarios/mail-flow/scripts/host-entrypoint.sh,harness/src/harness/scenarios/mail_flow.py,harness/src/harness/cli.py,harness/tests/mail_flow/__init__.py,harness/tests/mail_flow/conftest.py,harness/tests/mail_flow/test_mail_loop.py" status="todo">
+          <md><script type="text/plain">
+**The ontology goes first, before any Go file (G16).** Then the thinnest module
+that can open a store, and then the container that will judge everything after
+it.
+
+1. **Glossary.** Add a `## Mail` section to `docs/concepts/UBIQUITOUS_LANGUAGE.md`
+   with five entries in the house format (bold term, definition, `_Avoid_:`,
+   optional `_Has_:`):
+   - **Mail** — the stored unit of an addressed, durable message between agents.
+     `_Avoid_`: message, email, letter, note. `_Has_`: many Deliveries.
+   - **Address** — a virtual, free-form name a Mail is sent to, carrying no
+     physical identity. `_Avoid_`: mailbox, queue, topic, channel, inbox.
+     `_Has_`: many Subscriptions.
+   - **Subscription** — a durable reader of an Address, holding its own cursor
+     and ack state. `_Avoid_`: subscriber, consumer, listener, reader.
+     `_Has_`: many Deliveries, one Binding.
+   - **Delivery** — the per-Subscription copy of one Mail and its read/ack
+     state. `_Avoid_`: receipt, copy, inbox item.
+   - **Binding** — the current physical target and liveness of a Subscription,
+     recorded as an opaque `(manager, target)` pair. `_Avoid_`: pane, session
+     link, attachment, route.
+   Then update the frontmatter `summary` to name the five new terms.
+   **Verify:** `python3 .claude/skills/domain-modelling/scripts/glossary.py check docs/concepts/UBIQUITOUS_LANGUAGE.md`
+   exits 0; `python3 .claude/skills/domain-modelling/scripts/glossary.py diagram docs/concepts/UBIQUITOUS_LANGUAGE.md --write`
+   refreshes the ER block; `auto doc fixed docs/concepts/UBIQUITOUS_LANGUAGE.md`.
+   **Do not hand-edit the generated ER block.**
+
+2. **Module scaffold.** Create `auto-mail/` per `docs/auto-package-patterns.md`,
+   copying `auto-artifact/`'s shape: `go.mod`
+   (`module github.com/mistakenot/auto-mail`, `go 1.26.1`,
+   `replace github.com/mistakenot/auto-shared => ../auto-shared`, cobra +
+   `modernc.org/sqlite v1.53.0`), `cmd/automail/main.go`, `rootcmd/rootcmd.go`,
+   `internal/app/app.go`, `internal/cli/root.go` (with `ExitError` + `Execute`),
+   `internal/config/settings.go` (store path `~/.auto/mail/alpha-store.db`, flag
+   dir `~/.auto/mail/alpha-flags/`, via `config.AutoDir()`).
+   `auto-mail/CLAUDE.md` states what the tool is and how to build/test it.
+   **Verify:** `cd auto-mail && go build ./...` after each file, per the project's
+   Go build discipline.
+
+3. **The store, minimal.** `internal/store/store.go`: `Open(path)` with
+   `os.MkdirAll`, `sql.Open("sqlite", …)` and the exact pragma set
+   `auto-watch/internal/store/store.go:75-78` uses (`journal_mode = WAL`,
+   `busy_timeout = 5000`, `foreign_keys = ON`), `Close`, and a
+   `WithTx(ctx, fn)` helper that opens `BEGIN IMMEDIATE`. `internal/store/schema.go`:
+   `schema_migrations` plus empty-but-final DDL for `events`, `mail`,
+   `subscriptions`, `deliveries`, `bindings` (phase 2 fills the write paths;
+   creating the full shape now avoids a migration inside the task).
+   **Verify:** a store test that opens, migrates twice (idempotent) and closes.
+
+4. **The seam, minimal.** `auto-mail/mail/client.go`: the `Client` interface with
+   all six methods, the input/result types matching the C1 payloads, and sentinel
+   errors. `auto-mail/mail/direct.go`: `NewDirect(home)` returning an
+   implementation where `List` works (returning an empty slice against a fresh
+   store) and the other four return a `not implemented in this phase` error.
+   Everything else stays under `internal/`, so no other module can reach the
+   store (D-062-8).
+
+5. **CLI, minimal.** `internal/cli/init.go` (`auto mail init [--project]`:
+   `EnsureHost`, create `~/.auto/mail/`, open + migrate, print
+   `{"store":…,"created":…,"alpha":true}`), `internal/cli/docs.go` (embedded
+   reference; the alpha contract text lands in phase 5), `internal/cli/list.go`
+   (JSON array on stdout, `[]` when empty).
+   `internal/cli/cli_test.go`: `init` then `list` against a temp `HOME` returns
+   `[]` and writes nothing to stdout but JSON.
+   `auto-mail/mail/mail_test.go`: the greppable half of G16 — assert no exported
+   identifier, table name or event type in the module names the stored unit
+   `message` (the `--message` body flag is explicitly allowed).
+
+6. **Mount it.** `go.work` gains `./auto-mail`; `auto-cli/go.mod` gains the
+   require + local replace; `auto-cli/cmd/auto/main.go` imports
+   `mailcmd "github.com/mistakenot/auto-mail/rootcmd"` and adds
+   `mailcmd.New(stdout, stderr)` to `root.AddCommand`; `Makefile` PROJECTS gains
+   `auto-mail`; root `CLAUDE.md` gains the auto-mail row in the Sub-Projects
+   table (Early / "Agent-to-agent mailbox — durable addressed messages with ack").
+   **Verify:** from the repo root `make build && ./bin/auto mail init && ./bin/auto mail list`.
+
+7. **The scenario comes up (the epic's second of three things).**
+   `harness/scenarios/mail-flow/Dockerfile` — build the real `auto` from
+   monorepo source with context `../../..`, mirroring
+   `harness/scenarios/event-flow/Dockerfile`.
+   `docker-compose.yaml` — **one** `host` service (D-062-1), `init: true`,
+   healthcheck gating on `/tmp/mail-ready.json`.
+   `scripts/host-entrypoint.sh` — seed one `~/.auto/host.json`; `git init` +
+   empty commit + `auto init --project` in **both** `/workspace/project-a` and
+   `/workspace/project-b`; `auto mail init`; write the ready file; `sleep infinity`.
+   `harness/src/harness/scenarios/mail_flow.py` — `MailFlowScenario(Scenario)`
+   with `name = "mail-flow"`, `services = ["host"]`, a `check_ready()` that
+   fail-fasts with a diagnostic if the ready file is missing, either workspace is
+   unregistered in `~/.auto/projects.json`, or `auto mail list` is not `[]`, plus
+   a `mail(workspace, args)` helper that runs `auto mail …` with `cwd` set to a
+   workspace (base64-piped, per the event-flow convention).
+   Register `"mail-flow": MailFlowScenario` in `harness/src/harness/cli.py`.
+   `harness/tests/mail_flow/{__init__.py,conftest.py,test_mail_loop.py}` —
+   session-scoped fixture plus one test asserting the stack is up, both
+   workspaces are registered, and `auto mail list` returns `[]` from each.
+
+8. **Verify (phase gate):** `cd auto-mail && go build ./... && go test ./...`;
+   from the repo root `make check` and `make test`; from `harness/`
+   `uv run harness mail-flow up` then `uv run pytest tests/mail_flow -v` then
+   `uv run harness mail-flow down`; `uv run pytest -v` to prove the two existing
+   scenarios are untouched.
+   **Commit** `feat(062): auto-mail ontology, module skeleton and mail-flow scenario`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="One message travels between two agents and is acked" files="auto-mail/internal/store/schema.go,auto-mail/internal/store/events.go,auto-mail/internal/store/project.go,auto-mail/internal/store/store_test.go,auto-mail/internal/ulid/ulid.go,auto-mail/mail/client.go,auto-mail/mail/direct.go,auto-mail/mail/address.go,auto-mail/mail/binding.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/subscribe.go,auto-mail/internal/cli/send.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/ack.go,auto-mail/internal/cli/cli_test.go,harness/src/harness/scenarios/mail_flow.py,harness/tests/mail_flow/test_mail_loop.py" status="todo" depends-on="1">
+          <md><script type="text/plain">
+The epic's third thing: one message through the client seam, the event log and
+the projection, acked. C1 runs verbatim by the end of this phase.
+
+1. **Ids.** `internal/ulid/ulid.go`: monotonic, lexicographically sortable ULIDs,
+   sender-generated (the cross-host merge property `docs/auto-mail-beyond-mvp.md`
+   §3 depends on). Subscription ids are `sub_` + the ULID's leading 8 chars.
+   **Verify:** a test asserting monotonicity across 10k ids in one process and
+   sort order matching generation order.
+
+2. **Events.** `internal/store/events.go`: the four `alpha.*` types —
+   `alpha.mail.subscribed`, `alpha.mail.sent`, `alpha.mail.read`,
+   `alpha.mail.acked` — a versioned envelope (`version` integer, default 1), and
+   `Append(tx, ev)` as the **only** writer of the `events` table. Add the
+   `BEFORE UPDATE` / `BEFORE DELETE` triggers on `events` and on `mail` to
+   `schema.go`, each `RAISE(ABORT, …)` with a message naming the rail.
+
+3. **Projection.** `internal/store/project.go`, all inside one
+   `BEGIN IMMEDIATE` transaction per operation:
+   - `subscribe` → append `alpha.mail.subscribed`; upsert the subscription
+     (address + `from_cursor`) and its binding row.
+   - `send` → append `alpha.mail.sent`; insert the immutable `mail` row; insert a
+     `deliveries` row per subscription on the address whose cursor admits it.
+   - `list` → materialise any missing `deliveries` rows from each subscription's
+     `from_cursor` (D-10, lazily on read); stamp `read_at` and append
+     `alpha.mail.read` **only** `WHERE read_at IS NULL`, so repeated lists append
+     nothing; return unacked rows.
+   - `ack` → `UPDATE deliveries SET acked_at=?, acked_by=? WHERE subscription_id=?
+     AND mail_id=? AND acked_at IS NULL`; the affected-row count **is** the
+     `wonTransition` answer; append `alpha.mail.acked` only on a win (G13/D-7).
+
+4. **Addresses and bindings.** `mail/address.go`: `ValidateAddress` — permissive,
+   `/` explicitly allowed and never normalised (D-9); rejects empty,
+   whitespace-padded, control characters and over-length, each with a remediation
+   message. `mail/binding.go`: `BindingFor(cwd)` walking the ladder
+   `tmux` → `ntm` → `cwd` over `hooks.CaptureContext()` (D-062-2), returning the
+   opaque pair. **Neither ever writes physical identity into an address or an
+   envelope** (G5).
+
+5. **The direct client.** Implement the remaining five `Client` methods in
+   `mail/direct.go` over the projection, returning exactly the C1 payload shapes.
+   The sender's `from` follows the three-rung ladder: `--from` → the address of a
+   subscription bound to the caller's `(manager, target)` (lowest subscription id
+   when several) → the literal `<projectId>/agent` from the registry, or
+   `unregistered/agent` outside a registered project. Always a resolved absolute
+   address, never a relative handle.
+
+6. **The CLI verbs.** `subscribe.go` (positional address, `--from-now`,
+   `--name`), `send.go` (`--to`, `--message`, `--body`, `--from`), `list.go`
+   (`--address`, `--subscription`; unfiltered returns every unacked delivery for
+   every subscription bound to the caller), `ack.go` (positional mail id;
+   `wonTransition` in the payload, exit 0 on a lost race per D-062-7, non-zero
+   with a remediation hint for an unknown id).
+   `cli_test.go`: the C1 loop end to end against a temp `HOME`, asserting the
+   exact payloads and that stdout is pure JSON.
+
+7. **The harness proves it (G15).** Extend `mail_flow.py` with
+   `subscribe/send/list/ack` DSL helpers returning parsed JSON, and
+   `test_mail_loop.py` with the C1 loop across the two workspaces:
+   **project-a subscribes to its own reply address first** (so `from` resolves by
+   rung 2, as C1 shows), project-b subscribes to the target address, project-a
+   sends, project-b lists and acks, the second list is empty. Use bounded retry on the observable outcome; assert on
+   presence of the mail id, never on counts (G4 permits duplicates).
+
+8. **Verify (phase gate):** `cd auto-mail && go build ./... && go test ./...`;
+   repo-root `make check && make test`; `uv run pytest tests/mail_flow -v`.
+   **Commit** `feat(062): mail event log, projection and the C1 subscribe/send/list/ack loop`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="The in-band nudge reaches a working agent" files="auto-mail/mail/pending.go,auto-mail/mail/binding.go,auto-mail/mail/mail_test.go,auto-mail/internal/config/settings.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/ack.go,auto-cli/cmd/auto/hints.go,auto-cli/cmd/auto/hookscmd.go,auto-cli/cmd/auto/hints_test.go,auto-cli/cmd/auto/hooksmail_test.go,harness/scenarios/mail-flow/fixtures/hooks/post-tool-use.json,harness/src/harness/scenarios/mail_flow.py,harness/tests/mail_flow/test_mail_loop.py" status="todo" depends-on="2">
+          <md><script type="text/plain">
+The riskiest integration, and the reason it is inside the walking skeleton
+rather than deferred: hook → notification, in-band, at stat cost, without
+breaking the agent's turn.
+
+1. **The pending flag.** `mail/pending.go`:
+   `flagPath(home, b Binding)` = `~/.auto/mail/alpha-flags/` + the first 8 hex
+   bytes of `sha256(manager + "\x00" + target)`; `Set`, `Clear`, and
+   `HasPending(home, b) bool` which does **exactly one `os.Stat`** and treats
+   every error — missing dir, permission denied — as "no mail". Add
+   `NudgeText() string`, a **constant**: an instruction to run `auto mail list`
+   and `auto mail ack` when acted on, with **no** interpolation of sender,
+   address, subject or body (G14's content rule, adopted for the in-band channel).
+   Wire `Set` into `send` and `Clear` into `ack` and `list` when the binding's
+   subscriptions have nothing unacked left — the self-healing loop that bounds
+   flag drift (D-062-3).
+   **Verify:** `mail_test.go` — a counting store-opener injected over the package
+   var proves `HasPending` performs **zero** opens on both paths; flag lifecycle
+   across send → list → ack; a false-positive flag causes one `list` and then
+   clears itself.
+
+2. **Split matching from emission (D-062-9).** In `auto-cli/cmd/auto/hints.go`,
+   change `matchAndEmitHint` into `matchHint(...) string` (returns the rendered
+   fragment or `""`, same PostToolUse scoping and same first-match-wins rule) and
+   add `emitAdditionalContext(out io.Writer, event string, fragments ...string)`
+   which writes **exactly one** `hookResponse` object, or nothing when every
+   fragment is empty. Update `hints_test.go` for the split — the behavioural
+   assertions carry over unchanged.
+
+3. **Wire the nudge.** In `auto-cli/cmd/auto/hookscmd.go`, at the existing
+   `matchAndEmitHint` call site: compute `mail.BindingFor(cwd)`, call
+   `mail.HasPending(home, b)`, and pass `mail.NudgeText()` as the **first**
+   fragment to `emitAdditionalContext` alongside `matchHint(...)`. Everything
+   stays inside the never-return-an-error region — any failure is swallowed and
+   the hook still exits 0.
+
+4. **Hook tests.** `auto-cli/cmd/auto/hooksmail_test.go`:
+   nudge emitted only when the flag exists; only on `PostToolUse`; **one**
+   `hookSpecificOutput` object when a hint rule also matches, with mail first;
+   exit 0 and no stdout when `~/.auto/mail` is absent, unreadable or a corrupt
+   file; and — the observable form of G8 — firing hooks on a `HOME` where
+   `auto mail init` never ran leaves `alpha-store.db` **non-existent**.
+
+5. **The harness proves it.** Add
+   `harness/scenarios/mail-flow/fixtures/hooks/post-tool-use.json` (a minimal
+   PostToolUse payload, `cwd` patched per fire, mirroring
+   `event-flow/fixtures/hooks/doc-edit.json`), a `fire_hook(workspace)` helper on
+   `mail_flow.py` that base64-pipes it into `auto hooks fire --agent claude` and
+   returns stdout, and an `assert_nudge(workspace)` with bounded retry. Extend
+   `test_mail_loop.py`: after project-a sends, project-b's hook fire emits
+   `hookSpecificOutput.additionalContext` naming `auto mail list`; after the ack,
+   the next fire emits nothing.
+
+6. **Verify (phase gate):** `cd auto-mail && go test ./...`;
+   `cd auto-cli && go test ./...`; repo-root `make check && make test`;
+   `uv run pytest tests/mail_flow -v` **and** `uv run pytest tests/event_flow -v`
+   (the hints change touches a path `event-flow` exercises — prove it is intact).
+   **Commit** `feat(062): in-band mail nudge on hook fire at stat cost`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="Delivery semantics and the Client conformance suite" files="auto-mail/conformance/conformance.go,auto-mail/conformance/conformance_test.go,auto-mail/internal/store/project.go,auto-mail/internal/store/store_test.go,auto-mail/mail/direct.go,auto-mail/internal/cli/subscribe.go,auto-mail/internal/cli/send.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/ack.go,auto-mail/internal/cli/cli_test.go,harness/src/harness/scenarios/mail_flow.py,harness/tests/mail_flow/test_mail_loop.py" status="todo" depends-on="3">
+          <md><script type="text/plain">
+The call-site-visible contracts, written once against the interface so T3's RPC
+implementation becomes a second `go test` target rather than a redesign
+(D-062-5).
+
+1. **Cursor backfill (D-10).** Make `subscribe` honour `--from-now` (cursor = the
+   current ULID high-water mark) versus the default (cursor = the beginning), and
+   report `backfilled` as the count of unacked mail the new cursor admits.
+   **Verify:** send to an unsubscribed address, subscribe afterwards, `list`
+   returns it and `backfilled` is 1; with `--from-now`, `list` is `[]` and
+   `backfilled` is 0.
+
+2. **Broadcast (D-7).** Two subscriptions on one address each get their own
+   `deliveries` row and their own ack state; acking one leaves the other unacked.
+   **Verify:** `store_test.go` plus a conformance case.
+
+3. **Both counts (G6).** `send` reports `subscriptions` (durable readers) and
+   `bound` (rows with a live binding) as **distinct** numbers, exits 0 with
+   `0/0` for an unknown address, persists the mail, and writes the
+   likely-typo hint to **stderr** only.
+
+4. **The conformance suite.** `auto-mail/conformance/conformance.go` — a
+   `RunSuite(t *testing.T, newClient func(t *testing.T) mail.Client)` following
+   `auto-shared/rpc/conformance/`, covering: explicit ack (`list` twice returns
+   the same mail), `wonTransition` on first ack and on re-ack, idempotent re-ack
+   appending no second event, backfill-on-subscribe both ways,
+   subscriptions-vs-bound, send-to-nothing persisting, and free-form addresses
+   with a separator. `conformance_test.go` runs it against `NewDirect`.
+   **Deliberately absent: any assertion about ordering** (G4).
+
+5. **The harness proves the J2 half.** Extend `test_mail_loop.py` with
+   send-before-subscribe across the two workspaces: project-a sends to an address
+   nobody holds, project-b subscribes afterwards and receives it.
+
+6. **Verify (phase gate):** `cd auto-mail && go test ./...`; repo-root
+   `make check && make test`; `uv run pytest tests/mail_flow -v`.
+   **Commit** `feat(062): cursor backfill, broadcast delivery and the mail.Client conformance suite`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="5" title="Rails made executable: immutability, the ack race, reset, the seam guard, docs" files="auto-mail/internal/store/store_test.go,auto-mail/internal/cli/reset.go,auto-mail/internal/cli/cli_test.go,auto-mail/internal/cli/docs.go,auto-mail/conformance/seam_test.go,auto-mail/CLAUDE.md,Makefile,harness/CLAUDE.md" status="todo" depends-on="4">
+          <md><script type="text/plain">
+Everything the guard rails assert but nothing so far has been forced to prove.
+
+1. **Immutability (G1).** `store_test.go`: snapshot every `events` and `mail` row
+   before a `list` + `ack` cycle and assert byte-identical rows after; assert the
+   `BEFORE UPDATE` / `BEFORE DELETE` triggers abort with the expected message;
+   assert the ack appears as a **new** `alpha.mail.acked` row.
+
+2. **The ack race (G13).** A `-race` test: one delivery, 16 goroutines calling
+   `Ack`, exactly one `wonTransition: true`, exactly one `alpha.mail.acked`
+   event, and every caller seeing `acked: true`. Plus a concurrent-writer test:
+   N processes' worth of goroutines sending to one address lose no events and
+   leave a consistent projection. Add `auto-mail` to `RACE_PROJECTS` in the
+   `Makefile`.
+   **Verify:** `make test-race` green (needs `CGO_ENABLED=1` and a C compiler).
+
+3. **Reset (G10).** `internal/cli/reset.go`: `auto mail reset [--yes]` removes
+   `alpha-store.db` and `alpha-flags/`, reports what it removed, and refuses
+   without `--yes` on a non-empty store with a remediation hint.
+   **Verify:** `cli_test.go` — reset then the C1 loop again from empty.
+
+4. **The seam guard (G11).** `auto-mail/conformance/seam_test.go`: locate the
+   repo root by walking up for `go.work` (skip the test if absent, so a
+   standalone module checkout still passes), then walk every module's Go source,
+   `harness/` and `skills/`, asserting that the **mail store** is named nowhere
+   outside `auto-mail/internal/store` — the `alpha-store.db` filename, an
+   `~/.auto/mail` path opened as a database, or a `sqlite3` invocation against
+   either. **Do not ban `modernc.org/sqlite` repo-wide**: `auto-watch` and
+   `auto-search` import it for their own stores and would fail the guard on day
+   zero. Also assert no package outside `auto-mail` imports
+   `auto-mail/internal/...` (a regression guard over what the compiler already
+   enforces). Failure names the offending file and says "go through
+   mail.Client".
+
+5. **The alpha contract in writing (G10, G4).** `internal/cli/docs.go` and
+   `auto-mail/CLAUDE.md` both state, in as many words: **at-least-once,
+   unordered, consumers must be idempotent on mail id**; and **alpha — no
+   upcasters, no migrations, no compatibility guarantee, the store may be wiped
+   on upgrade, `reset` is supported**. `auto-mail/CLAUDE.md` also records the one
+   deliberate exception to `docs/auto-package-patterns.md` (D-062-8) so the next
+   package author does not read it as licence, and notes that `quickstart` and
+   `doctor` are epic task T4's.
+
+6. **Harness docs.** Add the `mail-flow` scenario to `harness/CLAUDE.md`'s
+   Scenarios section alongside `skill-remote` and `event-flow`, including why it
+   is one container (D-062-1).
+
+7. **Verify (phase gate):** `cd auto-mail && go test ./...`; repo-root
+   `make check`, `make test`, `make test-race`; from `harness/`
+   `uv run pytest -v` (all three scenarios). Run `auto doc fix` if any doc
+   frontmatter drifted. **Commit**
+   `feat(062): mail immutability, ack-race, reset, seam guard and the alpha contract`.
+   Open the PR.
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **P1** → AC-1 (ontology, in full), AC-11 baseline (alpha filename), AC-13
+  baseline (the scenario comes up).
+- **P2** → AC-2 (C1 verbatim), AC-4 (deliveries join), AC-5 (explicit ack),
+  AC-6 (compare-and-set behaviour), AC-8 (virtual, free-form addresses).
+- **P3** → AC-10 (stat-cost nudge, one emission, never breaks the hook).
+- **P4** → AC-4 completed (cursor backfill, broadcast), AC-7 (documented
+  at-least-once, idempotent re-ack), AC-9 (both counts, send-to-nothing).
+- **P5** → AC-3 (immutability), AC-6 completed (the race), AC-11 completed
+  (reset + the written contract), AC-12 (seam guard), AC-13 completed.
+- All thirteen criteria pass. `make check`, `make test` and `make test-race` are
+  green from the repo root, and `uv run pytest -v` is green for all three harness
+  scenarios — the last being the verdict G15 defines.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
