@@ -16,6 +16,10 @@ import (
 	"github.com/mistakenot/auto-search/internal/sessionhtml"
 )
 
+// defaultDepth renders the root's own segments plus its immediate sub-agents
+// as collapsed one-liners — the cheapest useful view.
+const defaultDepth = 1
+
 // Options are the build-time knobs derived from the CLI flags.
 type Options struct {
 	// Depth bounds how many node levels render expanded. 1 (the default)
@@ -116,13 +120,105 @@ func Build(db *sql.DB, sessionID string, opts Options) (*Outline, error) {
 		return nil, fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	root := buildNode(model, sess.ParentSessionID, nil)
-	return &Outline{OutlineNode: root}, nil
+	root := buildNode(model, sess.ParentSessionID, nil, sessionID)
+	outline := &Outline{OutlineNode: root}
+
+	// Resolve --expand against the full tree before --depth prunes it, so a
+	// region can be expanded without first widening the depth to reach it.
+	if opts.Expand != "" {
+		expanded, err := expand(db, root, opts.Expand)
+		if err != nil {
+			return nil, err
+		}
+		outline.Expanded = expanded
+	}
+
+	depth := opts.Depth
+	if depth < 1 {
+		depth = defaultDepth
+	}
+	collapse(root, depth, sessionID)
+
+	return outline, nil
+}
+
+// collapse prunes every node at or beyond maxDepth to a one-liner carrying the
+// command that renders it, mirroring how `session get` prints the command that
+// recovers a truncated body.
+func collapse(n *OutlineNode, maxDepth int, rootID string) {
+	if n.Depth >= maxDepth {
+		n.Collapsed = true
+		n.Segments = nil
+		n.Children = nil
+		n.Expand = fmt.Sprintf("auto search session outline %s --depth %d", rootID, n.Depth+1)
+		return
+	}
+	for _, c := range n.Children {
+		collapse(c, maxDepth, rootID)
+	}
+}
+
+// expand resolves an --expand argument to full-fidelity Messages. It accepts
+// either a Segment id (<session_id>#s<n>, expanding every Message in that
+// segment) or a single Message id.
+func expand(db *sql.DB, root *OutlineNode, id string) (*Expansion, error) {
+	if seg := findSegment(root, id); seg != nil {
+		msgs, err := loadMessages(db, seg.MessageIDs)
+		if err != nil {
+			return nil, err
+		}
+		return &Expansion{ID: id, Kind: "segment", Messages: msgs}, nil
+	}
+
+	// Not a segment in this outline — try it as a Message id.
+	msgs, err := loadMessages(db, []string{id})
+	if err != nil {
+		return nil, fmt.Errorf("unknown --expand id %q: not a segment in this outline and not an indexed message; "+
+			"run: auto search session outline %s to list segment ids", id, root.SessionID)
+	}
+	return &Expansion{ID: id, Kind: "message", Messages: msgs}, nil
+}
+
+// findSegment locates a segment by id anywhere in the tree.
+func findSegment(n *OutlineNode, id string) *Segment {
+	for i := range n.Segments {
+		if n.Segments[i].ID == id {
+			return &n.Segments[i]
+		}
+	}
+	for _, c := range n.Children {
+		if seg := findSegment(c, id); seg != nil {
+			return seg
+		}
+	}
+	return nil
+}
+
+// loadMessages hydrates Message ids through the canonical full-fidelity
+// reader, so an expanded body is byte-identical to `message get <id>`.
+func loadMessages(db *sql.DB, ids []string) ([]ExpandedMessage, error) {
+	msgs := make([]ExpandedMessage, 0, len(ids))
+	for _, id := range ids {
+		m, err := indexdb.GetMessageByID(db, id)
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, ExpandedMessage{
+			ID:           m.MessageID,
+			MessageIndex: m.MessageIndex,
+			Role:         m.Role,
+			Tool:         m.ToolName,
+			Content:      m.Content,
+		})
+	}
+	return msgs, nil
 }
 
 // buildNode maps one sessionhtml.Node (and, recursively, the sub-agents nested
-// in its Agent events) onto an OutlineNode.
-func buildNode(n *sessionhtml.Node, parentID string, dispatchedAt *int) *OutlineNode {
+// in its Agent events) onto an OutlineNode. rootID is the session the command
+// was invoked with; every breadcrumb resolves against it, so a caller can
+// always paste one back verbatim.
+func buildNode(n *sessionhtml.Node, parentID string, dispatchedAt *int, rootID string) *OutlineNode {
 	out := &OutlineNode{
 		SessionID:         n.ID,
 		ParentSessionID:   parentID,
@@ -139,6 +235,9 @@ func buildNode(n *sessionhtml.Node, parentID string, dispatchedAt *int) *Outline
 	}
 
 	out.Segments = segment(n.ID, n.Events)
+	for i := range out.Segments {
+		out.Segments[i].Expand = fmt.Sprintf("auto search session outline %s --expand %s", rootID, out.Segments[i].ID)
+	}
 
 	for i := range n.Events {
 		ev := &n.Events[i]
@@ -146,7 +245,7 @@ func buildNode(n *sessionhtml.Node, parentID string, dispatchedAt *int) *Outline
 			continue
 		}
 		idx := ev.Idx
-		out.Children = append(out.Children, buildNode(ev.Child, n.ID, &idx))
+		out.Children = append(out.Children, buildNode(ev.Child, n.ID, &idx, rootID))
 	}
 	return out
 }
