@@ -18,7 +18,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="062: auto-mail-walking-skeleton" status="executing" pr="pending" generated="2026-08-25" next-prompt="/commit-task 062">
+  <pd-doc title="062: auto-mail-walking-skeleton" status="complete" pr="pending" generated="2026-08-25" next-prompt="/commit-task 062">
 
     <pd-tab name="Requirements">
 
@@ -66,11 +66,11 @@ Verification tab).
 
       <pd-section id="target-transcript" title="The transcript this task must make real (C1)">
         <pd-cli id="C1" title="zsh — two agents trading a message" caption="Subscribe, send, list, ack — the whole T1 surface. Copied from epic 005; T1 must reproduce these payload shapes.">
-          <pd-cmd note="receiver binds a virtual channel" status="todo">auto mail subscribe auto-web/bugs</pd-cmd>
+          <pd-cmd note="receiver binds a virtual channel" status="done">auto mail subscribe auto-web/bugs</pd-cmd>
           <pd-out><script type="text/plain">{ "address": "auto-web/bugs", "subscription": "sub_01K9X2M4", "backfilled": 0 }</script></pd-out>
-          <pd-cmd note="sender is in a different project, same host" status="todo"><script type="text/plain">auto mail send --to auto-web/bugs --message "normalizeRemote drops the port on ssh:// URLs"</script></pd-cmd>
+          <pd-cmd note="sender is in a different project, same host" status="done"><script type="text/plain">auto mail send --to auto-web/bugs --message "normalizeRemote drops the port on ssh:// URLs"</script></pd-cmd>
           <pd-out><script type="text/plain">{ "id": "01K9X2QF7M3B0V8N", "to": "auto-web/bugs", "subscriptions": 1, "bound": 1 }</script></pd-out>
-          <pd-cmd note="receiver is nudged mid-turn, then lists" status="todo">auto mail list</pd-cmd>
+          <pd-cmd note="receiver is nudged mid-turn, then lists" status="done">auto mail list</pd-cmd>
           <pd-out><script type="text/plain">[
   {
     "id": "01K9X2QF7M3B0V8N",
@@ -79,9 +79,9 @@ Verification tab).
     "body": { "message": "normalizeRemote drops the port on ssh:// URLs" }
   }
 ]</script></pd-out>
-          <pd-cmd note="explicit ack — separate call, always" status="todo">auto mail ack 01K9X2QF7M3B0V8N</pd-cmd>
+          <pd-cmd note="explicit ack — separate call, always" status="done">auto mail ack 01K9X2QF7M3B0V8N</pd-cmd>
           <pd-out><script type="text/plain">{ "id": "01K9X2QF7M3B0V8N", "acked": true, "wonTransition": true }</script></pd-out>
-          <pd-cmd note="acked mail is gone from the default view" status="todo">auto mail list</pd-cmd>
+          <pd-cmd note="acked mail is gone from the default view" status="done">auto mail list</pd-cmd>
           <pd-out>[]</pd-out>
         </pd-cli>
       </pd-section>
@@ -1128,20 +1128,20 @@ Notes that are load-bearing rather than descriptive:
 
       <pd-section id="end-state-cli" title="The command surface at the end of this task">
         <pd-cli title="zsh — the full auto mail surface after T1" caption="C1 plus the baseline commands T1 owns. quickstart and doctor are T4's (D-062-4).">
-          <pd-cmd note="creates ~/.auto/mail/ and the alpha store" status="todo">auto mail init</pd-cmd>
+          <pd-cmd note="creates ~/.auto/mail/ and the alpha store" status="done">auto mail init</pd-cmd>
           <pd-out><script type="text/plain">{ "store": "/home/u/.auto/mail/alpha-store.db", "created": true, "alpha": true }</script></pd-out>
-          <pd-cmd note="the full command reference, including the alpha contract" status="todo">auto mail docs</pd-cmd>
-          <pd-cmd note="opt to start from now instead of the backlog (D-10)" status="todo">auto mail subscribe auto-web/bugs --from-now</pd-cmd>
+          <pd-cmd note="the full command reference, including the alpha contract" status="done">auto mail docs</pd-cmd>
+          <pd-cmd note="opt to start from now instead of the backlog (D-10)" status="done">auto mail subscribe auto-web/bugs --from-now</pd-cmd>
           <pd-out><script type="text/plain">{ "address": "auto-web/bugs", "subscription": "sub_01K9X2M4", "backfilled": 0 }</script></pd-out>
-          <pd-cmd note="nobody has subscribed — still exits 0, still persists (G6)" status="todo"><script type="text/plain">auto mail send --to auto-web/typo --message "hello?"</script></pd-cmd>
+          <pd-cmd note="nobody has subscribed — still exits 0, still persists (G6)" status="done"><script type="text/plain">auto mail send --to auto-web/typo --message "hello?"</script></pd-cmd>
           <pd-out><script type="text/plain">{ "id": "01K9X2R0000000000", "to": "auto-web/typo", "subscriptions": 0, "bound": 0 }
 # stderr: no subscription exists for "auto-web/typo" — mail is persisted and a later
 # subscriber will receive it, but check the address for a typo.</script></pd-out>
-          <pd-cmd note="scope to one subscription; no filters returns everything bound to you" status="todo">auto mail list --address auto-web/bugs</pd-cmd>
-          <pd-cmd note="a second acker is told it lost, and still exits 0 (D-062-7)" status="todo">auto mail ack 01K9X2QF7M3B0V8N</pd-cmd>
+          <pd-cmd note="scope to one subscription; no filters returns everything bound to you" status="done">auto mail list --address auto-web/bugs</pd-cmd>
+          <pd-cmd note="a second acker is told it lost, and still exits 0 (D-062-7)" status="done">auto mail ack 01K9X2QF7M3B0V8N</pd-cmd>
           <pd-out><script type="text/plain">{ "id": "01K9X2QF7M3B0V8N", "acked": true, "wonTransition": false }
 # stderr: already acked at 2026-08-25T10:15:40Z by sub_01K9X2M4</script></pd-out>
-          <pd-cmd note="alpha means reset is supported, not a workaround (G10)" status="todo">auto mail reset --yes</pd-cmd>
+          <pd-cmd note="alpha means reset is supported, not a workaround (G10)" status="done">auto mail reset --yes</pd-cmd>
           <pd-out><script type="text/plain">{ "removed": ["/home/u/.auto/mail/alpha-store.db", "/home/u/.auto/mail/alpha-flags"] }</script></pd-out>
         </pd-cli>
       </pd-section>
@@ -1588,7 +1588,7 @@ implementation becomes a second `go test` target rather than a redesign
           </script></md>
         </pd-phase>
 
-        <pd-phase n="5" title="Rails made executable: immutability, the ack race, reset, the seam guard, docs" files="auto-mail/internal/store/store_test.go,auto-mail/internal/cli/reset.go,auto-mail/internal/cli/cli_test.go,auto-mail/internal/cli/docs.go,auto-mail/conformance/seam_test.go,auto-mail/CLAUDE.md,Makefile,harness/CLAUDE.md" status="todo" depends-on="4">
+        <pd-phase n="5" title="Rails made executable: immutability, the ack race, reset, the seam guard, docs" files="auto-mail/internal/store/store_test.go,auto-mail/internal/cli/reset.go,auto-mail/internal/cli/cli_test.go,auto-mail/internal/cli/docs.go,auto-mail/conformance/seam_test.go,auto-mail/CLAUDE.md,Makefile,harness/CLAUDE.md" status="done" depends-on="4">
           <md><script type="text/plain">
 Everything the guard rails assert but nothing so far has been forced to prove.
 
