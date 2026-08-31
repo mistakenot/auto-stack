@@ -42,9 +42,15 @@ func Open(path string) (*Store, error) {
 	// so pinning the pool to a single connection is what makes them (and the
 	// BEGIN IMMEDIATE discipline) deterministic.
 	db.SetMaxOpenConns(1)
+	// busy_timeout is set **first**, and the order is load-bearing. Switching a
+	// database into WAL takes a brief exclusive lock, so two processes opening
+	// one store at the same moment race for it — and with no timeout in force
+	// yet, the loser gets SQLITE_BUSY immediately instead of waiting. D-11 makes
+	// simultaneous opens the ordinary case, so the connection has to be willing
+	// to wait before it asks for anything contended.
 	for _, stmt := range []string{
-		"PRAGMA journal_mode = WAL;",
 		"PRAGMA busy_timeout = 5000;",
+		"PRAGMA journal_mode = WAL;",
 		"PRAGMA foreign_keys = ON;",
 	} {
 		if _, err := db.Exec(stmt); err != nil {
