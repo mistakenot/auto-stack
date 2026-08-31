@@ -451,7 +451,10 @@ Assumptions this task proceeds on. Each is safe to revisit without redoing work:
   is asserted under `-race` rather than assumed.
 - [ ] **Mail ids are ULIDs, sender-generated**, per the epic's ER diagram and the
   cross-host merge argument in the backlog (§3). Subscription ids follow the
-  `sub_<ULID-prefix>` shape C1 shows.
+  `sub_<ULID-prefix>` shape C1 shows. They are identifiers, **not an ordering
+  the store relies on**: cursors and every "after this point" comparison use the
+  log's own append sequence, because ULID monotonicity is process-local and
+  every `auto mail` verb is a separate process (D-11).
 - [ ] **The body is a JSON object**, and `--message <text>` is sugar for
   `{"message": "<text>"}` — matching C1's `body: { "message": … }`. A future
   `kind` vocabulary and the open `attributes` map are additive fields on the
@@ -661,6 +664,13 @@ one-to-one so a rail cannot be quietly dropped.
   and `backfilled: 0`
 - **And** two subscriptions on one address each get their **own** delivery row
   and their own ack state — acking one leaves the other unacked (broadcast, D-7)
+- **And** `send` writes **no** `deliveries` rows: they are materialised on the
+  read path, against the cursor, and nowhere else. Eager materialisation is the
+  thing D-10 rules out — it is what makes a late subscriber unable to receive
+  earlier mail, and a second write path to rows the reader already owns
+- **And** "from now" is a position in the log — the store's own high-water mark
+  taken under the same write lock — never a comparison of two ids minted by
+  different processes (D-11)
           </script></md>
         </pd-ac>
 
@@ -1053,6 +1063,7 @@ erDiagram
   }
   MAIL {
     ulid id
+    int seq
     string to_address
     json envelope
     json body
@@ -1060,9 +1071,10 @@ erDiagram
   }
   SUBSCRIPTION {
     string id
+    int seq
     string address
     string name
-    string from_cursor
+    int from_cursor
     time created_at
   }
   DELIVERY {
@@ -1110,7 +1122,7 @@ Notes that are load-bearing rather than descriptive:
       <pd-section id="end-state-api" title="The client seam">
         <pd-api kind="interface" name="mail.Client" lang="go" path="auto-mail/mail/client.go" caption="The only API. CLI, hook, daemon and every future auto-* tool go through it.">
           <pd-member kind="method" sig="Subscribe(ctx context.Context, in SubscribeInput) (SubscribeResult, error)">Creates or returns the subscription for an address, records the caller's binding, and reports how many unacked mail items the cursor backfilled.</pd-member>
-          <pd-member kind="method" sig="Send(ctx context.Context, in SendInput) (SendResult, error)">Appends alpha.mail.sent, inserts the immutable mail row and a delivery row per bound subscription, sets each pending flag. Reports subscriptions and bound as separate counts (G6).</pd-member>
+          <pd-member kind="method" sig="Send(ctx context.Context, in SendInput) (SendResult, error)">Appends alpha.mail.sent and inserts the immutable mail row — and no delivery rows, which are the read path's alone (D-10). Sets the pending flag of every binding whose cursor admits the mail, and reports subscriptions and bound as separate counts (G6).</pd-member>
           <pd-member kind="method" sig="List(ctx context.Context, in ListInput) ([]Delivery, error)">Materialises delivery rows lazily from each subscription's cursor (D-10), stamps first read, and returns unacked mail. Never retires anything (G3).</pd-member>
           <pd-member kind="method" sig="Ack(ctx context.Context, in AckInput) (AckResult, error)">Compare-and-set on acked_at inside the append-and-project transaction; reports whether this call won the transition (G13).</pd-member>
           <pd-member kind="method" sig="Reset(ctx context.Context) (ResetResult, error)">Removes the store and the flag directory. A supported operation, because alpha (G10).</pd-member>
@@ -1179,7 +1191,7 @@ Notes that are load-bearing rather than descriptive:
           <pd-file path="auto-mail/internal/store/events.go" change="add">The alpha.mail.* event types, the versioned envelope, and the append path (the only writer of `events`).</pd-file>
           <pd-file path="auto-mail/internal/store/project.go" change="add">Same-transaction projection: mail insert, lazy delivery materialisation from the cursor, read stamp, ack compare-and-set, binding upsert.</pd-file>
           <pd-file path="auto-mail/internal/store/store_test.go" change="add">Immutability (triggers abort UPDATE/DELETE), cursor backfill, broadcast fan-out, and the concurrent-writer test run under -race.</pd-file>
-          <pd-file path="auto-mail/internal/ulid/ulid.go" change="add">Sender-generated, monotonic, lexicographically sortable ids — the cross-host merge property the backlog names.</pd-file>
+          <pd-file path="auto-mail/internal/ulid/ulid.go" change="add">Sender-generated ids, monotonic and sortable within one process — the cross-host merge property the backlog names. Not the store's ordering: cursors use the log's `seq`.</pd-file>
 
           <pd-file path="auto-mail/conformance/conformance.go" change="add">The Client contract suite, written against the interface: explicit ack, wonTransition, backfill-on-subscribe, subscriptions-vs-bound, idempotent re-ack.</pd-file>
           <pd-file path="auto-mail/conformance/conformance_test.go" change="add">Runs the suite against the direct-store implementation; T3 adds the RPC one as a second target.</pd-file>
@@ -1419,11 +1431,15 @@ it.
 The epic's third thing: one message through the client seam, the event log and
 the projection, acked. C1 runs verbatim by the end of this phase.
 
-1. **Ids.** `internal/ulid/ulid.go`: monotonic, lexicographically sortable ULIDs,
-   sender-generated (the cross-host merge property `docs/auto-mail-beyond-mvp.md`
-   §3 depends on). Subscription ids are `sub_` + the ULID's leading 8 chars.
+1. **Ids.** `internal/ulid/ulid.go`: sender-generated ULIDs, monotonic and
+   lexicographically sortable **within one process** (the cross-host merge
+   property `docs/auto-mail-beyond-mvp.md` §3 depends on). Subscription ids are
+   `sub_` + the ULID's leading 8 chars.
    **Verify:** a test asserting monotonicity across 10k ids in one process and
-   sort order matching generation order.
+   sort order matching generation order — and scoped to say so, because that
+   ordering does not survive a process boundary and nothing in the store may
+   rest on it. Ordering the store depends on comes from the log's own `seq`
+   (see the cursor, below).
 
 2. **Events.** `internal/store/events.go`: the four `alpha.*` types —
    `alpha.mail.subscribed`, `alpha.mail.sent`, `alpha.mail.read`,
@@ -1436,8 +1452,11 @@ the projection, acked. C1 runs verbatim by the end of this phase.
    `BEGIN IMMEDIATE` transaction per operation:
    - `subscribe` → append `alpha.mail.subscribed`; upsert the subscription
      (address + `from_cursor`) and its binding row.
-   - `send` → append `alpha.mail.sent`; insert the immutable `mail` row; insert a
-     `deliveries` row per subscription on the address whose cursor admits it.
+   - `send` → append `alpha.mail.sent`; insert the immutable `mail` row,
+     carrying the `seq` of that event as the store's own ordering of mail. It
+     writes **no** `deliveries` rows: materialisation is the read path's, and
+     only the read path's (D-10). Send additionally *reads* the two counts it
+     reports and the bindings whose pending flag the mail should raise.
    - `list` → materialise any missing `deliveries` rows from each subscription's
      `from_cursor` (D-10, lazily on read); stamp `read_at` and append
      `alpha.mail.read` **only** `WHERE read_at IS NULL`, so repeated lists append
@@ -1553,9 +1572,18 @@ The call-site-visible contracts, written once against the interface so T3's RPC
 implementation becomes a second `go test` target rather than a redesign
 (D-062-5).
 
-1. **Cursor backfill (D-10).** Make `subscribe` honour `--from-now` (cursor = the
-   current ULID high-water mark) versus the default (cursor = the beginning), and
-   report `backfilled` as the count of unacked mail the new cursor admits.
+1. **Cursor backfill (D-10).** Make `subscribe` honour `--from-now` (cursor =
+   the store's own high-water mark, `MAX(mail.seq)` read inside the same
+   `BEGIN IMMEDIATE` transaction that stores it) versus the default (cursor = 0,
+   the beginning of the log), and report `backfilled` as the count of unacked
+   mail the new cursor admits.
+
+   The cursor is a log position, **never a minted id**. A `--from-now` cursor of
+   `ulid.NewAt(now)` compared with `mail.id > from_cursor` is a claim about ULID
+   ordering *between processes*, and D-11 makes every verb its own process: two
+   ids drawn in the same millisecond share a timestamp prefix and draw
+   independent tails, so a mail could sort below the cursor and be admitted by
+   nothing, ever. The write lock is what makes a high-water mark true instead.
    **Verify:** send to an unsubscribed address, subscribe afterwards, `list`
    returns it and `backfilled` is 1; with `--from-now`, `list` is `[]` and
    `backfilled` is 0.

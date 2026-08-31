@@ -10,11 +10,17 @@ import (
 	"github.com/mistakenot/auto-mail/internal/ulid"
 )
 
-// TestMonotonicAndSortable is the property the subscription cursor rests on:
-// a plain string comparison (`m.id > from_cursor`) is only a correct
-// "everything after this point" test if byte order matches generation order.
-// 10k ids in one process is enough to land many of them in the same
-// millisecond, which is exactly the case the monotonic step exists for.
+// TestMonotonicAndSortable is the in-process ordering guarantee, and it is
+// scoped to exactly that: byte order matches generation order for ids minted
+// by *this* process, because the monotonic step reads package-level state.
+// 10k ids is enough to land many of them in the same millisecond, which is the
+// case that step exists for.
+//
+// The subscription cursor deliberately does **not** rest on this. It once did —
+// a `--from-now` cursor was a minted id compared with `m.id > from_cursor` —
+// and that was a cross-process claim this test cannot make: another process
+// shares only the timestamp prefix and draws its own tail. Admission is decided
+// by the store's append sequence instead; see internal/store.
 func TestMonotonicAndSortable(t *testing.T) {
 	const n = 10_000
 	ids := make([]string, n)
@@ -70,8 +76,9 @@ func TestTimestampOrdersAcrossMilliseconds(t *testing.T) {
 }
 
 // TestSubscriptionIDShape: `sub_` plus the ULID's leading 8 characters, which
-// is the shape C1 shows and the timestamp prefix the "lowest subscription id"
-// tie-break in the from-address ladder depends on.
+// is the shape C1 shows. The ordering it checks is within one process only —
+// the from-address ladder's "first subscription this agent created" is settled
+// by the subscribed event's seq in the store, not by comparing these ids.
 func TestSubscriptionIDShape(t *testing.T) {
 	first := ulid.SubscriptionID()
 	second := ulid.SubscriptionID()

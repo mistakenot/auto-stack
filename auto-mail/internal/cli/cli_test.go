@@ -14,6 +14,7 @@ import (
 
 	"github.com/mistakenot/auto-mail/internal/app"
 	"github.com/mistakenot/auto-mail/internal/cli"
+	"github.com/mistakenot/auto-mail/internal/store"
 	"github.com/spf13/pflag"
 )
 
@@ -796,5 +797,66 @@ func TestDocsStatesTheDeliveryContract(t *testing.T) {
 	// Exactly-once and ordering may only ever be mentioned to disclaim them.
 	if strings.Contains(lower, "exactly-once") && !strings.Contains(lower, "promises exactly-once") {
 		t.Error("docs mention exactly-once outside the disclaimer; the contract is at-least-once")
+	}
+}
+
+// TestResetRecoversAStoreWrittenByAnotherSchema is the escape hatch G10's
+// "no upcasters, no migrations" position needs to be honest.
+//
+// The alpha store is disposable, and a build that meets a store written by a
+// different schema says so and names `auto mail reset --yes`. That remediation
+// has to work on a store this build cannot open — otherwise the advice is a
+// dead end and the only way out is `rm` by hand. So every other verb refuses
+// with the mismatch named, and `reset --yes` wipes the file without opening it.
+func TestResetRecoversAStoreWrittenByAnotherSchema(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	if _, stderr, code := runCLI(t, "init"); code != 0 {
+		t.Fatalf("init exit %d, stderr: %s", code, stderr)
+	}
+	storePath := filepath.Join(home, ".auto", "mail", "alpha-store.db")
+	// Written through the one package allowed to open the mail store (G11), so
+	// this test observes the CLI's behaviour without reaching around the seam.
+	if err := store.RecordSchemaVersion(storePath, 99); err != nil {
+		t.Fatalf("stamp a foreign schema version: %v", err)
+	}
+
+	// Ordinary verbs refuse, and say what to do about it.
+	_, stderr, code := runCLI(t, "list")
+	if code == 0 {
+		t.Error("list against a foreign schema exited 0; it cannot read that store")
+	}
+	if !strings.Contains(stderr, "different schema") {
+		t.Errorf("list stderr = %q, want it to name the schema mismatch", stderr)
+	}
+
+	// So does reset without --yes: emptiness cannot be read from a store
+	// nobody can read, so the wipe is never implicit.
+	_, stderr, code = runCLI(t, "reset")
+	if code == 0 {
+		t.Error("reset without --yes wiped a store it could not read")
+	}
+	if !strings.Contains(stderr, "--yes") {
+		t.Errorf("reset stderr = %q, want it to name `auto mail reset --yes`", stderr)
+	}
+	if _, err := os.Stat(storePath); err != nil {
+		t.Errorf("the refused reset removed the store anyway: %v", err)
+	}
+
+	stdout, stderr, code := runCLI(t, "reset", "--yes")
+	if code != 0 {
+		t.Fatalf("reset --yes exit %d, stderr: %s", code, stderr)
+	}
+	if removed := decode[resetPayload](t, stdout).Removed; !slices.Contains(removed, storePath) {
+		t.Errorf("reset --yes removed %v, want it to include %s", removed, storePath)
+	}
+	if _, err := os.Stat(storePath); !os.IsNotExist(err) {
+		t.Errorf("the store is still on disk after reset --yes: %v", err)
+	}
+
+	// And the tool works again from there — "start again" is the migration path.
+	if _, stderr, code := runCLI(t, "subscribe", "auto-web/bugs"); code != 0 {
+		t.Fatalf("subscribe after the reset exit %d, stderr: %s", code, stderr)
 	}
 }

@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mistakenot/auto-mail/internal/store"
 )
@@ -131,10 +134,11 @@ func TestEventLogIsAppendOnly(t *testing.T) {
 	ctx := context.Background()
 
 	if err := st.WithTx(ctx, func(tx *sql.Tx) error {
-		return store.Append(ctx, tx, store.Event{
+		_, appendErr := store.Append(ctx, tx, store.Event{
 			Type:    store.TypeSent,
 			Payload: map[string]any{"mail": "01TEST"},
 		})
+		return appendErr
 	}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -174,7 +178,8 @@ func TestAppendRejectsAnEventOutsideTheAlphaNamespace(t *testing.T) {
 	ctx := context.Background()
 
 	err := st.WithTx(ctx, func(tx *sql.Tx) error {
-		return store.Append(ctx, tx, store.Event{Type: "mail.sent"})
+		_, appendErr := store.Append(ctx, tx, store.Event{Type: "mail.sent"})
+		return appendErr
 	})
 	if err == nil {
 		t.Fatal("appending `mail.sent` succeeded; only alpha.mail.* is appendable")
@@ -583,14 +588,22 @@ func TestSubscriptionsAndBoundDiverge(t *testing.T) {
 
 	// Delivery does not depend on the binding: the subscription is a durable
 	// reader, so the mail is waiting for whoever rebinds to it.
-	var delivered int
-	if err := st.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM deliveries WHERE subscription_id = ? AND mail_id = ?`,
-		sub.SubscriptionID, sent.ID).Scan(&delivered); err != nil {
-		t.Fatalf("count deliveries: %v", err)
+	//
+	// "Waiting" is a claim about the cursor, not about a row. This assertion
+	// used to demand a delivery row here, which was asserting the bug D-10
+	// forbids — `send` had materialised one eagerly. What has to be true is
+	// that the subscription's cursor admits the mail and the read path
+	// projects it, which is what reading by subscription id shows.
+	if rows := countRows(t, st, `SELECT COUNT(*) FROM deliveries`); rows != 0 {
+		t.Errorf("send materialised %d delivery rows; D-10 puts every one of them on the read path", rows)
 	}
-	if delivered != 1 {
-		t.Errorf("an unbound subscription received %d deliveries, want 1 — it is still a durable reader", delivered)
+	waiting, err := st.List(ctx, store.ListParams{SubscriptionID: sub.SubscriptionID})
+	if err != nil {
+		t.Fatalf("list the unbound subscription: %v", err)
+	}
+	if len(waiting) != 1 || waiting[0].ID != sent.ID {
+		t.Errorf("an unbound subscription holds %+v, want %s — it is still a durable reader",
+			waiting, sent.ID)
 	}
 
 	rebound, err := st.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/bugs", Caller: caller("/workspace/b2")})
@@ -607,6 +620,18 @@ func TestSubscriptionsAndBoundDiverge(t *testing.T) {
 	if after.Subscriptions != 2 || after.Bound != 1 {
 		t.Errorf("send reported subscriptions=%d bound=%d, want 2 and 1", after.Subscriptions, after.Bound)
 	}
+}
+
+// countRows answers a one-number question about the store's own tables. It is
+// how a test asserts that something was *not* written — the absence of a
+// projection has no seam-level observation, so it has to be read directly.
+func countRows(t *testing.T, st *store.Store, query string, args ...any) int {
+	t.Helper()
+	var count int
+	if err := st.QueryRowContext(context.Background(), query, args...).Scan(&count); err != nil {
+		t.Fatalf("count rows (%s): %v", query, err)
+	}
+	return count
 }
 
 func countEvents(t *testing.T, st *store.Store, typ string) int {
@@ -905,4 +930,307 @@ func TestConcurrentWritersLoseNoMail(t *testing.T) {
 	if deliveries != writers {
 		t.Errorf("unacked deliveries = %d, want %d", deliveries, writers)
 	}
+}
+
+// TestSendMaterialisesNoDeliveries is D-10's writer half, and the regression
+// rail for a `send` that used to insert a delivery row per subscription.
+//
+// The eager insert was a second path to rows the read path already owned, and
+// two paths to one projection can disagree; it also made a send pay
+// O(subscriptions) for readers that may never read, and put half the reader
+// projection inside the writer. The decision that settles it is the same one
+// that makes a late subscriber able to receive earlier mail (J2): if delivery
+// is decided at send, a subscription created afterwards has already missed it.
+func TestSendMaterialisesNoDeliveries(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	if _, err := st.Subscribe(ctx, store.SubscribeParams{
+		Address: "auto-web/bugs", Caller: caller("/workspace/reader"),
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	sent, err := st.Send(ctx, store.SendParams{To: "auto-web/bugs", From: "auto-stack/reviewer"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	if rows := countRows(t, st, `SELECT COUNT(*) FROM deliveries`); rows != 0 {
+		t.Errorf("send wrote %d delivery rows; D-10 puts every one of them on the read path", rows)
+	}
+	// The mail is nonetheless waiting: the cursor admits it, which is what the
+	// sender's own pending count reports and what the next read projects.
+	pending, err := st.PendingCount(ctx, caller("/workspace/reader"))
+	if err != nil {
+		t.Fatalf("pending count: %v", err)
+	}
+	if pending != 1 {
+		t.Errorf("pending = %d before any read, want 1 — a mail with no delivery row yet is "+
+			"still waiting, and a flag cleared on that answer would drop a real nudge", pending)
+	}
+
+	listed, err := st.List(ctx, store.ListParams{Caller: caller("/workspace/reader")})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != sent.ID {
+		t.Fatalf("list returned %+v, want %s", listed, sent.ID)
+	}
+	if rows := countRows(t, st, `SELECT COUNT(*) FROM deliveries`); rows != 1 {
+		t.Errorf("deliveries = %d after the read, want 1 — the read path is what materialises them", rows)
+	}
+}
+
+// TestFromAddressLadderFollowsTheLogNotTheID covers the same class of defect as
+// the cursor, on rung 2 of the sender's from-address ladder.
+//
+// The rung answers "the first subscription this agent created", and it used to
+// answer it with `ORDER BY s.id`. A subscription id is `sub_` plus a ULID
+// prefix — timestamp bits, then entropy — so between two processes that is not
+// a creation order at all. The row inserted by hand here is that case made
+// concrete: a subscription the store recorded *second* whose id sorts *first*,
+// which is what another process minting in the same window produces.
+func TestFromAddressLadderFollowsTheLogNotTheID(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+	c := caller("/workspace/sender")
+
+	if _, err := st.Subscribe(ctx, store.SubscribeParams{Address: "auto-web/first", Caller: c}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	// Recorded after it — a strictly greater seq — but carrying an id that
+	// sorts below every id this store can mint.
+	if err := st.WithTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO subscriptions (id, seq, address, name, from_cursor, created_at)
+			VALUES ('sub_00000000', (SELECT MAX(seq) + 1 FROM subscriptions), 'auto-web/later', NULL, 0,
+			        (SELECT created_at FROM subscriptions ORDER BY seq LIMIT 1))`); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO bindings (subscription_id, manager, target, session, last_seen)
+			VALUES ('sub_00000000', ?, ?, NULL, (SELECT last_seen FROM bindings LIMIT 1))`,
+			c.Manager, c.Target)
+		return err
+	}); err != nil {
+		t.Fatalf("insert the later subscription: %v", err)
+	}
+
+	address, ok, err := st.AddressForBinding(ctx, c)
+	if err != nil {
+		t.Fatalf("resolve from-address: %v", err)
+	}
+	if !ok || address != "auto-web/first" {
+		t.Errorf("the from-address ladder resolved %q (found=%v), want auto-web/first — "+
+			"\"first created\" is the log's order, not a comparison of two minted ids", address, ok)
+	}
+}
+
+// ── the cross-process cursor ────────────────────────────────────────────────
+
+// Environment variables the child process below is driven by. They exist
+// because the defect these tests cover cannot be reproduced inside one process:
+// the ULID generator is monotonic through package-level state, so two ids minted
+// in one process always sort in generation order. It is exactly that guarantee
+// which does *not* cross a process boundary, and D-11 makes every `auto mail`
+// verb its own process against one SQLite file.
+const (
+	childStoreEnv   = "AUTO_MAIL_TEST_CHILD_STORE"
+	childAddressEnv = "AUTO_MAIL_TEST_CHILD_ADDRESS"
+	childSendAtEnv  = "AUTO_MAIL_TEST_CHILD_SEND_AT"
+)
+
+// TestChildSend is not a test. It is the body of the child process the
+// cross-process cases spawn — this binary re-executed with -test.run — and it
+// skips itself whenever it is reached as an ordinary test.
+//
+// It matters that this is a real second process rather than a goroutine: the
+// whole point is that the child's ULID entropy is drawn independently of the
+// parent's, which is the condition a same-process test can never create.
+func TestChildSend(t *testing.T) {
+	path := os.Getenv(childStoreEnv)
+	if path == "" {
+		t.Skip("this is the child-process body of the cross-process cursor cases")
+	}
+	at, err := time.Parse(time.RFC3339Nano, os.Getenv(childSendAtEnv))
+	if err != nil {
+		t.Fatalf("child: parse %s: %v", childSendAtEnv, err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("child: open %s: %v", path, err)
+	}
+	defer func() { _ = st.Close() }()
+
+	out, err := st.Send(context.Background(), store.SendParams{
+		To:   os.Getenv(childAddressEnv),
+		From: "auto-stack/child",
+		Body: map[string]any{"message": "sent by another process"},
+		Now:  at,
+	})
+	if err != nil {
+		t.Fatalf("child: send: %v", err)
+	}
+	fmt.Printf("MAIL_ID=%s\n", out.ID)
+}
+
+// sendFromAnotherProcess re-executes this test binary as a child, has it post
+// one mail to the same store file at the given instant, and returns the id it
+// minted. It returns an error rather than failing the test, because leg 2 calls
+// it from goroutines, where t.Fatalf is not usable.
+func sendFromAnotherProcess(storePath, address string, at time.Time) (string, error) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestChildSend$", "-test.v")
+	cmd.Env = append(os.Environ(),
+		childStoreEnv+"="+storePath,
+		childAddressEnv+"="+address,
+		childSendAtEnv+"="+at.Format(time.RFC3339Nano),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("child send: %w\n%s", err, out)
+	}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if id, ok := strings.CutPrefix(strings.TrimSpace(line), "MAIL_ID="); ok {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("child send printed no mail id:\n%s", out)
+}
+
+// mustSendFromAnotherProcess is sendFromAnotherProcess on the test goroutine.
+func mustSendFromAnotherProcess(t *testing.T, storePath, address string, at time.Time) string {
+	t.Helper()
+	id, err := sendFromAnotherProcess(storePath, address, at)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	return id
+}
+
+// TestFromNowCursorIsDecidedByTheStoreNotByAnID is the regression rail for the
+// defect this cursor was rebuilt to close.
+//
+// A --from-now cursor used to be `ulid.NewAt(now)` — an id minted in the
+// subscribing process — and admission was the string comparison
+// `mail.id > from_cursor`. That is a claim about ULID ordering *between
+// processes*, and ULID makes no such promise: the timestamp prefix is shared,
+// the 80-bit tail is drawn independently, and two ids minted in the same
+// millisecond by two processes sort either way. A mail that landed below the
+// cursor was admitted by nothing — no delivery row, no pending count, no list
+// entry — silently and permanently.
+//
+// D-11 makes that the ordinary configuration, not an exotic one: `send`,
+// `list` and `ack` are each their own process against one file. So both legs
+// here drive a real second process, and both assert the same invariant —
+// **every mail committed after a --from-now subscribe is admitted by it**,
+// whatever id the sending process happened to draw.
+func TestFromNowCursorIsDecidedByTheStoreNotByAnID(t *testing.T) {
+	const address = "auto-web/bugs"
+
+	// Leg 1: the two processes disagree about the clock. This is the
+	// deterministic case — the child's id carries a strictly smaller timestamp
+	// prefix, so under the old cursor it sorted below and was lost every time,
+	// with no dependence on entropy at all.
+	t.Run("a-sender-whose-clock-trails-the-subscriber", func(t *testing.T) {
+		st := open(t)
+		ctx := context.Background()
+		// A real clock, so the subscribing process's own id generator is at
+		// this instant too. The child is handed an instant 5ms behind it, which
+		// is a clock the two processes disagree about — ordinary between two
+		// hosts, and reachable on one whenever a caller stamps its own time.
+		at := time.Now().UTC()
+
+		if _, err := st.Subscribe(ctx, store.SubscribeParams{
+			Address: address, FromNow: true, Caller: caller("/workspace/reader"), Now: at,
+		}); err != nil {
+			t.Fatalf("subscribe --from-now: %v", err)
+		}
+		sent := mustSendFromAnotherProcess(t, st.Path(), address, at.Add(-5*time.Millisecond))
+
+		listed, err := st.List(ctx, store.ListParams{Caller: caller("/workspace/reader")})
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if len(listed) != 1 || listed[0].ID != sent {
+			t.Fatalf("a --from-now subscriber holds %+v, want the mail %s another process "+
+				"committed after it subscribed; \"from now\" is a position in the log, "+
+				"not a comparison of two minted ids", listed, sent)
+		}
+	})
+
+	// Leg 2: the two processes agree about the clock, to the millisecond. This
+	// is the mechanism in its purest form — one timestamp prefix, sixteen
+	// independently drawn 80-bit tails — and it is deliberately *not* the leg
+	// the regression rests on. Against a cursor drawn from the same
+	// distribution, all sixteen ids land above it about one run in seventeen,
+	// so as a pre-fix failure it is likely, not certain; leg 1 is the one that
+	// fails deterministically. What this leg adds is the real shape: sixteen
+	// concurrent processes writing one SQLite file, asserting that every mail
+	// committed after the subscribe arrives, with no coin flip left in the
+	// answer.
+	t.Run("senders-in-the-same-millisecond", func(t *testing.T) {
+		const senders = 16
+		st := open(t)
+		ctx := context.Background()
+		at := time.Now().UTC()
+
+		if _, err := st.Subscribe(ctx, store.SubscribeParams{
+			Address: address, FromNow: true, Caller: caller("/workspace/reader"), Now: at,
+		}); err != nil {
+			t.Fatalf("subscribe --from-now: %v", err)
+		}
+
+		var (
+			wg   sync.WaitGroup
+			each = make([]string, senders)
+			errs = make([]error, senders)
+		)
+		for i := range senders {
+			wg.Go(func() {
+				each[i], errs[i] = sendFromAnotherProcess(st.Path(), address, at)
+			})
+		}
+		wg.Wait()
+		for _, err := range errs {
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+		}
+
+		// How much of the adversarial ordering this run exercised, measured
+		// between the children themselves so it assumes nothing about this
+		// process's own id generator. One of their ids stands in for the cursor
+		// the old code would have held; the count below it is how many mails
+		// that cursor would have lost. It swings widely run to run because the
+		// stand-in is itself a random draw, which is exactly why it is logged
+		// and not asserted.
+		below := 0
+		for _, id := range each[1:] {
+			if id < each[0] {
+				below++
+			}
+		}
+		t.Logf("%d of %d ids minted by other processes in this millisecond sort below "+
+			"another process's id from the same millisecond; a --from-now cursor holding "+
+			"that id would have lost every one of them, permanently",
+			below, senders-1)
+
+		listed, err := st.List(ctx, store.ListParams{Caller: caller("/workspace/reader")})
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		seen := map[string]bool{}
+		for _, item := range listed {
+			seen[item.ID] = true
+		}
+		for _, id := range each {
+			if !seen[id] {
+				t.Errorf("mail %s was committed after the --from-now subscribe but is not "+
+					"admitted by its cursor", id)
+			}
+		}
+		if len(listed) != senders {
+			t.Errorf("list returned %d mail, want %d", len(listed), senders)
+		}
+	})
 }

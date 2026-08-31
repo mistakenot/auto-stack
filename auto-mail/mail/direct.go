@@ -70,6 +70,17 @@ const (
 	EventTypeAcked = store.TypeAcked
 )
 
+// ErrSchemaMismatch is returned by NewDirect when the store on disk was written
+// by a different alpha schema. There is no migration path by design (G10): the
+// remediation is `auto mail reset --yes`, which WipeStore serves without
+// opening the store.
+//
+// It is re-exported rather than restated, for the same reason the event types
+// above are: a caller has to be able to branch on it without importing the
+// store (G11), and a twin sentinel would only make the error message say the
+// same sentence twice.
+var ErrSchemaMismatch = store.ErrSchemaMismatch
+
 // StorePath is the store file this client is bound to.
 func (d *direct) StorePath() string { return d.store.Path() }
 
@@ -270,9 +281,27 @@ func (d *direct) Reset(ctx context.Context, in ResetInput) (ResetResult, error) 
 	if err := d.store.Close(); err != nil {
 		return ResetResult{}, fmt.Errorf("close the mail store before reset: %w", err)
 	}
+	return WipeStore(d.home)
+}
 
-	storePath := config.StorePathIn(d.home)
-	flagsDir := config.FlagsDirIn(d.home)
+// WipeStore removes the alpha store and the pending flags under home, and
+// reports what it removed. It opens nothing.
+//
+// That is the point of it being reachable without a Client: a store written by
+// a different alpha schema cannot be opened at all (ErrSchemaMismatch), and
+// "start again" is the only migration path G10 offers — so the remediation the
+// error names has to work on a store this build cannot read. Reset uses it for
+// the ordinary path too, so there is one implementation of what a wipe removes.
+func WipeStore(home string) (ResetResult, error) {
+	if home == "" {
+		resolved, err := sharedconfig.HomeDir()
+		if err != nil {
+			return ResetResult{}, err
+		}
+		home = resolved
+	}
+	storePath := config.StorePathIn(home)
+	flagsDir := config.FlagsDirIn(home)
 	removed := make([]string, 0, 2)
 
 	// The -wal and -shm sidecars are part of the store rather than artifacts of

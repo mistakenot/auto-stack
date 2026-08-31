@@ -1,17 +1,26 @@
 // Package ulid mints the sender-generated ids mail uses for its events and its
 // stored mail rows.
 //
-// Three properties are load-bearing and none of them are decoration:
+// What these ids are for, and — just as importantly — what they are not:
 //
 //   - **Sender-generated.** A sender must be able to post mail with nothing else
 //     alive (D-11), so the id cannot come from a database sequence or a daemon.
-//   - **Lexicographically sortable.** The subscription cursor is a plain string
-//     comparison against a mail id (`m.id > from_cursor`), which is only a
-//     correct "everything after this point" test if byte order matches time
-//     order. It is also the property a future cross-host log merge depends on
-//     (docs/auto-mail-beyond-mvp.md §3).
-//   - **Monotonic within a process.** Two mails sent in the same millisecond
-//     must still order, or the cursor would admit or skip both together.
+//     This is the property the whole scheme exists for.
+//   - **Unique.** Two processes drawing an id in the same millisecond share a
+//     timestamp prefix and draw independent 80-bit tails, so a collision is a
+//     2^-80 event and the PRIMARY KEY would reject it loudly if it happened.
+//   - **Roughly time-ordered, for reading.** The timestamp leads, so a list of
+//     ids is legible in something close to chronological order.
+//
+// **Not an ordering the store may rely on.** Monotonicity here is maintained
+// through package-level state, which makes it a guarantee *within one process*
+// and nothing more. D-11 makes every `auto mail` verb its own process against
+// one SQLite file, so two ids minted in the same millisecond by two processes
+// can sort either way. Anything that means "after this point" — the
+// subscription cursor above all — uses the store's own append sequence
+// (`mail.seq`, projected from the log), never a comparison of two ids. A cursor
+// that compared ids would silently and permanently lose every mail whose id
+// happened to land below it.
 package ulid
 
 import (

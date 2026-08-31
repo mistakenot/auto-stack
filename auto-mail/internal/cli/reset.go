@@ -50,6 +50,26 @@ func runReset(cmd *cobra.Command, _ *app.App, yes bool) error {
 	}
 
 	client, err := mail.NewDirect("")
+	if errors.Is(err, mail.ErrSchemaMismatch) {
+		// This is the one command that has to work on a store this build cannot
+		// open — the mismatch error names `reset` as the remediation, and a
+		// remediation that needs the broken store opened is no remediation.
+		// Emptiness cannot be read from a store nobody can read, so the wipe is
+		// only offered against an explicit --yes.
+		if !yes {
+			return &ExitError{Code: 1, Err: fmt.Errorf(
+				"%w — its contents cannot be read, so run `auto mail reset --yes` "+
+					"to wipe it and start again", err)}
+		}
+		result, wipeErr := mail.WipeStore("")
+		if wipeErr != nil {
+			return &ExitError{Code: 1, Err: wipeErr}
+		}
+		if err := writeJSON(cmd.OutOrStdout(), result); err != nil {
+			return &ExitError{Code: 1, Err: err}
+		}
+		return nil
+	}
 	if err != nil {
 		return &ExitError{Code: 1, Err: err}
 	}

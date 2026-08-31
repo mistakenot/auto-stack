@@ -34,8 +34,8 @@ type Caller struct {
 type SubscribeParams struct {
 	Address string
 	Name    string
-	// FromNow starts the cursor at the current high-water mark instead of the
-	// beginning of the log, so existing mail is not backfilled (D-10).
+	// FromNow starts the cursor at the store's current high-water mark instead
+	// of the beginning of the log, so existing mail is not backfilled (D-10).
 	FromNow bool
 	Caller  Caller
 	Now     time.Time
@@ -62,13 +62,13 @@ func (s *Store) Subscribe(ctx context.Context, p SubscribeParams) (SubscribeOutc
 	var out SubscribeOutcome
 
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
-		var cursor string
+		var cursor int64
 		row := tx.QueryRowContext(ctx, `
 			SELECT s.id, s.from_cursor
 			FROM subscriptions s
 			JOIN bindings b ON b.subscription_id = s.id
 			WHERE s.address = ? AND b.manager = ? AND b.target = ?
-			ORDER BY s.id
+			ORDER BY s.seq
 			LIMIT 1`, p.Address, p.Caller.Manager, p.Caller.Target)
 		switch err := row.Scan(&out.SubscriptionID, &cursor); {
 		case err == nil:
@@ -83,31 +83,38 @@ func (s *Store) Subscribe(ctx context.Context, p SubscribeParams) (SubscribeOutc
 				return fmt.Errorf("refresh binding for %s: %w", out.SubscriptionID, err)
 			}
 		case errors.Is(err, sql.ErrNoRows):
-			// A from-now cursor is a fresh ULID: every mail sent after this
-			// instant carries a greater id, and every mail already stored
-			// carries a smaller one, so the plain string comparison the cursor
-			// is used with means exactly "from now on".
+			// A from-now cursor is the store's own high-water mark, read inside
+			// this BEGIN IMMEDIATE transaction — never an id minted here.
+			//
+			// The tempting version of this is a fresh ULID: "every mail sent
+			// after this instant carries a greater id". That holds only inside
+			// one process. D-11 makes every send its own process against one
+			// file, and two ULIDs drawn in the same millisecond by different
+			// processes share a timestamp prefix but draw independent random
+			// tails, so they can sort either way — and a mail that sorted below
+			// such a cursor would be admitted by nothing, ever. The write lock
+			// is what makes the mark true instead: any mail committed after
+			// this transaction is appended after it, and therefore has a
+			// strictly greater seq.
 			if p.FromNow {
-				cursor = ulid.NewAt(now)
+				mark, err := highWaterMark(ctx, tx)
+				if err != nil {
+					return err
+				}
+				cursor = mark
 			}
 			id, err := mintSubscriptionID(ctx, tx)
 			if err != nil {
 				return err
 			}
 			out.SubscriptionID = id
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO subscriptions (id, address, name, from_cursor, created_at) VALUES (?, ?, ?, ?, ?)`,
-				id, p.Address, nullable(p.Name), cursor, formatTime(now)); err != nil {
-				return fmt.Errorf("insert subscription for %q: %w", p.Address, err)
-			}
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO bindings (subscription_id, manager, target, session, last_seen) VALUES (?, ?, ?, ?, ?)`,
-				id, p.Caller.Manager, p.Caller.Target, nullable(p.Caller.Session), formatTime(now)); err != nil {
-				return fmt.Errorf("insert binding for %s: %w", id, err)
-			}
-			// Appended only when the subscription is created: a re-subscribe
-			// changes no subscription state, and the log records state changes.
-			if err := Append(ctx, tx, Event{
+			// Appended before the projection rather than after it, because the
+			// subscription's own seq *is* the log position of this event: the
+			// row is a projection of the event down to its ordering (D-1).
+			// It is appended only when the subscription is created — a
+			// re-subscribe changes no subscription state, and the log records
+			// state changes.
+			seq, err := Append(ctx, tx, Event{
 				Type:       TypeSubscribed,
 				OccurredAt: now,
 				Payload: map[string]any{
@@ -115,8 +122,19 @@ func (s *Store) Subscribe(ctx context.Context, p SubscribeParams) (SubscribeOutc
 					"address":      p.Address,
 					"fromCursor":   cursor,
 				},
-			}); err != nil {
+			})
+			if err != nil {
 				return err
+			}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO subscriptions (id, seq, address, name, from_cursor, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+				id, seq, p.Address, nullable(p.Name), cursor, formatTime(now)); err != nil {
+				return fmt.Errorf("insert subscription for %q: %w", p.Address, err)
+			}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO bindings (subscription_id, manager, target, session, last_seen) VALUES (?, ?, ?, ?, ?)`,
+				id, p.Caller.Manager, p.Caller.Target, nullable(p.Caller.Session), formatTime(now)); err != nil {
+				return fmt.Errorf("insert binding for %s: %w", id, err)
 			}
 		default:
 			return fmt.Errorf("look up subscription for %q: %w", p.Address, err)
@@ -155,15 +173,29 @@ func mintSubscriptionID(ctx context.Context, tx *sql.Tx) (string, error) {
 	return "", fmt.Errorf("mint subscription id: %q is already taken at full ULID length", u)
 }
 
+// highWaterMark is the store's "everything up to here" position: the greatest
+// mail seq the log holds. It must be read inside a BEGIN IMMEDIATE transaction,
+// which every caller here is — the write lock is what makes it a boundary
+// rather than a sample, because it is what stops a concurrent sender from
+// committing between the read and the write that stores it.
+func highWaterMark(ctx context.Context, tx *sql.Tx) (int64, error) {
+	var seq int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(seq), 0) FROM mail`).Scan(&seq); err != nil {
+		return 0, fmt.Errorf("read the mail high-water mark: %w", err)
+	}
+	return seq, nil
+}
+
 // countBackfill counts the mail this subscription's cursor admits and which has
 // no delivery row yet — what its next list will materialise (D-10).
-func countBackfill(ctx context.Context, tx *sql.Tx, subscriptionID, address, cursor string) (int, error) {
+func countBackfill(ctx context.Context, tx *sql.Tx, subscriptionID, address string, cursor int64) (int, error) {
 	var count int
 	err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM mail m
 		WHERE m.to_address = ?
-		  AND m.id > ?
+		  AND m.seq > ?
 		  AND NOT EXISTS (
 			SELECT 1 FROM deliveries d WHERE d.subscription_id = ? AND d.mail_id = m.id
 		  )`, address, cursor, subscriptionID).Scan(&count)
@@ -196,8 +228,16 @@ type SendOutcome struct {
 	Delivered []Caller
 }
 
-// Send appends alpha.mail.sent, inserts the immutable mail row, and inserts a
-// delivery row for every subscription on the address whose cursor admits it.
+// Send appends alpha.mail.sent and inserts the immutable mail row. That is the
+// whole write: **no delivery row is created here** (D-10). Delivery rows are
+// materialised lazily on the read path, against each subscription's cursor,
+// which is what lets a subscription created *after* a send still receive it
+// (journey J2) — the two paths cannot disagree because there is only one.
+//
+// What Send does compute is the pair of counts the sender acts on, and the
+// bindings whose pending flag this mail should raise. Those are reads, not
+// materialisation: a flag is a hint about state, and the store stays the only
+// authority on what is actually waiting.
 //
 // Delivery does not depend on the subscription being bound: a subscription with
 // no binding row still receives, and the sender is told the difference through
@@ -224,7 +264,7 @@ func (s *Store) Send(ctx context.Context, p SendParams) (SendOutcome, error) {
 	}
 
 	err = s.WithTx(ctx, func(tx *sql.Tx) error {
-		if err := Append(ctx, tx, Event{
+		seq, err := Append(ctx, tx, Event{
 			Type:       TypeSent,
 			OccurredAt: now,
 			Payload: map[string]any{
@@ -232,19 +272,16 @@ func (s *Store) Send(ctx context.Context, p SendParams) (SendOutcome, error) {
 				"to":   p.To,
 				"from": p.From,
 			},
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
+		// The mail row carries the log position of its own sent event. That
+		// number, not the id, is what every cursor comparison uses.
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO mail (id, to_address, envelope, body, sent_at) VALUES (?, ?, ?, ?, ?)`,
-			out.ID, p.To, string(envelope), string(body), formatTime(now)); err != nil {
+			`INSERT INTO mail (id, seq, to_address, envelope, body, sent_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			out.ID, seq, p.To, string(envelope), string(body), formatTime(now)); err != nil {
 			return fmt.Errorf("insert mail %s: %w", out.ID, err)
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO deliveries (subscription_id, mail_id, first_seen_at)
-			SELECT s.id, ?, ? FROM subscriptions s WHERE s.address = ? AND ? > s.from_cursor`,
-			out.ID, formatTime(now), p.To, out.ID); err != nil {
-			return fmt.Errorf("materialise deliveries for %s: %w", out.ID, err)
 		}
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(*), COUNT(b.subscription_id)
@@ -253,7 +290,7 @@ func (s *Store) Send(ctx context.Context, p SendParams) (SendOutcome, error) {
 			WHERE s.address = ?`, p.To).Scan(&out.Subscriptions, &out.Bound); err != nil {
 			return fmt.Errorf("count readers of %q: %w", p.To, err)
 		}
-		delivered, err := deliveredBindings(ctx, tx, p.To, out.ID)
+		delivered, err := deliveredBindings(ctx, tx, p.To, seq)
 		if err != nil {
 			return err
 		}
@@ -266,17 +303,18 @@ func (s *Store) Send(ctx context.Context, p SendParams) (SendOutcome, error) {
 	return out, nil
 }
 
-// deliveredBindings returns the binding of every subscription this mail was
-// delivered to. The cursor predicate is the same one the delivery insert used,
-// so a --from-now subscription that did not receive the mail does not get its
-// flag raised either.
-func deliveredBindings(ctx context.Context, tx *sql.Tx, address, mailID string) ([]Caller, error) {
+// deliveredBindings returns the binding of every subscription whose cursor
+// admits this mail — the bindings whose pending flag it should raise. The
+// predicate is the same one the read path materialises with, so a --from-now
+// subscription that will not receive the mail does not get its flag raised
+// either. It reads; it materialises nothing (D-10).
+func deliveredBindings(ctx context.Context, tx *sql.Tx, address string, seq int64) ([]Caller, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT b.manager, b.target, COALESCE(b.session, '')
 		FROM bindings b
 		JOIN subscriptions s ON s.id = b.subscription_id
 		WHERE s.address = ? AND ? > s.from_cursor
-		ORDER BY b.subscription_id`, address, mailID)
+		ORDER BY s.seq`, address, seq)
 	if err != nil {
 		return nil, fmt.Errorf("select bindings for %q: %w", address, err)
 	}
@@ -318,7 +356,7 @@ func (s *Store) PendingCount(ctx context.Context, c Caller) (int, error) {
 		     FROM mail m
 		     JOIN subscriptions s ON s.address = m.to_address
 		     JOIN bindings b ON b.subscription_id = s.id
-		    WHERE b.manager = ? AND b.target = ? AND m.id > s.from_cursor
+		    WHERE b.manager = ? AND b.target = ? AND m.seq > s.from_cursor
 		      AND NOT EXISTS (
 		        SELECT 1 FROM deliveries d
 		         WHERE d.subscription_id = s.id AND d.mail_id = m.id
@@ -364,13 +402,8 @@ func (s *Store) List(ctx context.Context, p ListParams) ([]ListedMail, error) {
 			return err
 		}
 		for _, sub := range subs {
-			// D-10: delivery rows are materialised lazily against the cursor,
-			// so a subscription created after a mail was sent still sees it.
-			if _, err := tx.ExecContext(ctx, `
-				INSERT OR IGNORE INTO deliveries (subscription_id, mail_id, first_seen_at)
-				SELECT ?, m.id, ? FROM mail m WHERE m.to_address = ? AND m.id > ?`,
-				sub.id, formatTime(now), sub.address, sub.cursor); err != nil {
-				return fmt.Errorf("materialise deliveries for %s: %w", sub.id, err)
+			if err := materialise(ctx, tx, sub, now, ""); err != nil {
+				return err
 			}
 
 			listed, unread, err := unackedFor(ctx, tx, sub.id)
@@ -397,7 +430,7 @@ func (s *Store) List(ctx context.Context, p ListParams) ([]ListedMail, error) {
 				if affected == 0 {
 					continue
 				}
-				if err := Append(ctx, tx, Event{
+				if _, err := Append(ctx, tx, Event{
 					Type:       TypeRead,
 					OccurredAt: now,
 					Payload:    map[string]any{"subscription": sub.id, "mail": mailID},
@@ -417,7 +450,32 @@ func (s *Store) List(ctx context.Context, p ListParams) ([]ListedMail, error) {
 type scopedSub struct {
 	id      string
 	address string
-	cursor  string
+	cursor  int64
+}
+
+// materialise is the **only** place a delivery row is created (D-10). It inserts
+// the rows this subscription's cursor admits and which do not exist yet, so a
+// subscription created after a mail was sent still sees it, and a --from-now
+// subscription never sees what preceded its mark.
+//
+// It lives on the read path on purpose: `send` writing delivery rows would make
+// the sender pay O(subscriptions) for readers that may never read, would put
+// half the reader projection inside the writer, and — being a second path to
+// the same rows — could disagree with this one. onlyMail scopes the work to a
+// single mail id when the caller already knows which one it wants (ack does).
+func materialise(ctx context.Context, tx *sql.Tx, sub scopedSub, now time.Time, onlyMail string) error {
+	query := `
+		INSERT OR IGNORE INTO deliveries (subscription_id, mail_id, first_seen_at)
+		SELECT ?, m.id, ? FROM mail m WHERE m.to_address = ? AND m.seq > ?`
+	args := []any{sub.id, formatTime(now), sub.address, sub.cursor}
+	if onlyMail != "" {
+		query += ` AND m.id = ?`
+		args = append(args, onlyMail)
+	}
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("materialise deliveries for %s: %w", sub.id, err)
+	}
+	return nil
 }
 
 func scopedSubscriptions(ctx context.Context, tx *sql.Tx, p ListParams) ([]scopedSub, error) {
@@ -437,7 +495,9 @@ func scopedSubscriptions(ctx context.Context, tx *sql.Tx, p ListParams) ([]scope
 		query = `SELECT s.id, s.address, s.from_cursor FROM subscriptions s WHERE s.id = ?`
 		args = []any{p.SubscriptionID}
 	}
-	query += ` ORDER BY s.id`
+	// Ordered by the log position the store assigned, not by the id a process
+	// minted: "the order these subscriptions were created" is the log's answer.
+	query += ` ORDER BY s.seq`
 
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -467,7 +527,7 @@ func unackedFor(ctx context.Context, tx *sql.Tx, subscriptionID string) ([]Liste
 		FROM deliveries d
 		JOIN mail m ON m.id = d.mail_id
 		WHERE d.subscription_id = ? AND d.acked_at IS NULL
-		ORDER BY m.id`, subscriptionID)
+		ORDER BY m.seq`, subscriptionID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("select unacked mail for %s: %w", subscriptionID, err)
 	}
@@ -541,6 +601,21 @@ func (s *Store) Ack(ctx context.Context, p AckParams) (AckOutcome, error) {
 	var out AckOutcome
 
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		// Ack is a read-side operation — the caller is retiring its own copy —
+		// so it materialises against its own cursors first, exactly as list
+		// does. Without this, `send` then `ack` with no `list` between them
+		// would fail on a mail the cursor plainly admits, purely because
+		// nothing had happened to project it yet (D-10).
+		subs, err := scopedSubscriptions(ctx, tx, ListParams{Caller: p.Caller})
+		if err != nil {
+			return err
+		}
+		for _, sub := range subs {
+			if err := materialise(ctx, tx, sub, now, p.MailID); err != nil {
+				return err
+			}
+		}
+
 		deliveries, err := heldDeliveries(ctx, tx, p.MailID, p.Caller)
 		if err != nil {
 			return err
@@ -584,7 +659,7 @@ func (s *Store) Ack(ctx context.Context, p AckParams) (AckOutcome, error) {
 			out.Won = true
 			out.AckedAt = now
 			out.AckedBy = d.subscription
-			if err := Append(ctx, tx, Event{
+			if _, err := Append(ctx, tx, Event{
 				Type:       TypeAcked,
 				OccurredAt: now,
 				Payload:    map[string]any{"subscription": d.subscription, "mail": p.MailID},
@@ -634,10 +709,14 @@ func heldDeliveries(ctx context.Context, tx *sql.Tx, mailID string, c Caller) ([
 	return out, nil
 }
 
-// AddressForBinding returns the address of the lowest-id subscription bound to
-// this caller, which is rung 2 of the sender's from-address ladder. "Lowest id"
-// is a deterministic tie-break rather than an arbitrary one: subscription ids
-// are ULID-prefixed, so it means "the first one this agent created".
+// AddressForBinding returns the address of the first subscription this caller
+// created, which is rung 2 of the sender's from-address ladder.
+//
+// "First" is the log's ordering, not a comparison of two minted ids. The id is
+// `sub_` plus a ULID prefix, and a prefix is timestamp bits: two subscriptions
+// created in the same window by two processes carry no reliable order between
+// them, so ordering by id would make this rung's answer depend on entropy.
+// Ordering by the subscribed event's seq makes it depend on the store.
 func (s *Store) AddressForBinding(ctx context.Context, c Caller) (string, bool, error) {
 	var address string
 	err := s.QueryRowContext(ctx, `
@@ -645,7 +724,7 @@ func (s *Store) AddressForBinding(ctx context.Context, c Caller) (string, bool, 
 		FROM subscriptions s
 		JOIN bindings b ON b.subscription_id = s.id
 		WHERE b.manager = ? AND b.target = ?
-		ORDER BY s.id
+		ORDER BY s.seq
 		LIMIT 1`, c.Manager, c.Target).Scan(&address)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):

@@ -53,13 +53,20 @@ type Event struct {
 	Payload map[string]any
 }
 
-// Append writes one event to the log. **It is the only writer of the `events`
+// Append writes one event to the log and returns its `seq` — the store's own
+// position for what just happened. **It is the only writer of the `events`
 // table** — everything else in this package projects from what it appends, and
 // the BEFORE UPDATE / BEFORE DELETE triggers in the schema make that a property
 // the database enforces rather than a rule this package remembers (G1).
-func Append(ctx context.Context, tx *sql.Tx, ev Event) error {
+//
+// The returned seq is what makes the log usable as an ordering: it is assigned
+// by SQLite inside this transaction, so it is decided by the store rather than
+// by the appending process. Projections that need "before"/"after" — the
+// subscription cursor is the one that matters — carry it rather than comparing
+// two process-minted ids (D-1).
+func Append(ctx context.Context, tx *sql.Tx, ev Event) (int64, error) {
 	if !strings.HasPrefix(ev.Type, eventNamespace) {
-		return fmt.Errorf("append event: type %q is outside the %s namespace", ev.Type, eventNamespace)
+		return 0, fmt.Errorf("append event: type %q is outside the %s namespace", ev.Type, eventNamespace)
 	}
 	if ev.ID == "" {
 		ev.ID = ulid.New()
@@ -75,14 +82,23 @@ func Append(ctx context.Context, tx *sql.Tx, ev Event) error {
 	}
 	payload, err := json.Marshal(ev.Payload)
 	if err != nil {
-		return fmt.Errorf("marshal %s payload: %w", ev.Type, err)
+		return 0, fmt.Errorf("marshal %s payload: %w", ev.Type, err)
 	}
-	if _, err := tx.ExecContext(ctx,
+	// `seq` is `INTEGER PRIMARY KEY AUTOINCREMENT`, so it is the row id and
+	// LastInsertId is the seq. AUTOINCREMENT is what makes it strictly greater
+	// than every seq the table has ever held, which is the property a cursor
+	// high-water mark depends on.
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO events (id, type, version, occurred_at, payload) VALUES (?, ?, ?, ?, ?)`,
-		ev.ID, ev.Type, ev.Version, formatTime(ev.OccurredAt), string(payload)); err != nil {
-		return fmt.Errorf("append %s: %w", ev.Type, err)
+		ev.ID, ev.Type, ev.Version, formatTime(ev.OccurredAt), string(payload))
+	if err != nil {
+		return 0, fmt.Errorf("append %s: %w", ev.Type, err)
 	}
-	return nil
+	seq, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("read the log position of %s: %w", ev.Type, err)
+	}
+	return seq, nil
 }
 
 // timeLayout is how every timestamp is stored. RFC 3339 in UTC sorts
