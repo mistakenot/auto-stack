@@ -8,6 +8,7 @@ use (
 	./auto-env
 	./auto-etl
 	./auto-graph
+	./auto-mail
 	./auto-reflect
 	./auto-search
 	./auto-shared
