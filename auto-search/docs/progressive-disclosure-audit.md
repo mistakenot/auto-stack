@@ -1,8 +1,8 @@
 ---
-hash: "390f5503"
+hash: "341963a2"
 id: "db2ed535"
 read_when: "improving autosearch progressive disclosure, deciding what session data to capture/surface, or fixing ETL information loss for thinking blocks / skill attribution / full-session retrieval"
-summary: "Audit of autosearch progressive disclosure against a real Claude session: the search→session→message drill-down ladder works for message text and tool I/O, but thinking blocks, skill attribution, permission mode, and full-session transcript are dropped or unreachable. Includes a prioritized fix list."
+summary: "Audit of autosearch progressive disclosure against a real Claude session: the search→session→outline→message drill-down ladder works for message text and tool I/O, but thinking blocks, skill attribution, permission mode, and full-session transcript are dropped or unreachable. Includes a prioritized fix list."
 title: "AutoSearch Progressive Disclosure & Information-Loss Audit"
 ---
 
@@ -36,11 +36,12 @@ Two structural gaps remain:
 | Discover | `search "review-task" --scope sessions` | session hits: IDs + metadata, no bodies | tiny |
 | Pinpoint | `search "" --session-id <id> --tool-name Edit` | per-message hits with message IDs (`<id>-48`) + snippets | tiny |
 | Overview | `session describe <id>` | tokens, duration, tool/file counts, git remote, model, head+tail summary | small |
+| Map | `session outline <id>` | the *shape* of the session: sub-agent spine, timeline cut into labelled segments (`<id>#s<n>`) with counts and index ranges, per-Message ids — **no bodies**; `--depth N` / `--expand <id>` navigate statelessly | small |
 | Read | `session get <id>` | all messages as `<user/agent/tool index=N>`; bodies truncated at 2048 ch with `…[truncated — run: autosearch message get <id>-N]…` | medium (42 KB here) |
 | Drill | `message get <id>-N` | one message, **full untruncated** (`-1` → 3922 ch vs 2048 ch in `session get`) | scoped |
 | Inspect | `message describe <id>-N` | metadata + raw `toolUseResult` envelope (`structuredPatch`, stdout/stderr) | tiny |
 
-**What's good:** `session get` always tells you the exact `message get` command to recover any truncated body. `message get` is full-fidelity by default (no flag needed). Tool rows carry `name`/`cmd`/`path`/`duration_ms`/`interrupted` inline so you can triage without drilling further. This is correct, token-efficient progressive disclosure.
+**What's good:** `session get` always tells you the exact `message get` command to recover any truncated body. `session outline` extends the same convention upward: a collapsed segment or sub-agent prints its `session outline … --expand <segId>` / `--depth N` command, and each Message leaf prints its `message get <id>` command — so no rung is a dead end. `message get` is full-fidelity by default (no flag needed). Tool rows carry `name`/`cmd`/`path`/`duration_ms`/`interrupted` inline so you can triage without drilling further. This is correct, token-efficient progressive disclosure.
 
 ---
 

@@ -102,13 +102,13 @@ func buildNode(db *sql.DB, sid string, opts Options, depth int, dispatchLabel st
 		case "thinking":
 			body, tr := opts.bodyField(m.Content, m.ContentTruncated)
 			events = append(events, Event{
-				Kind: "thinking", Idx: m.MessageIndex, MID: m.MessageID,
+				Kind: "thinking", Idx: m.MessageIndex, MID: m.MessageID, Ts: m.Timestamp,
 				Summary: firstLine(m.Content, 100), Body: body, Truncated: tr,
 			})
 		case "user":
 			body, tr := opts.bodyField(m.Content, m.ContentTruncated)
 			events = append(events, Event{
-				Kind: "user", Idx: m.MessageIndex, MID: m.MessageID,
+				Kind: "user", Idx: m.MessageIndex, MID: m.MessageID, Ts: m.Timestamp,
 				Summary: firstLine(m.Content, 140), Body: body, Truncated: tr,
 			})
 		case "assistant":
@@ -118,7 +118,7 @@ func buildNode(db *sql.DB, sid string, opts Options, depth int, dispatchLabel st
 				}
 				body, tr := opts.bodyField(m.Content, m.ContentTruncated)
 				events = append(events, Event{
-					Kind: "assistant", Idx: m.MessageIndex, MID: m.MessageID,
+					Kind: "assistant", Idx: m.MessageIndex, MID: m.MessageID, Ts: m.Timestamp,
 					Summary: firstLine(m.Content, 140), Body: body, Truncated: tr,
 					OutTokens: m.OutputTokens,
 				})
@@ -159,6 +159,7 @@ func buildToolEvent(db *sql.DB, m *indexdb.MessageRow, results map[string]indexd
 	res, hasRes := results[m.ToolUseID]
 	var (
 		resContent, resTruncated string
+		resMID                   string
 		duration                 int64
 		isErr, interrupted       bool
 		exit                     int
@@ -166,6 +167,9 @@ func buildToolEvent(db *sql.DB, m *indexdb.MessageRow, results map[string]indexd
 	if hasRes {
 		resContent = res.Content
 		resTruncated = res.ContentTruncated
+		// The result row holds the tool output; keep its message_id so a
+		// caller can drill to full fidelity via `message get <result_mid>`.
+		resMID = res.MessageID
 		duration = res.DurationMs
 		isErr = res.IsError
 		interrupted = res.Interrupted
@@ -187,11 +191,13 @@ func buildToolEvent(db *sql.DB, m *indexdb.MessageRow, results map[string]indexd
 			summary = firstLine(str(d, "prompt"), 100)
 		}
 		return Event{
-			Kind: "agent", Idx: m.MessageIndex, MID: m.MessageID, Summary: summary,
+			Kind: "agent", Idx: m.MessageIndex, MID: m.MessageID, Ts: m.Timestamp,
+			Summary:      summary,
 			SubagentType: str(d, "subagent_type"),
 			Prompt:       prompt, PromptTrunc: ptr,
 			Result: result, ResultTrunc: rtr,
-			Duration: duration, Child: childNode,
+			ResultMID: resMID,
+			Duration:  duration, Child: childNode,
 		}
 	}
 
@@ -216,12 +222,14 @@ func buildToolEvent(db *sql.DB, m *indexdb.MessageRow, results map[string]indexd
 	input, itr := opts.clipField(m.ToolInput)
 	output, otr := opts.bodyField(resContent, resTruncated)
 	return Event{
-		Kind: "tool", Idx: m.MessageIndex, MID: m.MessageID, Tool: m.ToolName,
+		Kind: "tool", Idx: m.MessageIndex, MID: m.MessageID, Ts: m.Timestamp,
+		Tool:        m.ToolName,
 		Summary:     toolSummary(m, d),
 		Input:       input,
 		InputTrunc:  itr,
 		Output:      output,
 		OutputTrunc: otr,
+		ResultMID:   resMID,
 		Duration:    duration,
 		IsError:     isErr,
 		Interrupted: interrupted,
