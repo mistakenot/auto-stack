@@ -1,13 +1,25 @@
 # Context: Task 063 — auto-mail #parent handle
 
 Codebase facts gathered for [plan.html](plan.html) (epic 005, T2). Paths are
-repo-root-relative. **`auto-mail/` does not exist on `main` yet** — every path
-under it was read in the task-062 worktree at
-`/home/vscode/.herdr/worktrees/auto-stack/task-062-auto-mail-walking-skeleton`
-(branch `task/062-auto-mail-walking-skeleton`). At the time of writing that
-branch is **complete** — all five phases landed (`fbefad8` is phase 5) and
-**PR #146 is open** — but it is **not merged to `main`**, and `auto-mail/` does
-not exist on `main`. Re-verify before execution (D-063-7).
+repo-root-relative.
+
+**Status: the D-063-7 gate is satisfied.** PR #146 merged to `main` on
+2026-08-31 as `0c73e78`, so `auto-mail/` now exists on `main` and the 063
+worktree should be cut from `main`. This document was originally written against
+the unmerged branch at `fbefad8`; every path and line number below has since
+been re-verified against merged `main`, and the citations were corrected.
+
+Two commits landed on the PR **after** this document was first written, and both
+changed things it quotes:
+
+- `94cc014` — the `--from-now` cursor became a store-owned log position
+  (`subscriptions.from_cursor` is now an INTEGER `seq`, not a minted ULID), and
+  the same sweep reordered `AddressForBinding` by `seq`. It also bumped
+  `schemaVersion` to 2 and added an `ErrSchemaMismatch` guard.
+- `9293cc4` — `store.Open` sets `busy_timeout` before `journal_mode = WAL`.
+
+The affected claims are corrected in place below and flagged where a commit
+message quoted here has been superseded.
 
 ## Key Files
 
@@ -19,31 +31,35 @@ not exist on `main`. Re-verify before execution (D-063-7).
   already names this task: "the subscribe process is a tool call and never sees
   the hook payload's session_id, and bridging that gap is exactly what D-13
   defers to T2."
-- `auto-mail/mail/direct.go:153-190` — `resolveFrom`, the three-rung ladder.
+- `auto-mail/mail/direct.go:164-189` — `resolveFrom`, the three-rung ladder.
   **Rung 2 is `#parent`'s resolution, already written**:
   `d.store.AddressForBinding(ctx, caller(in.Binding))`. Rung 3 falls back to
   `<projectId>/agent` via `projectAddress(cwd)`.
-- `auto-mail/internal/store/project.go` — `AddressForBinding` is the lookup;
-  T1's comment records that it picks the lowest subscription id when a binding
-  holds several, "so the answer is deterministic".
+- `auto-mail/internal/store/project.go:712-736` — `AddressForBinding` is the
+  lookup. When a binding holds several subscriptions it returns **the first one
+  created by the log's ordering** (`ORDER BY s.seq`), not the lowest minted id:
+  a `sub_` id is a ULID prefix, so "ordering by id would make this rung's answer
+  depend on entropy. Ordering by the subscribed event's seq makes it depend on
+  the store." (Changed by PR #146's post-review sweep, commit `94cc014` — later
+  than the branch state the rest of this document was read against.)
 
 ### The artifact the marker is modelled on
 
-- `auto-mail/mail/pending.go:38-56` — `flagName(b Binding)`:
+- `auto-mail/mail/pending.go:44-48` — `flagName(b Binding)`:
   `hex(sha256(manager + "\x00" + target)[:8])`. The NUL separator is why
   `(a, bc)` and `(ab, c)` cannot collide. `Session` is deliberately excluded
   from the identity.
-- `auto-mail/mail/pending.go:58-90` — `flagPath`, `addressable` (an empty pair
+- `auto-mail/mail/pending.go:50-84` — `flagPath`, `addressable` (an empty pair
   is refused rather than becoming a global flag), and `HasPending`, whose
   contract is the one the marker copies: **no error return, no store open, every
   failure reads as "absent"**, because "this runs on every tool call of every
   agent on the host, and a caller in that position has nothing useful to do with
   a failure except ignore it."
-- `auto-mail/mail/pending.go:11` — `var openStore = store.Open`, a package var
+- `auto-mail/mail/pending.go:17` — `var openStore = store.Open`, a package var
   *specifically so a test can count store opens*. AC-10 of task 062 asserts zero
   opens on both hook paths through it; task 063's marker path must keep that
   count at zero.
-- `auto-mail/internal/config/settings.go:56-72` — `MailDirIn/StorePathIn/
+- `auto-mail/internal/config/settings.go:55-70` — `MailDirIn/StorePathIn/
   FlagsDirIn(home string)`: "The hook path needs the locations without
   consulting the environment, so every path helper has a home-relative twin."
   The marker directory needs the same twin.
@@ -81,16 +97,26 @@ not exist on `main`. Re-verify before execution (D-063-7).
   comment is explicit that `/` "is a permitted, ordinary character" and that
   permissiveness is deliberate (D-9). **It accepts `#parent` today**, which is
   why reservation must happen at the CLI boundary, above validation (D-063-1).
-- `auto-mail/internal/store/project.go:213-241` — the envelope is
+- `auto-mail/internal/store/project.go:253-264` — the envelope is
   `json.Marshal(map[string]any{"version", "to", "from", "sentAt"})` written into
   a TEXT column. Adding an `attributes` key is additive with **no schema
   change**.
-- `auto-mail/internal/store/project.go:501-517` — `hydrate` decodes only
+- `auto-mail/internal/store/project.go:561-576` — `hydrate` decodes only
   `{"from"}` out of the envelope. Surfacing attributes on `list` means
   extending this struct and `ListedMail`.
-- `auto-mail/internal/store/schema.go` — `schemaVersion = 1`, `CREATE TABLE IF
+- `auto-mail/internal/store/schema.go` — `schemaVersion = 2`, `CREATE TABLE IF
   NOT EXISTS` only, plus `events_no_update` / `events_no_delete` /
   `mail_no_update` / `mail_no_delete` triggers enforcing G1 in the database.
+  **`Migrate` now guards the version**: a store stamped with a different version
+  fails with `ErrSchemaMismatch` rather than being silently reopened, because
+  `CREATE TABLE IF NOT EXISTS` would otherwise leave the old tables in place.
+  G10 offers no migration, so the only remediation is `auto mail reset --yes`
+  (which wipes without opening the store). Consequence for this task: adding an
+  `attributes` key to the envelope is still additive and needs **no** version
+  bump — the envelope is JSON in a TEXT column — but any change that does touch
+  the schema must bump `schemaVersion` and will strand existing alpha stores.
+  (Version 2 and the guard arrived in PR #146's post-review sweep, `94cc014`,
+  later than the branch state the rest of this document was read against.)
 
 ### The harness (G15's oracle)
 
@@ -219,7 +245,9 @@ Commits whose decisions bind this task. Bodies read with
 - `871dafd feat(062): phase 2 - event log, projection, subscribe/send/list/ack` —
   **Subscription identity is `(address, caller binding)`**; the `from` ladder is
   recorded as a `constraint(seam)` with rung 2 as "the address of a subscription
-  bound to the caller, lowest subscription id"; **an unreadable project registry
+  bound to the caller, lowest subscription id" (**superseded** by `94cc014`,
+  which reorders that rung by the log's `seq` — see `AddressForBinding` above);
+  **an unreadable project registry
   is treated exactly like an unregistered directory — `send` must never fail
   because the host's project list is missing.**
 - `e1812b0 feat(062): phase 4 - cursor backfill, broadcast delivery and the

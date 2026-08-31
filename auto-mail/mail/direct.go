@@ -166,10 +166,11 @@ func (d *direct) settleFlag(ctx context.Context, b Binding) {
 // relative handle — relative handles are T2's (G5/D-13).
 //
 //  1. An explicit --from wins.
-//  2. Otherwise the address of a subscription bound to this caller, lowest
-//     subscription id when there are several so the answer is deterministic.
-//     This is C1's case: the sender subscribed to its own reply address first,
-//     which is also what makes it reachable for a reply.
+//  2. Otherwise the address of a subscription bound to this caller — the first
+//     one it created, by the log's ordering rather than by comparing minted
+//     ids (see Store.AddressForBinding). This is C1's case: the sender
+//     subscribed to its own reply address first, which is also what makes it
+//     reachable for a reply.
 //  3. Otherwise `<projectId>/agent` from the project registry, or
 //     `unregistered/agent` outside a registered project.
 func (d *direct) resolveFrom(ctx context.Context, in SendInput) (string, error) {
