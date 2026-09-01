@@ -196,8 +196,16 @@ class MailFlowScenario(Scenario):
     def _hooks_dir(self):
         return SCENARIOS_ROOT / self.name / "fixtures" / "hooks"
 
-    def fire_hook(self, agent: str, agent_kind: str = "claude", home: str | None = None) -> Result:
-        """Pipe a PostToolUse payload into `auto hooks fire` for an agent.
+    def fire_hook(
+        self,
+        agent: str,
+        agent_kind: str = "claude",
+        home: str | None = None,
+        fixture: str = "post-tool-use.json",
+        agent_id: str | None = None,
+        agent_type: str | None = None,
+    ) -> Result:
+        """Pipe a hook payload into `auto hooks fire` for an agent.
 
         This is the real notification path, not a simulation of one: the same
         binary, the same entry point and the same payload shape an agent's hook
@@ -212,11 +220,21 @@ class MailFlowScenario(Scenario):
         initialised by the entrypoint, so asserting that the hook creates no
         store on a host where `auto mail init` never ran needs a HOME where it
         never did (AC-10).
+
+        `fixture` selects the payload shape; `agent_id` / `agent_type` override
+        the Subagent fields on it. Those field names are copied from real
+        payloads in `~/.auto/hooks/raw/events-*.jsonl` rather than invented —
+        the *provenance* of the payload is simulated here because a container
+        cannot run Claude Code, but its shape must not be.
         """
-        payload = json.loads((self._hooks_dir / "post-tool-use.json").read_text())
+        payload = json.loads((self._hooks_dir / fixture).read_text())
         workspace = self.workspace(agent)
         payload["cwd"] = workspace
         payload.setdefault("tool_input", {})["file_path"] = f"{workspace}/README.md"
+        if agent_id is not None:
+            payload["agent_id"] = agent_id
+        if agent_type is not None:
+            payload["agent_type"] = agent_type
         b64 = base64.b64encode(json.dumps(payload).encode()).decode()
         env = f"HOME={shlex.quote(home)} " if home else ""
         r = self.run("host", f"echo {b64} | base64 -d | {env}auto hooks fire --agent {agent_kind}")
@@ -226,6 +244,31 @@ class MailFlowScenario(Scenario):
                 f"break the agent: {r.stderr or r.stdout}"
             )
         return r
+
+    def mark_subagent(
+        self,
+        agent: str,
+        agent_id: str,
+        agent_type: str = "phase3",
+    ) -> Result:
+        """Fire a Subagent `PreToolUse` so `#parent` can resolve in a workspace.
+
+        This is the real bridge, not a simulation of one: the same binary and
+        the same entry point an agent's hook fires with, carrying the two fields
+        a Subagent's payload actually carries. In a container with no tmux the
+        binding falls to the cwd rung, so the supervisor and its Subagent are
+        one workspace — which is exactly what an in-process Subagent is.
+
+        There is no product seam for planting a marker directly, and there
+        should not be: a marker that any process could write would not be
+        evidence of anything (harness/CLAUDE.md — missing seams are findings).
+        """
+        return self.fire_hook(
+            agent,
+            fixture="pre-tool-use-subagent.json",
+            agent_id=agent_id,
+            agent_type=agent_type,
+        )
 
     def nudge_context(self, agent: str) -> str:
         """Fire a hook and return `hookSpecificOutput.additionalContext`, or "".

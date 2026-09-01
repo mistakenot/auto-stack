@@ -7,6 +7,7 @@ import (
 
 	"github.com/mistakenot/auto-mail/internal/app"
 	"github.com/mistakenot/auto-mail/mail"
+	sharedconfig "github.com/mistakenot/auto-shared/config"
 	"github.com/spf13/cobra"
 )
 
@@ -29,7 +30,8 @@ func newSendCmd(application *app.App) *cobra.Command {
 			return runSend(cmd, application, to, text, bodyJSON, from)
 		},
 	}
-	cmd.Flags().StringVar(&to, "to", "", "destination address (required)")
+	cmd.Flags().StringVar(&to, "to", "",
+		"destination address, or the relative handle #parent (required)")
 	cmd.Flags().StringVar(&text, "message", "", "body text; sugar for --body '{\"message\": ...}'")
 	cmd.Flags().StringVar(&bodyJSON, "body", "", "body as a JSON object")
 	cmd.Flags().StringVar(&from, "from", "",
@@ -52,14 +54,24 @@ func runSend(cmd *cobra.Command, application *app.App, to, text, bodyJSON, from 
 	}
 	defer func() { _ = client.Close() }()
 
+	// Who this process is, is established here and passed in — never derived
+	// inside the client (D-063-8). The markers it reads are on *this* host, and
+	// from T3 the client may be answering from another one.
+	binding := mail.BindingFor(application.CWD)
+	sender := mail.CallerSender(callerHome(), binding)
+
 	result, err := client.Send(cmd.Context(), mail.SendInput{
 		To:      to,
 		From:    from,
 		Body:    body,
-		Binding: mail.BindingFor(application.CWD),
+		Binding: binding,
 		Cwd:     application.CWD,
+		Sender:  sender,
 	})
 	if err != nil {
+		// Every send failure — a refused handle included — lands here: exit 1,
+		// the remediation on stderr, and stdout left completely empty so a
+		// caller parsing it is never handed half a payload.
 		return &ExitError{Code: 1, Err: err}
 	}
 	if err := writeJSON(cmd.OutOrStdout(), result); err != nil {
@@ -93,4 +105,19 @@ func resolveBody(text, bodyJSON string) (map[string]any, error) {
 	default:
 		return nil, errors.New("nothing to send: pass --message <text> or --body <json>")
 	}
+}
+
+// callerHome resolves the home directory the Subagent markers live under, and
+// answers "" when it cannot.
+//
+// An empty home is the same answer as an empty marker directory — an ordinary
+// agent, and a refused `#parent` with a hint — which is the right failure for a
+// question about identity: a caller that cannot tell whether it is a Subagent
+// must not be allowed to act as one.
+func callerHome() string {
+	home, err := sharedconfig.HomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
 }

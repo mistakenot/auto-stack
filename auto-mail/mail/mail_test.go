@@ -2,6 +2,7 @@ package mail_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"go/ast"
 	"go/parser"
@@ -710,5 +711,221 @@ func TestPendingFlagIsPerBinding(t *testing.T) {
 	}
 	if mail.FlagPathFor(home, a) == mail.FlagPathFor(home, b) {
 		t.Error("two distinct bindings hash to one flag path")
+	}
+}
+
+// TestParentHandleResolvesToTheSupervisorAndIsNeverStored is AC-1.
+//
+// A Subagent knows no address — it is handed a prompt, not an identity — so the
+// whole of what it supplies is the literal `#parent`. The client answers with
+// the supervisor's absolute address, and the *stored* row must carry that
+// address and nothing else: a Handle names a recipient at a moment, and a
+// stored moment is meaningless later (G5).
+func TestParentHandleResolvesToTheSupervisorAndIsNeverStored(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	// The supervisor and its Subagent share a pane and a working directory, so
+	// they compute the same binding — which is the entire mechanism.
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{
+		Address: "auto-stack/supervisor",
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("the supervisor could not subscribe: %v", err)
+	}
+
+	// The hook has seen the Subagent act under this binding; that is the whole
+	// of its self-identification.
+	mail.ObserveHookEvent(home, binding, "PreToolUse", mail.ActiveAgent{
+		AgentID:   "a84a3676a847c5c0b",
+		AgentType: "phase3",
+		SessionID: "the-supervisor-session",
+	})
+
+	sent, err := client.Send(ctx, mail.SendInput{
+		To:      mail.HandleParent,
+		Body:    map[string]any{"message": "phase 3 blocked: the fixture has no agent_id"},
+		Binding: binding,
+		Sender:  mail.CallerSender(home, binding),
+	})
+	if err != nil {
+		t.Fatalf("send to %s: %v", mail.HandleParent, err)
+	}
+	if sent.To != "auto-stack/supervisor" {
+		t.Errorf("to = %q, want the supervisor's absolute address", sent.To)
+	}
+	if sent.ResolvedFrom != mail.HandleParent {
+		t.Errorf("resolvedFrom = %q, want %q", sent.ResolvedFrom, mail.HandleParent)
+	}
+	if sent.Subscriptions != 1 || sent.Bound != 1 {
+		t.Errorf("subscriptions/bound = %d/%d, want 1/1", sent.Subscriptions, sent.Bound)
+	}
+
+	// The supervisor reads it, and reading does not retire it (G3).
+	listed, err := client.List(ctx, mail.ListInput{Binding: binding})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != sent.ID {
+		t.Fatalf("the supervisor listed %+v, want the mail %s", listed, sent.ID)
+	}
+
+	// And nothing beginning with `#` reached the store — not the mail row, not
+	// the envelope, not a subscription address.
+	st, err := store.Open(config.StorePathIn(home))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	var toAddress, envelope string
+	if err := st.QueryRowContext(ctx,
+		`SELECT to_address, envelope FROM mail WHERE id = ?`, sent.ID).Scan(&toAddress, &envelope); err != nil {
+		t.Fatalf("read mail row: %v", err)
+	}
+	if toAddress != "auto-stack/supervisor" {
+		t.Errorf("stored to_address = %q, want the resolved absolute address", toAddress)
+	}
+	if strings.Contains(envelope, mail.HandlePrefix) {
+		t.Errorf("the stored envelope carries a handle: %s", envelope)
+	}
+	// Nor is the Subagent's physical identity anywhere in the row (G5).
+	for _, physical := range []string{"a84a3676a847c5c0b", "the-supervisor-session"} {
+		if strings.Contains(toAddress+"\x00"+envelope, physical) {
+			t.Errorf("the stored row carries the physical identity %q", physical)
+		}
+	}
+
+	var addresses int
+	if err := st.QueryRowContext(ctx,
+		`SELECT count(*) FROM subscriptions WHERE address LIKE '#%'`).Scan(&addresses); err != nil {
+		t.Fatalf("count handle-shaped subscriptions: %v", err)
+	}
+	if addresses != 0 {
+		t.Errorf("%d subscription addresses begin with `#`; a handle is never an address", addresses)
+	}
+}
+
+// TestParentHandleRefusesANonSubagent is AC-3's first half at the seam.
+//
+// The refusal is what makes the handle safe to offer: a process that cannot
+// tell whether it is a Subagent must not be allowed to act as one, because the
+// alternative is mailing a stranger's supervisor. The token is bare and the
+// remediation is on the wrapped error, so a caller branches on the first and a
+// user reads the second.
+func TestParentHandleRefusesANonSubagent(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{
+		Address: "auto-stack/supervisor",
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	// No marker was ever written, so CallerSender answers "ordinary agent" —
+	// and the supervisor's own subscription being right there is exactly the
+	// thing that must not make this succeed.
+	_, err = client.Send(ctx, mail.SendInput{
+		To:      mail.HandleParent,
+		Body:    map[string]any{"message": "hello?"},
+		Binding: binding,
+		Sender:  mail.CallerSender(home, binding),
+	})
+	if !errors.Is(err, mail.ErrNotSubagent) {
+		t.Fatalf("send from a non-Subagent = %v, want ErrNotSubagent", err)
+	}
+	text := err.Error()
+	for _, want := range []string{mail.HandleParent, "Subagent", "auto-stack/supervisor", "auto mail docs"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the refusal does not mention %q — it must name the constraint, "+
+				"an absolute alternative, and where to read more: %s", want, text)
+		}
+	}
+
+	// Nothing was created: no mail row, and no event in the log.
+	listed, err := client.List(ctx, mail.ListInput{Binding: binding})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(listed) != 0 {
+		t.Errorf("a refused send delivered %+v, want nothing", listed)
+	}
+	counter, ok := client.(interface {
+		CountEvents(context.Context, string) (int, error)
+	})
+	if !ok {
+		t.Fatal("the direct client no longer counts events")
+	}
+	sentEvents, err := counter.CountEvents(ctx, mail.EventTypeSent)
+	if err != nil {
+		t.Fatalf("count sent events: %v", err)
+	}
+	if sentEvents != 0 {
+		t.Errorf("%d alpha.mail.sent events after a refused send, want 0", sentEvents)
+	}
+}
+
+// TestAbsoluteSendPayloadIsUnchanged is D-063-10: `resolvedFrom` is omitempty,
+// so an absolute send still marshals to exactly T1's four keys.
+//
+// The assertion is on the marshalled bytes rather than on the struct, because
+// the thing that must not change is what an existing consumer parses — and
+// every one of them was written against T1's payload.
+func TestAbsoluteSendPayloadIsUnchanged(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	sent, err := client.Send(ctx, mail.SendInput{
+		To:      "auto-web/bugs",
+		From:    "auto-stack/reviewer",
+		Body:    map[string]any{"message": "the port is dropped on ssh:// URLs"},
+		Binding: binding,
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	encoded, err := json.Marshal(sent)
+	if err != nil {
+		t.Fatalf("marshal the send payload: %v", err)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &keys); err != nil {
+		t.Fatalf("unmarshal the send payload: %v", err)
+	}
+	want := []string{"id", "to", "subscriptions", "bound"}
+	if len(keys) != len(want) {
+		t.Errorf("an absolute send printed %d keys (%s), want exactly T1's %v", len(keys), encoded, want)
+	}
+	for _, key := range want {
+		if _, ok := keys[key]; !ok {
+			t.Errorf("the send payload lost the key %q: %s", key, encoded)
+		}
+	}
+	if _, ok := keys["resolvedFrom"]; ok {
+		t.Errorf("an absolute send emitted resolvedFrom: %s", encoded)
 	}
 }

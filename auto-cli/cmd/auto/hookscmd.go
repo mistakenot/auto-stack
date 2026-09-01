@@ -111,6 +111,12 @@ func newHooksFireCmd() *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "auto hooks fire: append log: %v\n", err)
 			}
 
+			// Additive: record which Subagent is acting, if one is. Placed
+			// after the durable append and before the best-effort POST, so a
+			// slow or dead UI cannot delay the marker a Subagent's own
+			// `auto mail send` is about to read. It writes nothing to stdout.
+			mailObserveAgent(cwd, hookCtx, payload)
+
 			ev := buildBusEvent(agent, raw, registry)
 			ev.Env = hookCtx
 			postBusEvent(watchHookAddr(), ev)
@@ -167,6 +173,45 @@ func mailNudge(cwd string, hookCtx map[string]string) string {
 		return ""
 	}
 	return mail.NudgeText()
+}
+
+// mailObserveAgent records that an in-process Subagent is acting under this
+// agent's binding, so the Subagent's own `auto mail send --to '#parent'` can
+// tell that it is one (D-063-4).
+//
+// A payload with no agent_id is the ordinary agent's tool call and returns
+// immediately, before any path is built or any filesystem is touched: the
+// common hot path costs exactly what it cost before this existed (AC-7). The
+// early return lives here rather than in RunE precisely so that path is
+// otherwise untouched — the log append, the bus post and the in-band emission
+// all still happen for every payload.
+//
+// The binding comes from the context the hook already captured, never from a
+// second BindingFor(cwd): CaptureContext shells out to tmux, and asking the
+// same question twice in one hook would double that cost for no new
+// information. Like mailNudge, this has no error return and nothing here can
+// block — a hook must never break the agent.
+func mailObserveAgent(cwd string, hookCtx map[string]string, payload map[string]any) {
+	agentID := stringField(payload, "agent_id")
+	if agentID == "" {
+		return
+	}
+	home, err := sharedconfig.HomeDir()
+	if err != nil || home == "" {
+		return
+	}
+	mail.ObserveHookEvent(
+		home,
+		mail.BindingFromContext(hookCtx, cwd),
+		stringField(payload, "hook_event_name"),
+		mail.ActiveAgent{
+			AgentID:   agentID,
+			AgentType: stringField(payload, "agent_type"),
+			// The session_id on a Subagent's hook event is its *supervisor's*,
+			// which is why nothing resolves on it; it is kept for diagnostics.
+			SessionID: stringField(payload, "session_id"),
+		},
+	)
 }
 
 // mapEventType maps a hook_event_name (and optional tool_name) to a dotted bus

@@ -118,16 +118,28 @@ func (d *direct) Subscribe(ctx context.Context, in SubscribeInput) (SubscribeRes
 }
 
 func (d *direct) Send(ctx context.Context, in SendInput) (SendResult, error) {
-	if err := ValidateAddress(in.To); err != nil {
+	// Relative Handles are resolved before validation, never after: the stored
+	// address is always the absolute one a reply can be sent back to, and
+	// nothing beginning with `#` may reach a row (G5/D-063-1). An absolute
+	// address skips this entirely and takes exactly T1's path.
+	to, resolvedFrom := in.To, ""
+	if IsHandle(in.To) {
+		resolved, err := d.resolveHandle(ctx, in)
+		if err != nil {
+			return SendResult{}, err
+		}
+		to, resolvedFrom = resolved, in.To
+	}
+	if err := ValidateAddress(to); err != nil {
 		return SendResult{}, err
 	}
 	from, err := d.resolveFrom(ctx, in)
 	if err != nil {
 		return SendResult{}, err
 	}
-	out, err := d.store.Send(ctx, store.SendParams{To: in.To, From: from, Body: in.Body})
+	out, err := d.store.Send(ctx, store.SendParams{To: to, From: from, Body: in.Body})
 	if err != nil {
-		return SendResult{}, fmt.Errorf("send to %q: %w", in.To, err)
+		return SendResult{}, fmt.Errorf("send to %q: %w", to, err)
 	}
 	// The flag is raised after the commit, never inside it: it is a hint about
 	// state, and a hint that outlived a rolled-back send would be drift with no
@@ -139,10 +151,52 @@ func (d *direct) Send(ctx context.Context, in SendInput) (SendResult, error) {
 	}
 	return SendResult{
 		ID:            out.ID,
-		To:            in.To,
+		To:            to,
+		ResolvedFrom:  resolvedFrom,
 		Subscriptions: out.Subscriptions,
 		Bound:         out.Bound,
 	}, nil
+}
+
+// resolveHandle turns a relative Handle into the absolute address it names.
+//
+// `#parent` is the whole of it today, and it is two things at once: a guard and
+// a lookup. The guard is the Sender the caller established from its own
+// filesystem — only an in-process Subagent may use it. The lookup is T1's
+// existing AddressForBinding, rung 2 of the from-ladder, asked with the Binding
+// the *caller* computed for itself rather than one carried in a marker.
+//
+// That split is what makes the concurrency race unable to express a wrong
+// recipient (D-063-4): an in-process Subagent shares its supervisor's pane and
+// working directory, so every concurrent Subagent of one supervisor computes
+// the same Binding and therefore resolves to the same address. Whichever marker
+// writer wins, the answer is identical.
+func (d *direct) resolveHandle(ctx context.Context, in SendInput) (string, error) {
+	if in.To != HandleParent {
+		// The full reservation rule — a sentinel of its own, every position
+		// covered, the known handles listed — lands with D-063-2. Until then an
+		// unrecognised handle is still refused here, because the one thing that
+		// must never happen is `#nope` quietly becoming a channel.
+		return "", fmt.Errorf("%q is not a known relative handle. Known handles: %s; "+
+			"`#` is reserved for handles, so it can never be used as an address — "+
+			"drop the `#` if you meant a channel of that name", in.To, HandleParent)
+	}
+	if in.Sender.Kind != SenderSubagent {
+		return "", handleError(in.To, ErrNotSubagent)
+	}
+	address, ok, err := d.store.AddressForBinding(ctx, caller(in.Binding))
+	if err != nil {
+		return "", fmt.Errorf("resolve %q: %w", in.To, err)
+	}
+	if !ok {
+		// A sentinel for this case, distinct from ErrNotSubagent because the
+		// fix is different, lands with D-063-2. The remediation is already the
+		// final one: it is the supervisor that has to act, not the caller.
+		return "", fmt.Errorf("cannot resolve %q: your supervisor holds no subscription, "+
+			"so it has no address to be mailed at. Run `auto mail subscribe <address>` "+
+			"in the supervisor first — it is what binds an agent to an address", in.To)
+	}
+	return address, nil
 }
 
 // settleFlag brings the caller's pending flag back in line with the store after

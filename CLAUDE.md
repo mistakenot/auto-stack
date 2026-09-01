@@ -200,7 +200,7 @@ Use claud read tools to build heat maps of what files it's reading a lot, what d
 
 **docs/concepts**
 
-- [Ubiquitous Language](docs/concepts/UBIQUITOUS_LANGUAGE.md): The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Binding) with the terms to avoid for each. Read when: naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept
+- [Ubiquitous Language](docs/concepts/UBIQUITOUS_LANGUAGE.md): The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Handle, Binding) with the terms to avoid for each. Read when: naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept
 
 **docs/grilling**
 

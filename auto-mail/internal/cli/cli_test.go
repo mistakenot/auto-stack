@@ -15,6 +15,7 @@ import (
 	"github.com/mistakenot/auto-mail/internal/app"
 	"github.com/mistakenot/auto-mail/internal/cli"
 	"github.com/mistakenot/auto-mail/internal/store"
+	"github.com/mistakenot/auto-mail/mail"
 	"github.com/spf13/pflag"
 )
 
@@ -858,5 +859,126 @@ func TestResetRecoversAStoreWrittenByAnotherSchema(t *testing.T) {
 	// And the tool works again from there — "start again" is the migration path.
 	if _, stderr, code := runCLI(t, "subscribe", "auto-web/bugs"); code != 0 {
 		t.Fatalf("subscribe after the reset exit %d, stderr: %s", code, stderr)
+	}
+}
+
+// TestParentHandleAtTheCommandSurface is J1 as an agent actually types it, plus
+// AC-3's refusal.
+//
+// The supervisor and its Subagent are one workspace, because that is what an
+// in-process Subagent is: it shares its supervisor's pane and working
+// directory, so it computes the same binding and needs no identifier of its
+// own. `#parent` is the whole of what the child supplies.
+func TestParentHandleAtTheCommandSurface(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	supervisor := workspace(t, home, "supervisor")
+	t.Chdir(supervisor)
+	binding := mail.BindingFor(supervisor)
+
+	if _, stderr, code := runCLI(t, "subscribe", "auto-stack/supervisor"); code != 0 {
+		t.Fatalf("subscribe exit %d, stderr: %s", code, stderr)
+	}
+
+	// Before any Subagent is recorded, `#parent` is refused: exit 1, stdout
+	// completely empty, and the remediation on stderr.
+	stdout, stderr, code := runCLI(t, "send", "--to", "#parent", "--message", "hello?")
+	if code != 1 {
+		t.Fatalf("send --to #parent from a non-Subagent exit %d, want 1 (stdout %q)", code, stdout)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("stdout = %q on a refused send, want it empty — a caller parsing it "+
+			"must never be handed half a payload", stdout)
+	}
+	for _, want := range []string{"#parent", "Subagent", "auto mail docs"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the refusal on stderr does not mention %q: %s", want, stderr)
+		}
+	}
+
+	// The hook records that a Subagent is acting under this binding. That is
+	// the only thing that changes between the refusal above and the send below.
+	mail.ObserveHookEvent(home, binding, "PreToolUse", mail.ActiveAgent{
+		AgentID:   "a84a3676a847c5c0b",
+		AgentType: "phase3",
+		SessionID: "the-supervisor-session",
+	})
+
+	stdout, stderr, code = runCLI(t, "send", "--to", "#parent", "--message", "phase 3 blocked")
+	if code != 0 {
+		t.Fatalf("send --to #parent exit %d, stderr: %s", code, stderr)
+	}
+	sent := decode[handleSendPayload](t, stdout)
+	if sent.To != "auto-stack/supervisor" {
+		t.Errorf("to = %q, want the supervisor's absolute address", sent.To)
+	}
+	if sent.ResolvedFrom != "#parent" {
+		t.Errorf("resolvedFrom = %q, want %q", sent.ResolvedFrom, "#parent")
+	}
+
+	// The supervisor reads it, and only an explicit ack retires it (G3).
+	stdout, stderr, code = runCLI(t, "list")
+	if code != 0 {
+		t.Fatalf("list exit %d, stderr: %s", code, stderr)
+	}
+	delivered := decode[[]deliveryPayload](t, stdout)
+	if len(delivered) != 1 || delivered[0].ID != sent.ID {
+		t.Fatalf("the supervisor listed %+v, want the mail %s", delivered, sent.ID)
+	}
+	if delivered[0].Body["message"] != "phase 3 blocked" {
+		t.Errorf("body = %v, want the Subagent's text", delivered[0].Body)
+	}
+
+	stdout, stderr, code = runCLI(t, "ack", sent.ID)
+	if code != 0 {
+		t.Fatalf("ack exit %d, stderr: %s", code, stderr)
+	}
+	if acked := decode[ackPayload](t, stdout); !acked.WonTransition {
+		t.Errorf("ack = %+v, want the first ack to win the transition", acked)
+	}
+}
+
+// handleSendPayload is sendPayload plus the key a resolved Handle adds. It is a
+// separate type rather than a field on sendPayload so T1's own assertions keep
+// asserting T1's exact shape (D-063-10).
+type handleSendPayload struct {
+	ID           string `json:"id"`
+	To           string `json:"to"`
+	ResolvedFrom string `json:"resolvedFrom"`
+}
+
+// TestSendToAnUnknownHandleIsRefused: `#` is reserved for the family, so a typo
+// is an error rather than a new channel silently created under a name no reader
+// can ever subscribe to.
+func TestSendToAnUnknownHandleIsRefused(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	agent := workspace(t, home, "agent")
+	t.Chdir(agent)
+
+	stdout, stderr, code := runCLI(t, "send", "--to", "#parnet", "--message", "…")
+	if code != 1 {
+		t.Fatalf("send --to #parnet exit %d, want 1 (stdout %q)", code, stdout)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("stdout = %q on a refused send, want it empty", stdout)
+	}
+	if !strings.Contains(stderr, "#parnet") || !strings.Contains(stderr, "#parent") {
+		t.Errorf("the refusal must name the typo and list the handles that exist: %s", stderr)
+	}
+
+	// And no address beginning with `#` reached the store.
+	st, err := store.Open(filepath.Join(home, ".auto", "mail", "alpha-store.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	var rows int
+	if err := st.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM mail WHERE to_address LIKE '#%'`).Scan(&rows); err != nil {
+		t.Fatalf("count handle-shaped mail: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("%d mail rows are addressed to a handle, want 0", rows)
 	}
 }

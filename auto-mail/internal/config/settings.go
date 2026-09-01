@@ -17,6 +17,10 @@ const (
 	StoreFileName = "alpha-store.db"
 	// FlagsDirName holds the per-binding pending flags the hook stats (G8).
 	FlagsDirName = "alpha-flags"
+	// AgentsDirName holds one directory per binding of the Subagent markers
+	// the hook writes, which is how a Subagent's own `auto mail send` knows it
+	// is one at all (D-063-9).
+	AgentsDirName = "alpha-agents"
 )
 
 // ValidationError is an alias for the shared validation error type.
@@ -52,6 +56,15 @@ func FlagsDir() (string, error) {
 	return filepath.Join(dir, FlagsDirName), nil
 }
 
+// AgentsDir returns the path to ~/.auto/mail/alpha-agents.
+func AgentsDir() (string, error) {
+	dir, err := MailDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, AgentsDirName), nil
+}
+
 // MailDirIn returns <home>/.auto/mail for an explicitly supplied home
 // directory. The hook path needs the locations without consulting the
 // environment, so every path helper has a home-relative twin.
@@ -67,4 +80,9 @@ func StorePathIn(home string) string {
 // FlagsDirIn returns <home>/.auto/mail/alpha-flags.
 func FlagsDirIn(home string) string {
 	return filepath.Join(MailDirIn(home), FlagsDirName)
+}
+
+// AgentsDirIn returns <home>/.auto/mail/alpha-agents.
+func AgentsDirIn(home string) string {
+	return filepath.Join(MailDirIn(home), AgentsDirName)
 }
