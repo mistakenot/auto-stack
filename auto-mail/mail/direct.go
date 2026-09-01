@@ -179,7 +179,7 @@ func (d *direct) resolveHandle(ctx context.Context, in SendInput) (string, error
 		return "", err
 	}
 	if in.Sender.Kind != SenderSubagent {
-		return "", handleError(in.To, ErrNotSubagent)
+		return "", describeHandleError(ErrNotSubagent, in.To)
 	}
 	address, ok, err := d.store.AddressForBinding(ctx, caller(in.Binding))
 	if err != nil {
@@ -192,7 +192,7 @@ func (d *direct) resolveHandle(ctx context.Context, in SendInput) (string, error
 		// binding row gone while the subscription lives on — arrives here too,
 		// and is answered the same way, because from the caller's side it is
 		// the same fact: nothing binds this pair to an address any more.
-		return "", handleError(in.To, ErrNoSupervisor)
+		return "", describeHandleError(ErrNoSupervisor, in.To)
 	}
 	return address, nil
 }

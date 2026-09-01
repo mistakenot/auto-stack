@@ -158,9 +158,8 @@ func rejectHandle(value, position, why string) error {
 		return &ExitError{Code: 1, Err: err}
 	}
 	return &ExitError{Code: 1, Err: fmt.Errorf(
-		"%q is a relative handle, not an address: %w, and %s takes one — %s. "+
-			"Use an absolute address (for example `auto-stack/supervisor`); a handle "+
-			"is legal only in `auto mail send --to`. See `auto mail docs` under "+
-			"\"relative handles\"",
+		"%q: %w. %s takes an absolute address — %s. Use one (for example "+
+			"`auto-stack/supervisor`); a handle is legal only in "+
+			"`auto mail send --to`. See `auto mail docs` under \"relative handles\"",
 		value, mail.ErrHandleNotAllowed, position, why)}
 }

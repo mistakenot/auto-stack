@@ -44,11 +44,11 @@ var (
 	// Subscription is bound to its Binding, so the supervisor has no address to
 	// resolve to. Distinct from ErrNotSubagent because the fix is the
 	// supervisor's, not the caller's (AC-10).
-	ErrNoSupervisor = errors.New("the supervisor holds no subscription")
+	ErrNoSupervisor = errors.New("your supervisor holds no subscription")
 	// ErrUnknownHandle is returned for a `#`-prefixed value that is not a
 	// Handle that exists. It is what keeps `#nope` from quietly becoming a
 	// channel no reader can ever subscribe to.
-	ErrUnknownHandle = errors.New("unknown relative handle")
+	ErrUnknownHandle = errors.New("not a known relative handle")
 	// ErrHandleNotAllowed is returned when a known Handle is used in a position
 	// that only takes an absolute address — `subscribe`, `list --address`,
 	// `send --from` (D-063-2). It is wrapped at the CLI, which is the only
@@ -90,10 +90,18 @@ func ValidateHandle(s string) error {
 	if slices.Contains(KnownHandles(), s) {
 		return nil
 	}
-	return handleError(s, ErrUnknownHandle)
+	return describeHandleError(ErrUnknownHandle, s)
 }
 
-// handleError attaches the user-facing remediation to a resolution failure.
+// describeHandleError attaches the user-facing remediation to a resolution
+// failure.
+//
+// It returns an error rather than the string the API sketch imagined, and that
+// is load-bearing rather than a liberty: the sentence is joined to its token
+// with %w, so one value carries both layers. A string would force every caller
+// to re-wrap — and a caller that reached for errors.New instead would silently
+// break errors.Is, which is the entire contract these four sentinels exist to
+// offer (AC-3, AC-10).
 //
 // The two layers are separate for the reason T1's sentinels are: the token is
 // what a caller branches on, the message is what a user reads. All three
@@ -106,7 +114,7 @@ func ValidateHandle(s string) error {
 // knows whether the offending value arrived as a `subscribe` argument, as
 // `--address` or as `--from`, and a message that could not name the position
 // would be the least useful of the four.
-func handleError(handle string, err error) error {
+func describeHandleError(err error, handle string) error {
 	switch {
 	case errors.Is(err, ErrNotSubagent):
 		return fmt.Errorf("cannot resolve %q: %w — no active Subagent is recorded "+
@@ -117,14 +125,13 @@ func handleError(handle string, err error) error {
 	case errors.Is(err, ErrNoSupervisor):
 		return fmt.Errorf("cannot resolve %q: %w, so it has no address to be mailed "+
 			"at. Run `auto mail subscribe <address>` in the supervisor first — it is "+
-			"what binds an agent to an address — or send to an absolute address "+
-			"instead (`--to auto-stack/supervisor`). See `auto mail docs` under "+
+			"what binds an agent to an address. See `auto mail docs` under "+
 			"\"relative handles\"", handle, ErrNoSupervisor)
 	case errors.Is(err, ErrUnknownHandle):
-		return fmt.Errorf("%q is an %w. Known handles: %s. `#` is reserved for "+
-			"handles, so it can never be used as an address — drop the `#` if you "+
-			"meant a channel of that name. See `auto mail docs` under "+
-			"\"relative handles\"", handle, ErrUnknownHandle, strings.Join(KnownHandles(), ", "))
+		return fmt.Errorf("%q is %w. Known handles: %s; `#` is reserved for handles, "+
+			"so it can never be used as an address — drop the `#` if you meant a "+
+			"channel of that name. See `auto mail docs` under \"relative handles\"",
+			handle, ErrUnknownHandle, strings.Join(KnownHandles(), ", "))
 	default:
 		return err
 	}
