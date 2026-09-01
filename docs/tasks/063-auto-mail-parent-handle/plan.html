@@ -1411,8 +1411,7 @@ parent_handle` green; T1's existing `mail-flow` tests still green **unmodified**
       </pd-phase>
 
       <pd-phase n="2" title="The reservation rule and four distinguishable refusals"
-        files="auto-mail/mail/handle.go,auto-mail/mail/handle_test.go,auto-mail/mail/address.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/subscribe.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/send.go,auto-mail/internal/cli/cli_test.go,auto-mail/conformance/conformance.go,auto-mail/conformance/conformance_test.go"
-        status="todo" depends-on="1">
+        files="auto-mail/mail/handle.go,auto-mail/mail/handle_test.go,auto-mail/mail/address.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/subscribe.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/send.go,auto-mail/internal/cli/cli_test.go,auto-mail/conformance/conformance.go,auto-mail/conformance/conformance_test.go" status="done" depends-on="1">
         <md><script type="text/plain">
 1. `handle.go`: add `KnownHandles()` and the bare sentinels `ErrUnknownHandle`,
    `ErrNoSupervisor` and `ErrHandleNotAllowed`, plus the wrappers that attach
