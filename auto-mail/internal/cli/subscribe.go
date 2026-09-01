@@ -29,6 +29,16 @@ func newSubscribeCmd(application *app.App) *cobra.Command {
 }
 
 func runSubscribe(cmd *cobra.Command, application *app.App, address string, fromNow bool, name string) error {
+	// A subscription is durable, and a handle is not: it names whoever this
+	// process's supervisor happens to be right now, with no point at which it
+	// would ever be re-resolved (D-063-2). Rejected before the store is even
+	// opened, so a refused subscribe cannot leave a `#` anywhere.
+	if err := rejectHandle(address, "`auto mail subscribe <address>`",
+		"a subscription names a reader forever, and a relative name stops meaning "+
+			"what it said the moment this process is re-parented"); err != nil {
+		return err
+	}
+
 	client, err := mail.NewDirect("")
 	if err != nil {
 		return &ExitError{Code: 1, Err: err}

@@ -24,6 +24,7 @@ package conformance
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/mistakenot/auto-mail/mail"
@@ -73,6 +74,11 @@ var cases = []suiteCase{
 	{"send-to-nothing-persists-for-a-later-subscriber", sendToNothingPersists},
 	{"addresses-are-free-form-and-never-normalised", freeFormAddresses},
 	{"a-duplicated-delivery-still-transitions-once", duplicateDelivery},
+	{"parent-resolves-to-the-supervisor-for-a-subagent-sender", parentResolvesForASubagent},
+	{"parent-is-refused-for-a-sender-that-is-not-a-subagent", parentRefusesANonSubagent},
+	{"parent-is-refused-when-the-supervisor-holds-no-subscription", parentRefusesWithNoSupervisor},
+	{"an-unknown-handle-is-refused-whatever-the-sender-is", unknownHandleIsRefused},
+	{"an-absolute-send-reports-no-resolved-from", absoluteSendHasNoResolvedFrom},
 }
 
 // ── the driver ───────────────────────────────────────────────────────────────
@@ -138,6 +144,24 @@ func (f *fixture) send(to, text string) mail.SendResult {
 		f.t.Errorf("send returned to = %q, want %q verbatim", out.To, to)
 	}
 	return out
+}
+
+// sendAs posts through the seam as a named sender, and returns the error rather
+// than failing on it: the handle cases are about refusals as much as about
+// resolution, so the error is the value under test.
+//
+// It passes a Binding, which f.send deliberately does not — `#parent` resolves
+// from the caller's Binding, so every case here needs its own agent name or it
+// would resolve against a subscription another case created (AddressForBinding
+// is keyed by Binding, and answers with the first subscription made under it).
+func (f *fixture) sendAs(agent, to string, sender mail.Sender) (mail.SendResult, error) {
+	f.t.Helper()
+	return f.client.Send(f.ctx, mail.SendInput{
+		To:      to,
+		Body:    map[string]any{"message": "phase 3 blocked"},
+		Binding: binding(agent),
+		Sender:  sender,
+	})
 }
 
 func (f *fixture) list(agent string) []mail.Delivery {
@@ -436,6 +460,120 @@ func duplicateDelivery(f *fixture) {
 	}
 	if seam.ids("reader")[sent.ID] != 0 {
 		f.t.Errorf("%s is still listed after both acks", sent.ID)
+	}
+}
+
+// ── the handle contract (D-063-8) ────────────────────────────────────────────
+//
+// Handles are asserted here, at the interface, rather than only against the
+// direct client, because resolution is a *client* obligation: T3's RPC client
+// will resolve `#parent` over a wire against a store on another host, and the
+// four answers a caller may receive must be the same four. What is deliberately
+// not here is *who the caller is* — Sender is established caller-side from the
+// local filesystem (D-063-8) and passed in, so the suite states it outright
+// instead of planting markers a remote implementation would never read.
+
+// parentResolvesForASubagent is G5 and J1 at the seam: the handle is resolved at
+// send time, and the envelope carries the absolute address the supervisor can be
+// replied to at. The Handle itself is reported separately, and never stored.
+func parentResolvesForASubagent(f *fixture) {
+	f.subscribe("supervisor", "auto-stack/supervisor")
+
+	sent, err := f.sendAs("supervisor", mail.HandleParent, mail.Sender{Kind: mail.SenderSubagent})
+	if err != nil {
+		f.t.Fatalf("send to %s as a Subagent: %v", mail.HandleParent, err)
+	}
+	if sent.To != "auto-stack/supervisor" {
+		f.t.Errorf("to = %q, want the supervisor's absolute address — the stored "+
+			"envelope must never carry a handle (G5)", sent.To)
+	}
+	if sent.ResolvedFrom != mail.HandleParent {
+		f.t.Errorf("resolvedFrom = %q, want %q", sent.ResolvedFrom, mail.HandleParent)
+	}
+	if f.ids("supervisor")[sent.ID] == 0 {
+		f.t.Errorf("the supervisor did not receive %s; resolution reported an address "+
+			"it was not delivered to", sent.ID)
+	}
+}
+
+// parentRefusesANonSubagent is AC-3 at the seam. The supervisor's subscription
+// is right there and resolvable — the only thing standing between an ordinary
+// agent and somebody else's inbox is this refusal.
+func parentRefusesANonSubagent(f *fixture) {
+	f.subscribe("plain-agent", "auto-stack/supervisor")
+
+	_, err := f.sendAs("plain-agent", mail.HandleParent, mail.Sender{Kind: mail.SenderAgent})
+	if !errors.Is(err, mail.ErrNotSubagent) {
+		f.t.Fatalf("send to %s as an ordinary agent = %v, want ErrNotSubagent",
+			mail.HandleParent, err)
+	}
+	if got := f.list("plain-agent"); len(got) != 0 {
+		f.t.Errorf("a refused send delivered %+v, want nothing", got)
+	}
+
+	// The zero Sender is the same refusal, and that is the safe default: a
+	// caller that forgot to establish one is refused rather than handed
+	// whatever supervisor its Binding happens to resolve to.
+	if _, err := f.sendAs("plain-agent", mail.HandleParent, mail.Sender{}); !errors.Is(err, mail.ErrNotSubagent) {
+		f.t.Errorf("send with the zero Sender = %v, want ErrNotSubagent", err)
+	}
+}
+
+// parentRefusesWithNoSupervisor is AC-10: a Subagent whose supervisor never
+// subscribed gets its own answer, because the fix is the supervisor's.
+func parentRefusesWithNoSupervisor(f *fixture) {
+	// No subscribe under this binding at all. A subscription elsewhere is what
+	// makes the case honest: the store is not empty, it just holds nothing
+	// bound to this caller.
+	f.subscribe("somebody-else", "auto-web/bugs")
+
+	_, err := f.sendAs("orphan", mail.HandleParent, mail.Sender{Kind: mail.SenderSubagent})
+	if !errors.Is(err, mail.ErrNoSupervisor) {
+		f.t.Fatalf("send to %s with no supervisor subscription = %v, want ErrNoSupervisor",
+			mail.HandleParent, err)
+	}
+	if errors.Is(err, mail.ErrNotSubagent) {
+		f.t.Errorf("the refusal also matches ErrNotSubagent; the two have different fixes")
+	}
+	if got := f.list("somebody-else"); len(got) != 0 {
+		f.t.Errorf("a refused send reached an unrelated subscription: %+v", got)
+	}
+}
+
+// unknownHandleIsRefused is AC-4's typo half. `#` is reserved for the family, so
+// an unrecognised member is an error rather than a channel created under a name
+// no reader can ever subscribe to.
+func unknownHandleIsRefused(f *fixture) {
+	f.subscribe("typist", "auto-stack/supervisor")
+
+	// Asserted with a Subagent sender on purpose: this refusal is about the
+	// handle, not about who is asking, so the one caller that *could* have used
+	// `#parent` is still refused `#parnet`.
+	_, err := f.sendAs("typist", "#parnet", mail.Sender{Kind: mail.SenderSubagent})
+	if !errors.Is(err, mail.ErrUnknownHandle) {
+		f.t.Fatalf("send to %q = %v, want ErrUnknownHandle", "#parnet", err)
+	}
+	for _, want := range []string{"#parnet", mail.HandleParent} {
+		if !strings.Contains(err.Error(), want) {
+			f.t.Errorf("the refusal does not mention %q — it must name the typo and "+
+				"list the handles that exist: %v", want, err)
+		}
+	}
+	if got := f.list("typist"); len(got) != 0 {
+		f.t.Errorf("a refused send delivered %+v, want nothing", got)
+	}
+}
+
+// absoluteSendHasNoResolvedFrom is D-063-10 at the interface: the key is the
+// signal, so an absolute send must leave it empty and marshal it away.
+func absoluteSendHasNoResolvedFrom(f *fixture) {
+	f.subscribe("reader", "auto-web/bugs")
+
+	sent := f.send("auto-web/bugs", "the port is dropped on ssh:// URLs")
+	if sent.ResolvedFrom != "" {
+		f.t.Errorf("an absolute send reported resolvedFrom = %q, want it empty — "+
+			"presence of the key is what tells a caller a handle was used",
+			sent.ResolvedFrom)
 	}
 }
 

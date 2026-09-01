@@ -28,6 +28,14 @@ const MaxAddressLength = 256
 // into a hierarchy, and it keeps prefix filtering buildable later. The cost of
 // being permissive is the typo case, which `send` mitigates by reporting a
 // zero-subscription send on stderr rather than by narrowing the namespace.
+//
+// `#` is NOT rejected here, and that is deliberate rather than an oversight
+// (D-063-1). The reserved prefix is a rule about *resolution* and about the CLI
+// positions that take an address — see IsHandle and ValidateHandle in handle.go
+// — not about what may be stored. Teaching this function to reject `#` would
+// make the stored-address rule depend on a resolver concern, and D-9 keeps the
+// two apart; handle_test.go asserts the layering so the "fix" cannot land by
+// accident.
 func ValidateAddress(s string) error {
 	if s == "" {
 		return fmt.Errorf("%w: the address is empty — pass a name such as auto-web/bugs", ErrInvalidAddress)

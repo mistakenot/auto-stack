@@ -982,3 +982,182 @@ func TestSendToAnUnknownHandleIsRefused(t *testing.T) {
 		t.Errorf("%d mail rows are addressed to a handle, want 0", rows)
 	}
 }
+
+// TestHandleIsRejectedInEveryAddressPosition is AC-4 and D-063-2 at the command
+// surface: `#` is legal in exactly one position, `send --to`, and refused in the
+// three that take something durable.
+//
+// The loop covers both refusals in every position, because they are different
+// mistakes: `#parent` is a real handle in the wrong place, and `#parnet` does
+// not exist anywhere. Being told the wrong one of those sends the caller off to
+// fix something that is not broken.
+func TestHandleIsRejectedInEveryAddressPosition(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	agent := workspace(t, home, "agent")
+	t.Chdir(agent)
+
+	// A real subscription first, so the store exists and holds ordinary rows.
+	// The closing assertion is "no row begins with `#`", and against an empty
+	// database that would pass without proving anything.
+	if _, stderr, code := runCLI(t, "subscribe", "auto-stack/supervisor"); code != 0 {
+		t.Fatalf("subscribe exit %d, stderr: %s", code, stderr)
+	}
+
+	positions := map[string][]string{
+		"subscribe":      {"subscribe", "%s"},
+		"list --address": {"list", "--address", "%s"},
+		"send --from":    {"send", "--from", "%s", "--to", "auto-web/bugs", "--message", "…"},
+		"send --to":      {"send", "--to", "%s", "--message", "…"},
+	}
+	for position, template := range positions {
+		for _, value := range []string{"#parent", "#parnet"} {
+			// `send --to '#parent'` is the one legal pairing, and it fails here
+			// for a different reason entirely (no Subagent marker), which
+			// TestParentHandleAtTheCommandSurface already covers.
+			if position == "send --to" && value == "#parent" {
+				continue
+			}
+			args := slices.Clone(template)
+			for i, arg := range args {
+				if arg == "%s" {
+					args[i] = value
+				}
+			}
+
+			stdout, stderr, code := runCLI(t, args...)
+			if code != 1 {
+				t.Errorf("%s %q exit %d, want 1 (stdout %q)", position, value, code, stdout)
+			}
+			if strings.TrimSpace(stdout) != "" {
+				t.Errorf("%s %q printed %q on stdout, want it empty — a refusal must "+
+					"never leave parseable output", position, value, stdout)
+			}
+			if !strings.Contains(stderr, value) {
+				t.Errorf("%s %q: the refusal does not name the offending value: %s",
+					position, value, stderr)
+			}
+			switch value {
+			case "#parnet":
+				if !strings.Contains(stderr, "#parent") {
+					t.Errorf("%s %q: an unknown handle must list the handles that "+
+						"exist: %s", position, value, stderr)
+				}
+			case "#parent":
+				if !strings.Contains(stderr, position) {
+					t.Errorf("%s %q: the position refusal must name the position it "+
+						"is about: %s", position, value, stderr)
+				}
+			}
+		}
+	}
+
+	// The loop that closes AC-4: a refusal that still wrote is the failure this
+	// catches, and it is asserted against the store rather than against the
+	// command's own report of what it did.
+	assertNoHandleRows(t, home)
+}
+
+// assertNoHandleRows is AC-4's stored half: nothing beginning with `#` may reach
+// either column that holds an address. Reading the store directly is what makes
+// this an assertion rather than a restatement of the CLI's own output.
+func assertNoHandleRows(t *testing.T, home string) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(home, ".auto", "mail", "alpha-store.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	for _, query := range []string{
+		`SELECT count(*) FROM subscriptions WHERE address LIKE '#%'`,
+		`SELECT count(*) FROM mail WHERE to_address LIKE '#%'`,
+		`SELECT count(*) FROM mail WHERE json_extract(envelope, '$.from') LIKE '#%'`,
+	} {
+		var rows int
+		if err := st.QueryRowContext(context.Background(), query).Scan(&rows); err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+		if rows != 0 {
+			t.Errorf("%d rows match %s, want 0 — a handle is resolved at send time "+
+				"and never stored (G5)", rows, query)
+		}
+	}
+}
+
+// TestTheFourRefusalsAreDistinguishable is the core of AC-3, AC-4 and AC-10
+// taken together: four failures, four fixes, and an agent reading stderr has
+// only the sentence to tell them apart.
+//
+// Pairwise inequality is the weak half. The stronger half is that each message
+// carries the thing its own fix needs — become a Subagent, subscribe in the
+// supervisor, spell the handle correctly, use an absolute address — which is
+// what a caller actually acts on.
+func TestTheFourRefusalsAreDistinguishable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Each scenario gets its own workspace, and therefore its own binding: with
+	// no tmux the cwd rung is what separates two agents, and `#parent` resolves
+	// from the binding, so a shared directory would let one scenario resolve
+	// against another's subscription.
+	notASubagent := workspace(t, home, "not-a-subagent")
+	noSupervisor := workspace(t, home, "no-supervisor")
+
+	t.Chdir(notASubagent)
+	if _, stderr, code := runCLI(t, "subscribe", "auto-stack/supervisor"); code != 0 {
+		t.Fatalf("subscribe exit %d, stderr: %s", code, stderr)
+	}
+	refusals := map[string]string{
+		// A supervisor's subscription exists and is resolvable; no marker does.
+		"not a subagent": refusal(t, "send", "--to", "#parent", "--message", "hello?"),
+	}
+
+	// A marker, and deliberately no subscription under this binding.
+	t.Chdir(noSupervisor)
+	mail.ObserveHookEvent(home, mail.BindingFor(noSupervisor), "PreToolUse", mail.ActiveAgent{
+		AgentID:   "a84a3676a847c5c0b",
+		AgentType: "phase3",
+	})
+	refusals["no supervisor"] = refusal(t, "send", "--to", "#parent", "--message", "phase 3 blocked")
+	refusals["unknown handle"] = refusal(t, "send", "--to", "#parnet", "--message", "…")
+	refusals["not allowed here"] = refusal(t, "subscribe", "#parent")
+
+	wanted := map[string][]string{
+		"not a subagent":   {"Subagent", "auto mail docs"},
+		"no supervisor":    {"auto mail subscribe", "supervisor"},
+		"unknown handle":   {"#parnet", "#parent"},
+		"not allowed here": {"subscribe", "absolute address"},
+	}
+	for name, text := range refusals {
+		for _, want := range wanted[name] {
+			if !strings.Contains(text, want) {
+				t.Errorf("the %q refusal does not mention %q — it must carry what its "+
+					"own fix needs: %s", name, want, text)
+			}
+		}
+		for otherName, other := range refusals {
+			if otherName != name && text == other {
+				t.Errorf("the %q and %q refusals are the same sentence: %s",
+					name, otherName, text)
+			}
+		}
+	}
+
+	assertNoHandleRows(t, home)
+}
+
+// refusal runs a command that must fail, and returns what it said on stderr.
+// It asserts the shared half of every refusal — exit 1, stdout empty — so the
+// callers above can be about the sentences.
+func refusal(t *testing.T, args ...string) string {
+	t.Helper()
+	stdout, stderr, code := runCLI(t, args...)
+	if code != 1 {
+		t.Fatalf("%v exit %d, want 1 (stdout %q, stderr %q)", args, code, stdout, stderr)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("%v printed %q on stdout, want it empty", args, stdout)
+	}
+	return stderr
+}

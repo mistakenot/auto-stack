@@ -172,14 +172,11 @@ func (d *direct) Send(ctx context.Context, in SendInput) (SendResult, error) {
 // the same Binding and therefore resolves to the same address. Whichever marker
 // writer wins, the answer is identical.
 func (d *direct) resolveHandle(ctx context.Context, in SendInput) (string, error) {
-	if in.To != HandleParent {
-		// The full reservation rule — a sentinel of its own, every position
-		// covered, the known handles listed — lands with D-063-2. Until then an
-		// unrecognised handle is still refused here, because the one thing that
-		// must never happen is `#nope` quietly becoming a channel.
-		return "", fmt.Errorf("%q is not a known relative handle. Known handles: %s; "+
-			"`#` is reserved for handles, so it can never be used as an address — "+
-			"drop the `#` if you meant a channel of that name", in.To, HandleParent)
+	// The three refusals in the order their answers get cheaper to be wrong
+	// about: a handle nobody has ever heard of is a typo whatever the caller
+	// is, so it is answered before anything about identity is consulted.
+	if err := ValidateHandle(in.To); err != nil {
+		return "", err
 	}
 	if in.Sender.Kind != SenderSubagent {
 		return "", handleError(in.To, ErrNotSubagent)
@@ -189,12 +186,13 @@ func (d *direct) resolveHandle(ctx context.Context, in SendInput) (string, error
 		return "", fmt.Errorf("resolve %q: %w", in.To, err)
 	}
 	if !ok {
-		// A sentinel for this case, distinct from ErrNotSubagent because the
-		// fix is different, lands with D-063-2. The remediation is already the
-		// final one: it is the supervisor that has to act, not the caller.
-		return "", fmt.Errorf("cannot resolve %q: your supervisor holds no subscription, "+
-			"so it has no address to be mailed at. Run `auto mail subscribe <address>` "+
-			"in the supervisor first — it is what binds an agent to an address", in.To)
+		// The caller *is* a Subagent and the lookup still came back empty: a
+		// different failure with a different fix, and one only the supervisor
+		// can apply. The orphaned-Subscription case 062 phase 4 flagged — the
+		// binding row gone while the subscription lives on — arrives here too,
+		// and is answered the same way, because from the caller's side it is
+		// the same fact: nothing binds this pair to an address any more.
+		return "", handleError(in.To, ErrNoSupervisor)
 	}
 	return address, nil
 }

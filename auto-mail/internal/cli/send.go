@@ -47,6 +47,14 @@ func runSend(cmd *cobra.Command, application *app.App, to, text, bodyJSON, from 
 		// Invalid usage is fail-fast, per the project's CLI convention.
 		return err
 	}
+	// `--to` is the one position a handle is legal in; `--from` is not, because
+	// a handle there would have the sender claim its supervisor's identity as
+	// author — exactly the physical/logical confusion G5 exists to prevent.
+	if err := rejectHandle(from, "`auto mail send --from`",
+		"--from is the absolute address a reply comes back to, and a relative one "+
+			"would sign this mail as somebody else"); err != nil {
+		return err
+	}
 
 	client, err := mail.NewDirect("")
 	if err != nil {
@@ -120,4 +128,39 @@ func callerHome() string {
 		return ""
 	}
 	return home
+}
+
+// rejectHandle is the position rule (D-063-2), shared by the three surfaces
+// that take an address and only an address: `subscribe <address>`,
+// `list --address` and `send --from`. It returns nil for anything that is not a
+// handle, so an ordinary address never pays for it.
+//
+// The rule stated once: **a handle names a recipient at a moment; the three
+// positions above name something durable, and "durable" cannot be relative.**
+//
+// The two refusals are ordered so the more actionable one wins. `#nope`
+// anywhere is a typo — that the position would also have rejected it is beside
+// the point, and being told "not allowed here" would send the caller off to fix
+// the wrong thing. So an unrecognised handle is answered first, in every
+// position, with the mail package's own text: it is the same failure the
+// resolver reports, and one sentence for one mistake is what keeps the four
+// refusals distinguishable.
+//
+// The position message, by contrast, is built here rather than in the mail
+// package, because this is the only layer that knows which of the three
+// positions the value arrived in — and a refusal that could not name it would
+// be the least useful of the four.
+func rejectHandle(value, position, why string) error {
+	if !mail.IsHandle(value) {
+		return nil
+	}
+	if err := mail.ValidateHandle(value); err != nil {
+		return &ExitError{Code: 1, Err: err}
+	}
+	return &ExitError{Code: 1, Err: fmt.Errorf(
+		"%q is a relative handle, not an address: %w, and %s takes one — %s. "+
+			"Use an absolute address (for example `auto-stack/supervisor`); a handle "+
+			"is legal only in `auto mail send --to`. See `auto mail docs` under "+
+			"\"relative handles\"",
+		value, mail.ErrHandleNotAllowed, position, why)}
 }

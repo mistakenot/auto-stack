@@ -929,3 +929,92 @@ func TestAbsoluteSendPayloadIsUnchanged(t *testing.T) {
 		t.Errorf("an absolute send emitted resolvedFrom: %s", encoded)
 	}
 }
+
+// TestParentHandleRefusesWhenTheSupervisorNeverSubscribed is AC-10 at the seam.
+//
+// This is the second refusal, and the reason there are four rather than one:
+// the caller here did everything right — it *is* a Subagent, the marker is
+// there — and the thing that has to change is in the supervisor, not in the
+// child. A message that told it "you are not a Subagent" would send it off to
+// fix something that is not broken, which is why the two are separate tokens
+// and separate sentences.
+func TestParentHandleRefusesWhenTheSupervisorNeverSubscribed(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	// The marker exists — the hook saw a Subagent act here — and no
+	// subscription does. That pair is the whole of this case.
+	mail.ObserveHookEvent(home, binding, "PreToolUse", mail.ActiveAgent{
+		AgentID:   "a84a3676a847c5c0b",
+		AgentType: "phase3",
+		SessionID: "the-supervisor-session",
+	})
+	sender := mail.CallerSender(home, binding)
+	if sender.Kind != mail.SenderSubagent {
+		t.Fatalf("CallerSender = %+v, want a Subagent — this case is about a "+
+			"recognised Subagent with an unsubscribed supervisor", sender)
+	}
+
+	_, err = client.Send(ctx, mail.SendInput{
+		To:      mail.HandleParent,
+		Body:    map[string]any{"message": "phase 3 blocked"},
+		Binding: binding,
+		Sender:  sender,
+	})
+	if !errors.Is(err, mail.ErrNoSupervisor) {
+		t.Fatalf("send with no supervisor subscription = %v, want ErrNoSupervisor", err)
+	}
+	if errors.Is(err, mail.ErrNotSubagent) {
+		t.Fatalf("the refusal also matches ErrNotSubagent; a caller branching on the " +
+			"token would be told to become something it already is")
+	}
+	text := err.Error()
+	for _, want := range []string{mail.HandleParent, "auto mail subscribe", "supervisor"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the refusal does not mention %q — it must name the fix and who "+
+				"applies it: %s", want, text)
+		}
+	}
+
+	// AC-10's "textually distinct" clause, asserted rather than eyeballed: the
+	// two refusals share a caller and a command, so an agent reading stderr has
+	// only the sentence to tell them apart.
+	other := handleRefusalText(t, client, home, mail.BindingFromContext(nil, t.TempDir()))
+	if text == other {
+		t.Errorf("the no-supervisor and non-Subagent refusals are the same sentence: %s", text)
+	}
+
+	// Nothing was created by the refusal.
+	sentEvents, err := client.(interface {
+		CountEvents(context.Context, string) (int, error)
+	}).CountEvents(ctx, mail.EventTypeSent)
+	if err != nil {
+		t.Fatalf("count sent events: %v", err)
+	}
+	if sentEvents != 0 {
+		t.Errorf("%d alpha.mail.sent events after a refused send, want 0", sentEvents)
+	}
+}
+
+// handleRefusalText returns what an ordinary agent is told when it tries
+// `#parent`, so the no-supervisor case above can compare against it.
+func handleRefusalText(t *testing.T, client mail.Client, home string, binding mail.Binding) string {
+	t.Helper()
+	_, err := client.Send(context.Background(), mail.SendInput{
+		To:      mail.HandleParent,
+		Body:    map[string]any{"message": "hello?"},
+		Binding: binding,
+		Sender:  mail.CallerSender(home, binding),
+	})
+	if !errors.Is(err, mail.ErrNotSubagent) {
+		t.Fatalf("send from an ordinary agent = %v, want ErrNotSubagent", err)
+	}
+	return err.Error()
+}
