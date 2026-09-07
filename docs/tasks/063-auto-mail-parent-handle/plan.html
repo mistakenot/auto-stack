@@ -1453,8 +1453,7 @@ tests unmodified. **Commit.**
       </pd-phase>
 
       <pd-phase n="3" title="Marker lifecycle, and the hot path made adversarial"
-        files="auto-mail/mail/subagent.go,auto-mail/mail/subagent_test.go,auto-mail/mail/pending.go,auto-mail/mail/export_test.go,auto-mail/mail/direct.go,auto-mail/internal/cli/reset.go,auto-mail/internal/cli/cli_test.go,auto-cli/cmd/auto/hooksagent_test.go,auto-cli/cmd/auto/hooksinstallcmd_test.go,harness/scenarios/mail-flow/fixtures/hooks/subagent-stop.json,harness/src/harness/scenarios/mail_flow.py,harness/tests/mail_flow/test_parent_handle.py"
-        status="todo" depends-on="2">
+        files="auto-mail/mail/subagent.go,auto-mail/mail/subagent_test.go,auto-mail/mail/pending.go,auto-mail/mail/export_test.go,auto-mail/mail/direct.go,auto-mail/internal/cli/reset.go,auto-mail/internal/cli/cli_test.go,auto-cli/cmd/auto/hooksagent_test.go,auto-cli/cmd/auto/hooksinstallcmd_test.go,harness/scenarios/mail-flow/fixtures/hooks/subagent-stop.json,harness/src/harness/scenarios/mail_flow.py,harness/tests/mail_flow/test_parent_handle.py" status="done" depends-on="2">
         <md><script type="text/plain">
 1. `subagent.go`: finish the lifecycle (D-063-9) — one file per `agent_id`
    (hashed the same way as the Binding key, because the id format is upstream's
