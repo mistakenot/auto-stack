@@ -24,6 +24,17 @@ import (
 // address instead of failing, which is the harmless direction (D-063-9).
 const subagentTTL = 15 * time.Minute
 
+// markerNow is the clock every part of the marker lifecycle reads — the stamp a
+// write leaves and the cutoff a read expires against, so the two can never
+// disagree about what "now" was.
+//
+// It is a package var solely so a test can age a marker by an injected hour
+// instead of sleeping for one. A TTL measured in minutes has no test that a
+// stopwatch could write: sleeping past it would make the suite take a quarter
+// of an hour, and shortening the constant to suit the test would mean the
+// number under test was never the number that ships.
+var markerNow = func() time.Time { return time.Now().UTC() }
+
 // ActiveAgent is one Subagent the hook has seen acting under a Binding.
 //
 // SessionID is recorded for diagnostics only. Resolution never keys on it: an
@@ -45,12 +56,19 @@ func agentsDir(home string, b Binding) string {
 	return filepath.Join(config.AgentsDirIn(home), flagName(b))
 }
 
+// markerTempPrefix marks a marker mid-write. The dot is what makes it
+// invisible to ActiveSubagents, and a hex hash can never begin with one, so a
+// real marker and a temporary can never be mistaken for each other.
+const markerTempPrefix = ".tmp-"
+
 // agentMarkerPath is the one file an ActiveAgent owns.
 //
 // The id is hashed rather than used verbatim for the reason T1 hashed the
 // binding pair: observed ids are filename-safe today (`a84a3676a847c5c0b`), but
 // that is an upstream format nobody promised us, and a `/` in one would write
-// the marker somewhere else entirely.
+// the marker somewhere else entirely. Hashing also fixes the *shape* of the
+// name — 16 hex characters, never a leading dot — which is what lets a
+// dot-prefixed temporary be skipped by readers without any other bookkeeping.
 func agentMarkerPath(home string, b Binding, agentID string) string {
 	sum := sha256.Sum256([]byte(agentID))
 	return filepath.Join(agentsDir(home, b), hex.EncodeToString(sum[:8]))
@@ -81,7 +99,7 @@ func ObserveHookEvent(home string, b Binding, event string, a ActiveAgent) {
 	switch strings.ToLower(event) {
 	case "pretooluse", "posttooluse":
 		if a.At.IsZero() {
-			a.At = time.Now().UTC()
+			a.At = markerNow()
 		}
 		writeAgentMarker(home, b, a)
 	case "subagentstop":
@@ -91,8 +109,19 @@ func ObserveHookEvent(home string, b Binding, event string, a ActiveAgent) {
 	}
 }
 
-// writeAgentMarker creates or refreshes one marker. Every error is swallowed;
-// see ObserveHookEvent for why the hook has no other option.
+// writeAgentMarker creates or refreshes one marker, atomically: a temporary
+// file in the same directory, then a rename over the marker path. Every error
+// is swallowed; see ObserveHookEvent for why the hook has no other option.
+//
+// The atomicity is load-bearing rather than defensive, and it is worth the one
+// extra create and rename. A truncating write has a window in which the marker
+// is on disk with zero bytes in it, and an unparseable marker reads as *absent*
+// — so a refresh of one Subagent's marker can momentarily make it vanish from
+// ActiveSubagents while its sibling's stays. That does not degrade to "no
+// answer"; it degrades to a *confident wrong* one, because two live Subagents
+// briefly look like one and CallerSender then names whichever survived the
+// window (D-063-11). A rename has no such window: a reader sees the previous
+// marker or the new one, never neither.
 func writeAgentMarker(home string, b Binding, a ActiveAgent) {
 	encoded, err := json.Marshal(a)
 	if err != nil {
@@ -102,11 +131,38 @@ func writeAgentMarker(home string, b Binding, a ActiveAgent) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
-	// One write of a few dozen bytes, truncating whatever was there. A torn
-	// read is possible in principle and costs nothing in practice: an
-	// unparseable marker is skipped by ActiveSubagents exactly as a missing one
-	// is, and the next tool call rewrites it.
-	_ = os.WriteFile(agentMarkerPath(home, b, a.AgentID), encoded, 0o644)
+	// The temporary lives in the destination directory because rename is only
+	// atomic within one filesystem, and it is dot-prefixed because it is
+	// briefly visible to a concurrent ActiveSubagents — which skips dotfiles
+	// for exactly this reason, so a half-written marker is never a second
+	// answer for an agent that already has one.
+	tmp, err := os.CreateTemp(dir, markerTempPrefix+"*")
+	if err != nil {
+		return
+	}
+	name := tmp.Name()
+	written := func() bool {
+		if _, err := tmp.Write(encoded); err != nil {
+			return false
+		}
+		// CreateTemp opens 0600; the marker keeps the flag directory's 0644 so
+		// one directory does not hold two permission conventions.
+		if err := tmp.Chmod(0o644); err != nil {
+			return false
+		}
+		return tmp.Close() == nil
+	}()
+	if !written {
+		_ = tmp.Close()
+		_ = os.Remove(name)
+		return
+	}
+	if err := os.Rename(name, agentMarkerPath(home, b, a.AgentID)); err != nil {
+		// A failed rename must not leave litter behind: the temporary is
+		// invisible to readers but would otherwise never be collected, since
+		// nothing expires a file no reader ever parses.
+		_ = os.Remove(name)
+	}
 }
 
 // ActiveSubagents returns the unexpired markers under a Binding, newest first.
@@ -128,10 +184,13 @@ func ActiveSubagents(home string, b Binding) []ActiveAgent {
 	if err != nil {
 		return nil
 	}
-	cutoff := time.Now().UTC().Add(-subagentTTL)
+	cutoff := markerNow().Add(-subagentTTL)
 	out := make([]ActiveAgent, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() {
+		// Directories are not markers, and a dotfile is a marker mid-write —
+		// the temporary writeAgentMarker is about to rename into place. Reading
+		// one would count an agent that already has a marker of its own twice.
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		path := filepath.Join(dir, entry.Name())

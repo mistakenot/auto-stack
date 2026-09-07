@@ -1,6 +1,10 @@
 package mail
 
-import "github.com/mistakenot/auto-mail/internal/store"
+import (
+	"time"
+
+	"github.com/mistakenot/auto-mail/internal/store"
+)
 
 // This file exposes the package's internals to its own external test package
 // (`package mail_test`) and to nothing else — it is a _test.go file, so none of
@@ -30,3 +34,21 @@ func FlagPathFor(home string, b Binding) string { return flagPath(home, b) }
 
 // SetPendingFor raises a flag from a test without going through a send.
 func SetPendingFor(home string, b Binding) error { return setPending(home, b) }
+
+// SubagentTTL is the marker TTL, exported so a test asserts against the number
+// that ships rather than against a copy of it that could drift.
+func SubagentTTL() time.Duration { return subagentTTL }
+
+// SetMarkerClock replaces the clock the marker lifecycle reads and returns a
+// restore function.
+//
+// Aging a marker is the one part of the lifecycle that has no observable
+// short-cut: the TTL is fifteen minutes, so a test that slept past it would
+// take a quarter of an hour, and one that shortened the constant would be
+// asserting on a number that never ships. Injecting the clock leaves the real
+// TTL under test and the suite instant — never sleep to age a marker.
+func SetMarkerClock(at func() time.Time) (restore func()) {
+	prev := markerNow
+	markerNow = at
+	return func() { markerNow = prev }
+}

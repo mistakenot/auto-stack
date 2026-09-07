@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -268,5 +269,61 @@ func TestInstallAgentHooksCounts(t *testing.T) {
 	if added != 0 || existing != len(events) || created {
 		t.Errorf("second install: added=%d existing=%d created=%v, want added=0 existing=%d created=false",
 			added, existing, created, len(events))
+	}
+}
+
+// TestInstallKeepsTheEventsParentResolutionDependsOn is AC-14.
+//
+// `#parent` is not implemented in the mail store; it is implemented in the
+// *arrival of two hook events*. `PreToolUse` is what writes the marker a
+// Subagent's own `auto mail send` reads back a moment later, and `SubagentStop`
+// is what removes it again. Drop either from an agent's installed set and
+// nothing fails loudly: `#parent` simply starts refusing legitimate Subagents,
+// or starts resolving for processes that stopped being one hours ago.
+//
+// TestInstallWritesBothAgents already asserts every event in each list is
+// wired, so this is not about the wiring. It is about the *lists*: it pins the
+// two entries that another feature's cleanup would otherwise be free to prune,
+// and says in its failure message what breaks if they go.
+func TestInstallKeepsTheEventsParentResolutionDependsOn(t *testing.T) {
+	repo := t.TempDir()
+	gitInTest(t, repo, "init")
+	t.Chdir(repo)
+
+	runInstall(t)
+
+	// The two events, the config each agent writes, and the command that has to
+	// be wired onto them. Both agents, because an in-process Subagent is a
+	// Claude Code concept today and a Codex one tomorrow, and a handle that
+	// works under one agent and silently refuses under the other is worse than
+	// one that works under neither.
+	agents := []struct {
+		name    string
+		events  []string
+		path    string
+		command string
+	}{
+		{"claude", claudeHookEvents, filepath.Join(repo, ".claude", "settings.json"), "auto hooks fire --agent claude"},
+		{"codex", codexHookEvents, filepath.Join(repo, ".codex", "hooks.json"), "auto hooks fire --agent codex"},
+	}
+
+	for _, agent := range agents {
+		doc := readJSONTree(t, agent.path)
+		for _, event := range []string{"PreToolUse", "SubagentStop"} {
+			if !slices.Contains(agent.events, event) {
+				t.Errorf("%s no longer installs %s. `#parent` resolution depends on it: "+
+					"PreToolUse is what records which Subagent is acting, and SubagentStop is "+
+					"what clears the record. Removing either does not fail anything loudly — "+
+					"it makes `auto mail send --to '#parent'` refuse a real Subagent, or "+
+					"resolve for one that finished hours ago. Put it back, or take "+
+					"`#parent` out with it.", agent.name, event)
+				continue
+			}
+			if got := fireHandlerCount(t, doc, event, agent.command); got != 1 {
+				t.Errorf("%s %s: %q is wired %d times, want exactly 1 — the event is in the "+
+					"list but nothing reaches `auto hooks fire`, so no marker is ever written "+
+					"and `#parent` refuses every Subagent", agent.name, event, agent.command, got)
+			}
+		}
 	}
 }

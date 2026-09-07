@@ -1161,3 +1161,85 @@ func refusal(t *testing.T, args ...string) string {
 	}
 	return stderr
 }
+
+// TestResetRemovesSubagentMarkers is AC-9's last clause, and it is the clause
+// with the sharpest failure mode.
+//
+// A store or a flag that outlives a reset makes the next run *noisy* — a stale
+// nudge, a listing that is not empty. A marker that outlives one makes it
+// *wrong and quiet*: `#parent` from a process that is not a Subagent at all
+// resolves to a real address and the mail goes somewhere plausible, instead of
+// being refused with a hint. So the marker directory is wiped with the rest,
+// named in `removed`, and — the part a reader of the payload depends on — a
+// host whose only leftover state is a marker is not told there was nothing to
+// remove.
+func TestResetRemovesSubagentMarkers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	supervisor := workspace(t, home, "supervisor")
+	t.Chdir(supervisor)
+	agentsDir := filepath.Join(home, ".auto", "mail", "alpha-agents")
+
+	// A marker and nothing else: no store, no flags. This is the case the
+	// "nothing to reset" short-circuit would answer wrongly if it only looked
+	// at the store.
+	mail.ObserveHookEvent(home, mail.BindingFor(supervisor), "PreToolUse", mail.ActiveAgent{
+		AgentID:   "a84a3676a847c5c0b",
+		AgentType: "phase3",
+	})
+	if _, err := os.Stat(agentsDir); err != nil {
+		t.Fatalf("the hook left no marker directory to reset (%v)", err)
+	}
+
+	stdout, stderr, code := runCLI(t, "reset")
+	if code != 0 {
+		t.Fatalf("reset with only a marker on disk exit %d, stderr: %s", code, stderr)
+	}
+	if removed := decode[resetPayload](t, stdout).Removed; !slices.Contains(removed, agentsDir) {
+		t.Errorf("removed = %v, want it to name %q — a host holding only a stale marker "+
+			"has something to wipe, and reporting nothing would leave it there", removed, agentsDir)
+	}
+	if _, err := os.Stat(agentsDir); !os.IsNotExist(err) {
+		t.Errorf("the marker directory survived the reset (stat err = %v)", err)
+	}
+
+	// And the state the reset was for: `#parent` refuses again, because there
+	// is no longer any evidence that a Subagent is acting here.
+	if _, _, code := runCLI(t, "subscribe", "auto-stack/supervisor"); code != 0 {
+		t.Fatalf("subscribe after reset exit %d", code)
+	}
+	stdout, stderr, code = runCLI(t, "send", "--to", "#parent", "--message", "still a Subagent?")
+	if code != 1 {
+		t.Fatalf("send --to #parent after a reset exit %d, want 1 — the marker is gone, "+
+			"so the caller can no longer be shown to be a Subagent (stdout %q)", code, stdout)
+	}
+	if !strings.Contains(stderr, "Subagent") {
+		t.Errorf("the post-reset refusal does not name the constraint: %s", stderr)
+	}
+
+	// A reset that wipes a store as well still names all three artifacts, so
+	// the marker directory is not only removed on the marker-only path.
+	if _, stderr, code := runCLI(t, "send", "--to", "auto-stack/supervisor", "--message", "mail"); code != 0 {
+		t.Fatalf("send exit %d, stderr: %s", code, stderr)
+	}
+	mail.ObserveHookEvent(home, mail.BindingFor(supervisor), "PreToolUse", mail.ActiveAgent{
+		AgentID: "a84a3676a847c5c0b", AgentType: "phase3",
+	})
+	stdout, stderr, code = runCLI(t, "reset", "--yes")
+	if code != 0 {
+		t.Fatalf("reset --yes exit %d, stderr: %s", code, stderr)
+	}
+	removed := decode[resetPayload](t, stdout).Removed
+	for _, want := range []string{
+		filepath.Join(home, ".auto", "mail", "alpha-store.db"),
+		filepath.Join(home, ".auto", "mail", "alpha-flags"),
+		agentsDir,
+	} {
+		if !slices.Contains(removed, want) {
+			t.Errorf("removed = %v, want it to name %q", removed, want)
+		}
+		if _, err := os.Stat(want); !os.IsNotExist(err) {
+			t.Errorf("%s survived the reset (stat err = %v)", want, err)
+		}
+	}
+}

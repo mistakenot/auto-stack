@@ -26,6 +26,11 @@ SUPERVISOR = f"{WORKSPACE_A}/j1-supervisor"
 #: A directory deliberately left unmarked, so the refusal is about the absence
 #: of a Subagent rather than about the order the tests happened to run in.
 NO_SUBAGENT = f"{WORKSPACE_A}/j1-no-subagent"
+#: A supervisor whose only Subagent stops mid-test, so the refusal is about the
+#: marker's retirement rather than about it never having been written.
+STOPPED = f"{WORKSPACE_A}/j1-stopped"
+#: A supervisor running two Subagents, one of which stops.
+SIBLINGS = f"{WORKSPACE_A}/j1-siblings"
 
 SUPERVISOR_ADDRESS = "auto-stack/supervisor"
 SUBAGENT_ID = "harness-subagent-parent-handle"
@@ -117,3 +122,87 @@ def test_j1_a_subagent_mails_its_supervisor_by_handle(mail_flow):
     acked = mail_flow.ack(agent, sent["id"])
     assert acked["wonTransition"] is True, acked
     mail_flow.await_no_mail(agent, sent["id"])
+
+
+def test_parent_is_refused_again_once_the_subagent_has_stopped(mail_flow):
+    """AC-9's lifecycle, end to end: the handle is a statement about *now*.
+
+    `#parent` resolving is the whole risk surface of this feature, so what makes
+    it safe is not that it resolves for a Subagent but that it stops resolving
+    the moment one is no longer acting. `SubagentStop` is the event that says
+    so, and it is installed for both agents precisely so this holds.
+
+    The resolve is asserted before the stop rather than only the refusal after
+    it. A refusal on its own is what a marker that was never written looks like
+    too, and that version of this test would pass against a completely broken
+    bridge.
+    """
+    agent = _agent_dir(mail_flow, STOPPED)
+    mail_flow.subscribe(agent, "auto-stack/supervisor-of-a-stopped-child")
+
+    agent_id = "harness-subagent-that-stops"
+    mail_flow.mark_subagent(agent, agent_id, agent_type="phase3")
+
+    sent = mail_flow.send(agent, "#parent", "still working")
+    assert sent["resolvedFrom"] == "#parent", sent
+
+    mail_flow.stop_subagent(agent, agent_id, agent_type="phase3")
+
+    result = mail_flow.mail(agent, "send", "--to", "#parent", "--message", "and now?")
+    assert result.exit_code == 1, (
+        f"send --to '#parent' after SubagentStop exited {result.exit_code}, want 1 — "
+        "the marker is retired, so the caller can no longer be shown to be a Subagent; "
+        f"stdout: {result.stdout!r} stderr: {result.stderr!r}"
+    )
+    assert result.stdout.strip() == "", (
+        f"stdout must be empty on a hard error: {result.stdout!r}"
+    )
+    for fragment in ("#parent", "Subagent", "auto mail docs"):
+        assert fragment in result.stderr, (
+            f"the post-stop refusal does not mention {fragment!r}: {result.stderr!r}"
+        )
+
+    # And the marker is gone from disk, not merely disbelieved. A file that is
+    # ignored but never unlinked is unbounded state on a long-lived host, and it
+    # is the state the scenario's stand-up gate exists to catch.
+    markers = mail_flow.run(
+        "host",
+        'if [ -d "$HOME/.auto/mail/alpha-agents" ]; then '
+        'grep -rl "harness-subagent-that-stops" "$HOME/.auto/mail/alpha-agents" || true; '
+        "else echo __absent__; fi",
+    )
+    assert agent_id not in markers.stdout, (
+        f"the marker for {agent_id} survived SubagentStop: {markers.stdout!r}"
+    )
+
+
+def test_a_sibling_keeps_working_when_one_subagent_stops(mail_flow):
+    """AC-9's per-agent clause, at the real command surface (D-063-9).
+
+    One marker file per `agent_id` exists so that a sibling's `SubagentStop`
+    cannot retire a Subagent that is still working. A single shared slot would
+    pass every test above and still make `#parent` fail intermittently in the
+    one situation this feature is for — a supervisor running several Subagents
+    at once.
+    """
+    agent = _agent_dir(mail_flow, SIBLINGS)
+    mail_flow.subscribe(agent, "auto-stack/supervisor-of-two")
+
+    mail_flow.mark_subagent(agent, "harness-sibling-one", agent_type="phase3")
+    mail_flow.mark_subagent(agent, "harness-sibling-two", agent_type="phase3")
+
+    mail_flow.stop_subagent(agent, "harness-sibling-two", agent_type="phase3")
+
+    # The survivor can still reach its supervisor. The recipient is resolved
+    # from the Binding, which both siblings share, so stopping one must not
+    # change the answer for the other.
+    sent = mail_flow.send(agent, "#parent", "sibling two stopped; I am still here")
+    assert sent["resolvedFrom"] == "#parent", sent
+    assert sent["to"] == "auto-stack/supervisor-of-two", sent
+
+    mail_flow.stop_subagent(agent, "harness-sibling-one", agent_type="phase3")
+    result = mail_flow.mail(agent, "send", "--to", "#parent", "--message", "both gone")
+    assert result.exit_code == 1, (
+        f"with both siblings stopped, '#parent' still resolved (exit {result.exit_code}); "
+        f"stdout: {result.stdout!r}"
+    )

@@ -16,10 +16,11 @@ func newResetCmd(application *app.App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset",
 		Short: "Wipe the alpha mail store and its pending flags",
-		Long: "Remove ~/.auto/mail/alpha-store.db and ~/.auto/mail/alpha-flags/ and report " +
-			"what was removed. The store is alpha: there are no upcasters and no migrations, " +
-			"so starting again is the supported migration path rather than a workaround. " +
-			"A store that still holds events is refused unless --yes is given.",
+		Long: "Remove ~/.auto/mail/alpha-store.db, ~/.auto/mail/alpha-flags/ and " +
+			"~/.auto/mail/alpha-agents/ and report what was removed. The store is alpha: " +
+			"there are no upcasters and no migrations, so starting again is the supported " +
+			"migration path rather than a workaround. A store that still holds events is " +
+			"refused unless --yes is given.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runReset(cmd, application, yes)
@@ -38,11 +39,21 @@ func runReset(cmd *cobra.Command, _ *app.App, yes bool) error {
 	if err != nil {
 		return &ExitError{Code: 1, Err: err}
 	}
+	agentsDir, err := config.AgentsDir()
+	if err != nil {
+		return &ExitError{Code: 1, Err: err}
+	}
 
 	// Opening the client creates the store if it is absent, so a host with
 	// nothing to reset is answered before anything is opened. Otherwise
 	// `reset` on a fresh host would report removing a file it had just made.
-	if !exists(storePath) && !exists(flagsDir) {
+	//
+	// The marker directory is part of "nothing to reset" and not only of the
+	// wipe: a host whose only leftover state is a stale Subagent marker has
+	// something to remove, and short-circuiting on the store alone would answer
+	// `removed: []` and leave it there — the exact state that makes a later
+	// `#parent` resolve instead of refuse.
+	if !exists(storePath) && !exists(flagsDir) && !exists(agentsDir) {
 		if err := writeJSON(cmd.OutOrStdout(), mail.ResetResult{Removed: []string{}}); err != nil {
 			return &ExitError{Code: 1, Err: err}
 		}

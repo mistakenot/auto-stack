@@ -310,8 +310,9 @@ func (d *direct) Ack(ctx context.Context, in AckInput) (AckResult, error) {
 	}, nil
 }
 
-// Reset wipes the alpha store and the pending flags, and reports what it
-// removed. G10 makes this a supported operation rather than a workaround:
+// Reset wipes the alpha store, the pending flags and the Subagent markers, and
+// reports what it removed. G10 makes this a supported operation rather than a
+// workaround:
 // there are no upcasters and no migrations, so "start again" is the migration
 // path, and the harness needs it for isolation between runs.
 //
@@ -337,8 +338,14 @@ func (d *direct) Reset(ctx context.Context, in ResetInput) (ResetResult, error) 
 	return WipeStore(d.home)
 }
 
-// WipeStore removes the alpha store and the pending flags under home, and
-// reports what it removed. It opens nothing.
+// WipeStore removes the alpha store, the pending flags and the Subagent
+// markers under home, and reports what it removed. It opens nothing.
+//
+// The markers go with the rest because a reset that left them behind would
+// leave the host in the one state that is worse than dirty: a stale marker
+// makes a later `#parent` *resolve* rather than refuse, so the failure it
+// causes is a send that goes somewhere plausible instead of an error anyone
+// would notice (AC-9).
 //
 // That is the point of it being reachable without a Client: a store written by
 // a different alpha schema cannot be opened at all (ErrSchemaMismatch), and
@@ -354,8 +361,7 @@ func WipeStore(home string) (ResetResult, error) {
 		home = resolved
 	}
 	storePath := config.StorePathIn(home)
-	flagsDir := config.FlagsDirIn(home)
-	removed := make([]string, 0, 2)
+	removed := make([]string, 0, 3)
 
 	// The -wal and -shm sidecars are part of the store rather than artifacts of
 	// their own, so they are removed with it and not reported separately.
@@ -373,12 +379,14 @@ func WipeStore(home string) (ResetResult, error) {
 	// RemoveAll cannot report whether anything was there, so existence is
 	// sampled first — `removed` is a statement about what was on disk, and an
 	// unconditional entry would make it a statement about what was attempted.
-	_, flagsErr := os.Stat(flagsDir)
-	if err := os.RemoveAll(flagsDir); err != nil {
-		return ResetResult{}, fmt.Errorf("remove %s: %w", flagsDir, err)
-	}
-	if flagsErr == nil {
-		removed = append(removed, flagsDir)
+	for _, dir := range []string{config.FlagsDirIn(home), config.AgentsDirIn(home)} {
+		_, statErr := os.Stat(dir)
+		if err := os.RemoveAll(dir); err != nil {
+			return ResetResult{}, fmt.Errorf("remove %s: %w", dir, err)
+		}
+		if statErr == nil {
+			removed = append(removed, dir)
+		}
 	}
 	return ResetResult{Removed: removed}, nil
 }
