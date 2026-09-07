@@ -36,6 +36,7 @@ type Options struct {
 	TrustRequested bool   // pass through to trust gate
 	Version        string // --version override
 	As             string // --as rename (single-skill only)
+	Plugin         string // --plugin: install an Agent Plugin (path or manifest name) as a unit
 	Format         string // "json" or "text"
 	Trace          *trace.Logger
 }
@@ -44,6 +45,7 @@ type Options struct {
 type Result struct {
 	Added  []AddedSkill  `json:"added,omitempty"`
 	Listed []ListedSkill `json:"listed,omitempty"`
+	Plugin *AddedPlugin  `json:"plugin,omitempty"` // set for a --plugin add
 	Source string        `json:"source"`
 }
 
@@ -54,6 +56,7 @@ type AddedSkill struct {
 	Commit      string `json:"commit"`
 	VersionSpec string `json:"version_spec"`
 	Local       bool   `json:"local,omitempty"`
+	Plugin      string `json:"plugin,omitempty"` // owning plugin for a --plugin add
 }
 
 // ListedSkill records a discovered skill in --list mode.
@@ -91,6 +94,10 @@ func Run(env skill.Env, opts Options) (Result, error) {
 	tr := opts.Trace
 	doneRun := trace.Spanf(tr, "add run")
 	defer doneRun("")
+
+	if err := validatePluginFlags(opts); err != nil {
+		return Result{Source: opts.Source}, err
+	}
 
 	// 1. Parse source.
 	done := trace.Spanf(tr, "add parse source")
@@ -191,6 +198,11 @@ func Run(env skill.Env, opts Options) (Result, error) {
 	// Realize objects.
 	if err := repo.Realize(sha); err != nil {
 		return Result{Source: src.URL}, fmt.Errorf("realize commit %s: %w", sha, err)
+	}
+
+	// Plugin add: the manifest decides membership; skip per-skill discovery.
+	if opts.Plugin != "" {
+		return addPlugin(env, remotePluginSource(repo, src.URL, sha, versionSpec), opts)
 	}
 
 	// 4. Extract to temp dir.

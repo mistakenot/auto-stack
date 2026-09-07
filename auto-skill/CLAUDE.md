@@ -46,6 +46,42 @@ omitted entirely when empty.
 Migration returns valid results first, then exits non-zero when any entry was
 skipped (so a `--dry-run` plan and a real run both surface unsupported deps).
 
+## Agent Plugins (`auto skill add <source> --plugin <path|name>`)
+
+`--plugin` installs a bundle of skills that follows the
+[Agent Plugins](https://agent-plugins.org/specification) standard (v1.0.0). A
+plugin is a directory in the source with a root `plugin.json` (`$schema` +
+`name` required) and its skills as **immediate** children of `skills/`
+(`skills/<dir>/SKILL.md`, no recursion). The argument is either the repo-relative
+path of that directory (`--plugin plugins/planning-workflow`) or the manifest
+`name` (`--plugin planning-workflow`, matched against every `plugin.json` in the
+source; an ambiguous name asks for the path). The spec has no index file, so
+Claude Code's `.claude-plugin/marketplace.json` is not consulted.
+
+The plugin, not each skill, is the unit of intent and identity:
+
+- `skills.yaml` gains `plugins.<name>.version`; member skills get **no**
+  `skills.<name>` stub (an existing one is kept only for its `replacements`).
+- `lock.json` gains `plugins.<name>` (same shape as a skill entry; `subpath` is
+  the plugin root) and each member skill entry is stamped `plugin: <name>`.
+- `sync` renders members like any vendored skill. `update <plugin>` (or naming any
+  member) floats the plugin whole and re-reads the manifest at the new commit, so
+  skills added upstream are inserted and skills dropped upstream are removed from
+  the lock and pruned from targets. A manifest that disappears or changes its
+  `name` fails the plugin as unavailable (lock and targets untouched) with a
+  remove-and-re-add hint.
+- `remove <plugin> --plugin` (inferred when the name is only a plugin) drops the
+  plugin, every member, and both skills.yaml entries, then prunes. A member cannot
+  be removed on its own.
+- `list` / `describe` carry a `plugin` field on member rows.
+
+Failure boundaries follow the spec: an invalid `plugin.json` rejects the whole
+plugin; a `skills/` child without a regular `SKILL.md`, or whose declared name is
+not lowercase kebab-case, is skipped and reported; unknown manifest fields are
+ignored. Only the skills component is consumed — `mcp.json` and client extension
+directories are ignored. `--plugin` cannot be combined with `--skill`, `--path`,
+`--as` or `--full-depth`, and needs a git source (remote or local checkout).
+
 ## Git hooks (`make install-hooks`)
 
 The checked-in `hooks/*` shims delegate to Makefile targets. All skill stanzas

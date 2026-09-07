@@ -84,6 +84,14 @@ func handleLocalGit(env skill.Env, absPath string, opts Options) (Result, error)
 		return Result{Source: absPath}, fmt.Errorf("canonicalize local path: %w", err)
 	}
 
+	if opts.Plugin != "" {
+		spec := opts.Version
+		if spec == "" {
+			spec = "latest"
+		}
+		return addPlugin(env, localPluginSource(absPath, canonicalURL, sha, spec), opts)
+	}
+
 	// Discover.
 	done = trace.Spanf(opts.Trace, "add local git discover")
 	discOpts := discovery.Options{
@@ -236,6 +244,12 @@ func handleLocalGit(env skill.Env, absPath string, opts Options) (Result, error)
 
 // handleLocalPlain imports a non-git directory by copying into ./skills/<name>.
 func handleLocalPlain(env skill.Env, absPath string, opts Options) (Result, error) {
+	if opts.Plugin != "" {
+		return Result{Source: absPath}, &AddError{
+			Code:    CodePluginFlags,
+			Message: fmt.Sprintf("--plugin needs a git source so the plugin can be pinned and updated as a unit; %s is not a git repository (copy its skills/ with `auto skill add %s/<plugin>/skills` instead)", absPath, absPath),
+		}
+	}
 	// Discover.
 	done := trace.Spanf(opts.Trace, "add local plain discover")
 	discOpts := discovery.Options{

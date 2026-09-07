@@ -1,6 +1,7 @@
 package skill
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -23,7 +24,25 @@ const (
 	CodeUnknownSkillRef    = "unknown_skill_ref"
 	CodeDuplicateValue     = "duplicate_value"
 	CodeInvalidTarget      = "invalid_target"
+	CodeInvalidPluginName  = "invalid_plugin_name"
+	CodeUnknownPluginRef   = "unknown_plugin_ref"
 )
+
+// pluginNameRE is the agent-plugins.org name grammar (1–64 chars, lowercase
+// alphanumerics / hyphens / periods, alphanumeric at both ends). "--" and ".."
+// are rejected separately.
+var pluginNameRE = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?$`)
+
+// ValidatePluginName enforces the agent-plugins.org plugin name grammar.
+func ValidatePluginName(name string) error {
+	if name == "" {
+		return errors.New("missing plugin name")
+	}
+	if !pluginNameRE.MatchString(name) || strings.Contains(name, "--") || strings.Contains(name, "..") {
+		return fmt.Errorf("invalid plugin name %q: expected 1–64 lowercase alphanumerics, hyphens or periods, alphanumeric at both ends, no \"--\" or \"..\"", name)
+	}
+	return nil
+}
 
 var commitHexRE = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 

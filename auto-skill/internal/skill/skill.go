@@ -403,7 +403,7 @@ func Lint(env Env, target string) ([]Diagnostic, error) {
 // exact check so their stale-reference reporting stays identical.
 func CheckStaleSkillRefs(env Env) ([]Diagnostic, error) {
 	syaml := loadSkillsYAMLBestEffort(env)
-	if syaml == nil || len(syaml.Skills) == 0 {
+	if syaml == nil || (len(syaml.Skills) == 0 && len(syaml.Plugins) == 0) {
 		return nil, nil
 	}
 
@@ -411,7 +411,27 @@ func CheckStaleSkillRefs(env Env) ([]Diagnostic, error) {
 	if err != nil {
 		return nil, err
 	}
-	locked := lockedSkillNames(env)
+	locked, lockedPlugins := lockedSkillNames(env)
+
+	var diags []Diagnostic
+	pluginNames := make([]string, 0, len(syaml.Plugins))
+	for name := range syaml.Plugins {
+		pluginNames = append(pluginNames, name)
+	}
+	sort.Strings(pluginNames)
+	for _, name := range pluginNames {
+		if lockedPlugins[name] {
+			continue
+		}
+		diags = append(diags, Diagnostic{
+			Severity: SeverityWarning,
+			Code:     "stale_plugin_ref",
+			Path:     relPath(env.Root, env.SkillsYAMLPath()),
+			Field:    name,
+			Message:  fmt.Sprintf("skills.yaml declares plugin %q but the lock has no such plugin — re-add it with `auto skill add <source> --plugin %s` or drop the stale entry", name, name),
+			Value:    name,
+		})
+	}
 
 	names := make([]string, 0, len(syaml.Skills))
 	for name := range syaml.Skills {
@@ -419,7 +439,6 @@ func CheckStaleSkillRefs(env Env) ([]Diagnostic, error) {
 	}
 	sort.Strings(names)
 
-	var diags []Diagnostic
 	for _, name := range names {
 		if authored[name] || locked[name] {
 			continue
@@ -471,22 +490,25 @@ func authoredSkillNames(env Env) (map[string]bool, error) {
 	return out, nil
 }
 
-// lockedSkillNames returns the set of skill names recorded in lock.json,
-// best-effort (a missing or unparseable lock yields the empty set).
-func lockedSkillNames(env Env) map[string]bool {
-	out := map[string]bool{}
+// lockedSkillNames returns the sets of skill and plugin names recorded in
+// lock.json, best-effort (a missing or unparseable lock yields empty sets).
+func lockedSkillNames(env Env) (skills, plugins map[string]bool) {
+	skills, plugins = map[string]bool{}, map[string]bool{}
 	data, err := env.LoadLockFile()
 	if err != nil {
-		return out
+		return skills, plugins
 	}
 	lock, err := ParseLock(data)
 	if err != nil {
-		return out
+		return skills, plugins
 	}
 	for name := range lock.Skills {
-		out[name] = true
+		skills[name] = true
 	}
-	return out
+	for name := range lock.Plugins {
+		plugins[name] = true
+	}
+	return skills, plugins
 }
 
 func ValidateSkillName(name string) error {

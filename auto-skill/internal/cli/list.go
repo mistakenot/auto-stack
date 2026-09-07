@@ -112,7 +112,11 @@ func writeListText(cmd *cobra.Command, views []inspect.SkillView) {
 		if v.Shadowed {
 			shadow = " (shadows vendored)"
 		}
-		fmt.Fprintf(out, "- %s [%s] %s%s: %s\n", v.Name, v.Origin, stale, shadow, desc)
+		origin := v.Origin
+		if v.Plugin != "" {
+			origin += " plugin=" + v.Plugin
+		}
+		fmt.Fprintf(out, "- %s [%s] %s%s: %s\n", v.Name, origin, stale, shadow, desc)
 	}
 	if truncated {
 		fmt.Fprintln(out, "# descriptions truncated — run 'auto skill get <name>' for the full SKILL.md")
