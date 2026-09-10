@@ -865,7 +865,7 @@ Thicken identity + the block UX on the running skeleton.
 
         <pd-phase n="4" title="doctor + init + config validation + output conventions"
                   files="auto-cli/cmd/auto/lockcmd.go, auto-cli/cmd/auto/lockcmd_test.go, auto-shared/lock/config.go, auto-shared/lock/lock_test.go"
-                  depends-on="3" status="todo">
+                  depends-on="3" status="done">
           <md><script type="text/plain">
 - **config.go** — full validation: `[]ValidationError` for missing name/globs/description + bad `identity` enum; shared validator reused by CLI + guard.
 - **lockcmd.go** — `auto lock doctor` → `[]DoctorCheck`: **Claude** hook on PreToolUse = the only *pass* for enforceability (remediation `auto hooks install`); **Codex** = warn/not-verifiable (D-13); config valid; store health; `gh` present; identity resolvable; exit non-zero on any fail. `auto lock init --project` scaffolds `settings.json` + checks/offers the hook. JSON default + `--text` across all commands; `status` uses the resource-list shape.
