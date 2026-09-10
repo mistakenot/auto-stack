@@ -348,8 +348,12 @@ func TestFireLockBareMainBlocks(t *testing.T) {
 	if _, err := runLock(t, repo, "take", "drizzle-schema"); err == nil || !strings.Contains(err.Error(), lock.WorkerEnv) {
 		t.Errorf("bare take = %v, want the D-6 remediation", err)
 	}
-	// A pane is enough to identify the Worker again.
+	// A pane is enough to identify the Worker again. Pin the liveness probe so
+	// a real tmux server without a %3 pane cannot reclaim the lock mid-test.
 	t.Setenv("TMUX_PANE", "%3")
+	prevPanes := lock.DefaultTmuxPanes
+	lock.DefaultTmuxPanes = func() ([]string, error) { return []string{"%3"}, nil }
+	t.Cleanup(func() { lock.DefaultTmuxPanes = prevPanes })
 	takeOut, err := runLock(t, repo, "take", "drizzle-schema")
 	if err != nil {
 		t.Fatalf("take with TMUX_PANE: %v", err)

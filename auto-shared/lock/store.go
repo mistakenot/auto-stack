@@ -75,6 +75,13 @@ func listTmuxPanes() ([]string, error) {
 	return strings.Fields(string(out)), nil
 }
 
+// DefaultTmuxPanes is the pane probe a Store with a nil TmuxPanes field uses.
+// It is a variable so tests that go through Evaluate / OpenDefault (which
+// build their own Store) can pin the pane set instead of asking the tmux
+// server the test process happens to be running under — a live server that
+// lacks a seeded pane id would otherwise reclaim the fixture's lock.
+var DefaultTmuxPanes = listTmuxPanes
+
 // worktreeExists is the real worktree probe.
 func worktreeExists(path string) bool {
 	_, err := os.Stat(path)
@@ -307,7 +314,7 @@ func (s *Store) tmuxPanes() ([]string, error) {
 	if s.TmuxPanes != nil {
 		return s.TmuxPanes()
 	}
-	return listTmuxPanes()
+	return DefaultTmuxPanes()
 }
 
 // Release frees the locks w holds on its project: the one named group, or —

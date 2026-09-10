@@ -414,6 +414,7 @@ func TestSharedCheckoutPanesSerialize(t *testing.T) {
 	repo := initRepo(t, "main")
 	writeConfig(t, repo, oneGroupConfig)
 	store := NewStore(filepath.Join(home, ".auto", "lock"))
+	pinTmuxPanes(t, "%3", "%4")
 
 	t.Setenv("TMUX_PANE", "%3")
 	pane3, err := ResolveWorker(repo, nil, IdentityAuto)
@@ -1249,4 +1250,14 @@ func TestEvaluateInvalidConfigFailsOpen(t *testing.T) {
 	if d := Evaluate(repo, editPayload(repo, "db/schema/users.ts")); d.Deny {
 		t.Errorf("invalid config should fail open: %s", d.Reason)
 	}
+}
+
+// pinTmuxPanes makes every Store built during the test (including the ones
+// Evaluate opens for itself) see exactly these panes as live, so the outcome
+// never depends on whether the test process runs under a real tmux server.
+func pinTmuxPanes(t *testing.T, panes ...string) {
+	t.Helper()
+	prev := DefaultTmuxPanes
+	DefaultTmuxPanes = func() ([]string, error) { return panes, nil }
+	t.Cleanup(func() { DefaultTmuxPanes = prev })
 }
