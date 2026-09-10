@@ -130,9 +130,10 @@ func (s *Store) write(sf *storeFile) error {
 	return sharedconfig.WriteJSONFileAtomic(s.Path(), sf)
 }
 
-// Take acquires group on project for w. It is idempotent when w already holds
-// it (the existing Lock is returned unchanged) and returns a *HeldError when a
-// different Worker holds it.
+// Take acquires group on project for w, recording w's full Holder (kind, host,
+// branch, worktree path, worker id, session id for display) and reason. It is
+// idempotent when w already holds it (the existing Lock is returned unchanged,
+// never duplicated) and returns a *HeldError when a different Worker holds it.
 func (s *Store) Take(project, group string, w Worker, reason string) (Lock, error) {
 	var result Lock
 	err := s.withLock(func() error {
@@ -180,4 +181,39 @@ func (s *Store) List(project string) ([]Lock, error) {
 		return nil
 	})
 	return out, err
+}
+
+// Release frees the locks w holds on its project: the one named group, or —
+// when group is "" — every one, which is what `auto lock release` runs at
+// merge time. It returns how many were released; releasing nothing is not an
+// error. Locks held by any other Worker, on this host or another, are never
+// touched, and a Worker's locks on a different project are left alone too
+// (an override id such as worker-a may be reused across projects).
+func (s *Store) Release(w Worker, group string) (int, error) {
+	released := 0
+	err := s.withLock(func() error {
+		sf, err := s.read()
+		if err != nil {
+			return err
+		}
+		kept := sf.Locks[:0]
+		for i := range sf.Locks {
+			l := &sf.Locks[i]
+			mine := l.Project == w.Project && (group == "" || l.Group == group) && w.Matches(l.Holder)
+			if mine {
+				released++
+				continue
+			}
+			kept = append(kept, *l)
+		}
+		if released == 0 {
+			return nil
+		}
+		sf.Locks = kept
+		return s.write(sf)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return released, nil
 }
