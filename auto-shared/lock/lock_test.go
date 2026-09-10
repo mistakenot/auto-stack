@@ -1136,3 +1136,117 @@ func TestStoreClearNotHeld(t *testing.T) {
 		t.Errorf("refusal created %s: %v", store.Path(), err)
 	}
 }
+
+// TestConfigValidateTable (AC-12): each offending field yields exactly the
+// expected entries from the one shared validator, keyed by code, path and
+// field; a valid config yields none.
+func TestConfigValidateTable(t *testing.T) {
+	type want struct{ code, path, field string }
+	good := Group{Name: "drizzle-schema", Globs: []string{"db/schema/**"}, Description: "ordered migrations"}
+	cases := []struct {
+		name string
+		cfg  Config
+		want []want
+	}{
+		{name: "valid", cfg: Config{Identity: IdentityAuto, Groups: []Group{good}}},
+		{name: "valid empty identity and underscore name", cfg: Config{Groups: []Group{{Name: "api_v2", Globs: []string{"api/**"}, Description: "d"}}}},
+		{name: "bad identity", cfg: Config{Identity: "pane", Groups: []Group{good}},
+			want: []want{{"invalid_identity", "identity", "identity"}}},
+		{name: "missing name", cfg: Config{Groups: []Group{{Name: "  ", Globs: good.Globs, Description: "d"}}},
+			want: []want{{"missing_name", "groups[0].name", "name"}}},
+		{name: "name not a slug", cfg: Config{Groups: []Group{{Name: "Drizzle Schema", Globs: good.Globs, Description: "d"}}},
+			want: []want{{"invalid_name", "groups[0].name", "name"}}},
+		{name: "name with trailing separator", cfg: Config{Groups: []Group{{Name: "schema-", Globs: good.Globs, Description: "d"}}},
+			want: []want{{"invalid_name", "groups[0].name", "name"}}},
+		{name: "duplicate name", cfg: Config{Groups: []Group{good, good}},
+			want: []want{{"duplicate_name", "groups[1].name", "name"}}},
+		{name: "missing description", cfg: Config{Groups: []Group{{Name: "a", Globs: good.Globs, Description: " "}}},
+			want: []want{{"missing_description", "groups[0].description", "description"}}},
+		{name: "no globs", cfg: Config{Groups: []Group{{Name: "a", Description: "d"}}},
+			want: []want{{"missing_globs", "groups[0].globs", "globs"}}},
+		{name: "empty glob entry", cfg: Config{Groups: []Group{{Name: "a", Globs: []string{"db/**", " "}, Description: "d"}}},
+			want: []want{{"empty_glob", "groups[0].globs[1]", "globs"}}},
+		{name: "invalid glob pattern", cfg: Config{Groups: []Group{{Name: "a", Globs: []string{"db/[**"}, Description: "d"}}},
+			want: []want{{"invalid_glob", "groups[0].globs[0]", "globs"}}},
+		{name: "everything wrong at once", cfg: Config{Identity: "x", Groups: []Group{{}, {Name: "a", Globs: []string{""}, Description: "d"}}},
+			want: []want{
+				{"invalid_identity", "identity", "identity"},
+				{"missing_name", "groups[0].name", "name"},
+				{"missing_description", "groups[0].description", "description"},
+				{"missing_globs", "groups[0].globs", "globs"},
+				{"empty_glob", "groups[1].globs[0]", "globs"},
+			}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := tc.cfg.Validate()
+			got := make([]want, 0, len(errs))
+			for _, e := range errs {
+				got = append(got, want{e.Code, e.Path, e.Field})
+			}
+			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Errorf("Validate() = %v\nwant %v\n(full: %+v)", got, tc.want, errs)
+			}
+		})
+	}
+}
+
+// TestGroupNameRules: the slug rule and the normalization take/clear apply to
+// their argument agree with Validate, so a CLI argument is checked against
+// the same schema as the stored config (CLAUDE.md).
+func TestGroupNameRules(t *testing.T) {
+	for _, ok := range []string{"a", "drizzle-schema", "api_v2", "a1-b2_c3"} {
+		if !ValidGroupName(ok) {
+			t.Errorf("ValidGroupName(%q) = false, want true", ok)
+		}
+	}
+	for _, bad := range []string{"", "Drizzle", "a--b", "-a", "a-", "a b", "a/b", "a.b"} {
+		if ValidGroupName(bad) {
+			t.Errorf("ValidGroupName(%q) = true, want false", bad)
+		}
+	}
+	if got := NormalizeGroupName("  Drizzle-Schema \n"); got != "drizzle-schema" {
+		t.Errorf("NormalizeGroupName = %q, want drizzle-schema", got)
+	}
+}
+
+// TestLoadConfigSurfacesAllErrors (AC-12): LoadConfig returns every field
+// error together, not just the first, and keeps the file path.
+func TestLoadConfigSurfacesAllErrors(t *testing.T) {
+	repo := t.TempDir()
+	writeConfig(t, repo, `{"identity":"pane","groups":[{"name":"Bad Name","globs":["db/**"],"description":"d"},{"name":"ok","globs":[],"description":""}]}`)
+
+	cfg, err := LoadConfig(repo)
+	var verr *sharedconfig.ValidationErrorsError
+	if !errors.As(err, &verr) {
+		t.Fatalf("LoadConfig error = %v, want *ValidationErrorsError", err)
+	}
+	if cfg != nil {
+		t.Errorf("LoadConfig returned a config alongside validation errors: %+v", cfg)
+	}
+	if verr.Path != ConfigPath(repo) {
+		t.Errorf("Path = %q, want %q", verr.Path, ConfigPath(repo))
+	}
+	var codes []string
+	for _, e := range verr.Errors {
+		codes = append(codes, e.Code)
+	}
+	want := "[invalid_identity invalid_name missing_description missing_globs]"
+	if fmt.Sprint(codes) != want {
+		t.Errorf("codes = %v, want %s", codes, want)
+	}
+}
+
+// TestEvaluateInvalidConfigFailsOpen (AC-12 / D-10): a config that fails
+// validation — here on a group name — is Allow from the guard, even for a
+// path its glob would otherwise cover.
+func TestEvaluateInvalidConfigFailsOpen(t *testing.T) {
+	isolateHome(t)
+	t.Setenv(WorkerEnv, "worker-a")
+	repo := initRepo(t, "main")
+	writeConfig(t, repo, `{"groups":[{"name":"Drizzle Schema","globs":["db/schema/**"],"description":"d"}]}`)
+
+	if d := Evaluate(repo, editPayload(repo, "db/schema/users.ts")); d.Deny {
+		t.Errorf("invalid config should fail open: %s", d.Reason)
+	}
+}

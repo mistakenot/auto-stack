@@ -4,12 +4,35 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 	sharedconfig "github.com/mistakenot/auto-shared/config"
 )
+
+// GroupNamePattern is the slug every Group name must match: lowercase
+// letters and digits, with single `-` or `_` separators, never leading or
+// trailing (e.g. drizzle-schema, api_v2). A Group is referenced by name on the
+// command line (`take <group>`) and in deny messages, so the same rule is
+// enforced on the config (Validate) and on the `take`/`release`/`clear`
+// argument (ValidGroupName) — one schema for stored data and filter input.
+const GroupNamePattern = `^[a-z0-9]+(?:[-_][a-z0-9]+)*$`
+
+var groupNameRE = regexp.MustCompile(GroupNamePattern)
+
+// NormalizeGroupName applies the input normalization a command-line group
+// argument gets before it is validated and looked up: trimmed and lowercased,
+// so `take Drizzle-Schema ` finds drizzle-schema.
+func NormalizeGroupName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+// ValidGroupName reports whether name matches GroupNamePattern.
+func ValidGroupName(name string) bool {
+	return groupNameRE.MatchString(name)
+}
 
 // ConfigPath returns <repoRoot>/.auto/lock/settings.json.
 func ConfigPath(repoRoot string) string {
@@ -60,16 +83,18 @@ func (c *Config) Validate() []sharedconfig.ValidationError {
 	seen := map[string]int{}
 	for i, g := range c.Groups {
 		p := "groups[" + strconv.Itoa(i) + "]"
-		name := strings.TrimSpace(g.Name)
 		switch {
-		case name == "":
+		case strings.TrimSpace(g.Name) == "":
 			add("missing_name", p+".name", "name", "group name is required", nil)
+		case !ValidGroupName(g.Name):
+			add("invalid_name", p+".name", "name",
+				"group name must match "+GroupNamePattern+" (lowercase slug, e.g. drizzle-schema)", g.Name)
 		default:
-			if prev, dup := seen[name]; dup {
+			if prev, dup := seen[g.Name]; dup {
 				add("duplicate_name", p+".name", "name",
-					"group name duplicates groups["+strconv.Itoa(prev)+"]", name)
+					"group name duplicates groups["+strconv.Itoa(prev)+"]", g.Name)
 			}
-			seen[name] = i
+			seen[g.Name] = i
 		}
 		if strings.TrimSpace(g.Description) == "" {
 			add("missing_description", p+".description", "description",
