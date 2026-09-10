@@ -1261,3 +1261,44 @@ func pinTmuxPanes(t *testing.T, panes ...string) {
 	DefaultTmuxPanes = func() ([]string, error) { return panes, nil }
 	t.Cleanup(func() { DefaultTmuxPanes = prev })
 }
+
+func TestMatchGlob(t *testing.T) {
+	cases := []struct {
+		pattern, name string
+		want          bool
+	}{
+		{"db/schema/**", "db/schema/users.ts", true},
+		{"db/schema/**", "db/schema/nested/deep/users.ts", true},
+		{"db/schema/**", "db/schema", true},
+		{"db/schema/**", "db/schemas/users.ts", false},
+		{"db/schema/**", "src/db/schema/users.ts", false},
+		{"**/migrations/*.sql", "db/migrations/001.sql", true},
+		{"**/migrations/*.sql", "migrations/001.sql", true},
+		{"**/migrations/*.sql", "db/migrations/nested/001.sql", false},
+		{"db/*.ts", "db/schema.ts", true},
+		{"db/*.ts", "db/schema/users.ts", false},
+		{"db/schema/*.ts", "db/schema/users.ts", true},
+		{"db/[a-s]*/**", "db/schema/users.ts", true},
+		{"db/[a-s]*/**", "db/tables/users.ts", false},
+		{"**", "anything/at/all", true},
+		{"db/**/*.ts", "db/users.ts", true},
+		{"db/**/*.ts", "db/a/b/users.ts", true},
+		{"db/**/*.ts", "db/a/b/users.sql", false},
+	}
+	for _, tc := range cases {
+		got, err := matchGlob(tc.pattern, tc.name)
+		if err != nil {
+			t.Errorf("matchGlob(%q, %q) error: %v", tc.pattern, tc.name, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("matchGlob(%q, %q) = %v, want %v", tc.pattern, tc.name, got, tc.want)
+		}
+	}
+	if validGlob("[") {
+		t.Error("validGlob(\"[\") = true, want false")
+	}
+	if !validGlob("db/schema/**") {
+		t.Error("validGlob(\"db/schema/**\") = false, want true")
+	}
+}

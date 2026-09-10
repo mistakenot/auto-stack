@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/bmatcuk/doublestar/v4"
 	sharedconfig "github.com/mistakenot/auto-shared/config"
 )
 
@@ -109,7 +108,7 @@ func (c *Config) Validate() []sharedconfig.ValidationError {
 				add("empty_glob", gp, "globs", "glob must not be empty", glob)
 				continue
 			}
-			if !doublestar.ValidatePattern(glob) {
+			if !validGlob(glob) {
 				add("invalid_glob", gp, "globs", "glob is not a valid pattern", glob)
 			}
 		}
@@ -139,7 +138,7 @@ func (c *Config) MatchGroups(rel string) []Group {
 	var out []Group
 	for _, g := range c.Groups {
 		for _, glob := range g.Globs {
-			if ok, err := doublestar.Match(glob, rel); err == nil && ok {
+			if ok, err := matchGlob(glob, rel); err == nil && ok {
 				out = append(out, g)
 				break
 			}
