@@ -1,0 +1,918 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>064: serial-file-locks</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+  <script type="application/json" id="pd-meta">
+  { "id": "064", "name": "serial-file-locks", "status": "planning", "created": "2026-08-31" }
+  </script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="064: serial-file-locks" status="pending" pr="pending" generated="2026-08-31"
+          next-prompt="/new-solution 064">
+  <pd-tab name="Requirements">
+
+    <pd-scope></pd-scope>
+
+    <pd-section id="problem" title="Problem">
+      <md><script type="text/plain">
+Concurrent workers on separate worktrees independently edit files that require
+**serial** coordination. The canonical case is **Drizzle ORM schemas**: two
+branches change the schema (and its ordered migrations) in parallel, and the
+resulting commits/migrations clash in a way that is painful to unwind.
+
+There is no machine-level mutual exclusion for such files today — nothing stops
+two agents on the same host from editing the same coordinated file set at once.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="goals" title="Goals">
+      <md><script type="text/plain">
+- **Opt-in, per-project config** declaring lockable **groups** — each a named
+  entry with a `glob` and a `description` explaining *why* the files are serial.
+  Lives in project-local `.auto/lock/settings.json`.
+- **Hard-block enforcement via a `PreToolUse` hook (Claude Code in v1).** Editing a
+  file covered by a lockable group is denied unless the current holder owns a lock on
+  that group. The denial message is informative and actionable (see below). v1
+  enforces on Claude only — Codex reports edits as `apply_patch` with no discrete
+  file path, so the guard cannot match there and fails open (see D-12 / Out of Scope).
+- **`auto lock` command surface**: `take <group>`, `release`, `status`, `clear <group>`,
+  and **`doctor`** — a health check (per the repo's standard `doctor` pattern) that
+  verifies the setup is actually enforceable and reports problems as structured JSON.
+  It checks at least: (a) `auto hooks fire` is installed on `PreToolUse` in this
+  project's `.claude/settings.json` — the only check that can *pass* enforceability
+  (else silently inert; remediation `auto hooks install`); Codex is reported
+  not-verifiable (untrusted hooks are inert and trust state is uninspectable, and v1
+  doesn't enforce on Codex — D-12/D-13); (b)
+  `.auto/lock/settings.json` exists and parses, with valid group entries (name +
+  glob + description); (c) the current cwd resolves to a usable Worker identity
+  (warns on the bare-`main` case from D-6); (d) the `~/.auto/lock/locks.json` store
+  is readable/writable and not corrupt; (e) `gh` is available for the merge-verified
+  `clear`. Each finding carries a concrete remediation hint (e.g. `run auto hooks install`).
+- **Lock holder = a Worker with flexible identity** (D-1). Resolved through a
+  chain visible to both the CLI and the hook: `AUTO_LOCK_WORKER` override →
+  linked-worktree branch → shared-checkout tmux pane / `NTM_*`. Granularity is
+  configurable (`identity: auto|worktree|agent`, default `auto`) so both
+  worktree-isolated and same-checkout multi-agent fleets are serialized. `release`
+  frees every lock held by the current Worker (run at merge time).
+- **A lock covers a whole named group** (all files under its glob), giving true
+  serialization of the coordinated set — not per-file locks.
+- **First edit with no lock held is hard-blocked** — even the first editor must
+  run `auto lock take <group>` explicitly before editing.
+- **Stale-lock recovery without TTLs**: `auto lock clear <group>` verifies the
+  holder's PR is **merged** (via `gh`) before releasing another branch's lock
+  (`--force` to override, audited); and a lock is auto-reclaimed when its holder
+  **worktree no longer exists** on disk.
+- **Machine-global store** at `~/.auto/lock/locks.json`, with **flock-guarded**
+  atomic read-modify-write (reusing the existing in-repo flock helper).
+- **Block messages carry the full context**: which branch holds the lock and why
+  (the holder's reason), the group's `description` (why it's serial), and the
+  exact remediation command to run next.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="block-ux" title="Block message — the whole UX for the agent"
+                summary="The denial text is the entire agent-facing surface; it must say why and what to do next.">
+      <md><script type="text/plain">
+The hook's deny reason is the only thing a blocked agent sees, so it must be
+self-sufficient. Two shapes:
+
+**Unlocked (no holder yet)** — first editor:
+```
+✗ BLOCKED: db/schema/users.ts is under a serial-update lock group "drizzle-schema".
+  Why serial: ordered migrations clash if two branches change the schema in parallel.
+  Take the lock first:   auto lock take drizzle-schema
+  Then retry your edit. Release everything at merge time:  auto lock release
+```
+
+**Held by another branch:**
+```
+✗ BLOCKED: "drizzle-schema" is locked by branch feat/orders (PR #42, "adding orders table"),
+  taken 2026-08-31 14:02 on host laptop-charlie.
+  Wait for that PR to merge, then:  auto lock clear drizzle-schema
+  (clear refuses unless PR #42 is merged; use --force only if you have confirmed it.)
+```
+      </script></md>
+    </pd-section>
+
+    <pd-section id="decisions" title="Settled decisions">
+      <md><script type="text/plain">
+Resolved with the requester up front (see the ADR blocks below and the decision log).
+      </script></md>
+
+      <pd-decision id="D-1" title="Holder = a Worker, identity resolved through a CLI+hook-visible chain" status="accepted" by="charlie"
+        summary="Configurable granularity (auto): worktree → branch key; shared checkout → pane key. Supports both regimes.">
+        <md><script type="text/plain">
+**Context:** A lock must serialize two regimes at once: (a) **worktree-isolated**
+agents (one branch/worktree each) and (b) **many agents sharing one checkout**
+(the primary checkout on `main`). One fixed key can't do both — `{host,project,
+branch}` collapses all shared-`main` panes into one holder.
+
+**Mechanical constraint that rules out `session_id`:** the `take` CLI runs in the
+agent's Bash and the hook runs as a subprocess — both must resolve the *same*
+worker key. `session_id` is only in the **hook payload**, invisible to the Bash
+CLI. The discriminator must be visible to **both**: env (`TMUX_PANE`, `NTM_*`) or
+git (worktree/branch) — never `session_id`.
+
+**Decision:** The holder is a **Worker** = `{host, project} + discriminator`,
+resolved through a chain (first match wins):
+1. **`AUTO_LOCK_WORKER=<id>`** env / `take --as <id>` — explicit override, deterministic in any topology.
+2. **Linked worktree** (`worktree.Detect` → `IsMain=false`) → `branch` / worktree path. Durable across session restarts; maps 1:1 to the PR.
+3. **Shared/main checkout** → `TMUX_PANE` (e.g. `%3`) or `NTM_*` label. Rename/restart-proof while the pane lives.
+4. **Bare** (main, no tmux/ntm, no override) → **block with remediation** (see D-6).
+
+Granularity is configurable via `.auto/lock/settings.json` `identity:` —
+**`auto` (default)** applies the chain above; `worktree` forces branch
+granularity; `agent` forces per-pane even inside a worktree. Override env always
+trumps.
+
+**Invariant:** a group has **at most one holder at a time** regardless of
+granularity. Granularity only decides whether two calls from the same intent
+resolve to the *same* key (pass) or *different* keys (serialize). Cross-mode is
+safe — a worktree holder blocks an agent-on-main and vice versa.
+
+**Consequences:** identity is a small resolver reused by both the CLI and the
+hook; the lock record stores `holder_kind` (override|worktree|agent) + host,
+project, branch?, worktree_path?, worker_id, session_id (display), pr?, reason,
+taken_at. Recovery generalizes to "holder liveness token gone" — see D-3.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-2" title="A lock covers a named group, not individual files" status="accepted" by="charlie"
+        summary="True serialization of the coordinated set; per-file wouldn't stop migration clashes.">
+        <md><script type="text/plain">
+**Context:** Ordered migrations clash regardless of *which* schema file each
+branch touched.
+**Decision:** The config entry (name + glob + description) is the lockable unit;
+taking it blocks every file under the glob for other holders.
+**Alternatives:** Per-file locks (finer, but two agents editing different schema
+files still produce clashing migrations, and an agent rarely knows all files up
+front); per-raw-glob (messier than a named, described group).
+**Consequences:** Coarser locking; two independent schema changes fully serialize.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-3" title="Stale recovery = merge-verified clear + worktree-gone reclaim; no TTL" status="accepted" by="charlie"
+        summary="No silent time-based expiry — a long legitimate task must never be stomped.">
+        <md><script type="text/plain">
+**Context:** Locks get forgotten; recovery must not corrupt an in-flight task.
+**Decision:** Two recovery paths only — (a) `auto lock clear <group>` verifies the
+holder's PR is merged via `gh` and refuses otherwise (`--force` overrides, audited);
+(b) auto-reclaim when the holder's **liveness token is gone** — for a worktree
+holder, the worktree path no longer exists on disk; for a pane/agent holder, the
+`TMUX_PANE` no longer exists in the tmux server.
+**Alternatives:** Silent TTL auto-release (rejected — stomps long tasks);
+breakable-after-TTL (rejected for v1 — adds a state without a clear need given the
+two deterministic paths above).
+**Consequences:** Recovery is deterministic and provable, at the cost of always
+needing either a merged PR, a torn-down worktree, or a dead pane to reclaim.
+Agent holders on `main` have no PR, so they rely on pane-gone reclaim or `--force`.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-4" title="First edit with no holder is hard-blocked" status="accepted" by="charlie"
+        summary="Every worker goes through take explicitly; no silent auto-acquire.">
+        <md><script type="text/plain">
+**Context:** The point is to force serialization through an explicit protocol.
+**Decision:** Even the first editor is denied until `auto lock take <group>` runs.
+**Alternatives:** Auto-acquire on first edit (less friction, but grants a lock with
+no explicit intent — easy to hold one unknowingly).
+**Consequences:** One extra command before the first edit of a serial group.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-5" title="Ship as `auto lock` + a deny branch in `auto hooks fire`" status="accepted" by="agent"
+        summary="Reuse the existing hook adapter and identity/flock primitives; minimal new surface.">
+        <md><script type="text/plain">
+**Context:** `auto hooks fire` is already installed as a `PreToolUse` hook on
+Claude and Codex; it already parses the payload into cwd → worktree, branch,
+project, host, session, and target file paths, but always exits 0 (no deny path).
+**Decision:** Add an `auto lock` command group (`take`/`release`/`status`/`clear`/`doctor`)
+plus a **PreToolUse deny branch** inside the fire adapter that emits a
+`permissionDecision: "deny"` when a lockable file is edited without the holder's
+lock. Store `~/.auto/lock/locks.json`; config `.auto/lock/settings.json`; guard
+read-modify-write with the existing flock helper. Add "Lock" to the ubiquitous
+language glossary.
+**Enforcement depends on the hook being installed:** the guard only fires where
+`auto hooks fire` is already wired onto `PreToolUse`. A repo that never ran
+`auto hooks install` has no enforcement — so `auto lock doctor` reports this as a
+blocking finding with the `auto hooks install` remediation, rather than failing
+silently.
+**Alternatives:** A standalone daemon (overkill); folding everything under
+`auto hooks` (locking is its own noun and deserves its own command).
+**Consequences:** ~80% reuse; the enforcement gap for non-edit tools (Bash) is
+accepted — see Out of Scope.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-6" title="Unidentifiable worker on shared main → block with remediation" status="accepted" by="charlie"
+        summary="No pane, no worktree, no override = can't tell agents apart → deny rather than under-serialize.">
+        <md><script type="text/plain">
+**Context:** In the bare case — shared `main`, no tmux/NTM, no `AUTO_LOCK_WORKER`
+— the resolver cannot distinguish co-located agents from env alone.
+**Decision:** Deny the edit with a remediation message: work in a worktree, or
+export `AUTO_LOCK_WORKER=<id>` and retry. Never silently treat the checkout as a
+single holder (that could let two indistinguishable agents believe they hold it).
+**Alternatives:** Single-holder-per-checkout (simpler, but no per-agent
+attribution and can't hold different groups concurrently).
+**Consequences:** The safe default nudges toward worktrees or an explicit worker
+id; orchestrators (NTM) can export `AUTO_LOCK_WORKER` per pane to opt in cleanly.
+        </script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+    </pd-section>
+
+    <pd-section id="out-of-scope" title="Out of Scope">
+      <md><script type="text/plain">
+- **Cross-machine / distributed locking.** Single host only (store is `~/.auto`).
+- **Locking arbitrary Bash writes** (`sed -i`, `python -c`, `cat >`). Enforcement
+  covers the edit tools (Edit/Write/MultiEdit) only; the Bash bypass is a known,
+  documented gap for v1.
+- **TTL / time-based auto-expiry.** Explicitly rejected (D-3).
+- **Non-GitHub forges for the merge-check.** The `clear` verification assumes
+  `gh` / GitHub (this repo's convention).
+- **Auto-releasing locks on merge.** The agent runs `release`; wiring it into
+  `complete-task` / a git hook is a later task.
+- **A UI / dashboard surface.** CLI + hook only for v1.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="open-questions" title="Open Questions">
+      <pd-question id="Q-1" status="answered" priority="p1" for="charlie"
+                   title="What happens when the holder branch is not distinct (everyone on `main` in the shared primary checkout)?">
+        <md><script type="text/plain">
+The original holder `{host, project, branch}` is right for worktree branches, but
+the documented hazard is that **all panes often share the ONE primary checkout on
+`main`** — there every pane collapses to the same holder and they wouldn't block
+each other.
+        </script></md>
+        <pd-answer by="charlie">Resolved by making identity flexible (D-1): the
+holder is a Worker resolved through a CLI+hook-visible chain, with default
+`identity: auto` — a linked worktree keys on branch, a shared/main checkout keys
+on the tmux pane so co-located agents serialize. When even the pane is
+unavailable (bare main, no override), the guard blocks with remediation (D-6)
+rather than under-serialize.</pd-answer>
+      </pd-question>
+
+      <md><script type="text/plain">
+Assumptions being carried forward (not gating — proceeding on these):
+
+- [x] **Codex scope — resolved: Claude-only in v1** (D-12). Codex reports edits as
+  `apply_patch` with `tool_input.command` (a patch envelope), not a discrete
+  `file_path`, so the guard has nothing to match and fails open. v1 does not enforce
+  on Codex; enforcing there needs a tested parser that extracts every affected path
+  from the patch envelope plus Codex fixtures — deferred (Out of Scope).
+- [ ] **Global hook, cheap no-op.** The `PreToolUse` guard runs for every project
+  but returns "allow" immediately when the project has no `.auto/lock/settings.json`,
+  so non-participating repos pay ~nothing.
+- [ ] **Reason capture.** `auto lock take <group>` accepts an optional `--reason`
+  (and/or auto-derives the PR/branch) to populate the "why" shown to blocked
+  agents; absent a reason, the branch + PR is shown.
+- [ ] **PR discovery for `clear`.** The merge-check derives the holder branch's PR
+  via `gh` at clear time rather than requiring it to be recorded at `take` time.
+      </script></md>
+    </pd-section>
+
+  </pd-tab>
+
+  <pd-tab name="Verification">
+
+    <pd-section id="test-strategy" title="Test Strategy">
+      <md><script type="text/plain">
+Four layers, cheapest first — the guard runs on every agent edit, so correctness
+and **fail-open** behaviour dominate the strategy.
+
+1. **Unit (Go, `auto-shared/lock/lock_test.go`)** — the pure core, no hook plumbing:
+   - **Identity resolver** — the `AUTO_LOCK_WORKER` → worktree → pane → bare chain
+     (D-1/D-6), table-driven over synthetic env + `worktree.Info`. Includes the
+     bare-`main` block case and the "same branch across a simulated session
+     restart resolves to the same key" case.
+   - **Store RMW under contention** — spawn N goroutines/processes taking the same
+     group; assert exactly one holder, no lost updates, no corrupt JSON (flock).
+   - **Glob matching** — files in/out of a group's glob; overlap of multiple groups.
+   - **Config validation** — missing `description`/`name`/bad glob → specific
+     `[]ValidationError`; valid config round-trips.
+   - **Liveness reclaim** — a dead worktree/pane's lock is reclaimed **and** a
+     *live* holder's lock is NOT reclaimed (paired negative test — a silent-but-live
+     holder must survive; see Risks).
+2. **Hook integration (`auto-cli/cmd/auto/*_test.go`)** — mirror `runFire` /
+   `TestFireEmitsHintOnGitPush`: feed a `PreToolUse` Edit payload on stdin, assert
+   the exact deny JSON on stdout; assert **empty stdout = allow** for the held /
+   non-lockable / no-config cases; assert the adapter never errors when the store
+   or config is missing or corrupt.
+3. **CLI (`auto-cli/cmd/auto/lockcmd_test.go`)** — `take`/`release`/`status`/`clear`/
+   `doctor` exit codes + JSON shape; `clear` merge-check with a stubbed `gh`.
+4. **E2E harness scenario `lock-flow`** — modelled on **`mail-flow`** (not
+   event-flow), because the lock store is **host-global**: the interesting case is
+   *two Workers on one host*. One `host` container, one seeded host id, one
+   `~/.auto`, the `auto` binary built from source, hooks installed. The two Workers
+   are distinguished deterministically with **`AUTO_LOCK_WORKER=worker-a` vs
+   `worker-b`** (which also exercises the override branch of the identity chain, D-1
+   priority 1 — no real tmux/worktree needed in-container). A `fixtures/hooks/`
+   PreToolUse Edit payload (cf. mail-flow's `post-tool-use.json`) is piped into
+   `auto hooks fire --agent claude` and the scenario asserts the exact **deny JSON**
+   vs **empty-stdout allow**. The pytest suite drives the full loop:
+   opt-in (write `.auto/lock/settings.json`) → `worker-a` take → allowed edit →
+   `worker-b` edit **denied** (reason names worker-a) → `worker-b` take **errors
+   (held)** → `worker-a` release → `worker-b` take + edit allowed → `clear`
+   merge-check (stubbed `gh`) → `doctor` reports the hook installed.
+   `check_ready()` gates on the ready-file, project registered, store initialised
+   and empty, and the hook wired on `PreToolUse`.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="coverage-map" title="Coverage Map">
+      <pd-mermaid caption="Verification layers → what each proves">
+flowchart TD
+  U[Unit: identity / store / glob / config / reclaim] --> I[Hook integration: runFire deny vs allow JSON]
+  I --> C[CLI: take/release/status/clear/doctor]
+  C --> E[E2E harness: full take→block→release loop]
+  U -.fail-open invariant.-> I
+      </pd-mermaid>
+    </pd-section>
+
+    <pd-thread anchor="test-strategy" status="resolved" priority="p2" title="Test paths still describe the rejected module layout">
+      <pd-comment by="review">The unit and CLI test locations here are `auto-lock/lock/*_test.go` and `auto-lock/internal/cli/*_test.go`, but D-7 and File Changes choose an in-tree command plus `auto-shared/lock` (with tests at `auto-shared/lock/lock_test.go` and `auto-cli/cmd/auto/lockcmd_test.go`). Update this strategy so the commands and test targets are directly executable from the approved layout.</pd-comment>
+      <pd-comment by="author">Fixed — pre-D-7 drift. Unit test path is now `auto-shared/lock/lock_test.go` and the CLI test path is `auto-cli/cmd/auto/lockcmd_test.go`, matching D-7 and the File Changes tree. (Same drift was also corrected in context.md.)</pd-comment>
+    </pd-thread>
+
+    <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+      <pd-ac id="AC-1" title="First edit with no lock is hard-blocked" phases="1,2,5" tests="auto-cli/cmd/auto/hooks_lock_test.go, harness/tests/lock_flow/test_lock_flow.py">
+        <md><script type="text/plain">
+- **Given** a project with lockable group `drizzle-schema` and no lock held
+- **When** a Worker's `PreToolUse` Edit hook fires on a file under the group's glob
+- **Then** the hook denies (exit 0, `permissionDecision:"deny"`) with a reason that
+  states the group's `description` and instructs `auto lock take drizzle-schema`
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-2" title="Edit while holding the group's lock is allowed" phases="1,2,5" tests="auto-cli/cmd/auto/hooks_lock_test.go, harness/tests/lock_flow/test_lock_flow.py">
+        <md><script type="text/plain">
+- **Given** the current Worker holds the `drizzle-schema` lock
+- **When** the `PreToolUse` Edit hook fires on a file under the glob
+- **Then** the hook emits **empty stdout** (allow) and the edit proceeds
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-3" title="Edit of a group locked by another Worker is blocked with holder info" phases="2,5" tests="auto-cli/cmd/auto/hooks_lock_test.go, harness/tests/lock_flow/test_lock_flow.py">
+        <md><script type="text/plain">
+- **Given** `drizzle-schema` is locked by branch `feat/orders` (PR #42, reason "add orders")
+- **When** a *different* Worker's Edit hook fires on a file under the glob
+- **Then** the deny reason names the holder branch, its PR/reason, when it was taken,
+  and the `auto lock clear` path (with the merged-PR caveat)
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-4" title="Non-participating project / non-matching file always allows and never errors (fail-open)" phases="1" tests="auto-cli/cmd/auto/hooks_lock_test.go">
+        <md><script type="text/plain">
+- **Given** a project with no `.auto/lock/settings.json`, OR a file outside every
+  group glob, OR a missing/corrupt `~/.auto/lock/locks.json`
+- **When** any edit hook fires
+- **Then** the hook allows (empty stdout) and exits 0 without error — the guard
+  never blocks an edit except on a *confirmed* lock violation
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-5" title="Worker identity — worktree: one holder, survives session restart" phases="2" tests="auto-shared/lock/lock_test.go">
+        <md><script type="text/plain">
+- **Given** two agents on distinct worktree branches (`identity: auto`)
+- **When** each runs `auto lock take drizzle-schema`
+- **Then** exactly one holds it and the other is blocked until release; and the same
+  branch resolves to the same holder key after a session restart (still holds its lock)
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-6" title="Worker identity — shared checkout: co-located agents serialize; bare main blocks" phases="2,5" tests="auto-shared/lock/lock_test.go, harness/tests/lock_flow/test_lock_flow.py">
+        <md><script type="text/plain">
+- **Given** two agents in the same primary checkout on `main`, distinguished by
+  `TMUX_PANE` (e.g. `%3` vs `%4`), `identity: auto`
+- **When** one takes `drizzle-schema`
+- **Then** the other (different pane) is blocked; **and** when identity cannot be
+  resolved (bare `main`, no pane, no `AUTO_LOCK_WORKER`) the guard blocks with the
+  "use a worktree or set AUTO_LOCK_WORKER" remediation (D-6)
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-7" title="take / release lifecycle" phases="2,5" tests="auto-cli/cmd/auto/lockcmd_test.go, harness/tests/lock_flow/test_lock_flow.py">
+        <md><script type="text/plain">
+- **Given** a Worker has taken locks on one or more groups (optionally with `--reason`)
+- **When** it runs `auto lock release`
+- **Then** every lock held by *that Worker* is released, and subsequent edits to
+  those groups are blocked again until re-taken
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-8" title="Concurrent take is race-free" phases="3" tests="auto-shared/lock/lock_test.go">
+        <md><script type="text/plain">
+- **Given** N processes concurrently run `auto lock take <group>` on the same group
+- **When** they contend on the store
+- **Then** exactly one acquires the lock, the rest observe it held, and
+  `~/.auto/lock/locks.json` is never corrupted or missing an update (flock-guarded RMW)
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-9" title="clear is merge-verified" phases="3,5" tests="auto-cli/cmd/auto/lockcmd_test.go, auto-shared/lock/lock_test.go">
+        <md><script type="text/plain">
+- **Given** `drizzle-schema` is held by a Worker whose PR is still open
+- **When** another agent runs `auto lock clear drizzle-schema`
+- **Then** it refuses and reports the PR status; **and** when the PR is merged
+  (or `--force` is passed) it releases the lock and records an audit entry
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-10" title="Stale locks reclaim on lost liveness; live locks survive" phases="3" tests="auto-shared/lock/lock_test.go">
+        <md><script type="text/plain">
+- **Given** a lock whose holder worktree no longer exists on disk (or whose
+  `TMUX_PANE` is gone from the tmux server)
+- **When** any `auto lock` command or the guard evaluates it
+- **Then** the stale lock is reclaimed and does not block a new taker; **and** a
+  lock whose holder is still live (present but idle) is **never** reclaimed
+        </script></md>
+      </pd-ac>
+
+      <pd-ac id="AC-11" title="doctor reports enforceability" phases="4,5" tests="auto-cli/cmd/auto/lockcmd_test.go">
+        <md><script type="text/plain">
+- **Given** any project
+- **When** `auto lock doctor` runs
+- **Then** it emits `[]DoctorCheck` covering: **Claude** `auto hooks fire` installed on
+  `PreToolUse` in `.claude/settings.json` (fail + `auto hooks install` remediation if
+  absent) — this is the only check that can *pass* enforceability; **Codex** hook
+  present but reported **warn / not-verifiable** (trust state is uninspectable and v1
+  does not enforce on Codex, D-12/D-13); config parses & groups valid; store
+  readable/writable; `gh` available; identity resolvable — and exits non-zero if any
+  check fails
+        </script></md>
+      </pd-ac>
+
+      <pd-thread anchor="AC-11" status="resolved" priority="p2" title="Doctor's Codex enforcement check omits hook trust">
+        <pd-comment by="review">`auto hooks install` already warns that Codex hooks must be trusted via `/hooks` before they run (`hooksinstallcmd.go:174-176`). Merely finding `auto hooks fire` in `.codex/hooks.json` cannot establish the AC's claimed enforceability, because an untrusted hook is inert. Define whether doctor can inspect trust state; otherwise report Codex as a warning/not-verifiable and reserve a passing enforceability result for the Claude installation (or revise the AC).</pd-comment>
+        <pd-comment by="author">Adopted your fallback. Added **D-13**: doctor reserves a *passing* enforceability result for the Claude `PreToolUse` install and reports Codex as **warn / not-verifiable** (trust state is uninspectable, and v1 doesn't enforce on Codex per D-12). Updated the AC-11 card and the Goals doctor description accordingly.</pd-comment>
+      </pd-thread>
+
+      <pd-ac id="AC-12" title="config validation is specific and reused" phases="4" tests="auto-shared/lock/lock_test.go, auto-cli/cmd/auto/lockcmd_test.go">
+        <md><script type="text/plain">
+- **Given** `.auto/lock/settings.json` with a group missing `description` or a bad glob
+- **When** it is loaded (by any command or the guard)
+- **Then** validation returns the specific offending field(s) via the shared
+  validator; a valid config lists its groups via `auto lock status`
+        </script></md>
+      </pd-ac>
+
+    </pd-section>
+
+    <pd-thread anchor="acceptance-criteria" status="resolved" priority="p1" title="Acceptance criteria have no execution or test traceability">
+      <pd-comment by="review">Every `pd-ac` has empty `phases` and `tests` attributes, and the document ends after the Solution tab: there is no Plan tab or `pd-phase` implementation sequence. This leaves all 12 acceptance criteria untraceable to named tests and executable phases. Add the Plan tab, populate each criterion's phase/test chips, and make the phase file sets agree with File Changes before execution.</pd-comment>
+      <pd-comment by="author">Done — this was the pending /new-plan stage (the doc was mid-workflow at review time). Added a Plan tab with 6 phases (walking-skeleton first: config→store→identity→evaluate→deny→CLI in Phase 1, thickened in 2–4, E2E in 5, docs in 6), an execution DAG, and Success Criteria. Backfilled all 12 pd-ac cards with `phases` + `tests` chips, and the phase `files` sets agree with the Solution File Changes (verified by the pd-lint unplanned/untracked checks). The headless linter reports 0 issues.</pd-comment>
+    </pd-thread>
+
+    <pd-section id="verification-gaps" title="Known Gaps & Risks">
+      <md><script type="text/plain">
+- **Bash bypass (accepted, Out of Scope).** `sed -i` / `python -c` / `cat >` write
+  files without an Edit-tool hook, so they dodge the guard. Not covered; documented.
+- **Codex is NOT enforced in v1.** Codex reports file edits as `apply_patch` whose
+  `tool_input.command` is a patch envelope with no discrete `file_path`, so
+  `extractPathRefs` finds nothing to match and the guard fails open for Codex. The
+  deny JSON shape is shared, but v1 makes no enforcement claim on Codex. Enforcing
+  there is deferred: it requires a tested extractor for every path in an apply_patch
+  envelope, plus Codex hook fixtures and E2E — a follow-up task.
+- **Hot-path blast radius.** A bug in glob matching or the deny branch could block
+  *every* edit in a participating repo. Mitigated by the fail-open invariant (AC-4)
+  and integration tests asserting empty-stdout for all non-violation paths; worth a
+  small fuzz pass over glob matching.
+- **Liveness-reclaim false positive.** A healthy-but-idle holder must not be mistaken
+  for dead — a naïve reap test can encode that very bug, so AC-10 pairs the reclaim
+  test with a "live holder survives" negative test.
+- **`gh` / GitHub dependency.** The merge-verified `clear` assumes `gh` + GitHub; on
+  other forges or without `gh`, `clear` falls back to liveness-reclaim or `--force`
+  only. `doctor` surfaces missing `gh`.
+- **No TTL (by D-3).** A truly abandoned lock whose PR stays open *and* whose
+  worktree/pane still exists is only clearable via `--force` — accepted trade-off.
+- **Path extraction coverage.** MultiEdit/NotebookEdit path shapes must be matched,
+  not just Edit/Write — covered by reusing `extractPathRefs` and an explicit test.
+      </script></md>
+    </pd-section>
+
+  </pd-tab>
+
+  <pd-tab name="Solution">
+
+    <pd-section id="approach" title="Approach">
+      <md><script type="text/plain">
+`auto lock` is a hook-enforced, opt-in serial-update lock. It mirrors the existing
+`auto hooks` architecture: a **pure library in `auto-shared/lock`** (config, store,
+identity, evaluate) consumed by **both** the CLI command (`auto-cli/cmd/auto/lockcmd.go`)
+and the **PreToolUse guard** added to `auto hooks fire`.
+
+The flow:
+1. A project opts in with `.auto/lock/settings.json` — named groups, each `globs`
+   + a `description`.
+2. `auto hooks fire` already runs as a matcher-less `PreToolUse` hook. The new guard
+   branch resolves the editing **Worker** (D-1 chain), checks the edited path(s)
+   against the project's groups, and consults `~/.auto/lock/locks.json`.
+3. If a matched group is unheld, or held by another Worker, it emits a
+   `permissionDecision:"deny"` whose reason tells the agent exactly what to run.
+   Otherwise it stays silent (allow). **Fail-open**: any internal error allows.
+4. The agent runs `auto lock take <group>`, edits, and `auto lock release` at merge.
+   Stale locks recover via merge-verified `clear` or lost-liveness reclaim.
+
+The guard is the ONLY code that ever denies; every other path is silent, keeping the
+agent's hot path safe.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="flow" title="Guard decision flow">
+      <pd-mermaid caption="PreToolUse guard — decision for one edited path">
+flowchart TD
+  A[PreToolUse Edit/Write/MultiEdit] --> B{lock config<br/>for project?}
+  B -- none --> OK[allow: empty stdout]
+  B -- yes --> C{path matches<br/>a group glob?}
+  C -- no --> OK
+  C -- yes --> D{group held<br/>in store?}
+  D -- no --> DENY1[deny: run auto lock take group]
+  D -- yes --> E{holder == this<br/>Worker?}
+  E -- yes --> OK
+  E -- no --> F{holder liveness<br/>lost?}
+  F -- yes --> RECLAIM[reclaim then allow/re-eval]
+  F -- no --> DENY2[deny: held by branch/PR + clear path]
+  B -. any error .-> OK
+  C -. any error .-> OK
+  D -. any error .-> OK
+      </pd-mermaid>
+    </pd-section>
+
+    <pd-section id="cli-surface" title="Command surface (end state)">
+      <pd-cli title="zsh — the take → edit → release loop" caption="What the agent sees">
+        <pd-cmd note="opt in (scaffolds settings.json, checks the hook is installed)" status="todo">auto lock init --project</pd-cmd>
+        <pd-cmd note="agent hits a blocked edit; hook denies with this remediation" status="todo">auto lock take drizzle-schema --reason "add orders table"</pd-cmd>
+        <pd-out>✓ took lock "drizzle-schema" as feat/orders (worktree)</pd-out>
+        <pd-cmd note="who holds what (JSON default; --text shown)" status="todo">auto lock status --text</pd-cmd>
+        <pd-out>drizzle-schema  HELD by feat/orders (you)  since 14:02</pd-out>
+        <pd-cmd note="at merge time — frees every lock this Worker holds" status="todo">auto lock release</pd-cmd>
+        <pd-out>✓ released 1 lock</pd-out>
+        <pd-cmd note="reclaim another's forgotten lock — refuses unless PR merged" status="todo">auto lock clear drizzle-schema</pd-cmd>
+        <pd-out><script type="text/plain">✗ holder branch feat/orders PR #42 is still OPEN — not cleared (use --force if confirmed merged)</script></pd-out>
+        <pd-cmd note="is this setup actually enforceable?" status="todo">auto lock doctor</pd-cmd>
+      </pd-cli>
+    </pd-section>
+
+    <pd-section id="config-schema" title="Config & store schemas">
+      <pd-code lang="json" path=".auto/lock/settings.json" caption="Project-local opt-in (committed to the repo)">
+<script type="text/plain">{
+  "identity": "auto",
+  "groups": [
+    {
+      "name": "drizzle-schema",
+      "globs": ["db/schema/**", "db/migrations/**"],
+      "description": "Ordered migrations clash if two branches change the schema in parallel."
+    }
+  ]
+}</script>
+      </pd-code>
+      <pd-code lang="json" path="~/.auto/lock/locks.json" caption="Machine-global store — one holder per (project, group); flock-guarded RMW">
+<script type="text/plain">{
+  "version": 1,
+  "locks": [
+    {
+      "project": "auto-stack",
+      "group": "drizzle-schema",
+      "holder": {
+        "kind": "worktree",
+        "host": "laptop-charlie",
+        "branch": "feat/orders",
+        "worktree_path": "/home/vscode/src/auto-stack-orders",
+        "worker_id": "",
+        "session_id": "abc123"
+      },
+      "reason": "add orders table",
+      "pr": "",
+      "taken_at": "2026-09-10T14:02:00Z"
+    }
+  ],
+  "audit": []
+}</script>
+      </pd-code>
+      <md><script type="text/plain">
+`holder.worker_id` carries the `TMUX_PANE`/`NTM` value (agent kind) or the
+`AUTO_LOCK_WORKER` value (override kind); `branch`+`worktree_path` identify a
+worktree holder. `pr` is optional and derived from the branch via `gh` at `clear`
+time if absent. `audit` is append-only, recording every `clear`/`--force`.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="lib-api" title="auto-shared/lock — library surface">
+      <pd-api kind="module" name="auto-shared/lock" lang="go" path="auto-shared/lock" caption="Pure lib: config, identity, store, evaluate — no cobra, no stdout">
+        <pd-member kind="func" sig="LoadConfig(repoRoot string) (*Config, error)">Reads .auto/lock/settings.json; nil (not error) when absent; collects []ValidationError for bad groups.</pd-member>
+        <pd-member kind="func" sig="ResolveWorker(cwd string, payload map[string]any, identity string) (Worker, error)">The D-1 chain: AUTO_LOCK_WORKER → linked worktree branch → TMUX_PANE/NTM → bare (error). identity ∈ auto|worktree|agent.</pd-member>
+        <pd-member kind="method" sig="(w Worker) Matches(h Holder) bool">Same host+project AND same kind-specific discriminator (branch+path, or worker_id).</pd-member>
+        <pd-member kind="func" sig="Evaluate(cwd string, payload map[string]any) Decision">Fail-open guard core: resolves config+worker+store, matches edited paths to groups, returns Deny+Reason or Allow. Any internal error → Allow.</pd-member>
+        <pd-member kind="func" sig="Take(project, group string, w Worker, reason string) (Lock, error)">flock RMW; idempotent if self-held; errors with holder info if held by another.</pd-member>
+        <pd-member kind="func" sig="Release(w Worker, group string) (int, error)">Releases all of this Worker's locks (or one group); returns count.</pd-member>
+        <pd-member kind="func" sig="Clear(project, group string, force bool, gh GHChecker) error">Merge-verified reclaim of another's lock; refuses unless PR merged or force; appends audit.</pd-member>
+        <pd-member kind="func" sig="List(project string) ([]Lock, error)">Locks for a project (or all); reclaims lost-liveness locks as a side effect.</pd-member>
+        <pd-member kind="type" sig="Decision struct { Deny bool; Reason string }">The guard verdict; Reason becomes permissionDecisionReason.</pd-member>
+      </pd-api>
+      <pd-code lang="go" path="auto-cli/cmd/auto/hookscmd.go" caption="New deny shape emitted on PreToolUse (exit 0, stdout)">
+<script type="text/plain">type preToolUseDecision struct {
+	HookSpecificOutput preToolUseOutput `json:"hookSpecificOutput"`
+}
+type preToolUseOutput struct {
+	HookEventName            string `json:"hookEventName"`            // "PreToolUse"
+	PermissionDecision       string `json:"permissionDecision"`      // "deny"
+	PermissionDecisionReason string `json:"permissionDecisionReason"`
+}
+
+// In fire's RunE, before matchAndEmitHint (PostToolUse-only):
+// if hook_event_name == "PreToolUse" {
+//   if d := lock.Evaluate(cwd, payload); d.Deny { emit(preToolUseDecision{...}); return }
+// }</script>
+      </pd-code>
+    </pd-section>
+
+    <pd-section id="file-changes" title="File Changes">
+      <pd-files>
+        <pd-file path="auto-shared/lock/model.go" change="add">Lock, Holder, Group, Config, Worker, Decision types.</pd-file>
+        <pd-file path="auto-shared/lock/config.go" change="add">LoadConfig(repoRoot) + group validation (name/globs/description).</pd-file>
+        <pd-file path="auto-shared/lock/identity.go" change="add">ResolveWorker (D-1 chain), Worker.Matches, bare-main error (D-6).</pd-file>
+        <pd-file path="auto-shared/lock/store.go" change="add">~/.auto/lock/locks.json; flock RMW (registry.withLock pattern) + WriteJSONFileAtomic; Take/Release/Clear/List + liveness reclaim.</pd-file>
+        <pd-file path="auto-shared/lock/evaluate.go" change="add">Evaluate(cwd,payload) Decision + deny-reason formatting (both UX shapes).</pd-file>
+        <pd-file path="auto-shared/lock/lock_test.go" change="add">Unit tests: identity chain, store contention, glob match, config validation, reclaim + live-survives negative.</pd-file>
+        <pd-file path="auto-cli/cmd/auto/lockcmd.go" change="add">newLockCmd: take/release/status/clear/doctor/init; JSON default, --text; wraps auto-shared/lock.</pd-file>
+        <pd-file path="auto-cli/cmd/auto/lockcmd_test.go" change="add">CLI exit codes + JSON shape; clear with stubbed gh.</pd-file>
+        <pd-file path="auto-cli/cmd/auto/hookscmd.go" change="edit">PreToolUse deny branch calling lock.Evaluate; new preToolUseDecision emit; stays exit 0.</pd-file>
+        <pd-file path="auto-cli/cmd/auto/hooks_lock_test.go" change="add">Integration via runFire: deny JSON vs empty-stdout allow; never-errors-on-missing-config.</pd-file>
+        <pd-file path="auto-cli/cmd/auto/main.go" change="edit">root.AddCommand(newLockCmd()).</pd-file>
+        <pd-file path="docs/concepts/UBIQUITOUS_LANGUAGE.md" change="edit">Add Lock, Group, Worker terms via the glossary generator (glossary.py).</pd-file>
+        <pd-file path="harness/scenarios/lock-flow/docker-compose.yaml" change="add">One host container (one host id, one ~/.auto, two workspaces), mail-flow style.</pd-file>
+        <pd-file path="harness/scenarios/lock-flow/Dockerfile" change="add">Builds the real auto binary from monorepo source.</pd-file>
+        <pd-file path="harness/scenarios/lock-flow/scripts/host-entrypoint.sh" change="add">Seed host id, register project, install hooks, write ready-file.</pd-file>
+        <pd-file path="harness/scenarios/lock-flow/fixtures/hooks/pre-tool-use-edit.json" change="add">PreToolUse Edit payload with file_path under a locked glob (piped to auto hooks fire).</pd-file>
+        <pd-file path="harness/src/harness/scenarios/lock_flow.py" change="add">Scenario subclass + DSL: take/fire_edit(asserts deny|allow)/release/clear; check_ready() gates.</pd-file>
+        <pd-file path="harness/src/harness/cli.py" change="edit">Register the lock-flow scenario (+2 lines, cf. mail-flow 0c73e78).</pd-file>
+        <pd-file path="harness/tests/lock_flow/test_lock_flow.py" change="add">Full loop (Claude agent): opt-in → take → allow → deny(other worker) → held-error → release → allow → clear → doctor.</pd-file>
+        <pd-file path="harness/CLAUDE.md" change="edit">Document the lock-flow scenario in the scenarios list.</pd-file>
+        <pd-file path="CLAUDE.md" change="edit">Add `auto lock` to the sub-projects table.</pd-file>
+      </pd-files>
+    </pd-section>
+
+    <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+      <md><script type="text/plain">
+- **New `auto-lock` module** (like auto-env/auto-mail) — rejected in favour of
+  in-tree placement (D-7): `auto lock` is a hook-enforcement feature tightly coupled
+  to the `fire` adapter, exactly like `auto hooks`; a new go.mod/go.work/replace adds
+  ceremony for no isolation benefit.
+- **`session_id` as Worker identity** — mechanically impossible: the Bash-run CLI
+  can't see it (only the hook payload can). Rejected in D-1.
+- **Silent TTL auto-expiry** — stomps long legitimate tasks; rejected in D-3.
+- **Per-file locks** — don't serialize ordered migrations; rejected in D-2.
+- **A separate PreToolUse hook with `matcher:"Edit|Write|MultiEdit"`** — cleaner in
+  isolation, but the existing `fire` adapter is already installed matcher-less on all
+  events and no-ops internally (hints do the same). Reusing it avoids a second hook
+  install and a second process; the guard filters tool + event internally (D-10).
+- **exit 2 + stderr to block** — works, but JSON `permissionDecision` composes with
+  other hooks (most-restrictive-wins) and carries a structured reason; preferred.
+- **Store as a directory-of-lockfiles (mkdir-atomic)** — avoids RMW races without
+  flock, but scatters holder metadata and complicates `status`/`clear`; a single
+  flock-guarded JSON is simpler and matches the registry precedent.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="solution-decisions" title="Decisions">
+
+      <pd-decision id="D-7" title="Ship `auto lock` in-tree (like `auto hooks`), lib in auto-shared/lock" status="accepted" by="charlie"
+        summary="Command in auto-cli/cmd/auto; pure lib in auto-shared/lock consumed by CLI + guard; no new module.">
+        <md><script type="text/plain">
+**Decision:** Command surface in `auto-cli/cmd/auto/lockcmd.go`; pure library
+(config/store/identity/evaluate) in `auto-shared/lock`, imported by both the CLI and
+the `fire` guard. No new go.mod/go.work/replace.
+**Rationale:** mirrors the existing `auto hooks`/`auto-shared/hooks` split exactly;
+`auto lock` is hook-enforcement and shares the fire adapter.
+**Alternative:** a standalone `auto-lock` module (auto-env/auto-mail style) — more
+ceremony, no isolation benefit here.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-8" title="Store: one holder per (project, group) in a single flock-guarded JSON" status="accepted" by="agent"
+        summary="~/.auto/lock/locks.json; RMW under blocking LOCK_EX on a .lock sidecar + atomic write.">
+        <md><script type="text/plain">
+**Decision:** `~/.auto/lock/locks.json` holds `locks[]` keyed by `(project, group)`
+— at most one holder each — plus an append-only `audit[]`. Every mutation runs inside
+a blocking `flock(LOCK_EX)` on a `.lock` sidecar (the `registry.withLock` pattern) and
+persists via `WriteJSONFileAtomic`.
+**Rationale:** the store is itself contended by concurrent Workers; atomic-rename alone
+loses updates (per jsonfile.go's own note). flock + atomic write gives both.
+**Consequences:** a `schema version` field allows future migration.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-9" title="Config: named groups with globs[] + description in .auto/lock/settings.json" status="accepted" by="charlie"
+        summary="A group is the lockable unit (D-2); referenced by name in take/clear; identity default auto.">
+        <md><script type="text/plain">
+**Decision:** `.auto/lock/settings.json` carries `identity` (auto|worktree|agent,
+default auto) and `groups[]` of `{name, globs[], description}`. `name` is how the
+agent references a group (`take <name>`); `description` is the "why" shown in denials;
+`globs[]` supports the schema+migrations spread. Validation collects field errors.
+**Rationale:** matches the requirement (globs + description) and D-2 (group = unit);
+`name` gives a stable, human-facing handle for the CLI and deny messages.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-10" title="Guard reuses the matcher-less fire adapter; fail-open; single JSON object" status="accepted" by="agent"
+        summary="Deny only on confirmed violation for PreToolUse edit tools; every other path silent; errors allow.">
+        <md><script type="text/plain">
+**Decision:** The guard runs inside `fire` on `PreToolUse` only, filters to
+Edit/Write/MultiEdit/NotebookEdit internally (reusing `extractPathRefs`), and emits at
+most one JSON object — a deny — or nothing. It NEVER emits alongside a hint (hints are
+PostToolUse-only, so no collision). Any internal error (bad config, unreadable store,
+unresolved non-bare identity) returns Allow.
+**Rationale:** the deny is the one deliberate exception to fire's "always exit 0" rule;
+everything else preserves the hot-path-safe contract. Claude's hook spec allows a single
+hookSpecificOutput object per invocation.
+        </script></md>
+      </pd-decision>
+
+      <pd-thread anchor="D-10" status="resolved" priority="p1" title="Codex edit paths cannot reach the proposed file-glob guard">
+        <pd-comment by="review">The current `extractPathRefs` only reads `tool_input.file_path`, `notebook_path`, and `path`. Codex's current PreToolUse contract reports file edits as canonical `tool_name: "apply_patch"` with `tool_input.command`; its documented `Edit`/`Write` names are matcher aliases, not input paths. Therefore `lock.Evaluate` as specified has no path to match for Codex and silently allows every Codex edit, despite the goals and AC-1--AC-3 describing hard enforcement. Either scope v1 explicitly to Claude and remove Codex enforceability claims, or specify a safe, tested way to derive every affected path from Codex's edit input and add Codex fixtures/E2E coverage.</pd-comment>
+        <pd-comment by="author">Agreed and taken the first option — scoped v1 to Claude. Added **D-12**: Codex `apply_patch` carries no discrete `file_path`, so the guard finds nothing to match and (per fail-open D-10) allows the edit; v1 makes no Codex enforcement claim. Updated the Goals enforcement bullet, the former "Codex parity" assumption (now resolved), and Out of Scope (Codex NOT enforced in v1, with the deferred apply_patch-envelope parser + Codex fixtures/E2E called out as a follow-up). The E2E fires `--agent claude`.</pd-comment>
+      </pd-thread>
+
+      <pd-decision id="D-11" title="E2E: mail-flow-style single host + AUTO_LOCK_WORKER for two Workers" status="accepted" by="agent"
+        summary="Host-global store → two Workers on one host in one container; identity injected via AUTO_LOCK_WORKER.">
+        <md><script type="text/plain">
+**Decision:** The `lock-flow` harness scenario uses ONE `host` container (one host
+id, one `~/.auto`), following `mail-flow` rather than `event-flow`, and distinguishes
+the two contending Workers with `AUTO_LOCK_WORKER=worker-a`/`worker-b`.
+**Rationale:** the lock store is host-global, so the case that matters is two Workers
+on ONE host — and the harness gives each *container* a distinct host id, so two
+containers would be two hosts (the same reasoning as mail-flow's D-062-1). The
+`AUTO_LOCK_WORKER` override makes identity deterministic without real tmux/worktrees
+in-container, and doubles as coverage of the override branch of the D-1 chain.
+**Consequences:** the worktree/pane identity branches are covered by Go unit tests
+(synthetic env + `worktree.Info`); the E2E proves the end-to-end deny/allow contract
+through the real binary + real hook wiring.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-12" title="v1 enforcement is Claude-only; Codex unenforced pending apply_patch path extraction" status="accepted" by="charlie"
+        summary="Codex apply_patch carries no discrete file_path → guard cannot match → fails open; Codex enforcement deferred.">
+        <md><script type="text/plain">
+**Context (raised by Codex review, D-10 thread):** the guard matches paths from
+`tool_input.{file_path,notebook_path,path}` (`extractPathRefs`). Claude's
+Edit/Write/MultiEdit/NotebookEdit all carry those. **Codex** reports edits as
+`tool_name:"apply_patch"` with `tool_input.command` — a patch *envelope*, no discrete
+`file_path` — so the guard finds nothing to match and (correctly, per fail-open D-10)
+allows the edit.
+**Decision:** v1 **enforces on Claude only**. The `auto lock` CLI, store, config,
+identity, `clear`/`doctor`, and the deny JSON are agent-agnostic, but the *guard* only
+blocks Claude edits in v1. The doc makes no Codex enforcement claim; the E2E fires
+`--agent claude`.
+**Alternative (deferred):** parse the apply_patch envelope to extract every affected
+path, add Codex hook fixtures + E2E, and enforce on Codex — a follow-up task, called
+out in Out of Scope.
+**Consequences:** honest scope; no false sense of protection on Codex. `doctor`
+reflects this (D-13 / AC-11): a Claude hook installed = enforceable; Codex = reported
+not-verifiable, never a passing enforceability result.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-13" title="doctor reports Codex as not-verifiable (hook trust is uninspectable)" status="accepted" by="charlie"
+        summary="An untrusted Codex hook is inert; doctor can't read trust state → warn, never pass, for Codex.">
+        <md><script type="text/plain">
+**Context (raised by Codex review, AC-11 thread):** `auto hooks install` warns that
+Codex hooks must be trusted via `/hooks` before they fire (`hooksinstallcmd.go:174-176`).
+Finding `auto hooks fire` in `.codex/hooks.json` therefore does NOT prove Codex
+enforcement — an untrusted hook is inert — and the trust state is not machine-readable.
+**Decision:** `auto lock doctor` reserves a **passing** enforceability result for the
+**Claude** installation (hook present on `PreToolUse` in `.claude/settings.json`). For
+Codex it reports a **warn / not-verifiable** check ("hook present but trust state can't
+be inspected; and v1 does not enforce on Codex — D-12"), never a pass.
+**Consequences:** aligns AC-11 with reality; doctor never overclaims.
+        </script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+    </pd-section>
+
+  </pd-tab>
+
+  <pd-tab name="Plan">
+
+    <pd-section id="summary" title="Summary">
+      <md><script type="text/plain">
+Build the lock as a **walking skeleton first**: Phase 1 wires the thinnest path
+through every layer (config → store → identity → evaluate → deny hook → CLI) with
+one Go-level end-to-end check green. Phases 2–4 thicken behaviour on a system that
+already runs; Phase 5 adds the Docker E2E (Claude-only, D-12); Phase 6 (docs/glossary)
+runs in parallel. Enforcement is Claude-only in v1 (D-12); the CLI/store/config are
+agent-agnostic.
+      </script></md>
+    </pd-section>
+
+    <pd-section id="execution-sequence" title="Execution Sequence">
+      <pd-dag caption="Phase dependency DAG (6 runs parallel to 2–5)"></pd-dag>
+    </pd-section>
+
+    <pd-section id="phases" title="Phases">
+      <pd-stepper>
+
+        <pd-phase n="1" title="Walking skeleton: config→store→identity→evaluate→deny→take/status"
+                  files="auto-shared/lock/model.go, auto-shared/lock/config.go, auto-shared/lock/store.go, auto-shared/lock/identity.go, auto-shared/lock/evaluate.go, auto-shared/lock/lock_test.go, auto-cli/cmd/auto/lockcmd.go, auto-cli/cmd/auto/hookscmd.go, auto-cli/cmd/auto/main.go, auto-cli/cmd/auto/hooks_lock_test.go"
+                  status="todo">
+          <md><script type="text/plain">
+Thinnest end-to-end path, one case green.
+- **model.go** — `Lock, Holder, Group, Config, Worker, Decision` types (the on-disk + in-memory shapes from the Solution schemas).
+- **config.go** — `LoadConfig(repoRoot)` reading `.auto/lock/settings.json`; returns nil (not error) when absent. Verify: unit test loads a one-group fixture.
+- **store.go** — `~/.auto/lock/locks.json`; `Take`/`List` inside a blocking flock RMW (`registry.withLock` pattern) + `WriteJSONFileAtomic`. Verify: unit test take→list round-trips.
+- **identity.go** — `ResolveWorker`: `AUTO_LOCK_WORKER` → linked-worktree branch (stub the pane/bare branches for Phase 2). Verify: unit test resolves override + worktree.
+- **evaluate.go** — `Evaluate(cwd,payload)`: deny if a matched group is unheld or held-by-other; allow if self/none/no-config; **fail-open on any error**. Verify: unit test the deny + allow verdicts.
+- **hookscmd.go** — add the `preToolUseDecision` type + a PreToolUse branch in `fire` that calls `lock.Evaluate` on edit tools and emits deny JSON (exit 0); silent otherwise.
+- **lockcmd.go + main.go** — `auto lock take <group>` + `auto lock status`; `root.AddCommand(newLockCmd())`.
+- **hooks_lock_test.go** — the walking-skeleton E2E (Go): config + no lock → fire PreToolUse Edit under glob → assert deny JSON; after `take` → assert empty stdout (allow); missing config → allow.
+- **Verify:** `go build ./...`; `go test ./auto-shared/lock/... ./auto-cli/...`; `golangci-lint run` (no dead code — 047 gotcha). **Commit.**
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Full identity + held-by-other + release + deny-reason UX"
+                  files="auto-shared/lock/identity.go, auto-shared/lock/evaluate.go, auto-shared/lock/store.go, auto-shared/lock/lock_test.go, auto-cli/cmd/auto/lockcmd.go, auto-cli/cmd/auto/hooks_lock_test.go"
+                  depends-on="1" status="todo">
+          <md><script type="text/plain">
+Thicken identity + the block UX on the running skeleton.
+- **identity.go** — complete the chain: override → worktree → `TMUX_PANE`/`NTM_*` → **bare = block (D-6)**; `identity` modes auto|worktree|agent; `Worker.Matches(Holder)`. Verify: table-driven tests incl. bare-main block + "same branch after session restart = same key".
+- **evaluate.go** — held-by-another deny carrying holder branch/PR/reason/taken-at + both deny-reason shapes (Block-UX section); self → allow.
+- **store.go** — `Release(worker, group?)` frees all of a Worker's locks; `Take` records reason + full holder metadata; idempotent for self.
+- **lockcmd.go** — `auto lock release`; `take --reason` / `--as`.
+- **hooks_lock_test.go** — add held-by-other deny (reason names holder), self-allow, bare-main block.
+- **Verify:** build + `go test` + lint. **Commit.**
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Recovery: clear (gh merge-check) + liveness reclaim + concurrency proof"
+                  files="auto-shared/lock/store.go, auto-shared/lock/evaluate.go, auto-shared/lock/lock_test.go, auto-cli/cmd/auto/lockcmd.go, auto-cli/cmd/auto/lockcmd_test.go"
+                  depends-on="2" status="todo">
+          <md><script type="text/plain">
+- **store.go** — `Clear(project,group,force,gh)`: refuse unless holder PR merged (via a `GHChecker` iface; real impl shells `gh pr view --json state`), `--force` overrides, append `audit[]`. Liveness reclaim in `List`/`Evaluate`: holder worktree path missing OR `TMUX_PANE` gone from tmux.
+- **lockcmd.go** — `auto lock clear <group> [--force]`.
+- **lock_test.go** — concurrency proof (task-063 discipline): **four** concurrent takers, each its own store handle, run under `-race`, assertions first validated against a deliberately broken build; reclaim test **paired** with a live-holder-survives negative (memory: liveness-reap can encode the bug).
+- **lockcmd_test.go** — `clear` with a stubbed `GHChecker` (open→refuse, merged→release, --force→release+audit).
+- **Verify:** `go test -race ./auto-shared/lock/...`; build + lint. **Commit.**
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="doctor + init + config validation + output conventions"
+                  files="auto-cli/cmd/auto/lockcmd.go, auto-cli/cmd/auto/lockcmd_test.go, auto-shared/lock/config.go, auto-shared/lock/lock_test.go"
+                  depends-on="3" status="todo">
+          <md><script type="text/plain">
+- **config.go** — full validation: `[]ValidationError` for missing name/globs/description + bad `identity` enum; shared validator reused by CLI + guard.
+- **lockcmd.go** — `auto lock doctor` → `[]DoctorCheck`: **Claude** hook on PreToolUse = the only *pass* for enforceability (remediation `auto hooks install`); **Codex** = warn/not-verifiable (D-13); config valid; store health; `gh` present; identity resolvable; exit non-zero on any fail. `auto lock init --project` scaffolds `settings.json` + checks/offers the hook. JSON default + `--text` across all commands; `status` uses the resource-list shape.
+- **lock_test.go / lockcmd_test.go** — config-validation field errors (AC-12); doctor check matrix incl. Codex-not-verifiable (AC-11).
+- **Verify:** build + `go test` + lint. **Commit.**
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="5" title="E2E harness scenario lock-flow (Claude-only)"
+                  files="harness/scenarios/lock-flow/docker-compose.yaml, harness/scenarios/lock-flow/Dockerfile, harness/scenarios/lock-flow/scripts/host-entrypoint.sh, harness/scenarios/lock-flow/fixtures/hooks/pre-tool-use-edit.json, harness/src/harness/scenarios/lock_flow.py, harness/src/harness/cli.py, harness/tests/lock_flow/test_lock_flow.py, harness/CLAUDE.md"
+                  depends-on="4" status="todo">
+          <md><script type="text/plain">
+Model on `mail-flow` (host-global store → two Workers on one host).
+- **scenarios/lock-flow/** — compose (one `host` container), Dockerfile (build `auto` from source), `scripts/host-entrypoint.sh` (seed host id, register project, `auto hooks install`, write ready-file), `fixtures/hooks/pre-tool-use-edit.json` (PreToolUse Edit, `--agent claude`, file under a locked glob).
+- **lock_flow.py** — `Scenario` subclass + DSL `take/fire_edit(asserts deny|allow)/release/clear`; `check_ready()` gates ready-file + project registered + store empty + hook on PreToolUse. Two Workers via `AUTO_LOCK_WORKER=worker-a|worker-b`.
+- **cli.py** — register the scenario (+2 lines). **CLAUDE.md** — document it.
+- **test_lock_flow.py** — full loop: opt-in → worker-a take → allowed edit → worker-b edit **denied** → worker-b take **errors (held)** → worker-a release → worker-b take + edit allowed → `clear` merge-check (stub `gh`) → `doctor`.
+- **Verify:** `uv run pytest tests/lock_flow -v`. **Commit.**
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="6" title="Docs: glossary terms + sub-project table (parallel to 2–5)"
+                  files="docs/concepts/UBIQUITOUS_LANGUAGE.md, CLAUDE.md"
+                  depends-on="1" status="todo">
+          <md><script type="text/plain">
+- **UBIQUITOUS_LANGUAGE.md** — add **Lock**, **Group**, **Worker** via the `domain-modelling` skill's add-term (bold term + definition + `_Avoid_:` + `_Has_:`). Keep any avoided word that collides with a canonical term parenthetical (062 gotcha: bare collision fails `glossary.py check`). Run `glossary.py check` + `glossary.py diagram --write`.
+- **CLAUDE.md** — add an `auto lock` row to the sub-projects table.
+- **Verify:** `glossary.py check` passes; `auto doc` drift clean. **Commit.**
+          </script></md>
+        </pd-phase>
+
+      </pd-stepper>
+    </pd-section>
+
+    <pd-section id="success-criteria" title="Success Criteria">
+      <md><script type="text/plain">
+- **Phase 1** → AC-1, AC-2, AC-4 (skeleton verdicts + fail-open).
+- **Phase 2** → AC-1, AC-2, AC-3, AC-5, AC-6, AC-7 (identity + block UX + release).
+- **Phase 3** → AC-8, AC-9, AC-10 (concurrency, merge-verified clear, reclaim).
+- **Phase 4** → AC-11, AC-12 (doctor, config validation).
+- **Phase 5** → end-to-end re-proof of AC-1/2/3/6/7 through the real binary (Claude).
+- **Phase 6** → docs/glossary (no AC; supports all).
+All 12 acceptance criteria pass; `go test -race ./...` and `uv run pytest tests/lock_flow` green.
+      </script></md>
+    </pd-section>
+
+  </pd-tab>
+  </pd-doc>
+</body>
+</html>
