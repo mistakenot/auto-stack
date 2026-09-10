@@ -1,0 +1,11 @@
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "session_id": "harness-lock-flow",
+  "cwd": "/workspace/project",
+  "tool_input": {
+    "file_path": "/workspace/project/db/schema/users.ts",
+    "old_string": "export const users = {};",
+    "new_string": "export const users = { id: 1 };"
+  }
+}
