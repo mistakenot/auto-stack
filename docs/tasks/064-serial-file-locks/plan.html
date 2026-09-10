@@ -839,7 +839,7 @@ Thinnest end-to-end path, one case green.
 
         <pd-phase n="2" title="Full identity + held-by-other + release + deny-reason UX"
                   files="auto-shared/lock/identity.go, auto-shared/lock/evaluate.go, auto-shared/lock/store.go, auto-shared/lock/lock_test.go, auto-cli/cmd/auto/lockcmd.go, auto-cli/cmd/auto/hooks_lock_test.go"
-                  depends-on="1" status="todo">
+                  depends-on="1" status="done">
           <md><script type="text/plain">
 Thicken identity + the block UX on the running skeleton.
 - **identity.go** — complete the chain: override → worktree → `TMUX_PANE`/`NTM_*` → **bare = block (D-6)**; `identity` modes auto|worktree|agent; `Worker.Matches(Holder)`. Verify: table-driven tests incl. bare-main block + "same branch after session restart = same key".
