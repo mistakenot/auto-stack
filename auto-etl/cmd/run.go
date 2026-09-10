@@ -62,9 +62,13 @@ func newRunCmd() *cobra.Command {
 			}
 
 			if fullRun {
-				fmt.Printf("full rebuild: removing %s\n", outputDir)
-				if err := os.RemoveAll(outputDir); err != nil {
-					return fmt.Errorf("remove output dir: %w", err)
+				for _, source := range []string{"sessions", "git", "github", "hooks"} {
+					if !sources[source] {
+						continue
+					}
+					if err := resetSource(source, outputDir); err != nil {
+						return err
+					}
 				}
 			}
 
@@ -105,7 +109,7 @@ func newRunCmd() *cobra.Command {
 
 			// Git history ETL phase
 			if sources["git"] {
-				if err := runGitETL(hostID, gated, repoPathFlag, sinceFlag, fullRun); err != nil {
+				if err := runGitETL(hostID, gated, repoPathFlag, sinceFlag); err != nil {
 					return err
 				}
 			}
@@ -130,7 +134,9 @@ func newRunCmd() *cobra.Command {
 
 	runCmd.Flags().StringVar(&inputDir, "input", defaultInput, "Input directory containing raw session data")
 	runCmd.Flags().StringVar(&outputDir, "output", defaultOutput, "Output directory for transformed parquet files")
-	runCmd.Flags().BoolVar(&fullRun, "full", false, "Delete output directory before running (full rebuild)")
+	runCmd.Flags().BoolVar(&fullRun, "full", false,
+		"Discard the derived output and ingestion cursor for the selected sources, then rebuild them from source. "+
+			"Ordinary runs are already additive and self-healing; use this only to drop rows whose sources are gone.")
 	runCmd.Flags().StringSliceVar(&onlyFlag, "only", nil, "Run only specified ETL sources (sessions, github, git, hooks). Default: all.")
 	runCmd.Flags().StringSliceVar(&repoPathFlag, "repo-path", nil, "Explicit git repo paths to index (for --only git)")
 	runCmd.Flags().StringVar(&sinceFlag, "since", "", "Limit initial git history depth (e.g. 5m, 2h, 5d, 3w, 6mo, 1y)")
@@ -387,17 +393,10 @@ func gitRemoteOrigin(dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func runGitETL(hostID string, remotes map[string]string, explicitPaths []string, since string, fullRebuild bool) error {
+func runGitETL(hostID string, remotes map[string]string, explicitPaths []string, since string) error {
 	var phaseStart time.Time
 	if debug {
 		phaseStart = time.Now()
-	}
-
-	if fullRebuild {
-		statePath := gitextract.GitSyncStatePath()
-		if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "warning: could not remove git sync state %s: %v\n", statePath, err)
-		}
 	}
 
 	etlRunID := fmt.Sprintf("git-%d", time.Now().UnixMilli())
@@ -511,5 +510,67 @@ func runHooksETL(hostID string) error {
 	if debug {
 		fmt.Fprintf(os.Stderr, "[debug] hooks ETL: %s\n", time.Since(phaseStart))
 	}
+	return nil
+}
+
+// sourceDatasets maps each ETL source to the output datasets it owns. A --full
+// rebuild must delete exactly these for the sources it is rebuilding, and
+// nothing else.
+var sourceDatasets = map[string][]string{
+	"sessions": {"messages", "sessions"},
+	"git":      {"commits", "commit_files", "commit_hunks", "git_refs", "git_repositories"},
+	"github":   {"pull_requests", "pull_request_comments"},
+	"hooks":    {"hooks"},
+}
+
+// sourceCursor returns the path of the incremental cursor a source reads to
+// decide what it has already ingested, or "" for a source that has none.
+//
+// Deleting a source's output without also resetting its cursor is unrecoverable:
+// the source skips everything it has already seen, so the rows are gone and no
+// subsequent run can rebuild them. Sessions has no cursor — it re-derives its
+// whole output from the raw corpus every run.
+func sourceCursor(source string) string {
+	switch source {
+	case "git":
+		return gitextract.GitSyncStatePath()
+	case "github":
+		return ghclient.SyncStatePath()
+	case "hooks":
+		return hooksingest.HooksSyncStatePath()
+	default:
+		return ""
+	}
+}
+
+// resetSource discards a source's derived output and its ingestion cursor so the
+// next run rebuilds it from scratch.
+//
+// This is scoped per source on purpose. --full used to remove the entire output
+// root before --only was consulted, so `--full --only sessions` deleted the git,
+// github and hooks datasets too — and because it reset only the git cursor, the
+// github and hooks data could never be rebuilt.
+func resetSource(source, outputDir string) error {
+	for _, dataset := range sourceDatasets[source] {
+		path := filepath.Join(outputDir, dataset)
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		fmt.Printf("full rebuild: removing %s\n", path)
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+	cursor := sourceCursor(source)
+	if cursor == "" {
+		return nil
+	}
+	if err := os.Remove(cursor); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reset %s cursor %s: %w", source, cursor, err)
+	}
+	fmt.Printf("full rebuild: reset %s cursor %s\n", source, cursor)
 	return nil
 }
