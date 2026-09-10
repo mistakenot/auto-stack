@@ -4,16 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mistakenot/auto-mail/internal/config"
@@ -1017,4 +1020,301 @@ func handleRefusalText(t *testing.T, client mail.Client, home string, binding ma
 		t.Fatalf("send from an ordinary agent = %v, want ErrNotSubagent", err)
 	}
 	return err.Error()
+}
+
+// TestParentResolvesToOneAddressUnderConcurrency is D-063-4's central claim,
+// made falsifiable (AC-8).
+//
+// The claim is not that the marker race cannot happen — it can, constantly —
+// but that it cannot express a wrong *recipient*. `#parent` resolves through
+// AddressForBinding with the Binding the caller computed for itself, and every
+// in-process Subagent of one supervisor shares a pane and a working directory,
+// so all four compute the same key. Whichever marker writer wins the race, the
+// lookup is the same lookup.
+//
+// Each sender opens its **own** store handle, which is 062 phase 5's rule and
+// the whole point of the assertion: a shared handle is serialised by the
+// standard library's connection pool, so a test that shared one would be
+// asserting that the pool works rather than that this design does. The marker
+// directory is churning throughout, so resolution happens under exactly the
+// interleaving D-13 accepted as a limitation.
+func TestParentResolvesToOneAddressUnderConcurrency(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	supervisor, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = supervisor.Close() })
+	if _, err := supervisor.Subscribe(ctx, mail.SubscribeInput{
+		Address: "auto-stack/supervisor",
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("the supervisor could not subscribe: %v", err)
+	}
+
+	agents := swarm()
+	for _, agent := range agents {
+		mail.ObserveHookEvent(home, binding, "PreToolUse", agent)
+	}
+
+	// Marker refreshes run for the whole of the send, so every resolution is
+	// made while the directory is being rewritten underneath it.
+	done := make(chan struct{})
+	var churn sync.WaitGroup
+	for _, agent := range agents {
+		churn.Go(func() {
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					mail.ObserveHookEvent(home, binding, "PostToolUse", agent)
+				}
+			}
+		})
+	}
+
+	type outcome struct {
+		id, to, resolvedFrom string
+		err                  error
+	}
+	results := make([]outcome, len(agents))
+	var senders sync.WaitGroup
+	for i, agent := range agents {
+		senders.Go(func() {
+			client, err := mail.NewDirect(home)
+			if err != nil {
+				results[i] = outcome{err: fmt.Errorf("open a store handle of its own: %w", err)}
+				return
+			}
+			defer func() { _ = client.Close() }()
+			sent, err := client.Send(ctx, mail.SendInput{
+				To:      mail.HandleParent,
+				Body:    map[string]any{"message": "blocked, from " + agent.AgentID},
+				Binding: binding,
+				Sender:  mail.CallerSender(home, binding),
+			})
+			results[i] = outcome{id: sent.ID, to: sent.To, resolvedFrom: sent.ResolvedFrom, err: err}
+		})
+	}
+	senders.Wait()
+	close(done)
+	churn.Wait()
+
+	for i, got := range results {
+		if got.err != nil {
+			t.Fatalf("%s: send to %s failed: %v", agents[i].AgentID, mail.HandleParent, got.err)
+		}
+		if got.to != "auto-stack/supervisor" {
+			t.Errorf("%s resolved %s to %q, want the one supervisor address — the recipient "+
+				"comes from the Binding, which every sibling shares, so no interleaving may "+
+				"change it (D-063-4)", agents[i].AgentID, mail.HandleParent, got.to)
+		}
+		if got.resolvedFrom != mail.HandleParent {
+			t.Errorf("%s: resolvedFrom = %q, want %q", agents[i].AgentID, got.resolvedFrom, mail.HandleParent)
+		}
+	}
+
+	// Every one of them landed, and on the one subscription. The match is on
+	// presence of each id rather than on a count: mail is at-least-once (G4).
+	listed, err := supervisor.List(ctx, mail.ListInput{Binding: binding})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	delivered := make(map[string]bool, len(listed))
+	for _, item := range listed {
+		delivered[item.ID] = true
+	}
+	for i, got := range results {
+		if !delivered[got.id] {
+			t.Errorf("the mail %s sent by %s never reached the supervisor; delivered: %v",
+				got.id, agents[i].AgentID, slices.Sorted(maps.Keys(delivered)))
+		}
+	}
+}
+
+// TestTheSupervisorsOwnParentResolvesToItself asserts the residual D-063-4
+// documents rather than pretending it away (AC-8).
+//
+// A supervisor has no agent_id of its own, so while one of its children is live
+// its own `#parent` reads as a Subagent's and resolves — to *its own*
+// Subscription, because that is what its own Binding is bound to. That is the
+// whole of the residual: bounded self-delivery, never a stranger's mailbox. The
+// alternative reading, that a marker under one Binding could make a *different*
+// agent's `#parent` resolve, is the failure this rules out.
+func TestTheSupervisorsOwnParentResolvesToItself(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	supervisor := mail.BindingFromContext(nil, t.TempDir())
+	stranger := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	for binding, address := range map[mail.Binding]string{
+		supervisor: "auto-stack/supervisor",
+		stranger:   "auto-web/stranger",
+	} {
+		if _, err := client.Subscribe(ctx, mail.SubscribeInput{Address: address, Binding: binding}); err != nil {
+			t.Fatalf("subscribe %q: %v", address, err)
+		}
+	}
+
+	// One child is live under the supervisor's binding, and the supervisor —
+	// not the child — is the one sending.
+	mail.ObserveHookEvent(home, supervisor, "PreToolUse", mail.ActiveAgent{
+		AgentID: "a84a3676a847c5c0b", AgentType: "Explore", SessionID: "the-supervisor-session",
+	})
+
+	sent, err := client.Send(ctx, mail.SendInput{
+		To:      mail.HandleParent,
+		Body:    map[string]any{"message": "sent by the supervisor itself"},
+		Binding: supervisor,
+		Sender:  mail.CallerSender(home, supervisor),
+	})
+	if err != nil {
+		t.Fatalf("the supervisor's own %s: %v", mail.HandleParent, err)
+	}
+	if sent.To != "auto-stack/supervisor" {
+		t.Errorf("the supervisor's own %s resolved to %q, want its own address — the "+
+			"documented residual is self-delivery, and anything else is a stranger's "+
+			"mailbox reached by accident", mail.HandleParent, sent.To)
+	}
+
+	// The stranger is subscribed on the same host, with a marker live nowhere
+	// near it, and must be untouched.
+	strangerMail, err := client.List(ctx, mail.ListInput{Binding: stranger})
+	if err != nil {
+		t.Fatalf("List for the stranger: %v", err)
+	}
+	if len(strangerMail) != 0 {
+		t.Errorf("an unrelated agent received %+v from a %s it had nothing to do with",
+			strangerMail, mail.HandleParent)
+	}
+}
+
+// TestAttributionIsWithheldWhenSeveralSubagentsAreLive is D-063-11 at the seam,
+// and the assertion that stops attribution quietly reverting to "pick the
+// newest marker" — the bug the epic's review caught (AC-8).
+//
+// The calling process has no agent_id of its own. With four markers live, the
+// newest is a sibling's as often as it is the caller's, so a name here is a
+// plausible wrong answer, and a supervisor acting on a confident wrong name is
+// worse off than one told nothing at all. What survives concurrency is the
+// *kind* — every one of them is a Subagent of this supervisor — and that is
+// precisely what `#parent` resolves on.
+//
+// The single-Subagent arm at the end is not decoration: without it this test
+// would pass just as well against an implementation that never attributed
+// anything, which is the wrong fix for the same symptom.
+//
+// The envelope half is written as an implication rather than an equality
+// because attributes arrive in phase 5: today no `sender*` attribute exists, so
+// the clause is vacuous — but the moment one is emitted, an envelope produced
+// under ambiguity has to carry `senderAmbiguous` and must not name a Subagent,
+// or this fails. It cannot be satisfied by adding the attributes and forgetting
+// the rule.
+func TestAttributionIsWithheldWhenSeveralSubagentsAreLive(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{
+		Address: "auto-stack/supervisor",
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	agents := swarm()
+	for _, agent := range agents {
+		mail.ObserveHookEvent(home, binding, "PreToolUse", agent)
+	}
+
+	sender := mail.CallerSender(home, binding)
+	if sender.Kind != mail.SenderSubagent {
+		t.Fatalf("CallerSender = %+v, want a Subagent — the kind is the part that "+
+			"survives concurrency", sender)
+	}
+	if !sender.Ambiguous {
+		t.Fatalf("Ambiguous = false with %d live Subagents: %+v — an implementation that "+
+			"picked the newest marker would look exactly like this", len(agents), sender)
+	}
+	if sender.AgentID != "" || sender.AgentType != "" {
+		t.Errorf("a name was reported under concurrency: %+v — it can only be a guess, and "+
+			"a sibling's name is worse for a supervisor than no name (D-063-11)", sender)
+	}
+
+	sent, err := client.Send(ctx, mail.SendInput{
+		To:      mail.HandleParent,
+		Body:    map[string]any{"message": "one of four, and it cannot say which"},
+		Binding: binding,
+		Sender:  sender,
+	})
+	if err != nil {
+		t.Fatalf("send under ambiguity: %v", err)
+	}
+	if sent.To != "auto-stack/supervisor" {
+		t.Errorf("to = %q, want the supervisor — ambiguity withholds the name, never the "+
+			"delivery", sent.To)
+	}
+
+	st, err := store.Open(config.StorePathIn(home))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	var envelope string
+	if err := st.QueryRowContext(ctx,
+		`SELECT envelope FROM mail WHERE id = ?`, sent.ID).Scan(&envelope); err != nil {
+		t.Fatalf("read the envelope: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(envelope), &decoded); err != nil {
+		t.Fatalf("the envelope is not JSON: %v", err)
+	}
+
+	// No Subagent is named, by any spelling. The agent types are checked as
+	// well as the ids because a name is what a supervisor would act on.
+	for _, agent := range agents {
+		for _, physical := range []string{agent.AgentID, agent.AgentType} {
+			if physical != "" && strings.Contains(envelope, physical) {
+				t.Errorf("the envelope names %q while four Subagents were live: %s — "+
+					"under ambiguity it is a guess with a one-in-four chance", physical, envelope)
+			}
+		}
+	}
+	if _, named := decoded["senderAgentType"]; named {
+		t.Errorf("senderAgentType is present under ambiguity: %s", envelope)
+	}
+	// Phase 5's gate: attributes may arrive, but not without the flag that says
+	// the name was withheld deliberately.
+	if _, kind := decoded["senderKind"]; kind {
+		if ambiguous, ok := decoded["senderAmbiguous"].(bool); !ok || !ambiguous {
+			t.Errorf("the envelope carries senderKind but not senderAmbiguous: true, so a "+
+				"reader cannot tell a withheld name from an unattributed send: %s", envelope)
+		}
+	}
+
+	// And with exactly one live, the name comes back — otherwise the assertions
+	// above would hold for an implementation that attributed nothing at all.
+	for _, agent := range agents[1:] {
+		mail.ObserveHookEvent(home, binding, "SubagentStop", agent)
+	}
+	alone := mail.CallerSender(home, binding)
+	if alone.Ambiguous || alone.AgentID != agents[0].AgentID || alone.AgentType != agents[0].AgentType {
+		t.Errorf("with one Subagent live, CallerSender = %+v, want %q/%q named and no "+
+			"ambiguity", alone, agents[0].AgentID, agents[0].AgentType)
+	}
 }

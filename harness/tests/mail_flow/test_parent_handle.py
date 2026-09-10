@@ -19,6 +19,8 @@ what makes the supervisor and its Subagent one agent here.
 
 from __future__ import annotations
 
+import json
+
 from harness.scenarios.mail_flow import NUDGE_COMMAND, WORKSPACE_A
 
 #: The supervisor's own directory, and therefore its own binding.
@@ -31,6 +33,9 @@ NO_SUBAGENT = f"{WORKSPACE_A}/j1-no-subagent"
 STOPPED = f"{WORKSPACE_A}/j1-stopped"
 #: A supervisor running two Subagents, one of which stops.
 SIBLINGS = f"{WORKSPACE_A}/j1-siblings"
+#: A supervisor running a whole swarm at once — the case D-13 accepted as a
+#: limitation and this task claims to have made harmless.
+SWARM = f"{WORKSPACE_A}/j1-swarm"
 
 SUPERVISOR_ADDRESS = "auto-stack/supervisor"
 SUBAGENT_ID = "harness-subagent-parent-handle"
@@ -204,5 +209,103 @@ def test_a_sibling_keeps_working_when_one_subagent_stops(mail_flow):
     result = mail_flow.mail(agent, "send", "--to", "#parent", "--message", "both gone")
     assert result.exit_code == 1, (
         f"with both siblings stopped, '#parent' still resolved (exit {result.exit_code}); "
+        f"stdout: {result.stdout!r}"
+    )
+
+
+#: Four Subagents under one supervisor. Four rather than two because with two, a
+#: bridge that lost one marker still leaves a Subagent behind and the failure
+#: hides; with four, a lost marker is a missing mail id.
+SWARM_AGENTS = (
+    ("harness-swarm-one", "Explore"),
+    ("harness-swarm-two", "task-063-planner"),
+    ("harness-swarm-three", "general-purpose"),
+    ("harness-swarm-four", "Explore"),
+)
+
+
+def test_a_swarm_of_subagents_all_reach_the_one_supervisor(mail_flow):
+    """AC-8 at the real command surface: the race, proven rather than accepted.
+
+    Four Subagents are live under one binding at once and each sends to
+    `#parent`. Every one of them resolves to the same absolute address, because
+    the recipient comes from the Binding they share rather than from whichever
+    marker happened to be newest — that is the whole of D-063-4's claim, and it
+    is the claim D-13 recorded as an accepted limitation.
+
+    Attribution is the half that D-063-11 deliberately weakens: with several
+    live, the sending process has no `agent_id` of its own and cannot tell which
+    marker is itself, so no delivery may *name* a Subagent. The name assertion
+    is unconditional; the `senderAmbiguous` clause is written as an implication
+    because attributes arrive in phase 5 — vacuous today, and the moment a
+    `sender*` key appears it becomes the gate that stops attribution reverting
+    to "pick the newest marker".
+    """
+    agent = _agent_dir(mail_flow, SWARM)
+    address = "auto-stack/supervisor-of-a-swarm"
+    mail_flow.subscribe(agent, address)
+
+    for agent_id, agent_type in SWARM_AGENTS:
+        mail_flow.mark_subagent(agent, agent_id, agent_type=agent_type)
+
+    # Every marker is live for every send: the sends are sequential processes,
+    # but the state each one resolves against is the swarm's, not its own.
+    # The body deliberately carries no agent id: the attribution assertions
+    # below scan the whole delivery for one, and a sender that wrote its own
+    # name into the message would make them unfalsifiable.
+    sent = {}
+    for position, (agent_id, _) in enumerate(SWARM_AGENTS):
+        text = f"blocked, one of four (position {position})"
+        payload = mail_flow.send(agent, "#parent", text)
+        assert payload["to"] == address, (
+            f"{agent_id} resolved '#parent' to {payload['to']!r}, want {address!r} — with "
+            "several Subagents live the recipient must still come from the shared Binding"
+        )
+        assert payload["resolvedFrom"] == "#parent", payload
+        sent[payload["id"]] = text
+
+    # All four landed on the one subscription. Presence of each id, never a
+    # count: mail is at-least-once and unordered (G4).
+    for mail_id, text in sent.items():
+        delivered = mail_flow.await_mail(agent, mail_id)
+        assert delivered["body"]["message"] == text, delivered
+        assert not delivered["from"].startswith("#"), (
+            f"a handle reached the stored envelope: {delivered!r}"
+        )
+
+        # No Subagent is named, by any spelling. A supervisor acting on a
+        # confident wrong name is worse off than one told nothing at all.
+        rendered = json.dumps(delivered)
+        for other_id, other_type in SWARM_AGENTS:
+            assert other_id not in rendered, (
+                f"the delivery names the Subagent {other_id!r} while four were live: "
+                f"{rendered} — under ambiguity that is a one-in-four guess (D-063-11)"
+            )
+            assert f'"{other_type}"' not in rendered, (
+                f"the delivery names the agent type {other_type!r} under ambiguity: {rendered}"
+            )
+
+        # Phase 5's gate: attributes may arrive, but not without the flag that
+        # says the name was withheld deliberately.
+        if any(key.startswith("sender") for key in delivered):
+            assert delivered.get("senderAmbiguous") is True, (
+                "the delivery carries sender attributes but not senderAmbiguous: true, so a "
+                f"supervisor cannot tell a withheld name from an unattributed send: {rendered}"
+            )
+            assert "senderAgentType" not in delivered, (
+                f"senderAgentType is present while four Subagents were live: {rendered}"
+            )
+
+    for mail_id in sent:
+        mail_flow.ack(agent, mail_id)
+
+    # Leave no live markers behind. `#parent` refusing again is the observable
+    # proof they are gone, and it is the state the scenario's stand-up gate
+    # exists to catch.
+    for agent_id, agent_type in SWARM_AGENTS:
+        mail_flow.stop_subagent(agent, agent_id, agent_type=agent_type)
+    result = mail_flow.mail(agent, "send", "--to", "#parent", "--message", "all four gone")
+    assert result.exit_code == 1, (
+        f"with the whole swarm stopped, '#parent' still resolved (exit {result.exit_code}); "
         f"stdout: {result.stdout!r}"
     )

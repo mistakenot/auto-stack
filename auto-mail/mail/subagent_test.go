@@ -2,6 +2,7 @@ package mail_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -528,5 +529,133 @@ func TestTheMarkerPathNeverOpensTheStore(t *testing.T) {
 	if got := opens(); got != 0 {
 		t.Errorf("the marker path opened the store %d times, want 0 — it runs on every "+
 			"tool call of every agent on the host (G8/AC-7)", got)
+	}
+}
+
+// swarm is the set of Subagents phase 4's concurrency tests run under. Four is
+// the smallest number that is a swarm rather than a pair: with two, a reader
+// that lost one marker still sees a Subagent and the failure hides inside
+// Ambiguous; with four, losing one is visible as a missing id.
+func swarm() []mail.ActiveAgent {
+	return []mail.ActiveAgent{
+		{AgentID: "a84a3676a847c5c0b", AgentType: "Explore", SessionID: "the-supervisor-session"},
+		{AgentID: "ad24f740374961c32", AgentType: "task-063-planner", SessionID: "the-supervisor-session"},
+		{AgentID: "b1c0ffee0ddba11ff", AgentType: "general-purpose", SessionID: "the-supervisor-session"},
+		{AgentID: "c0decafe12345678a", AgentType: "Explore", SessionID: "the-supervisor-session"},
+	}
+}
+
+// TestConcurrentSubagentsNeverLoseALiveMarker is phase 4's first step, and the
+// reason this phase exists: D-13 recorded the concurrent-Subagent race as an
+// *accepted limitation*, and this task claims to have removed its ability to
+// produce a wrong answer. That claim is only worth anything if it is
+// falsifiable, so this is the interleaving that would falsify it.
+//
+// Four Subagents refresh their own markers as fast as the filesystem allows,
+// the supervisor's own agent-less tool calls are interleaved throughout — that
+// path must stay a no-op no matter how much else is happening — and readers ask
+// both questions concurrently. Two properties have to hold on every single
+// read: every live Subagent is still there, and the answer is a Subagent.
+//
+// The first is the one the per-agent files and the atomic rename exist for, and
+// it is not theoretical. Phase 3 reverted writeAgentMarker to a plain
+// os.WriteFile and a live marker vanished on read 7 of 500 in the single-agent
+// case; with four writers the window is four times as wide. Losing one here
+// does not degrade to "no answer" — with three left it degrades to a confident
+// answer about the wrong number of Subagents, and at one it would degrade to a
+// sibling's name reported as this caller's (D-063-11).
+func TestConcurrentSubagentsNeverLoseALiveMarker(t *testing.T) {
+	home := t.TempDir()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+	agents := swarm()
+
+	// Every marker is established before the readers start, so a missing id is
+	// unambiguously one that was lost rather than one not yet written.
+	for _, agent := range agents {
+		mail.ObserveHookEvent(home, binding, "PreToolUse", agent)
+	}
+	if got := mail.ActiveSubagents(home, binding); len(got) != len(agents) {
+		t.Fatalf("%d markers after establishing %d Subagents: %+v", len(got), len(agents), got)
+	}
+
+	done := make(chan struct{})
+	var writers sync.WaitGroup
+	for _, agent := range agents {
+		writers.Go(func() {
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					mail.ObserveHookEvent(home, binding, "PostToolUse", agent)
+				}
+			}
+		})
+	}
+	// The supervisor's own tool calls, carrying no agent_id. They are
+	// interleaved rather than run separately because AC-7's no-op has to hold
+	// *while* the directory is churning, not only on a quiet filesystem.
+	writers.Go(func() {
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				mail.ObserveHookEvent(home, binding, "PreToolUse", mail.ActiveAgent{AgentType: "supervisor"})
+				mail.ObserveHookEvent(home, binding, "PostToolUse", mail.ActiveAgent{AgentType: "supervisor"})
+			}
+		}
+	})
+
+	var failures struct {
+		sync.Mutex
+		seen []string
+	}
+	record := func(format string, args ...any) {
+		failures.Lock()
+		defer failures.Unlock()
+		if len(failures.seen) < 5 {
+			failures.seen = append(failures.seen, fmt.Sprintf(format, args...))
+		}
+	}
+
+	var readers sync.WaitGroup
+	for reader := range 4 {
+		readers.Go(func() {
+			for pass := range 250 {
+				active := mail.ActiveSubagents(home, binding)
+				live := make(map[string]bool, len(active))
+				for _, agent := range active {
+					live[agent.AgentID] = true
+				}
+				for _, want := range agents {
+					if !live[want.AgentID] {
+						record("reader %d pass %d: %q vanished mid-refresh; saw %d of %d markers (%+v) — "+
+							"a live Subagent must be visible on every read, whatever the interleaving",
+							reader, pass, want.AgentID, len(active), len(agents), active)
+					}
+				}
+				if got := mail.CallerSender(home, binding); got.Kind != mail.SenderSubagent {
+					record("reader %d pass %d: CallerSender = %+v, want a Subagent — "+
+						"four are live and the kind is the race-independent part", reader, pass, got)
+				}
+			}
+		})
+	}
+	readers.Wait()
+	close(done)
+	writers.Wait()
+
+	failures.Lock()
+	defer failures.Unlock()
+	for _, failure := range failures.seen {
+		t.Error(failure)
+	}
+
+	// The supervisor's own agent-less events wrote nothing of their own: four
+	// Subagents, four files, however many hundreds of times the loop ran.
+	if got := countMarkers(t, home); got != len(agents) {
+		t.Errorf("%d marker files after the swarm, want %d — a temporary outlived its "+
+			"rename, or an agent-less event wrote a marker of its own", got, len(agents))
 	}
 }
