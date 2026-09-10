@@ -12,7 +12,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="064: serial-file-locks" status="executing" pr="pending" generated="2026-08-31"
+  <pd-doc title="064: serial-file-locks" status="complete" pr="pending" generated="2026-08-31"
           next-prompt="/new-solution 064">
   <pd-tab name="Requirements">
 
@@ -548,16 +548,16 @@ flowchart TD
 
     <pd-section id="cli-surface" title="Command surface (end state)">
       <pd-cli title="zsh — the take → edit → release loop" caption="What the agent sees">
-        <pd-cmd note="opt in (scaffolds settings.json, checks the hook is installed)" status="todo">auto lock init --project</pd-cmd>
-        <pd-cmd note="agent hits a blocked edit; hook denies with this remediation" status="todo">auto lock take drizzle-schema --reason "add orders table"</pd-cmd>
+        <pd-cmd note="opt in (scaffolds settings.json, checks the hook is installed)" status="done">auto lock init --project</pd-cmd>
+        <pd-cmd note="agent hits a blocked edit; hook denies with this remediation" status="done">auto lock take drizzle-schema --reason "add orders table"</pd-cmd>
         <pd-out>✓ took lock "drizzle-schema" as feat/orders (worktree)</pd-out>
-        <pd-cmd note="who holds what (JSON default; --text shown)" status="todo">auto lock status --text</pd-cmd>
+        <pd-cmd note="who holds what (JSON default; --text shown)" status="done">auto lock status --text</pd-cmd>
         <pd-out>drizzle-schema  HELD by feat/orders (you)  since 14:02</pd-out>
-        <pd-cmd note="at merge time — frees every lock this Worker holds" status="todo">auto lock release</pd-cmd>
+        <pd-cmd note="at merge time — frees every lock this Worker holds" status="done">auto lock release</pd-cmd>
         <pd-out>✓ released 1 lock</pd-out>
-        <pd-cmd note="reclaim another's forgotten lock — refuses unless PR merged" status="todo">auto lock clear drizzle-schema</pd-cmd>
+        <pd-cmd note="reclaim another's forgotten lock — refuses unless PR merged" status="done">auto lock clear drizzle-schema</pd-cmd>
         <pd-out><script type="text/plain">✗ holder branch feat/orders PR #42 is still OPEN — not cleared (use --force if confirmed merged)</script></pd-out>
-        <pd-cmd note="is this setup actually enforceable?" status="todo">auto lock doctor</pd-cmd>
+        <pd-cmd note="is this setup actually enforceable?" status="done">auto lock doctor</pd-cmd>
       </pd-cli>
     </pd-section>
 
@@ -876,7 +876,7 @@ Thicken identity + the block UX on the running skeleton.
 
         <pd-phase n="5" title="E2E harness scenario lock-flow (Claude-only)"
                   files="harness/scenarios/lock-flow/docker-compose.yaml, harness/scenarios/lock-flow/Dockerfile, harness/scenarios/lock-flow/scripts/host-entrypoint.sh, harness/scenarios/lock-flow/fixtures/hooks/pre-tool-use-edit.json, harness/src/harness/scenarios/lock_flow.py, harness/src/harness/cli.py, harness/tests/lock_flow/test_lock_flow.py, harness/CLAUDE.md"
-                  depends-on="4" status="todo">
+                  depends-on="4" status="done">
           <md><script type="text/plain">
 Model on `mail-flow` (host-global store → two Workers on one host).
 - **scenarios/lock-flow/** — compose (one `host` container), Dockerfile (build `auto` from source), `scripts/host-entrypoint.sh` (seed host id, register project, `auto hooks install`, write ready-file), `fixtures/hooks/pre-tool-use-edit.json` (PreToolUse Edit, `--agent claude`, file under a locked glob).
