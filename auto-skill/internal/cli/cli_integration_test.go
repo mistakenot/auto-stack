@@ -1727,6 +1727,93 @@ func TestDoctorReportsOrphanAndForeign(t *testing.T) {
 	}
 }
 
+// TestSyncForeignCollisionSurvivesSecondSync: the refused run must not record
+// the foreign dir as managed, so a second plain sync refuses again instead of
+// silently overwriting it (regression: manifest claimed the un-written target).
+func TestSyncForeignCollisionSurvivesSecondSync(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "deploy", "SKILL.md"),
+		validSkill("deploy", "Use when deploying.", "## Workflow\n\n1. Desired variant.\n"))
+	foreignPath := filepath.Join(root, ".claude", "skills", "deploy", "SKILL.md")
+	writeFile(t, foreignPath,
+		validSkill("deploy", "Use when deploying.", "## Workflow\n\n1. Foreign variant.\n"))
+
+	if _, _, code := runCLI(t, "--root", root, "sync"); code == 0 {
+		t.Fatal("first sync must refuse the foreign collision")
+	}
+
+	// doctor between the two syncs names the collision and exits non-zero.
+	stdout, _, code := runCLI(t, "--root", root, "doctor")
+	if code == 0 {
+		t.Fatalf("doctor with a collision must exit non-zero\nstdout:\n%s", stdout)
+	}
+	report := decodeJSONMap(t, stdout)
+	if !ownershipHasName(report["collisions"], "deploy") {
+		t.Fatalf("expected 'deploy' in collisions, got: %v", report["collisions"])
+	}
+	if !ownershipHasName(report["ownership"].(map[string]any)["foreign"], "deploy") {
+		t.Fatalf("collision must still classify as foreign (adoptable), got: %v", report["ownership"])
+	}
+
+	stdout, stderr, code := runCLI(t, "--root", root, "sync")
+	if code == 0 {
+		t.Fatalf("second sync must refuse the foreign collision again\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	foreign := readBytes(t, foreignPath)
+	if !strings.Contains(string(foreign), "Foreign variant") {
+		t.Errorf("second sync overwrote the foreign dir without --force, got:\n%s", foreign)
+	}
+}
+
+// TestDoctorReportsShadowedAuthored: an authored ./skills/<name> that also has a
+// lock entry hides the vendored copy (sync only warns). doctor lists it under
+// `shadowed` with the hidden source and exits non-zero.
+func TestDoctorReportsShadowedAuthored(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "review", "SKILL.md"),
+		validSkill("review", "Use when reviewing.", "## Workflow\n\n1. Local variant.\n"))
+	writeSyncLock(t, root, map[string]skill.LockEntry{
+		"review": {
+			Source: "github.com/example/skills", URL: "https://github.com/example/skills",
+			VersionSpec: "latest", Ref: "main", Subpath: "skills/review",
+			Commit: "0123456789abcdef0123456789abcdef01234567", State: "resolved",
+		},
+	})
+
+	stdout, stderr, code := runCLI(t, "--root", root, "doctor")
+	if code == 0 {
+		t.Fatalf("doctor with a shadowed skill must exit non-zero\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	report := decodeJSONMap(t, stdout)
+	items, ok := report["shadowed"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("expected exactly one shadowed item, got: %v", report["shadowed"])
+	}
+	item, _ := items[0].(map[string]any)
+	if item["name"] != "review" || item["source"] != "https://github.com/example/skills" {
+		t.Fatalf("unexpected shadowed item: %v", item)
+	}
+	if item["authored_path"] != "skills/review" {
+		t.Fatalf("expected authored_path skills/review, got: %v", item["authored_path"])
+	}
+
+	stdout, _, _ = runCLI(t, "--root", root, "doctor", "--text")
+	if !strings.Contains(stdout, "doctor: issues found") || !strings.Contains(stdout, "review --vendored") {
+		t.Fatalf("expected a shadow remediation line in text output, got:\n%s", stdout)
+	}
+
+	// Dropping the lock entry clears the finding (exit code is not asserted:
+	// the sandbox has no global settings, which is a separate failing check).
+	writeSyncLock(t, root, map[string]skill.LockEntry{})
+	stdout, _, _ = runCLI(t, "--root", root, "doctor")
+	report = decodeJSONMap(t, stdout)
+	if items, _ := report["shadowed"].([]any); len(items) != 0 {
+		t.Fatalf("expected no shadowed items once the lock entry is gone, got: %v", report["shadowed"])
+	}
+}
+
 // TestDoctorTextMode renders the same data human-readably (counts + lists).
 func TestDoctorTextMode(t *testing.T) {
 	root := t.TempDir()

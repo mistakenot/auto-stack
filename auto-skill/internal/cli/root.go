@@ -12,6 +12,7 @@ import (
 
 	"github.com/mistakenot/auto-shared/version"
 	"github.com/mistakenot/auto-skill/internal/app"
+	"github.com/mistakenot/auto-skill/internal/inspect"
 	"github.com/mistakenot/auto-skill/internal/ownership"
 	"github.com/mistakenot/auto-skill/internal/skill"
 	"github.com/mistakenot/auto-skill/internal/sync"
@@ -247,7 +248,7 @@ func newDoctorCmd(resolveEnv envResolver) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check auto skill configuration, ownership drift, and project setup",
+		Short: "Check configuration, ownership drift, collisions, shadowed skills, and project setup",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := resolveEnv()
@@ -511,7 +512,7 @@ func newDocsCmd() *cobra.Command {
 				"- `sync`: render authored + vendored skills into each target.",
 				"- `update [name...]`: float vendored skills to their latest upstream commits; naming a plugin (or any member) updates the plugin whole and re-reads its manifest, so skills added or dropped upstream track automatically.",
 				"- `remove <name> [--local|--vendored|--plugin]`: remove a skill (or a whole plugin and its member skills) and prune managed rendered copies.",
-				"- `doctor`: verify setup and report issues in JSON.",
+				"- `doctor`: verify setup and report issues in JSON (`--text` for a summary): config, ownership drift, foreign-dir collisions, authored skills shadowing vendored ones, stale skill refs.",
 				"- `quickstart`: show a minimal happy-path workflow.",
 				"",
 				"Use persistent `--trace` with slow commands (`add`, `sync`, `update`) to emit detailed timing logs on stderr without changing JSON stdout.",
@@ -578,6 +579,7 @@ func doctorReport(env skill.Env) (map[string]any, error) {
 		"unestablished":   []map[string]any{},
 	}
 	staleItems := []map[string]any{}
+	collisionItems := []map[string]any{}
 	actionableDrift := false
 
 	desired, derr := sync.DesiredSet(env)
@@ -597,6 +599,11 @@ func doctorReport(env skill.Env) (map[string]any, error) {
 		verdicts := ownership.Classify(inputs)
 		managedOrphans := ownershipItems(ownership.PruneEligible(verdicts))
 		foreign := ownershipItems(ownership.Adoptable(verdicts))
+		// A foreign dir whose name sync WANTS to write is a collision: the next
+		// sync refuses it (or overwrites it under --force). It is listed under
+		// foreign too, but called out separately because it is not merely
+		// adoptable — it blocks the sync until resolved.
+		collisionItems = ownershipItems(foreignCollisions(desired, verdicts))
 		modified := ownershipItems(verdictsWithState(verdicts, ownership.StateModified))
 		unestablished := ownershipItems(verdictsWithState(verdicts, ownership.StateManagedUnestablished))
 
@@ -620,7 +627,30 @@ func doctorReport(env skill.Env) (map[string]any, error) {
 		actionableDrift = len(managedOrphans) > 0 ||
 			len(modified) > 0 ||
 			len(unestablished) > 0 ||
-			len(staleItems) > 0
+			len(staleItems) > 0 ||
+			len(collisionItems) > 0
+	}
+
+	// ── shadowed section (OFFLINE) ────────────────────────────────────────────
+	//
+	// An authored ./skills/<name> that also has a lock entry: sync renders the
+	// authored copy and silently never renders the vendored one (it only warns).
+	// `add` appears to succeed, `update` keeps fetching it, but the upstream
+	// content never lands — so it is actionable drift: keep one and drop the
+	// other (`remove <name> --vendored` or `remove <name> --local`).
+	shadowedItems := []map[string]any{}
+	if shadowed, err := inspect.Shadowed(env); err != nil {
+		checks = append(checks, map[string]any{
+			"code":    "shadow_scan",
+			"ok":      false,
+			"message": "shadow scan failed: " + err.Error(),
+			"hint":    "ensure ./skills and lock.json are readable",
+		})
+	} else {
+		shadowedItems = shadowItems(shadowed)
+		if len(shadowedItems) > 0 {
+			actionableDrift = true
+		}
 	}
 
 	configOK := true
@@ -639,8 +669,41 @@ func doctorReport(env skill.Env) (map[string]any, error) {
 		"ok":               configOK && !actionableDrift,
 		"checks":           checks,
 		"ownership":        ownershipSection,
+		"collisions":       collisionItems,
+		"shadowed":         shadowedItems,
 		"stale_skill_refs": staleItems,
 	}, nil
+}
+
+// foreignCollisions filters verdicts to foreign dirs whose name is in the
+// desired set — the exact condition sync refuses without --force. Mirrors
+// sync's unexported detectForeignCollisions so doctor and sync agree.
+func foreignCollisions(desired map[string]bool, verdicts []ownership.DirStatus) []ownership.DirStatus {
+	var out []ownership.DirStatus
+	for _, v := range verdicts {
+		if v.State == ownership.StateForeign && desired[v.Name] {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// shadowItems maps shadow views to JSON objects for the doctor report.
+func shadowItems(views []inspect.ShadowView) []map[string]any {
+	items := make([]map[string]any, 0, len(views))
+	for _, v := range views {
+		item := map[string]any{
+			"name":          v.Name,
+			"authored_path": filepath.ToSlash(v.AuthoredPath),
+			"source":        v.Source,
+			"commit":        v.Commit,
+		}
+		if v.Plugin != "" {
+			item["plugin"] = v.Plugin
+		}
+		items = append(items, item)
+	}
+	return items
 }
 
 // ownershipItems maps ownership verdicts to small, deterministically ordered JSON
@@ -722,6 +785,22 @@ func writeDoctorText(w io.Writer, report map[string]any) {
 		writeOwnershipGroup(w, "foreign (adoptable)", own["foreign"])
 		writeOwnershipGroup(w, "modified (locally edited)", own["modified"])
 		writeOwnershipGroup(w, "unestablished (no local receipt)", own["unestablished"])
+	}
+
+	if items, ok := report["collisions"].([]map[string]any); ok {
+		fmt.Fprintf(w, "collisions (desired skill on a foreign dir): %d\n", len(items))
+		for _, it := range items {
+			fmt.Fprintf(w, "  ! %v/%v — run `auto skill adopt %v` to keep the local copy, or `auto skill sync --force` to overwrite it\n",
+				it["target"], it["name"], it["name"])
+		}
+	}
+
+	if items, ok := report["shadowed"].([]map[string]any); ok {
+		fmt.Fprintf(w, "shadowed (authored ./skills hides a vendored lock entry): %d\n", len(items))
+		for _, it := range items {
+			fmt.Fprintf(w, "  ! %v: %v shadows %v — run `auto skill remove %v --vendored` to keep the local copy, or `auto skill remove %v --local` to use the vendored one\n",
+				it["name"], it["authored_path"], it["source"], it["name"], it["name"])
+		}
 	}
 
 	if refs, ok := report["stale_skill_refs"].([]map[string]any); ok {

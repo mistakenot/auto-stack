@@ -115,9 +115,9 @@ func hasReceipt(in Inputs, target, name string) bool {
 // oneFn, so kill tests can inject a single defect into the pure decision table
 // without touching production code. Unsorted (kill tests key by target+name).
 func classifyWith(in Inputs, oneFn func(managed, desired, has bool, onDisk, receipt string) State) []DirStatus {
-	managed := managedUnion(in.Manifest)
 	var out []DirStatus
 	for _, ts := range in.Targets {
+		managed := managedFor(in.Manifest, ts.Target)
 		receipts := in.Receipts[ts.Target]
 		for _, dir := range ts.Dirs {
 			rd, has := "", false

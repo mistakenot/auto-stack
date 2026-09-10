@@ -304,3 +304,40 @@ func TestClassify_NilManifestAllForeign(t *testing.T) {
 		t.Fatalf("nil manifest: got %+v, want single foreign", got)
 	}
 }
+
+// TestClassify_PerTargetRow: when the manifest has a row for the scanned target,
+// that row decides "managed" — a name sync disowned in one target (a refused
+// foreign collision) stays foreign there while remaining managed elsewhere.
+// A target with no row at all falls back to the union.
+func TestClassify_PerTargetRow(t *testing.T) {
+	manifest := &skill.Manifest{
+		Skills: map[string]skill.ManifestSkill{"foo": {SkillVersion: "v1"}},
+		Targets: map[string]skill.ManifestTarget{
+			"claude": {ManagedSkills: map[string]string{}},            // disowned here
+			"agents": {ManagedSkills: map[string]string{"foo": "v1"}}, // managed here
+		},
+	}
+	in := Inputs{
+		Targets: []TargetScan{
+			{Target: "claude", Dirs: []ScannedDir{{Name: "foo", Digest: "hand", Exists: true}}},
+			{Target: "agents", Dirs: []ScannedDir{{Name: "foo", Digest: "v1", Exists: true}}},
+			{Target: "legacy", Dirs: []ScannedDir{{Name: "foo", Digest: "v1", Exists: true}}},
+		},
+		Desired:  map[string]bool{"foo": true},
+		Manifest: manifest,
+		Receipts: map[string]map[string]string{"agents": {"foo": "v1"}},
+	}
+	got := map[string]State{}
+	for _, v := range Classify(in) {
+		got[v.Target] = v.State
+	}
+	if got["claude"] != StateForeign {
+		t.Errorf("claude/foo: got %s, want %s (row present, name absent)", got["claude"], StateForeign)
+	}
+	if got["agents"] != StateManagedCurrent {
+		t.Errorf("agents/foo: got %s, want %s", got["agents"], StateManagedCurrent)
+	}
+	if got["legacy"] != StateManagedUnestablished {
+		t.Errorf("legacy/foo: got %s, want %s (no row → union fallback)", got["legacy"], StateManagedUnestablished)
+	}
+}

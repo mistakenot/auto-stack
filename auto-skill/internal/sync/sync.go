@@ -335,6 +335,11 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 			if !opts.Check {
 				proc.Installs = removeInstall(proc.Installs, c.Target, c.Skill)
 			}
+			// The manifest must not claim a target dir this run refused to write:
+			// a managed_skills row for the foreign dir would make the NEXT sync
+			// classify it as managed-unestablished instead of foreign, silently
+			// bypassing this guard and overwriting the user's hand-written skill.
+			disownManifestTarget(proc.Manifest, c.Target, c.Skill)
 		}
 		desiredComplete = false
 		result.DesiredComplete = desiredComplete
@@ -487,6 +492,22 @@ func desiredSetFromStaged(staged []*StagedSkill) map[string]bool {
 
 // removeInstall returns installs with the (target style, skill) entry dropped, so
 // a refused foreign-dir collision never reaches the swap.
+// disownManifestTarget drops name from target's managed_skills row so the
+// manifest never records ownership of a dir sync did not write (a refused
+// foreign collision). The skills map entry is left alone: other targets may
+// still legitimately manage the same skill.
+func disownManifestTarget(m *skill.Manifest, target, name string) {
+	if m == nil {
+		return
+	}
+	mt, ok := m.Targets[target]
+	if !ok || mt.ManagedSkills == nil {
+		return
+	}
+	delete(mt.ManagedSkills, name)
+	m.Targets[target] = mt
+}
+
 func removeInstall(installs []Install, target, name string) []Install {
 	out := installs[:0:0]
 	for _, in := range installs {

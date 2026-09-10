@@ -436,6 +436,26 @@ func TestForeignCollisionRefusedThenForced(t *testing.T) {
 		}
 	}
 
+	// A second plain run must refuse again. Regression: the refused run used to
+	// still record claude/foo in the manifest's managed_skills, so the next
+	// sync classified the foreign dir as managed-unestablished, skipped the
+	// collision guard, and overwrote the user's hand-written skill.
+	res, err = Run(env, Options{Locked: true})
+	if err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if len(res.Conflicts) == 0 {
+		t.Fatal("second run must still report the conflict")
+	}
+	if res.ExitCode() == 0 {
+		t.Error("second run without --force must exit non-zero")
+	}
+	for _, dir := range foreignDirs {
+		if !strings.Contains(skillBody(t, dir), "FOREIGN body") {
+			t.Errorf("second run overwrote foreign dir %s without --force", dir)
+		}
+	}
+
 	// With --force: the incoming authored skill overwrites the foreign dir.
 	res, err = Run(env, Options{Locked: true, Force: true})
 	if err != nil {
