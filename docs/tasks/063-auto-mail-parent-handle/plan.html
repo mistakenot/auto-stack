@@ -19,7 +19,7 @@
   </script>
 
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="063: auto-mail-parent-handle" status="pending" pr="pending" generated="2026-08-25"
+  <pd-doc title="063: auto-mail-parent-handle" status="complete" pr="pending" generated="2026-08-25"
           next-prompt="/commit-task 063">
 
   <!-- ==================== REQUIREMENTS ==================== -->
@@ -1529,8 +1529,7 @@ task claims to have removed its ability to produce a wrong answer.
       </pd-phase>
 
       <pd-phase n="5" title="The supervisor learns which Subagent wrote — attributes, conformance, docs"
-        files="auto-mail/internal/store/project.go,auto-mail/internal/store/store_test.go,auto-mail/mail/client.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/docs.go,auto-mail/internal/cli/cli_test.go,auto-mail/conformance/conformance.go,auto-mail/conformance/conformance_test.go,auto-mail/CLAUDE.md,harness/CLAUDE.md,harness/tests/mail_flow/test_parent_handle.py"
-        status="todo" depends-on="4">
+        files="auto-mail/internal/store/project.go,auto-mail/internal/store/store_test.go,auto-mail/mail/client.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/docs.go,auto-mail/internal/cli/cli_test.go,auto-mail/conformance/conformance.go,auto-mail/conformance/conformance_test.go,auto-mail/CLAUDE.md,harness/CLAUDE.md,harness/tests/mail_flow/test_parent_handle.py" status="done" depends-on="4">
         <md><script type="text/plain">
 1. `internal/store/project.go`: `SendParams.Attributes` marshalled into the
    existing envelope JSON; `hydrate` decodes it; `ListedMail.Attributes` carries
