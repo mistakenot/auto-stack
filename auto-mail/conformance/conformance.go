@@ -79,6 +79,9 @@ var cases = []suiteCase{
 	{"parent-is-refused-when-the-supervisor-holds-no-subscription", parentRefusesWithNoSupervisor},
 	{"an-unknown-handle-is-refused-whatever-the-sender-is", unknownHandleIsRefused},
 	{"an-absolute-send-reports-no-resolved-from", absoluteSendHasNoResolvedFrom},
+	{"a-subagents-mail-tells-the-supervisor-which-child-wrote", subagentMailIsAttributed},
+	{"attribution-is-withheld-rather-than-guessed", attributionIsWithheldNotGuessed},
+	{"an-ordinary-agents-mail-carries-no-attributes", ordinaryMailIsUnattributed},
 }
 
 // ── the driver ───────────────────────────────────────────────────────────────
@@ -182,6 +185,21 @@ func (f *fixture) ids(agent string) map[string]int {
 		seen[d.ID]++
 	}
 	return seen
+}
+
+// delivered returns the one delivery an agent holds for a mail id. It fails
+// rather than returning a zero value: every caller below is about the *shape*
+// of a delivery, and a zero one would satisfy an absence assertion for the
+// wrong reason.
+func (f *fixture) delivered(agent, mailID string) mail.Delivery {
+	f.t.Helper()
+	for _, d := range f.list(agent) {
+		if d.ID == mailID {
+			return d
+		}
+	}
+	f.t.Fatalf("%s holds no delivery for %s", agent, mailID)
+	return mail.Delivery{}
 }
 
 func (f *fixture) ack(agent, mailID string) mail.AckResult {
@@ -574,6 +592,110 @@ func absoluteSendHasNoResolvedFrom(f *fixture) {
 		f.t.Errorf("an absolute send reported resolvedFrom = %q, want it empty — "+
 			"presence of the key is what tells a caller a handle was used",
 			sent.ResolvedFrom)
+	}
+}
+
+// ── the attributes contract (D-063-3, D-063-11) ──────────────────────────────
+
+// subagentMailIsAttributed is J1's outcome at the seam: the supervisor receives
+// mail from its own address — an in-process Subagent has no inbox of its own, so
+// it must not have a from-address of its own — and still learns which child
+// wrote, because the child's identity travels as envelope attributes rather
+// than as an address (D-063-3).
+//
+// It is asserted here rather than only against the direct client because the
+// attributes are part of what a caller is owed: T3's RPC client carries the same
+// Sender over a wire, and a delivery that arrived without them would be a
+// supervisor silently losing the answer to "which of my five children failed".
+func subagentMailIsAttributed(f *fixture) {
+	f.subscribe("supervisor", "auto-stack/supervisor")
+
+	sent, err := f.sendAs("supervisor", mail.HandleParent, mail.Sender{
+		Kind:      mail.SenderSubagent,
+		AgentID:   "a84a3676a847c5c0b",
+		AgentType: "phase3",
+	})
+	if err != nil {
+		f.t.Fatalf("send to %s as a Subagent: %v", mail.HandleParent, err)
+	}
+
+	got := f.delivered("supervisor", sent.ID)
+	if got.From == mail.HandleParent {
+		f.t.Errorf("from = %q; a Handle must never reach a stored envelope (G5)", got.From)
+	}
+	if got.Attributes["senderKind"] != "subagent" {
+		f.t.Errorf("attributes = %v, want senderKind \"subagent\" — it is the fact that "+
+			"survives concurrency, so it is unconditional", got.Attributes)
+	}
+	if got.Attributes["senderAgentType"] != "phase3" {
+		f.t.Errorf("attributes = %v, want senderAgentType \"phase3\" — exactly one Subagent "+
+			"is live and it has a name, so the name is knowable", got.Attributes)
+	}
+	if _, ambiguous := got.Attributes["senderAmbiguous"]; ambiguous {
+		f.t.Errorf("attributes = %v; a named sender is not ambiguous", got.Attributes)
+	}
+	// The opaque id is carried on the Sender for diagnostics and is deliberately
+	// not an attribute: it is not what a reader is meant to match on (G5).
+	if _, leaked := got.Attributes["senderAgentId"]; leaked {
+		f.t.Errorf("attributes = %v; the opaque agent id is not part of the contract",
+			got.Attributes)
+	}
+}
+
+// attributionIsWithheldNotGuessed is D-063-11: the two ways a name can fail to
+// be knowable, and the one attribute that says so.
+//
+// Both arms produce the same answer on purpose. A supervisor that cannot be
+// given a name must be told the name is missing, whether that is because
+// several children are live and the sending process cannot tell which it is, or
+// because upstream spawned this one with no type at all — a real SubagentStop on
+// this host carried an empty agent_type. What must never happen is a blank name
+// or a sibling's, because a supervisor acting on a confidently wrong name is
+// worse off than one told nothing.
+func attributionIsWithheldNotGuessed(f *fixture) {
+	f.subscribe("supervisor", "auto-stack/supervisor")
+
+	arms := []struct {
+		name   string
+		sender mail.Sender
+	}{
+		{"several are live", mail.Sender{Kind: mail.SenderSubagent, Ambiguous: true}},
+		{"upstream gave it no type", mail.Sender{Kind: mail.SenderSubagent, AgentID: "ad24f740374961c32"}},
+	}
+	for _, arm := range arms {
+		sent, err := f.sendAs("supervisor", mail.HandleParent, arm.sender)
+		if err != nil {
+			f.t.Fatalf("send to %s (%s): %v", mail.HandleParent, arm.name, err)
+		}
+		got := f.delivered("supervisor", sent.ID)
+		if got.Attributes["senderKind"] != "subagent" {
+			f.t.Errorf("%s: attributes = %v, want senderKind — the kind is knowable even "+
+				"when the name is not", arm.name, got.Attributes)
+		}
+		if ambiguous, ok := got.Attributes["senderAmbiguous"].(bool); !ok || !ambiguous {
+			f.t.Errorf("%s: attributes = %v, want senderAmbiguous true — a supervisor must "+
+				"be able to tell a withheld name from an unattributed send", arm.name, got.Attributes)
+		}
+		if _, named := got.Attributes["senderAgentType"]; named {
+			f.t.Errorf("%s: attributes = %v carry a name that could only be a guess",
+				arm.name, got.Attributes)
+		}
+	}
+}
+
+// ordinaryMailIsUnattributed is D-063-10 on the read side: a caller that is not
+// a Subagent must not be able to tell this task shipped. The map is nil, not
+// empty, so the key marshals away entirely and every existing consumer's
+// assertion about a delivery's keys still holds.
+func ordinaryMailIsUnattributed(f *fixture) {
+	f.subscribe("reader", "auto-web/bugs")
+
+	sent := f.send("auto-web/bugs", "the port is dropped on ssh:// URLs")
+	got := f.delivered("reader", sent.ID)
+	if got.Attributes != nil {
+		f.t.Errorf("a delivery from an ordinary agent carries attributes %v, want none — "+
+			"presence of the key is the signal, and an empty map would spend it",
+			got.Attributes)
 	}
 }
 

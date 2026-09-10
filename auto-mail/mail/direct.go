@@ -137,7 +137,9 @@ func (d *direct) Send(ctx context.Context, in SendInput) (SendResult, error) {
 	if err != nil {
 		return SendResult{}, err
 	}
-	out, err := d.store.Send(ctx, store.SendParams{To: to, From: from, Body: in.Body})
+	out, err := d.store.Send(ctx, store.SendParams{
+		To: to, From: from, Body: in.Body, Attributes: senderAttributes(in.Sender),
+	})
 	if err != nil {
 		return SendResult{}, fmt.Errorf("send to %q: %w", to, err)
 	}
@@ -195,6 +197,42 @@ func (d *direct) resolveHandle(ctx context.Context, in SendInput) (string, error
 		return "", describeHandleError(ErrNoSupervisor, in.To)
 	}
 	return address, nil
+}
+
+// senderAttributes turns the caller's established Sender into the envelope
+// metadata a supervisor reads to learn *which* of its children wrote (J1).
+//
+// It follows the sender rather than the handle: a Subagent that spells its
+// supervisor's address out in full is still a Subagent, and the supervisor's
+// need to know who wrote does not depend on how the address was typed (AC-6).
+//
+// Nil for anything that is not a Subagent, which is what keeps every existing
+// caller's delivery byte-identical to T1's — no marker, no attributes, no key
+// (D-063-10).
+//
+// The split between the two name keys is D-063-11, and it is the whole point of
+// this function. `senderKind` is race-independent: with four Subagents live
+// under one Binding, every one of them is a Subagent of this supervisor, so the
+// kind is true whichever marker the caller is. The *name* is not — the calling
+// process has no agent id of its own, so with several live it cannot tell which
+// marker is itself, and a sibling's name is worse for a supervisor than no name
+// at all. `senderAmbiguous` is emitted in the name's place so a reader can tell
+// a withheld name from a send that was never attributed: exactly one of the two
+// keys is always present alongside `senderKind`.
+func senderAttributes(s Sender) map[string]any {
+	if s.Kind != SenderSubagent {
+		return nil
+	}
+	attributes := map[string]any{"senderKind": string(s.Kind)}
+	// An empty AgentType is not hypothetical — a real SubagentStop on this host
+	// carried one — and it lands here rather than being emitted blank: a
+	// supervisor handed `senderAgentType: ""` would read it as a name.
+	if !s.Ambiguous && s.AgentType != "" {
+		attributes["senderAgentType"] = s.AgentType
+	} else {
+		attributes["senderAmbiguous"] = true
+	}
+	return attributes
 }
 
 // settleFlag brings the caller's pending flag back in line with the store after
@@ -278,10 +316,11 @@ func (d *direct) List(ctx context.Context, in ListInput) ([]Delivery, error) {
 	out := make([]Delivery, 0, len(listed))
 	for _, item := range listed {
 		out = append(out, Delivery{
-			ID:     item.ID,
-			From:   item.From,
-			SentAt: item.SentAt,
-			Body:   item.Body,
+			ID:         item.ID,
+			From:       item.From,
+			SentAt:     item.SentAt,
+			Body:       item.Body,
+			Attributes: item.Attributes,
 		})
 	}
 	return out, nil

@@ -158,6 +158,16 @@ type Delivery struct {
 	From   string         `json:"from"`
 	SentAt time.Time      `json:"sentAt"`
 	Body   map[string]any `json:"body"`
+	// Attributes is the envelope's open metadata about the *sender*, as
+	// distinct from what the sender said. Today it carries `senderKind`, plus
+	// either `senderAgentType` (one Subagent live, and it has a name) or
+	// `senderAmbiguous` (the name could only be a guess) — D-063-11.
+	//
+	// Omitted entirely when there is nothing to say, so a delivery from an
+	// ordinary agent prints exactly T1's four keys and an existing reader
+	// cannot tell this task shipped (D-063-10). It is the open map the backlog
+	// names as v1's obligation for attribute subscriptions later.
+	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
 // AckInput retires one delivery. Ack is always a separate explicit call —

@@ -121,6 +121,20 @@ def test_j1_a_subagent_mails_its_supervisor_by_handle(mail_flow):
         f"a handle reached the stored envelope: {delivered!r}"
     )
 
+    # And the supervisor learns *which* child wrote, which is the outcome J1 is
+    # actually for. The child said nothing about itself: the name comes from the
+    # marker the hook left, and it travels as envelope metadata rather than as a
+    # from-address, because an in-process Subagent has no inbox to be replied to
+    # (D-063-3).
+    assert delivered.get("attributes") == {
+        "senderKind": "subagent",
+        "senderAgentType": "phase3",
+    }, f"the supervisor cannot tell which child wrote: {delivered!r}"
+    assert SUBAGENT_ID not in json.dumps(delivered), (
+        "the opaque agent id reached the envelope; it is diagnostic, not identity, "
+        f"and a reader would match on it: {delivered!r}"
+    )
+
     # Reading never retires (G3): the same mail is still there.
     assert sent["id"] in {d["id"] for d in mail_flow.list_mail(agent)}
 
@@ -235,11 +249,11 @@ def test_a_swarm_of_subagents_all_reach_the_one_supervisor(mail_flow):
 
     Attribution is the half that D-063-11 deliberately weakens: with several
     live, the sending process has no `agent_id` of its own and cannot tell which
-    marker is itself, so no delivery may *name* a Subagent. The name assertion
-    is unconditional; the `senderAmbiguous` clause is written as an implication
-    because attributes arrive in phase 5 — vacuous today, and the moment a
-    `sender*` key appears it becomes the gate that stops attribution reverting
-    to "pick the newest marker".
+    marker is itself, so no delivery may *name* a Subagent. What it must do
+    instead is say so: every delivery carries `senderAmbiguous: true`, which is
+    what stops attribution quietly reverting to "pick the newest marker" — the
+    bug the epic's review caught, and one that would pass a test asserting only
+    that no name is present.
     """
     agent = _agent_dir(mail_flow, SWARM)
     address = "auto-stack/supervisor-of-a-swarm"
@@ -285,8 +299,8 @@ def test_a_swarm_of_subagents_all_reach_the_one_supervisor(mail_flow):
                 f"the delivery names the agent type {other_type!r} under ambiguity: {rendered}"
             )
 
-        # Phase 5's gate: attributes may arrive, but not without the flag that
-        # says the name was withheld deliberately.
+        # The implication this test was first written with, kept because it is
+        # what would catch attributes flattened into the delivery's own keys.
         if any(key.startswith("sender") for key in delivered):
             assert delivered.get("senderAmbiguous") is True, (
                 "the delivery carries sender attributes but not senderAmbiguous: true, so a "
@@ -295,6 +309,27 @@ def test_a_swarm_of_subagents_all_reach_the_one_supervisor(mail_flow):
             assert "senderAgentType" not in delivered, (
                 f"senderAgentType is present while four Subagents were live: {rendered}"
             )
+
+        # And the positive form, which an implication cannot give: the
+        # attributes have to be *there*. Withholding the name is a statement the
+        # supervisor reads, not the absence of one — a delivery with nothing at
+        # all would leave "four children, none nameable" indistinguishable from
+        # "nobody attributed this" (D-063-11).
+        attributes = delivered.get("attributes")
+        assert attributes is not None, (
+            f"the delivery carries no attributes at all: {rendered} — under ambiguity the "
+            "name is withheld, but the fact that a Subagent sent it never is"
+        )
+        assert attributes.get("senderKind") == "subagent", (
+            f"senderKind is not 'subagent': {rendered} — the kind survives concurrency, "
+            "so it is emitted unconditionally"
+        )
+        assert attributes.get("senderAmbiguous") is True, (
+            f"senderAmbiguous is not true with four Subagents live: {rendered}"
+        )
+        assert "senderAgentType" not in attributes, (
+            f"the attributes name a Subagent under ambiguity: {rendered}"
+        )
 
     for mail_id in sent:
         mail_flow.ack(agent, mail_id)

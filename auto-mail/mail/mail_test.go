@@ -1214,12 +1214,15 @@ func TestTheSupervisorsOwnParentResolvesToItself(t *testing.T) {
 // would pass just as well against an implementation that never attributed
 // anything, which is the wrong fix for the same symptom.
 //
-// The envelope half is written as an implication rather than an equality
-// because attributes arrive in phase 5: today no `sender*` attribute exists, so
-// the clause is vacuous — but the moment one is emitted, an envelope produced
-// under ambiguity has to carry `senderAmbiguous` and must not name a Subagent,
-// or this fails. It cannot be satisfied by adding the attributes and forgetting
-// the rule.
+// The envelope half was written as an implication when this test was first
+// added, because attributes did not exist yet: the clause held vacuously and
+// became a gate the moment a `sender*` key appeared. Those clauses are still
+// here — they are what would catch an implementation that flattened the
+// attributes into the envelope's own fields — but an implication can never
+// catch the other failure, "the attributes were never added at all". So the
+// positive assertion below is the one that matters now: with four Subagents
+// live the envelope must *carry* `senderAmbiguous: true`, not merely refrain
+// from contradicting it.
 func TestAttributionIsWithheldWhenSeveralSubagentsAreLive(t *testing.T) {
 	home := t.TempDir()
 	ctx := context.Background()
@@ -1307,6 +1310,28 @@ func TestAttributionIsWithheldWhenSeveralSubagentsAreLive(t *testing.T) {
 		}
 	}
 
+	// And the positive form, which is the assertion the implications above
+	// cannot make: the attributes have to be *there*. A supervisor told nothing
+	// at all cannot distinguish "four children, none nameable" from "nobody
+	// attributed this send", and that distinction is the whole of D-063-11.
+	attributes, ok := decoded["attributes"].(map[string]any)
+	if !ok {
+		t.Fatalf("the envelope carries no attributes object: %s — under ambiguity the "+
+			"name is withheld, but the fact that a Subagent sent it never is (AC-6)", envelope)
+	}
+	if attributes["senderKind"] != "subagent" {
+		t.Errorf("senderKind = %v, want \"subagent\" — the kind is the part that survives "+
+			"concurrency, so it is emitted unconditionally: %s", attributes["senderKind"], envelope)
+	}
+	if ambiguous, isBool := attributes["senderAmbiguous"].(bool); !isBool || !ambiguous {
+		t.Errorf("senderAmbiguous = %v, want true with %d Subagents live — without it a "+
+			"supervisor cannot tell a withheld name from an unnamed sender: %s",
+			attributes["senderAmbiguous"], len(agents), envelope)
+	}
+	if _, named := attributes["senderAgentType"]; named {
+		t.Errorf("senderAgentType is present in the attributes under ambiguity: %s", envelope)
+	}
+
 	// And with exactly one live, the name comes back — otherwise the assertions
 	// above would hold for an implementation that attributed nothing at all.
 	for _, agent := range agents[1:] {
@@ -1316,5 +1341,172 @@ func TestAttributionIsWithheldWhenSeveralSubagentsAreLive(t *testing.T) {
 	if alone.Ambiguous || alone.AgentID != agents[0].AgentID || alone.AgentType != agents[0].AgentType {
 		t.Errorf("with one Subagent live, CallerSender = %+v, want %q/%q named and no "+
 			"ambiguity", alone, agents[0].AgentID, agents[0].AgentType)
+	}
+}
+
+// TestSubagentAttributesTellTheSupervisorWhichChildWrote is J1's outcome
+// (AC-6): the supervisor learns which of its children wrote, without the child
+// having to know or say anything about itself.
+//
+// The three arms are the three things D-063-3 and D-063-11 promise together.
+// The name is emitted when it is knowable; it is withheld — never blanked —
+// when upstream gave the Subagent no type, which is not hypothetical, since a
+// real SubagentStop on this host carried an empty agent_type; and the
+// attributes follow the *sender* rather than the Handle, because a supervisor's
+// need to know who wrote does not depend on how the Address was spelled.
+func TestSubagentAttributesTellTheSupervisorWhichChildWrote(t *testing.T) {
+	ctx := context.Background()
+
+	arms := []struct {
+		name       string
+		agent      mail.ActiveAgent
+		to         string
+		attributes map[string]any
+	}{
+		{
+			name:       "a named Subagent is named",
+			agent:      mail.ActiveAgent{AgentID: "a84a3676a847c5c0b", AgentType: "phase3"},
+			to:         mail.HandleParent,
+			attributes: map[string]any{"senderKind": "subagent", "senderAgentType": "phase3"},
+		},
+		{
+			// Upstream does not guarantee a type. `senderAgentType: ""` would
+			// read as a name to a supervisor, so the key is absent and
+			// senderAmbiguous says the name is not available here.
+			name:       "an unnamed Subagent is not named blank",
+			agent:      mail.ActiveAgent{AgentID: "ad24f740374961c32"},
+			to:         mail.HandleParent,
+			attributes: map[string]any{"senderKind": "subagent", "senderAmbiguous": true},
+		},
+		{
+			name:       "the attributes follow the sender, not the handle",
+			agent:      mail.ActiveAgent{AgentID: "b1c0ffee0ddba11ff", AgentType: "Explore"},
+			to:         "auto-stack/supervisor",
+			attributes: map[string]any{"senderKind": "subagent", "senderAgentType": "Explore"},
+		},
+	}
+
+	for _, arm := range arms {
+		t.Run(arm.name, func(t *testing.T) {
+			home := t.TempDir()
+			binding := mail.BindingFromContext(nil, t.TempDir())
+			client, err := mail.NewDirect(home)
+			if err != nil {
+				t.Fatalf("NewDirect: %v", err)
+			}
+			t.Cleanup(func() { _ = client.Close() })
+			if _, err := client.Subscribe(ctx, mail.SubscribeInput{
+				Address: "auto-stack/supervisor",
+				Binding: binding,
+			}); err != nil {
+				t.Fatalf("subscribe: %v", err)
+			}
+
+			mail.ObserveHookEvent(home, binding, "PreToolUse", arm.agent)
+			sender := mail.CallerSender(home, binding)
+			if sender.Kind != mail.SenderSubagent || sender.Ambiguous {
+				t.Fatalf("CallerSender = %+v, want one unambiguous Subagent", sender)
+			}
+
+			sent, err := client.Send(ctx, mail.SendInput{
+				To:      arm.to,
+				Body:    map[string]any{"message": "phase 3 blocked"},
+				Binding: binding,
+				Sender:  sender,
+			})
+			if err != nil {
+				t.Fatalf("send to %q: %v", arm.to, err)
+			}
+
+			listed, err := client.List(ctx, mail.ListInput{Binding: binding})
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			if len(listed) != 1 || listed[0].ID != sent.ID {
+				t.Fatalf("the supervisor listed %+v, want the mail %s", listed, sent.ID)
+			}
+			if !maps.Equal(listed[0].Attributes, arm.attributes) {
+				t.Errorf("attributes = %v, want %v", listed[0].Attributes, arm.attributes)
+			}
+			// The opaque id is never an attribute. It is recorded on the marker
+			// for debugging, but it is not what a supervisor is meant to read,
+			// and putting it in the envelope would make it look like one (G5).
+			if strings.Contains(fmt.Sprint(listed[0].Attributes), arm.agent.AgentID) {
+				t.Errorf("the attributes carry the opaque agent id: %v", listed[0].Attributes)
+			}
+		})
+	}
+}
+
+// TestNonSubagentDeliveryIsByteIdenticalToT1 is D-063-10's other half at the
+// seam, and half of AC-15's regression gate: a delivery to a caller that is not
+// a Subagent must print exactly T1's four keys.
+//
+// The count is asserted, not just the absence of `attributes`, because the way
+// this promise actually breaks is a field added later without omitempty — which
+// no assertion about one key's name would catch.
+func TestNonSubagentDeliveryIsByteIdenticalToT1(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{
+		Address: "auto-web/bugs",
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	// No marker is written, which is every existing T1 caller's state: the
+	// Sender is the zero value and stays an ordinary agent.
+	if sender := mail.CallerSender(home, binding); sender.Kind != mail.SenderAgent {
+		t.Fatalf("CallerSender with no marker = %+v, want an ordinary agent", sender)
+	}
+	if _, err := client.Send(ctx, mail.SendInput{
+		To:      "auto-web/bugs",
+		From:    "auto-stack/reviewer",
+		Body:    map[string]any{"message": "the port is dropped on ssh:// URLs"},
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	listed, err := client.List(ctx, mail.ListInput{Binding: binding})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("list returned %d deliveries, want 1", len(listed))
+	}
+	if listed[0].Attributes != nil {
+		t.Errorf("a delivery from an ordinary agent carries attributes %v, want none",
+			listed[0].Attributes)
+	}
+
+	encoded, err := json.Marshal(listed[0])
+	if err != nil {
+		t.Fatalf("marshal the delivery: %v", err)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &keys); err != nil {
+		t.Fatalf("unmarshal the delivery: %v", err)
+	}
+	want := []string{"id", "from", "sentAt", "body"}
+	if len(keys) != len(want) {
+		t.Errorf("the delivery printed %d keys (%s), want exactly T1's %v",
+			len(keys), encoded, want)
+	}
+	for _, key := range want {
+		if _, ok := keys[key]; !ok {
+			t.Errorf("the delivery lost the key %q: %s", key, encoded)
+		}
+	}
+	if _, ok := keys["attributes"]; ok {
+		t.Errorf("an unattributed delivery emitted an attributes key: %s", encoded)
 	}
 }
