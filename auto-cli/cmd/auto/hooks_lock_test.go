@@ -286,12 +286,13 @@ func TestFireLockHeldByOtherBranch(t *testing.T) {
 	if err := json.Unmarshal([]byte(statusOut), &st); err != nil {
 		t.Fatal(err)
 	}
-	// Take never records a PR (that is Phase 3's gh lookup), so seed the
-	// holder — including its PR — straight into the store.
+	// Take never records a PR (that is the gh lookup at clear time), so seed
+	// the holder — including its PR — straight into the store. Its worktree
+	// path must exist: a missing path is a dead holder and gets reclaimed.
 	writeLockStore(t, home, lock.Lock{
 		Project: st.Project,
 		Group:   "drizzle-schema",
-		Holder:  lock.Holder{Kind: lock.KindWorktree, Host: st.Worker.Host, Branch: "feat/orders", WorktreePath: "/wt/orders"},
+		Holder:  lock.Holder{Kind: lock.KindWorktree, Host: st.Worker.Host, Branch: "feat/orders", WorktreePath: t.TempDir()},
 		Reason:  "adding orders table",
 		PR:      "42",
 		TakenAt: "2026-08-31T14:02:11Z",

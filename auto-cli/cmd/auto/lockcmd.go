@@ -7,14 +7,15 @@ import (
 	"io"
 	"os"
 
+	sharedconfig "github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-shared/lock"
 	"github.com/spf13/cobra"
 )
 
 // newLockCmd is the parent for the serial-update lock surface (task 064):
-// `auto lock take <group>`, `auto lock release [group]` and `auto lock status`;
-// clear, doctor and init follow in later phases. Output is JSON on stdout;
-// errors go to stderr with a non-zero exit.
+// `auto lock take <group>`, `auto lock release [group]`, `auto lock status`
+// and `auto lock clear <group>`; doctor and init follow in a later phase.
+// Output is JSON on stdout; errors go to stderr with a non-zero exit.
 func newLockCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "lock",
@@ -23,7 +24,14 @@ func newLockCmd() *cobra.Command {
 	cmd.AddCommand(newLockTakeCmd())
 	cmd.AddCommand(newLockReleaseCmd())
 	cmd.AddCommand(newLockStatusCmd())
+	cmd.AddCommand(newLockClearCmd())
 	return cmd
+}
+
+// newGHChecker builds the PR checker `auto lock clear` verifies with, given a
+// directory inside the repo. It is a package var so tests can script gh.
+var newGHChecker = func(dir string) lock.GHChecker {
+	return lock.GHCLI{Dir: dir}
 }
 
 // lockContext is what every lock subcommand resolves first: the repo the
@@ -205,6 +213,76 @@ func newLockStatusCmd() *cobra.Command {
 			return writeLockJSON(cmd.OutOrStdout(), out)
 		},
 	}
+}
+
+// lockClear is the `auto lock clear` payload.
+type lockClear struct {
+	Cleared bool        `json:"cleared"`
+	Project string      `json:"project"`
+	Group   string      `json:"group"`
+	Holder  lock.Holder `json:"holder"`
+	Forced  bool        `json:"forced"`
+	PR      string      `json:"pr,omitempty"`
+	State   string      `json:"state,omitempty"`
+}
+
+// newLockClearCmd implements `auto lock clear <group> [--force]`: remove
+// another Worker's lock once its PR is merged (verified via gh), or
+// unconditionally with --force. A refusal is a non-zero exit with the PR
+// state on stderr and the store untouched (D-3, AC-9). The clearing Worker is
+// recorded in the audit; when it cannot be identified (bare main, D-6) the
+// entry carries just this host, since clear needs no identity of its own.
+func newLockClearCmd() *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "clear <group>",
+		Short: "Clear another Worker's lock on a group (refuses unless its PR is merged; --force overrides)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			group := args[0]
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			repo, err := lock.ResolveRepo(cwd)
+			if err != nil {
+				return err
+			}
+			cfg, err := lock.LoadConfig(repo.Root)
+			if err != nil {
+				return err
+			}
+			if cfg == nil {
+				return fmt.Errorf("no lock config at %s: this project has not opted in to serial-update locks", lock.ConfigPath(repo.Root))
+			}
+			if cfg.Group(group) == nil {
+				return fmt.Errorf("unknown lock group %q in %s (see `auto lock status` for the configured groups)", group, lock.ConfigPath(repo.Root))
+			}
+			by := lock.Holder{Host: sharedconfig.HostIDQuietly()}
+			if w, err := lock.ResolveWorker(cwd, nil, cfg.Identity); err == nil {
+				by = w.Holder
+			}
+			store, err := lock.OpenDefault()
+			if err != nil {
+				return err
+			}
+			res, err := store.Clear(repo.Project, group, by, force, newGHChecker(repo.Root))
+			if err != nil {
+				return err
+			}
+			return writeLockJSON(cmd.OutOrStdout(), lockClear{
+				Cleared: true,
+				Project: repo.Project,
+				Group:   group,
+				Holder:  res.Lock.Holder,
+				Forced:  res.Forced,
+				PR:      res.PR,
+				State:   res.State,
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "clear even if the holder's PR is not merged (audited)")
+	return cmd
 }
 
 // writeLockJSON writes v as 2-space-indented JSON followed by a newline.

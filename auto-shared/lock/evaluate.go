@@ -77,6 +77,9 @@ func Evaluate(cwd string, payload map[string]any) Decision {
 		return allow
 	}
 
+	// List reclaims any lock whose holder is no longer live (worktree gone,
+	// tmux pane gone — D-3) before reporting, so a dead holder never blocks;
+	// a live-but-idle holder is untouched and still blocks below.
 	store, err := OpenDefault()
 	if err != nil {
 		return allow

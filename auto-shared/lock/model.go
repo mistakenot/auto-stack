@@ -59,13 +59,25 @@ type Lock struct {
 	TakenAt string `json:"taken_at"`
 }
 
-// AuditEntry records a clear / --force on the store (append-only).
+// Audit actions recorded on the store (D-3).
+const (
+	AuditCleared   = "cleared"   // auto lock clear: merge-verified, or --force
+	AuditReclaimed = "reclaimed" // holder liveness token gone (worktree path / tmux pane)
+)
+
+// AuditEntry records a clear / --force / liveness reclaim on the store
+// (append-only). Holder is the Worker whose Lock was removed; By is whoever
+// removed it (the clearing Worker, or just the host for a reclaim).
 type AuditEntry struct {
 	At      string `json:"at"`
 	Action  string `json:"action"`
 	Project string `json:"project"`
 	Group   string `json:"group"`
+	Holder  Holder `json:"holder"`
 	By      Holder `json:"by"`
+	Forced  bool   `json:"forced,omitempty"`
+	PR      string `json:"pr,omitempty"`
+	State   string `json:"state,omitempty"`
 	Note    string `json:"note,omitempty"`
 }
 

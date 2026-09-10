@@ -1,11 +1,14 @@
 package lock
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	sharedconfig "github.com/mistakenot/auto-shared/config"
@@ -708,5 +711,428 @@ func TestRelativeToRoot(t *testing.T) {
 		if got := relativeToRoot(c.p, root, root); got != c.want {
 			t.Errorf("relativeToRoot(%q) = %q, want %q", c.p, got, c.want)
 		}
+	}
+}
+
+// overrideWorker is a Worker of override kind on host h — no liveness token.
+func overrideWorker(project, id string) Worker {
+	return Worker{Project: project, Holder: Holder{Kind: KindOverride, Host: "h", WorkerID: id}}
+}
+
+// liveStore is a store on host "h" whose probes say every holder is live, so
+// tests of Take/List/Clear are not disturbed by the real probes seeing the
+// synthetic holders' paths and panes.
+func liveStore(t *testing.T) *Store {
+	t.Helper()
+	s := NewStore(filepath.Join(t.TempDir(), "lock"))
+	s.Host = "h"
+	s.WorktreeExists = func(string) bool { return true }
+	s.TmuxPanes = func() ([]string, error) { return nil, errors.New("tmux not probed in this test") }
+	return s
+}
+
+// readStoreFile parses locks.json straight off disk.
+func readStoreFile(t *testing.T, s *Store) storeFile {
+	t.Helper()
+	data, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatalf("read %s: %v", s.Path(), err)
+	}
+	var sf storeFile
+	if err := json.Unmarshal(data, &sf); err != nil {
+		t.Fatalf("locks.json is not valid JSON: %v\n%s", err, data)
+	}
+	return sf
+}
+
+// TestStoreConcurrentTakeSameGroup (AC-8) is the race proof, task-063
+// discipline: four takers — not two, which hides a lost write as "ambiguous"
+// — each with its OWN Store handle, released together on a barrier, run
+// under -race. Exactly one must win, the other three must see the winner in
+// their *HeldError, and locks.json must parse with exactly that one lock.
+// Validated against a deliberately broken build (withLock without the flock):
+// without the flock all four read an empty store and all four "win".
+func TestStoreConcurrentTakeSameGroup(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "lock")
+	const takers = 4
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	results := make([]error, takers)
+	for i := range takers {
+		wg.Go(func() {
+			store := NewStore(dir)
+			store.Host = "h"
+			<-start
+			_, results[i] = store.Take("p", "drizzle-schema", overrideWorker("p", fmt.Sprintf("worker-%d", i)), "")
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	winner := ""
+	var losers []*HeldError
+	for i, err := range results {
+		var held *HeldError
+		switch {
+		case err == nil:
+			if winner != "" {
+				t.Fatalf("two takers won: %s and worker-%d", winner, i)
+			}
+			winner = fmt.Sprintf("worker-%d", i)
+		case errors.As(err, &held):
+			losers = append(losers, held)
+		default:
+			t.Fatalf("taker %d: unexpected error %v", i, err)
+		}
+	}
+	if winner == "" {
+		t.Fatal("no taker won")
+	}
+	if len(losers) != takers-1 {
+		t.Fatalf("losers = %d, want %d", len(losers), takers-1)
+	}
+	for _, held := range losers {
+		if held.Lock.Holder.WorkerID != winner {
+			t.Errorf("loser saw holder %q, want the winner %q", held.Lock.Holder.WorkerID, winner)
+		}
+	}
+	sf := readStoreFile(t, NewStore(dir))
+	if len(sf.Locks) != 1 || sf.Locks[0].Holder.WorkerID != winner {
+		t.Errorf("locks.json = %+v, want exactly one lock held by %s", sf.Locks, winner)
+	}
+}
+
+// TestStoreConcurrentTakeDifferentGroups (AC-8): N parallel takes of N
+// distinct groups through N store handles all land — no update is lost to a
+// concurrent read-modify-write.
+func TestStoreConcurrentTakeDifferentGroups(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "lock")
+	const takers = 8
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make([]error, takers)
+	for i := range takers {
+		wg.Go(func() {
+			store := NewStore(dir)
+			store.Host = "h"
+			<-start
+			_, errs[i] = store.Take("p", fmt.Sprintf("group-%d", i), overrideWorker("p", fmt.Sprintf("worker-%d", i)), "")
+		})
+	}
+	close(start)
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("taker %d: %v", i, err)
+		}
+	}
+	sf := readStoreFile(t, NewStore(dir))
+	got := map[string]string{}
+	for _, l := range sf.Locks {
+		got[l.Group] = l.Holder.WorkerID
+	}
+	if len(got) != takers {
+		t.Fatalf("locks.json has %d locks, want %d (lost write): %+v", len(got), takers, sf.Locks)
+	}
+	for i := range takers {
+		if got[fmt.Sprintf("group-%d", i)] != fmt.Sprintf("worker-%d", i) {
+			t.Errorf("group-%d held by %q, want worker-%d", i, got[fmt.Sprintf("group-%d", i)], i)
+		}
+	}
+}
+
+// TestReclaimWorktreeGone (AC-10 a) — a worktree holder whose worktree_path
+// was deleted is reclaimed on the next List, the next Take by another Worker
+// succeeds, and the audit records the reclaim with its reason.
+func TestReclaimWorktreeGone(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "lock"))
+	store.Host = "h"
+	wt := filepath.Join(t.TempDir(), "wt-orders")
+	if err := os.Mkdir(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dead := Worker{Project: "p", Holder: Holder{Kind: KindWorktree, Host: "h", Branch: "feat/orders", WorktreePath: wt}}
+	if _, err := store.Take("p", "drizzle-schema", dead, "add orders"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+
+	locks, err := store.List("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(locks) != 0 {
+		t.Fatalf("List after worktree removal = %+v, want the lock reclaimed", locks)
+	}
+	if l, err := store.Take("p", "drizzle-schema", overrideWorker("p", "worker-b"), ""); err != nil || l.Holder.WorkerID != "worker-b" {
+		t.Errorf("Take after reclaim = %+v, %v; want worker-b to hold it", l, err)
+	}
+	sf := readStoreFile(t, store)
+	if len(sf.Audit) != 1 {
+		t.Fatalf("audit = %+v, want one reclaimed entry", sf.Audit)
+	}
+	a := sf.Audit[0]
+	if a.Action != AuditReclaimed || a.Group != "drizzle-schema" || a.Holder.Branch != "feat/orders" || a.By.Host != "h" || !strings.Contains(a.Note, wt) {
+		t.Errorf("reclaimed audit entry = %+v", a)
+	}
+}
+
+// TestReclaimLiveIdleWorktreeSurvives (AC-10 b, the negative) — a worktree
+// holder whose path still exists but shows no activity at all is live, is
+// NOT reclaimed, and still blocks the next taker. A reap test that only
+// checks the dead case can pass while encoding a false-reap bug; this one
+// pins the other half.
+func TestReclaimLiveIdleWorktreeSurvives(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "lock"))
+	store.Host = "h"
+	wt := filepath.Join(t.TempDir(), "wt-orders")
+	if err := os.Mkdir(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	idle := Worker{Project: "p", Holder: Holder{Kind: KindWorktree, Host: "h", Branch: "feat/orders", WorktreePath: wt}}
+	if _, err := store.Take("p", "drizzle-schema", idle, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	locks, err := store.List("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(locks) != 1 || locks[0].Holder.Branch != "feat/orders" {
+		t.Fatalf("List = %+v, want the idle holder still recorded", locks)
+	}
+	var held *HeldError
+	if _, err := store.Take("p", "drizzle-schema", overrideWorker("p", "worker-b"), ""); !errors.As(err, &held) || held.Lock.Holder.Branch != "feat/orders" {
+		t.Errorf("Take while an idle-but-live worktree holds it = %v, want *HeldError naming feat/orders", err)
+	}
+	if sf := readStoreFile(t, store); len(sf.Audit) != 0 {
+		t.Errorf("audit = %+v, want nothing reclaimed", sf.Audit)
+	}
+}
+
+// TestReclaimTmuxPane (AC-10 c–f) walks the pane probe outcomes for an agent
+// holder keyed on tmux pane %7 plus the holders that carry no liveness token.
+func TestReclaimTmuxPane(t *testing.T) {
+	cases := []struct {
+		name      string
+		holder    Holder
+		panes     []string
+		probeErr  error
+		reclaimed bool
+	}{
+		{name: "pane absent → reclaimed", holder: Holder{Kind: KindAgent, Host: "h", WorkerID: "%7"}, panes: []string{"%1", "%3"}, reclaimed: true},
+		{name: "pane present → survives", holder: Holder{Kind: KindAgent, Host: "h", WorkerID: "%7"}, panes: []string{"%1", "%7"}},
+		{name: "probe error → survives", holder: Holder{Kind: KindAgent, Host: "h", WorkerID: "%7"}, probeErr: errors.New("no server running")},
+		{name: "probe error with empty list → survives", holder: Holder{Kind: KindAgent, Host: "h", WorkerID: "%7"}, panes: []string{}, probeErr: errors.New("timeout")},
+		{name: "NTM label holder → never reclaimed", holder: Holder{Kind: KindAgent, Host: "h", WorkerID: "ntm:b1/2"}, panes: []string{}},
+		{name: "override holder → never reclaimed", holder: Holder{Kind: KindOverride, Host: "h", WorkerID: "worker-a"}, panes: []string{}},
+		{name: "other host's pane → never reclaimed", holder: Holder{Kind: KindAgent, Host: "elsewhere", WorkerID: "%7"}, panes: []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewStore(filepath.Join(t.TempDir(), "lock"))
+			store.Host = "h"
+			probed := 0
+			store.TmuxPanes = func() ([]string, error) {
+				probed++
+				return tc.panes, tc.probeErr
+			}
+			if _, err := store.Take("p", "drizzle-schema", Worker{Project: "p", Holder: tc.holder}, ""); err != nil {
+				t.Fatal(err)
+			}
+			probed = 0
+
+			locks, err := store.List("p")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(locks) == 0; got != tc.reclaimed {
+				t.Errorf("reclaimed = %v, want %v (locks %+v)", got, tc.reclaimed, locks)
+			}
+			wantsProbe := tc.holder.Kind == KindAgent && tc.holder.Host == "h" && strings.HasPrefix(tc.holder.WorkerID, "%")
+			if wantsProbe && probed != 1 {
+				t.Errorf("tmux probed %d times, want exactly once per List", probed)
+			}
+			if !wantsProbe && probed != 0 {
+				t.Errorf("tmux probed %d times for a holder with no pane token, want 0", probed)
+			}
+			_, err = store.Take("p", "drizzle-schema", overrideWorker("p", "worker-b"), "")
+			var held *HeldError
+			if tc.reclaimed && err != nil {
+				t.Errorf("Take after reclaim = %v, want success", err)
+			}
+			if !tc.reclaimed && !errors.As(err, &held) {
+				t.Errorf("Take while a live holder holds it = %v, want *HeldError", err)
+			}
+			sf := readStoreFile(t, store)
+			if tc.reclaimed && (len(sf.Audit) != 1 || sf.Audit[0].Action != AuditReclaimed || sf.Audit[0].Holder.WorkerID != "%7") {
+				t.Errorf("audit = %+v, want one reclaimed entry for %%7", sf.Audit)
+			}
+			if !tc.reclaimed && len(sf.Audit) != 0 {
+				t.Errorf("audit = %+v, want none", sf.Audit)
+			}
+		})
+	}
+}
+
+// TestReclaimRealProbesDefault verifies the nil probes fall back to the real
+// ones: a worktree holder at a path that never existed is reclaimed, and a
+// tmux failure (PATH emptied, so tmux cannot be found) keeps a pane holder.
+func TestReclaimRealProbesDefault(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "lock"))
+	store.Host = "h"
+	t.Setenv("PATH", t.TempDir())
+	gone := Worker{Project: "p", Holder: Holder{Kind: KindWorktree, Host: "h", Branch: "b", WorktreePath: filepath.Join(t.TempDir(), "never")}}
+	pane := Worker{Project: "p", Holder: Holder{Kind: KindAgent, Host: "h", WorkerID: "%999"}}
+	for _, w := range []Worker{gone, pane} {
+		if _, err := store.Take("p", "g-"+w.Kind, w, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	locks, err := store.List("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(locks) != 1 || locks[0].Holder.Kind != KindAgent {
+		t.Errorf("List = %+v, want only the pane holder (tmux unavailable = live)", locks)
+	}
+}
+
+// TestEvaluateReclaimsDeadHolder (AC-10) — the guard's lookup reclaims a dead
+// worktree holder, so the next taker is not blocked by it: the deny it gets is
+// the "unheld, take it" shape, not "held by feat/orders".
+func TestEvaluateReclaimsDeadHolder(t *testing.T) {
+	home := isolateHome(t)
+	t.Setenv(WorkerEnv, "worker-b")
+	repo := initRepo(t, "main")
+	writeConfig(t, repo, oneGroupConfig)
+	w, err := ResolveWorker(repo, nil, IdentityAuto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(filepath.Join(home, ".auto", "lock"))
+	dead := Worker{Project: w.Project, Holder: Holder{Kind: KindWorktree, Host: w.Host, Branch: "feat/orders", WorktreePath: filepath.Join(t.TempDir(), "gone")}}
+	if _, err := store.Take(w.Project, "drizzle-schema", dead, ""); err != nil {
+		t.Fatal(err)
+	}
+	d := Evaluate(repo, editPayload(repo, "db/schema/users.ts"))
+	if !d.Deny || strings.Contains(d.Reason, "feat/orders") || !strings.Contains(d.Reason, "auto lock take drizzle-schema") {
+		t.Errorf("guard after a dead holder = %+v, want the unheld deny, not held-by feat/orders", d)
+	}
+	if _, err := store.Take(w.Project, "drizzle-schema", w, ""); err != nil {
+		t.Errorf("Take after the guard reclaimed = %v", err)
+	}
+}
+
+// stubGH scripts the PR lookup for Clear.
+type stubGH struct {
+	number, state string
+	err           error
+	calls         []string
+}
+
+func (g *stubGH) PRState(branch string) (string, string, error) {
+	g.calls = append(g.calls, branch)
+	return g.number, g.state, g.err
+}
+
+// TestStoreClear (AC-9) — Clear refuses on an open PR, no PR, a gh failure,
+// and an agent holder, leaving the store untouched; releases on MERGED or
+// --force with a cleared audit entry carrying holder/by/forced/pr/state.
+func TestStoreClear(t *testing.T) {
+	worktreeHolder := Holder{Kind: KindWorktree, Host: "h", Branch: "feat/orders", WorktreePath: "/wt"}
+	agentHolder := Holder{Kind: KindAgent, Host: "h", WorkerID: "%3"}
+	by := Holder{Kind: KindOverride, Host: "h", WorkerID: "worker-b"}
+
+	cases := []struct {
+		name        string
+		holder      Holder
+		gh          *stubGH
+		force       bool
+		wantErr     []string
+		wantPR      string
+		wantState   string
+		wantGHCalls int
+	}{
+		{name: "open PR refuses", holder: worktreeHolder, gh: &stubGH{number: "42", state: "OPEN"}, wantErr: []string{"PR #42 is still OPEN", "not cleared", "--force"}, wantGHCalls: 1},
+		{name: "closed PR refuses", holder: worktreeHolder, gh: &stubGH{number: "42", state: "CLOSED"}, wantErr: []string{"PR #42 is still CLOSED", "--force"}, wantGHCalls: 1},
+		{name: "no PR refuses", holder: worktreeHolder, gh: &stubGH{err: ErrNoPR}, wantErr: []string{"no PR found for holder branch feat/orders", "--force"}, wantGHCalls: 1},
+		{name: "gh failure refuses", holder: worktreeHolder, gh: &stubGH{err: errors.New("gh: not logged in")}, wantErr: []string{"cannot verify holder branch feat/orders", "gh: not logged in", "--force"}, wantGHCalls: 1},
+		{name: "agent holder refuses without force", holder: agentHolder, gh: &stubGH{number: "1", state: PRStateMerged}, wantErr: []string{"worker %3", "no PR to verify", "--force"}, wantGHCalls: 0},
+		{name: "merged releases", holder: worktreeHolder, gh: &stubGH{number: "42", state: PRStateMerged}, wantPR: "42", wantState: PRStateMerged, wantGHCalls: 1},
+		{name: "force releases an open PR", holder: worktreeHolder, gh: &stubGH{number: "42", state: "OPEN"}, force: true, wantPR: "42", wantState: "OPEN", wantGHCalls: 1},
+		{name: "force releases when gh fails", holder: worktreeHolder, gh: &stubGH{err: errors.New("boom")}, force: true, wantGHCalls: 1},
+		{name: "force releases an agent holder", holder: agentHolder, gh: &stubGH{}, force: true, wantGHCalls: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := liveStore(t)
+			if _, err := store.Take("p", "drizzle-schema", Worker{Project: "p", Holder: tc.holder}, "why"); err != nil {
+				t.Fatal(err)
+			}
+			before := readStoreFile(t, store)
+
+			res, err := store.Clear("p", "drizzle-schema", by, tc.force, tc.gh)
+			if len(tc.gh.calls) != tc.wantGHCalls {
+				t.Errorf("gh called %d times (%v), want %d", len(tc.gh.calls), tc.gh.calls, tc.wantGHCalls)
+			}
+			if len(tc.wantErr) > 0 {
+				if err == nil {
+					t.Fatalf("Clear = %+v, nil; want refusal", res)
+				}
+				for _, want := range tc.wantErr {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("refusal missing %q: %v", want, err)
+					}
+				}
+				after := readStoreFile(t, store)
+				if len(after.Locks) != 1 || len(after.Audit) != 0 || after.Locks[0].TakenAt != before.Locks[0].TakenAt {
+					t.Errorf("refusal changed the store: %+v", after)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Clear: %v", err)
+			}
+			if res.Forced != tc.force || res.PR != tc.wantPR || res.State != tc.wantState || res.Lock.Holder != tc.holder {
+				t.Errorf("ClearResult = %+v, want forced %v pr %q state %q holder %+v", res, tc.force, tc.wantPR, tc.wantState, tc.holder)
+			}
+			after := readStoreFile(t, store)
+			if len(after.Locks) != 0 {
+				t.Errorf("lock still present after clear: %+v", after.Locks)
+			}
+			if len(after.Audit) != 1 {
+				t.Fatalf("audit = %+v, want one cleared entry", after.Audit)
+			}
+			a := after.Audit[0]
+			if a.Action != AuditCleared || a.Project != "p" || a.Group != "drizzle-schema" || a.Holder != tc.holder || a.By != by || a.Forced != tc.force || a.PR != tc.wantPR || a.State != tc.wantState || a.At == "" {
+				t.Errorf("cleared audit entry = %+v", a)
+			}
+			// The group is takeable again.
+			if _, err := store.Take("p", "drizzle-schema", overrideWorker("p", "worker-b"), ""); err != nil {
+				t.Errorf("Take after clear: %v", err)
+			}
+		})
+	}
+}
+
+// TestStoreClearNotHeld — clearing an unheld group is an error and writes
+// nothing (the store file is never even created).
+func TestStoreClearNotHeld(t *testing.T) {
+	store := liveStore(t)
+	gh := &stubGH{number: "1", state: PRStateMerged}
+	_, err := store.Clear("p", "drizzle-schema", Holder{Host: "h"}, false, gh)
+	if err == nil || !strings.Contains(err.Error(), "not held") {
+		t.Errorf("Clear(unheld) = %v, want a not-held error", err)
+	}
+	if len(gh.calls) != 0 {
+		t.Errorf("gh consulted for an unheld group: %v", gh.calls)
+	}
+	if _, err := os.Stat(store.Path()); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("refusal created %s: %v", store.Path(), err)
 	}
 }
