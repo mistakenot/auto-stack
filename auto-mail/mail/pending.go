@@ -41,6 +41,13 @@ func NudgeText() string { return nudgeText }
 // the NUL separator means (`a`, `bc`) and (`ab`, `c`) can never collide on one
 // flag. The session is excluded on purpose — it is context on the binding row,
 // not part of the identity the store joins on.
+//
+// It names two things now, not one: this flag, and the per-binding directory
+// the Subagent markers live in (D-063-9). That is deliberate — both answer a
+// question about the same join key, and two spellings of one key is how they
+// would eventually disagree — so the collision-safety argument above is the
+// argument for the marker directory's name too, and anything that changes it
+// changes where both live.
 func flagName(b Binding) string {
 	sum := sha256.Sum256([]byte(b.Manager + "\x00" + b.Target))
 	return hex.EncodeToString(sum[:8])

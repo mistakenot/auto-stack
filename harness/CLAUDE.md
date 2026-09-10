@@ -90,11 +90,23 @@ container with its own host id — additive, with the single-host case left as
 the control.
 
 `check_ready()` gates on the ready-file, both workspaces being registered, an
-initialised store, an empty `auto mail list` per workspace, **and** an empty
-pending-flag directory. Both halves of the on-disk state are session-scoped and
-shared by every test in the module, so a new test wants its own address and
-should ack everything it sends; a flag outliving its mail nudges whatever binds
-to that pair next, and the hook never opens the store to double-check (G8).
+initialised store, an empty `auto mail list` per workspace, an empty
+pending-flag directory, **and** no live Subagent markers. All three halves of
+the on-disk state are session-scoped and shared by every test in the module, so
+a new test wants its own address and should ack everything it sends; a flag
+outliving its mail nudges whatever binds to that pair next, and the hook never
+opens the store to double-check (G8).
+
+The Subagent markers under `~/.auto/mail/alpha-agents/` are the third piece, and
+they leak differently from the other two. **A test that marks a Subagent must
+stop it** — `mail_flow.stop_subagent(...)` for every `mark_subagent(...)`,
+including on the paths where the test's own point was that the marker exists.
+A marker left behind does not fail the test that left it; it makes a *later*
+test's `#parent` resolve where it should have been refused, which is a failure
+in the wrong file with a 15-minute TTL between the cause and the symptom. Tests
+each take a directory of their own (`_agent_dir`) so the binding is theirs, but
+markers are keyed by binding and the directory is not enough on its own if a
+later test reuses one.
 
 ## Usage
 

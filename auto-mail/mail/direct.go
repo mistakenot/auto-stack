@@ -118,16 +118,30 @@ func (d *direct) Subscribe(ctx context.Context, in SubscribeInput) (SubscribeRes
 }
 
 func (d *direct) Send(ctx context.Context, in SendInput) (SendResult, error) {
-	if err := ValidateAddress(in.To); err != nil {
+	// Relative Handles are resolved before validation, never after: the stored
+	// address is always the absolute one a reply can be sent back to, and
+	// nothing beginning with `#` may reach a row (G5/D-063-1). An absolute
+	// address skips this entirely and takes exactly T1's path.
+	to, resolvedFrom := in.To, ""
+	if IsHandle(in.To) {
+		resolved, err := d.resolveHandle(ctx, in)
+		if err != nil {
+			return SendResult{}, err
+		}
+		to, resolvedFrom = resolved, in.To
+	}
+	if err := ValidateAddress(to); err != nil {
 		return SendResult{}, err
 	}
 	from, err := d.resolveFrom(ctx, in)
 	if err != nil {
 		return SendResult{}, err
 	}
-	out, err := d.store.Send(ctx, store.SendParams{To: in.To, From: from, Body: in.Body})
+	out, err := d.store.Send(ctx, store.SendParams{
+		To: to, From: from, Body: in.Body, Attributes: senderAttributes(in.Sender),
+	})
 	if err != nil {
-		return SendResult{}, fmt.Errorf("send to %q: %w", in.To, err)
+		return SendResult{}, fmt.Errorf("send to %q: %w", to, err)
 	}
 	// The flag is raised after the commit, never inside it: it is a hint about
 	// state, and a hint that outlived a rolled-back send would be drift with no
@@ -139,10 +153,86 @@ func (d *direct) Send(ctx context.Context, in SendInput) (SendResult, error) {
 	}
 	return SendResult{
 		ID:            out.ID,
-		To:            in.To,
+		To:            to,
+		ResolvedFrom:  resolvedFrom,
 		Subscriptions: out.Subscriptions,
 		Bound:         out.Bound,
 	}, nil
+}
+
+// resolveHandle turns a relative Handle into the absolute address it names.
+//
+// `#parent` is the whole of it today, and it is two things at once: a guard and
+// a lookup. The guard is the Sender the caller established from its own
+// filesystem — only an in-process Subagent may use it. The lookup is T1's
+// existing AddressForBinding, rung 2 of the from-ladder, asked with the Binding
+// the *caller* computed for itself rather than one carried in a marker.
+//
+// That split is what makes the concurrency race unable to express a wrong
+// recipient (D-063-4): an in-process Subagent shares its supervisor's pane and
+// working directory, so every concurrent Subagent of one supervisor computes
+// the same Binding and therefore resolves to the same address. Whichever marker
+// writer wins, the answer is identical.
+func (d *direct) resolveHandle(ctx context.Context, in SendInput) (string, error) {
+	// The three refusals in the order their answers get cheaper to be wrong
+	// about: a handle nobody has ever heard of is a typo whatever the caller
+	// is, so it is answered before anything about identity is consulted.
+	if err := ValidateHandle(in.To); err != nil {
+		return "", err
+	}
+	if in.Sender.Kind != SenderSubagent {
+		return "", describeHandleError(ErrNotSubagent, in.To)
+	}
+	address, ok, err := d.store.AddressForBinding(ctx, caller(in.Binding))
+	if err != nil {
+		return "", fmt.Errorf("resolve %q: %w", in.To, err)
+	}
+	if !ok {
+		// The caller *is* a Subagent and the lookup still came back empty: a
+		// different failure with a different fix, and one only the supervisor
+		// can apply. The orphaned-Subscription case 062 phase 4 flagged — the
+		// binding row gone while the subscription lives on — arrives here too,
+		// and is answered the same way, because from the caller's side it is
+		// the same fact: nothing binds this pair to an address any more.
+		return "", describeHandleError(ErrNoSupervisor, in.To)
+	}
+	return address, nil
+}
+
+// senderAttributes turns the caller's established Sender into the envelope
+// metadata a supervisor reads to learn *which* of its children wrote (J1).
+//
+// It follows the sender rather than the handle: a Subagent that spells its
+// supervisor's address out in full is still a Subagent, and the supervisor's
+// need to know who wrote does not depend on how the address was typed (AC-6).
+//
+// Nil for anything that is not a Subagent, which is what keeps every existing
+// caller's delivery byte-identical to T1's — no marker, no attributes, no key
+// (D-063-10).
+//
+// The split between the two name keys is D-063-11, and it is the whole point of
+// this function. `senderKind` is race-independent: with four Subagents live
+// under one Binding, every one of them is a Subagent of this supervisor, so the
+// kind is true whichever marker the caller is. The *name* is not — the calling
+// process has no agent id of its own, so with several live it cannot tell which
+// marker is itself, and a sibling's name is worse for a supervisor than no name
+// at all. `senderAmbiguous` is emitted in the name's place so a reader can tell
+// a withheld name from a send that was never attributed: exactly one of the two
+// keys is always present alongside `senderKind`.
+func senderAttributes(s Sender) map[string]any {
+	if s.Kind != SenderSubagent {
+		return nil
+	}
+	attributes := map[string]any{"senderKind": string(s.Kind)}
+	// An empty AgentType is not hypothetical — a real SubagentStop on this host
+	// carried one — and it lands here rather than being emitted blank: a
+	// supervisor handed `senderAgentType: ""` would read it as a name.
+	if !s.Ambiguous && s.AgentType != "" {
+		attributes["senderAgentType"] = s.AgentType
+	} else {
+		attributes["senderAmbiguous"] = true
+	}
+	return attributes
 }
 
 // settleFlag brings the caller's pending flag back in line with the store after
@@ -226,10 +316,11 @@ func (d *direct) List(ctx context.Context, in ListInput) ([]Delivery, error) {
 	out := make([]Delivery, 0, len(listed))
 	for _, item := range listed {
 		out = append(out, Delivery{
-			ID:     item.ID,
-			From:   item.From,
-			SentAt: item.SentAt,
-			Body:   item.Body,
+			ID:         item.ID,
+			From:       item.From,
+			SentAt:     item.SentAt,
+			Body:       item.Body,
+			Attributes: item.Attributes,
 		})
 	}
 	return out, nil
@@ -258,8 +349,9 @@ func (d *direct) Ack(ctx context.Context, in AckInput) (AckResult, error) {
 	}, nil
 }
 
-// Reset wipes the alpha store and the pending flags, and reports what it
-// removed. G10 makes this a supported operation rather than a workaround:
+// Reset wipes the alpha store, the pending flags and the Subagent markers, and
+// reports what it removed. G10 makes this a supported operation rather than a
+// workaround:
 // there are no upcasters and no migrations, so "start again" is the migration
 // path, and the harness needs it for isolation between runs.
 //
@@ -285,8 +377,14 @@ func (d *direct) Reset(ctx context.Context, in ResetInput) (ResetResult, error) 
 	return WipeStore(d.home)
 }
 
-// WipeStore removes the alpha store and the pending flags under home, and
-// reports what it removed. It opens nothing.
+// WipeStore removes the alpha store, the pending flags and the Subagent
+// markers under home, and reports what it removed. It opens nothing.
+//
+// The markers go with the rest because a reset that left them behind would
+// leave the host in the one state that is worse than dirty: a stale marker
+// makes a later `#parent` *resolve* rather than refuse, so the failure it
+// causes is a send that goes somewhere plausible instead of an error anyone
+// would notice (AC-9).
 //
 // That is the point of it being reachable without a Client: a store written by
 // a different alpha schema cannot be opened at all (ErrSchemaMismatch), and
@@ -302,8 +400,7 @@ func WipeStore(home string) (ResetResult, error) {
 		home = resolved
 	}
 	storePath := config.StorePathIn(home)
-	flagsDir := config.FlagsDirIn(home)
-	removed := make([]string, 0, 2)
+	removed := make([]string, 0, 3)
 
 	// The -wal and -shm sidecars are part of the store rather than artifacts of
 	// their own, so they are removed with it and not reported separately.
@@ -321,12 +418,14 @@ func WipeStore(home string) (ResetResult, error) {
 	// RemoveAll cannot report whether anything was there, so existence is
 	// sampled first — `removed` is a statement about what was on disk, and an
 	// unconditional entry would make it a statement about what was attempted.
-	_, flagsErr := os.Stat(flagsDir)
-	if err := os.RemoveAll(flagsDir); err != nil {
-		return ResetResult{}, fmt.Errorf("remove %s: %w", flagsDir, err)
-	}
-	if flagsErr == nil {
-		removed = append(removed, flagsDir)
+	for _, dir := range []string{config.FlagsDirIn(home), config.AgentsDirIn(home)} {
+		_, statErr := os.Stat(dir)
+		if err := os.RemoveAll(dir); err != nil {
+			return ResetResult{}, fmt.Errorf("remove %s: %w", dir, err)
+		}
+		if statErr == nil {
+			removed = append(removed, dir)
+		}
 	}
 	return ResetResult{Removed: removed}, nil
 }

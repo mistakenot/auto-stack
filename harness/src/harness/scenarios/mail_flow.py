@@ -36,6 +36,11 @@ STORE_PATH = "$HOME/.auto/mail/alpha-store.db"
 #: opens nothing (G8), so a stray flag is a false-positive nudge for whatever
 #: runs next — which makes an empty flag directory part of "clean at stand-up".
 FLAGS_DIR = "$HOME/.auto/mail/alpha-flags"
+#: Where the per-binding Subagent markers live. A stray marker is worse than a
+#: stray flag: a flag causes a false-positive nudge, which is noisy and
+#: self-healing, whereas a marker makes a later `#parent` silently *resolve*
+#: where it should have refused — a test that passes for the wrong reason.
+AGENTS_DIR = "$HOME/.auto/mail/alpha-agents"
 #: A HOME that no `auto mail init` has ever touched, used to assert the hook's
 #: no-mail path creates no store (AC-10). It is inside the container and
 #: deliberately *not* the container's own HOME, which the entrypoint initialises.
@@ -111,6 +116,25 @@ class MailFlowScenario(Scenario):
             raise RuntimeError(
                 f"host: stray pending flags under {FLAGS_DIR} at stand-up "
                 f"({flags.stdout.strip()}) — they would produce false-positive nudges; "
+                "run `auto mail reset` or tear the stack down"
+            )
+
+        # The third piece of leftover state, and the one with the worst failure
+        # mode. A stray flag makes a test noisy; a stray Subagent marker makes a
+        # later `#parent` *resolve* instead of refusing, so the refusal tests
+        # pass by resolving to a plausible address and report success. Gate on
+        # it as hard as on the flags. Files, not directories: SubagentStop
+        # removes the marker and leaves its per-binding directory behind, which
+        # is empty state rather than stale state.
+        markers = self.run(
+            "host",
+            f'if [ -d {AGENTS_DIR} ]; then find {AGENTS_DIR} -type f; else echo __absent__; fi',
+        )
+        if markers.stdout.strip() not in ("", "__absent__"):
+            raise RuntimeError(
+                f"host: stray Subagent markers under {AGENTS_DIR} at stand-up "
+                f"({markers.stdout.strip()}) — they would make `#parent` resolve where it "
+                "must refuse, so a refusal test would pass by sending real mail; "
                 "run `auto mail reset` or tear the stack down"
             )
 
@@ -196,8 +220,16 @@ class MailFlowScenario(Scenario):
     def _hooks_dir(self):
         return SCENARIOS_ROOT / self.name / "fixtures" / "hooks"
 
-    def fire_hook(self, agent: str, agent_kind: str = "claude", home: str | None = None) -> Result:
-        """Pipe a PostToolUse payload into `auto hooks fire` for an agent.
+    def fire_hook(
+        self,
+        agent: str,
+        agent_kind: str = "claude",
+        home: str | None = None,
+        fixture: str = "post-tool-use.json",
+        agent_id: str | None = None,
+        agent_type: str | None = None,
+    ) -> Result:
+        """Pipe a hook payload into `auto hooks fire` for an agent.
 
         This is the real notification path, not a simulation of one: the same
         binary, the same entry point and the same payload shape an agent's hook
@@ -212,11 +244,25 @@ class MailFlowScenario(Scenario):
         initialised by the entrypoint, so asserting that the hook creates no
         store on a host where `auto mail init` never ran needs a HOME where it
         never did (AC-10).
+
+        `fixture` selects the payload shape; `agent_id` / `agent_type` override
+        the Subagent fields on it. Those field names are copied from real
+        payloads in `~/.auto/hooks/raw/events-*.jsonl` rather than invented —
+        the *provenance* of the payload is simulated here because a container
+        cannot run Claude Code, but its shape must not be.
         """
-        payload = json.loads((self._hooks_dir / "post-tool-use.json").read_text())
+        payload = json.loads((self._hooks_dir / fixture).read_text())
         workspace = self.workspace(agent)
         payload["cwd"] = workspace
-        payload.setdefault("tool_input", {})["file_path"] = f"{workspace}/README.md"
+        # Only rewritten when the fixture actually has one: a SubagentStop
+        # payload carries no tool_input, and inventing one would make the
+        # fixture a shape no agent ever fires.
+        if "tool_input" in payload:
+            payload["tool_input"]["file_path"] = f"{workspace}/README.md"
+        if agent_id is not None:
+            payload["agent_id"] = agent_id
+        if agent_type is not None:
+            payload["agent_type"] = agent_type
         b64 = base64.b64encode(json.dumps(payload).encode()).decode()
         env = f"HOME={shlex.quote(home)} " if home else ""
         r = self.run("host", f"echo {b64} | base64 -d | {env}auto hooks fire --agent {agent_kind}")
@@ -226,6 +272,52 @@ class MailFlowScenario(Scenario):
                 f"break the agent: {r.stderr or r.stdout}"
             )
         return r
+
+    def mark_subagent(
+        self,
+        agent: str,
+        agent_id: str,
+        agent_type: str = "phase3",
+    ) -> Result:
+        """Fire a Subagent `PreToolUse` so `#parent` can resolve in a workspace.
+
+        This is the real bridge, not a simulation of one: the same binary and
+        the same entry point an agent's hook fires with, carrying the two fields
+        a Subagent's payload actually carries. In a container with no tmux the
+        binding falls to the cwd rung, so the supervisor and its Subagent are
+        one workspace — which is exactly what an in-process Subagent is.
+
+        There is no product seam for planting a marker directly, and there
+        should not be: a marker that any process could write would not be
+        evidence of anything (harness/CLAUDE.md — missing seams are findings).
+        """
+        return self.fire_hook(
+            agent,
+            fixture="pre-tool-use-subagent.json",
+            agent_id=agent_id,
+            agent_type=agent_type,
+        )
+
+    def stop_subagent(
+        self,
+        agent: str,
+        agent_id: str,
+        agent_type: str = "phase3",
+    ) -> Result:
+        """Fire a Subagent `SubagentStop`, retiring that agent's marker.
+
+        The counterpart to `mark_subagent`, and the reason `#parent` is a
+        statement about *now* rather than about ever. It clears only the named
+        agent's marker: a sibling still working under the same binding keeps its
+        own (D-063-9), which is why the agent id is required rather than
+        defaulted.
+        """
+        return self.fire_hook(
+            agent,
+            fixture="subagent-stop.json",
+            agent_id=agent_id,
+            agent_type=agent_type,
+        )
 
     def nudge_context(self, agent: str) -> str:
         """Fire a hook and return `hookSpecificOutput.additionalContext`, or "".

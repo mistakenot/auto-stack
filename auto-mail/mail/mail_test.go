@@ -2,17 +2,21 @@ package mail_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mistakenot/auto-mail/internal/config"
@@ -710,5 +714,799 @@ func TestPendingFlagIsPerBinding(t *testing.T) {
 	}
 	if mail.FlagPathFor(home, a) == mail.FlagPathFor(home, b) {
 		t.Error("two distinct bindings hash to one flag path")
+	}
+}
+
+// TestParentHandleResolvesToTheSupervisorAndIsNeverStored is AC-1.
+//
+// A Subagent knows no address — it is handed a prompt, not an identity — so the
+// whole of what it supplies is the literal `#parent`. The client answers with
+// the supervisor's absolute address, and the *stored* row must carry that
+// address and nothing else: a Handle names a recipient at a moment, and a
+// stored moment is meaningless later (G5).
+func TestParentHandleResolvesToTheSupervisorAndIsNeverStored(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	// The supervisor and its Subagent share a pane and a working directory, so
+	// they compute the same binding — which is the entire mechanism.
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{
+		Address: "auto-stack/supervisor",
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("the supervisor could not subscribe: %v", err)
+	}
+
+	// The hook has seen the Subagent act under this binding; that is the whole
+	// of its self-identification.
+	mail.ObserveHookEvent(home, binding, "PreToolUse", mail.ActiveAgent{
+		AgentID:   "a84a3676a847c5c0b",
+		AgentType: "phase3",
+		SessionID: "the-supervisor-session",
+	})
+
+	sent, err := client.Send(ctx, mail.SendInput{
+		To:      mail.HandleParent,
+		Body:    map[string]any{"message": "phase 3 blocked: the fixture has no agent_id"},
+		Binding: binding,
+		Sender:  mail.CallerSender(home, binding),
+	})
+	if err != nil {
+		t.Fatalf("send to %s: %v", mail.HandleParent, err)
+	}
+	if sent.To != "auto-stack/supervisor" {
+		t.Errorf("to = %q, want the supervisor's absolute address", sent.To)
+	}
+	if sent.ResolvedFrom != mail.HandleParent {
+		t.Errorf("resolvedFrom = %q, want %q", sent.ResolvedFrom, mail.HandleParent)
+	}
+	if sent.Subscriptions != 1 || sent.Bound != 1 {
+		t.Errorf("subscriptions/bound = %d/%d, want 1/1", sent.Subscriptions, sent.Bound)
+	}
+
+	// The supervisor reads it, and reading does not retire it (G3).
+	listed, err := client.List(ctx, mail.ListInput{Binding: binding})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(listed) != 1 || listed[0].ID != sent.ID {
+		t.Fatalf("the supervisor listed %+v, want the mail %s", listed, sent.ID)
+	}
+
+	// And nothing beginning with `#` reached the store — not the mail row, not
+	// the envelope, not a subscription address.
+	st, err := store.Open(config.StorePathIn(home))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	var toAddress, envelope string
+	if err := st.QueryRowContext(ctx,
+		`SELECT to_address, envelope FROM mail WHERE id = ?`, sent.ID).Scan(&toAddress, &envelope); err != nil {
+		t.Fatalf("read mail row: %v", err)
+	}
+	if toAddress != "auto-stack/supervisor" {
+		t.Errorf("stored to_address = %q, want the resolved absolute address", toAddress)
+	}
+	if strings.Contains(envelope, mail.HandlePrefix) {
+		t.Errorf("the stored envelope carries a handle: %s", envelope)
+	}
+	// Nor is the Subagent's physical identity anywhere in the row (G5).
+	for _, physical := range []string{"a84a3676a847c5c0b", "the-supervisor-session"} {
+		if strings.Contains(toAddress+"\x00"+envelope, physical) {
+			t.Errorf("the stored row carries the physical identity %q", physical)
+		}
+	}
+
+	var addresses int
+	if err := st.QueryRowContext(ctx,
+		`SELECT count(*) FROM subscriptions WHERE address LIKE '#%'`).Scan(&addresses); err != nil {
+		t.Fatalf("count handle-shaped subscriptions: %v", err)
+	}
+	if addresses != 0 {
+		t.Errorf("%d subscription addresses begin with `#`; a handle is never an address", addresses)
+	}
+}
+
+// TestParentHandleRefusesANonSubagent is AC-3's first half at the seam.
+//
+// The refusal is what makes the handle safe to offer: a process that cannot
+// tell whether it is a Subagent must not be allowed to act as one, because the
+// alternative is mailing a stranger's supervisor. The token is bare and the
+// remediation is on the wrapped error, so a caller branches on the first and a
+// user reads the second.
+func TestParentHandleRefusesANonSubagent(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{
+		Address: "auto-stack/supervisor",
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	// No marker was ever written, so CallerSender answers "ordinary agent" —
+	// and the supervisor's own subscription being right there is exactly the
+	// thing that must not make this succeed.
+	_, err = client.Send(ctx, mail.SendInput{
+		To:      mail.HandleParent,
+		Body:    map[string]any{"message": "hello?"},
+		Binding: binding,
+		Sender:  mail.CallerSender(home, binding),
+	})
+	if !errors.Is(err, mail.ErrNotSubagent) {
+		t.Fatalf("send from a non-Subagent = %v, want ErrNotSubagent", err)
+	}
+	text := err.Error()
+	for _, want := range []string{mail.HandleParent, "Subagent", "auto-stack/supervisor", "auto mail docs"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the refusal does not mention %q — it must name the constraint, "+
+				"an absolute alternative, and where to read more: %s", want, text)
+		}
+	}
+
+	// Nothing was created: no mail row, and no event in the log.
+	listed, err := client.List(ctx, mail.ListInput{Binding: binding})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(listed) != 0 {
+		t.Errorf("a refused send delivered %+v, want nothing", listed)
+	}
+	counter, ok := client.(interface {
+		CountEvents(context.Context, string) (int, error)
+	})
+	if !ok {
+		t.Fatal("the direct client no longer counts events")
+	}
+	sentEvents, err := counter.CountEvents(ctx, mail.EventTypeSent)
+	if err != nil {
+		t.Fatalf("count sent events: %v", err)
+	}
+	if sentEvents != 0 {
+		t.Errorf("%d alpha.mail.sent events after a refused send, want 0", sentEvents)
+	}
+}
+
+// TestAbsoluteSendPayloadIsUnchanged is D-063-10: `resolvedFrom` is omitempty,
+// so an absolute send still marshals to exactly T1's four keys.
+//
+// The assertion is on the marshalled bytes rather than on the struct, because
+// the thing that must not change is what an existing consumer parses — and
+// every one of them was written against T1's payload.
+func TestAbsoluteSendPayloadIsUnchanged(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	sent, err := client.Send(ctx, mail.SendInput{
+		To:      "auto-web/bugs",
+		From:    "auto-stack/reviewer",
+		Body:    map[string]any{"message": "the port is dropped on ssh:// URLs"},
+		Binding: binding,
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	encoded, err := json.Marshal(sent)
+	if err != nil {
+		t.Fatalf("marshal the send payload: %v", err)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &keys); err != nil {
+		t.Fatalf("unmarshal the send payload: %v", err)
+	}
+	want := []string{"id", "to", "subscriptions", "bound"}
+	if len(keys) != len(want) {
+		t.Errorf("an absolute send printed %d keys (%s), want exactly T1's %v", len(keys), encoded, want)
+	}
+	for _, key := range want {
+		if _, ok := keys[key]; !ok {
+			t.Errorf("the send payload lost the key %q: %s", key, encoded)
+		}
+	}
+	if _, ok := keys["resolvedFrom"]; ok {
+		t.Errorf("an absolute send emitted resolvedFrom: %s", encoded)
+	}
+}
+
+// TestParentHandleRefusesWhenTheSupervisorNeverSubscribed is AC-10 at the seam.
+//
+// This is the second refusal, and the reason there are four rather than one:
+// the caller here did everything right — it *is* a Subagent, the marker is
+// there — and the thing that has to change is in the supervisor, not in the
+// child. A message that told it "you are not a Subagent" would send it off to
+// fix something that is not broken, which is why the two are separate tokens
+// and separate sentences.
+func TestParentHandleRefusesWhenTheSupervisorNeverSubscribed(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	// The marker exists — the hook saw a Subagent act here — and no
+	// subscription does. That pair is the whole of this case.
+	mail.ObserveHookEvent(home, binding, "PreToolUse", mail.ActiveAgent{
+		AgentID:   "a84a3676a847c5c0b",
+		AgentType: "phase3",
+		SessionID: "the-supervisor-session",
+	})
+	sender := mail.CallerSender(home, binding)
+	if sender.Kind != mail.SenderSubagent {
+		t.Fatalf("CallerSender = %+v, want a Subagent — this case is about a "+
+			"recognised Subagent with an unsubscribed supervisor", sender)
+	}
+
+	_, err = client.Send(ctx, mail.SendInput{
+		To:      mail.HandleParent,
+		Body:    map[string]any{"message": "phase 3 blocked"},
+		Binding: binding,
+		Sender:  sender,
+	})
+	if !errors.Is(err, mail.ErrNoSupervisor) {
+		t.Fatalf("send with no supervisor subscription = %v, want ErrNoSupervisor", err)
+	}
+	if errors.Is(err, mail.ErrNotSubagent) {
+		t.Fatalf("the refusal also matches ErrNotSubagent; a caller branching on the " +
+			"token would be told to become something it already is")
+	}
+	text := err.Error()
+	for _, want := range []string{mail.HandleParent, "auto mail subscribe", "supervisor"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the refusal does not mention %q — it must name the fix and who "+
+				"applies it: %s", want, text)
+		}
+	}
+
+	// AC-10's "textually distinct" clause, asserted rather than eyeballed: the
+	// two refusals share a caller and a command, so an agent reading stderr has
+	// only the sentence to tell them apart.
+	other := handleRefusalText(t, client, home, mail.BindingFromContext(nil, t.TempDir()))
+	if text == other {
+		t.Errorf("the no-supervisor and non-Subagent refusals are the same sentence: %s", text)
+	}
+
+	// Nothing was created by the refusal.
+	sentEvents, err := client.(interface {
+		CountEvents(context.Context, string) (int, error)
+	}).CountEvents(ctx, mail.EventTypeSent)
+	if err != nil {
+		t.Fatalf("count sent events: %v", err)
+	}
+	if sentEvents != 0 {
+		t.Errorf("%d alpha.mail.sent events after a refused send, want 0", sentEvents)
+	}
+}
+
+// handleRefusalText returns what an ordinary agent is told when it tries
+// `#parent`, so the no-supervisor case above can compare against it.
+func handleRefusalText(t *testing.T, client mail.Client, home string, binding mail.Binding) string {
+	t.Helper()
+	_, err := client.Send(context.Background(), mail.SendInput{
+		To:      mail.HandleParent,
+		Body:    map[string]any{"message": "hello?"},
+		Binding: binding,
+		Sender:  mail.CallerSender(home, binding),
+	})
+	if !errors.Is(err, mail.ErrNotSubagent) {
+		t.Fatalf("send from an ordinary agent = %v, want ErrNotSubagent", err)
+	}
+	return err.Error()
+}
+
+// TestParentResolvesToOneAddressUnderConcurrency is D-063-4's central claim,
+// made falsifiable (AC-8).
+//
+// The claim is not that the marker race cannot happen — it can, constantly —
+// but that it cannot express a wrong *recipient*. `#parent` resolves through
+// AddressForBinding with the Binding the caller computed for itself, and every
+// in-process Subagent of one supervisor shares a pane and a working directory,
+// so all four compute the same key. Whichever marker writer wins the race, the
+// lookup is the same lookup.
+//
+// Each sender opens its **own** store handle, which is 062 phase 5's rule and
+// the whole point of the assertion: a shared handle is serialised by the
+// standard library's connection pool, so a test that shared one would be
+// asserting that the pool works rather than that this design does. The marker
+// directory is churning throughout, so resolution happens under exactly the
+// interleaving D-13 accepted as a limitation.
+func TestParentResolvesToOneAddressUnderConcurrency(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	supervisor, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = supervisor.Close() })
+	if _, err := supervisor.Subscribe(ctx, mail.SubscribeInput{
+		Address: "auto-stack/supervisor",
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("the supervisor could not subscribe: %v", err)
+	}
+
+	agents := swarm()
+	for _, agent := range agents {
+		mail.ObserveHookEvent(home, binding, "PreToolUse", agent)
+	}
+
+	// Marker refreshes run for the whole of the send, so every resolution is
+	// made while the directory is being rewritten underneath it.
+	done := make(chan struct{})
+	var churn sync.WaitGroup
+	for _, agent := range agents {
+		churn.Go(func() {
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					mail.ObserveHookEvent(home, binding, "PostToolUse", agent)
+				}
+			}
+		})
+	}
+
+	type outcome struct {
+		id, to, resolvedFrom string
+		err                  error
+	}
+	results := make([]outcome, len(agents))
+	var senders sync.WaitGroup
+	for i, agent := range agents {
+		senders.Go(func() {
+			client, err := mail.NewDirect(home)
+			if err != nil {
+				results[i] = outcome{err: fmt.Errorf("open a store handle of its own: %w", err)}
+				return
+			}
+			defer func() { _ = client.Close() }()
+			sent, err := client.Send(ctx, mail.SendInput{
+				To:      mail.HandleParent,
+				Body:    map[string]any{"message": "blocked, from " + agent.AgentID},
+				Binding: binding,
+				Sender:  mail.CallerSender(home, binding),
+			})
+			results[i] = outcome{id: sent.ID, to: sent.To, resolvedFrom: sent.ResolvedFrom, err: err}
+		})
+	}
+	senders.Wait()
+	close(done)
+	churn.Wait()
+
+	for i, got := range results {
+		if got.err != nil {
+			t.Fatalf("%s: send to %s failed: %v", agents[i].AgentID, mail.HandleParent, got.err)
+		}
+		if got.to != "auto-stack/supervisor" {
+			t.Errorf("%s resolved %s to %q, want the one supervisor address — the recipient "+
+				"comes from the Binding, which every sibling shares, so no interleaving may "+
+				"change it (D-063-4)", agents[i].AgentID, mail.HandleParent, got.to)
+		}
+		if got.resolvedFrom != mail.HandleParent {
+			t.Errorf("%s: resolvedFrom = %q, want %q", agents[i].AgentID, got.resolvedFrom, mail.HandleParent)
+		}
+	}
+
+	// Every one of them landed, and on the one subscription. The match is on
+	// presence of each id rather than on a count: mail is at-least-once (G4).
+	listed, err := supervisor.List(ctx, mail.ListInput{Binding: binding})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	delivered := make(map[string]bool, len(listed))
+	for _, item := range listed {
+		delivered[item.ID] = true
+	}
+	for i, got := range results {
+		if !delivered[got.id] {
+			t.Errorf("the mail %s sent by %s never reached the supervisor; delivered: %v",
+				got.id, agents[i].AgentID, slices.Sorted(maps.Keys(delivered)))
+		}
+	}
+}
+
+// TestTheSupervisorsOwnParentResolvesToItself asserts the residual D-063-4
+// documents rather than pretending it away (AC-8).
+//
+// A supervisor has no agent_id of its own, so while one of its children is live
+// its own `#parent` reads as a Subagent's and resolves — to *its own*
+// Subscription, because that is what its own Binding is bound to. That is the
+// whole of the residual: bounded self-delivery, never a stranger's mailbox. The
+// alternative reading, that a marker under one Binding could make a *different*
+// agent's `#parent` resolve, is the failure this rules out.
+func TestTheSupervisorsOwnParentResolvesToItself(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	supervisor := mail.BindingFromContext(nil, t.TempDir())
+	stranger := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	for binding, address := range map[mail.Binding]string{
+		supervisor: "auto-stack/supervisor",
+		stranger:   "auto-web/stranger",
+	} {
+		if _, err := client.Subscribe(ctx, mail.SubscribeInput{Address: address, Binding: binding}); err != nil {
+			t.Fatalf("subscribe %q: %v", address, err)
+		}
+	}
+
+	// One child is live under the supervisor's binding, and the supervisor —
+	// not the child — is the one sending.
+	mail.ObserveHookEvent(home, supervisor, "PreToolUse", mail.ActiveAgent{
+		AgentID: "a84a3676a847c5c0b", AgentType: "Explore", SessionID: "the-supervisor-session",
+	})
+
+	sent, err := client.Send(ctx, mail.SendInput{
+		To:      mail.HandleParent,
+		Body:    map[string]any{"message": "sent by the supervisor itself"},
+		Binding: supervisor,
+		Sender:  mail.CallerSender(home, supervisor),
+	})
+	if err != nil {
+		t.Fatalf("the supervisor's own %s: %v", mail.HandleParent, err)
+	}
+	if sent.To != "auto-stack/supervisor" {
+		t.Errorf("the supervisor's own %s resolved to %q, want its own address — the "+
+			"documented residual is self-delivery, and anything else is a stranger's "+
+			"mailbox reached by accident", mail.HandleParent, sent.To)
+	}
+
+	// The stranger is subscribed on the same host, with a marker live nowhere
+	// near it, and must be untouched.
+	strangerMail, err := client.List(ctx, mail.ListInput{Binding: stranger})
+	if err != nil {
+		t.Fatalf("List for the stranger: %v", err)
+	}
+	if len(strangerMail) != 0 {
+		t.Errorf("an unrelated agent received %+v from a %s it had nothing to do with",
+			strangerMail, mail.HandleParent)
+	}
+}
+
+// TestAttributionIsWithheldWhenSeveralSubagentsAreLive is D-063-11 at the seam,
+// and the assertion that stops attribution quietly reverting to "pick the
+// newest marker" — the bug the epic's review caught (AC-8).
+//
+// The calling process has no agent_id of its own. With four markers live, the
+// newest is a sibling's as often as it is the caller's, so a name here is a
+// plausible wrong answer, and a supervisor acting on a confident wrong name is
+// worse off than one told nothing at all. What survives concurrency is the
+// *kind* — every one of them is a Subagent of this supervisor — and that is
+// precisely what `#parent` resolves on.
+//
+// The single-Subagent arm at the end is not decoration: without it this test
+// would pass just as well against an implementation that never attributed
+// anything, which is the wrong fix for the same symptom.
+//
+// The envelope half was written as an implication when this test was first
+// added, because attributes did not exist yet: the clause held vacuously and
+// became a gate the moment a `sender*` key appeared. Those clauses are still
+// here — they are what would catch an implementation that flattened the
+// attributes into the envelope's own fields — but an implication can never
+// catch the other failure, "the attributes were never added at all". So the
+// positive assertion below is the one that matters now: with four Subagents
+// live the envelope must *carry* `senderAmbiguous: true`, not merely refrain
+// from contradicting it.
+func TestAttributionIsWithheldWhenSeveralSubagentsAreLive(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{
+		Address: "auto-stack/supervisor",
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	agents := swarm()
+	for _, agent := range agents {
+		mail.ObserveHookEvent(home, binding, "PreToolUse", agent)
+	}
+
+	sender := mail.CallerSender(home, binding)
+	if sender.Kind != mail.SenderSubagent {
+		t.Fatalf("CallerSender = %+v, want a Subagent — the kind is the part that "+
+			"survives concurrency", sender)
+	}
+	if !sender.Ambiguous {
+		t.Fatalf("Ambiguous = false with %d live Subagents: %+v — an implementation that "+
+			"picked the newest marker would look exactly like this", len(agents), sender)
+	}
+	if sender.AgentID != "" || sender.AgentType != "" {
+		t.Errorf("a name was reported under concurrency: %+v — it can only be a guess, and "+
+			"a sibling's name is worse for a supervisor than no name (D-063-11)", sender)
+	}
+
+	sent, err := client.Send(ctx, mail.SendInput{
+		To:      mail.HandleParent,
+		Body:    map[string]any{"message": "one of four, and it cannot say which"},
+		Binding: binding,
+		Sender:  sender,
+	})
+	if err != nil {
+		t.Fatalf("send under ambiguity: %v", err)
+	}
+	if sent.To != "auto-stack/supervisor" {
+		t.Errorf("to = %q, want the supervisor — ambiguity withholds the name, never the "+
+			"delivery", sent.To)
+	}
+
+	st, err := store.Open(config.StorePathIn(home))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	var envelope string
+	if err := st.QueryRowContext(ctx,
+		`SELECT envelope FROM mail WHERE id = ?`, sent.ID).Scan(&envelope); err != nil {
+		t.Fatalf("read the envelope: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(envelope), &decoded); err != nil {
+		t.Fatalf("the envelope is not JSON: %v", err)
+	}
+
+	// No Subagent is named, by any spelling. The agent types are checked as
+	// well as the ids because a name is what a supervisor would act on.
+	for _, agent := range agents {
+		for _, physical := range []string{agent.AgentID, agent.AgentType} {
+			if physical != "" && strings.Contains(envelope, physical) {
+				t.Errorf("the envelope names %q while four Subagents were live: %s — "+
+					"under ambiguity it is a guess with a one-in-four chance", physical, envelope)
+			}
+		}
+	}
+	if _, named := decoded["senderAgentType"]; named {
+		t.Errorf("senderAgentType is present under ambiguity: %s", envelope)
+	}
+	// Phase 5's gate: attributes may arrive, but not without the flag that says
+	// the name was withheld deliberately.
+	if _, kind := decoded["senderKind"]; kind {
+		if ambiguous, ok := decoded["senderAmbiguous"].(bool); !ok || !ambiguous {
+			t.Errorf("the envelope carries senderKind but not senderAmbiguous: true, so a "+
+				"reader cannot tell a withheld name from an unattributed send: %s", envelope)
+		}
+	}
+
+	// And the positive form, which is the assertion the implications above
+	// cannot make: the attributes have to be *there*. A supervisor told nothing
+	// at all cannot distinguish "four children, none nameable" from "nobody
+	// attributed this send", and that distinction is the whole of D-063-11.
+	attributes, ok := decoded["attributes"].(map[string]any)
+	if !ok {
+		t.Fatalf("the envelope carries no attributes object: %s — under ambiguity the "+
+			"name is withheld, but the fact that a Subagent sent it never is (AC-6)", envelope)
+	}
+	if attributes["senderKind"] != "subagent" {
+		t.Errorf("senderKind = %v, want \"subagent\" — the kind is the part that survives "+
+			"concurrency, so it is emitted unconditionally: %s", attributes["senderKind"], envelope)
+	}
+	if ambiguous, isBool := attributes["senderAmbiguous"].(bool); !isBool || !ambiguous {
+		t.Errorf("senderAmbiguous = %v, want true with %d Subagents live — without it a "+
+			"supervisor cannot tell a withheld name from an unnamed sender: %s",
+			attributes["senderAmbiguous"], len(agents), envelope)
+	}
+	if _, named := attributes["senderAgentType"]; named {
+		t.Errorf("senderAgentType is present in the attributes under ambiguity: %s", envelope)
+	}
+
+	// And with exactly one live, the name comes back — otherwise the assertions
+	// above would hold for an implementation that attributed nothing at all.
+	for _, agent := range agents[1:] {
+		mail.ObserveHookEvent(home, binding, "SubagentStop", agent)
+	}
+	alone := mail.CallerSender(home, binding)
+	if alone.Ambiguous || alone.AgentID != agents[0].AgentID || alone.AgentType != agents[0].AgentType {
+		t.Errorf("with one Subagent live, CallerSender = %+v, want %q/%q named and no "+
+			"ambiguity", alone, agents[0].AgentID, agents[0].AgentType)
+	}
+}
+
+// TestSubagentAttributesTellTheSupervisorWhichChildWrote is J1's outcome
+// (AC-6): the supervisor learns which of its children wrote, without the child
+// having to know or say anything about itself.
+//
+// The three arms are the three things D-063-3 and D-063-11 promise together.
+// The name is emitted when it is knowable; it is withheld — never blanked —
+// when upstream gave the Subagent no type, which is not hypothetical, since a
+// real SubagentStop on this host carried an empty agent_type; and the
+// attributes follow the *sender* rather than the Handle, because a supervisor's
+// need to know who wrote does not depend on how the Address was spelled.
+func TestSubagentAttributesTellTheSupervisorWhichChildWrote(t *testing.T) {
+	ctx := context.Background()
+
+	arms := []struct {
+		name       string
+		agent      mail.ActiveAgent
+		to         string
+		attributes map[string]any
+	}{
+		{
+			name:       "a named Subagent is named",
+			agent:      mail.ActiveAgent{AgentID: "a84a3676a847c5c0b", AgentType: "phase3"},
+			to:         mail.HandleParent,
+			attributes: map[string]any{"senderKind": "subagent", "senderAgentType": "phase3"},
+		},
+		{
+			// Upstream does not guarantee a type. `senderAgentType: ""` would
+			// read as a name to a supervisor, so the key is absent and
+			// senderAmbiguous says the name is not available here.
+			name:       "an unnamed Subagent is not named blank",
+			agent:      mail.ActiveAgent{AgentID: "ad24f740374961c32"},
+			to:         mail.HandleParent,
+			attributes: map[string]any{"senderKind": "subagent", "senderAmbiguous": true},
+		},
+		{
+			name:       "the attributes follow the sender, not the handle",
+			agent:      mail.ActiveAgent{AgentID: "b1c0ffee0ddba11ff", AgentType: "Explore"},
+			to:         "auto-stack/supervisor",
+			attributes: map[string]any{"senderKind": "subagent", "senderAgentType": "Explore"},
+		},
+	}
+
+	for _, arm := range arms {
+		t.Run(arm.name, func(t *testing.T) {
+			home := t.TempDir()
+			binding := mail.BindingFromContext(nil, t.TempDir())
+			client, err := mail.NewDirect(home)
+			if err != nil {
+				t.Fatalf("NewDirect: %v", err)
+			}
+			t.Cleanup(func() { _ = client.Close() })
+			if _, err := client.Subscribe(ctx, mail.SubscribeInput{
+				Address: "auto-stack/supervisor",
+				Binding: binding,
+			}); err != nil {
+				t.Fatalf("subscribe: %v", err)
+			}
+
+			mail.ObserveHookEvent(home, binding, "PreToolUse", arm.agent)
+			sender := mail.CallerSender(home, binding)
+			if sender.Kind != mail.SenderSubagent || sender.Ambiguous {
+				t.Fatalf("CallerSender = %+v, want one unambiguous Subagent", sender)
+			}
+
+			sent, err := client.Send(ctx, mail.SendInput{
+				To:      arm.to,
+				Body:    map[string]any{"message": "phase 3 blocked"},
+				Binding: binding,
+				Sender:  sender,
+			})
+			if err != nil {
+				t.Fatalf("send to %q: %v", arm.to, err)
+			}
+
+			listed, err := client.List(ctx, mail.ListInput{Binding: binding})
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			if len(listed) != 1 || listed[0].ID != sent.ID {
+				t.Fatalf("the supervisor listed %+v, want the mail %s", listed, sent.ID)
+			}
+			if !maps.Equal(listed[0].Attributes, arm.attributes) {
+				t.Errorf("attributes = %v, want %v", listed[0].Attributes, arm.attributes)
+			}
+			// The opaque id is never an attribute. It is recorded on the marker
+			// for debugging, but it is not what a supervisor is meant to read,
+			// and putting it in the envelope would make it look like one (G5).
+			if strings.Contains(fmt.Sprint(listed[0].Attributes), arm.agent.AgentID) {
+				t.Errorf("the attributes carry the opaque agent id: %v", listed[0].Attributes)
+			}
+		})
+	}
+}
+
+// TestNonSubagentDeliveryIsByteIdenticalToT1 is D-063-10's other half at the
+// seam, and half of AC-15's regression gate: a delivery to a caller that is not
+// a Subagent must print exactly T1's four keys.
+//
+// The count is asserted, not just the absence of `attributes`, because the way
+// this promise actually breaks is a field added later without omitempty — which
+// no assertion about one key's name would catch.
+func TestNonSubagentDeliveryIsByteIdenticalToT1(t *testing.T) {
+	home := t.TempDir()
+	ctx := context.Background()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{
+		Address: "auto-web/bugs",
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	// No marker is written, which is every existing T1 caller's state: the
+	// Sender is the zero value and stays an ordinary agent.
+	if sender := mail.CallerSender(home, binding); sender.Kind != mail.SenderAgent {
+		t.Fatalf("CallerSender with no marker = %+v, want an ordinary agent", sender)
+	}
+	if _, err := client.Send(ctx, mail.SendInput{
+		To:      "auto-web/bugs",
+		From:    "auto-stack/reviewer",
+		Body:    map[string]any{"message": "the port is dropped on ssh:// URLs"},
+		Binding: binding,
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	listed, err := client.List(ctx, mail.ListInput{Binding: binding})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("list returned %d deliveries, want 1", len(listed))
+	}
+	if listed[0].Attributes != nil {
+		t.Errorf("a delivery from an ordinary agent carries attributes %v, want none",
+			listed[0].Attributes)
+	}
+
+	encoded, err := json.Marshal(listed[0])
+	if err != nil {
+		t.Fatalf("marshal the delivery: %v", err)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &keys); err != nil {
+		t.Fatalf("unmarshal the delivery: %v", err)
+	}
+	want := []string{"id", "from", "sentAt", "body"}
+	if len(keys) != len(want) {
+		t.Errorf("the delivery printed %d keys (%s), want exactly T1's %v",
+			len(keys), encoded, want)
+	}
+	for _, key := range want {
+		if _, ok := keys[key]; !ok {
+			t.Errorf("the delivery lost the key %q: %s", key, encoded)
+		}
+	}
+	if _, ok := keys["attributes"]; ok {
+		t.Errorf("an unattributed delivery emitted an attributes key: %s", encoded)
 	}
 }
