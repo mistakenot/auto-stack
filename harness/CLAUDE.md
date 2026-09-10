@@ -39,13 +39,19 @@ harness/
 │   └── scenarios/
 │       ├── base.py                  # Scenario base (compose path, gates, DSL)
 │       ├── skill_remote.py          # scenario 1 helpers
-│       └── event_flow.py            # scenario 2 DSL
+│       ├── event_flow.py            # scenario 2 DSL
+│       ├── mail_flow.py             # scenario 3 DSL
+│       └── lock_flow.py             # scenario 4 DSL
 ├── scenarios/
 │   ├── skill-remote/                # compose + Dockerfiles + scripts + fixtures
-│   └── event-flow/
+│   ├── event-flow/
+│   ├── mail-flow/
+│   └── lock-flow/
 └── tests/
     ├── skill_remote/                # per-scenario tests + session fixture
-    └── event_flow/
+    ├── event_flow/
+    ├── mail_flow/
+    └── lock_flow/
 ```
 
 ## Scenarios
@@ -96,6 +102,42 @@ shared by every test in the module, so a new test wants its own address and
 should ack everything it sends; a flag outliving its mail nudges whatever binds
 to that pair next, and the hook never opens the store to double-check (G8).
 
+### `lock-flow` — two Workers on one host contending for a lock Group
+
+**One** `host` container: one seeded host id, one `~/.auto`, and **one
+registered project workspace** (`/workspace/project`) that both Workers share.
+Each "Worker" is a separate `auto` invocation with **`AUTO_LOCK_WORKER`** set to
+`worker-a` or `worker-b` — the override rung of the identity chain, which makes
+identity deterministic with no tmux and no linked worktrees in-container
+(D-11). With it unset, the same workspace is the *bare* main checkout (D-6).
+The entrypoint runs `auto hooks install` (the Claude `PreToolUse` entry is what
+makes a lock enforceable, D-13) and opts the project in with one Group,
+`drizzle-schema`, over `db/schema/**` and `db/migrations/**`.
+
+The DSL drives the full loop through the real binary and the real hook wiring:
+`take`/`release`/`status`/`clear`/`doctor` as a Worker, and `fire_edit`, which
+pipes a Claude `PreToolUse` Edit payload into `auto hooks fire --agent claude`
+as that Worker; `assert_denied` reads exactly one deny object off stdout and
+`assert_allowed` requires an empty one. A stub `gh` on PATH
+(`scenarios/lock-flow/scripts/gh`) answers `gh pr list` from a file the tests
+write via `set_pr_state`, so the merge-verified `clear` is exercised OPEN vs
+MERGED without a network; every gh call is logged so a test can assert it was
+(or was not) consulted. A worktree-kind holder — the only kind `clear` looks up
+— cannot be produced by the CLI in this container, so `seed_worktree_holder`
+writes one into the store the way the Go tests do.
+
+Why one container: the lock store is host-global, and this harness's own
+convention gives each container a **distinct** `HOST_ID`, so two containers
+would be two *hosts* rather than two Workers on one — the same reasoning as
+`mail-flow`. Everything is synchronous and local, so the assertions are direct
+(no bounded retry). The store is shared by every test in the module; an autouse
+fixture empties it and resets the gh stub before each test, so the tests are
+independent.
+
+`check_ready()` gates on the ready-file, the project being registered, the lock
+config carrying the Group, an empty store, **and** `auto hooks fire --agent
+claude` being wired onto `PreToolUse` in `/workspace/project/.claude/settings.json`.
+
 ## Usage
 
 ```bash
@@ -103,7 +145,8 @@ to that pair next, and the hook never opens the store to double-check (G8).
 uv run pytest tests/skill_remote -v
 uv run pytest tests/event_flow -v
 uv run pytest tests/mail_flow -v
-uv run pytest -v                    # all three scenarios
+uv run pytest tests/lock_flow -v
+uv run pytest -v                    # all four scenarios
 
 # Interactive probing via the CLI
 uv run harness skill-remote up
@@ -118,6 +161,10 @@ uv run harness event-flow down --keep-images   # iterating: reuse layers next up
 uv run harness mail-flow up
 uv run harness mail-flow run host "cd /workspace/project-b && auto mail list"
 uv run harness mail-flow down
+
+uv run harness lock-flow up
+uv run harness lock-flow run host "cd /workspace/project && AUTO_LOCK_WORKER=worker-a auto lock status --text"
+uv run harness lock-flow down
 
 # Import in Python (probes / scripted tests share the same DSL)
 from harness.scenarios.event_flow import EventFlowScenario

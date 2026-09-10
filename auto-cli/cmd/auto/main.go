@@ -54,6 +54,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	)
 	root.AddCommand(newInitCmd())
 	root.AddCommand(newHooksCmd())
+	root.AddCommand(newLockCmd())
 	root.AddCommand(newUpdateCmd())
 
 	return root

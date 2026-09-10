@@ -17,6 +17,7 @@ import (
 	sharedconfig "github.com/mistakenot/auto-shared/config"
 	sharedgit "github.com/mistakenot/auto-shared/git"
 	"github.com/mistakenot/auto-shared/hooks"
+	"github.com/mistakenot/auto-shared/lock"
 	"github.com/spf13/cobra"
 )
 
@@ -115,6 +116,19 @@ func newHooksFireCmd() *cobra.Command {
 			ev.Env = hookCtx
 			postBusEvent(watchHookAddr(), ev)
 
+			// PreToolUse serial-file-lock guard (task 064, D-10): the ONE
+			// deliberate case where fire writes something other than
+			// additionalContext. Evaluate is fail-open — it denies only on a
+			// confirmed lock violation and allows on any internal error — and
+			// a deny is the sole stdout for this event, so it can never collide
+			// with the PostToolUse-only producers below. Still exit 0.
+			if strings.EqualFold(stringField(payload, "hook_event_name"), "PreToolUse") {
+				if d := lock.Evaluate(cwd, payload); d.Deny {
+					emitPreToolUseDeny(cmd.OutOrStdout(), d.Reason)
+				}
+				return nil
+			}
+
 			// Additive: after logging+posting, emit whatever the agent should be
 			// told in-band. Two producers write to this one stdout — the mail
 			// nudge and the project's hint rules — and they share a single
@@ -142,6 +156,34 @@ func newHooksFireCmd() *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "", "agent that fired the hook: claude or codex")
 	_ = cmd.MarkFlagRequired("agent")
 	return cmd
+}
+
+// preToolUseDecision is the stdout envelope Claude Code parses for a PreToolUse
+// hook verdict (code.claude.com/docs/en/hooks-guide). Exit 0 + this object is
+// a deny; empty stdout is an allow. permissionDecisionReason is shown to the
+// agent, so it carries the full remediation text.
+type preToolUseDecision struct {
+	HookSpecificOutput preToolUseOutput `json:"hookSpecificOutput"`
+}
+
+type preToolUseOutput struct {
+	HookEventName            string `json:"hookEventName"`            // "PreToolUse"
+	PermissionDecision       string `json:"permissionDecision"`       // "deny"
+	PermissionDecisionReason string `json:"permissionDecisionReason"` // why + what to run next
+}
+
+// emitPreToolUseDeny writes exactly one deny object to out. A marshal failure
+// (not expected for this shape) degrades to silence, i.e. allow.
+func emitPreToolUseDeny(out io.Writer, reason string) {
+	body, err := json.Marshal(preToolUseDecision{HookSpecificOutput: preToolUseOutput{
+		HookEventName:            "PreToolUse",
+		PermissionDecision:       "deny",
+		PermissionDecisionReason: reason,
+	}})
+	if err != nil {
+		return
+	}
+	fmt.Fprintln(out, string(body))
 }
 
 // mailNudge returns the fixed in-band instruction to go and read mail when this
