@@ -853,7 +853,7 @@ Thicken identity + the block UX on the running skeleton.
 
         <pd-phase n="3" title="Recovery: clear (gh merge-check) + liveness reclaim + concurrency proof"
                   files="auto-shared/lock/store.go, auto-shared/lock/evaluate.go, auto-shared/lock/lock_test.go, auto-cli/cmd/auto/lockcmd.go, auto-cli/cmd/auto/lockcmd_test.go"
-                  depends-on="2" status="todo">
+                  depends-on="2" status="done">
           <md><script type="text/plain">
 - **store.go** — `Clear(project,group,force,gh)`: refuse unless holder PR merged (via a `GHChecker` iface; real impl shells `gh pr view --json state`), `--force` overrides, append `audit[]`. Liveness reclaim in `List`/`Evaluate`: holder worktree path missing OR `TMUX_PANE` gone from tmux.
 - **lockcmd.go** — `auto lock clear <group> [--force]`.
