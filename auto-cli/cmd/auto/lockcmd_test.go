@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	sharedconfig "github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-shared/lock"
 )
 
@@ -65,7 +66,7 @@ func seedWorktreeHolder(t *testing.T, home, repo string) string {
 	writeLockStore(t, home, lock.Lock{
 		Project: st.Project,
 		Group:   "drizzle-schema",
-		Holder:  lock.Holder{Kind: lock.KindWorktree, Host: st.Worker.Host, Branch: "feat/orders", WorktreePath: t.TempDir()},
+		Holder:  lock.Holder{Kind: lock.KindWorktree, Host: sharedconfig.HostIDQuietly(), Branch: "feat/orders", WorktreePath: t.TempDir()},
 		Reason:  "adding orders table",
 		TakenAt: "2026-08-31T14:02:11Z",
 	})
@@ -570,5 +571,107 @@ func TestLockTextOutput(t *testing.T) {
 	stdout, _, err = runLockErr(t, repo, "status", "--text")
 	if err != nil || stdout != "drizzle-schema  free\n" {
 		t.Errorf("status --text after release = %q, %v", stdout, err)
+	}
+}
+
+// TestMatcherCoversTools: what a Claude hook matcher must look like for the
+// guard to actually run on edits.
+func TestMatcherCoversTools(t *testing.T) {
+	for _, tc := range []struct {
+		matcher string
+		want    bool
+	}{
+		{"", true}, {"  ", true}, {"*", true},
+		{"Edit|Write|MultiEdit|NotebookEdit", true},
+		{".*", true},
+		{"Edit|Write", false},
+		{"Bash", false},
+		{"Edit", false},
+		{"(", false},
+	} {
+		if got := matcherCoversTools(tc.matcher, guardedTools); got != tc.want {
+			t.Errorf("matcherCoversTools(%q) = %v, want %v", tc.matcher, got, tc.want)
+		}
+	}
+}
+
+// TestLockDoctorNarrowMatcherIsNotEnforcement: the fire handler sitting under
+// a `Bash` matcher is present but never fires for Edit/Write, so neither
+// doctor nor init may report enforcement; a matcher-less group alongside it
+// does enforce.
+func TestLockDoctorNarrowMatcherIsNotEnforcement(t *testing.T) {
+	_, repo := setupLockRepo(t, true)
+	restrictPath(t, "git")
+	path := claudeSettingsPath(repo)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	narrow := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"auto hooks fire --agent claude"}]}]}}`
+	if err := os.WriteFile(path, []byte(narrow), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	checks, err := doctorChecks(t, repo)
+	if err == nil {
+		t.Fatal("doctor with only a Bash-matched hook exited 0")
+	}
+	c := checks["claude-hook"]
+	if c.Status != "fail" || !strings.Contains(c.Message, `"Bash"`) || !strings.Contains(c.Hint, "matcher-less") {
+		t.Errorf("claude-hook = %+v, want fail naming the Bash matcher with a matcher-less remediation", c)
+	}
+
+	out, err := runLock(t, repo, "init", "--project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var init lockInit
+	if err := json.Unmarshal([]byte(out), &init); err != nil {
+		t.Fatal(err)
+	}
+	if init.ClaudeHookInstalled || !strings.Contains(init.Hint, `"Bash"`) {
+		t.Errorf("init = %+v, want claude_hook_installed false with the narrow-matcher hint", init)
+	}
+
+	// `auto hooks install` sees the command and leaves the narrow group alone
+	// (it only checks the command), so the fix is an additional matcher-less
+	// group — which is what passes.
+	wide := `{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"auto hooks fire --agent claude"}]},{"hooks":[{"type":"command","command":"auto hooks fire --agent claude"}]}]}}`
+	if err := os.WriteFile(path, []byte(wide), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checks, _ = doctorChecks(t, repo)
+	if c := checks["claude-hook"]; c.Status != "pass" {
+		t.Errorf("claude-hook with a matcher-less group = %+v, want pass", c)
+	}
+}
+
+// TestLockStatusWithoutIdentity: status is a read-only inventory, so the bare
+// case (main checkout, no pane, no AUTO_LOCK_WORKER) still lists the Groups
+// and Locks; only the (you) attribution is unavailable, reported in-band.
+func TestLockStatusWithoutIdentity(t *testing.T) {
+	home, repo := setupBareLockRepo(t, true)
+	seedWorktreeHolder(t, home, repo)
+
+	out, err := runLock(t, repo, "status")
+	if err != nil {
+		t.Fatalf("status without identity errored: %v", err)
+	}
+	var st lockStatus
+	if err := json.Unmarshal([]byte(out), &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.Worker != nil || !strings.Contains(st.WorkerError, lock.WorkerEnv) {
+		t.Errorf("worker = %+v, worker_error = %q; want null + the D-6 remediation", st.Worker, st.WorkerError)
+	}
+	if len(st.Groups) != 1 || !st.Groups[0].Held || st.Groups[0].HeldByYou {
+		t.Errorf("groups = %+v, want drizzle-schema held and not by you", st.Groups)
+	}
+
+	text, err := runLock(t, repo, "status", "--text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, "HELD by") || strings.Contains(text, "(you)") || !strings.Contains(text, "could not be identified") {
+		t.Errorf("text status = %q; want the holder line, no (you), and the identity note", text)
 	}
 }

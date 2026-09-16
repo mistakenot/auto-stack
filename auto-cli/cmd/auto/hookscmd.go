@@ -33,6 +33,10 @@ const defaultWatchHookAddr = "127.0.0.1:7787"
 
 // maxHookPayloadBytes bounds how much of stdin we read. Real hook payloads are a
 // few KB; this is generous headroom while still guarding against a runaway pipe.
+// A payload that exceeds it (a Write of a very large file, an Edit with huge
+// strings) is cut off, so it no longer parses as JSON; partialHookPayload then
+// recovers the envelope fields from the readable prefix so the lock guard can
+// still see the event, the tool and — usually — the edited path.
 const maxHookPayloadBytes = 1 << 20 // 1 MiB
 
 // newHooksCmd is the parent for agent hook adapters: `auto hooks fire` (the
@@ -66,16 +70,29 @@ func newHooksFireCmd() *cobra.Command {
 
 			// From here on, never return an error: a hook must not break the agent.
 			// Bound the read so a runaway payload can't OOM us (hook payloads are tiny).
-			raw, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), maxHookPayloadBytes))
+			// One byte past the bound tells truncation apart from a payload
+			// that is exactly the bound.
+			raw, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), maxHookPayloadBytes+1))
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "auto hooks fire: read stdin: %v\n", err)
 				return nil
+			}
+			oversized := len(raw) > maxHookPayloadBytes
+			if oversized {
+				raw = raw[:maxHookPayloadBytes]
 			}
 
 			// Resolve cwd and project for the envelope.
 			var payload map[string]any
 			if len(bytes.TrimSpace(raw)) > 0 {
 				_ = json.Unmarshal(raw, &payload)
+			}
+			if payload == nil && oversized {
+				// The cut-off payload is not valid JSON, but its readable
+				// prefix still carries the envelope: without this an oversized
+				// PreToolUse Write on a locked file would go unseen (payload
+				// nil → no event name → guard skipped → edit allowed).
+				payload = partialHookPayload(raw)
 			}
 			cwd := stringField(payload, "cwd")
 			if cwd == "" {
@@ -123,7 +140,14 @@ func newHooksFireCmd() *cobra.Command {
 			// a deny is the sole stdout for this event, so it can never collide
 			// with the PostToolUse-only producers below. Still exit 0.
 			if strings.EqualFold(stringField(payload, "hook_event_name"), "PreToolUse") {
-				if d := lock.Evaluate(cwd, payload); d.Deny {
+				d := lock.Evaluate(cwd, payload)
+				if oversized {
+					// The edited path may have been cut off with the payload;
+					// an opted-in project must not have its edit allowed unseen.
+					d = lock.EvaluateUnverifiable(cwd, payload,
+						fmt.Sprintf("the hook payload exceeded %d bytes, so the edited path was cut off before the guard could read it", maxHookPayloadBytes))
+				}
+				if d.Deny {
 					emitPreToolUseDeny(cmd.OutOrStdout(), d.Reason)
 				}
 				return nil
@@ -375,6 +399,102 @@ func resolvePathRefs(payload map[string]any, cwd, root string) []bus.PathRef {
 		refs = append(refs, bus.PathRef{Rel: rel, Abs: abs})
 	}
 	return refs
+}
+
+// partialHookPayload recovers what it can from a hook payload cut off at
+// maxHookPayloadBytes: the top-level scalar fields (session_id, cwd,
+// hook_event_name, tool_name, …) and the string members of tool_input, read as
+// a token stream up to the point where the truncation makes the JSON
+// unreadable; nested values are skipped. Claude emits the envelope before
+// tool_input and the file path before the bulky content, so an oversized Write
+// or Edit normally still yields everything the lock guard needs — and when the
+// path is lost as well, the guard sees an edit tool with no path and treats it
+// as unverifiable rather than allowed. Returns nil when not even the opening
+// object is readable.
+func partialHookPayload(raw []byte) map[string]any {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil
+	}
+	out := map[string]any{}
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		key, _ := keyTok.(string)
+		valTok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		switch v := valTok.(type) {
+		case json.Delim:
+			if key == "tool_input" && v == '{' {
+				inner, ok := partialStringFields(dec)
+				out[key] = inner
+				if !ok {
+					return out
+				}
+				continue
+			}
+			if !skipNested(dec) {
+				return out
+			}
+		default:
+			out[key] = v
+		}
+	}
+	return out
+}
+
+// partialStringFields reads the scalar members of the object whose opening
+// brace was just consumed, skipping nested values, until its closing brace or
+// the truncation point. ok is false when the stream ended first.
+func partialStringFields(dec *json.Decoder) (map[string]any, bool) {
+	out := map[string]any{}
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return out, false
+		}
+		key, _ := keyTok.(string)
+		valTok, err := dec.Token()
+		if err != nil {
+			return out, false
+		}
+		if _, nested := valTok.(json.Delim); nested {
+			if !skipNested(dec) {
+				return out, false
+			}
+			continue
+		}
+		out[key] = valTok
+	}
+	if _, err := dec.Token(); err != nil { // the closing brace
+		return out, false
+	}
+	return out, true
+}
+
+// skipNested consumes the remainder of the array or object whose opening
+// delimiter was just read. It returns false when the stream ends first.
+func skipNested(dec *json.Decoder) bool {
+	depth := 1
+	for depth > 0 {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		if d, ok := tok.(json.Delim); ok {
+			switch d {
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
+			}
+		}
+	}
+	return true
 }
 
 func stringField(payload map[string]any, key string) string {

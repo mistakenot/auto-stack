@@ -82,10 +82,15 @@ func listTmuxPanes() ([]string, error) {
 // lacks a seeded pane id would otherwise reclaim the fixture's lock.
 var DefaultTmuxPanes = listTmuxPanes
 
-// worktreeExists is the real worktree probe.
+// worktreeExists is the real worktree probe. Only a confirmed "does not
+// exist" means the holder is dead; any other Stat failure — permission denied,
+// an I/O error, a mount that is temporarily unavailable, ENOTDIR under a
+// regular file — is uncertain and keeps the holder live, exactly as the tmux
+// probe does: reclaiming on uncertainty would hand a live Worker's Group to
+// someone else.
 func worktreeExists(path string) bool {
 	_, err := os.Stat(path)
-	return err == nil
+	return !errors.Is(err, os.ErrNotExist)
 }
 
 // OpenDefault returns the store at ~/.auto/lock.
@@ -372,14 +377,24 @@ type GHCLI struct {
 	Dir string
 }
 
+// ghTimeout bounds the gh call. It runs outside the store flock (see Clear),
+// so a hang cannot stall other Workers, but the clearing command itself
+// should still fail with a reason rather than wait on GitHub forever.
+const ghTimeout = 30 * time.Second
+
 // PRState implements GHChecker via the gh CLI.
 func (g GHCLI) PRState(branch string) (string, string, error) {
-	cmd := exec.Command("gh", "pr", "list", "--head", branch, "--state", "all", "--limit", "1", "--json", "number,state")
+	ctx, cancel := context.WithTimeout(context.Background(), ghTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--head", branch, "--state", "all", "--limit", "1", "--json", "number,state")
 	cmd.Dir = g.Dir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", "", fmt.Errorf("gh pr list --head %s: timed out after %s", branch, ghTimeout)
+		}
 		return "", "", fmt.Errorf("gh pr list --head %s: %s", branch, firstNonEmpty(strings.TrimSpace(stderr.String()), err.Error()))
 	}
 	var prs []struct {
@@ -419,53 +434,99 @@ type ClearResult struct {
 // holder, by (the clearing Worker, or just its host), forced, pr and state.
 // A refusal never writes the store. Clearing an unheld group is an error.
 func (s *Store) Clear(project, group string, by Holder, force bool, gh GHChecker) (ClearResult, error) {
-	var result ClearResult
+	// Phase 1, under the flock: find the lock and decide whether a PR lookup
+	// is needed. A holder without a branch has no PR to verify, so it is
+	// refused — or, forced, removed — right here without leaving the flock.
+	var (
+		l      Lock
+		verify bool
+	)
 	err := s.withLock(func() error {
 		sf, err := s.read()
 		if err != nil {
 			return err
 		}
-		idx := slices.IndexFunc(sf.Locks, func(l Lock) bool { return l.Project == project && l.Group == group })
+		idx := indexOfLock(sf, project, group)
 		if idx < 0 {
 			return fmt.Errorf("lock %q on project %q is not held — nothing to clear", group, project)
 		}
-		l := sf.Locks[idx]
-		result = ClearResult{Lock: l, Forced: force}
-
-		if l.Holder.Kind == KindWorktree && l.Holder.Branch != "" {
-			pr, state, err := gh.PRState(l.Holder.Branch)
-			switch {
-			case err == nil:
-				result.PR, result.State = pr, state
-				if state != PRStateMerged && !force {
-					return fmt.Errorf("holder branch %s PR #%s is still %s — not cleared (use --force if confirmed merged)", l.Holder.Branch, pr, state)
-				}
-			case errors.Is(err, ErrNoPR):
-				if !force {
-					return fmt.Errorf("no PR found for holder branch %s — not cleared (use --force once you have confirmed that work is done)", l.Holder.Branch)
-				}
-			default:
-				if !force {
-					return fmt.Errorf("cannot verify holder branch %s: %w — not cleared (use --force once you have confirmed its PR is merged)", l.Holder.Branch, err)
-				}
-			}
-		} else if !force {
+		l = sf.Locks[idx]
+		verify = l.Holder.Kind == KindWorktree && l.Holder.Branch != ""
+		if verify {
+			return nil
+		}
+		if !force {
 			return fmt.Errorf("holder %s (%s) has no branch, so there is no PR to verify — not cleared (use --force once you have confirmed it is done)", DescribeHolder(l.Holder), l.Holder.Kind)
 		}
+		return s.removeLock(sf, idx, by, force, "", "")
+	})
+	result := ClearResult{Lock: l, Forced: force}
+	if err != nil || !verify {
+		return result, err
+	}
 
-		sf.Locks = slices.Delete(sf.Locks, idx, idx+1)
-		sf.Audit = append(sf.Audit, AuditEntry{
-			At:      time.Now().UTC().Format(time.RFC3339),
-			Action:  AuditCleared,
-			Project: project,
-			Group:   group,
-			Holder:  l.Holder,
-			By:      by,
-			Forced:  force,
-			PR:      result.PR,
-			State:   result.State,
-		})
-		return s.write(sf)
+	// Phase 2, with NO flock held: the gh call is network-bound and can hang
+	// on GitHub, auth or the CLI itself. Holding the host-global store lock
+	// across it would stall every Take, List and PreToolUse guard on this
+	// host behind one clearing command.
+	pr, state, err := gh.PRState(l.Holder.Branch)
+	switch {
+	case err == nil:
+		result.PR, result.State = pr, state
+		if state != PRStateMerged && !force {
+			return result, fmt.Errorf("holder branch %s PR #%s is still %s — not cleared (use --force if confirmed merged)", l.Holder.Branch, pr, state)
+		}
+	case errors.Is(err, ErrNoPR):
+		if !force {
+			return result, fmt.Errorf("no PR found for holder branch %s — not cleared (use --force once you have confirmed that work is done)", l.Holder.Branch)
+		}
+	default:
+		if !force {
+			return result, fmt.Errorf("cannot verify holder branch %s: %w — not cleared (use --force once you have confirmed its PR is merged)", l.Holder.Branch, err)
+		}
+	}
+
+	// Phase 3, under the flock again: the lock may have been released,
+	// reclaimed or retaken by another Worker while gh ran. Only the very same
+	// lock that was verified is removed; anything else is reported, never
+	// deleted on the strength of a stale verification.
+	err = s.withLock(func() error {
+		sf, err := s.read()
+		if err != nil {
+			return err
+		}
+		idx := indexOfLock(sf, project, group)
+		if idx < 0 {
+			return fmt.Errorf("lock %q on project %q was released while its PR was being verified — nothing left to clear", group, project)
+		}
+		if cur := sf.Locks[idx]; cur.Holder != l.Holder || cur.TakenAt != l.TakenAt {
+			return fmt.Errorf("lock %q on project %q changed hands while its PR was being verified (now held by %s) — re-run clear to verify the new holder", group, project, DescribeHolder(cur.Holder))
+		}
+		return s.removeLock(sf, idx, by, force, result.PR, result.State)
 	})
 	return result, err
+}
+
+// indexOfLock returns the position of (project, group) in sf.Locks, or -1.
+func indexOfLock(sf *storeFile, project, group string) int {
+	return slices.IndexFunc(sf.Locks, func(l Lock) bool { return l.Project == project && l.Group == group })
+}
+
+// removeLock deletes sf.Locks[idx], appends the cleared audit entry and
+// persists. Must be called under withLock.
+func (s *Store) removeLock(sf *storeFile, idx int, by Holder, forced bool, pr, state string) error {
+	l := sf.Locks[idx]
+	sf.Locks = slices.Delete(sf.Locks, idx, idx+1)
+	sf.Audit = append(sf.Audit, AuditEntry{
+		At:      time.Now().UTC().Format(time.RFC3339),
+		Action:  AuditCleared,
+		Project: l.Project,
+		Group:   l.Group,
+		Holder:  l.Holder,
+		By:      by,
+		Forced:  forced,
+		PR:      pr,
+		State:   state,
+	})
+	return s.write(sf)
 }

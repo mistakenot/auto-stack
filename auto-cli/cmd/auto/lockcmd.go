@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -79,15 +81,7 @@ type lockContext struct {
 // identified. as is the --as override (an explicit worker id that stands in
 // for AUTO_LOCK_WORKER on this invocation only); "" defers to the env.
 func resolveLockContext(as string) (lockContext, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return lockContext{}, err
-	}
-	repo, err := lock.ResolveRepo(cwd)
-	if err != nil {
-		return lockContext{}, err
-	}
-	cfg, err := loadLockConfig(repo.Root)
+	cwd, repo, cfg, err := resolveLockProject()
 	if err != nil {
 		return lockContext{}, err
 	}
@@ -96,6 +90,26 @@ func resolveLockContext(as string) (lockContext, error) {
 		return lockContext{}, err
 	}
 	return lockContext{repo: repo, config: cfg, worker: worker}, nil
+}
+
+// resolveLockProject is the identity-free half of resolveLockContext: cwd,
+// the repo and its (required, valid) lock config. Read-only commands such as
+// status stop here, so an unidentifiable Worker can still inspect the
+// project's Groups and Locks — only taking and editing need an identity.
+func resolveLockProject() (cwd string, repo lock.Repo, cfg *lock.Config, err error) {
+	cwd, err = os.Getwd()
+	if err != nil {
+		return "", lock.Repo{}, nil, err
+	}
+	repo, err = lock.ResolveRepo(cwd)
+	if err != nil {
+		return "", lock.Repo{}, nil, err
+	}
+	cfg, err = loadLockConfig(repo.Root)
+	if err != nil {
+		return "", lock.Repo{}, nil, err
+	}
+	return cwd, repo, cfg, nil
 }
 
 // loadLockConfig loads the project's lock config for a command that needs it:
@@ -260,10 +274,14 @@ func newLockReleaseCmd(opts *lockOpts) *cobra.Command {
 // project — the same information keyed by lock, which also surfaces a lock
 // whose Group has since been removed from the config.
 type lockStatus struct {
-	Project string            `json:"project"`
-	Worker  lock.Holder       `json:"worker"`
-	Groups  []lockStatusGroup `json:"groups"`
-	Locks   []lockStatusLock  `json:"locks"`
+	Project string `json:"project"`
+	// Worker is the caller's identity, or null with WorkerError set when the
+	// caller cannot be identified (bare main, D-6): status is read-only, so
+	// that only costs the held_by_you attribution, never the listing.
+	Worker      *lock.Holder      `json:"worker"`
+	WorkerError string            `json:"worker_error,omitempty"`
+	Groups      []lockStatusGroup `json:"groups"`
+	Locks       []lockStatusLock  `json:"locks"`
 }
 
 // lockStatusGroup is one configured Group and who, if anyone, holds it.
@@ -292,7 +310,7 @@ func newLockStatusCmd(opts *lockOpts) *cobra.Command {
 		Short: "Show the configured lock groups and who holds what on this project",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			lc, err := resolveLockContext("")
+			cwd, repo, cfg, err := resolveLockProject()
 			if err != nil {
 				return err
 			}
@@ -300,23 +318,30 @@ func newLockStatusCmd(opts *lockOpts) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			locks, err := store.List(lc.repo.Project)
+			locks, err := store.List(repo.Project)
 			if err != nil {
 				return err
 			}
 			held := map[string]lockStatusLock{}
 			out := lockStatus{
-				Project: lc.repo.Project,
-				Worker:  lc.worker.Holder,
-				Groups:  make([]lockStatusGroup, 0, len(lc.config.Groups)),
+				Project: repo.Project,
+				Groups:  make([]lockStatusGroup, 0, len(cfg.Groups)),
 				Locks:   make([]lockStatusLock, 0, len(locks)),
 			}
+			// Identity is optional here: without it every held_by_you is
+			// false and the error is reported alongside the listing.
+			worker, werr := lock.ResolveWorkerAs(cwd, nil, cfg.Identity, "")
+			if werr != nil {
+				out.WorkerError = werr.Error()
+			} else {
+				out.Worker = &worker.Holder
+			}
 			for i := range locks {
-				l := lockStatusLock{Lock: locks[i], HeldByYou: lc.worker.Matches(locks[i].Holder)}
+				l := lockStatusLock{Lock: locks[i], HeldByYou: werr == nil && worker.Matches(locks[i].Holder)}
 				out.Locks = append(out.Locks, l)
 				held[l.Group] = l
 			}
-			for _, g := range lc.config.Groups {
+			for _, g := range cfg.Groups {
 				sg := lockStatusGroup{Name: g.Name, Description: g.Description, Globs: g.Globs}
 				if l, ok := held[g.Name]; ok {
 					holder := l.Holder
@@ -356,6 +381,11 @@ func writeLockStatusText(w io.Writer, st lockStatus) {
 		if !configured[l.Group] {
 			fmt.Fprintf(w, "%-*s  HELD by %s%s  since %s  (group not in config)\n", width, l.Group, holderLabel(l.Holder), youSuffix(l.HeldByYou), lockSince(l.TakenAt))
 		}
+	}
+	if st.WorkerError != "" {
+		// Results first, then the readable error: the listing above is
+		// complete, only the "(you)" attribution is unavailable.
+		fmt.Fprintf(w, "! you could not be identified, so no lock is marked as yours: %s\n", st.WorkerError)
 	}
 }
 
@@ -531,12 +561,16 @@ func newLockInitCmd(opts *lockOpts) *cobra.Command {
 				return err
 			}
 
-			installed, err := hookInstalled(claudeSettingsPath(repo.Root), "PreToolUse", claudeFireCommand)
+			st, err := hookInstalled(claudeSettingsPath(repo.Root), "PreToolUse", claudeFireCommand)
 			if err != nil {
 				return err
 			}
-			out.ClaudeHookInstalled = installed
-			if !installed {
+			out.ClaudeHookInstalled = st.CoversEdits
+			switch {
+			case st.Present && !st.CoversEdits:
+				out.Hint = narrowHookMessage(claudeFireCommand, claudeSettingsPath(repo.Root), st.Narrow) + "; add a matcher-less PreToolUse group (see `auto lock doctor`)"
+				fmt.Fprintln(errOut, "warning: "+out.Hint)
+			case !st.Present:
 				out.Hint = hookInstallHint + " (the Claude PreToolUse hook is not installed, so locks are not enforced yet)"
 				fmt.Fprintln(errOut, "warning: "+out.Hint)
 			}
@@ -546,7 +580,7 @@ func newLockInitCmd(opts *lockOpts) *cobra.Command {
 				} else {
 					fmt.Fprintf(w, "✓ %s already exists (%d group%s); left untouched\n", out.Path, len(out.Groups), plural(len(out.Groups)))
 				}
-				if installed {
+				if out.ClaudeHookInstalled {
 					fmt.Fprintln(w, "✓ Claude PreToolUse hook installed: locks are enforced")
 				} else {
 					fmt.Fprintln(w, "✗ Claude PreToolUse hook not installed: "+hookInstallHint)
@@ -634,21 +668,93 @@ func codexHooksPath(root string) string {
 // hookInstalled reports whether the hook config at path carries a command
 // handler for command on event — the same test `auto hooks install` uses to
 // decide a handler is already present. A missing file is simply "no".
-func hookInstalled(path, event, command string) (bool, error) {
+// hookState is what init and doctor learn about `auto hooks fire` in an
+// agent's hook config for one event: whether the handler is present at all,
+// and whether some group carrying it fires for every tool the guard matches.
+// A handler tucked under a matcher such as "Bash" is present but never runs
+// for Edit or Write, so it enforces nothing — and `auto hooks install` leaves
+// it there (it only checks the command), so the two must not be conflated.
+type hookState struct {
+	Present     bool
+	CoversEdits bool
+	// Narrow lists the matchers of groups that carry the handler without
+	// covering the edit tools, for the remediation message.
+	Narrow []string
+}
+
+func hookInstalled(path, event, command string) (hookState, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return hookState{}, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("read %s: %w", path, err)
+		return hookState{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	var doc map[string]any
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return false, fmt.Errorf("parse %s: %w", path, err)
+		return hookState{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	hooks, _ := doc["hooks"].(map[string]any)
 	groups, _ := hooks[event].([]any)
-	return handlerExists(groups, command), nil
+	return hookCoverage(groups, command), nil
+}
+
+// guardedTools are the tool names a matcher must accept for the lock guard
+// to run at all; they mirror the edit tools lock.Evaluate matches.
+var guardedTools = []string{"Edit", "Write", "MultiEdit", "NotebookEdit"}
+
+// hookCoverage classifies every group on the event that carries command.
+func hookCoverage(groups []any, command string) hookState {
+	var st hookState
+	for _, g := range groups {
+		group, ok := g.(map[string]any)
+		if !ok || !handlerExists([]any{group}, command) {
+			continue
+		}
+		st.Present = true
+		matcher, _ := group["matcher"].(string)
+		if matcherCoversTools(matcher, guardedTools) {
+			st.CoversEdits = true
+			continue
+		}
+		st.Narrow = append(st.Narrow, matcher)
+	}
+	return st
+}
+
+// matcherCoversTools reports whether a Claude hook matcher fires for every
+// tool named. An absent or empty matcher and "*" match every tool; anything
+// else is a regular expression (per Claude's hook docs — "Edit|Write" is the
+// documented shape) that must match each tool name in full.
+func matcherCoversTools(matcher string, tools []string) bool {
+	m := strings.TrimSpace(matcher)
+	if m == "" || m == "*" {
+		return true
+	}
+	re, err := regexp.Compile("^(?:" + m + ")$")
+	if err != nil {
+		return false
+	}
+	for _, t := range tools {
+		if !re.MatchString(t) {
+			return false
+		}
+	}
+	return true
+}
+
+// narrowHookMessage explains a handler that is present but cannot enforce.
+func narrowHookMessage(command, path string, narrow []string) string {
+	return fmt.Sprintf("%q is installed on PreToolUse in %s only under matcher(s) %s, which never fire for %s: the guard never runs for edits, so locks are not enforced",
+		command, path, strings.Join(quoteAll(narrow), ", "), strings.Join(guardedTools, "/"))
+}
+
+func quoteAll(ss []string) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = strconv.Quote(s)
+	}
+	return out
 }
 
 // checkClaudeHook is the ONE check that can pass enforceability (D-13): the
@@ -656,12 +762,16 @@ func hookInstalled(path, event, command string) (bool, error) {
 // PreToolUse in this project's .claude/settings.json.
 func checkClaudeHook(root string) lockDoctorCheck {
 	path := claudeSettingsPath(root)
-	installed, err := hookInstalled(path, "PreToolUse", claudeFireCommand)
+	st, err := hookInstalled(path, "PreToolUse", claudeFireCommand)
 	switch {
 	case err != nil:
 		return lockDoctorCheck{Check: "claude-hook", Status: doctorFail, Message: err.Error(),
 			Hint: "fix " + path + " so it parses, then " + hookInstallHint}
-	case !installed:
+	case st.Present && !st.CoversEdits:
+		return lockDoctorCheck{Check: "claude-hook", Status: doctorFail,
+			Message: narrowHookMessage(claudeFireCommand, path, st.Narrow),
+			Hint:    "add a matcher-less PreToolUse group for " + strconv.Quote(claudeFireCommand) + " in " + path + " (or widen the matcher to cover " + strings.Join(guardedTools, "|") + ")"}
+	case !st.Present:
 		return lockDoctorCheck{Check: "claude-hook", Status: doctorFail,
 			Message: fmt.Sprintf("%q is not installed on PreToolUse in %s: the guard never runs, so locks are not enforced", claudeFireCommand, path),
 			Hint:    hookInstallHint}
@@ -676,13 +786,13 @@ func checkClaudeHook(root string) lockDoctorCheck {
 // anyway (apply_patch carries no file path to match).
 func checkCodexHook(root string) lockDoctorCheck {
 	path := codexHooksPath(root)
-	installed, err := hookInstalled(path, "PreToolUse", codexFireCommand)
+	st, err := hookInstalled(path, "PreToolUse", codexFireCommand)
 	const scope = "v1 does not enforce locks on Codex (D-12)"
 	switch {
 	case err != nil:
 		return lockDoctorCheck{Check: "codex-hook", Status: doctorWarn, Message: err.Error() + "; " + scope,
 			Hint: "fix " + path + " so it parses, then " + hookInstallHint}
-	case !installed:
+	case !st.Present:
 		return lockDoctorCheck{Check: "codex-hook", Status: doctorWarn,
 			Message: fmt.Sprintf("%q is not installed in %s; %s, so this is informational", codexFireCommand, path, scope),
 			Hint:    hookInstallHint + " to wire Codex hooks for hints and events"}

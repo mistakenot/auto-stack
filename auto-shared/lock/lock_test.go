@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	sharedconfig "github.com/mistakenot/auto-shared/config"
@@ -732,6 +733,17 @@ func liveStore(t *testing.T) *Store {
 	return s
 }
 
+// liveStoreAt is a second, independent handle on the store at dir with the
+// same always-live probes — "another process" in tests that need one.
+func liveStoreAt(t *testing.T, dir string) *Store {
+	t.Helper()
+	s := NewStore(dir)
+	s.Host = "h"
+	s.WorktreeExists = func(string) bool { return true }
+	s.TmuxPanes = func() ([]string, error) { return nil, errors.New("tmux not probed in this test") }
+	return s
+}
+
 // readStoreFile parses locks.json straight off disk.
 func readStoreFile(t *testing.T, s *Store) storeFile {
 	t.Helper()
@@ -1300,5 +1312,203 @@ func TestMatchGlob(t *testing.T) {
 	}
 	if !validGlob("db/schema/**") {
 		t.Error("validGlob(\"db/schema/**\") = false, want true")
+	}
+}
+
+// TestWorktreeProbeOnlyReclaimsConfirmedAbsence: only a confirmed not-exist
+// means a worktree holder is dead. Any other Stat failure (here ENOTDIR — a
+// path under a regular file — standing in for permission or I/O errors and an
+// unavailable mount) is uncertain and must keep the holder live, so List
+// never reclaims its Lock.
+func TestWorktreeProbeOnlyReclaimsConfirmedAbsence(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "regular")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	uncertain := filepath.Join(file, "child") // Stat → ENOTDIR, not ENOENT
+	gone := filepath.Join(dir, "gone")
+
+	if worktreeExists(gone) {
+		t.Error("a missing path must read as absent")
+	}
+	if !worktreeExists(dir) {
+		t.Error("an existing path must read as present")
+	}
+	if !worktreeExists(uncertain) {
+		t.Error("an uncertain stat error must keep the holder live")
+	}
+
+	home := isolateHome(t)
+	for _, tc := range []struct {
+		name     string
+		path     string
+		wantKept int
+	}{
+		{"uncertain error keeps the lock", uncertain, 1},
+		{"confirmed absence reclaims it", gone, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewStore(filepath.Join(home, ".auto", "lock", tc.name))
+			store.Host = "h"
+			w := Worker{Project: "p", Holder: Holder{Kind: KindWorktree, Host: "h", Branch: "feat/x", WorktreePath: tc.path}}
+			if _, err := store.Take("p", "g", w, "why"); err != nil {
+				t.Fatal(err)
+			}
+			locks, err := store.List("p")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(locks) != tc.wantKept {
+				t.Errorf("List kept %d lock(s), want %d", len(locks), tc.wantKept)
+			}
+		})
+	}
+}
+
+// flockProbeGH is a GHChecker that records whether the store's flock sidecar
+// was held while PRState ran: it tries a non-blocking exclusive flock on it.
+type flockProbeGH struct {
+	lockPath   string
+	called     bool
+	heldDuring bool
+}
+
+func (g *flockProbeGH) PRState(string) (string, string, error) {
+	g.called = true
+	f, err := os.OpenFile(g.lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return "", "", err
+	}
+	defer func() { _ = f.Close() }()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		g.heldDuring = true // EWOULDBLOCK: Clear is holding it
+		return "42", PRStateMerged, nil
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return "42", PRStateMerged, nil
+}
+
+// TestClearRunsPRLookupOutsideFlock: the gh call is network-bound and can
+// hang, so Clear must not hold the host-global store flock across it — every
+// Take, List and PreToolUse guard on the host would otherwise queue behind it.
+func TestClearRunsPRLookupOutsideFlock(t *testing.T) {
+	store := liveStore(t)
+	w := Worker{Project: "p", Holder: Holder{Kind: KindWorktree, Host: "h", Branch: "feat/orders", WorktreePath: t.TempDir()}}
+	if _, err := store.Take("p", "g", w, "why"); err != nil {
+		t.Fatal(err)
+	}
+	probe := &flockProbeGH{lockPath: store.lockPath()}
+	res, err := store.Clear("p", "g", Holder{Kind: KindOverride, Host: "h", WorkerID: "worker-b"}, false, probe)
+	if err != nil {
+		t.Fatalf("Clear: %v", err)
+	}
+	if !probe.called {
+		t.Fatal("PRState was never consulted")
+	}
+	if probe.heldDuring {
+		t.Fatal("the store flock was held while gh ran")
+	}
+	if res.PR != "42" || res.State != PRStateMerged {
+		t.Errorf("result = %+v, want PR 42 MERGED", res)
+	}
+	if locks, _ := store.List("p"); len(locks) != 0 {
+		t.Errorf("lock still present after a merged clear: %+v", locks)
+	}
+}
+
+// swapGH is a GHChecker that mutates the store through its OWN handle while
+// the PR is being "verified", simulating another Worker acting in the window
+// between Clear's two critical sections.
+type swapGH struct {
+	other  *Store
+	holder Worker
+	retake *Worker // nil = release only
+}
+
+func (g *swapGH) PRState(string) (string, string, error) {
+	if _, err := g.other.Release(g.holder, "g"); err != nil {
+		return "", "", err
+	}
+	if g.retake != nil {
+		if _, err := g.other.Take("p", "g", *g.retake, "mine now"); err != nil {
+			return "", "", err
+		}
+	}
+	return "42", PRStateMerged, nil
+}
+
+// TestClearRefusesWhenLockChangedDuringVerify: a MERGED answer only licenses
+// removing the very lock that was verified. If it was released meanwhile
+// Clear reports that; if another Worker took the Group meanwhile, that new
+// lock survives untouched and no cleared audit entry is written.
+func TestClearRefusesWhenLockChangedDuringVerify(t *testing.T) {
+	holder := Worker{Project: "p", Holder: Holder{Kind: KindWorktree, Host: "h", Branch: "feat/orders", WorktreePath: t.TempDir()}}
+	newcomer := Worker{Project: "p", Holder: Holder{Kind: KindOverride, Host: "h", WorkerID: "worker-c"}}
+	by := Holder{Kind: KindOverride, Host: "h", WorkerID: "worker-b"}
+
+	t.Run("released meanwhile", func(t *testing.T) {
+		store := liveStore(t)
+		if _, err := store.Take("p", "g", holder, "why"); err != nil {
+			t.Fatal(err)
+		}
+		other := liveStoreAt(t, store.Dir)
+		_, err := store.Clear("p", "g", by, false, &swapGH{other: other, holder: holder})
+		if err == nil || !strings.Contains(err.Error(), "released while its PR was being verified") {
+			t.Fatalf("Clear = %v, want the released-meanwhile error", err)
+		}
+		if sf := readStoreFile(t, store); len(sf.Locks) != 0 || countAudit(sf, AuditCleared) != 0 {
+			t.Errorf("store after = %+v, want no locks and no cleared entry", sf)
+		}
+	})
+	t.Run("retaken meanwhile", func(t *testing.T) {
+		store := liveStore(t)
+		if _, err := store.Take("p", "g", holder, "why"); err != nil {
+			t.Fatal(err)
+		}
+		other := liveStoreAt(t, store.Dir)
+		_, err := store.Clear("p", "g", by, false, &swapGH{other: other, holder: holder, retake: &newcomer})
+		if err == nil || !strings.Contains(err.Error(), "changed hands") || !strings.Contains(err.Error(), "worker-c") {
+			t.Fatalf("Clear = %v, want the changed-hands error naming worker-c", err)
+		}
+		sf := readStoreFile(t, store)
+		if len(sf.Locks) != 1 || !newcomer.Matches(sf.Locks[0].Holder) {
+			t.Fatalf("the newcomer's lock must survive: %+v", sf.Locks)
+		}
+		if countAudit(sf, AuditCleared) != 0 {
+			t.Errorf("a cleared audit entry was written for a lock that was not cleared: %+v", sf.Audit)
+		}
+	})
+}
+
+func countAudit(sf storeFile, action string) int {
+	n := 0
+	for i := range sf.Audit {
+		if sf.Audit[i].Action == action {
+			n++
+		}
+	}
+	return n
+}
+
+// TestLoadConfigRejectsUnknownFields: the schema is strict, so a misspelt
+// key ("identitiy") is an error rather than a silent fallback to identity
+// auto — which would change who counts as the same Worker.
+func TestLoadConfigRejectsUnknownFields(t *testing.T) {
+	repo := t.TempDir()
+	writeConfig(t, repo, `{"identitiy":"agent","groups":[{"name":"a","globs":["db/**"],"description":"d"}]}`)
+	cfg, err := LoadConfig(repo)
+	if err == nil {
+		t.Fatalf("LoadConfig accepted an unknown field: %+v", cfg)
+	}
+	for _, want := range []string{"identitiy", "unknown fields are rejected"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	// And the guard still fails open on it.
+	isolateHome(t)
+	if d := Evaluate(repo, editPayload(repo, "db/x.ts")); d.Deny {
+		t.Errorf("Evaluate on an unreadable config must allow, got: %s", d.Reason)
 	}
 }

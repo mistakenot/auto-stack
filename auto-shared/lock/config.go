@@ -2,6 +2,7 @@ package lock
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -50,9 +51,12 @@ func LoadConfig(repoRoot string) (*Config, error) {
 		}
 		return nil, err
 	}
+	// Strict: an unknown field is rejected rather than ignored, because a
+	// typo such as "identitiy" would otherwise silently fall back to identity
+	// auto and change who counts as the same Worker.
 	var cfg Config
-	if err := sharedconfig.DecodeJSONFile(path, &cfg); err != nil {
-		return nil, err
+	if err := sharedconfig.DecodeJSONFileStrict(path, &cfg); err != nil {
+		return nil, fmt.Errorf("%w (the schema is identity, groups[].name, groups[].globs, groups[].description; unknown fields are rejected)", err)
 	}
 	if cfg.Identity == "" {
 		cfg.Identity = IdentityAuto

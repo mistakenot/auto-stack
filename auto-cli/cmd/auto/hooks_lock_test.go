@@ -457,3 +457,84 @@ func TestLockReleaseLifecycle(t *testing.T) {
 		t.Errorf("drizzle-schema should still be self-held, got: %q", out)
 	}
 }
+
+// oversizedWritePayload builds a PreToolUse Write JSON whose content pushes
+// the payload past maxHookPayloadBytes. pathFirst controls whether file_path
+// precedes the bulky content (Claude's real order) or follows it.
+func oversizedWritePayload(repo, file string, pathFirst bool) string {
+	content := strings.Repeat("x", maxHookPayloadBytes+4096)
+	path := toJSON(filepath.Join(repo, file))
+	var input string
+	if pathFirst {
+		input = `{"file_path":` + path + `,"content":"` + content + `"}`
+	} else {
+		input = `{"content":"` + content + `","file_path":` + path + `}`
+	}
+	return `{"hook_event_name":"PreToolUse","session_id":"sess-big","cwd":` + toJSON(repo) +
+		`,"tool_name":"Write","tool_input":` + input + `}`
+}
+
+// TestFireOversizedPayloadStillGuards: a payload past the stdin bound used to
+// leave payload nil, skip the guard and let a locked-file Write through. Now
+// the readable prefix is recovered: with the path intact the normal verdicts
+// apply; with the path cut off an opted-in project is denied as unverifiable;
+// a project without lock config, and non-PreToolUse events, are untouched.
+func TestFireOversizedPayloadStillGuards(t *testing.T) {
+	_, repo := setupLockRepo(t, true)
+
+	d := decodeDeny(t, runFire(t, "claude", oversizedWritePayload(repo, "db/schema/users.ts", true)))
+	if !strings.Contains(d.HookSpecificOutput.PermissionDecisionReason, "auto lock take drizzle-schema") {
+		t.Errorf("oversized unheld Write: want the unlocked deny, got %q", d.HookSpecificOutput.PermissionDecisionReason)
+	}
+
+	d = decodeDeny(t, runFire(t, "claude", oversizedWritePayload(repo, "db/schema/users.ts", false)))
+	for _, want := range []string{"could not be checked", "drizzle-schema", "exceeded"} {
+		if !strings.Contains(d.HookSpecificOutput.PermissionDecisionReason, want) {
+			t.Errorf("oversized Write with the path cut off: reason missing %q:\n%s", want, d.HookSpecificOutput.PermissionDecisionReason)
+		}
+	}
+
+	if _, err := runLock(t, repo, "take", "drizzle-schema"); err != nil {
+		t.Fatal(err)
+	}
+	if out := runFire(t, "claude", oversizedWritePayload(repo, "db/schema/users.ts", true)); strings.TrimSpace(out) != "" {
+		t.Errorf("oversized Write by the holder should allow, got %q", out)
+	}
+	if out := runFire(t, "claude", oversizedWritePayload(repo, "src/app.ts", true)); strings.TrimSpace(out) != "" {
+		t.Errorf("oversized Write outside every glob should allow, got %q", out)
+	}
+	post := strings.Replace(oversizedWritePayload(repo, "db/schema/users.ts", false), `"PreToolUse"`, `"PostToolUse"`, 1)
+	if out := runFire(t, "claude", post); strings.TrimSpace(out) != "" {
+		t.Errorf("oversized PostToolUse must stay silent, got %q", out)
+	}
+
+	_, plain := setupLockRepo(t, false)
+	if out := runFire(t, "claude", oversizedWritePayload(plain, "db/schema/users.ts", false)); strings.TrimSpace(out) != "" {
+		t.Errorf("oversized Write in a project without lock config must allow, got %q", out)
+	}
+}
+
+func TestPartialHookPayload(t *testing.T) {
+	full := `{"session_id":"s","cwd":"/r","permission_mode":"default","nested":{"a":[1,2,{"b":"c"}]},"hook_event_name":"PreToolUse","tool_name":"Write","tool_input":{"file_path":"/r/f.ts","content":"` + strings.Repeat("y", 200) + `"},"after":"z"}`
+	cut := full[:len(full)-120] // inside the content string
+	got := partialHookPayload([]byte(cut))
+	for k, want := range map[string]string{"session_id": "s", "cwd": "/r", "hook_event_name": "PreToolUse", "tool_name": "Write"} {
+		if got[k] != want {
+			t.Errorf("%s = %v, want %q", k, got[k], want)
+		}
+	}
+	input, _ := got["tool_input"].(map[string]any)
+	if input["file_path"] != "/r/f.ts" {
+		t.Errorf("tool_input.file_path = %v, want /r/f.ts", input["file_path"])
+	}
+	if _, ok := got["after"]; ok {
+		t.Error("fields after the truncation point must not be invented")
+	}
+	if partialHookPayload([]byte("not json")) != nil || partialHookPayload(nil) != nil {
+		t.Error("unreadable input must yield nil")
+	}
+	whole := partialHookPayload([]byte(full))
+	if whole["after"] != "z" {
+		t.Errorf("an intact payload should be read to the end, got after=%v", whole["after"])
+	}
+}

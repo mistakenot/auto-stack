@@ -117,6 +117,44 @@ func Evaluate(cwd string, payload map[string]any) Decision {
 	return allow
 }
 
+// EvaluateUnverifiable is the verdict for a PreToolUse payload the hook
+// adapter could only read in part (it exceeded the adapter's stdin bound, and
+// the edited path may have been cut off with it). When a path survived, this
+// is exactly Evaluate. When none did, the edit tool is known but the file is
+// not: a project with no lock config still gets Allow (fail-open, as every
+// other internal condition), but a project that HAS opted in is denied —
+// silently allowing an edit the guard cannot see is the gap enforcement
+// exists to close. why is the adapter's one-line explanation for the agent.
+func EvaluateUnverifiable(cwd string, payload map[string]any, why string) Decision {
+	if !strings.EqualFold(payloadString(payload, "hook_event_name"), "PreToolUse") {
+		return allow
+	}
+	tool := payloadString(payload, "tool_name")
+	if !editTools[tool] {
+		return allow
+	}
+	if len(editedPaths(payload)) > 0 {
+		return Evaluate(cwd, payload)
+	}
+	repo, err := ResolveRepo(cwd)
+	if err != nil {
+		return allow
+	}
+	cfg, err := LoadConfig(repo.Root)
+	if err != nil || cfg == nil || len(cfg.Groups) == 0 {
+		return allow
+	}
+	names := make([]string, 0, len(cfg.Groups))
+	for _, g := range cfg.Groups {
+		names = append(names, g.Name)
+	}
+	return Decision{Deny: true, Reason: fmt.Sprintf(
+		"✗ BLOCKED: this %s could not be checked against this project's serial-update lock groups (%s): %s.\n"+
+			"  The guard cannot tell whether the file is under a locked group, so it will not let the edit through unseen.\n"+
+			"  Retry as a smaller edit, or split the content across several smaller writes.",
+		tool, strings.Join(names, ", "), why)}
+}
+
 // unlockedReason is the "no holder yet" block message (Requirements → Block
 // message): why the group is serial and the exact take command.
 func unlockedReason(rel string, g Group) string {
