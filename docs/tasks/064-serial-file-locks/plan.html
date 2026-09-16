@@ -12,7 +12,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="064: serial-file-locks" status="executing" pr="pending" generated="2026-08-31"
+  <pd-doc title="064: serial-file-locks" status="complete" pr="pending" generated="2026-08-31"
           next-prompt="/new-solution 064">
   <pd-tab name="Requirements">
 
@@ -548,16 +548,16 @@ flowchart TD
 
     <pd-section id="cli-surface" title="Command surface (end state)">
       <pd-cli title="zsh — the take → edit → release loop" caption="What the agent sees">
-        <pd-cmd note="opt in (scaffolds settings.json, checks the hook is installed)" status="todo">auto lock init --project</pd-cmd>
-        <pd-cmd note="agent hits a blocked edit; hook denies with this remediation" status="todo">auto lock take drizzle-schema --reason "add orders table"</pd-cmd>
+        <pd-cmd note="opt in (scaffolds settings.json, checks the hook is installed)" status="done">auto lock init --project</pd-cmd>
+        <pd-cmd note="agent hits a blocked edit; hook denies with this remediation" status="done">auto lock take drizzle-schema --reason "add orders table"</pd-cmd>
         <pd-out>✓ took lock "drizzle-schema" as feat/orders (worktree)</pd-out>
-        <pd-cmd note="who holds what (JSON default; --text shown)" status="todo">auto lock status --text</pd-cmd>
+        <pd-cmd note="who holds what (JSON default; --text shown)" status="done">auto lock status --text</pd-cmd>
         <pd-out>drizzle-schema  HELD by feat/orders (you)  since 14:02</pd-out>
-        <pd-cmd note="at merge time — frees every lock this Worker holds" status="todo">auto lock release</pd-cmd>
+        <pd-cmd note="at merge time — frees every lock this Worker holds" status="done">auto lock release</pd-cmd>
         <pd-out>✓ released 1 lock</pd-out>
-        <pd-cmd note="reclaim another's forgotten lock — refuses unless PR merged" status="todo">auto lock clear drizzle-schema</pd-cmd>
+        <pd-cmd note="reclaim another's forgotten lock — refuses unless PR merged" status="done">auto lock clear drizzle-schema</pd-cmd>
         <pd-out><script type="text/plain">✗ holder branch feat/orders PR #42 is still OPEN — not cleared (use --force if confirmed merged)</script></pd-out>
-        <pd-cmd note="is this setup actually enforceable?" status="todo">auto lock doctor</pd-cmd>
+        <pd-cmd note="is this setup actually enforceable?" status="done">auto lock doctor</pd-cmd>
       </pd-cli>
     </pd-section>
 
@@ -822,7 +822,7 @@ agent-agnostic.
 
         <pd-phase n="1" title="Walking skeleton: config→store→identity→evaluate→deny→take/status"
                   files="auto-shared/lock/model.go, auto-shared/lock/config.go, auto-shared/lock/store.go, auto-shared/lock/identity.go, auto-shared/lock/evaluate.go, auto-shared/lock/lock_test.go, auto-cli/cmd/auto/lockcmd.go, auto-cli/cmd/auto/hookscmd.go, auto-cli/cmd/auto/main.go, auto-cli/cmd/auto/hooks_lock_test.go"
-                  status="todo">
+                  status="done">
           <md><script type="text/plain">
 Thinnest end-to-end path, one case green.
 - **model.go** — `Lock, Holder, Group, Config, Worker, Decision` types (the on-disk + in-memory shapes from the Solution schemas).
@@ -839,7 +839,7 @@ Thinnest end-to-end path, one case green.
 
         <pd-phase n="2" title="Full identity + held-by-other + release + deny-reason UX"
                   files="auto-shared/lock/identity.go, auto-shared/lock/evaluate.go, auto-shared/lock/store.go, auto-shared/lock/lock_test.go, auto-cli/cmd/auto/lockcmd.go, auto-cli/cmd/auto/hooks_lock_test.go"
-                  depends-on="1" status="todo">
+                  depends-on="1" status="done">
           <md><script type="text/plain">
 Thicken identity + the block UX on the running skeleton.
 - **identity.go** — complete the chain: override → worktree → `TMUX_PANE`/`NTM_*` → **bare = block (D-6)**; `identity` modes auto|worktree|agent; `Worker.Matches(Holder)`. Verify: table-driven tests incl. bare-main block + "same branch after session restart = same key".
@@ -853,7 +853,7 @@ Thicken identity + the block UX on the running skeleton.
 
         <pd-phase n="3" title="Recovery: clear (gh merge-check) + liveness reclaim + concurrency proof"
                   files="auto-shared/lock/store.go, auto-shared/lock/evaluate.go, auto-shared/lock/lock_test.go, auto-cli/cmd/auto/lockcmd.go, auto-cli/cmd/auto/lockcmd_test.go"
-                  depends-on="2" status="todo">
+                  depends-on="2" status="done">
           <md><script type="text/plain">
 - **store.go** — `Clear(project,group,force,gh)`: refuse unless holder PR merged (via a `GHChecker` iface; real impl shells `gh pr view --json state`), `--force` overrides, append `audit[]`. Liveness reclaim in `List`/`Evaluate`: holder worktree path missing OR `TMUX_PANE` gone from tmux.
 - **lockcmd.go** — `auto lock clear <group> [--force]`.
@@ -865,7 +865,7 @@ Thicken identity + the block UX on the running skeleton.
 
         <pd-phase n="4" title="doctor + init + config validation + output conventions"
                   files="auto-cli/cmd/auto/lockcmd.go, auto-cli/cmd/auto/lockcmd_test.go, auto-shared/lock/config.go, auto-shared/lock/lock_test.go"
-                  depends-on="3" status="todo">
+                  depends-on="3" status="done">
           <md><script type="text/plain">
 - **config.go** — full validation: `[]ValidationError` for missing name/globs/description + bad `identity` enum; shared validator reused by CLI + guard.
 - **lockcmd.go** — `auto lock doctor` → `[]DoctorCheck`: **Claude** hook on PreToolUse = the only *pass* for enforceability (remediation `auto hooks install`); **Codex** = warn/not-verifiable (D-13); config valid; store health; `gh` present; identity resolvable; exit non-zero on any fail. `auto lock init --project` scaffolds `settings.json` + checks/offers the hook. JSON default + `--text` across all commands; `status` uses the resource-list shape.
@@ -876,7 +876,7 @@ Thicken identity + the block UX on the running skeleton.
 
         <pd-phase n="5" title="E2E harness scenario lock-flow (Claude-only)"
                   files="harness/scenarios/lock-flow/docker-compose.yaml, harness/scenarios/lock-flow/Dockerfile, harness/scenarios/lock-flow/scripts/host-entrypoint.sh, harness/scenarios/lock-flow/fixtures/hooks/pre-tool-use-edit.json, harness/src/harness/scenarios/lock_flow.py, harness/src/harness/cli.py, harness/tests/lock_flow/test_lock_flow.py, harness/CLAUDE.md"
-                  depends-on="4" status="todo">
+                  depends-on="4" status="done">
           <md><script type="text/plain">
 Model on `mail-flow` (host-global store → two Workers on one host).
 - **scenarios/lock-flow/** — compose (one `host` container), Dockerfile (build `auto` from source), `scripts/host-entrypoint.sh` (seed host id, register project, `auto hooks install`, write ready-file), `fixtures/hooks/pre-tool-use-edit.json` (PreToolUse Edit, `--agent claude`, file under a locked glob).
@@ -889,7 +889,7 @@ Model on `mail-flow` (host-global store → two Workers on one host).
 
         <pd-phase n="6" title="Docs: glossary terms + sub-project table (parallel to 2–5)"
                   files="docs/concepts/UBIQUITOUS_LANGUAGE.md, CLAUDE.md"
-                  depends-on="1" status="todo">
+                  depends-on="1" status="done">
           <md><script type="text/plain">
 - **UBIQUITOUS_LANGUAGE.md** — add **Lock**, **Group**, **Worker** via the `domain-modelling` skill's add-term (bold term + definition + `_Avoid_:` + `_Has_:`). Keep any avoided word that collides with a canonical term parenthetical (062 gotcha: bare collision fails `glossary.py check`). Run `glossary.py check` + `glossary.py diagram --write`.
 - **CLAUDE.md** — add an `auto lock` row to the sub-projects table.

@@ -1,0 +1,21 @@
+#!/bin/sh
+# Stub GitHub CLI for the lock-flow scenario.
+#
+# `auto lock clear` shells out to
+#   gh pr list --head <branch> --state all --limit 1 --json number,state
+# and expects a JSON array on stdout. This stub ignores its arguments and
+# prints whatever the tests last wrote to $GH_STUB_STATE (default
+# /tmp/gh-pr-state.json); with no such file it reports "no PR" (`[]`). Every
+# invocation is also appended, one line of arguments each, to $GH_STUB_LOG so a
+# test can assert whether gh was consulted at all.
+#
+#   printf '[{"number":42,"state":"OPEN"}]'   > /tmp/gh-pr-state.json  # refuse
+#   printf '[{"number":42,"state":"MERGED"}]' > /tmp/gh-pr-state.json  # clear
+state="${GH_STUB_STATE:-/tmp/gh-pr-state.json}"
+log="${GH_STUB_LOG:-/tmp/gh-calls.log}"
+printf '%s\n' "$*" >> "$log"
+if [ -f "$state" ]; then
+  cat "$state"
+else
+  printf '[]\n'
+fi
