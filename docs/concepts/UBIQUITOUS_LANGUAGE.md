@@ -1,8 +1,8 @@
 ---
-hash: "24fe9458"
+hash: "a018a99c"
 id: "1467e318"
 read_when: "naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept"
-summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Binding) with the terms to avoid for each."
+summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Binding, Lock, Group, Worker) with the terms to avoid for each."
 title: "Ubiquitous Language"
 ---
 
@@ -17,7 +17,9 @@ flowchart LR
     Address["Address"]
     Binding["Binding"]
     Delivery["Delivery"]
+    Group["Group"]
     Host["Host"]
+    Lock["Lock"]
     Mail["Mail"]
     Message["Message"]
     Playbook["Playbook"]
@@ -28,6 +30,7 @@ flowchart LR
     Subscription["Subscription"]
     TaskDef["TaskDef"]
     Trigger["Trigger"]
+    Worker["Worker"]
     Session -->|many| Message
     Session -->|many| Subagent
     Session -->|one| Host
@@ -40,6 +43,13 @@ flowchart LR
     Address -->|many| Subscription
     Subscription -->|many| Delivery
     Subscription -->|one| Binding
+    Lock -->|one| Group
+    Lock -->|one| Worker
+    Lock -->|one| Project
+    Lock -->|one| Host
+    Group -->|one| Project
+    Worker -->|one| Host
+    Worker -->|one| Project
 ```
 <!-- ER-DIAGRAM:END -->
 
@@ -138,3 +148,20 @@ _Avoid_: Receipt, copy, inbox item
 **Binding**:
 The current physical target of a Subscription, recorded as an opaque `(manager, target)` pair.
 _Avoid_: Pane, session link, attachment, route
+
+## Locks
+
+**Lock**:
+A serial-update reservation on one Group of a Project, held by exactly one Worker at a time and recorded in the host-global lock store. Taken explicitly with `auto lock take`, freed by `release`, or recovered by a merge-verified `clear` or lost-liveness reclaim — never by a TTL.
+_Avoid_: Mutex, reservation, claim, hold, file lock
+_Has_: one Group, one Worker, one Project, one Host
+
+**Group**:
+A named, described set of files (one or more repo-relative globs) declared in a Project's `.auto/lock/settings.json` that must be edited serially. The lockable unit — a Lock covers the whole Group, never individual files.
+_Avoid_: Lock set, glob set, file group, pattern
+_Has_: one Project
+
+**Worker**:
+The identity that holds a Lock, resolved through a chain visible to both the CLI and the hook: an explicit `AUTO_LOCK_WORKER` override, else the linked git worktree branch, else the tmux pane or NTM label on a shared checkout. Never keyed on a Session id, which only the hook can see.
+_Avoid_: Owner, editor, agent identity, holder key
+_Has_: one Host, one Project
