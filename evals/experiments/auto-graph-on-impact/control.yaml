@@ -1,0 +1,8 @@
+# Arm `control`: stock Claude Code.
+agents:
+  - name: claude-code
+    model_name: claude-haiku-4-5-20251001
+    kwargs:
+      max_turns: 60
+
+n_attempts: 5

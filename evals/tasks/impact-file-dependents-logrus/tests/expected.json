@@ -1,0 +1,19 @@
+[
+  "example_basic_test.go",
+  "example_custom_caller_test.go",
+  "example_default_field_value_test.go",
+  "example_function_test.go",
+  "example_global_hook_test.go",
+  "example_hook_test.go",
+  "hook_test.go",
+  "hooks/syslog/syslog.go",
+  "hooks/syslog/syslog_test.go",
+  "hooks/test/test.go",
+  "hooks/test/test_test.go",
+  "hooks/writer/writer.go",
+  "hooks/writer/writer_test.go",
+  "internal/testutils/testutils.go",
+  "level_test.go",
+  "logrus_test.go",
+  "writer_test.go"
+]

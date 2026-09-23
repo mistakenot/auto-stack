@@ -1,0 +1,6 @@
+# The primary `reward` Harbor reads is F1. Precision and recall are reported as
+# their own dimensions for diagnosis but carry no weight in `reward`.
+[[reward]]
+name = "reward"
+aggregation = "weighted-sum"
+weights = { f1 = 1.0, precision = 0.0, recall = 0.0 }
