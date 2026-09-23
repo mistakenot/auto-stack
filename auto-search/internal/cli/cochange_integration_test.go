@@ -107,7 +107,7 @@ func TestQuickstartCoChangeSection(t *testing.T) {
 	// Isolate the co-change section: from its heading to the next "## " heading
 	// or end of doc. AC-13 scopes the --limit prohibition to this section, while
 	// --limit is still a valid flag advertised for other commands (search, stats).
-	const heading = "### 9. Find files that change together (co-change)"
+	const heading = "### 10. Find files that change together (co-change)"
 	_, rest, found := strings.Cut(stdout, heading)
 	if !found {
 		t.Fatalf("quickstart missing co-change section heading %q\noutput:\n%s", heading, stdout)
@@ -553,5 +553,41 @@ func TestCoChangeCLI_HotFile_TextVsJSONSize(t *testing.T) {
 	}
 	if textRunes := utf8.RuneCountInString(textOut); textRunes > len(jsonOut)/4 {
 		t.Errorf("text is %d runes, want <= json/4 = %d", textRunes, len(jsonOut)/4)
+	}
+}
+
+// The quickstart must place `session outline` on the disclosure ladder and
+// spell out its flags — it is the rung an agent reaches for when it needs the
+// shape of a session rather than its text.
+func TestQuickstartSessionOutlineSection(t *testing.T) {
+	stdout, stderr, code := runCLI(t, "quickstart")
+	if code != 0 {
+		t.Fatalf("quickstart failed: code=%d stderr=%s", code, stderr)
+	}
+
+	const heading = "### 4. Map a session before reading it (outline)"
+	_, rest, found := strings.Cut(stdout, heading)
+	if !found {
+		t.Fatalf("quickstart missing session outline section heading %q\noutput:\n%s", heading, stdout)
+	}
+	section := rest
+	if before, _, ok := strings.Cut(rest, "\n### "); ok {
+		section = before
+	}
+
+	for _, want := range []string{
+		"auto search session outline <session_id>",
+		"--depth",
+		"--expand",
+		"--text",
+		"#s",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("quickstart outline section should contain %q\nsection:\n%s", want, section)
+		}
+	}
+	// The recovery use case is why the rung exists; keep it documented.
+	if !strings.Contains(strings.ToLower(section), "dead worker") {
+		t.Errorf("quickstart outline section should describe the crashed-worker recovery case\nsection:\n%s", section)
 	}
 }
