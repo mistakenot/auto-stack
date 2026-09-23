@@ -14,6 +14,17 @@ What are the current bottlenecks?
 - Agents probably spend a lot of time down, waiting for things to do
 - Do we have enough tmux worker instances? how to create/kill them automatically?
 
+## Host health — 2026-09-11 slow-machine incident
+
+Cross-cutting notes from diagnosing why this host was slow. Root disk hit 100% and
+the disk was pegged at 80% util by a single reader.
+
+- [ ] ai-economy: `server/data/economy.db` grew to 65 GB (+2.4 GB WAL) and filled the root disk (301 GB, 653 MB free). Deleted on 2026-09-11. `game_events` is an unbounded event log with a JSON `payload` column — needs retention/pruning (drop or archive old ticks) and probably an `auto_vacuum` / periodic `VACUUM`.
+- [ ] ai-economy: a Claude session's background monitor loop (`while true; bun -e ... COUNT(*) FROM game_events WHERE player_id=? AND type=?; sleep 20`) scanned most of the 65 GB file per iteration (13 min, ~125 MB/s, 4 players × full walk of the `type` index + rowid lookups). Only `(player_id,tick)` and `(type,tick)` indexes exist. Fix: add a composite index `(player_id,type)` or use `EXISTS ... LIMIT 1` / one `GROUP BY` query, and run `ANALYZE` so the planner has stats.
+- [ ] Guard rail: agent-authored polling loops against on-disk DBs should have a per-iteration cost/time budget. A `while true` loop that never finishes an iteration will never `sleep`, so the poll interval is meaningless. Consider a rule for the playbook / reflect.
+- [ ] Host hygiene: swap is 21 GB of 24 GB used after 65 days uptime — 35 idle `claude` procs, 129 `chrome`, 10 `agent-browser` instances (one holding 1.9 GB in swap). Need a reaper for stale agent-browser/chrome trees and finished claude sessions (auto watch / status-report candidate).
+- [ ] Add a "host health" check to `auto doctor` / status-report: disk % free, swap used, top disk reader, PSI io `full` avg60 — the four numbers that found this in one pass.
+
 ## Session quality scoring (cross-tool)
 
 - [ ] Calculate a quality score per coding session based on ETL + search data

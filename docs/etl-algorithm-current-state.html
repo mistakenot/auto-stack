@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>auto-etl: sessions → parquet, as it works today</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+  <style>
+    .lane { transition: all .45s cubic-bezier(.4,0,.2,1); }
+    .dot { width:7px; height:7px; border-radius:2px; display:inline-block; margin:1px;
+           transition: all .5s cubic-bezier(.4,0,.2,1); }
+    .dot-live   { background:#3b82f6; }
+    .dot-saved  { background:#10b981; }
+    .dot-lost   { background:#ef4444; opacity:.85; }
+    .dot-ghost  { background:#94a3b8; opacity:.25; }
+    .day-col { transition: all .4s ease; border-radius:.5rem; }
+    .day-now { box-shadow: 0 0 0 2px #3b82f6; }
+    .frozen  { position:relative; }
+    .frozen::after { content:"FROZEN"; position:absolute; inset:0; display:flex;
+      align-items:center; justify-content:center; font:700 11px ui-monospace,monospace;
+      letter-spacing:.12em; color:#ef4444; background:repeating-linear-gradient(45deg,
+      rgba(239,68,68,.10) 0 8px, rgba(239,68,68,.02) 8px 16px); border-radius:.5rem; }
+    .pulse-run { animation: runflash .7s ease; }
+    @keyframes runflash { 0%{background:#fbbf24} 100%{background:transparent} }
+    .bounce-off { animation: bounceoff .8s cubic-bezier(.4,0,.2,1); }
+    @keyframes bounceoff { 0%{transform:translateY(0)} 40%{transform:translateY(14px)}
+      100%{transform:translateY(-26px); opacity:0} }
+    .bar { transition: width .9s cubic-bezier(.4,0,.2,1); }
+    .flowdot { animation: flow 2.4s linear infinite; }
+    @keyframes flow { from{ transform:translateX(0); opacity:0 } 10%{opacity:1}
+      90%{opacity:1} to{ transform:translateX(var(--dx)); opacity:0 } }
+    .stage-box { transition: all .3s ease; }
+  </style>
+</head>
+<body>
+<pd-doc title="auto-etl: sessions → parquet, as it works today" status="draft" generated="2026-09-10">
+
+<!-- ═══════════════════════════ TAB 1 ═══════════════════════════ -->
+<pd-tab name="Pipeline">
+
+  <pd-section id="what-runs" title="What `auto etl run` does today">
+    <pd-mermaid caption="The sessions path. Four phases; only the last one has state.">
+flowchart LR
+  RAW["~/.claude/projects<br/>2,978 .jsonl files<br/>1.3 GB"]
+  P["parse<br/>ScanAndParse"]
+  T["transform<br/>Transform"]
+  W["write<br/>writer.Write"]
+  M[("messages/<br/>year=/week=")]
+  S[("sessions/<br/>year=/month=")]
+  RAW --> P --> T --> W
+  W --> M
+  W --> S
+  M --> DS["auto search<br/>auto reflect<br/>auto ui"]
+  S --> DS
+    </pd-mermaid>
+    <md><script type="text/plain">
+No sync state, no watermark, no mtime check anywhere in this path. Every run
+re-reads and re-transforms the entire corpus. The only state that exists is
+"does the output file already exist?" — consulted in the last phase.
+
+The other three ETL sources (`git`, `github`, `hooks`) each keep a real cursor.
+Sessions is the odd one out.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="throughput" title="Where the work goes">
+    <md><script type="text/plain">
+Measured on the real corpus with `--debug`. Press play.
+    </script></md>
+
+    <div class="my-4 rounded-xl border border-slate-300/50 p-4">
+      <div class="flex items-center gap-3 mb-4">
+        <button id="tp-play" class="px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm font-medium">▶ Run the pipeline</button>
+        <span id="tp-status" class="text-sm opacity-70 font-mono">idle</span>
+      </div>
+
+      <div class="grid grid-cols-4 gap-2 items-stretch">
+        <div id="st-parse" class="stage-box rounded-lg border border-slate-300/50 p-3">
+          <div class="text-[11px] uppercase tracking-wider opacity-60">parse</div>
+          <div class="text-2xl font-bold font-mono" id="n-parse">0</div>
+          <div class="text-[11px] opacity-60">sessions read</div>
+          <div class="text-[11px] font-mono mt-2 opacity-50" id="t-parse">—</div>
+        </div>
+        <div id="st-tf" class="stage-box rounded-lg border border-slate-300/50 p-3">
+          <div class="text-[11px] uppercase tracking-wider opacity-60">transform</div>
+          <div class="text-2xl font-bold font-mono" id="n-tf">0</div>
+          <div class="text-[11px] opacity-60">messages built</div>
+          <div class="text-[11px] font-mono mt-2 opacity-50" id="t-tf">—</div>
+        </div>
+        <div id="st-w" class="stage-box rounded-lg border border-slate-300/50 p-3">
+          <div class="text-[11px] uppercase tracking-wider opacity-60">write</div>
+          <div class="text-2xl font-bold font-mono text-emerald-600" id="n-w">0</div>
+          <div class="text-[11px] opacity-60">rows persisted</div>
+          <div class="text-[11px] font-mono mt-2 opacity-50" id="t-w">—</div>
+        </div>
+        <div id="st-drop" class="stage-box rounded-lg border border-red-400/50 p-3">
+          <div class="text-[11px] uppercase tracking-wider text-red-600">discarded</div>
+          <div class="text-2xl font-bold font-mono text-red-600" id="n-drop">0</div>
+          <div class="text-[11px] opacity-60">silently, exit 0</div>
+          <div class="text-[11px] font-mono mt-2 opacity-50">no counter exists</div>
+        </div>
+      </div>
+
+      <div class="mt-4 h-3 rounded-full overflow-hidden bg-slate-200/40 flex">
+        <div id="bar-kept" class="bar bg-emerald-500 h-full" style="width:0%"></div>
+        <div id="bar-drop" class="bar bg-red-500 h-full" style="width:0%"></div>
+      </div>
+      <div class="mt-2 text-xs font-mono opacity-70" id="tp-caption">&nbsp;</div>
+    </div>
+
+    <md><script type="text/plain">
+286,342 of the 289,314 transformed Messages hit the floor on this run. Most were
+already on disk from earlier runs — but as the next tab shows, tens of thousands
+were not, and never will be.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="the-code" title="The write decision, in full">
+    <pd-code lang="go" path="auto-etl/internal/writer/writer.go" lines highlight="1,7-9" caption="Every run re-derives this from the wall clock.">
+<script type="text/plain">
+now := time.Now()
+curYear, curWeek := now.ISOWeek()
+
+for key, msgs := range groupMessagesByWeek(rows.Messages) {
+    isCurrent := key.Year == curYear && key.Week == curWeek
+    path := filepath.Join(outputDir, "messages",
+        fmt.Sprintf("year=%d", key.Year), fmt.Sprintf("week=%02d", key.Week))
+
+    if !isCurrent && fileExists(path) {
+        continue                 // ← no error, no counter, no log line
+    }
+    writeParquet(path, msgs)     // ← os.Create on the live path
+}
+</script>
+    </pd-code>
+    <md><script type="text/plain">
+The stated intent, from the doc comment three lines above:
+
+> *Current period is always regenerated. Past periods are skipped if file exists.*
+
+It is an optimisation resting on one assumption — **the past does not change.**
+True of the calendar. Not true of an input file another process is still
+appending to.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="tables" title="The two tables">
+    <pd-api kind="schema" name="messages" lang="go" path="auto-shared/model/schema.go" caption="Partitioned year=YYYY/week=WW — one parquet file per ISO week.">
+      <pd-member kind="field" sig="id string">`{session_id}-{index}` — deterministic, stable under append.</pd-member>
+      <pd-member kind="field" sig="session_id string">Owning Session.</pd-member>
+      <pd-member kind="field" sig="timestamp int64">Unix ms. <strong>Decides the partition.</strong></pd-member>
+      <pd-member kind="field" sig="year int32, week int32">Derived from timestamp; the partition key.</pd-member>
+      <pd-member kind="field" sig="role, content, tool_name, tool_use_id, …">Normalised payload.</pd-member>
+    </pd-api>
+    <pd-api kind="schema" name="sessions" lang="go" path="auto-shared/model/schema.go" caption="Partitioned year=YYYY/month=MM — a DIFFERENT granularity to messages.">
+      <pd-member kind="field" sig="id string">Session identity.</pd-member>
+      <pd-member kind="field" sig="year int32, month int32">Monthly partition key.</pd-member>
+      <pd-member kind="field" sig="first_message_at, last_message_at int64">Span.</pd-member>
+      <pd-member kind="field" sig="transcript_full, transcript_truncated string">Rendered transcript.</pd-member>
+    </pd-api>
+    <md><script type="text/plain">
+The granularity mismatch matters. A Session running Sunday night into Monday has
+its Messages split across **two weekly** partitions while its Session row sits in
+**one monthly** partition. Freeze the Sunday week and you get a Session that
+survives intact with a hole punched through the middle of its Messages — and a
+`message_count` that no longer matches reality.
+    </script></md>
+  </pd-section>
+</pd-tab>
+
+<!-- ═══════════════════════════ TAB 2 ═══════════════════════════ -->
+<pd-tab name="The Freeze">
+
+  <pd-section id="player" title="Week 24, replayed">
+    <md><script type="text/plain">
+The real numbers: week 24 (Mon 8 – Sun 14 June) holds **40,644** Messages in the
+raw input. The partition on disk holds **7,823**. Its mtime is **Tue 9 June, 11:30**.
+
+Play it through.
+    </script></md>
+
+    <div class="my-4 rounded-xl border border-slate-300/50 p-4">
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <button id="pl-play"  class="px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm font-medium">▶ Play</button>
+        <button id="pl-step"  class="px-3 py-1.5 rounded-md border border-slate-400/60 text-sm">Step ›</button>
+        <button id="pl-reset" class="px-3 py-1.5 rounded-md border border-slate-400/60 text-sm">↺ Reset</button>
+        <span class="ml-auto text-xs font-mono opacity-60" id="pl-clock">— — —</span>
+      </div>
+
+      <div class="text-[11px] uppercase tracking-wider opacity-60 mb-1">raw input · ~/.claude/projects</div>
+      <div id="lane-raw" class="lane grid grid-cols-8 gap-1 mb-1"></div>
+
+      <div id="lane-runs" class="grid grid-cols-8 gap-1 mb-1 h-7"></div>
+
+      <div class="text-[11px] uppercase tracking-wider opacity-60 mb-1">parquet · messages/year=2026/week=24</div>
+      <div id="lane-part" class="lane rounded-lg border border-slate-300/50 p-2 min-h-[56px]"></div>
+
+      <div class="mt-4 grid grid-cols-3 gap-2">
+        <div class="rounded-lg border border-emerald-500/40 p-2">
+          <div class="text-[11px] uppercase tracking-wider text-emerald-600">captured</div>
+          <div class="text-xl font-bold font-mono text-emerald-600" id="pl-kept">0</div>
+        </div>
+        <div class="rounded-lg border border-red-500/40 p-2">
+          <div class="text-[11px] uppercase tracking-wider text-red-600">discarded</div>
+          <div class="text-xl font-bold font-mono text-red-600" id="pl-lost">0</div>
+        </div>
+        <div class="rounded-lg border border-slate-300/50 p-2">
+          <div class="text-[11px] uppercase tracking-wider opacity-60">etl runs</div>
+          <div class="text-xl font-bold font-mono" id="pl-runs">0</div>
+        </div>
+      </div>
+
+      <div id="pl-narr" class="mt-3 rounded-lg bg-slate-500/10 p-3 text-sm min-h-[62px]">
+        Press play. Blue = Messages sitting in the raw input. Green = persisted. Red = gone.
+      </div>
+    </div>
+  </pd-section>
+
+  <pd-section id="gate" title="The gate, evaluated">
+    <md><script type="text/plain">
+Every run, for every partition, exactly two questions. Click a scenario.
+    </script></md>
+
+    <div class="my-4 rounded-xl border border-slate-300/50 p-4">
+      <div class="flex flex-wrap gap-2 mb-4" id="gate-btns">
+        <button data-s="0" class="gs px-3 py-1.5 rounded-md border border-slate-400/60 text-sm">Append, same week</button>
+        <button data-s="1" class="gs px-3 py-1.5 rounded-md border border-slate-400/60 text-sm">Append, week rolled over</button>
+        <button data-s="2" class="gs px-3 py-1.5 rounded-md border border-slate-400/60 text-sm">Brand-new file, old week</button>
+        <button data-s="3" class="gs px-3 py-1.5 rounded-md border border-slate-400/60 text-sm">Old week, never processed</button>
+      </div>
+      <div class="grid md:grid-cols-2 gap-3">
+        <div id="g-q1" class="rounded-lg border-2 border-slate-300/50 p-3">
+          <div class="text-[11px] font-mono opacity-60">key.Week == curWeek ?</div>
+          <div class="text-lg font-bold font-mono mt-1" id="g-a1">—</div>
+        </div>
+        <div id="g-q2" class="rounded-lg border-2 border-slate-300/50 p-3">
+          <div class="text-[11px] font-mono opacity-60">fileExists(path) ?</div>
+          <div class="text-lg font-bold font-mono mt-1" id="g-a2">—</div>
+        </div>
+      </div>
+      <div id="g-out" class="mt-3 rounded-lg p-3 text-center font-bold font-mono text-lg border-2 border-slate-300/50">—</div>
+      <div id="g-note" class="mt-2 text-sm opacity-75 min-h-[40px]"></div>
+    </div>
+
+    <md><script type="text/plain">
+Note what is **absent** from the gate: any notion of which input files were seen,
+whether they changed, or whether the partition's data is complete. The writer
+never looks at the input at all — only at a timestamp and at what is already on disk.
+
+So the trigger is not "this file was already processed". It is: **the Message's
+week is closed and its partition file exists.** An append and a first-ever sighting
+are treated identically.
+    </script></md>
+  </pd-section>
+</pd-tab>
+
+<!-- ═══════════════════════════ TAB 3 ═══════════════════════════ -->
+<pd-tab name="Evidence">
+
+  <pd-section id="chart" title="Every partition, measured">
+    <md><script type="text/plain">
+Parse + transform the real corpus, then compare expected rows per partition
+against the parquet actually on disk.
+    </script></md>
+    <div class="my-4 rounded-xl border border-slate-300/50 p-4">
+      <button id="ch-play" class="px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm font-medium mb-4">▶ Reveal</button>
+      <div id="chart-rows" class="space-y-[3px] font-mono text-[11px]"></div>
+      <div class="mt-4 pt-3 border-t border-slate-300/40 flex gap-6 text-sm font-mono">
+        <span>expected <strong>289,349</strong></span>
+        <span class="text-red-600">missing <strong>51,625</strong></span>
+        <span class="opacity-60">17.8%</span>
+      </div>
+    </div>
+  </pd-section>
+
+  <pd-section id="inversion" title="The signature: when the last run happened decides everything">
+    <md><script type="text/plain">
+The size of a week's hole is exactly *how much activity happened after that week's
+last ETL run but before the week ended*. Ordered by freeze point:
+    </script></md>
+    <div class="my-4 overflow-x-auto">
+      <table class="w-full text-sm font-mono border-collapse">
+        <thead><tr class="text-left border-b border-slate-400/40">
+          <th class="py-2 pr-4">week</th><th class="pr-4">partition written</th>
+          <th class="pr-4">position in week</th><th class="pr-4 text-right">lost</th>
+        </tr></thead>
+        <tbody>
+          <tr class="border-b border-slate-300/20"><td class="py-1.5 pr-4">24</td><td class="pr-4">Tue 9 Jun 11:30</td><td class="pr-4">day 2 of 7</td><td class="pr-4 text-right text-red-600 font-bold">81%</td></tr>
+          <tr class="border-b border-slate-300/20"><td class="py-1.5 pr-4">32</td><td class="pr-4">Thu 6 Aug 10:21</td><td class="pr-4">day 4 of 7</td><td class="pr-4 text-right text-red-600 font-bold">59%</td></tr>
+          <tr class="border-b border-slate-300/20"><td class="py-1.5 pr-4">26</td><td class="pr-4">Sat 27 Jun 22:52</td><td class="pr-4">day 6 of 7</td><td class="pr-4 text-right text-red-600">29%</td></tr>
+          <tr class="border-b border-slate-300/20"><td class="py-1.5 pr-4">27</td><td class="pr-4">Sat 4 Jul 12:03</td><td class="pr-4">day 6 of 7</td><td class="pr-4 text-right">1%</td></tr>
+          <tr class="border-b border-slate-300/20"><td class="py-1.5 pr-4">36</td><td class="pr-4">Sun 6 Sep 23:51</td><td class="pr-4">9 min before rollover</td><td class="pr-4 text-right">2 rows</td></tr>
+          <tr class="border-b border-slate-300/20 bg-emerald-500/10"><td class="py-1.5 pr-4">25</td><td class="pr-4">Sat 27 Jun 14:49</td><td class="pr-4"><em>after the week ended</em></td><td class="pr-4 text-right text-emerald-600 font-bold">0</td></tr>
+          <tr class="bg-emerald-500/10"><td class="py-1.5 pr-4">33</td><td class="pr-4">Mon 24 Aug 20:50</td><td class="pr-4"><em>after the week ended</em></td><td class="pr-4 text-right text-emerald-600 font-bold">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <md><script type="text/plain">
+Those last two rows are the proof of mechanism, and they invert the intuition:
+
+> **A week the ETL never touched is perfect. A week it processed on Tuesday and
+> then left alone loses Wednesday through Sunday.**
+
+No run during the window means no file exists, means no skip fires, means the
+first run afterwards captures everything. Running the pipeline *during* a week is
+what damages that week.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="repro" title="Reproduce it">
+    <pd-cli title="zsh — measuring the gap" caption="Parse + transform the live corpus, diff against what is on disk.">
+      <pd-cmd note="what the pipeline costs per run">auto etl run --only sessions --debug</pd-cmd>
+      <pd-out><script type="text/plain">parsed 2972 sessions
+transformed: 289314 messages, 2956 sessions
+wrote .../messages/year=2026/week=37/messages.parquet (2972 rows)
+wrote .../sessions/year=2026/month=09/sessions.parquet (63 rows)
+[debug] parse: 21.3s   transform: 7.1s   write: 4.8s   total: 33.2s</script></pd-out>
+      <pd-cmd note="when was each partition frozen?">stat -c '%y %n' ~/.auto/etl/output/messages/year=2026/week=2[4-7]/*.parquet</pd-cmd>
+      <pd-out><script type="text/plain">2026-06-09 11:30  week=24/messages.parquet   ← day 2 of a 7-day week
+2026-06-27 14:49  week=25/messages.parquet   ← after week 25 ended
+2026-06-27 22:52  week=26/messages.parquet
+2026-07-04 12:03  week=27/messages.parquet</script></pd-out>
+      <pd-cmd note="does the fixture-backed suite actually run?">git clone --depth 1 . /tmp/ci && cd /tmp/ci/auto-etl && go test -run TestE2E -v .</pd-cmd>
+      <pd-out><script type="text/plain">23 of 25 tests SKIP  (fixture lives at .tmp/, gitignored)
+ok  github.com/mistakenot/auto-etl</script></pd-out>
+    </pd-cli>
+  </pd-section>
+</pd-tab>
+
+<!-- ═══════════════════════════ TAB 4 ═══════════════════════════ -->
+<pd-tab name="Contrast">
+
+  <pd-section id="four-writers" title="Three of the four writers already do this correctly">
+    <md><script type="text/plain">
+The canonical Session/Message path is the only one that skips. Click each.
+    </script></md>
+
+    <div class="my-4 rounded-xl border border-slate-300/50 p-4">
+      <div class="flex flex-wrap gap-2 mb-4">
+        <button data-w="0" class="ws px-3 py-1.5 rounded-md border border-red-400/60 text-sm">messages / sessions</button>
+        <button data-w="1" class="ws px-3 py-1.5 rounded-md border border-slate-400/60 text-sm">git</button>
+        <button data-w="2" class="ws px-3 py-1.5 rounded-md border border-slate-400/60 text-sm">github</button>
+        <button data-w="3" class="ws px-3 py-1.5 rounded-md border border-slate-400/60 text-sm">hooks</button>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-3 items-center">
+        <div class="rounded-lg border border-slate-300/50 p-3">
+          <div class="text-[11px] uppercase tracking-wider opacity-60 mb-2">already on disk</div>
+          <div id="w-existing" class="min-h-[52px]"></div>
+        </div>
+        <div class="text-center">
+          <div id="w-op" class="text-sm font-mono font-bold py-2 rounded-md">—</div>
+          <div id="w-arrow" class="text-2xl">↓</div>
+        </div>
+        <div class="rounded-lg border border-slate-300/50 p-3">
+          <div class="text-[11px] uppercase tracking-wider opacity-60 mb-2">incoming this run</div>
+          <div id="w-incoming" class="min-h-[52px]"></div>
+        </div>
+      </div>
+
+      <div class="mt-3 rounded-lg border-2 border-slate-300/50 p-3">
+        <div class="text-[11px] uppercase tracking-wider opacity-60 mb-2">result</div>
+        <div id="w-result" class="min-h-[52px]"></div>
+      </div>
+      <div id="w-note" class="mt-3 text-sm opacity-80 min-h-[54px]"></div>
+    </div>
+
+    <pd-code lang="go" path="auto-etl/internal/writer/git.go" caption="The pattern that already exists in the repo — used by git, github and hooks, but not by messages.">
+<script type="text/plain">
+existing, err := readExistingParquet[model.Commit](path)
+if err != nil { log.Printf("warning: could not read existing %s: %v (overwriting)", path, err) }
+merged := mergeByID(existing, commits, func(c *model.Commit) string { return c.ID })
+writeParquet(path, merged)
+</script>
+    </pd-code>
+  </pd-section>
+
+  <pd-section id="silent-drops" title="A second, independent discard channel">
+    <md><script type="text/plain">
+The partition freeze is not the only place data leaves without a trace. The
+transform's content-block dispatch ends in a bare `continue`:
+    </script></md>
+    <pd-code lang="go" path="auto-etl/internal/transform/transform.go" highlight="7-8" caption="Any block type Claude introduces tomorrow is discarded with no counter.">
+<script type="text/plain">
+switch block.Type {
+case "text":              // …
+case "tool_use":          // …
+case "tool_result":       // …
+case "thinking":          // …
+case "redacted_thinking": // …
+default:
+    continue
+}
+</script>
+    </pd-code>
+    <md><script type="text/plain">
+Profiling the live corpus with `genstats` — which deliberately imports no ETL
+packages and filters nothing — shows what actually arrives:
+
+**23 distinct line types** in the raw data. The transform processes **3**
+(`user`, `assistant`, `system`; `transform.go:198`). The hand-written schema
+reference documents **7**.
+
+    assistant 178330   user 111818   attachment 21595   progress 18549
+    last-prompt 11293  mode 9973     file-history-snapshot 8759  system 7506
+    ai-title 6541      custom-title 4815  permission-mode 3209  queue-operation 2865
+    agent-name 2356    atis-latch 1704    bridge-session 1431   pr-link 1271
+    started 528        result 518         file-history-delta 311  worktree-state 209
+    cost-state 28      agent-setting 7    fork-context-ref 1
+
+`fork-context-ref` occurs **once** in 393,626 lines — a brand-new Claude Code
+line type landing in the corpus right now. At the block level, `document` and
+`image` blocks are present and fall straight through the `default: continue`.
+
+Three incompatible beliefs about the format — the doc says 7, the code says 3,
+reality says 23 — and no artifact reconciles them.
+    </script></md>
+  </pd-section>
+
+  <pd-section id="why-invisible" title="Why none of this surfaced">
+    <pd-mermaid caption="Six links. Breaking any one catches it.">
+flowchart TB
+  A["Assumption:<br/>'the past does not change'"] --> B["Encoded as a silent skip<br/>no error · no counter · exit 0"]
+  B --> C["E2E suite runs once,<br/>into a FRESH temp dir<br/>→ fileExists is never true"]
+  C --> D["Idempotency test re-runs<br/>the IDENTICAL corpus<br/>→ nothing new to drop"]
+  D --> E["Fixture is gitignored<br/>→ 23/25 tests SKIP on CI<br/>→ package still reports ok"]
+  E --> F["Diagnosed correctly in<br/>pipeline-integrity-research.md<br/>'not yet translated into requirements'"]
+  F --> G["Fixed correctly in internal/merge<br/>merged 30 Jun · imported by nothing"]
+    </pd-mermaid>
+    <md><script type="text/plain">
+**2026-04-06** the skip ships. **2026-06-02** a research doc names the defect
+verbatim — *"Past session/message partitions are skipped if the file exists — no
+merge path for historical data"* — and parks it. **2026-06-30** PR #50 lands a
+Quint-verified CRDT merge package plus 20 ITF conformance traces; `grep -rn
+'internal/merge'` outside that package returns nothing. **2026-09-10** it is
+found by accident.
+
+The repository was never short of technique. Every link in the chain was a place
+where a correct artifact failed to connect to the next one.
+    </script></md>
+  </pd-section>
+</pd-tab>
+
+</pd-doc>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const fmt = n => n.toLocaleString('en-US');
+
+  /* ── Tab 1: throughput ─────────────────────────────── */
+  const TP = [
+    {el:'n-parse', to:2972,   t:'t-parse', tv:'21.3s', s:'parsing 2,978 files (1.3 GB)…'},
+    {el:'n-tf',    to:289314, t:'t-tf',    tv:'7.1s',  s:'transforming every Message, every run…'},
+    {el:'n-w',     to:2972,   t:'t-w',     tv:'4.8s',  s:'writing… 2 partitions touched'}
+  ];
+  function count(el, to, ms, done){
+    const st=performance.now();
+    (function f(now){
+      const k=Math.min(1,(now-st)/ms);
+      el.textContent=fmt(Math.round(to*(1-Math.pow(1-k,3))));
+      k<1 ? requestAnimationFrame(f) : done&&done();
+    })(st);
+  }
+  let tpBusy=false;
+  $('tp-play') && $('tp-play').addEventListener('click', ()=>{
+    if(tpBusy) return; tpBusy=true;
+    ['n-parse','n-tf','n-w','n-drop'].forEach(i=>$(i).textContent='0');
+    ['t-parse','t-tf','t-w'].forEach(i=>$(i).textContent='—');
+    $('bar-kept').style.width='0%'; $('bar-drop').style.width='0%';
+    $('tp-caption').innerHTML='&nbsp;';
+    let i=0;
+    (function step(){
+      if(i>=TP.length){
+        $('tp-status').textContent='done · total 33.2s';
+        count($('n-drop'), 286342, 900);
+        $('bar-kept').style.width='1%'; $('bar-drop').style.width='99%';
+        $('tp-caption').textContent='2,972 of 289,314 rows persisted — the rest silently skipped.';
+        tpBusy=false; return;
+      }
+      const s=TP[i++];
+      $('tp-status').textContent=s.s;
+      count($(s.el), s.to, 900, ()=>{ $(s.t).textContent=s.tv; setTimeout(step,180); });
+    })();
+  });
+
+  /* ── Tab 2: week-24 player ─────────────────────────── */
+  const DAYS=['Mon 8','Tue 9','Wed 10','Thu 11','Fri 12','Sat 13','Sun 14','wk25'];
+  const ARR =[   34,     44,     78,      95,      70,      52,      45,     0 ]; // dots/day
+  const KEPT=7823, LOST=32821;
+  const STEPS=[
+    {d:0, txt:"<b>Mon.</b> Work happens. Messages land in <code>~/.claude/projects</code>. Nothing has run yet — no partition file exists."},
+    {d:1, txt:"<b>Tue morning.</b> More Messages."},
+    {run:1, d:1, txt:"<b>Tue 11:30 — ETL runs.</b> Week 24 <em>is</em> the current week, so <code>isCurrent</code> is true and the partition is regenerated. <b>7,823 rows written.</b> Correct behaviour."},
+    {d:2, txt:"<b>Wed.</b> Work continues. These Messages sit in the raw input, unprocessed."},
+    {d:3, txt:"<b>Thu.</b> More."},
+    {d:4, txt:"<b>Fri.</b> More. No ETL run has happened since Tuesday."},
+    {d:5, txt:"<b>Sat.</b> More."},
+    {d:6, txt:"<b>Sun.</b> More. 32,821 Messages now sit in the input, all timestamped inside week 24, none of them in the parquet."},
+    {roll:1, txt:"<b>Midnight Sunday.</b> The ISO week rolls over. Nothing happened to the data — but <code>time.Now().ISOWeek()</code> now returns 25, and week 24 has become <em>the past</em>."},
+    {run:1, skip:1, txt:"<b>Next ETL run.</b> Week 24: <code>isCurrent = false</code>. <code>fileExists = true</code>. → <code>continue</code>. The 32,821 Messages are parsed, transformed, and dropped at the final step. <b>No error. Exit 0.</b>"},
+    {many:1, txt:"<b>And again.</b> The same decision is re-made identically on every subsequent run — ~200 of them over three months. The data is read and discarded every single time. Only <code>--full</code>, which deletes the file, would recover it."}
+  ];
+  let cur=-1, kept=0, lost=0, runs=0, playing=null;
+
+  function build(){
+    const raw=$('lane-raw'), runsL=$('lane-runs'), part=$('lane-part');
+    if(!raw) return;
+    raw.innerHTML=''; runsL.innerHTML=''; part.innerHTML='';
+    DAYS.forEach((d,i)=>{
+      const c=document.createElement('div');
+      c.className='day-col p-1.5 border border-slate-300/30';
+      c.id='day-'+i;
+      c.innerHTML='<div class="text-[10px] font-mono opacity-50 mb-1">'+d+'</div><div id="dots-'+i+'"></div>';
+      raw.appendChild(c);
+      const r=document.createElement('div'); r.id='run-'+i; r.className='text-center'; runsL.appendChild(r);
+    });
+    part.innerHTML='<span class="text-xs opacity-40 font-mono">(no file on disk)</span>';
+  }
+  function render(){
+    $('pl-kept').textContent=fmt(kept);
+    $('pl-lost').textContent=fmt(lost);
+    $('pl-runs').textContent=runs;
+  }
+  function reset(){
+    cur=-1; kept=0; lost=0; runs=0; build(); render();
+    $('pl-clock').textContent='— — —';
+    $('pl-narr').innerHTML='Press play. Blue = Messages sitting in the raw input. Green = persisted. Red = gone.';
+    $('lane-part').classList.remove('frozen');
+    if(playing){clearInterval(playing); playing=null; $('pl-play').textContent='▶ Play';}
+  }
+  function dots(n,cls){ let s=''; for(let i=0;i<n;i++) s+='<span class="dot '+cls+'"></span>'; return s; }
+
+  function step(){
+    if(cur>=STEPS.length-1) return false;
+    const s=STEPS[++cur];
+    $('pl-narr').innerHTML=s.txt;
+
+    if(s.d!==undefined){
+      $('dots-'+s.d).innerHTML=dots(ARR[s.d],'dot-live');
+      document.querySelectorAll('.day-col').forEach(e=>e.classList.remove('day-now'));
+      $('day-'+s.d).classList.add('day-now');
+      $('pl-clock').textContent='week 24 · '+DAYS[s.d];
+    }
+    if(s.roll){
+      $('pl-clock').textContent='⏰ week 25 begins';
+      document.querySelectorAll('.day-col').forEach(e=>e.classList.remove('day-now'));
+      $('lane-part').classList.add('frozen');
+    }
+    if(s.run){
+      runs++;
+      const col=s.skip?7:1;
+      const m=$('run-'+col);
+      m.innerHTML='<span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono font-bold '+
+        (s.skip?'bg-red-500 text-white':'bg-amber-400 text-black')+'">'+(s.skip?'SKIP':'RUN')+'</span>';
+      m.classList.add('pulse-run');
+      if(!s.skip){
+        kept=KEPT;
+        $('lane-part').innerHTML='<div class="text-[10px] font-mono opacity-60 mb-1">week=24/messages.parquet · 7,823 rows · written Tue 11:30</div>'+dots(ARR[0]+ARR[1],'dot-saved');
+      } else {
+        lost=LOST;
+        for(let i=2;i<=6;i++){
+          const el=$('dots-'+i);
+          el.innerHTML=dots(ARR[i],'dot-lost');
+          el.classList.add('bounce-off');
+        }
+        setTimeout(()=>{ for(let i=2;i<=6;i++) $('dots-'+i).innerHTML=dots(ARR[i],'dot-ghost'); },800);
+      }
+    }
+    if(s.many){
+      runs=200;
+      $('pl-clock').textContent='… 3 months later';
+      for(let i=2;i<=6;i++) $('dots-'+i).innerHTML=dots(ARR[i],'dot-ghost');
+    }
+    render();
+    return true;
+  }
+  if($('pl-step')){
+    build(); render();
+    $('pl-step').addEventListener('click',()=>{ if(!step()) reset(); });
+    $('pl-reset').addEventListener('click', reset);
+    $('pl-play').addEventListener('click',()=>{
+      if(playing){ clearInterval(playing); playing=null; $('pl-play').textContent='▶ Play'; return; }
+      if(cur>=STEPS.length-1) reset();
+      $('pl-play').textContent='❚❚ Pause';
+      playing=setInterval(()=>{ if(!step()){ clearInterval(playing); playing=null; $('pl-play').textContent='↺ Replay'; } }, 2100);
+    });
+  }
+
+  /* ── Tab 2: gate ───────────────────────────────────── */
+  const GATES=[
+    {a1:'true · current week', a2:"(not consulted)", ok:1, out:'WRITE — partition regenerated',
+     n:'The everyday case, and it works. Appending to an already-processed Session is fine as long as the Messages land in the current week. This is why the defect stayed invisible during normal use.'},
+    {a1:'false · week 24 ≠ 25', a2:'true · written Tue 11:30', ok:0, out:'continue — 32,821 rows discarded',
+     n:'Nothing about the data changed at midnight. Only <code>time.Now()</code> moved. The same Messages that were writable at 23:59 are unreachable at 00:01.'},
+    {a1:'false · old week', a2:'true · exists', ok:0, out:'continue — dropped on first sight',
+     n:'A file the ETL has <em>never seen</em> — another Host’s corpus, a restored backup, a second machine. Discarded immediately. There is no "already processed" intuition to warn you.'},
+    {a1:'false · old week', a2:'false · no file', ok:1, out:'WRITE — full partition created',
+     n:'The inverted case. Because no run happened during that week, no file exists, so nothing is skipped and everything lands. Weeks 25 and 33 are complete for exactly this reason.'}
+  ];
+  document.querySelectorAll('.gs').forEach(b=>b.addEventListener('click',()=>{
+    document.querySelectorAll('.gs').forEach(x=>x.classList.remove('bg-blue-600','text-white'));
+    b.classList.add('bg-blue-600','text-white');
+    const g=GATES[+b.dataset.s];
+    $('g-a1').textContent=g.a1; $('g-a2').textContent=g.a2;
+    $('g-out').textContent=g.out; $('g-note').innerHTML=g.n;
+    $('g-out').className='mt-3 rounded-lg p-3 text-center font-bold font-mono text-lg border-2 '+
+      (g.ok?'border-emerald-500 text-emerald-600 bg-emerald-500/10':'border-red-500 text-red-600 bg-red-500/10');
+  }));
+
+  /* ── Tab 3: chart ──────────────────────────────────── */
+  const WK=[[11,16491,0],[12,12046,0],[13,681,0],[14,912,0],[15,5002,0],[16,9185,0],[17,1075,0],
+    [18,727,0],[19,2620,0],[20,1321,0],[21,4560,0],[22,23012,0],[23,13955,0],[24,40644,32821],
+    [25,26968,0],[26,46847,13594],[27,20848,216],[28,2346,0],[29,107,0],[30,361,0],[31,141,0],
+    [32,8469,4957],[33,1284,0],[34,11811,0],[35,16464,0],[36,18465,2],[37,3007,35]];
+  const MAX=Math.max(...WK.map(w=>w[1]));
+  function drawChart(animate){
+    const c=$('chart-rows'); if(!c) return;
+    c.innerHTML='';
+    WK.forEach(([w,exp,miss],i)=>{
+      const keptW=(exp-miss)/MAX*100, lostW=miss/MAX*100;
+      const row=document.createElement('div');
+      row.className='flex items-center gap-2';
+      row.innerHTML=
+        '<span class="w-10 text-right opacity-60">wk '+w+'</span>'+
+        '<div class="flex-1 h-4 flex rounded-sm overflow-hidden bg-slate-500/10">'+
+          '<div class="bar bg-emerald-500 h-full" style="width:0%" data-w="'+keptW+'"></div>'+
+          '<div class="bar bg-red-500 h-full" style="width:0%" data-w="'+lostW+'"></div>'+
+        '</div>'+
+        '<span class="w-16 text-right '+(miss?'text-red-600 font-bold':'opacity-30')+'">'+(miss?'-'+fmt(miss):'✓')+'</span>';
+      c.appendChild(row);
+      const bars=row.querySelectorAll('.bar');
+      const go=()=>bars.forEach(b=>b.style.width=b.dataset.w+'%');
+      animate ? setTimeout(go, i*55) : go();
+    });
+  }
+  drawChart(false);
+  $('ch-play') && $('ch-play').addEventListener('click',()=>drawChart(true));
+
+  /* ── Tab 4: writers ────────────────────────────────── */
+  const WR=[
+    {op:'if !isCurrent && fileExists → continue', bad:1,
+     ex:'<div class="text-[10px] font-mono opacity-50 mb-1">week=24 · 7,823 rows</div>'+dots(18,'dot-saved'),
+     in:'<div class="text-[10px] font-mono opacity-50 mb-1">32,821 new rows</div>'+dots(24,'dot-live'),
+     res:'<div class="text-[10px] font-mono opacity-50 mb-1">unchanged · incoming discarded</div>'+dots(18,'dot-saved')+dots(24,'dot-ghost'),
+     n:'<b>writer.go:33.</b> The existing file is never read. Incoming rows for a closed partition are dropped in full.'},
+    {op:'mergeByID(existing, incoming, id) → union', bad:0,
+     ex:'<div class="text-[10px] font-mono opacity-50 mb-1">commits on disk</div>'+dots(18,'dot-saved'),
+     in:'<div class="text-[10px] font-mono opacity-50 mb-1">new commits</div>'+dots(14,'dot-live'),
+     res:'<div class="text-[10px] font-mono opacity-50 mb-1">read → merge by ID → rewrite</div>'+dots(32,'dot-saved'),
+     n:'<b>git.go:122.</b> Reads the existing partition back, unions by stable ID, rewrites. Late-arriving data lands correctly.'},
+    {op:'mergePRs(existing, incoming) → union', bad:0,
+     ex:'<div class="text-[10px] font-mono opacity-50 mb-1">PRs on disk</div>'+dots(12,'dot-saved'),
+     in:'<div class="text-[10px] font-mono opacity-50 mb-1">refreshed PRs</div>'+dots(10,'dot-live'),
+     res:'<div class="text-[10px] font-mono opacity-50 mb-1">read → merge → rewrite</div>'+dots(22,'dot-saved'),
+     n:'<b>github.go:88.</b> Same shape, plus comment replacement for refreshed PRs.'},
+    {op:'mergeByID(existing, incoming, id) → union', bad:0,
+     ex:'<div class="text-[10px] font-mono opacity-50 mb-1">hook events on disk</div>'+dots(16,'dot-saved'),
+     in:'<div class="text-[10px] font-mono opacity-50 mb-1">new events</div>'+dots(12,'dot-live'),
+     res:'<div class="text-[10px] font-mono opacity-50 mb-1">read → merge → rewrite</div>'+dots(28,'dot-saved'),
+     n:'<b>hooks.go:28.</b> Same pattern again. Three of four write paths get this right; the canonical one does not.'}
+  ];
+  document.querySelectorAll('.ws').forEach(b=>b.addEventListener('click',()=>{
+    document.querySelectorAll('.ws').forEach(x=>x.classList.remove('bg-blue-600','text-white'));
+    b.classList.add('bg-blue-600','text-white');
+    const w=WR[+b.dataset.w];
+    $('w-existing').innerHTML=w.ex; $('w-incoming').innerHTML=w.in;
+    $('w-result').innerHTML=w.res;  $('w-note').innerHTML=w.n;
+    $('w-op').textContent=w.op;
+    $('w-op').className='text-sm font-mono font-bold py-2 rounded-md '+
+      (w.bad?'bg-red-500/15 text-red-600':'bg-emerald-500/15 text-emerald-600');
+    $('w-arrow').textContent=w.bad?'⤫':'↓';
+  }));
+
+  /* default selections */
+  setTimeout(()=>{
+    const g=document.querySelector('.gs[data-s="1"]'); g&&g.click();
+    const w=document.querySelector('.ws[data-w="0"]'); w&&w.click();
+  },120);
+})();
+</script>
+</body>
+</html>
