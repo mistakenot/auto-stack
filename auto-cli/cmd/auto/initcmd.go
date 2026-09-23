@@ -11,8 +11,23 @@ import (
 )
 
 // knownToolDirs are the per-tool subdirectories that may exist under a
-// project's .auto/ folder. Used to record which tools a project uses.
-var knownToolDirs = []string{"doc", "env", "etl", "graph", "reflect", "search", "skill", "ui", "watch"}
+// project's .auto/ folder. Used to record which tools a project uses. Directory
+// names are not always identical to command names; auto skill uses .auto/skills.
+var knownToolDirs = []struct {
+	dir  string
+	tool string
+}{
+	{dir: "doc", tool: "doc"},
+	{dir: "env", tool: "env"},
+	{dir: "etl", tool: "etl"},
+	{dir: "graph", tool: "graph"},
+	{dir: "reflect", tool: "reflect"},
+	{dir: "search", tool: "search"},
+	{dir: "skill", tool: "skill"},
+	{dir: "skills", tool: "skill"},
+	{dir: "ui", tool: "ui"},
+	{dir: "watch", tool: "watch"},
+}
 
 // newInitCmd is the stack-level initializer. `auto init` ensures the host-level
 // config (~/.auto, host.json, the project registry). `auto init --project`
@@ -108,9 +123,14 @@ func newInitCmd() *cobra.Command {
 // <repoRoot>/.auto/<tool>/, recording which tools a project already uses.
 func detectTools(repoRoot string) []string {
 	tools := []string{}
+	seen := map[string]bool{}
 	for _, t := range knownToolDirs {
-		if info, err := os.Stat(filepath.Join(repoRoot, ".auto", t)); err == nil && info.IsDir() {
-			tools = append(tools, t)
+		if info, err := os.Stat(filepath.Join(repoRoot, ".auto", t.dir)); err == nil && info.IsDir() {
+			if seen[t.tool] {
+				continue
+			}
+			tools = append(tools, t.tool)
+			seen[t.tool] = true
 		}
 	}
 	if len(tools) == 0 {

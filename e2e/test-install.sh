@@ -75,6 +75,45 @@ for p in parts:
     fi
 }
 
+assert_command_ok() {
+    local desc="$1"
+    local cmd="$2"
+    local output
+    if output=$(docker exec "$CONTAINER_NAME" bash -c "$cmd" 2>&1); then
+        echo "  OK: $desc"
+    else
+        echo "  FAIL: $desc"
+        echo "$output" | sed 's/^/    /'
+        FAIL=1
+    fi
+}
+
+assert_project_registry() {
+    if docker exec "$CONTAINER_NAME" python3 -c "
+import json
+path = '/root/.auto/projects.json'
+d = json.load(open(path))
+projects = d.get('projects')
+assert isinstance(projects, list), d
+assert len(projects) == 1, projects
+p = projects[0]
+assert p.get('id') == 'testproject', p
+assert p.get('path') == '$PROJECT_DIR', p
+assert p.get('name') == 'Test Project', p
+assert p.get('remote') == 'https://github.com/acme/widgets', p
+tools = p.get('tools')
+assert isinstance(tools, list), p
+assert len(tools) == len(set(tools)), tools
+for want in ['doc', 'env', 'watch', 'skill']:
+    assert want in tools, (want, tools)
+" 2>/dev/null; then
+        echo "  OK: project registry captures initialized project and tools"
+    else
+        echo "  FAIL: project registry missing expected project metadata/tools"
+        FAIL=1
+    fi
+}
+
 echo "=== auto-stack install e2e test ==="
 echo "Image:  $IMAGE"
 
@@ -171,6 +210,7 @@ docker exec "$CONTAINER_NAME" bash -c "
     git init -q &&
     git config user.email 'test@test.com' &&
     git config user.name 'Test' &&
+    git remote add origin 'https://user:github_pat_SECRET@github.com/acme/widgets.git' &&
     touch README.md && git add . && git commit -q -m 'init'
 "
 
@@ -189,6 +229,9 @@ docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/auto watch in
 
 # auto env: project init only (no global state)
 docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/auto env init" 2>&1 | sed 's/^/  [auto env] /'
+
+# auto: stack-level project registration after project-local tool config exists
+docker exec "$CONTAINER_NAME" bash -c "cd $PROJECT_DIR && $BIN_DIR/auto init --project --id testproject --name 'Test Project'" 2>&1 | sed 's/^/  [auto init] /'
 
 # auto etl: no init command
 
@@ -222,14 +265,13 @@ assert_json_field "/root/.auto/search/settings.json" "default_index" "autosearch
 assert_json_field "/root/.auto/search/settings.json" "default_input" "autosearch has default_input"
 
 # autowatch global
-assert_dir  "/root/.auto/watch"                   "autowatch global dir"
-assert_file "/root/.auto/watch/settings.json"     "autowatch global settings"
-assert_json_field "/root/.auto/watch/settings.json" "projects" "autowatch has projects array"
-assert_dir  "/root/.auto/watch/runs"              "autowatch runs dir"
+assert_file "/root/.auto/projects.json"           "shared project registry"
+assert_json_field "/root/.auto/projects.json" "projects" "project registry has projects array"
+assert_project_registry
 
 # autoskill global
-assert_dir  "/root/.auto/skill"                   "autoskill global dir"
-assert_file "/root/.auto/skill/settings.json"      "autoskill global settings"
+assert_dir  "/root/.auto/skills"                  "autoskill global dir"
+assert_file "/root/.auto/skills/settings.json"     "autoskill global settings"
 
 # autograph global
 assert_dir  "/root/.auto/graph"                   "autograph global dir"
@@ -259,8 +301,9 @@ assert_dir  "$PROJECT_DIR/.auto/env/files"              "autoenv files dir"
 assert_file "$PROJECT_DIR/.auto/env/.gitignore"         "autoenv gitignore"
 
 # autoskill project
-assert_dir  "$PROJECT_DIR/.auto/skill"                  "autoskill project dir"
-assert_file "$PROJECT_DIR/.auto/skill/settings.json"    "autoskill project settings"
+assert_dir  "$PROJECT_DIR/.auto/skills"                 "autoskill project dir"
+assert_file "$PROJECT_DIR/.auto/skills/skills.yaml"      "autoskill project skills.yaml"
+assert_file "$PROJECT_DIR/.auto/skills/lock.json"        "autoskill project lock"
 assert_dir  "$PROJECT_DIR/skills"                       "skills directory created"
 
 # autowatch project
@@ -268,6 +311,17 @@ assert_dir  "$PROJECT_DIR/.auto/watch"                  "autowatch project dir"
 assert_file "$PROJECT_DIR/.auto/watch/project.json"     "autowatch project config"
 assert_json_field "$PROJECT_DIR/.auto/watch/project.json" "id" "autowatch project has id"
 assert_file "$PROJECT_DIR/.auto/watch/.gitignore"       "autowatch project gitignore"
+
+# ============================================================
+# Phase 5: Validate post-bootstrap command usability
+# ============================================================
+echo ""
+echo "--- validating post-bootstrap commands ---"
+
+assert_command_ok "auto skill sync --check works in initialized project" "cd $PROJECT_DIR && $BIN_DIR/auto skill sync --check"
+assert_command_ok "auto doc tree reads initialized docs config" "cd $PROJECT_DIR && $BIN_DIR/auto doc --json tree"
+assert_command_ok "auto watch task list reads initialized project config" "cd $PROJECT_DIR && $BIN_DIR/auto watch task list --json"
+assert_command_ok "auto watch trigger list reads initialized project config" "cd $PROJECT_DIR && $BIN_DIR/auto watch trigger list --json"
 
 # ============================================================
 # Result
