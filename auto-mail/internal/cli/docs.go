@@ -125,6 +125,20 @@ its own Address. It is bounded to self-delivery within one binding — never a
 stranger's inbox, never another session — and it is the harmless direction of
 the two, because the alternative would be a child's legitimate send failing.
 
+The same cause has a second effect, on **attribution** rather than routing. A
+Subagent marker is recorded per Binding, and a supervisor shares the Binding of
+every child it spawns — that sharing is exactly how a child finds its
+supervisor. The sending process has no identifier of its own (the environment a
+Subagent's command runs in is byte-identical to its supervisor's), so while a
+child is active the supervisor's **own** sends — to an absolute Address as much
+as to a Handle — are stamped as if a Subagent wrote them, and where exactly one
+child is live they carry that child's ` + "`senderAgentType`" + `. Treat these attributes
+as a hint, never as proof of authorship: when you need to be certain which child
+wrote, have it say so in the body. That is the reliable channel, and it is why
+these attributes are metadata rather than identity. Closing the gap needs a way
+for the sending process to identify itself, which is tracked as follow-up work
+rather than solved here.
+
 ## ack
 
     auto mail ack <mail-id>

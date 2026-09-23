@@ -1510,3 +1510,87 @@ func TestNonSubagentDeliveryIsByteIdenticalToT1(t *testing.T) {
 		t.Errorf("an unattributed delivery emitted an attributes key: %s", encoded)
 	}
 }
+
+// TestASupervisorsOwnSendIsStampedWhileAChildIsLive pins the attribution
+// residual that PR #150's review surfaced, so it is a known property rather
+// than a latent surprise.
+//
+// A marker is recorded per Binding, and a supervisor shares the Binding of
+// every child it spawns — that sharing is how a child finds its supervisor at
+// all. The sending process carries no identifier of its own, so while a child
+// is live the supervisor's own send is indistinguishable from the child's and
+// is stamped as one. This asserts the shape of that, including the sharp edge:
+// with exactly one child live the supervisor's mail carries that child's name.
+//
+// It is deliberately written as a *characterisation* test. If a later change
+// gives the send path a way to identify its caller, this test should fail and
+// be rewritten to assert the fix — that is the point of pinning it.
+func TestASupervisorsOwnSendIsStampedWhileAChildIsLive(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	binding := mail.BindingFromContext(nil, t.TempDir())
+
+	client, err := mail.NewDirect(home)
+	if err != nil {
+		t.Fatalf("NewDirect: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	if _, err := client.Subscribe(ctx, mail.SubscribeInput{
+		Address: "auto-stack/supervisor", Binding: binding,
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	// With no child live the supervisor is an ordinary agent and its mail is
+	// unattributed — this is the control arm, without which the assertion
+	// below would also pass against an implementation that stamps everything.
+	if kind := mail.CallerSender(home, binding).Kind; kind != mail.SenderAgent {
+		t.Fatalf("with no child live the caller is %q, want an ordinary agent", kind)
+	}
+
+	// One child marks itself live under the binding it shares with its parent.
+	mail.ObserveHookEvent(home, binding, "PreToolUse",
+		mail.ActiveAgent{AgentID: "a84a3676a847c5c0b", AgentType: "phase3"})
+
+	sender := mail.CallerSender(home, binding)
+	if sender.Kind != mail.SenderSubagent {
+		t.Fatalf("sender kind = %q, want subagent — the supervisor is "+
+			"indistinguishable from its child here, which is the residual", sender.Kind)
+	}
+
+	sent, err := client.Send(ctx, mail.SendInput{
+		To:      "auto-stack/supervisor", // absolute, not a Handle
+		Sender:  sender,
+		Binding: binding,
+		Body:    map[string]any{"message": "sent by the supervisor itself"},
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	deliveries, err := client.List(ctx, mail.ListInput{
+		Address: "auto-stack/supervisor", Binding: binding,
+	})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, d := range deliveries {
+		if d.ID != sent.ID {
+			continue
+		}
+		if d.Attributes["senderKind"] != "subagent" {
+			t.Errorf("attributes = %v, want senderKind subagent", d.Attributes)
+		}
+		// The sharp edge, asserted rather than left implicit: the supervisor's
+		// own mail carries its child's name. `auto mail docs` says so under
+		// "relative handles", and says to use the body when authorship matters.
+		if got := d.Attributes["senderAgentType"]; got != "phase3" {
+			t.Errorf("senderAgentType = %v, want \"phase3\" — this test pins the "+
+				"documented residual; if the send path can now identify its "+
+				"caller, rewrite this to assert the fix", got)
+		}
+		return
+	}
+	t.Fatalf("the supervisor's own mail %s was not delivered to it", sent.ID)
+}
