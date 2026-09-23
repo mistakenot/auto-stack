@@ -1,5 +1,5 @@
 ---
-hash: "a018a99c"
+hash: "759bcd19"
 id: "1467e318"
 read_when: "naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept"
 summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Outline, Segment, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Binding, Lock, Group, Worker) with the terms to avoid for each."
