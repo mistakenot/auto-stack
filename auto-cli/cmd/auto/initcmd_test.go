@@ -30,6 +30,9 @@ func TestInitProjectRegistersWithoutCredentials(t *testing.T) {
 	if err := exec.Command("mkdir", "-p", filepath.Join(repo, ".auto", "watch")).Run(); err != nil {
 		t.Fatalf("mkdir tool dir: %v", err)
 	}
+	if err := exec.Command("mkdir", "-p", filepath.Join(repo, ".auto", "skills")).Run(); err != nil {
+		t.Fatalf("mkdir skill tool dir: %v", err)
+	}
 	t.Chdir(repo)
 
 	cmd := newInitCmd()
@@ -57,14 +60,21 @@ func TestInitProjectRegistersWithoutCredentials(t *testing.T) {
 	if p.Remote == "" || p.Remote != "https://github.com/acme/widgets" {
 		t.Errorf("remote not credential-stripped/normalized: %q", p.Remote)
 	}
-	found := false
+	foundWatch := false
+	foundSkill := false
 	for _, tool := range p.Tools {
 		if tool == "watch" {
-			found = true
+			foundWatch = true
+		}
+		if tool == "skill" {
+			foundSkill = true
 		}
 	}
-	if !found {
+	if !foundWatch {
 		t.Errorf("expected detected tool 'watch', got %v", p.Tools)
+	}
+	if !foundSkill {
+		t.Errorf("expected detected tool 'skill', got %v", p.Tools)
 	}
 	if p.RegisteredAt == "" {
 		t.Errorf("expected registeredAt to be set")
