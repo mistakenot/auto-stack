@@ -104,6 +104,15 @@ def test_compare_is_deterministic(layout: Layout) -> None:
     assert compare(layout, "demo") == compare(layout, "demo")
 
 
+def test_single_trial_cells_get_no_interval(layout: Layout) -> None:
+    ctrl = _job(layout.root, "demo__control__20260923T000000Z")
+    treat = _job(layout.root, "demo__tool__20260923T000000Z")
+    _trial(ctrl, "c", "t1", 0.5)
+    _trial(treat, "x", "t1", 0.9)
+    eff = compare(layout, "demo")["treatments"]["tool"]["effects"]["reward"]
+    assert eff["delta"] == 0.4 and eff["ci95"] is None and not eff["ci_excludes_zero"]
+
+
 def test_diff_paths_treats_missing_section_as_empty() -> None:
     assert _diff_paths({"a": 1}, {"a": 1, "environment": {"mounts": [1]}}) == ["environment.mounts"]
     assert _diff_paths({"agents": [1]}, {"agents": [2]}) == ["agents"]

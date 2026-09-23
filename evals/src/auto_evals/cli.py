@@ -13,12 +13,15 @@ Diagnostics go to stderr.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+import yaml
 
 from . import harbor
 from .compare import compare, render_text
@@ -157,25 +160,49 @@ def cmd_run(layout: Layout, args: argparse.Namespace) -> int:
             print(f"+ {step}", file=sys.stderr)
             subprocess.run(step, shell=True, cwd=layout.root, check=True, stdout=sys.stderr)
 
+    # Harbor only accepts -i task filters next to an explicit -p/-d/-t, not with a
+    # dataset from a config layer. So a --task narrowing resolves the dataset's
+    # globs here and passes the surviving task names explicitly.
+    if args.task:
+        selection = _dataset_tasks(layout, exp["dataset"])
+        selected = sorted(t for t in selection if any(fnmatch.fnmatch(t, p) for p in args.task))
+        if not selected:
+            raise SystemExit(f"error: --task {args.task} matches no task in dataset '{exp['dataset']}': {selection}")
+        task_args = ["-p", str(layout.tasks_dir)] + [a for t in selected for a in ("-i", t)]
+        dataset_layer: list[str] = []
+    else:
+        task_args = []
+        dataset_layer = ["-c", str(layout.dataset_config(exp["dataset"]))]
+
     stamp = _stamp()
-    jobs: dict[str, str] = {}
-    code = 0
+    jobs: dict[str, dict] = {}
     for arm in arms:
         job_name = f"{args.experiment}__{arm}__{stamp}"
-        run_args = ["-c", str(layout.defaults_config), "-c", str(layout.dataset_config(exp["dataset"])),
-                    "-c", str(layout.arm_config(args.experiment, arm)), "--job-name", job_name]
+        run_args = ["-c", str(layout.defaults_config), *dataset_layer,
+                    "-c", str(layout.arm_config(args.experiment, arm)), *task_args, "--job-name", job_name]
         if args.attempts:
             run_args += ["-k", str(args.attempts)]
-        for pattern in args.task or []:
-            run_args += ["-i", pattern]
         if args.dry_run:
             run_args.append("--dry-run")
-        code = harbor.run(layout, run_args, auth) or code
-        jobs[arm] = f"jobs/{job_name}"
-    _emit({"ok": code == 0, "experiment": args.experiment, "jobs": jobs},
-          "\n".join(f"{a}: {j}" for a, j in jobs.items())
-          + f"\nnext: `uv run evals compare {args.experiment} --text`", args.text)
-    return code
+        rc = harbor.run(layout, run_args, auth)
+        jobs[arm] = {"job": f"jobs/{job_name}", "exit_code": rc}
+    ok = all(j["exit_code"] == 0 for j in jobs.values())
+    text = "\n".join(f"{a}: {j['job']}" + ("" if j["exit_code"] == 0 else f"   FAILED (harbor exit {j['exit_code']})")
+                     for a, j in jobs.items())
+    text += (f"\nnext: `uv run evals compare {args.experiment} --text`" if ok
+             else "\nhint: read the harbor error above; failed arms produced no usable job.")
+    _emit({"ok": ok, "experiment": args.experiment, "jobs": jobs}, text, args.text)
+    return 0 if ok else 1
+
+
+def _dataset_tasks(layout: Layout, dataset: str) -> list[str]:
+    data = yaml.safe_load(layout.dataset_config(dataset).read_text()) or {}
+    names = [d.name for d in layout.task_dirs()]
+    selected: set[str] = set()
+    for ds in data.get("datasets", []):
+        for pattern in ds.get("task_names") or ["*"]:
+            selected.update(fnmatch.filter(names, pattern))
+    return sorted(selected)
 
 
 # --- compare -----------------------------------------------------------------

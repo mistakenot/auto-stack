@@ -20,6 +20,7 @@ from .results import Trial, latest_job, load_job, trajectory_matches
 
 BOOTSTRAP_SAMPLES = 4000
 SEED = 20260923
+MIN_TRIALS_FOR_CI = 2
 
 
 def _cells(trials: list[Trial]) -> dict[str, list[Trial]]:
@@ -109,15 +110,22 @@ def compare(layout: Layout, experiment: str, job_overrides: dict[str, Path] | No
                 continue
             c = {t: c[t] for t in usable}
             x = {t: x[t] for t in usable}
-            lo, hi = _bootstrap(c, x, rng)
+            # With a single trial in any cell, resampling cannot see that cell's
+            # noise and the interval collapses to a point. Report no interval.
+            enough = all(len(c[t]) >= MIN_TRIALS_FOR_CI and len(x[t]) >= MIN_TRIALS_FOR_CI for t in usable)
+            lo, hi = _bootstrap(c, x, rng) if enough else (None, None)
             effects[m] = {
                 "control": round(fmean(fmean(v) for v in c.values()), 4),
                 "treatment": round(fmean(fmean(v) for v in x.values()), 4),
                 "delta": round(_effect(c, x), 4),
-                "ci95": [round(lo, 4), round(hi, 4)],
-                "ci_excludes_zero": lo > 0 or hi < 0,
+                "ci95": [round(lo, 4), round(hi, 4)] if enough else None,
+                "ci_excludes_zero": bool(enough and (lo > 0 or hi < 0)),
                 "per_task": {t: round(fmean(x[t]) - fmean(c[t]), 4) for t in usable},
             }
+            if not enough and f"{arm}: too few trials" not in " ".join(report["warnings"]):
+                report["warnings"].append(
+                    f"{arm}: too few trials for an interval; every task needs >= {MIN_TRIALS_FOR_CI} "
+                    "valid trials per arm")
 
         entry: dict = {"paired_tasks": paired, "effects": effects}
         if pattern := exp["arms"][arm].get("uptake"):
@@ -144,8 +152,9 @@ def render_text(report: dict) -> str:
         for m, e in entry["effects"].items():
             mark = " *" if e["ci_excludes_zero"] else ""
             primary = "  (primary)" if m == report["primary_metric"] else ""
+            interval = f"[{e['ci95'][0]}, {e['ci95'][1]}]" if e["ci95"] else "n/a"
             lines.append(f"{m:<16}{e['control']:>12}{e['treatment']:>12}{e['delta']:>12}   "
-                         f"[{e['ci95'][0]}, {e['ci95'][1]}]{mark}{primary}")
+                         f"{interval}{mark}{primary}")
     if report["arms_without_jobs"]:
         lines += ["", "arms with no completed job: " + ", ".join(report["arms_without_jobs"])]
     for w in report["warnings"]:
