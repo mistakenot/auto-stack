@@ -56,9 +56,58 @@ type SubscribeResult struct {
 	Backfilled   int    `json:"backfilled"`
 }
 
+// SenderKind classifies the process that is sending, which is what decides
+// whether a relative Handle may be resolved at all.
+//
+// It is a value rather than a bool because the set is open: T3's daemon and a
+// future `#children` sender are more kinds, not more flags.
+type SenderKind string
+
+const (
+	// SenderAgent is an ordinary agent process — the default, and everything
+	// the walking skeleton knew about before Handles existed.
+	SenderAgent SenderKind = "agent"
+	// SenderSubagent is an in-process Subagent: one the hook has seen acting
+	// under this caller's Binding. It is the only kind that may use `#parent`.
+	SenderSubagent SenderKind = "subagent"
+)
+
+// Sender is who the calling process believes it is, established caller-side
+// and passed in rather than derived inside the Client (D-063-8).
+//
+// The split is deliberate. "Who am I" is a question about the *caller's* host —
+// it is answered by reading markers on that filesystem — while "what is my
+// supervisor's address" is a question for the store, which from T3 may be
+// behind an RPC hop on another machine. A Client that answered both would
+// answer the first one against the daemon's filesystem the moment it stopped
+// being in-process, and that is a bug nothing local can see.
+//
+// AgentID and AgentType are carried for diagnostics and, from a later phase,
+// for the envelope attributes that tell a supervisor which Subagent wrote.
+// Neither is ever part of an Address (G5).
+type Sender struct {
+	// Kind is the sender's class. The zero value is deliberately not
+	// SenderAgent's string: a caller that never established a Sender gets an
+	// empty kind, which no Handle accepts.
+	Kind SenderKind
+	// AgentID is the opaque id the agent stamped on its own hook events.
+	AgentID string
+	// AgentType is the logical label the agent was spawned under ("Explore",
+	// "task-063-planner"). Upstream does not guarantee it is non-empty.
+	AgentType string
+	// Ambiguous records that several Subagents are live under this Binding, so
+	// the calling process cannot tell which marker is its own. The Kind stays
+	// trustworthy — every one of them is a Subagent of the same supervisor —
+	// but the name does not, and a name that might be a sibling's is worse
+	// than none (D-063-11).
+	Ambiguous bool
+}
+
 // SendInput posts one mail to an address.
 type SendInput struct {
-	// To is the destination address.
+	// To is the destination address, or a relative Handle such as `#parent`
+	// which is resolved to an absolute address at send time and never stored
+	// (G5).
 	To string
 	// From is the sender's resolved absolute address. Empty means the client
 	// resolves it on the documented ladder.
@@ -72,14 +121,25 @@ type SendInput struct {
 	// target is a pane whenever one exists, and the project lookup needs the
 	// directory itself.
 	Cwd string
+	// Sender is who the caller established itself to be, via CallerSender.
+	// The zero value is an ordinary agent, which is the safe reading: it can
+	// resolve no Handle, so a caller that forgets to establish one is refused
+	// rather than silently given somebody else's supervisor.
+	Sender Sender
 }
 
 // SendResult is the payload `auto mail send` prints. subscriptions counts
 // durable readers of the address; bound counts those with a binding row. The
 // two are deliberately distinct and mean different things to a sender (G6).
 type SendResult struct {
-	ID            string `json:"id"`
-	To            string `json:"to"`
+	ID string `json:"id"`
+	To string `json:"to"`
+	// ResolvedFrom is the Handle that To was resolved from, when one was used.
+	// It is omitted entirely otherwise, so an absolute send still prints
+	// exactly T1's four keys — the presence of the key is the signal, which is
+	// more informative than a null and costs an existing consumer nothing
+	// (D-063-10).
+	ResolvedFrom  string `json:"resolvedFrom,omitempty"`
 	Subscriptions int    `json:"subscriptions"`
 	Bound         int    `json:"bound"`
 }
@@ -98,6 +158,16 @@ type Delivery struct {
 	From   string         `json:"from"`
 	SentAt time.Time      `json:"sentAt"`
 	Body   map[string]any `json:"body"`
+	// Attributes is the envelope's open metadata about the *sender*, as
+	// distinct from what the sender said. Today it carries `senderKind`, plus
+	// either `senderAgentType` (one Subagent live, and it has a name) or
+	// `senderAmbiguous` (the name could only be a guess) — D-063-11.
+	//
+	// Omitted entirely when there is nothing to say, so a delivery from an
+	// ordinary agent prints exactly T1's four keys and an existing reader
+	// cannot tell this task shipped (D-063-10). It is the open map the backlog
+	// names as v1's obligation for attribute subscriptions later.
+	Attributes map[string]any `json:"attributes,omitempty"`
 }
 
 // AckInput retires one delivery. Ack is always a separate explicit call —

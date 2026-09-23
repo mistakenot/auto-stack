@@ -210,7 +210,13 @@ type SendParams struct {
 	To   string
 	From string
 	Body map[string]any
-	Now  time.Time
+	// Attributes are open envelope metadata about the send itself — who the
+	// sending process was, as opposed to what it said. They are separate from
+	// Body because a reader filters on them without reading the payload, which
+	// is what the backlog's attribute subscriptions will need. Empty means the
+	// key is absent from the envelope entirely, not present and blank.
+	Attributes map[string]any
+	Now        time.Time
 }
 
 // SendOutcome reports the id and the two counts a sender acts on. Subscriptions
@@ -253,12 +259,21 @@ func (s *Store) Send(ctx context.Context, p SendParams) (SendOutcome, error) {
 	// The envelope carries a version integer so a future reader can tell which
 	// shape it is looking at (G10/AC-11). It carries the virtual addresses and
 	// nothing physical — no host id, no session id, no pane (G5).
-	envelope, err := json.Marshal(map[string]any{
+	fields := map[string]any{
 		"version": EventVersion,
 		"to":      p.To,
 		"from":    p.From,
 		"sentAt":  formatTime(now),
-	})
+	}
+	// Additive by omission: with no attributes the envelope is byte-for-byte
+	// the one T1 wrote, so an existing row and a new one are the same shape and
+	// no migration exists to be skipped (D-063-10). The nesting is deliberate
+	// too — attributes are an open map, and merging them into the envelope's
+	// own fields would let a sender shadow `from`.
+	if len(p.Attributes) > 0 {
+		fields["attributes"] = p.Attributes
+	}
+	envelope, err := json.Marshal(fields)
 	if err != nil {
 		return SendOutcome{}, fmt.Errorf("marshal mail envelope: %w", err)
 	}
@@ -387,6 +402,9 @@ type ListedMail struct {
 	From   string
 	SentAt time.Time
 	Body   map[string]any
+	// Attributes are the envelope's open metadata, nil when the envelope
+	// carried none — which is every envelope written before they existed.
+	Attributes map[string]any
 }
 
 // List materialises any delivery rows the cursor admits, stamps the first read,
@@ -559,8 +577,12 @@ func unackedFor(ctx context.Context, tx *sql.Tx, subscriptionID string) ([]Liste
 }
 
 func hydrate(id, envelope, body, sentAt string) (ListedMail, error) {
+	// An absent `attributes` key decodes to a nil map rather than an error,
+	// which is the whole of the migration-free claim: an envelope written
+	// before this field existed hydrates exactly as it did then (D-063-10).
 	var env struct {
-		From string `json:"from"`
+		From       string         `json:"from"`
+		Attributes map[string]any `json:"attributes"`
 	}
 	if err := json.Unmarshal([]byte(envelope), &env); err != nil {
 		return ListedMail{}, fmt.Errorf("decode envelope of mail %s: %w", id, err)
@@ -573,7 +595,7 @@ func hydrate(id, envelope, body, sentAt string) (ListedMail, error) {
 	if err != nil {
 		return ListedMail{}, err
 	}
-	return ListedMail{ID: id, From: env.From, SentAt: at, Body: decoded}, nil
+	return ListedMail{ID: id, From: env.From, SentAt: at, Body: decoded, Attributes: env.Attributes}, nil
 }
 
 // AckParams retires one mail for every subscription the caller holds it under.

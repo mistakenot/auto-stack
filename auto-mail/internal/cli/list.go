@@ -31,6 +31,15 @@ func newListCmd(application *app.App) *cobra.Command {
 }
 
 func runList(cmd *cobra.Command, application *app.App, address, subscription string) error {
+	// --address filters on the address a subscription was actually created
+	// under, and that is always absolute — a handle is resolved at send time
+	// and never stored, so there is nothing here for one to match (G5/D-063-2).
+	if err := rejectHandle(address, "`auto mail list --address`",
+		"--address matches the stored address a subscription was created under, "+
+			"and a resolved handle is never what got stored"); err != nil {
+		return err
+	}
+
 	client, err := mail.NewDirect("")
 	if err != nil {
 		return &ExitError{Code: 1, Err: err}

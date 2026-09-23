@@ -19,6 +19,10 @@ Canonical terms live in `docs/concepts/UBIQUITOUS_LANGUAGE.md` (§ Mail):
 - **Delivery** — one Subscription's copy of one Mail, plus its read/ack state.
 - **Binding** — the opaque `(manager, target)` pair a Subscription is currently
   held by.
+- **Handle** — a relative alias for an Address (`#parent`), resolved at send
+  time and never stored.
+- **Subagent** — an in-process child agent, the only sender that may use
+  `#parent`.
 
 **Nothing here is called a message.** That word already names "a single
 role-tagged exchange within a Session". The one exception is the `--message`
@@ -55,11 +59,52 @@ from outside this module. Naming the store without opening it stays legal —
 from outside — and a repo-wide ban on `modernc.org/sqlite` would fail
 `auto-watch` and `auto-search`, which keep their own stores.
 
+## Relative handles and the Subagent marker
+
+`auto mail send --to '#parent'` is the one Handle that exists. It resolves to the
+Address of the Subscription held under the caller's own Binding — the from
+ladder's rung 2, asked with the Binding the caller computed for itself. `#` is
+reserved for Handles, so a Handle can never be stored and an Address can never
+begin with one; `subscribe`, `list --address` and `send --from` all reject one.
+Four refusals, four sentinels, four different fixes: see `mail/handle.go`.
+
+Only an **in-process Subagent** may resolve it, and what makes a caller one is a
+**marker** the hook wrote: `~/.auto/mail/alpha-agents/<binding-hash>/<id-hash>`,
+one file per `agent_id`, written on `PreToolUse`/`PostToolUse` and removed by
+that agent's own `SubagentStop`, with a 15-minute TTL as a crash backstop only.
+The directory name is T1's flag name — the same hash of the same Binding pair —
+because the marker and the pending flag join on the same key, and two spellings
+of one key is how they would eventually disagree. `auto mail reset` removes the
+markers with the store: a stale marker makes `#parent` *resolve* rather than
+refuse, which fails plausibly instead of loudly.
+
+Three rules that are load-bearing rather than stylistic:
+
+- **The hook never opens the store, and never touches the marker path for an
+  agent with no `agent_id`.** An ordinary tool call costs exactly what it cost
+  before markers existed.
+- **One file per `agent_id`, written by rename.** A single shared slot lets a
+  parent tick erase a live child's marker; a truncating write lets a refresh
+  briefly make one Subagent look like none.
+- **The Sender is established caller-side** (`mail.CallerSender`) and passed
+  into `Send`, never derived inside the Client — from T3 the Client may be an
+  RPC hop, and "who am I" is a question about the *caller's* filesystem.
+
+A Subagent's mail carries envelope `attributes`: `senderKind` always, plus
+either `senderAgentType` (exactly one Subagent live and it has a name) or
+`senderAmbiguous: true`. The name is never guessed — with several live the
+sending process has no id of its own, and a sibling's name is worse for a
+supervisor than no name. Attributes follow the *sender*, not the Handle, and are
+omitted entirely for anyone who is not a Subagent, so an ordinary delivery still
+prints exactly the four keys it always did.
+
 ## Layout
 
 ```
 auto-mail/
 ├── mail/                # THE ONLY EXPORTED DOMAIN API — the Client seam
+│   ├── handle.go        # the `#` reservation and the four refusals
+│   └── subagent.go      # the hook-written marker and CallerSender
 ├── rootcmd/             # mounting facade for `auto mail` (no domain logic)
 ├── cmd/automail/        # standalone binary entry point
 └── internal/
@@ -110,4 +155,11 @@ uv run harness mail-flow down
 ## Not here yet
 
 `quickstart` and `doctor` belong to epic 005's task T4, which owns the adoption
-surface. `#parent` and relative handles are T2's; waking an idle agent is T3's.
+surface. Waking an idle agent, and the RPC client that makes `mail.Client` have
+a second implementation, are T3's — which is why the conformance suite asserts
+the handle and attribute contracts at the interface rather than only against the
+direct client.
+
+Every Handle other than `#parent` is parked, not planned: the `#` prefix is
+reserved for the whole family, so `#children` or `#new` can be added later
+without an escape from an address space that already allowed them.

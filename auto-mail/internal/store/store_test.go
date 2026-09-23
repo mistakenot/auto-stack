@@ -1234,3 +1234,123 @@ func TestFromNowCursorIsDecidedByTheStoreNotByAnID(t *testing.T) {
 		}
 	})
 }
+
+// TestEnvelopeAttributesRoundTripAndAPreTaskEnvelopeStillHydrates is the
+// migration-free claim, asserted rather than trusted (AC-6, D-063-10).
+//
+// The envelope is a TEXT blob, so an open attributes map is additive by
+// construction: no schema statement changed to carry it, and none had to. That
+// is only worth anything if both directions hold — a new envelope must round
+// trip its attributes, and one written before they existed must still hydrate
+// with no attributes rather than failing to decode. The second half is the one
+// that would strand every alpha store already on disk, since `auto mail reset
+// --yes` is the only remediation this alpha offers (G10).
+//
+// The pre-task row is inserted verbatim rather than simulated: the envelope
+// text below is exactly what T1 wrote, four keys and no more, so this reads a
+// row of the shape that is on disk today rather than one this build produced
+// and then asserted about.
+func TestEnvelopeAttributesRoundTripAndAPreTaskEnvelopeStillHydrates(t *testing.T) {
+	st := open(t)
+	ctx := context.Background()
+
+	if _, err := st.Subscribe(ctx, store.SubscribeParams{
+		Address: "auto-stack/supervisor",
+		Caller:  caller("/workspace/supervisor"),
+	}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	withAttributes, err := st.Send(ctx, store.SendParams{
+		To:         "auto-stack/supervisor",
+		From:       "auto-stack/supervisor",
+		Body:       map[string]any{"message": "phase 3 blocked"},
+		Attributes: map[string]any{"senderKind": "subagent", "senderAgentType": "phase3"},
+	})
+	if err != nil {
+		t.Fatalf("send with attributes: %v", err)
+	}
+	withNone, err := st.Send(ctx, store.SendParams{
+		To:   "auto-stack/supervisor",
+		From: "auto-stack/reviewer",
+		Body: map[string]any{"message": "no attributes here"},
+	})
+	if err != nil {
+		t.Fatalf("send without attributes: %v", err)
+	}
+
+	// A send that carries nothing writes no key, so its envelope is still
+	// exactly the four fields T1 wrote. That equality is what makes the
+	// hand-written row below a fair stand-in for an old one.
+	var plain string
+	if err := st.QueryRowContext(ctx,
+		`SELECT envelope FROM mail WHERE id = ?`, withNone.ID).Scan(&plain); err != nil {
+		t.Fatalf("read the plain envelope: %v", err)
+	}
+	var plainKeys map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(plain), &plainKeys); err != nil {
+		t.Fatalf("the plain envelope is not JSON: %v", err)
+	}
+	if _, ok := plainKeys["attributes"]; ok {
+		t.Errorf("a send with no attributes wrote an attributes key: %s — the key's "+
+			"presence is the signal, and an empty one would make it meaningless", plain)
+	}
+	if len(plainKeys) != 4 {
+		t.Errorf("the plain envelope carries %d keys (%s), want exactly T1's four",
+			len(plainKeys), plain)
+	}
+
+	// The pre-task row: T1's envelope text, inserted directly. Its seq is above
+	// every seq this test's own sends produced, so the subscription's cursor
+	// admits it on the next list.
+	const preTaskEnvelope = `{"from":"auto-stack/reviewer","sentAt":"2026-01-01T00:00:00Z",` +
+		`"to":"auto-stack/supervisor","version":1}`
+	if err := st.WithTx(ctx, func(tx *sql.Tx) error {
+		_, execErr := tx.ExecContext(ctx,
+			`INSERT INTO mail (id, seq, to_address, envelope, body, sent_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			"01PRETASKMAIL0000000000000", 900000, "auto-stack/supervisor", preTaskEnvelope,
+			`{"message":"written before attributes existed"}`, "2026-01-01T00:00:00Z")
+		return execErr
+	}); err != nil {
+		t.Fatalf("insert the pre-task mail row: %v", err)
+	}
+
+	listed, err := st.List(ctx, store.ListParams{Caller: caller("/workspace/supervisor")})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	byID := map[string]store.ListedMail{}
+	for _, item := range listed {
+		byID[item.ID] = item
+	}
+
+	attributed, ok := byID[withAttributes.ID]
+	if !ok {
+		t.Fatalf("the attributed mail %s was not listed", withAttributes.ID)
+	}
+	if attributed.Attributes["senderKind"] != "subagent" ||
+		attributed.Attributes["senderAgentType"] != "phase3" {
+		t.Errorf("attributes round tripped as %v, want senderKind and senderAgentType "+
+			"back verbatim", attributed.Attributes)
+	}
+
+	if plainListed, ok := byID[withNone.ID]; !ok {
+		t.Errorf("the unattributed mail %s was not listed", withNone.ID)
+	} else if plainListed.Attributes != nil {
+		t.Errorf("a send with no attributes hydrated %v, want nil — absent and empty "+
+			"must not be the same value to a reader", plainListed.Attributes)
+	}
+
+	old, ok := byID["01PRETASKMAIL0000000000000"]
+	if !ok {
+		t.Fatalf("the pre-task mail was not listed; an envelope written before this " +
+			"task no longer hydrates, and there is no migration to fix it (G10)")
+	}
+	if old.From != "auto-stack/reviewer" || old.Body["message"] != "written before attributes existed" {
+		t.Errorf("the pre-task mail hydrated as %+v, want its own from and body", old)
+	}
+	if old.Attributes != nil {
+		t.Errorf("the pre-task mail hydrated attributes %v out of an envelope that has "+
+			"none", old.Attributes)
+	}
+}

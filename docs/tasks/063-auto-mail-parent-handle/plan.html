@@ -18,8 +18,8 @@
   }
   </script>
 
-  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="063: auto-mail-parent-handle" status="pending" pr="pending" generated="2026-08-25"
+  <!-- AI: When a PR is created for this work, update pr="https://github.com/mistakenot/auto-stack/pull/150" below with the PR URL -->
+  <pd-doc title="063: auto-mail-parent-handle" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/150" generated="2026-08-25"
           next-prompt="/commit-task 063">
 
   <!-- ==================== REQUIREMENTS ==================== -->
@@ -1152,7 +1152,8 @@ Two properties are visible in the diagram and both are deliberate.
         <pd-member kind="var" sig="ErrNoSupervisor error">The caller *is* a Subagent, but no Subscription is bound to its Binding. A separate token precisely so the CLI can branch with `errors.Is` rather than match strings — the fix is different (AC-10).</pd-member>
         <pd-member kind="var" sig="ErrUnknownHandle error">A `#`-prefixed value that is not a known handle. The token is bare; the wrapper interpolates the offending value and `KnownHandles()`.</pd-member>
         <pd-member kind="var" sig="ErrHandleNotAllowed error">A handle in a position that only takes an absolute address — `subscribe`, `list --address`, `send --from` (D-063-2). Wrapped at the CLI, which is the only layer that knows which position was used.</pd-member>
-        <pd-member kind="function" sig="describeHandleError(err error, handle string) string">Where the four user-facing messages are built: the resolution ones (`ErrNotSubagent`, `ErrNoSupervisor`, `ErrUnknownHandle`) are formatted **inside the mail package**, so T3's RPC client produces the same text; the position one is formatted at the CLI, which alone knows the flag. Callers still branch on the sentinel with `errors.Is`, never on the string.</pd-member>
+        <pd-member kind="function" sig="describeHandleError(err error, handle string) error">Where the four user-facing messages are built: the resolution ones (`ErrNotSubagent`, `ErrNoSupervisor`, `ErrUnknownHandle`) are formatted **inside the mail package**, so T3's RPC client produces the same text; the position one is formatted at the CLI, which alone knows the flag. Callers still branch on the sentinel with `errors.Is`, never on the string. <strong>Amended during execution:</strong> returns <code>error</code>, not <code>string</code>. The sentence is joined to its token with <code>%w</code> so one value carries both layers; a string return would force every caller to re-wrap, and a caller reaching for <code>errors.New</code> would silently break the <code>errors.Is</code> contract these four sentinels exist to provide (AC-3, AC-10).</pd-member>
+        <pd-member kind="function" sig="ValidateHandle(s string) error"><strong>Added during execution.</strong> Checks that a <code>#</code>-prefixed value names a Handle that exists. Shaped deliberately like <code>ValidateAddress</code> — one exported function reused everywhere the question is asked — so the CLI's three rejected positions (D-063-2) and the resolver all emit the <em>same</em> sentence for the same typo, which is what makes the four refusals distinguishable without being inconsistent (AC-4). Passing a non-handle is a caller error and is reported as one; check <code>IsHandle</code> first.</pd-member>
       </pd-api>
 
       <pd-api kind="interface" name="mail.Client — the additive delta" lang="go" path="auto-mail/mail/client.go" caption="Edited. Two new input/output fields and one new delivery field; no method added or changed.">
@@ -1323,8 +1324,7 @@ each phase is small once phase 1 exists.
     <pd-stepper>
 
       <pd-phase n="1" title="Walking skeleton: the ontology, the marker, and one #parent send end to end"
-        files="docs/concepts/UBIQUITOUS_LANGUAGE.md,CLAUDE.md,auto-mail/internal/config/settings.go,auto-mail/mail/subagent.go,auto-mail/mail/subagent_test.go,auto-mail/mail/handle.go,auto-mail/mail/handle_test.go,auto-mail/mail/client.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/send.go,auto-mail/internal/cli/cli_test.go,auto-cli/cmd/auto/hookscmd.go,harness/scenarios/mail-flow/fixtures/hooks/pre-tool-use-subagent.json,harness/src/harness/scenarios/mail_flow.py,harness/tests/mail_flow/test_parent_handle.py"
-        status="todo">
+        files="docs/concepts/UBIQUITOUS_LANGUAGE.md,CLAUDE.md,auto-mail/internal/config/settings.go,auto-mail/mail/subagent.go,auto-mail/mail/subagent_test.go,auto-mail/mail/handle.go,auto-mail/mail/handle_test.go,auto-mail/mail/client.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/send.go,auto-mail/internal/cli/cli_test.go,auto-cli/cmd/auto/hookscmd.go,harness/scenarios/mail-flow/fixtures/hooks/pre-tool-use-subagent.json,harness/src/harness/scenarios/mail_flow.py,harness/tests/mail_flow/test_parent_handle.py" status="done">
         <md><script type="text/plain">
 **Gate first.** Confirm 062 is merged: `git log --oneline origin/main | grep 062`
 and `ls auto-mail/mail/binding.go` on `main`. If `auto-mail/` is absent, **stop
@@ -1412,8 +1412,7 @@ parent_handle` green; T1's existing `mail-flow` tests still green **unmodified**
       </pd-phase>
 
       <pd-phase n="2" title="The reservation rule and four distinguishable refusals"
-        files="auto-mail/mail/handle.go,auto-mail/mail/handle_test.go,auto-mail/mail/address.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/subscribe.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/send.go,auto-mail/internal/cli/cli_test.go,auto-mail/conformance/conformance.go,auto-mail/conformance/conformance_test.go"
-        status="todo" depends-on="1">
+        files="auto-mail/mail/handle.go,auto-mail/mail/handle_test.go,auto-mail/mail/address.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/subscribe.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/send.go,auto-mail/internal/cli/cli_test.go,auto-mail/conformance/conformance.go,auto-mail/conformance/conformance_test.go" status="done" depends-on="1">
         <md><script type="text/plain">
 1. `handle.go`: add `KnownHandles()` and the bare sentinels `ErrUnknownHandle`,
    `ErrNoSupervisor` and `ErrHandleNotAllowed`, plus the wrappers that attach
@@ -1454,8 +1453,7 @@ tests unmodified. **Commit.**
       </pd-phase>
 
       <pd-phase n="3" title="Marker lifecycle, and the hot path made adversarial"
-        files="auto-mail/mail/subagent.go,auto-mail/mail/subagent_test.go,auto-mail/mail/pending.go,auto-mail/mail/export_test.go,auto-mail/mail/direct.go,auto-mail/internal/cli/reset.go,auto-mail/internal/cli/cli_test.go,auto-cli/cmd/auto/hooksagent_test.go,auto-cli/cmd/auto/hooksinstallcmd_test.go,harness/scenarios/mail-flow/fixtures/hooks/subagent-stop.json,harness/src/harness/scenarios/mail_flow.py,harness/tests/mail_flow/test_parent_handle.py"
-        status="todo" depends-on="2">
+        files="auto-mail/mail/subagent.go,auto-mail/mail/subagent_test.go,auto-mail/mail/pending.go,auto-mail/mail/export_test.go,auto-mail/mail/direct.go,auto-mail/internal/cli/reset.go,auto-mail/internal/cli/cli_test.go,auto-cli/cmd/auto/hooksagent_test.go,auto-cli/cmd/auto/hooksinstallcmd_test.go,harness/scenarios/mail-flow/fixtures/hooks/subagent-stop.json,harness/src/harness/scenarios/mail_flow.py,harness/tests/mail_flow/test_parent_handle.py" status="done" depends-on="2">
         <md><script type="text/plain">
 1. `subagent.go`: finish the lifecycle (D-063-9) — one file per `agent_id`
    (hashed the same way as the Binding key, because the id format is upstream's
@@ -1495,8 +1493,7 @@ module green end to end. **Commit.**
       </pd-phase>
 
       <pd-phase n="4" title="The race, proven rather than accepted"
-        files="auto-mail/mail/subagent_test.go,auto-mail/mail/mail_test.go,harness/tests/mail_flow/test_parent_handle.py"
-        status="todo" depends-on="3">
+        files="auto-mail/mail/subagent_test.go,auto-mail/mail/mail_test.go,harness/tests/mail_flow/test_parent_handle.py" status="done" depends-on="3">
         <md><script type="text/plain">
 This phase adds no production code. Its job is to make D-063-4's central claim
 falsifiable, because D-13 recorded the race as an *accepted limitation* and this
@@ -1532,8 +1529,7 @@ task claims to have removed its ability to produce a wrong answer.
       </pd-phase>
 
       <pd-phase n="5" title="The supervisor learns which Subagent wrote — attributes, conformance, docs"
-        files="auto-mail/internal/store/project.go,auto-mail/internal/store/store_test.go,auto-mail/mail/client.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/docs.go,auto-mail/internal/cli/cli_test.go,auto-mail/conformance/conformance.go,auto-mail/conformance/conformance_test.go,auto-mail/CLAUDE.md,harness/CLAUDE.md,harness/tests/mail_flow/test_parent_handle.py"
-        status="todo" depends-on="4">
+        files="auto-mail/internal/store/project.go,auto-mail/internal/store/store_test.go,auto-mail/mail/client.go,auto-mail/mail/direct.go,auto-mail/mail/mail_test.go,auto-mail/internal/cli/list.go,auto-mail/internal/cli/docs.go,auto-mail/internal/cli/cli_test.go,auto-mail/conformance/conformance.go,auto-mail/conformance/conformance_test.go,auto-mail/CLAUDE.md,harness/CLAUDE.md,harness/tests/mail_flow/test_parent_handle.py" status="done" depends-on="4">
         <md><script type="text/plain">
 1. `internal/store/project.go`: `SendParams.Attributes` marshalled into the
    existing envelope JSON; `hydrate` decodes it; `ListedMail.Attributes` carries

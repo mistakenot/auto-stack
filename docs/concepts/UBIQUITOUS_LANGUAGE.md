@@ -1,8 +1,8 @@
 ---
-hash: "759bcd19"
+hash: "30e704ac"
 id: "1467e318"
 read_when: "naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept"
-summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Outline, Segment, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Binding, Lock, Group, Worker) with the terms to avoid for each."
+summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Outline, Segment, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Binding, Handle, Lock, Group, Worker) with the terms to avoid for each."
 title: "Ubiquitous Language"
 ---
 
@@ -18,6 +18,7 @@ flowchart LR
     Binding["Binding"]
     Delivery["Delivery"]
     Group["Group"]
+    Handle["Handle"]
     Host["Host"]
     Lock["Lock"]
     Mail["Mail"]
@@ -47,6 +48,7 @@ flowchart LR
     Address -->|many| Subscription
     Subscription -->|many| Delivery
     Subscription -->|one| Binding
+    Handle -->|one| Address
     Lock -->|one| Group
     Lock -->|one| Worker
     Lock -->|one| Project
@@ -157,6 +159,11 @@ _Has_: many Deliveries, one Binding
 **Delivery**:
 The per-Subscription copy of one Mail together with its read and ack state.
 _Avoid_: Receipt, copy, inbox item
+
+**Handle**:
+A relative alias for an Address, written with a leading `#`, resolved at send time and never stored — the stored envelope always carries the resolved absolute Address. Today there is exactly one: `#parent`, the supervisor of an in-process Subagent.
+_Avoid_: Alias, shortcut, relative address, magic address
+_Has_: one Address
 
 **Binding**:
 The current physical target of a Subscription, recorded as an opaque `(manager, target)` pair.

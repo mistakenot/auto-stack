@@ -15,6 +15,7 @@ import (
 	"github.com/mistakenot/auto-mail/internal/app"
 	"github.com/mistakenot/auto-mail/internal/cli"
 	"github.com/mistakenot/auto-mail/internal/store"
+	"github.com/mistakenot/auto-mail/mail"
 	"github.com/spf13/pflag"
 )
 
@@ -858,5 +859,556 @@ func TestResetRecoversAStoreWrittenByAnotherSchema(t *testing.T) {
 	// And the tool works again from there — "start again" is the migration path.
 	if _, stderr, code := runCLI(t, "subscribe", "auto-web/bugs"); code != 0 {
 		t.Fatalf("subscribe after the reset exit %d, stderr: %s", code, stderr)
+	}
+}
+
+// TestParentHandleAtTheCommandSurface is J1 as an agent actually types it, plus
+// AC-3's refusal.
+//
+// The supervisor and its Subagent are one workspace, because that is what an
+// in-process Subagent is: it shares its supervisor's pane and working
+// directory, so it computes the same binding and needs no identifier of its
+// own. `#parent` is the whole of what the child supplies.
+func TestParentHandleAtTheCommandSurface(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	supervisor := workspace(t, home, "supervisor")
+	t.Chdir(supervisor)
+	binding := mail.BindingFor(supervisor)
+
+	if _, stderr, code := runCLI(t, "subscribe", "auto-stack/supervisor"); code != 0 {
+		t.Fatalf("subscribe exit %d, stderr: %s", code, stderr)
+	}
+
+	// Before any Subagent is recorded, `#parent` is refused: exit 1, stdout
+	// completely empty, and the remediation on stderr.
+	stdout, stderr, code := runCLI(t, "send", "--to", "#parent", "--message", "hello?")
+	if code != 1 {
+		t.Fatalf("send --to #parent from a non-Subagent exit %d, want 1 (stdout %q)", code, stdout)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("stdout = %q on a refused send, want it empty — a caller parsing it "+
+			"must never be handed half a payload", stdout)
+	}
+	for _, want := range []string{"#parent", "Subagent", "auto mail docs"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the refusal on stderr does not mention %q: %s", want, stderr)
+		}
+	}
+
+	// The hook records that a Subagent is acting under this binding. That is
+	// the only thing that changes between the refusal above and the send below.
+	mail.ObserveHookEvent(home, binding, "PreToolUse", mail.ActiveAgent{
+		AgentID:   "a84a3676a847c5c0b",
+		AgentType: "phase3",
+		SessionID: "the-supervisor-session",
+	})
+
+	stdout, stderr, code = runCLI(t, "send", "--to", "#parent", "--message", "phase 3 blocked")
+	if code != 0 {
+		t.Fatalf("send --to #parent exit %d, stderr: %s", code, stderr)
+	}
+	sent := decode[handleSendPayload](t, stdout)
+	if sent.To != "auto-stack/supervisor" {
+		t.Errorf("to = %q, want the supervisor's absolute address", sent.To)
+	}
+	if sent.ResolvedFrom != "#parent" {
+		t.Errorf("resolvedFrom = %q, want %q", sent.ResolvedFrom, "#parent")
+	}
+
+	// The supervisor reads it, and only an explicit ack retires it (G3).
+	stdout, stderr, code = runCLI(t, "list")
+	if code != 0 {
+		t.Fatalf("list exit %d, stderr: %s", code, stderr)
+	}
+	delivered := decode[[]deliveryPayload](t, stdout)
+	if len(delivered) != 1 || delivered[0].ID != sent.ID {
+		t.Fatalf("the supervisor listed %+v, want the mail %s", delivered, sent.ID)
+	}
+	if delivered[0].Body["message"] != "phase 3 blocked" {
+		t.Errorf("body = %v, want the Subagent's text", delivered[0].Body)
+	}
+
+	stdout, stderr, code = runCLI(t, "ack", sent.ID)
+	if code != 0 {
+		t.Fatalf("ack exit %d, stderr: %s", code, stderr)
+	}
+	if acked := decode[ackPayload](t, stdout); !acked.WonTransition {
+		t.Errorf("ack = %+v, want the first ack to win the transition", acked)
+	}
+}
+
+// handleSendPayload is sendPayload plus the key a resolved Handle adds. It is a
+// separate type rather than a field on sendPayload so T1's own assertions keep
+// asserting T1's exact shape (D-063-10).
+type handleSendPayload struct {
+	ID           string `json:"id"`
+	To           string `json:"to"`
+	ResolvedFrom string `json:"resolvedFrom"`
+}
+
+// TestSendToAnUnknownHandleIsRefused: `#` is reserved for the family, so a typo
+// is an error rather than a new channel silently created under a name no reader
+// can ever subscribe to.
+func TestSendToAnUnknownHandleIsRefused(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	agent := workspace(t, home, "agent")
+	t.Chdir(agent)
+
+	stdout, stderr, code := runCLI(t, "send", "--to", "#parnet", "--message", "…")
+	if code != 1 {
+		t.Fatalf("send --to #parnet exit %d, want 1 (stdout %q)", code, stdout)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("stdout = %q on a refused send, want it empty", stdout)
+	}
+	if !strings.Contains(stderr, "#parnet") || !strings.Contains(stderr, "#parent") {
+		t.Errorf("the refusal must name the typo and list the handles that exist: %s", stderr)
+	}
+
+	// And no address beginning with `#` reached the store.
+	st, err := store.Open(filepath.Join(home, ".auto", "mail", "alpha-store.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	var rows int
+	if err := st.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM mail WHERE to_address LIKE '#%'`).Scan(&rows); err != nil {
+		t.Fatalf("count handle-shaped mail: %v", err)
+	}
+	if rows != 0 {
+		t.Errorf("%d mail rows are addressed to a handle, want 0", rows)
+	}
+}
+
+// TestHandleIsRejectedInEveryAddressPosition is AC-4 and D-063-2 at the command
+// surface: `#` is legal in exactly one position, `send --to`, and refused in the
+// three that take something durable.
+//
+// The loop covers both refusals in every position, because they are different
+// mistakes: `#parent` is a real handle in the wrong place, and `#parnet` does
+// not exist anywhere. Being told the wrong one of those sends the caller off to
+// fix something that is not broken.
+func TestHandleIsRejectedInEveryAddressPosition(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	agent := workspace(t, home, "agent")
+	t.Chdir(agent)
+
+	// A real subscription first, so the store exists and holds ordinary rows.
+	// The closing assertion is "no row begins with `#`", and against an empty
+	// database that would pass without proving anything.
+	if _, stderr, code := runCLI(t, "subscribe", "auto-stack/supervisor"); code != 0 {
+		t.Fatalf("subscribe exit %d, stderr: %s", code, stderr)
+	}
+
+	positions := map[string][]string{
+		"subscribe":      {"subscribe", "%s"},
+		"list --address": {"list", "--address", "%s"},
+		"send --from":    {"send", "--from", "%s", "--to", "auto-web/bugs", "--message", "…"},
+		"send --to":      {"send", "--to", "%s", "--message", "…"},
+	}
+	for position, template := range positions {
+		for _, value := range []string{"#parent", "#parnet"} {
+			// `send --to '#parent'` is the one legal pairing, and it fails here
+			// for a different reason entirely (no Subagent marker), which
+			// TestParentHandleAtTheCommandSurface already covers.
+			if position == "send --to" && value == "#parent" {
+				continue
+			}
+			args := slices.Clone(template)
+			for i, arg := range args {
+				if arg == "%s" {
+					args[i] = value
+				}
+			}
+
+			stdout, stderr, code := runCLI(t, args...)
+			if code != 1 {
+				t.Errorf("%s %q exit %d, want 1 (stdout %q)", position, value, code, stdout)
+			}
+			if strings.TrimSpace(stdout) != "" {
+				t.Errorf("%s %q printed %q on stdout, want it empty — a refusal must "+
+					"never leave parseable output", position, value, stdout)
+			}
+			if !strings.Contains(stderr, value) {
+				t.Errorf("%s %q: the refusal does not name the offending value: %s",
+					position, value, stderr)
+			}
+			switch value {
+			case "#parnet":
+				if !strings.Contains(stderr, "#parent") {
+					t.Errorf("%s %q: an unknown handle must list the handles that "+
+						"exist: %s", position, value, stderr)
+				}
+			case "#parent":
+				if !strings.Contains(stderr, position) {
+					t.Errorf("%s %q: the position refusal must name the position it "+
+						"is about: %s", position, value, stderr)
+				}
+			}
+		}
+	}
+
+	// The loop that closes AC-4: a refusal that still wrote is the failure this
+	// catches, and it is asserted against the store rather than against the
+	// command's own report of what it did.
+	assertNoHandleRows(t, home)
+}
+
+// assertNoHandleRows is AC-4's stored half: nothing beginning with `#` may reach
+// either column that holds an address. Reading the store directly is what makes
+// this an assertion rather than a restatement of the CLI's own output.
+func assertNoHandleRows(t *testing.T, home string) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(home, ".auto", "mail", "alpha-store.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	for _, query := range []string{
+		`SELECT count(*) FROM subscriptions WHERE address LIKE '#%'`,
+		`SELECT count(*) FROM mail WHERE to_address LIKE '#%'`,
+		`SELECT count(*) FROM mail WHERE json_extract(envelope, '$.from') LIKE '#%'`,
+	} {
+		var rows int
+		if err := st.QueryRowContext(context.Background(), query).Scan(&rows); err != nil {
+			t.Fatalf("%s: %v", query, err)
+		}
+		if rows != 0 {
+			t.Errorf("%d rows match %s, want 0 — a handle is resolved at send time "+
+				"and never stored (G5)", rows, query)
+		}
+	}
+}
+
+// TestTheFourRefusalsAreDistinguishable is the core of AC-3, AC-4 and AC-10
+// taken together: four failures, four fixes, and an agent reading stderr has
+// only the sentence to tell them apart.
+//
+// Pairwise inequality is the weak half. The stronger half is that each message
+// carries the thing its own fix needs — become a Subagent, subscribe in the
+// supervisor, spell the handle correctly, use an absolute address — which is
+// what a caller actually acts on.
+func TestTheFourRefusalsAreDistinguishable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Each scenario gets its own workspace, and therefore its own binding: with
+	// no tmux the cwd rung is what separates two agents, and `#parent` resolves
+	// from the binding, so a shared directory would let one scenario resolve
+	// against another's subscription.
+	notASubagent := workspace(t, home, "not-a-subagent")
+	noSupervisor := workspace(t, home, "no-supervisor")
+
+	t.Chdir(notASubagent)
+	if _, stderr, code := runCLI(t, "subscribe", "auto-stack/supervisor"); code != 0 {
+		t.Fatalf("subscribe exit %d, stderr: %s", code, stderr)
+	}
+	refusals := map[string]string{
+		// A supervisor's subscription exists and is resolvable; no marker does.
+		"not a subagent": refusal(t, "send", "--to", "#parent", "--message", "hello?"),
+	}
+
+	// A marker, and deliberately no subscription under this binding.
+	t.Chdir(noSupervisor)
+	mail.ObserveHookEvent(home, mail.BindingFor(noSupervisor), "PreToolUse", mail.ActiveAgent{
+		AgentID:   "a84a3676a847c5c0b",
+		AgentType: "phase3",
+	})
+	refusals["no supervisor"] = refusal(t, "send", "--to", "#parent", "--message", "phase 3 blocked")
+	refusals["unknown handle"] = refusal(t, "send", "--to", "#parnet", "--message", "…")
+	refusals["not allowed here"] = refusal(t, "subscribe", "#parent")
+
+	wanted := map[string][]string{
+		"not a subagent":   {"Subagent", "auto mail docs"},
+		"no supervisor":    {"auto mail subscribe", "supervisor"},
+		"unknown handle":   {"#parnet", "#parent"},
+		"not allowed here": {"subscribe", "absolute address"},
+	}
+	for name, text := range refusals {
+		for _, want := range wanted[name] {
+			if !strings.Contains(text, want) {
+				t.Errorf("the %q refusal does not mention %q — it must carry what its "+
+					"own fix needs: %s", name, want, text)
+			}
+		}
+		for otherName, other := range refusals {
+			if otherName != name && text == other {
+				t.Errorf("the %q and %q refusals are the same sentence: %s",
+					name, otherName, text)
+			}
+		}
+	}
+
+	assertNoHandleRows(t, home)
+}
+
+// refusal runs a command that must fail, and returns what it said on stderr.
+// It asserts the shared half of every refusal — exit 1, stdout empty — so the
+// callers above can be about the sentences.
+func refusal(t *testing.T, args ...string) string {
+	t.Helper()
+	stdout, stderr, code := runCLI(t, args...)
+	if code != 1 {
+		t.Fatalf("%v exit %d, want 1 (stdout %q, stderr %q)", args, code, stdout, stderr)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("%v printed %q on stdout, want it empty", args, stdout)
+	}
+	return stderr
+}
+
+// TestResetRemovesSubagentMarkers is AC-9's last clause, and it is the clause
+// with the sharpest failure mode.
+//
+// A store or a flag that outlives a reset makes the next run *noisy* — a stale
+// nudge, a listing that is not empty. A marker that outlives one makes it
+// *wrong and quiet*: `#parent` from a process that is not a Subagent at all
+// resolves to a real address and the mail goes somewhere plausible, instead of
+// being refused with a hint. So the marker directory is wiped with the rest,
+// named in `removed`, and — the part a reader of the payload depends on — a
+// host whose only leftover state is a marker is not told there was nothing to
+// remove.
+func TestResetRemovesSubagentMarkers(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	supervisor := workspace(t, home, "supervisor")
+	t.Chdir(supervisor)
+	agentsDir := filepath.Join(home, ".auto", "mail", "alpha-agents")
+
+	// A marker and nothing else: no store, no flags. This is the case the
+	// "nothing to reset" short-circuit would answer wrongly if it only looked
+	// at the store.
+	mail.ObserveHookEvent(home, mail.BindingFor(supervisor), "PreToolUse", mail.ActiveAgent{
+		AgentID:   "a84a3676a847c5c0b",
+		AgentType: "phase3",
+	})
+	if _, err := os.Stat(agentsDir); err != nil {
+		t.Fatalf("the hook left no marker directory to reset (%v)", err)
+	}
+
+	stdout, stderr, code := runCLI(t, "reset")
+	if code != 0 {
+		t.Fatalf("reset with only a marker on disk exit %d, stderr: %s", code, stderr)
+	}
+	if removed := decode[resetPayload](t, stdout).Removed; !slices.Contains(removed, agentsDir) {
+		t.Errorf("removed = %v, want it to name %q — a host holding only a stale marker "+
+			"has something to wipe, and reporting nothing would leave it there", removed, agentsDir)
+	}
+	if _, err := os.Stat(agentsDir); !os.IsNotExist(err) {
+		t.Errorf("the marker directory survived the reset (stat err = %v)", err)
+	}
+
+	// And the state the reset was for: `#parent` refuses again, because there
+	// is no longer any evidence that a Subagent is acting here.
+	if _, _, code := runCLI(t, "subscribe", "auto-stack/supervisor"); code != 0 {
+		t.Fatalf("subscribe after reset exit %d", code)
+	}
+	stdout, stderr, code = runCLI(t, "send", "--to", "#parent", "--message", "still a Subagent?")
+	if code != 1 {
+		t.Fatalf("send --to #parent after a reset exit %d, want 1 — the marker is gone, "+
+			"so the caller can no longer be shown to be a Subagent (stdout %q)", code, stdout)
+	}
+	if !strings.Contains(stderr, "Subagent") {
+		t.Errorf("the post-reset refusal does not name the constraint: %s", stderr)
+	}
+
+	// A reset that wipes a store as well still names all three artifacts, so
+	// the marker directory is not only removed on the marker-only path.
+	if _, stderr, code := runCLI(t, "send", "--to", "auto-stack/supervisor", "--message", "mail"); code != 0 {
+		t.Fatalf("send exit %d, stderr: %s", code, stderr)
+	}
+	mail.ObserveHookEvent(home, mail.BindingFor(supervisor), "PreToolUse", mail.ActiveAgent{
+		AgentID: "a84a3676a847c5c0b", AgentType: "phase3",
+	})
+	stdout, stderr, code = runCLI(t, "reset", "--yes")
+	if code != 0 {
+		t.Fatalf("reset --yes exit %d, stderr: %s", code, stderr)
+	}
+	removed := decode[resetPayload](t, stdout).Removed
+	for _, want := range []string{
+		filepath.Join(home, ".auto", "mail", "alpha-store.db"),
+		filepath.Join(home, ".auto", "mail", "alpha-flags"),
+		agentsDir,
+	} {
+		if !slices.Contains(removed, want) {
+			t.Errorf("removed = %v, want it to name %q", removed, want)
+		}
+		if _, err := os.Stat(want); !os.IsNotExist(err) {
+			t.Errorf("%s survived the reset (stat err = %v)", want, err)
+		}
+	}
+}
+
+// TestAbsoluteSendStdoutIsByteIdenticalToT1 is AC-15's regression gate at the
+// command surface, and it is deliberately the strictest assertion in this
+// suite: not "the keys are still there" but the exact bytes, whitespace
+// included.
+//
+// T2 adds a key to `send` and a key to a delivery. Both are surfaces agents
+// already parse — the epic's C1 transcript, the harness, and habits that are
+// ungreppable — so `omitempty` on both is the promise that a caller which never
+// used a Handle cannot tell this task shipped (D-063-10). A weaker assertion
+// would pass against `"resolvedFrom": null`, which is precisely the change that
+// would break them.
+func TestAbsoluteSendStdoutIsByteIdenticalToT1(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	agent := workspace(t, home, "agent")
+	t.Chdir(agent)
+
+	if _, stderr, code := runCLI(t, "subscribe", "auto-web/bugs"); code != 0 {
+		t.Fatalf("subscribe exit %d, stderr: %s", code, stderr)
+	}
+
+	stdout, stderr, code := runCLI(t, "send", "--to", "auto-web/bugs",
+		"--message", "the port is dropped on ssh:// URLs")
+	if code != 0 {
+		t.Fatalf("send exit %d, stderr: %s", code, stderr)
+	}
+	sent := decode[sendPayload](t, stdout)
+	want := "{\n" +
+		"  \"id\": \"" + sent.ID + "\",\n" +
+		"  \"to\": \"auto-web/bugs\",\n" +
+		"  \"subscriptions\": 1,\n" +
+		"  \"bound\": 1\n" +
+		"}\n"
+	if stdout != want {
+		t.Errorf("send stdout is no longer byte-identical to T1's.\n got: %q\nwant: %q",
+			stdout, want)
+	}
+
+	// And the delivery this caller reads: no marker was ever written, so it is
+	// not a Subagent and its mail carries no attributes key at all (AC-6).
+	stdout, stderr, code = runCLI(t, "list")
+	if code != 0 {
+		t.Fatalf("list exit %d, stderr: %s", code, stderr)
+	}
+	var deliveries []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(stdout), &deliveries); err != nil {
+		t.Fatalf("list stdout is not JSON: %v", err)
+	}
+	if len(deliveries) != 1 {
+		t.Fatalf("list returned %d deliveries, want 1: %s", len(deliveries), stdout)
+	}
+	if _, ok := deliveries[0]["attributes"]; ok {
+		t.Errorf("a delivery from an ordinary agent carries an attributes key: %s", stdout)
+	}
+	for _, key := range []string{"id", "from", "sentAt", "body"} {
+		if _, ok := deliveries[0][key]; !ok {
+			t.Errorf("the delivery lost T1's key %q: %s", key, stdout)
+		}
+	}
+	if len(deliveries[0]) != 4 {
+		t.Errorf("the delivery printed %d keys, want exactly T1's four: %s",
+			len(deliveries[0]), stdout)
+	}
+}
+
+// TestListSurfacesSenderAttributes is the supervisor's half of J1 at the
+// command surface (AC-6): the child sends knowing nothing about itself, and
+// what the supervisor reads names it.
+func TestListSurfacesSenderAttributes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	supervisor := workspace(t, home, "supervisor")
+	t.Chdir(supervisor)
+	binding := mail.BindingFor(supervisor)
+
+	if _, stderr, code := runCLI(t, "subscribe", "auto-stack/supervisor"); code != 0 {
+		t.Fatalf("subscribe exit %d, stderr: %s", code, stderr)
+	}
+	mail.ObserveHookEvent(home, binding, "PreToolUse", mail.ActiveAgent{
+		AgentID:   "a84a3676a847c5c0b",
+		AgentType: "phase3",
+		SessionID: "the-supervisor-session",
+	})
+
+	stdout, stderr, code := runCLI(t, "send", "--to", "#parent", "--message", "phase 3 blocked")
+	if code != 0 {
+		t.Fatalf("send exit %d, stderr: %s", code, stderr)
+	}
+	sent := decode[handleSendPayload](t, stdout)
+
+	stdout, stderr, code = runCLI(t, "list")
+	if code != 0 {
+		t.Fatalf("list exit %d, stderr: %s", code, stderr)
+	}
+	var deliveries []attributedDeliveryPayload
+	if err := json.Unmarshal([]byte(stdout), &deliveries); err != nil {
+		t.Fatalf("list stdout is not JSON: %v", err)
+	}
+	if len(deliveries) != 1 || deliveries[0].ID != sent.ID {
+		t.Fatalf("the supervisor listed %+v, want the mail %s", deliveries, sent.ID)
+	}
+	if deliveries[0].Attributes["senderKind"] != "subagent" {
+		t.Errorf("attributes = %v, want senderKind \"subagent\": %s",
+			deliveries[0].Attributes, stdout)
+	}
+	if deliveries[0].Attributes["senderAgentType"] != "phase3" {
+		t.Errorf("attributes = %v, want the Subagent's type, which is the whole point of "+
+			"J1 — the supervisor learns which child wrote: %s", deliveries[0].Attributes, stdout)
+	}
+	// The opaque id stays on the marker. It is diagnostic, not identity, and an
+	// envelope carrying it would invite a reader to match on it (G5).
+	if strings.Contains(stdout, "a84a3676a847c5c0b") {
+		t.Errorf("the delivery carries the opaque agent id: %s", stdout)
+	}
+}
+
+// attributedDeliveryPayload is deliveryPayload plus the key a Subagent's mail
+// adds. It is a separate type for the same reason handleSendPayload is: T1's
+// own assertions keep asserting T1's exact shape (D-063-10).
+type attributedDeliveryPayload struct {
+	ID         string         `json:"id"`
+	Attributes map[string]any `json:"attributes"`
+}
+
+// TestDocsStatesTheRelativeHandleContract is AC-13: an agent has to be able to
+// discover `#parent` without being told about it, because J1's whole premise is
+// a child that knows nothing about its own context.
+//
+// Each clause below is a fact a reader would otherwise have to learn from a
+// refusal — or, worse, from a send that went somewhere plausible. The residual
+// is in the list on purpose: a documented ambiguity that only lives in a
+// decision record is not documented.
+func TestDocsStatesTheRelativeHandleContract(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	stdout, _, code := runCLI(t, "docs")
+	if code != 0 {
+		t.Fatalf("docs exit %d", code)
+	}
+	for _, want := range []string{
+		"relative handles",    // the section exists and is findable by that name
+		"#parent",             // the one Handle that exists
+		"resolvedFrom",        // how a caller knows a Handle was resolved
+		"in-process Subagent", // who may use it
+		"send --to",           // the position rule
+		"first",               // the deterministic choice among several Subscriptions
+		"auto mail subscribe", // the remediation when the supervisor never subscribed
+		"reserved",            // why `#` can never begin an Address
+		"senderKind",          // how the supervisor learns which child wrote
+		"senderAmbiguous",     // and how it is told the name was withheld
+		"self-delivery",       // D-063-4's residual, stated where a reader will meet it
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("the relative-handles section does not state %q", want)
+		}
+	}
+
+	// AC-13's last clause: the adoption surface is still T4's (D-062-4). A
+	// section describing a command that does not exist would be worse than the
+	// absence itself.
+	root := cli.NewRootCmd(app.New(io.Discard, io.Discard, t.TempDir()))
+	for _, cmd := range root.Commands() {
+		if cmd.Name() == "quickstart" || cmd.Name() == "doctor" {
+			t.Errorf("`auto mail %s` exists; it belongs to T4, which owns the adoption "+
+				"surface (D-062-4)", cmd.Name())
+		}
 	}
 }
