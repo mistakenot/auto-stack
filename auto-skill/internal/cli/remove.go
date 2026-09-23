@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/mistakenot/auto-skill/internal/skill"
 	"github.com/mistakenot/auto-skill/internal/sync"
@@ -20,12 +21,13 @@ func newRemoveCmd(resolveEnv envResolver) *cobra.Command {
 	var (
 		local      bool
 		vendored   bool
+		pluginSel  bool
 		textOutput bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "remove <name>",
-		Short: "Remove a skill and prune its rendered target copies",
+		Short: "Remove a skill or plugin and prune its rendered target copies",
 		Long: "Drop a skill's source of truth — the authored ./skills/<name>/ dir " +
 			"(--local) and/or the vendored lock + skills.yaml entry (--vendored) — then " +
 			"reconcile: the now-undesired skill is pruned from every target through the " +
@@ -33,11 +35,20 @@ func newRemoveCmd(resolveEnv envResolver) *cobra.Command {
 			"A selector is required only when the name exists as both a local and a " +
 			"vendored skill; otherwise the single present source is inferred. Target " +
 			"copies lacking a matching receipt, or locally modified, are reported — " +
-			"never deleted.",
+			"never deleted.\n\n" +
+			"An installed Agent Plugin is removed as a unit with --plugin (inferred when " +
+			"the name is only a plugin): its lock and skills.yaml entries and every member " +
+			"skill are dropped, then pruned. A member skill cannot be removed on its own.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if local && vendored {
-				return &ExitError{Code: 1, Err: errors.New("invalid flags: --local and --vendored cannot be combined")}
+			selectors := 0
+			for _, b := range []bool{local, vendored, pluginSel} {
+				if b {
+					selectors++
+				}
+			}
+			if selectors > 1 {
+				return &ExitError{Code: 1, Err: errors.New("invalid flags: --local, --vendored and --plugin cannot be combined")}
 			}
 
 			env, err := resolveEnv()
@@ -51,6 +62,8 @@ func newRemoveCmd(resolveEnv envResolver) *cobra.Command {
 				sel = sync.SelLocal
 			case vendored:
 				sel = sync.SelVendored
+			case pluginSel:
+				sel = sync.SelPlugin
 			}
 
 			result, runErr := sync.Remove(env, args[0], sel)
@@ -86,6 +99,7 @@ func newRemoveCmd(resolveEnv envResolver) *cobra.Command {
 
 	cmd.Flags().BoolVar(&local, "local", false, "remove the authored ./skills/<name>/ source")
 	cmd.Flags().BoolVar(&vendored, "vendored", false, "remove the vendored (lock + skills.yaml) source")
+	cmd.Flags().BoolVar(&pluginSel, "plugin", false, "remove an installed Agent Plugin and all of its member skills")
 	cmd.Flags().BoolVar(&textOutput, "text", false, "emit a human-readable summary instead of JSON")
 
 	return cmd
@@ -95,6 +109,9 @@ func newRemoveCmd(resolveEnv envResolver) *cobra.Command {
 func writeRemoveText(w io.Writer, r sync.RemoveResult) {
 	if len(r.Removed) > 0 {
 		fmt.Fprintf(w, "removed %s (%v)\n", r.Name, r.Removed)
+	}
+	if len(r.Skills) > 0 {
+		fmt.Fprintf(w, "dropped %d member skill(s): %s\n", len(r.Skills), strings.Join(r.Skills, ", "))
 	}
 	if len(r.Pruned) > 0 {
 		fmt.Fprintf(w, "pruned: %d\n", len(r.Pruned))

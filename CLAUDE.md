@@ -66,6 +66,7 @@ All tools ship as subcommands of a single `auto` binary.
 | `auto-etl/`    | `auto etl`     | Active      | ETL for coding agent session histories (SSH, LXC, local)           |
 | `auto-graph/`  | `auto graph`   | Active      | Code context graphs — file-level import graph with ast-grep scanning |
 | `auto-mail/`   | `auto mail`    | Early       | Agent-to-agent mailbox — durable addressed messages with ack        |
+| `auto-cli/`    | `auto lock`    | Early       | Serial-update file locks — hook-enforced Group locks for files that must be edited one Worker at a time (lib in `auto-shared/lock`) |
 | `auto-reflect/`| `auto reflect` | Early       | Analyze past sessions, extract rules for future ones               |
 | `auto-search/` | `auto search`  | Early       | Rich search over normalized session history from auto-etl          |
 | `auto-skill/`  | `auto skill`   | Early       | Agent skill management                                             |
@@ -200,7 +201,7 @@ Use claud read tools to build heat maps of what files it's reading a lot, what d
 
 **docs/concepts**
 
-- [Ubiquitous Language](docs/concepts/UBIQUITOUS_LANGUAGE.md): The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Handle, Binding) with the terms to avoid for each. Read when: naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept
+- [Ubiquitous Language](docs/concepts/UBIQUITOUS_LANGUAGE.md): The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Binding, Handle, Lock, Group, Worker) with the terms to avoid for each. Read when: naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept
 
 **docs/grilling**
 

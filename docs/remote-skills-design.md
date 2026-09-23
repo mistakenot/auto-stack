@@ -1,5 +1,5 @@
 ---
-hash: "028ce428"
+hash: "876bca41"
 id: "75ae66eb"
 read_when: "implementing auto-skill's remote install/customize/update/export pipeline, the skills.yaml/lock.json formats, the git cache, deterministic skill hashing, or the migrate-from-vercel command"
 summary: "End-to-end design for turning auto-skill into a native tool for installing, customizing, updating, and exporting agent skills from remote repos: a global git cache, deterministic templating with literal/file-ref replacements, section-level doc extraction, a composite skill_version hash, version pinning policy, the skills.yaml + lock.json schemas, the full CLI surface, and a migrate-from-vercel path."
@@ -542,7 +542,15 @@ skills:
         file: docs/conventions.md
         section: "Deploy"                  # best-effort heading
         include_heading: false
+
+plugins:                     # Agent Plugins (agent-plugins.org) installed as a unit via `add --plugin`
+  planning-workflow:
+    version: latest          # the plugin, not each member skill, carries version intent
 ```
+
+A plugin's member skills get **no** `skills.<name>` entry from `add`; one may be
+added by hand purely to carry `replacements` (its `version` is ignored — the
+plugin's wins).
 
 Effective replacements for a skill = `shared.replacements` merged with
 `skills.<name>.replacements` (skill wins). Type-by-shape: scalar = literal;
@@ -573,10 +581,42 @@ AUTHOR: Literals are now restricted to strings — non-string scalars must be qu
       "private": false,
       "local": false,                               // true = local git source (non-portable)
       "state": "resolved"                           // "resolved" | "unresolved" (migration)
+    },
+    "new-task": {                                   // a plugin member: same shape, stamped with its owner
+      "source": "github.com/mistakenot/skills",
+      "url": "https://github.com/mistakenot/skills",
+      "version_spec": "latest",
+      "ref": "4f5d61c2…",
+      "commit": "4f5d61c2…",                        // always equals the owning plugin's commit
+      "subpath": "plugins/planning-workflow/skills/new-task",
+      "private": false,
+      "local": false,
+      "state": "resolved",
+      "plugin": "planning-workflow"
+    }
+  },
+  "plugins": {                                      // Agent Plugins pinned as units (omitted when empty)
+    "planning-workflow": {
+      "source": "github.com/mistakenot/skills",
+      "url": "https://github.com/mistakenot/skills",
+      "version_spec": "latest",
+      "ref": "4f5d61c2…",
+      "commit": "4f5d61c2…",
+      "subpath": "plugins/planning-workflow",       // the directory holding plugin.json
+      "private": false,
+      "local": false,
+      "state": "resolved"
     }
   }
 }
 ```
+
+- **Plugins are units.** `update <plugin>` (or naming any member) re-resolves the
+  plugin's spec once and re-derives membership from `plugin.json` + `skills/` at the
+  new commit: gained skills are inserted, dropped skills are deleted from the lock
+  and pruned from targets. `remove <plugin> --plugin` drops the plugin and every
+  member. A member cannot be updated or removed on its own; a lock validator
+  (`unknown_plugin_ref`) rejects a member whose plugin entry is missing.
 
 - `commit` (resolved) + `ref`/`version_spec` (intent) make renders replayable and
   tell `update` what may move.

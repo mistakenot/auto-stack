@@ -33,6 +33,7 @@ type Options struct {
 	Targets        []string // restrict to these skill names (empty = all)
 	Jobs           int      // fetch worker-pool size (default DefaultJobs)
 	AutoUpdate     bool     // float floating specs (effective skills.yaml auto_update)
+	Update         bool     // explicit `auto skill update` verb: a name scope still floats (only the named entries' lock rows move)
 	TrustRequested bool     // pass-through to the trust gate
 	IsTTY          bool     // trust-gate interactive context
 	Force          bool     // overwrite a foreign-dir collision instead of refusing (AC-4)
@@ -98,9 +99,10 @@ type RepoTarget struct {
 // Plan is phase A's resolved work-list. Skills is the full per-skill decision
 // set; Repos is the distinct set of repos needing a phase-B fetch.
 type Plan struct {
-	Skills []SkillPlan  `json:"skills"`
-	Repos  []RepoTarget `json:"repos"`
-	Errors []error      `json:"-"` // planning-time errors (unavailable, trust, bad URL)
+	Skills  []SkillPlan  `json:"skills"`
+	Plugins []PluginPlan `json:"plugins,omitempty"` // per-plugin unit decisions (members also appear in Skills)
+	Repos   []RepoTarget `json:"repos"`
+	Errors  []error      `json:"-"` // planning-time errors (unavailable, trust, bad URL)
 }
 
 // HasErrors reports whether any planning-time error was collected.
@@ -179,9 +181,18 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 		opts.Check, opts.Locked, opts.NoUpdate, opts.AutoUpdate, len(opts.Targets), opts.jobs())
 	defer doneRun("")
 
-	// --target is a scoped partial/repair op: it implies --locked so it never
-	// floats or advances the project-wide lock.
+	// A name scope always covers a plugin whole (naming a member or the plugin
+	// selects every member), so a scoped run never splits a plugin's commit.
 	if len(opts.Targets) > 0 {
+		opts.Targets = ExpandTargets(env, opts.Targets)
+	}
+
+	// --target is a scoped partial/repair op: it implies --locked so it never
+	// floats or advances the project-wide lock. The explicit `auto skill update
+	// <name>` verb is the one scoped run that must float — only the named
+	// entries' lock rows are rewritten, so the project-wide lock still does not
+	// advance.
+	if len(opts.Targets) > 0 && !(opts.Update && opts.AutoUpdate) {
 		opts.Locked = true
 		trace.Logf(tr, "sync target scope implies locked targets=%v", opts.Targets)
 	}
@@ -324,6 +335,11 @@ func Run(env skill.Env, opts Options) (*Result, error) {
 			if !opts.Check {
 				proc.Installs = removeInstall(proc.Installs, c.Target, c.Skill)
 			}
+			// The manifest must not claim a target dir this run refused to write:
+			// a managed_skills row for the foreign dir would make the NEXT sync
+			// classify it as managed-unestablished instead of foreign, silently
+			// bypassing this guard and overwriting the user's hand-written skill.
+			disownManifestTarget(proc.Manifest, c.Target, c.Skill)
 		}
 		desiredComplete = false
 		result.DesiredComplete = desiredComplete
@@ -476,6 +492,22 @@ func desiredSetFromStaged(staged []*StagedSkill) map[string]bool {
 
 // removeInstall returns installs with the (target style, skill) entry dropped, so
 // a refused foreign-dir collision never reaches the swap.
+// disownManifestTarget drops name from target's managed_skills row so the
+// manifest never records ownership of a dir sync did not write (a refused
+// foreign collision). The skills map entry is left alone: other targets may
+// still legitimately manage the same skill.
+func disownManifestTarget(m *skill.Manifest, target, name string) {
+	if m == nil {
+		return
+	}
+	mt, ok := m.Targets[target]
+	if !ok || mt.ManagedSkills == nil {
+		return
+	}
+	delete(mt.ManagedSkills, name)
+	m.Targets[target] = mt
+}
+
 func removeInstall(installs []Install, target, name string) []Install {
 	out := installs[:0:0]
 	for _, in := range installs {
@@ -516,6 +548,11 @@ func planWantsLockRewrite(plan *Plan) bool {
 			return true
 		}
 	}
+	for i := range plan.Plugins {
+		if plan.Plugins[i].LockRewrite {
+			return true
+		}
+	}
 	return false
 }
 
@@ -526,6 +563,7 @@ func buildUpdatedLock(env skill.Env, plan *Plan) (*skill.Lock, error) {
 	if err != nil {
 		return nil, err
 	}
+	applyPluginPlans(lock, plan)
 	for i := range plan.Skills {
 		sp := plan.Skills[i]
 		if !sp.LockRewrite {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/mistakenot/auto-skill/internal/add"
 	"github.com/mistakenot/auto-skill/internal/skill"
@@ -22,6 +23,7 @@ func newAddCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Comman
 		fullDepth      bool
 		version        string
 		as             string
+		pluginRef      string
 		noSync         bool
 		force          bool
 		trustRequested bool
@@ -58,6 +60,7 @@ func newAddCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Comman
 				FullDepth:      fullDepth,
 				Version:        version,
 				As:             as,
+				Plugin:         pluginRef,
 				NoSync:         noSync,
 				Force:          force,
 				TrustRequested: trustRequested,
@@ -122,6 +125,7 @@ func newAddCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Comman
 	cmd.Flags().BoolVar(&fullDepth, "full-depth", false, "force recursive scan of entire tree")
 	cmd.Flags().StringVar(&version, "version", "", "version spec override (default: latest)")
 	cmd.Flags().StringVar(&as, "as", "", "rename (single-skill only)")
+	cmd.Flags().StringVar(&pluginRef, "plugin", "", "install an Agent Plugin (agent-plugins.org) as a unit: a repo-relative path to the directory holding plugin.json, or the manifest name")
 	cmd.Flags().BoolVar(&noSync, "no-sync", false, "skip post-add sync (accepted; always true until T4)")
 	cmd.Flags().BoolVar(&force, "force", false, "force overwrite on local import collision")
 	cmd.Flags().BoolVar(&trustRequested, "trust-requested", false, "opt into advisory trust (CI/non-TTY)")
@@ -173,6 +177,11 @@ func runPostAddSync(cmd *cobra.Command, env skill.Env, result add.Result, trustR
 	for _, a := range result.Added {
 		added = append(added, a.Name)
 	}
+	// A plugin re-add may have dropped members the manifest no longer ships;
+	// scoping the render to them too lets this run prune their stale copies.
+	if result.Plugin != nil {
+		added = append(added, result.Plugin.Removed...)
+	}
 	syncRes, syncErr := sync.Run(env, sync.Options{
 		Targets:        added,
 		Locked:         true,
@@ -199,6 +208,27 @@ func runPostAddSync(cmd *cobra.Command, env skill.Env, result add.Result, trustR
 
 // formatAddText writes human-readable add output to stdout.
 func formatAddText(cmd *cobra.Command, result add.Result) {
+	if p := result.Plugin; p != nil {
+		if len(result.Listed) > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "Plugin %s (%s): %d skill(s)\n", p.Name, displayPluginRoot(p.Root), len(result.Listed))
+			for _, l := range result.Listed {
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s  %s\n", l.Name, l.Subpath)
+			}
+		} else {
+			sha := p.Commit
+			if len(sha) > 12 {
+				sha = sha[:12]
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Added plugin %s (commit %s) with %d skill(s): %s\n", p.Name, sha, len(p.Skills), strings.Join(p.Skills, ", "))
+			if len(p.Removed) > 0 {
+				fmt.Fprintf(cmd.OutOrStdout(), "Dropped %d skill(s) no longer shipped: %s\n", len(p.Removed), strings.Join(p.Removed, ", "))
+			}
+		}
+		for _, sk := range p.Skipped {
+			fmt.Fprintf(cmd.OutOrStdout(), "  skipped skills/%s: %s\n", sk.Dir, sk.Reason)
+		}
+		return
+	}
 	if len(result.Listed) > 0 {
 		for _, l := range result.Listed {
 			line := fmt.Sprintf("  %s  %s", l.Name, l.Subpath)
@@ -221,4 +251,11 @@ func formatAddText(cmd *cobra.Command, result add.Result) {
 			fmt.Fprintf(cmd.OutOrStdout(), "Added %s\n", a.Name)
 		}
 	}
+}
+
+func displayPluginRoot(root string) string {
+	if root == "" {
+		return "."
+	}
+	return root
 }

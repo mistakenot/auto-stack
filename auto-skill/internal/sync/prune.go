@@ -53,6 +53,19 @@ func DesiredSet(env skill.Env) (map[string]bool, error) {
 	return desired, nil
 }
 
+// PluginNames returns the set of plugin names recorded in the lock.
+func PluginNames(env skill.Env) (map[string]bool, error) {
+	lock, err := loadLock(env)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(lock.Plugins))
+	for name := range lock.Plugins {
+		out[name] = true
+	}
+	return out, nil
+}
+
 // ScanOwnership builds the pure ownership.Inputs for env: it resolves the output
 // targets, scans each target dir for child skill dirs (computing each one's
 // on-disk tree digest with the same canonicalization sync uses), loads the

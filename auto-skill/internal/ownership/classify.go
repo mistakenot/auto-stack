@@ -77,13 +77,31 @@ type DirStatus struct {
 // managedUnion returns the set of skill names managed by ANY target in the
 // manifest.
 //
-// Seam note: the manifest's Targets map is keyed by target STYLE name (e.g.
-// "claude"), but TargetScan.Target and Receipts are keyed by ABSOLUTE path.
-// Phase 1 is I/O-free and cannot resolve style → path on its own, so it does NOT
-// attempt to. Instead "managed" is the UNION of every Manifest.Targets[*].
-// ManagedSkills. This is correct because sync writes the full managed union into
-// every target (see internal/sync buildManifest: every target receives the same
-// managed map), so a name managed for one target is managed for all.
+// managedFor returns the managed set to classify one target against. When the
+// manifest carries a row for that target (production: sync keys manifest rows,
+// receipts, and scans all by target STYLE name, e.g. "claude"), that row is
+// authoritative — sync normally writes the same managed map into every target,
+// but a refused foreign collision disowns just the (target, skill) it did not
+// write, and that dir must keep classifying as foreign so the next sync refuses
+// it again instead of overwriting it. A target with no manifest row falls back
+// to the union of every row (an older manifest, or a caller keying scans by a
+// path the manifest does not know), which is the historical behaviour.
+func managedFor(m *skill.Manifest, target string) map[string]bool {
+	if m == nil {
+		return map[string]bool{}
+	}
+	if mt, ok := m.Targets[target]; ok && mt.ManagedSkills != nil {
+		out := make(map[string]bool, len(mt.ManagedSkills))
+		for name := range mt.ManagedSkills {
+			out[name] = true
+		}
+		return out
+	}
+	return managedUnion(m)
+}
+
+// managedUnion is the union of every Manifest.Targets[*].ManagedSkills — the
+// fallback managedFor uses when a target has no row of its own.
 func managedUnion(m *skill.Manifest) map[string]bool {
 	union := map[string]bool{}
 	if m == nil {
@@ -101,7 +119,7 @@ func managedUnion(m *skill.Manifest) map[string]bool {
 // returns the verdicts sorted deterministically by (Target, Name).
 //
 // A dir is StateManagedOrphan (the only prune-eligible state) IFF all three hold:
-//  1. the name is in the manifest's managed union but NOT in the desired set, AND
+//  1. the name is managed for that target (managedFor) but NOT desired, AND
 //  2. a local receipt records a digest for (target, name), AND
 //  3. the on-disk dir digest == that receipt digest.
 //
@@ -111,10 +129,9 @@ func managedUnion(m *skill.Manifest) map[string]bool {
 // simply makes the on-disk digest match no receipt → modified/unestablished, and
 // a name absent from the manifest union is foreign regardless of its stamp.
 func Classify(in Inputs) []DirStatus {
-	managed := managedUnion(in.Manifest)
-
 	var out []DirStatus
 	for _, ts := range in.Targets {
+		managed := managedFor(in.Manifest, ts.Target)
 		receipts := in.Receipts[ts.Target]
 		for _, dir := range ts.Dirs {
 			ds := DirStatus{

@@ -42,6 +42,9 @@ type SkillView struct {
 	// Shadowed is set on a local row whose name also appears in the lock: the
 	// authored skill wins and the vendored entry is hidden.
 	Shadowed bool `json:"shadowed,omitempty"`
+	// Plugin names the installed Agent Plugin that owns a vendored row (empty for
+	// a standalone skill).
+	Plugin string `json:"plugin,omitempty"`
 }
 
 // Provenance is the `describe` payload: identity + provenance for one skill.
@@ -59,6 +62,7 @@ type Provenance struct {
 	VersionSpec  string            `json:"version_spec,omitempty"`
 	SkillVersion string            `json:"skill_version,omitempty"`
 	Replacements map[string]string `json:"replacements,omitempty"`
+	Plugin       string            `json:"plugin,omitempty"` // owning Agent Plugin, if any
 }
 
 // Source is one upstream dependency, deduped by repo, with the skills it provides.

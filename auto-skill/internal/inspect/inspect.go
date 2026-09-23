@@ -63,10 +63,11 @@ func Inspect(env skill.Env, filter Filter) ([]SkillView, []string, error) {
 
 	// Vendored half (origin vendored), skipping any name authored locally.
 	if !filter.Local && lock != nil {
-		for name, entry := range lock.Skills {
+		for name := range lock.Skills {
 			if _, isAuthored := authoredByName[name]; isAuthored {
 				continue
 			}
+			entry := lock.Skills[name]
 			views = append(views, SkillView{
 				Name:         name,
 				Origin:       OriginVendored,
@@ -74,6 +75,7 @@ func Inspect(env skill.Env, filter Filter) ([]SkillView, []string, error) {
 				Path:         lockPath(entry),
 				SkillVersion: manifestSkillVersion(manifest, name),
 				Stale:        computeStale(name, manifest, targets),
+				Plugin:       entry.Plugin,
 			})
 		}
 	}
@@ -144,6 +146,7 @@ func Describe(env skill.Env, name string) (Provenance, error) {
 		prov.Commit = lockEntry.Commit
 		prov.VersionSpec = lockEntry.VersionSpec
 		prov.Path = lockPath(*lockEntry)
+		prov.Plugin = lockEntry.Plugin
 	}
 	if manifest != nil {
 		if ms, ok := manifest.Skills[name]; ok {

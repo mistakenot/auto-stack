@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/mistakenot/auto-shared/config"
@@ -24,6 +25,9 @@ const (
 	SelLocal
 	// SelVendored removes the vendored source (the lock + skills.yaml entry).
 	SelVendored
+	// SelPlugin removes an installed plugin as a unit: its lock plugins entry,
+	// every member skill entry, and the skills.yaml plugins entry.
+	SelPlugin
 )
 
 // RemoveResult is the JSON-serializable outcome of a `remove` run. Removed lists
@@ -31,7 +35,8 @@ const (
 // reflect the receipt-gated reconcile that converges the targets afterwards.
 type RemoveResult struct {
 	Name     string   `json:"name"`
-	Removed  []string `json:"removed"`            // sources dropped: "local" and/or "vendored"
+	Removed  []string `json:"removed"`            // sources dropped: "local", "vendored" or "plugin"
+	Skills   []string `json:"skills,omitempty"`   // member skills dropped with a plugin
 	Pruned   []string `json:"pruned,omitempty"`   // target/skill entries pruned by the reconcile
 	Reported []string `json:"reported,omitempty"` // target copies NOT deleted (no receipt / modified)
 	Errors   []string `json:"errors,omitempty"`   // reconcile-time errors (post-mutation)
@@ -51,39 +56,77 @@ type RemoveResult struct {
 func Remove(env skill.Env, name string, sel Selector) (RemoveResult, error) {
 	res := RemoveResult{Name: name}
 
-	if err := skill.ValidateSkillName(name); err != nil {
-		return res, err
+	// A name is either a skill name or a plugin name (plugin names may carry
+	// periods). Only names valid under at least one grammar go any further.
+	skillNameOK := skill.ValidateSkillName(name) == nil
+	pluginNameOK := skill.ValidatePluginName(name) == nil
+	switch {
+	case sel == SelPlugin && !pluginNameOK:
+		return res, skill.ValidatePluginName(name)
+	case sel != SelPlugin && !skillNameOK && !pluginNameOK:
+		return res, skill.ValidateSkillName(name)
 	}
-
-	// Detect existence of each source.
-	local := dirExists(filepath.Join(env.SkillsDir(), name))
 
 	lock, err := loadLock(env)
 	if err != nil {
 		return res, fmt.Errorf("load lock: %w", err)
 	}
-	_, vendored := lock.Skills[name]
+
+	// Detect existence of each source.
+	local := skillNameOK && dirExists(filepath.Join(env.SkillsDir(), name))
+	vendoredEntry, vendored := lock.Skills[name]
+	_, isPlugin := lock.Plugins[name]
 
 	// Selector validation — fail-fast, no mutation on error.
+	present := 0
+	for _, b := range []bool{local, vendored, isPlugin} {
+		if b {
+			present++
+		}
+	}
 	switch {
-	case !local && !vendored:
-		return res, fmt.Errorf("no skill named %q found (not in ./skills/ or the lock); nothing to remove", name)
-	case local && vendored && sel == SelUnset:
-		return res, fmt.Errorf("%q exists as both a local and a vendored skill; pass --local or --vendored to choose", name)
+	case present == 0:
+		return res, fmt.Errorf("no skill or plugin named %q found (not in ./skills/ or the lock); nothing to remove", name)
+	case present > 1 && sel == SelUnset:
+		var kinds, flags []string
+		if local {
+			kinds, flags = append(kinds, "a local skill"), append(flags, "--local")
+		}
+		if vendored {
+			kinds, flags = append(kinds, "a vendored skill"), append(flags, "--vendored")
+		}
+		if isPlugin {
+			kinds, flags = append(kinds, "a plugin"), append(flags, "--plugin")
+		}
+		return res, fmt.Errorf("%q exists as both %s; pass %s to choose", name, joinAnd(kinds), joinOr(flags))
 	case sel == SelLocal && !local:
-		return res, fmt.Errorf("no local (authored ./skills/%s/) skill named %q to remove; it exists only as a vendored skill — use --vendored", name, name)
+		return res, fmt.Errorf("no local (authored ./skills/%s/) skill named %q to remove; use --vendored or --plugin for the source that exists", name, name)
 	case sel == SelVendored && !vendored:
-		return res, fmt.Errorf("no vendored (locked) skill named %q to remove; it exists only as a local skill — use --local", name)
+		return res, fmt.Errorf("no vendored (locked) skill named %q to remove; use --local or --plugin for the source that exists", name)
+	case sel == SelPlugin && !isPlugin:
+		return res, fmt.Errorf("no plugin named %q in the lock; run `auto skill list` to see installed plugins", name)
 	}
 
 	// Resolve SelUnset to the single present source.
 	if sel == SelUnset {
-		if local {
+		switch {
+		case local:
 			sel = SelLocal
-		} else {
+		case vendored:
 			sel = SelVendored
+		default:
+			sel = SelPlugin
 		}
 	}
+
+	// A plugin member is owned by its plugin: it cannot be removed on its own,
+	// because the next update would re-derive it from the manifest anyway.
+	if sel == SelVendored && vendoredEntry.Plugin != "" {
+		return res, fmt.Errorf("skill %q is a member of plugin %q and cannot be removed on its own; run `auto skill remove %s --plugin` to remove the whole plugin", name, vendoredEntry.Plugin, vendoredEntry.Plugin)
+	}
+
+	// Names whose target copies this remove should account for.
+	removedNames := map[string]bool{name: true}
 
 	// Apply the drop.
 	switch sel {
@@ -110,6 +153,28 @@ func Remove(env skill.Env, name string, sel Selector) (RemoveResult, error) {
 			return res, fmt.Errorf("drop skills.yaml entry for %q: %w", name, err)
 		}
 		res.Removed = append(res.Removed, "vendored")
+	case SelPlugin:
+		members := lock.PluginMembers(name)
+		for _, m := range members {
+			delete(lock.Skills, m)
+			removedNames[m] = true
+		}
+		delete(lock.Plugins, name)
+		if err := config.WriteJSONFileAtomic(env.LockPath(), lock); err != nil {
+			return res, fmt.Errorf("rewrite lock without plugin %q: %w", name, err)
+		}
+		if err := removeYAMLMapEntry(env.SkillsYAMLPath(), "plugins", name); err != nil {
+			return res, fmt.Errorf("drop skills.yaml plugins entry for %q: %w", name, err)
+		}
+		// A member may carry a skills.<member> entry for replacements; it would
+		// be a dangling ref once the member is gone, so drop it too.
+		for _, m := range members {
+			if err := removeSkillsYAMLEntry(env.SkillsYAMLPath(), m); err != nil {
+				return res, fmt.Errorf("drop skills.yaml entry for %q: %w", m, err)
+			}
+		}
+		res.Skills = members
+		res.Removed = append(res.Removed, "plugin")
 	}
 
 	// Reconcile: the removed skill is no longer desired, so the receipt-gated
@@ -121,18 +186,26 @@ func Remove(env skill.Env, name string, sel Selector) (RemoveResult, error) {
 	}
 	res.Errors = append(res.Errors, run.Errors...)
 
-	// Map the reconcile's prunes for this name into Pruned.
-	suffix := "/" + name
+	// Map the reconcile's prunes for the removed name(s) into Pruned.
 	for _, p := range run.Pruned {
-		if strings.HasSuffix(p, suffix) {
+		if _, sk, ok := strings.Cut(p, "/"); ok && removedNames[sk] {
 			res.Pruned = append(res.Pruned, p)
 		}
 	}
 
-	// Any target copy of the removed name that SURVIVED the reconcile was held
+	// Any target copy of a removed name that SURVIVED the reconcile was held
 	// back by the deletion authority (no receipt / modified / foreign) — surface
 	// it as reported-not-deleted so the user knows a copy remains.
-	res.Reported = append(res.Reported, survivingTargetCopies(env, name, res.Pruned)...)
+	names := make([]string, 0, len(removedNames))
+	for n := range removedNames {
+		if skill.ValidateSkillName(n) == nil {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		res.Reported = append(res.Reported, survivingTargetCopies(env, n, res.Pruned)...)
+	}
 
 	return res, nil
 }
@@ -169,6 +242,12 @@ func survivingTargetCopies(env skill.Env, name string, pruned []string) []string
 // a missing key is not an error — the skill may be authored-only or declared
 // elsewhere.
 func removeSkillsYAMLEntry(path, name string) error {
+	return removeYAMLMapEntry(path, "skills", name)
+}
+
+// removeYAMLMapEntry deletes <section>.<name> from a skills.yaml-shaped document
+// with the same comment-preserving node edit.
+func removeYAMLMapEntry(path, section, name string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -191,7 +270,7 @@ func removeSkillsYAMLEntry(path, name string) error {
 
 	changed := false
 	for i := 0; i+1 < len(root.Content); i += 2 {
-		if root.Content[i].Value != "skills" {
+		if root.Content[i].Value != section {
 			continue
 		}
 		skillsNode := root.Content[i+1]
@@ -252,4 +331,14 @@ func writeFileAtomic(path string, data []byte) error {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+func joinAnd(items []string) string { return joinLast(items, "and") }
+func joinOr(items []string) string  { return joinLast(items, "or") }
+
+func joinLast(items []string, conj string) string {
+	if len(items) <= 1 {
+		return strings.Join(items, "")
+	}
+	return strings.Join(items[:len(items)-1], ", ") + " " + conj + " " + items[len(items)-1]
 }

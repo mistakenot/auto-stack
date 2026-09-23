@@ -105,16 +105,15 @@ func (r *Repo) ExtractPaths(sha string, paths []string, dest string) error {
 // to ExtractPaths. A SKILL.md at the repo root yields "" (the whole tree).
 func (r *Repo) ListSkillDirs(sha string) ([]string, error) {
 	done := traceExtractSpan(r, "git list skill dirs", sha, "", "")
-	out, err := runGitOffline(r.Path, "ls-tree", "-r", "--name-only", sha)
+	files, err := r.ListFiles(sha)
 	if err != nil {
 		done("error=%v", err)
 		return nil, err
 	}
 	var dirs []string
 	seen := map[string]bool{}
-	for line := range strings.SplitSeq(out, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || gopath.Base(line) != "SKILL.md" {
+	for _, line := range files {
+		if gopath.Base(line) != "SKILL.md" {
 			continue
 		}
 		dir := gopath.Dir(line)
@@ -369,4 +368,37 @@ func validateEntry(hdr *tar.Header, dest string, fileCount *int, totalSize *int6
 	}
 
 	return nil
+}
+
+// ListFiles lists every path in the commit's tree (slash-separated, repo
+// relative) from a single `git ls-tree -r` listing. Like ListSkillDirs it does
+// not descend through symlinked directories, so the result is symlink-free.
+func (r *Repo) ListFiles(sha string) ([]string, error) {
+	out, err := runGitOffline(r.Path, "ls-tree", "-r", "--name-only", sha)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for line := range strings.SplitSeq(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+	return files, nil
+}
+
+// ReadFile returns the content of one file at commit sha without extracting the
+// tree. The path is slash-separated and repo relative; a missing path returns
+// an error wrapping ErrSubpathNotFound.
+func (r *Repo) ReadFile(sha, rel string) ([]byte, error) {
+	rel = strings.TrimPrefix(gopath.Clean("/"+rel), "/")
+	if rel == "" || rel == "." {
+		return nil, fmt.Errorf("read %s: empty path", sha)
+	}
+	out, err := runGitOffline(r.Path, "cat-file", "-p", sha+":"+rel)
+	if err != nil {
+		return nil, fmt.Errorf("read %s:%s: %w", shortTraceSHA(sha), rel, ErrSubpathNotFound)
+	}
+	return []byte(out), nil
 }

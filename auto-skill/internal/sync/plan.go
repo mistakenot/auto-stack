@@ -55,8 +55,8 @@ func planRepos(env skill.Env, opts Options, syaml *skill.SkillsYAML, mode planMo
 		return nil, err
 	}
 
-	scope := normalizeNames(opts.Targets)
-	trace.Logf(opts.Trace, "sync plan loaded lock entries=%d scoped=%t", len(lock.Skills), len(scope) > 0)
+	scope := expandScope(lock, normalizeNames(opts.Targets))
+	trace.Logf(opts.Trace, "sync plan loaded lock entries=%d plugins=%d scoped=%t", len(lock.Skills), len(lock.Plugins), len(scope) > 0)
 	groups, order, planErrs := groupByRepo(lock, scope)
 	trace.Logf(opts.Trace, "sync plan grouped repos=%d grouping_errors=%d", len(order), len(planErrs))
 
@@ -84,7 +84,17 @@ type repoGroup struct {
 	canonical string
 	cacheID   transport.CacheIdentity
 	endpoint  string
-	skills    []groupedSkill
+	skills    []groupedSkill  // standalone skills
+	plugins   []groupedPlugin // plugins with their member skills
+}
+
+// allSkills returns every grouped skill in the repo: standalone plus members.
+func (g *repoGroup) allSkills() []groupedSkill {
+	out := append([]groupedSkill(nil), g.skills...)
+	for i := range g.plugins {
+		out = append(out, g.plugins[i].members...)
+	}
+	return out
 }
 
 type groupedSkill struct {
@@ -111,12 +121,15 @@ func planRepoGroup(c *cache.Cache, gate *trust.Gate, gio trust.GateIO, syaml *sk
 			}
 		}
 		for i := range g.skills {
-			sp := planOfflineSkill(repo, syaml, g.skills[i])
+			sp := planOfflineSkill(repo, syaml, &g.skills[i])
 			if sp.Err != nil {
 				plan.Errors = append(plan.Errors, sp.Err)
 			}
 			plan.Skills = append(plan.Skills, sp)
 			traceSkillPlan(tr, sp)
+		}
+		for i := range g.plugins {
+			planPluginOffline(repo, syaml, g, &g.plugins[i], plan, tr)
 		}
 		return
 	}
@@ -153,6 +166,16 @@ func planRepoGroup(c *cache.Cache, gate *trust.Gate, gio trust.GateIO, syaml *sk
 		plan.Skills = append(plan.Skills, sp)
 		traceSkillPlan(tr, sp)
 	}
+	for i := range g.plugins {
+		before := len(plan.Skills)
+		planPluginOnline(repo, syaml, mode, g, &g.plugins[i], resolved, plan, tr)
+		for j := before; j < len(plan.Skills); j++ {
+			if plan.Skills[j].Action == ActionMaterialize && !plan.Skills[j].Cached {
+				needFetch = true
+				target.Commits = appendUnique(target.Commits, plan.Skills[j].TargetCommit)
+			}
+		}
+	}
 	if needFetch {
 		plan.Repos = append(plan.Repos, target)
 		trace.Logf(tr, "sync plan repo %s fetch_commits=%d", g.key, len(target.Commits))
@@ -168,7 +191,7 @@ func traceSkillPlan(tr *trace.Logger, sp SkillPlan) {
 // memoizes float re-resolution across skills sharing this repo (keyed by ref).
 func planOnlineSkill(repo *cache.Repo, syaml *skill.SkillsYAML, mode planMode, g *repoGroup, s groupedSkill, resolved map[string]resolveOutcome) SkillPlan {
 	lockSpec := s.entry.VersionSpec
-	intent := declaredVersion(syaml, s.name)
+	intent := declaredIntent(syaml, &s)
 	if intent == "" {
 		intent = lockSpec
 	}
@@ -268,9 +291,9 @@ func decidePinned(repo *cache.Repo, sp SkillPlan) SkillPlan {
 }
 
 // planOfflineSkill decides a skill under sync --check (no network at all).
-func planOfflineSkill(repo *cache.Repo, syaml *skill.SkillsYAML, s groupedSkill) SkillPlan {
+func planOfflineSkill(repo *cache.Repo, syaml *skill.SkillsYAML, s *groupedSkill) SkillPlan {
 	lockSpec := s.entry.VersionSpec
-	intent := declaredVersion(syaml, s.name)
+	intent := declaredIntent(syaml, s)
 	if intent == "" {
 		intent = lockSpec
 	}
@@ -286,7 +309,7 @@ func planOfflineSkill(repo *cache.Repo, syaml *skill.SkillsYAML, s groupedSkill)
 	}
 	if intent != lockSpec {
 		sp.Action = ActionIntentChanged
-		sp.Message = fmt.Sprintf("intent changed (%s → %s) — run: auto skill update %s", lockSpec, intent, s.name)
+		sp.Message = fmt.Sprintf("intent changed (%s → %s) — run: auto skill update %s", lockSpec, intent, updateTarget(s))
 		return sp
 	}
 	if repo != nil {
@@ -433,6 +456,7 @@ func groupByRepo(lock *skill.Lock, scope map[string]bool) (map[string]*repoGroup
 	groups := map[string]*repoGroup{}
 	var order []string
 	var errs []error
+	members := map[string][]groupedSkill{}
 
 	names := make([]string, 0, len(lock.Skills))
 	for name := range lock.Skills {
@@ -461,16 +485,65 @@ func groupByRepo(lock *skill.Lock, scope map[string]bool) (map[string]*repoGroup
 			groups[canonical] = g
 			order = append(order, canonical)
 		}
+		if entry.Plugin != "" {
+			if _, isPlugin := lock.Plugins[entry.Plugin]; isPlugin {
+				members[entry.Plugin] = append(members[entry.Plugin], groupedSkill{name: name, entry: entry})
+				continue
+			}
+			errs = append(errs, fmt.Errorf("skill %s claims plugin %q which lock.json does not record; re-add the plugin or remove the skill", name, entry.Plugin))
+			continue
+		}
 		g.skills = append(g.skills, groupedSkill{name: name, entry: entry})
+	}
+
+	// Plugins: one grouped unit per locked plugin, carrying its members. A
+	// plugin is in scope when the (expanded) scope names it.
+	pluginNames := make([]string, 0, len(lock.Plugins))
+	for name := range lock.Plugins {
+		pluginNames = append(pluginNames, name)
+	}
+	sort.Strings(pluginNames)
+	for _, name := range pluginNames {
+		if len(scope) > 0 && !scope[strings.ToLower(name)] {
+			continue
+		}
+		entry := lock.Plugins[name]
+		canonical, cacheID, err := transport.CanonicalizeURL(entry.URL)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("canonicalize url for plugin %s (%s): %w", name, entry.URL, err))
+			continue
+		}
+		ep, err := transport.Endpoint(entry.URL)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("endpoint for plugin %s (%s): %w", name, entry.URL, err))
+			continue
+		}
+		g, ok := groups[canonical]
+		if !ok {
+			g = &repoGroup{key: canonical, url: entry.URL, canonical: canonical, cacheID: cacheID, endpoint: ep}
+			groups[canonical] = g
+			order = append(order, canonical)
+		}
+		g.plugins = append(g.plugins, groupedPlugin{name: name, entry: entry, members: members[name]})
 	}
 	sort.Strings(order)
 	return groups, order, errs
 }
 
+// updateTarget names what `auto skill update` should be told to move for an
+// intent change: the plugin for a member, the skill itself otherwise.
+func updateTarget(s *groupedSkill) string {
+	if s.entry.Plugin != "" {
+		return s.entry.Plugin
+	}
+	return s.name
+}
+
 func appendRepoError(plan *Plan, g *repoGroup, err error) {
 	plan.Errors = append(plan.Errors, err)
-	for i := range g.skills {
-		s := &g.skills[i]
+	all := g.allSkills()
+	for i := range all {
+		s := &all[i]
 		plan.Skills = append(plan.Skills, SkillPlan{
 			Name:         s.name,
 			Repo:         g.key,

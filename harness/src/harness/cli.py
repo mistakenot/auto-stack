@@ -17,6 +17,7 @@ import click
 
 from harness.scenarios.base import Scenario
 from harness.scenarios.event_flow import EventFlowScenario
+from harness.scenarios.lock_flow import LockFlowScenario
 from harness.scenarios.mail_flow import MailFlowScenario
 from harness.scenarios.skill_remote import SkillRemoteScenario
 
@@ -26,6 +27,7 @@ SCENARIOS: dict[str, type[Scenario]] = {
     "skill-remote": SkillRemoteScenario,
     "event-flow": EventFlowScenario,
     "mail-flow": MailFlowScenario,
+    "lock-flow": LockFlowScenario,
 }
 
 

@@ -34,6 +34,9 @@ func UpdateWith(env skill.Env, opts Options) (*UpdateResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(opts.Targets) > 0 {
+		opts.Targets = ExpandTargets(env, opts.Targets)
+	}
 
 	mode := planMode{
 		offline:   false, // update always reaches upstream, even under --check

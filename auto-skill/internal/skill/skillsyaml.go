@@ -22,6 +22,15 @@ type SkillsYAML struct {
 	TrustedHosts  []string               `yaml:"trusted_hosts"`
 	Shared        SharedConfig           `yaml:"shared"`
 	Skills        map[string]SkillConfig `yaml:"skills"`
+	// Plugins holds the version intent for each installed Agent Plugin, keyed
+	// by plugin name. A plugin's member skills take their version from here; a
+	// `skills.<member>` entry may still exist to carry replacements.
+	Plugins map[string]PluginConfig `yaml:"plugins,omitempty"`
+}
+
+// PluginConfig holds per-plugin intent.
+type PluginConfig struct {
+	Version string `yaml:"version"`
 }
 
 // SharedConfig holds defaults applied across every managed skill.
@@ -142,6 +151,26 @@ func ValidateSkillsYAML(cfg *SkillsYAML) []config.ValidationError {
 			}
 		}
 		errs = append(errs, validateReplacements(sc.Replacements, path+".replacements")...)
+	}
+
+	for name, pc := range cfg.Plugins {
+		path := "plugins." + name
+		if err := ValidatePluginName(name); err != nil {
+			errs = append(errs, config.ValidationError{
+				Code:    CodeInvalidPluginName,
+				Path:    path,
+				Field:   "name",
+				Message: err.Error(),
+				Value:   name,
+			})
+		}
+		if pc.Version != "" {
+			if ve := ValidateVersionSpec(pc.Version); ve != nil {
+				ve.Path = path + ".version"
+				ve.Field = "version"
+				errs = append(errs, *ve)
+			}
+		}
 	}
 
 	return errs

@@ -21,7 +21,8 @@ func SourceList(env skill.Env) ([]Source, error) {
 	}
 
 	bySource := map[string]*Source{}
-	for name, entry := range lock.Skills {
+	for name := range lock.Skills {
+		entry := lock.Skills[name]
 		id := sourceID(entry)
 		if id == "" {
 			continue

@@ -221,7 +221,8 @@ func loadReferencedIDs(env skill.Env) map[string]bool {
 		if err != nil {
 			return
 		}
-		for _, entry := range lock.Skills {
+		for name := range lock.Skills {
+			entry := lock.Skills[name]
 			if entry.URL == "" {
 				continue
 			}

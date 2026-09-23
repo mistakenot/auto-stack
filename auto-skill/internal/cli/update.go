@@ -36,7 +36,9 @@ func newUpdateCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Com
 			}
 			for _, name := range args {
 				if err := skill.ValidateSkillName(name); err != nil {
-					return &ExitError{Code: 1, Err: err}
+					if perr := skill.ValidatePluginName(name); perr != nil {
+						return &ExitError{Code: 1, Err: err}
+					}
 				}
 			}
 			env, err := resolveEnv()
@@ -53,15 +55,19 @@ func newUpdateCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Com
 				if derr != nil {
 					return &ExitError{Code: 1, Err: derr}
 				}
+				plugins, perr := sync.PluginNames(env)
+				if perr != nil {
+					return &ExitError{Code: 1, Err: perr}
+				}
 				var missing []string
 				for _, name := range args {
-					if !desired[name] {
+					if !desired[name] && !plugins[name] {
 						missing = append(missing, name)
 					}
 				}
 				if len(missing) > 0 {
 					return &ExitError{Code: 1, Err: fmt.Errorf(
-						"unknown skill(s): %s; run `auto skill list` to see managed skills",
+						"unknown skill(s) or plugin(s): %s; run `auto skill list` to see managed skills",
 						strings.Join(missing, ", "))}
 				}
 			}
@@ -73,6 +79,7 @@ func newUpdateCmd(resolveEnv envResolver, resolveTrace traceResolver) *cobra.Com
 			result, runErr := sync.Run(env, sync.Options{
 				Targets:    args,
 				AutoUpdate: true,
+				Update:     true,
 				Check:      check,
 				Trace:      resolveTrace(cmd),
 			})

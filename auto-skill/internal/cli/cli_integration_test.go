@@ -1727,6 +1727,93 @@ func TestDoctorReportsOrphanAndForeign(t *testing.T) {
 	}
 }
 
+// TestSyncForeignCollisionSurvivesSecondSync: the refused run must not record
+// the foreign dir as managed, so a second plain sync refuses again instead of
+// silently overwriting it (regression: manifest claimed the un-written target).
+func TestSyncForeignCollisionSurvivesSecondSync(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "deploy", "SKILL.md"),
+		validSkill("deploy", "Use when deploying.", "## Workflow\n\n1. Desired variant.\n"))
+	foreignPath := filepath.Join(root, ".claude", "skills", "deploy", "SKILL.md")
+	writeFile(t, foreignPath,
+		validSkill("deploy", "Use when deploying.", "## Workflow\n\n1. Foreign variant.\n"))
+
+	if _, _, code := runCLI(t, "--root", root, "sync"); code == 0 {
+		t.Fatal("first sync must refuse the foreign collision")
+	}
+
+	// doctor between the two syncs names the collision and exits non-zero.
+	stdout, _, code := runCLI(t, "--root", root, "doctor")
+	if code == 0 {
+		t.Fatalf("doctor with a collision must exit non-zero\nstdout:\n%s", stdout)
+	}
+	report := decodeJSONMap(t, stdout)
+	if !ownershipHasName(report["collisions"], "deploy") {
+		t.Fatalf("expected 'deploy' in collisions, got: %v", report["collisions"])
+	}
+	if !ownershipHasName(report["ownership"].(map[string]any)["foreign"], "deploy") {
+		t.Fatalf("collision must still classify as foreign (adoptable), got: %v", report["ownership"])
+	}
+
+	stdout, stderr, code := runCLI(t, "--root", root, "sync")
+	if code == 0 {
+		t.Fatalf("second sync must refuse the foreign collision again\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	foreign := readBytes(t, foreignPath)
+	if !strings.Contains(string(foreign), "Foreign variant") {
+		t.Errorf("second sync overwrote the foreign dir without --force, got:\n%s", foreign)
+	}
+}
+
+// TestDoctorReportsShadowedAuthored: an authored ./skills/<name> that also has a
+// lock entry hides the vendored copy (sync only warns). doctor lists it under
+// `shadowed` with the hidden source and exits non-zero.
+func TestDoctorReportsShadowedAuthored(t *testing.T) {
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+	writeFile(t, filepath.Join(root, "skills", "review", "SKILL.md"),
+		validSkill("review", "Use when reviewing.", "## Workflow\n\n1. Local variant.\n"))
+	writeSyncLock(t, root, map[string]skill.LockEntry{
+		"review": {
+			Source: "github.com/example/skills", URL: "https://github.com/example/skills",
+			VersionSpec: "latest", Ref: "main", Subpath: "skills/review",
+			Commit: "0123456789abcdef0123456789abcdef01234567", State: "resolved",
+		},
+	})
+
+	stdout, stderr, code := runCLI(t, "--root", root, "doctor")
+	if code == 0 {
+		t.Fatalf("doctor with a shadowed skill must exit non-zero\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	report := decodeJSONMap(t, stdout)
+	items, ok := report["shadowed"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("expected exactly one shadowed item, got: %v", report["shadowed"])
+	}
+	item, _ := items[0].(map[string]any)
+	if item["name"] != "review" || item["source"] != "https://github.com/example/skills" {
+		t.Fatalf("unexpected shadowed item: %v", item)
+	}
+	if item["authored_path"] != "skills/review" {
+		t.Fatalf("expected authored_path skills/review, got: %v", item["authored_path"])
+	}
+
+	stdout, _, _ = runCLI(t, "--root", root, "doctor", "--text")
+	if !strings.Contains(stdout, "doctor: issues found") || !strings.Contains(stdout, "review --vendored") {
+		t.Fatalf("expected a shadow remediation line in text output, got:\n%s", stdout)
+	}
+
+	// Dropping the lock entry clears the finding (exit code is not asserted:
+	// the sandbox has no global settings, which is a separate failing check).
+	writeSyncLock(t, root, map[string]skill.LockEntry{})
+	stdout, _, _ = runCLI(t, "--root", root, "doctor")
+	report = decodeJSONMap(t, stdout)
+	if items, _ := report["shadowed"].([]any); len(items) != 0 {
+		t.Fatalf("expected no shadowed items once the lock entry is gone, got: %v", report["shadowed"])
+	}
+}
+
 // TestDoctorTextMode renders the same data human-readably (counts + lists).
 func TestDoctorTextMode(t *testing.T) {
 	root := t.TempDir()
@@ -1844,5 +1931,95 @@ func TestSyncForeignCollisionExitsNonZero(t *testing.T) {
 	foreign := readBytes(t, filepath.Join(root, ".claude", "skills", "deploy", "SKILL.md"))
 	if !strings.Contains(string(foreign), "Foreign variant") {
 		t.Errorf("foreign dir must not be overwritten without --force, got:\n%s", foreign)
+	}
+}
+
+// ── Agent Plugins (--plugin) ────────────────────────────────────────────
+
+func (f *syncFixture) commitPlugin(pluginName string, skills map[string]string) string {
+	f.t.Helper()
+	root := filepath.Join(f.dir, "plugins", pluginName)
+	writeFile(f.t, filepath.Join(root, "plugin.json"),
+		`{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"`+pluginName+`"}`)
+	for name, body := range skills {
+		writeFile(f.t, filepath.Join(root, "skills", name, "SKILL.md"), validSkill(name, "Use when testing plugins.", body))
+	}
+	f.git("add", "-A")
+	f.git("commit", "-m", "plugin "+pluginName)
+	return f.git("rev-parse", "HEAD")
+}
+
+// TestAddPluginFlagConflicts: --plugin with a per-skill selector is a fail-fast
+// usage error before any network or write.
+func TestAddPluginFlagConflicts(t *testing.T) {
+	root := t.TempDir()
+	for _, extra := range [][]string{{"--skill", "x"}, {"--path", "p"}, {"--as", "y"}, {"--full-depth"}} {
+		args := append([]string{"--root", root, "add", "file:///nowhere", "--plugin", "pw"}, extra...)
+		_, stderr, code := runCLI(t, args...)
+		if code == 0 || !strings.Contains(stderr, "--plugin cannot be combined") {
+			t.Fatalf("%v: code=%d stderr=%s", extra, code, stderr)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(skillsConfigDir(root), "lock.json")); !os.IsNotExist(err) {
+		t.Fatal("nothing must be written on a flag conflict")
+	}
+}
+
+// TestAddPluginEndToEnd drives add → list → update → remove for a plugin
+// through the CLI, checking JSON payloads and the rendered targets.
+func TestAddPluginEndToEnd(t *testing.T) {
+	f := newSyncFixture(t)
+	f.commitPlugin("pw", map[string]string{"alpha": "## Workflow\n\nv1\n", "beta": "## Workflow\n\nv1\n"})
+	root := t.TempDir()
+	writeSyncYAML(t, root, &skill.SkillsYAML{})
+
+	stdout, stderr, code := runCLI(t, "--root", root, "add", f.url, "--plugin", "plugins/pw", "--trust-requested")
+	if code != 0 {
+		t.Fatalf("add --plugin: code=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	res := decodeJSONMap(t, stdout)
+	pl, _ := res["plugin"].(map[string]any)
+	if pl["name"] != "pw" || pl["root"] != "plugins/pw" {
+		t.Fatalf("plugin payload = %v", pl)
+	}
+	assertExists(t, filepath.Join(root, ".claude", "skills", "alpha", "SKILL.md"))
+	assertExists(t, filepath.Join(root, ".claude", "skills", "beta", "SKILL.md"))
+
+	stdout, _, code = runCLI(t, "--root", root, "list", "--format", "text")
+	if code != 0 || !strings.Contains(stdout, "alpha [vendored plugin=pw]") {
+		t.Fatalf("list: code=%d stdout=%s", code, stdout)
+	}
+
+	// Upstream drops beta and adds gamma; a named update tracks it.
+	if err := os.RemoveAll(filepath.Join(f.dir, "plugins", "pw", "skills", "beta")); err != nil {
+		t.Fatal(err)
+	}
+	f.commitPlugin("pw", map[string]string{"alpha": "## Workflow\n\nv2\n", "gamma": "## Workflow\n\nv1\n"})
+	stdout, stderr, code = runCLI(t, "--root", root, "update", "pw", "--format", "text")
+	if code != 0 {
+		t.Fatalf("update pw: code=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	assertExists(t, filepath.Join(root, ".claude", "skills", "gamma", "SKILL.md"))
+	if _, err := os.Stat(filepath.Join(root, ".claude", "skills", "beta")); !os.IsNotExist(err) {
+		t.Fatal("beta must be pruned after the plugin dropped it")
+	}
+	data, _ := os.ReadFile(filepath.Join(root, ".claude", "skills", "alpha", "SKILL.md"))
+	if !strings.Contains(string(data), "v2") {
+		t.Fatal("alpha must be re-rendered at the new commit")
+	}
+
+	// A member cannot be removed alone; the plugin can.
+	_, stderr, code = runCLI(t, "--root", root, "remove", "alpha")
+	if code == 0 || !strings.Contains(stderr, "remove pw --plugin") {
+		t.Fatalf("member remove: code=%d stderr=%s", code, stderr)
+	}
+	stdout, stderr, code = runCLI(t, "--root", root, "remove", "pw", "--plugin", "--text")
+	if code != 0 || !strings.Contains(stdout, "dropped 2 member skill(s): alpha, gamma") {
+		t.Fatalf("remove --plugin: code=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	for _, name := range []string{"alpha", "gamma"} {
+		if _, err := os.Stat(filepath.Join(root, ".claude", "skills", name)); !os.IsNotExist(err) {
+			t.Errorf("%s must be pruned with its plugin", name)
+		}
 	}
 }

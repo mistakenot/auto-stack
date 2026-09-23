@@ -338,10 +338,16 @@ func (s *Service) Reap(ctx context.Context) error {
 			}
 			return fmt.Errorf("read exit code for run %d: %w", run.ID, err)
 		}
-		code, err := strconv.Atoi(strings.TrimSpace(string(data)))
-		if err != nil {
-			return fmt.Errorf("parse exit code for run %d: %w", run.ID, err)
-		}
+		// An exit-code file that exists but holds no parseable integer means the
+		// launch wrapper was interrupted between creating the file (the `>`
+		// redirect truncates on open) and writing the code into it. That states
+		// the same fact as a missing file — no exit code was ever recorded — so
+		// it must not be fatal. Reap runs on every Tick, and the run stays
+		// RunRunning until Reap gets past it, so returning an error here is a
+		// loop the daemon can never escape: it dies, restarts, reads the same
+		// byte, and dies again.
+		code, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
+		interrupted := parseErr != nil
 		if run.SessionName != "" {
 			exists, err := s.Backend.SessionExists(ctx, run.SessionName)
 			if err != nil {
@@ -353,9 +359,21 @@ func (s *Service) Reap(ctx context.Context) error {
 				}
 			}
 		}
+		codePtr := &code
 		state := model.RunCompleted
 		message := ""
-		if code != 0 {
+		outcome := fmt.Sprintf("finished with exit code %d", code)
+		switch {
+		case interrupted:
+			// No code was recorded, so report none rather than inventing one.
+			codePtr = nil
+			state = model.RunFailed
+			outcome = "was interrupted before recording an exit code"
+			message = tailOutput(run.OutputPath, 200)
+			if message == "" {
+				message = "run interrupted before recording an exit code"
+			}
+		case code != 0:
 			state = model.RunFailed
 			message = tailOutput(run.OutputPath, 200)
 			if message == "" {
@@ -377,7 +395,7 @@ func (s *Service) Reap(ctx context.Context) error {
 			s.dispatchMu.Unlock()
 			continue
 		}
-		if err := s.Store.MarkRunTerminal(ctx, run.ID, state, &code, now, message); err != nil {
+		if err := s.Store.MarkRunTerminal(ctx, run.ID, state, codePtr, now, message); err != nil {
 			s.dispatchMu.Unlock()
 			return err
 		}
@@ -392,14 +410,15 @@ func (s *Service) Reap(ctx context.Context) error {
 			TriggerID: run.TriggerID,
 			TaskID:    run.TaskID,
 			RunID:     &run.ID,
-			Message:   fmt.Sprintf("run %d finished with exit code %d", run.ID, code),
+			Message:   fmt.Sprintf("run %d %s", run.ID, outcome),
 			Metadata: map[string]any{
-				"exit_code":    code,
+				"exit_code":    codePtr,
 				"session_name": run.SessionName,
 				"resource_key": run.ResourceKey,
+				"interrupted":  interrupted,
 			},
 		})
-		s.emitWatchTask(ctx, watchType, &fresh, &code, fmt.Sprintf("run %d finished with exit code %d", run.ID, code))
+		s.emitWatchTask(ctx, watchType, &fresh, codePtr, fmt.Sprintf("run %d %s", run.ID, outcome))
 		s.dispatchMu.Unlock()
 		if logErr != nil {
 			return logErr

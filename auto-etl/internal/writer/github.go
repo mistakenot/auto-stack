@@ -142,23 +142,36 @@ func mergeComments(existing, incoming []model.PRComment) []model.PRComment {
 
 // readExistingParquet reads all rows from an existing parquet file.
 // Returns nil, nil if the file doesn't exist.
-func readExistingParquet[T any](path string) ([]T, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
+//
+// parquet-go panics rather than returning an error on a structurally invalid
+// file (a truncated write, a bad magic header). Every caller here is deciding
+// whether it is safe to merge into that partition, so a panic would take the
+// whole run down — and with `auto etl run` on a */10 cron, one corrupt partition
+// would crash every run indefinitely. Convert it to an error the caller can act
+// on instead.
+func readExistingParquet[T any](path string) (rows []T, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			rows, err = nil, fmt.Errorf("corrupt parquet at %s: %v", path, r)
+		}
+	}()
+
+	f, ferr := os.Open(path)
+	if ferr != nil {
+		if os.IsNotExist(ferr) {
 			return nil, nil
 		}
-		return nil, err
+		return nil, ferr
 	}
 	defer func() { _ = f.Close() }()
 
 	reader := parquet.NewGenericReader[T](f)
 	defer func() { _ = reader.Close() }()
 
-	rows := make([]T, reader.NumRows())
-	n, err := reader.Read(rows)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return nil, err
+	rows = make([]T, reader.NumRows())
+	n, rerr := reader.Read(rows)
+	if rerr != nil && !errors.Is(rerr, io.EOF) {
+		return nil, rerr
 	}
 	return rows[:n], nil
 }

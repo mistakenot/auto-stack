@@ -52,7 +52,9 @@ func buildManifest(staged []*StagedSkill, targets []Target) (*skill.Manifest, []
 
 	// managed_skills per target: every staged skill is managed in every target
 	// (sync writes the full union into each target). The expected value is the
-	// skill_version; skip-vs-write does not change what `sync` *manages*.
+	// skill_version; skip-vs-write does not change what `sync` *manages*. The
+	// one exception is applied later by Run: a refused foreign collision
+	// disowns that (target, skill) row (disownManifestTarget).
 	want := map[string]string{}
 	for _, st := range staged {
 		want[st.Name] = st.SkillVersion
