@@ -1,0 +1,123 @@
+# Spec for generated `impact-*` tasks. Render with `uv run evals generate`.
+#
+# Each [[tasks]] entry becomes tasks/impact-<objective>-<fixture>-<subject>/.
+# Ground truth comes from `go list` at the pinned revision, never from a tool
+# under test. Pick targets with `uv run evals generate --candidates <fixture>`:
+# good ones have many dependents, few of them direct, and long import chains.
+# Bump a task's `version` whenever a change alters what it measures.
+
+[fixtures.logrus]
+repo = "https://github.com/sirupsen/logrus"
+rev = "d40e25cd45ed9c6b2b66e6b97573a0413e4c23bd"  # v1.9.3
+repo_dir = "logrus"
+
+[fixtures.gogit]
+repo = "https://github.com/go-git/go-git"
+rev = "302dddeda962e4bb3477a8e4080bc6f5a253e2bb"
+repo_dir = "go-git"
+
+[fixtures.autostack]
+repo = "https://github.com/mistakenot/auto-stack"
+rev = "f03feaa918c4f8ca00ead589a71fa3dd2aaeb3fa"
+repo_dir = "auto-stack"
+
+[fixtures.ghcli]
+repo = "https://github.com/cli/cli"
+rev = "b6770c8bc54c72e74e785c307850446b8e10be9d"
+repo_dir = "cli"
+
+[fixtures.hugo]
+repo = "https://github.com/gohugoio/hugo"
+rev = "9e4059cfca84a3914544476093b86bc06d6028e8"
+repo_dir = "hugo"
+
+[fixtures.caddy]
+repo = "https://github.com/caddyserver/caddy"
+rev = "7ee4441f9261d649eed215f27331352c1ab5a746"
+repo_dir = "caddy"
+
+# --- easy guard: control already solves it, so it catches a tool making simple cases worse
+
+[[tasks]]
+fixture = "logrus"
+target = "."
+granularity = "file"
+subject = "root"
+
+# --- go-git
+
+[[tasks]]
+fixture = "gogit"
+target = "utils/trace"
+granularity = "pkg"
+subject = "utils-trace"
+
+[[tasks]]
+fixture = "gogit"
+target = "plumbing/filemode"
+granularity = "pkg"
+subject = "filemode"
+
+[[tasks]]
+fixture = "gogit"
+target = "plumbing/format/diff"
+granularity = "pkg"
+subject = "format-diff"
+
+# --- auto-stack (auto-search module)
+
+[[tasks]]
+fixture = "autostack"
+module_dir = "auto-search"
+target = "internal/model"
+granularity = "pkg"
+subject = "search-model"
+
+[[tasks]]
+fixture = "autostack"
+module_dir = "auto-search"
+target = "internal/model"
+granularity = "file"
+subject = "search-model"
+
+# --- GitHub CLI
+
+[[tasks]]
+fixture = "ghcli"
+target = "internal/flock"
+granularity = "pkg"
+subject = "flock"
+
+[[tasks]]
+fixture = "ghcli"
+target = "pkg/cmd/attestation/artifact/digest"
+granularity = "pkg"
+subject = "attestation-digest"
+
+[[tasks]]
+fixture = "ghcli"
+target = "internal/skills/lockfile"
+granularity = "file"
+subject = "skills-lockfile"
+
+# --- Hugo
+
+[[tasks]]
+fixture = "hugo"
+target = "common/tasks"
+granularity = "pkg"
+subject = "common-tasks"
+
+[[tasks]]
+fixture = "hugo"
+target = "resources/resource_transformers/integrity"
+granularity = "pkg"
+subject = "integrity"
+
+# --- Caddy
+
+[[tasks]]
+fixture = "caddy"
+target = "notify"
+granularity = "pkg"
+subject = "notify"

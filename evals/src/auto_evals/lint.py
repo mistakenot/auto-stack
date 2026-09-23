@@ -86,10 +86,12 @@ def _check_task(layout: Layout, task_dir: Path) -> list[LintError]:
     if area and area not in conv["areas"]:
         err("area_unknown", "metadata.area",
             f"area must be one of {sorted(conv['areas'])}; add new areas to conventions.toml first", area)
-    expected = "-".join(str(meta.get(k, "")) for k in ("area", "objective", "fixture"))
-    if all(meta.get(k) for k in ("area", "objective", "fixture")) and name != expected:
+    parts = ("area", "objective", "fixture", "subject")
+    expected = "-".join(str(meta.get(k, "")) for k in parts)
+    if all(meta.get(k) for k in parts) and name != expected:
         err("name_convention", "dir",
-            "task name must be <area>-<objective>-<fixture> built from [metadata]", {"name": name, "expected": expected})
+            "task name must be <area>-<objective>-<fixture>-<subject> built from [metadata]",
+            {"name": name, "expected": expected})
 
     guid = conv["canary_guid"]
     for fname in ("instruction.md", "task.toml"):

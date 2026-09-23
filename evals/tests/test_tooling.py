@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from auto_evals.compare import compare
+from auto_evals.compare import MIN_TASKS_TO_GENERALIZE, _holm, compare
 from auto_evals.layout import Layout
 from auto_evals.lint import _diff_paths, validate
 from auto_evals.results import load_job
@@ -79,7 +79,9 @@ def test_compare_pairs_by_task_and_excludes_errors(layout: Layout) -> None:
     report = compare(layout, "demo")
     eff = report["treatments"]["tool"]["effects"]["reward"]
     assert eff["control"] == 0.5 and eff["treatment"] == 0.9 and eff["delta"] == 0.4
-    assert eff["ci_excludes_zero"]
+    assert eff["significant"] and eff["ci95_generalized"] is None  # one task cannot generalize
+    assert report["treatments"]["tool"]["verdict"]["result"] == "improves"
+    assert report["treatments"]["tool"]["verdict"]["scope"] == "these-tasks-only"
     assert report["trials"]["control"]["errors"] == {"ApiRateLimitError": 1}
     assert report["treatments"]["tool"]["uptake"] == {
         "pattern": "\\bauto\\s+graph\\b", "used": 2, "of": 3, "rate": 0.6667}
@@ -110,7 +112,26 @@ def test_single_trial_cells_get_no_interval(layout: Layout) -> None:
     _trial(ctrl, "c", "t1", 0.5)
     _trial(treat, "x", "t1", 0.9)
     eff = compare(layout, "demo")["treatments"]["tool"]["effects"]["reward"]
-    assert eff["delta"] == 0.4 and eff["ci95"] is None and not eff["ci_excludes_zero"]
+    assert eff["delta"] == 0.4 and eff["ci95_these_tasks"] is None and not eff["significant"]
+
+
+def test_generalized_interval_needs_enough_tasks(layout: Layout) -> None:
+    ctrl = _job(layout.root, "demo__control__20260923T000000Z")
+    treat = _job(layout.root, "demo__tool__20260923T000000Z")
+    for k in range(MIN_TASKS_TO_GENERALIZE):
+        for i in range(2):
+            _trial(ctrl, f"c{k}-{i}", f"t{k}", 0.5 + 0.01 * i)
+            _trial(treat, f"x{k}-{i}", f"t{k}", 0.8 + 0.01 * i)
+    tool = compare(layout, "demo")["treatments"]["tool"]
+    assert tool["effects"]["reward"]["ci95_generalized"] is not None
+    assert tool["verdict"] == {"result": "improves", "scope": "generalizes", "delta": 0.3,
+                               "p": tool["effects"]["reward"]["p"]}
+
+
+def test_holm_is_stricter_than_raw_threshold() -> None:
+    # 0.03 passes a raw 0.05 bar, but not Holm's 0.05/2 when it is the smaller of two.
+    assert _holm({"a": 0.03, "b": 0.04}) == {"a": False, "b": False}
+    assert _holm({"a": 0.001, "b": 0.04}) == {"a": True, "b": True}
 
 
 def test_diff_paths_treats_missing_section_as_empty() -> None:

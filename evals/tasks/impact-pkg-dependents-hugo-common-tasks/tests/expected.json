@@ -1,0 +1,16 @@
+[
+  ".",
+  "commands",
+  "create",
+  "hugolib",
+  "internal/js/esbuild",
+  "resources/images/imagetesting",
+  "resources/resource_factories/create",
+  "resources/resource_transformers/js",
+  "tpl/css",
+  "tpl/images",
+  "tpl/js",
+  "tpl/openapi/openapi3",
+  "tpl/resources",
+  "tpl/tplimplinit"
+]

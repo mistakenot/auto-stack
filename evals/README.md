@@ -47,8 +47,8 @@ that the two agree, so a name can never drift from what it describes.
 
 | Thing | Pattern | Example |
 |---|---|---|
-| Task | `<area>-<objective>-<fixture>` | `impact-pkg-dependents-gogit` |
-| Harbor task name | `auto-stack/<task>` | `auto-stack/impact-pkg-dependents-gogit` |
+| Task | `<area>-<objective>-<fixture>-<subject>` | `impact-pkg-dependents-ghcli-flock` |
+| Harbor task name | `auto-stack/<task>` | `auto-stack/impact-pkg-dependents-ghcli-flock` |
 | Dataset | `<purpose>` | `impact` |
 | Experiment | `<subject>-on-<dataset>` | `auto-graph-on-impact` |
 | Arm | `control`, or the one factor it changes | `auto-graph`, `model-sonnet-5` |
@@ -65,8 +65,10 @@ hundreds of tasks and dozens of experiments.
 2. **The area comes first and is a closed list.** `impact-*` is then a safe glob,
    so a new task joins its datasets automatically. Adding an area means adding
    one line to `conventions.toml`.
-3. **The fixture comes last.** Related tasks sort together, and one objective can
-   run over many repositories.
+3. **Fixture, then subject, come last.** The fixture names the repository and the
+   subject names what the task is about within it, usually the target package.
+   Tasks with one objective sort together across repositories, and one repository
+   can host many tasks.
 4. **No versions or dates in task names.** A change that alters what a task
    measures bumps `[task].version`. Harbor records a content checksum per trial,
    and `evals compare` refuses to pair trials of a task that changed between arms.
@@ -108,18 +110,50 @@ These come from Harbor's documented practice. Lint enforces the checkable ones.
 - **Errored trials are not failures.** Harbor still grades a rate-limited trial
   as 0. `evals compare` excludes any trial with an exception and reports errors
   by type.
+- **Answer keys never come from a tool under test.** The first go-git key was
+  produced by `auto graph` and encoded its bugs, so the auto-graph arm "won" by
+  reproducing them. Generated keys come from `go list`.
+
+## Reading `evals compare`
+
+- **The verdict uses the primary metric only.** It reads `improves`, `worsens`,
+  or `inconclusive`, at p <= 0.05.
+- **Secondary metrics are context.** They are marked significant only after a
+  Holm correction across all of them. Seven metrics at 95% would otherwise give
+  about a 30% chance of at least one fluke.
+- **Two intervals answer two questions.** `these tasks` resamples trials only:
+  would a rerun of the same tasks agree? `generalized` also resamples tasks:
+  should the effect hold on similar tasks? It appears only with at least 8 paired
+  tasks, and the verdict uses it whenever it exists. The verdict's `scope` says
+  which one decided.
+- **Intervals need at least 2 valid trials per task per arm.** With one, the
+  interval would collapse to a point and look falsely certain.
 
 ## Adding things
 
-**A task:**
+**An impact task** is generated, never hand-written. Add a `[[tasks]]` entry to
+`generators/impact.toml`, then render and gate it:
 
 ```bash
-uv run evals new-task --area impact --objective callers --fixture cobra --description "..."
+uv run evals generate --candidates ghcli --text   # rank targets: many dependents, few direct, deep chains
+uv run evals generate --text                      # render every task in the spec
+uv run evals generate --check --text              # CI: committed tasks match a fresh render
+uv run evals lint --text && uv run evals oracle --text
+```
+
+The generator fetches the fixture at its pinned commit and runs `go list` inside
+a pinned Go container to build the answer key. `generators/impact/` holds the
+templates every impact task shares, including the verifier.
+
+**Any other task:**
+
+```bash
+uv run evals new-task --area fix --objective flaky-test --fixture cobra --subject completion --description "..."
 # fill instruction.md, environment/, tests/, solution/, and the remaining [metadata]
 uv run evals lint --text && uv run evals oracle --text
 ```
 
-Copy `tests/` from an existing task with a similar grading shape. For example,
+Copy `tests/` from a task with a similar grading shape. For example,
 `set_match.py` scores any set-valued answer.
 
 **An experiment:** create `experiments/<subject>-on-<dataset>/` holding an
@@ -136,23 +170,25 @@ evals/
   defaults.yaml           runtime-only job settings, layered first
   datasets/<name>.yaml    task selections by glob
   experiments/<name>/     experiment.toml plus one <arm>.yaml per arm
-  tasks/<name>/           Harbor tasks
+  tasks/<name>/           Harbor tasks, mostly generated
+  generators/impact.toml  spec for generated impact tasks
+  generators/impact/      shared templates for impact tasks, including the verifier
+  generators/golist/      Go helper that dumps a module's import graph
   templates/              metadata template for `harbor task init`
   src/auto_evals/         the evals CLI
   tests/                  offline tests for the CLI
-  jobs/  .build/          run output and built binaries (gitignored)
+  jobs/ .build/ .cache/   run output, built binaries, fixture and graph caches (gitignored)
 ```
 
 ## Known limits
 
 - **Arms run one after another.** API latency and rate limits drift over time, so
   wall-clock deltas carry some time-of-day noise. Compare quality metrics first.
-- **Two tasks give weak cross-task intervals.** The bootstrap resamples trials
-  within tasks. Its interval says the result is stable, not that it generalises.
-  More `impact-*` tasks fix this.
-- **Ground truth has no derivation script yet.** Each task README records how its
-  truth was computed.
-- **Shared criteria are copied into each task** to keep tasks self-contained.
-  Once several tasks share one, publish a versioned verifier base image instead.
+- **Twelve tasks is a start.** The generalized interval needs at least 8 paired
+  tasks. It grows more trustworthy with more tasks from more repositories.
+- **Only Go is covered.** The generator relies on `go list`. Other languages need
+  their own ground-truth source.
+- **Generated tasks copy the shared verifier** to stay self-contained. A
+  versioned verifier base image would remove the copies.
 - **Datasets are local globs.** Harbor Hub `dataset.toml` manifests pin tasks by
   digest but resolve only through a registry. Adopt them when publishing.

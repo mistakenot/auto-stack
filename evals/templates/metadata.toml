@@ -4,6 +4,7 @@
 area = ""
 objective = ""
 fixture = ""
+subject = ""
 fixture_repo = ""
 fixture_rev = ""
 truth_source = ""

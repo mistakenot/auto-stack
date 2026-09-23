@@ -1,7 +1,8 @@
 """`evals`: the thin layer over Harbor.
 
     evals lint                      check naming, task hygiene, and one-factor arms
-    evals new-task --area A --objective O --fixture F
+    evals new-task --area A --objective O --fixture F --subject S
+    evals generate [--check] [--candidates FIXTURE]   render generated impact-* tasks
     evals oracle [--dataset D]      every selected task must score 1.0 with the oracle
     evals run EXPERIMENT [--arm A]  run arms as Harbor jobs named <experiment>__<arm>__<utc>
     evals compare EXPERIMENT        paired effects with bootstrap intervals
@@ -61,7 +62,7 @@ def cmd_lint(layout: Layout, args: argparse.Namespace) -> int:
 
 def cmd_new_task(layout: Layout, args: argparse.Namespace) -> int:
     conv = layout.conventions
-    parts = {"area": args.area, "objective": args.objective, "fixture": args.fixture}
+    parts = {"area": args.area, "objective": args.objective, "fixture": args.fixture, "subject": args.subject}
     for key, value in parts.items():
         if not layout.name_re.match(value):
             raise SystemExit(f"error: --{key} '{value}' must be lowercase kebab-case.")
@@ -70,7 +71,7 @@ def cmd_new_task(layout: Layout, args: argparse.Namespace) -> int:
             f"error: unknown area '{args.area}'. Known: {', '.join(sorted(conv['areas']))}.\n"
             "hint: add the area to conventions.toml with a one-line definition first."
         )
-    name = f"{args.area}-{args.objective}-{args.fixture}"
+    name = f"{args.area}-{args.objective}-{args.fixture}-{args.subject}"
     task_dir = layout.tasks_dir / name
     if task_dir.exists():
         raise SystemExit(f"error: {task_dir.relative_to(layout.root)} already exists.")
@@ -93,6 +94,42 @@ def cmd_new_task(layout: Layout, args: argparse.Namespace) -> int:
           f"created {task_dir.relative_to(layout.root)}\n"
           "next: fill instruction.md, environment/, tests/, solution/, and the remaining [metadata] keys, "
           "then run `uv run evals lint` and `uv run evals oracle`.", args.text)
+    return 0
+
+
+# --- generate ----------------------------------------------------------------
+
+
+def cmd_generate(layout: Layout, args: argparse.Namespace) -> int:
+    from .generate import candidates, drift, render_all, stale_generated, write
+
+    if args.candidates:
+        rows = candidates(layout, args.candidates, args.module_dir)
+        text = f"{'target':<48}{'dependents':>11}{'direct':>8}{'depth':>7}  difficulty\n" + "\n".join(
+            f"{r['target']:<48}{r['dependents']:>11}{r['direct']:>8}{r['max_depth']:>7}  {r['difficulty']}" for r in rows)
+        _emit({"fixture": args.candidates, "module_dir": args.module_dir, "candidates": rows}, text, args.text)
+        return 0
+
+    rendered = render_all(layout, args.only)
+    stale = [] if args.only else stale_generated(layout, rendered)
+    if args.check:
+        drifted = {r.name: d for r in rendered if (d := drift(layout, r))}
+        ok = not drifted and not stale
+        payload = {"ok": ok, "drifted": drifted, "stale": stale}
+        text = "generated tasks are up to date" if ok else (
+            "\n".join(f"{n}: {', '.join(d)}" for n, d in drifted.items())
+            + ("\nstale: " + ", ".join(stale) if stale else "")
+            + "\nhint: run `uv run evals generate` and commit the result.")
+        _emit(payload, text, args.text)
+        return 0 if ok else 1
+    for r in rendered:
+        write(layout, r)
+    rows = [{"task": r.name, **r.stats} for r in rendered]
+    text = "\n".join(f"{r['task']:<52} answer={r['answer_size']:<4} direct={r['direct']:<3} "
+                     f"depth={r['depth']:<2} {r['difficulty']}" for r in rows)
+    if stale:
+        text += "\nstale generated tasks no longer in the spec: " + ", ".join(stale)
+    _emit({"written": rows, "stale": stale}, text, args.text)
     return 0
 
 
@@ -237,8 +274,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--area", required=True)
     p.add_argument("--objective", required=True)
     p.add_argument("--fixture", required=True)
+    p.add_argument("--subject", required=True, help="what the task is about within the fixture")
     p.add_argument("--description", default="")
     p.set_defaults(func=cmd_new_task)
+
+    p = sub.add_parser("generate", help="render generated impact-* tasks from generators/impact.toml")
+    p.add_argument("--check", action="store_true", help="fail if committed tasks differ from a fresh render")
+    p.add_argument("--only", action="append", help="render only this task name (repeatable)")
+    p.add_argument("--candidates", metavar="FIXTURE", help="rank candidate targets in a fixture instead")
+    p.add_argument("--module-dir", default=".", help="module directory within the fixture, for --candidates")
+    p.set_defaults(func=cmd_generate)
 
     p = sub.add_parser("oracle", help="prove every selected task is solvable and graded 1.0")
     p.add_argument("--dataset", help="dataset name under datasets/ (default: all tasks)")
