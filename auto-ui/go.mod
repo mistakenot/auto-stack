@@ -6,7 +6,6 @@ require (
 	github.com/coder/websocket v1.8.14
 	github.com/mistakenot/auto-shared v0.0.0
 	github.com/spf13/cobra v1.10.2
-	golang.org/x/net v0.41.0
 )
 
 require (
