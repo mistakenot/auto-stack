@@ -55,8 +55,10 @@ def _draws(ctrl: Cells, treat: Cells, rng: random.Random, *, resample_tasks: boo
     out = []
     for _ in range(BOOTSTRAP_SAMPLES):
         picked = rng.choices(tasks, k=len(tasks)) if resample_tasks else tasks
-        c = {t: rng.choices(ctrl[t], k=len(ctrl[t])) for t in set(picked)}
-        x = {t: rng.choices(treat[t], k=len(treat[t])) for t in set(picked)}
+        # sorted(): set order depends on per-process string hashing, which would
+        # change the order of random draws and make reports irreproducible.
+        c = {t: rng.choices(ctrl[t], k=len(ctrl[t])) for t in sorted(set(picked))}
+        x = {t: rng.choices(treat[t], k=len(treat[t])) for t in sorted(set(picked))}
         out.append(_effect(c, x, picked))
     out.sort()
     return out
@@ -221,15 +223,22 @@ def render_text(report: dict) -> str:
         if "uptake" in entry:
             u = entry["uptake"]
             lines.append(f"uptake: {u['used']}/{u['of']} valid trials matched /{u['pattern']}/")
-        lines.append(f"{'metric':<15}{'control':>11}{'treatment':>11}{'delta':>10}   "
-                     f"{'95% CI these tasks':<21}{'95% CI generalized':<21}{'p':>7}")
-        fmt = lambda ci: f"[{ci[0]}, {ci[1]}]" if ci else "n/a"
+        num = lambda v: f"{v:,.0f}" if abs(v) >= 1000 else f"{v:.4g}"
+        ci = lambda c: f"[{num(c[0])}, {num(c[1])}]" if c else "n/a"
+        rows = [("metric", "control", "treatment", "delta", "95% CI these tasks", "95% CI generalized", "p")]
         for m, e in entry["effects"].items():
-            mark = " *" if e["significant"] else ""
-            tag = "  (primary)" if m == report["primary_metric"] else ""
-            p = "n/a" if e["p"] is None else e["p"]
-            lines.append(f"{m:<15}{e['control']:>11}{e['treatment']:>11}{e['delta']:>10}   "
-                         f"{fmt(e['ci95_these_tasks']):<21}{fmt(e['ci95_generalized']):<21}{p:>7}{mark}{tag}")
+            rows.append((m, num(e["control"]), num(e["treatment"]), num(e["delta"]), ci(e["ci95_these_tasks"]),
+                         ci(e["ci95_generalized"]), "n/a" if e["p"] is None else f"{e['p']:.3g}"))
+        widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
+        metrics = list(entry["effects"])
+        for i, r in enumerate(rows):
+            cells = [r[0].ljust(widths[0])] + [c.rjust(w) for c, w in zip(r[1:4], widths[1:4])] \
+                + [c.ljust(w) for c, w in zip(r[4:6], widths[4:6])] + [r[6].rjust(widths[6])]
+            suffix = ""
+            if i:
+                e = entry["effects"][metrics[i - 1]]
+                suffix = (" *" if e["significant"] else "") + ("  (primary)" if metrics[i - 1] == report["primary_metric"] else "")
+            lines.append("  ".join(cells) + suffix)
     if report["arms_without_jobs"]:
         lines += ["", "arms with no completed job: " + ", ".join(report["arms_without_jobs"])]
     if report["warnings"]:

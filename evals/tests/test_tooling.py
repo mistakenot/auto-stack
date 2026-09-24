@@ -97,13 +97,22 @@ def test_compare_excludes_task_changed_between_arms(layout: Layout) -> None:
     assert any("checksums differ" in w for w in report["warnings"])
 
 
-def test_compare_is_deterministic(layout: Layout) -> None:
+def test_compare_is_deterministic_across_processes(layout: Layout) -> None:
+    """String hashing is randomized per process, so compare must not depend on set order."""
+    import subprocess
+    import sys
+
     ctrl = _job(layout.root, "demo__control__20260923T000000Z")
     treat = _job(layout.root, "demo__tool__20260923T000000Z")
-    for i, r in enumerate([0.2, 0.6, 0.4]):
-        _trial(ctrl, f"c{i}", "t1", r)
-        _trial(treat, f"x{i}", "t1", r + 0.1)
-    assert compare(layout, "demo") == compare(layout, "demo")
+    for k in range(MIN_TASKS_TO_GENERALIZE):
+        for i, r in enumerate([0.2, 0.6, 0.4]):
+            _trial(ctrl, f"c{k}-{i}", f"t{k}", r)
+            _trial(treat, f"x{k}-{i}", f"t{k}", r + 0.05 * (k % 3))
+    code = ("import json,sys; from pathlib import Path; from auto_evals.layout import Layout; "
+            "from auto_evals.compare import compare; print(json.dumps(compare(Layout(Path(sys.argv[1])), 'demo')))")
+    outs = {subprocess.run([sys.executable, "-c", code, str(layout.root)], capture_output=True, text=True,
+                           env={"PYTHONHASHSEED": seed}, check=True).stdout for seed in ("1", "2", "3")}
+    assert len(outs) == 1
 
 
 def test_single_trial_cells_get_no_interval(layout: Layout) -> None:
