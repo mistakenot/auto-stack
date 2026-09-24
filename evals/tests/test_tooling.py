@@ -143,6 +143,41 @@ def test_holm_is_stricter_than_raw_threshold() -> None:
     assert _holm({"a": 0.001, "b": 0.04}) == {"a": True, "b": True}
 
 
+def test_compare_pairs_arms_from_the_same_run(layout: Layout) -> None:
+    old_c = _job(layout.root, "demo__control__20260923T000000Z")
+    old_t = _job(layout.root, "demo__tool__20260923T000000Z")
+    _trial(old_c, "c", "t1", 0.5)
+    _trial(old_c, "c2", "t1", 0.5)
+    _trial(old_t, "x", "t1", 0.9)
+    _trial(old_t, "x2", "t1", 0.9)
+    rerun = _job(layout.root, "demo__control__20260924T000000Z")  # control rerun alone
+    _trial(rerun, "c", "t1", 1.0)
+    report = compare(layout, "demo")
+    assert report["cohort"] == "20260923T000000Z"
+    assert report["jobs"]["control"] == "jobs/demo__control__20260923T000000Z"
+    assert any("20260924T000000Z" in w and "ignored" in w for w in report["warnings"])
+
+
+def test_compare_overrides_must_cover_every_arm_and_may_live_outside(layout: Layout, tmp_path_factory) -> None:
+    outside = tmp_path_factory.mktemp("archive")
+    ctrl, treat = _job(outside, "c"), _job(outside, "t")
+    _trial(ctrl, "c", "t1", 0.5)
+    _trial(treat, "x", "t1", 0.9)
+    with pytest.raises(SystemExit, match="must name every arm"):
+        compare(layout, "demo", {"control": ctrl})
+    report = compare(layout, "demo", {"control": ctrl, "tool": treat})
+    assert report["cohort"] == "explicit" and report["jobs"]["control"] == str(ctrl.resolve())
+
+
+def test_malformed_dataset_yaml_is_a_lint_error(tmp_path: Path) -> None:
+    (tmp_path / "conventions.toml").write_text((EVALS_ROOT / "conventions.toml").read_text())
+    (tmp_path / "datasets").mkdir()
+    (tmp_path / "datasets" / "broken.yaml").write_text("datasets: [unclosed\n")
+    (tmp_path / "datasets" / "scalar.yaml").write_text("just a string\n")
+    codes = sorted((e.path, e.code) for e in validate(Layout(tmp_path), resolve_arms=False))
+    assert codes == [("datasets/broken.yaml", "dataset_invalid"), ("datasets/scalar.yaml", "dataset_invalid")]
+
+
 def test_diff_paths_treats_missing_section_as_empty() -> None:
     assert _diff_paths({"a": 1}, {"a": 1, "environment": {"mounts": [1]}}) == ["environment.mounts"]
     assert _diff_paths({"agents": [1]}, {"agents": [2]}) == ["agents"]

@@ -59,7 +59,11 @@ def resolve_config(layout: Layout, configs: list[Path]) -> dict:
 
 
 def run(layout: Layout, args: list[str], extra_env: dict[str, str] | None = None) -> int:
-    """Run harbor with inherited stdio, from evals/, and return its exit code."""
+    """Run harbor from evals/ and return its exit code.
+
+    Harbor's progress output goes to our stderr, so stdout carries only the
+    `evals` result payload and stays parseable JSON.
+    """
     cmd = [harbor_bin(), "run", *args]
     print("+ " + " ".join(cmd), file=sys.stderr)
-    return subprocess.run(cmd, cwd=layout.root, env=harbor_env(layout, extra_env)).returncode
+    return subprocess.run(cmd, cwd=layout.root, env=harbor_env(layout, extra_env), stdout=sys.stderr).returncode

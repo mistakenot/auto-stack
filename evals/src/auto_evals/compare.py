@@ -27,7 +27,7 @@ from pathlib import Path
 from statistics import fmean
 
 from .layout import Layout, load_experiment
-from .results import Trial, latest_job, load_job, trajectory_matches
+from .results import Trial, completed_jobs, latest_cohort, load_job, trajectory_matches
 
 BOOTSTRAP_SAMPLES = 4000
 SEED = 20260923
@@ -92,28 +92,35 @@ def compare(layout: Layout, experiment: str, job_overrides: dict[str, Path] | No
     control = layout.control_arm
     primary = exp["primary_metric"]
     secondaries = [m for m in exp.get("secondary_metrics", []) if m != primary]
+    arms = list(exp["arms"])
     overrides = job_overrides or {}
-    jobs: dict[str, Path] = {}
-    missing = []
-    for arm in exp["arms"]:
-        job = overrides.get(arm) or latest_job(layout.jobs_dir, experiment, arm)
-        if job is None:
-            missing.append(arm)
-        else:
-            jobs[arm] = job
-    if control in missing:
-        raise SystemExit(
-            f"error: no completed '{control}' job for experiment '{experiment}' under jobs/.\n"
-            f"hint: run `uv run evals run {experiment}` first, or pass --job {control}=<dir>."
-        )
+    warnings: list[str] = []
+    if overrides:
+        # Explicit pairing: the caller vouches that these jobs belong together.
+        absent = [a for a in arms if a not in overrides]
+        if absent:
+            raise SystemExit(
+                f"error: --job overrides must name every arm; missing {absent}.\n"
+                "hint: pass --job ARM=DIR for each arm, or omit --job to use the latest complete run.")
+        jobs, cohort = {a: overrides[a] for a in arms}, "explicit"
+    else:
+        cohort, jobs = latest_cohort(layout.jobs_dir, experiment, arms)
+        if cohort is None:
+            raise SystemExit(
+                f"error: no run of '{experiment}' where every arm {arms} completed under jobs/.\n"
+                f"hint: run `uv run evals run {experiment}` for all arms, or pass --job ARM=DIR for each arm.")
+        for arm in arms:
+            newer = sorted(s for s in completed_jobs(layout.jobs_dir, experiment, arm) if s > cohort)
+            if newer:
+                warnings.append(f"{arm}: newer job(s) {newer} ignored because not every arm ran at that stamp")
 
     trials = {arm: load_job(path) for arm, path in jobs.items()}
     report: dict = {
         "experiment": experiment,
         "question": exp.get("question"),
         "primary_metric": primary,
-        "jobs": {arm: str(p.relative_to(layout.root)) for arm, p in jobs.items()},
-        "arms_without_jobs": missing,
+        "cohort": cohort,
+        "jobs": {arm: _display(p, layout.root) for arm, p in jobs.items()},
         "trials": {
             arm: {
                 "total": len(ts),
@@ -123,7 +130,7 @@ def compare(layout: Layout, experiment: str, job_overrides: dict[str, Path] | No
             for arm, ts in trials.items()
         },
         "treatments": {},
-        "warnings": [],
+        "warnings": warnings,
     }
 
     ctrl_cells = _cells(trials[control])
@@ -199,6 +206,14 @@ def compare(layout: Layout, experiment: str, job_overrides: dict[str, Path] | No
     return report
 
 
+def _display(path: Path, root: Path) -> str:
+    """Path relative to evals/ when inside it, else absolute. Archived jobs may live anywhere."""
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        return str(path.resolve())
+
+
 def _verdict(e: dict | None) -> dict:
     if e is None or e["p"] is None:
         return {"result": "no-data", "scope": None}
@@ -211,7 +226,8 @@ def _verdict(e: dict | None) -> dict:
 
 
 def render_text(report: dict) -> str:
-    lines = [f"experiment: {report['experiment']}", f"question:   {report['question']}", ""]
+    lines = [f"experiment: {report['experiment']}", f"question:   {report['question']}",
+             f"run:        {report['cohort']}", ""]
     for arm, s in report["trials"].items():
         errs = ", ".join(f"{k}={v}" for k, v in s["errors"].items()) or "none"
         lines.append(f"{arm:<14} {s['valid']}/{s['total']} valid trials   errors: {errs}")
@@ -239,8 +255,6 @@ def render_text(report: dict) -> str:
                 e = entry["effects"][metrics[i - 1]]
                 suffix = (" *" if e["significant"] else "") + ("  (primary)" if metrics[i - 1] == report["primary_metric"] else "")
             lines.append("  ".join(cells) + suffix)
-    if report["arms_without_jobs"]:
-        lines += ["", "arms with no completed job: " + ", ".join(report["arms_without_jobs"])]
     if report["warnings"]:
         lines.append("")
     for w in report["warnings"]:

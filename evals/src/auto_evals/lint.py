@@ -129,7 +129,15 @@ def _check_dataset(layout: Layout, cfg_path: Path, task_names: list[str]) -> lis
     rel = str(cfg_path.relative_to(layout.root))
     if not layout.name_re.match(cfg_path.stem):
         errs.append(LintError("name_format", rel, "file", "dataset name must be lowercase kebab-case", cfg_path.stem))
-    data = yaml.safe_load(cfg_path.read_text()) or {}
+    try:
+        data = yaml.safe_load(cfg_path.read_text()) or {}
+    except yaml.YAMLError as e:
+        errs.append(LintError("dataset_invalid", rel, "file", f"dataset YAML does not parse: {e}"))
+        return errs
+    if not isinstance(data, dict) or not isinstance(data.get("datasets", []), list):
+        errs.append(LintError("dataset_invalid", rel, "datasets",
+                              "a dataset file must be a mapping with a `datasets` list"))
+        return errs
     if set(data) - {"datasets"}:
         errs.append(LintError("dataset_scope", rel, "keys",
                               "a dataset layer may only set `datasets`; move other settings to an arm",

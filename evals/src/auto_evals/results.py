@@ -80,11 +80,22 @@ def trajectory_matches(path: Path | None, pattern: re.Pattern[str]) -> bool:
     return False
 
 
-def latest_job(jobs_dir: Path, experiment: str, arm: str) -> Path | None:
-    """Newest completed job named <experiment>__<arm>__<timestamp>."""
+def completed_jobs(jobs_dir: Path, experiment: str, arm: str) -> dict[str, Path]:
+    """Completed jobs named <experiment>__<arm>__<stamp>, keyed by stamp."""
     prefix = f"{experiment}__{arm}__"
-    candidates = sorted(
-        (p for p in jobs_dir.glob(prefix + "*") if (p / "result.json").is_file()),
-        key=lambda p: p.name,
-    )
-    return candidates[-1] if candidates else None
+    return {p.name[len(prefix):]: p for p in jobs_dir.glob(prefix + "*") if (p / "result.json").is_file()}
+
+
+def latest_cohort(jobs_dir: Path, experiment: str, arms: list[str]) -> tuple[str | None, dict[str, Path]]:
+    """Newest run stamp at which every arm completed a job.
+
+    `evals run` gives all arms of one invocation the same stamp. Pairing by
+    stamp keeps a rerun of a single arm from being compared against a stale job
+    of another arm that ran under different conditions.
+    """
+    by_arm = {arm: completed_jobs(jobs_dir, experiment, arm) for arm in arms}
+    common = set.intersection(*(set(jobs) for jobs in by_arm.values())) if by_arm else set()
+    if not common:
+        return None, {}
+    stamp = max(common)
+    return stamp, {arm: by_arm[arm][stamp] for arm in arms}
