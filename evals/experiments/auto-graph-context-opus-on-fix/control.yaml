@@ -5,5 +5,5 @@ agents:
     kwargs:
       max_turns: 100
 
-# 3 attempts x 10 tasks keeps an Opus run to 30 trials per arm.
+# 3 attempts x 10 tasks = 30 Opus trials per arm.
 n_attempts: 3

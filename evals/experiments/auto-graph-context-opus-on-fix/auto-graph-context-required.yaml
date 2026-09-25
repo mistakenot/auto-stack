@@ -1,4 +1,4 @@
-# Arm `auto-graph-context`: control plus the auto binary and a pointer to context packs.
+# Arm `auto-graph-context-required`: control plus the auto binary and an instruction to use context packs.
 # Everything above the marker must stay identical to control.yaml.
 agents:
   - name: claude-code
@@ -18,4 +18,4 @@ environment:
       read_only: true
 
 extra_instructions:
-  - "The `auto` CLI is on your `PATH`. `auto graph code context <dir> --file <path> --token-limit 20000` returns a context pack: the given file plus the files most closely related to it through imports, ranked and trimmed to a token budget. Run `auto graph quickstart` for details."
+  - "The `auto` CLI is on your `PATH`. Before you edit any file, run `auto graph code context <dir> --file <path> --token-limit 20000` for each file you plan to change, and read the context pack it returns: the file plus the files most closely related to it through imports, ranked and trimmed to a token budget. Run `auto graph quickstart` for details."
