@@ -1,0 +1,9 @@
+# Arm `control`: stock Claude Code on Opus 5.5.
+agents:
+  - name: claude-code
+    model_name: claude-opus-5-5
+    kwargs:
+      max_turns: 100
+
+# 3 attempts x 10 tasks = 30 Opus trials per arm.
+n_attempts: 3

@@ -1,0 +1,6 @@
+# Dataset `impact`: every task in the impact area.
+# A dataset is a named task selection, expressed as a job-config layer. The task
+# naming convention makes area prefixes safe to glob on.
+datasets:
+  - path: tasks
+    task_names: ["impact-*"]

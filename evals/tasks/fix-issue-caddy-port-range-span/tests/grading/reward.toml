@@ -1,0 +1,6 @@
+# The primary `reward` is `resolved`, as in SWE-bench. The partial shares are
+# diagnostic dimensions with no weight.
+[[reward]]
+name = "reward"
+aggregation = "weighted-sum"
+weights = { resolved = 1.0, fail_to_pass = 0.0, pass_to_pass = 0.0 }

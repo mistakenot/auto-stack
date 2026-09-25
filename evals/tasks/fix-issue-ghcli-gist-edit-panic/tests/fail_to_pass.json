@@ -1,0 +1,7 @@
+[
+  "github.com/cli/cli/v2/pkg/cmd/gist/edit::Test_editRun",
+  "github.com/cli/cli/v2/pkg/cmd/gist/edit::Test_editRun/edit_no-file_gist,_nil_map_(#10626)",
+  "github.com/cli/cli/v2/pkg/cmd/gist/edit::Test_editRun/edit_no-file_gist_(#10626)",
+  "github.com/cli/cli/v2/pkg/cmd/gist/shared::TestPromptGists",
+  "github.com/cli/cli/v2/pkg/cmd/gist/shared::TestPromptGists/prompt_list_contains_no-file_gist_(#10626)"
+]

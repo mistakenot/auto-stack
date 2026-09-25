@@ -1,0 +1,21 @@
+# Arm `auto-graph-context-required`: control plus the auto binary and an instruction to use context packs.
+# Everything above the marker must stay identical to control.yaml.
+agents:
+  - name: claude-code
+    model_name: claude-opus-5-5
+    kwargs:
+      max_turns: 100
+
+# 3 attempts x 10 tasks = 30 Opus trials per arm.
+n_attempts: 3
+
+# --- treatment ---------------------------------------------------------------
+environment:
+  mounts:
+    - type: bind
+      source: ${EVALS_ROOT}/.build/auto-linux-amd64
+      target: /usr/local/bin/auto
+      read_only: true
+
+extra_instructions:
+  - "The `auto` CLI is on your `PATH`. Before you edit any file, run `auto graph code context <dir> --file <path> --token-limit 20000` for each file you plan to change, and read the context pack it returns: the file plus the files most closely related to it through imports, ranked and trimmed to a token budget. Run `auto graph quickstart` for details."

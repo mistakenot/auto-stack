@@ -1,0 +1,5 @@
+[
+  "github.com/cli/cli/v2/pkg/cmd/pr/shared::TestTryDetermineDefaultPRHead",
+  "github.com/cli/cli/v2/pkg/cmd/pr/shared::TestTryDetermineDefaultPRHead/when_the_push_default_is_tracking_or_upstream,_use_the_merge_ref",
+  "github.com/cli/cli/v2/pkg/cmd/pr/shared::TestTryDetermineDefaultPRHead/when_the_push_default_is_tracking_or_upstream,_use_the_merge_ref/but_if_the_merge_ref_is_empty,_use_the_provided_branch_name"
+]

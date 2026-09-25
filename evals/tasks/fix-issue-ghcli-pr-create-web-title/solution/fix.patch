@@ -1,0 +1,41 @@
+diff --git a/pkg/cmd/pr/create/create.go b/pkg/cmd/pr/create/create.go
+index 705f46023..b44f77170 100644
+--- a/pkg/cmd/pr/create/create.go
++++ b/pkg/cmd/pr/create/create.go
+@@ -388,13 +388,17 @@ func createRun(opts *CreateOptions) error {
+ 		return err
+ 	}
+ 
++	if opts.TitleProvided {
++		state.Title = opts.Title
++	}
++
++	if opts.BodyProvided {
++		state.Body = opts.Body
++	}
++
+ 	var openURL string
+ 
+ 	if opts.WebMode {
+-		if !(opts.Autofill || opts.FillFirst) {
+-			state.Title = opts.Title
+-			state.Body = opts.Body
+-		}
+ 		if opts.Template != "" {
+ 			state.Template = opts.Template
+ 		}
+@@ -413,14 +417,6 @@ func createRun(opts *CreateOptions) error {
+ 		return previewPR(*opts, openURL)
+ 	}
+ 
+-	if opts.TitleProvided {
+-		state.Title = opts.Title
+-	}
+-
+-	if opts.BodyProvided {
+-		state.Body = opts.Body
+-	}
+-
+ 	existingPR, _, err := opts.Finder.Find(shared.FindOptions{
+ 		Selector:   ctx.PRRefs.QualifiedHeadRef(),
+ 		BaseBranch: ctx.PRRefs.BaseRef(),

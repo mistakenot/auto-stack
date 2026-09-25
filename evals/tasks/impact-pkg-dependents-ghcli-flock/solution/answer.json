@@ -1,0 +1,13 @@
+[
+  "cmd/gen-docs",
+  "cmd/gh",
+  "internal/docs",
+  "internal/ghcmd",
+  "internal/skills/installer",
+  "internal/skills/lockfile",
+  "pkg/cmd/root",
+  "pkg/cmd/skills",
+  "pkg/cmd/skills/install",
+  "pkg/cmd/skills/list",
+  "pkg/cmd/skills/update"
+]

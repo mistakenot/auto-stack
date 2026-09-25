@@ -1,0 +1,4 @@
+# Dataset `fix`: resolve real upstream issues, graded by the fix commit's own tests.
+datasets:
+  - path: tasks
+    task_names: ["fix-*"]

@@ -1,0 +1,11 @@
+# Passed to `harbor task init --metadata-template`. Fill every key before
+# committing. `evals lint` rejects empty required keys.
+[metadata]
+area = ""
+objective = ""
+fixture = ""
+subject = ""
+fixture_repo = ""
+fixture_rev = ""
+truth_source = ""
+difficulty = ""

@@ -1,0 +1,16 @@
+[
+  ".",
+  "plumbing/format/pktline",
+  "plumbing/protocol/packp",
+  "plumbing/protocol/packp/sideband",
+  "plumbing/serverinfo",
+  "plumbing/transport",
+  "plumbing/transport/client",
+  "plumbing/transport/file",
+  "plumbing/transport/git",
+  "plumbing/transport/http",
+  "plumbing/transport/internal/common",
+  "plumbing/transport/server",
+  "plumbing/transport/ssh",
+  "plumbing/transport/test"
+]
