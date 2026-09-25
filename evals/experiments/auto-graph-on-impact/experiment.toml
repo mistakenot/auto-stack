@@ -1,3 +1,4 @@
+# Model: Claude Haiku 4.5. See auto-graph-opus-on-impact-file for Opus 5.5.
 # Experiment: does the auto graph CLI help Claude Code answer impact questions?
 # Pre-registered: the question, the primary metric, and what each arm changes are
 # written down before results exist, so the analysis cannot drift to fit them.

@@ -24,6 +24,7 @@ from .golist import GO_IMAGE, import_graph
 from .layout import Layout
 
 OBJECTIVES = {"pkg": "pkg-dependents", "file": "file-dependents"}
+GENERATORS = ("impact", "fix")
 
 
 @dataclass
@@ -146,7 +147,7 @@ def write(layout: Layout, rendered: Rendered) -> None:
     task_dir = layout.tasks_dir / rendered.name
     if task_dir.exists():
         meta = tomllib.loads((task_dir / "task.toml").read_text()).get("metadata", {})
-        if meta.get("generator") != "impact":
+        if meta.get("generator") not in GENERATORS:
             raise SystemExit(f"error: {task_dir.name} exists and was not generated; refusing to overwrite it.")
         shutil.rmtree(task_dir)
     for rel, content in rendered.files.items():
@@ -175,7 +176,7 @@ def stale_generated(layout: Layout, rendered: list[Rendered]) -> list[str]:
     stale = []
     for task_dir in layout.task_dirs():
         meta = tomllib.loads((task_dir / "task.toml").read_text()).get("metadata", {})
-        if meta.get("generator") == "impact" and task_dir.name not in names:
+        if meta.get("generator") in GENERATORS and task_dir.name not in names:
             stale.append(task_dir.name)
     return stale
 

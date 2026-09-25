@@ -1,0 +1,6 @@
+# Dataset `impact-file`: file-level impact tasks only. The first run showed
+# package-level impact is at the ceiling for a scripting agent, so this is the
+# subset where a graph tool can plausibly change the answer.
+datasets:
+  - path: tasks
+    task_names: ["impact-file-*"]

@@ -145,6 +145,25 @@ The generator fetches the fixture at its pinned commit and runs `go list` inside
 a pinned Go container to build the answer key. `generators/impact/` holds the
 templates every impact task shares, including the verifier.
 
+**A fix task** is also generated, SWE-bench style, from a real upstream bug-fix
+commit. Add a `[[tasks]]` entry to `generators/fix.toml` and a problem statement
+at `generators/fix/statements/<fixture>-<subject>.md`, then render and gate it
+as above. `evals generate` first validates the commit inside a pinned Go
+container, offline. The commit's tests must compile against the pre-fix code,
+some must fail before the fix and pass after it, and none may regress.
+
+- **The agent** gets the repository at the pre-fix commit as a fresh
+  single-commit repo, with the Go toolchain and dependencies ready.
+- **A collect hook** turns the agent's working tree into `/tmp/agent.patch`.
+- **The separate, offline verifier** applies that patch, lays the fix commit's
+  hidden tests over it, and runs the affected packages.
+- **`reward` is `resolved`.** It is 1 only when every fail-to-pass test passes
+  and no previously passing test breaks.
+
+Statements must describe symptoms, never the fix. Use the linked issue verbatim
+when there is one. Otherwise write a symptom-only report from the PR, and say so
+in `statement_source`.
+
 **Any other task:**
 
 ```bash
@@ -173,6 +192,8 @@ evals/
   tasks/<name>/           Harbor tasks, mostly generated
   generators/impact.toml  spec for generated impact tasks
   generators/impact/      shared templates for impact tasks, including the verifier
+  generators/fix.toml     spec for generated fix tasks (upstream bug-fix commits)
+  generators/fix/         templates, grading criteria, and problem statements for fix tasks
   generators/golist/      Go helper that dumps a module's import graph
   templates/              metadata template for `harbor task init`
   src/auto_evals/         the evals CLI
@@ -186,8 +207,10 @@ evals/
   wall-clock deltas carry some time-of-day noise. Compare quality metrics first.
 - **Twelve tasks is a start.** The generalized interval needs at least 8 paired
   tasks. It grows more trustworthy with more tasks from more repositories.
-- **Only Go is covered.** The generator relies on `go list`. Other languages need
-  their own ground-truth source.
+- **Only Go is covered.** Both generators rely on the Go toolchain. Other
+  languages need their own ground-truth source.
+- **Fix tasks can be contaminated.** Models may have seen these upstream fixes
+  in training. Prefer commits newer than the model's training cutoff.
 - **Generated tasks copy the shared verifier** to stay self-contained. A
   versioned verifier base image would remove the copies.
 - **Datasets are local globs.** Harbor Hub `dataset.toml` manifests pin tasks by

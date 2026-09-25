@@ -1,0 +1,4 @@
+[
+  "github.com/caddyserver/caddy/v2/modules/caddyhttp/rewrite::TestQueryOpsRenameNoOpCases",
+  "github.com/caddyserver/caddy/v2/modules/caddyhttp/rewrite::TestQueryOpsReplaceScopedToKey"
+]

@@ -1,0 +1,4 @@
+[
+  "github.com/caddyserver/caddy/v2::TestParseNetworkAddress_PortSpanBoundary",
+  "github.com/caddyserver/caddy/v2::TestParseNetworkAddress_PortSpanBoundary/0-65535_spans_65536_ports_and_is_rejected"
+]

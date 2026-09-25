@@ -110,7 +110,9 @@ def cmd_generate(layout: Layout, args: argparse.Namespace) -> int:
         _emit({"fixture": args.candidates, "module_dir": args.module_dir, "candidates": rows}, text, args.text)
         return 0
 
-    rendered = render_all(layout, args.only)
+    from .genfix import render_all as render_fix
+
+    rendered = render_all(layout, args.only) + render_fix(layout, args.only)
     stale = [] if args.only else stale_generated(layout, rendered)
     if args.check:
         drifted = {r.name: d for r in rendered if (d := drift(layout, r))}
@@ -125,8 +127,8 @@ def cmd_generate(layout: Layout, args: argparse.Namespace) -> int:
     for r in rendered:
         write(layout, r)
     rows = [{"task": r.name, **r.stats} for r in rendered]
-    text = "\n".join(f"{r['task']:<52} answer={r['answer_size']:<4} direct={r['direct']:<3} "
-                     f"depth={r['depth']:<2} {r['difficulty']}" for r in rows)
+    text = "\n".join(f"{r['task']:<52} " + "  ".join(f"{k}={v}" for k, v in r.items() if k != "task")
+                     for r in rows)
     if stale:
         text += "\nstale generated tasks no longer in the spec: " + ", ".join(stale)
     _emit({"written": rows, "stale": stale}, text, args.text)
@@ -278,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--description", default="")
     p.set_defaults(func=cmd_new_task)
 
-    p = sub.add_parser("generate", help="render generated impact-* tasks from generators/impact.toml")
+    p = sub.add_parser("generate", help="render generated impact-* and fix-* tasks from generators/")
     p.add_argument("--check", action="store_true", help="fail if committed tasks differ from a fresh render")
     p.add_argument("--only", action="append", help="render only this task name (repeatable)")
     p.add_argument("--candidates", metavar="FIXTURE", help="rank candidate targets in a fixture instead")

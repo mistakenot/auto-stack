@@ -1,0 +1,21 @@
+# Experiment: does auto graph help Claude Code on Opus 5.5 answer file-level impact questions?
+# Follows auto-graph-on-impact (Haiku 4.5), which was at the ceiling on package-level
+# tasks and only showed a signal on file-level ones. Opus 5.5 is the model used day to day.
+
+question = "On Opus 5.5, does putting the auto graph CLI in front of Claude Code improve file-level blast-radius answers?"
+hypothesis = "The auto-graph arm raises mean reward (F1) over control on file-level impact tasks."
+dataset = "impact-file"
+primary_metric = "reward"
+secondary_metrics = ["precision", "recall", "agent_sec", "input_tokens", "output_tokens", "cost_usd"]
+
+prepare = [
+  "make -C .. dist GOOS=linux GOARCH=amd64 DIST_DIR=evals/.build",
+]
+
+[arms.control]
+description = "Stock Claude Code on Opus 5.5 with its built-in tools."
+
+[arms.auto-graph]
+description = "Control plus the auto binary on PATH and one line pointing at `auto graph quickstart`."
+changes = ["environment.mounts", "extra_instructions"]
+uptake = "\\bauto\\s+graph\\b"

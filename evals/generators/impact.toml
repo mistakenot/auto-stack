@@ -121,3 +121,43 @@ fixture = "caddy"
 target = "notify"
 granularity = "pkg"
 subject = "notify"
+
+# --- file-level on larger repositories (added for the Opus 5.5 experiment).
+# The first Haiku run only showed a signal on file-level tasks, so this set
+# brings file-level up to the 8+ tasks needed for a generalized interval.
+
+[[tasks]]
+fixture = "gogit"
+target = "plumbing/color"
+granularity = "file"
+subject = "color"
+
+[[tasks]]
+fixture = "gogit"
+target = "utils/merkletrie"
+granularity = "file"
+subject = "merkletrie"
+
+[[tasks]]
+fixture = "ghcli"
+target = "pkg/githubtemplate"
+granularity = "file"
+subject = "githubtemplate"
+
+[[tasks]]
+fixture = "ghcli"
+target = "pkg/cmd/repo/autolink/shared"
+granularity = "file"
+subject = "autolink-shared"
+
+[[tasks]]
+fixture = "caddy"
+target = "modules/internal/network"
+granularity = "file"
+subject = "internal-network"
+
+[[tasks]]
+fixture = "hugo"
+target = "resources/resource_transformers/integrity"
+granularity = "file"
+subject = "integrity"

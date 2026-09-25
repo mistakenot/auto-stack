@@ -1,0 +1,91 @@
+# Spec for generated `fix-*` tasks, SWE-bench style. Render with `uv run evals generate`.
+#
+# Each [[tasks]] entry names an upstream bug-fix commit. The agent gets the
+# repository at the commit's parent plus a problem statement. The verifier runs
+# the commit's own tests against the agent's patch. `evals generate` validates
+# every commit first (see src/auto_evals/fixmine.py) and refuses one that does
+# not have tests failing before the fix and passing after it.
+#
+# Statements live in generators/fix/statements/<subject>.md:
+# - "issue #N": the linked issue's title and body, verbatim.
+# - "curated from PR #N": a symptom-only report written from the PR, with
+#   observed and expected behaviour and no hint of the fix.
+# Bump a task's `version` whenever a change alters what it measures.
+
+[fixtures.ghcli]
+repo = "https://github.com/cli/cli"
+repo_dir = "cli"
+
+[fixtures.cobra]
+repo = "https://github.com/spf13/cobra"
+repo_dir = "cobra"
+
+[fixtures.caddy]
+repo = "https://github.com/caddyserver/caddy"
+repo_dir = "caddy"
+
+# --- GitHub CLI: large repo, real issues
+
+[[tasks]]
+fixture = "ghcli"
+sha = "8fcd6a643f993ee12b70ad0edeab741ed133c9f1"
+subject = "merge-delete-branch"
+statement_source = "cli/cli issue #14404"
+
+[[tasks]]
+fixture = "ghcli"
+sha = "f1d112104821b055bb0c5656f2989f9213db71f6"
+subject = "skill-install-dir"
+statement_source = "cli/cli issue #13763"
+
+[[tasks]]
+fixture = "ghcli"
+sha = "b31f38c9460ad452d75bc97a1b38525afe1f8f1e"
+subject = "pr-create-web-title"
+statement_source = "cli/cli issue #10527"
+
+[[tasks]]
+fixture = "ghcli"
+sha = "19e1178a32fd5e06469386cb42eedf6d0991efaa"
+subject = "gist-edit-panic"
+statement_source = "cli/cli issue #10626"
+
+[[tasks]]
+fixture = "ghcli"
+sha = "fb97b3efaabaf3a727beb6ed5f4adbf9e780f9ff"
+subject = "pr-create-remote-branch"
+statement_source = "cli/cli issue #10862"
+
+# --- Cobra: small library
+
+[[tasks]]
+fixture = "cobra"
+sha = "746ef07158728502482cea9f880a6f4b21ef29a9"
+subject = "completion-os-args"
+statement_source = "spf13/cobra issue #2257"
+
+[[tasks]]
+fixture = "cobra"
+sha = "5bef9d8d87ad1a1c73e74361bad9e38b3469a58e"
+subject = "version-display-name"
+statement_source = "curated from spf13/cobra PR #2180"
+
+# --- Caddy: mid-size server
+
+[[tasks]]
+fixture = "caddy"
+sha = "f7d58438b08c1ff613ab2f93b5aaf01c6d692319"
+subject = "admin-host-case"
+statement_source = "caddyserver/caddy issue #7992"
+
+[[tasks]]
+fixture = "caddy"
+sha = "62a72977e58c87fad7e7726c18b58f10c653f2d3"
+subject = "port-range-span"
+statement_source = "curated from caddyserver/caddy PR #7975"
+
+[[tasks]]
+fixture = "caddy"
+sha = "7bf1b9057b29903efef451440e4664efd8775ec5"
+subject = "strip-suffix-encoding"
+statement_source = "curated from caddyserver/caddy PR #7877"

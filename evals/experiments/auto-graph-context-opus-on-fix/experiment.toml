@@ -1,0 +1,21 @@
+# Experiment: do auto graph context packs help Claude Code on Opus 5.5 fix real bugs?
+# Tests the way auto graph is meant to be used day to day: gathering the files
+# related to a change before editing, rather than answering graph questions.
+
+question = "On Opus 5.5, does offering auto graph context packs raise the share of real issues Claude Code resolves?"
+hypothesis = "The context arm resolves more issues than control, or resolves as many with fewer tokens and less time."
+dataset = "fix"
+primary_metric = "reward"
+secondary_metrics = ["fail_to_pass", "pass_to_pass", "agent_sec", "input_tokens", "output_tokens", "cost_usd"]
+
+prepare = [
+  "make -C .. dist GOOS=linux GOARCH=amd64 DIST_DIR=evals/.build",
+]
+
+[arms.control]
+description = "Stock Claude Code on Opus 5.5 with its built-in tools."
+
+[arms.auto-graph-context]
+description = "Control plus the auto binary on PATH and a pointer to `auto graph code context` context packs."
+changes = ["environment.mounts", "extra_instructions"]
+uptake = "\\bauto\\s+graph\\s+code\\s+context\\b"
