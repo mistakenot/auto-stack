@@ -1,3 +1,0 @@
-[
-  "github.com/cli/cli/v2/pkg/cmd/pr/merge::TestDeleteRemoteBranchTreatsOwnerCaseAsSameRepository"
-]

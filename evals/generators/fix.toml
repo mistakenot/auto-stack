@@ -11,6 +11,13 @@
 # - "curated from PR #N": a symptom-only report written from the PR, with
 #   observed and expected behaviour and no hint of the fix.
 # Bump a task's `version` whenever a change alters what it measures.
+#
+# Rejected after review:
+# - cli/cli 8fcd6a64 (issue #14404, merge --delete-branch owner case): the hidden
+#   test stubs `isCrossRepository`, so it passes only with upstream's choice of
+#   API field. A correct case-insensitive owner comparison fails it. All 9 Opus
+#   trials resolved the issue that way and scored 0. A task that every arm fails
+#   while the oracle passes needs this review before its results count.
 
 [fixtures.ghcli]
 repo = "https://github.com/cli/cli"
@@ -25,12 +32,6 @@ repo = "https://github.com/caddyserver/caddy"
 repo_dir = "caddy"
 
 # --- GitHub CLI: large repo, real issues
-
-[[tasks]]
-fixture = "ghcli"
-sha = "8fcd6a643f993ee12b70ad0edeab741ed133c9f1"
-subject = "merge-delete-branch"
-statement_source = "cli/cli issue #14404"
 
 [[tasks]]
 fixture = "ghcli"

@@ -115,6 +115,14 @@ def compare(layout: Layout, experiment: str, job_overrides: dict[str, Path] | No
                 warnings.append(f"{arm}: newer job(s) {newer} ignored because not every arm ran at that stamp")
 
     trials = {arm: load_job(path) for arm, path in jobs.items()}
+    # Tasks removed from the suite after review (e.g. a flawed hidden test) no
+    # longer count, even though their trials remain in old jobs.
+    current = {f"{layout.org}/{d.name}" for d in layout.task_dirs()}
+    if current:
+        dropped = sorted({t.task for ts in trials.values() for t in ts} - current)
+        for task in dropped:
+            warnings.append(f"task '{task}' is no longer in tasks/ and is excluded")
+        trials = {arm: [t for t in ts if t.task in current] for arm, ts in trials.items()}
     report: dict = {
         "experiment": experiment,
         "question": exp.get("question"),

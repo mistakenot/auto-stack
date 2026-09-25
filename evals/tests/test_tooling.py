@@ -178,6 +178,20 @@ def test_malformed_dataset_yaml_is_a_lint_error(tmp_path: Path) -> None:
     assert codes == [("datasets/broken.yaml", "dataset_invalid"), ("datasets/scalar.yaml", "dataset_invalid")]
 
 
+def test_compare_drops_tasks_removed_from_the_suite(layout: Layout) -> None:
+    (layout.root / "tasks" / "t1").mkdir(parents=True)
+    (layout.root / "tasks" / "t1" / "task.toml").write_text("")
+    ctrl = _job(layout.root, "demo__control__20260923T000000Z")
+    treat = _job(layout.root, "demo__tool__20260923T000000Z")
+    for task in ("auto-stack/t1", "auto-stack/gone"):
+        for i in range(2):
+            _trial(ctrl, f"c-{task[-2:]}{i}", task, 0.5)
+            _trial(treat, f"x-{task[-2:]}{i}", task, 0.9)
+    report = compare(layout, "demo")
+    assert report["treatments"]["tool"]["paired_tasks"] == ["auto-stack/t1"]
+    assert any("auto-stack/gone" in w and "no longer" in w for w in report["warnings"])
+
+
 def test_diff_paths_treats_missing_section_as_empty() -> None:
     assert _diff_paths({"a": 1}, {"a": 1, "environment": {"mounts": [1]}}) == ["environment.mounts"]
     assert _diff_paths({"agents": [1]}, {"agents": [2]}) == ["agents"]
