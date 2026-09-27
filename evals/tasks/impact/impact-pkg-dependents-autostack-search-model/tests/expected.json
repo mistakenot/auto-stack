@@ -1,0 +1,11 @@
+[
+  "cmd/autosearch",
+  "internal/cli",
+  "internal/cochange",
+  "internal/etlscan",
+  "internal/indexdb",
+  "internal/sessionhtml",
+  "internal/sessionoutline",
+  "internal/testutil",
+  "rootcmd"
+]

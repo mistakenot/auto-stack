@@ -1,0 +1,5 @@
+[
+  "github.com/spf13/cobra::TestPlugin",
+  "github.com/spf13/cobra::TestPluginWithSubCommands",
+  "github.com/spf13/cobra::TestVersionFlagExecutedDiplayName"
+]

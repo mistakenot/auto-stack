@@ -1,0 +1,15 @@
+# Runtime defaults layered first under every job: `harbor run -c defaults.yaml -c datasets/<d>.yaml -c <arm>.yaml`.
+# Only machine-level settings belong here. Anything that could change an
+# experiment's result belongs in the arm file, where the one-factor lint can see it.
+jobs_dir: jobs
+
+# Subscription OAuth hits rate limits above ~3 concurrent Claude Code trials.
+n_concurrent_trials: 2
+
+retry:
+  max_retries: 3
+  min_wait_sec: 30.0
+  max_wait_sec: 300.0
+
+environment:
+  type: docker

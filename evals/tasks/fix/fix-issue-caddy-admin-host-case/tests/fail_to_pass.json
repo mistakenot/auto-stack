@@ -1,0 +1,6 @@
+[
+  "github.com/caddyserver/caddy/v2::TestAdminHandlerCheckHostCaseInsensitive",
+  "github.com/caddyserver/caddy/v2::TestAdminHandlerCheckHostCaseInsensitive/allow-list_lowercase,_request_Host_uppercase",
+  "github.com/caddyserver/caddy/v2::TestAdminHandlerCheckHostCaseInsensitive/allow-list_uppercase,_request_Host_lowercase",
+  "github.com/caddyserver/caddy/v2::TestAdminHandlerCheckHostCaseInsensitive/default_localhost_entry,_request_Host_uppercase"
+]

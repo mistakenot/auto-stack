@@ -1,0 +1,27 @@
+diff --git a/pkg/cmd/gist/edit/edit.go b/pkg/cmd/gist/edit/edit.go
+index e0d6e3b84..9e74adf62 100644
+--- a/pkg/cmd/gist/edit/edit.go
++++ b/pkg/cmd/gist/edit/edit.go
+@@ -236,6 +236,8 @@ func editRun(opts *EditOptions) error {
+ 		if filename == "" {
+ 			if len(candidates) == 1 {
+ 				filename = candidates[0]
++			} else if len(candidates) == 0 {
++				return errors.New("no file in the gist")
+ 			} else {
+ 				if !opts.IO.CanPrompt() {
+ 					return errors.New("unsure what file to edit; either specify --filename or run interactively")
+diff --git a/pkg/cmd/gist/shared/shared.go b/pkg/cmd/gist/shared/shared.go
+index fc63f56ce..99a5524ee 100644
+--- a/pkg/cmd/gist/shared/shared.go
++++ b/pkg/cmd/gist/shared/shared.go
+@@ -44,6 +44,9 @@ func (g Gist) Filename() string {
+ 	for fn := range g.Files {
+ 		filenames = append(filenames, fn)
+ 	}
++	if len(filenames) == 0 {
++		return ""
++	}
+ 	sort.Strings(filenames)
+ 	return filenames[0]
+ }

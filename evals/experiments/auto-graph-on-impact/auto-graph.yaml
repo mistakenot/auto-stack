@@ -1,0 +1,20 @@
+# Arm `auto-graph`: control plus the auto binary and a pointer to it.
+# Everything above the marker must stay identical to control.yaml.
+agents:
+  - name: claude-code
+    model_name: claude-haiku-4-5-20251001
+    kwargs:
+      max_turns: 60
+
+n_attempts: 5
+
+# --- treatment ---------------------------------------------------------------
+environment:
+  mounts:
+    - type: bind
+      source: ${EVALS_ROOT}/.build/auto-linux-amd64
+      target: /usr/local/bin/auto
+      read_only: true
+
+extra_instructions:
+  - "The `auto` CLI is on your `PATH`; run `auto graph quickstart` to see how it builds file-level import graphs."

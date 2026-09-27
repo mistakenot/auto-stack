@@ -1,0 +1,10 @@
+[
+  ".",
+  "plumbing/object",
+  "plumbing/object/commitgraph",
+  "plumbing/revlist",
+  "plumbing/serverinfo",
+  "plumbing/transport/client",
+  "plumbing/transport/file",
+  "plumbing/transport/server"
+]

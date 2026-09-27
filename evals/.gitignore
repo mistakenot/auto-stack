@@ -1,0 +1,5 @@
+jobs/
+.build/
+.venv/
+__pycache__/
+.cache/

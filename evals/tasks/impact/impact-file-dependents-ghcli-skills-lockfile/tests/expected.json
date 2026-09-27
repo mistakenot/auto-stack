@@ -1,0 +1,15 @@
+[
+  "cmd/gen-docs/main.go",
+  "cmd/gh/main.go",
+  "internal/docs/man.go",
+  "internal/docs/markdown.go",
+  "internal/ghcmd/cmd.go",
+  "internal/skills/installer/installer.go",
+  "pkg/cmd/root/extension_test.go",
+  "pkg/cmd/root/root.go",
+  "pkg/cmd/skills/install/install.go",
+  "pkg/cmd/skills/list/list.go",
+  "pkg/cmd/skills/skills.go",
+  "pkg/cmd/skills/skills_test.go",
+  "pkg/cmd/skills/update/update.go"
+]
