@@ -29,7 +29,7 @@ For a cheap smoke run, add `--attempts 1 --task 'impact-file-*'` to `evals run`.
 
 | Term | Meaning | Lives in |
 |---|---|---|
-| **Task** | One self-contained Harbor task: instruction, environment, verifier, oracle. Knows nothing about arms. | `tasks/<name>/` |
+| **Task** | One self-contained Harbor task: instruction, environment, verifier, oracle. Knows nothing about arms. | `tasks/<area>/<name>/` |
 | **Dataset** | A named selection of tasks, expressed as a job-config layer that globs task names. | `datasets/<name>.yaml` |
 | **Experiment** | One pre-registered question. It names a dataset, a primary metric, and its arms. | `experiments/<name>/experiment.toml` |
 | **Arm** | One complete agent configuration within an experiment. Exactly one is `control`. | `experiments/<name>/<arm>.yaml` |
@@ -65,6 +65,9 @@ hundreds of tasks and dozens of experiments.
 2. **The area comes first and is a closed list.** `impact-*` is then a safe glob,
    so a new task joins its datasets automatically. Adding an area means adding
    one line to `conventions.toml`.
+   Tasks live in `tasks/<area>/`, so each area folder stays browsable. Folders
+   group by area, not by the feature under test, because one task serves every
+   experiment. Lint checks the folder matches `[metadata].area`.
 3. **Fixture, then subject, come last.** The fixture names the repository and the
    subject names what the task is about within it, usually the target package.
    Tasks with one objective sort together across repositories, and one repository
@@ -189,7 +192,7 @@ evals/
   defaults.yaml           runtime-only job settings, layered first
   datasets/<name>.yaml    task selections by glob
   experiments/<name>/     experiment.toml plus one <arm>.yaml per arm
-  tasks/<name>/           Harbor tasks, mostly generated
+  tasks/<area>/<name>/    Harbor tasks grouped by area (impact/, fix/), mostly generated
   generators/impact.toml  spec for generated impact tasks
   generators/impact/      shared templates for impact tasks, including the verifier
   generators/fix.toml     spec for generated fix tasks (upstream bug-fix commits)

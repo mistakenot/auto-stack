@@ -67,10 +67,37 @@ class Layout:
     def name_re(self) -> re.Pattern[str]:
         return re.compile(self.conventions["name_regex"])
 
+    def area_dir(self, area: str) -> Path:
+        return self.tasks_dir / area
+
+    def task_dir(self, name: str) -> Path:
+        """Where task `name` lives: tasks/<area>/<name>, the area being its leading token."""
+        return self.area_dir(name.split("-", 1)[0]) / name
+
     def task_dirs(self) -> list[Path]:
+        """Every task directory, across all area folders."""
         if not self.tasks_dir.is_dir():
             return []
-        return sorted(p for p in self.tasks_dir.iterdir() if (p / "task.toml").is_file())
+        return sorted((p for p in self.tasks_dir.glob("*/*") if (p / "task.toml").is_file()),
+                      key=lambda p: p.name)
+
+    def selection_layer(self, names: list[str], label: str) -> Path:
+        """A job-config layer selecting exactly these tasks, one dataset entry per area.
+
+        Harbor's `-p` takes a single directory, so a selection spanning areas, or
+        narrowing a dataset by name, is expressed as generated `datasets` entries.
+        """
+        import json
+
+        by_area: dict[str, list[str]] = {}
+        for name in sorted(names):
+            by_area.setdefault(name.split("-", 1)[0], []).append(name)
+        layer = {"datasets": [{"path": str(self.area_dir(a).relative_to(self.root)), "task_names": ns}
+                              for a, ns in sorted(by_area.items())]}
+        path = self.root / ".cache" / "layers" / f"{label}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(layer, indent=2))
+        return path
 
     def dataset_config(self, name: str) -> Path:
         return self.datasets_dir / f"{name}.yaml"

@@ -2,5 +2,5 @@
 # package-level impact is at the ceiling for a scripting agent, so this is the
 # subset where a graph tool can plausibly change the answer.
 datasets:
-  - path: tasks
+  - path: tasks/impact
     task_names: ["impact-file-*"]

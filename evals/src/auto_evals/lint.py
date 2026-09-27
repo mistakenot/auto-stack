@@ -37,11 +37,10 @@ class LintError:
 
 def validate(layout: Layout, *, resolve_arms: bool = True) -> list[LintError]:
     errors: list[LintError] = []
-    task_names = [d.name for d in layout.task_dirs()]
     for task_dir in layout.task_dirs():
         errors += _check_task(layout, task_dir)
     for cfg in sorted(layout.datasets_dir.glob("*.yaml")):
-        errors += _check_dataset(layout, cfg, task_names)
+        errors += _check_dataset(layout, cfg)
     if layout.experiments_dir.is_dir():
         for exp_dir in sorted(p for p in layout.experiments_dir.iterdir() if p.is_dir()):
             errors += _check_experiment(layout, exp_dir, resolve_arms=resolve_arms)
@@ -56,6 +55,7 @@ def _check_task(layout: Layout, task_dir: Path) -> list[LintError]:
     rel = str(task_dir.relative_to(layout.root))
     name = task_dir.name
     conv = layout.conventions
+    area_folder = task_dir.parent.name
 
     def err(code: str, field: str, message: str, value: Any = None) -> None:
         errs.append(LintError(code, rel, field, message, value))
@@ -83,6 +83,9 @@ def _check_task(layout: Layout, task_dir: Path) -> list[LintError]:
             err("metadata_missing", f"metadata.{key}", f"[metadata].{key} is required and must be non-empty")
 
     area = meta.get("area", "")
+    if area and area != area_folder:
+        err("area_folder", "dir", f"a task with area '{area}' must live under tasks/{area}/",
+            {"folder": area_folder, "area": area})
     if area and area not in conv["areas"]:
         err("area_unknown", "metadata.area",
             f"area must be one of {sorted(conv['areas'])}; add new areas to conventions.toml first", area)
@@ -124,7 +127,7 @@ def _check_task(layout: Layout, task_dir: Path) -> list[LintError]:
 # --- datasets ----------------------------------------------------------------
 
 
-def _check_dataset(layout: Layout, cfg_path: Path, task_names: list[str]) -> list[LintError]:
+def _check_dataset(layout: Layout, cfg_path: Path) -> list[LintError]:
     errs: list[LintError] = []
     rel = str(cfg_path.relative_to(layout.root))
     if not layout.name_re.match(cfg_path.stem):
@@ -143,8 +146,14 @@ def _check_dataset(layout: Layout, cfg_path: Path, task_names: list[str]) -> lis
                               "a dataset layer may only set `datasets`; move other settings to an arm",
                               sorted(set(data) - {"datasets"})))
     for i, ds in enumerate(data.get("datasets", [])):
+        root = layout.root / ds.get("path", "")
+        if not root.is_dir():
+            errs.append(LintError("dataset_path_missing", rel, f"datasets[{i}].path",
+                                  "dataset path is not a directory; use tasks/<area>", ds.get("path")))
+            continue
+        in_path = [d.name for d in layout.task_dirs() if d.resolve().is_relative_to(root.resolve())]
         for pattern in ds.get("task_names") or ["*"]:
-            if not fnmatch.filter(task_names, pattern):
+            if not fnmatch.filter(in_path, pattern):
                 errs.append(LintError("dataset_empty_glob", rel, f"datasets[{i}].task_names",
                                       "pattern matches no task under tasks/", pattern))
     return errs

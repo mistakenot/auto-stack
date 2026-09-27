@@ -179,8 +179,8 @@ def test_malformed_dataset_yaml_is_a_lint_error(tmp_path: Path) -> None:
 
 
 def test_compare_drops_tasks_removed_from_the_suite(layout: Layout) -> None:
-    (layout.root / "tasks" / "t1").mkdir(parents=True)
-    (layout.root / "tasks" / "t1" / "task.toml").write_text("")
+    (layout.root / "tasks" / "t1" / "t1").mkdir(parents=True)
+    (layout.root / "tasks" / "t1" / "t1" / "task.toml").write_text("")
     ctrl = _job(layout.root, "demo__control__20260923T000000Z")
     treat = _job(layout.root, "demo__tool__20260923T000000Z")
     for task in ("auto-stack/t1", "auto-stack/gone"):
@@ -190,6 +190,16 @@ def test_compare_drops_tasks_removed_from_the_suite(layout: Layout) -> None:
     report = compare(layout, "demo")
     assert report["treatments"]["tool"]["paired_tasks"] == ["auto-stack/t1"]
     assert any("auto-stack/gone" in w and "no longer" in w for w in report["warnings"])
+
+
+def test_task_in_wrong_area_folder_is_a_lint_error(tmp_path: Path) -> None:
+    import shutil
+
+    (tmp_path / "conventions.toml").write_text((EVALS_ROOT / "conventions.toml").read_text())
+    src = next(d for d in Layout(EVALS_ROOT).task_dirs() if d.name.startswith("impact-"))
+    shutil.copytree(src, tmp_path / "tasks" / "fix" / src.name)
+    codes = {e.code for e in validate(Layout(tmp_path), resolve_arms=False)}
+    assert "area_folder" in codes
 
 
 def test_diff_paths_treats_missing_section_as_empty() -> None:

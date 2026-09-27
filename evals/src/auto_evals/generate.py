@@ -144,7 +144,7 @@ def render_all(layout: Layout, only: list[str] | None = None) -> list[Rendered]:
 
 
 def write(layout: Layout, rendered: Rendered) -> None:
-    task_dir = layout.tasks_dir / rendered.name
+    task_dir = layout.task_dir(rendered.name)
     if task_dir.exists():
         meta = tomllib.loads((task_dir / "task.toml").read_text()).get("metadata", {})
         if meta.get("generator") not in GENERATORS:
@@ -160,7 +160,7 @@ def write(layout: Layout, rendered: Rendered) -> None:
 
 def drift(layout: Layout, rendered: Rendered) -> list[str]:
     """Paths whose committed content differs from a fresh render."""
-    task_dir = layout.tasks_dir / rendered.name
+    task_dir = layout.task_dir(rendered.name)
     if not task_dir.is_dir():
         return ["<task missing>"]
     on_disk = {str(p.relative_to(task_dir)) for p in task_dir.rglob("*") if p.is_file()}
