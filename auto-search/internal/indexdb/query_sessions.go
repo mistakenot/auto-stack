@@ -89,6 +89,18 @@ type SessionListRow struct {
 	FirstUserIntentTruncated string `json:"first_user_intent_truncated,omitempty"`
 }
 
+// sessionCountsJoinSQL aggregates per-session message and bash-error counts.
+// It scans the whole messages table, so it must stay satisfiable from the
+// idx_messages_session_id_bash_exit_code covering index alone (see
+// TestSessionCountsJoinUsesCoveringIndex).
+const sessionCountsJoinSQL = `
+		LEFT JOIN (
+			SELECT session_id,
+				COUNT(*) AS cnt,
+				SUM(CASE WHEN bash_exit_code > 0 THEN 1 ELSE 0 END) AS err_cnt
+			FROM messages GROUP BY session_id
+		) mc ON mc.session_id = s.session_id`
+
 // ListSessions queries the sessions table directly (no FTS) with optional filters.
 func ListSessions(db *sql.DB, opts *ListSessionsOpts) ([]SessionListRow, int, error) {
 	if opts.Limit < 0 {
@@ -183,21 +195,13 @@ func ListSessions(db *sql.DB, opts *ListSessionsOpts) ([]SessionListRow, int, er
 		}
 	}
 
-	joinSQL := `
-		LEFT JOIN (
-			SELECT session_id,
-				COUNT(*) AS cnt,
-				SUM(CASE WHEN bash_exit_code > 0 THEN 1 ELSE 0 END) AS err_cnt
-			FROM messages GROUP BY session_id
-		) mc ON mc.session_id = s.session_id`
-
 	// Count total matching rows for pagination metadata.
 	var total int
 	countArgs := append([]any{}, args...)
 	if needsJoin {
 		countSQL := fmt.Sprintf(`
 			SELECT COUNT(*) FROM sessions s %s %s%s`,
-			joinSQL, whereClause, joinWhereClause)
+			sessionCountsJoinSQL, whereClause, joinWhereClause)
 		countArgs = append(countArgs, joinWhereArgs...)
 		if err := db.QueryRow(countSQL, countArgs...).Scan(&total); err != nil {
 			return nil, 0, fmt.Errorf("count sessions: %w", err)
@@ -248,7 +252,7 @@ func ListSessions(db *sql.DB, opts *ListSessionsOpts) ([]SessionListRow, int, er
 		%s%s
 		ORDER BY %s
 		LIMIT ? OFFSET ?
-	`, joinSQL, whereClause, joinWhereClause, orderBy)
+	`, sessionCountsJoinSQL, whereClause, joinWhereClause, orderBy)
 	args = append(args, joinWhereArgs...)
 	args = append(args, opts.Limit, opts.Offset)
 

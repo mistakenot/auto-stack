@@ -10,7 +10,7 @@ import (
 )
 
 // SchemaVersion is bumped whenever the index layout changes, forcing a full rebuild.
-const SchemaVersion = 9
+const SchemaVersion = 10
 
 // schemaSQL contains the DDL for all base tables, indexes, and FTS virtual tables.
 const schemaSQL = `
@@ -120,6 +120,10 @@ CREATE INDEX IF NOT EXISTS idx_messages_bash_exit_code ON messages(bash_exit_cod
 CREATE INDEX IF NOT EXISTS idx_messages_tool_use_id ON messages(tool_use_id);
 CREATE INDEX IF NOT EXISTS idx_messages_duration_ms ON messages(duration_ms);
 CREATE INDEX IF NOT EXISTS idx_messages_interrupted ON messages(interrupted);
+-- Covering index for ListSessions' per-session message/error count aggregate.
+-- Without it the GROUP BY must fetch every full messages row (content is
+-- inline, ~1 GB+) to read bash_exit_code: 30s+ on a cold page cache.
+CREATE INDEX IF NOT EXISTS idx_messages_session_id_bash_exit_code ON messages(session_id, bash_exit_code);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
   transcript_truncated,

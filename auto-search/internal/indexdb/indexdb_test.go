@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/mistakenot/auto-search/internal/indexdb"
@@ -911,5 +913,40 @@ func TestRowCountsEmpty(t *testing.T) {
 	}
 	if sessions != 0 || messages != 0 || indexState != 0 {
 		t.Fatalf("expected 0/0/0, got %d/%d/%d", sessions, messages, indexState)
+	}
+}
+
+// TestSessionCountsJoinUsesCoveringIndex guards against the session list
+// aggregate falling back to reading full messages rows (content is inline, so
+// that is a ~1 GB read and 30s+ on a cold page cache).
+func TestSessionCountsJoinUsesCoveringIndex(t *testing.T) {
+	db, err := indexdb.Create(filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	rows, err := db.Query("EXPLAIN QUERY PLAN SELECT s.session_id FROM sessions s " +
+		indexdb.SessionCountsJoinSQL + " ORDER BY s.first_message_at DESC LIMIT 1")
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var plan []string
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatalf("scan plan: %v", err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+	want := "SCAN messages USING COVERING INDEX idx_messages_session_id_bash_exit_code"
+	if !slices.Contains(plan, want) {
+		t.Fatalf("messages aggregate not served by covering index; plan:\n%s", strings.Join(plan, "\n"))
 	}
 }
