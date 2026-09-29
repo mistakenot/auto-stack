@@ -1,4 +1,3 @@
-// [autodoc(e8d3cf9c@028588a9, 55dde660)]
 package linkscan
 
 import (

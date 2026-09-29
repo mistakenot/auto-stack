@@ -1,4 +1,3 @@
-// [autodoc(e8d3cf9c@028588a9, 1d67966c)]
 package commands
 
 import (
@@ -412,8 +411,8 @@ func writeFolderLinkIssue(w io.Writer, issue *linkcheck.LinkIssue, sourcePath, t
 	fmt.Fprintf(w, "  tag:       %s\n", tagText)
 	fmt.Fprintf(w, "  scope:     every code file under %s (recursive)\n", folder)
 	fmt.Fprintf(w, "  doc:       %s (id: %s)\n", docPath, issue.Tag.DocId)
-	fmt.Fprintf(w, "  current doc hash:   %s (was %s)\n", issue.CurrentDocHash, issue.Tag.DocHash)
-	fmt.Fprintf(w, "  current scope hash: %s (was %s)\n", issue.CurrentScopeHash, issue.Tag.ScopeHash)
+	fmt.Fprintf(w, "  current doc hash:   %s %s\n", issue.CurrentDocHash, wasOrUnchanged(issue.Tag.DocHash, issue.CurrentDocHash))
+	fmt.Fprintf(w, "  current scope hash: %s %s\n", issue.CurrentScopeHash, wasOrUnchanged(issue.Tag.ScopeHash, issue.CurrentScopeHash))
 	fmt.Fprintf(w, "  action: Review the changes under %s against the doc (e.g. git diff -- %s).\n", folder, folder)
 	fmt.Fprintln(w, "          If the doc needs updating, edit it and run `auto doc fixed <docPath>`.")
 	fmt.Fprintf(w, "          Then run `auto doc fixed %s` to refresh every tag in the file.\n", sourcePath)
@@ -438,4 +437,11 @@ func writeFolderSuggestions(w io.Writer, suggestions []FolderLinkSuggestion) {
 		}
 		fmt.Fprintln(w)
 	}
+}
+
+func wasOrUnchanged(old, current string) string {
+	if old == current {
+		return "(unchanged)"
+	}
+	return "(was " + old + ")"
 }

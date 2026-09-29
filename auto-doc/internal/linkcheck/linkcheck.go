@@ -1,4 +1,3 @@
-// [autodoc(e8d3cf9c@028588a9, 00428f2b)]
 package linkcheck
 
 import (
