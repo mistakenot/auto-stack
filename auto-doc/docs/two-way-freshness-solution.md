@@ -1,5 +1,5 @@
 ---
-hash: "028588a9"
+hash: "464ab475"
 id: "e8d3cf9c"
 read_when: "implementing two-way freshness checking between code and documentation"
 summary: "Implementation details for two-way code-doc freshness checks in autodoc."
@@ -313,7 +313,7 @@ Multiple code files can reference the same doc ID. When the doc changes, all tag
 
 A `.autodoc` file holds one `[autodoc(docId@docHash, scopeHash)]` per line (`#` comments and blank lines allowed; any other line is a malformed tag). Each becomes a `ScopeKindFolder` tag whose scope is the file's folder subtree, recursively: the same `git ls-files --cached --others --exclude-standard` set filtered by `shouldIgnorePath` (data/markdown extensions, `_test.go`, `vendor/`, `testdata/`, …), minus every `.autodoc`. The scope hash is MD5 over `relpath \0 content \0` per file in sorted order, with inline tags stripped and CRLF normalised — so add/delete/rename/edit all stale the link, while refreshing inline tags or nested `.autodoc` files never does. Nested `.autodoc` files are independent (files under a child count toward both).
 
-`auto doc fixed <folder>/.autodoc` rewrites every tag to the current doc hash and folder scope hash (the review acknowledgement), leaving unknown doc ids and malformed lines untouched and exiting non-zero for them. `fix` adds an advisory "Folder Link Suggestions" section (`folder_link_suggestion` in JSON) for folders where 2+ files carry inline tags to the same doc and no `.autodoc` in that folder or an ancestor already links it. Inline tags and folder links coexist without warnings. Motivation: several files in one folder linked to one doc turned every doc edit or package-wide change into a many-file hash-bump diff; the folder link makes it one line.
+`auto doc fixed <folder>/.autodoc` rewrites every tag to the current doc hash and folder scope hash (the review acknowledgement), leaving unknown doc ids and malformed lines untouched and exiting non-zero for them. `fix` adds an advisory "Folder Link Suggestions" section (`folder_link_suggestion` in JSON) for folders where 2+ files carry inline tags to the same doc, or for the parent of 2+ tagged sibling folders (tightest folder first, never the repo root for a spread), where no `.autodoc` in that folder or an ancestor already links it. Inline tags and folder links coexist without warnings. Motivation: several files in one folder linked to one doc turned every doc edit or package-wide change into a many-file hash-bump diff; the folder link makes it one line.
 
 ### ID collisions
 

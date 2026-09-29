@@ -3,10 +3,12 @@ package commands
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/datadyne-io/autodoc/internal/linkscan"
 	"github.com/datadyne-io/autodoc/internal/testutil"
 )
 
@@ -145,5 +147,78 @@ func TestFixSuggestsFolderLinks(t *testing.T) {
 	}
 	if len(result.FolderSuggestions) != 0 {
 		t.Fatalf("covered folder still suggested: %+v", result.FolderSuggestions)
+	}
+}
+
+func TestSuggestFolderLinksSiblingSpread(t *testing.T) {
+	cases := []struct {
+		name  string
+		files []string
+		want  []string // "dir:folderCount:fileCount"
+	}{
+		{
+			name:  "one file per sibling package collapses to parent",
+			files: []string{"svc/internal/a/a.go", "svc/internal/b/b.go", "svc/internal/c/c.go"},
+			want:  []string{"svc/internal:3:3"},
+		},
+		{
+			name:  "parent with its own tagged file plus a child",
+			files: []string{"svc/pkg/root.go", "svc/pkg/sub/sub.go"},
+			want:  []string{"svc/pkg:2:2"},
+		},
+		{
+			name:  "tightest folder wins before the parent",
+			files: []string{"svc/a/one.go", "svc/a/two.go", "svc/b/three.go"},
+			want:  []string{"svc/a:1:2"},
+		},
+		{
+			name:  "top-level siblings never suggest the repo root",
+			files: []string{"alpha/a.go", "beta/b.go"},
+			want:  nil,
+		},
+		{
+			name:  "cousins do not group",
+			files: []string{"svc/a/x/one.go", "svc/b/y/two.go"},
+			want:  nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := testutil.NewWorkspace(t)
+			ws.InitGitRepo()
+			tags := make([]linkscan.Tag, 0, len(tc.files))
+			for _, f := range tc.files {
+				tags = append(tags, linkscan.Tag{FilePath: ws.Path(f), DocId: "deadbeef", ScopeKind: linkscan.ScopeKindIndent})
+			}
+			got := make([]string, 0)
+			for _, s := range suggestFolderLinks(ws.Dir, tags) {
+				got = append(got, fmt.Sprintf("%s:%d:%d", s.Dir, len(s.Folders), len(s.Files)))
+			}
+			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("suggestions = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFixSuggestsSiblingSpreadText(t *testing.T) {
+	ws := testutil.NewWorkspace(t)
+	ws.InitGitRepo()
+	createDocWithID(t, ws, "docs/cache.md", "deadbeef")
+	for _, f := range []string{"svc/internal/a/a.go", "svc/internal/b/b.go"} {
+		ws.WriteSourceFile(f, "// [autodoc(deadbeef@00000000, 00000000)]\npackage x\n")
+	}
+	ws.GitAddAll()
+
+	var buf bytes.Buffer
+	_ = Fix(&buf, ws.Dir, "docs", 2, nil, nil)
+	out := buf.String()
+	for _, want := range []string{
+		"FOLDER LINK: 2 files across 2 folders under svc/internal/ link doc deadbeef",
+		"svc/internal/.autodoc would also cover untagged files and folders under svc/internal/",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
 	}
 }

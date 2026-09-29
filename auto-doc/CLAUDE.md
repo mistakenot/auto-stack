@@ -201,7 +201,7 @@ Outputs text instructions for an AI agent to follow. Provides full context on wh
    - Rewrite default/missing titles to a pretty-print version of the filename or main H1.
    - Run `auto doc fixed <repo-relative-doc-path>` to recalculate the hash.
 6. Validate `[autodoc($docId@$docHash, @codeBlockHash)]` links in code and `.autodoc` folder link files, and report any code/doc drift with the current and expected hashes.
-7. Suggest (advisory, never failing) collapsing folders where 2+ files carry inline tags to the same doc into one `.autodoc`.
+7. Suggest (advisory, never failing) collapsing inline tags to the same doc into one `.autodoc`: for a folder with 2+ tagged files, or for the parent of 2+ tagged sibling folders (never the repo root). Tightest folder wins.
 8. Run `auto doc agents` to update agent memory files.
 
 ### `auto doc fixed <filepath>`

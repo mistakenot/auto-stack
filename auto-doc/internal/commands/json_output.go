@@ -173,7 +173,7 @@ func FixOutputJSON(w io.Writer, docIssues []docIssue, linkIssues []linkcheck.Lin
 		issues = append(issues, FixIssueJSON{
 			Type:    "folder_link_suggestion",
 			Path:    s.Dir,
-			Details: fmt.Sprintf("%d files link doc %s inline (%s); advisory: replace with one %s/.autodoc", len(s.Files), s.DocID, strings.Join(s.Files, ", "), s.Dir),
+			Details: fmt.Sprintf("%d files in %d folder(s) link doc %s inline (%s); advisory: replace with one %s/.autodoc", len(s.Files), len(s.Folders), s.DocID, strings.Join(s.Files, ", "), s.Dir),
 		})
 	}
 	return WriteJSON(w, issues)

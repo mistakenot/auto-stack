@@ -94,7 +94,7 @@ Scan for all documentation and code-link issues, output instructions for an AI a
 - Stale hash (content changed since last ` + "`auto doc fixed`" + `)
 - Default/empty title
 - ` + "`[autodoc(...)]`" + ` code tag and ` + "`.autodoc`" + ` folder link issues: doc hash mismatch, scope hash mismatch, both mismatch, orphaned tags, malformed tags
-- Advisory ` + "`folder_link_suggestion`" + `: folders where 2+ files carry inline tags to the same doc (not covered by a ` + "`.autodoc`" + ` in that folder or an ancestor). Never fails ` + "`fix`" + ` on its own.
+- Advisory ` + "`folder_link_suggestion`" + `: folders where 2+ files, or files spread across 2+ direct subfolders, carry inline tags to the same doc (never the repo root for a spread; not covered by a ` + "`.autodoc`" + ` in that folder or an ancestor). Never fails ` + "`fix`" + ` on its own.
 
 **Behavior:**
 - Auto-assigns 8-char hex doc IDs to files missing them
@@ -106,7 +106,7 @@ Scan for all documentation and code-link issues, output instructions for an AI a
 [
   {"type": "stale_hash", "path": "docs/auth.md", "details": "Hash does not match content"},
   {"type": "orphaned_tag", "path": "src/main.go", "details": "Tag at line 10: doc=deadbeef@cafebabe scope=12345678"},
-  {"type": "folder_link_suggestion", "path": "pkg/cache", "details": "2 files link doc deadbeef inline (pkg/cache/lru.go, pkg/cache/ttl.go); advisory: replace with one pkg/cache/.autodoc"}
+  {"type": "folder_link_suggestion", "path": "pkg/cache", "details": "2 files in 1 folder(s) link doc deadbeef inline (pkg/cache/lru.go, pkg/cache/ttl.go); advisory: replace with one pkg/cache/.autodoc"}
 ]
 ` + "```" + `
 

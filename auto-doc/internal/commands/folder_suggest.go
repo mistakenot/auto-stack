@@ -3,22 +3,30 @@ package commands
 import (
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/datadyne-io/autodoc/internal/linkscan"
 )
 
-// FolderLinkSuggestion flags a folder where several code files carry inline
-// tags to the same doc; one .autodoc line would replace all of them.
+// FolderLinkSuggestion flags a folder whose inline tags to one doc could
+// collapse into a single .autodoc line: either several tagged files in the
+// folder itself, or tagged files spread across two or more of its direct
+// subfolders (sibling folders).
 type FolderLinkSuggestion struct {
-	Dir   string   // repo-relative, slash-separated ("." for the root)
-	DocID string   // 8-char hex doc ID
-	Files []string // repo-relative files carrying the inline tag, sorted
+	Dir     string   // repo-relative, slash-separated: where the .autodoc goes
+	DocID   string   // 8-char hex doc ID
+	Folders []string // repo-relative folders holding the inline tags, sorted
+	Files   []string // repo-relative files carrying the inline tag, sorted
 }
 
-// suggestFolderLinks groups inline code tags by (folder, doc) and returns the
-// groups with two or more files. Folders already covered for that doc by a
-// .autodoc in the folder or an ancestor are skipped: inline and folder links
-// may coexist, so the hint is only for folders that have not migrated yet.
+// suggestFolderLinks groups uncovered inline code tags per doc and returns
+// migration candidates. A folder is a candidate when, together with its
+// direct subfolders, at least two tagged folders exist (sibling spread), or
+// when it alone holds two or more tagged files. Candidates are taken deepest
+// first so each tagged folder lands in the tightest suggestion. The repo
+// root is never suggested for a sibling spread: a root .autodoc would cover
+// the whole repo. Folders already covered for that doc by a .autodoc in the
+// folder or an ancestor are skipped — inline and folder links may coexist.
 func suggestFolderLinks(rootDir string, tags []linkscan.Tag) []FolderLinkSuggestion {
 	if abs, err := filepath.Abs(rootDir); err == nil {
 		rootDir = abs
@@ -57,17 +65,69 @@ func suggestFolderLinks(rootDir string, tags []linkscan.Tag) []FolderLinkSuggest
 		}
 	}
 
+	// Tagged, uncovered folders per doc.
+	byDoc := make(map[string][]string)
+	for k := range files {
+		if !isCovered(k.dir, k.docID) {
+			byDoc[k.docID] = append(byDoc[k.docID], k.dir)
+		}
+	}
+
 	out := make([]FolderLinkSuggestion, 0)
-	for k, set := range files {
-		if len(set) < 2 || isCovered(k.dir, k.docID) {
-			continue
+	for docID, dirs := range byDoc {
+		tagged := make(map[string]bool, len(dirs))
+		for _, d := range dirs {
+			tagged[d] = true
 		}
-		s := FolderLinkSuggestion{Dir: relSlash(rootDir, k.dir), DocID: k.docID}
-		for f := range set {
-			s.Files = append(s.Files, relSlash(rootDir, f))
+
+		// Candidate folders: every tagged folder and its parent.
+		candidates := make(map[string]bool)
+		for _, d := range dirs {
+			candidates[d] = true
+			if d != rootDir {
+				candidates[filepath.Dir(d)] = true
+			}
 		}
-		sort.Strings(s.Files)
-		out = append(out, s)
+		ordered := make([]string, 0, len(candidates))
+		for c := range candidates {
+			ordered = append(ordered, c)
+		}
+		sort.Slice(ordered, func(i, j int) bool {
+			di, dj := strings.Count(ordered[i], string(filepath.Separator)), strings.Count(ordered[j], string(filepath.Separator))
+			if di != dj {
+				return di > dj
+			}
+			return ordered[i] < ordered[j]
+		})
+
+		consumed := make(map[string]bool)
+		for _, c := range ordered {
+			members := make([]string, 0)
+			for d := range tagged {
+				if consumed[d] {
+					continue
+				}
+				if d == c || (d != rootDir && filepath.Dir(d) == c) {
+					members = append(members, d)
+				}
+			}
+			spread := len(members) >= 2 && c != rootDir
+			single := len(members) == 1 && members[0] == c && len(files[key{c, docID}]) >= 2
+			if !spread && !single {
+				continue
+			}
+			s := FolderLinkSuggestion{Dir: relSlash(rootDir, c), DocID: docID}
+			for _, d := range members {
+				consumed[d] = true
+				s.Folders = append(s.Folders, relSlash(rootDir, d))
+				for f := range files[key{d, docID}] {
+					s.Files = append(s.Files, relSlash(rootDir, f))
+				}
+			}
+			sort.Strings(s.Folders)
+			sort.Strings(s.Files)
+			out = append(out, s)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Dir != out[j].Dir {

@@ -1,5 +1,5 @@
 ---
-hash: "cd14ff12"
+hash: "e55b4e21"
 id: "6719b91e"
 read_when: "using two-way freshness links to keep documentation and code synchronized"
 summary: "Walkthrough of the full lifecycle for keeping docs and code in sync using autodoc two-way freshness links"
@@ -267,7 +267,7 @@ Guidance:
 
 ### Migrating inline tags to a folder link
 
-`auto doc fix` lists folders where two or more files carry inline tags to the same doc under **Folder Link Suggestions** (`folder_link_suggestion` in `--json`). To migrate one:
+`auto doc fix` lists candidates under **Folder Link Suggestions** (`folder_link_suggestion` in `--json`): a folder with two or more files carrying inline tags to the same doc, or the parent of two or more sibling folders that each tag it (common when one file per package is tagged). The tightest folder wins, and a spread across top-level folders never suggests the repo root. For a sibling spread the parent `.autodoc` also covers untagged siblings — the suggestion says so; weigh the wider scope before migrating. To migrate one:
 
 1. Create `<folder>/.autodoc` containing `[autodoc(<docId>@00000000, 00000000)]`.
 2. Delete the inline tags for that doc from the files under the folder.
@@ -285,4 +285,4 @@ Guidance:
 | Doc renamed | Nothing (ID is stable) | Nothing | No action needed |
 | File under a `.autodoc` folder added/edited/renamed | folder scopeHash mismatch | "files under a folder link changed" | Review folder diff vs doc, then `auto doc fixed <folder>/.autodoc` |
 | Doc linked by a `.autodoc` edited | docHash mismatch in folder link | "doc updated, folder link needs refresh" | `auto doc fixed <folder>/.autodoc` |
-| 2+ files in a folder tag the same doc | — | "Folder Link Suggestions" (advisory) | Migrate to one `.autodoc` |
+| 2+ files in a folder, or 2+ sibling folders, tag the same doc | — | "Folder Link Suggestions" (advisory) | Migrate to one `.autodoc` |

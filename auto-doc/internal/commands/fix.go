@@ -422,7 +422,7 @@ func writeFolderLinkIssue(w io.Writer, issue *linkcheck.LinkIssue, sourcePath, t
 func writeFolderSuggestions(w io.Writer, suggestions []FolderLinkSuggestion) {
 	fmt.Fprintln(w, "## Folder Link Suggestions (optional)")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "These folders have several files tagged with the same doc. One `.autodoc` folder link")
+	fmt.Fprintln(w, "These folders have several files (directly or across subfolders) tagged with the same doc. One `.autodoc` folder link")
 	fmt.Fprintln(w, "file covers every code file in the folder's subtree, so edits and doc changes touch one")
 	fmt.Fprintln(w, "line instead of one tag per file. To migrate a folder:")
 	fmt.Fprintln(w, "  1. Create `<folder>/.autodoc` containing `[autodoc"+"(<docId>@00000000, 00000000)]`.")
@@ -431,7 +431,12 @@ func writeFolderSuggestions(w io.Writer, suggestions []FolderLinkSuggestion) {
 	fmt.Fprintln(w, "Place `.autodoc` in the lowest folder that covers the files: its scope is recursive.")
 	fmt.Fprintln(w)
 	for _, s := range suggestions {
-		fmt.Fprintf(w, "FOLDER LINK: %d files in %s/ link doc %s\n", len(s.Files), s.Dir, s.DocID)
+		if len(s.Folders) > 1 {
+			fmt.Fprintf(w, "FOLDER LINK: %d files across %d folders under %s/ link doc %s\n", len(s.Files), len(s.Folders), s.Dir, s.DocID)
+			fmt.Fprintf(w, "  note: %s/.autodoc would also cover untagged files and folders under %s/\n", s.Dir, s.Dir)
+		} else {
+			fmt.Fprintf(w, "FOLDER LINK: %d files in %s/ link doc %s\n", len(s.Files), s.Dir, s.DocID)
+		}
 		for _, f := range s.Files {
 			fmt.Fprintf(w, "  - %s\n", f)
 		}
