@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/datadyne-io/autodoc/internal/doctree"
 	"github.com/datadyne-io/autodoc/internal/frontmatter"
@@ -128,7 +129,7 @@ func StaleOutputJSON(w io.Writer, staleFiles []doctree.Entry) error {
 }
 
 // FixOutputJSON writes all fix issues as a JSON array to w.
-func FixOutputJSON(w io.Writer, docIssues []docIssue, linkIssues []linkcheck.LinkIssue) error {
+func FixOutputJSON(w io.Writer, docIssues []docIssue, linkIssues []linkcheck.LinkIssue, suggestions []FolderLinkSuggestion) error {
 	issues := make([]FixIssueJSON, 0, len(docIssues)+len(linkIssues))
 	for _, d := range docIssues {
 		if d.MissingFM {
@@ -166,6 +167,13 @@ func FixOutputJSON(w io.Writer, docIssues []docIssue, linkIssues []linkcheck.Lin
 			Type:    linkStatusString(l.Status),
 			Path:    l.Tag.FilePath,
 			Details: fmt.Sprintf("Tag at line %d: doc=%s@%s scope=%s", l.Tag.Line, l.Tag.DocId, l.Tag.DocHash, l.Tag.ScopeHash),
+		})
+	}
+	for _, s := range suggestions {
+		issues = append(issues, FixIssueJSON{
+			Type:    "folder_link_suggestion",
+			Path:    s.Dir,
+			Details: fmt.Sprintf("%d files link doc %s inline (%s); advisory: replace with one %s/.autodoc", len(s.Files), s.DocID, strings.Join(s.Files, ", "), s.Dir),
 		})
 	}
 	return WriteJSON(w, issues)

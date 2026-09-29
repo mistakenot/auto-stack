@@ -58,25 +58,43 @@ func Scan(projectRoot string, warn io.Writer) ([]Link, error) {
 			continue // orphaned tag — no matching doc
 		}
 
-		// tag.FilePath is absolute; convert to repo-relative.
-		rel, err := filepath.Rel(absRoot, tag.FilePath)
-		if err != nil {
-			continue
+		// tag.FilePath is absolute; convert to repo-relative. A .autodoc
+		// folder link covers every code file under its folder, so it expands
+		// to one link per covered file.
+		sources := []string{tag.FilePath}
+		if tag.ScopeKind == scan.ScopeKindFolder {
+			dir := filepath.Dir(tag.FilePath)
+			covered, err := scan.FolderScopeFiles(dir)
+			if err != nil {
+				fmt.Fprintf(warn, "doclink: folder scope %s: %v\n", dir, err)
+				continue
+			}
+			sources = sources[:0]
+			for _, f := range covered {
+				sources = append(sources, filepath.Join(dir, filepath.FromSlash(f)))
+			}
 		}
-		sourceFile := filepath.ToSlash(rel)
 
-		k := linkKey{source: sourceFile, doc: entry.RepoRelPath}
-		if seen[k] {
-			continue
+		for _, src := range sources {
+			rel, err := filepath.Rel(absRoot, src)
+			if err != nil {
+				continue
+			}
+			sourceFile := filepath.ToSlash(rel)
+
+			k := linkKey{source: sourceFile, doc: entry.RepoRelPath}
+			if seen[k] {
+				continue
+			}
+			seen[k] = true
+
+			links = append(links, Link{
+				SourceFile: sourceFile,
+				DocFile:    entry.RepoRelPath,
+				DocID:      tag.DocId,
+				DocTitle:   entry.Title,
+			})
 		}
-		seen[k] = true
-
-		links = append(links, Link{
-			SourceFile: sourceFile,
-			DocFile:    entry.RepoRelPath,
-			DocID:      tag.DocId,
-			DocTitle:   entry.Title,
-		})
 	}
 
 	return links, nil

@@ -115,7 +115,7 @@ Inserts documentation indexes into agent memory files.
 - Run `auto doc quickstart` before first use to learn the workflow.
 - Search docs with `auto doc search keyword <query>`.
 - Check doc freshness with `auto doc stale`, fix issues with `auto doc fix`.
-- Link code to docs with `[autodoc()]` tags — run `auto doc fix` for details.
+- Link code to docs with `[autodoc()]` tags, or one `.autodoc` file per folder — run `auto doc quickstart` for details.
 
 **auto-doc/docs**
 
@@ -170,7 +170,7 @@ Inserts documentation indexes into agent memory files.
 - Run `auto doc quickstart` before first use to learn the workflow.
 - Search docs with `auto doc search keyword <query>`.
 - Check doc freshness with `auto doc stale`, fix issues with `auto doc fix`.
-- Link code to docs with `[autodoc()]` tags — run `auto doc fix` for details.
+- Link code to docs with `[autodoc()]` tags, or one `.autodoc` file per folder — run `auto doc quickstart` for details.
 
 - [Architecture](docs/architecture.md): Overview of system design
 - [Getting Started](docs/getting-started.md): Setup instructions
@@ -200,12 +200,24 @@ Outputs text instructions for an AI agent to follow. Provides full context on wh
    - Update the summary to accurately reflect the content.
    - Rewrite default/missing titles to a pretty-print version of the filename or main H1.
    - Run `auto doc fixed <repo-relative-doc-path>` to recalculate the hash.
-6. Validate `[autodoc($docId@$docHash, @codeBlockHash)]` links in code and report any code/doc drift with the current and expected hashes.
-7. Run `auto doc agents` to update agent memory files.
+6. Validate `[autodoc($docId@$docHash, @codeBlockHash)]` links in code and `.autodoc` folder link files, and report any code/doc drift with the current and expected hashes.
+7. Suggest (advisory, never failing) collapsing folders where 2+ files carry inline tags to the same doc into one `.autodoc`.
+8. Run `auto doc agents` to update agent memory files.
 
 ### `auto doc fixed <filepath>`
 
 Recalculates and writes the current 8-char content hash for a single doc file and updates the file in place.
+
+Given a `.autodoc` folder link file, rewrites every tag in it to the current doc hash and folder scope hash instead.
+
+---
+
+## Code-Doc Links
+
+- **Inline tag** — `[autodoc(docId@docHash, scopeHash)]` in a code comment; scope is the indented block below it.
+- **Folder link file** — `.autodoc` in any folder, one tag per line, `#` comments allowed. Scope is every code file in the folder's subtree (recursive), minus the scanner's exclusions (`.md`/data files, `_test.go`, `vendor/`, `testdata/`, git-ignored) and other `.autodoc` files. The hash covers paths + contents, so add/rename/delete also stale the link. Refresh with `auto doc fixed <folder>/.autodoc`.
+- Tag scanning and folder scopes both read git-tracked **and** untracked-but-not-ignored files, so a new tag or `.autodoc` is checked before it's staged.
+- Implementation: `internal/linkscan/folder.go` (parse + scope hash), `internal/commands/fixed_folder.go` (`fixed`), `internal/commands/folder_suggest.go` (migration hint). `auto-graph` expands folder links to one edge per covered file.
 
 ---
 

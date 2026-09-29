@@ -1,5 +1,5 @@
 ---
-hash: "816eb2de"
+hash: "cd14ff12"
 id: "6719b91e"
 read_when: "using two-way freshness links to keep documentation and code synchronized"
 summary: "Walkthrough of the full lifecycle for keeping docs and code in sync using autodoc two-way freshness links"
@@ -233,6 +233,47 @@ LINK STALE: doc updated, code tag needs refresh
 
 All three tags need their doc hash updated.
 
+## One Doc, One Folder: `.autodoc` Folder Links
+
+When several files in the same folder link to the same doc, each tag needs its own refresh: one doc edit or a sweep of edits across the package produces a diff touching every file just to bump hashes. A **folder link file** collapses them into one line.
+
+Put a file named `.autodoc` in the folder, one tag per line (`#` comments allowed):
+
+```
+# pkg/cache/.autodoc — caching layer design
+[autodoc(e4b7a21f@9c3d0e5a, 3c9d1e0f)]
+```
+
+Its scope is **every code file in the folder's subtree** (recursive): git-tracked plus untracked-but-not-ignored files, with the same exclusions as the tag scanner (`.md`/`.json`/`.yaml` and other data files, `_test.go`, `vendor/`, `testdata/`, `node_modules/`, …) and excluding other `.autodoc` files. The scope hash covers each file's path and content, with inline tags stripped, so adding, removing, renaming or editing any covered file marks the link stale — and only the one line in `.autodoc` needs refreshing.
+
+```
+LINK STALE: files under a folder link changed, doc may need updating
+  location:  pkg/cache/.autodoc:2
+  tag:       [autodoc(e4b7a21f@9c3d0e5a, 3c9d1e0f)]
+  scope:     every code file under pkg/cache/ (recursive)
+  ...
+  action: Review the changes under pkg/cache/ against the doc (e.g. git diff -- pkg/cache/).
+          If the doc needs updating, edit it and run `auto doc fixed <docPath>`.
+          Then run `auto doc fixed pkg/cache/.autodoc` to refresh every tag in the file.
+```
+
+`auto doc fixed <folder>/.autodoc` rewrites every tag in the file to the current doc hash and folder scope hash — no hand-editing hashes. Running it is the acknowledgement that the docs were reviewed.
+
+Guidance:
+
+- Place `.autodoc` in the **lowest folder that covers the files** — a high-level `.autodoc` goes stale on almost any edit beneath it.
+- Nested `.autodoc` files are independent: files under a child folder count toward both the child's and the parent's scope.
+- Inline tags and folder links may coexist; keep an inline tag when a single function needs its own, tighter link.
+
+### Migrating inline tags to a folder link
+
+`auto doc fix` lists folders where two or more files carry inline tags to the same doc under **Folder Link Suggestions** (`folder_link_suggestion` in `--json`). To migrate one:
+
+1. Create `<folder>/.autodoc` containing `[autodoc(<docId>@00000000, 00000000)]`.
+2. Delete the inline tags for that doc from the files under the folder.
+3. Run `auto doc fixed <folder>/.autodoc` to write the real hashes.
+4. Run `auto doc fix` to confirm the folder is clean and no longer suggested.
+
 ## Quick Reference
 
 | Scenario | What changes | What `fix` reports | Fix action |
@@ -242,3 +283,6 @@ All three tags need their doc hash updated.
 | Doc deleted | Doc ID not found | "orphaned tag" | Manual resolution |
 | Code reformatted | scopeHash mismatch | "code changed, doc may need updating" | AI confirms doc is still correct, updates scopeHash |
 | Doc renamed | Nothing (ID is stable) | Nothing | No action needed |
+| File under a `.autodoc` folder added/edited/renamed | folder scopeHash mismatch | "files under a folder link changed" | Review folder diff vs doc, then `auto doc fixed <folder>/.autodoc` |
+| Doc linked by a `.autodoc` edited | docHash mismatch in folder link | "doc updated, folder link needs refresh" | `auto doc fixed <folder>/.autodoc` |
+| 2+ files in a folder tag the same doc | — | "Folder Link Suggestions" (advisory) | Migrate to one `.autodoc` |

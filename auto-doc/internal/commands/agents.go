@@ -21,7 +21,7 @@ var agentsPreamble = "## Documentation Index\n\n" +
 	"- Run `auto doc quickstart` before first use to learn the workflow.\n" +
 	"- Search docs with `auto doc search keyword <query>`.\n" +
 	"- Check doc freshness with `auto doc stale`, fix issues with `auto doc fix`.\n" +
-	"- Link code to docs with `[autodoc()]` tags — run `auto doc fix` for details.\n\n"
+	"- Link code to docs with `[autodoc()]` tags, or one `.autodoc` file per folder — run `auto doc quickstart` for details.\n\n"
 
 // AgentsWithResult inserts tree output into agent memory files and returns the list of updated files.
 func AgentsWithResult(rootDir string, docsDir string, agentFiles []string, ignores []string) ([]string, error) {

@@ -1,5 +1,5 @@
 ---
-hash: "34e92e15"
+hash: "028588a9"
 id: "e8d3cf9c"
 read_when: "implementing two-way freshness checking between code and documentation"
 summary: "Implementation details for two-way code-doc freshness checks in autodoc."
@@ -65,7 +65,9 @@ type ScanResult struct {
 
 Discovers all source files via `git ls-files` (run from `rootDir`), filters out known noise directories (`vendor/`, `node_modules/`, `.git/`, build artifacts), then scans each file line-by-line for `[autodoc(` substrings.
 
-**Why `git ls-files`**: Only scans tracked files. Respects `.gitignore`. Fast — no filesystem walk needed.
+**Why `git ls-files`**: Respects `.gitignore`. Fast — no filesystem walk needed. Runs with `--cached --others --exclude-standard`, so untracked-but-not-ignored files are scanned too: a freshly written tag or `.autodoc` is checked before it is staged.
+
+Files named `.autodoc` are parsed as **folder link files** (see §8, "Folder link files") rather than scanned line-by-line for inline tags.
 
 **Regex for tag extraction**:
 
@@ -306,6 +308,12 @@ Handled by the `id` field. Code tags reference the doc by ID, not by file path. 
 ### Concurrent tag references to the same doc
 
 Multiple code files can reference the same doc ID. When the doc changes, all tags referencing it will have `DocHashMismatch`. Each is reported independently. The fix for each is the same: update the `docHash` field in the tag.
+
+### Folder link files (`.autodoc`)
+
+A `.autodoc` file holds one `[autodoc(docId@docHash, scopeHash)]` per line (`#` comments and blank lines allowed; any other line is a malformed tag). Each becomes a `ScopeKindFolder` tag whose scope is the file's folder subtree, recursively: the same `git ls-files --cached --others --exclude-standard` set filtered by `shouldIgnorePath` (data/markdown extensions, `_test.go`, `vendor/`, `testdata/`, …), minus every `.autodoc`. The scope hash is MD5 over `relpath \0 content \0` per file in sorted order, with inline tags stripped and CRLF normalised — so add/delete/rename/edit all stale the link, while refreshing inline tags or nested `.autodoc` files never does. Nested `.autodoc` files are independent (files under a child count toward both).
+
+`auto doc fixed <folder>/.autodoc` rewrites every tag to the current doc hash and folder scope hash (the review acknowledgement), leaving unknown doc ids and malformed lines untouched and exiting non-zero for them. `fix` adds an advisory "Folder Link Suggestions" section (`folder_link_suggestion` in JSON) for folders where 2+ files carry inline tags to the same doc and no `.autodoc` in that folder or an ancestor already links it. Inline tags and folder links coexist without warnings. Motivation: several files in one folder linked to one doc turned every doc edit or package-wide change into a many-file hash-bump diff; the folder link makes it one line.
 
 ### ID collisions
 

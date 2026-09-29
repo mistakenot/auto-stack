@@ -3,6 +3,7 @@ package linkscan
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -80,21 +81,25 @@ func TestScanFilesSkipsDataFileExtensions(t *testing.T) {
 	}
 }
 
-func TestScanFilesOnlyTrackedFiles(t *testing.T) {
+func TestScanFilesIncludesUntrackedButNotIgnoredFiles(t *testing.T) {
 	ws := testutil.NewWorkspace(t)
 	ws.WriteSourceFile("tracked.go", "// [autodoc(deadbeef@cafebabe, 01234567)]\n")
+	ws.WriteSourceFile(".gitignore", "ignored.go\n")
 	ws.InitGitRepo()
 	ws.WriteSourceFile("untracked.go", "// [autodoc(deadbeef@cafebabe, 89abcdef)]\n")
+	ws.WriteSourceFile("ignored.go", "// [autodoc(deadbeef@cafebabe, 00000000)]\n")
 
 	result, err := ScanFiles(ws.Dir)
 	if err != nil {
 		t.Fatalf("ScanFiles: %v", err)
 	}
-	if len(result.Tags) != 1 {
-		t.Fatalf("len(result.Tags) = %d, want 1", len(result.Tags))
+	got := make([]string, 0, len(result.Tags))
+	for _, tag := range result.Tags {
+		got = append(got, filepath.Base(tag.FilePath))
 	}
-	if !strings.HasSuffix(filepath.ToSlash(result.Tags[0].FilePath), "/tracked.go") {
-		t.Fatalf("unexpected tracked file path: %q", result.Tags[0].FilePath)
+	sort.Strings(got)
+	if strings.Join(got, ",") != "tracked.go,untracked.go" {
+		t.Fatalf("scanned files = %v, want tracked.go and untracked.go (ignored.go excluded)", got)
 	}
 }
 

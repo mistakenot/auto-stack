@@ -129,11 +129,15 @@ func BuildGraph(rootDir string, docsDir string, ignores []string) (*GraphJSON, e
 		}
 
 		linkType := "code_to_doc"
-		if tag.ScopeKind == linkscan.ScopeKindMarkdown {
+		switch tag.ScopeKind {
+		case linkscan.ScopeKindMarkdown:
 			linkType = "doc_to_doc"
+		case linkscan.ScopeKindFolder:
+			// Source is the .autodoc file; its scope is the folder subtree.
+			linkType = "folder_to_doc"
 		}
 
-		if linkType == "code_to_doc" {
+		if linkType != "doc_to_doc" {
 			codeFiles[sourcePath] = true
 		}
 

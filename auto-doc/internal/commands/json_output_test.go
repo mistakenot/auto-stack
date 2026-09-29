@@ -96,7 +96,7 @@ func TestFixOutputJSON(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := FixOutputJSON(&buf, docIssues, linkIssues); err != nil {
+	if err := FixOutputJSON(&buf, docIssues, linkIssues, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -146,7 +146,7 @@ func TestFixOutputJSONIncludesEmptyReadWhen(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := FixOutputJSON(&buf, docIssues, nil); err != nil {
+	if err := FixOutputJSON(&buf, docIssues, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 

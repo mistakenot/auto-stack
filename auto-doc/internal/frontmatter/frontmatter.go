@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, c1904ee4)]
+// [autodoc(e8d3cf9c@028588a9, c1904ee4)]
 package frontmatter
 
 import (

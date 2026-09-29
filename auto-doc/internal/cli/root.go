@@ -12,6 +12,7 @@ import (
 	"github.com/datadyne-io/autodoc/internal/config"
 	"github.com/datadyne-io/autodoc/internal/doctree"
 	"github.com/datadyne-io/autodoc/internal/frontmatter"
+	"github.com/datadyne-io/autodoc/internal/linkscan"
 	"github.com/mistakenot/auto-shared/update"
 	"github.com/mistakenot/auto-shared/version"
 	"github.com/spf13/cobra"
@@ -209,7 +210,7 @@ func newFixCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return commands.FixOutputJSON(os.Stdout, result.DocIssues, result.LinkIssues)
+				return commands.FixOutputJSON(os.Stdout, result.DocIssues, result.LinkIssues, result.FolderSuggestions)
 			}
 			return commands.Fix(os.Stdout, cwd, cfg.DocsDir, cfg.Parallelism, cfg.AgentFiles, cfg.Ignores)
 		},
@@ -319,7 +320,7 @@ func newDoctorCmd() *cobra.Command {
 func newFixedCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "fixed <filepath>",
-		Short: "Recalculate and write the hash for a doc file",
+		Short: "Recalculate the hash for a doc file, or refresh a .autodoc folder link file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := args[0]
@@ -329,6 +330,10 @@ func newFixedCmd() *cobra.Command {
 			}
 			if !filepath.IsAbs(path) {
 				path = filepath.Join(cwd, path)
+			}
+
+			if linkscan.IsFolderLinkPath(path) {
+				return runFixedFolderLink(path, args[0])
 			}
 
 			// Read old hash before fixing
@@ -379,4 +384,25 @@ func newUpdateCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// runFixedFolderLink refreshes a .autodoc folder link file's tags.
+func runFixedFolderLink(absPath, displayPath string) error {
+	cfg, cwd, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	updates, fixErr := commands.FixedFolderLink(absPath, cwd, cfg.DocsDir, cfg.Ignores)
+	if jsonOutput {
+		if err := commands.WriteJSON(os.Stdout, commands.FixedFolderLinkJSON{Path: displayPath, Updated: updates}); err != nil {
+			return err
+		}
+	} else if len(updates) == 0 {
+		fmt.Printf("Folder links already current in %s\n", displayPath)
+	} else {
+		for _, u := range updates {
+			fmt.Printf("Updated %s:%d %s -> %s\n", displayPath, u.Line, u.OldTag, u.NewTag)
+		}
+	}
+	return fixErr
 }

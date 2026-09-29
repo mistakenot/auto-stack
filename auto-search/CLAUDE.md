@@ -10,7 +10,7 @@ A tool for running rich search over previous coding session history. AutoSearch 
 - Run `auto doc quickstart` before first use to learn the workflow.
 - Search docs with `auto doc search keyword <query>`.
 - Check doc freshness with `auto doc stale`, fix issues with `auto doc fix`.
-- Link code to docs with `[autodoc()]` tags — run `auto doc fix` for details.
+- Link code to docs with `[autodoc()]` tags, or one `.autodoc` file per folder — run `auto doc quickstart` for details.
 
 **auto-search/docs**
 

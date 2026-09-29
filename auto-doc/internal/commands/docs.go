@@ -93,7 +93,8 @@ Scan for all documentation and code-link issues, output instructions for an AI a
 - Missing frontmatter (no title/summary/hash)
 - Stale hash (content changed since last ` + "`auto doc fixed`" + `)
 - Default/empty title
-- ` + "`[autodoc(...)]`" + ` code tag issues: doc hash mismatch, scope hash mismatch, both mismatch, orphaned tags, malformed tags
+- ` + "`[autodoc(...)]`" + ` code tag and ` + "`.autodoc`" + ` folder link issues: doc hash mismatch, scope hash mismatch, both mismatch, orphaned tags, malformed tags
+- Advisory ` + "`folder_link_suggestion`" + `: folders where 2+ files carry inline tags to the same doc (not covered by a ` + "`.autodoc`" + ` in that folder or an ancestor). Never fails ` + "`fix`" + ` on its own.
 
 **Behavior:**
 - Auto-assigns 8-char hex doc IDs to files missing them
@@ -104,7 +105,8 @@ Scan for all documentation and code-link issues, output instructions for an AI a
 ` + "```json" + `
 [
   {"type": "stale_hash", "path": "docs/auth.md", "details": "Hash does not match content"},
-  {"type": "orphaned_tag", "path": "src/main.go", "details": "Tag at line 10: doc=deadbeef@cafebabe scope=12345678"}
+  {"type": "orphaned_tag", "path": "src/main.go", "details": "Tag at line 10: doc=deadbeef@cafebabe scope=12345678"},
+  {"type": "folder_link_suggestion", "path": "pkg/cache", "details": "2 files link doc deadbeef inline (pkg/cache/lru.go, pkg/cache/ttl.go); advisory: replace with one pkg/cache/.autodoc"}
 ]
 ` + "```" + `
 
@@ -123,7 +125,13 @@ Recalculate and write the hash for a single doc file. Also updates the search in
 {"path": "docs/auth.md", "oldHash": "aabbccdd", "newHash": "11223344"}
 ` + "```" + `
 
-**Exit codes:** 0 on success.
+**Folder link files:** ` + "`auto doc fixed <folder>/.autodoc`" + ` rewrites every tag in the file to the linked doc's current hash and the folder's current scope hash — running it acknowledges the docs were reviewed against the folder's code. Tags whose doc id is unknown, and malformed lines, are left untouched and reported (exit 1); the other tags are still refreshed.
+
+` + "```json" + `
+{"path": "pkg/cache/.autodoc", "updated": [{"line": 1, "docId": "deadbeef", "oldTag": "[autodoc` + `(deadbeef@00000000, 00000000)]", "newTag": "[autodoc` + `(deadbeef@11223344, 55667788)]"}]}
+` + "```" + `
+
+**Exit codes:** 0 on success, 1 if a folder link file has unknown doc ids or malformed lines.
 
 ---
 
@@ -252,9 +260,17 @@ hash: "a1b2c3d4"
 
 ## Code-Doc Linking
 
+**Inline tag** — scope is the indented block below the tag (a tag at the top of a file covers the whole file):
+
 ` + "```" + `
 // [autodoc` + `(docId@docHash, scopeHash)]
 ` + "```" + `
 
-Two-way freshness: ` + "`fix`" + ` detects when doc or code changes, reports the specific drift type, and provides exact remediation steps.
+**Folder link file** — a file named ` + "`.autodoc`" + ` holding one tag per line (` + "`#`" + ` comments allowed). Its scope is every code file in the folder's subtree, recursively: git-tracked plus untracked-but-not-ignored files, minus the same exclusions as the tag scanner (` + "`.md`" + `/` + "`.json`" + `/` + "`.yaml`" + `/etc., ` + "`_test.go`" + `, ` + "`vendor/`" + `, ` + "`testdata/`" + `, ` + "`node_modules/`" + ` …) and minus other ` + "`.autodoc`" + ` files. The scope hash covers each file's path and content (inline tags stripped, CRLF normalised), so adding, removing, renaming or editing a file marks the link stale. Nested ` + "`.autodoc`" + ` files are independent: files below a child count toward both.
+
+Use a folder link when several files in a folder link the same doc — edits and doc changes then touch one line instead of one tag per file. Place it in the lowest folder that covers the files. Inline tags and folder links may coexist.
+
+Migration: create ` + "`<folder>/.autodoc`" + ` with ` + "`[autodoc` + `(<docId>@00000000, 00000000)]`" + `, delete the inline tags for that doc under the folder, run ` + "`auto doc fixed <folder>/.autodoc`" + `.
+
+Two-way freshness: ` + "`fix`" + ` detects when doc or code changes, reports the specific drift type, and provides exact remediation steps. ` + "`auto doc graph`" + ` reports folder links with ` + "`link_type: folder_to_doc`" + `.
 `

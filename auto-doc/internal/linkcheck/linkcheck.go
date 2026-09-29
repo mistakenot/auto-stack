@@ -1,9 +1,10 @@
-// [autodoc(e8d3cf9c@34e92e15, bfec9559)]
+// [autodoc(e8d3cf9c@028588a9, 00428f2b)]
 package linkcheck
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/datadyne-io/autodoc/internal/doctree"
 	"github.com/datadyne-io/autodoc/internal/linkscan"
@@ -51,6 +52,7 @@ func Check(tags []linkscan.Tag, docs []doctree.Entry) ([]LinkIssue, error) {
 	}
 
 	fileCache := make(map[string]string)
+	folderHashCache := make(map[string]string)
 	issues := make([]LinkIssue, 0)
 
 	for _, tag := range tags {
@@ -72,19 +74,9 @@ func Check(tags []linkscan.Tag, docs []doctree.Entry) ([]LinkIssue, error) {
 			continue
 		}
 
-		content, ok := fileCache[tag.FilePath]
-		if !ok {
-			data, err := os.ReadFile(tag.FilePath)
-			if err != nil {
-				return nil, fmt.Errorf("read %s: %w", tag.FilePath, err)
-			}
-			content = string(data)
-			fileCache[tag.FilePath] = content
-		}
-
-		scopeHash, err := linkscan.ComputeScopeHashFromContentForTag(content, &tag)
+		scopeHash, err := scopeHashFor(&tag, fileCache, folderHashCache)
 		if err != nil {
-			return nil, fmt.Errorf("scope hash %s:%d: %w", tag.FilePath, tag.Line, err)
+			return nil, err
 		}
 
 		docMismatch := tag.DocHash != doc.Hash
@@ -134,4 +126,37 @@ func docPath(doc *doctree.Entry) string {
 		return doc.RepoRelPath
 	}
 	return doc.RelPath
+}
+
+// scopeHashFor computes a tag's current scope hash, caching file reads and
+// per-folder hashes (several tags in one .autodoc share a folder).
+func scopeHashFor(tag *linkscan.Tag, fileCache, folderCache map[string]string) (string, error) {
+	if tag.ScopeKind == linkscan.ScopeKindFolder {
+		dir := filepath.Dir(tag.FilePath)
+		if h, ok := folderCache[dir]; ok {
+			return h, nil
+		}
+		h, err := linkscan.ComputeFolderScopeHash(dir)
+		if err != nil {
+			return "", fmt.Errorf("folder scope hash %s: %w", dir, err)
+		}
+		folderCache[dir] = h
+		return h, nil
+	}
+
+	content, ok := fileCache[tag.FilePath]
+	if !ok {
+		data, err := os.ReadFile(tag.FilePath)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", tag.FilePath, err)
+		}
+		content = string(data)
+		fileCache[tag.FilePath] = content
+	}
+
+	scopeHash, err := linkscan.ComputeScopeHashFromContentForTag(content, tag)
+	if err != nil {
+		return "", fmt.Errorf("scope hash %s:%d: %w", tag.FilePath, tag.Line, err)
+	}
+	return scopeHash, nil
 }

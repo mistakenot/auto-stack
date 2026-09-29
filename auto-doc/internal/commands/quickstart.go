@@ -65,10 +65,45 @@ auto doc fix
 
 ### ` + "`auto doc fixed <filepath>`" + `
 Recalculate and write the hash for a single doc file. Also updates the search index if one exists.
+Given a ` + "`.autodoc`" + ` folder link file, it instead rewrites every tag in it to the current doc and folder hashes.
 
 ` + "```" + `
 auto doc fixed docs/api/auth.md
+auto doc fixed pkg/auth/.autodoc
 ` + "```" + `
+
+## Linking Code to Docs
+
+Two-way freshness links make ` + "`fix`" + ` report when code or its doc drifts. Two forms:
+
+**Inline tag** — covers the indented block under the tag (top of file = whole file):
+` + "```go" + `
+// [autodoc` + `(<docId>@<docHash>, <scopeHash>)]
+` + "```" + `
+
+**Folder link file** — a ` + "`.autodoc`" + ` file covers every code file in its folder's subtree
+(recursive; ` + "`.md`" + `/data files, ` + "`_test.go`" + `, ` + "`vendor/`" + `, ` + "`testdata/`" + ` and git-ignored files excluded).
+One tag per line, ` + "`#`" + ` comments allowed:
+` + "```" + `
+# pkg/auth/.autodoc
+[autodoc` + `(a1b2c3d4@00000000, 00000000)]
+` + "```" + `
+
+Prefer ` + "`.autodoc`" + ` when several files in a folder link the same doc: a code edit or doc
+change then touches one line, not one tag per file. Put it in the lowest folder that
+covers the files — anything added, renamed or edited below it marks the link stale.
+Inline tags and folder links may coexist.
+
+**Migrating** (` + "`auto doc fix`" + ` lists candidates under "Folder Link Suggestions"):
+` + "```" + `
+echo '[autodoc` + `(a1b2c3d4@00000000, 00000000)]' > pkg/auth/.autodoc   # 1. placeholder hashes
+# 2. delete the inline [autodoc` + `(a1b2c3d4@...)] tags from files under pkg/auth/
+auto doc fixed pkg/auth/.autodoc                                   # 3. write real hashes
+auto doc fix                                                       # 4. verify clean
+` + "```" + `
+
+When a folder link goes stale, review the folder's changes against the doc, update the
+doc if needed (then ` + "`auto doc fixed <doc>`" + `), and run ` + "`auto doc fixed <folder>/.autodoc`" + `.
 
 ## Agent Integration
 

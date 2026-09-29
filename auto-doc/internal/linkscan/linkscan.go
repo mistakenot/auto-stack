@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, b248a5c1)]
+// [autodoc(e8d3cf9c@028588a9, 55dde660)]
 package linkscan
 
 import (
@@ -60,6 +60,9 @@ type ScopeKind int
 const (
 	ScopeKindIndent ScopeKind = iota
 	ScopeKindMarkdown
+	// ScopeKindFolder tags live in a .autodoc folder link file and cover every
+	// code file in that folder's subtree.
+	ScopeKindFolder
 )
 
 // Tag represents a single parsed [autodoc()] tag found in a source file.
@@ -86,7 +89,8 @@ type ScanResult struct {
 	Malformed []MalformedTag
 }
 
-// ScanFiles scans git-tracked files under rootDir for autodoc tags.
+// ScanFiles scans git-tracked and untracked-but-not-ignored files under rootDir
+// for autodoc tags.
 func ScanFiles(rootDir string) (ScanResult, error) {
 	var result ScanResult
 
@@ -95,16 +99,20 @@ func ScanFiles(rootDir string) (ScanResult, error) {
 		return result, fmt.Errorf("abs root: %w", err)
 	}
 
-	cmd := exec.Command("git", "-C", absRoot, "ls-files", "-z")
+	// Untracked (but not git-ignored) files count too, so a freshly written
+	// tag or .autodoc is checked before it is staged.
+	cmd := exec.Command("git", "-C", absRoot, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 	out, err := cmd.Output()
 	if err != nil {
 		return result, fmt.Errorf("git ls-files: %w", err)
 	}
 
+	seen := make(map[string]bool)
 	for rel := range strings.SplitSeq(string(out), "\x00") {
-		if rel == "" {
+		if rel == "" || seen[rel] {
 			continue
 		}
+		seen[rel] = true
 		if shouldIgnorePath(rel) {
 			continue
 		}
@@ -123,6 +131,11 @@ func ScanFiles(rootDir string) (ScanResult, error) {
 		data, err := os.ReadFile(fullPath)
 		if err != nil {
 			return result, fmt.Errorf("read %s: %w", rel, err)
+		}
+
+		if IsFolderLinkPath(rel) {
+			ScanFolderLinkFile(fullPath, data, &result)
+			continue
 		}
 
 		lines := strings.Split(string(data), "\n")
@@ -191,9 +204,14 @@ func ComputeScopeHashFromContent(content string, tagLine int) (string, error) {
 }
 
 // ComputeScopeHashFromContentForTag computes a scope hash using in-memory file content.
+// Folder tags ignore content and hash the files under the link file's folder.
 func ComputeScopeHashFromContentForTag(content string, tag *Tag) (string, error) {
-	if tag.ScopeKind == ScopeKindMarkdown {
+	switch tag.ScopeKind {
+	case ScopeKindMarkdown:
 		return computeMarkdownScopeHashFromContent(content, tag.Line)
+	case ScopeKindFolder:
+		// The link file's own content is not part of the scope.
+		return ComputeFolderScopeHash(filepath.Dir(tag.FilePath))
 	}
 	return computeIndentedScopeHashFromContent(content, tag.Line)
 }

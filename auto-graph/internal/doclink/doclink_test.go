@@ -268,3 +268,44 @@ func TestEnrich_NoOpWhenEmpty(t *testing.T) {
 		t.Errorf("expected 0 edges, got %d", len(g.Edges))
 	}
 }
+
+func TestScan_ExpandsFolderLinkToCoveredFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	writeFile(t, filepath.Join(dir, "pkg", "cache", ".autodoc"), "[autodoc(aabbccdd@11223344, 55667788)]\n")
+	writeFile(t, filepath.Join(dir, "pkg", "cache", "lru.go"), "package cache\n")
+	writeFile(t, filepath.Join(dir, "pkg", "cache", "inner", "shard.go"), "package inner\n")
+	writeFile(t, filepath.Join(dir, "pkg", "other.go"), "package pkg\n")
+	writeFile(t, filepath.Join(dir, "docs", "guide.md"), `---
+id: "aabbccdd"
+title: "Cache Guide"
+summary: "A guide"
+hash: "00000000"
+---
+Body.
+`)
+	initGitRepo(t, dir)
+
+	var buf bytes.Buffer
+	links, err := Scan(dir, &buf)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if buf.Len() > 0 {
+		t.Errorf("unexpected warnings: %s", buf.String())
+	}
+
+	got := make(map[string]bool)
+	for _, l := range links {
+		got[l.SourceFile] = true
+	}
+	want := []string{"pkg/cache/inner/shard.go", "pkg/cache/lru.go"}
+	if len(got) != len(want) {
+		t.Fatalf("links = %+v, want sources %v", links, want)
+	}
+	for _, w := range want {
+		if !got[w] {
+			t.Errorf("missing link from %s; got %+v", w, links)
+		}
+	}
+}

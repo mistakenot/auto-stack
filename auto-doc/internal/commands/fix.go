@@ -1,4 +1,4 @@
-// [autodoc(e8d3cf9c@34e92e15, e8d2824a)]
+// [autodoc(e8d3cf9c@028588a9, 1d67966c)]
 package commands
 
 import (
@@ -24,6 +24,9 @@ type FixResult struct {
 	DocIssues    []docIssue
 	LinkIssues   []linkcheck.LinkIssue
 	MalformedCnt int
+	// FolderSuggestions are advisory: folders whose inline tags could collapse
+	// into one .autodoc folder link file. They never fail `fix`.
+	FolderSuggestions []FolderLinkSuggestion
 }
 
 // FixCollect scans for all doc and link issues without producing output.
@@ -71,9 +74,10 @@ func FixCollect(rootDir string, docsDir string, ignores []string) (*FixResult, e
 	})
 
 	return &FixResult{
-		DocIssues:    docIssues,
-		LinkIssues:   linkIssues,
-		MalformedCnt: len(scanResult.Malformed),
+		DocIssues:         docIssues,
+		LinkIssues:        linkIssues,
+		MalformedCnt:      len(scanResult.Malformed),
+		FolderSuggestions: suggestFolderLinks(rootDir, scanResult.Tags),
 	}, nil
 }
 
@@ -86,6 +90,10 @@ func Fix(w io.Writer, rootDir string, docsDir string, parallelism int, agentFile
 
 	if len(result.DocIssues) == 0 && len(result.LinkIssues) == 0 {
 		fmt.Fprintln(w, "All documentation files are up to date. No fixes needed.")
+		if len(result.FolderSuggestions) > 0 {
+			fmt.Fprintln(w)
+			writeFolderSuggestions(w, result.FolderSuggestions)
+		}
 		return nil
 	}
 
@@ -96,6 +104,9 @@ func Fix(w io.Writer, rootDir string, docsDir string, parallelism int, agentFile
 	}
 	if len(result.LinkIssues) > 0 {
 		writeLinkFreshness(w, rootDir, result.LinkIssues)
+	}
+	if len(result.FolderSuggestions) > 0 {
+		writeFolderSuggestions(w, result.FolderSuggestions)
 	}
 
 	parts := make([]string, 0, 3)
@@ -245,6 +256,11 @@ func writeLinkFreshness(w io.Writer, rootDir string, issues []linkcheck.LinkIssu
 			docPath = filepath.ToSlash(issue.DocFile)
 		}
 
+		if issue.Tag.ScopeKind == linkscan.ScopeKindFolder && writeFolderLinkIssue(w, issue, sourcePath, tagText, docPath) {
+			fmt.Fprintln(w)
+			continue
+		}
+
 		switch issue.Status {
 		case linkcheck.ScopeHashMismatch:
 			fmt.Fprintln(w, "LINK STALE: source changed, doc may need updating")
@@ -374,4 +390,52 @@ func generateDocID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+// writeFolderLinkIssue writes stale-link instructions for a tag in a .autodoc
+// folder link file. It returns false for statuses the generic writer handles.
+func writeFolderLinkIssue(w io.Writer, issue *linkcheck.LinkIssue, sourcePath, tagText, docPath string) bool {
+	var headline string
+	switch issue.Status {
+	case linkcheck.ScopeHashMismatch:
+		headline = "LINK STALE: files under a folder link changed, doc may need updating"
+	case linkcheck.DocHashMismatch:
+		headline = "LINK STALE: doc updated, folder link needs refresh"
+	case linkcheck.BothMismatch:
+		headline = "LINK STALE: both folder files and doc changed since last sync"
+	default:
+		return false
+	}
+	folder := path.Dir(sourcePath) + "/"
+	fmt.Fprintln(w, headline)
+	fmt.Fprintf(w, "  location:  %s:%d\n", sourcePath, issue.Tag.Line)
+	fmt.Fprintf(w, "  tag:       %s\n", tagText)
+	fmt.Fprintf(w, "  scope:     every code file under %s (recursive)\n", folder)
+	fmt.Fprintf(w, "  doc:       %s (id: %s)\n", docPath, issue.Tag.DocId)
+	fmt.Fprintf(w, "  current doc hash:   %s (was %s)\n", issue.CurrentDocHash, issue.Tag.DocHash)
+	fmt.Fprintf(w, "  current scope hash: %s (was %s)\n", issue.CurrentScopeHash, issue.Tag.ScopeHash)
+	fmt.Fprintf(w, "  action: Review the changes under %s against the doc (e.g. git diff -- %s).\n", folder, folder)
+	fmt.Fprintln(w, "          If the doc needs updating, edit it and run `auto doc fixed <docPath>`.")
+	fmt.Fprintf(w, "          Then run `auto doc fixed %s` to refresh every tag in the file.\n", sourcePath)
+	return true
+}
+
+func writeFolderSuggestions(w io.Writer, suggestions []FolderLinkSuggestion) {
+	fmt.Fprintln(w, "## Folder Link Suggestions (optional)")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "These folders have several files tagged with the same doc. One `.autodoc` folder link")
+	fmt.Fprintln(w, "file covers every code file in the folder's subtree, so edits and doc changes touch one")
+	fmt.Fprintln(w, "line instead of one tag per file. To migrate a folder:")
+	fmt.Fprintln(w, "  1. Create `<folder>/.autodoc` containing `[autodoc"+"(<docId>@00000000, 00000000)]`.")
+	fmt.Fprintln(w, "  2. Remove the inline tags for that doc from the listed files.")
+	fmt.Fprintln(w, "  3. Run `auto doc fixed <folder>/.autodoc` to write the real hashes.")
+	fmt.Fprintln(w, "Place `.autodoc` in the lowest folder that covers the files: its scope is recursive.")
+	fmt.Fprintln(w)
+	for _, s := range suggestions {
+		fmt.Fprintf(w, "FOLDER LINK: %d files in %s/ link doc %s\n", len(s.Files), s.Dir, s.DocID)
+		for _, f := range s.Files {
+			fmt.Fprintf(w, "  - %s\n", f)
+		}
+		fmt.Fprintln(w)
+	}
 }

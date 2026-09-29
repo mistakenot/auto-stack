@@ -328,7 +328,7 @@ The PR bodies capture the full workflow narrative (problem, plan, decisions, tes
 - **Doc-code overlay** — `auto graph` and `auto doc graph` visualize which docs cover which files via `[autodoc()]` tags.
 
 ### Documentation
-- **Two-way freshness links** — `[autodoc()]` tags in source code and content hashes in doc frontmatter detect drift in both directions.
+- **Two-way freshness links** — `[autodoc()]` tags in source code (or one `.autodoc` folder link file covering a whole folder) and content hashes in doc frontmatter detect drift in both directions.
 - **BM25 doc search** — `auto doc search keyword <query>` searches every doc in the tree.
 - **`read_when` routing hints** — frontmatter tells agents when to pull a doc into context.
 - **Auto-generated indexes** — `auto doc fix` regenerates the documentation index in CLAUDE.md / AGENTS.md.
