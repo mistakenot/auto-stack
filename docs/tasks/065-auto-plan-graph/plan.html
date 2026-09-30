@@ -1,0 +1,1312 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>065: auto-plan-graph</title>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "065",
+    "name": "auto-plan-graph",
+    "status": "planning",
+    "created": "2026-09-29"
+  }
+  </script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="065: auto-plan-graph" status="pending" pr="pending" generated="2026-09-29" next-prompt="/new-solution 065">
+
+    <pd-tab name="Requirements">
+
+      <pd-scope></pd-scope>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+Plans today are `plan.html` files: Markdown inside `<script>` tags inside `pd-*` web components.
+The document is both the source of truth and the view. Most relationships live in prose or in
+comma-separated attributes, and derived facts are written out by hand, so they drift. The plan-lab
+experiments (`docs/plan-lab-00-index.html`, 2026-09-29) found six contradictions in the two most
+complex reviewed plans, and review had caught none of them. Every rich view needed a hand-written
+extractor first.
+
+Agents need **one structured plan graph**: typed nodes with stable IDs, typed edges, validated on
+every write. They also need an `auto plan` CLI to create it, change it, lint it, and read it back in
+forms an agent can use directly.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals" summary="Seven outcomes, written in the G layering this task introduces.">
+        <md><script type="text/plain">
+1. **The vocabulary lands first.** Plan, Goal, Acceptance Criterion, Decision, Rail, Journey and
+   the other node types are in the glossary before any code uses them.
+2. **`auto plan new` starts a plan.** It creates `docs/plans/NNN-name/` using the existing 3-digit +
+   kebab-case convention, containing a `graph.json` that holds only the `plan` node, for either kind:
+   `task` or `epic`.
+3. **The graph is one deterministic `graph.json` per plan.** It holds typed nodes and typed edges,
+   written sorted and stable so a PR diff reads cleanly. It is the only source of truth.
+4. **Every node type from the design is supported.** Core layer: ◎ Goal → ✓ Acceptance Criterion
+   (with a reproducible `verify` command) → ◆ Decision (with rejected alternatives). Secondary
+   types: rails, defects, stages, planned file changes, questions, and structured-text trees in
+   show-me notation. Epic types: journeys (with legs) and child-plan references.
+5. **Agents can change the graph safely through the CLI.** Add, update, link, unlink and retire.
+   IDs are opaque and generated for you (`ac-3fxm`), so they never change when items are
+   removed or reordered. Reading order is a separate `rank` field. Every write is validated.
+6. **`auto plan lint` catches drift.** It runs fast, returns structured errors, and exits
+   non-zero. Checks include dangling references, bad IDs, goal count, ACs without a verify
+   command, stage dependency cycles, and epic inheritance gaps.
+7. **Agents can read the graph usefully.** A goal → AC → decision overview, a card for any node
+   with its neighbours, lineage traces, show-me style text trees, and a stage brief for each stage.
+   JSON is available for every output.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-1" title="Plans live in docs/plans/NNN-name/, for both kinds" status="accepted" by="charlie"
+        summary="New root; one numbering sequence; kind task|epic lives in the graph. docs/tasks and docs/epics untouched.">
+        <md><script type="text/plain">
+**Decision:** `auto plan new` creates `docs/plans/NNN-name/` using the same 3-digit + kebab-case
+convention as `docs/tasks/`. Tasks and epics share one root and one numbering sequence, and the
+graph records `kind`.
+**Alternatives:** Reuse `docs/tasks` + `docs/epics`. Use split `docs/plans/tasks` +
+`docs/plans/epics` roots with separate numbering.
+**Consequences:** Existing task and epic docs are untouched. Qualified references (`005:r-8hw3`)
+need a plan-id scheme that works across both kinds. The plan being written here still lives in
+`docs/tasks/065-…` because the current workflow produces it.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-2" title="graph.json snapshot is the source of truth" status="accepted" by="charlie"
+        summary="One deterministic nodes+edges document per plan; git is the history; lint validates.">
+        <md><script type="text/plain">
+**Decision:** Each plan holds one `graph.json`: typed nodes and typed edges, serialised
+deterministically (sorted keys and order, stable formatting). Both the CLI and direct agent edits
+write it, and `auto plan lint` validates it.
+**Alternatives:** An append-only `graph.jsonl` operation log folded on read. Both (a canonical log
+plus a derived snapshot).
+**Consequences:** PR diffs read cleanly and hand edits stay possible. History comes from git, not
+from the file. Review threads, which must be append-only, will need their own log later. That's out
+of scope here.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-3" title="One task, staged as a walking skeleton" status="accepted" by="charlie"
+        summary="Skeleton first (new → add/link → lint → show on G/AC/D), then remaining node types, display lenses, epics.">
+        <md><script type="text/plain">
+**Decision:** Deliver everything in one task. The first stage is a thin end-to-end path:
+`new` → add and link a Goal, an AC and a Decision → `lint` → `show`. Later stages add the remaining
+node types, the display lenses, and epic support.
+**Alternatives:** Plan it as an epic with three tasks. Do a core-only task with follow-ups.
+**Consequences:** The task is large. Stage boundaries must each leave a shippable, green state. If
+the solution stage finds it too big, epics split off cleanly as a follow-up task.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-4" title="Coexist with plan.html; planning skills untouched" status="accepted" by="charlie"
+        summary="auto plan ships standalone; skill migration, HTML rendering and plan.html import are follow-ups.">
+        <md><script type="text/plain">
+**Decision:** `auto plan` ships as a standalone tool. The `new-task`, `new-solution`, `new-plan`
+and `new-epic` skills and `plan.html` keep working unchanged.
+**Alternatives:** Migrate `new-task` in this task. Also build a `plan.html` importer.
+**Consequences:** For a while there are two plan formats. Adoption comes from follow-up tasks
+(skill migration, the HTML renderer, the importer), which will build on this graph.
+        </script></md>
+      </pd-decision>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+- **HTML rendering / the plan-lab views.** This task displays for agents only (text + JSON). The
+  human-facing renderer is a follow-up that reads `graph.json`.
+- **Review threads.** The append-only thread log anchored by node id + content hash, and the
+  paste-back import, come later. Node IDs are designed to be anchorable now.
+- **`auto plan verify` / attestations.** The AC `verify` command is stored and linted for presence
+  and shape, but never executed. Evidence records, sampling audits and the notary are follow-ups.
+- **The derived code layer.** Symbols, imports and call frames extracted from git or `auto graph`
+  are out. Only *planned* file changes and authored show-me trees are in. Checking trees against
+  the repo is a later `doctor` concern.
+- **Migrating the planning skills, or importing existing `plan.html` files** (D-4).
+- **Beads integration.** The plan graph is standalone. Beads is not a storage or execution layer
+  for it.
+- **Fragility scoring and quiz generation.** The graph will carry the fields they need
+  (reversibility on decisions, `wouldBreak` on alternatives), but scoring is a view concern.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Assumptions this task proceeds on. Each can be revisited without redoing work:
+
+- [ ] **New module `auto-plan/`, mounted as `auto plan`**, following
+  `docs/auto-package-patterns.md` (go.work, Makefile PROJECTS, `auto-cli` root command).
+- [ ] **Node IDs are opaque and plan-local** (answered in `/new-solution`, D-11). Each is a
+  lowercase type prefix + 4 random base32 characters, e.g. `g-k7q2`, `ac-3fxm`, `d-9t2w`. They're
+  generated by the CLI, checked for collisions within the plan, and never reused; retiring keeps
+  the ID. Across plans they're qualified by plan number (`005:r-8hw3`, D-9). Order never lives in an
+  ID (see D-12).
+- [ ] **Goals cap at 5–8 per plan.** Lint *warns* outside the range rather than failing, so draft
+  plans stay writable. Every AC belongs to exactly one goal.
+- [ ] **Prose attaches to nodes** as Markdown fields (`description`, `why`) and refers to other
+  nodes by ID (`[[ac-3fxm]]`). Lint resolves those references. Prose never holds a fact that has a
+  field.
+- [ ] **Structured-text trees** (call, file, dependency, pseudocode) are stored as show-me notation
+  text on a `tree` node. They are parsed for shape and gutter markers (`+ - ~`) but not checked
+  against the repo in this task.
+- [ ] **Output follows repo conventions:** JSON on stdout for data commands, diagnostics on stderr,
+  `--format text` where a human or agent reads it. Which display commands default to text is
+  settled in `/new-solution`.
+- [ ] **Partial plans are valid.** A plan still at the requirements step has goals but no stages or
+  files. Lint knows which checks apply at each lifecycle step.
+        </script></md>
+      </pd-section>
+
+      <pd-question id="Q-1" status="answered" priority="p1" for="charlie"
+        title="Several node-type names collide with the glossary's _Avoid_ lists — what do we call them?">
+        <md><script type="text/plain">
+`docs/concepts/UBIQUITOUS_LANGUAGE.md` already lists three of this design's words as terms to
+avoid:
+
+- **Task** is on TaskDef's _Avoid_ list, and an epic's children are "tasks" in today's workflow.
+- **Phase** is on Segment's _Avoid_ list, and plans are split into "phases".
+- **Finding** is on Observation's _Avoid_ list, and 052-style plans fix "findings".
+
+Goal 1 puts the vocabulary in first, so these names have to be settled before any code.
+
+**Recommended:** The unit is a **Plan** with `kind: task | epic`. Keep "task" only as that kind
+value, and call an epic's children **child plans**. Rename phase → **Stage**. Rename finding →
+**Defect**. Narrow the existing _Avoid_ lines so they name their own domain. Everything else
+(Goal, Acceptance Criterion, Decision, Rail, Journey, Alternative, Question, Tree) is new and
+collision-free.
+        </script></md>
+        <pd-answer by="charlie">Defect for a known problem in existing code that a plan fixes (052's F1–F11). Plan + Stage: the unit is a Plan with kind task | epic, an epic's children are child plans, and an ordered slice of work is a Stage. The existing _Avoid_ lines for TaskDef, Segment and Observation are narrowed to their own domains when the glossary is updated.</pd-answer>
+      </pd-question>
+
+    </pd-tab>
+
+    <pd-tab name="Verification">
+
+      <pd-section id="test-strategy" title="Test Strategy" summary="Golden-file and in-process CLI tests on temp repos, plus an end-to-end run that re-expresses epic 005, 062 and 052 as fresh plans 001–003 through the CLI alone.">
+        <md><script type="text/plain">
+The package is pure Go with no daemon, network or store. Nearly everything can be pinned
+deterministically, so the strategy leans on **golden files** and **in-process CLI runs against a
+temp git repo**, following the `auto-mail/internal/cli/cli_test.go` `runCLI` pattern with
+`t.Setenv("HOME", t.TempDir())`.
+
+1. **Unit (`internal/graph`, `internal/lint`, `internal/tree`, `internal/render`):**
+   - schema decode (strict) and the node/edge-type rules
+   - ID generation, collision retry and rank insertion
+   - canonical serialisation
+   - every lint rule, one table case per issue code, plus a clean case
+   - the show-me tree parser
+   - Tarjan-based cycle detection
+2. **CLI integration (`internal/cli/*_integration_test.go`):** every command against a temp repo.
+   Asserts exact JSON payload shapes on stdout, diagnostics only on stderr, exit codes, and that a
+   rejected write leaves `graph.json` byte-identical.
+3. **Golden output (`testdata/golden/`):** `--text` renderings (overview, card, trace, trees, stage
+   brief) compared byte for byte. Regenerate with `-update`. The fixtures need a `.gitignore`
+   un-ignore line (`**/testdata/` is ignored repo-wide; `.gitignore:11`).
+4. **End to end with the real binary (`auto-plan/e2e/`), driven by scripted scenarios:**
+   - Each scenario is a fixture folder under `auto-plan/e2e/testdata/scenarios/<name>/` holding a
+     `commands.txt`. That file is an ordered list of `auto …` invocations with `# checkpoint <n>`
+     markers.
+   - Each checkpoint has an expected `graph.json` snapshot per plan, plus the expected stdout and
+     exit code for the invocations that matter.
+   - The harness builds the `auto` binary, creates a temp workspace (`git init` + an empty commit,
+     and an isolated `HOME`), then runs `auto plan init` and `auto plan new …` through
+     `exec.Command`, exactly as a user would.
+   - At every checkpoint it asserts that each plan's `graph.json` on disk is **byte-identical** to
+     the snapshot. That covers canonical form, generated IDs, ranks, typed edges, and retired nodes kept in
+     place.
+   - A `-update` flag regenerates the snapshots so they can be reviewed in the diff.
+
+   There are two scenarios. **`lifecycle`** walks one task plan from `new` through every mutating
+   command, including rejected writes (the file must be unchanged afterwards) and a retire.
+   **`dogfood`** re-expresses the *content* of epic 005, its child task 062 and task 052 as fresh
+   plans `001-auto-mail-mvp` (epic), `002-auto-mail-walking-skeleton` (its child) and
+   `003-reflect-tool-hardening`, using **only CLI
+   commands**, as an agent would, then lints them clean and golden-compares the displays. If the
+   two plans the plan-lab studied can't be expressed without hand-editing JSON, the CLI isn't
+   finished.
+
+Conventions asserted throughout:
+- JSON by default with a 2-space indent, and `--text` for humans
+- stdout carries only the payload
+- errors are `[]ValidationError{code,path,field,message,value}` with a remediation hint
+- non-zero exit on any error, while still returning every valid result
+- `go build ./...` is clean after every file
+        </script></md>
+      </pd-section>
+
+      <pd-section id="coverage-map" title="Coverage Map">
+        <pd-mermaid caption="What each layer proves">
+flowchart TB
+  U["Unit: schema, ids, canonical JSON, lint rules, tree parser, cycles"] --> I["CLI integration: payload shapes, exit codes, atomic writes"]
+  I --> G["Golden text: overview, card, trace, trees, stage brief"]
+  G --> E["E2E scenarios: temp workspace, auto plan init + new, scripted commands, graph.json byte-identical per checkpoint; dogfood 001 epic + 002 child + 003 (content of 005, 062, 052)"]
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria" summary="Eighteen criteria covering vocabulary, the file, writes, lint, epics, display, and end-to-end CLI scenarios.">
+        <md><script type="text/plain">
+IDs inside the plan graph are opaque (`g-k7q2`, `ac-3fxm` …, D-11). This planning doc keeps the
+current `AC-n` format because it is still a `plan.html`. Tests make ID generation deterministic by
+injecting a seeded random source, so snapshots are stable.
+        </script></md>
+
+        <pd-ac id="AC-1" title="The vocabulary lands first and the glossary stays valid" phases="1" tests="auto-plan/internal/schema/registry_test.go">
+          <md><script type="text/plain">
+- **Given** `docs/concepts/UBIQUITOUS_LANGUAGE.md` before any `auto-plan` Go file exists
+- **When** the task's first change adds a **Planning** section
+- **Then** it defines **Plan, Child Plan, Goal, Acceptance Criterion, Decision, Alternative, Rail,
+  Defect, Stage, File Change, Journey, Leg, Question** and **Tree**, each with a definition, `_Avoid_` and
+  `_Has_` in the house format
+- **And** Segment's, Observation's and TaskDef's `_Avoid_` lines are narrowed so that *phase*,
+  *finding* and *task* are forbidden only within their own domains (per Q-1)
+- **And** no planning term is named *Node* or *Context Pack* (Host and Context Pack own those
+  words), so the per-stage agent bundle is called a **Stage Brief**
+- **And** every registry node type names its canonical term (`NodeType.Term`), and a registry test
+  proves each one exists in the glossary
+- **And** `python3 .claude/skills/domain-modelling/scripts/glossary.py check …` exits 0, the ER
+  block is regenerated with `diagram --write`, and `auto doc fixed` leaves freshness green
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-1" status="resolved" priority="p1" title="Registry-to-glossary contract omits a node type and its mappings">
+          <pd-comment by="review">Phase 1 requires `registry_test.go` to find a glossary `**Term**` entry for every registered type except `plan`, but AC-1's required Planning terms omit the registered `file` type. The machine type names also do not identify their canonical terms (`ac` → Acceptance Criterion; `child` → Child Plan). Define an explicit type-to-canonical-term mapping in the registry/test contract and either add File to the glossary or explicitly exempt it; otherwise the proposed registry test cannot be implemented against AC-1.</pd-comment>
+          <pd-comment by="author">Correct: `file` was registered with no glossary term, and machine names don't identify canonical terms. Fixed with an explicit mapping. `NodeType` gains a `Term` field (`ac` → Acceptance Criterion, `child` → Child Plan, `file` → File Change, `plan` → Plan), and the registry test now checks that every type's `Term` exists in the glossary, with no exemptions. **File Change** is added to AC-1's term list and to the glossary edit.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-2" title="auto plan new creates a numbered plan folder" phases="1" tests="auto-plan/internal/workspace/workspace_test.go,auto-plan/internal/cli/cli_integration_test.go,auto-plan/e2e/e2e_test.go">
+          <md><script type="text/plain">
+- **Given** a repo whose `docs/plans/` holds `001-a/` and `003-b/` (or does not exist yet)
+- **When** `auto plan new stage-briefs --kind task` runs from any subdirectory
+- **Then** it creates `docs/plans/004-stage-briefs/graph.json` (highest + 1, or `001` if the folder
+  is empty or missing) holding exactly `{"version":1,"nodes":[<plan node>],"edges":[]}`. The `plan`
+  node carries name, kind, `lifecycle: requirements` and the created date. It prints
+  `{"id":"004","name":"stage-briefs","kind":"task","path":"docs/plans/004-stage-briefs"}`
+- **And** `--kind` accepts only `task|epic`, and the name must match
+  `^[a-z0-9]+(?:-[a-z0-9]+)*$`. A bad name or an existing folder exits non-zero with a hint and
+  writes nothing
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-2" status="resolved" priority="p1" title="The new-plan graph shape is contradictory">
+          <pd-comment by="review">This criterion calls the new graph “valid, empty,” while D-9 requires exactly one `plan` node and stage 1 says `new` writes a graph holding only that node (the CLI example likewise says “empty graph with a plan node”). Choose and state one invariant—presumably `{version, nodes:[plan], edges:[]}`—and update the Goals/D-1/AC-2 wording and fixtures so validation and snapshots have one target shape.</pd-comment>
+          <pd-comment by="author">Correct: "empty" contradicted D-9. There is now one invariant: `new` writes exactly `{"version":1,"nodes":[<plan node>],"edges":[]}`, with the `plan` node at `lifecycle: requirements`. Goal 2, AC-2 and the CLI transcript now say that, and it's the shape the e2e checkpoint-1 snapshot asserts.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-3" title="graph.json is canonical and deterministic" phases="1,2" tests="auto-plan/internal/graph/graph_test.go,auto-plan/internal/cli/cli_integration_test.go,auto-plan/e2e/e2e_test.go">
+          <md><script type="text/plain">
+- **Given** any graph written by the CLI
+- **When** it is read and written again
+- **Then** the bytes are identical. Nodes are sorted by type then ID, edges by (from, type, to),
+  object keys come in a fixed order, the indent is 2 spaces, HTML is not escaped, and the file
+  ends with a trailing newline
+- **And** `auto plan fmt <plan>` rewrites a hand-edited file into canonical form and reports
+  whether it changed anything. `fmt --check` exits non-zero when the file isn't canonical
+- **And** only malformed JSON fails to decode (`parse-error`, with line and column). Unknown
+  fields, unregistered types and every structural problem still decode, and are reported by
+  validation with the offending JSON path, so `lint` always sees the whole graph
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="Every node type from the design is representable" phases="1,2" tests="auto-plan/internal/schema/registry_test.go,auto-plan/internal/graph/graph_test.go">
+          <md><script type="text/plain">
+- **Given** the schema
+- **Then** the node types below exist, each with required fields validated for both presence and
+  format:
+  - `goal` (one-line title; the description is optional)
+  - `ac` (given/when/then, plus a `verify` block with a command and test names, or `kind: manual`)
+  - `decision` (chosen, why, by, `reversibility: one-way|two-way` optional)
+  - `alternative` (option, why rejected)
+  - `rail`, `defect`, `stage` (title, steps, commit message), `file` (path, change `add|edit|delete`, why)
+  - `question` (status, recommended answer, answer)
+  - `tree` (kind `call|file|dep|pseudo`, show-me text body)
+  - `journey`, `leg` (actor, action)
+  - `child` (a child-plan reference)
+- **And** edge types are typed by their endpoints, and a wrong endpoint type is rejected. Examples:
+  - `proves` is ac→goal only
+  - `constrains` is decision→goal|ac
+  - `rejects` is decision→alternative
+  - `wouldBreak` is alternative→ac|goal|rail
+  - `dependsOn` is stage→stage and child→child
+  - `touches` is stage→file
+  - `discharges` is ac→rail
+  - `honors`, `delivers` and `builds-on` go to qualified epic nodes
+  - `about` is tree→any
+  - `supersedes` is decision→decision
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="IDs are generated, stable and never reused" phases="1,2" tests="auto-plan/internal/graph/graph_test.go,auto-plan/e2e/e2e_test.go">
+          <md><script type="text/plain">
+- **Given** a plan with active and retired nodes
+- **When** `auto plan add <plan> ac …` runs
+- **Then** the new node's ID matches `^[a-z]{1,4}-[0-9a-hjkmnp-tv-z]{4}$`: the type's prefix plus 4
+  Crockford-base32 characters. It is regenerated on collision with any existing ID in the plan,
+  retired IDs included
+- **And** it receives a `rank` after its last sibling. `auto plan move <plan> <id> --before|--after <id>`
+  changes only that node's `rank` (a sortable string between its neighbours). No other node's ID or
+  rank changes, and views re-sort
+- **And** no command changes or deletes an ID. `retire` sets `status: retired` and keeps the
+  node
+- **And** a qualified reference `<plan-id>:<node-id>` (e.g. `005:r-8hw3`) resolves against
+  `docs/plans/005-*/graph.json`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Writes are validated and atomic, and report what changed" phases="1,2" tests="auto-plan/internal/graph/graph_test.go,auto-plan/internal/cli/cli_integration_test.go,auto-plan/e2e/e2e_test.go">
+          <md><script type="text/plain">
+- **Given** any mutating command (`add`, `update`, `link`, `unlink`, `retire`)
+- **When** it succeeds
+- **Then** stdout carries a top-level `id` (or `ids`) plus the changed fields, and the graph on
+  disk is canonical
+- **When** it would create an invalid graph (for example a dangling endpoint, a wrong edge
+  endpoint type, a duplicate ID, or a missing required field)
+- **Then** it exits non-zero with `[]ValidationError` and a remediation hint, and `graph.json` is
+  **byte-identical** to before
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="lint reports every structural problem, structured, with remediation" phases="1,3" tests="auto-plan/internal/lint/lint_test.go,auto-plan/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** fixture graphs that each break one rule
+- **When** `auto plan lint <plan>` runs (or `auto plan lint all`, which lints every plan)
+- **Then** each fixture yields exactly its code, and a clean fixture yields none. Codes include:
+  - `dangling-ref`, `bad-id`, `duplicate-id`, `wrong-endpoint`
+  - `ac-no-goal`, `ac-multi-goal`, `ac-no-verify`, `goal-no-ac`
+  - `goal-count` (a warning outside 5–8)
+  - `decision-no-alternative` (a warning)
+  - `dependency-cycle` (the path is joined with " → ")
+  - `retired-ref` (a warning)
+- **And** the output is `{plan, ok, issues:[{code,severity,path,field,message,hint}]}`, with
+  `--text` for humans. Exit 1 on any error; warnings alone exit 0
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-7" status="resolved" priority="p1" title="Strict structural loading prevents linting the invalid fixtures">
+          <pd-comment by="review">The Key APIs define `Load` as “Strict decode … plus structural validation,” and the write path is `Load → mutate → validate → Save`. But this AC requires lint to report malformed hand-edited graphs—including duplicate IDs, dangling references, wrong endpoints, and bad IDs—and the risks section says hand edits are caught by lint. If Load rejects those invariants first, `lint` receives no graph and cannot return the complete `issues` array. Specify a decode-only/diagnostic-load path (or a conversion of structural validation failures into lint Issues) and keep semantic validation as the write gate.</pd-comment>
+          <pd-comment by="author">Correct, and it would have made lint useless on exactly the files it exists for. The Solution now has two gates. `Decode` is tolerant: only malformed JSON fails it, reported as `parse-error` with a position; unknown fields and types are kept. `Validate` returns every structural issue as data. Lint = Decode + Validate + rules, merged into one `issues` array. Writes = Decode → mutate → Validate → Save, refused on any error, including errors already in the file, with a hint to run lint first. AC-3's "strict decode" line, the Key APIs, `io.go`, and stage 1's steps and tests are updated. Stage 1 gains a test that a hand-broken fixture still decodes and reports each problem.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-8" title="Prose and trees are checked, not trusted" phases="3" tests="auto-plan/internal/lint/lint_test.go,auto-plan/internal/tree/tree_test.go">
+          <md><script type="text/plain">
+- **Given** a node whose Markdown field contains `[[ac-zz9q]]`, where `ac-zz9q` doesn't exist
+- **Then** lint reports `dangling-prose-ref` pointing at that field
+- **Given** a `tree` node body in show-me notation
+- **Then** lint parses it and reports `tree-syntax` for:
+  - a gutter marker other than `+ - ~` or blank
+  - indentation that isn't a multiple of 2
+  - a child with no parent
+  - a malformed `├──`/`└──` file tree
+- **And** a well-formed tree yields a structure (lines with depth, marker, name, comment) that the
+  renderers reuse
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="Partial plans are valid at their lifecycle step" phases="3" tests="auto-plan/internal/lint/lint_test.go">
+          <md><script type="text/plain">
+- **Given** a plan whose `lifecycle` is `requirements` and which holds only goals, questions and
+  decisions
+- **Then** `lint` reports no errors: checks that need stages, files or ACs don't apply at that
+  step
+- **And** at `lifecycle: solution`, `goal-no-ac` and `ac-no-verify` apply. At `lifecycle: plan`,
+  stage and file coverage apply too. `auto plan update <plan> plan --lifecycle …` advances the step
+- **And** open `question` nodes report `open-question` as a gate at every step, the same way
+  `pd-question` gates today
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-10" title="lint subsumes today's pd-lint checks" phases="3" tests="auto-plan/internal/lint/lint_test.go">
+          <md><script type="text/plain">
+- **Given** a plan at `lifecycle: plan`
+- **Then** lint reports:
+  - `unplanned-file`: a `file` node no stage touches
+  - `untracked-file`: a stage `touches` an edge to a path with no `file` node
+  - `missing-dep`: a stage depends on a stage that doesn't exist
+  - `dependency-cycle`
+  - `open-question`
+
+  These keep pd-lint's meanings, so the migration later is one-for-one.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-11" title="Epics: inheritance is referenced, and gaps are caught" phases="5" tests="auto-plan/internal/lint/lint_test.go,auto-plan/e2e/e2e_test.go">
+          <md><script type="text/plain">
+- **Given** an epic plan with goals, journeys + legs, rails, decisions and `child` nodes (with
+  `dependsOn` between children), and a task plan that declares `epic: <id>` and references epic
+  nodes by qualified ID (`honors 005:r-8hw3`, `delivers 005:l-2qdn`, `builds-on 005:d-6yb4`, and an
+  AC `discharges 005:r-8hw3`)
+- **When** `auto plan lint all` runs across `docs/plans/`
+- **Then** it reports:
+  - `rail-unhonored`: an epic rail that no child plan honours and that isn't marked
+    `deferred: <child>`
+  - `rail-undischarged`: a child honours a rail but no AC in it `discharges` the rail
+  - `leg-undelivered`: a leg no child delivers
+  - `child-missing`: a `child` node whose plan folder doesn't exist
+  - `child-epic-mismatch`: a plan whose `epic` is set but which doesn't appear as that epic's child
+  - `superseded-ref`: a child references a superseded decision
+  - child `dependency-cycle`
+- **And** child plans never copy rail text. The only link is the qualified reference
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-12" title="Resource verbs: list, describe, get and search return the right fidelity" phases="4" tests="auto-plan/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** a populated plan
+- **Then** `auto plan list all` (every plan) and `auto plan list <plan> [--type ac]` return IDs,
+  metadata and titles only, and return everything when no filter is given
+- **And** `auto plan describe <plan> <id>` returns the cheap summary rung: ID, type, status, rank,
+  title, edge counts by type, and each text field truncated to about 200 characters with the exact
+  `auto plan get …` command that recovers it
+- **And** `auto plan get <plan> <id>` returns the full node plus its incoming and outgoing edges,
+  each with the neighbour's type and title
+- **And** `auto plan search <plan|all> <query>` finds nodes by case-insensitive text in one plan or across plans
+- **And** any truncated text output prints the exact command that recovers the full node
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-12" status="resolved" priority="p2" title="The resource surface omits required describe">
+          <pd-comment by="review">`plan` exposes addressable node data, but this criterion and `read.go` provide only `list`, `get`, and `search`. The repository's CLI convention in `CLAUDE.md:119` and `docs/auto-package-patterns.md:239-287` requires the `list` / `describe &lt;id&gt;` / `get &lt;id&gt;` triad, with `describe` as the cheap summary rung. Add `describe &lt;plan&gt; &lt;id&gt;` (and integration coverage), or explicitly justify an exception and revise the project convention before implementation.</pd-comment>
+          <pd-comment by="author">Correct: the repo convention is the list/describe/get triad. Added `describe <plan> <id>` as the cheap summary rung (ID, type, status, rank, title, edge counts, and text fields truncated to about 200 characters with the exact `get` recovery command) to AC-12, `read.go`, and stage 4's steps and integration tests.</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-13" title="show renders the plan as a goal ladder an agent can read at a glance" phases="1,4,5" tests="auto-plan/internal/render/render_test.go,auto-plan/e2e/e2e_test.go">
+          <md><script type="text/plain">
+- **Given** a plan
+- **When** `auto plan show <plan> --text` runs
+- **Then** stdout is a show-me style indented ladder: each ◎ goal, its ✓ ACs (each with its verify
+  command), and the ◆ decisions that constrain it, with rejected alternatives on `-` lines.
+  Rails, defects and open questions follow in their own blocks. For an epic, the layout is goals →
+  journeys → child plans with status
+- **And** the JSON form carries the same information (text and JSON must not diverge), and the
+  output matches its golden file
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-14" title="trace shows lineage in both directions" phases="4,5" tests="auto-plan/internal/render/render_test.go">
+          <md><script type="text/plain">
+- **Given** any node, including a qualified epic node
+- **When** `auto plan trace <plan> <id> [--up|--down]` runs
+- **Then** it prints the indented chain of edges to the roots (up) and the leaves (down). For
+  example, `ac-3fxm` up → `g-m4t8` (proves) → epic `005:g-k7q2` (via the child plan), and down → the stages that
+  include it → the files those stages touch
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-15" title="Trees render in show-me notation, including derived file trees" phases="4" tests="auto-plan/internal/tree/tree_test.go,auto-plan/internal/render/render_test.go">
+          <md><script type="text/plain">
+- **Given** a `tree` node
+- **Then** `auto plan tree <plan> <id>` renders it with the aligned gutter and the right-hand
+  comment column. Names matching node IDs are annotated with their glyph (◎ ✓ ◆)
+- **Given** a plan's `file` nodes
+- **Then** `auto plan tree <plan> --files [--stage s-4nrd]` **derives** a `├──` file tree with a
+  `+ ~ -` gutter from the nodes. It is never authored, and filtering by stage shows only that
+  stage's files
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-16" title="A stage brief gives an executing agent everything for one stage" phases="4" tests="auto-plan/internal/render/render_test.go,auto-plan/e2e/e2e_test.go">
+          <md><script type="text/plain">
+- **Given** a plan at `lifecycle: plan`
+- **When** `auto plan brief <plan> s-4nrd` runs
+- **Then** the output (Markdown with `--text`, JSON by default) holds:
+  - the stage's steps and commit message
+  - its `dependsOn` stages with their status
+  - the file tree it touches
+  - the ACs it discharges with their verify commands
+  - the decisions and (epic) rails constraining those ACs
+  - any open questions
+- **And** it contains nothing about other stages beyond their IDs and titles, so it fits in an
+  agent's context
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-17" title="Mounted, documented and dogfooded end to end" phases="1,6" tests="auto-cli/cmd/auto/main_test.go,auto-plan/internal/cli/cli_integration_test.go,auto-plan/e2e/e2e_test.go">
+          <md><script type="text/plain">
+- **Given** `make build` from the repo root
+- **Then** `auto plan` is mounted: it's in `TestAllToolsMounted`, `go.work`, Makefile `PROJECTS`,
+  and the root `CLAUDE.md` Sub-Projects table
+- **And** `auto plan quickstart` and `auto plan docs` print the happy path and the full command
+  reference
+- **And** `make check`, `make test` and `make stale-refs` are green
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-18" title="E2E: scripted CLI scenarios in a temp workspace produce exactly the expected graph.json" phases="1,2,6" tests="auto-plan/e2e/e2e_test.go">
+          <md><script type="text/plain">
+- **Given** the real `auto` binary built from source, and a fresh temp workspace (`git init`, one
+  empty commit, isolated `HOME`)
+- **When** the **`lifecycle`** scenario runs these commands in order through `exec.Command`, with
+  no in-process shortcuts:
+  - `auto plan init`
+  - `auto plan new demo --kind task`
+  - `add` goals, ACs and decisions (with alternatives)
+  - `link`, `update`, `unlink`
+  - one **rejected** write
+  - `retire`
+  - `update --lifecycle`
+  - `fmt --check`
+  - `lint`
+- **Then** at every `# checkpoint`, `docs/plans/001-demo/graph.json` is **byte-identical** to the
+  scenario's snapshot. That proves the generated IDs (seeded), the typed edges, the canonical ordering, a
+  retired node kept in place, and the rejected write leaving the file untouched
+- **And** each invocation's exit code matches the script, and the invocations the script marks
+  have stdout matching their expected payloads. For example, `new` prints
+  `{"id":"001","name":"demo","kind":"task","path":"docs/plans/001-demo"}`
+- **When** the **`dogfood`** scenario re-expresses the content of epic 005, task 062 and task 052
+  from CLI commands alone. They get fresh numbers in the temp workspace: `001-auto-mail-mvp` (epic),
+  `002-auto-mail-walking-skeleton` (child, `--epic 001`) and `003-reflect-tool-hardening`. Qualified
+  references and snapshots use those numbers (`001:r-…`); the source plans' old numbers appear
+  nowhere
+- **Then** every `graph.json` matches its snapshot, `auto plan lint all` exits 0 with zero errors, and
+  `show`, `trace`, `tree` and `brief` match their golden outputs
+- **And** `-update` regenerates the snapshots. Scenario fixtures are committed with a `.gitignore`
+  un-ignore line for `auto-plan/e2e/testdata/`
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-18" status="resolved" priority="p2" title="Dogfood fixture identities conflict with the execution plan">
+          <pd-comment by="review">AC-18 requires a dogfood scenario for “epic 005 + child plan 062 and plan 052,” and the file list repeats those identities. Stage 6 instead creates `001-auto-mail-mvp`, `002-auto-mail-walking-skeleton`, and `003-reflect-tool-hardening` in its fresh workspace. Decide whether the scenario verifies the source plans' numeric identities (which needs prior numbered fixtures/allocation) or only their content under fresh IDs, then align AC-18, stage 6, qualified-reference snapshots, and fixture names.</pd-comment>
+          <pd-comment by="author">Decided: the scenario verifies *content*, not the source plans' numbers. The temp workspace allocates fresh numbers: `001-auto-mail-mvp` (epic), `002-auto-mail-walking-skeleton` (child, `--epic 001`) and `003-reflect-tool-hardening`. Qualified references and snapshots use those numbers. Re-using 005/062/052 would need a `new --id` override that no real workflow needs. AC-18, the test strategy, the coverage map and the fixture file note now match stage 6.</pd-comment>
+        </pd-thread>
+
+        <pd-trace caption="Acceptance coverage"></pd-trace>
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **Hand edits bypass validation until lint runs.** Agents can edit `graph.json` directly (D-2).
+  Nothing forces `auto plan lint all` before commit in this task. A pre-commit or Stop-hook gate is a
+  follow-up.
+- **Trees are checked for shape, not truth.** A call tree naming a symbol that doesn't exist
+  passes. Checking trees against the repo is a later `doctor` concern (out of scope: the code
+  layer).
+- **Writers are assumed serial.** One agent plans one plan at a time, so there is no lock. Writes
+  are still atomic (temp file + rename), so a crash can't leave a half-written `graph.json`.
+  Concurrent edits to the same plan from two branches meet in git merges, and canonical sorting
+  keeps those merges line-local.
+- **No migration or import.** Existing `plan.html` plans aren't converted. The e2e fixtures
+  re-express 062 and 052 by hand through the CLI, which proves expressiveness, not conversion.
+- **Lint is judged against the plan-lab defects only in part.** Several of those defects (diagram
+  vs AC, `phases=` vs Success Criteria) can't occur here, because the facts aren't stored twice.
+  The fixtures don't reproduce them; the design removes them.
+- **The goal-count and missing-alternative rules only warn,** so drafts stay writable. A plan can
+  ship with 12 goals if someone ignores the warnings.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+    <pd-tab name="Solution">
+
+      <pd-section id="approach" title="Approach" summary="A new auto-plan module: one Go type registry drives a generic nodes + edges graph.json, its validation, lint, generated per-type CLI flags, and show-me text renderers.">
+        <md><script type="text/plain">
+A new module, **`auto-plan/`**, mounted as `auto plan`. There are five parts, and every one of
+them reads from a single **type registry**, so adding a node or edge type means adding an entry
+there and changing nothing else.
+
+**1. The registry (`internal/schema`).** A Go table declares:
+- each **node type**: its ID prefix, its fields (name, kind `string|text|enum|list|object`,
+  required, pattern or enum, help text), and an optional custom renderer
+- each **edge type**: the node types allowed at each end, and whether the target may be a
+  qualified reference into another plan
+
+Validation, lint, `add`/`update` flags, `get` cards and `trace` all read the registry. A type in
+a file that isn't registered still decodes, and validation reports it as `unregistered-type`.
+
+**2. The file (`internal/graph`).** `docs/plans/NNN-name/graph.json` holds `{version, nodes[],
+edges[]}`:
+- **Node:** `{id, type, status: active|retired, fields:{…}}`.
+- **Edge:** `{from, type, to}`.
+- **Plan header:** the plan itself is the node `plan` of type `plan`, carrying name, kind
+  `task|epic`, lifecycle, epic and created date. Its plan-level relationships (`honors`,
+  `delivers`, `builds-on`) are ordinary edges.
+- **Cross-plan references:** written `NNN:ID` (for example `005:r-8hw3`), and allowed only where the
+  edge type permits.
+
+**Two gates.** `Decode` is tolerant: only malformed JSON fails it. Unknown fields and types are
+kept, so a broken hand edit still loads. `Validate` returns every structural issue as data
+(unregistered type, unknown field, duplicate or bad ID, dangling or wrong-endpoint edge). **Lint**
+= Decode + Validate + the lint rules, all merged into one `issues` array. **Writes** = Decode →
+mutate → Validate → `Save`, and they refuse if the result has *any* error, including errors that
+were already there. The refusal carries a hint to run `auto plan lint <plan>` and fix the file
+first. `Save` sorts nodes by
+(type, id) and edges by (from, type, to), uses a fixed key order and a 2-space indent, keeps
+`SetEscapeHTML(false)` and a trailing newline, and writes a temp file then renames it into place.
+There's no lock, because one agent plans one plan at a time. A write that fails validation never
+touches disk.
+
+**3. Workspace and IDs (`internal/workspace`, `internal/graph/ids.go`):**
+- `git.RepoRoot` locates the repo root. `docs/plans/` is scanned for `^\d{3}-[a-z0-9-]+$`, and
+  the next plan number is the highest + 1.
+- A plan argument accepts `065`, `065-auto-plan-graph` or a path.
+- A node ID is its type prefix + 4 random Crockford-base32 characters, regenerated on collision
+  (D-11). IDs carry no order and never change; `retire` flips `status`.
+- **Reading order** is a `rank` string on each node, sorted among siblings: goals, the ACs under one
+  goal, a decision's alternatives (D-12). `move` rewrites a single rank. Order that carries meaning
+  stays an edge: stages render in `dependsOn` order, with ties broken by rank.
+
+**4. Lint (`internal/lint`).**
+- Every rule is a function over the loaded graph, and `auto plan lint all` also
+  loads every plan it references. Rules return `[]Issue{code, severity, path, field, message, hint}`.
+- The rule set grows with the lifecycle: `requirements` ⊂ `solution` ⊂ `plan`.
+- Prose fields are scanned for `[[ID]]` / `[[NNN:ID]]`. `tree` bodies are parsed by
+  `internal/tree`.
+- Cross-plan rules (epic inheritance) run over the set of loaded plans.
+- The pd-lint codes (`unplanned-file`, `untracked-file`, `missing-dep`, `dependency-cycle`,
+  `open-question`) keep their meaning. Cycle detection uses a deterministic Tarjan SCC, mirrored
+  from `auto-graph/internal/contextpack/builder.go`.
+
+**5. Display (`internal/tree`, `internal/render`).**
+- `internal/tree` parses and renders **show-me notation**: indented lines, a `+ - ~` gutter and an
+  aligned comment column. It also **derives** `├──` file trees from `file` nodes.
+- `internal/render` builds `show` (the goal ladder), `get` (a node card with its edges), `trace`
+  (lineage up or down) and `brief` (a stage brief). Each produces one value type that is rendered
+  both as JSON (the default) and as text (`--text`), so the two can't diverge.
+
+**Argument order (D-13).** Every command reads `auto plan <verb> <plan> [args…]`. `<plan>` is `NNN`,
+`NNN-name` or a path, or the keyword `all` for commands that make sense across plans (`list`,
+`search`, `lint`, `fmt`). Node IDs in arguments are plan-local. Only an edge *target* in another
+plan is qualified (`NNN:ID`). The only commands without a plan argument are `init`, `new <name>`
+(which creates it), `quickstart` and `docs`. Mutation output carries `plan` and `id` as separate
+fields.
+
+**CLI wiring (`internal/cli`).** `add <type>` and `update` **generate their cobra flags from the
+registry**, which gives typed, `--help`-documented flags per type, and new types get flags
+automatically. A text flag value of the form `@path`, or `@-` for stdin, reads long content from a
+file (prose, trees, given/when/then). Mutations print `{id, …changed}` via a `mutationResult`
+helper, following `auto-reflect/internal/cli/output.go`. Errors go to stderr as
+`[]ValidationError` with a remediation hint, and the command returns an `ExitError`.
+
+**Glossary first.** A new **Planning** section in `docs/concepts/UBIQUITOUS_LANGUAGE.md`, and the
+narrowed Segment / Observation / TaskDef `_Avoid_` lines, land before any Go file is written.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="end-state-cli" title="The command surface">
+        <pd-cli title="zsh — auto plan end state" caption="Every command is auto plan &lt;verb&gt; &lt;plan&gt; [args]. Node IDs are plan-local; only cross-plan edge targets are qualified (NNN:ID). all targets every plan. JSON by default, --text for humans.">
+          <pd-cmd note="idempotent: creates docs/plans/">auto plan init</pd-cmd>
+          <pd-out>{ "root": "docs/plans", "created": true }</pd-out>
+          <pd-cmd note="next NNN; graph holds only the plan node">auto plan new stage-briefs --kind task</pd-cmd>
+          <pd-out>{ "id": "004", "name": "stage-briefs", "kind": "task", "path": "docs/plans/004-stage-briefs" }</pd-out>
+          <pd-cmd note="flags generated from the registry">auto plan add 004 goal --title "An agent gets one stage's context in one call"</pd-cmd>
+          <pd-out>{ "plan": "004", "id": "g-k7q2", "type": "goal", "rank": "a0" }</pd-out>
+          <pd-cmd note="long content from a file">auto plan add 004 ac --proves g-k7q2 --title "brief is self-contained" --gwt @ac.md --verify-cmd "go test ./e2e -run Brief"</pd-cmd>
+          <pd-out>{ "plan": "004", "id": "ac-3fxm", "type": "ac", "rank": "a0", "edges": [ { "from": "ac-3fxm", "type": "proves", "to": "g-k7q2" } ] }</pd-out>
+          <pd-cmd note="typed edge; endpoint types checked">auto plan link 004 d-9t2w rejects a-5hcv</pd-cmd>
+          <pd-cmd note="cross-plan edge target is qualified">auto plan link 004 plan honors 005:r-8hw3</pd-cmd>
+          <pd-cmd note="reorder: rewrites one rank, no ID changes">auto plan move 004 g-m4t8 --before g-k7q2</pd-cmd>
+          <pd-cmd note="ID kept, status retired">auto plan retire 004 ac-7w1e</pd-cmd>
+          <pd-cmd note="structured issues; exit 1 on any error">auto plan lint 004</pd-cmd>
+          <pd-out>{ "plan": "004", "ok": false, "issues": [ { "code": "goal-no-ac", "severity": "error", "path": "$.nodes[g-m4t8]", "message": "g-m4t8 has no active AC", "hint": "auto plan add 004 ac --proves g-m4t8 …" } ] }</pd-out>
+          <pd-cmd note="goal ladder in show-me notation">auto plan show 004 --text</pd-cmd>
+          <pd-out><script type="text/plain">◎ g-m4t8   Plans can be reordered without breaking references
+◎ g-k7q2   An agent gets one stage's context in one call
+    ✓ ac-3fxm  brief is self-contained              go test ./e2e -run Brief
+    ◆ d-9t2w   brief is Markdown + JSON
+    -   a-5hcv   reuse Context Pack                 collides with auto-graph's term</script></pd-out>
+          <pd-cmd note="lineage, card, trees, stage brief">auto plan trace 004 ac-3fxm --up · auto plan describe 004 d-9t2w · auto plan get 004 d-9t2w · auto plan tree 004 --files --stage s-4nrd · auto plan brief 004 s-4nrd</pd-cmd>
+          <pd-cmd note="canonical rewrite after hand edits">auto plan fmt 004 --check</pd-cmd>
+          <pd-cmd note="all = every plan in docs/plans">auto plan lint all</pd-cmd>
+        </pd-cli>
+      </pd-section>
+
+      <pd-section id="key-apis" title="Key APIs">
+        <pd-api kind="module" name="schema" lang="go" path="auto-plan/internal/schema/registry.go" caption="The single source for every node and edge type">
+          <pd-member kind="type" sig="type NodeType struct { Name, Prefix, Term string; Fields []FieldSpec; MinLifecycle Lifecycle }">A node type. `Term` is its canonical glossary term (e.g. `ac` → Acceptance Criterion, `child` → Child Plan, `file` → File Change, `plan` → Plan). The prefix starts every generated ID: g, ac, d, a, r, df, s, f, q, t, j, l, c. The single plan node's ID is literally `plan`.</pd-member>
+          <pd-member kind="type" sig="type FieldSpec struct { Name string; Kind FieldKind; Required bool; Enum []string; Pattern string; Help string }">Drives decode validation, the generated flags, and card rendering.</pd-member>
+          <pd-member kind="type" sig="type EdgeType struct { Name string; From, To []string; CrossPlan bool; Help string }">Allowed endpoint types, and whether `to` may be `NNN:ID`.</pd-member>
+          <pd-member kind="var" sig="var Registry = Schema{Nodes: […], Edges: […]}">Initial node types: plan, goal, ac, decision, alternative, rail, defect, stage, file, question, tree, journey, leg, child. Initial edge types: proves, constrains, rejects, wouldBreak, supersedes, dependsOn, touches, covers, discharges, addresses, about, in, honors, delivers, builds-on.</pd-member>
+        </pd-api>
+        <pd-api kind="module" name="graph" lang="go" path="auto-plan/internal/graph/model.go" caption="Generic, registry-validated graph">
+          <pd-member kind="type" sig="type Graph struct { Version int; Nodes []Node; Edges []Edge }">The whole of graph.json.</pd-member>
+          <pd-member kind="type" sig="type Node struct { ID, Type, Status, Rank string; Fields map[string]any }">A generic node envelope, with `Rank` for reading order among siblings; fields are validated against its NodeType.</pd-member>
+          <pd-member kind="type" sig="type Edge struct { From, Type, To string }">A typed relationship. `To` may be qualified (`005:r-8hw3`).</pd-member>
+          <pd-member kind="function" sig="Decode(path string) (*Graph, error)">Tolerant decode. Only malformed JSON is an error (with position); unknown fields and types are preserved for validation.</pd-member>
+          <pd-member kind="function" sig="Validate(g *Graph) []ValidationError">Every structural issue as data. Lint merges it into `issues`, and writes refuse on any error.</pd-member>
+          <pd-member kind="function" sig="Save(path string, g *Graph) error">Canonical sort and encode, then atomic write. Byte-stable.</pd-member>
+          <pd-member kind="function" sig="(g *Graph) Add(typ string, fields map[string]any, edges []Edge) (Node, []ValidationError)">Generates a collision-free ID and a rank after the last sibling, validates, and returns the node.</pd-member>
+          <pd-member kind="function" sig="(g *Graph) Update(id string, fields map[string]any) []ValidationError">Also: Link, Unlink, Retire, Move (rank between neighbours). All validate first and change nothing on error.</pd-member>
+        </pd-api>
+        <pd-api kind="module" name="lint / tree / render" lang="go" path="auto-plan/internal/" caption="Read side">
+          <pd-member kind="function" sig="lint.Run(set *workspace.PlanSet, target string) []Issue">Runs every rule that applies to each plan's lifecycle, including cross-plan epic rules.</pd-member>
+          <pd-member kind="function" sig="tree.Parse(body string) (Tree, []Issue)">Parses show-me notation into lines of {depth, marker, name, comment}.</pd-member>
+          <pd-member kind="function" sig="tree.Render(t Tree) string">Aligned gutter and comment column. FileTree(nodes) derives the ├── view.</pd-member>
+          <pd-member kind="function" sig="render.Show / Card / Trace / Brief(...) View">Each returns one value, which is encoded as JSON or rendered as text.</pd-member>
+        </pd-api>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="docs/concepts/UBIQUITOUS_LANGUAGE.md" change="edit">First: add a Planning section (Plan, Child Plan, Goal, Acceptance Criterion, Decision, Alternative, Rail, Defect, Stage, File Change, Journey, Leg, Question, Tree, Stage Brief), narrow the Segment, Observation and TaskDef `_Avoid_` lines, regenerate the ER block, and update the frontmatter summary.</pd-file>
+          <pd-file path="auto-plan/go.mod" change="add">module github.com/mistakenot/auto-plan; auto-shared (replace ../auto-shared) + cobra.</pd-file>
+          <pd-file path="auto-plan/go.sum" change="add">Checksums (all already in the workspace).</pd-file>
+          <pd-file path="auto-plan/CLAUDE.md" change="add">What the tool is, build/test instructions, and a vocabulary pointer to the glossary. Says `auto plan`, never a per-tool binary name.</pd-file>
+          <pd-file path="auto-plan/cmd/autoplan/main.go" change="add">Minimal entry point: os.Exit(cli.Execute(...)).</pd-file>
+          <pd-file path="auto-plan/rootcmd/rootcmd.go" change="add">New(stdout, stderr) mounting façade.</pd-file>
+          <pd-file path="auto-plan/internal/app/app.go" change="add">App{Stdout, Stderr, CWD}.</pd-file>
+          <pd-file path="auto-plan/internal/schema/registry.go" change="add">Node types, edge types and field specs: the single extension point.</pd-file>
+          <pd-file path="auto-plan/internal/schema/registry_test.go" change="add">Registry self-consistency: unique prefixes, edge endpoints name real types, patterns compile.</pd-file>
+          <pd-file path="auto-plan/internal/graph/model.go" change="add">Graph, Node, Edge; the ValidationError alias.</pd-file>
+          <pd-file path="auto-plan/internal/graph/io.go" change="add">Decode (tolerant; only malformed JSON fails), Save (canonical + atomic temp/rename).</pd-file>
+          <pd-file path="auto-plan/internal/graph/ids.go" change="add">Opaque ID generation (injectable random source for tests), rank keys (sortable strings between neighbours), qualified reference parsing.</pd-file>
+          <pd-file path="auto-plan/internal/graph/mutate.go" change="add">Add, Update, Link, Unlink, Retire. Validate first, never partial.</pd-file>
+          <pd-file path="auto-plan/internal/graph/validate.go" change="add">The shared validate(): fields against their FieldSpec, edges against their EdgeType.</pd-file>
+          <pd-file path="auto-plan/internal/graph/graph_test.go" change="add">Round-trip byte stability, ID collision retry including retired IDs, rank insertion and move, validation cases.</pd-file>
+          <pd-file path="auto-plan/internal/workspace/workspace.go" change="add">Repo root, docs/plans scan, next NNN, plan-argument resolution, PlanSet for cross-plan references.</pd-file>
+          <pd-file path="auto-plan/internal/workspace/workspace_test.go" change="add">Numbering gaps, name validation, resolution from subdirectories.</pd-file>
+          <pd-file path="auto-plan/internal/lint/lint.go" change="add">The Issue type, the rule runner, lifecycle gating.</pd-file>
+          <pd-file path="auto-plan/internal/lint/rules.go" change="add">Core, prose-reference, stage/file (pd-lint parity) and question rules.</pd-file>
+          <pd-file path="auto-plan/internal/lint/epic.go" change="add">Cross-plan rules: rail-unhonored/undischarged, leg-undelivered, child-missing/epic-mismatch, superseded-ref.</pd-file>
+          <pd-file path="auto-plan/internal/lint/cycles.go" change="add">Deterministic Tarjan SCC for dependsOn (stages and children).</pd-file>
+          <pd-file path="auto-plan/internal/lint/lint_test.go" change="add">One table case per issue code, plus a clean graph per lifecycle.</pd-file>
+          <pd-file path="auto-plan/internal/tree/parse.go" change="add">Show-me notation parser.</pd-file>
+          <pd-file path="auto-plan/internal/tree/render.go" change="add">Aligned gutter + comment column, glyph annotation, derived ├── file tree.</pd-file>
+          <pd-file path="auto-plan/internal/tree/tree_test.go" change="add">Parse errors, render goldens.</pd-file>
+          <pd-file path="auto-plan/internal/render/show.go" change="add">Goal ladder (task), and goals → journeys → children (epic).</pd-file>
+          <pd-file path="auto-plan/internal/render/card.go" change="add">Node card with incoming/outgoing edges (used by get).</pd-file>
+          <pd-file path="auto-plan/internal/render/trace.go" change="add">Lineage walk up/down across plans.</pd-file>
+          <pd-file path="auto-plan/internal/render/brief.go" change="add">Stage Brief.</pd-file>
+          <pd-file path="auto-plan/internal/render/render_test.go" change="add">JSON/text parity and goldens under testdata/golden/.</pd-file>
+          <pd-file path="auto-plan/internal/cli/root.go" change="add">Root command, ExitError, Execute, writeJSON (no HTML escaping), mutationResult.</pd-file>
+          <pd-file path="auto-plan/internal/cli/init.go" change="add">init: create docs/plans/ (idempotent) and ensure ~/.auto/settings.json.</pd-file>
+          <pd-file path="auto-plan/internal/cli/new.go" change="add">new &lt;name&gt; --kind task|epic [--epic NNN].</pd-file>
+          <pd-file path="auto-plan/internal/cli/read.go" change="add">list, describe, get, search (the resource-verb triad plus search).</pd-file>
+          <pd-file path="auto-plan/internal/cli/write.go" change="add">add &lt;type&gt; / update with registry-generated flags and @file values; link, unlink, retire, move.</pd-file>
+          <pd-file path="auto-plan/internal/cli/lint.go" change="add">lint [plan…] and fmt [--check].</pd-file>
+          <pd-file path="auto-plan/internal/cli/view.go" change="add">show, trace, tree, brief.</pd-file>
+          <pd-file path="auto-plan/internal/cli/help.go" change="add">quickstart (happy path) and docs (full reference, generated from the registry).</pd-file>
+          <pd-file path="auto-plan/internal/cli/cli_integration_test.go" change="add">Every command in-process against a temp repo: payloads, exit codes, byte-identical rejected writes.</pd-file>
+          <pd-file path="auto-plan/e2e/e2e_test.go" change="add">Builds `auto`, runs the scripted scenarios in a temp workspace, compares graph.json snapshots per checkpoint; -update.</pd-file>
+          <pd-file path="auto-plan/e2e/testdata/scenarios/lifecycle/commands.txt" change="add">init → new → add/link/update/unlink → rejected write → retire → lifecycle → fmt → lint, with checkpoints.</pd-file>
+          <pd-file path="auto-plan/e2e/testdata/scenarios/lifecycle/snapshots/" change="add">Expected graph.json per checkpoint, plus marked stdout payloads.</pd-file>
+          <pd-file path="auto-plan/e2e/testdata/scenarios/dogfood/commands.txt" change="add">Re-expresses epic 005, 062 and 052 as fresh plans 001 (epic), 002 (child) and 003 via the CLI only.</pd-file>
+          <pd-file path="auto-plan/e2e/testdata/scenarios/dogfood/snapshots/" change="add">Expected graphs plus golden show/trace/tree/brief output.</pd-file>
+          <pd-file path=".gitignore" change="edit">Un-ignore auto-plan testdata (internal/*/testdata and e2e/testdata).</pd-file>
+          <pd-file path="auto-cli/cmd/auto/main.go" change="edit">Import plancmd and add plancmd.New(stdout, stderr).</pd-file>
+          <pd-file path="auto-cli/cmd/auto/main_test.go" change="edit">Add "plan" to TestAllToolsMounted stems.</pd-file>
+          <pd-file path="auto-cli/go.mod" change="edit">Require auto-plan with a local replace.</pd-file>
+          <pd-file path="auto-cli/go.sum" change="edit">Checksums for the new module edge.</pd-file>
+          <pd-file path="go.work" change="edit">use ./auto-plan.</pd-file>
+          <pd-file path="Makefile" change="edit">Add auto-plan to PROJECTS (before auto-cli).</pd-file>
+          <pd-file path="CLAUDE.md" change="edit">Sub-Projects row: `auto-plan/` · `auto plan` · Early · structured plan graph.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Inline reference fields on nodes (`ac.goal`, `stage.dependsOn`).** Rejected (D-5). A hand edit
+  touches one place, but a separate edges array is the more literal, uniformly queryable graph, and
+  new edge types need no change to node shapes.
+- **An envelope with a `refs` map on each node.** Rejected (D-5). It's also extensible, but the
+  relationships would stay split across nodes.
+- **A data-file registry (`schema.json`, overridable per repo).** Rejected (D-6). Teams could add
+  types without a release, but lint for a new type would stay generic, and it adds a second file
+  format to validate.
+- **JSON-stdin-only input, or a generic `--set key=value`.** Rejected (D-7) in favour of typed
+  per-type flags. Generating those flags from the registry keeps extensibility.
+- **Hand-written flags per type.** Rejected, because every new type would need CLI code.
+- **A per-plan write lock.** Rejected (D-8): planners work serially, one agent per plan. Atomic
+  rename is enough to stop a crash leaving a half-written file.
+- **An append-only `graph.jsonl` operation log.** Rejected upstream (D-2).
+- **Reusing `auto-graph`'s model.** It's `internal` and models code files, not plan intent. Its
+  Tarjan SCC is mirrored, not imported.
+- **Numbered IDs (`G1`, `AC3`), never renumbered.** Rejected (D-11). The numbers read as order
+  and lie after a reorder, two branches allocate the same number, and gaps after retires look like
+  mistakes.
+- **Slug IDs from the title (`g-stage-brief`).** Rejected (D-11). They're the most readable, but
+  they go stale after a title edit, and they're long.
+- **Order as `next`/`follows` edges between siblings.** Rejected (D-12). An insert rewires two
+  edges, reorders conflict in merges, and cycles become possible.
+- **Plan-level relationships as metadata fields** (`plan.honors: […]`). Rejected (D-9): a `plan`
+  root node keeps every relationship in the edges array.
+        </script></md>
+      </pd-section>
+
+      <pd-decision id="D-5" title="graph.json is generic nodes[] + edges[]" status="accepted" by="charlie"
+        summary="Nodes {id,type,status,fields}; edges {from,type,to}; both validated by the registry.">
+        <md><script type="text/plain">
+**Decision:** The file holds generic node envelopes and a separate typed edges array.
+**Alternatives:** Inline typed reference fields; an envelope with a refs map.
+**Consequences:** It's a literal, uniformly queryable graph, and new edge types don't touch node
+shapes. A hand-added AC needs a node and an edge, which `auto plan fmt` and `lint` catch.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-6" title="The type registry is a Go table" status="accepted" by="charlie"
+        summary="One Go file declares node + edge types; adding a type is a code change plus a release.">
+        <md><script type="text/plain">
+**Decision:** Node types, edge types and field specs live in `internal/schema/registry.go`.
+**Alternatives:** A data-file registry that repos can override.
+**Consequences:** Validation is fully typed and there is one format to maintain. Extensibility
+comes from the registry being the only place a type is defined: decode, lint, flags, cards, trace
+and docs all read it.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-7" title="Typed per-type flags, generated from the registry" status="accepted" by="charlie"
+        summary="add/update flags come from each type's FieldSpecs; text values accept @file / @-.">
+        <md><script type="text/plain">
+**Decision:** `auto plan add <plan> <type>` and `update <plan> <id>` expose one typed flag per field, generated from
+the registry at command build time, with `--help` taken from `FieldSpec.Help`. A text value of the
+form `@path` or `@-` reads from a file or stdin, which covers long prose and trees.
+**Alternatives:** JSON stdin only; a generic `--set`; hand-written flags.
+**Consequences:** The flags are discoverable and typed, and a new type gets flags automatically.
+Edge flags are named after the edge type (`--proves g-k7q2`).
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-8" title="No write lock; atomic rename only" status="accepted" by="charlie"
+        summary="Planners are serial, one agent per plan.">
+        <md><script type="text/plain">
+**Decision:** There is no locking. `Save` writes a temp file and renames it into place.
+**Consequences:** It stays simple. Concurrent editing is unsupported by design; git merges handle
+branches.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-9" title="The plan header is a plan node; cross-plan refs are NNN:ID" status="accepted" by="agent"
+        summary="Plan metadata and plan-level edges live on a node of type plan; references into other plans are qualified by plan number. Confirmed by Charlie.">
+        <md><script type="text/plain">
+**Decision:** Each graph has exactly one node `plan` (type `plan`) carrying name, kind, lifecycle,
+epic and created date. Plan-level relationships (`honors`, `delivers`, `builds-on`) are edges from
+`plan`. A reference into another plan is written `NNN:ID`, for example `005:r-8hw3`, and only edge types
+marked `CrossPlan` accept one.
+**Alternatives:** A top-level `plan` object with reference arrays (these would sit outside the
+edges array); references by folder name (not stable across renames).
+**Consequences:** Every relationship lives in `edges[]`. Plan numbers are unique across kinds
+(D-1), so `NNN` alone is unambiguous.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-10" title="Lint is gated by an explicit lifecycle field" status="accepted" by="agent"
+        summary="plan.fields.lifecycle: requirements|solution|plan|executing|done selects which rules apply. Confirmed by Charlie.">
+        <md><script type="text/plain">
+**Decision:** Partial plans stay valid because the rule set grows with an explicit lifecycle,
+advanced by `auto plan update NNN plan --lifecycle …`.
+**Alternatives:** Inferring the lifecycle from which node types are present (fragile and
+surprising).
+**Consequences:** A plan at `requirements` never errors for missing stages. Each registry type
+declares `MinLifecycle`.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-11" title="Node IDs are opaque: type prefix + 4 random base32 characters" status="accepted" by="charlie"
+        summary="e.g. g-k7q2, ac-3fxm; collision-checked per plan, never reused, no order implied.">
+        <md><script type="text/plain">
+**Decision:** Every generated ID is a lowercase type prefix, a hyphen, and 4 Crockford-base32
+characters (`^[a-z]{1,4}-[0-9a-hjkmnp-tv-z]{4}$`). IDs are regenerated on collision with any
+existing ID in the plan (retired included) and never change. The one exception is the plan node,
+whose ID is `plan`.
+**Alternatives:** Numbered per type and never renumbered; slugs of the title.
+**Consequences:** Removing or reordering nodes never touches an ID, and branches don't collide.
+IDs are less memorable than `AC3`, so views print a positional label next to the glyph for reading
+(never used as a reference). Tests inject a seeded random source so snapshots are deterministic.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-12" title="Reading order is a rank field; meaningful order stays in edges" status="accepted" by="charlie"
+        summary="Sortable rank strings order siblings; move rewrites one rank; stages order by dependsOn.">
+        <md><script type="text/plain">
+**Decision:** Each node has a `rank`, a sortable string such as `a0` or `a5`, and siblings render
+in rank order. `auto plan move <plan> <id> --before|--after <id>` writes one new rank between the
+neighbours, and no other node changes. Order that means something is an edge: stages render in
+`dependsOn` order (ties broken by rank), and ACs sit under their goal through `proves`. Order
+inside a node (a stage's steps, a tree's lines) stays a list or text field.
+**Alternatives:** `next`/`follows` edges between siblings.
+**Consequences:** Inserts and reorders are single-field changes that merge cleanly. The canonical
+file still sorts by (type, id), so reordering doesn't reshuffle the file.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-13" title="Every command is auto plan &lt;verb&gt; &lt;plan&gt; [args]" status="accepted" by="charlie"
+        summary="Plan is always the first positional (or all); node IDs are plan-local; only cross-plan edge targets are qualified.">
+        <md><script type="text/plain">
+**Decision:** Argument order is uniform: `auto plan <verb> <plan> [args…]`. Examples:
+- `add 004 ac --proves g-k7q2`
+- `link 004 d-9t2w rejects a-5hcv`
+- `move 004 g-m4t8 --before g-k7q2`
+- `get 004 d-9t2w`, `trace 004 ac-3fxm --up`, `brief 004 s-4nrd`, `update 004 plan --lifecycle solution`
+
+Commands that can span plans take `all` in the plan position (`list all`, `search all <q>`,
+`lint all`, `fmt all`). `init`, `new <name>`, `quickstart` and `docs` take no plan.
+**Alternatives:** Qualified node refs as the only argument (`get 004:d-9t2w`); an optional
+`--plan` flag.
+**Consequences:** One mental model. Plan resolution happens once, in shared argument parsing.
+`all` can't collide with a plan, because plan arguments start with 3 digits.
+        </script></md>
+      </pd-decision>
+
+      <pd-decisions></pd-decisions>
+
+    </pd-tab>
+
+    <pd-tab name="Plan">
+
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Six stages, walking skeleton first. **Stage 1** lands the glossary, then wires the thinnest path
+through every layer:
+- the registry, for goal, ac and decision
+- canonical `graph.json` I/O
+- `init`, `new`, `add` and `link`
+- a three-rule `lint`
+- a plain `show`
+- the real `auto` binary driven by the scripted e2e harness, asserting `graph.json` byte for byte
+
+Stages 2 to 5 thicken that running system: the full write surface and every node type, full lint,
+the read and display lenses, and epics across plans. Stage 6 dogfoods it by rebuilding epic 005,
+062 and 052 through the CLI.
+
+Every stage ends with:
+- `go build ./...`
+- the module's tests
+- `golangci-lint run` (with the Go 1.26 toolchain first on `PATH`)
+- a commit
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence" summary="A strict chain: each stage edits files the previous one created and is verified by the e2e scenario the first stage stood up.">
+        <pd-dag caption="Stage dependencies, derived from depends-on"></pd-dag>
+      </pd-section>
+
+      <pd-section id="phases" title="Stages">
+        <pd-stepper>
+
+          <pd-phase n="1" title="Walking skeleton: glossary → registry → graph.json → new/add/link/lint/show → e2e" status="todo"
+            files="docs/concepts/UBIQUITOUS_LANGUAGE.md,auto-plan/go.mod,auto-plan/go.sum,auto-plan/CLAUDE.md,auto-plan/cmd/autoplan/main.go,auto-plan/rootcmd/rootcmd.go,auto-plan/internal/app/app.go,auto-plan/internal/schema/registry.go,auto-plan/internal/schema/registry_test.go,auto-plan/internal/graph/model.go,auto-plan/internal/graph/io.go,auto-plan/internal/graph/ids.go,auto-plan/internal/graph/mutate.go,auto-plan/internal/graph/validate.go,auto-plan/internal/graph/graph_test.go,auto-plan/internal/workspace/workspace.go,auto-plan/internal/workspace/workspace_test.go,auto-plan/internal/lint/lint.go,auto-plan/internal/lint/rules.go,auto-plan/internal/lint/lint_test.go,auto-plan/internal/render/show.go,auto-plan/internal/render/render_test.go,auto-plan/internal/cli/root.go,auto-plan/internal/cli/init.go,auto-plan/internal/cli/new.go,auto-plan/internal/cli/write.go,auto-plan/internal/cli/lint.go,auto-plan/internal/cli/view.go,auto-plan/internal/cli/cli_integration_test.go,auto-plan/e2e/e2e_test.go,auto-plan/e2e/testdata/scenarios/lifecycle/commands.txt,auto-plan/e2e/testdata/scenarios/lifecycle/snapshots/,.gitignore,auto-cli/cmd/auto/main.go,auto-cli/cmd/auto/main_test.go,auto-cli/go.mod,auto-cli/go.sum,go.work,Makefile,CLAUDE.md">
+            <md><script type="text/plain">
+The thinnest path through every layer, with the real binary judging it from the first commit.
+
+1. **Glossary first (AC-1), before any Go file.**
+   - Add a `## Planning` section to `docs/concepts/UBIQUITOUS_LANGUAGE.md` with these entries:
+     Plan, Child Plan, Goal, Acceptance Criterion, Decision, Alternative, Rail, Defect, Stage, File
+     Change, Journey, Leg, Question, Tree and Stage Brief. Each gets a bold term, a definition, an
+     `_Avoid_` line (with *phase*, *finding* and *task* as parentheticals where needed, following
+     the Mail precedent) and a `_Has_` line.
+   - Narrow Segment's (`:98`), Observation's (`:108`) and TaskDef's (`:123`) `_Avoid_` lines to
+     their own domains.
+   - Name no planning term *Node* or *Context Pack*.
+   - Update the frontmatter `summary`.
+
+   **Verify:** `python3 .claude/skills/domain-modelling/scripts/glossary.py check docs/concepts/UBIQUITOUS_LANGUAGE.md`
+   exits 0; `… diagram … --write` regenerates the ER block (never hand-edit it);
+   `auto doc fixed docs/concepts/UBIQUITOUS_LANGUAGE.md`.
+2. **Scaffold** following auto-mail (`0c73e78`):
+   - `go.mod` (`module github.com/mistakenot/auto-plan`, `go 1.26.1`, auto-shared with a replace,
+     cobra `v1.10.2`)
+   - `cmd/autoplan/main.go`, `rootcmd/rootcmd.go`, `internal/app/app.go`
+   - `internal/cli/root.go`: `ExitError`, `Execute`, `NewRootCmd`, a `writeJSON` built on an
+     Encoder with `SetEscapeHTML(false)`, and a `mutationResult` helper
+   - `auto-plan/CLAUDE.md`, which says `auto plan`, never a per-tool binary name
+
+   **Verify:** `cd auto-plan && go build ./...` after each file.
+3. **Registry (minimal).** In `internal/schema/registry.go`, define `NodeType`, `FieldSpec` and
+   `EdgeType`. Register the node types `plan`, `goal`, `ac` and `decision`, and the edge types
+   `proves` and `constrains`. In `registry_test.go`:
+   - prefixes are unique
+   - every edge endpoint names a registered type
+   - every registered node type declares a `Term`, and each `Term` has a `**Term**:` entry in the
+     glossary. This is an explicit type → term mapping with no exemptions: `plan` → Plan, `ac` →
+     Acceptance Criterion, `child` → Child Plan, `file` → File Change. The glossary is read via the
+     `go.work` root, and the test skips if it's absent.
+
+   **Verify:** `go test ./internal/schema/...`.
+4. **Graph core.**
+   - `model.go`: `Graph`, `Node{ID, Type, Status, Rank, Fields}`, `Edge`, and an alias for
+     `config.ValidationError`.
+   - `validate.go`: the shared `validate()`, which checks fields against `FieldSpec` and edges
+     against `EdgeType` endpoints.
+   - `io.go`: `Decode` (tolerant: only malformed JSON fails; unknown fields and types are kept for
+     `Validate` to report) and `Save` (canonical sort of nodes by
+     (type, id) and edges by (from, type, to); fixed key order; 2-space indent; trailing newline;
+     atomic temp file + rename).
+   - `ids.go`: an opaque ID generator (prefix + 4 Crockford-base32 characters, retried on
+     collision, injectable `rand` source) and rank keys (append after the last sibling).
+   - `mutate.go`: `Add` and `Link`, which validate first and change nothing on error.
+
+   **Verify:** `graph_test.go`:
+   - Save→Decode→Save is byte-identical
+   - a hand-broken fixture (duplicate ID, dangling edge, unknown type) still decodes, and
+     `Validate` reports each problem; a write against it is refused
+   - IDs match the regex, and a collision is retried against a seeded source
+   - a rejected `Add` leaves the graph deep-equal to before
+5. **Workspace.** `workspace.go`:
+   - `git.RepoRoot`
+   - scan `docs/plans/` for `^\d{3}-[a-z0-9]+(?:-[a-z0-9]+)*$`; the next plan is highest + 1, or
+     `001`
+   - resolve a plan argument given as `NNN`, `NNN-name`, a path, or `all`
+
+   **Verify:** `workspace_test.go` covers gaps, a missing folder, bad names, and resolution from a
+   subdirectory.
+6. **Lint (minimal) and show (minimal).**
+   - `lint.go`: the `Issue` type and a runner.
+   - `rules.go`: `dangling-ref`, `bad-id`, `goal-no-ac`.
+   - `render/show.go`: a goal ladder as one `View` value, rendered to JSON and to text.
+
+   **Verify:** `lint_test.go` has one table case per rule plus a clean graph. `render_test.go` has
+   a text golden, and a parity check that the JSON and text views carry the same facts.
+7. **CLI verbs (D-13 argument order):**
+   - `init` creates `docs/plans/` (idempotent) and calls `config.EnsureHost`
+   - `new <name> --kind task|epic` writes a graph holding only the `plan` node
+   - `add <plan> goal|ac|decision`, with flags generated from the registry
+   - `link <plan> <from> <edge> <to>`
+   - `lint <plan|all>`
+   - `show <plan>`
+
+   All output is JSON by default with `--text` available; errors are `[]ValidationError` on stderr
+   with a hint, returned as an `ExitError`.
+
+   **Verify:** `cli_integration_test.go` uses the auto-mail `runCLI` pattern with a temp git repo
+   and `t.Setenv("HOME", …)`. It checks the payload shapes, the exit codes, and that `graph.json`
+   is byte-identical after a rejected write.
+8. **Mount the tool.**
+   - `go.work` gains `./auto-plan`.
+   - Add the require + replace to `auto-cli/go.mod` **by hand**; don't run `go mod tidy`.
+   - Add the import and `plancmd.New(stdout, stderr)` to `auto-cli/cmd/auto/main.go`.
+   - Add `plan` (and the missing `mail`) to `TestAllToolsMounted` in `main_test.go`.
+   - Add `auto-plan` to Makefile `PROJECTS`, before `auto-cli`.
+   - Add a row to the root `CLAUDE.md` Sub-Projects table.
+
+   **Verify:** `make build && ./bin/auto plan init && ./bin/auto plan new demo --kind task`.
+9. **E2E harness + `lifecycle` scenario (checkpoints 1–3).**
+   - `e2e/e2e_test.go` builds `auto` and parses `commands.txt` (one `auto …` invocation per line,
+     `# checkpoint <n>` markers, and `# expect exit=<n> stdout=<file>` annotations).
+   - It creates a temp workspace: `git init`, an empty commit, and an isolated and pinned `HOME`
+     and environment.
+   - It seeds IDs through the `AUTO_PLAN_SEED` environment variable, read only when set, so
+     snapshots are deterministic.
+   - At each checkpoint it compares every `docs/plans/*/graph.json` byte for byte; `-update`
+     rewrites the snapshots.
+   - Scenario so far: `init` → `new demo` → `add goal` ×2 → `add ac --proves` → `add decision` →
+     `link constrains` → `lint 001` → `show 001 --text`.
+   - Add the `.gitignore` un-ignore lines for `auto-plan/internal/*/testdata/`,
+     `auto-plan/e2e/testdata/` and their `/**`.
+
+   **Verify:** `cd auto-plan && go test ./e2e/...`, and `git check-ignore` reports the fixtures
+   are **not** ignored.
+10. **Stage verify:**
+   - `cd auto-plan && go build ./... && go test ./...`
+   - `golangci-lint run` (1.26 toolchain first on `PATH`; `golangci-lint cache clean` if a sibling
+     worktree pollutes it)
+   - repo root `make check` (allow about 5 minutes)
+   - `cd auto-cli && go test ./cmd/auto/...`
+
+   **Commit:** `feat(065): auto plan walking skeleton — glossary, registry, graph.json, new/add/link/lint/show, e2e`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="2" title="Full write surface and every node type" status="todo" depends-on="1"
+            files="auto-plan/internal/schema/registry.go,auto-plan/internal/schema/registry_test.go,auto-plan/internal/graph/io.go,auto-plan/internal/graph/ids.go,auto-plan/internal/graph/mutate.go,auto-plan/internal/graph/validate.go,auto-plan/internal/graph/graph_test.go,auto-plan/internal/cli/write.go,auto-plan/internal/cli/lint.go,auto-plan/internal/cli/cli_integration_test.go,auto-plan/e2e/testdata/scenarios/lifecycle/commands.txt,auto-plan/e2e/testdata/scenarios/lifecycle/snapshots/">
+            <md><script type="text/plain">
+1. **Registry, complete (AC-4).**
+   - Node types: `alternative`, `rail`, `defect`, `stage` (steps list, commit message), `file`
+     (path, `change add|edit|delete`, why), `question` (status, recommended answer, answer), `tree`
+     (kind `call|file|dep|pseudo`, body), `journey`, `leg`, `child` (plan number), and
+     `reversibility` on `decision`.
+   - Edge types: `rejects`, `wouldBreak`, `supersedes`, `dependsOn`, `touches`, `covers` (stage →
+     ac), `discharges`, `addresses` (goal → defect), `about`, `in` (leg → journey), and the
+     cross-plan `honors`, `delivers`, `builds-on`, all with endpoint sets.
+   - Each type declares `MinLifecycle`.
+
+   **Verify:** the `registry_test.go` consistency checks, plus a glossary term for every new type.
+2. **Mutations.**
+   - `Update`, `Unlink`, `Retire` (sets status, keeps the ID) and `Move` (one new rank between
+     neighbours).
+   - `update <plan> plan --lifecycle …` advances the lifecycle.
+
+   **Verify:** `graph_test.go`:
+   - `Move` changes exactly one node's rank
+   - `Retire` keeps the ID, and a new ID never reuses a retired one
+   - every mutation is all-or-nothing
+3. **Generated flags + `@file` (D-7).**
+   - `write.go` builds one typed flag per `FieldSpec` and one flag per outgoing edge type for every
+     registered type.
+   - A text value of `@path` or `@-` reads from a file or stdin.
+   - `--help` text comes from `FieldSpec.Help`.
+
+   **Verify:** an integration test registers a throwaway test-only type and shows its flags appear
+   with no CLI code change. That's the extensibility contract.
+4. **`fmt <plan|all> [--check]` (AC-3).** It rewrites to canonical form and reports whether
+   anything changed; `--check` exits 1 when it isn't canonical.
+
+   **Verify:** a hand-scrambled fixture comes out canonical after `fmt`, and `--check` fails
+   before and passes after.
+5. **Extend the `lifecycle` scenario (checkpoints 4–7):** `update`, `unlink`, one **rejected**
+   write (a wrong endpoint type → exit 1, `graph.json` unchanged at the checkpoint), `retire`,
+   `move`, `update plan --lifecycle solution`, `fmt --check`. Regenerate and review the snapshots.
+
+   **Verify:** `go test ./e2e/...`.
+6. **Stage verify:** module build, tests and lint, then `make check`.
+
+   **Commit:** `feat(065): every node and edge type, full write surface, generated flags, fmt`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="3" title="Lint, complete: lifecycle gating, prose refs, trees, pd-lint parity" status="todo" depends-on="2"
+            files="auto-plan/internal/lint/lint.go,auto-plan/internal/lint/rules.go,auto-plan/internal/lint/cycles.go,auto-plan/internal/lint/lint_test.go,auto-plan/internal/tree/parse.go,auto-plan/internal/tree/tree_test.go,auto-plan/internal/cli/lint.go,auto-plan/internal/cli/cli_integration_test.go">
+            <md><script type="text/plain">
+1. **Lifecycle gating (AC-9).** The runner filters rules by `plan.fields.lifecycle`
+   (requirements ⊂ solution ⊂ plan …). `open-question` applies at every step.
+
+   **Verify:** a requirements-only fixture (goals, questions, decisions) has zero errors; the same
+   graph at `solution` reports `goal-no-ac` and `ac-no-verify`.
+2. **Core rules (AC-7):** `duplicate-id`, `wrong-endpoint`, `ac-multi-goal`, `ac-no-verify`,
+   `goal-count` (a warning outside 5–8), `decision-no-alternative` (a warning), `retired-ref` (a
+   warning). The output is `{plan, ok, issues:[{code,severity,path,field,message,hint}]}`; exit 1
+   only on errors; `--text` prints the results, then remediation.
+
+   **Verify:** `lint_test.go` has one table case per code, with the exact code and severity.
+3. **Cycles.** `cycles.go` mirrors `computeSCCs` from
+   `auto-graph/internal/contextpack/builder.go:623-696` (deterministic Tarjan) for `dependsOn`,
+   with the path joined by " → ".
+
+   **Verify:** a planted 3-cycle reports the same path every run.
+4. **Prose refs and trees (AC-8).**
+   - Scan every `text` field for `[[id]]` and `[[NNN:id]]` → `dangling-prose-ref`.
+   - `tree/parse.go` parses show-me notation into `{depth, marker, name, comment}`. It reports
+     `tree-syntax` for a bad marker, odd indentation, an orphan child, or a malformed `├──`.
+
+   **Verify:** `tree_test.go` parse tables; the lint cases.
+5. **pd-lint parity (AC-10).** At `lifecycle: plan`, report `unplanned-file`, `untracked-file`,
+   `missing-dep`, `dependency-cycle` and `open-question`, with the meanings of the vendored
+   `pd-lint.mjs` v0.9.0.
+
+   **Verify:** one case per code, with message shapes matching the bundle's wording.
+6. **Stage verify:** module build, tests and lint, then `make check`.
+
+   **Commit:** `feat(065): full plan lint — lifecycle gating, prose refs, show-me tree syntax, pd-lint parity`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="4" title="Read and display lenses: list/describe/get/search, show, trace, tree, brief" status="todo" depends-on="3"
+            files="auto-plan/internal/render/show.go,auto-plan/internal/render/card.go,auto-plan/internal/render/trace.go,auto-plan/internal/render/brief.go,auto-plan/internal/render/render_test.go,auto-plan/internal/tree/render.go,auto-plan/internal/tree/tree_test.go,auto-plan/internal/cli/read.go,auto-plan/internal/cli/view.go,auto-plan/internal/cli/cli_integration_test.go">
+            <md><script type="text/plain">
+1. **Resource verbs (AC-12).** In `read.go`:
+   - `list <plan|all> [--type]` returns IDs, metadata and titles only (everything when no filter
+     is given)
+   - `describe <plan> <id>` returns the summary rung: ID, type, status, rank, title, edge counts,
+     and text fields truncated with the recovery command
+   - `get <plan> <id>` returns the full node plus incoming and outgoing edges, each with the
+     neighbour's type and title
+   - `search <plan|all> <query>` matches case-insensitive text
+
+   Truncated text output prints the exact recovery command.
+
+   **Verify:** integration tests for payload shapes, the filters, and `describe`'s truncation plus
+   recovery command.
+2. **`show` completes (AC-13):**
+   - the goal ladder in rank order, each ✓ AC with its verify command, and the ◆ decisions that
+     constrain it with `-` rejected-alternative lines
+   - then blocks for rails, defects and open questions
+   - a positional label printed beside each glyph, never used as a reference
+
+   **Verify:** text goldens plus the JSON/text parity test. **Read the actual `--text` output by
+   eye before calling it done** (061's lesson).
+3. **`trace <plan> <id> [--up|--down]` (AC-14):** an indented walk over the edges, rendered by
+   `trace.go`.
+
+   **Verify:** golden output for an AC → goal (up) and an AC → stages → files (down).
+4. **Trees (AC-15).** `tree/render.go` produces the aligned gutter and comment column, annotating
+   names that match node IDs with their glyph. `FileTree(nodes)` **derives** a `├──` tree with a
+   `+ ~ -` gutter from the `file` nodes. The commands are `tree <plan> <id>` and
+   `tree <plan> --files [--stage <id>]`.
+
+   **Verify:** `tree_test.go` render goldens, including stage filtering.
+5. **`brief <plan> <stage-id>` (AC-16):** the stage's steps and commit message, its `dependsOn`
+   stages with their status, its file tree, the ACs it `covers` with their verify commands, the
+   constraining decisions and rails, and any open questions. Markdown with `--text`, JSON by
+   default.
+
+   **Verify:** a golden, plus an assertion that no other stage's steps appear.
+6. **Stage verify:** module build, tests and lint, then `make check`.
+
+   **Commit:** `feat(065): agent-facing lenses — list/get/search, show, trace, show-me trees, stage brief`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="5" title="Epics across plans: qualified refs, inheritance lint, epic views" status="todo" depends-on="4"
+            files="auto-plan/internal/workspace/workspace.go,auto-plan/internal/workspace/workspace_test.go,auto-plan/internal/graph/ids.go,auto-plan/internal/lint/epic.go,auto-plan/internal/lint/lint_test.go,auto-plan/internal/render/show.go,auto-plan/internal/render/trace.go,auto-plan/internal/render/render_test.go,auto-plan/internal/cli/cli_integration_test.go">
+            <md><script type="text/plain">
+1. **`PlanSet` + qualified refs.**
+   - `workspace.PlanSet` loads the target plan plus every plan it references.
+   - `ids.go` parses `NNN:id`, and only `CrossPlan` edge types accept one.
+   - `new <name> --kind task --epic NNN` sets `plan.fields.epic`.
+
+   **Verify:** a cross-plan `link` to a missing plan or node is rejected with a hint.
+2. **Epic lint (AC-11)** in `lint/epic.go`, run by `lint all` and by linting any plan in an epic
+   family:
+   - `rail-unhonored` (unless marked `deferred`)
+   - `rail-undischarged`
+   - `leg-undelivered`
+   - `child-missing`
+   - `child-epic-mismatch`
+   - `superseded-ref`
+   - child `dependency-cycle`
+
+   **Verify:** a two-plan fixture per code, plus a clean epic family.
+3. **Epic views.**
+   - `show` on an epic prints goals → journeys (legs, each tagged with the child that delivers it)
+     → child plans with their lifecycle.
+   - `trace` crosses plan boundaries: a task AC → task goal → the epic goal through its `child`
+     link.
+
+   **Verify:** goldens.
+4. **Stage verify:** module build, tests and lint, then `make check`.
+
+   **Commit:** `feat(065): epics — qualified cross-plan refs, inheritance lint, epic show/trace`.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="6" title="Dogfood and docs: rebuild epic 005 + 062 and 052 via the CLI, quickstart/docs" status="todo" depends-on="5"
+            files="auto-plan/internal/cli/help.go,auto-plan/internal/cli/root.go,auto-plan/CLAUDE.md,auto-plan/e2e/e2e_test.go,auto-plan/e2e/testdata/scenarios/dogfood/commands.txt,auto-plan/e2e/testdata/scenarios/dogfood/snapshots/,CLAUDE.md">
+            <md><script type="text/plain">
+1. **`quickstart` and `docs` (AC-17).** `help.go` holds the happy path (init → new → add → link →
+   lint → show → brief). `docs` gives the full reference, **generated from the registry** (every
+   node type's fields and every edge type's endpoints), so it can't drift.
+
+   **Verify:** integration tests assert every registered type appears in `docs`.
+2. **The `dogfood` scenario (AC-18).** Using CLI commands only:
+   - create epic `001-auto-mail-mvp` (its goals, journeys J1 and J2 with legs, the rails taken
+     from epic 005's guard rails, its decisions, and child nodes)
+   - create child plan `002-auto-mail-walking-skeleton` (the 062 content: 7 goals, 13 ACs with
+     verify commands, decisions with alternatives, 5 stages with `dependsOn` and `touches`, and
+     `honors`/`discharges` into the epic's rails)
+   - create plan `003-reflect-tool-hardening` (the 052 content: defects F1–F11 as `defect` nodes,
+     `addresses` edges, 7 stages forming a DAG)
+
+   Use `docs/tasks/062-…/plan.html`, `052-…/plan.html` and `docs/epics/epic-005-auto-mail-mvp.html`
+   as the source text. `lint all` must exit 0 with zero errors. Commit golden `show`, `trace`,
+   `tree --files` and `brief` output.
+
+   **Verify:** `go test ./e2e/... -run Dogfood`. If anything can't be expressed without
+   hand-editing JSON, raise it as a finding and don't work around it.
+3. **Docs polish.** `auto-plan/CLAUDE.md` covers the command surface, the registry as the only
+   extension point, and the vocabulary pointer. The root `CLAUDE.md` row is final. Run
+   `auto doc fixed` on each changed doc.
+4. **Stage verify:**
+   - `cd auto-plan && go build ./... && go test ./...`
+   - repo root `make check`, `make test` (allow about 15 minutes) and `make stale-refs`
+   - `./bin/auto plan quickstart` by hand
+
+   **Commit:** `feat(065): dogfood e2e (epic 005 + 062, 052) and quickstart/docs`. Open the PR.
+            </script></md>
+          </pd-phase>
+
+        </pd-stepper>
+      </pd-section>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- **P1** → AC-1, AC-2, AC-17 baseline (mounted), AC-18 `lifecycle` checkpoints 1–3, and the first
+  slices of AC-3, AC-4, AC-5, AC-6, AC-7 and AC-13.
+- **P2** → AC-3, AC-4, AC-5 and AC-6 complete, and AC-18 `lifecycle` complete.
+- **P3** → AC-7, AC-8, AC-9 and AC-10.
+- **P4** → AC-12, AC-13, AC-14, AC-15 and AC-16.
+- **P5** → AC-11, plus the epic forms of AC-13 and AC-14.
+- **P6** → AC-17 and AC-18 `dogfood`.
+- All 18 criteria pass. `make check`, `make test` and `make stale-refs` are green. `auto plan lint all`
+  is clean for the dogfood plans.
+        </script></md>
+      </pd-section>
+
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
