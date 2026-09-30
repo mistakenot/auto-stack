@@ -16,7 +16,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="065: auto-plan-graph" status="executing" pr="pending" generated="2026-09-29" next-prompt="/new-solution 065">
+  <pd-doc title="065: auto-plan-graph" status="complete" pr="pending" generated="2026-09-29" next-prompt="/new-solution 065">
 
     <pd-tab name="Requirements">
 
@@ -1253,7 +1253,7 @@ The thinnest path through every layer, with the real binary judging it from the 
             </script></md>
           </pd-phase>
 
-          <pd-phase n="6" title="Dogfood and docs: rebuild epic 005 + 062 and 052 via the CLI, quickstart/docs" status="todo" depends-on="5"
+          <pd-phase n="6" title="Dogfood and docs: rebuild epic 005 + 062 and 052 via the CLI, quickstart/docs" status="done" depends-on="5"
             files="auto-plan/internal/cli/help.go,auto-plan/internal/cli/root.go,auto-plan/CLAUDE.md,auto-plan/e2e/e2e_test.go,auto-plan/e2e/testdata/scenarios/dogfood/commands.txt,auto-plan/e2e/testdata/scenarios/dogfood/snapshots/,CLAUDE.md">
             <md><script type="text/plain">
 1. **`quickstart` and `docs` (AC-17).** `help.go` holds the happy path (init → new → add → link →
