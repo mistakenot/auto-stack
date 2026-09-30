@@ -9,6 +9,7 @@ use (
 	./auto-etl
 	./auto-graph
 	./auto-mail
+	./auto-plan
 	./auto-reflect
 	./auto-search
 	./auto-shared

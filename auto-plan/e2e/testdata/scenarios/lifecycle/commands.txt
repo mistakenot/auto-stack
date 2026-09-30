@@ -1,0 +1,25 @@
+# lifecycle: one task plan walked from `new` through every mutating command.
+# IDs are deterministic: the harness sets AUTO_PLAN_SEED=1 and AUTO_PLAN_DATE=2026-01-01.
+
+# expect exit=0 stdout=init.json
+auto plan init
+# expect exit=0 stdout=new.json
+auto plan new demo --kind task
+# checkpoint 1
+
+# expect exit=0 stdout=add-goal.json
+auto plan add 001 goal --title "Plans can be reordered without breaking references"
+auto plan add 001 goal --title "An agent gets one stage's context in one call"
+# expect exit=0 stdout=add-ac.json
+auto plan add 001 ac --proves g-gc8t --title "brief is self-contained" --verify-cmd "go test ./e2e -run Brief"
+auto plan add 001 decision --title "brief is Markdown + JSON"
+# checkpoint 2
+
+# expect exit=0 stdout=link.json
+auto plan link 001 d-kqxw constrains g-gc8t
+# checkpoint 3
+
+# expect exit=0 stdout=lint.json
+auto plan lint 001
+# expect exit=0 stdout=show.txt
+auto plan show 001 --text

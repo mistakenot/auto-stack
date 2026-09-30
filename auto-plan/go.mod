@@ -1,0 +1,13 @@
+module github.com/mistakenot/auto-plan
+
+go 1.26.1
+
+require (
+	github.com/mistakenot/auto-shared v0.0.0
+	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.9
+)
+
+require github.com/inconshreveable/mousetrap v1.1.0 // indirect
+
+replace github.com/mistakenot/auto-shared => ../auto-shared

@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "ac-j58t",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "title": "brief is self-contained",
+        "verify": {
+          "cmd": "go test ./e2e -run Brief"
+        }
+      }
+    },
+    {
+      "id": "d-kqxw",
+      "type": "decision",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "title": "brief is Markdown + JSON"
+      }
+    },
+    {
+      "id": "g-gc8t",
+      "type": "goal",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "title": "An agent gets one stage's context in one call"
+      }
+    },
+    {
+      "id": "g-rbcw",
+      "type": "goal",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "title": "Plans can be reordered without breaking references"
+      }
+    },
+    {
+      "id": "plan",
+      "type": "plan",
+      "status": "active",
+      "fields": {
+        "created": "2026-01-01",
+        "kind": "task",
+        "lifecycle": "requirements",
+        "name": "demo"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "ac-j58t",
+      "type": "proves",
+      "to": "g-gc8t"
+    }
+  ]
+}

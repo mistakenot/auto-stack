@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "plan",
+      "type": "plan",
+      "status": "active",
+      "fields": {
+        "created": "2026-01-01",
+        "kind": "task",
+        "lifecycle": "requirements",
+        "name": "demo"
+      }
+    }
+  ],
+  "edges": []
+}

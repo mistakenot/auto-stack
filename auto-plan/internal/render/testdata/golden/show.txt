@@ -1,0 +1,11 @@
+004-stage-briefs  task · solution
+
+◎ g-m4t8   Plans can be reordered without breaking references
+    ◆ d-2hcv   ranks are strings
+◎ g-k7q2   An agent gets one stage's context in one call
+    ✓ ac-3fxm  brief is self-contained  go test ./e2e -run Brief
+    ◆ d-9t2w   brief is Markdown + JSON
+
+unlinked
+    ✓ ac-8pqr  a manual check           (manual)
+    ◆ d-5n0b   undecided scope
