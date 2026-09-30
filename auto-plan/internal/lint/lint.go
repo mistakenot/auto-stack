@@ -5,7 +5,10 @@ package lint
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/mistakenot/auto-plan/internal/graph"
 	"github.com/mistakenot/auto-plan/internal/schema"
@@ -54,6 +57,25 @@ type Context struct {
 	// Plan is the plan's number, used in hints.
 	Plan  string
 	Graph *graph.Graph
+	// Lifecycle is the plan's lifecycle step (see Lifecycle).
+	Lifecycle schema.Lifecycle
+
+	byID map[string]graph.Node
+}
+
+// Node returns the node with the given plan-local ID. When a (broken) graph
+// repeats an ID, the first node wins, as in graph.Validate.
+func (c *Context) Node(id string) (graph.Node, bool) {
+	if c.byID == nil {
+		c.byID = make(map[string]graph.Node, len(c.Graph.Nodes))
+		for _, n := range c.Graph.Nodes {
+			if _, dup := c.byID[n.ID]; !dup {
+				c.byID[n.ID] = n
+			}
+		}
+	}
+	n, ok := c.byID[id]
+	return n, ok
 }
 
 // File lints the graph.json at path. A file that cannot be read or parsed is
@@ -81,16 +103,15 @@ func File(planID, path string) Report {
 // applies at the plan's lifecycle.
 func Graph(planID string, g *graph.Graph) Report {
 	issues := []Issue{}
+	c := &Context{Plan: planID, Graph: g, Lifecycle: Lifecycle(g)}
 	for _, ve := range graph.Validate(g) {
 		issues = append(issues, Issue{
 			Code: ve.Code, Severity: SeverityError, Path: ve.Path, Field: ve.Field,
-			Message: ve.Message, Hint: validationHint(planID, ve.Code),
+			Message: ve.Message, Hint: validationHint(c, ve),
 		})
 	}
-	c := &Context{Plan: planID, Graph: g}
-	lifecycle := Lifecycle(g)
 	for _, r := range Rules {
-		if !lifecycle.AtLeast(r.MinLifecycle) {
+		if !c.Lifecycle.AtLeast(r.MinLifecycle) {
 			continue
 		}
 		for _, is := range r.Check(c) {
@@ -123,23 +144,79 @@ func Lifecycle(g *graph.Graph) schema.Lifecycle {
 	return l
 }
 
-// validationHint is the remediation for a structural validation code.
-func validationHint(plan, code string) string {
+// validationHint is the remediation for a structural validation error. Where
+// a CLI write fixes it (a write refuses only if its result still has errors),
+// the hint is that exact command; otherwise it says what to edit by hand.
+func validationHint(c *Context, ve graph.ValidationError) string {
+	plan := c.Plan
 	lint := "`auto plan lint " + plan + "`"
-	switch code {
-	case graph.CodeDanglingRef:
-		return "add the missing node, or point the edge at an existing ID in graph.json, then run " + lint
+	switch ve.Code {
+	case graph.CodeDanglingRef, graph.CodeWrongEndpoint:
+		if from, typ, to, ok := edgeFromPath(ve.Path); ok {
+			fix := "point it at an existing node of an allowed type"
+			if ve.Code == graph.CodeWrongEndpoint {
+				fix = "use an edge type whose endpoints match (see `auto plan link --help`)"
+			}
+			return fmt.Sprintf("remove the edge with `auto plan unlink %s %s %s %s`, or %s", plan, from, typ, to, fix)
+		}
+		return "fix the edge in graph.json, then run " + lint
 	case graph.CodeBadID:
 		return "IDs are generated: restore the generated ID, or re-add the node with `auto plan add " + plan + " <type>`"
 	case graph.CodeDuplicateID:
 		return "give each node its own ID (re-add the duplicate with `auto plan add " + plan + " <type>`), then run " + lint
-	case graph.CodeWrongEndpoint:
-		return "use an edge type whose endpoints match (see `auto plan link --help`), then run " + lint
 	case graph.CodeUnregisteredType, graph.CodeUnknownField:
 		return "remove it from graph.json or use a registered type/field (see `auto plan add --help`), then run " + lint
 	case graph.CodeMissingField, graph.CodeInvalidField:
+		if cmd := updateCommand(c, ve.Path); cmd != "" {
+			return "set it with `" + cmd + "`"
+		}
 		return "set the field to a valid value in graph.json, then run " + lint
 	default:
 		return "fix graph.json by hand, then run " + lint
 	}
+}
+
+var (
+	nodeFieldPath = regexp.MustCompile(`^\$\.nodes\[([^\]]+)\]\.(fields\.[^\[]+|rank)`)
+	edgePathRe    = regexp.MustCompile(`^\$\.edges\[(\S+) (\S+) (\S+)\]`)
+)
+
+// edgeFromPath recovers an edge's endpoints from its graph.EdgePath.
+func edgeFromPath(path string) (from, typ, to string, ok bool) {
+	m := edgePathRe.FindStringSubmatch(path)
+	if m == nil {
+		return "", "", "", false
+	}
+	return m[1], m[2], m[3], true
+}
+
+// updateCommand is the `auto plan update|move` command that sets the field at
+// path, or "" when no CLI write can (a Fixed field, an unregistered type).
+func updateCommand(c *Context, path string) string {
+	m := nodeFieldPath.FindStringSubmatch(path)
+	if m == nil {
+		return ""
+	}
+	id := m[1]
+	if m[2] == "rank" {
+		return "auto plan move " + c.Plan + " " + id + " --before|--after <sibling-id>"
+	}
+	n, ok := c.Node(id)
+	if !ok {
+		return ""
+	}
+	nt, ok := schema.Registry.Node(n.Type)
+	if !ok {
+		return ""
+	}
+	parts := strings.Split(strings.TrimPrefix(m[2], "fields."), ".")
+	spec, ok := nt.Field(parts[0])
+	if !ok || spec.Fixed {
+		return ""
+	}
+	flag := parts[0]
+	if len(parts) > 1 {
+		flag += "-" + parts[1]
+	}
+	return "auto plan update " + c.Plan + " " + id + " --" + flag + " …"
 }

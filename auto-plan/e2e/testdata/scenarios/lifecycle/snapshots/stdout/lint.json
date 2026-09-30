@@ -1,5 +1,14 @@
 {
   "plan": "001",
   "ok": true,
-  "issues": []
+  "issues": [
+    {
+      "code": "decision-no-alternative",
+      "severity": "warning",
+      "path": "$.nodes[d-kqxw]",
+      "field": "",
+      "message": "d-kqxw rejects no alternative",
+      "hint": "auto plan add 001 alternative --title \"…\" --why \"…\", then auto plan link 001 d-kqxw rejects <alternative-id>"
+    }
+  ]
 }

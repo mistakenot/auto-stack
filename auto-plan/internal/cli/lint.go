@@ -20,8 +20,19 @@ func newLintCmd(application *app.App) *cobra.Command {
 		Long: `Decode graph.json (only malformed JSON fails to load), validate it against the registry,
 and run the lint rules that apply at the plan's lifecycle step.
 
+Which rules run depends on the plan's lifecycle (auto plan update <plan> plan --lifecycle …):
+
+  every step   open-question, ac-no-goal, ac-multi-goal, dangling-prose-ref, tree-syntax,
+               dependency-cycle; warnings decision-no-alternative, retired-ref
+  solution     + goal-no-ac, ac-no-verify; warning goal-count (outside 5–8 goals)
+  plan         + unplanned-file, untracked-file, missing-dep
+
+Structural codes (dangling-ref, bad-id, duplicate-id, wrong-endpoint, missing-field, …) are
+reported at every step. A qualified [[NNN:id]] prose reference is shape-checked only.
+
 One plan prints {plan, ok, issues:[{code,severity,path,field,message,hint}]}; "all" prints
-{ok, plans:[…]}. Exit 1 on any error; warnings alone exit 0.`,
+{ok, plans:[…]}. Exit 1 on any error; warnings alone exit 0. --text prints each plan's
+verdict, then the issues, then their remediation hints.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLint(cmd, application, args[0])
@@ -66,8 +77,8 @@ func runLint(cmd *cobra.Command, application *app.App, arg string) error {
 	return nil
 }
 
-// lintText prints each plan's verdict first, then its issues with their
-// remediation hints.
+// lintText prints each plan's verdict first, then every issue, then the
+// remediation: each distinct hint once, in issue order.
 func lintText(reports []lint.Report) string {
 	var b strings.Builder
 	if len(reports) == 0 {
@@ -78,11 +89,34 @@ func lintText(reports []lint.Report) string {
 		if !r.OK {
 			verdict = "FAIL"
 		}
-		fmt.Fprintf(&b, "%s  %s  (%d issue%s)\n", r.Plan, verdict, len(r.Issues), plural(len(r.Issues)))
+		errs := 0
+		for _, is := range r.Issues {
+			if is.Severity == lint.SeverityError {
+				errs++
+			}
+		}
+		warns := len(r.Issues) - errs
+		fmt.Fprintf(&b, "%s  %s  (%d error%s, %d warning%s)\n", r.Plan, verdict, errs, plural(errs), warns, plural(warns))
 	}
+	hints := 0
 	for _, r := range reports {
 		for _, is := range r.Issues {
-			fmt.Fprintf(&b, "\n%s %s %s %s\n  %s\n  hint: %s\n", r.Plan, is.Severity, is.Code, is.Path, is.Message, is.Hint)
+			fmt.Fprintf(&b, "\n%s %s %s %s\n  %s\n", r.Plan, is.Severity, is.Code, is.Path, is.Message)
+			hints++
+		}
+	}
+	if hints == 0 {
+		return b.String()
+	}
+	b.WriteString("\nremediation:\n")
+	seen := map[string]bool{}
+	for _, r := range reports {
+		for _, is := range r.Issues {
+			line := fmt.Sprintf("  %s %s: %s\n", r.Plan, is.Code, is.Hint)
+			if !seen[line] { // several issues in one field share a fix
+				seen[line] = true
+				b.WriteString(line)
+			}
 		}
 	}
 	return b.String()

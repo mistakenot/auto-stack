@@ -305,8 +305,9 @@ type report struct {
 func TestLintCleanAndBroken(t *testing.T) {
 	root := repo(t)
 	walk(t, root)
+	// At requirements the only issue is a warning, and warnings alone exit 0.
 	r := decode[report](t, mustRun(t, root, "lint", "001"))
-	if r.Plan != "001" || !r.OK || r.Issues == nil || len(r.Issues) != 0 {
+	if r.Plan != "001" || !r.OK || len(r.Issues) != 1 || r.Issues[0].Code != "decision-no-alternative" || r.Issues[0].Severity != "warning" {
 		t.Fatalf("clean lint = %+v", r)
 	}
 
@@ -336,8 +337,41 @@ func TestLintCleanAndBroken(t *testing.T) {
 	}
 
 	text, _, _ := runCLI(t, root, "lint", "all", "--text")
-	if !strings.HasPrefix(text, "001  ok  (0 issues)\n002  FAIL") || !strings.Contains(text, "hint: ") {
+	if !strings.HasPrefix(text, "001  ok  (0 errors, 1 warning)\n002  FAIL  (2 errors, 0 warnings)\n") ||
+		!strings.Contains(text, "\nremediation:\n  001 decision-no-alternative: auto plan add 001 alternative") ||
+		strings.Index(text, "remediation:") < strings.Index(text, "002 error dangling-ref") {
 		t.Fatalf("lint --text:\n%s", text)
+	}
+}
+
+// TestLintLifecycleGating: advancing the lifecycle turns on the rules for
+// that step (AC-9), and an open question gates at every step.
+func TestLintLifecycleGating(t *testing.T) {
+	root := repo(t)
+	_, g2, _, _ := walk(t, root)
+	mustRun(t, root, "update", "001", "plan", "--lifecycle", "solution")
+	stdout, _, code := runCLI(t, root, "lint", "001")
+	r := decode[report](t, stdout)
+	var errs []string
+	for _, is := range r.Issues {
+		if is.Severity == "error" {
+			errs = append(errs, is.Code+" "+is.Path)
+		}
+	}
+	if code != 1 || r.OK || len(errs) != 1 || errs[0] != "goal-no-ac $.nodes["+g2+"]" {
+		t.Fatalf("lint at solution: exit %d %+v", code, r)
+	}
+
+	mustRun(t, root, "update", "001", "plan", "--lifecycle", "requirements")
+	q := decode[struct{ ID string }](t, mustRun(t, root, "add", "001", "question", "--title", "Which store?", "--status", "open"))
+	stdout, _, code = runCLI(t, root, "lint", "001")
+	r = decode[report](t, stdout)
+	if code != 1 || r.OK || r.Issues[0].Code != "open-question" || !strings.Contains(r.Issues[0].Message, q.ID) {
+		t.Fatalf("open question at requirements: exit %d %+v", code, r)
+	}
+	mustRun(t, root, "update", "001", q.ID, "--status", "answered", "--answer", "JSON")
+	if _, _, code = runCLI(t, root, "lint", "001"); code != 0 {
+		t.Fatalf("answered question: exit %d", code)
 	}
 }
 
