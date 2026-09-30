@@ -1,0 +1,16 @@
+✓ ac-42vx  G6 — send with no subscription persists, and reports both counts
+
+down
+  covers  ← ▶ s-qg05  Delivery semantics and the Client conformance suite
+    touches → □ f-y361  auto-mail/internal/cli/subscribe.go
+    touches → □ f-vrqj  auto-mail/internal/cli/send.go
+    touches → □ f-edst  auto-mail/internal/cli/list.go
+    touches → □ f-6z14  auto-mail/internal/cli/ack.go
+    touches → □ f-rrht  auto-mail/internal/cli/cli_test.go
+    touches → □ f-3e02  auto-mail/mail/direct.go
+    touches → □ f-fpa3  auto-mail/internal/store/project.go
+    touches → □ f-jqm7  auto-mail/internal/store/store_test.go
+    touches → □ f-gn2d  auto-mail/conformance/conformance.go
+    touches → □ f-fhpw  auto-mail/conformance/conformance_test.go
+    touches → □ f-nkx5  harness/src/harness/scenarios/mail_flow.py
+    touches → □ f-m7ab  harness/tests/mail_flow/test_mail_loop.py

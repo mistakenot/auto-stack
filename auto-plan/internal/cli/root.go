@@ -115,6 +115,8 @@ a path, or "all" where it makes sense. Output is JSON by default; --text is for 
 		newTraceCmd(application),
 		newTreeCmd(application),
 		newBriefCmd(application),
+		newQuickstartCmd(application),
+		newDocsCmd(application),
 	)
 	return rootCmd
 }

@@ -1,0 +1,85 @@
+{
+  "plan": "003",
+  "name": "reflect-tool-hardening",
+  "kind": "task",
+  "lifecycle": "plan",
+  "nodes": [
+    {
+      "id": "df-rbcw",
+      "type": "defect",
+      "status": "active",
+      "rank": "a0",
+      "title": "Stale or partial reflect state goes undetected"
+    },
+    {
+      "id": "df-gc8t",
+      "type": "defect",
+      "status": "active",
+      "rank": "a1",
+      "title": "miner status pending (390) disagrees with stats pending_to_mine (396)"
+    },
+    {
+      "id": "df-j58t",
+      "type": "defect",
+      "status": "active",
+      "rank": "a2",
+      "title": "correction_density is undocumented"
+    },
+    {
+      "id": "df-kqxw",
+      "type": "defect",
+      "status": "active",
+      "rank": "a3",
+      "title": "Feedback gaps are write-only"
+    },
+    {
+      "id": "df-w1fg",
+      "type": "defect",
+      "status": "active",
+      "rank": "a4",
+      "title": "Each command nests its minted id differently"
+    },
+    {
+      "id": "df-bvmq",
+      "type": "defect",
+      "status": "active",
+      "rank": "a5",
+      "title": "Rule created_at and updated_at come back empty"
+    },
+    {
+      "id": "df-21j1",
+      "type": "defect",
+      "status": "active",
+      "rank": "a6",
+      "title": "Dry-run ids differ from apply ids"
+    },
+    {
+      "id": "df-9wde",
+      "type": "defect",
+      "status": "active",
+      "rank": "a7",
+      "title": "The feedback outcome enum is undocumented"
+    },
+    {
+      "id": "df-mfg7",
+      "type": "defect",
+      "status": "active",
+      "rank": "a8",
+      "title": "The .auto/reflect/ git policy contradicts itself"
+    },
+    {
+      "id": "df-pn3v",
+      "type": "defect",
+      "status": "active",
+      "rank": "a9",
+      "title": "No nudge when an observed session is never acked"
+    },
+    {
+      "id": "df-7fdr",
+      "type": "defect",
+      "status": "active",
+      "rank": "aa",
+      "title": "Legacy docs/reflection yaml from the superseded process remains"
+    }
+  ]
+}

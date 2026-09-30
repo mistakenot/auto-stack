@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "plans": [
+    {
+      "plan": "001",
+      "path": "docs/plans/001-auto-mail-mvp/graph.json",
+      "canonical": true,
+      "changed": false
+    },
+    {
+      "plan": "002",
+      "path": "docs/plans/002-auto-mail-walking-skeleton/graph.json",
+      "canonical": true,
+      "changed": false
+    },
+    {
+      "plan": "003",
+      "path": "docs/plans/003-reflect-tool-hardening/graph.json",
+      "canonical": true,
+      "changed": false
+    }
+  ]
+}

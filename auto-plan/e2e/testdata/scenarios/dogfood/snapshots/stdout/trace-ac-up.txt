@@ -1,0 +1,23 @@
+✓ ac-42vx  G6 — send with no subscription persists, and reports both counts
+
+up
+  proves     → ◎ g-w1fg      Broadcast delivery with a compare-and-set ack, rows materialised lazily from a subscription cursor
+    child-of   → ◎ 001:g-rbcw  Agents on one host address each other by name and get a reply  (via 001:c-gn2d)
+      constrains ← ◆ 001:d-xpbe  No message resource noun on the CLI
+      constrains ← ◆ 001:d-3e02  Addresses are free-form; structure is convention, filtering is v2
+      constrains ← ◆ 001:d-h7wk  #parent covers in-process subagents only, resolved from hook-supplied parentage
+    child-of   → ◎ 001:g-gc8t  Mail is durable and at-least-once: it survives until explicitly acked  (via 001:c-gn2d)
+      constrains ← ◆ 001:d-gm40  The MVP CLI writes the store directly; the daemon is never required
+      constrains ← ◆ 001:d-edst  Broadcast delivery, with ack as a compare-and-set
+      constrains ← ◆ 001:d-271g  Subscriptions backfill unacked history from a cursor
+    child-of   → ◎ 001:g-j58t  A working agent learns it has mail in-band, at no cost when there is none  (via 001:c-gn2d)
+    child-of   → ◎ 001:g-kqxw  An idle agent is woken without corrupting a working one  (via 001:c-gn2d)
+      constrains ← ◆ 001:d-6prf  Mail's effector seam is separate from autowatch's execution Backend
+      constrains ← ◆ 001:d-hr0p  The sender notifies inline; no cron sweep in the MVP
+      constrains ← ◆ 001:d-124m  Inline notify for latency, plus a minimal reconcile tick for correctness
+      constrains ← ◆ 001:d-rrht  Escalating intrusiveness: nudge first, keystrokes last
+    child-of   → ◎ 001:g-w1fg  Nothing in the MVP forecloses fan-out, leases or multi-host  (via 001:c-gn2d)
+      constrains ← ◆ 001:d-spbj  Event-source the delivery lifecycle, not everything
+      constrains ← ◆ 001:d-vvcy  Alpha marker in the type string and the store filename
+      constrains ← ◆ 001:d-cfv7  Reuse auto-shared rpc + transport rather than a new wire
+  discharges → ‖ 001:r-q6hs  Sending to an address with no subscription persists, and a later subscriber sees it

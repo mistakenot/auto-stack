@@ -1,0 +1,165 @@
+# Stage s-zf2b: One message travels between two agents and is acked
+
+Plan 002-auto-mail-walking-skeleton · status done
+
+## Depends on
+
+- s-5tag: Ontology, module skeleton, and the scenario comes up (done)
+
+## Steps
+
+1. **Ids.** `internal/ulid/ulid.go`: sender-generated ULIDs, monotonic and lexicographically sortable **within one process** (the cross-host merge property `docs/auto-mail-beyond-mvp.md` §3 depends on).
+2. **Events.** `internal/store/events.go`: the four `alpha.*` types — `alpha.mail.subscribed`, `alpha.mail.sent`, `alpha.mail.read`, `alpha.mail.acked` — a versioned envelope (`version` integer, default …
+3. **Projection.** `internal/store/project.go`, all inside one `BEGIN IMMEDIATE` transaction per operation: - `subscribe` → append `alpha.mail.subscribed`; upsert the subscription (address + …
+4. **Addresses and bindings.** `mail/address.go`: `ValidateAddress` — permissive, `/` explicitly allowed and never normalised (D-9); rejects empty, whitespace-padded, control characters and over-length …
+5. **The direct client.** Implement the remaining five `Client` methods in `mail/direct.go` over the projection, returning exactly the C1 payload shapes.
+6. **The CLI verbs.** `subscribe.go` (positional address, `--from-now`, `--name`), `send.go` (`--to`, `--message`, `--body`, `--from`), `list.go` (`--address`, `--subscription`; unfiltered returns every …
+7. **The harness proves it (G15).** Extend `mail_flow.py` with `subscribe/send/list/ack` DSL helpers returning parsed JSON, and `test_mail_loop.py` with the C1 loop across the two workspaces …
+8. **Verify (phase gate):** `cd auto-mail && go build ./... && go test ./...`; repo-root `make check && make test`; `uv run pytest tests/mail_flow -v`.
+
+## Commit
+
+`feat(002): mail event log, projection and the C1 subscribe/send/list/ack loop`
+
+## Files
+
+```
++ auto-mail/
++ ├── internal/
++ │   ├── cli/
++ │   │   ├── ack.go         f-6z14  `auto mail ack <mail-id>`; prints wonTransition, exit 0 on …
++ │   │   ├── cli_test.go    f-rrht  Command-level tests against a temp HOME asserting the exact…
++ │   │   ├── list.go        f-edst  `auto mail list [--address] [--subscription]`; all bound su…
++ │   │   ├── send.go        f-vrqj  `auto mail send --to --message [--body] [--from]`; resolves…
++ │   │   └── subscribe.go   f-y361  `auto mail subscribe <address> [--from-now] [--name]`; reco…
++ │   ├── store/
++ │   │   ├── events.go      f-m24f  The alpha.mail.* event types, the versioned envelope, and t…
++ │   │   ├── project.go     f-fpa3  Same-transaction projection: mail insert, lazy delivery mat…
++ │   │   ├── schema.go      f-h7wk  DDL: events (+ append-only triggers), mail (+ immutability …
++ │   │   └── store_test.go  f-jqm7  Immutability (triggers abort UPDATE/DELETE), cursor backfil…
++ │   └── ulid/
++ │       └── ulid.go        f-nrws  Sender-generated ids, monotonic and sortable within one pro…
++ └── mail/
++     ├── address.go         f-djp7  ValidateAddress — permissive, separator explicitly allowed …
++     ├── binding.go         f-txje  BindingFor: the (manager, target) ladder over hooks.Capture…
++     ├── client.go          f-bt89  The public seam: Client interface, inputs/results, domain t…
++     ├── direct.go          f-3e02  NewDirect: the direct-store implementation D-11 binds the M…
++     └── mail_test.go       f-pesp  Address validation, binding ladder, flag lifecycle, and the…
++ harness/
++ ├── src/harness/scenarios/
++ │   └── mail_flow.py       f-nkx5  MailFlowScenario: check_ready gates plus the DSL (subscribe…
++ └── tests/mail_flow/
++     └── test_mail_loop.py  f-m7ab  AC-13: the C1 loop, the in-band nudge, send-before-subscrib…
+```
+
+## Acceptance criteria
+
+### ac-mfg7: C1 — the epic's transcript runs verbatim
+
+Proves g-gc8t: A new auto-mail package, mounted as auto mail, with the four C1 verbs
+
+**Given** an initialised store and two agent workspaces on one host; **When** the four commands of C1 are run in order; **Then** each emits the documented JSON payload on **stdout only**: `subscribe <address>` → `{"address":…, "subscription":"sub_…", "backfilled":N}` `send --to <address> --message <text>` → `{"id":"<ULID>", "to":…, "subscriptions":N …
+
+- Verify: `(cd auto-mail && go test ./internal/cli/) && (cd harness && uv run pytest tests/mail_flow -v)`
+- Tests: auto-mail/internal/cli/cli_test.go, harness/tests/mail_flow/test_mail_loop.py
+
+### ac-xbrt: G5 / D-9 — addresses are virtual and free-form
+
+Proves g-gc8t: A new auto-mail package, mounted as auto mail, with the four C1 verbs
+
+**Given** address validation; **Then** `auto-web/bugs` is accepted — the separator `/` is explicitly permitted and never normalised away — as are addresses with no separator at all
+
+- Verify: `(cd auto-mail && go test ./internal/store/ ./mail/)`
+- Tests: auto-mail/mail/mail_test.go, auto-mail/internal/store/store_test.go
+
+### ac-pn3v: G1 — mail and events are immutable
+
+Proves g-kqxw: An event-sourced store: an append-only log with same-transaction projections, marked alpha
+
+**Given** a mail row and its `alpha.mail.sent` event; **When** the mail is listed and then acked; **Then** the `mail` row and every previously-appended event row are **byte identical** before and after (asserted by comparing full row snapshots)
+
+- Verify: `(cd auto-mail && go test ./internal/store/)`
+- Tests: auto-mail/internal/store/store_test.go
+
+### ac-7fdr: G2 / D-10 — consumer state lives in a deliveries join, materialised lazily from a cursor
+
+Proves g-w1fg: Broadcast delivery with a compare-and-set ack, rows materialised lazily from a subscription cursor
+
+**Given** the schema; **Then** `read_at` and `acked_at` exist **only** on `deliveries`, keyed by `(subscription_id, mail_id)`, and **no** consumer-state column exists on `mail`; **Given** mail sent to an address with **no** subscription; **When** a subscription is created afterwards with the default cursor; **Then** `list` returns that earlier mail and `subscribe` reports `backfilled: 1` (the J2 requirement D-10 exists to satisfy)
+
+- Verify: `(cd auto-mail && go test ./conformance/ ./internal/store/)`
+- Tests: auto-mail/internal/store/store_test.go, auto-mail/conformance/conformance_test.go
+
+### ac-0x4k: G3 — ack is a separate explicit call; reading does not retire
+
+Proves g-w1fg: Broadcast delivery with a compare-and-set ack, rows materialised lazily from a subscription cursor
+
+**Given** one unacked mail; **When** `auto mail list` is run twice with no `ack` between them; **Then** the mail is returned **both** times
+
+- Verify: `(cd auto-mail && go test ./conformance/ ./internal/cli/)`
+- Tests: auto-mail/conformance/conformance_test.go, auto-mail/internal/cli/cli_test.go
+
+### ac-0f9w: G13 / D-7 — ack transitions exactly once and reports whether it won
+
+Proves g-w1fg: Broadcast delivery with a compare-and-set ack, rows materialised lazily from a subscription cursor
+
+**Given** one delivery row and N=16 goroutines calling `Ack` on it concurrently under `-race`; **When** they all complete; **Then** exactly **one** returns `wonTransition: true` and the other fifteen return `wonTransition: false`
+
+- Verify: `(cd auto-mail && go test -race ./internal/cli/ ./internal/store/)`
+- Tests: auto-mail/internal/store/store_test.go, auto-mail/internal/cli/cli_test.go
+
+### ac-vgcz: G15 — it passes end to end in the harness
+
+Proves g-21j1: The harness scenario is the verdict, and nothing already shipped breaks
+
+**Given** `uv run harness mail-flow up` from `harness/`; **Then** the stack comes up with **one** container, one seeded host id, and two registered project workspaces, and `check_ready()` gates fail-fast with a diagnostic if the store is not initialised or a workspace is not registered; **When** `uv run pytest tests/mail_flow -v` runs; **Then** the full C1 loop passes against the **real `auto` binary built from monorepo source**: agent B subscribes, agent A sends, agent B's hook fire emits the nudge, `list` shows the mail, `ack` reports `wonTransition: true`, and the …
+
+- Verify: `(cd harness && uv run pytest tests/mail_flow -v)`
+- Tests: harness/tests/mail_flow/test_mail_loop.py
+
+## Decisions
+
+### d-9bka: Two agents on one host = two workspaces in one container, not two containers
+
+Constrains ac-vgcz
+
+**Chosen:** The `mail-flow` scenario is a **single container** with one seeded host id and one `~/.auto`, containing **two registered project workspaces** (`/workspace/project-a`, `/workspace/project-b`). Each "agent" is a separate `auto` process invocation run in one of those workspaces.
+
+**Why:** T1's scenario must bring up "two agents on one host". `event-flow`'s pattern is one container per agent, each seeded with a **distinct `HOST_ID`** — that is precisely what makes it a *multi-host* scenario.
+
+### d-p2kk: A binding is keyed by the physical context hooks already capture
+
+Constrains ac-xbrt
+
+**Chosen:** Binding identity is the **opaque `(manager, target)` pair G12 mandates**, derived by both sides from the *same* shared helper (`auto-shared/hooks.CaptureContext`), on a documented fallback ladder: `tmux` + `tmux_pane_id` → `ntm` + the NTM pane identifier → `cwd` + the resolved worktree path. **`subscribe` is the only writer of a binding row in T1** …
+
+**Why:** The nudge needs to answer "does the agent that just fired this hook have mail?". The hook payload carries `session_id` and `cwd`; the `auto mail subscribe` process does **not** see `session_id` (it is a tool call, not the hook process).
+
+### d-57nj: T1 ships init, docs and reset; quickstart and doctor land in T4
+
+Constrains g-gc8t
+
+**Chosen:** T1 ships `init` (creates `~/.auto/mail/` and the store), `docs` (the full command reference — an agent must be able to discover the surface it is being asked to use) and `reset` (G10 makes wiping a *supported operation*, and the harness needs it for isolation). `quickstart` and `doctor` are T4's, as the epic assigns them.
+
+**Why:** The project's CLI conventions call for `init` / `doctor` / `quickstart` / `docs` on every tool. The epic assigns "quickstart, doctor and agent-facing guidance" to **T4** and argues explicitly that adoption is a task, not a chore.
+
+### d-xpbe: Losing an ack race is a reported outcome, not an error exit
+
+Constrains ac-0f9w
+
+**Chosen:** `auto mail ack <id>` always prints `{"id":…, "acked":true, "wonTransition":<bool>}` on stdout and exits **0** when the delivery exists. A loser gets `wonTransition:false` plus a one-line note on stderr naming who won it.
+
+**Why:** G13 requires that a losing ack be "told, never silently treated as success". That fixes the payload, not the exit code, and the project convention reserves fail-fast exits for invalid CLI usage.
+
+## Rails
+
+- 001:r-tr9x: Addresses are virtual — no physical identity in them (discharged by ac-xbrt)
+- 001:r-xbrt: Messages and events are immutable (discharged by ac-pn3v)
+- 001:r-42vx: Consumer state lives in a deliveries join, never on the message (discharged by ac-7fdr)
+- 001:r-jcvm: Ack is a separate explicit call, from the first consumer (discharged by ac-0x4k)
+- 001:r-apsc: Ack transitions exactly once and reports whether it won (discharged by ac-0f9w)
+- 001:r-0bcq: A capability is done when it passes end to end in the harness (discharged by ac-vgcz)
+
+## Open questions
+
+(none)

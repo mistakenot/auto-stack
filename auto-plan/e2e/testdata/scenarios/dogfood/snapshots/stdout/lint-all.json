@@ -1,0 +1,53 @@
+{
+  "ok": true,
+  "plans": [
+    {
+      "plan": "001",
+      "ok": true,
+      "issues": []
+    },
+    {
+      "plan": "002",
+      "ok": true,
+      "issues": []
+    },
+    {
+      "plan": "003",
+      "ok": true,
+      "issues": [
+        {
+          "code": "goal-count",
+          "severity": "warning",
+          "path": "$.nodes",
+          "field": "",
+          "message": "the plan has 9 active goals; aim for 5–8",
+          "hint": "merge overlapping goals and retire the rest: auto plan retire 003 <goal-id>"
+        },
+        {
+          "code": "decision-no-alternative",
+          "severity": "warning",
+          "path": "$.nodes[d-m7rq]",
+          "field": "",
+          "message": "d-m7rq rejects no alternative",
+          "hint": "auto plan add 003 alternative --title \"…\" --why \"…\", then auto plan link 003 d-m7rq rejects <alternative-id>"
+        },
+        {
+          "code": "decision-no-alternative",
+          "severity": "warning",
+          "path": "$.nodes[d-xpbe]",
+          "field": "",
+          "message": "d-xpbe rejects no alternative",
+          "hint": "auto plan add 003 alternative --title \"…\" --why \"…\", then auto plan link 003 d-xpbe rejects <alternative-id>"
+        },
+        {
+          "code": "decision-no-alternative",
+          "severity": "warning",
+          "path": "$.nodes[d-yxva]",
+          "field": "",
+          "message": "d-yxva rejects no alternative",
+          "hint": "auto plan add 003 alternative --title \"…\" --why \"…\", then auto plan link 003 d-yxva rejects <alternative-id>"
+        }
+      ]
+    }
+  ]
+}

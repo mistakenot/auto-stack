@@ -1,0 +1,2158 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "ac-0f9w",
+      "type": "ac",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "gwt": "**Given** one delivery row and N=16 goroutines calling `Ack` on it concurrently under `-race`; **When** they all complete; **Then** exactly **one** returns `wonTransition: true` and the other fifteen return `wonTransition: false`",
+        "title": "G13 / D-7 — ack transitions exactly once and reports whether it won",
+        "verify": {
+          "cmd": "(cd auto-mail && go test -race ./internal/cli/ ./internal/store/)",
+          "tests": [
+            "auto-mail/internal/store/store_test.go",
+            "auto-mail/internal/cli/cli_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-0x4k",
+      "type": "ac",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "gwt": "**Given** one unacked mail; **When** `auto mail list` is run twice with no `ack` between them; **Then** the mail is returned **both** times",
+        "title": "G3 — ack is a separate explicit call; reading does not retire",
+        "verify": {
+          "cmd": "(cd auto-mail && go test ./conformance/ ./internal/cli/)",
+          "tests": [
+            "auto-mail/conformance/conformance_test.go",
+            "auto-mail/internal/cli/cli_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-42vx",
+      "type": "ac",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "gwt": "**Given** an address nobody has subscribed to; **When** `auto mail send --to <address> --message …` runs; **Then** it exits **0**, the mail is persisted, and the payload reports `\"subscriptions\": 0, \"bound\": 0`; **Given** a subscription exists but has **no binding row** (in T1 `bound` counts binding rows, not liveness — nothing refreshes `last_seen` until T3, per D-062-2); **Then** the payload reports `\"subscriptions\": 1, \"bound\": 0` — the two counts are distinct and mean different things to a sender",
+        "title": "G6 — send with no subscription persists, and reports both counts",
+        "verify": {
+          "cmd": "(cd auto-mail && go test ./conformance/) && (cd harness && uv run pytest tests/mail_flow -v)",
+          "tests": [
+            "auto-mail/conformance/conformance_test.go",
+            "harness/tests/mail_flow/test_mail_loop.py"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-7fdr",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** the schema; **Then** `read_at` and `acked_at` exist **only** on `deliveries`, keyed by `(subscription_id, mail_id)`, and **no** consumer-state column exists on `mail`; **Given** mail sent to an address with **no** subscription; **When** a subscription is created afterwards with the default cursor; **Then** `list` returns that earlier mail and `subscribe` reports `backfilled: 1` (the J2 requirement D-10 exists to satisfy)",
+        "title": "G2 / D-10 — consumer state lives in a deliveries join, materialised lazily from a cursor",
+        "verify": {
+          "cmd": "(cd auto-mail && go test ./conformance/ ./internal/store/)",
+          "tests": [
+            "auto-mail/internal/store/store_test.go",
+            "auto-mail/conformance/conformance_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-9wde",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** `docs/concepts/UBIQUITOUS_LANGUAGE.md` with no mail vocabulary; **When** the glossary is updated as the task's first change, before any Go file is written; **Then** it defines **Mail**, **Address**, **Subscription**, **Delivery** and **Binding**, each with a definition and an `_Avoid_` line, and the `_Has_` relations (Address→Subscription, Subscription→Delivery, Subscription→Binding …",
+        "title": "G16 — the ontology lands before the code that uses it",
+        "verify": {
+          "cmd": "python3 .claude/skills/domain-modelling/scripts/glossary.py check docs/concepts/UBIQUITOUS_LANGUAGE.md",
+          "tests": [
+            "auto-mail/mail/mail_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-apsc",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** the whole repository; **When** a guard test walks every module's Go source, the harness scenarios and the `skills/` tree; **Then** nothing outside `auto-mail/internal/store` names the **mail store**: the `alpha-store.db` filename, an `~/.auto/mail` path opened as a database, or a `sqlite3` invocation against either. The guard is scoped to the *mail store* …",
+        "title": "G11 — nothing outside the mail package reads the store",
+        "verify": {
+          "cmd": "(cd auto-mail && go test ./conformance/)",
+          "tests": [
+            "auto-mail/conformance/seam_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-cwd2",
+      "type": "ac",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "gwt": "**Given** `auto mail docs` and the package `CLAUDE.md`; **Then** both state the delivery contract in as many words: **at-least-once, unordered, consumers must be idempotent on mail id** — and neither promises exactly-once or ordering",
+        "title": "G4 — at-least-once and unordered, as documented",
+        "verify": {
+          "cmd": "(cd auto-mail && go test ./conformance/ ./internal/cli/)",
+          "tests": [
+            "auto-mail/conformance/conformance_test.go",
+            "auto-mail/internal/cli/cli_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-fjxr",
+      "type": "ac",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "gwt": "**Given** the store; **Then** its path is `~/.auto/mail/alpha-store.db` — the marker is in the **filename**, not only in docs",
+        "title": "G10 / D-2 — alpha is in the type string and the filename, and reset works",
+        "verify": {
+          "cmd": "(cd auto-mail && go test ./internal/cli/ ./internal/store/)",
+          "tests": [
+            "auto-mail/internal/cli/cli_test.go",
+            "auto-mail/internal/store/store_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-jcvm",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** any state of the mailbox; **When** `auto hooks fire --agent claude` processes a PostToolUse payload; **Then** the mail check performs **zero** store opens on **either** path — present flag or absent — asserted with a counting store-opener injected over the package var, and stats at most one path; **Given** pending mail; **Then** the hook emits exactly **one** `hookSpecificOutput` JSON object on stdout whose `additionalContext` names `auto mail list`, on `PostToolUse` events only — and when a hint rule also matches, both fragments ride that single emission …",
+        "title": "G8 — the nudge is free when there is no mail, and can never break the hook",
+        "verify": {
+          "cmd": "(cd auto-mail && go test ./mail/) && (cd auto-cli && go test ./cmd/auto/) && (cd harness && uv run pytest tests/mail_flow -v)",
+          "tests": [
+            "auto-mail/mail/mail_test.go",
+            "auto-cli/cmd/auto/hooksmail_test.go",
+            "harness/tests/mail_flow/test_mail_loop.py"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-mfg7",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** an initialised store and two agent workspaces on one host; **When** the four commands of C1 are run in order; **Then** each emits the documented JSON payload on **stdout only**: `subscribe <address>` → `{\"address\":…, \"subscription\":\"sub_…\", \"backfilled\":N}` `send --to <address> --message <text>` → `{\"id\":\"<ULID>\", \"to\":…, \"subscriptions\":N …",
+        "title": "C1 — the epic's transcript runs verbatim",
+        "verify": {
+          "cmd": "(cd auto-mail && go test ./internal/cli/) && (cd harness && uv run pytest tests/mail_flow -v)",
+          "tests": [
+            "auto-mail/internal/cli/cli_test.go",
+            "harness/tests/mail_flow/test_mail_loop.py"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-pn3v",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** a mail row and its `alpha.mail.sent` event; **When** the mail is listed and then acked; **Then** the `mail` row and every previously-appended event row are **byte identical** before and after (asserted by comparing full row snapshots)",
+        "title": "G1 — mail and events are immutable",
+        "verify": {
+          "cmd": "(cd auto-mail && go test ./internal/store/)",
+          "tests": [
+            "auto-mail/internal/store/store_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-vgcz",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** `uv run harness mail-flow up` from `harness/`; **Then** the stack comes up with **one** container, one seeded host id, and two registered project workspaces, and `check_ready()` gates fail-fast with a diagnostic if the store is not initialised or a workspace is not registered; **When** `uv run pytest tests/mail_flow -v` runs; **Then** the full C1 loop passes against the **real `auto` binary built from monorepo source**: agent B subscribes, agent A sends, agent B's hook fire emits the nudge, `list` shows the mail, `ack` reports `wonTransition: true`, and the …",
+        "title": "G15 — it passes end to end in the harness",
+        "verify": {
+          "cmd": "(cd harness && uv run pytest tests/mail_flow -v)",
+          "tests": [
+            "harness/tests/mail_flow/test_mail_loop.py"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-xbrt",
+      "type": "ac",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "gwt": "**Given** address validation; **Then** `auto-web/bugs` is accepted — the separator `/` is explicitly permitted and never normalised away — as are addresses with no separator at all",
+        "title": "G5 / D-9 — addresses are virtual and free-form",
+        "verify": {
+          "cmd": "(cd auto-mail && go test ./internal/store/ ./mail/)",
+          "tests": [
+            "auto-mail/mail/mail_test.go",
+            "auto-mail/internal/store/store_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "a-01p5",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "title": "Key the binding on cwd only",
+        "why": "Breaks the moment two agents work in one checkout, this host's normal state."
+      }
+    },
+    {
+      "id": "a-0bcq",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "title": "Open the store read-only in the hook and count",
+        "why": "Not stat cost: a SQLite open in every agent's hot path."
+      }
+    },
+    {
+      "id": "a-1eyq",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "title": "Key the binding on session_id",
+        "why": "The CLI cannot see it: that is exactly the bridge D-13 defers to T2."
+      }
+    },
+    {
+      "id": "a-2g81",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ae",
+      "fields": {
+        "title": "Rely on the bus instead of the pending flag",
+        "why": "The bus is at-most-once and drops slow subscribers: the D-5 error D-12 corrected."
+      }
+    },
+    {
+      "id": "a-2gq9",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ac",
+      "fields": {
+        "title": "Put everything under internal/ per the package blueprint",
+        "why": "Mail is a seam other tools consume; exporting one narrow package makes G11 a compile-time guarantee."
+      }
+    },
+    {
+      "id": "a-4kf4",
+      "type": "alternative",
+      "status": "active",
+      "rank": "af",
+      "fields": {
+        "title": "Exit non-zero on a lost ack race",
+        "why": "A shell would treat a correct, expected outcome as a failure."
+      }
+    },
+    {
+      "id": "a-63s8",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a8",
+      "fields": {
+        "title": "Ship stub quickstart and doctor in T1",
+        "why": "A stub quickstart teaches a half-built workflow: the ships-complete-and-unused failure."
+      }
+    },
+    {
+      "id": "a-6gjf",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "title": "A new --as <label> flag on subscribe",
+        "why": "Pushes physical identity onto the caller, and free-form labels collide silently."
+      }
+    },
+    {
+      "id": "a-6tp0",
+      "type": "alternative",
+      "status": "active",
+      "rank": "aa",
+      "fields": {
+        "title": "Build both Client implementations in T1",
+        "why": "Drags the daemon, its lifecycle and its failure modes into the walking skeleton."
+      }
+    },
+    {
+      "id": "a-cfv7",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ad",
+      "fields": {
+        "title": "Publish a bus event from send in T1",
+        "why": "Buys nothing for the in-band path, and adds a live daemon dependency D-11 forbids."
+      }
+    },
+    {
+      "id": "a-f1ys",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "title": "A shared in-memory or daemon cache",
+        "why": "Reintroduces the daemon into the path D-11 removed it from."
+      }
+    },
+    {
+      "id": "a-fzh2",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "title": "Interpolate the sender or subject into the nudge text",
+        "why": "Sender-controlled text would land in another agent's context; the nudge is a constant, as G14 fixes keystrokes."
+      }
+    },
+    {
+      "id": "a-m7rq",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ag",
+      "fields": {
+        "title": "Exit 0 and say nothing",
+        "why": "The exact silent success G13 forbids."
+      }
+    },
+    {
+      "id": "a-q6hs",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "title": "Two containers with distinct host ids",
+        "why": "That is multi-host, which the MVP explicitly is not."
+      }
+    },
+    {
+      "id": "a-spbj",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a9",
+      "fields": {
+        "title": "Pull T4's adoption work forward",
+        "why": "Breaks the slice and duplicates work once #parent and waking land."
+      }
+    },
+    {
+      "id": "a-tr9x",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "title": "Two containers sharing a ~/.auto volume",
+        "why": "Contradicts one-container-one-host, and a shared HOME collides on ready files and host identity."
+      }
+    },
+    {
+      "id": "a-vvcy",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ab",
+      "fields": {
+        "title": "No conformance suite until there are two implementations",
+        "why": "Then the second implementation pays for the suite, when it is most tempting to skip."
+      }
+    },
+    {
+      "id": "d-57nj",
+      "type": "decision",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "by": "agent",
+        "chosen": "T1 ships `init` (creates `~/.auto/mail/` and the store), `docs` (the full command reference — an agent must be able to discover the surface it is being asked to use) and `reset` (G10 makes wiping a *supported operation*, and the harness needs it for isolation). `quickstart` and `doctor` are T4's, as the epic assigns them.",
+        "title": "T1 ships init, docs and reset; quickstart and doctor land in T4",
+        "why": "The project's CLI conventions call for `init` / `doctor` / `quickstart` / `docs` on every tool. The epic assigns \"quickstart, doctor and agent-facing guidance\" to **T4** and argues explicitly that adoption is a task, not a chore."
+      }
+    },
+    {
+      "id": "d-9bka",
+      "type": "decision",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "by": "agent",
+        "chosen": "The `mail-flow` scenario is a **single container** with one seeded host id and one `~/.auto`, containing **two registered project workspaces** (`/workspace/project-a`, `/workspace/project-b`). Each \"agent\" is a separate `auto` process invocation run in one of those workspaces.",
+        "title": "Two agents on one host = two workspaces in one container, not two containers",
+        "why": "T1's scenario must bring up \"two agents on one host\". `event-flow`'s pattern is one container per agent, each seeded with a **distinct `HOST_ID`** — that is precisely what makes it a *multi-host* scenario."
+      }
+    },
+    {
+      "id": "d-gm40",
+      "type": "decision",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "by": "agent",
+        "chosen": "In T1, \"notify inline\" means: `send` sets the receiver's pending flag inside its commit path, and the receiver's very next tool-call hook picks it up. No bus event is published by `auto mail send` in T1.",
+        "title": "Inline notification in T1 is the pending flag; the bus event waits for the daemon",
+        "why": "D-12 keeps inline notification as the fast path. The epic's container diagram draws the notification arriving over the bus (`DAEMON → BUS ⇢ HOOK`), but D-11 removes the daemon from T1 entirely."
+      }
+    },
+    {
+      "id": "d-p2kk",
+      "type": "decision",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "by": "agent",
+        "chosen": "Binding identity is the **opaque `(manager, target)` pair G12 mandates**, derived by both sides from the *same* shared helper (`auto-shared/hooks.CaptureContext`), on a documented fallback ladder: `tmux` + `tmux_pane_id` → `ntm` + the NTM pane identifier → `cwd` + the resolved worktree path. **`subscribe` is the only writer of a binding row in T1** …",
+        "title": "A binding is keyed by the physical context hooks already capture",
+        "why": "The nudge needs to answer \"does the agent that just fired this hook have mail?\". The hook payload carries `session_id` and `cwd`; the `auto mail subscribe` process does **not** see `session_id` (it is a tool call, not the hook process)."
+      }
+    },
+    {
+      "id": "d-pe53",
+      "type": "decision",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "by": "agent",
+        "chosen": "T1 defines `mail.Client` and ships the direct-store implementation only. It also ships a **conformance suite written against the interface** (the `auto-shared/rpc/conformance` pattern), run against that one implementation now.",
+        "title": "T1 defines the Client seam and ships one implementation, with the conformance suite written against the interface",
+        "why": "Seam 1 warns that \"an abstraction with one implementation is a guess\". D-11 settles that the MVP CLI binds the **direct-store** implementation and the RPC one is what the daemon uses."
+      }
+    },
+    {
+      "id": "d-xpbe",
+      "type": "decision",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "by": "agent",
+        "chosen": "`auto mail ack <id>` always prints `{\"id\":…, \"acked\":true, \"wonTransition\":<bool>}` on stdout and exits **0** when the delivery exists. A loser gets `wonTransition:false` plus a one-line note on stderr naming who won it.",
+        "title": "Losing an ack race is a reported outcome, not an error exit",
+        "why": "G13 requires that a losing ack be \"told, never silently treated as success\". That fixes the payload, not the exit code, and the project convention reserves fail-fast exits for invalid CLI usage."
+      }
+    },
+    {
+      "id": "d-ymt5",
+      "type": "decision",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "by": "agent",
+        "chosen": "The mail package maintains a **pending flag** — an empty marker file per bound subscription under `~/.auto/mail/alpha-flags/`. `send` creates the flag for each bound subscription inside the same commit path; `ack` removes it when that subscription's unacked count reaches zero.",
+        "title": "The no-mail hook path is gated by a pending-flag file, not a store read",
+        "why": "G8: \"the common case — no pending mail — must cost about what a `stat` costs, and must never be able to stall or break the hook.\" Opening a SQLite file and running an indexed count is milliseconds, not a `stat`, and it happens on **every tool call of every agent on the host**."
+      }
+    },
+    {
+      "id": "f-0ytx",
+      "type": "file",
+      "status": "active",
+      "rank": "az5",
+      "fields": {
+        "change": "edit",
+        "path": "Makefile",
+        "why": "Add auto-mail to PROJECTS and to RACE_PROJECTS (the ack race and concurrent writers must run under -race)."
+      }
+    },
+    {
+      "id": "f-124m",
+      "type": "file",
+      "status": "active",
+      "rank": "a9",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/cli/docs.go",
+        "why": "`auto mail docs`: embedded full command reference incl. the delivery contract and the alpha disclaimer."
+      }
+    },
+    {
+      "id": "f-271g",
+      "type": "file",
+      "status": "active",
+      "rank": "al",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/mail/pending.go",
+        "why": "The pending-flag file: Set/Clear/HasPending (stat only) and NudgeText (a fixed constant)."
+      }
+    },
+    {
+      "id": "f-2cx2",
+      "type": "file",
+      "status": "active",
+      "rank": "az8",
+      "fields": {
+        "change": "add",
+        "path": "harness/scenarios/mail-flow/docker-compose.yaml",
+        "why": "One `host` service, init: true, healthcheck gating on the mail-ready file."
+      }
+    },
+    {
+      "id": "f-2nmm",
+      "type": "file",
+      "status": "active",
+      "rank": "an",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/store/store.go",
+        "why": "Open (MkdirAll, sql.Open, WAL + busy_timeout + foreign_keys), Close, single write connection, transaction helper."
+      }
+    },
+    {
+      "id": "f-32y3",
+      "type": "file",
+      "status": "active",
+      "rank": "az4",
+      "fields": {
+        "change": "edit",
+        "path": "go.work",
+        "why": "Add ./auto-mail to the use block."
+      }
+    },
+    {
+      "id": "f-383z",
+      "type": "file",
+      "status": "active",
+      "rank": "az3",
+      "fields": {
+        "change": "edit",
+        "path": "auto-cli/go.sum",
+        "why": "Checksums for the new module edge."
+      }
+    },
+    {
+      "id": "f-3bxs",
+      "type": "file",
+      "status": "active",
+      "rank": "aze",
+      "fields": {
+        "change": "add",
+        "path": "harness/tests/mail_flow/conftest.py",
+        "why": "Session-scoped fixture: up(build=True) then down() at teardown."
+      }
+    },
+    {
+      "id": "f-3e02",
+      "type": "file",
+      "status": "active",
+      "rank": "ai",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/mail/direct.go",
+        "why": "NewDirect: the direct-store implementation D-11 binds the MVP CLI to."
+      }
+    },
+    {
+      "id": "f-3n0t",
+      "type": "file",
+      "status": "active",
+      "rank": "az7",
+      "fields": {
+        "change": "add",
+        "path": "harness/scenarios/mail-flow/Dockerfile",
+        "why": "Builds the real auto binary from monorepo source (context ../../..) into a single host image."
+      }
+    },
+    {
+      "id": "f-48t5",
+      "type": "file",
+      "status": "active",
+      "rank": "a8",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/cli/init.go",
+        "why": "`auto mail init [--project]`: EnsureHost, create ~/.auto/mail/, open+migrate the store."
+      }
+    },
+    {
+      "id": "f-5qnz",
+      "type": "file",
+      "status": "active",
+      "rank": "ay",
+      "fields": {
+        "change": "edit",
+        "path": "auto-cli/cmd/auto/hookscmd.go",
+        "why": "After the existing sinks, stat the pending flag for the firing agent's binding and prepend the fixed mail fragment to the single emission."
+      }
+    },
+    {
+      "id": "f-6prf",
+      "type": "file",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/CLAUDE.md",
+        "why": "Tool description, build/test instructions, and the alpha contract stated in as many words (at-least-once, unordered, idempotent consumers, store may be wiped)."
+      }
+    },
+    {
+      "id": "f-6z14",
+      "type": "file",
+      "status": "active",
+      "rank": "ad",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/cli/ack.go",
+        "why": "`auto mail ack <mail-id>`; prints wonTransition, exit 0 on a lost race (D-062-7)."
+      }
+    },
+    {
+      "id": "f-9x8m",
+      "type": "file",
+      "status": "active",
+      "rank": "ax",
+      "fields": {
+        "change": "edit",
+        "path": "auto-cli/cmd/auto/hints.go",
+        "why": "Split emission from matching: matchHint returns the rendered fragment; emitAdditionalContext writes exactly one hookSpecificOutput object for all fragments."
+      }
+    },
+    {
+      "id": "f-anp7",
+      "type": "file",
+      "status": "active",
+      "rank": "azg",
+      "fields": {
+        "change": "edit",
+        "path": "harness/CLAUDE.md",
+        "why": "Document the mail-flow scenario alongside skill-remote and event-flow."
+      }
+    },
+    {
+      "id": "f-aw9y",
+      "type": "file",
+      "status": "active",
+      "rank": "ae",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/cli/reset.go",
+        "why": "`auto mail reset [--yes]`; removes the store and flag directory, reports what it removed."
+      }
+    },
+    {
+      "id": "f-bcs8",
+      "type": "file",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/cli/root.go",
+        "why": "Root cobra command, ExitError, Execute; wires the subcommands."
+      }
+    },
+    {
+      "id": "f-bndy",
+      "type": "file",
+      "status": "active",
+      "rank": "av",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/conformance/seam_test.go",
+        "why": "AC-12 guard: walks the repo (located via go.work) asserting the store filename and sqlite imports appear only under auto-mail/internal/store."
+      }
+    },
+    {
+      "id": "f-bt89",
+      "type": "file",
+      "status": "active",
+      "rank": "ah",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/mail/client.go",
+        "why": "The public seam: Client interface, inputs/results, domain types, sentinel errors. The only exported package."
+      }
+    },
+    {
+      "id": "f-djp7",
+      "type": "file",
+      "status": "active",
+      "rank": "aj",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/mail/address.go",
+        "why": "ValidateAddress — permissive, separator explicitly allowed and never normalised (D-9)."
+      }
+    },
+    {
+      "id": "f-dsj8",
+      "type": "file",
+      "status": "active",
+      "rank": "ag",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/config/settings.go",
+        "why": "Store and flag paths under ~/.auto/mail/, settings load/validate via auto-shared/config."
+      }
+    },
+    {
+      "id": "f-ed9v",
+      "type": "file",
+      "status": "active",
+      "rank": "az6",
+      "fields": {
+        "change": "edit",
+        "path": "CLAUDE.md",
+        "why": "Add the auto-mail row to the Sub-Projects table."
+      }
+    },
+    {
+      "id": "f-edst",
+      "type": "file",
+      "status": "active",
+      "rank": "ac",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/cli/list.go",
+        "why": "`auto mail list [--address] [--subscription]`; all bound subscriptions when unfiltered; clears a stale flag."
+      }
+    },
+    {
+      "id": "f-f2m8",
+      "type": "file",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/go.mod",
+        "why": "module github.com/mistakenot/auto-mail; replace auto-shared => ../auto-shared; modernc.org/sqlite + cobra."
+      }
+    },
+    {
+      "id": "f-fhpw",
+      "type": "file",
+      "status": "active",
+      "rank": "au",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/conformance/conformance_test.go",
+        "why": "Runs the suite against the direct-store implementation; T3 adds the RPC one as a second target."
+      }
+    },
+    {
+      "id": "f-fpa3",
+      "type": "file",
+      "status": "active",
+      "rank": "aq",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/store/project.go",
+        "why": "Same-transaction projection: mail insert, lazy delivery materialisation from the cursor, read stamp, ack compare-and-set, binding upsert."
+      }
+    },
+    {
+      "id": "f-gn2d",
+      "type": "file",
+      "status": "active",
+      "rank": "at",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/conformance/conformance.go",
+        "why": "The Client contract suite, written against the interface: explicit ack, wonTransition, backfill-on-subscribe, subscriptions-vs-bound, idempotent re-ack."
+      }
+    },
+    {
+      "id": "f-h7wk",
+      "type": "file",
+      "status": "active",
+      "rank": "ao",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/store/schema.go",
+        "why": "DDL: events (+ append-only triggers), mail (+ immutability trigger), subscriptions, deliveries, bindings, indexes, schema_migrations."
+      }
+    },
+    {
+      "id": "f-hr0p",
+      "type": "file",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/app/app.go",
+        "why": "App context (stdout, stderr, cwd), per the blueprint."
+      }
+    },
+    {
+      "id": "f-jqm7",
+      "type": "file",
+      "status": "active",
+      "rank": "ar",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/store/store_test.go",
+        "why": "Immutability (triggers abort UPDATE/DELETE), cursor backfill, broadcast fan-out, and the concurrent-writer test run under -race."
+      }
+    },
+    {
+      "id": "f-kjh2",
+      "type": "file",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/cmd/automail/main.go",
+        "why": "Minimal entry point delegating to cli.Execute."
+      }
+    },
+    {
+      "id": "f-kyqb",
+      "type": "file",
+      "status": "active",
+      "rank": "aza",
+      "fields": {
+        "change": "add",
+        "path": "harness/scenarios/mail-flow/fixtures/hooks/post-tool-use.json",
+        "why": "A minimal PostToolUse payload, patched per-fire with cwd (mirrors event-flow's fixture pattern)."
+      }
+    },
+    {
+      "id": "f-m24f",
+      "type": "file",
+      "status": "active",
+      "rank": "ap",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/store/events.go",
+        "why": "The alpha.mail.* event types, the versioned envelope, and the append path (the only writer of `events`)."
+      }
+    },
+    {
+      "id": "f-m7ab",
+      "type": "file",
+      "status": "active",
+      "rank": "azf",
+      "fields": {
+        "change": "add",
+        "path": "harness/tests/mail_flow/test_mail_loop.py",
+        "why": "AC-13: the C1 loop, the in-band nudge, send-before-subscribe, and the no-store-created assertion."
+      }
+    },
+    {
+      "id": "f-m9bb",
+      "type": "file",
+      "status": "active",
+      "rank": "az",
+      "fields": {
+        "change": "edit",
+        "path": "auto-cli/cmd/auto/hints_test.go",
+        "why": "Update for the matchHint/emitAdditionalContext split; existing behaviour assertions unchanged."
+      }
+    },
+    {
+      "id": "f-nkx5",
+      "type": "file",
+      "status": "active",
+      "rank": "azb",
+      "fields": {
+        "change": "add",
+        "path": "harness/src/harness/scenarios/mail_flow.py",
+        "why": "MailFlowScenario: check_ready gates plus the DSL (subscribe/send/list/ack/fire_hook/assert_nudge) with bounded retry."
+      }
+    },
+    {
+      "id": "f-nrws",
+      "type": "file",
+      "status": "active",
+      "rank": "as",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/ulid/ulid.go",
+        "why": "Sender-generated ids, monotonic and sortable within one process — the cross-host merge property the backlog names. Not the store's ordering: cursors use the log's `seq`."
+      }
+    },
+    {
+      "id": "f-pesp",
+      "type": "file",
+      "status": "active",
+      "rank": "am",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/mail/mail_test.go",
+        "why": "Address validation, binding ladder, flag lifecycle, and the zero-store-opens assertion via an injected counting opener."
+      }
+    },
+    {
+      "id": "f-rrht",
+      "type": "file",
+      "status": "active",
+      "rank": "af",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/cli/cli_test.go",
+        "why": "Command-level tests against a temp HOME asserting the exact C1 payload shapes and the error paths."
+      }
+    },
+    {
+      "id": "f-rsyh",
+      "type": "file",
+      "status": "active",
+      "rank": "az1",
+      "fields": {
+        "change": "add",
+        "path": "auto-cli/cmd/auto/hooksmail_test.go",
+        "why": "Hook-side tests: nudge emitted only with a flag and only on PostToolUse, one emission when a hint also matches, exit 0 with an absent/unreadable store, and no store file created."
+      }
+    },
+    {
+      "id": "f-s5mp",
+      "type": "file",
+      "status": "active",
+      "rank": "azc",
+      "fields": {
+        "change": "edit",
+        "path": "harness/src/harness/cli.py",
+        "why": "One line registering mail-flow in SCENARIOS."
+      }
+    },
+    {
+      "id": "f-t2we",
+      "type": "file",
+      "status": "active",
+      "rank": "az2",
+      "fields": {
+        "change": "edit",
+        "path": "auto-cli/go.mod",
+        "why": "Require github.com/mistakenot/auto-mail with a local replace directive."
+      }
+    },
+    {
+      "id": "f-txje",
+      "type": "file",
+      "status": "active",
+      "rank": "ak",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/mail/binding.go",
+        "why": "BindingFor: the (manager, target) ladder over hooks.CaptureContext (D-062-2)."
+      }
+    },
+    {
+      "id": "f-vrqj",
+      "type": "file",
+      "status": "active",
+      "rank": "ab",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/cli/send.go",
+        "why": "`auto mail send --to --message [--body] [--from]`; resolves the sender's absolute from-address."
+      }
+    },
+    {
+      "id": "f-wj0b",
+      "type": "file",
+      "status": "active",
+      "rank": "az9",
+      "fields": {
+        "change": "add",
+        "path": "harness/scenarios/mail-flow/scripts/host-entrypoint.sh",
+        "why": "Seeds one host id, git-inits and registers /workspace/project-a and project-b, runs auto mail init, writes the ready file."
+      }
+    },
+    {
+      "id": "f-wt5d",
+      "type": "file",
+      "status": "active",
+      "rank": "aw",
+      "fields": {
+        "change": "edit",
+        "path": "auto-cli/cmd/auto/main.go",
+        "why": "Import mailcmd and add mailcmd.New(stdout, stderr) to root.AddCommand."
+      }
+    },
+    {
+      "id": "f-x13r",
+      "type": "file",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/rootcmd/rootcmd.go",
+        "why": "New(stdout, stderr) façade so auto-cli can mount `auto mail`."
+      }
+    },
+    {
+      "id": "f-y35d",
+      "type": "file",
+      "status": "active",
+      "rank": "azd",
+      "fields": {
+        "change": "add",
+        "path": "harness/tests/mail_flow/__init__.py",
+        "why": "Package marker, mirroring tests/event_flow."
+      }
+    },
+    {
+      "id": "f-y361",
+      "type": "file",
+      "status": "active",
+      "rank": "aa",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/internal/cli/subscribe.go",
+        "why": "`auto mail subscribe <address> [--from-now] [--name]`; records the caller's binding."
+      }
+    },
+    {
+      "id": "f-yxva",
+      "type": "file",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "change": "edit",
+        "path": "docs/concepts/UBIQUITOUS_LANGUAGE.md",
+        "why": "G16, first: add Mail, Address, Subscription, Delivery, Binding with _Avoid_ and _Has_ lines; refresh the generated ER block; update the frontmatter summary."
+      }
+    },
+    {
+      "id": "f-z90w",
+      "type": "file",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "change": "add",
+        "path": "auto-mail/go.sum",
+        "why": "Checksums for the dependency set (all already present elsewhere in the workspace)."
+      }
+    },
+    {
+      "id": "g-21j1",
+      "type": "goal",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "title": "The harness scenario is the verdict, and nothing already shipped breaks"
+      }
+    },
+    {
+      "id": "g-bvmq",
+      "type": "goal",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "title": "An in-band nudge reaches a working agent, at stat cost when there is no mail"
+      }
+    },
+    {
+      "id": "g-gc8t",
+      "type": "goal",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "description": "subscribe, send, list and ack as flat verbs (plus init, docs and reset), JSON on stdout, diagnostics on stderr.",
+        "title": "A new auto-mail package, mounted as auto mail, with the four C1 verbs"
+      }
+    },
+    {
+      "id": "g-j58t",
+      "type": "goal",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "title": "One client seam: mail.Client is the only API, and the direct-store implementation needs no daemon"
+      }
+    },
+    {
+      "id": "g-kqxw",
+      "type": "goal",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "title": "An event-sourced store: an append-only log with same-transaction projections, marked alpha"
+      }
+    },
+    {
+      "id": "g-rbcw",
+      "type": "goal",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "description": "Nothing in mail is called a Message: that word is already bound to a Session exchange.",
+        "title": "Ontology first: the glossary defines Mail, Address, Subscription, Delivery and Binding before any code uses them"
+      }
+    },
+    {
+      "id": "g-w1fg",
+      "type": "goal",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "title": "Broadcast delivery with a compare-and-set ack, rows materialised lazily from a subscription cursor"
+      }
+    },
+    {
+      "id": "plan",
+      "type": "plan",
+      "status": "active",
+      "fields": {
+        "created": "2026-01-01",
+        "epic": "001",
+        "kind": "task",
+        "lifecycle": "plan",
+        "name": "auto-mail-walking-skeleton"
+      }
+    },
+    {
+      "id": "s-5tag",
+      "type": "stage",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "commit": "feat(002): auto-mail ontology, module skeleton and mail-flow scenario",
+        "status": "done",
+        "steps": [
+          "**Glossary.** Add a `## Mail` section to `docs/concepts/UBIQUITOUS_LANGUAGE.md` with five entries in the house format (bold term, definition, `_Avoid_:`, optional `_Has_:`): - **Mail** — the stored …",
+          "**Module scaffold.** Create `auto-mail/` per `docs/auto-package-patterns.md`, copying `auto-artifact/`'s shape: `go.mod` (`module github.com/mistakenot/auto-mail`, `go 1.26.1`, `replace …",
+          "**The store, minimal.** `internal/store/store.go`: `Open(path)` with `os.MkdirAll`, `sql.Open(\"sqlite\", …)` and the exact pragma set `auto-watch/internal/store/store.go:75-78` uses (`journal_mode = …",
+          "**The seam, minimal.** `auto-mail/mail/client.go`: the `Client` interface with all six methods, the input/result types matching the C1 payloads, and sentinel errors.",
+          "**CLI, minimal.** `internal/cli/init.go` (`auto mail init [--project]`: `EnsureHost`, create `~/.auto/mail/`, open + migrate, print `{\"store\":…,\"created\":…,\"alpha\":true}`), `internal/cli/docs.go` …",
+          "**Mount it.** `go.work` gains `./auto-mail`; `auto-cli/go.mod` gains the require + local replace; `auto-cli/cmd/auto/main.go` imports `mailcmd \"github.com/mistakenot/auto-mail/rootcmd\"` and adds …",
+          "**The scenario comes up (the epic's second of three things).** `harness/scenarios/mail-flow/Dockerfile` — build the real `auto` from monorepo source with context `../../..`, mirroring …",
+          "**Verify (phase gate):** `cd auto-mail && go build ./... && go test ./...`; from the repo root `make check` and `make test`; from `harness/` `uv run harness mail-flow up` then `uv run pytest …"
+        ],
+        "title": "Ontology, module skeleton, and the scenario comes up"
+      }
+    },
+    {
+      "id": "s-ap54",
+      "type": "stage",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "commit": "feat(002): in-band mail nudge on hook fire at stat cost",
+        "status": "done",
+        "steps": [
+          "**The pending flag.** `mail/pending.go`: `flagPath(home, b Binding)` = `~/.auto/mail/alpha-flags/` + the first 8 hex bytes of `sha256(manager + \"\\x00\" + target)`; `Set`, `Clear`, and …",
+          "**Split matching from emission (D-062-9).** In `auto-cli/cmd/auto/hints.go`, change `matchAndEmitHint` into `matchHint(...) string` (returns the rendered fragment or `\"\"`, same PostToolUse scoping …",
+          "**Wire the nudge.** In `auto-cli/cmd/auto/hookscmd.go`, at the existing `matchAndEmitHint` call site: compute `mail.BindingFor(cwd)`, call `mail.HasPending(home, b)`, and pass `mail.NudgeText()` as …",
+          "**Hook tests.** `auto-cli/cmd/auto/hooksmail_test.go`: nudge emitted only when the flag exists; only on `PostToolUse`; **one** `hookSpecificOutput` object when a hint rule also matches, with mail …",
+          "**The harness proves it.** Add `harness/scenarios/mail-flow/fixtures/hooks/post-tool-use.json` (a minimal PostToolUse payload, `cwd` patched per fire, mirroring …",
+          "**Verify (phase gate):** `cd auto-mail && go test ./...`; `cd auto-cli && go test ./...`; repo-root `make check && make test`; `uv run pytest tests/mail_flow -v` **and** `uv run pytest …"
+        ],
+        "title": "The in-band nudge reaches a working agent"
+      }
+    },
+    {
+      "id": "s-qg05",
+      "type": "stage",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "commit": "feat(002): cursor backfill, broadcast delivery and the mail.Client conformance suite",
+        "status": "done",
+        "steps": [
+          "**Cursor backfill (D-10).** Make `subscribe` honour `--from-now` (cursor = the store's own high-water mark, `MAX(mail.seq)` read inside the same `BEGIN IMMEDIATE` transaction that stores it) versus …",
+          "**Broadcast (D-7).** Two subscriptions on one address each get their own `deliveries` row and their own ack state; acking one leaves the other unacked.",
+          "**Both counts (G6).** `send` reports `subscriptions` (durable readers) and `bound` (rows with a live binding) as **distinct** numbers, exits 0 with `0/0` for an unknown address, persists the mail …",
+          "**The conformance suite.** `auto-mail/conformance/conformance.go` — a `RunSuite(t *testing.T, newClient func(t *testing.T) mail.Client)` following `auto-shared/rpc/conformance/`, covering: explicit …",
+          "**The harness proves the J2 half.** Extend `test_mail_loop.py` with send-before-subscribe across the two workspaces: project-a sends to an address nobody holds, project-b subscribes afterwards and …",
+          "**Verify (phase gate):** `cd auto-mail && go test ./...`; repo-root `make check && make test`; `uv run pytest tests/mail_flow -v`."
+        ],
+        "title": "Delivery semantics and the Client conformance suite"
+      }
+    },
+    {
+      "id": "s-r3hv",
+      "type": "stage",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "commit": "feat(002): mail immutability, ack-race, reset, seam guard and the alpha contract",
+        "status": "done",
+        "steps": [
+          "**Immutability (G1).** `store_test.go`: snapshot every `events` and `mail` row before a `list` + `ack` cycle and assert byte-identical rows after; assert the `BEFORE UPDATE` / `BEFORE DELETE` …",
+          "**The ack race (G13).** A `-race` test: one delivery, 16 goroutines calling `Ack`, exactly one `wonTransition: true`, exactly one `alpha.mail.acked` event, and every caller seeing `acked: true`.",
+          "**Reset (G10).** `internal/cli/reset.go`: `auto mail reset [--yes]` removes `alpha-store.db` and `alpha-flags/`, reports what it removed, and refuses without `--yes` on a non-empty store with a …",
+          "**The seam guard (G11).** `auto-mail/conformance/seam_test.go`: locate the repo root by walking up for `go.work` (skip the test if absent, so a standalone module checkout still passes), then walk …",
+          "**The alpha contract in writing (G10, G4).** `internal/cli/docs.go` and `auto-mail/CLAUDE.md` both state, in as many words: **at-least-once, unordered, consumers must be idempotent on mail id**; and …",
+          "**Harness docs.** Add the `mail-flow` scenario to `harness/CLAUDE.md`'s Scenarios section alongside `skill-remote` and `event-flow`, including why it is one container (D-062-1).",
+          "**Verify (phase gate):** `cd auto-mail && go test ./...`; repo-root `make check`, `make test`, `make test-race`; from `harness/` `uv run pytest -v` (all three scenarios)."
+        ],
+        "title": "Rails made executable: immutability, the ack race, reset, the seam guard, docs"
+      }
+    },
+    {
+      "id": "s-zf2b",
+      "type": "stage",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "commit": "feat(002): mail event log, projection and the C1 subscribe/send/list/ack loop",
+        "status": "done",
+        "steps": [
+          "**Ids.** `internal/ulid/ulid.go`: sender-generated ULIDs, monotonic and lexicographically sortable **within one process** (the cross-host merge property `docs/auto-mail-beyond-mvp.md` §3 depends on).",
+          "**Events.** `internal/store/events.go`: the four `alpha.*` types — `alpha.mail.subscribed`, `alpha.mail.sent`, `alpha.mail.read`, `alpha.mail.acked` — a versioned envelope (`version` integer, default …",
+          "**Projection.** `internal/store/project.go`, all inside one `BEGIN IMMEDIATE` transaction per operation: - `subscribe` → append `alpha.mail.subscribed`; upsert the subscription (address + …",
+          "**Addresses and bindings.** `mail/address.go`: `ValidateAddress` — permissive, `/` explicitly allowed and never normalised (D-9); rejects empty, whitespace-padded, control characters and over-length …",
+          "**The direct client.** Implement the remaining five `Client` methods in `mail/direct.go` over the projection, returning exactly the C1 payload shapes.",
+          "**The CLI verbs.** `subscribe.go` (positional address, `--from-now`, `--name`), `send.go` (`--to`, `--message`, `--body`, `--from`), `list.go` (`--address`, `--subscription`; unfiltered returns every …",
+          "**The harness proves it (G15).** Extend `mail_flow.py` with `subscribe/send/list/ack` DSL helpers returning parsed JSON, and `test_mail_loop.py` with the C1 loop across the two workspaces …",
+          "**Verify (phase gate):** `cd auto-mail && go build ./... && go test ./...`; repo-root `make check && make test`; `uv run pytest tests/mail_flow -v`."
+        ],
+        "title": "One message travels between two agents and is acked"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "a-0bcq",
+      "type": "wouldBreak",
+      "to": "001:r-1eyq"
+    },
+    {
+      "from": "a-2g81",
+      "type": "wouldBreak",
+      "to": "ac-jcvm"
+    },
+    {
+      "from": "a-2gq9",
+      "type": "wouldBreak",
+      "to": "001:r-fzh2"
+    },
+    {
+      "from": "a-fzh2",
+      "type": "wouldBreak",
+      "to": "001:r-fjxr"
+    },
+    {
+      "from": "a-m7rq",
+      "type": "wouldBreak",
+      "to": "001:r-apsc"
+    },
+    {
+      "from": "ac-0f9w",
+      "type": "discharges",
+      "to": "001:r-apsc"
+    },
+    {
+      "from": "ac-0f9w",
+      "type": "proves",
+      "to": "g-w1fg"
+    },
+    {
+      "from": "ac-0x4k",
+      "type": "discharges",
+      "to": "001:r-jcvm"
+    },
+    {
+      "from": "ac-0x4k",
+      "type": "proves",
+      "to": "g-w1fg"
+    },
+    {
+      "from": "ac-42vx",
+      "type": "discharges",
+      "to": "001:r-q6hs"
+    },
+    {
+      "from": "ac-42vx",
+      "type": "proves",
+      "to": "g-w1fg"
+    },
+    {
+      "from": "ac-7fdr",
+      "type": "discharges",
+      "to": "001:r-42vx"
+    },
+    {
+      "from": "ac-7fdr",
+      "type": "proves",
+      "to": "g-w1fg"
+    },
+    {
+      "from": "ac-9wde",
+      "type": "discharges",
+      "to": "001:r-f1ys"
+    },
+    {
+      "from": "ac-9wde",
+      "type": "proves",
+      "to": "g-rbcw"
+    },
+    {
+      "from": "ac-apsc",
+      "type": "discharges",
+      "to": "001:r-fzh2"
+    },
+    {
+      "from": "ac-apsc",
+      "type": "proves",
+      "to": "g-j58t"
+    },
+    {
+      "from": "ac-cwd2",
+      "type": "discharges",
+      "to": "001:r-vgcz"
+    },
+    {
+      "from": "ac-cwd2",
+      "type": "proves",
+      "to": "g-w1fg"
+    },
+    {
+      "from": "ac-fjxr",
+      "type": "discharges",
+      "to": "001:r-6gjf"
+    },
+    {
+      "from": "ac-fjxr",
+      "type": "proves",
+      "to": "g-kqxw"
+    },
+    {
+      "from": "ac-jcvm",
+      "type": "discharges",
+      "to": "001:r-1eyq"
+    },
+    {
+      "from": "ac-jcvm",
+      "type": "proves",
+      "to": "g-bvmq"
+    },
+    {
+      "from": "ac-mfg7",
+      "type": "proves",
+      "to": "g-gc8t"
+    },
+    {
+      "from": "ac-pn3v",
+      "type": "discharges",
+      "to": "001:r-xbrt"
+    },
+    {
+      "from": "ac-pn3v",
+      "type": "proves",
+      "to": "g-kqxw"
+    },
+    {
+      "from": "ac-vgcz",
+      "type": "discharges",
+      "to": "001:r-0bcq"
+    },
+    {
+      "from": "ac-vgcz",
+      "type": "proves",
+      "to": "g-21j1"
+    },
+    {
+      "from": "ac-xbrt",
+      "type": "discharges",
+      "to": "001:r-tr9x"
+    },
+    {
+      "from": "ac-xbrt",
+      "type": "proves",
+      "to": "g-gc8t"
+    },
+    {
+      "from": "d-57nj",
+      "type": "constrains",
+      "to": "g-gc8t"
+    },
+    {
+      "from": "d-57nj",
+      "type": "rejects",
+      "to": "a-63s8"
+    },
+    {
+      "from": "d-57nj",
+      "type": "rejects",
+      "to": "a-spbj"
+    },
+    {
+      "from": "d-9bka",
+      "type": "constrains",
+      "to": "ac-vgcz"
+    },
+    {
+      "from": "d-9bka",
+      "type": "rejects",
+      "to": "a-q6hs"
+    },
+    {
+      "from": "d-9bka",
+      "type": "rejects",
+      "to": "a-tr9x"
+    },
+    {
+      "from": "d-gm40",
+      "type": "constrains",
+      "to": "ac-jcvm"
+    },
+    {
+      "from": "d-gm40",
+      "type": "rejects",
+      "to": "a-2g81"
+    },
+    {
+      "from": "d-gm40",
+      "type": "rejects",
+      "to": "a-cfv7"
+    },
+    {
+      "from": "d-p2kk",
+      "type": "constrains",
+      "to": "ac-xbrt"
+    },
+    {
+      "from": "d-p2kk",
+      "type": "rejects",
+      "to": "a-01p5"
+    },
+    {
+      "from": "d-p2kk",
+      "type": "rejects",
+      "to": "a-1eyq"
+    },
+    {
+      "from": "d-p2kk",
+      "type": "rejects",
+      "to": "a-6gjf"
+    },
+    {
+      "from": "d-pe53",
+      "type": "constrains",
+      "to": "g-j58t"
+    },
+    {
+      "from": "d-pe53",
+      "type": "rejects",
+      "to": "a-2gq9"
+    },
+    {
+      "from": "d-pe53",
+      "type": "rejects",
+      "to": "a-6tp0"
+    },
+    {
+      "from": "d-pe53",
+      "type": "rejects",
+      "to": "a-vvcy"
+    },
+    {
+      "from": "d-xpbe",
+      "type": "constrains",
+      "to": "ac-0f9w"
+    },
+    {
+      "from": "d-xpbe",
+      "type": "rejects",
+      "to": "a-4kf4"
+    },
+    {
+      "from": "d-xpbe",
+      "type": "rejects",
+      "to": "a-m7rq"
+    },
+    {
+      "from": "d-ymt5",
+      "type": "constrains",
+      "to": "ac-jcvm"
+    },
+    {
+      "from": "d-ymt5",
+      "type": "rejects",
+      "to": "a-0bcq"
+    },
+    {
+      "from": "d-ymt5",
+      "type": "rejects",
+      "to": "a-f1ys"
+    },
+    {
+      "from": "d-ymt5",
+      "type": "rejects",
+      "to": "a-fzh2"
+    },
+    {
+      "from": "plan",
+      "type": "builds-on",
+      "to": "001:d-271g"
+    },
+    {
+      "from": "plan",
+      "type": "builds-on",
+      "to": "001:d-3e02"
+    },
+    {
+      "from": "plan",
+      "type": "builds-on",
+      "to": "001:d-edst"
+    },
+    {
+      "from": "plan",
+      "type": "builds-on",
+      "to": "001:d-gm40"
+    },
+    {
+      "from": "plan",
+      "type": "builds-on",
+      "to": "001:d-spbj"
+    },
+    {
+      "from": "plan",
+      "type": "builds-on",
+      "to": "001:d-vvcy"
+    },
+    {
+      "from": "plan",
+      "type": "builds-on",
+      "to": "001:d-xpbe"
+    },
+    {
+      "from": "plan",
+      "type": "delivers",
+      "to": "001:l-0x4k"
+    },
+    {
+      "from": "plan",
+      "type": "delivers",
+      "to": "001:l-cwd2"
+    },
+    {
+      "from": "plan",
+      "type": "honors",
+      "to": "001:r-0bcq"
+    },
+    {
+      "from": "plan",
+      "type": "honors",
+      "to": "001:r-1eyq"
+    },
+    {
+      "from": "plan",
+      "type": "honors",
+      "to": "001:r-42vx"
+    },
+    {
+      "from": "plan",
+      "type": "honors",
+      "to": "001:r-6gjf"
+    },
+    {
+      "from": "plan",
+      "type": "honors",
+      "to": "001:r-apsc"
+    },
+    {
+      "from": "plan",
+      "type": "honors",
+      "to": "001:r-f1ys"
+    },
+    {
+      "from": "plan",
+      "type": "honors",
+      "to": "001:r-fzh2"
+    },
+    {
+      "from": "plan",
+      "type": "honors",
+      "to": "001:r-jcvm"
+    },
+    {
+      "from": "plan",
+      "type": "honors",
+      "to": "001:r-q6hs"
+    },
+    {
+      "from": "plan",
+      "type": "honors",
+      "to": "001:r-tr9x"
+    },
+    {
+      "from": "plan",
+      "type": "honors",
+      "to": "001:r-vgcz"
+    },
+    {
+      "from": "plan",
+      "type": "honors",
+      "to": "001:r-xbrt"
+    },
+    {
+      "from": "s-5tag",
+      "type": "covers",
+      "to": "ac-9wde"
+    },
+    {
+      "from": "s-5tag",
+      "type": "covers",
+      "to": "ac-fjxr"
+    },
+    {
+      "from": "s-5tag",
+      "type": "covers",
+      "to": "ac-mfg7"
+    },
+    {
+      "from": "s-5tag",
+      "type": "covers",
+      "to": "ac-vgcz"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-0ytx"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-124m"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-2cx2"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-2nmm"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-32y3"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-383z"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-3bxs"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-3e02"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-3n0t"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-48t5"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-6prf"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-bcs8"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-bt89"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-dsj8"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-ed9v"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-edst"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-f2m8"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-h7wk"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-hr0p"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-kjh2"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-m7ab"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-nkx5"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-pesp"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-rrht"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-s5mp"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-t2we"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-wj0b"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-wt5d"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-x13r"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-y35d"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-yxva"
+    },
+    {
+      "from": "s-5tag",
+      "type": "touches",
+      "to": "f-z90w"
+    },
+    {
+      "from": "s-ap54",
+      "type": "covers",
+      "to": "ac-jcvm"
+    },
+    {
+      "from": "s-ap54",
+      "type": "covers",
+      "to": "ac-vgcz"
+    },
+    {
+      "from": "s-ap54",
+      "type": "covers",
+      "to": "ac-xbrt"
+    },
+    {
+      "from": "s-ap54",
+      "type": "dependsOn",
+      "to": "s-zf2b"
+    },
+    {
+      "from": "s-ap54",
+      "type": "touches",
+      "to": "f-271g"
+    },
+    {
+      "from": "s-ap54",
+      "type": "touches",
+      "to": "f-5qnz"
+    },
+    {
+      "from": "s-ap54",
+      "type": "touches",
+      "to": "f-6z14"
+    },
+    {
+      "from": "s-ap54",
+      "type": "touches",
+      "to": "f-9x8m"
+    },
+    {
+      "from": "s-ap54",
+      "type": "touches",
+      "to": "f-dsj8"
+    },
+    {
+      "from": "s-ap54",
+      "type": "touches",
+      "to": "f-edst"
+    },
+    {
+      "from": "s-ap54",
+      "type": "touches",
+      "to": "f-kyqb"
+    },
+    {
+      "from": "s-ap54",
+      "type": "touches",
+      "to": "f-m7ab"
+    },
+    {
+      "from": "s-ap54",
+      "type": "touches",
+      "to": "f-m9bb"
+    },
+    {
+      "from": "s-ap54",
+      "type": "touches",
+      "to": "f-nkx5"
+    },
+    {
+      "from": "s-ap54",
+      "type": "touches",
+      "to": "f-pesp"
+    },
+    {
+      "from": "s-ap54",
+      "type": "touches",
+      "to": "f-rsyh"
+    },
+    {
+      "from": "s-ap54",
+      "type": "touches",
+      "to": "f-txje"
+    },
+    {
+      "from": "s-qg05",
+      "type": "covers",
+      "to": "ac-0x4k"
+    },
+    {
+      "from": "s-qg05",
+      "type": "covers",
+      "to": "ac-42vx"
+    },
+    {
+      "from": "s-qg05",
+      "type": "covers",
+      "to": "ac-7fdr"
+    },
+    {
+      "from": "s-qg05",
+      "type": "covers",
+      "to": "ac-cwd2"
+    },
+    {
+      "from": "s-qg05",
+      "type": "covers",
+      "to": "ac-vgcz"
+    },
+    {
+      "from": "s-qg05",
+      "type": "dependsOn",
+      "to": "s-ap54"
+    },
+    {
+      "from": "s-qg05",
+      "type": "touches",
+      "to": "f-3e02"
+    },
+    {
+      "from": "s-qg05",
+      "type": "touches",
+      "to": "f-6z14"
+    },
+    {
+      "from": "s-qg05",
+      "type": "touches",
+      "to": "f-edst"
+    },
+    {
+      "from": "s-qg05",
+      "type": "touches",
+      "to": "f-fhpw"
+    },
+    {
+      "from": "s-qg05",
+      "type": "touches",
+      "to": "f-fpa3"
+    },
+    {
+      "from": "s-qg05",
+      "type": "touches",
+      "to": "f-gn2d"
+    },
+    {
+      "from": "s-qg05",
+      "type": "touches",
+      "to": "f-jqm7"
+    },
+    {
+      "from": "s-qg05",
+      "type": "touches",
+      "to": "f-m7ab"
+    },
+    {
+      "from": "s-qg05",
+      "type": "touches",
+      "to": "f-nkx5"
+    },
+    {
+      "from": "s-qg05",
+      "type": "touches",
+      "to": "f-rrht"
+    },
+    {
+      "from": "s-qg05",
+      "type": "touches",
+      "to": "f-vrqj"
+    },
+    {
+      "from": "s-qg05",
+      "type": "touches",
+      "to": "f-y361"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "covers",
+      "to": "ac-0f9w"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "covers",
+      "to": "ac-apsc"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "covers",
+      "to": "ac-cwd2"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "covers",
+      "to": "ac-fjxr"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "covers",
+      "to": "ac-pn3v"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "covers",
+      "to": "ac-vgcz"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "dependsOn",
+      "to": "s-qg05"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "touches",
+      "to": "f-0ytx"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "touches",
+      "to": "f-124m"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "touches",
+      "to": "f-6prf"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "touches",
+      "to": "f-anp7"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "touches",
+      "to": "f-aw9y"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "touches",
+      "to": "f-bndy"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "touches",
+      "to": "f-jqm7"
+    },
+    {
+      "from": "s-r3hv",
+      "type": "touches",
+      "to": "f-rrht"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "covers",
+      "to": "ac-0f9w"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "covers",
+      "to": "ac-0x4k"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "covers",
+      "to": "ac-7fdr"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "covers",
+      "to": "ac-mfg7"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "covers",
+      "to": "ac-pn3v"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "covers",
+      "to": "ac-vgcz"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "covers",
+      "to": "ac-xbrt"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "dependsOn",
+      "to": "s-5tag"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-3e02"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-6z14"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-bt89"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-djp7"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-edst"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-fpa3"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-h7wk"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-jqm7"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-m24f"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-m7ab"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-nkx5"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-nrws"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-pesp"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-rrht"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-txje"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-vrqj"
+    },
+    {
+      "from": "s-zf2b",
+      "type": "touches",
+      "to": "f-y361"
+    }
+  ]
+}

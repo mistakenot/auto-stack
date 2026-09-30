@@ -1197,3 +1197,60 @@ func TestEpicFamilyAcrossPlans(t *testing.T) {
 		t.Fatalf("lint 002 = exit %d %+v", code, r)
 	}
 }
+
+// TestDocsCoversEveryRegisteredType asserts the reference is generated from
+// the registry: every node type (with its fields) and every edge type (with
+// its endpoints and cross-plan flag) appears, as does every command.
+func TestDocsCoversEveryRegisteredType(t *testing.T) {
+	dir := repo(t)
+	out := mustRun(t, dir, "docs")
+	for _, n := range schema.Registry.Nodes {
+		if !strings.Contains(out, "### "+n.Name+" — "+n.Term+"\n") {
+			t.Errorf("docs lacks node type %s", n.Name)
+		}
+		for _, f := range n.Fields {
+			if !strings.Contains(out, "| `"+f.Name+"` | "+string(f.Kind)+" |") {
+				t.Errorf("docs lacks field %s.%s", n.Name, f.Name)
+			}
+			for _, m := range f.Fields {
+				if !strings.Contains(out, "| `"+f.Name+"."+m.Name+"` |") {
+					t.Errorf("docs lacks field %s.%s.%s", n.Name, f.Name, m.Name)
+				}
+			}
+		}
+	}
+	for _, e := range schema.Registry.Edges {
+		cross := "no"
+		if e.CrossPlan {
+			cross = "yes"
+		}
+		row := "| `" + e.Name + "` | "
+		i := strings.Index(out, row)
+		if i < 0 {
+			t.Errorf("docs lacks edge type %s", e.Name)
+			continue
+		}
+		line := out[i : i+strings.IndexByte(out[i:], '\n')]
+		if !strings.Contains(line, strings.ReplaceAll(e.ToLabel(), "|", `\|`)) || !strings.Contains(line, "| "+cross+" |") {
+			t.Errorf("docs row for %s lacks its endpoints or cross-plan flag: %s", e.Name, line)
+		}
+	}
+	for _, verb := range []string{"init", "new", "add", "update", "link", "unlink", "retire", "move", "lint", "fmt",
+		"list", "describe", "get", "search", "show", "trace", "tree", "brief", "quickstart", "docs"} {
+		if !strings.Contains(out, "- `auto plan "+verb) {
+			t.Errorf("docs lacks command %s", verb)
+		}
+	}
+}
+
+func TestQuickstartNamesTheHappyPath(t *testing.T) {
+	out := mustRun(t, t.TempDir(), "quickstart")
+	if strings.TrimSpace(out) == "" {
+		t.Fatal("quickstart is empty")
+	}
+	for _, verb := range []string{"init", "new", "add", "link", "lint", "show", "brief"} {
+		if !strings.Contains(out, "auto plan "+verb+" ") {
+			t.Errorf("quickstart does not show auto plan %s", verb)
+		}
+	}
+}

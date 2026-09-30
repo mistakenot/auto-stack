@@ -1,0 +1,55 @@
+003-reflect-tool-hardening  task · plan
+
+◎ G1     g-0x4k   Reported feedback gaps are readable with auto reflect gap list
+    ✓ AC1.1  ac-tr9x  gap list surfaces reported gaps (F4)                                   cd auto-reflect && go test ./internal/cli/ -run Gap
+    ✓ AC1.2  ac-q6hs  gap list obeys list conventions (F4)                                   cd auto-reflect && go test ./internal/cli/ -run Gap
+    ◆ D1     d-2gq9   F4 surface = dedicated `gap list`
+    -   A1.1   a-6tp0   A generic events list --full/--payload flag                          Less discoverable, and it does not match the gap → observat…
+    -   A1.2   a-vvcy   Both a gap list and a generic payload flag                           The generic payload dump stays out of scope.
+◎ G2     g-0f9w   One pending count: miner status and stats agree
+    ✓ AC2.1  ac-9bka  One pending count, two callers agree (F2)                              cd auto-reflect && go test ./internal/cli/ -run 'Miner|Stats|Pending'
+◎ G3     g-cwd2   A uniform output envelope with a predictable top-level id
+    ✓ AC3.1  ac-1eyq  Mutating commands expose a top-level id (F5)                           cd auto-reflect && go test ./internal/cli/ -run 'Observation|Consolidate'
+    ✓ AC3.2  ac-01p5  Collection commands expose .[].id without data loss (F5)               cd auto-reflect && go test ./internal/cli/ -run Observation
+    ✓ AC3.3  ac-57nj  No regressions (cross-cutting)                                         cd auto-reflect && go build ./... && go test ./...
+    ◆ D2     d-4kf4   F5 = restructure to a uniform envelope (breaking)
+    -   A2.1   a-gm40   Non-breaking additive .id/.ids                                       Leaves the inconsistent nesting in place.
+    ◆ D3     d-xpbe   F5 changes CLI output only — not the stored event schema
+    ◆ D4     d-z90w   F5 final shape: top-level id on mutations, per-element id on reads
+    -   A4.1   a-f2m8   Wrap every command in {ok,data}                                      Over-wraps reads, breaks more consumers, and fights the lis…
+◎ G4     g-xbrt   Content-derived ids make --dry-run mint the same ids as apply
+    ✓ AC4.1  ac-6gjf  Content-derived ids make consolidate deterministic + idempotent (F7)   cd auto-reflect && go test ./internal/idhash/ && go test ./internal/cli/ -run Consolidate
+    ✓ AC4.2  ac-p2kk  Ids keep their format (F7/D-6)                                         cd auto-reflect && go test ./internal/idhash/
+    ◆ D5     d-m7rq   Content-derived ids ship in this plan
+    ◆ D6     d-yxva   Content-derived ids preserve existing id formats
+    ◆ D7     d-kjh2   Content-derived ids: rules + observations only
+    -   A7.1   a-6prf   Content-derive every id, rt-/fb-/ev- too                             Loop and event ids are distinct-in-time records; hashing wo…
+    ◆ D8     d-hr0p   Pure content hash, no collision suffix
+    -   A8.1   a-x13r   A collision suffix on hash collision                                 Breaks idempotency and adds a state read at mint, for a neg…
+◎ G5     g-42vx   init writes a coherent git policy for .auto/reflect/
+    ✓ AC5.1  ac-0bcq  init writes an idempotent .gitignore (F9)                              cd auto-reflect && go test ./internal/cli/ -run Init
+    ✓ AC5.2  ac-f1ys  Canonical events tracked, cache ignored (F9/D-2)                       cd auto-reflect && go test ./internal/cli/ -run Init
+    ◆ D9     d-2g81   Event log is git-tracked
+    -   A9.1   a-pe53   Ignore events/ too, keeping reflect state machine-local              History would not travel with the repo, so a clone could no…
+    -   A9.2   a-cfv7   Append to the repo-root .gitignore                                   A per-state-dir .gitignore keeps the policy with the state.
+◎ G6     g-jcvm   doctor detects stale or partial reflect state
+    ✓ AC6.1  ac-fzh2  doctor detects stale/partial state (F1)                                cd auto-reflect && go test ./internal/cli/ -run Doctor
+◎ G7     g-fjxr   Rule listings carry their timestamps
+    ✓ AC7.1  ac-ymt5  Rule listings carry timestamps (F6)                                    cd auto-reflect && go test ./internal/rules/ -run Projection
+◎ G8     g-apsc   The outcome enum and correction_density are documented
+    ✓ AC8.1  ac-63s8  outcome enum + correction_density documented (F8/F3)                   (manual)
+◎ G9     g-vgcz   The legacy reflection yaml is removed
+    ✓ AC9.1  ac-spbj  Legacy yaml removed (F11)                                              test ! -e docs/reflection/observations.yaml
+
+defects
+    ✗ DF1    df-rbcw  Stale or partial reflect state goes undetected                         addressed by g-jcvm
+    ✗ DF2    df-gc8t  miner status pending (390) disagrees with stats pending_to_mine (396)  addressed by g-0f9w
+    ✗ DF3    df-j58t  correction_density is undocumented                                     addressed by g-apsc
+    ✗ DF4    df-kqxw  Feedback gaps are write-only                                           addressed by g-0x4k
+    ✗ DF5    df-w1fg  Each command nests its minted id differently                           addressed by g-cwd2
+    ✗ DF6    df-bvmq  Rule created_at and updated_at come back empty                         addressed by g-fjxr
+    ✗ DF7    df-21j1  Dry-run ids differ from apply ids                                      addressed by g-xbrt
+    ✗ DF8    df-9wde  The feedback outcome enum is undocumented                              addressed by g-apsc
+    ✗ DF9    df-mfg7  The .auto/reflect/ git policy contradicts itself                       addressed by g-42vx
+    ✗ DF10   df-pn3v  No nudge when an observed session is never acked
+    ✗ DF11   df-7fdr  Legacy docs/reflection yaml from the superseded process remains        addressed by g-vgcz

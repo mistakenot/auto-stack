@@ -39,6 +39,10 @@ const (
 
 func TestLifecycle(t *testing.T) { runScenario(t, "lifecycle") }
 
+// TestDogfood rebuilds epic 005, its child task 062 and task 052 as plans 001–003
+// from CLI calls alone, lints the family clean and golden-compares the displays.
+func TestDogfood(t *testing.T) { runScenario(t, "dogfood") }
+
 // step is one scripted invocation.
 type step struct {
 	line       int
