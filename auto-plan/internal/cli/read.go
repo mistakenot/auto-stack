@@ -294,7 +294,9 @@ type loadedPlan struct {
 	graph *graph.Graph
 }
 
-// loadMany resolves a plan argument (`all` included) and decodes every plan.
+// loadMany resolves a plan argument (`all` included), decodes every plan and
+// validates it. Plans that decode are always returned, so listings keep every
+// available result; malformed and structurally invalid plans add errors.
 // A plan that fails to decode is collected as an error and skipped, so the
 // others are still returned.
 func loadMany(cmd *cobra.Command, application *app.App, text bool, arg string) ([]loadedPlan, []graph.ValidationError, error) {
@@ -315,18 +317,22 @@ func loadMany(cmd *cobra.Command, application *app.App, text bool, arg string) (
 			errs = append(errs, graph.ValidationError{Code: "parse-error", Path: p.Dir + "/" + workspace.GraphFile, Field: "plan", Message: err.Error(), Value: p.ID})
 			continue
 		}
+		for _, ve := range graph.Validate(g) {
+			ve.Message = "plan " + p.ID + ": " + ve.Message
+			errs = append(errs, ve)
+		}
 		out = append(out, loadedPlan{plan: p, graph: g})
 	}
 	return out, errs, nil
 }
 
-// reportLoadErrors prints plans that failed to load (after the results) and
-// returns exit 1, or nil when there were none.
+// reportLoadErrors prints plans that failed to load or validate (after the
+// results) and returns exit 1, or nil when there were none.
 func reportLoadErrors(cmd *cobra.Command, text bool, errs []graph.ValidationError) error {
 	if len(errs) == 0 {
 		return nil
 	}
-	return fail(cmd, text, errs, "the other plans were read; fix the malformed graph.json by hand, then run `auto plan lint all`")
+	return fail(cmd, text, errs, "every readable plan was listed; run `auto plan lint all` for each problem and its fix")
 }
 
 func planHeader(lp loadedPlan) planList {

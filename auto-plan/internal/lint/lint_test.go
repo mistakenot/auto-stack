@@ -522,6 +522,18 @@ func family(epic, child string) map[string]string {
 	return map[string]string{"001-mail-mvp": epic, "002-walking-skeleton": child}
 }
 
+// twoChildren is a clean epic family at lifecycle plan with a second child,
+// 003, whose edges are given; deferred, when set, is the rail's deferred list.
+func twoChildren(deferred []string, edges003 []string) map[string]string {
+	epic := epicDoc("plan", []string{node("c-e002", "child", `"plan": "003", "title": "fan-out"`)}, nil)
+	if deferred != nil {
+		epic = strings.Replace(epic, `"no network calls"`, `"no network calls", "deferred": ["`+strings.Join(deferred, `", "`)+`"]`, 1)
+	}
+	folders := family(epic, "")
+	folders["003-fan-out"] = planDoc("fan-out", "task", "plan", "001", []string{childGoal, childAC}, edges003)
+	return folders
+}
+
 // errorCodes lints planID within set and returns its error codes (and the
 // warning codes named in keep), checking every issue carries a message,
 // path and hint.
@@ -566,6 +578,13 @@ func TestEpicRules(t *testing.T) {
 		{"rail-unhonored: deferred", family(
 			strings.Replace(epicDoc("plan", nil, nil), `"no network calls"`, `"no network calls", "deferred": ["002"]`, 1),
 			childDoc("plan", "001", nil, childEdges("honors"))), "001", nil, nil},
+
+		{"rail-unhonored: one honouring child does not cover another", twoChildren(nil, childEdges("honors")), "001", nil,
+			[]string{"rail-unhonored"}},
+		{"rail-unhonored: deferred excuses the named child", twoChildren([]string{"003"}, childEdges("honors")), "001", nil, nil},
+		{"rail-unhonored: deferred excuses only the named child", twoChildren([]string{"002"}, childEdges("honors")), "001", nil,
+			[]string{"rail-unhonored"}},
+		{"rail-unhonored: every child honours", twoChildren(nil, childEdges()), "001", nil, nil},
 
 		{"rail-undischarged", family("", childDoc("solution", "001", nil, childEdges("discharges"))), "002", nil, []string{"rail-undischarged"}},
 		{"rail-undischarged: a retired AC does not count", family("", childDoc("solution", "001",
@@ -656,8 +675,8 @@ func TestEpicMessages(t *testing.T) {
 		got[is.Code] = is
 	}
 	if is := got["rail-unhonored"]; is.Path != "$.nodes[r-e001]" ||
-		is.Message != `Rail r-e001 "no network calls" is honoured by no child plan (children: 002) and is not deferred.` ||
-		is.Hint != "auto plan link <child> plan honors 001:r-e001, or excuse children for now with auto plan update 001 r-e001 --deferred <NNN>" {
+		is.Message != `Rail r-e001 "no network calls" is not honoured by child plan 002, which is not deferred.` ||
+		is.Hint != "auto plan link 002 plan honors 001:r-e001, or excuse the child for now with auto plan update 001 r-e001 --deferred <NNN>" {
 		t.Errorf("rail-unhonored = %+v", is)
 	}
 	if is := got["leg-undelivered"]; is.Message != `Leg l-e001 "agent: sends mail" is delivered by no child plan (children: 002).` ||

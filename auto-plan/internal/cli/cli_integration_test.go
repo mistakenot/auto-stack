@@ -825,6 +825,37 @@ func TestListFiltersAndAll(t *testing.T) {
 	}
 }
 
+// TestListingsValidateGraphs: a plan that is valid JSON but structurally
+// invalid is still listed and searched, and its validation errors go to stderr
+// with exit 1.
+func TestListingsValidateGraphs(t *testing.T) {
+	root := repo(t)
+	mustRun(t, root, "new", "demo", "--kind", "task")
+	mustRun(t, root, "add", "001", "goal", "--title", "Findable goal")
+	path := filepath.Join(root, "docs", "plans", "001-demo", "graph.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := strings.Replace(string(raw), `"edges": []`, `"edges": [{"from": "plan", "type": "proves", "to": "g-zzzz"}]`, 1)
+	if broken == string(raw) {
+		t.Fatalf("fixture edit did not apply:\n%s", raw)
+	}
+	if err := os.WriteFile(path, []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"list", "001"}, {"list", "all"}, {"search", "all", "findable"}} {
+		stdout, stderr, code := runCLI(t, root, args...)
+		if code != 1 || !strings.Contains(stdout, "Findable goal") {
+			t.Fatalf("%v: exit %d, results must still be printed:\n%s", args, code, stdout)
+		}
+		f := decode[failure](t, stderr)
+		if len(f.Errors) == 0 || !strings.Contains(f.Hint, "auto plan lint") {
+			t.Fatalf("%v stderr = %s", args, stderr)
+		}
+	}
+}
+
 func TestDescribeTruncatesWithRecoveryCommand(t *testing.T) {
 	root := repo(t)
 	ids := lens(t, root)

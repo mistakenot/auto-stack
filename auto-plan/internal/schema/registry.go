@@ -197,8 +197,14 @@ const (
 	DatePattern = `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`
 	// PlanNumberPattern is a plan's 3-digit number.
 	PlanNumberPattern = `^[0-9]{3}$`
-	// RepoPathPattern is a repo-relative path: no leading slash, no spaces.
-	RepoPathPattern = `^[^/\s]\S*$`
+	// RepoPathPattern is a canonical repo-relative path: "/"-separated
+	// segments with no spaces, backslashes or colons, and no empty, "." or ".."
+	// segment, so it can never leave the repo (no leading slash, no drive
+	// letter). A trailing slash names a directory.
+	RepoPathPattern = `^` + repoPathSegment + `(?:/` + repoPathSegment + `)*/?$`
+
+	// repoPathSegment is one path segment other than "." and "..".
+	repoPathSegment = `(?:[^./\\:\s][^/\\:\s]*|\.[^./\\:\s][^/\\:\s]*|\.\.[^/\\:\s]+)`
 )
 
 // PlanNodeID is the fixed ID of the one plan node in every graph.

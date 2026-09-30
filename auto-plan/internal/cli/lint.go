@@ -31,7 +31,7 @@ Cross-plan (epic) rules, by the linted plan's own lifecycle:
 
   every step   child-missing, child-epic-mismatch, superseded-ref
   solution     + rail-undischarged (the plan honours a rail no AC of it discharges)
-  plan         + rail-unhonored (unless the rail is deferred), leg-undelivered (epics)
+  plan         + rail-unhonored (per child, unless deferred for it), leg-undelivered (epics)
 
 Structural codes (dangling-ref, bad-id, duplicate-id, wrong-endpoint, missing-field, …) are
 reported at every step. Qualified references (an NNN:ID edge target or [[NNN:id]] in prose)

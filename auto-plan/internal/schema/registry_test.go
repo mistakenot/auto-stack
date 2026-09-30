@@ -277,3 +277,19 @@ func TestLifecycleOrder(t *testing.T) {
 		t.Fatal("unknown lifecycle must reach nothing")
 	}
 }
+
+// TestRepoPathPatternStaysInRepo: a file path is canonical and repo-relative,
+// so it can never point outside the repository.
+func TestRepoPathPatternStaysInRepo(t *testing.T) {
+	re := regexp.MustCompile(RepoPathPattern)
+	for _, p := range []string{"a", "a/b.go", "auto-plan/internal/", "docs/.gitignore", ".github/x.yml", "a/...b", "..hidden"} {
+		if !re.MatchString(p) {
+			t.Errorf("rejects %q", p)
+		}
+	}
+	for _, p := range []string{"", ".", "..", "../outside", "a/../../outside", "a/..", "./a", "a/./b", "a//b", "/abs", `C:\outside`, `a\b`, "a b"} {
+		if re.MatchString(p) {
+			t.Errorf("accepts %q", p)
+		}
+	}
+}

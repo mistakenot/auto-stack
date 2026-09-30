@@ -237,10 +237,12 @@ func railUndischarged(c *Context) []Issue {
 	return out
 }
 
-// railUnhonored reports each active rail of an epic that no child plan
-// honours, unless the rail is marked deferred (its `deferred` list names the
-// child plans excused for now). Child plans are the epic's family: the plans
-// its child nodes name and the plans that declare it as their epic.
+// railUnhonored reports each active rail of an epic that some child plan
+// neither honours nor is excused from. A rail constrains every child, so each
+// child plan in the family must honour it or be named in the rail's `deferred`
+// list. Child plans are the epic's family: the plans its child nodes name and
+// the plans that declare it as their epic. A rail of an epic with no child plans
+// is reported unless something is deferred.
 func railUnhonored(c *Context) []Issue {
 	if !isEpic(c) {
 		return nil
@@ -248,17 +250,31 @@ func railUnhonored(c *Context) []Issue {
 	family := c.Set.Family(c.Plan)
 	var out []Issue
 	for _, r := range active(c, "rail") {
-		if len(stringItems(r.Fields["deferred"])) > 0 {
+		deferred := stringItems(r.Fields["deferred"])
+		ref := graph.Qualify(c.Plan, r.ID)
+		var missing []string
+		for _, p := range family {
+			if !slices.Contains(deferred, p) && !planEdgeTo(c, p, edgeHonors, ref) {
+				missing = append(missing, p)
+			}
+		}
+		var msg string
+		switch {
+		case len(missing) > 0:
+			msg = fmt.Sprintf("Rail %s %q is not honoured by child plan %s, which is not deferred.", r.ID, r.StringField("title"), strings.Join(missing, ", "))
+		case len(family) == 0 && len(deferred) == 0:
+			msg = fmt.Sprintf("Rail %s %q is honoured by no child plan (%s) and is not deferred.", r.ID, r.StringField("title"), familyLabel(family))
+		default:
 			continue
 		}
-		ref := graph.Qualify(c.Plan, r.ID)
-		if slices.ContainsFunc(family, func(p string) bool { return planEdgeTo(c, p, edgeHonors, ref) }) {
-			continue
+		child := "<child>"
+		if len(missing) > 0 {
+			child = missing[0]
 		}
 		out = append(out, Issue{
 			Path:    graph.NodePath(r.ID),
-			Message: fmt.Sprintf("Rail %s %q is honoured by no child plan (%s) and is not deferred.", r.ID, r.StringField("title"), familyLabel(family)),
-			Hint: "auto plan link <child> plan honors " + ref + ", or excuse children for now with auto plan update " +
+			Message: msg,
+			Hint: "auto plan link " + child + " plan honors " + ref + ", or excuse the child for now with auto plan update " +
 				c.Plan + " " + r.ID + " --deferred <NNN>",
 		})
 	}
