@@ -77,7 +77,8 @@ type BriefDecision struct {
 }
 
 // BriefRail is a rail a covered AC discharges. A qualified rail (`005:r-8hw3`)
-// lives in another plan; its title is empty until plans load as a set.
+// lives in another plan (usually the epic); its title is resolved through the
+// plan set, and stays empty when it does not resolve.
 type BriefRail struct {
 	ID           string   `json:"id"`
 	Title        string   `json:"title"`
@@ -93,8 +94,8 @@ type BriefQuestion struct {
 }
 
 // Brief builds the Stage Brief of stageID. ok is false when stageID is not a
-// stage of the plan.
-func Brief(planID string, g *graph.Graph, stageID string) (BriefView, bool) {
+// stage of the plan. plans (may be nil) resolves qualified rails.
+func Brief(planID string, g *graph.Graph, stageID string, plans Plans) (BriefView, bool) {
 	s, ok := g.NodeByID(stageID)
 	if !ok || s.Type != "stage" {
 		return BriefView{}, false
@@ -183,6 +184,9 @@ func Brief(planID string, g *graph.Graph, stageID string) (BriefView, bool) {
 				r = &BriefRail{ID: e.To, DischargedBy: []string{}}
 				if _, _, q := graph.ParseRef(e.To); q {
 					r.Qualified = true
+					if n, ok := lookup(plans, e.To); ok {
+						r.Title = n.StringField("title")
+					}
 				} else if n, ok := ix.active[e.To]; ok {
 					r.Title = n.StringField("title")
 				} else {
@@ -274,7 +278,7 @@ func (v BriefView) Text() string {
 	if section("Rails", len(v.Rails) == 0) {
 		for _, r := range v.Rails {
 			title := r.Title
-			if r.Qualified {
+			if r.Qualified && title == "" {
 				title = "a rail in plan " + strings.SplitN(r.ID, ":", 2)[0]
 			}
 			fmt.Fprintf(&b, "- %s: %s (discharged by %s)\n", r.ID, title, strings.Join(r.DischargedBy, ", "))

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mistakenot/auto-plan/internal/graph"
+	"github.com/mistakenot/auto-plan/internal/workspace"
 )
 
 // fixture builds a graph.json with a plan node at the given lifecycle plus
@@ -418,5 +419,269 @@ func TestFileParseError(t *testing.T) {
 	missing := File("001", filepath.Join(t.TempDir(), "graph.json"))
 	if missing.OK || missing.Issues[0].Code != "unreadable" {
 		t.Fatalf("missing file report = %+v", missing)
+	}
+}
+
+// planDoc builds a graph.json whose plan node has the given kind, lifecycle
+// and epic ("" for none).
+func planDoc(name, kind, lifecycle, epic string, nodes, edges []string) string {
+	epicField := ""
+	if epic != "" {
+		epicField = `, "epic": "` + epic + `"`
+	}
+	plan := `{"id": "plan", "type": "plan", "status": "active", "fields": {"name": "` + name + `", "kind": "` + kind +
+		`", "lifecycle": "` + lifecycle + `", "created": "2026-01-01"` + epicField + `}}`
+	return `{"version": 1, "nodes": [` + strings.Join(append([]string{plan}, nodes...), ",") +
+		`], "edges": [` + strings.Join(edges, ",") + `]}`
+}
+
+// writeSet writes each folder's graph.json under a temp docs/plans and
+// returns the workspace's PlanSet.
+func writeSet(t *testing.T, folders map[string]string) *workspace.PlanSet {
+	t.Helper()
+	root := t.TempDir()
+	for folder, doc := range folders {
+		dir := filepath.Join(root, "docs", "plans", folder)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "graph.json"), []byte(doc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set, err := (&workspace.Workspace{Root: root, CWD: root}).PlanSet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return set
+}
+
+// Epic family fixture: epic 001 with a goal, a decision, a rail, a journey
+// with one leg, and a child node for 002; child 002 honours the rail,
+// delivers the leg, builds on the decision, and has an AC that discharges the
+// rail.
+var (
+	epicGoal  = node("g-e001", "goal", `"title": "agents exchange mail"`)
+	epicDec   = node("d-e001", "decision", `"title": "SQLite", "chosen": "SQLite", "why": "durable", "by": "charlie"`)
+	epicAlt   = node("a-e001", "alternative", `"title": "files", "why": "no transactions"`)
+	epicRail  = node("r-e001", "rail", `"title": "no network calls"`)
+	epicJour  = node("j-e001", "journey", `"title": "send and ack"`)
+	epicLeg   = node("l-e001", "leg", `"actor": "agent", "action": "sends mail"`)
+	epicChild = node("c-e001", "child", `"plan": "002", "title": "walking skeleton"`)
+
+	childGoal = node("g-t001", "goal", `"title": "round trip"`)
+	childAC   = node("ac-t001", "ac", `"title": "read back", "gwt": "Given, when, then", "verify": {"cmd": "go test ./..."}`)
+)
+
+func epicDoc(lifecycle string, extraNodes, extraEdges []string) string {
+	return planDoc("mail-mvp", "epic", lifecycle, "",
+		append([]string{epicGoal, epicDec, epicAlt, epicRail, epicJour, epicLeg, epicChild}, extraNodes...),
+		append([]string{edge("d-e001", "rejects", "a-e001"), edge("d-e001", "constrains", "g-e001"), edge("l-e001", "in", "j-e001")}, extraEdges...))
+}
+
+// epicUnlisted is the clean epic without its child node for 002.
+func epicUnlisted(lifecycle string) string {
+	return strings.Replace(epicDoc(lifecycle, nil, nil), ","+epicChild, "", 1)
+}
+
+// withProse gives the child's goal a description.
+func withProse(doc, description string) string {
+	return strings.Replace(doc, `"title": "round trip"`, `"title": "round trip", "description": "`+description+`"`, 1)
+}
+
+// childEdges are the clean child's edges; drop removes the ones it names.
+func childEdges(drop ...string) []string {
+	all := map[string]string{
+		"honors":     edge("plan", "honors", "001:r-e001"),
+		"delivers":   edge("plan", "delivers", "001:l-e001"),
+		"builds-on":  edge("plan", "builds-on", "001:d-e001"),
+		"proves":     edge("ac-t001", "proves", "g-t001"),
+		"discharges": edge("ac-t001", "discharges", "001:r-e001"),
+	}
+	var out []string
+	for _, k := range []string{"honors", "delivers", "builds-on", "proves", "discharges"} {
+		if !slices.Contains(drop, k) {
+			out = append(out, all[k])
+		}
+	}
+	return out
+}
+
+func childDoc(lifecycle, epic string, extraNodes, edges []string) string {
+	return planDoc("walking-skeleton", "task", lifecycle, epic, append([]string{childGoal, childAC}, extraNodes...), edges)
+}
+
+// family is a clean epic family at lifecycle plan, with overrides.
+func family(epic, child string) map[string]string {
+	if epic == "" {
+		epic = epicDoc("plan", nil, nil)
+	}
+	if child == "" {
+		child = childDoc("plan", "001", nil, childEdges())
+	}
+	return map[string]string{"001-mail-mvp": epic, "002-walking-skeleton": child}
+}
+
+// errorCodes lints planID within set and returns its error codes (and the
+// warning codes named in keep), checking every issue carries a message,
+// path and hint.
+func errorCodes(t *testing.T, set *workspace.PlanSet, planID string, keep ...string) []string {
+	t.Helper()
+	var out []string
+	for _, is := range Plan(set, planID).Issues {
+		if is.Hint == "" || is.Message == "" || is.Path == "" {
+			t.Errorf("issue lacks message/path/hint: %+v", is)
+		}
+		if is.Severity == SeverityError || slices.Contains(keep, is.Code) {
+			out = append(out, is.Code)
+		}
+	}
+	return out
+}
+
+// TestEpicRules: a two-plan fixture per cross-plan code, plus a clean epic
+// family (AC-11).
+func TestEpicRules(t *testing.T) {
+	supersede := []string{node("d-e002", "decision", `"title": "SQLite in WAL mode", "chosen": "WAL", "why": "readers", "by": "charlie"`)}
+	supersedeEdges := []string{edge("d-e002", "supersedes", "d-e001"), edge("d-e002", "rejects", "a-e001")}
+	cases := []struct {
+		name    string
+		folders map[string]string
+		lint    string
+		keep    []string // warning codes to report too
+		want    []string
+	}{
+		{"clean family: epic", family("", ""), "001", nil, nil},
+		{"clean family: child", family("", ""), "002", nil, nil},
+		{"clean requirements-only epic: rails and legs, no children yet", map[string]string{
+			"001-mail-mvp": planDoc("mail-mvp", "epic", "requirements", "", []string{epicGoal, epicRail, epicJour, epicLeg},
+				[]string{edge("l-e001", "in", "j-e001")}),
+		}, "001", nil, nil},
+		{"epic goals need no ACs at solution", map[string]string{
+			"001-mail-mvp": planDoc("mail-mvp", "epic", "solution", "", []string{epicGoal}, nil),
+		}, "001", nil, nil},
+
+		{"rail-unhonored", family("", childDoc("plan", "001", nil, childEdges("honors"))), "001", nil, []string{"rail-unhonored"}},
+		{"rail-unhonored gated below plan", family(epicDoc("solution", nil, nil), childDoc("plan", "001", nil, childEdges("honors"))), "001", nil, nil},
+		{"rail-unhonored: deferred", family(
+			strings.Replace(epicDoc("plan", nil, nil), `"no network calls"`, `"no network calls", "deferred": ["002"]`, 1),
+			childDoc("plan", "001", nil, childEdges("honors"))), "001", nil, nil},
+
+		{"rail-undischarged", family("", childDoc("solution", "001", nil, childEdges("discharges"))), "002", nil, []string{"rail-undischarged"}},
+		{"rail-undischarged: a retired AC does not count", family("", childDoc("solution", "001",
+			[]string{retired(strings.Replace(childAC, "ac-t001", "ac-t002", 1))},
+			append(childEdges("discharges"), edge("ac-t002", "discharges", "001:r-e001")))), "002", nil, []string{"rail-undischarged"}},
+		{"rail-undischarged gated at requirements", family("", childDoc("requirements", "001", nil, childEdges("discharges"))), "002", nil, nil},
+
+		{"leg-undelivered", family("", childDoc("plan", "001", nil, childEdges("delivers"))), "001", nil, []string{"leg-undelivered"}},
+
+		{"child-missing", family(epicDoc("requirements", []string{node("c-e002", "child", `"plan": "009"`)}, nil), ""), "001", nil,
+			[]string{"child-missing"}},
+
+		{"child-epic-mismatch: the epic does not list the child", family(epicUnlisted("requirements"), ""), "002", nil,
+			[]string{"child-epic-mismatch"}},
+		{"child-epic-mismatch: the named epic is a task", map[string]string{
+			"001-mail-mvp":         planDoc("mail-mvp", "task", "requirements", "", []string{epicChild}, nil),
+			"002-walking-skeleton": childDoc("requirements", "001", nil, childEdges("honors", "delivers", "builds-on", "discharges")),
+		}, "002", nil, []string{"child-epic-mismatch"}},
+		{"child-epic-mismatch: the named epic does not exist", map[string]string{
+			"002-walking-skeleton": childDoc("requirements", "009", nil, childEdges("honors", "delivers", "builds-on", "discharges")),
+		}, "002", nil, []string{"child-epic-mismatch"}},
+		{"child-epic-mismatch: reverse, the child names no epic", family("", childDoc("plan", "", nil, childEdges())), "001", nil,
+			[]string{"child-epic-mismatch"}},
+
+		{"superseded-ref: builds-on", family(epicDoc("plan", supersede, supersedeEdges), ""), "002", nil, []string{"superseded-ref"}},
+		{"superseded-ref: prose", family(epicDoc("plan", supersede, supersedeEdges),
+			withProse(childDoc("plan", "001", nil, childEdges("builds-on")), "per [[001:d-e001]]")),
+			"002", nil, []string{"superseded-ref"}},
+		{"superseded-ref: a retired superseder does not count", family(epicDoc("plan",
+			[]string{retired(supersede[0])}, supersedeEdges), ""), "002", nil, nil},
+
+		{"child dependency-cycle", map[string]string{
+			"001-mail-mvp": planDoc("mail-mvp", "epic", "requirements", "", []string{epicChild, node("c-e002", "child", `"plan": "003"`)},
+				[]string{edge("c-e001", "dependsOn", "c-e002"), edge("c-e002", "dependsOn", "c-e001")}),
+			"002-walking-skeleton": childDoc("requirements", "001", nil, childEdges("honors", "delivers", "builds-on", "discharges")),
+			"003-fan-out":          planDoc("fan-out", "task", "requirements", "001", nil, nil),
+		}, "001", nil, []string{"dependency-cycle"}},
+
+		// Qualified references resolve against the set.
+		{"qualified dangling-ref: no such node", family("", childDoc("plan", "001", nil,
+			append(childEdges(), edge("plan", "honors", "001:r-zzzz")))), "002", nil, []string{"dangling-ref"}},
+		{"qualified dangling-ref: no such plan", family("", childDoc("plan", "001", nil,
+			append(childEdges(), edge("plan", "honors", "009:r-e001")))), "002", nil, []string{"dangling-ref"}},
+		{"qualified dangling-ref: malformed", family("", childDoc("plan", "001", nil,
+			append(childEdges(), edge("plan", "honors", "1:r-e001")))), "002", nil, []string{"dangling-ref"}},
+		{"qualified wrong-endpoint", family("", childDoc("plan", "001", nil,
+			append(childEdges(), edge("plan", "honors", "001:g-e001")))), "002", nil, []string{"wrong-endpoint"}},
+		{"qualified dangling-prose-ref", family("",
+			withProse(childDoc("plan", "001", nil, childEdges()), "per [[001:d-zzzz]], [[009:plan]] and [[001:d-e001]]")),
+			"002", nil, []string{"dangling-prose-ref", "dangling-prose-ref"}},
+		{"qualified retired-ref", family(strings.Replace(epicDoc("plan", nil, nil), `"id": "l-e001", "type": "leg", "status": "active"`,
+			`"id": "l-e001", "type": "leg", "status": "retired"`, 1), ""), "002", []string{"retired-ref"}, []string{"retired-ref"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			set := writeSet(t, tc.folders)
+			if got := errorCodes(t, set, tc.lint, tc.keep...); !slices.Equal(got, tc.want) {
+				t.Fatalf("codes = %v, want %v\n%+v", got, tc.want, Plan(set, tc.lint).Issues)
+			}
+		})
+	}
+}
+
+// TestEpicRulesNeedTheSet: linted alone, a plan's qualified references are
+// shape-checked only and no epic rule runs.
+func TestEpicRulesNeedTheSet(t *testing.T) {
+	doc := childDoc("solution", "009", nil, append(childEdges("discharges"), edge("plan", "honors", "001:r-zzzz")))
+	for _, is := range issuesOf(t, "002", doc) {
+		if is.Severity == SeverityError {
+			t.Fatalf("lint alone must not resolve qualified refs or run epic rules: %+v", is)
+		}
+	}
+	if len(EpicRules) != 6 {
+		t.Fatalf("%d epic rules", len(EpicRules))
+	}
+	for _, r := range EpicRules {
+		if r.Severity != SeverityError {
+			t.Errorf("%s severity = %s", r.Code, r.Severity)
+		}
+	}
+}
+
+// TestEpicMessages pins the wording and hints of the cross-plan codes.
+func TestEpicMessages(t *testing.T) {
+	set := writeSet(t, family("", childDoc("solution", "001", nil, childEdges("honors", "delivers", "discharges"))))
+	got := map[string]Issue{}
+	for _, is := range Plan(set, "001").Issues {
+		got[is.Code] = is
+	}
+	if is := got["rail-unhonored"]; is.Path != "$.nodes[r-e001]" ||
+		is.Message != `Rail r-e001 "no network calls" is honoured by no child plan (children: 002) and is not deferred.` ||
+		is.Hint != "auto plan link <child> plan honors 001:r-e001, or excuse children for now with auto plan update 001 r-e001 --deferred <NNN>" {
+		t.Errorf("rail-unhonored = %+v", is)
+	}
+	if is := got["leg-undelivered"]; is.Message != `Leg l-e001 "agent: sends mail" is delivered by no child plan (children: 002).` ||
+		is.Hint != "auto plan link <child> plan delivers 001:l-e001, or auto plan retire 001 l-e001" {
+		t.Errorf("leg-undelivered = %+v", is)
+	}
+
+	set = writeSet(t, family(epicUnlisted("requirements"),
+		childDoc("solution", "001", nil, append(childEdges("discharges"), edge("plan", "honors", "001:r-zzzz")))))
+	got = map[string]Issue{}
+	for _, is := range Plan(set, "002").Issues {
+		got[is.Code] = is
+	}
+	if is := got["child-epic-mismatch"]; is.Path != "$.nodes[plan].fields.epic" || is.Field != "epic" ||
+		is.Message != "Plan 002 names epic 001, but epic 001 lists no child node for plan 002." ||
+		!strings.HasPrefix(is.Hint, `auto plan add 001 child --plan 002 --title "…"`) {
+		t.Errorf("child-epic-mismatch = %+v", is)
+	}
+	if is := got["dangling-ref"]; is.Message != `edge targets "001:r-zzzz", but plan 001 has no node r-zzzz` ||
+		is.Hint != "remove the edge with `auto plan unlink 002 plan honors 001:r-zzzz`, or point it at an existing node of an allowed type" {
+		t.Errorf("dangling-ref = %+v", is)
+	}
+	if is := got["rail-undischarged"]; is.Message != "Plan 002 honours rail 001:r-e001, but no AC discharges it." ||
+		is.Hint != "auto plan link 002 <ac-id> discharges 001:r-e001 (or add an AC for it with --discharges 001:r-e001)" {
+		t.Errorf("rail-undischarged = %+v", is)
 	}
 }

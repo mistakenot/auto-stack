@@ -9,6 +9,7 @@ import (
 	"github.com/mistakenot/auto-plan/internal/app"
 	"github.com/mistakenot/auto-plan/internal/graph"
 	"github.com/mistakenot/auto-plan/internal/schema"
+	"github.com/mistakenot/auto-plan/internal/workspace"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -184,6 +185,12 @@ func runAdd(cmd *cobra.Command, application *app.App, args []string) error {
 	if len(errs) > 0 {
 		return fail(cmd, text, errs, "graph.json was not changed; fix the flagged values (see `auto plan add "+l.plan.ID+" "+typ+" --help`)")
 	}
+	for i := range edges {
+		edges[i].From = node.ID
+	}
+	if err := l.checkCrossPlan(cmd, text, edges, fields); err != nil {
+		return err
+	}
 	if err := l.save(cmd, text); err != nil {
 		return err
 	}
@@ -293,6 +300,9 @@ func runLink(cmd *cobra.Command, application *app.App, planArg, from, typ, to st
 	if len(errs) > 0 {
 		return fail(cmd, text, errs, "graph.json was not changed; check both IDs exist and the edge type fits them (`auto plan link --help`)")
 	}
+	if err := l.checkCrossPlan(cmd, text, []graph.Edge{e}, nil); err != nil {
+		return err
+	}
 	if err := l.save(cmd, text); err != nil {
 		return err
 	}
@@ -378,6 +388,11 @@ func runUpdate(cmd *cobra.Command, application *app.App, args []string) error {
 	changed, errs := l.graph.Update(id, fields)
 	if len(errs) > 0 {
 		return fail(cmd, text, errs, "graph.json was not changed; fix the flagged values ("+hint+")")
+	}
+	if nt.Name == schema.PlanNodeID {
+		if err := l.checkCrossPlan(cmd, text, nil, fields); err != nil {
+			return err
+		}
 	}
 	if err := l.save(cmd, text); err != nil {
 		return err
@@ -495,4 +510,38 @@ func runMove(cmd *cobra.Command, application *app.App, planArg, id, before, afte
 	return emit(cmd, text, mutationResult(l.plan.ID, n.ID, map[string]any{"type": n.Type, "rank": n.Rank}), func() string {
 		return fmt.Sprintf("moved %s %s to rank %s in %s\n", n.Type, n.ID, n.Rank, l.plan.Folder())
 	})
+}
+
+// checkCrossPlan resolves what a write points at in other plans before it is
+// saved: the qualified target of each cross-plan edge must be an existing node
+// of a type the edge allows (D-9), and a plan's `epic` must name an existing
+// epic plan. On failure nothing is written.
+func (l *loaded) checkCrossPlan(cmd *cobra.Command, text bool, edges []graph.Edge, fields map[string]any) error {
+	epic, _ := fields["epic"].(string)
+	qualified := slices.ContainsFunc(edges, func(e graph.Edge) bool {
+		_, _, q := graph.ParseRef(e.To)
+		return q
+	})
+	if !qualified && epic == "" {
+		return nil
+	}
+	set, err := l.ws.PlanSet()
+	if err != nil {
+		return failOne(cmd, text, "read-failed", "$", "", err.Error(), nil, "check that "+workspace.PlansDir+" is readable")
+	}
+	var errs []graph.ValidationError
+	for _, e := range edges {
+		errs = append(errs, set.CheckEdge(e)...)
+	}
+	if len(errs) > 0 {
+		return fail(cmd, text, errs, "graph.json was not changed; a cross-plan target is NNN:ID in an existing plan "+
+			"(find it with `auto plan list <NNN>` or `auto plan search all <text>`) and of a type the edge allows (`auto plan link --help`)")
+	}
+	if epic != "" {
+		if err := set.CheckEpic(epic); err != nil {
+			return failOne(cmd, text, "epic-not-found", graph.NodePath(schema.PlanNodeID)+".fields.epic", "epic", err.Error(), epic,
+				"graph.json was not changed; name an existing epic plan (create one with `auto plan new <name> --kind epic`)")
+		}
+	}
+	return nil
 }

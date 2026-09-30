@@ -1,0 +1,20 @@
+001-mail-mvp  epic · plan
+
+◎ G1    g-e001  Agents exchange durable mail on one host
+◎ G2    g-e002  Mail survives a restart
+    ◆ D1    d-e001  SQLite is the mail store
+    -   A1.1  a-e001  flat files                                 no transactions
+
+journeys
+    ↝ J1    j-e001  Send, read and ack
+        ↳ L1.1  l-e001  agent: sends mail to an address          delivered by 002
+        ↳ L1.2  l-e002  agent: fans mail out to subscribers      delivered by 003
+        ↳ L1.3  l-e003  agent: acks a delivery                   delivered by 002
+
+child plans
+    ▷ C1    c-e001  002-walking-skeleton — the walking skeleton  plan
+    ▷ C2    c-e002  003-fan-out — fan-out                        requirements · after c-e001
+
+rails
+    ‖ R1    r-e001  No network calls                             honoured by 002, 003
+    ‖ R2    r-e002  auto-shared stays stdlib-only                deferred: 003

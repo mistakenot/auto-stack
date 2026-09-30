@@ -14,6 +14,7 @@ import (
 
 	"github.com/mistakenot/auto-plan/internal/app"
 	"github.com/mistakenot/auto-plan/internal/cli"
+	"github.com/mistakenot/auto-plan/internal/graph"
 	"github.com/mistakenot/auto-plan/internal/schema"
 )
 
@@ -722,6 +723,21 @@ func TestFmtAllAndLossyFiles(t *testing.T) {
 // a long reason, a rail discharged locally and across plans, an open
 // question, two stages (the second depends on the first), three files and a
 // tree. It returns the generated IDs by role.
+// handLink appends an edge to a plan's graph.json the way a hand edit would,
+// bypassing the CLI's write checks.
+func handLink(t *testing.T, root, folder string, e graph.Edge) {
+	t.Helper()
+	path := filepath.Join(root, "docs", "plans", folder, "graph.json")
+	g, err := graph.Decode(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Edges = append(g.Edges, e)
+	if err := graph.Save(path, g); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func lens(t *testing.T, root string) map[string]string {
 	t.Helper()
 	g1, g2, ac, d := walk(t, root)
@@ -735,7 +751,9 @@ func lens(t *testing.T, root string) map[string]string {
 	add("ac2", "ac", "--proves", g2, "--title", "second criterion", "--gwt", "Given x, when y, then z", "--verify-cmd", "go test ./b")
 	add("r", "rail", "--title", "No network calls")
 	mustRun(t, root, "link", "001", ac, "discharges", ids["r"])
-	mustRun(t, root, "link", "001", ac, "discharges", "005:r-8hw3")
+	// A qualified target in a plan that does not exist: link refuses it, so
+	// it is a hand edit, and the read lenses print it as a raw reference.
+	handLink(t, root, "001-demo", graph.Edge{From: ac, Type: "discharges", To: "005:r-8hw3"})
 	add("q", "question", "--title", "Ship it behind a flag?", "--status", "open", "--recommended", "no")
 	add("s1", "stage", "--title", "First stage", "--steps", "SECRET-STEP-ONE", "--commit", "feat: one", "--status", "done")
 	add("s2", "stage", "--title", "Second stage", "--steps", "step two", "--commit", "feat: two", "--dependsOn", ids["s1"])
@@ -1062,4 +1080,120 @@ func TestBriefCommand(t *testing.T) {
 	}
 	expectFailure(t, root, "wrong-type", "brief", "001", ids["ac"])
 	expectFailure(t, root, "node-not-found", "brief", "001", "s-zzzz")
+}
+
+// TestEpicFamilyAcrossPlans: new --epic, cross-plan writes resolved against
+// the target plan (rejected byte-identically when they do not), lint all over
+// the family, and the views following qualified references (AC-5, AC-11,
+// AC-13, AC-14).
+func TestEpicFamilyAcrossPlans(t *testing.T) {
+	root := repo(t)
+	id := func(args ...string) string {
+		t.Helper()
+		return decode[struct{ ID string }](t, mustRun(t, root, args...)).ID
+	}
+	id("new", "mail-mvp", "--kind", "epic")
+	eg := id("add", "001", "goal", "--title", "Agents exchange durable mail")
+	rail := id("add", "001", "rail", "--title", "No network calls")
+	j := id("add", "001", "journey", "--title", "Send and ack")
+	leg := id("add", "001", "leg", "--actor", "agent", "--action", "sends mail", "--in", j)
+
+	created := decode[map[string]string](t, mustRun(t, root, "new", "walking-skeleton", "--kind", "task", "--epic", "001"))
+	if created["id"] != "002" || created["epic"] != "001" {
+		t.Fatalf("new --epic = %+v", created)
+	}
+	if !strings.Contains(string(readGraph(t, root, "002-walking-skeleton")), `"epic": "001"`) {
+		t.Fatal("new --epic records plan.fields.epic")
+	}
+	expectFailure(t, root, "epic-not-found", "new", "x", "--kind", "task", "--epic", "009")
+	expectFailure(t, root, "epic-not-found", "new", "x", "--kind", "task", "--epic", "002")
+	expectFailure(t, root, "usage", "new", "x", "--kind", "epic", "--epic", "001")
+	expectFailure(t, root, "invalid-field", "new", "x", "--kind", "task", "--epic", "1")
+	if _, err := os.Stat(filepath.Join(root, "docs", "plans", "003-x")); !os.IsNotExist(err) {
+		t.Fatal("a rejected new must create nothing")
+	}
+	child := id("add", "001", "child", "--plan", "002", "--title", "walking skeleton")
+
+	// Cross-plan writes resolve their target, or change nothing.
+	before := readGraph(t, root, "002-walking-skeleton")
+	expectFailure(t, root, "dangling-ref", "link", "002", "plan", "honors", "009:r-8hw3")
+	expectFailure(t, root, "dangling-ref", "link", "002", "plan", "honors", "001:r-zzzz")
+	expectFailure(t, root, "wrong-endpoint", "link", "002", "plan", "honors", "001:"+eg)
+	if !bytes.Equal(before, readGraph(t, root, "002-walking-skeleton")) {
+		t.Fatal("rejected cross-plan links must leave graph.json byte-identical")
+	}
+	g := id("add", "002", "goal", "--title", "round trip")
+	before = readGraph(t, root, "002-walking-skeleton")
+	expectFailure(t, root, "dangling-ref", "add", "002", "ac", "--proves", g, "--title", "t", "--gwt", "x", "--discharges", "001:r-zzzz")
+	expectFailure(t, root, "epic-not-found", "update", "002", "plan", "--epic", "009")
+	if !bytes.Equal(before, readGraph(t, root, "002-walking-skeleton")) {
+		t.Fatal("rejected cross-plan writes must leave graph.json byte-identical")
+	}
+	mustRun(t, root, "link", "002", "plan", "honors", "001:"+rail)
+	mustRun(t, root, "link", "002", "plan", "delivers", "001:"+leg)
+	ac := id("add", "002", "ac", "--proves", g, "--title", "read back", "--gwt", "x", "--verify-cmd", "go test ./...", "--discharges", "001:"+rail)
+
+	type report struct {
+		Plan   string
+		OK     bool
+		Issues []struct{ Code, Severity string }
+	}
+	errorsOf := func(r report) []string {
+		var out []string
+		for _, is := range r.Issues {
+			if is.Severity == "error" {
+				out = append(out, is.Code)
+			}
+		}
+		return out
+	}
+	mustRun(t, root, "update", "001", "plan", "--lifecycle", "plan")
+	mustRun(t, root, "update", "002", "plan", "--lifecycle", "solution")
+	all := decode[struct {
+		OK    bool
+		Plans []report
+	}](t, mustRun(t, root, "lint", "all"))
+	if !all.OK || len(all.Plans) != 2 {
+		t.Fatalf("lint all over a clean family = %+v", all)
+	}
+
+	// Views follow the qualified references.
+	show := decode[struct {
+		Journeys []struct {
+			Legs []struct{ DeliveredBy []string }
+		}
+		Children []struct{ Plan, Lifecycle string }
+	}](t, mustRun(t, root, "show", "001"))
+	if !slices.Equal(show.Journeys[0].Legs[0].DeliveredBy, []string{"002"}) || show.Children[0].Lifecycle != "solution" {
+		t.Fatalf("epic show = %+v", show)
+	}
+	if text := mustRun(t, root, "show", "001", "--text"); !strings.Contains(text, "\nchild plans\n") || !strings.Contains(text, "delivered by 002") {
+		t.Fatalf("epic show --text:\n%s", text)
+	}
+	trace := mustRun(t, root, "trace", "002", ac, "--up", "--text")
+	for _, s := range []string{"child-of   → ◎ 001:" + eg + "  Agents exchange durable mail  (via 001:" + child + ")", "discharges → ‖ 001:" + rail + "  No network calls"} {
+		if !strings.Contains(trace, s) {
+			t.Errorf("trace --up missing %q:\n%s", s, trace)
+		}
+	}
+	type row struct {
+		Edge, ID, Type, Title string
+		Qualified             bool
+	}
+	card := decode[struct{ In []row }](t, mustRun(t, root, "get", "001", rail))
+	if len(card.In) != 2 || card.In[1] != (row{Edge: "honors", ID: "002:plan", Type: "plan", Title: "walking-skeleton", Qualified: true}) {
+		t.Fatalf("get rail in = %+v", card.In)
+	}
+
+	// Breaking the family is caught on the plan that must change.
+	mustRun(t, root, "unlink", "002", "plan", "delivers", "001:"+leg)
+	stdout, _, code := runCLI(t, root, "lint", "001")
+	if r := decode[report](t, stdout); code != 1 || !slices.Equal(errorsOf(r), []string{"leg-undelivered"}) {
+		t.Fatalf("lint 001 = exit %d %+v", code, r)
+	}
+	mustRun(t, root, "retire", "001", child)
+	stdout, _, code = runCLI(t, root, "lint", "002")
+	if r := decode[report](t, stdout); code != 1 || !slices.Equal(errorsOf(r), []string{"child-epic-mismatch"}) {
+		t.Fatalf("lint 002 = exit %d %+v", code, r)
+	}
 }

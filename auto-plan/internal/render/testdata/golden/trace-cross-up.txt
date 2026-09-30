@@ -1,0 +1,8 @@
+✓ ac-t001  a sent mail is read back
+
+up
+  proves     → ◎ g-t001      send and read round-trip
+    child-of   → ◎ 001:g-e001  Agents exchange durable mail on one host  (via 001:c-e001)
+    child-of   → ◎ 001:g-e002  Mail survives a restart  (via 001:c-e001)
+      constrains ← ◆ 001:d-e001  SQLite is the mail store
+  discharges → ‖ 001:r-e001  No network calls

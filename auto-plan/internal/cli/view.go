@@ -17,21 +17,23 @@ func newShowCmd(application *app.App) *cobra.Command {
 		Short: "Show the goal ladder: goals, the ACs proving them, the decisions constraining them",
 		Long: `Show a plan as a goal ladder in show-me notation: each ◎ goal in rank order, its ✓ ACs with
 their verify commands, and the ◆ decisions that constrain the goal or its ACs, each followed by
-its rejected alternatives on "-" lines. Blocks for unlinked nodes, rails, defects and open
+its rejected alternatives on "-" lines. An epic then lists its journeys (each leg tagged with
+the child plans that deliver it) and its child plans with their lifecycle and dependsOn. Blocks
+for unlinked nodes, rails (tagged with the child plans that honour them), defects and open
 questions follow. Retired nodes are left out.
 
-Every row carries a positional label (G1, AC1.2, D3, A3.1, R1, DF1, Q1) for reading only:
+Every row carries a positional label (G1, AC1.2, D3, A3.1, J1, L1.2, C1, R1, DF1, Q1) for reading only:
 labels follow the current rank order and are never accepted as a reference — use the ID.
 The JSON form (default) carries the same facts as --text.`,
 		Example: "  auto plan show 004 --text",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			text := textMode(cmd)
-			p, g, err := loadForRead(cmd, application, text, args[0])
+			p, g, set, err := loadInSet(cmd, application, text, args[0])
 			if err != nil {
 				return err
 			}
-			return emitView(cmd, text, render.Show(p.ID, g))
+			return emitView(cmd, text, render.Show(p.ID, g, set))
 		},
 	}
 }
@@ -46,13 +48,18 @@ stages that cover an AC, the files those stages touch). Without --up or --down b
 
 Each edge type walks one way when followed forward (from → to):
 
-  up    proves, covers, discharges, about, in, honors, delivers, builds-on
+  up    proves, covers, discharges, about, in, honors, delivers, builds-on, child-of
   down  constrains, rejects, touches, addresses
 
 and the other way when followed backward, so "down" from an AC follows covers backward to its
-stages. wouldBreak, supersedes and dependsOn are not lineage and are never traced. Retired
-neighbours are left out; a node met twice is printed once and then marked "(see above)"; a
-qualified neighbour (NNN:ID) is printed as its raw reference.`,
+stages. wouldBreak, supersedes and dependsOn are not lineage and are never traced.
+
+Walks cross plans: a qualified target (NNN:ID) is followed into plan NNN, and edges other plans
+hold into a node are followed backward. child-of is derived, not stored: a goal of a child plan
+steps up to its epic's goals (via the epic's child node), and an epic goal steps down to its
+child plans' goals, when plan.epic and the epic's child node agree. Nodes in other plans print
+as NNN:ID. Retired neighbours are left out; a node met twice is printed once and then marked
+"(see above)"; a qualified neighbour that does not resolve is printed as its raw reference.`,
 		Example: "  auto plan trace 004 ac-3fxm --up\n  auto plan trace 004 g-k7q2 --down --text",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -78,11 +85,11 @@ func runTrace(cmd *cobra.Command, application *app.App, planArg, id string, up, 
 	case down:
 		dir = render.Down
 	}
-	p, g, err := loadForRead(cmd, application, text, planArg)
+	p, g, set, err := loadInSet(cmd, application, text, planArg)
 	if err != nil {
 		return err
 	}
-	v, ok := render.Trace(p.ID, g, id, dir)
+	v, ok := render.Trace(p.ID, g, id, dir, set)
 	if !ok {
 		return nodeNotFound(cmd, text, p, id)
 	}
@@ -176,14 +183,14 @@ JSON by default; --text prints Markdown.`,
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			text := textMode(cmd)
-			p, g, err := loadForRead(cmd, application, text, args[0])
+			p, g, set, err := loadInSet(cmd, application, text, args[0])
 			if err != nil {
 				return err
 			}
 			if err := requireType(cmd, text, p, g, args[1], "stage"); err != nil {
 				return err
 			}
-			v, _ := render.Brief(p.ID, g, args[1])
+			v, _ := render.Brief(p.ID, g, args[1], set)
 			return emitView(cmd, text, v)
 		},
 	}
@@ -211,6 +218,31 @@ func loadForRead(cmd *cobra.Command, application *app.App, text bool, arg string
 			"fix graph.json by hand, then run `auto plan lint "+p.ID+"`")
 	}
 	return p, g, nil
+}
+
+// loadInSet is loadForRead for the views that follow qualified references:
+// the plan is decoded through its workspace's PlanSet, which then resolves
+// nodes in other plans on demand.
+func loadInSet(cmd *cobra.Command, application *app.App, text bool, arg string) (workspace.Plan, *graph.Graph, *workspace.PlanSet, error) {
+	ws, err := openWorkspace(cmd, application, text)
+	if err != nil {
+		return workspace.Plan{}, nil, nil, err
+	}
+	p, err := resolveOne(cmd, ws, text, arg)
+	if err != nil {
+		return workspace.Plan{}, nil, nil, err
+	}
+	set, err := ws.PlanSet()
+	if err != nil {
+		return workspace.Plan{}, nil, nil, failOne(cmd, text, "read-failed", "$", "", err.Error(), nil,
+			"check that "+workspace.PlansDir+" is readable")
+	}
+	g, err := set.Load(p.ID)
+	if err != nil {
+		return workspace.Plan{}, nil, nil, failOne(cmd, text, "parse-error", "$", "", err.Error(), nil,
+			"fix graph.json by hand, then run `auto plan lint "+p.ID+"`")
+	}
+	return p, g, set, nil
 }
 
 // nodeNotFound reports an ID the plan does not hold.

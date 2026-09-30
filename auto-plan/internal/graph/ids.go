@@ -134,6 +134,13 @@ func suffix(s string, n int) string {
 	return s[n:]
 }
 
+// QualifiedRefPattern is the shape of a cross-plan reference `NNN:ID`: a
+// plan number, then a node ID in that plan (the plan node's ID is `plan`).
+var QualifiedRefPattern = regexp.MustCompile(`^[0-9]{3}:(?:plan|[a-z]{1,4}-[0-9a-hjkmnp-tv-z]{4})$`)
+
+// Qualify returns the qualified reference `plan:id`.
+func Qualify(plan, id string) string { return plan + ":" + id }
+
 // ParseRef splits a possibly qualified reference. `005:r-8hw3` yields
 // ("005", "r-8hw3", true); a plan-local `r-8hw3` yields ("", "r-8hw3", false).
 func ParseRef(ref string) (plan, id string, qualified bool) {

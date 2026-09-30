@@ -1,0 +1,8 @@
+◎ g-e001  Agents exchange durable mail on one host
+
+down
+  child-of ← ◎ 002:g-t001   send and read round-trip  (via c-e001)
+    proves   ← ✓ 002:ac-t001  a sent mail is read back
+      covers   ← ▶ 002:s-t001   store + send
+        touches  → □ 002:f-t001   auto-mail/store.go
+  child-of ← ◎ 003:g-w001   one mail reaches every subscriber  (via c-e002)

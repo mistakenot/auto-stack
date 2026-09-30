@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/mistakenot/auto-plan/internal/graph"
 	"github.com/mistakenot/auto-plan/internal/schema"
+	"github.com/mistakenot/auto-plan/internal/workspace"
 )
 
 // Severity of an issue. Errors fail lint; warnings alone do not.
@@ -59,8 +61,27 @@ type Context struct {
 	Graph *graph.Graph
 	// Lifecycle is the plan's lifecycle step (see Lifecycle).
 	Lifecycle schema.Lifecycle
+	// Set is every plan of the workspace, for resolving qualified
+	// references and the cross-plan epic rules. It is nil when a graph is
+	// linted alone: qualified references are then shape-checked only and
+	// EpicRules do not run.
+	Set *workspace.PlanSet
 
 	byID map[string]graph.Node
+}
+
+// Resolve returns the node a reference names: a plan-local ID, or (with a
+// Set) a qualified `NNN:ID` in another plan. ok is false when it does not
+// resolve.
+func (c *Context) Resolve(ref string) (graph.Node, bool) {
+	if _, _, qualified := graph.ParseRef(ref); !qualified {
+		return c.Node(ref)
+	}
+	if c.Set == nil {
+		return graph.Node{}, false
+	}
+	n, err := c.Set.Lookup(ref)
+	return n, err == nil
 }
 
 // Node returns the node with the given plan-local ID. When a (broken) graph
@@ -78,39 +99,70 @@ func (c *Context) Node(id string) (graph.Node, bool) {
 	return n, ok
 }
 
-// File lints the graph.json at path. A file that cannot be read or parsed is
-// reported as an issue, never as a Go error, so `lint all` covers every plan.
+// File lints the graph.json at path on its own (no PlanSet). A file that
+// cannot be read or parsed is reported as an issue, never as a Go error, so
+// `lint all` covers every plan.
 func File(planID, path string) Report {
 	g, err := graph.Decode(path)
 	if err != nil {
-		var pe *graph.ParseError
-		issue := Issue{
-			Code: CodeParseError, Severity: SeverityError, Path: "$", Message: err.Error(),
-			Hint: "fix the JSON syntax in " + path + ", then run `auto plan lint " + planID + "`",
-		}
-		if !errors.As(err, &pe) {
-			issue.Code = "unreadable"
-			if errors.Is(err, os.ErrNotExist) {
-				issue.Hint = "every plan folder needs a graph.json; recreate it with `auto plan new`"
-			}
-		}
-		return finish(planID, []Issue{issue})
+		return loadFailure(planID, path, err)
 	}
 	return Graph(planID, g)
 }
 
-// Graph lints a decoded graph: every validation error, then every rule that
-// applies at the plan's lifecycle.
-func Graph(planID string, g *graph.Graph) Report {
+// Plan lints plan planID of set: validation, the lifecycle rules, qualified
+// references resolved against the set, and the cross-plan EpicRules.
+func Plan(set *workspace.PlanSet, planID string) Report {
+	g, err := set.Load(planID)
+	if err != nil {
+		return loadFailure(planID, set.Path(planID), err)
+	}
+	return InSet(set, planID, g)
+}
+
+func loadFailure(planID, path string, err error) Report {
+	var pe *graph.ParseError
+	issue := Issue{
+		Code: CodeParseError, Severity: SeverityError, Path: "$", Message: err.Error(),
+		Hint: "fix the JSON syntax in " + path + ", then run `auto plan lint " + planID + "`",
+	}
+	if !errors.As(err, &pe) {
+		issue.Code = "unreadable"
+		if errors.Is(err, os.ErrNotExist) {
+			issue.Hint = "every plan folder needs a graph.json; recreate it with `auto plan new`"
+		}
+	}
+	return finish(planID, []Issue{issue})
+}
+
+// Graph lints a decoded graph on its own: every validation error, then every
+// rule that applies at the plan's lifecycle. Qualified references are
+// shape-checked only.
+func Graph(planID string, g *graph.Graph) Report { return InSet(nil, planID, g) }
+
+// InSet lints a decoded graph that belongs to set (nil: lint it alone). With
+// a set, each qualified edge target must resolve to a node of an allowed type
+// (dangling-ref, wrong-endpoint), and EpicRules run after Rules.
+func InSet(set *workspace.PlanSet, planID string, g *graph.Graph) Report {
 	issues := []Issue{}
-	c := &Context{Plan: planID, Graph: g, Lifecycle: Lifecycle(g)}
-	for _, ve := range graph.Validate(g) {
+	c := &Context{Plan: planID, Graph: g, Lifecycle: Lifecycle(g), Set: set}
+	structural := graph.Validate(g)
+	if set != nil {
+		for _, e := range g.Edges {
+			structural = append(structural, set.CheckEdge(e)...)
+		}
+	}
+	for _, ve := range structural {
 		issues = append(issues, Issue{
 			Code: ve.Code, Severity: SeverityError, Path: ve.Path, Field: ve.Field,
 			Message: ve.Message, Hint: validationHint(c, ve),
 		})
 	}
-	for _, r := range Rules {
+	rules := Rules
+	if set != nil {
+		rules = append(slices.Clone(Rules), EpicRules...)
+	}
+	for _, r := range rules {
 		if !c.Lifecycle.AtLeast(r.MinLifecycle) {
 			continue
 		}

@@ -68,8 +68,9 @@ type EdgeCounts struct {
 }
 
 // Describe builds the summary rung for node id. ok is false when the plan
-// has no such node.
-func Describe(planID string, g *graph.Graph, id string) (DescribeView, bool) {
+// has no such node. Edge counts include edges other plans hold into the node
+// (plans may be nil).
+func Describe(planID string, g *graph.Graph, id string, plans Plans) (DescribeView, bool) {
 	n, ok := g.NodeByID(id)
 	if !ok {
 		return DescribeView{}, false
@@ -91,6 +92,9 @@ func Describe(planID string, g *graph.Graph, id string) (DescribeView, bool) {
 		if e.To == n.ID {
 			v.Edges.In[e.Type]++
 		}
+	}
+	for _, x := range incoming(plans, planID, n.ID) {
+		v.Edges.In[x.edge.Type]++
 	}
 	return v, true
 }
@@ -170,8 +174,9 @@ type CardView struct {
 }
 
 // EdgeRow is one edge seen from a node: the edge type and the neighbour at
-// the other end. A qualified neighbour (`005:r-8hw3`) lives in another plan;
-// its type and title are left empty until plans are loaded as a set.
+// the other end. A qualified neighbour (`005:r-8hw3`) lives in another plan:
+// its type, title and status are resolved through the plan set, and stay
+// empty when it does not resolve.
 type EdgeRow struct {
 	Edge      string `json:"edge"`
 	ID        string `json:"id"`
@@ -182,8 +187,9 @@ type EdgeRow struct {
 }
 
 // Card builds the full node card for id. ok is false when there is no such
-// node.
-func Card(planID string, g *graph.Graph, id string) (CardView, bool) {
+// node. With plans, qualified neighbours are resolved and the edges other
+// plans hold into the node are listed under In as qualified rows.
+func Card(planID string, g *graph.Graph, id string, plans Plans) (CardView, bool) {
 	n, ok := g.NodeByID(id)
 	if !ok {
 		return CardView{}, false
@@ -196,11 +202,14 @@ func Card(planID string, g *graph.Graph, id string) (CardView, bool) {
 	maps.Copy(v.Fields, n.Fields)
 	for _, e := range g.Edges {
 		if e.From == n.ID {
-			v.Out = append(v.Out, neighbour(g, e.Type, e.To))
+			v.Out = append(v.Out, neighbour(g, plans, e.Type, e.To))
 		}
 		if e.To == n.ID {
-			v.In = append(v.In, neighbour(g, e.Type, e.From))
+			v.In = append(v.In, neighbour(g, plans, e.Type, e.From))
 		}
+	}
+	for _, x := range incoming(plans, planID, n.ID) {
+		v.In = append(v.In, neighbour(g, plans, x.edge.Type, graph.Qualify(x.plan, x.edge.From)))
 	}
 	sortEdgeRows(v.Out)
 	sortEdgeRows(v.In)
@@ -208,10 +217,13 @@ func Card(planID string, g *graph.Graph, id string) (CardView, bool) {
 }
 
 // neighbour describes the node at the other end of an edge.
-func neighbour(g *graph.Graph, edge, ref string) EdgeRow {
+func neighbour(g *graph.Graph, plans Plans, edge, ref string) EdgeRow {
 	row := EdgeRow{Edge: edge, ID: ref}
 	if _, _, qualified := graph.ParseRef(ref); qualified {
 		row.Qualified = true
+		if n, ok := lookup(plans, ref); ok {
+			row.Type, row.Title, row.Status = n.Type, NodeTitle(n), n.Status
+		}
 		return row
 	}
 	if n, ok := g.NodeByID(ref); ok {
@@ -260,7 +272,7 @@ func writeEdgeRows(b *strings.Builder, title, arrow string, rows []EdgeRow) {
 	for _, r := range rows {
 		glyph, rest := Glyph(r.Type), r.Title
 		switch {
-		case r.Qualified:
+		case r.Qualified && r.Type == "":
 			glyph, rest = "⇢", "(in plan "+strings.SplitN(r.ID, ":", 2)[0]+")"
 		case r.Type == "":
 			rest = "(missing)"

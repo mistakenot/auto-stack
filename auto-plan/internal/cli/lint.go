@@ -24,11 +24,19 @@ Which rules run depends on the plan's lifecycle (auto plan update <plan> plan --
 
   every step   open-question, ac-no-goal, ac-multi-goal, dangling-prose-ref, tree-syntax,
                dependency-cycle; warnings decision-no-alternative, retired-ref
-  solution     + goal-no-ac, ac-no-verify; warning goal-count (outside 5–8 goals)
+  solution     + goal-no-ac (not for epics), ac-no-verify; warning goal-count (outside 5–8 goals)
   plan         + unplanned-file, untracked-file, missing-dep
 
+Cross-plan (epic) rules, by the linted plan's own lifecycle:
+
+  every step   child-missing, child-epic-mismatch, superseded-ref
+  solution     + rail-undischarged (the plan honours a rail no AC of it discharges)
+  plan         + rail-unhonored (unless the rail is deferred), leg-undelivered (epics)
+
 Structural codes (dangling-ref, bad-id, duplicate-id, wrong-endpoint, missing-field, …) are
-reported at every step. A qualified [[NNN:id]] prose reference is shape-checked only.
+reported at every step. Qualified references (an NNN:ID edge target or [[NNN:id]] in prose)
+must resolve against docs/plans/NNN-*/graph.json, and an edge's target must be of a type the
+edge allows. Each issue is reported on the plan whose graph holds the node it is about.
 
 One plan prints {plan, ok, issues:[{code,severity,path,field,message,hint}]}; "all" prints
 {ok, plans:[…]}. Exit 1 on any error; warnings alone exit 0. --text prints each plan's
@@ -57,9 +65,13 @@ func runLint(cmd *cobra.Command, application *app.App, arg string) error {
 			"name a plan as NNN, NNN-name, a path, or all")
 	}
 
+	set, err := ws.PlanSet()
+	if err != nil {
+		return failOne(cmd, text, "read-failed", "$", "", err.Error(), nil, "check that "+workspace.PlansDir+" is readable")
+	}
 	all := lintAllResult{OK: true, Plans: []lint.Report{}}
 	for _, p := range plans {
-		r := lint.File(p.ID, ws.GraphPath(p))
+		r := lint.Plan(set, p.ID)
 		all.OK = all.OK && r.OK
 		all.Plans = append(all.Plans, r)
 	}

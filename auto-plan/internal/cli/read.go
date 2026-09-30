@@ -141,11 +141,11 @@ direction. "get" is the exact command that prints the full node.`, render.Descri
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			text := textMode(cmd)
-			p, g, err := loadForRead(cmd, application, text, args[0])
+			p, g, set, err := loadInSet(cmd, application, text, args[0])
 			if err != nil {
 				return err
 			}
-			v, ok := render.Describe(p.ID, g, args[1])
+			v, ok := render.Describe(p.ID, g, args[1], set)
 			if !ok {
 				return nodeNotFound(cmd, text, p, args[1])
 			}
@@ -160,16 +160,18 @@ func newGetCmd(application *app.App) *cobra.Command {
 		Short: "Print one node in full, with every incoming and outgoing edge",
 		Long: `Print one node at full fidelity: every field, and each outgoing ("out") and incoming ("in")
 edge with the neighbour's ID, type, title and status. A neighbour in another plan (NNN:ID) is
-marked qualified and printed as its raw reference.`,
+marked qualified and resolved through docs/plans/NNN-*/graph.json; edges other plans hold into
+the node are listed under "in" with their qualified source. A reference that does not resolve
+is printed raw.`,
 		Example: "  auto plan get 004 d-9t2w --text",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			text := textMode(cmd)
-			p, g, err := loadForRead(cmd, application, text, args[0])
+			p, g, set, err := loadInSet(cmd, application, text, args[0])
 			if err != nil {
 				return err
 			}
-			v, ok := render.Card(p.ID, g, args[1])
+			v, ok := render.Card(p.ID, g, args[1], set)
 			if !ok {
 				return nodeNotFound(cmd, text, p, args[1])
 			}

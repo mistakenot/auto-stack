@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "nodes": [
+    {"id": "plan", "type": "plan", "status": "active", "fields": {"name": "fan-out", "kind": "task", "lifecycle": "requirements", "created": "2026-01-01", "epic": "001"}},
+    {"id": "g-w001", "type": "goal", "status": "active", "rank": "a0", "fields": {"title": "one mail reaches every subscriber"}}
+  ],
+  "edges": [
+    {"from": "plan", "type": "honors", "to": "001:r-e001"},
+    {"from": "plan", "type": "delivers", "to": "001:l-e002"}
+  ]
+}

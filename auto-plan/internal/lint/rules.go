@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"github.com/mistakenot/auto-plan/internal/graph"
 	"github.com/mistakenot/auto-plan/internal/schema"
 	"github.com/mistakenot/auto-plan/internal/tree"
+	"github.com/mistakenot/auto-plan/internal/workspace"
 )
 
 // Edge type names the rules read.
@@ -18,6 +20,9 @@ const (
 	edgeDependsOn = "dependsOn"
 	edgeTouches   = "touches"
 )
+
+// kindEpic is the plan kind whose plans hold rails, journeys and children.
+const kindEpic = "epic"
 
 // Goal-count bounds: lint warns outside them.
 const (
@@ -136,8 +141,13 @@ func acMultiGoal(c *Context) []Issue {
 	return out
 }
 
-// goalNoAC reports every active goal that no active AC proves.
+// goalNoAC reports every active goal that no active AC proves. An epic's
+// goals are exempt: its child plans carry the ACs, and an epic's own goals
+// are reached from theirs (trace's child-of hop), never proven locally.
 func goalNoAC(c *Context) []Issue {
+	if plan, _ := c.Graph.Plan(); plan.StringField("kind") == kindEpic {
+		return nil
+	}
 	proven := map[string]bool{}
 	for _, e := range c.Graph.Edges {
 		if e.Type == edgeProves && isActive(c, e.From) {
@@ -219,7 +229,7 @@ func decisionNoAlternative(c *Context) []Issue {
 var proseRef = regexp.MustCompile(`\[\[([^\[\]\n]*)\]\]`)
 
 // qualifiedRef is the shape of a cross-plan prose reference, `[[005:r-8hw3]]`.
-var qualifiedRef = regexp.MustCompile(`^[0-9]{3}:(?:plan|[a-z]{1,4}-[0-9a-hjkmnp-tv-z]{4})$`)
+var qualifiedRef = graph.QualifiedRefPattern
 
 // proseRefs calls fn for each distinct `[[…]]` reference in every text field
 // (registry kind text, nested objects included) of every active node.
@@ -263,9 +273,9 @@ func walkText(path string, specs []schema.FieldSpec, values map[string]any, fn f
 
 // danglingProseRef reports `[[id]]` references that name no node in the
 // plan, and references that are not node IDs at all. A qualified
-// `[[NNN:id]]` is checked for shape only here; resolving it against plan NNN
-// is a cross-plan check that runs over the set of loaded plans. A reference
-// to a retired node is a retired-ref warning instead.
+// `[[NNN:id]]` must resolve against docs/plans/NNN-*/graph.json when the plan
+// is linted within its PlanSet; linted alone, it is checked for shape only. A
+// reference to a retired node is a retired-ref warning instead.
 func danglingProseRef(c *Context) []Issue {
 	var out []Issue
 	proseRefs(c, func(n graph.Node, path, field, ref string) {
@@ -273,7 +283,21 @@ func danglingProseRef(c *Context) []Issue {
 			" …; see the plan's node IDs with auto plan show " + c.Plan
 		switch {
 		case qualifiedRef.MatchString(ref):
-			return
+			if c.Set == nil {
+				return
+			}
+			if _, err := c.Set.Lookup(ref); err != nil {
+				planID, id, _ := graph.ParseRef(ref)
+				why := "plan " + planID + " has no node " + id
+				switch {
+				case errors.Is(err, workspace.ErrNotFound):
+					why = "there is no plan " + planID
+				case !errors.Is(err, workspace.ErrNodeNotFound):
+					why = "plan " + planID + " cannot be read"
+				}
+				out = append(out, Issue{Path: path, Field: field, Hint: hint,
+					Message: fmt.Sprintf("%s's %s refers to [[%s]], but %s", n.ID, field, ref, why)})
+			}
 		case ref == schema.PlanNodeID || graph.IDPattern.MatchString(ref):
 			if _, ok := c.Node(ref); ok {
 				return
@@ -423,7 +447,8 @@ func missingDep(c *Context) []Issue {
 }
 
 // retiredRef warns about every reference from an active node to a retired
-// one: edges, and `[[id]]` prose references. From `plan` on, touches and
+// one: edges, and `[[id]]` prose references, qualified ones included when the
+// plan is linted within its PlanSet. From `plan` on, touches and
 // dependsOn edges to retired nodes are untracked-file and missing-dep errors
 // instead, so they are not reported twice.
 func retiredRef(c *Context) []Issue {
@@ -436,7 +461,7 @@ func retiredRef(c *Context) []Issue {
 		if !isActive(c, e.From) {
 			continue
 		}
-		to, ok := c.Node(e.To)
+		to, ok := c.Resolve(e.To)
 		if !ok || to.Active() {
 			continue
 		}
@@ -447,7 +472,7 @@ func retiredRef(c *Context) []Issue {
 		})
 	}
 	proseRefs(c, func(n graph.Node, path, field, ref string) {
-		if to, ok := c.Node(ref); ok && !to.Active() {
+		if to, ok := c.Resolve(ref); ok && !to.Active() {
 			out = append(out, Issue{
 				Path: path, Field: field,
 				Message: fmt.Sprintf("%s's %s refers to [[%s]], which is retired", n.ID, field, ref),

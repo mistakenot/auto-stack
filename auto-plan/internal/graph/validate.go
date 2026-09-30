@@ -234,10 +234,15 @@ func (v *validator) edge(path string, e Edge, byID map[string]Node) {
 	}
 
 	if _, _, qualified := ParseRef(e.To); qualified {
-		if ok && !et.CrossPlan {
+		switch {
+		case ok && !et.CrossPlan:
 			v.add(CodeWrongEndpoint, path+".to", "to", et.Name+" edges cannot target another plan", e.To)
+		case !QualifiedRefPattern.MatchString(e.To):
+			v.add(CodeDanglingRef, path+".to", "to",
+				"edge targets "+strconv.Quote(e.To)+", which is not a reference NNN:ID (e.g. 005:r-8hw3)", e.To)
 		}
-		// Qualified targets are resolved across plans, not here.
+		// Well-formed qualified targets are resolved across plans
+		// (workspace.PlanSet.CheckEdge), not here.
 		return
 	}
 	to, toOK := byID[e.To]

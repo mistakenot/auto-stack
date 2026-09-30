@@ -18,6 +18,75 @@ type View interface {
 	Text() string
 }
 
+// Plans is the set of plans a view can reach through qualified references
+// (`005:r-8hw3`) and epic ↔ child links. workspace.PlanSet implements it. A
+// nil Plans reaches nothing: qualified neighbours stay raw references.
+type Plans interface {
+	// Graph returns plan planID's graph; ok is false when it is missing or
+	// unreadable.
+	Graph(planID string) (*graph.Graph, bool)
+	// IDs lists every plan number, sorted.
+	IDs() []string
+	// Family lists an epic's child plan numbers, sorted.
+	Family(epic string) []string
+}
+
+// lookup resolves a qualified reference through plans.
+func lookup(plans Plans, ref string) (graph.Node, bool) {
+	planID, id, qualified := graph.ParseRef(ref)
+	if !qualified || plans == nil {
+		return graph.Node{}, false
+	}
+	g, ok := plans.Graph(planID)
+	if !ok {
+		return graph.Node{}, false
+	}
+	return g.NodeByID(id)
+}
+
+// crossEdge is an edge held by another plan whose qualified target is a node
+// of this plan.
+type crossEdge struct {
+	plan string
+	edge graph.Edge
+}
+
+// incoming returns the edges of every other plan that target plan planID's
+// node id, in plan order then edge order.
+func incoming(plans Plans, planID, id string) []crossEdge {
+	if plans == nil {
+		return nil
+	}
+	ref := graph.Qualify(planID, id)
+	var out []crossEdge
+	for _, p := range plans.IDs() {
+		if p == planID {
+			continue
+		}
+		g, ok := plans.Graph(p)
+		if !ok {
+			continue
+		}
+		for _, e := range g.Edges {
+			if e.To == ref {
+				out = append(out, crossEdge{plan: p, edge: e})
+			}
+		}
+	}
+	return out
+}
+
+// planEdgeTo reports whether plan planID has an edge `plan <typ> <to>`.
+func planEdgeTo(plans Plans, planID, typ, to string) bool {
+	g, ok := plans.Graph(planID)
+	if !ok {
+		return false
+	}
+	return slices.ContainsFunc(g.Edges, func(e graph.Edge) bool {
+		return e.From == "plan" && e.Type == typ && e.To == to
+	})
+}
+
 // Glyphs mark node types in text views (show-me notation).
 const (
 	GlyphGoal     = "◎"
@@ -58,15 +127,26 @@ func Glyph(typ string) string {
 // decisions that constrain it or its ACs (with the alternatives they
 // rejected), then blocks for rails, defects and open questions.
 //
+// An epic reads goals → journeys → child plans: after the ladder come its
+// journeys (each leg tagged with the child plans that deliver it, found by
+// scanning the children's `delivers` edges) and its child plans with their
+// lifecycle and dependsOn. Rails are tagged with the children that honour
+// them. The blocks are data-driven, so a task plan that holds journeys or
+// child nodes shows them too.
+//
 // Every row carries a positional label (G1, AC1.2, D3, A3.1, R1, DF1, Q1)
 // for reading only: labels follow the current rank order, change when the
 // plan is reordered, and are never accepted as a reference.
 type ShowView struct {
-	Plan      string        `json:"plan"`
-	Name      string        `json:"name"`
-	Kind      string        `json:"kind"`
-	Lifecycle string        `json:"lifecycle"`
+	Plan      string `json:"plan"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	Lifecycle string `json:"lifecycle"`
+	// Epic is the epic plan this plan belongs to (plan.fields.epic).
+	Epic      string        `json:"epic,omitempty"`
 	Goals     []GoalRow     `json:"goals"`
+	Journeys  []JourneyRow  `json:"journeys"`
+	Children  []ChildRow    `json:"children"`
 	Unlinked  UnlinkedRow   `json:"unlinked"`
 	Rails     []RailRow     `json:"rails"`
 	Defects   []DefectRow   `json:"defects"`
@@ -109,12 +189,44 @@ type AltRow struct {
 	Why   string `json:"why,omitempty"`
 }
 
-// RailRow is one rail, with the child plans excused from it for now.
+// RailRow is one rail, with the child plans that honour it and those
+// excused from it for now.
 type RailRow struct {
-	Label    string   `json:"label"`
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
-	Deferred []string `json:"deferred"`
+	Label     string   `json:"label"`
+	ID        string   `json:"id"`
+	Title     string   `json:"title"`
+	HonoredBy []string `json:"honoredBy"`
+	Deferred  []string `json:"deferred"`
+}
+
+// JourneyRow is one journey and its legs in reading order.
+type JourneyRow struct {
+	Label string   `json:"label"`
+	ID    string   `json:"id"`
+	Title string   `json:"title"`
+	Legs  []LegRow `json:"legs"`
+}
+
+// LegRow is one leg, with the child plans that deliver it.
+type LegRow struct {
+	Label       string   `json:"label"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	DeliveredBy []string `json:"deliveredBy"`
+}
+
+// ChildRow is one child plan of an epic: the child node, the plan it names,
+// that plan's name and lifecycle (Found is false when its folder is missing
+// or unreadable), and the child nodes it depends on.
+type ChildRow struct {
+	Label     string   `json:"label"`
+	ID        string   `json:"id"`
+	Plan      string   `json:"plan"`
+	Name      string   `json:"name"`
+	Title     string   `json:"title"`
+	Lifecycle string   `json:"lifecycle"`
+	Found     bool     `json:"found"`
+	DependsOn []string `json:"dependsOn"`
 }
 
 // DefectRow is one defect and the goals that address it.
@@ -133,26 +245,33 @@ type QuestionRow struct {
 }
 
 // UnlinkedRow holds active ACs that prove no goal, decisions that constrain
-// nothing and alternatives no decision rejects, so nothing is invisible.
+// nothing, alternatives no decision rejects and legs in no journey, so
+// nothing is invisible.
 type UnlinkedRow struct {
 	ACs          []ACRow       `json:"acs"`
 	Decisions    []DecisionRow `json:"decisions"`
 	Alternatives []AltRow      `json:"alternatives"`
+	Legs         []LegRow      `json:"legs"`
 }
 
 // ladderWhyWidth is how many runes of an alternative's reason the ladder shows.
 const ladderWhyWidth = 60
 
-// Show builds the goal ladder for a plan. Retired nodes are left out.
-func Show(planID string, g *graph.Graph) ShowView {
+// Show builds the goal ladder for a plan. Retired nodes are left out. plans
+// (may be nil) supplies the child plans an epic's journeys, children and
+// rails are tagged with.
+func Show(planID string, g *graph.Graph, plans Plans) ShowView {
 	plan, _ := g.Plan()
 	v := ShowView{
 		Plan:      planID,
 		Name:      plan.StringField("name"),
 		Kind:      plan.StringField("kind"),
 		Lifecycle: plan.StringField("lifecycle"),
+		Epic:      plan.StringField("epic"),
 		Goals:     []GoalRow{},
-		Unlinked:  UnlinkedRow{ACs: []ACRow{}, Decisions: []DecisionRow{}, Alternatives: []AltRow{}},
+		Journeys:  []JourneyRow{},
+		Children:  []ChildRow{},
+		Unlinked:  UnlinkedRow{ACs: []ACRow{}, Decisions: []DecisionRow{}, Alternatives: []AltRow{}, Legs: []LegRow{}},
 		Rails:     []RailRow{},
 		Defects:   []DefectRow{},
 		Questions: []QuestionRow{},
@@ -230,8 +349,27 @@ func Show(planID string, g *graph.Graph) ShowView {
 		}
 	}
 
+	var family []string
+	if plans != nil {
+		family = plans.Family(planID)
+	}
+	by := func(typ, id string) []string {
+		out := []string{}
+		for _, p := range family {
+			if planEdgeTo(plans, p, typ, graph.Qualify(planID, id)) {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	v.Journeys, v.Unlinked.Legs = journeys(ix, by)
+	v.Children = children(ix, plans)
+
 	for i, r := range ix.byType("rail") {
-		v.Rails = append(v.Rails, RailRow{Label: "R" + strconv.Itoa(i+1), ID: r.ID, Title: r.StringField("title"), Deferred: stringList(r.Fields["deferred"])})
+		v.Rails = append(v.Rails, RailRow{
+			Label: "R" + strconv.Itoa(i+1), ID: r.ID, Title: r.StringField("title"),
+			HonoredBy: by("honors", r.ID), Deferred: stringList(r.Fields["deferred"]),
+		})
 	}
 	for i, d := range ix.byType("defect") {
 		v.Defects = append(v.Defects, DefectRow{Label: "DF" + strconv.Itoa(i+1), ID: d.ID, Title: d.StringField("title"), AddressedBy: sorted(addressedBy[d.ID])})
@@ -242,6 +380,67 @@ func Show(planID string, g *graph.Graph) ShowView {
 		}
 	}
 	return v
+}
+
+// journeys groups the active legs under their journey (the first active
+// journey a leg is `in`), in reading order; legs in no journey are returned
+// separately. deliveredBy lists the plans with a `delivers` edge to a leg.
+func journeys(ix *index, deliveredBy func(typ, id string) []string) ([]JourneyRow, []LegRow) {
+	journeyOf := map[string]string{}
+	for _, e := range ix.activeEdges("in") {
+		if _, seen := journeyOf[e.From]; !seen {
+			journeyOf[e.From] = e.To
+		}
+	}
+	legRow := func(l graph.Node, label string) LegRow {
+		return LegRow{Label: label, ID: l.ID, Title: NodeTitle(l), DeliveredBy: deliveredBy("delivers", l.ID)}
+	}
+	legs := ix.byType("leg")
+	rows := []JourneyRow{}
+	for ji, j := range ix.byType("journey") {
+		jl := strconv.Itoa(ji + 1)
+		row := JourneyRow{Label: "J" + jl, ID: j.ID, Title: j.StringField("title"), Legs: []LegRow{}}
+		for _, l := range legs {
+			if journeyOf[l.ID] == j.ID {
+				row.Legs = append(row.Legs, legRow(l, "L"+jl+"."+strconv.Itoa(len(row.Legs)+1)))
+			}
+		}
+		rows = append(rows, row)
+	}
+	unlinked := []LegRow{}
+	for _, l := range legs {
+		if _, ok := journeyOf[l.ID]; !ok {
+			unlinked = append(unlinked, legRow(l, "L?."+strconv.Itoa(len(unlinked)+1)))
+		}
+	}
+	return rows, unlinked
+}
+
+// children lists the active child nodes in reading order with the name and
+// lifecycle of the plan each names.
+func children(ix *index, plans Plans) []ChildRow {
+	deps := map[string][]string{}
+	for _, e := range ix.activeEdges("dependsOn") {
+		deps[e.From] = append(deps[e.From], e.To)
+	}
+	rows := []ChildRow{}
+	for i, c := range ix.byType("child") {
+		row := ChildRow{
+			Label: "C" + strconv.Itoa(i+1), ID: c.ID, Plan: c.StringField("plan"), Title: c.StringField("title"),
+			DependsOn: []string{},
+		}
+		for _, d := range ix.ordered(deps[c.ID]) {
+			row.DependsOn = append(row.DependsOn, d.ID)
+		}
+		if plans != nil {
+			if g, ok := plans.Graph(row.Plan); ok {
+				p, _ := g.Plan()
+				row.Name, row.Lifecycle, row.Found = p.StringField("name"), p.StringField("lifecycle"), true
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func acRow(n graph.Node, label string) ACRow {
@@ -307,6 +506,32 @@ func (v ShowView) Text() string {
 	}
 
 	blocks := []block{{lines: ladder}}
+	var journeyLines, childLines []line
+	for _, j := range v.Journeys {
+		journeyLines = append(journeyLines, line{indent: 1, glyph: Glyph("journey"), label: j.Label, id: j.ID, title: j.Title})
+		for _, l := range j.Legs {
+			journeyLines = append(journeyLines, legLine(2, l))
+		}
+	}
+	for i := range v.Children {
+		c := &v.Children[i]
+		title := c.Plan
+		if c.Name != "" {
+			title += "-" + c.Name
+		}
+		if c.Title != "" {
+			title += " — " + c.Title
+		}
+		comment := c.Lifecycle
+		if !c.Found {
+			comment = "(no plan " + c.Plan + ")"
+		}
+		if len(c.DependsOn) > 0 {
+			comment += " · after " + strings.Join(c.DependsOn, ", ")
+		}
+		childLines = append(childLines, line{indent: 1, glyph: Glyph("child"), label: c.Label, id: c.ID, title: title, comment: comment})
+	}
+	blocks = append(blocks, block{"journeys", journeyLines}, block{"child plans", childLines})
 	var unlinked []line
 	for _, ac := range v.Unlinked.ACs {
 		unlinked = append(unlinked, line{indent: 1, glyph: GlyphAC, label: ac.Label, id: ac.ID, title: ac.Title, comment: ac.Verify})
@@ -317,14 +542,21 @@ func (v ShowView) Text() string {
 	for _, a := range v.Unlinked.Alternatives {
 		unlinked = append(unlinked, altLine(1, a))
 	}
+	for _, l := range v.Unlinked.Legs {
+		unlinked = append(unlinked, legLine(1, l))
+	}
 	blocks = append(blocks, block{title: "unlinked", lines: unlinked})
 
 	var rails, defects, questions []line
 	for _, r := range v.Rails {
-		comment := ""
-		if len(r.Deferred) > 0 {
-			comment = "deferred: " + strings.Join(r.Deferred, ", ")
+		var notes []string
+		if len(r.HonoredBy) > 0 {
+			notes = append(notes, "honoured by "+strings.Join(r.HonoredBy, ", "))
 		}
+		if len(r.Deferred) > 0 {
+			notes = append(notes, "deferred: "+strings.Join(r.Deferred, ", "))
+		}
+		comment := strings.Join(notes, "; ")
 		rails = append(rails, line{indent: 1, glyph: Glyph("rail"), label: r.Label, id: r.ID, title: r.Title, comment: comment})
 	}
 	for _, d := range v.Defects {
@@ -340,7 +572,11 @@ func (v ShowView) Text() string {
 	blocks = append(blocks, block{"rails", rails}, block{"defects", defects}, block{"open questions", questions})
 
 	var b strings.Builder
-	b.WriteString(v.Plan + "-" + v.Name + "  " + v.Kind + " · " + v.Lifecycle + "\n")
+	b.WriteString(v.Plan + "-" + v.Name + "  " + v.Kind + " · " + v.Lifecycle)
+	if v.Epic != "" {
+		b.WriteString(" · epic " + v.Epic)
+	}
+	b.WriteString("\n")
 	var all []line
 	for _, bl := range blocks {
 		all = append(all, bl.lines...)
@@ -363,6 +599,16 @@ func (v ShowView) Text() string {
 		}
 	}
 	return b.String()
+}
+
+// legLine is a leg, with the child plans that deliver it in the comment
+// column.
+func legLine(indent int, l LegRow) line {
+	comment := ""
+	if len(l.DeliveredBy) > 0 {
+		comment = "delivered by " + strings.Join(l.DeliveredBy, ", ")
+	}
+	return line{indent: indent, glyph: Glyph("leg"), label: l.Label, id: l.ID, title: l.Title, comment: comment}
 }
 
 // altLine is a rejected alternative: a "-" in its decision's glyph column,

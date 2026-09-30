@@ -1,6 +1,7 @@
 // Package workspace locates plans on disk: the repo root, the docs/plans/
 // folder, the next plan number, and resolution of a plan argument
-// (`NNN`, `NNN-name`, a path, or `all`).
+// (`NNN`, `NNN-name`, a path, or `all`), and the PlanSet that resolves
+// qualified cross-plan references (`005:r-8hw3`).
 package workspace
 
 import (
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mistakenot/auto-plan/internal/graph"
 	"github.com/mistakenot/auto-plan/internal/schema"
 	"github.com/mistakenot/auto-shared/git"
 )
@@ -178,4 +180,178 @@ func (w *Workspace) ResolveOne(arg string) (Plan, error) {
 		return Plan{}, err
 	}
 	return plans[0], nil
+}
+
+// ErrNodeNotFound is returned when a qualified reference names a plan that
+// exists but holds no node with that ID.
+var ErrNodeNotFound = errors.New("node not found")
+
+// PlanSet is every plan of a workspace, loaded on demand: a plan's graph is
+// decoded the first time something asks for it and cached, so resolving a
+// plan's qualified references (and theirs, transitively) loads exactly the
+// plans they reach. Qualified references (`005:r-8hw3`) resolve against
+// docs/plans/005-*/graph.json (D-9).
+type PlanSet struct {
+	ws    *Workspace
+	plans map[string]Plan
+	ids   []string
+	cache map[string]loadResult
+}
+
+type loadResult struct {
+	g   *graph.Graph
+	err error
+}
+
+// PlanSet indexes the workspace's plan folders. No graph is read yet.
+func (w *Workspace) PlanSet() (*PlanSet, error) {
+	plans, err := w.Plans()
+	if err != nil {
+		return nil, err
+	}
+	s := &PlanSet{ws: w, plans: map[string]Plan{}, cache: map[string]loadResult{}}
+	for _, p := range plans {
+		if _, dup := s.plans[p.ID]; dup {
+			continue // two folders with one number: the first (sorted) wins
+		}
+		s.plans[p.ID] = p
+		s.ids = append(s.ids, p.ID)
+	}
+	return s, nil
+}
+
+// IDs lists every plan number, sorted.
+func (s *PlanSet) IDs() []string { return slices.Clone(s.ids) }
+
+// Plan returns the plan folder with number id.
+func (s *PlanSet) Plan(id string) (Plan, bool) {
+	p, ok := s.plans[id]
+	return p, ok
+}
+
+// Has reports whether a plan folder with number id exists.
+func (s *PlanSet) Has(id string) bool {
+	_, ok := s.plans[id]
+	return ok
+}
+
+// Path returns the absolute graph.json path of plan id ("" when absent).
+func (s *PlanSet) Path(id string) string {
+	p, ok := s.plans[id]
+	if !ok {
+		return ""
+	}
+	return s.ws.GraphPath(p)
+}
+
+// Load decodes plan id's graph (once; later calls return the cached result).
+// A missing folder is ErrNotFound; malformed JSON is the decode error.
+func (s *PlanSet) Load(id string) (*graph.Graph, error) {
+	if r, ok := s.cache[id]; ok {
+		return r.g, r.err
+	}
+	p, ok := s.plans[id]
+	if !ok {
+		return nil, fmt.Errorf("%w: no %s/%s-* folder", ErrNotFound, PlansDir, id)
+	}
+	g, err := graph.Decode(s.ws.GraphPath(p))
+	s.cache[id] = loadResult{g: g, err: err}
+	return g, err
+}
+
+// Graph is Load for callers that only need to know whether the plan loaded.
+func (s *PlanSet) Graph(id string) (*graph.Graph, bool) {
+	g, err := s.Load(id)
+	return g, err == nil
+}
+
+// Lookup resolves a qualified reference `NNN:ID` to its node, whatever its
+// status. It fails with ErrNotFound (no such plan), ErrNodeNotFound (the plan
+// has no such node) or the plan's decode error.
+func (s *PlanSet) Lookup(ref string) (graph.Node, error) {
+	planID, id, qualified := graph.ParseRef(ref)
+	if !qualified || !graph.QualifiedRefPattern.MatchString(ref) {
+		return graph.Node{}, fmt.Errorf("%q is not a reference NNN:ID", ref)
+	}
+	g, err := s.Load(planID)
+	if err != nil {
+		return graph.Node{}, err
+	}
+	n, ok := g.NodeByID(id)
+	if !ok {
+		return graph.Node{}, fmt.Errorf("%w: plan %s has no node %s", ErrNodeNotFound, planID, id)
+	}
+	return n, nil
+}
+
+// CheckEdge resolves the qualified target of a cross-plan edge and checks it
+// against the edge type's allowed target types. It returns nothing for a
+// plan-local target, an unregistered or non-cross-plan edge type, or a
+// malformed reference: graph.Validate reports those. Otherwise a target whose
+// plan or node does not exist is a dangling-ref, and one of a type the edge
+// may not end at is a wrong-endpoint.
+func (s *PlanSet) CheckEdge(e graph.Edge) []graph.ValidationError {
+	planID, id, qualified := graph.ParseRef(e.To)
+	et, ok := schema.Registry.Edge(e.Type)
+	if !qualified || !ok || !et.CrossPlan || !graph.QualifiedRefPattern.MatchString(e.To) {
+		return nil
+	}
+	path := graph.EdgePath(e) + ".to"
+	n, err := s.Lookup(e.To)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return []graph.ValidationError{{Code: graph.CodeDanglingRef, Path: path, Field: "to", Value: e.To,
+			Message: fmt.Sprintf("edge targets %s, but there is no plan %s under %s", strconv.Quote(e.To), planID, PlansDir)}}
+	case errors.Is(err, ErrNodeNotFound):
+		return []graph.ValidationError{{Code: graph.CodeDanglingRef, Path: path, Field: "to", Value: e.To,
+			Message: fmt.Sprintf("edge targets %s, but plan %s has no node %s", strconv.Quote(e.To), planID, id)}}
+	case err != nil:
+		return []graph.ValidationError{{Code: graph.CodeDanglingRef, Path: path, Field: "to", Value: e.To,
+			Message: fmt.Sprintf("edge targets %s, but plan %s cannot be read: %v", strconv.Quote(e.To), planID, err)}}
+	case !et.AllowsTo(n.Type):
+		return []graph.ValidationError{{Code: graph.CodeWrongEndpoint, Path: path, Field: "to", Value: e.To,
+			Message: fmt.Sprintf("%s edges end at %s, not %s (%s is a %s)", et.Name, et.ToLabel(), n.Type, e.To, n.Type)}}
+	}
+	return nil
+}
+
+// CheckEpic checks that plan number epic names an existing, readable epic
+// plan: what `new --epic` and `update … plan --epic` require.
+func (s *PlanSet) CheckEpic(epic string) error {
+	g, err := s.Load(epic)
+	if err != nil {
+		return err
+	}
+	plan, _ := g.Plan()
+	if kind := plan.StringField("kind"); kind != "epic" {
+		return fmt.Errorf("plan %s is kind %q, not an epic", epic, kind)
+	}
+	return nil
+}
+
+// Family returns the child plan numbers of epic plan epic, sorted: the plans
+// its active child nodes name (when they exist) and every plan whose plan
+// node declares `epic: <epic>`. Plans that fail to load are skipped.
+func (s *PlanSet) Family(epic string) []string {
+	var out []string
+	if g, ok := s.Graph(epic); ok {
+		for _, n := range g.Nodes {
+			if n.Type == "child" && n.Active() && s.Has(n.StringField("plan")) {
+				out = append(out, n.StringField("plan"))
+			}
+		}
+	}
+	for _, id := range s.ids {
+		if id == epic {
+			continue
+		}
+		if g, ok := s.Graph(id); ok {
+			if p, _ := g.Plan(); p.StringField("epic") == epic {
+				out = append(out, id)
+			}
+		}
+	}
+	slices.Sort(out)
+	out = slices.Compact(out)
+	return slices.DeleteFunc(out, func(id string) bool { return id == epic || strings.TrimSpace(id) == "" })
 }

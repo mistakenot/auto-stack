@@ -1,0 +1,8 @@
+‖ r-e001  No network calls
+
+down
+  discharges ← ✓ 002:ac-t001  a sent mail is read back
+    covers     ← ▶ 002:s-t001   store + send
+      touches    → □ 002:f-t001   auto-mail/store.go
+  honors     ← ▤ 002:plan     walking-skeleton
+  honors     ← ▤ 003:plan     fan-out
