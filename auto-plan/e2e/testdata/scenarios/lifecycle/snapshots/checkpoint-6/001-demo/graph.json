@@ -2,6 +2,16 @@
   "version": 1,
   "nodes": [
     {
+      "id": "ac-bvmq",
+      "type": "ac",
+      "status": "retired",
+      "rank": "a1",
+      "fields": {
+        "gwt": "Given two stages, when brief runs for one, then the other's steps are absent",
+        "title": "brief names no other stage"
+      }
+    },
+    {
       "id": "ac-j58t",
       "type": "ac",
       "status": "active",
@@ -10,8 +20,22 @@
         "gwt": "Given a stage, when brief runs, then its output needs nothing else",
         "title": "brief is self-contained",
         "verify": {
-          "cmd": "go test ./e2e -run Brief"
+          "cmd": "go test ./e2e -run Brief",
+          "tests": [
+            "TestBrief",
+            "TestBriefIsolated"
+          ]
         }
+      }
+    },
+    {
+      "id": "a-w1fg",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "title": "reuse Context Pack",
+        "why": "collides with auto-graph's term"
       }
     },
     {
@@ -30,7 +54,7 @@
       "id": "g-gc8t",
       "type": "goal",
       "status": "active",
-      "rank": "a1",
+      "rank": "5",
       "fields": {
         "title": "An agent gets one stage's context in one call"
       }
@@ -41,6 +65,7 @@
       "status": "active",
       "rank": "a0",
       "fields": {
+        "description": "Reordering rewrites one rank; no ID changes.",
         "title": "Plans can be reordered without breaking references"
       }
     },
@@ -58,6 +83,11 @@
   ],
   "edges": [
     {
+      "from": "ac-bvmq",
+      "type": "proves",
+      "to": "g-gc8t"
+    },
+    {
       "from": "ac-j58t",
       "type": "proves",
       "to": "g-gc8t"
@@ -65,7 +95,12 @@
     {
       "from": "d-kqxw",
       "type": "constrains",
-      "to": "g-gc8t"
+      "to": "ac-j58t"
+    },
+    {
+      "from": "d-kqxw",
+      "type": "rejects",
+      "to": "a-w1fg"
     }
   ]
 }

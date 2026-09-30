@@ -96,6 +96,11 @@ func parseError(data []byte, err error) *ParseError {
 	return &ParseError{Line: line, Column: col, Msg: err.Error()}
 }
 
+// DecodeIssues returns the problems found while decoding: values of the wrong
+// JSON type, or nodes and edges that are not objects. Decode could not keep
+// those values, so rewriting the file would lose them; `fmt` refuses.
+func (g *Graph) DecodeIssues() []ValidationError { return slices.Clone(g.decodeIssues) }
+
 func (g *Graph) issue(code, path, field, msg string, value any) {
 	g.decodeIssues = append(g.decodeIssues, ValidationError{Code: code, Path: path, Field: field, Message: msg, Value: value})
 }

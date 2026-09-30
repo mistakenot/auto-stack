@@ -145,7 +145,8 @@ func (v *validator) fields(path string, specs []schema.FieldSpec, values map[str
 			v.add(CodeUnknownField, path+"."+k, k, "unknown field "+strconv.Quote(k), nil)
 		}
 	}
-	for _, f := range specs {
+	for i := range specs {
+		f := &specs[i]
 		val, present := values[f.Name]
 		fpath := path + "." + f.Name
 		if !present {
@@ -154,7 +155,7 @@ func (v *validator) fields(path string, specs []schema.FieldSpec, values map[str
 			}
 			continue
 		}
-		v.value(fpath, f, val)
+		v.value(fpath, *f, val)
 	}
 }
 
@@ -227,7 +228,7 @@ func (v *validator) edge(path string, e Edge, byID map[string]Node) {
 	from, fromOK := byID[e.From]
 	if !fromOK {
 		v.add(CodeDanglingRef, path+".from", "from", "edge starts at "+strconv.Quote(e.From)+", which is not a node in this plan", e.From)
-	} else if ok && !slices.Contains(et.From, from.Type) {
+	} else if ok && !et.AllowsFrom(from.Type) {
 		v.add(CodeWrongEndpoint, path+".from", "from",
 			fmt.Sprintf("%s edges start at %s, not %s", et.Name, strings.Join(et.From, "|"), from.Type), e.From)
 	}
@@ -242,9 +243,12 @@ func (v *validator) edge(path string, e Edge, byID map[string]Node) {
 	to, toOK := byID[e.To]
 	if !toOK {
 		v.add(CodeDanglingRef, path+".to", "to", "edge targets "+strconv.Quote(e.To)+", which is not a node in this plan", e.To)
-	} else if ok && !slices.Contains(et.To, to.Type) {
+	} else if ok && !et.AllowsTo(to.Type) {
 		v.add(CodeWrongEndpoint, path+".to", "to",
-			fmt.Sprintf("%s edges end at %s, not %s", et.Name, strings.Join(et.To, "|"), to.Type), e.To)
+			fmt.Sprintf("%s edges end at %s, not %s", et.Name, et.ToLabel(), to.Type), e.To)
+	} else if ok && et.SameType && fromOK && from.Type != to.Type {
+		v.add(CodeWrongEndpoint, path+".to", "to",
+			fmt.Sprintf("%s edges join nodes of the same type, not %s → %s", et.Name, from.Type, to.Type), e.To)
 	}
 }
 

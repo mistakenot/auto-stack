@@ -100,8 +100,13 @@ a path, or "all" where it makes sense. Output is JSON by default; --text is for 
 		newInitCmd(application),
 		newNewCmd(application),
 		newAddCmd(application),
+		newUpdateCmd(application),
 		newLinkCmd(application),
+		newUnlinkCmd(application),
+		newRetireCmd(application),
+		newMoveCmd(application),
 		newLintCmd(application),
+		newFmtCmd(application),
 		newShowCmd(application),
 	)
 	return rootCmd

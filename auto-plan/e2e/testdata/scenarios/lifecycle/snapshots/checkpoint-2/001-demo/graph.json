@@ -7,6 +7,7 @@
       "status": "active",
       "rank": "a0",
       "fields": {
+        "gwt": "Given a stage, when brief runs, then its output needs nothing else",
         "title": "brief is self-contained",
         "verify": {
           "cmd": "go test ./e2e -run Brief"
@@ -19,7 +20,10 @@
       "status": "active",
       "rank": "a0",
       "fields": {
-        "title": "brief is Markdown + JSON"
+        "by": "charlie",
+        "chosen": "Markdown with --text, JSON by default",
+        "title": "brief is Markdown + JSON",
+        "why": "agents read JSON; humans read Markdown"
       }
     },
     {

@@ -21,8 +21,8 @@ func fixture(lifecycle string, nodes, edges []string) string {
 
 const (
 	goalA = `{"id": "g-k7q2", "type": "goal", "status": "active", "rank": "a0", "fields": {"title": "a goal"}}`
-	acA   = `{"id": "ac-3fxm", "type": "ac", "status": "active", "rank": "a0", "fields": {"title": "an ac", "verify": {"cmd": "go test ./..."}}}`
-	decA  = `{"id": "d-9t2w", "type": "decision", "status": "active", "rank": "a0", "fields": {"title": "a decision"}}`
+	acA   = `{"id": "ac-3fxm", "type": "ac", "status": "active", "rank": "a0", "fields": {"title": "an ac", "gwt": "Given a, when b, then c", "verify": {"cmd": "go test ./..."}}}`
+	decA  = `{"id": "d-9t2w", "type": "decision", "status": "active", "rank": "a0", "fields": {"title": "a decision", "chosen": "c", "why": "w", "by": "charlie"}}`
 	proof = `{"from": "ac-3fxm", "type": "proves", "to": "g-k7q2"}`
 )
 

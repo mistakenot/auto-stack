@@ -1,0 +1,14 @@
+{
+  "fields": {
+    "verify": {
+      "cmd": "go test ./e2e -run Brief",
+      "tests": [
+        "TestBrief",
+        "TestBriefIsolated"
+      ]
+    }
+  },
+  "id": "ac-j58t",
+  "plan": "001",
+  "type": "ac"
+}

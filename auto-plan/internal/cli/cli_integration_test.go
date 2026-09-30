@@ -8,11 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/mistakenot/auto-plan/internal/app"
 	"github.com/mistakenot/auto-plan/internal/cli"
+	"github.com/mistakenot/auto-plan/internal/schema"
 )
 
 // runCLI drives the command tree in-process from cwd, returning stdout,
@@ -210,11 +212,12 @@ func walk(t *testing.T, root string) (g1, g2, ac, d string) {
 		t.Fatalf("second goal rank = %s", b.Rank)
 	}
 	c := decode[added](t, mustRun(t, root, "add", "001-demo", "ac", "--proves", a.ID, "--title", "it works",
-		"--verify-cmd", "go test ./...", "--verify-tests", "TestA", "--verify-tests", "TestB"))
+		"--gwt", "Given a plan, when it runs, then it works", "--verify-cmd", "go test ./...", "--verify-tests", "TestA", "--verify-tests", "TestB"))
 	if len(c.Edges) != 1 || c.Edges[0].From != c.ID || c.Edges[0].Type != "proves" || c.Edges[0].To != a.ID {
 		t.Fatalf("add ac = %+v", c)
 	}
-	dd := decode[added](t, mustRun(t, root, "add", "docs/plans/001-demo", "decision", "--title", "use JSON"))
+	dd := decode[added](t, mustRun(t, root, "add", "docs/plans/001-demo", "decision", "--title", "use JSON",
+		"--chosen", "JSON", "--why", "diffable", "--by", "charlie"))
 	l := decode[added](t, mustRun(t, root, "link", "001", dd.ID, "constrains", a.ID))
 	if l.ID != dd.ID || l.Plan != "001" || len(l.Edges) != 1 || l.Edges[0].To != a.ID {
 		t.Fatalf("link = %+v", l)
@@ -383,15 +386,300 @@ func TestShowJSONAndText(t *testing.T) {
 func TestAddHelpIsGeneratedFromRegistry(t *testing.T) {
 	root := repo(t)
 	out := mustRun(t, root, "add", "001", "ac", "--help")
-	for _, want := range []string{"--title", "--gwt", "--verify-cmd", "--verify-tests", "--proves", "[required]"} {
+	for _, want := range []string{"--title", "--gwt", "--verify-cmd", "--verify-tests", "--proves", "--discharges", "[required]"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("ac --help missing %s:\n%s", want, out)
 		}
 	}
 	out = mustRun(t, root, "add", "--help")
-	for _, want := range []string{"goal —", "ac —", "decision —"} {
+	for _, want := range []string{"goal —", "ac —", "decision —", "stage —", "child —"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("add --help missing %q", want)
 		}
+	}
+}
+
+// TestEveryTypeGetsGeneratedFlags checks add and update expose one flag per
+// registered field and add one flag per outgoing edge type, for every type.
+func TestEveryTypeGetsGeneratedFlags(t *testing.T) {
+	root := repo(t)
+	for _, nt := range schema.Registry.Nodes {
+		var fieldFlags []string
+		for _, f := range nt.Fields {
+			if f.Kind == schema.KindObject {
+				for _, m := range f.Fields {
+					fieldFlags = append(fieldFlags, "--"+f.Name+"-"+m.Name)
+				}
+				continue
+			}
+			fieldFlags = append(fieldFlags, "--"+f.Name)
+		}
+		if !nt.Singleton() {
+			out := mustRun(t, root, "add", "001", nt.Name, "--help")
+			want := slices.Clone(fieldFlags)
+			for _, e := range schema.Registry.EdgesFrom(nt.Name) {
+				want = append(want, "--"+e.Name)
+			}
+			for _, w := range want {
+				if !strings.Contains(out, w+" ") {
+					t.Errorf("add %s --help missing %s:\n%s", nt.Name, w, out)
+				}
+			}
+		}
+		up := mustRun(t, root, "update", "--help")
+		if !strings.Contains(up, nt.Name+" — ") {
+			t.Errorf("update --help missing type %s", nt.Name)
+		}
+	}
+	for _, w := range []string{"--lifecycle", "--epic", "--reversibility", "--steps"} {
+		if !strings.Contains(mustRun(t, root, "update", "--help"), w) {
+			t.Errorf("update --help missing %s", w)
+		}
+	}
+}
+
+// TestThrowawayTypeGetsFlagsWithoutCLIChanges is the extensibility contract
+// (D-6, D-7): registering a type is the only change needed for add, update,
+// link, their --help, and validation to handle it.
+func TestThrowawayTypeGetsFlagsWithoutCLIChanges(t *testing.T) {
+	saved := schema.Registry
+	t.Cleanup(func() { schema.Registry = saved })
+	schema.Registry.Nodes = append(slices.Clone(saved.Nodes), schema.NodeType{
+		Name: "widget", Prefix: "w", Term: "Widget", MinLifecycle: schema.LifecycleRequirements,
+		Help: "A test-only type.",
+		Fields: []schema.FieldSpec{
+			{Name: "title", Kind: schema.KindString, Required: true, Help: "Widget name"},
+			{Name: "colour", Kind: schema.KindEnum, Enum: []string{"red", "blue"}, Help: "Widget colour"},
+		},
+	})
+	schema.Registry.Edges = append(slices.Clone(saved.Edges), schema.EdgeType{
+		Name: "decorates", From: []string{"widget"}, To: []string{"goal"}, Help: "The goal this widget decorates",
+	})
+
+	root := repo(t)
+	g1, _, ac, _ := walk(t, root)
+
+	help := mustRun(t, root, "add", "001", "widget", "--help")
+	for _, want := range []string{"widget — A test-only type.", "--title", "--colour", "(red|blue)", "--decorates", "edge to goal"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("widget --help missing %q:\n%s", want, help)
+		}
+	}
+	if !strings.Contains(mustRun(t, root, "add", "--help"), "widget — ") {
+		t.Error("add --help does not list widget")
+	}
+
+	w := decode[struct{ ID, Type string }](t, mustRun(t, root, "add", "001", "widget", "--title", "w", "--colour", "red", "--decorates", g1))
+	if w.Type != "widget" || !strings.HasPrefix(w.ID, "w-") {
+		t.Fatalf("add widget = %+v", w)
+	}
+	u := decode[struct {
+		Fields map[string]any `json:"fields"`
+	}](t, mustRun(t, root, "update", "001", w.ID, "--colour", "blue"))
+	if u.Fields["colour"] != "blue" {
+		t.Fatalf("update widget = %+v", u)
+	}
+	expectFailure(t, root, "invalid-field", "update", "001", w.ID, "--colour", "green")
+	expectFailure(t, root, "wrong-endpoint", "link", "001", w.ID, "decorates", ac)
+	if !strings.Contains(mustRun(t, root, "link", "--help"), "decorates") {
+		t.Error("link --help does not list the decorates edge")
+	}
+}
+
+type mutation struct {
+	Plan   string         `json:"plan"`
+	ID     string         `json:"id"`
+	Type   string         `json:"type"`
+	Rank   string         `json:"rank"`
+	Status string         `json:"status"`
+	Fields map[string]any `json:"fields"`
+	Edges  []struct {
+		From, Type, To string
+	} `json:"edges"`
+	Removed []struct {
+		From, Type, To string
+	} `json:"removed"`
+}
+
+func TestUpdateUnlinkRetireMove(t *testing.T) {
+	root := repo(t)
+	g1, g2, ac, d := walk(t, root)
+
+	u := decode[mutation](t, mustRun(t, root, "update", "001", ac, "--title", "it really works", "--verify-kind", "manual", "--verify-cmd", ""))
+	if u.Plan != "001" || u.ID != ac || u.Type != "ac" || u.Fields["title"] != "it really works" {
+		t.Fatalf("update = %+v", u)
+	}
+	if v, _ := u.Fields["verify"].(map[string]any); v["kind"] != "manual" || v["cmd"] != nil || v["tests"] == nil {
+		t.Fatalf("update verify merge = %+v", u.Fields["verify"])
+	}
+	if text := mustRun(t, root, "update", "001", ac, "--title", "it really works", "--text"); !strings.Contains(text, "nothing changed") {
+		t.Fatalf("no-op update --text = %q", text)
+	}
+
+	p := decode[mutation](t, mustRun(t, root, "update", "001", "plan", "--lifecycle", "solution"))
+	if p.ID != "plan" || p.Fields["lifecycle"] != "solution" {
+		t.Fatalf("update plan = %+v", p)
+	}
+	if !strings.Contains(mustRun(t, root, "show", "001", "--text"), "task · solution") {
+		t.Fatal("lifecycle not advanced")
+	}
+
+	un := decode[mutation](t, mustRun(t, root, "unlink", "001", d, "constrains", g1))
+	if un.ID != d || len(un.Removed) != 1 || un.Removed[0].To != g1 {
+		t.Fatalf("unlink = %+v", un)
+	}
+
+	m := decode[mutation](t, mustRun(t, root, "move", "001", g2, "--before", g1))
+	if m.ID != g2 || m.Type != "goal" || m.Rank == "" || m.Rank >= "a0" {
+		t.Fatalf("move = %+v", m)
+	}
+	show := mustRun(t, root, "show", "001", "--text")
+	if strings.Index(show, g2) > strings.Index(show, g1) {
+		t.Fatalf("show does not reflect the move:\n%s", show)
+	}
+
+	r := decode[mutation](t, mustRun(t, root, "retire", "001", ac))
+	if r.ID != ac || r.Status != "retired" || r.Type != "ac" {
+		t.Fatalf("retire = %+v", r)
+	}
+	data := string(readGraph(t, root, "001-demo"))
+	if !strings.Contains(data, `"id": "`+ac+`",`+"\n      \"type\": \"ac\",\n      \"status\": \"retired\"") {
+		t.Fatalf("retired node not kept:\n%s", data)
+	}
+}
+
+func TestRejectedMutationsLeaveGraphByteIdentical(t *testing.T) {
+	root := repo(t)
+	g1, g2, ac, d := walk(t, root)
+	before := readGraph(t, root, "001-demo")
+
+	expectFailure(t, root, "node-not-found", "update", "001", "g-zzzz", "--title", "x")
+	expectFailure(t, root, "missing-field", "update", "001", g1, "--title", "")
+	expectFailure(t, root, "invalid-field", "update", "001", "plan", "--lifecycle", "shipped")
+	expectFailure(t, root, "usage", "update", "001", "plan", "--name", "other")
+	expectFailure(t, root, "usage", "update", "001", g1)
+	expectFailure(t, root, "usage", "update", "001", g1, "--proves", g2)
+	expectFailure(t, root, "edge-not-found", "unlink", "001", d, "constrains", g2)
+	expectFailure(t, root, "node-not-found", "retire", "001", "g-zzzz")
+	expectFailure(t, root, "not-retirable", "retire", "001", "plan")
+	expectFailure(t, root, "usage", "move", "001", g1)
+	expectFailure(t, root, "usage", "move", "001", g1, "--before", g2, "--after", g2)
+	expectFailure(t, root, "not-sibling", "move", "001", g1, "--before", ac)
+	expectFailure(t, root, "not-movable", "move", "001", "plan", "--before", g1)
+	expectFailure(t, root, "wrong-endpoint", "link", "001", ac, "rejects", g1)
+
+	if after := readGraph(t, root, "001-demo"); !bytes.Equal(before, after) {
+		t.Fatalf("rejected mutations changed graph.json:\n%s\n---\n%s", before, after)
+	}
+}
+
+func TestUpdateHelpForOneNode(t *testing.T) {
+	root := repo(t)
+	_, _, ac, _ := walk(t, root)
+	out := mustRun(t, root, "update", "001", ac, "--help")
+	for _, want := range []string{"auto plan update <plan> " + ac, "--gwt", "--verify-cmd", `("" removes it)`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("update %s --help missing %q:\n%s", ac, want, out)
+		}
+	}
+	if strings.Contains(out, "--proves") || strings.Contains(out, "[required]") {
+		t.Errorf("update --help must not offer edge flags or [required]:\n%s", out)
+	}
+	if out := mustRun(t, root, "update", "001", "plan", "--help"); strings.Contains(out, "--name") || strings.Contains(out, "--created") {
+		t.Errorf("fixed plan fields must not be updatable:\n%s", out)
+	}
+}
+
+type fmtOut struct {
+	Plan      string `json:"plan"`
+	Path      string `json:"path"`
+	Canonical bool   `json:"canonical"`
+	Changed   bool   `json:"changed"`
+	Errors    []struct{ Code string }
+}
+
+func TestFmtCanonicalisesHandEdits(t *testing.T) {
+	root := repo(t)
+	walk(t, root)
+	canonical := readGraph(t, root, "001-demo")
+	path := filepath.Join(root, "docs", "plans", "001-demo", "graph.json")
+
+	// Hand-scramble: reverse node and edge order, compact, add an unknown key.
+	var raw map[string]any
+	if err := json.Unmarshal(canonical, &raw); err != nil {
+		t.Fatal(err)
+	}
+	nodes := raw["nodes"].([]any)
+	slices.Reverse(nodes)
+	edges := raw["edges"].([]any)
+	slices.Reverse(edges)
+	raw["zz-note"] = "kept <as is>"
+	scrambled, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, scrambled, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, code := runCLI(t, root, "fmt", "001", "--check")
+	if r := decode[fmtOut](t, stdout); code != 1 || r.Canonical || r.Changed || r.Path != "docs/plans/001-demo/graph.json" {
+		t.Fatalf("fmt --check on scrambled: exit %d %+v", code, r)
+	}
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, scrambled) {
+		t.Fatal("fmt --check wrote the file")
+	}
+
+	r := decode[fmtOut](t, mustRun(t, root, "fmt", "001"))
+	if r.Canonical || !r.Changed {
+		t.Fatalf("fmt = %+v", r)
+	}
+	got := readGraph(t, root, "001-demo")
+	if want := strings.Replace(string(canonical), "\n  ]\n}\n", "\n  ],\n  \"zz-note\": \"kept <as is>\"\n}\n", 1); string(got) != want {
+		t.Fatalf("fmt output:\n%s\nwant:\n%s", got, want)
+	}
+
+	r = decode[fmtOut](t, mustRun(t, root, "fmt", "001", "--check"))
+	if !r.Canonical || r.Changed {
+		t.Fatalf("fmt --check after fmt = %+v", r)
+	}
+	r = decode[fmtOut](t, mustRun(t, root, "fmt", "001"))
+	if !r.Canonical || r.Changed {
+		t.Fatalf("second fmt = %+v", r)
+	}
+}
+
+func TestFmtAllAndLossyFiles(t *testing.T) {
+	root := repo(t)
+	walk(t, root)
+	mustRun(t, root, "new", "broken", "--kind", "task")
+	path := filepath.Join(root, "docs", "plans", "002-broken", "graph.json")
+	lossy := strings.Replace(string(readGraph(t, root, "002-broken")), `"edges": []`, `"edges": [42]`, 1)
+	if err := os.WriteFile(path, []byte(lossy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, code := runCLI(t, root, "fmt", "all")
+	all := decode[struct {
+		OK    bool     `json:"ok"`
+		Plans []fmtOut `json:"plans"`
+	}](t, stdout)
+	if code != 1 || all.OK || len(all.Plans) != 2 || !all.Plans[0].Canonical || len(all.Plans[0].Errors) != 0 ||
+		len(all.Plans[1].Errors) == 0 || all.Plans[1].Errors[0].Code != "invalid-field" {
+		t.Fatalf("fmt all: exit %d %+v", code, all)
+	}
+	if got, _ := os.ReadFile(path); string(got) != lossy {
+		t.Fatal("fmt rewrote a file it could not represent")
+	}
+	text, _, _ := runCLI(t, root, "fmt", "all", "--text")
+	if !strings.HasPrefix(text, "001  canonical") || !strings.Contains(text, "002  ERROR") || !strings.Contains(text, "hint: ") {
+		t.Fatalf("fmt all --text:\n%s", text)
+	}
+
+	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, code = runCLI(t, root, "fmt", "002")
+	if r := decode[fmtOut](t, stdout); code != 1 || len(r.Errors) != 1 || r.Errors[0].Code != "parse-error" {
+		t.Fatalf("fmt malformed: exit %d %+v", code, r)
 	}
 }

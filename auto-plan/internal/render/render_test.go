@@ -22,12 +22,12 @@ const ladderFixture = `{
     {"id": "plan", "type": "plan", "status": "active", "fields": {"name": "stage-briefs", "kind": "task", "lifecycle": "solution", "created": "2026-01-01"}},
     {"id": "g-m4t8", "type": "goal", "status": "active", "rank": "a0", "fields": {"title": "Plans can be reordered without breaking references"}},
     {"id": "g-k7q2", "type": "goal", "status": "active", "rank": "a1", "fields": {"title": "An agent gets one stage's context in one call"}},
-    {"id": "ac-3fxm", "type": "ac", "status": "active", "rank": "a0", "fields": {"title": "brief is self-contained", "verify": {"cmd": "go test ./e2e -run Brief"}}},
-    {"id": "ac-7w1e", "type": "ac", "status": "retired", "rank": "a1", "fields": {"title": "retired criterion"}},
-    {"id": "ac-8pqr", "type": "ac", "status": "active", "rank": "a0", "fields": {"title": "a manual check", "verify": {"kind": "manual"}}},
-    {"id": "d-9t2w", "type": "decision", "status": "active", "rank": "a0", "fields": {"title": "brief is Markdown + JSON"}},
-    {"id": "d-2hcv", "type": "decision", "status": "active", "rank": "a1", "fields": {"title": "ranks are strings"}},
-    {"id": "d-5n0b", "type": "decision", "status": "active", "rank": "a2", "fields": {"title": "undecided scope"}}
+    {"id": "ac-3fxm", "type": "ac", "status": "active", "rank": "a0", "fields": {"title": "brief is self-contained", "gwt": "Given a, when b, then c", "verify": {"cmd": "go test ./e2e -run Brief"}}},
+    {"id": "ac-7w1e", "type": "ac", "status": "retired", "rank": "a1", "fields": {"title": "retired criterion", "gwt": "Given a, when b, then c"}},
+    {"id": "ac-8pqr", "type": "ac", "status": "active", "rank": "a0", "fields": {"title": "a manual check", "gwt": "Given a, when b, then c", "verify": {"kind": "manual"}}},
+    {"id": "d-9t2w", "type": "decision", "status": "active", "rank": "a0", "fields": {"title": "brief is Markdown + JSON", "chosen": "c", "why": "w", "by": "charlie"}},
+    {"id": "d-2hcv", "type": "decision", "status": "active", "rank": "a1", "fields": {"title": "ranks are strings", "chosen": "c", "why": "w", "by": "charlie"}},
+    {"id": "d-5n0b", "type": "decision", "status": "active", "rank": "a2", "fields": {"title": "undecided scope", "chosen": "c", "why": "w", "by": "charlie"}}
   ],
   "edges": [
     {"from": "ac-3fxm", "type": "proves", "to": "g-k7q2"},

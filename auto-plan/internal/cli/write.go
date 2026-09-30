@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -29,42 +30,62 @@ type fieldFlag struct {
 	spec   schema.FieldSpec
 }
 
+// flagMode selects which generated flags a command gets.
+type flagMode int
+
+const (
+	// forAdd: every field, marked [required] where the registry says so, plus
+	// one repeatable flag per edge type the node may start.
+	forAdd flagMode = iota
+	// forUpdate: every field except Fixed ones; an empty value removes a field.
+	forUpdate
+)
+
 // typeFlags generates a node type's flags from the registry (D-7): one typed
-// flag per field (object members become --<field>-<member>), and one
+// flag per field (object members become --<field>-<member>) and, for add, one
 // repeatable flag per edge type the node may start, named after the edge.
-func typeFlags(nt schema.NodeType) (*pflag.FlagSet, []fieldFlag, []schema.EdgeType) {
+func typeFlags(nt schema.NodeType, mode flagMode) (*pflag.FlagSet, []fieldFlag, []schema.EdgeType) {
 	fs := pflag.NewFlagSet(nt.Name, pflag.ContinueOnError)
 	fs.SortFlags = false
 	var bound []fieldFlag
 	define := func(name string, f schema.FieldSpec) {
+		usage := flagUsage(f, mode)
 		if f.Kind == schema.KindList {
-			fs.StringArray(name, nil, flagUsage(f))
+			fs.StringArray(name, nil, usage)
 		} else {
-			fs.String(name, "", flagUsage(f))
+			fs.String(name, "", usage)
 		}
 	}
-	for _, f := range nt.Fields {
+	for i := range nt.Fields {
+		f := &nt.Fields[i]
+		if mode == forUpdate && f.Fixed {
+			continue
+		}
 		if f.Kind == schema.KindObject {
-			for _, m := range f.Fields {
+			for j := range f.Fields {
+				m := &f.Fields[j]
 				name := f.Name + "-" + m.Name
-				define(name, m)
-				bound = append(bound, fieldFlag{flag: name, field: f.Name, member: m.Name, spec: m})
+				define(name, *m)
+				bound = append(bound, fieldFlag{flag: name, field: f.Name, member: m.Name, spec: *m})
 			}
 			continue
 		}
-		define(f.Name, f)
-		bound = append(bound, fieldFlag{flag: f.Name, field: f.Name, spec: f})
+		define(f.Name, *f)
+		bound = append(bound, fieldFlag{flag: f.Name, field: f.Name, spec: *f})
 	}
-	edges := schema.Registry.EdgesFrom(nt.Name)
-	for _, e := range edges {
-		fs.StringArray(e.Name, nil, fmt.Sprintf("%s (edge to %s; repeatable)", e.Help, strings.Join(e.To, "|")))
+	var edges []schema.EdgeType
+	if mode == forAdd {
+		edges = schema.Registry.EdgesFrom(nt.Name)
+		for _, e := range edges {
+			fs.StringArray(e.Name, nil, fmt.Sprintf("%s (edge to %s; repeatable)", e.Help, e.ToLabel()))
+		}
 	}
 	fs.Bool("text", false, "human-readable text output instead of JSON")
 	fs.BoolP("help", "h", false, "help for this type")
 	return fs, bound, edges
 }
 
-func flagUsage(f schema.FieldSpec) string {
+func flagUsage(f schema.FieldSpec, mode flagMode) string {
 	u := f.Help
 	switch f.Kind {
 	case schema.KindEnum:
@@ -75,8 +96,11 @@ func flagUsage(f schema.FieldSpec) string {
 		u += " (repeatable)"
 	case schema.KindString, schema.KindObject:
 	}
-	if f.Required {
+	switch {
+	case mode == forAdd && f.Required:
 		u += " [required]"
+	case mode == forUpdate && !f.Required:
+		u += " (\"\" removes it)"
 	}
 	return u
 }
@@ -89,7 +113,7 @@ func addLong() string {
 	b.WriteString("Flags are generated from the type registry; `auto plan add <plan> <type> --help` shows one type.\n")
 	for _, name := range planTypes() {
 		nt, _ := schema.Registry.Node(name)
-		fs, _, _ := typeFlags(nt)
+		fs, _, _ := typeFlags(nt, forAdd)
 		fmt.Fprintf(&b, "\n%s — %s\n%s", nt.Name, nt.Help, fs.FlagUsages())
 	}
 	return b.String()
@@ -126,7 +150,7 @@ func runAdd(cmd *cobra.Command, application *app.App, args []string) error {
 			"use one of: "+strings.Join(planTypes(), ", "))
 	}
 
-	fs, bound, edgeTypes := typeFlags(nt)
+	fs, bound, edgeTypes := typeFlags(nt, forAdd)
 	fs.SetOutput(cmd.ErrOrStderr())
 	if err := fs.Parse(args[2:]); err != nil {
 		return failOne(cmd, text, "usage", "flags", "", err.Error(), nil, "see `auto plan add "+planArg+" "+typ+" --help`")
@@ -140,7 +164,7 @@ func runAdd(cmd *cobra.Command, application *app.App, args []string) error {
 			"quote values that contain spaces; see `auto plan add "+planArg+" "+typ+" --help`")
 	}
 
-	fields, err := collectFields(cmd, application, fs, bound)
+	fields, err := collectFields(cmd, application, fs, bound, false)
 	if err != nil {
 		return failOne(cmd, text, "usage", "flags", "", err.Error(), nil, "check the @file path")
 	}
@@ -183,8 +207,9 @@ func runAdd(cmd *cobra.Command, application *app.App, args []string) error {
 }
 
 // collectFields turns the flags that were set into node fields. Text values
-// accept @file / @-.
-func collectFields(cmd *cobra.Command, application *app.App, fs *pflag.FlagSet, bound []fieldFlag) (map[string]any, error) {
+// accept @file / @-. With clear set (update), an empty value becomes nil,
+// which removes the field (or object member).
+func collectFields(cmd *cobra.Command, application *app.App, fs *pflag.FlagSet, bound []fieldFlag, clear bool) (map[string]any, error) {
 	fields := map[string]any{}
 	for i := range bound {
 		b := &bound[i]
@@ -199,6 +224,9 @@ func collectFields(cmd *cobra.Command, application *app.App, fs *pflag.FlagSet, 
 				list[i] = it
 			}
 			val = list
+			if clear && len(items) == 1 && items[0] == "" {
+				val = nil
+			}
 		} else {
 			s, _ := fs.GetString(b.flag)
 			if b.spec.Kind == schema.KindText {
@@ -209,6 +237,9 @@ func collectFields(cmd *cobra.Command, application *app.App, fs *pflag.FlagSet, 
 				s = expanded
 			}
 			val = s
+			if clear && s == "" {
+				val = nil
+			}
 		}
 		if b.member == "" {
 			fields[b.field] = val
@@ -230,7 +261,11 @@ func linkLong() string {
 	b.WriteString("Add one typed edge. Endpoint types are checked against the registry, and the whole graph\n")
 	b.WriteString("is validated before anything is written.\n\nEdge types (from → to):\n")
 	for _, e := range schema.Registry.Edges {
-		fmt.Fprintf(&b, "  %-12s %s → %s  %s\n", e.Name, strings.Join(e.From, "|"), strings.Join(e.To, "|"), e.Help)
+		note := ""
+		if e.CrossPlan {
+			note = " (target may be another plan's node: NNN:ID)"
+		}
+		fmt.Fprintf(&b, "  %-12s %s → %s  %s%s\n", e.Name, strings.Join(e.From, "|"), e.ToLabel(), e.Help, note)
 	}
 	return b.String()
 }
@@ -264,5 +299,200 @@ func runLink(cmd *cobra.Command, application *app.App, planArg, from, typ, to st
 	out := toEdgeOut(e)
 	return emit(cmd, text, mutationResult(l.plan.ID, from, map[string]any{"edges": []edgeOut{out}}), func() string {
 		return fmt.Sprintf("linked %s %s %s in %s\n", out.From, out.Type, out.To, l.plan.Folder())
+	})
+}
+
+// updateLong documents every type's updatable flags.
+func updateLong() string {
+	var b strings.Builder
+	b.WriteString("Change fields of one node. Flags are generated from the node's type in the registry;\n")
+	b.WriteString("only the flags given change, and an empty value (\"\") removes an optional field.\n")
+	b.WriteString("Edges change with link/unlink, status with retire, and reading order with move.\n")
+	b.WriteString("`auto plan update <plan> <id> --help` shows one node's flags.\n")
+	for _, nt := range schema.Registry.Nodes {
+		fs, _, _ := typeFlags(nt, forUpdate)
+		fmt.Fprintf(&b, "\n%s — %s\n%s", nt.Name, nt.Help, fs.FlagUsages())
+	}
+	return b.String()
+}
+
+func newUpdateCmd(application *app.App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "update <plan> <id> [flags]",
+		Short: "Change a node's fields with registry-generated flags (plan --lifecycle advances a plan)",
+		Long:  updateLong(),
+		Example: `  auto plan update 004 plan --lifecycle solution
+  auto plan update 004 ac-3fxm --gwt @ac.md --verify-cmd "go test ./e2e -run Brief"
+  auto plan update 004 g-k7q2 --description ""`,
+		// Flags depend on the node's type, so they are parsed after it is known.
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runUpdate(cmd, application, args)
+		},
+	}
+}
+
+func runUpdate(cmd *cobra.Command, application *app.App, args []string) error {
+	text := slices.Contains(args, "--text")
+	if len(args) < 2 || strings.HasPrefix(args[0], "-") || strings.HasPrefix(args[1], "-") {
+		if slices.Contains(args, "--help") || slices.Contains(args, "-h") {
+			return cmd.Help()
+		}
+		return failOne(cmd, text, "usage", "args", "", "update needs <plan> <id> before any flags", strings.Join(args, " "),
+			"auto plan update <plan> <id> [flags]; see `auto plan update --help`")
+	}
+	planArg, id := args[0], args[1]
+	l, err := loadForWrite(cmd, application, text, planArg)
+	if err != nil {
+		return err
+	}
+	node, ok := l.graph.NodeByID(id)
+	if !ok {
+		return failOne(cmd, text, graph.CodeNodeNotFound, "args.id", "id", fmt.Sprintf("no node %q in plan %s", id, l.plan.ID), id,
+			"list the plan's nodes with `auto plan show "+l.plan.ID+"`")
+	}
+	nt, _ := schema.Registry.Node(node.Type) // registered: loadForWrite validated the graph
+
+	fs, bound, _ := typeFlags(nt, forUpdate)
+	fs.SetOutput(cmd.ErrOrStderr())
+	hint := "see `auto plan update " + l.plan.ID + " " + id + " --help`"
+	if err := fs.Parse(args[2:]); err != nil {
+		return failOne(cmd, text, "usage", "flags", "", err.Error(), nil, hint)
+	}
+	if help, _ := fs.GetBool("help"); help {
+		fmt.Fprintf(cmd.OutOrStdout(), "Usage:\n  auto plan update <plan> %s [flags]\n\n%s — %s\n\nFlags:\n%s", id, nt.Name, nt.Help, fs.FlagUsages())
+		return nil
+	}
+	if fs.NArg() > 0 {
+		return failOne(cmd, text, "usage", "args", "", "unexpected arguments: "+strings.Join(fs.Args(), " "), fs.Args(),
+			"quote values that contain spaces; "+hint)
+	}
+	fields, err := collectFields(cmd, application, fs, bound, true)
+	if err != nil {
+		return failOne(cmd, text, "usage", "flags", "", err.Error(), nil, "check the @file path")
+	}
+	if len(fields) == 0 {
+		return failOne(cmd, text, "usage", "flags", "", "update needs at least one field flag", nil, hint)
+	}
+
+	changed, errs := l.graph.Update(id, fields)
+	if len(errs) > 0 {
+		return fail(cmd, text, errs, "graph.json was not changed; fix the flagged values ("+hint+")")
+	}
+	if err := l.save(cmd, text); err != nil {
+		return err
+	}
+	return emit(cmd, text, mutationResult(l.plan.ID, id, map[string]any{"type": nt.Name, "fields": changed}), func() string {
+		names := slices.Sorted(maps.Keys(changed))
+		if len(names) == 0 {
+			return fmt.Sprintf("%s %s in %s: nothing changed\n", nt.Name, id, l.plan.Folder())
+		}
+		return fmt.Sprintf("updated %s %s in %s: %s\n", nt.Name, id, l.plan.Folder(), strings.Join(names, ", "))
+	})
+}
+
+func newUnlinkCmd(application *app.App) *cobra.Command {
+	return &cobra.Command{
+		Use:     "unlink <plan> <from> <edge> <to>",
+		Short:   "Remove one typed edge",
+		Long:    "Remove one edge. Both nodes are kept, and the whole graph is validated before anything is written.",
+		Example: "  auto plan unlink 004 d-9t2w constrains g-k7q2",
+		Args:    cobra.ExactArgs(4),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runUnlink(cmd, application, args[0], args[1], args[2], args[3])
+		},
+	}
+}
+
+func runUnlink(cmd *cobra.Command, application *app.App, planArg, from, typ, to string) error {
+	text := textMode(cmd)
+	l, err := loadForWrite(cmd, application, text, planArg)
+	if err != nil {
+		return err
+	}
+	e, errs := l.graph.Unlink(from, typ, to)
+	if len(errs) > 0 {
+		return fail(cmd, text, errs, "graph.json was not changed; name an existing edge as <from> <edge> <to> (see `auto plan show "+l.plan.ID+"`)")
+	}
+	if err := l.save(cmd, text); err != nil {
+		return err
+	}
+	out := toEdgeOut(e)
+	return emit(cmd, text, mutationResult(l.plan.ID, from, map[string]any{"removed": []edgeOut{out}}), func() string {
+		return fmt.Sprintf("unlinked %s %s %s in %s\n", out.From, out.Type, out.To, l.plan.Folder())
+	})
+}
+
+func newRetireCmd(application *app.App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "retire <plan> <id>",
+		Short: "Retire a node: status becomes retired, the ID and its edges are kept",
+		Long: `Retire a node. Its status becomes retired; its ID, fields, rank and edges are kept, and the ID
+is never handed out again. Retiring twice is a no-op. The plan node cannot be retired.`,
+		Example: "  auto plan retire 004 ac-7w1e",
+		Args:    cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRetire(cmd, application, args[0], args[1])
+		},
+	}
+}
+
+func runRetire(cmd *cobra.Command, application *app.App, planArg, id string) error {
+	text := textMode(cmd)
+	l, err := loadForWrite(cmd, application, text, planArg)
+	if err != nil {
+		return err
+	}
+	n, errs := l.graph.Retire(id)
+	if len(errs) > 0 {
+		return fail(cmd, text, errs, "graph.json was not changed; name an existing node other than plan (see `auto plan show "+l.plan.ID+"`)")
+	}
+	if err := l.save(cmd, text); err != nil {
+		return err
+	}
+	return emit(cmd, text, mutationResult(l.plan.ID, n.ID, map[string]any{"type": n.Type, "status": n.Status}), func() string {
+		return fmt.Sprintf("retired %s %s in %s\n", n.Type, n.ID, l.plan.Folder())
+	})
+}
+
+func newMoveCmd(application *app.App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "move <plan> <id> --before <id> | --after <id>",
+		Short: "Reorder a node among its siblings (rewrites one rank, no ID changes)",
+		Long: `Give a node one new rank so it reads directly before or after a sibling. No other node
+changes. Siblings share a type and, for ACs, the goal they prove (legs: the journey they are in).`,
+		Example: "  auto plan move 004 g-m4t8 --before g-k7q2",
+		Args:    cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			before, _ := cmd.Flags().GetString("before")
+			after, _ := cmd.Flags().GetString("after")
+			return runMove(cmd, application, args[0], args[1], before, after)
+		},
+	}
+	cmd.Flags().String("before", "", "sibling ID to place the node directly before")
+	cmd.Flags().String("after", "", "sibling ID to place the node directly after")
+	return cmd
+}
+
+func runMove(cmd *cobra.Command, application *app.App, planArg, id, before, after string) error {
+	text := textMode(cmd)
+	if (before == "") == (after == "") {
+		return failOne(cmd, text, "usage", "flags", "", "move needs exactly one of --before or --after", nil,
+			"auto plan move <plan> <id> --before <sibling> (or --after <sibling>)")
+	}
+	anchor := before + after
+	l, err := loadForWrite(cmd, application, text, planArg)
+	if err != nil {
+		return err
+	}
+	n, errs := l.graph.Move(id, anchor, after != "")
+	if len(errs) > 0 {
+		return fail(cmd, text, errs, "graph.json was not changed; move a node relative to a sibling of the same type (see `auto plan show "+l.plan.ID+"`)")
+	}
+	if err := l.save(cmd, text); err != nil {
+		return err
+	}
+	return emit(cmd, text, mutationResult(l.plan.ID, n.ID, map[string]any{"type": n.Type, "rank": n.Rank}), func() string {
+		return fmt.Sprintf("moved %s %s to rank %s in %s\n", n.Type, n.ID, n.Rank, l.plan.Folder())
 	})
 }

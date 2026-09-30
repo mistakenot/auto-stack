@@ -1,0 +1,6 @@
+001-demo  task · solution
+
+◎ g-gc8t   An agent gets one stage's context in one call
+    ✓ ac-j58t  brief is self-contained  go test ./e2e -run Brief
+    ◆ d-kqxw   brief is Markdown + JSON
+◎ g-rbcw   Plans can be reordered without breaking references

@@ -1,0 +1,11 @@
+{
+  "id": "d-kqxw",
+  "plan": "001",
+  "removed": [
+    {
+      "from": "d-kqxw",
+      "type": "constrains",
+      "to": "g-gc8t"
+    }
+  ]
+}

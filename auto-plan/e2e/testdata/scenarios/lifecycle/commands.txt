@@ -11,8 +11,8 @@ auto plan new demo --kind task
 auto plan add 001 goal --title "Plans can be reordered without breaking references"
 auto plan add 001 goal --title "An agent gets one stage's context in one call"
 # expect exit=0 stdout=add-ac.json
-auto plan add 001 ac --proves g-gc8t --title "brief is self-contained" --verify-cmd "go test ./e2e -run Brief"
-auto plan add 001 decision --title "brief is Markdown + JSON"
+auto plan add 001 ac --proves g-gc8t --title "brief is self-contained" --gwt "Given a stage, when brief runs, then its output needs nothing else" --verify-cmd "go test ./e2e -run Brief"
+auto plan add 001 decision --title "brief is Markdown + JSON" --chosen "Markdown with --text, JSON by default" --why "agents read JSON; humans read Markdown" --by charlie
 # checkpoint 2
 
 # expect exit=0 stdout=link.json
@@ -22,4 +22,40 @@ auto plan link 001 d-kqxw constrains g-gc8t
 # expect exit=0 stdout=lint.json
 auto plan lint 001
 # expect exit=0 stdout=show.txt
+auto plan show 001 --text
+
+# update, a rejected alternative, a second AC, and an edge moved from the goal to the AC.
+auto plan update 001 g-rbcw --description "Reordering rewrites one rank; no ID changes."
+auto plan add 001 alternative --title "reuse Context Pack" --why "collides with auto-graph's term"
+auto plan link 001 d-kqxw rejects a-w1fg
+auto plan add 001 ac --proves g-gc8t --title "brief names no other stage" --gwt "Given two stages, when brief runs for one, then the other's steps are absent"
+auto plan link 001 d-kqxw constrains ac-j58t
+# expect exit=0 stdout=unlink.json
+auto plan unlink 001 d-kqxw constrains g-gc8t
+# expect exit=0 stdout=update.json
+auto plan update 001 ac-j58t --verify-tests TestBrief --verify-tests TestBriefIsolated
+# checkpoint 4
+
+# A rejected write: rejects is decision → alternative, so an AC cannot start one.
+# Exit 1, nothing on stdout, and graph.json stays byte-identical to checkpoint 4.
+# expect exit=1 stdout=rejected.txt
+auto plan link 001 ac-j58t rejects g-gc8t
+# checkpoint 5
+
+# expect exit=0 stdout=retire.json
+auto plan retire 001 ac-bvmq
+# expect exit=0 stdout=move.json
+auto plan move 001 g-gc8t --before g-rbcw
+# checkpoint 6
+
+# expect exit=0 stdout=update-lifecycle.json
+auto plan update 001 plan --lifecycle solution
+# expect exit=0 stdout=fmt-check.json
+auto plan fmt 001 --check
+# checkpoint 7
+
+# At solution, goal-no-ac applies: g-rbcw has no AC yet.
+# expect exit=1 stdout=lint-solution.json
+auto plan lint 001
+# expect exit=0 stdout=show-solution.txt
 auto plan show 001 --text
