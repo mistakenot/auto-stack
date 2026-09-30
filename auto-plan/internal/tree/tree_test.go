@@ -1,10 +1,38 @@
 package tree
 
 import (
+	"flag"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/mistakenot/auto-plan/internal/graph"
 )
+
+var update = flag.Bool("update", false, "rewrite golden files")
+
+// golden compares got with testdata/golden/<name>, rewriting it with -update.
+func golden(t *testing.T, name, got string) {
+	t.Helper()
+	path := filepath.Join("testdata", "golden", name)
+	if *update {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read golden (run with -update to create): %v", err)
+	}
+	if got != string(want) {
+		t.Fatalf("%s mismatch (run with -update):\n--- got\n%s\n--- want\n%s", name, got, want)
+	}
+}
 
 func TestParseWellFormed(t *testing.T) {
 	cases := []struct {
@@ -151,5 +179,107 @@ func TestParseBestEffort(t *testing.T) {
 	}
 	if len(got.Lines) != 3 || got.Lines[1].Name != "b" || got.Lines[1].Marker != "*" && got.Lines[1].Marker != "" {
 		t.Fatalf("lines = %+v", got.Lines)
+	}
+}
+
+// glyphs stands in for a plan's node lookup.
+func glyphs(id string) string {
+	return map[string]string{"g-k7q2": "◎", "ac-3fxm": "✓", "d-9t2w": "◆"}[id]
+}
+
+func TestRenderGoldens(t *testing.T) {
+	cases := []struct{ name, body string }{
+		{"render-indent.txt", "+ runBrief  new entry point\n~   render.Brief # builds the brief for ac-3fxm\n      d-9t2w   the decision\n      covers ac-3fxm and g-k7q2\n      ac-zzzz  unknown IDs stay plain\n  # a note\n- oldBrief   replaced"},
+		{"render-file.txt", "~ auto-plan/\n~ ├── internal/  code\n+ │   ├── tree/\n+ │   │   └── render.go  show-me renderer\n~ │   └── lint/rules.go\n- └── old.go  gone"},
+		{"render-plain.txt", "docs/\n└── plans/\n    ├── 001-a/   first\n    └── 002-b/"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr, errs := Parse(tc.body)
+			if len(errs) != 0 {
+				t.Fatalf("errors: %v", errs)
+			}
+			golden(t, tc.name, Render(tr, glyphs))
+		})
+	}
+}
+
+// TestRenderRoundTrip: rendering a parsed tree and parsing it again gives the
+// same lines (numbers aside), for every well-formed case.
+func TestRenderRoundTrip(t *testing.T) {
+	bodies := []string{
+		"runLint\n  lint.File  reads graph.json\n    graph.Decode # tolerant\n  lint.Graph\n\nemit",
+		"+ runLint                  new entry point\n~   lint.File              #  reads graph\n      graph.Decode\n- oldLint   \n",
+		"~ auto-plan/\n~ ├── internal/\n+ │   ├── tree/\n+ │   │   └── parse.go  show-me parser\n~ │   └── lint/rules.go\n- └── old.go",
+		"docs/\n└── plans/\n    ├── 001-a/\n    └── 002-b/",
+		"# the lint path\nlint\n  # rules run here\n  rules",
+	}
+	for _, body := range bodies {
+		want, _ := Parse(body)
+		got, errs := Parse(Render(want, nil))
+		if len(errs) != 0 {
+			t.Fatalf("re-parse errors %v for:\n%s", errs, Render(want, nil))
+		}
+		if !sameLines(got, want) {
+			t.Fatalf("round trip changed the tree:\n  %+v\nwant\n  %+v", got, want)
+		}
+	}
+}
+
+func sameLines(a, b Tree) bool {
+	if a.Gutter != b.Gutter || a.Style != b.Style || len(a.Lines) != len(b.Lines) {
+		return false
+	}
+	for i := range a.Lines {
+		x, y := a.Lines[i], b.Lines[i]
+		x.N, y.N = 0, 0
+		if x != y {
+			return false
+		}
+	}
+	return true
+}
+
+func fileNode(id, path, change, why string) graph.Node {
+	return graph.Node{ID: id, Type: "file", Status: graph.StatusActive, Fields: map[string]any{"path": path, "change": change, "why": why}}
+}
+
+func TestFileTree(t *testing.T) {
+	files := []graph.Node{
+		fileNode("f-0001", "auto-plan/internal/render/brief.go", "add", "Stage Brief view"),
+		fileNode("f-0002", "auto-plan/internal/render/show.go", "edit", "labels, alternatives and blocks"),
+		fileNode("f-0003", "auto-plan/internal/cli/read.go", "add", "list, describe, get, search"),
+		fileNode("f-0004", "auto-plan/internal/cli/old.go", "delete", "replaced by read.go\nmore detail"),
+		fileNode("f-0005", "go.work", "edit", "use ./auto-plan"),
+		fileNode("f-0006", "docs/plans/README.md", "add", strings.Repeat("a very long reason ", 10)),
+	}
+	full := FileTree(files)
+	golden(t, "filetree.txt", Render(full, nil))
+	if !full.Gutter || full.Style != StyleFile {
+		t.Fatalf("derived tree = %+v", full)
+	}
+	byName := map[string]Line{}
+	for _, l := range full.Lines {
+		byName[l.Name] = l
+	}
+	for name, marker := range map[string]string{
+		"auto-plan/internal/": "~", "render/": "~", "cli/": "~", "brief.go": "+", "old.go": "-", "docs/plans/": "+",
+	} {
+		if byName[name].Marker != marker {
+			t.Errorf("%s marker = %q, want %q (lines %+v)", name, byName[name].Marker, marker, full.Lines)
+		}
+	}
+	if _, errs := Parse(Render(full, nil)); len(errs) != 0 {
+		t.Fatalf("a derived tree must parse cleanly: %v", errs)
+	}
+
+	// One stage's subset: only its files, joined directories re-derived.
+	staged := FileTree([]graph.Node{files[2], files[3]})
+	golden(t, "filetree-stage.txt", Render(staged, nil))
+	if len(staged.Lines) != 3 || staged.Lines[0].Name != "auto-plan/internal/cli/" || staged.Lines[0].Marker != "~" {
+		t.Fatalf("staged tree = %+v", staged.Lines)
+	}
+	if empty := FileTree(nil); len(empty.Lines) != 0 || Render(empty, nil) != "" {
+		t.Fatalf("empty tree = %+v", empty)
 	}
 }

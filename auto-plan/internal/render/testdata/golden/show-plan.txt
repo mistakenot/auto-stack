@@ -1,0 +1,20 @@
+001-stage-briefs  task · plan
+
+◎ G1     g-xyf8   An agent gets one stage's context in one call
+    ✓ AC1.1  ac-jttt  brief is self-contained                      go test ./e2e -run Brief
+    ✓ AC1.2  ac-cgyg  brief names no other stage's steps           (manual)
+    ◆ D1     d-ytbz   brief is Markdown + JSON
+    -   A1.1   a-c70k   reuse Context Pack                         collides with auto-graph's term
+    -   A1.2   a-9xcp   HTML only                                  agents cannot read it cheaply, and it would need a renderer…
+◎ G2     g-473w   Plans can be reordered without breaking references
+    ✓ AC2.1  ac-y16y  move rewrites one rank                       go test ./internal/graph -run Move
+    ◆ D2     d-tj08   ranks are strings
+
+rails
+    ‖ R1     r-jbjh   Never copy rail text into a child            deferred: 002
+
+defects
+    ✗ DF1    df-1ycb  Stage context is scattered across plan.html  addressed by g-xyf8
+
+open questions
+    ? Q1     q-jcx5   Should brief include rejected alternatives?

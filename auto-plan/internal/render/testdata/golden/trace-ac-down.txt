@@ -1,0 +1,7 @@
+✓ ac-jttt  brief is self-contained
+
+down
+  covers  ← ▶ s-3v6v  Render layer
+    touches → □ f-rn42  auto-plan/internal/render/brief.go
+    touches → □ f-pa6c  auto-plan/internal/render/show.go
+  about   ← ≡ t-nfba  brief call path

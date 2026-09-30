@@ -107,7 +107,14 @@ a path, or "all" where it makes sense. Output is JSON by default; --text is for 
 		newMoveCmd(application),
 		newLintCmd(application),
 		newFmtCmd(application),
+		newListCmd(application),
+		newDescribeCmd(application),
+		newGetCmd(application),
+		newSearchCmd(application),
 		newShowCmd(application),
+		newTraceCmd(application),
+		newTreeCmd(application),
+		newBriefCmd(application),
 	)
 	return rootCmd
 }

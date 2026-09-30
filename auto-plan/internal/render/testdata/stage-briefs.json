@@ -1,0 +1,355 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": "ac-cgyg",
+      "type": "ac",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "gwt": "Given two stages, when brief runs for one, then the other's steps are absent",
+        "title": "brief names no other stage's steps",
+        "verify": {
+          "kind": "manual"
+        }
+      }
+    },
+    {
+      "id": "ac-jttt",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "Given a stage, when brief runs, then its output needs nothing else",
+        "title": "brief is self-contained",
+        "verify": {
+          "cmd": "go test ./e2e -run Brief",
+          "tests": [
+            "TestBrief"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-y16y",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "Given siblings, when move runs, then only one rank changes",
+        "title": "move rewrites one rank",
+        "verify": {
+          "cmd": "go test ./internal/graph -run Move"
+        }
+      }
+    },
+    {
+      "id": "a-9xcp",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "title": "HTML only",
+        "why": "agents cannot read it cheaply, and it would need a renderer that does not exist yet in this repository at all"
+      }
+    },
+    {
+      "id": "a-c70k",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "title": "reuse Context Pack",
+        "why": "collides with auto-graph's term"
+      }
+    },
+    {
+      "id": "d-tj08",
+      "type": "decision",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "by": "charlie",
+        "chosen": "sortable strings",
+        "title": "ranks are strings",
+        "why": "one-field reorders"
+      }
+    },
+    {
+      "id": "d-ytbz",
+      "type": "decision",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "by": "charlie",
+        "chosen": "Markdown with --text, JSON by default",
+        "title": "brief is Markdown + JSON",
+        "why": "agents read JSON; humans read Markdown"
+      }
+    },
+    {
+      "id": "df-1ycb",
+      "type": "defect",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "title": "Stage context is scattered across plan.html"
+      }
+    },
+    {
+      "id": "f-44v0",
+      "type": "file",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/cli/read.go",
+        "why": "list, describe, get, search"
+      }
+    },
+    {
+      "id": "f-gqzz",
+      "type": "file",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "change": "delete",
+        "path": "auto-plan/internal/cli/old.go",
+        "why": "replaced by read.go"
+      }
+    },
+    {
+      "id": "f-pa6c",
+      "type": "file",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "change": "edit",
+        "path": "auto-plan/internal/render/show.go",
+        "why": "labels, alternatives and blocks"
+      }
+    },
+    {
+      "id": "f-r5et",
+      "type": "file",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "change": "edit",
+        "path": "go.work",
+        "why": "use ./auto-plan"
+      }
+    },
+    {
+      "id": "f-rn42",
+      "type": "file",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/render/brief.go",
+        "why": "Stage Brief view"
+      }
+    },
+    {
+      "id": "g-473w",
+      "type": "goal",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "title": "Plans can be reordered without breaking references"
+      }
+    },
+    {
+      "id": "g-xyf8",
+      "type": "goal",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "title": "An agent gets one stage's context in one call"
+      }
+    },
+    {
+      "id": "plan",
+      "type": "plan",
+      "status": "active",
+      "fields": {
+        "created": "2026-01-01",
+        "kind": "task",
+        "lifecycle": "plan",
+        "name": "stage-briefs"
+      }
+    },
+    {
+      "id": "q-jcx5",
+      "type": "question",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "recommended": "No: keep it small",
+        "status": "open",
+        "title": "Should brief include rejected alternatives?"
+      }
+    },
+    {
+      "id": "q-tjhs",
+      "type": "question",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "answer": "yes",
+        "status": "answered",
+        "title": "Answered one"
+      }
+    },
+    {
+      "id": "r-jbjh",
+      "type": "rail",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "deferred": [
+          "002"
+        ],
+        "title": "Never copy rail text into a child"
+      }
+    },
+    {
+      "id": "s-3v6v",
+      "type": "stage",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "commit": "feat: render layer",
+        "status": "done",
+        "steps": [
+          "Write show.go",
+          "Write brief.go"
+        ],
+        "title": "Render layer"
+      }
+    },
+    {
+      "id": "s-p6v5",
+      "type": "stage",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "commit": "feat: cli verbs",
+        "steps": [
+          "Write read.go",
+          "Wire root.go"
+        ],
+        "title": "CLI verbs"
+      }
+    },
+    {
+      "id": "t-nfba",
+      "type": "tree",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "body": "+ runBrief                  new entry point\n~   render.Brief            builds the brief for s-3v6v\n      covers ac-jttt\n      render.StageFiles\n  # retired below\n- oldBrief                  replaced",
+        "kind": "call",
+        "title": "brief call path"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "ac-cgyg",
+      "type": "proves",
+      "to": "g-xyf8"
+    },
+    {
+      "from": "ac-jttt",
+      "type": "discharges",
+      "to": "005:r-8hw3"
+    },
+    {
+      "from": "ac-jttt",
+      "type": "discharges",
+      "to": "r-jbjh"
+    },
+    {
+      "from": "ac-jttt",
+      "type": "proves",
+      "to": "g-xyf8"
+    },
+    {
+      "from": "ac-y16y",
+      "type": "proves",
+      "to": "g-473w"
+    },
+    {
+      "from": "d-tj08",
+      "type": "constrains",
+      "to": "g-473w"
+    },
+    {
+      "from": "d-ytbz",
+      "type": "constrains",
+      "to": "ac-jttt"
+    },
+    {
+      "from": "d-ytbz",
+      "type": "rejects",
+      "to": "a-9xcp"
+    },
+    {
+      "from": "d-ytbz",
+      "type": "rejects",
+      "to": "a-c70k"
+    },
+    {
+      "from": "g-xyf8",
+      "type": "addresses",
+      "to": "df-1ycb"
+    },
+    {
+      "from": "s-3v6v",
+      "type": "covers",
+      "to": "ac-jttt"
+    },
+    {
+      "from": "s-3v6v",
+      "type": "touches",
+      "to": "f-pa6c"
+    },
+    {
+      "from": "s-3v6v",
+      "type": "touches",
+      "to": "f-rn42"
+    },
+    {
+      "from": "s-p6v5",
+      "type": "covers",
+      "to": "ac-cgyg"
+    },
+    {
+      "from": "s-p6v5",
+      "type": "dependsOn",
+      "to": "s-3v6v"
+    },
+    {
+      "from": "s-p6v5",
+      "type": "touches",
+      "to": "f-44v0"
+    },
+    {
+      "from": "s-p6v5",
+      "type": "touches",
+      "to": "f-gqzz"
+    },
+    {
+      "from": "s-p6v5",
+      "type": "touches",
+      "to": "f-r5et"
+    },
+    {
+      "from": "t-nfba",
+      "type": "about",
+      "to": "ac-jttt"
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+# Stage s-3v6v: Render layer
+
+Plan 001-stage-briefs · status done
+
+## Depends on
+
+(none)
+
+## Steps
+
+1. Write show.go
+2. Write brief.go
+
+## Commit
+
+`feat: render layer`
+
+## Files
+
+```
+~ auto-plan/internal/render/
++ ├── brief.go  f-rn42  Stage Brief view
+~ └── show.go   f-pa6c  labels, alternatives and blocks
+```
+
+## Acceptance criteria
+
+### ac-jttt: brief is self-contained
+
+Proves g-xyf8: An agent gets one stage's context in one call
+
+Given a stage, when brief runs, then its output needs nothing else
+
+- Verify: `go test ./e2e -run Brief`
+- Tests: TestBrief
+
+## Decisions
+
+### d-ytbz: brief is Markdown + JSON
+
+Constrains ac-jttt
+
+**Chosen:** Markdown with --text, JSON by default
+
+**Why:** agents read JSON; humans read Markdown
+
+## Rails
+
+- 005:r-8hw3: a rail in plan 005 (discharged by ac-jttt)
+- r-jbjh: Never copy rail text into a child (discharged by ac-jttt)
+
+## Open questions
+
+- q-jcx5: Should brief include rejected alternatives?
+  Recommended: No: keep it small

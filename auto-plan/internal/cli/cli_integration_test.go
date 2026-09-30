@@ -409,7 +409,7 @@ func TestShowJSONAndText(t *testing.T) {
 	}
 
 	text := mustRun(t, root, "show", "001", "--text")
-	for _, want := range []string{"001-demo  task · requirements", "◎ " + g1, "    ✓ " + ac, "go test ./...", "    ◆ " + d} {
+	for _, want := range []string{"001-demo  task · requirements", "◎ G1     " + g1, "    ✓ AC1.1  " + ac, "go test ./...", "    ◆ D1     " + d} {
 		if !strings.Contains(text, want) {
 			t.Errorf("show --text missing %q:\n%s", want, text)
 		}
@@ -716,4 +716,350 @@ func TestFmtAllAndLossyFiles(t *testing.T) {
 	if r := decode[fmtOut](t, stdout); code != 1 || len(r.Errors) != 1 || r.Errors[0].Code != "parse-error" {
 		t.Fatalf("fmt malformed: exit %d %+v", code, r)
 	}
+}
+
+// lens builds a plan for the read lenses on top of walk: an alternative with
+// a long reason, a rail discharged locally and across plans, an open
+// question, two stages (the second depends on the first), three files and a
+// tree. It returns the generated IDs by role.
+func lens(t *testing.T, root string) map[string]string {
+	t.Helper()
+	g1, g2, ac, d := walk(t, root)
+	ids := map[string]string{"g1": g1, "g2": g2, "ac": ac, "d": d}
+	add := func(role string, args ...string) {
+		t.Helper()
+		ids[role] = decode[struct{ ID string }](t, mustRun(t, root, append([]string{"add", "001"}, args...)...)).ID
+	}
+	add("a", "alternative", "--title", "YAML", "--why", strings.Repeat("merge conflicts everywhere ", 12))
+	mustRun(t, root, "link", "001", d, "rejects", ids["a"])
+	add("ac2", "ac", "--proves", g2, "--title", "second criterion", "--gwt", "Given x, when y, then z", "--verify-cmd", "go test ./b")
+	add("r", "rail", "--title", "No network calls")
+	mustRun(t, root, "link", "001", ac, "discharges", ids["r"])
+	mustRun(t, root, "link", "001", ac, "discharges", "005:r-8hw3")
+	add("q", "question", "--title", "Ship it behind a flag?", "--status", "open", "--recommended", "no")
+	add("s1", "stage", "--title", "First stage", "--steps", "SECRET-STEP-ONE", "--commit", "feat: one", "--status", "done")
+	add("s2", "stage", "--title", "Second stage", "--steps", "step two", "--commit", "feat: two", "--dependsOn", ids["s1"])
+	add("f1", "file", "--path", "pkg/a.go", "--change", "add", "--why", "new")
+	add("f2", "file", "--path", "pkg/b.go", "--change", "edit", "--why", "changed")
+	add("f3", "file", "--path", "README.md", "--change", "delete", "--why", "gone")
+	mustRun(t, root, "link", "001", ids["s1"], "touches", ids["f1"])
+	mustRun(t, root, "link", "001", ids["s2"], "touches", ids["f2"])
+	mustRun(t, root, "link", "001", ids["s2"], "touches", ids["f3"])
+	mustRun(t, root, "link", "001", ids["s1"], "covers", ac)
+	mustRun(t, root, "link", "001", ids["s2"], "covers", ids["ac2"])
+	add("t", "tree", "--title", "call path", "--kind", "call", "--body", "run\n  check "+ac+"  the AC", "--about", ac)
+	return ids
+}
+
+type listOut struct {
+	Plan      string `json:"plan"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	Lifecycle string `json:"lifecycle"`
+	Nodes     []struct {
+		ID, Type, Status, Rank, Title string
+	} `json:"nodes"`
+}
+
+func TestListFiltersAndAll(t *testing.T) {
+	root := repo(t)
+	ids := lens(t, root)
+	mustRun(t, root, "retire", "001", ids["ac2"])
+
+	one := decode[listOut](t, mustRun(t, root, "list", "001"))
+	if one.Plan != "001" || one.Name != "demo" || one.Kind != "task" || one.Lifecycle != "requirements" || len(one.Nodes) != 15 {
+		t.Fatalf("list 001 = %+v", one)
+	}
+	if n := one.Nodes[0]; n.ID != "plan" || n.Title != "demo" {
+		t.Fatalf("registry type order puts the plan node first: %+v", n)
+	}
+	acs := decode[listOut](t, mustRun(t, root, "list", "001", "--type", "  AC "))
+	statuses := map[string]string{}
+	for _, n := range acs.Nodes {
+		statuses[n.ID] = n.Status
+	}
+	if len(acs.Nodes) != 2 || statuses[ids["ac"]] != "active" || statuses[ids["ac2"]] != "retired" {
+		t.Fatalf("--type is normalised and retired nodes are listed: %+v", acs.Nodes)
+	}
+	if strings.Contains(mustRun(t, root, "list", "001"), `"gwt"`) {
+		t.Fatal("list carries IDs, metadata and titles only")
+	}
+	expectFailure(t, root, "invalid-type", "list", "001", "--type", "story")
+
+	text := mustRun(t, root, "list", "001", "--type", "ac", "--text")
+	if !strings.HasPrefix(text, "001-demo  task · requirements\n") || !strings.Contains(text, "second criterion  (retired)") {
+		t.Fatalf("list --text:\n%s", text)
+	}
+
+	// all: every plan; a malformed plan is reported on stderr, the rest still listed.
+	mustRun(t, root, "new", "other", "--kind", "epic")
+	mustRun(t, root, "new", "broken", "--kind", "task")
+	if err := os.WriteFile(filepath.Join(root, "docs", "plans", "003-broken", "graph.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := runCLI(t, root, "list", "all")
+	all := decode[struct{ Plans []listOut }](t, stdout)
+	if code != 1 || len(all.Plans) != 2 || all.Plans[1].Plan != "002" || all.Plans[1].Kind != "epic" {
+		t.Fatalf("list all: exit %d %+v", code, all)
+	}
+	if f := decode[failure](t, stderr); len(f.Errors) != 1 || f.Errors[0].Code != "parse-error" || f.Hint == "" {
+		t.Fatalf("list all stderr = %s", stderr)
+	}
+}
+
+func TestDescribeTruncatesWithRecoveryCommand(t *testing.T) {
+	root := repo(t)
+	ids := lens(t, root)
+	v := decode[struct {
+		ID, Type, Term, Status, Rank, Title, Get string
+		Fields                                   map[string]any
+		Truncated                                []string
+		Edges                                    struct{ Out, In map[string]int }
+	}](t, mustRun(t, root, "describe", "001", ids["a"]))
+	why, _ := v.Fields["why"].(string)
+	if v.Type != "alternative" || v.Term != "Alternative" || v.Title != "YAML" || v.Rank != "a0" ||
+		len([]rune(why)) != 201 || !strings.HasSuffix(why, "…") || !slices.Equal(v.Truncated, []string{"why"}) ||
+		v.Get != "auto plan get 001 "+ids["a"] || v.Edges.In["rejects"] != 1 {
+		t.Fatalf("describe = %+v", v)
+	}
+	text := mustRun(t, root, "describe", "001", ids["a"], "--text")
+	if !strings.Contains(text, "truncated: why; full node: auto plan get 001 "+ids["a"]) {
+		t.Fatalf("describe --text must print the recovery command:\n%s", text)
+	}
+	expectFailure(t, root, "node-not-found", "describe", "001", "a-zzzz")
+}
+
+func TestGetIsFullFidelityWithNeighbours(t *testing.T) {
+	root := repo(t)
+	ids := lens(t, root)
+	type row struct {
+		Edge, ID, Type, Title, Status string
+		Qualified                     bool
+	}
+	v := decode[struct {
+		ID     string
+		Fields map[string]any
+		Out    []row
+		In     []row
+	}](t, mustRun(t, root, "get", "001", ids["a"]))
+	if why, _ := v.Fields["why"].(string); why != strings.Repeat("merge conflicts everywhere ", 12) {
+		t.Fatalf("get must return the full field, got %q", why)
+	}
+	if len(v.In) != 1 || v.In[0] != (row{Edge: "rejects", ID: ids["d"], Type: "decision", Title: "use JSON", Status: "active"}) {
+		t.Fatalf("in = %+v", v.In)
+	}
+	ac := decode[struct{ Out, In []row }](t, mustRun(t, root, "get", "001", ids["ac"]))
+	want := []row{
+		{Edge: "proves", ID: ids["g1"], Type: "goal", Title: "First goal", Status: "active"},
+		{Edge: "discharges", ID: "005:r-8hw3", Qualified: true},
+		{Edge: "discharges", ID: ids["r"], Type: "rail", Title: "No network calls", Status: "active"},
+	}
+	if !slices.Equal(ac.Out, want) || len(ac.In) != 2 {
+		t.Fatalf("get ac out = %+v in = %+v", ac.Out, ac.In)
+	}
+	text := mustRun(t, root, "get", "001", ids["ac"], "--text")
+	for _, s := range []string{"gwt ", "verify.cmd ", "go test ./...", "proves     → ◎ " + ids["g1"], "⇢ 005:r-8hw3", "covers ← ▶ " + ids["s1"], "verify.tests  - TestA\n                - TestB\n"} {
+		if !strings.Contains(text, s) {
+			t.Errorf("get --text missing %q:\n%s", s, text)
+		}
+	}
+	expectFailure(t, root, "node-not-found", "get", "001", "ac-zzzz")
+}
+
+func TestSearchIsCaseInsensitiveAcrossPlans(t *testing.T) {
+	root := repo(t)
+	ids := lens(t, root)
+	mustRun(t, root, "new", "other", "--kind", "task")
+	mustRun(t, root, "add", "002", "goal", "--title", "Another MERGE story")
+	type match struct {
+		Plan, ID, Type, Title string
+		Fields                []string
+	}
+	r := decode[struct {
+		Query   string
+		Matches []match
+	}](t, mustRun(t, root, "search", "all", "  Merge "))
+	if r.Query != "merge" || len(r.Matches) != 2 || r.Matches[0].ID != ids["a"] || !slices.Equal(r.Matches[0].Fields, []string{"why"}) ||
+		r.Matches[1].Plan != "002" || r.Matches[1].Type != "goal" {
+		t.Fatalf("search all = %+v", r)
+	}
+	one := decode[struct{ Matches []match }](t, mustRun(t, root, "search", "001", "merge"))
+	if len(one.Matches) != 1 {
+		t.Fatalf("search 001 = %+v", one)
+	}
+	nested := decode[struct{ Matches []match }](t, mustRun(t, root, "search", "001", "GO TEST ./B"))
+	if len(nested.Matches) != 1 || !slices.Equal(nested.Matches[0].Fields, []string{"verify.cmd"}) {
+		t.Fatalf("object members are searched: %+v", nested)
+	}
+	if none := decode[struct{ Matches []match }](t, mustRun(t, root, "search", "001", "nothing-like-this")); none.Matches == nil || len(none.Matches) != 0 {
+		t.Fatalf("no match is an empty list: %+v", none)
+	}
+	if text := mustRun(t, root, "search", "all", "merge", "--text"); !strings.HasPrefix(text, "2 matches for \"merge\"") {
+		t.Fatalf("search --text:\n%s", text)
+	}
+	expectFailure(t, root, "usage", "search", "001", "   ")
+}
+
+func TestShowLadderWithBlocksAndLabels(t *testing.T) {
+	root := repo(t)
+	ids := lens(t, root)
+	v := decode[struct {
+		Goals []struct {
+			Label     string
+			Decisions []struct {
+				Label        string
+				Alternatives []struct{ Label, ID, Why string }
+			}
+		}
+		Rails     []struct{ Label, ID string }
+		Questions []struct{ Label, ID string }
+	}](t, mustRun(t, root, "show", "001"))
+	alts := v.Goals[0].Decisions[0].Alternatives
+	if v.Goals[0].Label != "G1" || v.Goals[1].Label != "G2" || len(alts) != 1 || alts[0].ID != ids["a"] || alts[0].Label != "A1.1" ||
+		!strings.HasSuffix(alts[0].Why, "…") || len(v.Rails) != 1 || v.Rails[0].ID != ids["r"] || len(v.Questions) != 1 {
+		t.Fatalf("show = %+v", v)
+	}
+	text := mustRun(t, root, "show", "001", "--text")
+	for _, s := range []string{"◎ G1 ", "✓ AC1.1  " + ids["ac"], "◆ D1 ", "    -   A1.1   " + ids["a"], "\nrails\n", "\nopen questions\n    ? Q1 "} {
+		if !strings.Contains(text, s) {
+			t.Errorf("show --text missing %q:\n%s", s, text)
+		}
+	}
+}
+
+func TestTraceCommand(t *testing.T) {
+	root := repo(t)
+	ids := lens(t, root)
+	type step struct {
+		Edge, Dir, ID, Type string
+		Qualified           bool
+		Children            []step
+	}
+	type traceOut struct {
+		Direction string
+		Root      step
+		Up, Down  []step
+	}
+	up := decode[traceOut](t, mustRun(t, root, "trace", "001", ids["ac"], "--up"))
+	if up.Direction != "up" || up.Root.ID != ids["ac"] || len(up.Down) != 0 || len(up.Up) != 3 || len(up.Up[0].Children) != 1 ||
+		up.Up[0].Edge != "proves" || up.Up[0].ID != ids["g1"] || up.Up[0].Dir != "out" {
+		t.Fatalf("trace --up = %+v", up)
+	}
+	down := decode[traceOut](t, mustRun(t, root, "trace", "001", ids["ac"], "--down"))
+	if len(down.Down) != 2 || down.Down[0].Edge != "covers" || down.Down[0].ID != ids["s1"] ||
+		len(down.Down[0].Children) != 1 || down.Down[0].Children[0].ID != ids["f1"] || down.Down[1].Edge != "about" {
+		t.Fatalf("trace --down = %+v", down)
+	}
+	both := decode[traceOut](t, mustRun(t, root, "trace", "001", ids["f2"]))
+	if both.Direction != "both" || len(both.Up) != 1 || both.Up[0].ID != ids["s2"] || len(both.Down) != 0 {
+		t.Fatalf("trace (both) = %+v", both)
+	}
+	text := mustRun(t, root, "trace", "001", ids["g1"], "--down", "--text")
+	for _, s := range []string{"◎ " + ids["g1"] + "  First goal\n", "\ndown\n", "  proves  ← ✓ " + ids["ac"], "    covers  ← ▶ " + ids["s1"], "      touches → □ " + ids["f1"]} {
+		if !strings.Contains(text, s) {
+			t.Errorf("trace --text missing %q:\n%s", s, text)
+		}
+	}
+	expectFailure(t, root, "usage", "trace", "001", ids["ac"], "--up", "--down")
+	expectFailure(t, root, "node-not-found", "trace", "001", "ac-zzzz")
+}
+
+func TestTreeCommand(t *testing.T) {
+	root := repo(t)
+	ids := lens(t, root)
+	v := decode[struct {
+		ID, Kind string
+		About    []string
+		Tree     struct {
+			Lines []struct {
+				Depth         int
+				Name, Comment string
+			}
+		}
+		Errors []any
+	}](t, mustRun(t, root, "tree", "001", ids["t"]))
+	if v.Kind != "call" || !slices.Equal(v.About, []string{ids["ac"]}) || len(v.Tree.Lines) != 2 || v.Errors == nil || len(v.Errors) != 0 {
+		t.Fatalf("tree = %+v", v)
+	}
+	text := mustRun(t, root, "tree", "001", ids["t"], "--text")
+	if !strings.Contains(text, "  check ✓ "+ids["ac"]+"  the AC\n") {
+		t.Fatalf("tree --text annotates node IDs with their glyph:\n%s", text)
+	}
+
+	files := decode[struct {
+		Files []struct{ ID, Path, Change string }
+	}](t, mustRun(t, root, "tree", "001", "--files"))
+	if len(files.Files) != 3 || files.Files[0].Path != "README.md" {
+		t.Fatalf("tree --files = %+v", files)
+	}
+	want := "- README.md  " + ids["f3"] + "  gone\n~ pkg/\n+ ├── a.go   " + ids["f1"] + "  new\n~ └── b.go   " + ids["f2"] + "  changed\n"
+	if got := mustRun(t, root, "tree", "001", "--files", "--text"); got != want {
+		t.Fatalf("tree --files --text:\n%s\nwant:\n%s", got, want)
+	}
+	staged := mustRun(t, root, "tree", "001", "--files", "--stage", ids["s2"], "--text")
+	if strings.Contains(staged, "a.go") || !strings.Contains(staged, "b.go") || !strings.Contains(staged, "README.md") {
+		t.Fatalf("--stage shows only that stage's files:\n%s", staged)
+	}
+
+	expectFailure(t, root, "usage", "tree", "001")
+	expectFailure(t, root, "usage", "tree", "001", ids["t"], "--files")
+	expectFailure(t, root, "usage", "tree", "001", ids["t"], "--stage", ids["s1"])
+	expectFailure(t, root, "wrong-type", "tree", "001", ids["ac"])
+	expectFailure(t, root, "wrong-type", "tree", "001", "--files", "--stage", ids["ac"])
+	expectFailure(t, root, "node-not-found", "tree", "001", "t-zzzz")
+
+	// A broken body still renders best effort, with the errors on stderr.
+	path := filepath.Join(root, "docs", "plans", "001-demo", "graph.json")
+	broken := strings.Replace(string(readGraph(t, root, "001-demo")), `"run\n  check`, `"run\n   check`, 1)
+	if err := os.WriteFile(path, []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := runCLI(t, root, "tree", "001", ids["t"])
+	if code != 1 || !strings.Contains(stdout, `"errors": [`) {
+		t.Fatalf("broken tree: exit %d stdout %s", code, stdout)
+	}
+	if f := decode[failure](t, stderr); len(f.Errors) != 1 || f.Errors[0].Code != "tree-syntax" {
+		t.Fatalf("broken tree stderr = %s", stderr)
+	}
+}
+
+func TestBriefCommand(t *testing.T) {
+	root := repo(t)
+	ids := lens(t, root)
+	v := decode[struct {
+		Stage struct {
+			ID, Status, Commit string
+			Steps              []string
+		}
+		DependsOn []struct{ ID, Title, Status string }
+		Files     []struct{ ID string }
+		ACs       []struct {
+			ID     string
+			Verify struct{ Cmd string }
+		} `json:"acs"`
+		Decisions []struct{ ID string }
+		Rails     []struct {
+			ID        string
+			Qualified bool
+		}
+		Questions []struct{ ID string }
+	}](t, mustRun(t, root, "brief", "001", ids["s2"]))
+	if v.Stage.ID != ids["s2"] || v.Stage.Status != "todo" || v.Stage.Commit != "feat: two" || len(v.DependsOn) != 1 ||
+		v.DependsOn[0].ID != ids["s1"] || v.DependsOn[0].Status != "done" || len(v.Files) != 2 || len(v.ACs) != 1 ||
+		v.ACs[0].ID != ids["ac2"] || v.ACs[0].Verify.Cmd != "go test ./b" || len(v.Decisions) != 0 || len(v.Rails) != 0 || len(v.Questions) != 1 {
+		t.Fatalf("brief s2 = %+v", v)
+	}
+	first := mustRun(t, root, "brief", "001", ids["s1"], "--text")
+	for _, s := range []string{"# Stage " + ids["s1"] + ": First stage\n", "1. SECRET-STEP-ONE", "`feat: one`", "+ └── a.go", "### " + ids["ac"] + ": it works",
+		"- Verify: `go test ./...`", "### " + ids["d"] + ": use JSON", "- 005:r-8hw3: a rail in plan 005", "- " + ids["r"] + ": No network calls", "- " + ids["q"] + ": Ship it behind a flag?"} {
+		if !strings.Contains(first, s) {
+			t.Errorf("brief --text missing %q:\n%s", s, first)
+		}
+	}
+	second := mustRun(t, root, "brief", "001", ids["s2"], "--text")
+	if strings.Contains(second, "SECRET-STEP-ONE") || strings.Contains(second, "feat: one") || !strings.Contains(second, "- "+ids["s1"]+": First stage (done)") {
+		t.Fatalf("a brief names other stages by ID, title and status only:\n%s", second)
+	}
+	expectFailure(t, root, "wrong-type", "brief", "001", ids["ac"])
+	expectFailure(t, root, "node-not-found", "brief", "001", "s-zzzz")
 }

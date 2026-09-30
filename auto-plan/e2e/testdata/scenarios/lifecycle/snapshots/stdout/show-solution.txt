@@ -1,6 +1,7 @@
 001-demo  task · solution
 
-◎ g-gc8t   An agent gets one stage's context in one call
-    ✓ ac-j58t  brief is self-contained  go test ./e2e -run Brief
-    ◆ d-kqxw   brief is Markdown + JSON
-◎ g-rbcw   Plans can be reordered without breaking references
+◎ G1     g-gc8t   An agent gets one stage's context in one call
+    ✓ AC1.1  ac-j58t  brief is self-contained  go test ./e2e -run Brief
+    ◆ D1     d-kqxw   brief is Markdown + JSON
+    -   A1.1   a-w1fg   reuse Context Pack     collides with auto-graph's term
+◎ G2     g-rbcw   Plans can be reordered without breaking references

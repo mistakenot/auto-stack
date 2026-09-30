@@ -1,0 +1,14 @@
+◎ g-xyf8  An agent gets one stage's context in one call
+
+down
+  proves    ← ✓ ac-jttt  brief is self-contained
+    covers    ← ▶ s-3v6v   Render layer
+      touches   → □ f-rn42   auto-plan/internal/render/brief.go
+      touches   → □ f-pa6c   auto-plan/internal/render/show.go
+    about     ← ≡ t-nfba   brief call path
+  proves    ← ✓ ac-cgyg  brief names no other stage's steps
+    covers    ← ▶ s-p6v5   CLI verbs
+      touches   → □ f-44v0   auto-plan/internal/cli/read.go
+      touches   → □ f-gqzz   auto-plan/internal/cli/old.go
+      touches   → □ f-r5et   go.work
+  addresses → ✗ df-1ycb  Stage context is scattered across plan.html

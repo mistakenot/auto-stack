@@ -1,6 +1,6 @@
 001-demo  task · requirements
 
-◎ g-rbcw   Plans can be reordered without breaking references
-◎ g-gc8t   An agent gets one stage's context in one call
-    ✓ ac-j58t  brief is self-contained  go test ./e2e -run Brief
-    ◆ d-kqxw   brief is Markdown + JSON
+◎ G1     g-rbcw   Plans can be reordered without breaking references
+◎ G2     g-gc8t   An agent gets one stage's context in one call
+    ✓ AC2.1  ac-j58t  brief is self-contained  go test ./e2e -run Brief
+    ◆ D1     d-kqxw   brief is Markdown + JSON
