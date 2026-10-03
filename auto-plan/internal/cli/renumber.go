@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +30,10 @@ func newRenumberCmd(application *app.App) *cobra.Command {
 NNN (lint reports duplicate-plan-number). The folder NNN-name becomes MMM-name, the plan ID
 NNN-xxxx becomes MMM-xxxx (the random suffix is kept), and every reference to the old ID in
 every plan under .auto/plan/plans is rewritten: qualified edge targets, [[NNN-xxxx:id]] prose
-references, and the epic, child plan and rail deferred fields. A shorthand prose reference
+references, the epic, child plan and rail deferred fields, and the cross-plan [[NNN:id]] /
+[[NNN-xxxx:id]] references inside each plan's annex Markdown. Annex paths are folder-relative,
+so the folder rename moves the files themselves — only the cross-plan references in their prose
+are rewritten. A shorthand prose reference
 [[NNN:id]] keeps its meaning: while NNN names only this plan it moves with it; during a
 collision, one whose node is in this plan becomes a full [[MMM-xxxx:id]], one whose node is in
 the other plan is left alone (NNN names that plan once this one moves), and one that both plans
@@ -45,7 +49,8 @@ plan, or one of another format version, is never rewritten), when any rewritten 
 fail validation, or when the target number is taken.
 
 Every new graph.json is encoded and validated first and staged as a temp file beside its
-target; only then are the temp files renamed into place, and the folder renamed last. A
+target, alongside every rewritten annex Markdown file; only then are the temp files renamed into
+place, and the folder renamed last. A
 failure while staging changes nothing; a failure among the renames is rolled back best effort,
 and the error says whether that rollback succeeded or names the files it could not restore.
 The renames of several files are not one atomic step, so a crash in that window can leave some
@@ -162,7 +167,9 @@ func runRenumber(cmd *cobra.Command, application *app.App, arg, to string) error
 	}
 
 	// Compute every rewrite and validate it before anything is written.
-	var rewrites []*rewrite
+	// rewrites holds the graph.json changes (reported as "rewritten");
+	// annexes holds the annex-Markdown changes, staged atomically with them.
+	var rewrites, annexes []*rewrite
 	var frozen, ambiguous []string
 	var errs []graph.ValidationError
 	for _, q := range set.Plans() {
@@ -183,26 +190,38 @@ func runRenumber(cmd *cobra.Command, application *app.App, arg, to string) error
 		for _, a := range amb {
 			ambiguous = append(ambiguous, q.Dir+"/"+workspace.GraphFile+" "+a)
 		}
+		// Cross-plan [[NNN:id]] / [[NNN-xxxx:id]] references inside this plan's
+		// annex Markdown are rewritten with the same mapping as graph.json
+		// prose. Annex paths are folder-relative, so the folder rename moves the
+		// files; only their prose is rewritten, never the stored paths. A renamed
+		// plan's annex temp files are staged at their pre-rename paths (beside its
+		// graph.json temp), so the final folder rename carries them too; other
+		// plans' annexes are rewritten in place.
+		annexRewrites, annexAmb := planAnnexRewrites(ws, q, oldID, newID, short)
+		ambiguous = append(ambiguous, annexAmb...)
 		if q.Dir == p.Dir {
 			gq.ID, changed = newID, true
 		}
-		if !changed {
+		if !changed && len(annexRewrites) == 0 {
 			continue
 		}
 		if q.Dir != p.Dir && gq.Frozen() != "" {
 			frozen = append(frozen, q.Ref()+" ("+gq.Frozen()+")")
 			continue
 		}
-		for _, ve := range graph.Validate(gq) {
-			ve.Message = "plan " + q.Ref() + ": " + ve.Message
-			errs = append(errs, ve)
+		if changed {
+			for _, ve := range graph.Validate(gq) {
+				ve.Message = "plan " + q.Ref() + ": " + ve.Message
+				errs = append(errs, ve)
+			}
+			data, err := graph.Encode(gq)
+			if err != nil {
+				errs = append(errs, graph.ValidationError{Code: "encode-failed", Path: q.Dir, Message: err.Error()})
+				continue
+			}
+			rewrites = append(rewrites, &rewrite{plan: q, path: path, orig: orig, data: data})
 		}
-		data, err := graph.Encode(gq)
-		if err != nil {
-			errs = append(errs, graph.ValidationError{Code: "encode-failed", Path: q.Dir, Message: err.Error()})
-			continue
-		}
-		rewrites = append(rewrites, &rewrite{plan: q, path: path, orig: orig, data: data})
+		annexes = append(annexes, annexRewrites...)
 	}
 	if len(ambiguous) > 0 {
 		return failOne(cmd, text, "ambiguous-ref", "$", "", fmt.Sprintf("%d shorthand reference(s) to plan number %s could name either plan of the collision, "+
@@ -217,7 +236,11 @@ func runRenumber(cmd *cobra.Command, application *app.App, arg, to string) error
 	if len(errs) > 0 {
 		return fail(cmd, text, errs, "nothing was renumbered; run `auto plan lint all`, fix the plans flagged, then retry")
 	}
-	if err := commitRewrites(rewrites, ws.Abs(p.Dir), ws.Abs(newDir)); err != nil {
+	// graph.json and annex files are staged and renamed together, so a renamed
+	// plan's annex temp files are renamed into its old folder before that folder
+	// is renamed last.
+	all := append(append([]*rewrite(nil), rewrites...), annexes...)
+	if err := commitRewrites(all, ws.Abs(p.Dir), ws.Abs(newDir)); err != nil {
 		return failOne(cmd, text, "write-failed", "$", "", err.Error(), nil, "check that "+workspace.PlansDir+" is writable, then run `auto plan lint all`")
 	}
 
@@ -316,4 +339,71 @@ func stage(path string, data []byte) (string, error) {
 func hasNode(g *graph.Graph, id string) bool {
 	_, ok := g.NodeByID(id)
 	return ok
+}
+
+// planAnnexRewrites computes the rewrites for plan q's annex Markdown files
+// whose prose references the renumbered plan. Each file is read through the
+// plan folder (the `*.md` files MarkdownFiles enumerates) and its cross-plan
+// references folded with the same old→new mapping graph.json prose uses; a
+// file is rewritten only when it actually changes. The rewrite's path is the
+// file's current (pre-rename) location, so commitRewrites stages it beside the
+// plan's graph.json temp and the final folder rename carries a renamed plan's
+// files along with it — folder-relative annex paths are never rewritten. It
+// also returns the locations of any ambiguous shorthand references found.
+func planAnnexRewrites(ws *workspace.Workspace, q workspace.Plan, oldID, newID string, short graph.ShortRefFunc) ([]*rewrite, []string) {
+	fsys := ws.FolderFS(q)
+	names, err := workspace.MarkdownFiles(fsys)
+	if err != nil {
+		return nil, nil // an unreadable folder has no annex refs to rewrite
+	}
+	folder := ws.FolderPath(q)
+	var out []*rewrite
+	var ambiguous []string
+	for i := range names {
+		name := names[i]
+		data, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			continue // an unreadable file is an annex-missing/lint concern
+		}
+		rewritten, amb := rewriteAnnexProse(string(data), oldID, newID, short)
+		for _, a := range amb {
+			ambiguous = append(ambiguous, q.Dir+"/"+name+" [["+a+"]]")
+		}
+		if rewritten == string(data) {
+			continue
+		}
+		out = append(out, &rewrite{plan: q, path: filepath.Join(folder, name), orig: data, data: []byte(rewritten)})
+	}
+	return out, ambiguous
+}
+
+// rewriteAnnexProse rewrites the cross-plan references in annex Markdown,
+// mirroring the prose rewrite graph.json fields get: a qualified [[oldID:id]]
+// becomes [[newID:id]], and a shorthand [[NNN:id]] is passed to short. Prose
+// scanning and code-span skipping are reused from graph.ReplaceProseRefs, so
+// an example reference inside backticks is left untouched, exactly as lint and
+// graph.json rewriting treat it. It returns the rewritten text and the
+// references short reported ambiguous.
+func rewriteAnnexProse(s, oldID, newID string, short graph.ShortRefFunc) (string, []string) {
+	var ambiguous []string
+	out := graph.ReplaceProseRefs(s, func(ref string) string {
+		p, id, qualified := graph.ParseRef(ref)
+		switch {
+		case !qualified:
+			return ""
+		case p == oldID:
+			return "[[" + graph.Qualify(newID, id) + "]]"
+		case short != nil && len(p) == 3:
+			repl, amb := short(p, id)
+			if amb {
+				ambiguous = append(ambiguous, ref)
+				return ""
+			}
+			if repl != "" {
+				return "[[" + repl + "]]"
+			}
+		}
+		return ""
+	})
+	return out, ambiguous
 }

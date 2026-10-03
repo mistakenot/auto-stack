@@ -1598,6 +1598,88 @@ func TestRenumberFixesIDMismatch(t *testing.T) {
 	}
 }
 
+// TestRenumberRewritesAnnexCrossPlanRefs is AC-12: renumbering a plan moves its
+// annex files with the renamed folder (the stored folder-relative path never
+// changes) and rewrites the cross-plan [[NNN:id]] references inside every plan's
+// annex Markdown — the moved plan's own annex, carried along by the folder
+// rename, and another plan's annex, rewritten in place — all staged atomically,
+// and lint all stays clean. The other plan's graph.json does not reference the
+// moved plan at all, so only its annex is rewritten.
+func TestRenumberRewritesAnnexCrossPlanRefs(t *testing.T) {
+	root := repo(t)
+	mustRun(t, root, "new", "keep", "--kind", "task") // 001-keep
+	mustRun(t, root, "new", "move", "--kind", "task") // 002-move
+	plans := filepath.Join(root, ".auto", "plan", "plans")
+
+	// keep's annex references move cross-plan; move's annex self-references.
+	// The example in backticks is an example, not a reference, so it is left
+	// alone by both lint and renumber.
+	keepAnnex := "# Keep\n\nSee the plan being moved: [[002:plan]].\n\n" +
+		"An example like `[[002:plan]]` in backticks is left alone.\n"
+	if err := os.WriteFile(filepath.Join(plans, "001-keep", "usage.md"), []byte(keepAnnex), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	moveAnnex := "# Move\n\nThis plan is [[002:plan]].\n"
+	if err := os.WriteFile(filepath.Join(plans, "002-move", "usage.md"), []byte(moveAnnex), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Register each file as an annex node — add never overwrites existing content.
+	mustRun(t, root, "add", "001", "annex", "--kind", "usage", "--path", "usage.md", "--title", "Keep")
+	mustRun(t, root, "add", "002", "annex", "--kind", "usage", "--path", "usage.md", "--title", "Move")
+	// Lift both to solution so annex-ref actively resolves the references.
+	mustRun(t, root, "update", "001", "plan", "--lifecycle", "solution")
+	mustRun(t, root, "update", "002", "plan", "--lifecycle", "solution")
+
+	out := decode[struct {
+		Plan, Path string
+		Rewritten  []string
+	}](t, mustRun(t, root, "renumber", "002-move", "--to", "005"))
+	if out.Path != ".auto/plan/plans/005-move" {
+		t.Fatalf("renumber path = %q", out.Path)
+	}
+	// The moved plan's own graph.json is the only one reported rewritten: keep's
+	// graph.json never named move — only keep's annex did.
+	if !slices.Equal(out.Rewritten, []string{".auto/plan/plans/005-move/graph.json"}) {
+		t.Fatalf("rewritten = %v", out.Rewritten)
+	}
+
+	// The moved plan's folder is gone; its annex moved with it, prose rewritten.
+	if _, err := os.Stat(filepath.Join(plans, "002-move")); !os.IsNotExist(err) {
+		t.Fatal("old folder still exists")
+	}
+	if got := readFile(t, root, "005-move", "usage.md"); got != "# Move\n\nThis plan is [[005:plan]].\n" {
+		t.Fatalf("moved annex not rewritten/moved:\n%q", got)
+	}
+	// The stored annex path is still the folder-relative flat name (not rewritten).
+	g := decode[struct {
+		Nodes []struct {
+			Type   string
+			Fields map[string]any
+		}
+	}](t, string(readGraph(t, root, "005-move")))
+	var storedPath string
+	for _, n := range g.Nodes {
+		if n.Type == "annex" {
+			storedPath, _ = n.Fields["path"].(string)
+		}
+	}
+	if storedPath != "usage.md" {
+		t.Fatalf("stored annex path changed: %q", storedPath)
+	}
+
+	// keep's annex is rewritten in place: the cross-plan ref now names 005, and
+	// the backticked example is untouched.
+	wantKeep := "# Keep\n\nSee the plan being moved: [[005:plan]].\n\n" +
+		"An example like `[[002:plan]]` in backticks is left alone.\n"
+	if got := readFile(t, root, "001-keep", "usage.md"); got != wantKeep {
+		t.Fatalf("keep annex rewrite:\n%q\nwant\n%q", got, wantKeep)
+	}
+
+	if r := decode[struct{ OK bool }](t, mustRun(t, root, "lint", "all")); !r.OK {
+		t.Fatal("lint all after renumber not clean")
+	}
+}
+
 // TestEdgeIDs: add and link return edge IDs, get shows them, and unlink
 // takes one.
 func TestEdgeIDs(t *testing.T) {
