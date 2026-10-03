@@ -4,19 +4,67 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/mistakenot/auto-plan/internal/schema"
 )
 
-// annexStub returns the Markdown written for a new annex when its file is
-// absent. Phase 1 writes a minimal, deterministic stub (a single title
-// heading); the per-kind section templates (the testing stub seeds `## e2e …
-// ## manual`) land in Phase 4. The text is fixed so the e2e harness can diff
-// it byte for byte.
+// Per-kind annex stub bodies, appended after the `# <title>` heading. They are
+// fixed text — no timestamps, no randomness — so the e2e harness can diff the
+// written file byte for byte. The `testing` body is built from the registry
+// ac.layer enum (testingStub), so adding a layer updates the stub with no edit
+// here; `usage` and `structures` carry a hand-written skeleton.
+const (
+	usageStub      = "\n## Synopsis\n\n_One line on what this does and when to reach for it._\n\n## Example\n\n```console\n$ auto ...\n```\n"
+	structuresStub = "\n## Overview\n\n_The shapes this plan introduces or changes, and how they fit together._\n"
+)
+
+// annexStub returns the deterministic Markdown written for a new annex when its
+// file is absent. The body is keyed off the annex kind (D-5): `usage` and
+// `structures` get a fixed skeleton, and `testing` seeds one `## <layer>`
+// section per ac.layer enum member, in registry order (`## e2e` … `## manual`).
 func annexStub(kind, title string) string {
 	heading := title
 	if heading == "" {
 		heading = kind
 	}
-	return "# " + heading + "\n"
+	var b strings.Builder
+	b.WriteString("# " + heading + "\n")
+	switch kind {
+	case "usage":
+		b.WriteString(usageStub)
+	case "structures":
+		b.WriteString(structuresStub)
+	case "testing":
+		b.WriteString(testingStub())
+	}
+	return b.String()
+}
+
+// testingStub seeds one `## <layer>` section per ac.layer enum member, in
+// registry order, each with a short placeholder line. Deriving the layers from
+// the registry keeps the stub in step with the enum: a new layer appears here
+// automatically, and the annex-testing-layers lint reads the same enum.
+func testingStub() string {
+	var b strings.Builder
+	for _, layer := range acLayers() {
+		b.WriteString("\n## " + layer + "\n\n_What the " + layer + " layer covers, and how to run it._\n")
+	}
+	return b.String()
+}
+
+// acLayers is the ac.layer enum, in registry order (empty if the field is ever
+// removed).
+func acLayers() []string {
+	nt, ok := schema.Registry.Node("ac")
+	if !ok {
+		return nil
+	}
+	f, ok := nt.Field("layer")
+	if !ok {
+		return nil
+	}
+	return f.Enum
 }
 
 // writeAnnexStub writes the stub Markdown for a freshly added annex, but only

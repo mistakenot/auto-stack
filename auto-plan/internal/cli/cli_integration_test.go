@@ -1790,3 +1790,119 @@ func TestListPlans(t *testing.T) {
 		t.Fatalf("list with problems: exit %d rows %+v stderr %s", code, rows, stderr)
 	}
 }
+
+// readFile reads a sidecar file from a plan folder.
+func readFile(t *testing.T, root, folder, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, ".auto", "plan", "plans", folder, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// TestAddAnnexWritesPerKindStub: `add annex` writes the deterministic per-kind
+// stub (AC-5). The exact bytes are pinned here and must match the Phase 6 e2e
+// goldens. An existing file is never overwritten.
+func TestAddAnnexWritesPerKindStub(t *testing.T) {
+	root := repo(t)
+	mustRun(t, root, "new", "demo", "--kind", "task")
+
+	mustRun(t, root, "add", "001", "annex", "--kind", "testing", "--path", "testing.md", "--title", "Testing the thing")
+	wantTesting := "# Testing the thing\n" +
+		"\n## e2e\n\n_What the e2e layer covers, and how to run it._\n" +
+		"\n## integration\n\n_What the integration layer covers, and how to run it._\n" +
+		"\n## golden\n\n_What the golden layer covers, and how to run it._\n" +
+		"\n## unit\n\n_What the unit layer covers, and how to run it._\n" +
+		"\n## manual\n\n_What the manual layer covers, and how to run it._\n"
+	if got := readFile(t, root, "001-demo", "testing.md"); got != wantTesting {
+		t.Fatalf("testing stub:\n%q\nwant\n%q", got, wantTesting)
+	}
+
+	mustRun(t, root, "add", "001", "annex", "--kind", "usage", "--path", "usage.md", "--title", "Using it")
+	wantUsage := "# Using it\n\n## Synopsis\n\n_One line on what this does and when to reach for it._\n\n## Example\n\n```console\n$ auto ...\n```\n"
+	if got := readFile(t, root, "001-demo", "usage.md"); got != wantUsage {
+		t.Fatalf("usage stub:\n%q\nwant\n%q", got, wantUsage)
+	}
+
+	mustRun(t, root, "add", "001", "annex", "--kind", "structures", "--path", "structures.md", "--title", "The shapes")
+	wantStructures := "# The shapes\n\n## Overview\n\n_The shapes this plan introduces or changes, and how they fit together._\n"
+	if got := readFile(t, root, "001-demo", "structures.md"); got != wantStructures {
+		t.Fatalf("structures stub:\n%q\nwant\n%q", got, wantStructures)
+	}
+}
+
+// TestAddAnnexNeverOverwrites: an annex whose file already has content is
+// registered but its file is left byte-identical (create-only-when-missing).
+func TestAddAnnexNeverOverwrites(t *testing.T) {
+	root := repo(t)
+	mustRun(t, root, "new", "demo", "--kind", "task")
+	path := filepath.Join(root, ".auto", "plan", "plans", "001-demo", "usage.md")
+	const authored = "# Authored by hand\n\nKeep me.\n"
+	if err := os.WriteFile(path, []byte(authored), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, root, "add", "001", "annex", "--kind", "usage", "--path", "usage.md", "--title", "Using it")
+	if got := readFile(t, root, "001-demo", "usage.md"); got != authored {
+		t.Fatalf("existing annex was overwritten:\n%q", got)
+	}
+}
+
+// TestTestingAnnexLintsCleanWithSomeLayers is AC-9's required clean-stub case:
+// a plan that uses only some test layers, with a freshly stubbed all-layers
+// testing annex, lints clean — the one-directional rule and the all-layers stub
+// coexist.
+func TestTestingAnnexLintsCleanWithSomeLayers(t *testing.T) {
+	root := repo(t)
+	mustRun(t, root, "new", "demo", "--kind", "task")
+	g1 := decode[struct{ ID string }](t, mustRun(t, root, "add", "001", "goal", "--title", "First goal")).ID
+	g2 := decode[struct{ ID string }](t, mustRun(t, root, "add", "001", "goal", "--title", "Second goal")).ID
+	mustRun(t, root, "add", "001", "ac", "--proves", g1, "--title", "end to end",
+		"--gwt", "Given a, when b, then c", "--verify-cmd", "go test ./...", "--layer", "e2e")
+	mustRun(t, root, "add", "001", "ac", "--proves", g2, "--title", "a unit",
+		"--gwt", "Given a, when b, then c", "--verify-cmd", "go test ./...", "--layer", "unit")
+	mustRun(t, root, "update", "001", "plan", "--lifecycle", "solution")
+	mustRun(t, root, "add", "001", "annex", "--kind", "testing", "--path", "testing.md", "--title", "Testing")
+
+	stdout, stderr, code := runCLI(t, root, "lint", "001")
+	if code != 0 || stderr != "" {
+		t.Fatalf("lint after stubbing testing annex: exit %d stderr %q\n%s", code, stderr, stdout)
+	}
+	r := decode[report](t, stdout)
+	if !r.OK {
+		t.Fatalf("plan with all-layers stub must lint clean: %+v", r)
+	}
+	for _, is := range r.Issues {
+		if is.Severity == "error" || is.Code == "annex-testing-layers" {
+			t.Fatalf("unexpected issue: %+v", is)
+		}
+	}
+
+	// Removing the `## e2e` section (a used layer) now reports the rule.
+	path := filepath.Join(root, ".auto", "plan", "plans", "001-demo", "testing.md")
+	full := readFile(t, root, "001-demo", "testing.md")
+	trimmed := strings.Replace(full, "\n## e2e\n\n_What the e2e layer covers, and how to run it._\n", "", 1)
+	if trimmed == full {
+		t.Fatal("fixture edit did not remove the e2e section")
+	}
+	if err := os.WriteFile(path, []byte(trimmed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, code = runCLI(t, root, "lint", "001")
+	if code != 1 {
+		t.Fatalf("lint with a used layer missing: exit %d\n%s", code, stdout)
+	}
+	r = decode[report](t, stdout)
+	var saw bool
+	for _, is := range r.Issues {
+		if is.Code == "annex-testing-layers" {
+			saw = true
+			if is.Hint == "" || is.Message == "" {
+				t.Fatalf("annex-testing-layers lacks message/hint: %+v", is)
+			}
+		}
+	}
+	if r.OK || !saw {
+		t.Fatalf("expected annex-testing-layers: %+v", r)
+	}
+}

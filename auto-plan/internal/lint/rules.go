@@ -59,6 +59,7 @@ var Rules = []Rule{
 	{Code: "annex-missing", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: annexMissing},
 	{Code: "unlinked-file", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: unlinkedFile},
 	{Code: "annex-ref", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: annexRef},
+	{Code: "annex-testing-layers", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: annexTestingLayers},
 	{Code: "annex-changed", Severity: SeverityError, MinLifecycle: schema.LifecycleDone, Check: annexChanged},
 	{Code: "goal-count", Severity: SeverityWarning, MinLifecycle: schema.LifecycleSolution, Check: goalCount},
 	{Code: "decision-no-alternative", Severity: SeverityWarning, MinLifecycle: schema.LifecycleRequirements, Check: decisionNoAlternative},
@@ -666,6 +667,106 @@ func annexChanged(c *Context) []Issue {
 			Hint: "a frozen plan is history; restore " + path + " to its frozen contents, " +
 				"or start new work in a new plan: auto plan new <name> --kind task",
 		})
+	}
+	return out
+}
+
+// annexTestingLayers reports every test layer that at least one active AC uses
+// but the testing annex has no `## <layer>` section for. The rule is
+// one-directional (AC-9): an extra `## <layer>` section for a layer no AC uses
+// is allowed, so a freshly stubbed all-layers testing annex lints clean even
+// when the plan uses only some layers. It is silent when the plan has no
+// testing annex, and does nothing when the graph is linted without its folder
+// (c.FS nil) or when the testing annex's file is absent (an annex-missing
+// error).
+func annexTestingLayers(c *Context) []Issue {
+	if c.FS == nil {
+		return nil
+	}
+	n, ok := testingAnnex(c)
+	if !ok {
+		return nil
+	}
+	path := n.StringField("path")
+	if path == "" {
+		return nil
+	}
+	data, err := fs.ReadFile(c.FS, path)
+	if err != nil {
+		return nil // the absent file is an annex-missing error
+	}
+	sections := markdownSections(string(data))
+	used := usedLayers(c)
+	var out []Issue
+	for _, layer := range acLayerEnum() {
+		if !used[layer] || sections[layer] {
+			continue
+		}
+		out = append(out, Issue{
+			Path: graph.NodePath(n.ID),
+			Message: fmt.Sprintf("Testing annex %s (%s) has no `## %s` section, but the plan has an AC at the %s layer.",
+				n.ID, path, layer, layer),
+			Hint: "add a `## " + layer + "` section to " + path + " (auto plan add seeds one per layer), " +
+				"or move the ACs off the " + layer + " layer with auto plan update " + c.Plan + " <ac-id> --layer <other>",
+		})
+	}
+	return out
+}
+
+// testingAnnex returns the plan's active testing annex. At most one exists
+// (annex.UniqueBy is kind), so the first match is it.
+func testingAnnex(c *Context) (graph.Node, bool) {
+	for _, n := range active(c, typeAnnex) {
+		if n.StringField("kind") == "testing" {
+			return n, true
+		}
+	}
+	return graph.Node{}, false
+}
+
+// usedLayers is the set of layer values the plan's active ACs carry.
+func usedLayers(c *Context) map[string]bool {
+	used := map[string]bool{}
+	for _, n := range active(c, "ac") {
+		if l := n.StringField("layer"); l != "" {
+			used[l] = true
+		}
+	}
+	return used
+}
+
+// acLayerEnum is the ac.layer enum in registry order, so layers are reported
+// deterministically and in the same order the testing stub seeds them.
+func acLayerEnum() []string {
+	nt, ok := schema.Registry.Node("ac")
+	if !ok {
+		return nil
+	}
+	f, ok := nt.Field("layer")
+	if !ok {
+		return nil
+	}
+	return f.Enum
+}
+
+// markdownSections returns the set of level-2 ATX headings (`## <name>`) in
+// src, keyed by the trimmed heading text. Headings inside a fenced code block
+// (``` or ~~~) are skipped, so a `## ` line quoted in an example is not counted
+// as a section — the same spirit as proseRefs skipping fenced blocks.
+func markdownSections(src string) map[string]bool {
+	out := map[string]bool{}
+	fenced := false
+	for line := range strings.SplitSeq(src, "\n") {
+		t := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~"):
+			fenced = !fenced
+		case fenced:
+		default:
+			if name, ok := strings.CutPrefix(t, "## "); ok {
+				out[strings.TrimSpace(name)] = true
+			}
+		}
 	}
 	return out
 }

@@ -253,8 +253,8 @@ func TestSeverities(t *testing.T) {
 		"goal-no-ac": SeverityError, "ac-no-verify": SeverityError, "unplanned-file": SeverityError,
 		"untracked-file": SeverityError, "missing-dep": SeverityError,
 		"annex-missing": SeverityError, "unlinked-file": SeverityError, "annex-ref": SeverityError,
-		"annex-changed": SeverityError,
-		"goal-count":    SeverityWarning, "decision-no-alternative": SeverityWarning, "retired-ref": SeverityWarning,
+		"annex-testing-layers": SeverityError, "annex-changed": SeverityError,
+		"goal-count": SeverityWarning, "decision-no-alternative": SeverityWarning, "retired-ref": SeverityWarning,
 	}
 	if len(Rules) != len(want) {
 		t.Fatalf("%d rules, want %d", len(Rules), len(want))
@@ -854,6 +854,69 @@ func TestAnnexChanged(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			g, err := graph.Parse([]byte(doc(tc.hash)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := run(&Context{Plan: "001", Graph: g, Lifecycle: Lifecycle(g), FS: tc.files})
+			var got []string
+			for _, is := range r.Issues {
+				got = append(got, is.Code)
+				if is.Message == "" || is.Path == "" || is.Hint == "" {
+					t.Errorf("issue lacks message/path/hint: %+v", is)
+				}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("codes = %v, want %v\n%+v", got, tc.want, r.Issues)
+			}
+		})
+	}
+}
+
+// TestAnnexTestingLayers: the one-directional testing-layer rule (AC-9). A
+// layer some AC uses but the testing annex has no `## <layer>` section for is
+// flagged; an extra section for a layer no AC uses is allowed, so the
+// all-layers stub lints clean whatever layers the plan uses.
+func TestAnnexTestingLayers(t *testing.T) {
+	// layered builds a solution plan of five proven goals with the given layer
+	// values set on the first len(layers) ACs, plus a testing annex.
+	layered := func(layers ...string) string {
+		n, e := goals(5)
+		for i := range layers {
+			ac := 2*i + 1 // goals() appends goal then ac, so AC i is at 2i+1
+			n[ac] = strings.Replace(n[ac], `"verify": {"cmd": "go test ./..."}`,
+				`"verify": {"cmd": "go test ./..."}, "layer": "`+layers[i]+`"`, 1)
+		}
+		return fixture("solution", append(n, annex("ax-0001", "testing", "testing.md", "Testing")), e)
+	}
+	// allLayers is the full stub body: one `## <layer>` section per enum member.
+	allLayers := "# Testing\n\n## e2e\n_x_\n\n## integration\n_x_\n\n## golden\n_x_\n\n## unit\n_x_\n\n## manual\n_x_\n"
+	cases := []struct {
+		name  string
+		doc   string
+		files fstest.MapFS
+		want  []string
+	}{
+		{"a used layer with no section is flagged",
+			layered("e2e"),
+			fstest.MapFS{"testing.md": mdFile("# Testing\n\n## unit\n_x_\n")},
+			[]string{"annex-testing-layers"}},
+		{"all-layers stub lints clean when only some layers are used",
+			layered("e2e", "unit"),
+			fstest.MapFS{"testing.md": mdFile(allLayers)}, nil},
+		{"an extra section for an unused layer is allowed",
+			layered("e2e"),
+			fstest.MapFS{"testing.md": mdFile("# Testing\n\n## e2e\n_x_\n\n## integration\n_x_\n")}, nil},
+		{"no layers used lints clean",
+			layered(),
+			fstest.MapFS{"testing.md": mdFile("# Testing\n")}, nil},
+		{"a `## <layer>` inside a fenced block is not a section",
+			layered("e2e"),
+			fstest.MapFS{"testing.md": mdFile("# Testing\n\n```\n## e2e\n```\n")},
+			[]string{"annex-testing-layers"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g, err := graph.Parse([]byte(tc.doc))
 			if err != nil {
 				t.Fatal(err)
 			}
