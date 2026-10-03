@@ -40,6 +40,18 @@
       }
     },
     {
+      "id": "ax-21j1",
+      "type": "annex",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "hash": "8a6a78f2261ea5b483df32296918f13a7adf7712db87d0c2fe07c61dc90d42e2",
+        "kind": "usage",
+        "path": "demo-usage.md",
+        "title": "Using demo"
+      }
+    },
+    {
       "id": "d-kqxw",
       "type": "decision",
       "status": "active",

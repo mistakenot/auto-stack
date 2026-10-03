@@ -319,6 +319,30 @@ auto plan add 003 stage --title "doctor command" --commit "feat(003): auto refle
 auto plan add 003 stage --title "Docs, init gitignore, cleanup, e2e" --commit "docs(003): gap/doctor/enum docs, init gitignore, drop legacy yaml (F8,F3,F9,F11)" --status done --steps "`init.go`: after `MkdirAll(eventsDir)`, write `.auto/reflect/.gitignore` (`playbook.json\\n`) only if absent (auto-doc stat-then-skip pattern)." --steps "Repo hygiene: `git rm --cached .auto/reflect/playbook.json`; commit the new `.auto/reflect/.gitignore` and the existing `events/` log (D-2)." --steps "Docstrings: `loop/feedback.go` (outcome enum), `miner/score.go` (correction_density)." --steps "Delete `docs/reflection/observations.yaml`." --steps "Docs: `quickstart.go` + skill refs (`SKILL.md`, `retrieve.md`, `observe.md`, `mine.md`, `consolidate.md`) — new `jq` id paths, `gap list`, `doctor`, outcome enum, correction_density …" --steps "Extend `e2e_loop_test.go` through `gap list`; update `e2e_lifecycle_test.go` output-shape assertions to the new envelope." --steps "**Phase verify:** `go build ./...`; **full** `go test ./...`; `golangci-lint run`; `auto reflect quickstart` happy path by hand." --dependsOn s-kyqb --dependsOn s-nkx5 --dependsOn s-s5mp --dependsOn s-3bxs --touches f-jqm7 --touches f-nrws --touches f-gn2d --touches f-fhpw --touches f-bndy --touches f-m9bb --touches f-rsyh --touches f-t2we --touches f-383z --touches f-32y3 --touches f-0ytx --touches f-ed9v --touches f-3n0t --touches f-2cx2 --covers ac-0bcq --covers ac-f1ys --covers ac-63s8 --covers ac-spbj --covers ac-57nj
 auto plan update 003 plan --lifecycle plan
 
+# ---- annexes + ac.layer on the walking skeleton (002), then its freeze -------
+# Classify 002's ACs by the test layer that proves them (ac.layer). update does
+# not mint a node, so these never shift 002's deterministic IDs.
+auto plan update 002 ac-mfg7 --layer e2e
+auto plan update 002 ac-vgcz --layer e2e
+auto plan update 002 ac-7fdr --layer integration
+auto plan update 002 ac-pn3v --layer integration
+auto plan update 002 ac-apsc --layer integration
+auto plan update 002 ac-0f9w --layer unit
+auto plan update 002 ac-xbrt --layer unit
+auto plan update 002 ac-cwd2 --layer manual
+# Three annexes beside 002/graph.json. `add` writes a create-only stub .md for
+# each (diffed at the checkpoints) and wires its `about` edges inline, so no
+# literal ax- id is needed. The testing stub seeds one `## <layer>` section per
+# ac.layer enum member, so every used layer is covered (annex-testing-layers).
+# expect exit=0 stdout=add-annex-usage.json
+auto plan add 002 annex --kind usage --path usage.md --title "Using auto mail" --about g-gc8t
+auto plan add 002 annex --kind structures --path structures.md --title "Mail store shapes" --about g-kqxw --about g-w1fg
+auto plan add 002 annex --kind testing --path testing.md --title "Mail test layers" --about g-21j1
+# Freeze 002: every annex file is hashed into its annex.hash, and the plan is
+# sealed at lifecycle done. The files exist (the stubs above), so the freeze is
+# accepted rather than refused with annex-missing.
+auto plan update 002 plan --lifecycle done
+
 # The epic stays at solution: at plan every leg needs a delivering child, and
 # J1 and J2's remaining legs belong to epic tasks T2-T4, which have no plans yet.
 auto plan update 001 plan --lifecycle solution
@@ -356,3 +380,10 @@ auto plan brief 003 s-m7ab --text
 # expect exit=0 stdout=list-defects.json
 auto plan list 003 --type defect
 # checkpoint 4
+
+# The preview-rebuild derivation: reassemble AC-14's preview-data contract from
+# 002's frozen graph.json + annex files alone — per-layer AC counts, the annex
+# inventory (kind/title/path + about targets), and the raw usage/structures
+# bodies — and byte-compare it with the golden. Nothing the preview spike faked
+# (contract/example definitions, test-layer summaries) is claimed.
+# preview 002-auto-mail-walking-skeleton preview-data.json
