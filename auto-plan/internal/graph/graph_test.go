@@ -916,8 +916,14 @@ func TestRewritePlanRefs(t *testing.T) {
 ], "edges": [{"id": "e-0000", "from": "c-0000", "type": "dependsOn", "to": "c-0000"}]}`))
 	orig, _ := Encode(g)
 	c := mustParse(t, orig)
-	if !c.RewritePlanRefs("002-m3x9", "004-m3x9", "002", "004") {
-		t.Fatal("nothing rewritten")
+	short := func(number, id string) (string, bool) {
+		if number != "002" {
+			return "", false
+		}
+		return Qualify("004", id), false
+	}
+	if changed, amb := c.RewritePlanRefs("002-m3x9", "004-m3x9", short); !changed || amb != nil {
+		t.Fatalf("changed=%v ambiguous=%v", changed, amb)
 	}
 	child, _ := c.NodeByID("c-0000")
 	rail, _ := c.NodeByID("r-0000")
@@ -933,7 +939,18 @@ func TestRewritePlanRefs(t *testing.T) {
 	if again, _ := Encode(g); !bytes.Equal(again, orig) {
 		t.Error("the source graph changed")
 	}
-	if c.RewritePlanRefs("009-aaaa", "010-aaaa", "", "") {
+	if changed, _ := c.RewritePlanRefs("009-aaaa", "010-aaaa", nil); changed {
 		t.Error("no reference to 009-aaaa, yet something changed")
+	}
+
+	// A shorthand the resolver calls ambiguous is reported with its location
+	// and left as written.
+	amb := mustParse(t, orig)
+	_, got := amb.RewritePlanRefs("002-m3x9", "004-m3x9", func(string, string) (string, bool) { return "", true })
+	if want := []string{"$.nodes[r-0000].fields.description: [[002:g-0001]]"}; !slices.Equal(got, want) {
+		t.Errorf("ambiguous = %v, want %v", got, want)
+	}
+	if r, _ := amb.NodeByID("r-0000"); !strings.Contains(r.StringField("description"), "[[002:g-0001]]") {
+		t.Errorf("ambiguous shorthand was rewritten: %q", r.StringField("description"))
 	}
 }

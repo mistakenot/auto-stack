@@ -10,6 +10,7 @@ import (
 
 	"github.com/mistakenot/auto-plan/internal/app"
 	"github.com/mistakenot/auto-plan/internal/graph"
+	"github.com/mistakenot/auto-plan/internal/schema"
 	"github.com/mistakenot/auto-plan/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -28,19 +29,25 @@ func newRenumberCmd(application *app.App) *cobra.Command {
 NNN (lint reports duplicate-plan-number). The folder NNN-name becomes MMM-name, the plan ID
 NNN-xxxx becomes MMM-xxxx (the random suffix is kept), and every reference to the old ID in
 every plan under .auto/plan/plans is rewritten: qualified edge targets, [[NNN-xxxx:id]] prose
-references, and the epic, child plan and rail deferred fields. Shorthand prose references
-[[NNN:id]] are rewritten too when NNN named only this plan. --to defaults to the next free
+references, and the epic, child plan and rail deferred fields. A shorthand prose reference
+[[NNN:id]] keeps its meaning: while NNN names only this plan it moves with it; during a
+collision, one whose node is in this plan becomes a full [[MMM-xxxx:id]], one whose node is in
+the other plan is left alone (NNN names that plan once this one moves), and one that both plans
+could satisfy refuses the renumber (ambiguous-ref) until it is rewritten with a full plan ID.
+--to defaults to the next free
 number (the highest + 1). With --to equal to the folder's own number, only the ID is rewritten
 (the fix for plan-id-mismatch).
 
 Plans are mutable until merged, so this is a legitimate write. It is refused, and nothing
-changes, when the plan is frozen (frozen), when a frozen plan references it (frozen-ref: a done
+changes, when the plan is frozen (frozen), when a shorthand reference is ambiguous
+(ambiguous-ref), when a frozen plan references it (frozen-ref: a done
 plan, or one of another format version, is never rewritten), when any rewritten graph would
 fail validation, or when the target number is taken.
 
 Every new graph.json is encoded and validated first and staged as a temp file beside its
 target; only then are the temp files renamed into place, and the folder renamed last. A
-failure while staging changes nothing; a failure among the renames is rolled back best effort.
+failure while staging changes nothing; a failure among the renames is rolled back best effort,
+and the error says whether that rollback succeeded or names the files it could not restore.
 The renames of several files are not one atomic step, so a crash in that window can leave some
 plans rewritten: run auto plan lint all to see what remains.
 
@@ -125,16 +132,38 @@ func runRenumber(cmd *cobra.Command, application *app.App, arg, to string) error
 	if len(set.WithID(newID)) > 0 {
 		return failOne(cmd, text, CodePlanNumberTaken, "flags.to", "to", "plan ID "+newID+" is already in use", to, "pass another --to")
 	}
-	// A shorthand [[NNN:id]] names this plan only while its folder number is
-	// unique; only then is it rewritten.
-	oldShort, newShort := "", ""
-	if len(set.ByNumber(p.Number)) == 1 && to != p.Number {
-		oldShort, newShort = p.Number, to
+	// A shorthand [[NNN:id]] with this plan's old number must keep meaning
+	// what it meant. While the number is unique it names this plan and moves
+	// with it. During a collision it names whichever plan holds the node: a
+	// reference to this plan becomes a full ID, one to another plan already
+	// resolves correctly once this plan leaves the number, and one that the
+	// plans cannot tell apart stops the renumber.
+	candidates := set.ByNumber(p.Number)
+	short := func(number, id string) (string, bool) {
+		if number != p.Number || to == p.Number {
+			return "", false
+		}
+		if len(candidates) == 1 {
+			return graph.Qualify(to, id), false
+		}
+		var holders []string
+		for _, c := range candidates {
+			if gc, err := set.LoadPlan(c); err == nil && (id == schema.PlanNodeID || hasNode(gc, id)) {
+				holders = append(holders, gc.ID)
+			}
+		}
+		switch {
+		case len(holders) > 1:
+			return "", true
+		case len(holders) == 1 && holders[0] == oldID:
+			return graph.Qualify(newID, id), false
+		}
+		return "", false // another plan's node, or dangling either way (lint reports it)
 	}
 
 	// Compute every rewrite and validate it before anything is written.
 	var rewrites []*rewrite
-	var frozen []string
+	var frozen, ambiguous []string
 	var errs []graph.ValidationError
 	for _, q := range set.Plans() {
 		path := ws.GraphPath(q)
@@ -150,7 +179,10 @@ func runRenumber(cmd *cobra.Command, application *app.App, arg, to string) error
 			}
 			continue
 		}
-		changed := gq.RewritePlanRefs(oldID, newID, oldShort, newShort)
+		changed, amb := gq.RewritePlanRefs(oldID, newID, short)
+		for _, a := range amb {
+			ambiguous = append(ambiguous, q.Dir+"/"+workspace.GraphFile+" "+a)
+		}
 		if q.Dir == p.Dir {
 			gq.ID, changed = newID, true
 		}
@@ -171,6 +203,11 @@ func runRenumber(cmd *cobra.Command, application *app.App, arg, to string) error
 			continue
 		}
 		rewrites = append(rewrites, &rewrite{plan: q, path: path, orig: orig, data: data})
+	}
+	if len(ambiguous) > 0 {
+		return failOne(cmd, text, "ambiguous-ref", "$", "", fmt.Sprintf("%d shorthand reference(s) to plan number %s could name either plan of the collision, "+
+			"so renumbering could change what they point at; nothing was renumbered: %s", len(ambiguous), p.Number, strings.Join(ambiguous, "; ")), ambiguous,
+			"rewrite each one with the full plan ID it means (e.g. [["+graph.Qualify(oldID, "<id>")+"]]), then retry")
 	}
 	if len(frozen) > 0 {
 		return failOne(cmd, text, CodeFrozenRef, "$", "", "plan "+oldID+" is referenced by frozen plan "+strings.Join(frozen, ", ")+
@@ -222,12 +259,27 @@ func commitRewrites(rewrites []*rewrite, oldDir, newDir string) (err error) {
 	}
 	var done []*rewrite
 	restore := func(cause error) error {
+		var failed []string
 		for _, r := range done {
-			if tmp, serr := stage(r.path, r.orig); serr == nil {
-				_ = os.Rename(tmp, r.path)
+			tmp, serr := stage(r.path, r.orig)
+			if serr == nil {
+				if rerr := os.Rename(tmp, r.path); rerr != nil {
+					_ = os.Remove(tmp)
+					serr = rerr
+				}
+			}
+			if serr != nil {
+				failed = append(failed, r.path+": "+serr.Error())
 			}
 		}
-		return fmt.Errorf("%w (the files already replaced were restored)", cause)
+		if len(failed) > 0 {
+			return fmt.Errorf("%w; restoring the files already replaced FAILED, so these may hold the new plan ID while the folder "+
+				"and the other plans keep the old one: %s", cause, strings.Join(failed, "; "))
+		}
+		if len(done) == 0 {
+			return fmt.Errorf("%w (nothing had been replaced)", cause)
+		}
+		return fmt.Errorf("%w (the %d file(s) already replaced were restored)", cause, len(done))
 	}
 	for _, r := range rewrites {
 		if err := os.Rename(r.tmp, r.path); err != nil {
@@ -258,4 +310,10 @@ func stage(path string, data []byte) (string, error) {
 		return "", fmt.Errorf("stage %s: %w", path, err)
 	}
 	return name, nil
+}
+
+// hasNode reports whether g holds a node with this ID.
+func hasNode(g *graph.Graph, id string) bool {
+	_, ok := g.NodeByID(id)
+	return ok
 }

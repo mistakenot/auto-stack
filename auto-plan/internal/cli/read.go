@@ -156,8 +156,21 @@ func runListPlans(cmd *cobra.Command, application *app.App, kind string) error {
 	if err != nil {
 		return err
 	}
-	result := planRows{Plans: []planRow{}}
+	// Collisions are counted over every discovered folder, so a malformed plan
+	// that shares a number still makes the number ambiguous.
+	ws, err := openWorkspace(cmd, application, text)
+	if err != nil {
+		return err
+	}
+	folders, err := ws.Plans()
+	if err != nil {
+		return failOne(cmd, text, "read-failed", workspace.PlansDir, "", err.Error(), nil, "check that "+workspace.PlansDir+" is readable")
+	}
 	numbers := map[string][]string{}
+	for _, f := range folders {
+		numbers[f.Number] = append(numbers[f.Number], f.Ref())
+	}
+	result := planRows{Plans: []planRow{}}
 	for _, lp := range plans {
 		g := lp.graph
 		row := planRow{ID: g.ID, Number: lp.plan.Number, Name: lp.plan.Name, Path: lp.plan.Dir, Version: g.Version}
@@ -170,7 +183,6 @@ func runListPlans(cmd *cobra.Command, application *app.App, kind string) error {
 		case row.Lifecycle == string(schema.LifecycleDone):
 			row.Frozen, row.FrozenReason = true, frozenDone
 		}
-		numbers[lp.plan.Number] = append(numbers[lp.plan.Number], lp.plan.Ref())
 		if kind == "" || row.Kind == kind {
 			result.Plans = append(result.Plans, row)
 		}

@@ -1498,6 +1498,63 @@ func TestRenumber(t *testing.T) {
 	}
 }
 
+// TestRenumberShorthandDuringCollision: while two plans share a number, a
+// shorthand [[NNN:id]] means whichever plan holds the node. Renumbering
+// rewrites one that names the moving plan to its full new ID, leaves one that
+// names the other plan alone, and refuses when the plans can't be told apart.
+func TestRenumberShorthandDuringCollision(t *testing.T) {
+	root := repo(t)
+	id := func(args ...string) string {
+		t.Helper()
+		return decode[struct{ ID string }](t, mustRun(t, root, args...)).ID
+	}
+	mustRun(t, root, "new", "keep", "--kind", "task")
+	mustRun(t, root, "new", "late", "--kind", "task")
+	rail := id("add", "001", "rail", "--title", "theirs")
+	defect := id("add", "002", "defect", "--title", "mine")
+	late := collide(t, root, "002-late", "001")
+	lateID := planID(t, root, late)
+
+	// [[001:plan]] exists in both plans numbered 001: refused, nothing changes.
+	mustRun(t, root, "update", late, defect, "--description", "see [[001:plan]]")
+	before := map[string][]byte{"001-keep": readGraph(t, root, "001-keep"), late: readGraph(t, root, late)}
+	_, stderr, code := runCLI(t, root, "renumber", lateID)
+	f := decode[failure](t, stderr)
+	if code != 1 || len(f.Errors) != 1 || f.Errors[0].Code != "ambiguous-ref" ||
+		!strings.Contains(f.Errors[0].Message, "[[001:plan]]") || !strings.Contains(f.Hint, "[["+lateID+":<id>]]") {
+		t.Fatalf("ambiguous renumber: exit %d %s", code, stderr)
+	}
+	for folder, want := range before {
+		if !bytes.Equal(want, readGraph(t, root, folder)) {
+			t.Fatalf("refused renumber changed %s", folder)
+		}
+	}
+
+	// Each node lives in one plan: the moving plan's ref becomes a full ID,
+	// the other plan's ref stays shorthand (001 is unique once this moves).
+	mustRun(t, root, "update", late, defect, "--description", "mine [[001:"+defect+"]], theirs [[001:"+rail+"]]")
+	out := decode[struct{ Plan string }](t, mustRun(t, root, "renumber", lateID))
+	moved := out.Plan[:3] + "-late"
+	g := decode[struct {
+		Nodes []struct {
+			ID     string
+			Fields map[string]any
+		}
+	}](t, string(readGraph(t, root, moved)))
+	desc := ""
+	for _, n := range g.Nodes {
+		if n.ID == defect {
+			desc, _ = n.Fields["description"].(string)
+		}
+	}
+	if want := "mine [[" + out.Plan + ":" + defect + "]], theirs [[001:" + rail + "]]"; desc != want {
+		t.Fatalf("description = %q, want %q", desc, want)
+	}
+	if r := decode[struct{ OK bool }](t, mustRun(t, root, "lint", "all")); !r.OK {
+		t.Fatalf("lint all after renumber = %+v", r)
+	}
+}
+
 // TestRenumberFixesIDMismatch: --to the folder's own number rewrites only
 // the ID (the fix plan-id-mismatch suggests).
 func TestRenumberFixesIDMismatch(t *testing.T) {
@@ -1630,6 +1687,31 @@ type planRow struct {
 }
 
 // TestListPlans: list with no argument lists the plans themselves.
+// TestListPlansCountsMalformedCollisions: a malformed plan that shares a
+// number still makes the number ambiguous, so list reports the collision as
+// well as the parse error.
+func TestListPlansCountsMalformedCollisions(t *testing.T) {
+	root := repo(t)
+	mustRun(t, root, "new", "keep", "--kind", "task")
+	mustRun(t, root, "new", "late", "--kind", "task")
+	late := collide(t, root, "002-late", "001")
+	if err := os.WriteFile(filepath.Join(root, ".auto", "plan", "plans", late, "graph.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := runCLI(t, root, "list")
+	if out := decode[struct{ Plans []planRow }](t, stdout); code != 1 || len(out.Plans) != 1 || out.Plans[0].ID != p1 {
+		t.Fatalf("list: exit %d %+v", code, out)
+	}
+	f := decode[failure](t, stderr)
+	codes := map[string]bool{}
+	for _, e := range f.Errors {
+		codes[e.Code] = true
+	}
+	if !codes["parse-error"] || !codes["duplicate-plan-number"] {
+		t.Fatalf("list stderr = %s", stderr)
+	}
+}
+
 func TestListPlans(t *testing.T) {
 	root := repo(t)
 	if out := decode[struct{ Plans []planRow }](t, mustRun(t, root, "list")); out.Plans == nil || len(out.Plans) != 0 {
