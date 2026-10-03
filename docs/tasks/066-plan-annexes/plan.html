@@ -17,7 +17,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="066: Plan annexes for auto plan" status="executing" pr="pending" generated="2026-10-03">
+  <pd-doc title="066: Plan annexes for auto plan" status="complete" pr="pending" generated="2026-10-03">
 
     <pd-tab name="Requirements">
       <pd-scope></pd-scope>
@@ -615,7 +615,7 @@ move, ref rewritten, `lint all` clean; a crash-window note stays accurate. Commi
             </script></md>
           </pd-phase>
 
-          <pd-phase n="6" title="e2e, goldens, docs" status="todo" depends-on="1,2,3,4,5"
+          <pd-phase n="6" title="e2e, goldens, docs" status="done" depends-on="1,2,3,4,5"
                     files="auto-plan/e2e/e2e_test.go,auto-plan/e2e/testdata/scenarios/lifecycle/commands.txt,auto-plan/e2e/testdata/scenarios/dogfood/commands.txt,auto-plan/CLAUDE.md">
             <md><script type="text/plain">
 1. Teach the e2e harness to diff sidecar `.md` files (and the freeze hash) at checkpoints.
