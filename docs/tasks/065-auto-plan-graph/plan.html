@@ -1003,6 +1003,22 @@ version add it without migrating existing plans.
         </script></md>
       </pd-decision>
 
+      <pd-decision id="D-20" title="Plans live in .auto/plan/plans/, not docs/plans/ (amends D-1)" status="accepted" by="charlie"
+        summary="Plans are tool-owned data, so they follow the .auto/&lt;tool&gt;/ convention; numbering and kinds are unchanged from D-1.">
+        <md><script type="text/plain">
+**Decision:** The canonical plans root is `.auto/plan/plans/NNN-name/graph.json`. Everything else
+in D-1 still holds: one numbering sequence for both kinds, `kind` stored in the graph, and
+`docs/tasks` and `docs/epics` untouched. `init` and `new` still scaffold an `AGENTS.md`, with a
+`CLAUDE.md` symlink to it, inside the plans folder.
+**Alternatives:** Keep `docs/plans/` (D-1). That folder is easier to find with default `rg`
+searches, which skip hidden directories. But it needed an auto-doc ignore, because auto-doc
+treated the scaffolded agent files as docs that needed frontmatter and an index.
+**Consequences:** `docs/` stays prose for people, and `.auto/` holds tool data, like
+`.auto/reflect/events/`. Agents read plans through `auto plan list`, `show`, `get` and `search`
+rather than by grepping. Plain `rg` needs `--hidden` to search the plans folder.
+        </script></md>
+      </pd-decision>
+
       <pd-decisions></pd-decisions>
 
     </pd-tab>
