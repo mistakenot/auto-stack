@@ -17,7 +17,7 @@
 </head>
 <body>
   <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="066: Plan annexes for auto plan" status="executing" pr="pending" generated="2026-10-03">
+  <pd-doc title="066: Plan annexes for auto plan" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/158" generated="2026-10-03">
 
     <pd-tab name="Requirements">
       <pd-scope></pd-scope>
@@ -537,7 +537,7 @@ consistency check, renumber correctness, and finally e2e/goldens/docs.
 
       <pd-section id="phases" title="Phases">
         <pd-stepper>
-          <pd-phase n="1" title="Walking skeleton: the annex type, end to end" status="todo"
+          <pd-phase n="1" title="Walking skeleton: the annex type, end to end" status="done"
                     files="auto-plan/internal/schema/registry.go,auto-plan/internal/schema/registry_test.go,auto-plan/internal/graph/validate.go,auto-plan/internal/cli/write.go,auto-plan/internal/cli/annex_stub.go,auto-plan/internal/workspace/workspace.go,docs/concepts/UBIQUITOUS_LANGUAGE.md">
             <md><script type="text/plain">
 Thin path through every layer so an annex can be created and round-tripped:
@@ -560,7 +560,7 @@ manual round-trip: `auto plan add <p> annex --kind usage --path usage.md --title
             </script></md>
           </pd-phase>
 
-          <pd-phase n="2" title="Folder-aware lint: missing / unlinked / refs" status="todo" depends-on="1"
+          <pd-phase n="2" title="Folder-aware lint: missing / unlinked / refs" status="done" depends-on="1"
                     files="auto-plan/internal/lint/lint.go,auto-plan/internal/lint/rules.go,auto-plan/internal/lint/lint_test.go,auto-plan/internal/workspace/workspace.go">
             <md><script type="text/plain">
 1. Add an `fs.FS` (rooted at the plan folder) to `lint.Context`; wire `os.DirFS(folder)` from the runner.
@@ -574,7 +574,7 @@ a stray `.md`, and a dangling `[[id]]` reports exactly the three codes with non-
             </script></md>
           </pd-phase>
 
-          <pd-phase n="3" title="Freeze hashing + annex-changed" status="todo" depends-on="1,2"
+          <pd-phase n="3" title="Freeze hashing + annex-changed" status="done" depends-on="1,2"
                     files="auto-plan/internal/graph/hash.go,auto-plan/internal/graph/hash_test.go,auto-plan/internal/cli/write.go,auto-plan/internal/lint/rules.go,auto-plan/internal/lint/lint_test.go">
             <md><script type="text/plain">
 1. `graph/hash.go`: SHA-256 hex over bytes + unit tests.
@@ -587,7 +587,7 @@ annex nodes gain `hash`; edit a file → `annex-changed`; untouched → clean; c
             </script></md>
           </pd-phase>
 
-          <pd-phase n="4" title="Testing-layer consistency + per-kind stubs" status="todo" depends-on="1,2"
+          <pd-phase n="4" title="Testing-layer consistency + per-kind stubs" status="done" depends-on="1,2"
                     files="auto-plan/internal/cli/annex_stub.go,auto-plan/internal/lint/rules.go,auto-plan/internal/lint/lint_test.go,auto-plan/internal/cli/cli_integration_test.go">
             <md><script type="text/plain">
 1. Flesh out the deterministic per-kind stub templates (`usage`/`structures`/`testing`; the testing
@@ -603,7 +603,7 @@ flagged; a freshly stubbed testing annex lints clean; the stub is byte-stable. C
             </script></md>
           </pd-phase>
 
-          <pd-phase n="5" title="Renumber correctness for annexes" status="todo" depends-on="1"
+          <pd-phase n="5" title="Renumber correctness for annexes" status="done" depends-on="1"
                     files="auto-plan/internal/cli/renumber.go,auto-plan/internal/cli/cli_integration_test.go">
             <md><script type="text/plain">
 1. Confirm folder-relative paths need no rewrite (the folder rename moves files).
@@ -615,7 +615,7 @@ move, ref rewritten, `lint all` clean; a crash-window note stays accurate. Commi
             </script></md>
           </pd-phase>
 
-          <pd-phase n="6" title="e2e, goldens, docs" status="todo" depends-on="1,2,3,4,5"
+          <pd-phase n="6" title="e2e, goldens, docs" status="done" depends-on="1,2,3,4,5"
                     files="auto-plan/e2e/e2e_test.go,auto-plan/e2e/testdata/scenarios/lifecycle/commands.txt,auto-plan/e2e/testdata/scenarios/dogfood/commands.txt,auto-plan/CLAUDE.md">
             <md><script type="text/plain">
 1. Teach the e2e harness to diff sidecar `.md` files (and the freeze hash) at checkpoints.

@@ -1,8 +1,8 @@
 ---
-hash: "670f8130"
+hash: "c241a0f0"
 id: "1467e318"
 read_when: "naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept"
-summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Outline, Segment, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Binding, Handle, Lock, Group, Worker, Plan, Child Plan, Goal, Acceptance Criterion, Decision, Alternative, Rail, Defect, Stage, File Change, Journey, Leg, Question, Tree, Stage Brief) with the terms to avoid for each."
+summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Outline, Segment, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Binding, Handle, Lock, Group, Worker, Plan, Child Plan, Goal, Acceptance Criterion, Decision, Alternative, Rail, Defect, Stage, File Change, Journey, Leg, Question, Tree, Stage Brief, Annex) with the terms to avoid for each."
 title: "Ubiquitous Language"
 ---
 
@@ -17,6 +17,7 @@ flowchart LR
     Acceptance_Criterion["Acceptance Criterion"]
     Address["Address"]
     Alternative["Alternative"]
+    Annex["Annex"]
     Binding["Binding"]
     Child_Plan["Child Plan"]
     Decision["Decision"]
@@ -81,6 +82,7 @@ flowchart LR
     Plan -->|many| Tree
     Plan -->|many| Journey
     Plan -->|many| Child_Plan
+    Plan -->|many| Annex
     Child_Plan -->|one| Plan
     Goal -->|many| Defect
     Acceptance_Criterion -->|many| Goal
@@ -98,6 +100,7 @@ flowchart LR
     Question -->|one| Plan
     Tree -->|one| Plan
     Stage_Brief -->|one| Stage
+    Annex -->|one| Plan
 ```
 <!-- ER-DIAGRAM:END -->
 
@@ -233,7 +236,7 @@ _Has_: one Host, one Project
 **Plan**:
 The structured record of intended work — typed items and typed relationships held in one `graph.json` under `.auto/plan/plans/NNN-name/` — whose kind is either task or epic. What `auto plan` creates, changes, lints and reads.
 _Avoid_: Task (only a Plan's kind, never the unit), spec, ticket, plan doc
-_Has_: many Goals, many Decisions, many Rails, many Defects, many Stages, many File Changes, many Questions, many Trees, many Journeys, many Child Plans
+_Has_: many Goals, many Decisions, many Rails, many Defects, many Stages, many File Changes, many Questions, many Trees, many Journeys, many Child Plans, many Annex
 
 **Child Plan**:
 An epic Plan's reference to one of the Plans that delivers part of it. The child links back to the epic only by qualified reference and never copies the epic's text.
@@ -304,3 +307,8 @@ _Has_: one Plan
 Everything an executing agent needs for one Stage, derived from the Plan: its steps, the File Changes it touches, the Acceptance Criteria it covers, and the Decisions, Rails and Questions that bear on them.
 _Avoid_: Context Pack (that names auto-graph's file bundle), stage pack, handoff
 _Has_: one Stage
+
+**Annex**:
+A Markdown file beside a Plan's `graph.json`, registered as one node in that graph, that holds the plan-time sense-check exposition a reviewer scans — usage transcripts, data structures, per-layer test summaries. Facts stay in the graph; the annex carries only the prose and the fields something computes from (kind, path, title, freeze hash).
+_Avoid_: Appendix, exhibit, dossier, note, doc
+_Has_: one Plan

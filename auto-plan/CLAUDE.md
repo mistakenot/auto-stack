@@ -38,7 +38,8 @@ auto plan new walking-skeleton --kind task --epic 001   # a child plan of epic 0
 
 # write (Decode → mutate → Validate → Save; refused on any error)
 auto plan add 001 goal --title "…"               # flags are generated from the registry
-auto plan add 001 ac --proves g-k7q2 --title "…" --gwt @ac.md --verify-cmd "go test ./…"
+auto plan add 001 ac --proves g-k7q2 --title "…" --gwt @ac.md --verify-cmd "go test ./…" --layer e2e
+auto plan add 001 annex --kind usage --path using-brief.md --title "…" --about g-k7q2   # also writes a create-only stub .md; `file` names it
 auto plan link 001 d-9t2w constrains g-k7q2      # endpoint types are checked; returns the edge ID
 auto plan unlink 001 e-7k2q                      # by edge ID, or: unlink 001 d-9t2w constrains g-k7q2
 auto plan update 001 g-k7q2 --description "…"    # same field flags as add; plan --lifecycle advances
@@ -111,6 +112,27 @@ requires every rail honoured by a child (or `--deferred <child>`) and every leg
 delivered by one. Hierarchy is epic → task only; nothing in the ID scheme
 depends on that.
 
+**Annexes.** An `annex` (prefix `ax`) is a Markdown file beside `graph.json`,
+registered as a node, holding plan-time exposition whose *facts* belong in the
+graph (D-5). Its `kind` is `usage`, `structures` or `testing`, and at most one
+annex per kind may be active (registry `UniqueBy: kind`, code
+`duplicate-annex-kind`). `path` is a flat `<kebab>.md` filename relative to the
+plan folder, so a folder rename on `renumber` keeps it valid. `add annex` writes
+a **create-only** stub `.md` when the file is absent (never overwriting user
+content), reports it in the result (`file`, and a `wrote …` line in `--text`),
+and wires any `--about <id>` edge inline — `about` now runs from a tree **or an
+annex** to any node. The `testing` stub seeds one `## <layer>` section per
+`ac.layer` enum member; `usage` and `structures` carry a fixed skeleton. An AC
+carries an optional `layer` (`e2e|integration|golden|unit|manual`) naming the
+test layer that proves it. Folder-aware lint (all gated at `solution`, read
+through the plan folder, skipped when a plan is linted without its folder):
+`annex-missing` (a `path` names no file), `unlinked-file` (a `*.md` in the
+folder no annex registers), `annex-ref` (a `[[id]]` in an annex file resolves to
+no node — the same code-span-skipping resolution as prose), and
+`annex-testing-layers` (one-directional: a `## <layer>` section is missing for a
+layer some AC uses — extra sections are fine). `annex-changed` is gated at
+`done`.
+
 ## The registry is the only extension point
 
 `internal/schema/registry.go` declares the lifecycle sequence
@@ -156,6 +178,14 @@ lifecycle without touching old plans.
   command, `fmt` without `--check` (only when it would rewrite), `renumber` — are
   refused with `frozen` when the plan is another major or newer than the tool,
   or its lifecycle is `done` (setting `done` is the last allowed write).
+- **Freeze hashes annexes.** `annex.hash` is a `Computed` field (never a flag):
+  the `--lifecycle done` write is the one place it is set, recording the SHA-256
+  of each active annex's bytes before the graph is saved. That transition
+  **refuses** with `annex-missing` (exit 1, nothing saved, lifecycle not
+  advanced) if any annex's file cannot be read, so every annex must have its
+  file on disk before the freeze. From `done` on, lint recomputes the hash and
+  reports `annex-changed` when a frozen annex's bytes drift from it — a frozen
+  plan is history, so the fix is to restore the file or start a new plan.
 
 ## Determinism for tests
 
@@ -182,20 +212,29 @@ go test ./internal/render/ -update   # regenerate text goldens
 
 The e2e harness (`e2e/e2e_test.go`) builds `auto` from `../auto-cli`, creates a
 temp git workspace with a pinned environment, runs
-`e2e/testdata/scenarios/<name>/commands.txt` line by line, and compares every
-`.auto/plan/plans/*/graph.json` byte for byte at each `# checkpoint <n>` (and that
+`e2e/testdata/scenarios/<name>/commands.txt` line by line, and at each
+`# checkpoint <n>` compares every `.auto/plan/plans/*/graph.json` **and every
+annex `*.md` sidecar beside it** byte for byte (and that
 `.auto/plan/plans/AGENTS.md` and its CLAUDE.md symlink exist). A
 `# expect exit=<n> stdout=<file>` line checks the next invocation against
-`snapshots/stdout/<file>`.
+`snapshots/stdout/<file>`. A `# preview <folder> <file>` line reassembles AC-14's
+preview-data contract — per-layer AC counts, the annex inventory (kind/title/path
++ `about` targets), and the raw usage/structures bodies — from a plan's final
+`graph.json` + annex files and byte-compares it with `snapshots/<file>`.
 
 Two scenarios (`go test ./e2e/ -run 'Lifecycle|Dogfood'`):
 
 - **lifecycle** walks one task plan through every mutating command, including a
-  rejected write, a retire, a `renumber` and the freeze after `done`.
+  rejected write, a retire, a `renumber`, an annex `add` (stub `.md` + `file`
+  result) and the freeze after `done` (which records each annex's `hash`).
+  `annex-changed` needs a mid-scenario file edit the commands.txt harness cannot
+  do, so it is covered in `internal/lint` unit tests, not here.
 - **dogfood** rebuilds epic 005, its child task 062 and task 052 as plans
   001–003 from CLI calls alone, lints the family clean, and golden-compares
-  `show`, `trace`, `tree --files` and `brief`. Its `commands.txt` holds literal
-  generated IDs: to change the script, rerun it incrementally, read each `id`
-  from the output, and refresh with `-update`.
+  `show`, `trace`, `tree --files` and `brief`. The child (002) also gains
+  `ac.layer` on its ACs and three real annexes, is frozen to `done`, and feeds
+  the `preview-data.json` golden. Its `commands.txt` holds literal generated
+  IDs: to change the script, rerun it incrementally, read each `id` from the
+  output, and refresh with `-update`.
 
 The merged `auto` binary is built from the repo root with `make build`.

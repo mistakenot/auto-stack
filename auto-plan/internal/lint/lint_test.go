@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/mistakenot/auto-plan/internal/graph"
 	"github.com/mistakenot/auto-plan/internal/schema"
@@ -251,6 +252,8 @@ func TestSeverities(t *testing.T) {
 		"dangling-prose-ref": SeverityError, "tree-syntax": SeverityError, "dependency-cycle": SeverityError,
 		"goal-no-ac": SeverityError, "ac-no-verify": SeverityError, "unplanned-file": SeverityError,
 		"untracked-file": SeverityError, "missing-dep": SeverityError,
+		"annex-missing": SeverityError, "unlinked-file": SeverityError, "annex-ref": SeverityError,
+		"annex-testing-layers": SeverityError, "annex-changed": SeverityError,
 		"goal-count": SeverityWarning, "decision-no-alternative": SeverityWarning, "retired-ref": SeverityWarning,
 	}
 	if len(Rules) != len(want) {
@@ -741,6 +744,208 @@ func TestEpicMessages(t *testing.T) {
 	if is := got["rail-undischarged"]; is.Message != "Plan 002-bbbb honours rail 001-aaaa:r-e001, but no AC discharges it." ||
 		is.Hint != "auto plan link 002-bbbb <ac-id> discharges 001-aaaa:r-e001 (or add an AC for it with --discharges 001-aaaa:r-e001)" {
 		t.Errorf("rail-undischarged = %+v", is)
+	}
+}
+
+// annex builds an annex node with the given kind, path and title.
+func annex(id, kind, path, title string) string {
+	return node(id, "annex", `"kind": "`+kind+`", "path": "`+path+`", "title": "`+title+`"`)
+}
+
+// annexHashed builds an annex node carrying a frozen content hash.
+func annexHashed(id, kind, path, title, hash string) string {
+	return node(id, "annex", `"kind": "`+kind+`", "path": "`+path+`", "title": "`+title+`", "hash": "`+hash+`"`)
+}
+
+// mdFile is one Markdown file for an fstest.MapFS.
+func mdFile(content string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(content)} }
+
+// TestAnnexRules drives the folder-aware rules through an fstest.MapFS (no temp
+// dirs): the plan folder's files are the map, annex paths resolve against it.
+func TestAnnexRules(t *testing.T) {
+	// base is five proven goals at solution: clean but for what the case adds,
+	// and past the annex rules' MinLifecycle.
+	base := func(extraNodes []string) string {
+		n, e := goals(5)
+		return fixture("solution", append(n, extraNodes...), e)
+	}
+	cases := []struct {
+		name  string
+		doc   string
+		files fstest.MapFS
+		want  []string
+	}{
+		{"annex-missing: the file is not in the folder",
+			base([]string{annex("ax-0001", "usage", "usage.md", "How to use it")}),
+			fstest.MapFS{}, []string{"annex-missing"}},
+		{"valid annex: file present, no references",
+			base([]string{annex("ax-0001", "usage", "usage.md", "How to use it")}),
+			fstest.MapFS{"usage.md": mdFile("# Usage\n\nRun it.\n")}, nil},
+		{"unlinked-file: a stray .md no annex names",
+			base([]string{annex("ax-0001", "usage", "usage.md", "How to use it")}),
+			fstest.MapFS{"usage.md": mdFile("# Usage\n"), "stray.md": mdFile("# Stray\n")},
+			[]string{"unlinked-file"}},
+		{"unlinked-file: graph.json is never flagged",
+			base([]string{annex("ax-0001", "usage", "usage.md", "How to use it")}),
+			fstest.MapFS{"usage.md": mdFile("# Usage\n"), "graph.json": mdFile("{}")}, nil},
+		{"annex-ref: a dangling [[id]] in the annex body",
+			base([]string{annex("ax-0001", "structures", "structures.md", "The shapes")}),
+			fstest.MapFS{"structures.md": mdFile("See [[ac-zz9q]] for the shape.\n")},
+			[]string{"annex-ref"}},
+		{"annex-ref: a reference that resolves passes",
+			base([]string{annex("ax-0001", "structures", "structures.md", "The shapes")}),
+			fstest.MapFS{"structures.md": mdFile("See [[g-aaa1]] for the goal.\n")}, nil},
+		{"annex-ref: a [[id]] in a code span is an example, not a reference",
+			base([]string{annex("ax-0001", "structures", "structures.md", "The shapes")}),
+			fstest.MapFS{"structures.md": mdFile("Write `[[ac-zz9q]]` to reference a node.\n")}, nil},
+		{"all three at once, in reporting order",
+			base([]string{
+				annex("ax-0001", "usage", "usage.md", "How to use it"),
+				annex("ax-0002", "structures", "structures.md", "The shapes"),
+			}),
+			fstest.MapFS{
+				"structures.md": mdFile("See [[ac-zz9q]].\n"),
+				"stray.md":      mdFile("# Stray\n"),
+			},
+			[]string{"annex-missing", "unlinked-file", "annex-ref"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g, err := graph.Parse([]byte(tc.doc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := run(&Context{Plan: "001", Graph: g, Lifecycle: Lifecycle(g), FS: tc.files})
+			var got []string
+			for _, is := range r.Issues {
+				got = append(got, is.Code)
+				if is.Message == "" || is.Path == "" || is.Hint == "" {
+					t.Errorf("issue lacks message/path/hint: %+v", is)
+				}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("codes = %v, want %v\n%+v", got, tc.want, r.Issues)
+			}
+		})
+	}
+}
+
+// TestAnnexChanged: from lifecycle done, an annex whose file still matches the
+// hash the freeze recorded lints clean; one whose bytes differ reports
+// annex-changed. The rule reads the file through the Context FS.
+func TestAnnexChanged(t *testing.T) {
+	const body = "# Usage\n\nRun it.\n"
+	clean := graph.HashBytes([]byte(body))
+	doc := func(hash string) string {
+		n, e := goals(5)
+		return fixture("done", append(n, annexHashed("ax-0001", "usage", "usage.md", "How to use it", hash)), e)
+	}
+	cases := []struct {
+		name  string
+		hash  string
+		files fstest.MapFS
+		want  []string
+	}{
+		{"unchanged annex lints clean",
+			clean, fstest.MapFS{"usage.md": mdFile(body)}, nil},
+		{"changed annex reports annex-changed",
+			clean, fstest.MapFS{"usage.md": mdFile(body + "and edit it.\n")}, []string{"annex-changed"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g, err := graph.Parse([]byte(doc(tc.hash)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := run(&Context{Plan: "001", Graph: g, Lifecycle: Lifecycle(g), FS: tc.files})
+			var got []string
+			for _, is := range r.Issues {
+				got = append(got, is.Code)
+				if is.Message == "" || is.Path == "" || is.Hint == "" {
+					t.Errorf("issue lacks message/path/hint: %+v", is)
+				}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("codes = %v, want %v\n%+v", got, tc.want, r.Issues)
+			}
+		})
+	}
+}
+
+// TestAnnexTestingLayers: the one-directional testing-layer rule (AC-9). A
+// layer some AC uses but the testing annex has no `## <layer>` section for is
+// flagged; an extra section for a layer no AC uses is allowed, so the
+// all-layers stub lints clean whatever layers the plan uses.
+func TestAnnexTestingLayers(t *testing.T) {
+	// layered builds a solution plan of five proven goals with the given layer
+	// values set on the first len(layers) ACs, plus a testing annex.
+	layered := func(layers ...string) string {
+		n, e := goals(5)
+		for i := range layers {
+			ac := 2*i + 1 // goals() appends goal then ac, so AC i is at 2i+1
+			n[ac] = strings.Replace(n[ac], `"verify": {"cmd": "go test ./..."}`,
+				`"verify": {"cmd": "go test ./..."}, "layer": "`+layers[i]+`"`, 1)
+		}
+		return fixture("solution", append(n, annex("ax-0001", "testing", "testing.md", "Testing")), e)
+	}
+	// allLayers is the full stub body: one `## <layer>` section per enum member.
+	allLayers := "# Testing\n\n## e2e\n_x_\n\n## integration\n_x_\n\n## golden\n_x_\n\n## unit\n_x_\n\n## manual\n_x_\n"
+	cases := []struct {
+		name  string
+		doc   string
+		files fstest.MapFS
+		want  []string
+	}{
+		{"a used layer with no section is flagged",
+			layered("e2e"),
+			fstest.MapFS{"testing.md": mdFile("# Testing\n\n## unit\n_x_\n")},
+			[]string{"annex-testing-layers"}},
+		{"all-layers stub lints clean when only some layers are used",
+			layered("e2e", "unit"),
+			fstest.MapFS{"testing.md": mdFile(allLayers)}, nil},
+		{"an extra section for an unused layer is allowed",
+			layered("e2e"),
+			fstest.MapFS{"testing.md": mdFile("# Testing\n\n## e2e\n_x_\n\n## integration\n_x_\n")}, nil},
+		{"no layers used lints clean",
+			layered(),
+			fstest.MapFS{"testing.md": mdFile("# Testing\n")}, nil},
+		{"a `## <layer>` inside a fenced block is not a section",
+			layered("e2e"),
+			fstest.MapFS{"testing.md": mdFile("# Testing\n\n```\n## e2e\n```\n")},
+			[]string{"annex-testing-layers"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g, err := graph.Parse([]byte(tc.doc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := run(&Context{Plan: "001", Graph: g, Lifecycle: Lifecycle(g), FS: tc.files})
+			var got []string
+			for _, is := range r.Issues {
+				got = append(got, is.Code)
+				if is.Message == "" || is.Path == "" || is.Hint == "" {
+					t.Errorf("issue lacks message/path/hint: %+v", is)
+				}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("codes = %v, want %v\n%+v", got, tc.want, r.Issues)
+			}
+		})
+	}
+}
+
+// TestAnnexRulesSkipWithoutFolder: linted without its folder (c.FS nil), a
+// plan's annex rules do not run, even with annex nodes present.
+func TestAnnexRulesSkipWithoutFolder(t *testing.T) {
+	doc := func() string {
+		n, e := goals(5)
+		return fixture("solution", append(n, annex("ax-0001", "usage", "usage.md", "t")), e)
+	}()
+	for _, is := range issuesOf(t, "001", doc) {
+		if is.Code == "annex-missing" || is.Code == "unlinked-file" || is.Code == "annex-ref" {
+			t.Errorf("annex rule ran without a folder: %+v", is)
+		}
 	}
 }
 

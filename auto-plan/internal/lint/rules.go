@@ -3,6 +3,7 @@ package lint
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"strings"
 
@@ -55,6 +56,11 @@ var Rules = []Rule{
 	{Code: "unplanned-file", Severity: SeverityError, MinLifecycle: schema.LifecyclePlan, Check: unplannedFile},
 	{Code: "untracked-file", Severity: SeverityError, MinLifecycle: schema.LifecyclePlan, Check: untrackedFile},
 	{Code: "missing-dep", Severity: SeverityError, MinLifecycle: schema.LifecyclePlan, Check: missingDep},
+	{Code: "annex-missing", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: annexMissing},
+	{Code: "unlinked-file", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: unlinkedFile},
+	{Code: "annex-ref", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: annexRef},
+	{Code: "annex-testing-layers", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: annexTestingLayers},
+	{Code: "annex-changed", Severity: SeverityError, MinLifecycle: schema.LifecycleDone, Check: annexChanged},
 	{Code: "goal-count", Severity: SeverityWarning, MinLifecycle: schema.LifecycleSolution, Check: goalCount},
 	{Code: "decision-no-alternative", Severity: SeverityWarning, MinLifecycle: schema.LifecycleRequirements, Check: decisionNoAlternative},
 	{Code: "retired-ref", Severity: SeverityWarning, MinLifecycle: schema.LifecycleRequirements, Check: retiredRef},
@@ -503,6 +509,265 @@ func retiredRef(c *Context) []Issue {
 			})
 		}
 	})
+	return out
+}
+
+// typeAnnex is the node type whose path names a Markdown file beside
+// graph.json.
+const typeAnnex = "annex"
+
+// annexMissing reports every active annex whose path names a file that is not
+// in the plan folder (read through the Context FS). It does nothing when the
+// graph is linted without its folder (c.FS nil).
+func annexMissing(c *Context) []Issue {
+	if c.FS == nil {
+		return nil
+	}
+	var out []Issue
+	for _, n := range active(c, typeAnnex) {
+		path := n.StringField("path")
+		if path == "" {
+			continue // a missing path is a missing-field validation error
+		}
+		if _, err := fs.Stat(c.FS, path); err == nil {
+			continue
+		}
+		out = append(out, Issue{
+			Path: graph.NodePath(n.ID) + ".fields.path", Field: "path",
+			Message: fmt.Sprintf("Annex %s names %s, but no such file is in the plan folder.", n.ID, path),
+			Hint: "create the file beside graph.json (auto plan add writes a stub), or point it at the right file: auto plan update " +
+				c.Plan + " " + n.ID + " --path <file>.md",
+		})
+	}
+	return out
+}
+
+// unlinkedFile reports every `*.md` file in the plan folder that no active
+// annex node names: a stray file, or an annex the plan forgot to register. It
+// does nothing when the graph is linted without its folder (c.FS nil).
+func unlinkedFile(c *Context) []Issue {
+	if c.FS == nil {
+		return nil
+	}
+	files, err := workspace.MarkdownFiles(c.FS)
+	if err != nil {
+		return nil // an unreadable folder is not this rule's concern
+	}
+	named := map[string]bool{}
+	for _, n := range active(c, typeAnnex) {
+		if path := n.StringField("path"); path != "" {
+			named[path] = true
+		}
+	}
+	var out []Issue
+	for _, f := range files {
+		if named[f] {
+			continue
+		}
+		out = append(out, Issue{
+			Path:    "$",
+			Message: f + " is in the plan folder but no annex node names it.",
+			Hint: "register it: auto plan add " + c.Plan + " annex --path " + f +
+				` --kind <usage|structures|testing> --title "…"; or delete the file`,
+		})
+	}
+	return out
+}
+
+// annexRef reports every `[[id]]` reference in an annex file that names no
+// node of the plan: the same resolution as danglingProseRef, read through the
+// Context FS over the file's bytes (so a reference inside inline code or a
+// fenced block is an example and ignored). A qualified `[[NNN-xxxx:id]]` (or
+// shorthand `[[NNN:id]]`) must resolve against the set when there is one;
+// linted alone, it is shape-checked only. It does nothing without the folder.
+func annexRef(c *Context) []Issue {
+	if c.FS == nil {
+		return nil
+	}
+	var out []Issue
+	for _, n := range active(c, typeAnnex) {
+		path := n.StringField("path")
+		if path == "" {
+			continue
+		}
+		data, err := fs.ReadFile(c.FS, path)
+		if err != nil {
+			continue // the absent file is an annex-missing error
+		}
+		hint := "fix the reference in " + path +
+			"; see this plan's node IDs with auto plan show " + c.Plan
+		var seen []string
+		for _, r := range graph.FindProseRefs(string(data)) {
+			ref := r.Ref
+			if slices.Contains(seen, ref) {
+				continue
+			}
+			seen = append(seen, ref)
+			msg := ""
+			switch {
+			case qualifiedRef(ref):
+				if c.Set == nil {
+					continue
+				}
+				if _, err := c.Set.Lookup(ref); err != nil && !errors.Is(err, workspace.ErrAmbiguous) {
+					planID, id, _ := graph.ParseRef(ref)
+					why := "plan " + planID + " has no node " + id
+					switch {
+					case errors.Is(err, workspace.ErrNotFound):
+						why = "there is no plan " + planID
+					case !errors.Is(err, workspace.ErrNodeNotFound):
+						why = "plan " + planID + " cannot be read"
+					}
+					msg = fmt.Sprintf("Annex %s (%s) refers to [[%s]], but %s", n.ID, path, ref, why)
+				}
+			case ref == schema.PlanNodeID || graph.IDPattern.MatchString(ref):
+				if _, ok := c.Node(ref); ok {
+					continue
+				}
+				msg = fmt.Sprintf("Annex %s (%s) refers to [[%s]], which is not a node in this plan", n.ID, path, ref)
+			default:
+				msg = fmt.Sprintf("Annex %s (%s) holds [[%s]], which is not a node ID (write [[ac-3fxm]], or [[005-k7q2:r-8hw3]] for another plan)", n.ID, path, ref)
+			}
+			if msg != "" {
+				out = append(out, Issue{Path: graph.NodePath(n.ID), Message: msg, Hint: hint})
+			}
+		}
+	}
+	return out
+}
+
+// annexChanged reports every active annex whose file no longer matches the
+// SHA-256 hash recorded when the plan was frozen (the freeze step writes
+// annex.hash at the transition into lifecycle done). It runs only from done
+// on, over the file read through the Context FS, and does nothing when the
+// graph is linted without its folder (c.FS nil). An annex with no stored hash
+// (nothing was frozen) or whose file is absent (an annex-missing error) is
+// skipped.
+func annexChanged(c *Context) []Issue {
+	if c.FS == nil {
+		return nil
+	}
+	var out []Issue
+	for _, n := range active(c, typeAnnex) {
+		stored := n.StringField("hash")
+		path := n.StringField("path")
+		if stored == "" || path == "" {
+			continue
+		}
+		data, err := fs.ReadFile(c.FS, path)
+		if err != nil {
+			continue // the absent file is an annex-missing error
+		}
+		if graph.HashBytes(data) == stored {
+			continue
+		}
+		out = append(out, Issue{
+			Path: graph.NodePath(n.ID) + ".fields.hash", Field: "hash",
+			Message: fmt.Sprintf("Annex %s (%s) has changed since the plan was frozen: its bytes no longer match the recorded hash.", n.ID, path),
+			Hint: "a frozen plan is history; restore " + path + " to its frozen contents, " +
+				"or start new work in a new plan: auto plan new <name> --kind task",
+		})
+	}
+	return out
+}
+
+// annexTestingLayers reports every test layer that at least one active AC uses
+// but the testing annex has no `## <layer>` section for. The rule is
+// one-directional (AC-9): an extra `## <layer>` section for a layer no AC uses
+// is allowed, so a freshly stubbed all-layers testing annex lints clean even
+// when the plan uses only some layers. It is silent when the plan has no
+// testing annex, and does nothing when the graph is linted without its folder
+// (c.FS nil) or when the testing annex's file is absent (an annex-missing
+// error).
+func annexTestingLayers(c *Context) []Issue {
+	if c.FS == nil {
+		return nil
+	}
+	n, ok := testingAnnex(c)
+	if !ok {
+		return nil
+	}
+	path := n.StringField("path")
+	if path == "" {
+		return nil
+	}
+	data, err := fs.ReadFile(c.FS, path)
+	if err != nil {
+		return nil // the absent file is an annex-missing error
+	}
+	sections := markdownSections(string(data))
+	used := usedLayers(c)
+	var out []Issue
+	for _, layer := range acLayerEnum() {
+		if !used[layer] || sections[layer] {
+			continue
+		}
+		out = append(out, Issue{
+			Path: graph.NodePath(n.ID),
+			Message: fmt.Sprintf("Testing annex %s (%s) has no `## %s` section, but the plan has an AC at the %s layer.",
+				n.ID, path, layer, layer),
+			Hint: "add a `## " + layer + "` section to " + path + " (auto plan add seeds one per layer), " +
+				"or move the ACs off the " + layer + " layer with auto plan update " + c.Plan + " <ac-id> --layer <other>",
+		})
+	}
+	return out
+}
+
+// testingAnnex returns the plan's active testing annex. At most one exists
+// (annex.UniqueBy is kind), so the first match is it.
+func testingAnnex(c *Context) (graph.Node, bool) {
+	for _, n := range active(c, typeAnnex) {
+		if n.StringField("kind") == "testing" {
+			return n, true
+		}
+	}
+	return graph.Node{}, false
+}
+
+// usedLayers is the set of layer values the plan's active ACs carry.
+func usedLayers(c *Context) map[string]bool {
+	used := map[string]bool{}
+	for _, n := range active(c, "ac") {
+		if l := n.StringField("layer"); l != "" {
+			used[l] = true
+		}
+	}
+	return used
+}
+
+// acLayerEnum is the ac.layer enum in registry order, so layers are reported
+// deterministically and in the same order the testing stub seeds them.
+func acLayerEnum() []string {
+	nt, ok := schema.Registry.Node("ac")
+	if !ok {
+		return nil
+	}
+	f, ok := nt.Field("layer")
+	if !ok {
+		return nil
+	}
+	return f.Enum
+}
+
+// markdownSections returns the set of level-2 ATX headings (`## <name>`) in
+// src, keyed by the trimmed heading text. Headings inside a fenced code block
+// (``` or ~~~) are skipped, so a `## ` line quoted in an example is not counted
+// as a section — the same spirit as proseRefs skipping fenced blocks.
+func markdownSections(src string) map[string]bool {
+	out := map[string]bool{}
+	fenced := false
+	for line := range strings.SplitSeq(src, "\n") {
+		t := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~"):
+			fenced = !fenced
+		case fenced:
+		default:
+			if name, ok := strings.CutPrefix(t, "## "); ok {
+				out[strings.TrimSpace(name)] = true
+			}
+		}
+	}
 	return out
 }
 

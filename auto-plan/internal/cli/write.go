@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -61,6 +63,11 @@ func typeFlags(nt schema.NodeType, mode flagMode) (*pflag.FlagSet, []fieldFlag, 
 	}
 	for i := range nt.Fields {
 		f := &nt.Fields[i]
+		if f.Computed {
+			// A computed field (annex.hash) is written by the tool, never a
+			// flag: neither add nor update can set it (D-6).
+			continue
+		}
 		if mode == forUpdate && f.Fixed {
 			continue
 		}
@@ -201,6 +208,17 @@ func runAdd(cmd *cobra.Command, application *app.App, args []string) error {
 	}
 
 	out := map[string]any{"type": node.Type, "rank": node.Rank}
+	var stubbed string
+	if node.Type == "annex" {
+		stubbed, err = writeAnnexStub(l, fields)
+		if err != nil {
+			return failOne(cmd, text, "write-failed", "$", "", err.Error(), stubbed,
+				"the annex node was saved, but its Markdown file could not be written; check the plan folder is writable")
+		}
+		if stubbed != "" {
+			out["file"] = stubbed
+		}
+	}
 	var added []edgeOut
 	for _, e := range own {
 		added = append(added, toEdgeOut(e))
@@ -211,6 +229,9 @@ func runAdd(cmd *cobra.Command, application *app.App, args []string) error {
 	return emit(cmd, text, mutationResult(l.ref(), node.ID, out), func() string {
 		var b strings.Builder
 		fmt.Fprintf(&b, "added %s %s (rank %s) to %s\n", node.Type, node.ID, node.Rank, l.plan.Folder())
+		if stubbed != "" {
+			fmt.Fprintf(&b, "  wrote %s\n", stubbed)
+		}
 		for _, e := range added {
 			fmt.Fprintf(&b, "  %s  %s %s %s\n", e.ID, e.From, e.Type, e.To)
 		}
@@ -419,7 +440,8 @@ func updateLong() string {
 	b.WriteString("only the flags given change, and an empty value (\"\") removes an optional field.\n")
 	b.WriteString("Edges change with link/unlink, status with retire, and reading order with move.\n")
 	b.WriteString("`auto plan update <plan> <id> --help` shows one node's flags.\n")
-	for _, nt := range schema.Registry.Nodes {
+	for i := range schema.Registry.Nodes {
+		nt := schema.Registry.Nodes[i]
 		fs, _, _ := typeFlags(nt, forUpdate)
 		fmt.Fprintf(&b, "\n%s — %s\n%s", nt.Name, nt.Help, fs.FlagUsages())
 	}
@@ -495,6 +517,15 @@ func runUpdate(cmd *cobra.Command, application *app.App, args []string) error {
 	if nt.Name == schema.PlanNodeID {
 		if err := l.checkCrossPlan(cmd, text, nil, fields); err != nil {
 			return err
+		}
+		// Freezing the plan (the transition into done, its last allowed write)
+		// records each annex's content hash before anything is saved. A plan
+		// loaded for write is never already done (loadForWrite refuses a frozen
+		// plan), so lifecycle "done" here is always the transition into it.
+		if s, _ := fields["lifecycle"].(string); s == string(schema.LifecycleDone) {
+			if err := l.hashAnnexes(cmd, text); err != nil {
+				return err
+			}
 		}
 	}
 	if err := l.save(cmd, text); err != nil {
@@ -660,6 +691,37 @@ func (l *loaded) checkCrossPlan(cmd *cobra.Command, text bool, edges []graph.Edg
 		if err := set.CheckEpic(epic); err != nil {
 			return failOne(cmd, text, "epic-not-found", graph.NodePath(schema.PlanNodeID)+".fields.epic", "epic", err.Error(), epic,
 				"graph.json was not changed; name an existing epic plan (create one with `auto plan new <name> --kind epic`)")
+		}
+	}
+	return nil
+}
+
+// hashAnnexes records each active annex's SHA-256 content hash in its
+// Computed `hash` field, the one place that field is written (D-6). It runs
+// only at the freeze (the transition into lifecycle done), over the graph
+// already mutated in memory, before it is saved. A missing annex file refuses
+// the freeze: a frozen plan must carry a hash for every annex, so nothing is
+// saved and the lifecycle does not advance. The folder rename in renumber
+// keeps a flat annex path valid, so the file is read off the plan folder.
+func (l *loaded) hashAnnexes(cmd *cobra.Command, text bool) error {
+	folder := l.ws.FolderPath(l.plan)
+	for _, n := range l.graph.Nodes {
+		if n.Type != "annex" || !n.Active() {
+			continue
+		}
+		path := n.StringField("path")
+		if path == "" {
+			continue // a required path missing is a validation error already
+		}
+		data, err := os.ReadFile(filepath.Join(folder, filepath.FromSlash(path)))
+		if err != nil {
+			return failOne(cmd, text, "annex-missing", graph.NodePath(n.ID)+".fields.path", "path",
+				fmt.Sprintf("annex %s names %s, but its file cannot be read to hash it at freeze: %v", n.ID, path, err), path,
+				"graph.json was not changed and the plan was not frozen; every annex needs a readable Markdown file before `--lifecycle done` — "+
+					"create it beside graph.json (auto plan add writes a stub) or point --path at the right file, then retry")
+		}
+		if _, errs := l.graph.Update(n.ID, map[string]any{"hash": graph.HashBytes(data)}); len(errs) > 0 {
+			return fail(cmd, text, errs, "graph.json was not changed; the annex hash could not be recorded at freeze")
 		}
 	}
 	return nil

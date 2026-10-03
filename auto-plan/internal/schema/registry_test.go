@@ -92,6 +92,7 @@ func TestDesignNodeTypes(t *testing.T) {
 		"journey":     {"title"},
 		"leg":         {"actor", "action"},
 		"child":       {"plan"},
+		"annex":       {"kind", "path", "title"},
 	}
 	for name, required := range want {
 		nt, ok := Registry.Node(name)
@@ -140,6 +141,8 @@ func TestDesignEdgeEndpoints(t *testing.T) {
 		{"addresses", "goal", "defect", true},
 		{"about", "tree", "goal", true},
 		{"about", "tree", "file", true},
+		{"about", "annex", "goal", true},
+		{"about", "annex", "ac", true},
 		{"about", "goal", "tree", false},
 		{"in", "leg", "journey", true},
 		{"honors", "plan", "rail", true},
@@ -218,6 +221,9 @@ func TestFieldSpecsWellFormed(t *testing.T) {
 			if f.Fixed && (f.Kind == KindObject || !f.Required) {
 				t.Errorf("%s: a Fixed field must be a required scalar (it is set at creation)", where)
 			}
+			if f.Computed && (f.Required || f.Fixed || f.Kind == KindObject) {
+				t.Errorf("%s: a Computed field must be an optional scalar the tool sets (not required, not Fixed)", where)
+			}
 			if f.Help == "" {
 				t.Errorf("%s: missing Help (it is the flag's --help text)", where)
 			}
@@ -266,6 +272,45 @@ func glossaryPath(t *testing.T) string {
 			t.Skip("no go.work root found; skipping glossary check")
 		}
 		dir = parent
+	}
+}
+
+// TestACLayerIsOptionalEnum pins the optional test-layer field AC-2 adds to
+// the ac node: an enum of the five layers, not required, so ACs without a
+// layer (the frozen dogfood fixture) stay valid.
+func TestACLayerIsOptionalEnum(t *testing.T) {
+	ac, ok := Registry.Node("ac")
+	if !ok {
+		t.Fatal("ac node type is not registered")
+	}
+	layer, ok := ac.Field("layer")
+	if !ok {
+		t.Fatal("ac has no layer field")
+	}
+	if layer.Kind != KindEnum || layer.Required {
+		t.Errorf("ac.layer must be an optional enum, got kind=%q required=%v", layer.Kind, layer.Required)
+	}
+	if !slices.Equal(layer.Enum, []string{"e2e", "integration", "golden", "unit", "manual"}) {
+		t.Errorf("ac.layer enum = %v", layer.Enum)
+	}
+}
+
+// TestAnnexHashIsComputed pins annex.hash as a Computed field (D-6): the tool
+// sets it at freeze, so it is never required and never a CLI flag.
+func TestAnnexHashIsComputed(t *testing.T) {
+	annex, ok := Registry.Node("annex")
+	if !ok {
+		t.Fatal("annex node type is not registered")
+	}
+	if annex.Prefix != "ax" || annex.Term != "Annex" || annex.UniqueBy != "kind" {
+		t.Errorf("annex = prefix %q, term %q, uniqueBy %q", annex.Prefix, annex.Term, annex.UniqueBy)
+	}
+	hash, ok := annex.Field("hash")
+	if !ok {
+		t.Fatal("annex has no hash field")
+	}
+	if !hash.Computed || hash.Required {
+		t.Errorf("annex.hash must be Computed and not required, got computed=%v required=%v", hash.Computed, hash.Required)
 	}
 }
 

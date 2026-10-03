@@ -9,6 +9,7 @@
       "rank": "a2",
       "fields": {
         "gwt": "**Given** one delivery row and N=16 goroutines calling `Ack` on it concurrently under `-race`; **When** they all complete; **Then** exactly **one** returns `wonTransition: true` and the other fifteen return `wonTransition: false`",
+        "layer": "unit",
         "title": "G13 / D-7 — ack transitions exactly once and reports whether it won",
         "verify": {
           "cmd": "(cd auto-mail && go test -race ./internal/cli/ ./internal/store/)",
@@ -60,6 +61,7 @@
       "rank": "a0",
       "fields": {
         "gwt": "**Given** the schema; **Then** `read_at` and `acked_at` exist **only** on `deliveries`, keyed by `(subscription_id, mail_id)`, and **no** consumer-state column exists on `mail`; **Given** mail sent to an address with **no** subscription; **When** a subscription is created afterwards with the default cursor; **Then** `list` returns that earlier mail and `subscribe` reports `backfilled: 1` (the J2 requirement D-10 exists to satisfy)",
+        "layer": "integration",
         "title": "G2 / D-10 — consumer state lives in a deliveries join, materialised lazily from a cursor",
         "verify": {
           "cmd": "(cd auto-mail && go test ./conformance/ ./internal/store/)",
@@ -93,6 +95,7 @@
       "rank": "a0",
       "fields": {
         "gwt": "**Given** the whole repository; **When** a guard test walks every module's Go source, the harness scenarios and the `skills/` tree; **Then** nothing outside `auto-mail/internal/store` names the **mail store**: the `alpha-store.db` filename, an `~/.auto/mail` path opened as a database, or a `sqlite3` invocation against either. The guard is scoped to the *mail store* …",
+        "layer": "integration",
         "title": "G11 — nothing outside the mail package reads the store",
         "verify": {
           "cmd": "(cd auto-mail && go test ./conformance/)",
@@ -109,6 +112,7 @@
       "rank": "a3",
       "fields": {
         "gwt": "**Given** `auto mail docs` and the package `CLAUDE.md`; **Then** both state the delivery contract in as many words: **at-least-once, unordered, consumers must be idempotent on mail id** — and neither promises exactly-once or ordering",
+        "layer": "manual",
         "title": "G4 — at-least-once and unordered, as documented",
         "verify": {
           "cmd": "(cd auto-mail && go test ./conformance/ ./internal/cli/)",
@@ -161,6 +165,7 @@
       "rank": "a0",
       "fields": {
         "gwt": "**Given** an initialised store and two agent workspaces on one host; **When** the four commands of C1 are run in order; **Then** each emits the documented JSON payload on **stdout only**: `subscribe <address>` → `{\"address\":…, \"subscription\":\"sub_…\", \"backfilled\":N}` `send --to <address> --message <text>` → `{\"id\":\"<ULID>\", \"to\":…, \"subscriptions\":N …",
+        "layer": "e2e",
         "title": "C1 — the epic's transcript runs verbatim",
         "verify": {
           "cmd": "(cd auto-mail && go test ./internal/cli/) && (cd harness && uv run pytest tests/mail_flow -v)",
@@ -178,6 +183,7 @@
       "rank": "a0",
       "fields": {
         "gwt": "**Given** a mail row and its `alpha.mail.sent` event; **When** the mail is listed and then acked; **Then** the `mail` row and every previously-appended event row are **byte identical** before and after (asserted by comparing full row snapshots)",
+        "layer": "integration",
         "title": "G1 — mail and events are immutable",
         "verify": {
           "cmd": "(cd auto-mail && go test ./internal/store/)",
@@ -194,6 +200,7 @@
       "rank": "a0",
       "fields": {
         "gwt": "**Given** `uv run harness mail-flow up` from `harness/`; **Then** the stack comes up with **one** container, one seeded host id, and two registered project workspaces, and `check_ready()` gates fail-fast with a diagnostic if the store is not initialised or a workspace is not registered; **When** `uv run pytest tests/mail_flow -v` runs; **Then** the full C1 loop passes against the **real `auto` binary built from monorepo source**: agent B subscribes, agent A sends, agent B's hook fire emits the nudge, `list` shows the mail, `ack` reports `wonTransition: true`, and the …",
+        "layer": "e2e",
         "title": "G15 — it passes end to end in the harness",
         "verify": {
           "cmd": "(cd harness && uv run pytest tests/mail_flow -v)",
@@ -210,6 +217,7 @@
       "rank": "a1",
       "fields": {
         "gwt": "**Given** address validation; **Then** `auto-web/bugs` is accepted — the separator `/` is explicitly permitted and never normalised away — as are addresses with no separator at all",
+        "layer": "unit",
         "title": "G5 / D-9 — addresses are virtual and free-form",
         "verify": {
           "cmd": "(cd auto-mail && go test ./internal/store/ ./mail/)",
@@ -388,6 +396,42 @@
       "fields": {
         "title": "No conformance suite until there are two implementations",
         "why": "Then the second implementation pays for the suite, when it is most tempting to skip."
+      }
+    },
+    {
+      "id": "ax-37jd",
+      "type": "annex",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "hash": "486d4d9e610d14d1274c7ca7ae88768d3a876dbc6754a743d1ec058a4f1048a6",
+        "kind": "testing",
+        "path": "testing.md",
+        "title": "Mail test layers"
+      }
+    },
+    {
+      "id": "ax-twqw",
+      "type": "annex",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "hash": "e432812f8a4669e3ba425f7aad4f6041f8f55bb3513aea011ca14df8dd787725",
+        "kind": "structures",
+        "path": "structures.md",
+        "title": "Mail store shapes"
+      }
+    },
+    {
+      "id": "ax-y2bm",
+      "type": "annex",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "hash": "a34279ecb242b180cf1b46b1859f8f982d62b5716590ebf9326f87985b2085f7",
+        "kind": "usage",
+        "path": "usage.md",
+        "title": "Using auto mail"
       }
     },
     {
@@ -1119,7 +1163,7 @@
         "created": "2026-01-01",
         "epic": "001-acs4",
         "kind": "task",
-        "lifecycle": "plan",
+        "lifecycle": "done",
         "name": "auto-mail-walking-skeleton"
       }
     },
@@ -1403,6 +1447,30 @@
       "id": "e-tbnk",
       "from": "ac-xbrt",
       "type": "proves",
+      "to": "g-gc8t"
+    },
+    {
+      "id": "e-32dt",
+      "from": "ax-37jd",
+      "type": "about",
+      "to": "g-21j1"
+    },
+    {
+      "id": "e-h5sh",
+      "from": "ax-twqw",
+      "type": "about",
+      "to": "g-kqxw"
+    },
+    {
+      "id": "e-2sfs",
+      "from": "ax-twqw",
+      "type": "about",
+      "to": "g-w1fg"
+    },
+    {
+      "id": "e-g4cd",
+      "from": "ax-y2bm",
+      "type": "about",
       "to": "g-gc8t"
     },
     {
