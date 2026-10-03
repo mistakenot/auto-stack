@@ -560,7 +560,7 @@ manual round-trip: `auto plan add <p> annex --kind usage --path usage.md --title
             </script></md>
           </pd-phase>
 
-          <pd-phase n="2" title="Folder-aware lint: missing / unlinked / refs" status="todo" depends-on="1"
+          <pd-phase n="2" title="Folder-aware lint: missing / unlinked / refs" status="done" depends-on="1"
                     files="auto-plan/internal/lint/lint.go,auto-plan/internal/lint/rules.go,auto-plan/internal/lint/lint_test.go,auto-plan/internal/workspace/workspace.go">
             <md><script type="text/plain">
 1. Add an `fs.FS` (rooted at the plan folder) to `lint.Context`; wire `os.DirFS(folder)` from the runner.
