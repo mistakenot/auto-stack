@@ -1,0 +1,3553 @@
+{
+  "version": "1.0.0",
+  "id": "001-hqax",
+  "nodes": [
+    {
+      "id": "ac-21xb",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "- **Given** any graph written by the CLI\n- **When** it is read and written again\n- **Then** the bytes are identical: nodes sorted by type then ID, edges by (from, type, to), fixed key order, 2-space indent, no HTML escaping, trailing newline\n- **And** `auto plan fmt <plan>` rewrites a hand-edited file into canonical form; `fmt --check` exits non-zero when it isn't\n- **And** only malformed JSON fails to decode (`parse-error`); everything else is reported by validation with its JSON path",
+        "title": "graph.json is canonical and deterministic",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/graph/ -run 'RoundTrip|Fmt'",
+          "tests": [
+            "auto-plan/internal/graph/graph_test.go",
+            "auto-plan/internal/cli/cli_integration_test.go",
+            "auto-plan/e2e/e2e_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-34fe",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "- **Given** the schema\n- **Then** goal, ac, decision, alternative, rail, defect, stage, file, question, tree, journey, leg and child exist, with required fields validated for presence and format\n- **And** edge types are typed by their endpoints and a wrong endpoint type is rejected (`proves` is ac→goal only, `about` is tree→any, …)",
+        "title": "Every node type from the design is representable",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/schema/ ./internal/graph/",
+          "tests": [
+            "auto-plan/internal/schema/registry_test.go",
+            "auto-plan/internal/graph/graph_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-4qrn",
+      "type": "ac",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "gwt": "- **Given** a plan at `lifecycle: requirements` holding only goals, questions and decisions\n- **Then** lint reports no errors\n- **And** at `solution`, `goal-no-ac` and `ac-no-verify` apply; at `plan`, stage and file coverage apply too\n- **And** open `question` nodes report `open-question` as a gate at every step",
+        "title": "Partial plans are valid at their lifecycle step",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/lint/ -run Lifecycle",
+          "tests": [
+            "auto-plan/internal/lint/lint_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-6733",
+      "type": "ac",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "gwt": "- **Given** any mutating command\n- **When** it succeeds\n- **Then** stdout carries a top-level `id` plus the changed fields, and the file on disk is canonical\n- **When** it would create an invalid graph\n- **Then** it exits non-zero with `[]ValidationError` and a hint, and `graph.json` is **byte-identical** to before",
+        "title": "Writes are validated and atomic, and report what changed",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/cli/ -run Rejected",
+          "tests": [
+            "auto-plan/internal/graph/graph_test.go",
+            "auto-plan/internal/cli/cli_integration_test.go",
+            "auto-plan/e2e/e2e_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-6xez",
+      "type": "ac",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "gwt": "- **Given** the real `auto` binary built from source and a fresh temp workspace\n- **When** the `lifecycle` scenario runs init → new → add/link/update/unlink → a rejected write → retire → lifecycle → fmt → lint\n- **Then** at every `# checkpoint` each `graph.json` is byte-identical to its snapshot\n- **When** the `dogfood` scenario re-expresses epic 005, task 062 and task 052 from CLI commands alone\n- **Then** every snapshot matches and `auto plan lint all` exits 0",
+        "title": "E2E: scripted CLI scenarios in a temp workspace produce exactly the expected graph.json",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./e2e/",
+          "tests": [
+            "auto-plan/e2e/e2e_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-7msa",
+      "type": "ac",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "gwt": "- **Given** a plan\n- **When** `auto plan show <plan> --text` runs\n- **Then** each ◎ goal, its ✓ ACs with verify commands, and the ◆ decisions that constrain it with `-` rejected alternatives; then rails, defects and open questions\n- **And** the JSON form carries the same information",
+        "title": "show renders the plan as a goal ladder an agent can read at a glance",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/render/ -run Show",
+          "tests": [
+            "auto-plan/internal/render/render_test.go",
+            "auto-plan/e2e/e2e_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-fqq9",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "- **Given** a plan with active and retired nodes\n- **When** `auto plan add <plan> ac …` runs\n- **Then** the new ID matches `^[a-z]{1,4}-[0-9a-hjkmnp-tv-z]{4}$`, regenerated on collision with any ID in the plan, retired included\n- **And** it gets a `rank` after its last sibling; `move` changes only that node's rank\n- **And** no command changes or deletes an ID; `retire` sets `status: retired`",
+        "title": "IDs are generated, stable and never reused",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/graph/ -run 'ID|Rank|Move|Retire'",
+          "tests": [
+            "auto-plan/internal/graph/graph_test.go",
+            "auto-plan/e2e/e2e_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-g3z3",
+      "type": "ac",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "gwt": "- **Given** an epic with goals, journeys + legs, rails, decisions and `child` nodes, and a task plan referencing epic nodes by qualified ID\n- **When** `auto plan lint all` runs\n- **Then** it reports `rail-unhonored`, `rail-undischarged` (per child), `leg-undelivered`, `child-missing`, `child-epic-mismatch`, `superseded-ref` and child `dependency-cycle`\n- **And** child plans never copy rail text",
+        "title": "Epics: inheritance is referenced, and gaps are caught",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/lint/ -run Epic",
+          "tests": [
+            "auto-plan/internal/lint/lint_test.go",
+            "auto-plan/e2e/e2e_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-h5qy",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "- **Given** a repo whose plans root holds `001-a/` and `003-b/` (or does not exist yet)\n- **When** `auto plan new stage-briefs --kind task` runs from any subdirectory\n- **Then** it creates `004-stage-briefs/graph.json` (highest + 1, or `001`) holding exactly the `plan` node at `lifecycle: requirements` and no edges\n- **And** `--kind` accepts only `task|epic`; a bad name or an existing folder exits non-zero with a hint and writes nothing",
+        "title": "auto plan new creates a numbered plan folder",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/workspace/ ./internal/cli/ ./e2e/",
+          "tests": [
+            "auto-plan/internal/workspace/workspace_test.go",
+            "auto-plan/internal/cli/cli_integration_test.go",
+            "auto-plan/e2e/e2e_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-mybp",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "- **Given** a populated plan\n- **Then** `list` returns IDs, metadata and titles only; `describe` the cheap summary rung with truncated text and the exact `get` recovery command; `get` the full node plus edges; `search` case-insensitive matches in one plan or all",
+        "title": "Resource verbs: list, describe, get and search return the right fidelity",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/cli/ -run 'List|Describe|Get|Search'",
+          "tests": [
+            "auto-plan/internal/cli/cli_integration_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-qxxe",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "- **Given** `docs/concepts/UBIQUITOUS_LANGUAGE.md` before any `auto-plan` Go file exists\n- **When** the task's first change adds a **Planning** section\n- **Then** it defines Plan, Child Plan, Goal, Acceptance Criterion, Decision, Alternative, Rail, Defect, Stage, File Change, Journey, Leg, Question and Tree in the house format\n- **And** Segment's, Observation's and TaskDef's `_Avoid_` lines are narrowed to their own domains\n- **And** every registry node type names its canonical term (`NodeType.Term`) and a registry test proves each exists in the glossary\n- **And** `glossary.py check` exits 0",
+        "title": "The vocabulary lands first and the glossary stays valid",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/schema/ -run Glossary",
+          "tests": [
+            "auto-plan/internal/schema/registry_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-r6cp",
+      "type": "ac",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "gwt": "- **Given** a plan at `lifecycle: plan`\n- **Then** lint reports `unplanned-file`, `untracked-file`, `missing-dep`, `dependency-cycle` and `open-question` with pd-lint's meanings",
+        "title": "lint subsumes today's pd-lint checks",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/lint/ -run PdLint",
+          "tests": [
+            "auto-plan/internal/lint/lint_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-rap2",
+      "type": "ac",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "gwt": "- **Given** any node, including a qualified epic node\n- **When** `auto plan trace <plan> <id> [--up|--down]` runs\n- **Then** it prints the chain of edges to the roots (up) and the leaves (down), crossing into the epic via the child plan",
+        "title": "trace shows lineage in both directions",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/render/ -run Trace",
+          "tests": [
+            "auto-plan/internal/render/render_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-t9jf",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "- **Given** fixture graphs that each break one rule\n- **When** `auto plan lint <plan>` (or `lint all`) runs\n- **Then** each fixture yields exactly its code and a clean fixture yields none\n- **And** output is `{plan, ok, issues:[{code,severity,path,field,message,hint}]}`; exit 1 on any error, warnings alone exit 0",
+        "title": "lint reports every structural problem, structured, with remediation",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/lint/",
+          "tests": [
+            "auto-plan/internal/lint/lint_test.go",
+            "auto-plan/internal/cli/cli_integration_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-temp",
+      "type": "ac",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "gwt": "- **Given** `make build` from the repo root\n- **Then** `auto plan` is mounted: `TestAllToolsMounted`, `go.work`, Makefile `PROJECTS`, the root `CLAUDE.md` table\n- **And** `auto plan quickstart` and `auto plan docs` print the happy path and the full reference\n- **And** `make check`, `make test` and `make stale-refs` are green",
+        "title": "Mounted, documented and dogfooded end to end",
+        "verify": {
+          "cmd": "make build && make check && make stale-refs",
+          "tests": [
+            "auto-cli/cmd/auto/main_test.go",
+            "auto-plan/internal/cli/cli_integration_test.go",
+            "auto-plan/e2e/e2e_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-w7q1",
+      "type": "ac",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "gwt": "- **Given** a plan at `lifecycle: plan`\n- **When** `auto plan brief <plan> <stage>` runs\n- **Then** it holds the stage's steps and commit, its `dependsOn` stages with status, its file tree, covered ACs with verify commands, constraining decisions and rails, and open questions\n- **And** nothing about other stages beyond their IDs and titles",
+        "title": "A stage brief gives an executing agent everything for one stage",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/render/ -run Brief",
+          "tests": [
+            "auto-plan/internal/render/render_test.go",
+            "auto-plan/e2e/e2e_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-zcn4",
+      "type": "ac",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "gwt": "- **Given** a `tree` node\n- **Then** `auto plan tree <plan> <id>` renders the aligned gutter and comment column\n- **Given** a plan's `file` nodes\n- **Then** `auto plan tree <plan> --files [--stage <id>]` derives a `├──` file tree with a `+ ~ -` gutter",
+        "title": "Trees render in show-me notation, including derived file trees",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/tree/ ./internal/render/",
+          "tests": [
+            "auto-plan/internal/tree/tree_test.go",
+            "auto-plan/internal/render/render_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-zkv8",
+      "type": "ac",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "gwt": "- **Given** a Markdown field containing `[[ac-zz9q]]`, where `ac-zz9q` doesn't exist\n- **Then** lint reports `dangling-prose-ref`\n- **Given** a `tree` body in show-me notation\n- **Then** lint reports `tree-syntax` for a bad gutter marker, odd indentation, an orphan child or a malformed `├──` tree",
+        "title": "Prose and trees are checked, not trusted",
+        "verify": {
+          "cmd": "cd auto-plan && go test ./internal/lint/ ./internal/tree/",
+          "tests": [
+            "auto-plan/internal/lint/lint_test.go",
+            "auto-plan/internal/tree/tree_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "a-0nzs",
+      "type": "alternative",
+      "status": "active",
+      "rank": "at",
+      "fields": {
+        "title": "Allow epics inside epics now",
+        "why": "Speculative, and multiplies the cross-plan lint rules."
+      }
+    },
+    {
+      "id": "a-3b77",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "title": "Also build a plan.html importer",
+        "why": "Conversion of drifting prose is its own problem."
+      }
+    },
+    {
+      "id": "a-3eqr",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ag",
+      "fields": {
+        "title": "References by folder name",
+        "why": "Not stable across renames."
+      }
+    },
+    {
+      "id": "a-4wej",
+      "type": "alternative",
+      "status": "active",
+      "rank": "am",
+      "fields": {
+        "title": "An optional --plan flag",
+        "why": "Two ways to say the same thing."
+      }
+    },
+    {
+      "id": "a-5cfp",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "title": "Migrate new-task in this task",
+        "why": "Doubles the scope and couples the format to one workflow before it is proven."
+      }
+    },
+    {
+      "id": "a-5wh0",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ab",
+      "fields": {
+        "title": "JSON on stdin only",
+        "why": "Undiscoverable; agents must know the schema up front."
+      }
+    },
+    {
+      "id": "a-7dse",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ao",
+      "fields": {
+        "title": "Store only the short NNN:id form",
+        "why": "Same ambiguity, deferred to read time."
+      }
+    },
+    {
+      "id": "a-88nf",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "title": "An epic with three tasks",
+        "why": "Coordination overhead for one engineer's worth of work."
+      }
+    },
+    {
+      "id": "a-8kwn",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ak",
+      "fields": {
+        "title": "next/follows edges between siblings",
+        "why": "An insert rewires two edges, reorders conflict in merges, and cycles become possible."
+      }
+    },
+    {
+      "id": "a-94km",
+      "type": "alternative",
+      "status": "active",
+      "rank": "au",
+      "fields": {
+        "title": "Keep docs/plans/",
+        "why": "auto-doc treated the scaffolded agent files as docs needing frontmatter and an index."
+      }
+    },
+    {
+      "id": "a-ascy",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a8",
+      "fields": {
+        "title": "Inline typed reference fields on nodes (ac.goal, stage.dependsOn)",
+        "why": "Relationships split across node shapes; every new edge type changes a node."
+      }
+    },
+    {
+      "id": "a-b2zx",
+      "type": "alternative",
+      "status": "active",
+      "rank": "as",
+      "fields": {
+        "title": "A hard-coded package-level list",
+        "why": "Ties every future lifecycle experiment to a code change that affects old plans."
+      }
+    },
+    {
+      "id": "a-f1sd",
+      "type": "alternative",
+      "status": "active",
+      "rank": "aa",
+      "fields": {
+        "title": "A data-file registry (schema.json, overridable per repo)",
+        "why": "Lint for a new type stays generic, and it adds a second file format to validate."
+      }
+    },
+    {
+      "id": "a-g1tc",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "title": "Both a canonical log and a derived snapshot",
+        "why": "Two files that can disagree is the drift this task exists to remove."
+      }
+    },
+    {
+      "id": "a-gtht",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "title": "An append-only graph.jsonl operation log folded on read",
+        "why": "Diffs show operations, not state, and hand edits become impossible."
+      }
+    },
+    {
+      "id": "a-h2a3",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a9",
+      "fields": {
+        "title": "An envelope with a refs map on each node",
+        "why": "Still splits relationships across nodes."
+      }
+    },
+    {
+      "id": "a-h5s1",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ar",
+      "fields": {
+        "title": "Migrate old plans forward on every schema change",
+        "why": "Rewrites history and needs upcasters forever."
+      }
+    },
+    {
+      "id": "a-j0h9",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ad",
+      "fields": {
+        "title": "Hand-written flags per type",
+        "why": "Every new type would need CLI code."
+      }
+    },
+    {
+      "id": "a-j4zg",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "title": "Split docs/plans/tasks + docs/plans/epics roots",
+        "why": "Separate numbering again; qualified references would need the kind."
+      }
+    },
+    {
+      "id": "a-k5gs",
+      "type": "alternative",
+      "status": "active",
+      "rank": "aj",
+      "fields": {
+        "title": "Slug IDs from the title (g-stage-brief)",
+        "why": "Stale after a title edit, and long."
+      }
+    },
+    {
+      "id": "a-m0vs",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ae",
+      "fields": {
+        "title": "A per-plan write lock",
+        "why": "Complexity for a concurrency case the workflow never produces."
+      }
+    },
+    {
+      "id": "a-mz63",
+      "type": "alternative",
+      "status": "active",
+      "rank": "al",
+      "fields": {
+        "title": "Qualified node refs as the only argument (get 004:d-9t2w)",
+        "why": "Noisy for the common single-plan case."
+      }
+    },
+    {
+      "id": "a-p3zz",
+      "type": "alternative",
+      "status": "active",
+      "rank": "af",
+      "fields": {
+        "title": "A top-level plan object with reference arrays",
+        "why": "Relationships would sit outside the edges array."
+      }
+    },
+    {
+      "id": "a-qrqc",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ah",
+      "fields": {
+        "title": "Infer the lifecycle from which node types are present",
+        "why": "Fragile and surprising: adding one stage would flip every rule on."
+      }
+    },
+    {
+      "id": "a-r493",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ac",
+      "fields": {
+        "title": "A generic --set key=value",
+        "why": "Untyped; `--help` can't document fields."
+      }
+    },
+    {
+      "id": "a-stf0",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ai",
+      "fields": {
+        "title": "Numbered per type (G1, AC3), never renumbered",
+        "why": "Numbers read as order and lie after a reorder; two branches allocate the same number."
+      }
+    },
+    {
+      "id": "a-tbzy",
+      "type": "alternative",
+      "status": "active",
+      "rank": "an",
+      "fields": {
+        "title": "Keep NNN as the only plan identity",
+        "why": "Two branches that each create 004 make every `004:` reference ambiguous after merge."
+      }
+    },
+    {
+      "id": "a-trkr",
+      "type": "alternative",
+      "status": "active",
+      "rank": "aq",
+      "fields": {
+        "title": "Identify edges only by their (from, type, to) triple",
+        "why": "Nothing stable to anchor a review thread to."
+      }
+    },
+    {
+      "id": "a-v35e",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "title": "A core-only task with follow-ups",
+        "why": "Leaves the format unproven against epics, the hardest case."
+      }
+    },
+    {
+      "id": "a-vyk9",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "title": "Reuse docs/tasks + docs/epics",
+        "why": "Two numbering sequences make a bare plan number ambiguous."
+      }
+    },
+    {
+      "id": "a-wmsf",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ap",
+      "fields": {
+        "title": "Treat the plan ID as permanent and let the folder number drift",
+        "why": "Folder and ID disagree forever."
+      }
+    },
+    {
+      "id": "d-1a9h",
+      "type": "decision",
+      "status": "active",
+      "rank": "ac",
+      "fields": {
+        "by": "charlie",
+        "chosen": "The plan is always the first positional (or `all`); node IDs are plan-local; only cross-plan edge targets are qualified.",
+        "reversibility": "two-way",
+        "title": "Every command is auto plan <verb> <plan> [args]",
+        "why": "One mental model; plan resolution happens once, in shared argument parsing."
+      }
+    },
+    {
+      "id": "d-1q9c",
+      "type": "decision",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "by": "charlie",
+        "chosen": "Each plan holds one deterministic `graph.json` of typed nodes and edges; the CLI writes it and `auto plan lint` validates it.",
+        "reversibility": "one-way",
+        "title": "graph.json snapshot is the source of truth",
+        "why": "PR diffs read cleanly and hand edits stay possible; history comes from git, not the file."
+      }
+    },
+    {
+      "id": "d-237n",
+      "type": "decision",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "by": "charlie",
+        "chosen": "Node types, edge types and field specs live in `internal/schema/registry.go`; decode, lint, flags, cards, trace and docs all read it.",
+        "reversibility": "two-way",
+        "title": "The type registry is a Go table",
+        "why": "Fully typed validation and one format to maintain."
+      }
+    },
+    {
+      "id": "d-7s73",
+      "type": "decision",
+      "status": "active",
+      "rank": "aa",
+      "fields": {
+        "by": "charlie",
+        "chosen": "A lowercase type prefix, a hyphen and 4 Crockford-base32 characters, regenerated on collision (retired included), never changed. The plan node's ID is `plan`.",
+        "reversibility": "one-way",
+        "title": "Node IDs are opaque: type prefix + 4 random base32 characters",
+        "why": "Removing or reordering never touches an ID, and branches don't collide."
+      }
+    },
+    {
+      "id": "d-9bam",
+      "type": "decision",
+      "status": "active",
+      "rank": "a9",
+      "fields": {
+        "by": "agent",
+        "chosen": "`plan.fields.lifecycle: requirements|solution|plan|executing|done` selects which rules apply, advanced by `update <plan> plan --lifecycle`.",
+        "reversibility": "two-way",
+        "title": "Lint is gated by an explicit lifecycle field",
+        "why": "A plan at `requirements` never errors for missing stages."
+      }
+    },
+    {
+      "id": "d-9vrq",
+      "type": "decision",
+      "status": "active",
+      "rank": "ah",
+      "fields": {
+        "by": "charlie",
+        "chosen": "The ordered steps are declared in `schema.Registry` next to the node and edge types; a test checks every referenced step exists.",
+        "reversibility": "two-way",
+        "title": "The lifecycle sequence lives in the registry",
+        "why": "A future version can change lifecycles without touching frozen plans."
+      }
+    },
+    {
+      "id": "d-ac47",
+      "type": "decision",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "by": "charlie",
+        "chosen": "`add <plan> <type>` and `update <plan> <id>` expose one typed flag per field, generated at command build time; `@path` / `@-` reads long text.",
+        "reversibility": "two-way",
+        "title": "Typed per-type flags, generated from the registry",
+        "why": "Discoverable typed flags, and a new type gets flags with no CLI code."
+      }
+    },
+    {
+      "id": "d-f44t",
+      "type": "decision",
+      "status": "active",
+      "rank": "a8",
+      "fields": {
+        "by": "agent",
+        "chosen": "Exactly one node `plan` carries name, kind, lifecycle, epic and created date; plan-level relationships are edges from it; cross-plan references are `NNN:ID`.",
+        "reversibility": "two-way",
+        "title": "The plan header is a plan node; cross-plan refs are NNN:ID",
+        "why": "Every relationship lives in `edges[]`; plan numbers are unique across kinds ([[d-vg7q]])."
+      }
+    },
+    {
+      "id": "d-fc9d",
+      "type": "decision",
+      "status": "active",
+      "rank": "af",
+      "fields": {
+        "by": "charlie",
+        "chosen": "Edges become `{id, from, type, to}` with `e-xxxx` IDs unique across the plan; `unlink` takes the ID or the triple.",
+        "reversibility": "one-way",
+        "title": "Edges get random IDs",
+        "why": "Review threads and evidence can anchor to edges; duplicate triples are still rejected."
+      }
+    },
+    {
+      "id": "d-ff0j",
+      "type": "decision",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "by": "charlie",
+        "chosen": "`auto plan` ships standalone; `new-task`, `new-solution`, `new-plan`, `new-epic` and `plan.html` keep working.",
+        "reversibility": "two-way",
+        "title": "Coexist with plan.html; planning skills untouched",
+        "why": "Adoption comes from follow-ups (skill migration, HTML renderer, importer) that build on this graph."
+      }
+    },
+    {
+      "id": "d-gdbk",
+      "type": "decision",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "by": "charlie",
+        "chosen": "No locking. `Save` writes a temp file and renames it into place.",
+        "reversibility": "two-way",
+        "title": "No write lock; atomic rename only",
+        "why": "Planners are serial, one agent per plan; git merges handle branches."
+      }
+    },
+    {
+      "id": "d-mpk7",
+      "type": "decision",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "by": "charlie",
+        "chosen": "Deliver everything in one task: a thin end-to-end path first (new → add/link G/AC/D → lint → show), then the remaining node types, lenses and epics.",
+        "reversibility": "two-way",
+        "title": "One task, staged as a walking skeleton",
+        "why": "The real binary judges every stage from the first commit; epics can split off if the task proves too big."
+      }
+    },
+    {
+      "id": "d-p221",
+      "type": "decision",
+      "status": "active",
+      "rank": "ae",
+      "fields": {
+        "by": "charlie",
+        "chosen": "`auto plan renumber <plan> [--to NNN]` renames the folder, rewrites the plan ID (keeping its suffix) and every reference in writable plans; refuses with `frozen-ref`.",
+        "reversibility": "two-way",
+        "title": "Number collisions are fixed at merge time by renumber",
+        "why": "The ID always matches its folder; rewriting is fine because plans stay mutable until they merge."
+      }
+    },
+    {
+      "id": "d-rrsn",
+      "type": "decision",
+      "status": "active",
+      "rank": "ad",
+      "fields": {
+        "by": "charlie",
+        "chosen": "`new` generates `NNN-xxxx`, stored as graph.json's top-level `id`; qualified references store the full ID; the CLI expands the `NNN` shorthand when unambiguous.",
+        "reversibility": "one-way",
+        "title": "Each plan has its own ID: NNN-xxxx",
+        "why": "References stay unambiguous while two branches have both allocated the same number. Decided after execution, during PR #157."
+      }
+    },
+    {
+      "id": "d-savt",
+      "type": "decision",
+      "status": "active",
+      "rank": "ag",
+      "fields": {
+        "by": "charlie",
+        "chosen": "`version` is a semver string starting at `1.0.0`; writes are refused (`frozen`) on a major mismatch or once lifecycle is `done`.",
+        "reversibility": "one-way",
+        "title": "Semver schema versions; plans freeze instead of migrating",
+        "why": "A new schema version only affects plans created after it; completed plans are a permanent record."
+      }
+    },
+    {
+      "id": "d-vg7q",
+      "type": "decision",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "by": "charlie",
+        "chosen": "`auto plan new` creates `docs/plans/NNN-name/`; tasks and epics share one root and one numbering sequence, and the graph records `kind`.",
+        "reversibility": "two-way",
+        "title": "Plans live in docs/plans/NNN-name/, for both kinds",
+        "why": "Existing task and epic docs stay untouched, and one sequence keeps `NNN` unambiguous across kinds."
+      }
+    },
+    {
+      "id": "d-weaw",
+      "type": "decision",
+      "status": "active",
+      "rank": "aj",
+      "fields": {
+        "by": "charlie",
+        "chosen": "The canonical plans root is `.auto/plan/plans/NNN-name/graph.json`; everything else in [[d-vg7q]] still holds.",
+        "reversibility": "one-way",
+        "title": "Plans live in .auto/plan/plans/, not docs/plans/ (amends D-1)",
+        "why": "Plans are tool-owned data and follow the `.auto/<tool>/` convention; `docs/` stays prose for people."
+      }
+    },
+    {
+      "id": "d-xdpt",
+      "type": "decision",
+      "status": "active",
+      "rank": "ai",
+      "fields": {
+        "by": "charlie",
+        "chosen": "The hierarchy stays epic → task.",
+        "reversibility": "two-way",
+        "title": "Keep two levels (epic → task) for now",
+        "why": "No use case for deeper nesting has come up; versioning lets a later version add it."
+      }
+    },
+    {
+      "id": "d-z9vm",
+      "type": "decision",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "by": "charlie",
+        "chosen": "Generic node envelopes `{id,type,status,fields}` and a separate typed edges array `{from,type,to}`, both validated by the registry.",
+        "reversibility": "one-way",
+        "title": "graph.json is generic nodes[] + edges[]",
+        "why": "A literal, uniformly queryable graph; new edge types never touch node shapes."
+      }
+    },
+    {
+      "id": "d-zv2w",
+      "type": "decision",
+      "status": "active",
+      "rank": "ab",
+      "fields": {
+        "by": "charlie",
+        "chosen": "Each node has a sortable `rank`; `move --before|--after` writes one new rank. Stages render in `dependsOn` order, ACs under their goal via `proves`.",
+        "reversibility": "two-way",
+        "title": "Reading order is a rank field; meaningful order stays in edges",
+        "why": "Inserts and reorders are single-field changes that merge cleanly."
+      }
+    },
+    {
+      "id": "df-kctm",
+      "type": "defect",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "description": "Task 062 mounted `auto mail` but never added it to the stems list in `auto-cli/cmd/auto/main_test.go:63` (0c73e78).",
+        "title": "TestAllToolsMounted is missing mail"
+      }
+    },
+    {
+      "id": "df-t0sv",
+      "type": "defect",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "description": "Relationships sit in prose or comma-separated attributes and derived facts are hand-written. The plan-lab experiments (`docs/plan-lab-00-index.html`, 2026-09-29) found six contradictions in the two most complex reviewed plans; review had caught none.",
+        "title": "plan.html relationships live in prose, so derived facts drift"
+      }
+    },
+    {
+      "id": "df-teqk",
+      "type": "defect",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "description": "Markdown inside `<script>` tags inside `pd-*` web components has no queryable structure.",
+        "title": "Every rich plan view needs a hand-written extractor first"
+      }
+    },
+    {
+      "id": "f-019m",
+      "type": "file",
+      "status": "active",
+      "rank": "az6",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/e2e/testdata/scenarios/lifecycle/snapshots/",
+        "why": "Expected graph.json per checkpoint plus stdout payloads."
+      }
+    },
+    {
+      "id": "f-0kp6",
+      "type": "file",
+      "status": "active",
+      "rank": "az4",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/e2e/e2e_test.go",
+        "why": "Builds auto, runs scripted scenarios, compares graph.json per checkpoint."
+      }
+    },
+    {
+      "id": "f-0xm4",
+      "type": "file",
+      "status": "active",
+      "rank": "azc",
+      "fields": {
+        "change": "edit",
+        "path": "auto-cli/go.mod",
+        "why": "Require auto-plan with a local replace."
+      }
+    },
+    {
+      "id": "f-1f44",
+      "type": "file",
+      "status": "active",
+      "rank": "azm",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/cli/scaffold_integration_test.go",
+        "why": "Scaffold idempotence and the symlink fallback."
+      }
+    },
+    {
+      "id": "f-25tm",
+      "type": "file",
+      "status": "active",
+      "rank": "am",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/tree/parse.go",
+        "why": "Show-me notation parser."
+      }
+    },
+    {
+      "id": "f-2kcp",
+      "type": "file",
+      "status": "active",
+      "rank": "aza",
+      "fields": {
+        "change": "edit",
+        "path": "auto-cli/cmd/auto/main.go",
+        "why": "Mount plancmd.New(stdout, stderr)."
+      }
+    },
+    {
+      "id": "f-30kg",
+      "type": "file",
+      "status": "active",
+      "rank": "af",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/workspace/workspace.go",
+        "why": "Repo root, plans scan, next NNN, plan-argument resolution, PlanSet."
+      }
+    },
+    {
+      "id": "f-3dkc",
+      "type": "file",
+      "status": "active",
+      "rank": "az5",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/e2e/testdata/scenarios/lifecycle/commands.txt",
+        "why": "The lifecycle scenario script."
+      }
+    },
+    {
+      "id": "f-44v6",
+      "type": "file",
+      "status": "active",
+      "rank": "azl",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/workspace/scaffold.go",
+        "why": "AGENTS.md + CLAUDE.md symlink scaffold in the plans root."
+      }
+    },
+    {
+      "id": "f-4bgn",
+      "type": "file",
+      "status": "active",
+      "rank": "az1",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/cli/view.go",
+        "why": "show, trace, tree, brief."
+      }
+    },
+    {
+      "id": "f-5f4j",
+      "type": "file",
+      "status": "active",
+      "rank": "az3",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/cli/cli_integration_test.go",
+        "why": "Every command in-process against a temp repo."
+      }
+    },
+    {
+      "id": "f-6eqk",
+      "type": "file",
+      "status": "active",
+      "rank": "azi",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/lint/set.go",
+        "why": "Plan set loading with duplicate-plan-number detection."
+      }
+    },
+    {
+      "id": "f-6jf3",
+      "type": "file",
+      "status": "active",
+      "rank": "aq",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/render/card.go",
+        "why": "Node card with incoming/outgoing edges."
+      }
+    },
+    {
+      "id": "f-82ef",
+      "type": "file",
+      "status": "active",
+      "rank": "az8",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/e2e/testdata/scenarios/dogfood/snapshots/",
+        "why": "Expected graphs plus golden show/trace/tree/brief output."
+      }
+    },
+    {
+      "id": "f-83hg",
+      "type": "file",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/go.sum",
+        "why": "Checksums (all already in the workspace)."
+      }
+    },
+    {
+      "id": "f-8sae",
+      "type": "file",
+      "status": "active",
+      "rank": "a9",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/graph/model.go",
+        "why": "Graph, Node, Edge; the ValidationError alias."
+      }
+    },
+    {
+      "id": "f-984z",
+      "type": "file",
+      "status": "active",
+      "rank": "au",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/cli/root.go",
+        "why": "Root command, ExitError, Execute, writeJSON, mutationResult."
+      }
+    },
+    {
+      "id": "f-ap2g",
+      "type": "file",
+      "status": "active",
+      "rank": "ak",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/lint/cycles.go",
+        "why": "Deterministic Tarjan SCC for dependsOn."
+      }
+    },
+    {
+      "id": "f-av07",
+      "type": "file",
+      "status": "active",
+      "rank": "ay",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/cli/write.go",
+        "why": "add/update with registry-generated flags; link, unlink, retire, move."
+      }
+    },
+    {
+      "id": "f-b57j",
+      "type": "file",
+      "status": "active",
+      "rank": "ap",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/render/show.go",
+        "why": "Goal ladder (task) and goals → journeys → children (epic)."
+      }
+    },
+    {
+      "id": "f-bf2d",
+      "type": "file",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/cmd/autoplan/main.go",
+        "why": "Minimal entry point."
+      }
+    },
+    {
+      "id": "f-bz3f",
+      "type": "file",
+      "status": "active",
+      "rank": "ah",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/lint/lint.go",
+        "why": "The Issue type, the rule runner, lifecycle gating."
+      }
+    },
+    {
+      "id": "f-c6ws",
+      "type": "file",
+      "status": "active",
+      "rank": "aj",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/lint/epic.go",
+        "why": "Cross-plan epic inheritance rules."
+      }
+    },
+    {
+      "id": "f-ckg8",
+      "type": "file",
+      "status": "active",
+      "rank": "a8",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/schema/registry_test.go",
+        "why": "Registry self-consistency and the glossary term contract."
+      }
+    },
+    {
+      "id": "f-e6te",
+      "type": "file",
+      "status": "active",
+      "rank": "azj",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/cli/renumber.go",
+        "why": "renumber <plan> [--to NNN], per [[d-p221]]."
+      }
+    },
+    {
+      "id": "f-evst",
+      "type": "file",
+      "status": "active",
+      "rank": "azf",
+      "fields": {
+        "change": "edit",
+        "path": "Makefile",
+        "why": "Add auto-plan to PROJECTS (before auto-cli)."
+      }
+    },
+    {
+      "id": "f-f21t",
+      "type": "file",
+      "status": "active",
+      "rank": "azk",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/cli/renumber_internal_test.go",
+        "why": "Shorthand-ref rewriting and rollback reporting."
+      }
+    },
+    {
+      "id": "f-ff3s",
+      "type": "file",
+      "status": "active",
+      "rank": "ao",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/tree/tree_test.go",
+        "why": "Parse errors, render goldens."
+      }
+    },
+    {
+      "id": "f-fxmr",
+      "type": "file",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/schema/registry.go",
+        "why": "Node types, edge types, field specs: the single extension point."
+      }
+    },
+    {
+      "id": "f-g5d6",
+      "type": "file",
+      "status": "active",
+      "rank": "ai",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/lint/rules.go",
+        "why": "Core, prose-reference, pd-lint parity and question rules."
+      }
+    },
+    {
+      "id": "f-g6ka",
+      "type": "file",
+      "status": "active",
+      "rank": "at",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/render/render_test.go",
+        "why": "JSON/text parity and goldens."
+      }
+    },
+    {
+      "id": "f-gbm0",
+      "type": "file",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/app/app.go",
+        "why": "App{Stdout, Stderr, CWD}."
+      }
+    },
+    {
+      "id": "f-gkp0",
+      "type": "file",
+      "status": "active",
+      "rank": "az2",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/cli/help.go",
+        "why": "quickstart and the registry-generated docs."
+      }
+    },
+    {
+      "id": "f-gtne",
+      "type": "file",
+      "status": "active",
+      "rank": "az7",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/e2e/testdata/scenarios/dogfood/commands.txt",
+        "why": "Re-expresses epic 005, 062 and 052 via the CLI only."
+      }
+    },
+    {
+      "id": "f-j085",
+      "type": "file",
+      "status": "active",
+      "rank": "aa",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/graph/io.go",
+        "why": "Tolerant Decode; canonical, atomic Save."
+      }
+    },
+    {
+      "id": "f-k7e9",
+      "type": "file",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/go.mod",
+        "why": "module github.com/mistakenot/auto-plan; auto-shared (replace ../auto-shared) + cobra."
+      }
+    },
+    {
+      "id": "f-m0vg",
+      "type": "file",
+      "status": "active",
+      "rank": "az",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/cli/lint.go",
+        "why": "lint and fmt [--check]."
+      }
+    },
+    {
+      "id": "f-mtfb",
+      "type": "file",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/rootcmd/rootcmd.go",
+        "why": "New(stdout, stderr) mounting façade."
+      }
+    },
+    {
+      "id": "f-n972",
+      "type": "file",
+      "status": "active",
+      "rank": "azg",
+      "fields": {
+        "change": "edit",
+        "path": "CLAUDE.md",
+        "why": "Sub-Projects row for auto plan."
+      }
+    },
+    {
+      "id": "f-ncpd",
+      "type": "file",
+      "status": "active",
+      "rank": "ag",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/workspace/workspace_test.go",
+        "why": "Numbering gaps, name validation, resolution from subdirectories."
+      }
+    },
+    {
+      "id": "f-nv2s",
+      "type": "file",
+      "status": "active",
+      "rank": "aw",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/cli/new.go",
+        "why": "new <name> --kind task|epic [--epic NNN]."
+      }
+    },
+    {
+      "id": "f-pd5x",
+      "type": "file",
+      "status": "active",
+      "rank": "aze",
+      "fields": {
+        "change": "edit",
+        "path": "go.work",
+        "why": "use ./auto-plan."
+      }
+    },
+    {
+      "id": "f-pfzt",
+      "type": "file",
+      "status": "active",
+      "rank": "ad",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/graph/validate.go",
+        "why": "The shared validate(): fields against FieldSpec, edges against EdgeType."
+      }
+    },
+    {
+      "id": "f-pp0c",
+      "type": "file",
+      "status": "active",
+      "rank": "an",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/tree/render.go",
+        "why": "Aligned gutter + comment column, glyphs, derived file tree."
+      }
+    },
+    {
+      "id": "f-qzaz",
+      "type": "file",
+      "status": "active",
+      "rank": "azh",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/graph/rewrite.go",
+        "why": "Rewrites qualified references for renumber."
+      }
+    },
+    {
+      "id": "f-rj5m",
+      "type": "file",
+      "status": "active",
+      "rank": "ac",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/graph/mutate.go",
+        "why": "Add, Update, Link, Unlink, Retire, Move. Validate first, never partial."
+      }
+    },
+    {
+      "id": "f-v65x",
+      "type": "file",
+      "status": "active",
+      "rank": "azb",
+      "fields": {
+        "change": "edit",
+        "path": "auto-cli/cmd/auto/main_test.go",
+        "why": "Add plan (and the missing mail) to TestAllToolsMounted."
+      }
+    },
+    {
+      "id": "f-v9pg",
+      "type": "file",
+      "status": "active",
+      "rank": "av",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/cli/init.go",
+        "why": "init: create the plans root (idempotent), ensure ~/.auto/settings.json."
+      }
+    },
+    {
+      "id": "f-vd9y",
+      "type": "file",
+      "status": "active",
+      "rank": "ab",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/graph/ids.go",
+        "why": "Opaque IDs (injectable random source), rank keys, qualified reference parsing."
+      }
+    },
+    {
+      "id": "f-w3h4",
+      "type": "file",
+      "status": "active",
+      "rank": "as",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/render/brief.go",
+        "why": "Stage Brief."
+      }
+    },
+    {
+      "id": "f-wk31",
+      "type": "file",
+      "status": "active",
+      "rank": "ae",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/graph/graph_test.go",
+        "why": "Round-trip stability, ID collisions, rank insertion, validation cases."
+      }
+    },
+    {
+      "id": "f-wpt7",
+      "type": "file",
+      "status": "active",
+      "rank": "al",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/lint/lint_test.go",
+        "why": "One table case per issue code, plus a clean graph per lifecycle."
+      }
+    },
+    {
+      "id": "f-xkpz",
+      "type": "file",
+      "status": "active",
+      "rank": "ar",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/render/trace.go",
+        "why": "Lineage walk up/down across plans."
+      }
+    },
+    {
+      "id": "f-xs29",
+      "type": "file",
+      "status": "active",
+      "rank": "ax",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/internal/cli/read.go",
+        "why": "list, describe, get, search."
+      }
+    },
+    {
+      "id": "f-ya5v",
+      "type": "file",
+      "status": "active",
+      "rank": "az9",
+      "fields": {
+        "change": "edit",
+        "path": ".gitignore",
+        "why": "Un-ignore auto-plan testdata."
+      }
+    },
+    {
+      "id": "f-z7s1",
+      "type": "file",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "change": "edit",
+        "path": "docs/concepts/UBIQUITOUS_LANGUAGE.md",
+        "why": "Planning section first; narrow the Segment, Observation and TaskDef _Avoid_ lines; regenerate the ER block."
+      }
+    },
+    {
+      "id": "f-za01",
+      "type": "file",
+      "status": "retired",
+      "rank": "azd",
+      "fields": {
+        "change": "edit",
+        "path": "auto-cli/go.sum",
+        "why": "Checksums for the new module edge."
+      }
+    },
+    {
+      "id": "f-zah7",
+      "type": "file",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "change": "add",
+        "path": "auto-plan/CLAUDE.md",
+        "why": "What the tool is, build/test, vocabulary pointer. Says auto plan, never a per-tool binary name."
+      }
+    },
+    {
+      "id": "f-zw3e",
+      "type": "file",
+      "status": "active",
+      "rank": "azn",
+      "fields": {
+        "change": "edit",
+        "path": ".auto/doc/settings.json",
+        "why": "auto-doc ignore for the plans root, then dropped when plans moved to .auto/."
+      }
+    },
+    {
+      "id": "g-1wak",
+      "type": "goal",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "description": "Fast, structured errors, non-zero exit: dangling references, bad IDs, goal count, ACs without a verify command, stage dependency cycles, epic inheritance gaps.",
+        "title": "auto plan lint catches drift"
+      }
+    },
+    {
+      "id": "g-2bjp",
+      "type": "goal",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "description": "A goal → AC → decision overview, a card for any node with its neighbours, lineage traces, show-me text trees, and a stage brief per stage. JSON for every output.",
+        "title": "Agents can read the graph usefully"
+      }
+    },
+    {
+      "id": "g-9s1v",
+      "type": "goal",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "description": "Core layer: ◎ Goal → ✓ Acceptance Criterion (with a reproducible `verify` command) → ◆ Decision (with rejected alternatives). Secondary: rails, defects, stages, file changes, questions, show-me trees. Epic: journeys with legs, child-plan references.",
+        "title": "Every node type from the design is supported"
+      }
+    },
+    {
+      "id": "g-9vsj",
+      "type": "goal",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "description": "Typed nodes and typed edges, written sorted and stable so a PR diff reads cleanly. It is the only source of truth.",
+        "title": "The graph is one deterministic graph.json per plan"
+      }
+    },
+    {
+      "id": "g-hwb6",
+      "type": "goal",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "description": "Add, update, link, unlink and retire. IDs are opaque and generated (`ac-3fxm`), so they never change when items are removed or reordered. Reading order is a separate `rank`. Every write is validated.",
+        "title": "Agents can change the graph safely through the CLI"
+      }
+    },
+    {
+      "id": "g-jqeb",
+      "type": "goal",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "description": "It creates a numbered `NNN-name/` plan folder using the existing 3-digit + kebab-case convention, holding a `graph.json` with only the `plan` node, for either kind: `task` or `epic`.",
+        "title": "auto plan new starts a plan"
+      }
+    },
+    {
+      "id": "g-p2kr",
+      "type": "goal",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "description": "Plan, Goal, Acceptance Criterion, Decision, Rail, Journey and the other node types are in the glossary before any code uses them.",
+        "title": "The vocabulary lands first"
+      }
+    },
+    {
+      "id": "plan",
+      "type": "plan",
+      "status": "active",
+      "fields": {
+        "created": "2026-09-29",
+        "kind": "task",
+        "lifecycle": "done",
+        "name": "auto-plan-graph"
+      }
+    },
+    {
+      "id": "q-5szy",
+      "type": "question",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "answer": "Yes, via the explicit lifecycle field ([[d-9bam]]).",
+        "recommended": "Yes — lint knows which checks apply at each lifecycle step.",
+        "status": "answered",
+        "title": "Are partial plans valid?"
+      }
+    },
+    {
+      "id": "q-bewg",
+      "type": "question",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "answer": "New module auto-plan/, mounted as auto plan.",
+        "recommended": "A new module `auto-plan/`, mounted as `auto plan`, following docs/auto-package-patterns.md.",
+        "status": "answered",
+        "title": "Where does the code live?"
+      }
+    },
+    {
+      "id": "q-hbqc",
+      "type": "question",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "answer": "5–8, as a goal-count warning.",
+        "recommended": "Cap at 5–8; lint warns outside the range rather than failing, so drafts stay writable.",
+        "status": "answered",
+        "title": "How many goals may a plan have?"
+      }
+    },
+    {
+      "id": "q-q98v",
+      "type": "question",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "answer": "Settled in /new-solution as [[d-7s73]].",
+        "recommended": "Opaque, plan-local: type prefix + 4 random base32 characters.",
+        "status": "answered",
+        "title": "What shape are node IDs?"
+      }
+    },
+    {
+      "id": "q-r2qm",
+      "type": "question",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "answer": "JSON by default, --text on every read and view command.",
+        "recommended": "None: JSON by default everywhere, `--text` for humans.",
+        "status": "answered",
+        "title": "Which display commands default to text?"
+      }
+    },
+    {
+      "id": "q-vzrv",
+      "type": "question",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "answer": "Defect for a known problem in existing code that a plan fixes. Plan + Stage: the unit is a Plan with kind task | epic, an epic's children are child plans, and an ordered slice of work is a Stage. The TaskDef, Segment and Observation _Avoid_ lines are narrowed to their own domains.",
+        "recommended": "The unit is a Plan with kind task|epic; an epic's children are child plans; phase → Stage; finding → Defect; narrow the existing _Avoid_ lines.",
+        "status": "answered",
+        "title": "Several node-type names collide with the glossary's _Avoid_ lists — what do we call them?"
+      }
+    },
+    {
+      "id": "s-7kx3",
+      "type": "stage",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "commit": "feat(065): auto plan walking skeleton — glossary, registry, graph.json, new/add/link/lint/show, e2e",
+        "status": "done",
+        "steps": [
+          "Glossary first: add the Planning section and narrow the Segment/Observation/TaskDef _Avoid_ lines; glossary.py check exits 0",
+          "Scaffold the module following auto-mail (go.mod, main.go, rootcmd, app, cli/root.go, CLAUDE.md)",
+          "Minimal registry: plan, goal, ac, decision; proves and constrains; the Term → glossary test",
+          "Graph core: model, tolerant Decode, canonical atomic Save, opaque IDs, Add and Link",
+          "Workspace: repo root, plans scan, next NNN, plan-argument resolution",
+          "Minimal lint (dangling-ref, bad-id, goal-no-ac) and a plain show",
+          "CLI verbs init, new, add, link, lint, show with auto plan <verb> <plan> argument order",
+          "Mount under auto: go.work, auto-cli go.mod + main.go, TestAllToolsMounted (plan and mail), Makefile, CLAUDE.md",
+          "E2E harness + lifecycle scenario checkpoints 1–3 with AUTO_PLAN_SEED; .gitignore un-ignore lines",
+          "Stage verify: build, tests, golangci-lint (1.26 toolchain), make check"
+        ],
+        "title": "Walking skeleton: glossary → registry → graph.json → new/add/link/lint/show → e2e"
+      }
+    },
+    {
+      "id": "s-a96x",
+      "type": "stage",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "commit": "feat(065): dogfood e2e (epic + 062, 052 content) and quickstart/docs",
+        "status": "done",
+        "steps": [
+          "quickstart (happy path) and docs generated from the registry",
+          "dogfood scenario: epic 001-auto-mail-mvp, child 002-auto-mail-walking-skeleton, 003-reflect-tool-hardening from CLI calls only",
+          "Raise anything inexpressible as a finding rather than working around it",
+          "Docs polish: auto-plan/CLAUDE.md and the root CLAUDE.md row; auto doc fixed",
+          "Stage verify: make check, make test, make stale-refs; open the PR"
+        ],
+        "title": "Dogfood and docs: rebuild epic 005 + 062 and 052 via the CLI, quickstart/docs"
+      }
+    },
+    {
+      "id": "s-dqaz",
+      "type": "stage",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "commit": "fix(065): address PR #157 review — per-child rails, validated listings, in-repo paths",
+        "status": "done",
+        "steps": [
+          "rail-undischarged becomes per child: one compliant child no longer hides the others",
+          "list/describe validate what they return",
+          "File paths must stay inside the repo (registry pattern)"
+        ],
+        "title": "Address PR #157 review: per-child rails, validated listings, in-repo paths"
+      }
+    },
+    {
+      "id": "s-evss",
+      "type": "stage",
+      "status": "active",
+      "rank": "a9",
+      "fields": {
+        "commit": "feat(065): move canonical plans root to .auto/plan/plans",
+        "status": "done",
+        "steps": [
+          "workspace root becomes .auto/plan/plans; scaffold follows",
+          "Drop the auto-doc ignore now that plans are outside docs/",
+          "Update glossary, CLAUDE.md, help text and every stdout snapshot path"
+        ],
+        "title": "Move the canonical plans root to .auto/plan/plans (D-20)"
+      }
+    },
+    {
+      "id": "s-exhn",
+      "type": "stage",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "commit": "feat(065): agent-facing lenses — list/describe/get/search, show, trace, show-me trees, stage brief",
+        "status": "done",
+        "steps": [
+          "Resource verbs: list, describe (truncated + recovery command), get, search",
+          "show completes: goal ladder, verify commands, decisions with rejected alternatives, rails/defects/questions blocks",
+          "trace <plan> <id> [--up|--down]",
+          "Trees: aligned gutter and comment column; derived file tree with --files [--stage]",
+          "brief <plan> <stage>: everything one stage needs, nothing about other stages",
+          "Read the --text output by eye before calling it done (061's lesson)",
+          "Stage verify: build, tests, lint, make check"
+        ],
+        "title": "Read and display lenses: list/describe/get/search, show, trace, tree, brief"
+      }
+    },
+    {
+      "id": "s-gev8",
+      "type": "stage",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "commit": "feat(065): full plan lint — lifecycle gating, prose refs, show-me tree syntax, pd-lint parity",
+        "status": "done",
+        "steps": [
+          "Lifecycle gating: rules filtered by plan.lifecycle; open-question at every step",
+          "Core rules: duplicate-id, wrong-endpoint, ac-multi-goal, ac-no-verify, goal-count, decision-no-alternative, retired-ref",
+          "Cycles: mirror auto-graph's deterministic Tarjan SCC for dependsOn, path joined with ' → '",
+          "Prose [[id]] refs → dangling-prose-ref; show-me tree parser → tree-syntax",
+          "pd-lint parity at lifecycle plan: unplanned-file, untracked-file, missing-dep, dependency-cycle, open-question",
+          "Stage verify: build, tests, lint, make check"
+        ],
+        "title": "Lint, complete: lifecycle gating, prose refs, trees, pd-lint parity"
+      }
+    },
+    {
+      "id": "s-hcka",
+      "type": "stage",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "commit": "feat(065): every node and edge type, full write surface, generated flags, fmt",
+        "status": "done",
+        "steps": [
+          "Complete the registry: every node and edge type, with MinLifecycle",
+          "Mutations: Update, Unlink, Retire (keeps the ID), Move (one new rank); update plan --lifecycle",
+          "Registry-generated flags for add and update, @file / @- values; a throwaway-type test proves no CLI code is needed",
+          "fmt <plan|all> [--check]",
+          "Extend the lifecycle scenario (checkpoints 4–7) including a rejected write",
+          "Stage verify: build, tests, lint, make check"
+        ],
+        "title": "Full write surface and every node type"
+      }
+    },
+    {
+      "id": "s-j1ep",
+      "type": "stage",
+      "status": "active",
+      "rank": "aa",
+      "fields": {
+        "commit": "fix(065): address second Codex review — shorthand refs in renumber, rollback reporting, list collisions",
+        "status": "done",
+        "steps": [
+          "renumber rewrites NNN:id shorthand references too",
+          "A failed renumber reports what it rolled back",
+          "list all reports number collisions instead of hiding one plan"
+        ],
+        "title": "Address the second Codex review: shorthand refs in renumber, rollback reporting, list collisions"
+      }
+    },
+    {
+      "id": "s-nkz2",
+      "type": "stage",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "commit": "feat(065): epics — qualified cross-plan refs, inheritance lint, epic show/trace",
+        "status": "done",
+        "steps": [
+          "PlanSet loads the target plan plus every plan it references; only CrossPlan edges accept NNN:id; new --epic",
+          "Epic lint: rail-unhonored, rail-undischarged, leg-undelivered, child-missing, child-epic-mismatch, superseded-ref, child dependency-cycle",
+          "Epic views: show prints goals → journeys → child plans; trace crosses plan boundaries",
+          "Stage verify: build, tests, lint, make check"
+        ],
+        "title": "Epics across plans: qualified refs, inheritance lint, epic views"
+      }
+    },
+    {
+      "id": "s-qdmr",
+      "type": "stage",
+      "status": "active",
+      "rank": "a8",
+      "fields": {
+        "commit": "feat(065): init/new scaffold docs/plans AGENTS.md + CLAUDE.md symlink",
+        "status": "done",
+        "steps": [
+          "workspace.Scaffold writes AGENTS.md and a relative CLAUDE.md symlink (a copy where symlinks fail); never overwrites",
+          "init and new report what they scaffolded",
+          "auto-doc ignore for the plans root"
+        ],
+        "title": "init/new scaffold AGENTS.md + CLAUDE.md symlink in the plans root"
+      }
+    },
+    {
+      "id": "s-xsa9",
+      "type": "stage",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "commit": "feat(065): plan IDs, edge IDs, semver freezing, registry-owned lifecycle",
+        "status": "done",
+        "steps": [
+          "Plan IDs NNN-xxxx stored as the top-level id; references store the full ID; NNN shorthand expands",
+          "Edges become {id, from, type, to} with e-xxxx IDs; unlink takes either form",
+          "Semver version 1.0.0; writes refused with frozen on a major mismatch or lifecycle done",
+          "The lifecycle sequence moves into schema.Registry",
+          "renumber <plan> [--to NNN] with reference rewriting; duplicate-plan-number lint",
+          "Regenerate and review every snapshot"
+        ],
+        "title": "Plan IDs, edge IDs, semver freezing, registry-owned lifecycle (D-14 – D-18)"
+      }
+    },
+    {
+      "id": "t-105h",
+      "type": "tree",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "body": "+ auto-plan/internal/workspace/scaffold.go  AGENTS.md + CLAUDE.md symlink\n~ auto-plan/internal/workspace/workspace.go  root moves to .auto/plan/plans\n~ .auto/doc/settings.json  drop the docs/plans ignore\n",
+        "kind": "file",
+        "title": "Moving the plans root (D-20)"
+      }
+    },
+    {
+      "id": "t-15q3",
+      "type": "tree",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "body": "lint(plan)\n  Decode(path)  tolerant: only malformed JSON fails\n  Validate(graph)  every structural issue as data\n  rules(lifecycle)  gated by plan.lifecycle\nwrite(plan, op)\n  Decode(path)\n  mutate(op)\n  Validate(graph)  refuse on any error, file untouched\n  Save(path)  canonical sort, temp file + rename\n",
+        "kind": "pseudo",
+        "title": "Two gates: tolerant lint, strict writes"
+      }
+    },
+    {
+      "id": "t-gfp2",
+      "type": "tree",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "body": "auto-plan/\n├── cmd/autoplan/main.go  entry point\n├── rootcmd/rootcmd.go  mounting façade for auto-cli\n└── internal/\n    ├── schema/  the type registry, the only extension point\n    ├── graph/  decode, validate, mutate, canonical save\n    ├── workspace/  plans root, numbering, plan-argument resolution\n    ├── lint/  lifecycle-gated rules, epic rules, Tarjan cycles\n    ├── tree/  show-me parser and renderer\n    ├── render/  show, card, trace and brief views\n    └── cli/  cobra verbs with registry-generated flags\n",
+        "kind": "file",
+        "title": "The auto-plan module"
+      }
+    },
+    {
+      "id": "t-p282",
+      "type": "tree",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "body": "auto plan add <plan> <type>\n  schema.Registry.Node(type)  flags generated per FieldSpec\n  graph.Decode\n  graph.Add  new ID, rank after the last sibling\n    graph.Validate\n  graph.Save\n",
+        "kind": "call",
+        "title": "What auto plan add does"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-he4g",
+      "from": "a-gtht",
+      "type": "wouldBreak",
+      "to": "ac-21xb"
+    },
+    {
+      "id": "e-mx8m",
+      "from": "a-j0h9",
+      "type": "wouldBreak",
+      "to": "g-9s1v"
+    },
+    {
+      "id": "e-z0tj",
+      "from": "a-qrqc",
+      "type": "wouldBreak",
+      "to": "ac-4qrn"
+    },
+    {
+      "id": "e-m7ym",
+      "from": "a-stf0",
+      "type": "wouldBreak",
+      "to": "ac-fqq9"
+    },
+    {
+      "id": "e-g1x9",
+      "from": "a-tbzy",
+      "type": "wouldBreak",
+      "to": "ac-g3z3"
+    },
+    {
+      "id": "e-9463",
+      "from": "ac-21xb",
+      "type": "proves",
+      "to": "g-9vsj"
+    },
+    {
+      "id": "e-py8c",
+      "from": "ac-34fe",
+      "type": "proves",
+      "to": "g-9s1v"
+    },
+    {
+      "id": "e-w876",
+      "from": "ac-4qrn",
+      "type": "proves",
+      "to": "g-1wak"
+    },
+    {
+      "id": "e-97s3",
+      "from": "ac-6733",
+      "type": "proves",
+      "to": "g-hwb6"
+    },
+    {
+      "id": "e-t6bd",
+      "from": "ac-6xez",
+      "type": "proves",
+      "to": "g-9vsj"
+    },
+    {
+      "id": "e-g1v9",
+      "from": "ac-6xez",
+      "type": "proves",
+      "to": "g-hwb6"
+    },
+    {
+      "id": "e-q24y",
+      "from": "ac-7msa",
+      "type": "proves",
+      "to": "g-2bjp"
+    },
+    {
+      "id": "e-d7ak",
+      "from": "ac-fqq9",
+      "type": "proves",
+      "to": "g-hwb6"
+    },
+    {
+      "id": "e-pwnz",
+      "from": "ac-g3z3",
+      "type": "proves",
+      "to": "g-1wak"
+    },
+    {
+      "id": "e-r4w7",
+      "from": "ac-h5qy",
+      "type": "proves",
+      "to": "g-jqeb"
+    },
+    {
+      "id": "e-ksny",
+      "from": "ac-mybp",
+      "type": "proves",
+      "to": "g-2bjp"
+    },
+    {
+      "id": "e-z9f3",
+      "from": "ac-qxxe",
+      "type": "proves",
+      "to": "g-p2kr"
+    },
+    {
+      "id": "e-z18t",
+      "from": "ac-r6cp",
+      "type": "proves",
+      "to": "g-1wak"
+    },
+    {
+      "id": "e-8tc3",
+      "from": "ac-rap2",
+      "type": "proves",
+      "to": "g-2bjp"
+    },
+    {
+      "id": "e-4sxr",
+      "from": "ac-t9jf",
+      "type": "proves",
+      "to": "g-1wak"
+    },
+    {
+      "id": "e-5rja",
+      "from": "ac-temp",
+      "type": "proves",
+      "to": "g-2bjp"
+    },
+    {
+      "id": "e-e627",
+      "from": "ac-temp",
+      "type": "proves",
+      "to": "g-jqeb"
+    },
+    {
+      "id": "e-2sqp",
+      "from": "ac-w7q1",
+      "type": "proves",
+      "to": "g-2bjp"
+    },
+    {
+      "id": "e-775t",
+      "from": "ac-zcn4",
+      "type": "proves",
+      "to": "g-2bjp"
+    },
+    {
+      "id": "e-yz0b",
+      "from": "ac-zkv8",
+      "type": "proves",
+      "to": "g-1wak"
+    },
+    {
+      "id": "e-z7c5",
+      "from": "d-1a9h",
+      "type": "constrains",
+      "to": "g-2bjp"
+    },
+    {
+      "id": "e-z9y7",
+      "from": "d-1a9h",
+      "type": "constrains",
+      "to": "g-hwb6"
+    },
+    {
+      "id": "e-ffs1",
+      "from": "d-1a9h",
+      "type": "rejects",
+      "to": "a-4wej"
+    },
+    {
+      "id": "e-f5cx",
+      "from": "d-1a9h",
+      "type": "rejects",
+      "to": "a-mz63"
+    },
+    {
+      "id": "e-mdtb",
+      "from": "d-1q9c",
+      "type": "constrains",
+      "to": "g-9vsj"
+    },
+    {
+      "id": "e-975w",
+      "from": "d-1q9c",
+      "type": "rejects",
+      "to": "a-g1tc"
+    },
+    {
+      "id": "e-smxa",
+      "from": "d-1q9c",
+      "type": "rejects",
+      "to": "a-gtht"
+    },
+    {
+      "id": "e-y2c0",
+      "from": "d-237n",
+      "type": "constrains",
+      "to": "g-9s1v"
+    },
+    {
+      "id": "e-17vg",
+      "from": "d-237n",
+      "type": "rejects",
+      "to": "a-f1sd"
+    },
+    {
+      "id": "e-j720",
+      "from": "d-7s73",
+      "type": "constrains",
+      "to": "ac-fqq9"
+    },
+    {
+      "id": "e-ev62",
+      "from": "d-7s73",
+      "type": "rejects",
+      "to": "a-k5gs"
+    },
+    {
+      "id": "e-3jh0",
+      "from": "d-7s73",
+      "type": "rejects",
+      "to": "a-stf0"
+    },
+    {
+      "id": "e-f8my",
+      "from": "d-9bam",
+      "type": "constrains",
+      "to": "ac-4qrn"
+    },
+    {
+      "id": "e-b41t",
+      "from": "d-9bam",
+      "type": "rejects",
+      "to": "a-qrqc"
+    },
+    {
+      "id": "e-x6w4",
+      "from": "d-9vrq",
+      "type": "constrains",
+      "to": "ac-4qrn"
+    },
+    {
+      "id": "e-s3eb",
+      "from": "d-9vrq",
+      "type": "rejects",
+      "to": "a-b2zx"
+    },
+    {
+      "id": "e-9x06",
+      "from": "d-ac47",
+      "type": "constrains",
+      "to": "g-hwb6"
+    },
+    {
+      "id": "e-apbk",
+      "from": "d-ac47",
+      "type": "rejects",
+      "to": "a-5wh0"
+    },
+    {
+      "id": "e-50gv",
+      "from": "d-ac47",
+      "type": "rejects",
+      "to": "a-j0h9"
+    },
+    {
+      "id": "e-qj5e",
+      "from": "d-ac47",
+      "type": "rejects",
+      "to": "a-r493"
+    },
+    {
+      "id": "e-h00z",
+      "from": "d-f44t",
+      "type": "constrains",
+      "to": "ac-fqq9"
+    },
+    {
+      "id": "e-dk6h",
+      "from": "d-f44t",
+      "type": "constrains",
+      "to": "ac-g3z3"
+    },
+    {
+      "id": "e-wvmr",
+      "from": "d-f44t",
+      "type": "rejects",
+      "to": "a-3eqr"
+    },
+    {
+      "id": "e-f38k",
+      "from": "d-f44t",
+      "type": "rejects",
+      "to": "a-p3zz"
+    },
+    {
+      "id": "e-7g27",
+      "from": "d-fc9d",
+      "type": "constrains",
+      "to": "ac-34fe"
+    },
+    {
+      "id": "e-xbq4",
+      "from": "d-fc9d",
+      "type": "rejects",
+      "to": "a-trkr"
+    },
+    {
+      "id": "e-30fy",
+      "from": "d-ff0j",
+      "type": "constrains",
+      "to": "g-jqeb"
+    },
+    {
+      "id": "e-139m",
+      "from": "d-ff0j",
+      "type": "rejects",
+      "to": "a-3b77"
+    },
+    {
+      "id": "e-2aan",
+      "from": "d-ff0j",
+      "type": "rejects",
+      "to": "a-5cfp"
+    },
+    {
+      "id": "e-67z7",
+      "from": "d-gdbk",
+      "type": "constrains",
+      "to": "ac-6733"
+    },
+    {
+      "id": "e-97v5",
+      "from": "d-gdbk",
+      "type": "rejects",
+      "to": "a-m0vs"
+    },
+    {
+      "id": "e-f4wk",
+      "from": "d-mpk7",
+      "type": "constrains",
+      "to": "ac-6xez"
+    },
+    {
+      "id": "e-1m51",
+      "from": "d-mpk7",
+      "type": "rejects",
+      "to": "a-88nf"
+    },
+    {
+      "id": "e-qfg4",
+      "from": "d-mpk7",
+      "type": "rejects",
+      "to": "a-v35e"
+    },
+    {
+      "id": "e-nc6c",
+      "from": "d-p221",
+      "type": "constrains",
+      "to": "ac-fqq9"
+    },
+    {
+      "id": "e-1avd",
+      "from": "d-p221",
+      "type": "rejects",
+      "to": "a-wmsf"
+    },
+    {
+      "id": "e-gtz1",
+      "from": "d-rrsn",
+      "type": "constrains",
+      "to": "ac-fqq9"
+    },
+    {
+      "id": "e-yeq8",
+      "from": "d-rrsn",
+      "type": "constrains",
+      "to": "ac-g3z3"
+    },
+    {
+      "id": "e-h06c",
+      "from": "d-rrsn",
+      "type": "rejects",
+      "to": "a-7dse"
+    },
+    {
+      "id": "e-ja6e",
+      "from": "d-rrsn",
+      "type": "rejects",
+      "to": "a-tbzy"
+    },
+    {
+      "id": "e-9ycb",
+      "from": "d-rrsn",
+      "type": "supersedes",
+      "to": "d-f44t"
+    },
+    {
+      "id": "e-cvhp",
+      "from": "d-savt",
+      "type": "constrains",
+      "to": "ac-21xb"
+    },
+    {
+      "id": "e-kzma",
+      "from": "d-savt",
+      "type": "constrains",
+      "to": "g-hwb6"
+    },
+    {
+      "id": "e-r4an",
+      "from": "d-savt",
+      "type": "rejects",
+      "to": "a-h5s1"
+    },
+    {
+      "id": "e-heb0",
+      "from": "d-vg7q",
+      "type": "constrains",
+      "to": "g-jqeb"
+    },
+    {
+      "id": "e-k1k7",
+      "from": "d-vg7q",
+      "type": "rejects",
+      "to": "a-j4zg"
+    },
+    {
+      "id": "e-qrn4",
+      "from": "d-vg7q",
+      "type": "rejects",
+      "to": "a-vyk9"
+    },
+    {
+      "id": "e-9rgv",
+      "from": "d-weaw",
+      "type": "constrains",
+      "to": "ac-h5qy"
+    },
+    {
+      "id": "e-fh68",
+      "from": "d-weaw",
+      "type": "constrains",
+      "to": "g-jqeb"
+    },
+    {
+      "id": "e-46ya",
+      "from": "d-weaw",
+      "type": "rejects",
+      "to": "a-94km"
+    },
+    {
+      "id": "e-etg2",
+      "from": "d-weaw",
+      "type": "supersedes",
+      "to": "d-vg7q"
+    },
+    {
+      "id": "e-8qk1",
+      "from": "d-xdpt",
+      "type": "constrains",
+      "to": "ac-g3z3"
+    },
+    {
+      "id": "e-7z18",
+      "from": "d-xdpt",
+      "type": "rejects",
+      "to": "a-0nzs"
+    },
+    {
+      "id": "e-kn8e",
+      "from": "d-z9vm",
+      "type": "constrains",
+      "to": "ac-34fe"
+    },
+    {
+      "id": "e-fz4f",
+      "from": "d-z9vm",
+      "type": "constrains",
+      "to": "g-9vsj"
+    },
+    {
+      "id": "e-ybba",
+      "from": "d-z9vm",
+      "type": "rejects",
+      "to": "a-ascy"
+    },
+    {
+      "id": "e-13kk",
+      "from": "d-z9vm",
+      "type": "rejects",
+      "to": "a-h2a3"
+    },
+    {
+      "id": "e-jq0n",
+      "from": "d-zv2w",
+      "type": "constrains",
+      "to": "ac-fqq9"
+    },
+    {
+      "id": "e-a9kp",
+      "from": "d-zv2w",
+      "type": "rejects",
+      "to": "a-8kwn"
+    },
+    {
+      "id": "e-4eav",
+      "from": "g-1wak",
+      "type": "addresses",
+      "to": "df-t0sv"
+    },
+    {
+      "id": "e-59m0",
+      "from": "g-2bjp",
+      "type": "addresses",
+      "to": "df-teqk"
+    },
+    {
+      "id": "e-hbkm",
+      "from": "g-9vsj",
+      "type": "addresses",
+      "to": "df-t0sv"
+    },
+    {
+      "id": "e-c212",
+      "from": "g-jqeb",
+      "type": "addresses",
+      "to": "df-kctm"
+    },
+    {
+      "id": "e-9tps",
+      "from": "s-7kx3",
+      "type": "covers",
+      "to": "ac-h5qy"
+    },
+    {
+      "id": "e-5pv4",
+      "from": "s-7kx3",
+      "type": "covers",
+      "to": "ac-qxxe"
+    },
+    {
+      "id": "e-4qmp",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-019m"
+    },
+    {
+      "id": "e-g223",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-0kp6"
+    },
+    {
+      "id": "e-3xst",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-0xm4"
+    },
+    {
+      "id": "e-zv8x",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-2kcp"
+    },
+    {
+      "id": "e-7vb2",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-30kg"
+    },
+    {
+      "id": "e-qzm8",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-3dkc"
+    },
+    {
+      "id": "e-xjkz",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-4bgn"
+    },
+    {
+      "id": "e-2ev7",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-5f4j"
+    },
+    {
+      "id": "e-zsxe",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-83hg"
+    },
+    {
+      "id": "e-znvy",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-8sae"
+    },
+    {
+      "id": "e-pr82",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-984z"
+    },
+    {
+      "id": "e-3yj0",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-av07"
+    },
+    {
+      "id": "e-afse",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-b57j"
+    },
+    {
+      "id": "e-bp1q",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-bf2d"
+    },
+    {
+      "id": "e-s8d3",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-bz3f"
+    },
+    {
+      "id": "e-9zzt",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-ckg8"
+    },
+    {
+      "id": "e-f2xr",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-evst"
+    },
+    {
+      "id": "e-g17y",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-fxmr"
+    },
+    {
+      "id": "e-v630",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-g5d6"
+    },
+    {
+      "id": "e-x0h1",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-g6ka"
+    },
+    {
+      "id": "e-gbvn",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-gbm0"
+    },
+    {
+      "id": "e-gwbr",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-j085"
+    },
+    {
+      "id": "e-8gvg",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-k7e9"
+    },
+    {
+      "id": "e-pykb",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-m0vg"
+    },
+    {
+      "id": "e-9wbc",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-mtfb"
+    },
+    {
+      "id": "e-06ha",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-n972"
+    },
+    {
+      "id": "e-8kqx",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-ncpd"
+    },
+    {
+      "id": "e-xg1a",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-nv2s"
+    },
+    {
+      "id": "e-8hjb",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-pd5x"
+    },
+    {
+      "id": "e-e725",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-pfzt"
+    },
+    {
+      "id": "e-cn3r",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-rj5m"
+    },
+    {
+      "id": "e-t1fn",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-v65x"
+    },
+    {
+      "id": "e-sh86",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-v9pg"
+    },
+    {
+      "id": "e-0xn3",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-vd9y"
+    },
+    {
+      "id": "e-48x6",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-wk31"
+    },
+    {
+      "id": "e-w03e",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-wpt7"
+    },
+    {
+      "id": "e-wbae",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-ya5v"
+    },
+    {
+      "id": "e-8eg9",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-z7s1"
+    },
+    {
+      "id": "e-3yey",
+      "from": "s-7kx3",
+      "type": "touches",
+      "to": "f-zah7"
+    },
+    {
+      "id": "e-dsmq",
+      "from": "s-a96x",
+      "type": "covers",
+      "to": "ac-6xez"
+    },
+    {
+      "id": "e-ngrc",
+      "from": "s-a96x",
+      "type": "covers",
+      "to": "ac-temp"
+    },
+    {
+      "id": "e-xkyn",
+      "from": "s-a96x",
+      "type": "dependsOn",
+      "to": "s-nkz2"
+    },
+    {
+      "id": "e-vrke",
+      "from": "s-a96x",
+      "type": "touches",
+      "to": "f-0kp6"
+    },
+    {
+      "id": "e-6n66",
+      "from": "s-a96x",
+      "type": "touches",
+      "to": "f-82ef"
+    },
+    {
+      "id": "e-bqxx",
+      "from": "s-a96x",
+      "type": "touches",
+      "to": "f-984z"
+    },
+    {
+      "id": "e-etzf",
+      "from": "s-a96x",
+      "type": "touches",
+      "to": "f-gkp0"
+    },
+    {
+      "id": "e-zgp2",
+      "from": "s-a96x",
+      "type": "touches",
+      "to": "f-gtne"
+    },
+    {
+      "id": "e-bc5t",
+      "from": "s-a96x",
+      "type": "touches",
+      "to": "f-n972"
+    },
+    {
+      "id": "e-wb25",
+      "from": "s-a96x",
+      "type": "touches",
+      "to": "f-zah7"
+    },
+    {
+      "id": "e-pqzc",
+      "from": "s-dqaz",
+      "type": "covers",
+      "to": "ac-g3z3"
+    },
+    {
+      "id": "e-49ew",
+      "from": "s-dqaz",
+      "type": "covers",
+      "to": "ac-mybp"
+    },
+    {
+      "id": "e-zj0s",
+      "from": "s-dqaz",
+      "type": "dependsOn",
+      "to": "s-a96x"
+    },
+    {
+      "id": "e-fkpk",
+      "from": "s-dqaz",
+      "type": "touches",
+      "to": "f-5f4j"
+    },
+    {
+      "id": "e-eftv",
+      "from": "s-dqaz",
+      "type": "touches",
+      "to": "f-c6ws"
+    },
+    {
+      "id": "e-adgn",
+      "from": "s-dqaz",
+      "type": "touches",
+      "to": "f-ckg8"
+    },
+    {
+      "id": "e-9s5j",
+      "from": "s-dqaz",
+      "type": "touches",
+      "to": "f-fxmr"
+    },
+    {
+      "id": "e-ch9b",
+      "from": "s-dqaz",
+      "type": "touches",
+      "to": "f-m0vg"
+    },
+    {
+      "id": "e-k2x2",
+      "from": "s-dqaz",
+      "type": "touches",
+      "to": "f-wpt7"
+    },
+    {
+      "id": "e-2d71",
+      "from": "s-dqaz",
+      "type": "touches",
+      "to": "f-xs29"
+    },
+    {
+      "id": "e-q389",
+      "from": "s-evss",
+      "type": "covers",
+      "to": "ac-h5qy"
+    },
+    {
+      "id": "e-4f9g",
+      "from": "s-evss",
+      "type": "covers",
+      "to": "ac-temp"
+    },
+    {
+      "id": "e-3zd3",
+      "from": "s-evss",
+      "type": "dependsOn",
+      "to": "s-qdmr"
+    },
+    {
+      "id": "e-nbe6",
+      "from": "s-evss",
+      "type": "touches",
+      "to": "f-30kg"
+    },
+    {
+      "id": "e-remd",
+      "from": "s-evss",
+      "type": "touches",
+      "to": "f-44v6"
+    },
+    {
+      "id": "e-aj6y",
+      "from": "s-evss",
+      "type": "touches",
+      "to": "f-gkp0"
+    },
+    {
+      "id": "e-h9f2",
+      "from": "s-evss",
+      "type": "touches",
+      "to": "f-z7s1"
+    },
+    {
+      "id": "e-wncp",
+      "from": "s-evss",
+      "type": "touches",
+      "to": "f-zah7"
+    },
+    {
+      "id": "e-jy04",
+      "from": "s-evss",
+      "type": "touches",
+      "to": "f-zw3e"
+    },
+    {
+      "id": "e-h3wp",
+      "from": "s-exhn",
+      "type": "covers",
+      "to": "ac-7msa"
+    },
+    {
+      "id": "e-43ex",
+      "from": "s-exhn",
+      "type": "covers",
+      "to": "ac-mybp"
+    },
+    {
+      "id": "e-g9dn",
+      "from": "s-exhn",
+      "type": "covers",
+      "to": "ac-rap2"
+    },
+    {
+      "id": "e-j72r",
+      "from": "s-exhn",
+      "type": "covers",
+      "to": "ac-w7q1"
+    },
+    {
+      "id": "e-qkr6",
+      "from": "s-exhn",
+      "type": "covers",
+      "to": "ac-zcn4"
+    },
+    {
+      "id": "e-xrpf",
+      "from": "s-exhn",
+      "type": "dependsOn",
+      "to": "s-gev8"
+    },
+    {
+      "id": "e-4t3d",
+      "from": "s-exhn",
+      "type": "touches",
+      "to": "f-4bgn"
+    },
+    {
+      "id": "e-t4sh",
+      "from": "s-exhn",
+      "type": "touches",
+      "to": "f-5f4j"
+    },
+    {
+      "id": "e-z7bp",
+      "from": "s-exhn",
+      "type": "touches",
+      "to": "f-6jf3"
+    },
+    {
+      "id": "e-va5r",
+      "from": "s-exhn",
+      "type": "touches",
+      "to": "f-b57j"
+    },
+    {
+      "id": "e-zjxe",
+      "from": "s-exhn",
+      "type": "touches",
+      "to": "f-ff3s"
+    },
+    {
+      "id": "e-1bg7",
+      "from": "s-exhn",
+      "type": "touches",
+      "to": "f-g6ka"
+    },
+    {
+      "id": "e-v44q",
+      "from": "s-exhn",
+      "type": "touches",
+      "to": "f-pp0c"
+    },
+    {
+      "id": "e-na0c",
+      "from": "s-exhn",
+      "type": "touches",
+      "to": "f-w3h4"
+    },
+    {
+      "id": "e-3n22",
+      "from": "s-exhn",
+      "type": "touches",
+      "to": "f-xkpz"
+    },
+    {
+      "id": "e-2kt0",
+      "from": "s-exhn",
+      "type": "touches",
+      "to": "f-xs29"
+    },
+    {
+      "id": "e-j0k3",
+      "from": "s-gev8",
+      "type": "covers",
+      "to": "ac-4qrn"
+    },
+    {
+      "id": "e-g4z6",
+      "from": "s-gev8",
+      "type": "covers",
+      "to": "ac-r6cp"
+    },
+    {
+      "id": "e-xqty",
+      "from": "s-gev8",
+      "type": "covers",
+      "to": "ac-t9jf"
+    },
+    {
+      "id": "e-bbja",
+      "from": "s-gev8",
+      "type": "covers",
+      "to": "ac-zkv8"
+    },
+    {
+      "id": "e-xemg",
+      "from": "s-gev8",
+      "type": "dependsOn",
+      "to": "s-hcka"
+    },
+    {
+      "id": "e-nv17",
+      "from": "s-gev8",
+      "type": "touches",
+      "to": "f-25tm"
+    },
+    {
+      "id": "e-0brx",
+      "from": "s-gev8",
+      "type": "touches",
+      "to": "f-5f4j"
+    },
+    {
+      "id": "e-pswy",
+      "from": "s-gev8",
+      "type": "touches",
+      "to": "f-ap2g"
+    },
+    {
+      "id": "e-6sxx",
+      "from": "s-gev8",
+      "type": "touches",
+      "to": "f-bz3f"
+    },
+    {
+      "id": "e-j6qc",
+      "from": "s-gev8",
+      "type": "touches",
+      "to": "f-ff3s"
+    },
+    {
+      "id": "e-hjdz",
+      "from": "s-gev8",
+      "type": "touches",
+      "to": "f-g5d6"
+    },
+    {
+      "id": "e-dndp",
+      "from": "s-gev8",
+      "type": "touches",
+      "to": "f-m0vg"
+    },
+    {
+      "id": "e-vkaw",
+      "from": "s-gev8",
+      "type": "touches",
+      "to": "f-wpt7"
+    },
+    {
+      "id": "e-hxxg",
+      "from": "s-hcka",
+      "type": "covers",
+      "to": "ac-21xb"
+    },
+    {
+      "id": "e-1s1b",
+      "from": "s-hcka",
+      "type": "covers",
+      "to": "ac-34fe"
+    },
+    {
+      "id": "e-35ms",
+      "from": "s-hcka",
+      "type": "covers",
+      "to": "ac-6733"
+    },
+    {
+      "id": "e-fb67",
+      "from": "s-hcka",
+      "type": "covers",
+      "to": "ac-6xez"
+    },
+    {
+      "id": "e-y2kq",
+      "from": "s-hcka",
+      "type": "covers",
+      "to": "ac-fqq9"
+    },
+    {
+      "id": "e-va92",
+      "from": "s-hcka",
+      "type": "dependsOn",
+      "to": "s-7kx3"
+    },
+    {
+      "id": "e-mc4h",
+      "from": "s-hcka",
+      "type": "touches",
+      "to": "f-019m"
+    },
+    {
+      "id": "e-zf6t",
+      "from": "s-hcka",
+      "type": "touches",
+      "to": "f-3dkc"
+    },
+    {
+      "id": "e-7dy0",
+      "from": "s-hcka",
+      "type": "touches",
+      "to": "f-5f4j"
+    },
+    {
+      "id": "e-frbd",
+      "from": "s-hcka",
+      "type": "touches",
+      "to": "f-av07"
+    },
+    {
+      "id": "e-zqha",
+      "from": "s-hcka",
+      "type": "touches",
+      "to": "f-ckg8"
+    },
+    {
+      "id": "e-hexz",
+      "from": "s-hcka",
+      "type": "touches",
+      "to": "f-fxmr"
+    },
+    {
+      "id": "e-m4w7",
+      "from": "s-hcka",
+      "type": "touches",
+      "to": "f-j085"
+    },
+    {
+      "id": "e-9zgw",
+      "from": "s-hcka",
+      "type": "touches",
+      "to": "f-m0vg"
+    },
+    {
+      "id": "e-gpgz",
+      "from": "s-hcka",
+      "type": "touches",
+      "to": "f-pfzt"
+    },
+    {
+      "id": "e-ymvy",
+      "from": "s-hcka",
+      "type": "touches",
+      "to": "f-rj5m"
+    },
+    {
+      "id": "e-bmrh",
+      "from": "s-hcka",
+      "type": "touches",
+      "to": "f-vd9y"
+    },
+    {
+      "id": "e-mnys",
+      "from": "s-hcka",
+      "type": "touches",
+      "to": "f-wk31"
+    },
+    {
+      "id": "e-93wx",
+      "from": "s-j1ep",
+      "type": "covers",
+      "to": "ac-fqq9"
+    },
+    {
+      "id": "e-vxf0",
+      "from": "s-j1ep",
+      "type": "covers",
+      "to": "ac-mybp"
+    },
+    {
+      "id": "e-qc5y",
+      "from": "s-j1ep",
+      "type": "dependsOn",
+      "to": "s-evss"
+    },
+    {
+      "id": "e-p9a4",
+      "from": "s-j1ep",
+      "type": "touches",
+      "to": "f-e6te"
+    },
+    {
+      "id": "e-w572",
+      "from": "s-j1ep",
+      "type": "touches",
+      "to": "f-f21t"
+    },
+    {
+      "id": "e-m0db",
+      "from": "s-j1ep",
+      "type": "touches",
+      "to": "f-qzaz"
+    },
+    {
+      "id": "e-gcpq",
+      "from": "s-j1ep",
+      "type": "touches",
+      "to": "f-xs29"
+    },
+    {
+      "id": "e-8z79",
+      "from": "s-nkz2",
+      "type": "covers",
+      "to": "ac-g3z3"
+    },
+    {
+      "id": "e-dk36",
+      "from": "s-nkz2",
+      "type": "covers",
+      "to": "ac-rap2"
+    },
+    {
+      "id": "e-gnsc",
+      "from": "s-nkz2",
+      "type": "dependsOn",
+      "to": "s-exhn"
+    },
+    {
+      "id": "e-fydn",
+      "from": "s-nkz2",
+      "type": "touches",
+      "to": "f-30kg"
+    },
+    {
+      "id": "e-2fvw",
+      "from": "s-nkz2",
+      "type": "touches",
+      "to": "f-5f4j"
+    },
+    {
+      "id": "e-0a3s",
+      "from": "s-nkz2",
+      "type": "touches",
+      "to": "f-b57j"
+    },
+    {
+      "id": "e-648f",
+      "from": "s-nkz2",
+      "type": "touches",
+      "to": "f-c6ws"
+    },
+    {
+      "id": "e-j51j",
+      "from": "s-nkz2",
+      "type": "touches",
+      "to": "f-g6ka"
+    },
+    {
+      "id": "e-fr2h",
+      "from": "s-nkz2",
+      "type": "touches",
+      "to": "f-ncpd"
+    },
+    {
+      "id": "e-tqmq",
+      "from": "s-nkz2",
+      "type": "touches",
+      "to": "f-vd9y"
+    },
+    {
+      "id": "e-n5tp",
+      "from": "s-nkz2",
+      "type": "touches",
+      "to": "f-wpt7"
+    },
+    {
+      "id": "e-y988",
+      "from": "s-nkz2",
+      "type": "touches",
+      "to": "f-xkpz"
+    },
+    {
+      "id": "e-rhnj",
+      "from": "s-qdmr",
+      "type": "covers",
+      "to": "ac-h5qy"
+    },
+    {
+      "id": "e-k8jz",
+      "from": "s-qdmr",
+      "type": "dependsOn",
+      "to": "s-xsa9"
+    },
+    {
+      "id": "e-kjfe",
+      "from": "s-qdmr",
+      "type": "touches",
+      "to": "f-1f44"
+    },
+    {
+      "id": "e-2rv3",
+      "from": "s-qdmr",
+      "type": "touches",
+      "to": "f-44v6"
+    },
+    {
+      "id": "e-5691",
+      "from": "s-qdmr",
+      "type": "touches",
+      "to": "f-nv2s"
+    },
+    {
+      "id": "e-rx9x",
+      "from": "s-qdmr",
+      "type": "touches",
+      "to": "f-v9pg"
+    },
+    {
+      "id": "e-4qsh",
+      "from": "s-qdmr",
+      "type": "touches",
+      "to": "f-zw3e"
+    },
+    {
+      "id": "e-1zgb",
+      "from": "s-xsa9",
+      "type": "covers",
+      "to": "ac-21xb"
+    },
+    {
+      "id": "e-yeft",
+      "from": "s-xsa9",
+      "type": "covers",
+      "to": "ac-fqq9"
+    },
+    {
+      "id": "e-2axv",
+      "from": "s-xsa9",
+      "type": "dependsOn",
+      "to": "s-dqaz"
+    },
+    {
+      "id": "e-zx05",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-019m"
+    },
+    {
+      "id": "e-hv5n",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-30kg"
+    },
+    {
+      "id": "e-s407",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-4bgn"
+    },
+    {
+      "id": "e-vsrc",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-5f4j"
+    },
+    {
+      "id": "e-r0cn",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-6eqk"
+    },
+    {
+      "id": "e-zx0m",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-82ef"
+    },
+    {
+      "id": "e-5zav",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-8sae"
+    },
+    {
+      "id": "e-vm3p",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-984z"
+    },
+    {
+      "id": "e-rc0m",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-av07"
+    },
+    {
+      "id": "e-mdbm",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-bz3f"
+    },
+    {
+      "id": "e-r2ag",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-c6ws"
+    },
+    {
+      "id": "e-gr11",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-ckg8"
+    },
+    {
+      "id": "e-ktz3",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-e6te"
+    },
+    {
+      "id": "e-zthv",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-fxmr"
+    },
+    {
+      "id": "e-y127",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-g5d6"
+    },
+    {
+      "id": "e-bn89",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-gkp0"
+    },
+    {
+      "id": "e-qz3w",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-j085"
+    },
+    {
+      "id": "e-efm7",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-m0vg"
+    },
+    {
+      "id": "e-y4vv",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-ncpd"
+    },
+    {
+      "id": "e-jfyy",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-nv2s"
+    },
+    {
+      "id": "e-g4ma",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-pfzt"
+    },
+    {
+      "id": "e-rkpt",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-qzaz"
+    },
+    {
+      "id": "e-nskm",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-rj5m"
+    },
+    {
+      "id": "e-bpsn",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-vd9y"
+    },
+    {
+      "id": "e-wmad",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-wk31"
+    },
+    {
+      "id": "e-bq3j",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-wpt7"
+    },
+    {
+      "id": "e-7fq9",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-xs29"
+    },
+    {
+      "id": "e-qdpp",
+      "from": "s-xsa9",
+      "type": "touches",
+      "to": "f-zah7"
+    },
+    {
+      "id": "e-h24s",
+      "from": "t-105h",
+      "type": "about",
+      "to": "d-weaw"
+    },
+    {
+      "id": "e-s5az",
+      "from": "t-15q3",
+      "type": "about",
+      "to": "ac-t9jf"
+    },
+    {
+      "id": "e-s8a7",
+      "from": "t-gfp2",
+      "type": "about",
+      "to": "g-9s1v"
+    },
+    {
+      "id": "e-0m9j",
+      "from": "t-p282",
+      "type": "about",
+      "to": "d-ac47"
+    }
+  ]
+}
