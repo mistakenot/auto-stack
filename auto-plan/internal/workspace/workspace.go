@@ -110,6 +110,10 @@ func (w *Workspace) Abs(rel string) string { return filepath.Join(w.Root, filepa
 // GraphPath returns the absolute path of a plan's graph.json.
 func (w *Workspace) GraphPath(p Plan) string { return filepath.Join(w.Abs(p.Dir), GraphFile) }
 
+// FolderPath returns the absolute path of a plan's folder — where its
+// graph.json and its annex Markdown files live.
+func (w *Workspace) FolderPath(p Plan) string { return w.Abs(p.Dir) }
+
 // Plans lists every plan folder, sorted by folder name, with the plan ID
 // each graph.json records. A missing .auto/plan/plans/ is an empty list. Entries
 // that are not NNN-name folders are ignored.

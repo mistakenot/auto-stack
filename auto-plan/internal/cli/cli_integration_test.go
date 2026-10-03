@@ -451,6 +451,10 @@ func TestEveryTypeGetsGeneratedFlags(t *testing.T) {
 	for _, nt := range schema.Registry.Nodes {
 		var fieldFlags []string
 		for _, f := range nt.Fields {
+			if f.Computed {
+				// A computed field (annex.hash) gets no flag (D-6).
+				continue
+			}
 			if f.Kind == schema.KindObject {
 				for _, m := range f.Fields {
 					fieldFlags = append(fieldFlags, "--"+f.Name+"-"+m.Name)

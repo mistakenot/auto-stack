@@ -360,7 +360,8 @@ func readValue(cmd *cobra.Command, application *app.App, v string) (string, erro
 // planTypes lists the registered types `add` accepts.
 func planTypes() []string {
 	var out []string
-	for _, n := range schema.Registry.Nodes {
+	for i := range schema.Registry.Nodes {
+		n := &schema.Registry.Nodes[i]
 		if !n.Singleton() {
 			out = append(out, n.Name)
 		}

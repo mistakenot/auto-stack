@@ -131,6 +131,10 @@ type FieldSpec struct {
 	// Fixed marks a field that is set when the node is created and that
 	// `update` refuses to change (a plan's name must match its folder).
 	Fixed bool
+	// Computed marks a field the tool writes itself (never a CLI flag, neither
+	// `add` nor `update`): annex.hash is set only by the freeze step. Unlike
+	// Fixed, a Computed field is not known at create, so it is not required.
+	Computed bool
 	// Fields holds the members of a KindObject field. Their flags are named
 	// `--<field>-<member>`.
 	Fields []FieldSpec
@@ -159,7 +163,12 @@ type NodeType struct {
 	// reading order (an AC's siblings are the ACs proving the same goal). Empty
 	// means every node of the type is a sibling.
 	RankScope string
-	Help      string
+	// UniqueBy names a field of this type that at most one active node may
+	// share a value of: an annex has at most one node per `kind`. Validate
+	// enforces it (code `duplicate-<type>-<field>`), so a cap on a type is a
+	// registry entry, not a bespoke check. Empty means no such cap.
+	UniqueBy string
+	Help     string
 }
 
 // Singleton reports whether the type has exactly one node with a fixed ID.
@@ -223,9 +232,9 @@ type Schema struct {
 
 // Node returns the named node type.
 func (s *Schema) Node(name string) (NodeType, bool) {
-	for _, n := range s.Nodes {
-		if n.Name == name {
-			return n, true
+	for i := range s.Nodes {
+		if s.Nodes[i].Name == name {
+			return s.Nodes[i], true
 		}
 	}
 	return NodeType{}, false
@@ -272,6 +281,11 @@ const (
 
 	// repoPathSegment is one path segment other than "." and "..".
 	repoPathSegment = `(?:[^./\\:\s][^/\\:\s]*|\.[^./\\:\s][^/\\:\s]*|\.\.[^/\\:\s]+)`
+
+	// AnnexPathPattern is a flat kebab-case Markdown filename, relative to the
+	// plan folder (`usage.md`, `test-coverage.md`): no directory segments, so
+	// the folder rename in `renumber` moves the file with no path rewrite.
+	AnnexPathPattern = `^[a-z0-9]+(?:-[a-z0-9]+)*\.md$`
 )
 
 // PlanNodeID is the fixed ID of the one plan node in every graph.
@@ -323,6 +337,7 @@ var Registry = Schema{
 						{Name: "kind", Kind: KindEnum, Enum: []string{"command", "manual"}, Help: "How it is verified (default command)"},
 					},
 				},
+				{Name: "layer", Kind: KindEnum, Enum: []string{"e2e", "integration", "golden", "unit", "manual"}, Help: "Test layer this criterion is covered at (optional)"},
 			},
 		},
 		{
@@ -424,6 +439,17 @@ var Registry = Schema{
 				{Name: "title", Kind: KindString, Help: "What the child delivers, in one line"},
 			},
 		},
+		{
+			Name: "annex", Prefix: "ax", Term: "Annex", MinLifecycle: LifecycleSolution,
+			UniqueBy: "kind",
+			Help:     "A Markdown file beside graph.json, registered as a node, holding plan-time exposition (at most one per kind).",
+			Fields: []FieldSpec{
+				{Name: "kind", Kind: KindEnum, Required: true, Enum: []string{"usage", "structures", "testing"}, Help: "Which exposition this annex holds"},
+				{Name: "path", Kind: KindString, Required: true, Pattern: AnnexPathPattern, Help: "Flat <kebab>.md filename, relative to the plan folder"},
+				titleField("One-line title of the annex"),
+				{Name: "hash", Kind: KindString, Computed: true, Help: "SHA-256 hex of the file's bytes, recorded at freeze (computed; no flag)"},
+			},
+		},
 	},
 	Edges: []EdgeType{
 		{Name: "proves", From: []string{"ac"}, To: []string{"goal"}, Help: "The goal this AC proves"},
@@ -436,7 +462,7 @@ var Registry = Schema{
 		{Name: "covers", From: []string{"stage"}, To: []string{"ac"}, Help: "An AC this stage makes pass"},
 		{Name: "discharges", From: []string{"ac"}, To: []string{"rail"}, CrossPlan: true, Help: "A rail this AC proves is honoured"},
 		{Name: "addresses", From: []string{"goal"}, To: []string{"defect"}, Help: "A defect this goal fixes"},
-		{Name: "about", From: []string{"tree"}, To: []string{AnyType}, Help: "The node this tree illustrates"},
+		{Name: "about", From: []string{"tree", "annex"}, To: []string{AnyType}, Help: "The node this tree or annex illustrates"},
 		{Name: "in", From: []string{"leg"}, To: []string{"journey"}, Help: "The journey this leg belongs to"},
 		{Name: "honors", From: []string{"plan"}, To: []string{"rail"}, CrossPlan: true, Help: "An epic rail this plan honours"},
 		{Name: "delivers", From: []string{"plan"}, To: []string{"leg"}, CrossPlan: true, Help: "An epic leg this plan delivers"},

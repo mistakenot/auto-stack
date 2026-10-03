@@ -61,6 +61,11 @@ func typeFlags(nt schema.NodeType, mode flagMode) (*pflag.FlagSet, []fieldFlag, 
 	}
 	for i := range nt.Fields {
 		f := &nt.Fields[i]
+		if f.Computed {
+			// A computed field (annex.hash) is written by the tool, never a
+			// flag: neither add nor update can set it (D-6).
+			continue
+		}
 		if mode == forUpdate && f.Fixed {
 			continue
 		}
@@ -201,6 +206,17 @@ func runAdd(cmd *cobra.Command, application *app.App, args []string) error {
 	}
 
 	out := map[string]any{"type": node.Type, "rank": node.Rank}
+	var stubbed string
+	if node.Type == "annex" {
+		stubbed, err = writeAnnexStub(l, fields)
+		if err != nil {
+			return failOne(cmd, text, "write-failed", "$", "", err.Error(), stubbed,
+				"the annex node was saved, but its Markdown file could not be written; check the plan folder is writable")
+		}
+		if stubbed != "" {
+			out["file"] = stubbed
+		}
+	}
 	var added []edgeOut
 	for _, e := range own {
 		added = append(added, toEdgeOut(e))
@@ -211,6 +227,9 @@ func runAdd(cmd *cobra.Command, application *app.App, args []string) error {
 	return emit(cmd, text, mutationResult(l.ref(), node.ID, out), func() string {
 		var b strings.Builder
 		fmt.Fprintf(&b, "added %s %s (rank %s) to %s\n", node.Type, node.ID, node.Rank, l.plan.Folder())
+		if stubbed != "" {
+			fmt.Fprintf(&b, "  wrote %s\n", stubbed)
+		}
 		for _, e := range added {
 			fmt.Fprintf(&b, "  %s  %s %s %s\n", e.ID, e.From, e.Type, e.To)
 		}
@@ -419,7 +438,8 @@ func updateLong() string {
 	b.WriteString("only the flags given change, and an empty value (\"\") removes an optional field.\n")
 	b.WriteString("Edges change with link/unlink, status with retire, and reading order with move.\n")
 	b.WriteString("`auto plan update <plan> <id> --help` shows one node's flags.\n")
-	for _, nt := range schema.Registry.Nodes {
+	for i := range schema.Registry.Nodes {
+		nt := schema.Registry.Nodes[i]
 		fs, _, _ := typeFlags(nt, forUpdate)
 		fmt.Fprintf(&b, "\n%s — %s\n%s", nt.Name, nt.Help, fs.FlagUsages())
 	}
