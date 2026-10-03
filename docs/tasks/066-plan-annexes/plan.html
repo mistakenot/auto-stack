@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>066: Plan annexes for auto plan</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "066",
+    "name": "plan-annexes",
+    "status": "planning",
+    "created": "2026-10-03"
+  }
+  </script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="066: Plan annexes for auto plan" status="pending" pr="pending" generated="2026-10-03">
+
+    <pd-tab name="Requirements">
+      <pd-scope></pd-scope>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+A `auto plan` Plan is a `graph.json` of typed nodes and edges — the right home for
+*facts* (goals, ACs, decisions, file changes). It has no home for the plan-time
+**sense-check exposition** a human scans to judge what will actually be built:
+
+1. **Usage** — concise CLI/bash transcripts of the end state (what the commands look
+   like when the work is done).
+2. **Structures** — the fundamental data structures: code blocks, example instances,
+   diagrams.
+3. **Testing** — one short summary per test layer (e2e / integration / golden / unit;
+   unit is "the agent's call") so a reviewer can tell at a glance whether the *shape*
+   of coverage is right, without reading every acceptance criterion.
+
+Today this content has nowhere to live. Stuffing long code into `graph.json` string
+fields is unreadable in PR diffs (every newline escaped as `\n`), and authoring
+multi-line Markdown through CLI flags is painful. We need exposition that lives as
+real Markdown files a reviewer can read in a diff, while the graph stays the single
+source of truth for facts.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+- Introduce the **annex**: a Markdown file that lives beside a Plan's `graph.json` in
+  the plan folder and is **registered as a node** in that graph (one node per file),
+  so its relationships live in `edges[]` like every other node — never as top-level
+  metadata.
+- Keep the discipline: **facts stay in the graph; exposition goes in text.** Prose in
+  an annex never holds a fact that has a field — the moment something needs to be
+  computed from a value, that value is promoted to a node/field.
+- Give annexes a small fixed `kind` enum (`usage | structures | testing` to start),
+  at most one annex per kind per plan, each file path relative to the plan folder.
+- Let an annex declare, by `about` edges, which nodes it explains, and resolve `[[id]]`
+  references inside the Markdown through the existing prose-ref machinery.
+- Add a `layer` enum field to the `ac` node (`e2e | integration | golden | unit |
+  manual`) so **test-layer coverage is computed from the graph**, and have the testing
+  annex carry one section per layer (plus each layer's expected test files).
+- Extend lint to keep annexes honest (file present, no stray files, no dangling refs,
+  per-kind structural checks).
+- Make **freezing cover annexes**: at `--lifecycle done` record a content hash on each
+  annex node; afterwards lint reports a changed annex. Hash only at freeze, not on
+  every Markdown edit.
+- Keep `renumber` correct: annex file paths move with the plan folder.
+- Add the term **annex** to the ubiquitous-language glossary before writing code.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+These were discussed and deliberately deferred — mention as follow-ups, do not build:
+
+- Per-stage file changes with a per-stage *why*.
+- An existence check of edited files against a recorded base commit.
+- A `Contract` node for load-bearing symbols.
+- `ac → file` `exercises` edges.
+- A `auto plan verify` command (that would *run* the usage transcripts / checks).
+- The HTML renderer / "Plan Preview" page itself. (This task only guarantees the
+  preview *can* be rebuilt from real annexes + `ac.layer`; it does not ship the
+  renderer.)
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Decisions taken from the design discussion are treated as **settled** (see the
+Solution tab's decision log). Assumptions carried forward as reasonable leans:
+
+- **Content hash** is the **full 64-character SHA-256 hex** of the annex file's raw
+  bytes — **not** truncated (there is no existing hash style to match; IDs are random
+  base32, not hashes). This is the single persisted representation used by the freeze
+  step (D-7) and the `annex-changed` lint, and it matches the `hash` value in the
+  Solution tab's data-shapes example.
+- **Enum extensibility** — `kind` and `layer` start with the listed members; adding a
+  member later is a registry edit, same as any other enum, and needs no migration.
+
+The one genuinely provisional, hard-to-reverse call — the domain **term** — is raised
+as a gate below.
+        </script></md>
+
+        <pd-question id="Q-1" status="answered" priority="p1" for="charlie"
+                     title="Domain term: is &quot;annex&quot; the word?"
+                     recommendedAnswer="Yes — use &quot;annex&quot;. It is free in the glossary, and Plan's _Avoid_ list already rules out &quot;plan doc&quot;/&quot;doc&quot;.">
+          <md><script type="text/plain">
+The design calls the new concept an **annex** (a registered Markdown file beside
+`graph.json`). It was introduced as a *working name*, and it becomes permanent the
+moment it lands: a glossary term, a node `type`, a CLI noun, and lint codes
+(`annex-missing`, `annex-ref`, `annex-changed`). The glossary rule is one word per
+concept — Plan's `_Avoid_` list already contains "plan doc", so "doc" is out.
+
+Candidates considered: **annex** (lean), *exhibit*, *appendix*, *dossier*. "Annex"
+reads as "attached supporting material", is short, and does not collide with any
+existing term (Message, Outline, Segment, Tree, Stage Brief, …).
+
+Rubber-stamp "annex", or name the replacement — everything downstream (glossary,
+registry type, CLI, lint codes) is renamed to match.
+          </script></md>
+          <pd-answer by="review">hmm not sure - maybe `note`?</pd-answer>
+          <pd-comment by="author">"note" collides with the glossary: it is already on two `_Avoid_` lists, Observation ("Finding (from a Session), note, issue, flag") and Mail ("…, email, letter, note"). `glossary.py check` rejects a canonical term that sits on another term's `_Avoid_` list, so adopting it means narrowing both lines to "note (for a Session finding)" / "note (for agent mail)". It also reads as free-form jottings, which is the dumping-ground risk this design guards against with a fixed set of kinds and `unlinked-file`. My lean stays **annex**: free in the glossary, and it says "attached to the plan, subordinate to it". If you prefer "note" anyway, it works once those two lines are narrowed — please confirm one or the other before the glossary edit lands.</pd-comment>
+          <pd-comment by="author">Confirmed in chat by charlie: the term is **annex**. "note" stays on the Observation and Mail `_Avoid_` lines as it is.</pd-comment>
+        </pd-question>
+      </pd-section>
+      <pd-thread anchor="open-questions" status="resolved" priority="p1" title="Choose one persisted hash representation">
+        <pd-comment by="review">The Requirements tab says the SHA-256 hex is truncated to a short fixed prefix, but D-7 explicitly rejects truncation and the Solution example stores the full 64-character digest. This is a persisted graph format and directly changes the freeze and lint assertions, so resolve the contradiction and state the exact representation (including prefix length if truncated) before implementation.</pd-comment>
+        <pd-comment by="author">Fixed — the "truncated" wording was a stray leftover. The Requirements bullet now states the single representation: full 64-character SHA-256 hex, not truncated, matching D-7 and the data-shapes example (`e3b0c4…b855`). There is no existing hash style to match (IDs are random base32, not hashes), so full hex is the only persisted form the freeze step writes and `annex-changed` compares.</pd-comment>
+      </pd-thread>
+    </pd-tab>
+
+    <pd-tab name="Verification">
+      <pd-section id="test-strategy" title="Test Strategy">
+        <md><script type="text/plain">
+`auto plan` is registry-driven, so most of the new surface (the `annex` node type,
+the `ac.layer` enum, their generated flags, help and docs) is **exercised for free**
+by the existing registry/CLI coverage tests — the job is to keep those green and add
+targeted tests for the genuinely new behaviour: write-time uniqueness, filesystem-aware
+lint, and freeze-time hashing.
+
+Four layers, walking-skeleton first (Phase 1 drives the type end-to-end: registry →
+CLI add → stub file → lint → freeze-hash):
+
+- **unit** — registry shape (`registry_test.go`), validation (`duplicate-annex-kind`,
+  `ac.layer` enum), the new `UniqueBy`/`Computed` mechanisms, the SHA-256 helper, and
+  the markdown section/ref parsing the annex lint rules use (`fstest.MapFS`, no temp dirs).
+- **integration** — in-process CLI (`internal/cli/*_integration_test.go`): `add annex`
+  writes the stub, `link … about …`, `lint` reports each new code with a remediation
+  hint, `update --lifecycle done` records hashes, a post-freeze edit trips `annex-changed`.
+- **golden** — `internal/render` text goldens, refreshed with `-update`, for any `show`/
+  `describe`/`get`/`docs` output that now mentions annexes or `layer`.
+- **e2e** — `e2e/testdata/scenarios/{lifecycle,dogfood}`: the `dogfood` scenario authors
+  real annexes + `ac.layer` before the freeze and proves the preview's data is rebuildable;
+  `lifecycle` walks an annex through create → lint → freeze → `annex-changed`. Requires
+  teaching the harness to diff sidecar `.md` files, not just `graph.json`.
+        </script></md>
+
+        <pd-mermaid caption="Coverage layers (unit → e2e), widest at the base">
+flowchart TD
+  U[unit: registry / validate / hash / md-parse] --> I[integration: CLI add·link·lint·freeze]
+  I --> G[golden: render show/docs]
+  G --> E[e2e: lifecycle + dogfood rebuild &amp; preview-rebuild]
+        </pd-mermaid>
+      </pd-section>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+
+        <pd-ac id="AC-1" title="Annex is a registered node type, created with zero CLI code" phases="1" tests="auto-plan/internal/schema/registry_test.go,auto-plan/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** the `annex` node type in the registry (prefix, `kind`/`path`/`title`/`hash` fields)
+- **When** `auto plan add <plan> annex --kind usage --path usage.md --title "…"` runs
+- **Then** a valid `annex` node is written with an opaque `ax-xxxx` id, and the generated-flag
+  and docs coverage tests pass for it with no per-type CLI code; an unknown `--kind` is
+  rejected with `invalid-field` ("must be one of usage|structures|testing").
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="ACs carry an optional test-layer field" phases="1" tests="auto-plan/internal/schema/registry_test.go,auto-plan/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** the new optional `layer` enum on the `ac` node
+- **When** `auto plan update <plan> <ac> --layer e2e` runs
+- **Then** the AC stores `layer:"e2e"`; an invalid value is rejected; and an AC with **no**
+  `layer` stays valid — the frozen dogfood fixture (whose ACs have no layer) still lints clean.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="At most one annex per kind, refused at write time" phases="1" tests="auto-plan/internal/graph/validate_test.go,auto-plan/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** a plan that already has a `testing` annex
+- **When** a second `testing` annex is added
+- **Then** the write is **refused** by validation with `duplicate-annex-kind` (not merely a
+  lint warning), naming both nodes — enforced generically via `NodeType.UniqueBy="kind"`.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="An annex explains nodes via about edges" phases="1" tests="auto-plan/internal/schema/registry_test.go,auto-plan/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** the `about` edge extended to `From:["tree","annex"]`
+- **When** `auto plan link <plan> <annex> about <goal>` runs
+- **Then** the edge is accepted (annex → any node); `about` from a node that is neither
+  `tree` nor `annex` is still rejected with `wrong-endpoint`.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-5" title="Creating an annex writes a kind-templated stub, idempotently" phases="1,4" tests="auto-plan/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** no `testing.md` in the plan folder
+- **When** `auto plan add <plan> annex --kind testing --path testing.md …` runs
+- **Then** `testing.md` is created with the per-layer section skeleton (`## e2e` … `## manual`);
+  running the same add again (or when the file already has content) **never overwrites** it —
+  create-only-when-missing, like the scaffold writer.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-6" title="Lint flags an annex whose file is missing" phases="2" tests="auto-plan/internal/lint/lint_test.go">
+          <md><script type="text/plain">
+- **Given** an `annex` node whose `path` names a file that does not exist on disk
+- **When** `auto plan lint <plan>` runs
+- **Then** it reports `annex-missing` with a non-zero exit and a remediation hint, naming the node and path.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-7" title="Lint flags stray markdown files in the plan folder" phases="2" tests="auto-plan/internal/lint/lint_test.go">
+          <md><script type="text/plain">
+- **Given** a `*.md` file in the plan folder that no `annex` node's `path` names
+- **When** `auto plan lint <plan>` runs
+- **Then** it reports `unlinked-file` for that file — keeping the folder a fixed, registered
+  set rather than a dumping ground. (`graph.json`, and `AGENTS.md`/`CLAUDE.md` which live in the
+  parent `plans/` dir, are never flagged.)
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="Lint resolves [[id]] references inside annex markdown" phases="2" tests="auto-plan/internal/lint/lint_test.go">
+          <md><script type="text/plain">
+- **Given** an annex file containing `[[ac-3fxm]]` (valid), `[[g-nope]]` (dangling), and a
+  `` `[[g-example]]` `` inside a code span
+- **When** `auto plan lint <plan>` runs
+- **Then** the dangling ref reports `annex-ref`; the valid ref passes; the code-span ref is
+  **ignored** — resolution reuses `graph.FindProseRefs`, so what lint checks matches what renumber rewrites.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="Every used test layer has a testing-annex section" phases="4" tests="auto-plan/internal/lint/lint_test.go,auto-plan/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** a `testing` annex and the set of `layer` values the plan's ACs actually use
+- **When** `auto plan lint <plan>` runs
+- **Then** a layer that **at least one AC uses** but the testing annex has **no `## <layer>`
+  section** for is flagged (code `annex-testing-layers`). The rule is **one-directional**: a
+  `## <layer>` section for a layer no AC uses is **allowed** (template/placeholder sections are
+  fine), so a freshly stubbed testing annex (which seeds all layers, per AC-5) **lints clean**
+  even when the plan uses only some layers. This is proved by a dedicated clean-stub integration case.
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-9" status="resolved" priority="p1" title="Testing stub cannot pass its own layer rule">
+          <pd-comment by="review">AC-5 and Phase 4 require a newly created testing annex to seed every `## e2e` through `## manual` section, while AC-9/Phase 4 require lint to reject every section whose layer is unused by an AC. A normal new plan (and especially an optional `ac.layer` plan) will therefore fail lint immediately after `add annex --kind testing`. Define whether empty template sections are exempt, the template is generated only from currently used layers, or the rule has another intended semantics; add the corresponding clean-stub integration case.</pd-comment>
+          <pd-comment by="author">Good catch — the two-directional rule contradicted the all-layers stub. Made `annex-testing-layers` **one-directional**: it flags only a *used* layer that has *no* section; an extra `## <layer>` section for an unused layer is allowed. So the freshly-stubbed testing annex (all five sections) lints clean regardless of which layers the plan uses. AC-9 is rewritten to this semantics, D-10 and Phase 4 updated to match, and a clean-stub integration case is now required (AC-9 `tests` includes `cli_integration_test.go`; Phase 4 lists the case).</pd-comment>
+        </pd-thread>
+
+        <pd-ac id="AC-10" title="Freezing records a content hash on every annex" phases="3" tests="auto-plan/internal/graph/hash_test.go,auto-plan/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** a plan with annexes being advanced to done
+- **When** `auto plan update <plan> --lifecycle done` runs (the last allowed write)
+- **Then** every annex node gains a `hash` = SHA-256 hex of its file's bytes, written into the
+  frozen `graph.json`; `hash` has **no CLI flag** (neither `add` nor `update` can set it) and is
+  computed only at this transition — not on ordinary markdown edits.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-11" title="After freeze, a changed annex is detected" phases="3" tests="auto-plan/internal/lint/lint_test.go,auto-plan/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** a frozen plan (`lifecycle:done`) whose annex files were hashed at freeze
+- **When** an annex file is edited and `auto plan lint <plan>` runs
+- **Then** it reports `annex-changed` (MinLifecycle done) naming the node; an untouched annex lints clean.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-12" title="Renumber keeps annex files and refs correct" phases="5" tests="auto-plan/internal/cli/cli_integration_test.go">
+          <md><script type="text/plain">
+- **Given** a plan with annex files (folder-relative paths) and a cross-plan `[[NNN:id]]` ref inside one
+- **When** `auto plan renumber <plan>` runs
+- **Then** the annex files move with the renamed folder (stored paths unchanged), the cross-plan ref
+  inside the markdown is rewritten to the new number, and `lint all` is clean — all staged atomically.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-13" title="Annex is in the ubiquitous language" phases="1" tests="auto-plan/internal/schema/registry_test.go">
+          <md><script type="text/plain">
+- **Given** the glossary needs the term before code (and `registry_test.go` requires it)
+- **When** the `**Annex**:` entry is added and `glossary.py check` + `glossary.py diagram --write` run
+- **Then** the glossary check passes, `TestEveryTypeHasGlossaryTerm` passes, the mermaid ER block and
+  frontmatter `summary:` include Annex, and `NodeType.Term` for `annex` names it.
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-14" title="The preview's in-scope data contract is rebuildable from real annexes" phases="6" tests="auto-plan/e2e/e2e_test.go">
+          <md><script type="text/plain">
+- **Given** the dogfood e2e authors real `usage`/`structures`/`testing` annexes and sets `ac.layer`
+  on the rebuilt plan before freezing
+- **When** a derivation emits a **defined preview-data contract** — only the fields this task
+  actually produces
+- **Then** it reproduces, and a golden file pins, exactly these:
+  1. **per-layer AC counts** keyed by `ac.layer` (the data `layerOf`/the goal badges need);
+  2. the **annex inventory** — one record per annex `{kind, title, path}` plus its `about`-edge target ids;
+  3. the **usage and structures exposition** as the raw Markdown bodies of those annex files.
+- **Explicitly out of the contract** (so the oracle is determinate): the spike's richer faked fields
+  — `contract.definition`/`example`, `testlayer.summary`/`harness`/`expects`, per-`example` `why`/`body`
+  split — which would need an annex-Markdown field schema and `auto plan verify` (both out of scope).
+  The derivation does **not** claim to reconstruct those.
+- **Oracle:** the harness byte-compares the emitted JSON against
+  `auto-plan/e2e/testdata/scenarios/dogfood/snapshots/preview-data.json`.
+          </script></md>
+        </pd-ac>
+        <pd-thread anchor="AC-14" status="resolved" priority="p1" title="Preview-rebuild derivation has no defined input contract">
+          <pd-comment by="review">The current spike cannot be reproduced from the stated annex data alone: its `example` records need `title`, `why`, `body`, and `about` targets; its `contract` records need `name`, `kind`, `why`, `definition`, `example`, and constraining edges; and its test layers need title, summary, harness, expected files, plus `in` edges. The plan only specifies raw usage/structures bodies, `annex → about`, and `ac.layer`. Define the annex Markdown schema and the derivation/test output (or narrow AC-14 to the fields actually reconstructible), then name the test artifact that compares it. Otherwise the proposed dogfood check has no determinate oracle.</pd-comment>
+          <pd-comment by="author">Agreed — reconstructing the spike's full faked records would require an annex-Markdown field schema, which is really the front half of `auto plan verify` (out of scope). Narrowed AC-14 to a **defined preview-data contract** covering only what this task produces: (1) per-layer AC counts from `ac.layer`, (2) an annex inventory `{kind, title, path}` + `about` targets, (3) the raw usage/structures Markdown bodies. The richer fields (`contract.definition`/`example`, `testlayer.summary`/`harness`/`expects`, the `example` `why`/`body` split) are explicitly declared out of the contract, so the derivation has a determinate oracle: a golden `dogfood/snapshots/preview-data.json` the harness byte-compares. D-11 and Phase 6 now name that artifact.</pd-comment>
+        </pd-thread>
+
+        <pd-trace caption="Acceptance coverage"></pd-trace>
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **No `auto plan verify`** (out of scope): the `usage` annex's ```console blocks are stored and
+  structurally lint-able, but nothing *executes* them this task. The deeper per-kind checks
+  (console-block parse; each testing layer's expected test files are real `file` nodes) are
+  deferred with it (see D-10).
+- **e2e harness change** — the scenario runner diffs only `graph.json` today; asserting sidecar
+  `.md` content (and the freeze hash over it) needs harness support. Risk: flaky byte-diffs if the
+  stub template isn't deterministic — the stub must be fixed text.
+- **Frozen committed fixture** — `001-auto-plan-graph/graph.json` is `done` and won't be hand-edited;
+  annex coverage is proved by the e2e *rebuild*, not by mutating the committed fixture.
+- **`ac.layer` is optional** — coverage "shape" is only computed for ACs that set it; an AC with no
+  layer simply isn't counted. That's intended (unit is "the agent's call"), not a gap to close here.
+        </script></md>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Solution">
+      <pd-section id="approach" title="Approach">
+        <md><script type="text/plain">
+Add the **annex** as a first-class registry node type and `layer` as an optional enum on
+`ac`, then teach the three subsystems that must know about files — **validation** (write-time
+uniqueness), **lint** (read the plan folder and the annex markdown), and **freeze/renumber**
+(hash at `done`; move files + rewrite cross-plan refs) — about them. Everything that can be
+registry-driven is (flags, help, docs, decode): the only genuinely new infrastructure is two
+small generic registry capabilities (`UniqueBy`, `Computed`), a filesystem handle on
+`lint.Context`, and a SHA-256 helper.
+
+Guiding rule carried from the design discussion: **facts live in the graph, exposition lives in
+the annex markdown.** The annex node holds only fields something computes from (`kind`, `path`,
+`title`, freeze `hash`); the prose a human reads stays in the `.md`.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="data-shapes" title="Data shapes">
+        <pd-code lang="json" path=".auto/plan/plans/NNN-name/graph.json (excerpt)" caption="An annex node + its about edge; an AC carrying a layer">
+<script type="text/plain">
+{
+  "nodes": [
+    { "id": "ax-7k2q", "type": "annex", "rank": 1,
+      "fields": {
+        "kind": "testing",
+        "path": "testing.md",
+        "title": "Test coverage by layer",
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      } },
+    { "id": "ac-3fxm", "type": "ac",
+      "fields": { "title": "…", "gwt": "…", "layer": "e2e",
+                  "verify": { "cmd": "go test ./…", "kind": "command" } } }
+  ],
+  "edges": [
+    { "id": "e-9t2w", "from": "ax-7k2q", "type": "about", "to": "ac-3fxm" }
+  ]
+}
+</script>
+        </pd-code>
+        <md><script type="text/plain">
+`hash` is present **only after freeze** (`lifecycle:done`); before that the field is absent.
+`path` is relative to the plan folder — a flat `<kebab>.md`. Files on disk beside `graph.json`:
+`usage.md`, `structures.md`, `testing.md` (each registered by exactly one annex node).
+        </script></md>
+      </pd-section>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-plan/internal/schema/registry.go" change="edit">Add the `annex` NodeType (prefix `ax`; fields `kind` enum, `path` string+pattern, `title`, `hash` Computed); add optional `layer` enum to `ac`; extend `about` edge `From` to `["tree","annex"]`; add `UniqueBy` to NodeType and `Computed` to FieldSpec.</pd-file>
+          <pd-file path="auto-plan/internal/schema/registry_test.go" change="edit">Update pin-tests: node count + `TestDesignNodeTypes`, `TestDesignEdgeEndpoints`, `TestPrefixesUnique`, `TestFieldSpecsWellFormed`; assert the `annex` term + `ac.layer`.</pd-file>
+          <pd-file path="auto-plan/internal/graph/validate.go" change="edit">Enforce `NodeType.UniqueBy` generically (code `duplicate-annex-kind`), modeled on the plan-singleton count; accept the `Computed` `hash` field.</pd-file>
+          <pd-file path="auto-plan/internal/graph/hash.go" change="add">New SHA-256 hex helper over annex file bytes (no hashing exists in the repo).</pd-file>
+          <pd-file path="auto-plan/internal/graph/hash_test.go" change="add">Unit tests for the hash helper (stable hex; empty file).</pd-file>
+          <pd-file path="auto-plan/internal/lint/lint.go" change="edit">Add an `fs.FS` (rooted at the plan folder) to `lint.Context`; thread it from the runner.</pd-file>
+          <pd-file path="auto-plan/internal/lint/rules.go" change="edit">New rules: `annex-missing`, `unlinked-file`, `annex-ref`, `annex-changed`, `annex-testing-layers`; a small markdown section-header reader; reuse `FindProseRefs` for `annex-ref`.</pd-file>
+          <pd-file path="auto-plan/internal/lint/lint_test.go" change="edit">Table tests per new rule using `fstest.MapFS`; keep `TestRuleLifecyclesAreRegistrySteps` green.</pd-file>
+          <pd-file path="auto-plan/internal/workspace/workspace.go" change="edit">Helper to enumerate a plan folder's `*.md` files (for `unlinked-file`) and to open the folder as an `fs.FS`.</pd-file>
+          <pd-file path="auto-plan/internal/cli/write.go" change="edit">After `add` creates an `annex`, write the kind-templated stub `.md` if absent (idempotent); at the `--lifecycle done` transition in `runUpdate`, compute and store each annex `hash`.</pd-file>
+          <pd-file path="auto-plan/internal/cli/annex_stub.go" change="add">The deterministic per-kind stub templates (`usage`/`structures`/`testing` skeletons).</pd-file>
+          <pd-file path="auto-plan/internal/cli/renumber.go" change="edit">Rewrite cross-plan `[[NNN:id]]` refs inside annex markdown via `ReplaceProseRefs`, staged atomically alongside graph.json; confirm folder-relative paths need no rewrite.</pd-file>
+          <pd-file path="auto-plan/internal/cli/cli_integration_test.go" change="edit">Integration coverage: `add annex` stub, `link about`, each lint code, freeze hash, post-freeze `annex-changed`, renumber-with-annex.</pd-file>
+          <pd-file path="auto-plan/e2e/e2e_test.go" change="edit">Teach the harness to diff sidecar `.md` files (and the freeze hash) at checkpoints.</pd-file>
+          <pd-file path="auto-plan/e2e/testdata/scenarios/lifecycle/commands.txt" change="edit">Walk an annex through create → lint → freeze → `annex-changed`; refresh snapshots.</pd-file>
+          <pd-file path="auto-plan/e2e/testdata/scenarios/dogfood/commands.txt" change="edit">Author real `usage`/`structures`/`testing` annexes + `ac.layer` before freeze; add a preview-rebuild derivation check; refresh snapshots.</pd-file>
+          <pd-file path="docs/concepts/UBIQUITOUS_LANGUAGE.md" change="edit">Add the `**Annex**:` term (+ `_Has_: one Plan`, `Plan _Has_ many Annex`); regenerate the mermaid ER block; add Annex to the frontmatter `summary:`.</pd-file>
+          <pd-file path="auto-plan/CLAUDE.md" change="edit">Document the annex type, `ac.layer`, the new lint codes, and the freeze-hash behaviour in the command surface + invariants.</pd-file>
+        </pd-files>
+      </pd-section>
+
+      <pd-decision id="D-1" title="An annex is a registry node type, not plan metadata" status="accepted" by="agent"
+        summary="One node per annex file; relationships live in edges[] — follows task 065's D-9.">
+        <md><script type="text/plain">
+**Context:** Plans need scannable exposition (usage transcripts, data structures, per-layer test summaries) with nowhere to live.
+**Decision:** Each annex file is registered as one `annex` node in `graph.json`; its relationships (`about`) are edges.
+**Alternatives:** Top-level reference arrays / a `plan.annexes` metadata field — rejected for the same reason as 065's D-9 (relationships would sit outside `edges[]`). Content nodes holding the prose in-graph — rejected: unreadable escaped `\n` in PR diffs, painful CLI authoring.
+**Consequences:** Exposition is real Markdown in the diff; the graph stays the single source of facts.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-2" title="ac.layer is an optional enum on the existing ac node" status="accepted" by="agent"
+        summary="Test-layer coverage computed from the graph; optional so old/frozen ACs stay valid.">
+        <md><script type="text/plain">
+**Decision:** Add `layer` (enum `e2e|integration|golden|unit|manual`, not required) to `ac`.
+**Alternatives:** A separate `testlayer` node (the spike's fake) — rejected: a layer is a property of an AC, not its own entity; a field is cheaper and lets `show`/preview compute coverage directly.
+**Consequences:** The frozen dogfood fixture (ACs without `layer`) stays valid; coverage is only computed for ACs that opt in.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-3" title="Reuse the about edge for annex→node" status="accepted" by="agent"
+        summary="Extend about's From to [tree, annex] rather than minting a new edge type.">
+        <md><script type="text/plain">
+**Decision:** `about` becomes `From:["tree","annex"] To:["*"]`.
+**Alternatives:** A new `explains` edge — rejected: `about` already means "the node this X illustrates"; a second near-synonym edge violates the one-word-per-concept discipline.
+**Consequences:** Existing `about` consumers (trace, show) light up annexes for free.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-4" title="At most one annex per kind via a generic NodeType.UniqueBy" status="accepted" by="agent"
+        summary="Write-time refusal, enforced generically in Validate — not a lint-only warning.">
+        <md><script type="text/plain">
+**Decision:** Add `NodeType.UniqueBy string`; `annex` sets `UniqueBy:"kind"`. `Validate` groups active nodes of such a type by that field and reports `duplicate-annex-kind`, modeled on the existing plan-singleton count.
+**Alternatives:** A hardcoded annex check in Validate — rejected: the registry is the extension point (D-6), prefer a generic knob. Lint-only — rejected: a hard cap should refuse the write, not warn after the fact.
+**Consequences:** One generic mechanism; the plan-singleton remains the only bespoke count.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-5" title="Annex content is authored in the .md; add writes a stub when absent" status="accepted" by="agent"
+        summary="Generic `add annex` registers the node and writes a kind-templated stub, create-only-when-missing.">
+        <md><script type="text/plain">
+**Decision:** Keep registration on the generic `auto plan add <plan> annex …` (zero per-type CLI code). Add a small post-create hook: if the `path` file is absent, write a deterministic per-kind stub (the `testing` stub seeds `## e2e … ## manual`); never overwrite existing content.
+**Alternatives:** A dedicated `auto plan annex …` verb group — rejected: breaks the uniform `add <type>` surface. No stub at all — rejected: `annex-missing` would fire immediately and multi-line authoring via flags is the pain we're removing.
+**Consequences:** One type-specific side effect in `runAdd`, modeled on the idempotent scaffold writer.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-6" title="hash is a Computed field — no CLI flag, set only at freeze" status="accepted" by="agent"
+        summary="New FieldSpec.Computed flag; Fixed doesn't fit because hash is unknown at create.">
+        <md><script type="text/plain">
+**Decision:** Add `FieldSpec.Computed bool`; `annex.hash` is Computed — it gets no `add`/`update` flag and is written only by the freeze step. `Validate` accepts it.
+**Alternatives:** Reuse `Fixed` — rejected: Fixed fields are set at create, but the hash isn't known until freeze. Store the hash outside the graph — rejected: the design puts it on the node.
+**Consequences:** A second small generic registry capability, reusable by any future tool-computed field.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-7" title="Freeze computes SHA-256 at the done transition" status="accepted" by="agent"
+        summary="Hash annex bytes once at --lifecycle done; annex-changed re-checks after.">
+        <md><script type="text/plain">
+**Decision:** At the `--lifecycle done` write (the last allowed write), compute SHA-256 hex over each annex file's bytes and store it in `hash`. `annex-changed` (MinLifecycle done) recomputes and compares. Introduce a `graph/hash.go` helper — no hashing exists in the repo.
+**Alternatives:** Hash on every write — rejected by the design (no CLI round-trip per markdown edit). Truncated hash — rejected: full hex is one field and avoids any collision reasoning.
+**Consequences:** Freeze gains its first side effect beyond setting the field; the frozen graph.json carries the hashes.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-8" title="Annex paths are folder-relative; renumber rewrites cross-plan refs in markdown" status="accepted" by="agent"
+        summary="Folder rename moves files for free; renumber also rewrites [[NNN:id]] inside annex prose.">
+        <md><script type="text/plain">
+**Decision:** Store `path` relative to the plan folder (a flat `<kebab>.md`). Renumber's existing folder rename moves the files with no path rewrite. Renumber additionally reads each annex file and rewrites cross-plan `[[NNN:id]]` refs via `ReplaceProseRefs`, staged atomically with the graph.json temp files.
+**Alternatives:** Repo-relative paths (including `NNN-name`) — rejected: would force renumber to rewrite every stored path and break on folder moves. Leave annex prose refs un-rewritten — rejected: renumber's contract is to rewrite *every* reference; a stale cross-plan ref would dangle (though `annex-ref` would catch it).
+**Consequences:** Renumber grows a bounded file-rewrite step reusing existing machinery.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-9" title="Lint reads the plan folder through an fs.FS on Context" status="accepted" by="agent"
+        summary="Add fs.FS to lint.Context (os.DirFS in prod, fstest.MapFS in tests).">
+        <md><script type="text/plain">
+**Decision:** Give `lint.Context` an `fs.FS` rooted at the plan folder; all annex rules read annex files and enumerate `*.md` through it.
+**Alternatives:** Rules call `os` directly — rejected: untestable without temp dirs and couples lint to the filesystem layout.
+**Consequences:** Annex lint is unit-testable with in-memory files; the runner wires `os.DirFS(folder)`.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-10" title="v1 lint scope: core rules + the cheap testing-layers check" status="accepted" by="agent"
+        summary="Defer console-block parsing and expected-test-paths checks to auto plan verify.">
+        <md><script type="text/plain">
+**Decision:** Ship `annex-missing`, `unlinked-file`, `annex-ref`, `annex-changed`, and `annex-testing-layers` (**one-directional**: every layer some AC uses must have a `## <layer>` section; extra template sections for unused layers are allowed, so the all-layers stub lints clean). Defer the heavier per-kind checks — usage ```console blocks parse; each testing layer's expected test files are real `file` nodes — to the out-of-scope `auto plan verify`.
+**Alternatives:** Build every per-kind check now — rejected: the console parser is really the front half of `verify`, already out of scope; adding a lint rule later is cheap.
+**Consequences:** v1 keeps the annex set honest without a markdown execution engine.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-11" title="Prove preview-rebuild via the dogfood e2e, not the frozen fixture" status="accepted" by="agent"
+        summary="The rebuild scenario authors real annexes + ac.layer before freeze.">
+        <md><script type="text/plain">
+**Decision:** Extend the `dogfood` e2e rebuild to author real annexes and set `ac.layer` before freezing, then derive a **defined preview-data contract** (per-layer AC counts, the annex inventory + `about` targets, and the raw usage/structures Markdown bodies) and pin it with a golden `dogfood/snapshots/preview-data.json`. The contract deliberately excludes the spike's richer faked fields (they need an annex-Markdown schema + `auto plan verify`, out of scope) so the oracle is determinate — see AC-14.
+**Alternatives:** Hand-edit the committed frozen `001` fixture — rejected: it's `lifecycle:done` (writes refused) and the e2e rebuild is the source of truth.
+**Consequences:** The `07-preview.html` spike's faked `plan-extras` becomes reproducible from real data.
+        </script></md>
+      </pd-decision>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Prose in graph.json string fields** — unreadable escaped `\n` in diffs; painful to author via flags. (D-1)
+- **A `plan.annexes` metadata array / top-level references** — relationships outside `edges[]`; rejected by 065's D-9. (D-1)
+- **A standalone `testlayer` node** (the spike's fake) — a layer is a property of an AC, not an entity. (D-2)
+- **A new `explains` edge** — `about` already carries the meaning. (D-3)
+- **Lint-only uniqueness** — a hard "one per kind" cap belongs at write time. (D-4)
+- **A dedicated `annex` verb group** — breaks the uniform `add <type>` surface. (D-5)
+- **Reusing `Fixed` for the hash** — Fixed is set at create; the hash is a freeze-time value. (D-6)
+- **Hashing on every write** — the design explicitly avoids a CLI round-trip per markdown edit. (D-7)
+- **Repo-relative annex paths** — would force renumber to rewrite every path. (D-8)
+        </script></md>
+      </pd-section>
+
+      <pd-decisions></pd-decisions>
+    </pd-tab>
+
+    <pd-tab name="Plan">
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Stand the `annex` node type up end-to-end first (registry → validate → CLI → disk → glossary),
+then thicken it one subsystem at a time: folder-aware lint, freeze hashing, the testing-layer
+consistency check, renumber correctness, and finally e2e/goldens/docs.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="execution-sequence" title="Execution Sequence">
+        <pd-dag caption="Phase dependency graph"></pd-dag>
+      </pd-section>
+
+      <pd-section id="phases" title="Phases">
+        <pd-stepper>
+          <pd-phase n="1" title="Walking skeleton: the annex type, end to end" status="todo"
+                    files="auto-plan/internal/schema/registry.go,auto-plan/internal/schema/registry_test.go,auto-plan/internal/graph/validate.go,auto-plan/internal/cli/write.go,auto-plan/internal/cli/annex_stub.go,auto-plan/internal/workspace/workspace.go,docs/concepts/UBIQUITOUS_LANGUAGE.md">
+            <md><script type="text/plain">
+Thin path through every layer so an annex can be created and round-tripped:
+1. Registry: add generic `NodeType.UniqueBy` + `FieldSpec.Computed`; add the `annex` NodeType
+   (prefix `ax`; fields `kind` enum `usage|structures|testing`, `path` string+flat-`.md` pattern,
+   `title`, `hash` Computed; `UniqueBy:"kind"`; `MinLifecycle: solution`); add optional `layer`
+   enum to `ac`; extend `about` edge `From` to `["tree","annex"]`.
+2. Glossary: add the `**Annex**:` term (+ `_Has_: one Plan`, `Plan _Has_ many Annex`); run
+   `glossary.py check` and `diagram --write`; add Annex to the frontmatter `summary:`.
+3. Validate: enforce `UniqueBy` generically (`duplicate-annex-kind`), modeled on the plan-singleton
+   count; accept the `Computed` `hash` field.
+4. CLI: `add annex` registers via the generic path and writes a minimal stub `.md` when absent
+   (full per-kind templates land in Phase 4); add the workspace folder/`fs.FS` + `*.md` helpers.
+5. Update the registry pin-tests (node count, `TestDesignNodeTypes/EdgeEndpoints/PrefixesUnique/
+   FieldSpecsWellFormed`, glossary-term test).
+
+**Verify:** `cd auto-plan && go build ./... && go test ./internal/schema/ ./internal/graph/ ./internal/cli/`;
+`python3 .claude/skills/domain-modelling/scripts/glossary.py check docs/concepts/UBIQUITOUS_LANGUAGE.md`;
+manual round-trip: `auto plan add <p> annex --kind usage --path usage.md --title x` → node + file exist, `lint` clean, `link <p> <ax> about <goal>` accepted. Commit.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="2" title="Folder-aware lint: missing / unlinked / refs" status="todo" depends-on="1"
+                    files="auto-plan/internal/lint/lint.go,auto-plan/internal/lint/rules.go,auto-plan/internal/lint/lint_test.go,auto-plan/internal/workspace/workspace.go">
+            <md><script type="text/plain">
+1. Add an `fs.FS` (rooted at the plan folder) to `lint.Context`; wire `os.DirFS(folder)` from the runner.
+2. Implement `annex-missing` (node path absent), `unlinked-file` (a `*.md` no annex names), and
+   `annex-ref` (read each annex file, `graph.FindProseRefs`, resolve against the plan — dangling →
+   report, code-span refs ignored). Give each a remediation hint.
+3. Table tests with `fstest.MapFS`; keep `TestRuleLifecyclesAreRegistrySteps` green.
+
+**Verify:** `go test ./internal/lint/ ./internal/workspace/`; a fixture plan with a missing file,
+a stray `.md`, and a dangling `[[id]]` reports exactly the three codes with non-zero exit. Commit.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="3" title="Freeze hashing + annex-changed" status="todo" depends-on="1,2"
+                    files="auto-plan/internal/graph/hash.go,auto-plan/internal/graph/hash_test.go,auto-plan/internal/cli/write.go,auto-plan/internal/lint/rules.go,auto-plan/internal/lint/lint_test.go">
+            <md><script type="text/plain">
+1. `graph/hash.go`: SHA-256 hex over bytes + unit tests.
+2. In `runUpdate`, at the `--lifecycle done` transition (last allowed write), compute and store each
+   annex's `hash` before save (reading files via the workspace folder).
+3. `annex-changed` lint rule (MinLifecycle done): recompute file hash, compare to the stored field.
+
+**Verify:** `go test ./internal/graph/ ./internal/cli/ ./internal/lint/`; freeze a fixture →
+annex nodes gain `hash`; edit a file → `annex-changed`; untouched → clean; confirm `hash` has no flag. Commit.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="4" title="Testing-layer consistency + per-kind stubs" status="todo" depends-on="1,2"
+                    files="auto-plan/internal/cli/annex_stub.go,auto-plan/internal/lint/rules.go,auto-plan/internal/lint/lint_test.go,auto-plan/internal/cli/cli_integration_test.go">
+            <md><script type="text/plain">
+1. Flesh out the deterministic per-kind stub templates (`usage`/`structures`/`testing`; the testing
+   stub seeds `## e2e … ## manual`).
+2. A small markdown section-header reader; `annex-testing-layers` lint (**one-directional**): flag a
+   layer some AC uses that the testing annex has no `## <layer>` section for; an extra section for an
+   unused layer is allowed (so the all-layers stub passes).
+3. Integration coverage for the stub + the new rule, **including a clean-stub case**: `add annex
+   --kind testing` on a plan that uses only some layers must lint clean.
+
+**Verify:** `go test ./internal/lint/ ./internal/cli/`; a testing annex missing a *used* layer is
+flagged; a freshly stubbed testing annex lints clean; the stub is byte-stable. Commit.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="5" title="Renumber correctness for annexes" status="todo" depends-on="1"
+                    files="auto-plan/internal/cli/renumber.go,auto-plan/internal/cli/cli_integration_test.go">
+            <md><script type="text/plain">
+1. Confirm folder-relative paths need no rewrite (the folder rename moves files).
+2. Rewrite cross-plan `[[NNN:id]]` refs inside annex markdown via `ReplaceProseRefs`, staged as temp
+   files and renamed atomically alongside `graph.json`; keep the frozen-ref refusal.
+
+**Verify:** `go test ./internal/cli/`; renumber a plan with an annex holding a cross-plan ref → files
+move, ref rewritten, `lint all` clean; a crash-window note stays accurate. Commit.
+            </script></md>
+          </pd-phase>
+
+          <pd-phase n="6" title="e2e, goldens, docs" status="todo" depends-on="1,2,3,4,5"
+                    files="auto-plan/e2e/e2e_test.go,auto-plan/e2e/testdata/scenarios/lifecycle/commands.txt,auto-plan/e2e/testdata/scenarios/dogfood/commands.txt,auto-plan/CLAUDE.md">
+            <md><script type="text/plain">
+1. Teach the e2e harness to diff sidecar `.md` files (and the freeze hash) at checkpoints.
+2. `lifecycle`: walk an annex create → lint → freeze → `annex-changed`.
+3. `dogfood`: author real `usage`/`structures`/`testing` annexes + set `ac.layer` before freeze; emit the
+   **preview-data contract** (per-layer AC counts from `ac.layer`; annex inventory `{kind,title,path}` +
+   `about` targets; raw usage/structures Markdown bodies — AC-14's in-scope subset) and pin it with a new
+   golden `e2e/testdata/scenarios/dogfood/snapshots/preview-data.json`.
+4. Refresh render goldens (`go test ./internal/render/ -update`) and e2e snapshots (`go test ./e2e/ -update`); review diffs.
+5. Document the annex type, `ac.layer`, the new lint codes, and freeze-hash in `auto-plan/CLAUDE.md`.
+
+**Verify:** `cd auto-plan && go test ./...` (full, incl. e2e); `make build` from repo root;
+`auto plan docs` mentions annex + layer. Commit.
+            </script></md>
+          </pd-phase>
+        </pd-stepper>
+      </pd-section>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- Phase 1 → **AC-1, AC-2, AC-3, AC-4, AC-13** (type, layer, uniqueness, about edge, glossary).
+- Phase 2 → **AC-6, AC-7, AC-8** (annex-missing, unlinked-file, annex-ref).
+- Phase 3 → **AC-10, AC-11** (freeze hash, annex-changed).
+- Phase 4 → **AC-5 (templated stub), AC-9** (testing-layer consistency).
+- Phase 5 → **AC-12** (renumber).
+- Phase 6 → **AC-14** (preview rebuildable) + docs.
+- All ACs pass; `cd auto-plan && go test ./...` and `make build` are green; `glossary.py check` clean.
+        </script></md>
+      </pd-section>
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
