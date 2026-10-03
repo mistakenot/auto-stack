@@ -3,5 +3,5 @@
   "number": "001",
   "name": "demo",
   "kind": "task",
-  "path": "docs/plans/001-demo"
+  "path": ".auto/plan/plans/001-demo"
 }

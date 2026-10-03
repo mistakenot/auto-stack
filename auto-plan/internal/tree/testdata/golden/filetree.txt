@@ -5,6 +5,6 @@
 ~ └── render/
 +     ├── brief.go  f-0001  Stage Brief view
 ~     └── show.go   f-0002  labels, alternatives and blocks
-+ docs/plans/
++ docs/guide/
 + └── README.md     f-0006  a very long reason a very long reason a very long reason a …
 ~ go.work           f-0005  use ./auto-plan

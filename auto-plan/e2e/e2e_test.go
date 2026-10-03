@@ -5,7 +5,7 @@
 // A scenario is testdata/scenarios/<name>/commands.txt: one `auto …`
 // invocation per line, with two kinds of annotation:
 //
-//	# checkpoint <n>                      compare docs/plans/*/graph.json with snapshots/checkpoint-<n>/
+//	# checkpoint <n>                      compare .auto/plan/plans/*/graph.json with snapshots/checkpoint-<n>/
 //	# expect exit=<n> stdout=<file>       applies to the next invocation (either part optional)
 //
 // Invocations without an expect annotation must exit 0. Run with -update to
@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	planws "github.com/mistakenot/auto-plan/internal/workspace"
 )
 
 var update = flag.Bool("update", false, "regenerate scenario snapshots and expected stdout")
@@ -202,18 +204,18 @@ func splitWords(line string) ([]string, error) {
 
 // compareCheckpoint asserts the workspace's plan graphs equal the snapshot
 // directory: the same plan folders, each graph.json byte-identical. It also
-// asserts the scaffold init/new create: docs/plans/AGENTS.md and a CLAUDE.md
+// asserts the scaffold init/new create: .auto/plan/plans/AGENTS.md and a CLAUDE.md
 // symlinked to it.
 func compareCheckpoint(t *testing.T, ws, snapDir string) {
 	t.Helper()
-	plansDir := filepath.Join(ws, "docs", "plans")
+	plansDir := filepath.Join(ws, filepath.FromSlash(planws.PlansDir))
 	if _, err := os.Stat(filepath.Join(plansDir, "AGENTS.md")); err != nil {
-		t.Fatalf("%s: docs/plans/AGENTS.md: %v", filepath.Base(snapDir), err)
+		t.Fatalf("%s: %s/AGENTS.md: %v", filepath.Base(snapDir), planws.PlansDir, err)
 	}
 	if target, err := os.Readlink(filepath.Join(plansDir, "CLAUDE.md")); err != nil || target != "AGENTS.md" {
-		t.Fatalf("%s: docs/plans/CLAUDE.md should link to AGENTS.md: %q, %v", filepath.Base(snapDir), target, err)
+		t.Fatalf("%s: %s/CLAUDE.md should link to AGENTS.md: %q, %v", filepath.Base(snapDir), planws.PlansDir, target, err)
 	}
-	got := planGraphs(t, filepath.Join(ws, "docs", "plans"))
+	got := planGraphs(t, plansDir)
 	if *update {
 		if err := os.RemoveAll(snapDir); err != nil {
 			t.Fatal(err)

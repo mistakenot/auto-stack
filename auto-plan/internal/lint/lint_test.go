@@ -459,14 +459,14 @@ func planDoc(name, kind, lifecycle, epic string, nodes, edges []string) string {
 		`], "edges": [` + strings.Join(edges, ",") + `]}`
 }
 
-// writeSet writes each folder's graph.json under a temp docs/plans and
+// writeSet writes each folder's graph.json under a temp .auto/plan/plans and
 // returns the workspace's PlanSet. A doc's "@PLAN@" ID becomes the plan ID of
 // its folder's number.
 func writeSet(t *testing.T, folders map[string]string) *workspace.PlanSet {
 	t.Helper()
 	root := t.TempDir()
 	for folder, doc := range folders {
-		dir := filepath.Join(root, "docs", "plans", folder)
+		dir := filepath.Join(root, ".auto", "plan", "plans", folder)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -793,7 +793,7 @@ func TestPlanSetRules(t *testing.T) {
 	for _, r := range []Report{beta, gamma} {
 		is := find(r, "duplicate-plan-number")
 		if r.OK || is.Severity != SeverityError ||
-			!strings.Contains(is.Message, "002-b0b0 (docs/plans/002-beta)") || !strings.Contains(is.Message, "002-g0g0 (docs/plans/002-gamma)") ||
+			!strings.Contains(is.Message, "002-b0b0 (.auto/plan/plans/002-beta)") || !strings.Contains(is.Message, "002-g0g0 (.auto/plan/plans/002-gamma)") ||
 			is.Hint != "auto plan renumber "+r.Plan+" (moves it to the next free number and rewrites every reference to it)" {
 			t.Errorf("%s duplicate-plan-number = %+v", r.Plan, is)
 		}

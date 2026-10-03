@@ -82,7 +82,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "plan",
 		Short: "Structured plan graphs: goals, acceptance criteria and decisions in one graph.json",
-		Long: `auto plan keeps each plan as one deterministic graph.json under docs/plans/NNN-name/:
+		Long: `auto plan keeps each plan as one deterministic graph.json under .auto/plan/plans/NNN-name/:
 typed nodes (plan, goal, ac, decision, …) and typed edges (proves, constrains, …),
 validated on every write against one type registry.
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/mistakenot/auto-plan/internal/graph"
 	"github.com/mistakenot/auto-plan/internal/schema"
+	"github.com/mistakenot/auto-plan/internal/workspace"
 )
 
 // Edge type names the epic rules read.
@@ -77,7 +78,7 @@ func childMissing(c *Context) []Issue {
 		}
 		out = append(out, Issue{
 			Path: graph.NodePath(n.ID) + ".fields.plan", Field: "plan",
-			Message: fmt.Sprintf("Child %s names plan %s, which no plan under docs/plans has as its ID.", n.ID, p),
+			Message: fmt.Sprintf("Child %s names plan %s, which no plan under %s has as its ID.", n.ID, p, workspace.PlansDir),
 			Hint: "create it with auto plan new <name> --kind task --epic " + c.Plan +
 				" and point the child at it (auto plan update " + c.Plan + " " + n.ID + " --plan <child-plan>), or auto plan retire " + c.Plan + " " + n.ID,
 		})
@@ -105,7 +106,7 @@ func childEpicMismatch(c *Context) []Issue {
 		}
 		switch g, err := c.Set.Load(epic); {
 		case !c.Set.Has(epic):
-			issue(fmt.Sprintf("Plan %s names epic %s, which no plan under docs/plans has as its ID.", c.Plan, epic), fix)
+			issue(fmt.Sprintf("Plan %s names epic %s, which no plan under %s has as its ID.", c.Plan, epic, workspace.PlansDir), fix)
 		case err != nil:
 			// The epic's own lint reports its parse error.
 		default:

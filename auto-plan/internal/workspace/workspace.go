@@ -1,4 +1,4 @@
-// Package workspace locates plans on disk: the repo root, the docs/plans/
+// Package workspace locates plans on disk: the repo root, the .auto/plan/plans/
 // folder, the next plan number, and resolution of a plan argument
 // (`NNN`, `NNN-xxxx`, `NNN-name`, a path, or `all`), and the PlanSet that
 // resolves qualified cross-plan references (`005-k7q2:r-8hw3`).
@@ -21,7 +21,7 @@ import (
 )
 
 // PlansDir is the plans root, relative to the repo root (D-1).
-const PlansDir = "docs/plans"
+const PlansDir = ".auto/plan/plans"
 
 // GraphFile is the one source-of-truth file in each plan folder (D-2).
 const GraphFile = "graph.json"
@@ -76,7 +76,7 @@ type Plan struct {
 	ID string `json:"id"`
 	// Name is the kebab-case name from the folder (`stage-briefs`).
 	Name string `json:"name"`
-	// Dir is the folder relative to the repo root (`docs/plans/004-stage-briefs`).
+	// Dir is the folder relative to the repo root (`.auto/plan/plans/004-stage-briefs`).
 	Dir string `json:"path"`
 }
 
@@ -101,7 +101,7 @@ func Open(cwd string) (*Workspace, error) {
 	return &Workspace{Root: root, CWD: cwd}, nil
 }
 
-// PlansPath returns the absolute docs/plans directory.
+// PlansPath returns the absolute .auto/plan/plans directory.
 func (w *Workspace) PlansPath() string { return filepath.Join(w.Root, filepath.FromSlash(PlansDir)) }
 
 // Abs returns the absolute path of a repo-relative path.
@@ -111,7 +111,7 @@ func (w *Workspace) Abs(rel string) string { return filepath.Join(w.Root, filepa
 func (w *Workspace) GraphPath(p Plan) string { return filepath.Join(w.Abs(p.Dir), GraphFile) }
 
 // Plans lists every plan folder, sorted by folder name, with the plan ID
-// each graph.json records. A missing docs/plans/ is an empty list. Entries
+// each graph.json records. A missing .auto/plan/plans/ is an empty list. Entries
 // that are not NNN-name folders are ignored.
 func (w *Workspace) Plans() ([]Plan, error) {
 	entries, err := os.ReadDir(w.PlansPath())

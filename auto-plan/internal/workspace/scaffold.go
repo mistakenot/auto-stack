@@ -8,22 +8,22 @@ import (
 )
 
 // AgentsFile and ClaudeFile are the agent memory files `init` and `new`
-// scaffold in docs/plans/: AGENTS.md says the folders are plans managed by
+// scaffold in .auto/plan/plans/: AGENTS.md says the folders are plans managed by
 // auto plan, and CLAUDE.md is a relative symlink to it.
 const (
 	AgentsFile = "AGENTS.md"
 	ClaudeFile = "CLAUDE.md"
 )
 
-// AgentsText is the content of a scaffolded docs/plans/AGENTS.md.
+// AgentsText is the content of a scaffolded .auto/plan/plans/AGENTS.md.
 const AgentsText = "# " + PlansDir + "\n\n" +
 	"Each `NNN-name/` folder here is a plan managed by `auto plan`: one `graph.json` per plan.\n" +
 	"Don't edit `graph.json` by hand. Change plans with `auto plan` (add, update, link, …) and read them\n" +
 	"with `auto plan list`, `show`, `get` and `search`.\n\n" +
 	"Run `auto plan quickstart` for the workflow and `auto plan docs` for the full reference.\n"
 
-// EnsureScaffold creates docs/plans/ and, when missing, docs/plans/AGENTS.md
-// and docs/plans/CLAUDE.md (a symlink to AGENTS.md). It never overwrites:
+// EnsureScaffold creates .auto/plan/plans/ and, when missing, .auto/plan/plans/AGENTS.md
+// and .auto/plan/plans/CLAUDE.md (a symlink to AGENTS.md). It never overwrites:
 // an existing AGENTS.md may hold a user's edits, and an existing CLAUDE.md
 // of any form is left alone. It returns the repo-relative paths it created
 // and notes for stderr: a CLAUDE.md that is not a symlink to AGENTS.md, or a

@@ -10,7 +10,7 @@ import (
 	"github.com/mistakenot/auto-plan/internal/workspace"
 )
 
-var scaffoldPaths = []string{"docs/plans/AGENTS.md", "docs/plans/CLAUDE.md"}
+var scaffoldPaths = []string{".auto/plan/plans/AGENTS.md", ".auto/plan/plans/CLAUDE.md"}
 
 type scaffoldOut struct {
 	Scaffolded *[]string `json:"scaffolded"`
@@ -20,7 +20,7 @@ type scaffoldOut struct {
 // relative symlink whose target is exactly AGENTS.md.
 func assertScaffold(t *testing.T, root string) {
 	t.Helper()
-	dir := filepath.Join(root, "docs", "plans")
+	dir := filepath.Join(root, ".auto", "plan", "plans")
 	data, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
 	if err != nil || string(data) != workspace.AgentsText {
 		t.Fatalf("AGENTS.md = %q, %v", data, err)
@@ -49,11 +49,11 @@ func TestInitScaffoldsAgentsAndClaudeSymlink(t *testing.T) {
 func TestInitTextListsScaffoldedFiles(t *testing.T) {
 	root := repo(t)
 	got := mustRun(t, root, "init", "--text")
-	want := "created docs/plans\ncreated docs/plans/AGENTS.md\ncreated docs/plans/CLAUDE.md\n"
+	want := "created .auto/plan/plans\ncreated .auto/plan/plans/AGENTS.md\ncreated .auto/plan/plans/CLAUDE.md\n"
 	if got != want {
 		t.Fatalf("init --text = %q, want %q", got, want)
 	}
-	if got := mustRun(t, root, "init", "--text"); got != "docs/plans already exists\n" {
+	if got := mustRun(t, root, "init", "--text"); got != ".auto/plan/plans already exists\n" {
 		t.Fatalf("second init --text = %q", got)
 	}
 }
@@ -61,17 +61,17 @@ func TestInitTextListsScaffoldedFiles(t *testing.T) {
 func TestInitPreservesEditedAgents(t *testing.T) {
 	root := repo(t)
 	mustRun(t, root, "init")
-	agents := filepath.Join(root, "docs", "plans", "AGENTS.md")
+	agents := filepath.Join(root, ".auto", "plan", "plans", "AGENTS.md")
 	const edited = "# my own notes\n"
 	if err := os.WriteFile(agents, []byte(edited), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// Remove the symlink too: init recreates CLAUDE.md but never AGENTS.md.
-	if err := os.Remove(filepath.Join(root, "docs", "plans", "CLAUDE.md")); err != nil {
+	if err := os.Remove(filepath.Join(root, ".auto", "plan", "plans", "CLAUDE.md")); err != nil {
 		t.Fatal(err)
 	}
 	out := decode[scaffoldOut](t, mustRun(t, root, "init"))
-	if out.Scaffolded == nil || !slices.Equal(*out.Scaffolded, []string{"docs/plans/CLAUDE.md"}) {
+	if out.Scaffolded == nil || !slices.Equal(*out.Scaffolded, []string{".auto/plan/plans/CLAUDE.md"}) {
 		t.Fatalf("scaffolded = %v", out.Scaffolded)
 	}
 	if data, _ := os.ReadFile(agents); string(data) != edited {
@@ -81,7 +81,7 @@ func TestInitPreservesEditedAgents(t *testing.T) {
 
 func TestInitLeavesRegularClaudeAlone(t *testing.T) {
 	root := repo(t)
-	dir := filepath.Join(root, "docs", "plans")
+	dir := filepath.Join(root, ".auto", "plan", "plans")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -95,10 +95,10 @@ func TestInitLeavesRegularClaudeAlone(t *testing.T) {
 		t.Fatalf("exit %d, stderr %s", code, stderr)
 	}
 	out := decode[scaffoldOut](t, stdout)
-	if out.Scaffolded == nil || !slices.Equal(*out.Scaffolded, []string{"docs/plans/AGENTS.md"}) {
+	if out.Scaffolded == nil || !slices.Equal(*out.Scaffolded, []string{".auto/plan/plans/AGENTS.md"}) {
 		t.Fatalf("scaffolded = %v", out.Scaffolded)
 	}
-	if strings.Count(stderr, "\n") != 1 || !strings.Contains(stderr, "docs/plans/CLAUDE.md exists and is not a symlink to AGENTS.md; left as is") {
+	if strings.Count(stderr, "\n") != 1 || !strings.Contains(stderr, ".auto/plan/plans/CLAUDE.md exists and is not a symlink to AGENTS.md; left as is") {
 		t.Fatalf("stderr = %q, want one note", stderr)
 	}
 	if data, _ := os.ReadFile(claude); string(data) != mine {

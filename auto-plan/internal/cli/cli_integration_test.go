@@ -90,7 +90,7 @@ func decode[T any](t *testing.T, s string) T {
 
 func readGraph(t *testing.T, root, folder string) []byte {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, "docs", "plans", folder, "graph.json"))
+	data, err := os.ReadFile(filepath.Join(root, ".auto", "plan", "plans", folder, "graph.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func expectFailure(t *testing.T, cwd, code string, args ...string) {
 func TestInitIsIdempotent(t *testing.T) {
 	root := repo(t)
 	first := decode[map[string]any](t, mustRun(t, root, "init"))
-	if first["root"] != "docs/plans" || first["created"] != true {
+	if first["root"] != ".auto/plan/plans" || first["created"] != true {
 		t.Fatalf("first init = %v", first)
 	}
 	second := decode[map[string]any](t, mustRun(t, root, "init"))
@@ -145,13 +145,13 @@ func TestInitIsIdempotent(t *testing.T) {
 
 func TestNewNumbersAfterHighestFromSubdirectory(t *testing.T) {
 	root := repo(t)
-	for _, d := range []string{"docs/plans/001-a", "docs/plans/003-b", "src/deep"} {
+	for _, d := range []string{".auto/plan/plans/001-a", ".auto/plan/plans/003-b", "src/deep"} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	stdout := mustRun(t, filepath.Join(root, "src", "deep"), "new", "stage-briefs", "--kind", "task")
-	want := "{\n  \"id\": \"004-vejj\",\n  \"number\": \"004\",\n  \"name\": \"stage-briefs\",\n  \"kind\": \"task\",\n  \"path\": \"docs/plans/004-stage-briefs\",\n  \"scaffolded\": [\n    \"docs/plans/AGENTS.md\",\n    \"docs/plans/CLAUDE.md\"\n  ]\n}\n"
+	want := "{\n  \"id\": \"004-vejj\",\n  \"number\": \"004\",\n  \"name\": \"stage-briefs\",\n  \"kind\": \"task\",\n  \"path\": \".auto/plan/plans/004-stage-briefs\",\n  \"scaffolded\": [\n    \".auto/plan/plans/AGENTS.md\",\n    \".auto/plan/plans/CLAUDE.md\"\n  ]\n}\n"
 	if stdout != want {
 		t.Fatalf("new stdout:\n%s\nwant:\n%s", stdout, want)
 	}
@@ -189,7 +189,7 @@ func TestNewRejectsBadInputAndWritesNothing(t *testing.T) {
 	expectFailure(t, root, "invalid-name", "new", "Bad_Name", "--kind", "task")
 	expectFailure(t, root, "invalid-kind", "new", "demo", "--kind", "story")
 	expectFailure(t, root, "invalid-kind", "new", "demo")
-	if _, err := os.Stat(filepath.Join(root, "docs", "plans")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, ".auto", "plan", "plans")); !os.IsNotExist(err) {
 		t.Fatalf("rejected new must write nothing (stat err %v)", err)
 	}
 }
@@ -225,7 +225,7 @@ func walk(t *testing.T, root string) (g1, g2, ac, d string) {
 	if len(c.Edges) != 1 || c.Edges[0].From != c.ID || c.Edges[0].Type != "proves" || c.Edges[0].To != a.ID {
 		t.Fatalf("add ac = %+v", c)
 	}
-	dd := decode[added](t, mustRun(t, root, "add", "docs/plans/001-demo", "decision", "--title", "use JSON",
+	dd := decode[added](t, mustRun(t, root, "add", ".auto/plan/plans/001-demo", "decision", "--title", "use JSON",
 		"--chosen", "JSON", "--why", "diffable", "--by", "charlie"))
 	l := decode[added](t, mustRun(t, root, "link", "001", dd.ID, "constrains", a.ID))
 	if l.ID != dd.ID || l.Plan != p1 || len(l.Edges) != 1 || l.Edges[0].To != a.ID {
@@ -288,7 +288,7 @@ func TestRejectedWritesLeaveGraphByteIdentical(t *testing.T) {
 func TestWritesRefuseAlreadyInvalidGraph(t *testing.T) {
 	root := repo(t)
 	mustRun(t, root, "new", "demo", "--kind", "task")
-	path := filepath.Join(root, "docs", "plans", "001-demo", "graph.json")
+	path := filepath.Join(root, ".auto", "plan", "plans", "001-demo", "graph.json")
 	broken := strings.Replace(string(readGraph(t, root, "001-demo")), `"edges": []`,
 		`"edges": [{"id": "e-zzzz", "from": "d-zzzz", "type": "constrains", "to": "g-zzzz"}]`, 1)
 	if err := os.WriteFile(path, []byte(broken), 0o644); err != nil {
@@ -321,7 +321,7 @@ func TestLintCleanAndBroken(t *testing.T) {
 	}
 
 	mustRun(t, root, "new", "broken", "--kind", "task")
-	path := filepath.Join(root, "docs", "plans", "002-broken", "graph.json")
+	path := filepath.Join(root, ".auto", "plan", "plans", "002-broken", "graph.json")
 	data := strings.Replace(string(readGraph(t, root, "002-broken")), `"edges": []`,
 		`"edges": [{"id": "e-zzzz", "from": "d-zzzz", "type": "constrains", "to": "plan"}]`, 1)
 	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
@@ -387,7 +387,7 @@ func TestLintLifecycleGating(t *testing.T) {
 func TestLintMalformedJSON(t *testing.T) {
 	root := repo(t)
 	mustRun(t, root, "new", "demo", "--kind", "task")
-	path := filepath.Join(root, "docs", "plans", "001-demo", "graph.json")
+	path := filepath.Join(root, ".auto", "plan", "plans", "001-demo", "graph.json")
 	if err := os.WriteFile(path, []byte("{\n  \"version\": 1,\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -645,7 +645,7 @@ func TestFmtCanonicalisesHandEdits(t *testing.T) {
 	root := repo(t)
 	walk(t, root)
 	canonical := readGraph(t, root, "001-demo")
-	path := filepath.Join(root, "docs", "plans", "001-demo", "graph.json")
+	path := filepath.Join(root, ".auto", "plan", "plans", "001-demo", "graph.json")
 
 	// Hand-scramble: reverse node and edge order, compact, add an unknown key.
 	var raw map[string]any
@@ -666,7 +666,7 @@ func TestFmtCanonicalisesHandEdits(t *testing.T) {
 	}
 
 	stdout, _, code := runCLI(t, root, "fmt", "001", "--check")
-	if r := decode[fmtOut](t, stdout); code != 1 || r.Canonical || r.Changed || r.Path != "docs/plans/001-demo/graph.json" {
+	if r := decode[fmtOut](t, stdout); code != 1 || r.Canonical || r.Changed || r.Path != ".auto/plan/plans/001-demo/graph.json" {
 		t.Fatalf("fmt --check on scrambled: exit %d %+v", code, r)
 	}
 	if got, _ := os.ReadFile(path); !bytes.Equal(got, scrambled) {
@@ -696,7 +696,7 @@ func TestFmtAllAndLossyFiles(t *testing.T) {
 	root := repo(t)
 	walk(t, root)
 	mustRun(t, root, "new", "broken", "--kind", "task")
-	path := filepath.Join(root, "docs", "plans", "002-broken", "graph.json")
+	path := filepath.Join(root, ".auto", "plan", "plans", "002-broken", "graph.json")
 	lossy := strings.Replace(string(readGraph(t, root, "002-broken")), `"edges": []`, `"edges": [42]`, 1)
 	if err := os.WriteFile(path, []byte(lossy), 0o644); err != nil {
 		t.Fatal(err)
@@ -735,7 +735,7 @@ func TestFmtAllAndLossyFiles(t *testing.T) {
 // bypassing the CLI's write checks.
 func handLink(t *testing.T, root, folder string, e graph.Edge) {
 	t.Helper()
-	path := filepath.Join(root, "docs", "plans", folder, "graph.json")
+	path := filepath.Join(root, ".auto", "plan", "plans", folder, "graph.json")
 	g, err := graph.Decode(path)
 	if err != nil {
 		t.Fatal(err)
@@ -820,7 +820,7 @@ func TestListFiltersAndAll(t *testing.T) {
 	// all: every plan; a malformed plan is reported on stderr, the rest still listed.
 	mustRun(t, root, "new", "other", "--kind", "epic")
 	mustRun(t, root, "new", "broken", "--kind", "task")
-	if err := os.WriteFile(filepath.Join(root, "docs", "plans", "003-broken", "graph.json"), []byte("{"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".auto", "plan", "plans", "003-broken", "graph.json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stdout, stderr, code := runCLI(t, root, "list", "all")
@@ -840,7 +840,7 @@ func TestListingsValidateGraphs(t *testing.T) {
 	root := repo(t)
 	mustRun(t, root, "new", "demo", "--kind", "task")
 	mustRun(t, root, "add", "001", "goal", "--title", "Findable goal")
-	path := filepath.Join(root, "docs", "plans", "001-demo", "graph.json")
+	path := filepath.Join(root, ".auto", "plan", "plans", "001-demo", "graph.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -1066,7 +1066,7 @@ func TestTreeCommand(t *testing.T) {
 	expectFailure(t, root, "node-not-found", "tree", "001", "t-zzzz")
 
 	// A broken body still renders best effort, with the errors on stderr.
-	path := filepath.Join(root, "docs", "plans", "001-demo", "graph.json")
+	path := filepath.Join(root, ".auto", "plan", "plans", "001-demo", "graph.json")
 	broken := strings.Replace(string(readGraph(t, root, "001-demo")), `"run\n  check`, `"run\n   check`, 1)
 	if err := os.WriteFile(path, []byte(broken), 0o644); err != nil {
 		t.Fatal(err)
@@ -1148,7 +1148,7 @@ func TestEpicFamilyAcrossPlans(t *testing.T) {
 	expectFailure(t, root, "epic-not-found", "new", "x", "--kind", "task", "--epic", "002")
 	expectFailure(t, root, "usage", "new", "x", "--kind", "epic", "--epic", "001")
 	expectFailure(t, root, "invalid-field", "new", "x", "--kind", "task", "--epic", "1")
-	if _, err := os.Stat(filepath.Join(root, "docs", "plans", "003-x")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, ".auto", "plan", "plans", "003-x")); !os.IsNotExist(err) {
 		t.Fatal("a rejected new must create nothing")
 	}
 	child := id("add", "001", "child", "--plan", "002", "--title", "walking skeleton")
@@ -1305,7 +1305,7 @@ func planID(t *testing.T, root, folder string) string {
 // the other branch's `new` would have written it.
 func collide(t *testing.T, root, from, to string) string {
 	t.Helper()
-	plans := filepath.Join(root, "docs", "plans")
+	plans := filepath.Join(root, ".auto", "plan", "plans")
 	dest := to + from[3:]
 	if err := os.Rename(filepath.Join(plans, from), filepath.Join(plans, dest)); err != nil {
 		t.Fatal(err)
@@ -1332,10 +1332,10 @@ func TestPlanIDsAndArguments(t *testing.T) {
 		t.Fatalf("new = %v", created)
 	}
 	text := mustRun(t, root, "new", "other", "--kind", "task", "--text")
-	if text != "created plan "+p2+" in docs/plans/002-other (task, requirements)\n" {
+	if text != "created plan "+p2+" in .auto/plan/plans/002-other (task, requirements)\n" {
 		t.Fatalf("new --text = %q", text)
 	}
-	for _, arg := range []string{"001", p1, "001-demo", "docs/plans/001-demo", "docs/plans/001-demo/graph.json"} {
+	for _, arg := range []string{"001", p1, "001-demo", ".auto/plan/plans/001-demo", ".auto/plan/plans/001-demo/graph.json"} {
 		if got := decode[report](t, mustRun(t, root, "lint", arg)); got.Plan != p1 {
 			t.Errorf("lint %s names %s", arg, got.Plan)
 		}
@@ -1426,7 +1426,7 @@ func TestRenumber(t *testing.T) {
 	lateID := planID(t, root, late)
 	// The epic still names the moved plan by its old ID: rewrite it to match,
 	// as the other branch's epic would have.
-	epicPath := filepath.Join(root, "docs", "plans", "001-epic", "graph.json")
+	epicPath := filepath.Join(root, ".auto", "plan", "plans", "001-epic", "graph.json")
 	data := bytes.ReplaceAll(readGraph(t, root, "001-epic"), []byte(p3), []byte(lateID))
 	if err := os.WriteFile(epicPath, data, 0o644); err != nil {
 		t.Fatal(err)
@@ -1471,14 +1471,14 @@ func TestRenumber(t *testing.T) {
 		Rewritten                []string
 	}](t, mustRun(t, root, "renumber", lateID))
 	newID := "003" + lateID[3:]
-	if out.Plan != newID || out.ID != "plan" || out.From != lateID || out.To != newID || out.Path != "docs/plans/003-late" ||
-		!slices.Equal(out.Rewritten, []string{"docs/plans/001-epic/graph.json", "docs/plans/003-late/graph.json"}) {
+	if out.Plan != newID || out.ID != "plan" || out.From != lateID || out.To != newID || out.Path != ".auto/plan/plans/003-late" ||
+		!slices.Equal(out.Rewritten, []string{".auto/plan/plans/001-epic/graph.json", ".auto/plan/plans/003-late/graph.json"}) {
 		t.Fatalf("renumber = %+v", out)
 	}
 	if planID(t, root, "003-late") != newID {
 		t.Fatal("plan ID not rewritten")
 	}
-	if _, err := os.Stat(filepath.Join(root, "docs", "plans", late)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, ".auto", "plan", "plans", late)); !os.IsNotExist(err) {
 		t.Fatal("old folder still exists")
 	}
 	epic := string(readGraph(t, root, "001-epic"))
@@ -1493,7 +1493,7 @@ func TestRenumber(t *testing.T) {
 	expectFailure(t, root, "usage", "renumber", newID, "--to", "003")
 	expectFailure(t, root, "usage", "renumber", newID, "--to", "3")
 	text := mustRun(t, root, "renumber", newID, "--to", "007", "--text")
-	if !strings.HasPrefix(text, "renumbered "+newID+" → 007"+newID[3:]+" (docs/plans/003-late → docs/plans/007-late)\n") {
+	if !strings.HasPrefix(text, "renumbered "+newID+" → 007"+newID[3:]+" (.auto/plan/plans/003-late → .auto/plan/plans/007-late)\n") {
 		t.Fatalf("renumber --text:\n%s", text)
 	}
 }
@@ -1503,7 +1503,7 @@ func TestRenumber(t *testing.T) {
 func TestRenumberFixesIDMismatch(t *testing.T) {
 	root := repo(t)
 	mustRun(t, root, "new", "demo", "--kind", "task")
-	path := filepath.Join(root, "docs", "plans", "001-demo", "graph.json")
+	path := filepath.Join(root, ".auto", "plan", "plans", "001-demo", "graph.json")
 	if err := os.WriteFile(path, bytes.Replace(readGraph(t, root, "001-demo"), []byte(`"`+p1+`"`), []byte(`"009`+p1[3:]+`"`), 1), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -1572,7 +1572,7 @@ func TestEdgeIDs(t *testing.T) {
 func TestVersionsAndFreezing(t *testing.T) {
 	root := repo(t)
 	walk(t, root)
-	path := filepath.Join(root, "docs", "plans", "001-demo", "graph.json")
+	path := filepath.Join(root, ".auto", "plan", "plans", "001-demo", "graph.json")
 	orig := readGraph(t, root, "001-demo")
 	setVersion := func(v string) {
 		t.Helper()
@@ -1642,9 +1642,9 @@ func TestListPlans(t *testing.T) {
 
 	rows := decode[struct{ Plans []planRow }](t, mustRun(t, root, "list")).Plans
 	want := []planRow{
-		{ID: p1, Number: "001", Name: "epic", Path: "docs/plans/001-epic", Kind: "epic", Lifecycle: "requirements", Version: "1.0.0"},
-		{ID: p2, Number: "002", Name: "child", Path: "docs/plans/002-child", Kind: "task", Lifecycle: "requirements", Version: "1.0.0", Epic: p1},
-		{ID: p3, Number: "003", Name: "finished", Path: "docs/plans/003-finished", Kind: "task", Lifecycle: "done", Version: "1.0.0", Frozen: true, FrozenReason: "done"},
+		{ID: p1, Number: "001", Name: "epic", Path: ".auto/plan/plans/001-epic", Kind: "epic", Lifecycle: "requirements", Version: "1.0.0"},
+		{ID: p2, Number: "002", Name: "child", Path: ".auto/plan/plans/002-child", Kind: "task", Lifecycle: "requirements", Version: "1.0.0", Epic: p1},
+		{ID: p3, Number: "003", Name: "finished", Path: ".auto/plan/plans/003-finished", Kind: "task", Lifecycle: "done", Version: "1.0.0", Frozen: true, FrozenReason: "done"},
 	}
 	if !slices.Equal(rows, want) {
 		t.Fatalf("list =\n%+v\nwant\n%+v", rows, want)
@@ -1667,7 +1667,7 @@ func TestListPlans(t *testing.T) {
 	// A malformed plan and a number collision: every readable plan is still
 	// listed, the problems go to stderr, exit 1.
 	mustRun(t, root, "new", "broken", "--kind", "task")
-	if err := os.WriteFile(filepath.Join(root, "docs", "plans", "004-broken", "graph.json"), []byte("{"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".auto", "plan", "plans", "004-broken", "graph.json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	mustRun(t, root, "new", "dup", "--kind", "task")

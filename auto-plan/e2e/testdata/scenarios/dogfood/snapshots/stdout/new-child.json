@@ -4,5 +4,5 @@
   "name": "auto-mail-walking-skeleton",
   "kind": "task",
   "epic": "001-acs4",
-  "path": "docs/plans/002-auto-mail-walking-skeleton"
+  "path": ".auto/plan/plans/002-auto-mail-walking-skeleton"
 }

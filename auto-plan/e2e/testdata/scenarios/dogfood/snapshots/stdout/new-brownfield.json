@@ -3,5 +3,5 @@
   "number": "003",
   "name": "reflect-tool-hardening",
   "kind": "task",
-  "path": "docs/plans/003-reflect-tool-hardening"
+  "path": ".auto/plan/plans/003-reflect-tool-hardening"
 }

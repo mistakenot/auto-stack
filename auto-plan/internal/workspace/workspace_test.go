@@ -64,7 +64,7 @@ func TestNextNumberSkipsGapsAndIgnoresNoise(t *testing.T) {
 		t.Fatalf("NextNumber = %q, %v; want 004", id, err)
 	}
 	plans, _ := w.Plans()
-	if len(plans) != 2 || plans[0].Folder() != "001-a" || plans[1].Dir != "docs/plans/003-b" {
+	if len(plans) != 2 || plans[0].Folder() != "001-a" || plans[1].Dir != ".auto/plan/plans/003-b" {
 		t.Fatalf("Plans = %+v", plans)
 	}
 }
@@ -94,12 +94,12 @@ func TestResolveFromSubdirectory(t *testing.T) {
 	}
 
 	for arg, want := range map[string]string{
-		"003":                                  "003-b",
-		"001-a":                                "001-a",
-		"../../docs/plans/003-b":               "003-b",
-		"../../docs/plans/001-a/":              "001-a",
-		"../../docs/plans/003-b/graph.json":    "003-b",
-		filepath.Join(root, PlansDir, "001-a"): "001-a",
+		"003":                           "003-b",
+		"001-a":                         "001-a",
+		"../../.auto/plan/plans/003-b":  "003-b",
+		"../../.auto/plan/plans/001-a/": "001-a",
+		"../../.auto/plan/plans/003-b/graph.json": "003-b",
+		filepath.Join(root, PlansDir, "001-a"):    "001-a",
 	} {
 		p, err := w.ResolveOne(arg)
 		if err != nil {
@@ -118,7 +118,7 @@ func TestResolveFromSubdirectory(t *testing.T) {
 	if _, err := w.ResolveOne(All); err == nil {
 		t.Error("ResolveOne(all) must fail")
 	}
-	for _, missing := range []string{"002", "001-b", "docs/plans/nope"} {
+	for _, missing := range []string{"002", "001-b", ".auto/plan/plans/nope"} {
 		if _, err := w.Resolve(missing); !errors.Is(err, ErrNotFound) {
 			t.Errorf("Resolve(%q) = %v, want ErrNotFound", missing, err)
 		}
@@ -245,7 +245,7 @@ func TestNumberCollision(t *testing.T) {
 	if _, err := w.Resolve("002"); !errors.As(err, &amb) || !errors.Is(err, ErrAmbiguous) || len(amb.Candidates) != 2 {
 		t.Fatalf("Resolve(002) = %v", err)
 	}
-	if !strings.Contains(amb.Error(), "002-b0b0 (docs/plans/002-beta)") || !strings.Contains(amb.Error(), "002-g0g0") {
+	if !strings.Contains(amb.Error(), "002-b0b0 (.auto/plan/plans/002-beta)") || !strings.Contains(amb.Error(), "002-g0g0") {
 		t.Errorf("message names the candidates: %v", amb)
 	}
 	for arg, want := range map[string]string{"002-g0g0": "002-gamma", "002-beta": "002-beta", "001": "001-epic", "001-e0e0": "001-epic"} {
@@ -289,7 +289,7 @@ func TestNumberCollision(t *testing.T) {
 
 func TestPlansIgnoresScaffoldFiles(t *testing.T) {
 	root := gitRepo(t)
-	mkdirs(t, root, "docs/plans/001-a")
+	mkdirs(t, root, ".auto/plan/plans/001-a")
 	w, err := Open(root)
 	if err != nil {
 		t.Fatal(err)

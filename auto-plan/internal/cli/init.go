@@ -15,14 +15,14 @@ import (
 func newInitCmd(application *app.App) *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
-		Short: "Create docs/plans/ with its AGENTS.md and CLAUDE.md (idempotent)",
-		Long: `Create docs/plans/ in this repository, plus two agent memory files when they are missing:
-docs/plans/AGENTS.md (the folders are plans managed by auto plan; use the CLI, not hand edits)
-and docs/plans/CLAUDE.md, a relative symlink to AGENTS.md (a copy where symlinks fail).
+		Short: "Create .auto/plan/plans/ with its AGENTS.md and CLAUDE.md (idempotent)",
+		Long: `Create .auto/plan/plans/ in this repository, plus two agent memory files when they are missing:
+.auto/plan/plans/AGENTS.md (the folders are plans managed by auto plan; use the CLI, not hand edits)
+and .auto/plan/plans/CLAUDE.md, a relative symlink to AGENTS.md (a copy where symlinks fail).
 Existing files are never overwritten; a CLAUDE.md that is not a symlink to AGENTS.md is left
 as is, with a note on stderr. ` + "`auto plan new`" + ` ensures the same files.
 
-Prints {root, created, scaffolded}: created is true when docs/plans/ was new, scaffolded lists
+Prints {root, created, scaffolded}: created is true when .auto/plan/plans/ was new, scaffolded lists
 the files this run created (absent when none).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -34,7 +34,7 @@ the files this run created (absent when none).`,
 type initResult struct {
 	Root    string `json:"root"`
 	Created bool   `json:"created"`
-	// Scaffolded lists the docs/plans files this run created.
+	// Scaffolded lists the .auto/plan/plans files this run created.
 	Scaffolded []string `json:"scaffolded,omitempty"`
 }
 
@@ -64,7 +64,7 @@ func runInit(cmd *cobra.Command, application *app.App) error {
 	})
 }
 
-// ensureScaffold creates docs/plans/ and its missing AGENTS.md / CLAUDE.md
+// ensureScaffold creates .auto/plan/plans/ and its missing AGENTS.md / CLAUDE.md
 // (workspace.EnsureScaffold) for init and new, printing its notes on stderr.
 func ensureScaffold(cmd *cobra.Command, ws *workspace.Workspace, text bool) ([]string, error) {
 	created, notes, err := ws.EnsureScaffold()

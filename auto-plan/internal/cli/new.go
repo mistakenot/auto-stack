@@ -29,7 +29,7 @@ func newNewCmd(application *app.App) *cobra.Command {
 	var kind, epic string
 	cmd := &cobra.Command{
 		Use:   "new <name> --kind task|epic [--epic <plan>]",
-		Short: "Create docs/plans/NNN-<name>/graph.json holding only the plan node",
+		Short: "Create .auto/plan/plans/NNN-<name>/graph.json holding only the plan node",
 		Long: `Create the next numbered plan folder (highest existing number + 1, or 001) with a
 graph.json holding exactly the plan node at lifecycle "requirements", format version
 ` + schema.Version + `, and a new plan ID: the number, a hyphen and 4 random characters (004-k7q2).
@@ -37,7 +37,7 @@ Qualified references to the plan name that ID, so two branches that both create 
 get distinct plans; ` + "`auto plan renumber`" + ` moves one of them after the merge.
 
 Prints {id, number, name, kind, epic, path, scaffolded}: id is the plan ID, number its folder
-number. Like init, new first ensures docs/plans/AGENTS.md and its CLAUDE.md symlink; scaffolded
+number. Like init, new first ensures .auto/plan/plans/AGENTS.md and its CLAUDE.md symlink; scaffolded
 lists the files it created (absent when none).
 
 The name must be kebab-case (` + schema.NamePattern + `). --epic (task plans only) records the
@@ -64,7 +64,7 @@ type newResult struct {
 	Kind   string `json:"kind"`
 	Epic   string `json:"epic,omitempty"`
 	Path   string `json:"path"`
-	// Scaffolded lists the docs/plans files this run created (see init).
+	// Scaffolded lists the .auto/plan/plans files this run created (see init).
 	Scaffolded []string `json:"scaffolded,omitempty"`
 }
 

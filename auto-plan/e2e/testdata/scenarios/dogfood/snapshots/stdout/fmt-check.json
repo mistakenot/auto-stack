@@ -3,19 +3,19 @@
   "plans": [
     {
       "plan": "001-acs4",
-      "path": "docs/plans/001-auto-mail-mvp/graph.json",
+      "path": ".auto/plan/plans/001-auto-mail-mvp/graph.json",
       "canonical": true,
       "changed": false
     },
     {
       "plan": "002-j8nx",
-      "path": "docs/plans/002-auto-mail-walking-skeleton/graph.json",
+      "path": ".auto/plan/plans/002-auto-mail-walking-skeleton/graph.json",
       "canonical": true,
       "changed": false
     },
     {
       "plan": "003-gevp",
-      "path": "docs/plans/003-reflect-tool-hardening/graph.json",
+      "path": ".auto/plan/plans/003-reflect-tool-hardening/graph.json",
       "canonical": true,
       "changed": false
     }

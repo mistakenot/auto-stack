@@ -45,7 +45,7 @@ func newListCmd(application *app.App) *cobra.Command {
 		Short: "List the plans (no argument), or a plan's nodes (or every plan's): IDs, metadata and titles only",
 		Long: `Three forms, all on the cheap rung (IDs and metadata; describe and get go deeper):
 
-  auto plan list               the plans themselves: one row per folder under docs/plans
+  auto plan list               the plans themselves: one row per folder under .auto/plan/plans
   auto plan list <plan>        that plan's nodes
   auto plan list all           every plan's nodes
 
@@ -281,7 +281,7 @@ func newGetCmd(application *app.App) *cobra.Command {
 		Short: "Print one node in full, with every incoming and outgoing edge",
 		Long: `Print one node at full fidelity: every field, and each outgoing ("out") and incoming ("in")
 edge with the neighbour's ID, type, title and status. A neighbour in another plan (NNN:ID) is
-marked qualified and resolved through docs/plans/NNN-*/graph.json; edges other plans hold into
+marked qualified and resolved through .auto/plan/plans/NNN-*/graph.json; edges other plans hold into
 the node are listed under "in" with their qualified source. A reference that does not resolve
 is printed raw.`,
 		Example: "  auto plan get 004 d-9t2w --text",

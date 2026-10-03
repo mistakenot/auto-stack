@@ -2,7 +2,7 @@
 
 Structured plan graphs. Ships as `auto plan` in the unified binary.
 
-A Plan is one deterministic `graph.json` under `docs/plans/NNN-name/`: typed
+A Plan is one deterministic `graph.json` under `.auto/plan/plans/NNN-name/`: typed
 nodes and typed edges, validated on every write. It is the only source of
 truth for the plan; git is its history.
 
@@ -32,8 +32,8 @@ reference, generated from the registry.
 auto plan list --text                            # one row per plan: ID, name, kind, lifecycle, frozen, epic
 
 # create
-auto plan init                                   # create docs/plans/ + AGENTS.md, CLAUDE.md symlink (idempotent)
-auto plan new demo --kind task                   # docs/plans/001-demo/graph.json, plan ID 001-k7q2
+auto plan init                                   # create .auto/plan/plans/ + AGENTS.md, CLAUDE.md symlink (idempotent)
+auto plan new demo --kind task                   # .auto/plan/plans/001-demo/graph.json, plan ID 001-k7q2
 auto plan new walking-skeleton --kind task --epic 001   # a child plan of epic 001
 
 # write (Decode → mutate → Validate → Save; refused on any error)
@@ -65,16 +65,16 @@ auto plan brief 001 s-2m6c --text                # a Stage Brief: everything one
 ```
 
 **The plans folder.** `init` and `new` both call `workspace.EnsureScaffold`:
-it creates `docs/plans/`, a short `docs/plans/AGENTS.md` (the folders are plans
-managed by `auto plan`; use the CLI, not hand edits) and `docs/plans/CLAUDE.md`
+it creates `.auto/plan/plans/`, a short `.auto/plan/plans/AGENTS.md` (the folders are plans
+managed by `auto plan`; use the CLI, not hand edits) and `.auto/plan/plans/CLAUDE.md`
 as a relative symlink to `AGENTS.md` (a copy, with a stderr note, where
 symlinks fail). Each is created only when missing: an existing AGENTS.md is
 never overwritten, and an existing CLAUDE.md of any form is left alone (stderr
 note when it is not that symlink; exit 0). The result's `scaffolded` lists the
 files a run created and is absent when none. The plan scan only reads
-`NNN-name` folders, so these files are invisible to it. auto doc would treat
-the AGENTS.md as a doc and index into it, so this repo's
-`.auto/doc/settings.json` ignores `docs/plans/*`.
+`NNN-name` folders, so these files are invisible to it. Plans are tool-owned
+data under `.auto/plan/` (the `.auto/<tool>/` convention), outside `docs/`, so
+auto doc never scans them and needs no ignore.
 
 **Plan IDs.** `new` gives every plan an ID `NNN-xxxx` (folder number + 4
 random Crockford base32 characters, the same generator as node IDs), stored as
@@ -173,8 +173,8 @@ go test ./internal/render/ -update   # regenerate text goldens
 The e2e harness (`e2e/e2e_test.go`) builds `auto` from `../auto-cli`, creates a
 temp git workspace with a pinned environment, runs
 `e2e/testdata/scenarios/<name>/commands.txt` line by line, and compares every
-`docs/plans/*/graph.json` byte for byte at each `# checkpoint <n>` (and that
-`docs/plans/AGENTS.md` and its CLAUDE.md symlink exist). A
+`.auto/plan/plans/*/graph.json` byte for byte at each `# checkpoint <n>` (and that
+`.auto/plan/plans/AGENTS.md` and its CLAUDE.md symlink exist). A
 `# expect exit=<n> stdout=<file>` line checks the next invocation against
 `snapshots/stdout/<file>`.
 

@@ -251,7 +251,7 @@ func TestFileTree(t *testing.T) {
 		fileNode("f-0003", "auto-plan/internal/cli/read.go", "add", "list, describe, get, search"),
 		fileNode("f-0004", "auto-plan/internal/cli/old.go", "delete", "replaced by read.go\nmore detail"),
 		fileNode("f-0005", "go.work", "edit", "use ./auto-plan"),
-		fileNode("f-0006", "docs/plans/README.md", "add", strings.Repeat("a very long reason ", 10)),
+		fileNode("f-0006", "docs/guide/README.md", "add", strings.Repeat("a very long reason ", 10)),
 	}
 	full := FileTree(files)
 	golden(t, "filetree.txt", Render(full, nil))
@@ -263,7 +263,7 @@ func TestFileTree(t *testing.T) {
 		byName[l.Name] = l
 	}
 	for name, marker := range map[string]string{
-		"auto-plan/internal/": "~", "render/": "~", "cli/": "~", "brief.go": "+", "old.go": "-", "docs/plans/": "+",
+		"auto-plan/internal/": "~", "render/": "~", "cli/": "~", "brief.go": "+", "old.go": "-", "docs/guide/": "+",
 	} {
 		if byName[name].Marker != marker {
 			t.Errorf("%s marker = %q, want %q (lines %+v)", name, byName[name].Marker, marker, full.Lines)

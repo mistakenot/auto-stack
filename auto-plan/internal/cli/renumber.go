@@ -27,7 +27,7 @@ func newRenumberCmd(application *app.App) *cobra.Command {
 		Long: `Move a plan to another number — usually after a merge in which two branches each created plan
 NNN (lint reports duplicate-plan-number). The folder NNN-name becomes MMM-name, the plan ID
 NNN-xxxx becomes MMM-xxxx (the random suffix is kept), and every reference to the old ID in
-every plan under docs/plans is rewritten: qualified edge targets, [[NNN-xxxx:id]] prose
+every plan under .auto/plan/plans is rewritten: qualified edge targets, [[NNN-xxxx:id]] prose
 references, and the epic, child plan and rail deferred fields. Shorthand prose references
 [[NNN:id]] are rewritten too when NNN named only this plan. --to defaults to the next free
 number (the highest + 1). With --to equal to the folder's own number, only the ID is rewritten

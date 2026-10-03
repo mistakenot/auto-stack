@@ -1,5 +1,5 @@
 ---
-hash: "c1213822"
+hash: "5fcadb07"
 id: "1467e318"
 read_when: "naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept"
 summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Outline, Segment, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Binding, Handle, Lock, Group, Worker, Plan, Child Plan, Goal, Acceptance Criterion, Decision, Alternative, Rail, Defect, Stage, File Change, Journey, Leg, Question, Tree, Stage Brief) with the terms to avoid for each."
@@ -231,7 +231,7 @@ _Has_: one Host, one Project
 ## Planning
 
 **Plan**:
-The structured record of intended work — typed items and typed relationships held in one `graph.json` under `docs/plans/NNN-name/` — whose kind is either task or epic. What `auto plan` creates, changes, lints and reads.
+The structured record of intended work — typed items and typed relationships held in one `graph.json` under `.auto/plan/plans/NNN-name/` — whose kind is either task or epic. What `auto plan` creates, changes, lints and reads.
 _Avoid_: Task (only a Plan's kind, never the unit), spec, ticket, plan doc
 _Has_: many Goals, many Decisions, many Rails, many Defects, many Stages, many File Changes, many Questions, many Trees, many Journeys, many Child Plans
 
