@@ -201,9 +201,18 @@ func splitWords(line string) ([]string, error) {
 }
 
 // compareCheckpoint asserts the workspace's plan graphs equal the snapshot
-// directory: the same plan folders, each graph.json byte-identical.
+// directory: the same plan folders, each graph.json byte-identical. It also
+// asserts the scaffold init/new create: docs/plans/AGENTS.md and a CLAUDE.md
+// symlinked to it.
 func compareCheckpoint(t *testing.T, ws, snapDir string) {
 	t.Helper()
+	plansDir := filepath.Join(ws, "docs", "plans")
+	if _, err := os.Stat(filepath.Join(plansDir, "AGENTS.md")); err != nil {
+		t.Fatalf("%s: docs/plans/AGENTS.md: %v", filepath.Base(snapDir), err)
+	}
+	if target, err := os.Readlink(filepath.Join(plansDir, "CLAUDE.md")); err != nil || target != "AGENTS.md" {
+		t.Fatalf("%s: docs/plans/CLAUDE.md should link to AGENTS.md: %q, %v", filepath.Base(snapDir), target, err)
+	}
 	got := planGraphs(t, filepath.Join(ws, "docs", "plans"))
 	if *update {
 		if err := os.RemoveAll(snapDir); err != nil {

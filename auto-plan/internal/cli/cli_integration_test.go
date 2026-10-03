@@ -151,7 +151,7 @@ func TestNewNumbersAfterHighestFromSubdirectory(t *testing.T) {
 		}
 	}
 	stdout := mustRun(t, filepath.Join(root, "src", "deep"), "new", "stage-briefs", "--kind", "task")
-	want := "{\n  \"id\": \"004-vejj\",\n  \"number\": \"004\",\n  \"name\": \"stage-briefs\",\n  \"kind\": \"task\",\n  \"path\": \"docs/plans/004-stage-briefs\"\n}\n"
+	want := "{\n  \"id\": \"004-vejj\",\n  \"number\": \"004\",\n  \"name\": \"stage-briefs\",\n  \"kind\": \"task\",\n  \"path\": \"docs/plans/004-stage-briefs\",\n  \"scaffolded\": [\n    \"docs/plans/AGENTS.md\",\n    \"docs/plans/CLAUDE.md\"\n  ]\n}\n"
 	if stdout != want {
 		t.Fatalf("new stdout:\n%s\nwant:\n%s", stdout, want)
 	}
@@ -1326,6 +1326,7 @@ func collide(t *testing.T, root, from, to string) string {
 // resolves; a bare number shared by two folders is ambiguous.
 func TestPlanIDsAndArguments(t *testing.T) {
 	root := repo(t)
+	mustRun(t, root, "init")
 	created := decode[map[string]string](t, mustRun(t, root, "new", "demo", "--kind", "task"))
 	if created["id"] != p1 || created["number"] != "001" || planID(t, root, "001-demo") != p1 {
 		t.Fatalf("new = %v", created)

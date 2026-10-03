@@ -1,4 +1,8 @@
 {
   "root": "docs/plans",
-  "created": true
+  "created": true,
+  "scaffolded": [
+    "docs/plans/AGENTS.md",
+    "docs/plans/CLAUDE.md"
+  ]
 }

@@ -36,7 +36,9 @@ graph.json holding exactly the plan node at lifecycle "requirements", format ver
 Qualified references to the plan name that ID, so two branches that both create plan 004 still
 get distinct plans; ` + "`auto plan renumber`" + ` moves one of them after the merge.
 
-Prints {id, number, name, kind, epic, path}: id is the plan ID, number its folder number.
+Prints {id, number, name, kind, epic, path, scaffolded}: id is the plan ID, number its folder
+number. Like init, new first ensures docs/plans/AGENTS.md and its CLAUDE.md symlink; scaffolded
+lists the files it created (absent when none).
 
 The name must be kebab-case (` + schema.NamePattern + `). --epic (task plans only) records the
 epic this plan belongs to in plan.fields.epic, as the epic's plan ID (a bare NNN is expanded);
@@ -62,6 +64,8 @@ type newResult struct {
 	Kind   string `json:"kind"`
 	Epic   string `json:"epic,omitempty"`
 	Path   string `json:"path"`
+	// Scaffolded lists the docs/plans files this run created (see init).
+	Scaffolded []string `json:"scaffolded,omitempty"`
 }
 
 func runNew(cmd *cobra.Command, application *app.App, name, kind, epic string) error {
@@ -137,8 +141,9 @@ func runNew(cmd *cobra.Command, application *app.App, name, kind, epic string) e
 		return fail(cmd, text, errs, "report this: a new plan must always be valid")
 	}
 
-	if err := os.MkdirAll(ws.PlansPath(), 0o755); err != nil {
-		return failOne(cmd, text, "write-failed", "$", "", err.Error(), nil, "check that the repository is writable")
+	scaffolded, err := ensureScaffold(cmd, ws, text)
+	if err != nil {
+		return err
 	}
 	if err := os.Mkdir(ws.Abs(p.Dir), 0o755); err != nil {
 		if errors.Is(err, os.ErrExist) {
@@ -152,12 +157,13 @@ func runNew(cmd *cobra.Command, application *app.App, name, kind, epic string) e
 		return failOne(cmd, text, "write-failed", "$", "", err.Error(), p.Dir, "check that the repository is writable")
 	}
 
-	res := newResult{ID: id, Number: number, Name: name, Kind: kind, Epic: epic, Path: p.Dir}
+	res := newResult{ID: id, Number: number, Name: name, Kind: kind, Epic: epic, Path: p.Dir, Scaffolded: scaffolded}
 	return emit(cmd, text, res, func() string {
 		if epic != "" {
 			return "created plan " + id + " in " + p.Dir + " (" + kind + " in epic " + epic + ", requirements)\n" +
-				"list it in the epic: auto plan add " + epic + " child --plan " + id + " --title \"…\"\n"
+				"list it in the epic: auto plan add " + epic + " child --plan " + id + " --title \"…\"\n" +
+				scaffoldedText(scaffolded)
 		}
-		return "created plan " + id + " in " + p.Dir + " (" + kind + ", requirements)\n"
+		return "created plan " + id + " in " + p.Dir + " (" + kind + ", requirements)\n" + scaffoldedText(scaffolded)
 	})
 }

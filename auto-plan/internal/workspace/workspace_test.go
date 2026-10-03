@@ -286,3 +286,20 @@ func TestNumberCollision(t *testing.T) {
 		t.Errorf("a full ID is kept as is: %q %v", got, err)
 	}
 }
+
+func TestPlansIgnoresScaffoldFiles(t *testing.T) {
+	root := gitRepo(t)
+	mkdirs(t, root, "docs/plans/001-a")
+	w, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, notes, err := w.EnsureScaffold()
+	if err != nil || len(created) != 2 || len(notes) != 0 {
+		t.Fatalf("EnsureScaffold = %v, %v, %v", created, notes, err)
+	}
+	plans, err := w.Plans()
+	if err != nil || len(plans) != 1 || plans[0].Folder() != "001-a" {
+		t.Fatalf("Plans = %+v, %v", plans, err)
+	}
+}
