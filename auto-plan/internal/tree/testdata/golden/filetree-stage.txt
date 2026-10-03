@@ -1,0 +1,3 @@
+~ auto-plan/internal/cli/
+- ├── old.go   f-0004  replaced by read.go …
++ └── read.go  f-0003  list, describe, get, search

@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "id": "001-acs4",
+  "nodes": [
+    {
+      "id": "plan",
+      "type": "plan",
+      "status": "active",
+      "fields": {
+        "created": "2026-01-01",
+        "kind": "task",
+        "lifecycle": "requirements",
+        "name": "demo"
+      }
+    }
+  ],
+  "edges": []
+}

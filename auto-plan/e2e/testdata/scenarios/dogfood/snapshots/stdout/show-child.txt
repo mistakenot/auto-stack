@@ -1,0 +1,46 @@
+002-j8nx  auto-mail-walking-skeleton  task · plan · epic 001-acs4
+
+◎ G1     g-rbcw   Ontology first: the glossary defines Mail, Address, Subscription, Delivery and Binding before any code uses them
+    ✓ AC1.1  ac-9wde  G16 — the ontology lands before the code that uses it                                     python3 .claude/skills/domain-modelling/scripts/glossary.py check docs/concepts/UBIQUITOUS_LANGUAGE.md
+◎ G2     g-gc8t   A new auto-mail package, mounted as auto mail, with the four C1 verbs
+    ✓ AC2.1  ac-mfg7  C1 — the epic's transcript runs verbatim                                                  (cd auto-mail && go test ./internal/cli/) && (cd harness && uv run pytest tests/mail_flow -v)
+    ✓ AC2.2  ac-xbrt  G5 / D-9 — addresses are virtual and free-form                                            (cd auto-mail && go test ./internal/store/ ./mail/)
+    ◆ D1     d-p2kk   A binding is keyed by the physical context hooks already capture
+    -   A1.1   a-1eyq   Key the binding on session_id                                                           The CLI cannot see it: that is exactly the bridge D-13 defe…
+    -   A1.2   a-01p5   Key the binding on cwd only                                                             Breaks the moment two agents work in one checkout, this hos…
+    -   A1.3   a-6gjf   A new --as <label> flag on subscribe                                                    Pushes physical identity onto the caller, and free-form lab…
+    ◆ D2     d-57nj   T1 ships init, docs and reset; quickstart and doctor land in T4
+    -   A2.1   a-63s8   Ship stub quickstart and doctor in T1                                                   A stub quickstart teaches a half-built workflow: the ships-…
+    -   A2.2   a-spbj   Pull T4's adoption work forward                                                         Breaks the slice and duplicates work once #parent and wakin…
+◎ G3     g-j58t   One client seam: mail.Client is the only API, and the direct-store implementation needs no daemon
+    ✓ AC3.1  ac-apsc  G11 — nothing outside the mail package reads the store                                    (cd auto-mail && go test ./conformance/)
+    ◆ D3     d-pe53   T1 defines the Client seam and ships one implementation, with the conformance suite written against the interface
+    -   A3.1   a-6tp0   Build both Client implementations in T1                                                 Drags the daemon, its lifecycle and its failure modes into …
+    -   A3.2   a-vvcy   No conformance suite until there are two implementations                                Then the second implementation pays for the suite, when it …
+    -   A3.3   a-2gq9   Put everything under internal/ per the package blueprint                                Mail is a seam other tools consume; exporting one narrow pa…
+◎ G4     g-kqxw   An event-sourced store: an append-only log with same-transaction projections, marked alpha
+    ✓ AC4.1  ac-pn3v  G1 — mail and events are immutable                                                        (cd auto-mail && go test ./internal/store/)
+    ✓ AC4.2  ac-fjxr  G10 / D-2 — alpha is in the type string and the filename, and reset works                 (cd auto-mail && go test ./internal/cli/ ./internal/store/)
+◎ G5     g-w1fg   Broadcast delivery with a compare-and-set ack, rows materialised lazily from a subscription cursor
+    ✓ AC5.1  ac-7fdr  G2 / D-10 — consumer state lives in a deliveries join, materialised lazily from a cursor  (cd auto-mail && go test ./conformance/ ./internal/store/)
+    ✓ AC5.2  ac-0x4k  G3 — ack is a separate explicit call; reading does not retire                             (cd auto-mail && go test ./conformance/ ./internal/cli/)
+    ✓ AC5.3  ac-0f9w  G13 / D-7 — ack transitions exactly once and reports whether it won                       (cd auto-mail && go test -race ./internal/cli/ ./internal/store/)
+    ✓ AC5.4  ac-cwd2  G4 — at-least-once and unordered, as documented                                           (cd auto-mail && go test ./conformance/ ./internal/cli/)
+    ✓ AC5.5  ac-42vx  G6 — send with no subscription persists, and reports both counts                          (cd auto-mail && go test ./conformance/) && (cd harness && uv run pytest tests/mail_flow -v)
+    ◆ D4     d-xpbe   Losing an ack race is a reported outcome, not an error exit
+    -   A4.1   a-4kf4   Exit non-zero on a lost ack race                                                        A shell would treat a correct, expected outcome as a failur…
+    -   A4.2   a-m7rq   Exit 0 and say nothing                                                                  The exact silent success G13 forbids.
+◎ G6     g-bvmq   An in-band nudge reaches a working agent, at stat cost when there is no mail
+    ✓ AC6.1  ac-jcvm  G8 — the nudge is free when there is no mail, and can never break the hook                (cd auto-mail && go test ./mail/) && (cd auto-cli && go test ./cmd/auto/) && (cd harness && uv run pytest tests/mail_flow -v)
+    ◆ D5     d-ymt5   The no-mail hook path is gated by a pending-flag file, not a store read
+    -   A5.1   a-0bcq   Open the store read-only in the hook and count                                          Not stat cost: a SQLite open in every agent's hot path.
+    -   A5.2   a-f1ys   A shared in-memory or daemon cache                                                      Reintroduces the daemon into the path D-11 removed it from.
+    -   A5.3   a-fzh2   Interpolate the sender or subject into the nudge text                                   Sender-controlled text would land in another agent's contex…
+    ◆ D6     d-gm40   Inline notification in T1 is the pending flag; the bus event waits for the daemon
+    -   A6.1   a-cfv7   Publish a bus event from send in T1                                                     Buys nothing for the in-band path, and adds a live daemon d…
+    -   A6.2   a-2g81   Rely on the bus instead of the pending flag                                             The bus is at-most-once and drops slow subscribers: the D-5…
+◎ G7     g-21j1   The harness scenario is the verdict, and nothing already shipped breaks
+    ✓ AC7.1  ac-vgcz  G15 — it passes end to end in the harness                                                 (cd harness && uv run pytest tests/mail_flow -v)
+    ◆ D7     d-9bka   Two agents on one host = two workspaces in one container, not two containers
+    -   A7.1   a-tr9x   Two containers sharing a ~/.auto volume                                                 Contradicts one-container-one-host, and a shared HOME colli…
+    -   A7.2   a-q6hs   Two containers with distinct host ids                                                   That is multi-host, which the MVP explicitly is not.

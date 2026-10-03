@@ -1,0 +1,8 @@
+≡ t-nfba  brief call path  (call; about ac-jttt)
+
++ runBrief        new entry point
+~   render.Brief  builds the brief for s-3v6v
+      covers ✓ ac-jttt
+      render.StageFiles
+  # retired below
+- oldBrief        replaced

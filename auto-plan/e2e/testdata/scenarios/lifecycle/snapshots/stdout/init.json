@@ -1,0 +1,8 @@
+{
+  "root": ".auto/plan/plans",
+  "created": true,
+  "scaffolded": [
+    ".auto/plan/plans/AGENTS.md",
+    ".auto/plan/plans/CLAUDE.md"
+  ]
+}

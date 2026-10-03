@@ -1,0 +1,9 @@
+▤ plan  walking-skeleton
+
+up
+  honors    → ‖ 001-aaaa:r-e001  No network calls
+  delivers  → ↳ 001-aaaa:l-e001  agent: sends mail to an address
+    in        → ↝ 001-aaaa:j-e001  Send, read and ack
+  delivers  → ↳ 001-aaaa:l-e003  agent: acks a delivery
+    in        → ↝ 001-aaaa:j-e001  Send, read and ack  (see above)
+  builds-on → ◆ 001-aaaa:d-e001  SQLite is the mail store

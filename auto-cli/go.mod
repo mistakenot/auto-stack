@@ -10,6 +10,7 @@ require (
 	github.com/mistakenot/auto-etl v0.0.0
 	github.com/mistakenot/auto-graph v0.0.0
 	github.com/mistakenot/auto-mail v0.0.0
+	github.com/mistakenot/auto-plan v0.0.0
 	github.com/mistakenot/auto-reflect v0.0.0
 	github.com/mistakenot/auto-search v0.0.0
 	github.com/mistakenot/auto-shared v0.0.0
@@ -80,6 +81,8 @@ replace github.com/mistakenot/auto-etl => ../auto-etl
 replace github.com/mistakenot/auto-graph => ../auto-graph
 
 replace github.com/mistakenot/auto-mail => ../auto-mail
+
+replace github.com/mistakenot/auto-plan => ../auto-plan
 
 replace github.com/mistakenot/auto-reflect => ../auto-reflect
 

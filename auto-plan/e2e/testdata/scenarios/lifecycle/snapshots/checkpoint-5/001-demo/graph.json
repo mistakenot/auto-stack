@@ -1,0 +1,111 @@
+{
+  "version": "1.0.0",
+  "id": "001-acs4",
+  "nodes": [
+    {
+      "id": "ac-bvmq",
+      "type": "ac",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "gwt": "Given two stages, when brief runs for one, then the other's steps are absent",
+        "title": "brief names no other stage"
+      }
+    },
+    {
+      "id": "ac-j58t",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "Given a stage, when brief runs, then its output needs nothing else",
+        "title": "brief is self-contained",
+        "verify": {
+          "cmd": "go test ./e2e -run Brief",
+          "tests": [
+            "TestBrief",
+            "TestBriefIsolated"
+          ]
+        }
+      }
+    },
+    {
+      "id": "a-w1fg",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "title": "reuse Context Pack",
+        "why": "collides with auto-graph's term"
+      }
+    },
+    {
+      "id": "d-kqxw",
+      "type": "decision",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "by": "charlie",
+        "chosen": "Markdown with --text, JSON by default",
+        "title": "brief is Markdown + JSON",
+        "why": "agents read JSON; humans read Markdown"
+      }
+    },
+    {
+      "id": "g-gc8t",
+      "type": "goal",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "title": "An agent gets one stage's context in one call"
+      }
+    },
+    {
+      "id": "g-rbcw",
+      "type": "goal",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "description": "Reordering rewrites one rank; no ID changes.",
+        "title": "Plans can be reordered without breaking references"
+      }
+    },
+    {
+      "id": "plan",
+      "type": "plan",
+      "status": "active",
+      "fields": {
+        "created": "2026-01-01",
+        "kind": "task",
+        "lifecycle": "requirements",
+        "name": "demo"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-0t8w",
+      "from": "ac-bvmq",
+      "type": "proves",
+      "to": "g-gc8t"
+    },
+    {
+      "id": "e-tg1m",
+      "from": "ac-j58t",
+      "type": "proves",
+      "to": "g-gc8t"
+    },
+    {
+      "id": "e-21j1",
+      "from": "d-kqxw",
+      "type": "constrains",
+      "to": "ac-j58t"
+    },
+    {
+      "id": "e-bvmq",
+      "from": "d-kqxw",
+      "type": "rejects",
+      "to": "a-w1fg"
+    }
+  ]
+}

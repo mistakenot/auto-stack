@@ -1,0 +1,14 @@
+✓ ac-jttt  Acceptance Criterion · active · rank a0
+  title         brief is self-contained
+  gwt           Given a stage, when brief runs, then its output needs nothing else
+  verify.cmd    go test ./e2e -run Brief
+  verify.tests  - TestBrief
+
+edges
+  out → proves ×1
+  out → discharges ×2
+  in  ← constrains ×1
+  in  ← covers ×1
+  in  ← about ×1
+
+full node: auto plan get 001 ac-jttt

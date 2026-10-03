@@ -1,0 +1,6 @@
+□ f-44v0  auto-plan/internal/cli/read.go
+
+up
+  touches ← ▶ s-p6v5   CLI verbs
+    covers  → ✓ ac-cgyg  brief names no other stage's steps
+      proves  → ◎ g-xyf8   An agent gets one stage's context in one call

@@ -1,0 +1,1127 @@
+{
+  "version": "1.0.0",
+  "id": "001-acs4",
+  "nodes": [
+    {
+      "id": "a-2g81",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "title": "RPC-first: route send/list/ack through the daemon",
+        "why": "Mail is down whenever the daemon is, and a failing agent must be able to post mail with nothing else alive."
+      }
+    },
+    {
+      "id": "a-2gq9",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "title": "A bespoke socket protocol",
+        "why": "Rebuilds a solved problem."
+      }
+    },
+    {
+      "id": "a-2nmm",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ap",
+      "fields": {
+        "title": "Launch-time stamping by herdr/ntm/delegate in the MVP",
+        "why": "Makes panes work too, but adds a cross-tool dependency this epic does not otherwise carry."
+      }
+    },
+    {
+      "id": "a-48t5",
+      "type": "alternative",
+      "status": "active",
+      "rank": "af",
+      "fields": {
+        "title": "An in-memory timer only",
+        "why": "Lost on the daemon restarts this host is known for."
+      }
+    },
+    {
+      "id": "a-4kf4",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "title": "auto mail letter …",
+        "why": "Coins a term, and the metaphor fights the channel/subscription model."
+      }
+    },
+    {
+      "id": "a-57nj",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "title": "A v1 prefix",
+        "why": "Implies v2 arrives alongside and obliges upcasters, a promise we do not want."
+      }
+    },
+    {
+      "id": "a-63s8",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "title": "Full CQRS with a projection process",
+        "why": "Rebuild tooling and eventual consistency for a few hundred rows a day."
+      }
+    },
+    {
+      "id": "a-6tp0",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "title": "A docs-only alpha note",
+        "why": "Does not stop a skill matching on a bare type name."
+      }
+    },
+    {
+      "id": "a-6z14",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ai",
+      "fields": {
+        "title": "Keys immediately on idle",
+        "why": "Spends the most dangerous mechanism on the most ordinary case."
+      }
+    },
+    {
+      "id": "a-aw9y",
+      "type": "alternative",
+      "status": "active",
+      "rank": "aj",
+      "fields": {
+        "title": "Opt-in per subscription only",
+        "why": "The cross-project journey silently does nothing for anyone who did not know to opt in."
+      }
+    },
+    {
+      "id": "a-bcs8",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ae",
+      "fields": {
+        "title": "Keep D-5 and accept best-effort escalation",
+        "why": "Silently breaks J2 and sits badly against G4's at-least-once promise."
+      }
+    },
+    {
+      "id": "a-bt89",
+      "type": "alternative",
+      "status": "active",
+      "rank": "al",
+      "fields": {
+        "title": "A strictly opaque token with separators rejected",
+        "why": "The one variant that would foreclose prefix filtering."
+      }
+    },
+    {
+      "id": "a-djp7",
+      "type": "alternative",
+      "status": "active",
+      "rank": "am",
+      "fields": {
+        "title": "Eager delivery rows at send time",
+        "why": "Silently breaks J2: the failure only appears when a subscriber arrives late."
+      }
+    },
+    {
+      "id": "a-dsj8",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ak",
+      "fields": {
+        "title": "An enforced project/name shape",
+        "why": "Breaks addresses that are not about a project, like a swarm channel."
+      }
+    },
+    {
+      "id": "a-f2m8",
+      "type": "alternative",
+      "status": "active",
+      "rank": "aa",
+      "fields": {
+        "title": "Hard-code herdr",
+        "why": "Breaks ntm panes, which hook capture already sees."
+      }
+    },
+    {
+      "id": "a-kjh2",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ac",
+      "fields": {
+        "title": "Cron as the primary delivery path",
+        "why": "A latency floor, and the wrong shape even later."
+      }
+    },
+    {
+      "id": "a-m7rq",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a8",
+      "fields": {
+        "title": "Qualify Message by context, as Event does",
+        "why": "The in-binary collision remains."
+      }
+    },
+    {
+      "id": "a-pe53",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "title": "Route mail over bus events only",
+        "why": "At-most-once broadcast cannot carry an ack."
+      }
+    },
+    {
+      "id": "a-pesp",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ao",
+      "fields": {
+        "title": "Env promotion (AUTO_MAIL_SELF → AUTO_MAIL_PARENT)",
+        "why": "Bootstrap hole: a supervisor that subscribes mid-session cannot set a variable in its own running process."
+      }
+    },
+    {
+      "id": "a-txje",
+      "type": "alternative",
+      "status": "active",
+      "rank": "an",
+      "fields": {
+        "title": "Backfill from subscription time only",
+        "why": "Breaks J2 for the same reason, just less visibly."
+      }
+    },
+    {
+      "id": "a-vrqj",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ah",
+      "fields": {
+        "title": "Ack as an unconditional write",
+        "why": "Cannot tell a winner from a loser, which is the whole point."
+      }
+    },
+    {
+      "id": "a-x13r",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ad",
+      "fields": {
+        "title": "No notification at all",
+        "why": "Mail sits unread, the failure mode this epic exists to fix."
+      }
+    },
+    {
+      "id": "a-y361",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ag",
+      "fields": {
+        "title": "A separate lock table",
+        "why": "A second thing to keep consistent, and redundant: D-1's transaction already makes ack atomic."
+      }
+    },
+    {
+      "id": "a-ymt5",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "title": "Mutable tables",
+        "why": "Two hosts' divergent mutable state is a conflict-resolution problem with no good answer."
+      }
+    },
+    {
+      "id": "a-yxva",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a9",
+      "fields": {
+        "title": "Extend autowatch's Backend",
+        "why": "Wrong lifecycle: it abstracts sessions autowatch creates and owns, not panes created by herdr or ntm."
+      }
+    },
+    {
+      "id": "a-z90w",
+      "type": "alternative",
+      "status": "active",
+      "rank": "ab",
+      "fields": {
+        "title": "A general session-manager refactor across autowatch",
+        "why": "Large, speculative, and unused by this epic."
+      }
+    },
+    {
+      "id": "c-gn2d",
+      "type": "child",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "plan": "002-j8nx",
+        "title": "Walking skeleton: subscribe, send, list, ack"
+      }
+    },
+    {
+      "id": "d-124m",
+      "type": "decision",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "by": "agent",
+        "chosen": "Keep inline notification as the fast path, and add a **minimal reconcile tick** in the daemon that re-evaluates unacked mail against the escalation policy. autowatch already owns ticker/cron machinery, so this is small. The sweep is not a scheduler — it is the thing that makes escalation and the nobody-was-running case actually happen.",
+        "title": "Inline notify for latency, plus a minimal reconcile tick for correctness",
+        "why": "D-5 cut the sweep on the premise that on one host there are no pushes to drop. That premise does not survive contact with two facts."
+      }
+    },
+    {
+      "id": "d-271g",
+      "type": "decision",
+      "status": "active",
+      "rank": "ab",
+      "fields": {
+        "by": "agent",
+        "chosen": "The address holds the mail; a subscription holds a `from_cursor` and its ack state, and delivery rows are materialised **lazily on read**. A new subscription defaults to seeing all unacked mail on the address from the beginning, and can opt to start from now.",
+        "title": "Subscriptions backfill unacked history from a cursor",
+        "why": "G2 keys consumer state by (subscription, message). If delivery rows were created eagerly at send time, a subscription created *later* would have none — and J2 leg 3, where an agent in project B reads mail sent before it existed, could never happen."
+      }
+    },
+    {
+      "id": "d-3e02",
+      "type": "decision",
+      "status": "active",
+      "rank": "aa",
+      "fields": {
+        "by": "agent",
+        "chosen": "An address is an opaque string with no enforced structure and no required project segment. Validation is permissive but must **explicitly allow a separator character**, so hierarchical names remain expressible by convention and prefix filtering stays buildable later.",
+        "title": "Addresses are free-form; structure is convention, filtering is v2",
+        "why": "Q-3 chose flexibility over an enforced namespace, with prefix filtering deferred."
+      }
+    },
+    {
+      "id": "d-6prf",
+      "type": "decision",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "by": "agent",
+        "chosen": "Leave that `Backend` untouched. Mail gets its own narrow effector seam — deliver to a pane, and ask whether it is alive — with one implementation per manager.",
+        "title": "Mail's effector seam is separate from autowatch's execution Backend",
+        "why": "Three session managers are in play (ntm, tmux, herdr), with a long-term intent to consolidate on herdr. autowatch already has a `Backend` interface (`Start` / `Kill` / `SessionExists`) with a single tmux implementation."
+      }
+    },
+    {
+      "id": "d-cfv7",
+      "type": "decision",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "by": "agent",
+        "chosen": "Register `mail.*` methods on the existing JSON-RPC peer, alongside `doc.*`, `task.*`, `bus.*`. Notification rides the bus; operations ride RPC.",
+        "title": "Reuse auto-shared rpc + transport rather than a new wire",
+        "why": "The MVP is single-host but must not foreclose multi-host."
+      }
+    },
+    {
+      "id": "d-edst",
+      "type": "decision",
+      "status": "active",
+      "rank": "a8",
+      "fields": {
+        "by": "agent",
+        "chosen": "Each subscription holds its own `deliveries` row and its own ack, so two *subscriptions* never contend. Ack is a conditional update inside the existing append-and-project transaction (`WHERE acked_at IS NULL`), and **returns whether this call was the one that transitioned it**.",
+        "title": "Broadcast delivery, with ack as a compare-and-set",
+        "why": "Q-1 settled fan-out as broadcast, and raised ack atomicity."
+      }
+    },
+    {
+      "id": "d-gm40",
+      "type": "decision",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "by": "agent",
+        "chosen": "`mail.Client` has two implementations. The **direct-store** one is what the MVP CLI binds to: send, list and ack work with no daemon running.",
+        "title": "The MVP CLI writes the store directly; the daemon is never required",
+        "why": "Seam 2 says send/list/ack are RPC calls, and D-3 registers `mail.*` on the daemon's peer — which would make the daemon the store's owner and put it in the path of every operation."
+      }
+    },
+    {
+      "id": "d-h7wk",
+      "type": "decision",
+      "status": "active",
+      "rank": "ac",
+      "fields": {
+        "by": "agent",
+        "chosen": "`#parent` resolves from the parentage already carried on an in-process subagent's hook events — the parent's `session_id` alongside the child's `agent_id`. A hook records which agent is currently active for a session so the mail CLI can identify itself, since the hook payload never reaches a tool call and an in-process subagent shares the parent's …",
+        "title": "#parent covers in-process subagents only, resolved from hook-supplied parentage",
+        "why": "Q-4, answered in-process only."
+      }
+    },
+    {
+      "id": "d-hr0p",
+      "type": "decision",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "by": "agent",
+        "chosen": "On a single host the sender resolves the binding and notifies inline. The reconciling sweep — which is what heals dropped pushes — is deferred until there are pushes that can drop, i.e. multi-host.",
+        "title": "The sender notifies inline; no cron sweep in the MVP",
+        "why": "A periodic inbox sweep was the obvious delivery driver, but a one-minute tick sets a 60-second floor on latency and burns work when nothing happened."
+      }
+    },
+    {
+      "id": "d-rrht",
+      "type": "decision",
+      "status": "active",
+      "rank": "a9",
+      "fields": {
+        "by": "agent",
+        "chosen": "Notification escalates in stages. Every message first waits for an in-band hook nudge.",
+        "title": "Escalating intrusiveness: nudge first, keystrokes last",
+        "why": "Q-2 rejected default-on keystroke injection in favour of escalation."
+      }
+    },
+    {
+      "id": "d-spbj",
+      "type": "decision",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "by": "agent",
+        "chosen": "Append-only event log as the authority, projections maintained in the same transaction. Messages immutable.",
+        "title": "Event-source the delivery lifecycle, not everything",
+        "why": "Storage choice for a low-volume, debugging-heavy, eventually-distributed message store."
+      }
+    },
+    {
+      "id": "d-vvcy",
+      "type": "decision",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "by": "agent",
+        "chosen": "Prefix event types with `alpha` and name the store file with it. Carry a `version` integer on the envelope anyway.",
+        "title": "Alpha marker in the type string and the store filename",
+        "why": "Event sourcing makes the event vocabulary permanent, which raises the stakes on getting it right first time."
+      }
+    },
+    {
+      "id": "d-xpbe",
+      "type": "decision",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "by": "agent",
+        "chosen": "`auto mail` is itself the resource noun — flat verbs, no `message` subcommand. The glossary gains **Mail** (the stored unit, named `MAIL` in the schema), **Address**, **Subscription**, **Delivery** and **Binding** — the concepts the epic actually uses.",
+        "title": "No message resource noun on the CLI",
+        "why": "`docs/concepts/UBIQUITOUS_LANGUAGE.md` binds **Message** to a role-tagged exchange within a Session. A mail resource of the same name would make `auto search message get` and `auto mail message get` mean unrelated things in one binary."
+      }
+    },
+    {
+      "id": "g-gc8t",
+      "type": "goal",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "description": "The bus is for events nobody has to receive; mail is for messages someone must act on.",
+        "title": "Mail is durable and at-least-once: it survives until explicitly acked"
+      }
+    },
+    {
+      "id": "g-j58t",
+      "type": "goal",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "title": "A working agent learns it has mail in-band, at no cost when there is none"
+      }
+    },
+    {
+      "id": "g-kqxw",
+      "type": "goal",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "title": "An idle agent is woken without corrupting a working one"
+      }
+    },
+    {
+      "id": "g-rbcw",
+      "type": "goal",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "description": "Without knowing what session, pane, project or process the other one is.",
+        "title": "Agents on one host address each other by name and get a reply"
+      }
+    },
+    {
+      "id": "g-w1fg",
+      "type": "goal",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "description": "Schema you own is cheap to migrate; call sites you don't own are not.",
+        "title": "Nothing in the MVP forecloses fan-out, leases or multi-host"
+      }
+    },
+    {
+      "id": "j-bvmq",
+      "type": "journey",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "description": "Outcome: supervisor learns the child failed, in-band, without polling.",
+        "title": "Sub-agent reports home"
+      }
+    },
+    {
+      "id": "j-pn3v",
+      "type": "journey",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "description": "Outcome: a fact discovered in one project reaches the project that owns it.",
+        "title": "Cross-project bug report"
+      }
+    },
+    {
+      "id": "l-0f9w",
+      "type": "leg",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "action": "is idle in a pane",
+        "actor": "agent in project B"
+      }
+    },
+    {
+      "id": "l-0x4k",
+      "type": "leg",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "action": "persists it — nobody in B is running",
+        "actor": "mail"
+      }
+    },
+    {
+      "id": "l-21j1",
+      "type": "leg",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "action": "spawns an in-process sub-agent",
+        "actor": "supervisor"
+      }
+    },
+    {
+      "id": "l-7fdr",
+      "type": "leg",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "action": "finds a bug that belongs to project B",
+        "actor": "agent in project A"
+      }
+    },
+    {
+      "id": "l-9wde",
+      "type": "leg",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "action": "hits a wall and mails #parent",
+        "actor": "sub-agent"
+      }
+    },
+    {
+      "id": "l-cwd2",
+      "type": "leg",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "action": "reads, fixes, acks",
+        "actor": "agent in project B"
+      }
+    },
+    {
+      "id": "l-mfg7",
+      "type": "leg",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "action": "is nudged on its next tool call",
+        "actor": "supervisor"
+      }
+    },
+    {
+      "id": "plan",
+      "type": "plan",
+      "status": "active",
+      "fields": {
+        "created": "2026-01-01",
+        "kind": "epic",
+        "lifecycle": "solution",
+        "name": "auto-mail-mvp"
+      }
+    },
+    {
+      "id": "q-fpa3",
+      "type": "question",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "answer": "Agreed, we should be careful and escalate our intrusiveness. Start with hook injection, only use injection as a last resort.",
+        "recommended": "on by default, with a per-subscription ceiling available.",
+        "status": "answered",
+        "title": "Is keystroke injection on by default in alpha, or opt-in per subscription?"
+      }
+    },
+    {
+      "id": "q-jqm7",
+      "type": "question",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "answer": "Leave it flexible. Virtual addresses can be anything, but we have prefix-based filtering as an option. Could be a v2 feature to be honest as I can't see a use for it right now.",
+        "recommended": "hierarchical, purpose-based, with the leading segment conventionally a project id but never enforced.",
+        "status": "answered",
+        "title": "Is the address namespace hierarchical, and is the project segment meaningful?"
+      }
+    },
+    {
+      "id": "q-m24f",
+      "type": "question",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "answer": "Copy all messages to everyone. An important thing to include though — ack must be atomic. If two agents read the same message, then they race to ack it, only one must succeed. SQLite transaction should back ack. We push to the event log and maybe update a separate lock table.",
+        "recommended": "a copy each (broadcast).",
+        "status": "answered",
+        "title": "Two subscribers on one channel: a copy each, or compete for it?"
+      }
+    },
+    {
+      "id": "q-nrws",
+      "type": "question",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "answer": "In-process only.",
+        "recommended": "in-process only for the MVP.",
+        "status": "answered",
+        "title": "Which spawn shapes does #parent cover, and how does the CLI identify which agent it is?"
+      }
+    },
+    {
+      "id": "r-01p5",
+      "type": "rail",
+      "status": "active",
+      "rank": "aa",
+      "fields": {
+        "deferred": [
+          "002-j8nx"
+        ],
+        "description": "(functional) Intrusiveness escalates, never leads. Every message first waits for an in-band hook nudge; keystrokes are the last resort, firing only when the agent is idle by hook silence and the message has aged past a threshold.",
+        "title": "Delivery never corrupts a working agent"
+      }
+    },
+    {
+      "id": "r-0bcq",
+      "type": "rail",
+      "status": "active",
+      "rank": "ad",
+      "fields": {
+        "description": "(operability) The guiding oracle is a harness scenario running the real auto binary in containers over real transports, with a realistic but minimal setup. Unit and package tests are supporting evidence, not the verdict — a task whose capability cannot be demonstrated end to end is not finished.",
+        "title": "A capability is done when it passes end to end in the harness"
+      }
+    },
+    {
+      "id": "r-1eyq",
+      "type": "rail",
+      "status": "active",
+      "rank": "a9",
+      "fields": {
+        "description": "(operability) Notification runs in the agent's critical path on tool calls. The common case — no pending mail — must cost about what a stat costs, and must never be able to stall or break the hook.",
+        "title": "The nudge is free when there is no mail"
+      }
+    },
+    {
+      "id": "r-42vx",
+      "type": "rail",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "description": "(functional) Read and ack state is keyed by (subscription, message), even though the MVP has exactly one subscription per address. That redundancy is the feature: fan-out becomes extra rows, competing consumers become a column.",
+        "title": "Consumer state lives in a deliveries join, never on the message"
+      }
+    },
+    {
+      "id": "r-6gjf",
+      "type": "rail",
+      "status": "active",
+      "rank": "ab",
+      "fields": {
+        "description": "(compat) Event types and the store file carry an alpha marker. No upcasters, no migrations, no compatibility guarantee; reset is a supported operation.",
+        "title": "Alpha: the store may be wiped, nothing may depend on it"
+      }
+    },
+    {
+      "id": "r-9bka",
+      "type": "rail",
+      "status": "active",
+      "rank": "a8",
+      "fields": {
+        "deferred": [
+          "002-j8nx"
+        ],
+        "description": "(security) Capture widens to reach herdr panes. It must stay a prefix allowlist and never become \"everything except known secrets\" — agent environments carry live credentials (this host's sessions expose a messaging token in plain env).",
+        "title": "Hook environment capture stays an allowlist"
+      }
+    },
+    {
+      "id": "r-apsc",
+      "type": "rail",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "description": "(functional) Ack is a conditional update inside the same transaction that appends its event, so concurrent acks on one delivery resolve to exactly one winner. The call returns which it was — a loser is told, never silently treated as success.",
+        "title": "Ack transitions exactly once and reports whether it won"
+      }
+    },
+    {
+      "id": "r-f1ys",
+      "type": "rail",
+      "status": "active",
+      "rank": "ae",
+      "fields": {
+        "description": "(functional) Canonical terms go into the ubiquitous-language glossary first, and then the same word is used everywhere — schema, event types, CLI, RPC methods, prose and commits. Naming is the one decision that propagates into every surface at once, including the ungreppable ones, so it cannot be tidied up afterwards.",
+        "title": "The ontology lands before the code that uses it"
+      }
+    },
+    {
+      "id": "r-fjxr",
+      "type": "rail",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "deferred": [
+          "002-j8nx"
+        ],
+        "description": "(security) Two rules, both absolute. Content: the injected sequence is a fixed constant — an instruction to go and read mail — never interpolated from an envelope or body, or a sender would be typing into a stranger's pane.",
+        "title": "Injected keystrokes are a fixed constant, into a verified agent"
+      }
+    },
+    {
+      "id": "r-fzh2",
+      "type": "rail",
+      "status": "active",
+      "rank": "af",
+      "fields": {
+        "description": "(operability) One client interface is the only API. The moment a skill or hook runs sqlite3 against the store, the schema is frozen and the transport swap is dead.",
+        "title": "Nothing outside the mail package reads the store"
+      }
+    },
+    {
+      "id": "r-jcvm",
+      "type": "rail",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "description": "(functional) Reading does not retire a message. Ack may do nothing but stamp a timestamp — no timer, no redelivery — but every consumer must call it.",
+        "title": "Ack is a separate explicit call, from the first consumer"
+      }
+    },
+    {
+      "id": "r-p2kk",
+      "type": "rail",
+      "status": "active",
+      "rank": "ac",
+      "fields": {
+        "deferred": [
+          "002-j8nx"
+        ],
+        "description": "(compat) A binding records its physical target as an opaque (manager, target) pair — never a typed tmux_pane_id / herdr_pane_id column. Delivery goes through an effector interface with one implementation per manager.",
+        "title": "No session manager is hard-coded into stored data"
+      }
+    },
+    {
+      "id": "r-q6hs",
+      "type": "rail",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "description": "(reliability) The cross-project journey depends on both halves: mail sent to a project nobody is working in must persist, and the agent who subscribes tomorrow must receive it. A send reports two distinct counts — how many subscriptions exist (durable readers) and how many are currently bound (live agents) — because …",
+        "title": "Sending to an address with no subscription persists, and a later subscriber sees it"
+      }
+    },
+    {
+      "id": "r-tr9x",
+      "type": "rail",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "description": "(functional) Physical identity (session, host, herdr/ntm pane) appears only as binding metadata, never in an address, never in a stored envelope's to field. Relative handles like #parent resolve at send time; the stored envelope always carries the resolved absolute address.",
+        "title": "Addresses are virtual — no physical identity in them"
+      }
+    },
+    {
+      "id": "r-vgcz",
+      "type": "rail",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "description": "(functional) The MVP delivers exactly once, in order, by accident. The contract promises neither.",
+        "title": "At-least-once and unordered, as documented"
+      }
+    },
+    {
+      "id": "r-xbrt",
+      "type": "rail",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "description": "(functional) A message row is never updated after insert, and a delivery event is never rewritten. State changes are appended and re-projected.",
+        "title": "Messages and events are immutable"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-dx4b",
+      "from": "a-6z14",
+      "type": "wouldBreak",
+      "to": "r-01p5"
+    },
+    {
+      "id": "e-kvvn",
+      "from": "a-bcs8",
+      "type": "wouldBreak",
+      "to": "r-vgcz"
+    },
+    {
+      "id": "e-9vka",
+      "from": "a-djp7",
+      "type": "wouldBreak",
+      "to": "r-q6hs"
+    },
+    {
+      "id": "e-qexb",
+      "from": "a-f2m8",
+      "type": "wouldBreak",
+      "to": "r-p2kk"
+    },
+    {
+      "id": "e-r9z1",
+      "from": "a-pe53",
+      "type": "wouldBreak",
+      "to": "r-jcvm"
+    },
+    {
+      "id": "e-ebap",
+      "from": "a-txje",
+      "type": "wouldBreak",
+      "to": "r-q6hs"
+    },
+    {
+      "id": "e-ct1r",
+      "from": "a-vrqj",
+      "type": "wouldBreak",
+      "to": "r-apsc"
+    },
+    {
+      "id": "e-1748",
+      "from": "d-124m",
+      "type": "constrains",
+      "to": "g-kqxw"
+    },
+    {
+      "id": "e-yemt",
+      "from": "d-124m",
+      "type": "rejects",
+      "to": "a-48t5"
+    },
+    {
+      "id": "e-dvn3",
+      "from": "d-124m",
+      "type": "rejects",
+      "to": "a-bcs8"
+    },
+    {
+      "id": "e-e2b3",
+      "from": "d-124m",
+      "type": "supersedes",
+      "to": "d-hr0p"
+    },
+    {
+      "id": "e-2s9d",
+      "from": "d-271g",
+      "type": "constrains",
+      "to": "g-gc8t"
+    },
+    {
+      "id": "e-gsbe",
+      "from": "d-271g",
+      "type": "rejects",
+      "to": "a-djp7"
+    },
+    {
+      "id": "e-7dwp",
+      "from": "d-271g",
+      "type": "rejects",
+      "to": "a-txje"
+    },
+    {
+      "id": "e-s267",
+      "from": "d-3e02",
+      "type": "constrains",
+      "to": "g-rbcw"
+    },
+    {
+      "id": "e-9aq7",
+      "from": "d-3e02",
+      "type": "rejects",
+      "to": "a-bt89"
+    },
+    {
+      "id": "e-swp9",
+      "from": "d-3e02",
+      "type": "rejects",
+      "to": "a-dsj8"
+    },
+    {
+      "id": "e-hq93",
+      "from": "d-6prf",
+      "type": "constrains",
+      "to": "g-kqxw"
+    },
+    {
+      "id": "e-yp2b",
+      "from": "d-6prf",
+      "type": "rejects",
+      "to": "a-f2m8"
+    },
+    {
+      "id": "e-rbac",
+      "from": "d-6prf",
+      "type": "rejects",
+      "to": "a-yxva"
+    },
+    {
+      "id": "e-crqt",
+      "from": "d-6prf",
+      "type": "rejects",
+      "to": "a-z90w"
+    },
+    {
+      "id": "e-vvbf",
+      "from": "d-cfv7",
+      "type": "constrains",
+      "to": "g-w1fg"
+    },
+    {
+      "id": "e-b8fa",
+      "from": "d-cfv7",
+      "type": "rejects",
+      "to": "a-2gq9"
+    },
+    {
+      "id": "e-nspz",
+      "from": "d-cfv7",
+      "type": "rejects",
+      "to": "a-pe53"
+    },
+    {
+      "id": "e-914r",
+      "from": "d-edst",
+      "type": "constrains",
+      "to": "g-gc8t"
+    },
+    {
+      "id": "e-316c",
+      "from": "d-edst",
+      "type": "rejects",
+      "to": "a-vrqj"
+    },
+    {
+      "id": "e-5tyn",
+      "from": "d-edst",
+      "type": "rejects",
+      "to": "a-y361"
+    },
+    {
+      "id": "e-q8dy",
+      "from": "d-gm40",
+      "type": "constrains",
+      "to": "g-gc8t"
+    },
+    {
+      "id": "e-rf9a",
+      "from": "d-gm40",
+      "type": "rejects",
+      "to": "a-2g81"
+    },
+    {
+      "id": "e-85ap",
+      "from": "d-h7wk",
+      "type": "constrains",
+      "to": "g-rbcw"
+    },
+    {
+      "id": "e-v07a",
+      "from": "d-h7wk",
+      "type": "rejects",
+      "to": "a-2nmm"
+    },
+    {
+      "id": "e-73w6",
+      "from": "d-h7wk",
+      "type": "rejects",
+      "to": "a-pesp"
+    },
+    {
+      "id": "e-y97r",
+      "from": "d-hr0p",
+      "type": "constrains",
+      "to": "g-kqxw"
+    },
+    {
+      "id": "e-mrt7",
+      "from": "d-hr0p",
+      "type": "rejects",
+      "to": "a-kjh2"
+    },
+    {
+      "id": "e-1c6b",
+      "from": "d-hr0p",
+      "type": "rejects",
+      "to": "a-x13r"
+    },
+    {
+      "id": "e-jgv0",
+      "from": "d-rrht",
+      "type": "constrains",
+      "to": "g-kqxw"
+    },
+    {
+      "id": "e-bnwk",
+      "from": "d-rrht",
+      "type": "rejects",
+      "to": "a-6z14"
+    },
+    {
+      "id": "e-5thj",
+      "from": "d-rrht",
+      "type": "rejects",
+      "to": "a-aw9y"
+    },
+    {
+      "id": "e-5e0m",
+      "from": "d-spbj",
+      "type": "constrains",
+      "to": "g-w1fg"
+    },
+    {
+      "id": "e-573x",
+      "from": "d-spbj",
+      "type": "rejects",
+      "to": "a-63s8"
+    },
+    {
+      "id": "e-mqrc",
+      "from": "d-spbj",
+      "type": "rejects",
+      "to": "a-ymt5"
+    },
+    {
+      "id": "e-0n2p",
+      "from": "d-vvcy",
+      "type": "constrains",
+      "to": "g-w1fg"
+    },
+    {
+      "id": "e-yn3r",
+      "from": "d-vvcy",
+      "type": "rejects",
+      "to": "a-57nj"
+    },
+    {
+      "id": "e-x1av",
+      "from": "d-vvcy",
+      "type": "rejects",
+      "to": "a-6tp0"
+    },
+    {
+      "id": "e-fc32",
+      "from": "d-xpbe",
+      "type": "constrains",
+      "to": "g-rbcw"
+    },
+    {
+      "id": "e-wpa0",
+      "from": "d-xpbe",
+      "type": "rejects",
+      "to": "a-4kf4"
+    },
+    {
+      "id": "e-7gga",
+      "from": "d-xpbe",
+      "type": "rejects",
+      "to": "a-m7rq"
+    },
+    {
+      "id": "e-j5t0",
+      "from": "l-0f9w",
+      "type": "in",
+      "to": "j-pn3v"
+    },
+    {
+      "id": "e-7vp6",
+      "from": "l-0x4k",
+      "type": "in",
+      "to": "j-pn3v"
+    },
+    {
+      "id": "e-m60h",
+      "from": "l-21j1",
+      "type": "in",
+      "to": "j-bvmq"
+    },
+    {
+      "id": "e-tk0w",
+      "from": "l-7fdr",
+      "type": "in",
+      "to": "j-pn3v"
+    },
+    {
+      "id": "e-2kdw",
+      "from": "l-9wde",
+      "type": "in",
+      "to": "j-bvmq"
+    },
+    {
+      "id": "e-bdaw",
+      "from": "l-cwd2",
+      "type": "in",
+      "to": "j-pn3v"
+    },
+    {
+      "id": "e-00ae",
+      "from": "l-mfg7",
+      "type": "in",
+      "to": "j-bvmq"
+    }
+  ]
+}

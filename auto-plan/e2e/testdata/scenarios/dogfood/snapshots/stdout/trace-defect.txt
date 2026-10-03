@@ -1,0 +1,8 @@
+✗ df-kqxw  Feedback gaps are write-only
+
+up
+  addresses  ← ◎ g-0x4k  Reported feedback gaps are readable with auto reflect gap list
+    constrains ← ◆ d-2gq9  F4 surface = dedicated `gap list`
+
+down
+  (none)

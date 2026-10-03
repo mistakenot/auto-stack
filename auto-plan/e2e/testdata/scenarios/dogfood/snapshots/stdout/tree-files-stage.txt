@@ -1,0 +1,4 @@
+~ auto-reflect/internal/cli/
++ ├── gap.go                   f-124m  `gap list` command (F4).
++ ├── gap_integration_test.go  f-y361  gap list integration tests (F4).
+~ └── root.go                  f-aw9y  Register `gap` + `doctor` commands.

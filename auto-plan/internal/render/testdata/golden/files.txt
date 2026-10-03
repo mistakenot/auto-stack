@@ -1,0 +1,8 @@
+~ auto-plan/internal/
+~ ├── cli/
+- │   ├── old.go    f-gqzz  replaced by read.go
++ │   └── read.go   f-44v0  list, describe, get, search
+~ └── render/
++     ├── brief.go  f-rn42  Stage Brief view
+~     └── show.go   f-pa6c  labels, alternatives and blocks
+~ go.work           f-r5et  use ./auto-plan

@@ -1,0 +1,6 @@
+~ auto-plan/
+~ ├── internal/          code
++ │   ├── tree/
++ │   │   └── render.go  show-me renderer
+~ │   └── lint/rules.go
+- └── old.go             gone

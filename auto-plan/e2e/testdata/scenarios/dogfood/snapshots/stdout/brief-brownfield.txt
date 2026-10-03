@@ -1,0 +1,139 @@
+# Stage s-m7ab: Docs, init gitignore, cleanup, e2e
+
+Plan 003-gevp (reflect-tool-hardening) · status done
+
+## Depends on
+
+- s-kyqb: Rule content ids + consolidate determinism (done)
+- s-nkx5: Envelope rollout + rule timestamps (done)
+- s-s5mp: Single-source pending count (done)
+- s-3bxs: doctor command (done)
+
+## Steps
+
+1. `init.go`: after `MkdirAll(eventsDir)`, write `.auto/reflect/.gitignore` (`playbook.json\n`) only if absent (auto-doc stat-then-skip pattern).
+2. Repo hygiene: `git rm --cached .auto/reflect/playbook.json`; commit the new `.auto/reflect/.gitignore` and the existing `events/` log (D-2).
+3. Docstrings: `loop/feedback.go` (outcome enum), `miner/score.go` (correction_density).
+4. Delete `docs/reflection/observations.yaml`.
+5. Docs: `quickstart.go` + skill refs (`SKILL.md`, `retrieve.md`, `observe.md`, `mine.md`, `consolidate.md`) — new `jq` id paths, `gap list`, `doctor`, outcome enum, correction_density …
+6. Extend `e2e_loop_test.go` through `gap list`; update `e2e_lifecycle_test.go` output-shape assertions to the new envelope.
+7. **Phase verify:** `go build ./...`; **full** `go test ./...`; `golangci-lint run`; `auto reflect quickstart` happy path by hand.
+
+## Commit
+
+`docs(003): gap/doctor/enum docs, init gitignore, drop legacy yaml (F8,F3,F9,F11)`
+
+## Files
+
+```
+~ .claude/skills/reflect-playbook/
+~ ├── SKILL.md                   f-383z  Id-threading invariant, gap list, health check (F4/F5).
+~ └── references/
+~     ├── consolidate.md         f-3n0t  Id-threading examples to new envelope (F5).
+~     ├── mine.md                f-ed9v  Document correction_density (F3).
+~     ├── observe.md             f-0ytx  Clarify observation `--kind gap` vs feedback gap (F4).
+~     └── retrieve.md            f-32y3  jq id paths, gap list, outcome enum (F5/F4/F8).
+~ auto-reflect/
+~ ├── CLAUDE.md                  f-t2we  Autodoc index: new `gap`/`doctor` commands.
+~ ├── cmd/autoreflect/
+~ │   ├── e2e_lifecycle_test.go  f-rsyh  Update output-shape assertions (F5).
+~ │   └── e2e_loop_test.go       f-m9bb  Extend the loop through `gap list`; new envelope paths (F4/…
+~ └── internal/
+~     ├── cli/
+~     │   ├── init.go            f-jqm7  Write idempotent `.auto/reflect/.gitignore` (F9).
++     │   ├── init_test.go       f-nrws  init writes/keeps `.gitignore`; idempotent (F9).
+~     │   └── quickstart.go      f-gn2d  Docs: gap list, doctor, outcome enum, correction_density, i…
+~     ├── loop/
+~     │   └── feedback.go        f-fhpw  Docstring for the `outcome` enum (F8).
+~     └── miner/
+~         └── score.go           f-bndy  Docstring for `correction_density` (F3).
+- docs/reflection/
+- └── observations.yaml          f-2cx2  Legacy superseded-process artifact (F11).
+```
+
+## Acceptance criteria
+
+### ac-57nj: No regressions (cross-cutting)
+
+Proves g-cwd2: A uniform output envelope with a predictable top-level id
+
+**Given** all changes, **When** I run `go build ./...` and the full `auto-reflect` test suite, **Then** everything builds and passes (existing assertions updated to the new envelope), and the end-to-end reflect loop completes as in `quickstart`.
+
+- Verify: `cd auto-reflect && go build ./... && go test ./...`
+- Tests: auto-reflect/cmd/autoreflect/e2e_loop_test.go, auto-reflect/cmd/autoreflect/e2e_lifecycle_test.go
+
+### ac-0bcq: init writes an idempotent .gitignore (F9)
+
+Proves g-42vx: init writes a coherent git policy for .auto/reflect/
+
+**Given** a repo, **When** I run `auto reflect init` (or `init --project`), **Then** `.auto/reflect/.gitignore` exists and ignores `playbook.json` (not `events/`); running init again does not overwrite or duplicate it.
+
+- Verify: `cd auto-reflect && go test ./internal/cli/ -run Init`
+- Tests: auto-reflect/internal/cli/init_test.go
+
+### ac-f1ys: Canonical events tracked, cache ignored (F9/D-2)
+
+Proves g-42vx: init writes a coherent git policy for .auto/reflect/
+
+**Given** the repo's own `.auto/reflect/`, **When** I check git status after init, **Then** `.auto/reflect/events/*.jsonl` is tracked/committable and `playbook.json` is untracked (removed from the index with `git rm --cached` if previously tracked).
+
+- Verify: `cd auto-reflect && go test ./internal/cli/ -run Init`
+- Tests: auto-reflect/internal/cli/init_test.go
+
+### ac-63s8: outcome enum + correction_density documented (F8/F3)
+
+Proves g-apsc: The outcome enum and correction_density are documented
+
+**Given** the docs, **When** a reader consults `quickstart` and the reflect-playbook references, **Then** the feedback `outcome` enum (`success|partial|fail|abandoned`, distinct from miner ack status) and `correction_density` (definition + scale) are documented; a malformed `outcome` error already names the valid set.
+
+- Verify: manual
+
+### ac-spbj: Legacy yaml removed (F11)
+
+Proves g-vgcz: The legacy reflection yaml is removed
+
+**Given** the superseded process artifacts, **When** the task lands, **Then** `docs/reflection/observations.yaml` is deleted and the reflect-playbook "supersedes" note reflects the removal. The only remaining referencers are the already-superseded `playbook-observe`/`-refine`/`-search` skills (no Go code …
+
+- Verify: `test ! -e docs/reflection/observations.yaml`
+
+## Decisions
+
+### d-2g81: Event log is git-tracked
+
+Constrains g-42vx
+
+**Chosen:** The canonical `.auto/reflect/events/*.jsonl` log is committed (shared playbook history; any clone can `rebuild`). The init-written `.auto/reflect/.gitignore` ignores only the disposable `playbook.json`.
+
+**Why:** Reflect history travels with the repo and across hosts.
+
+### d-4kf4: F5 = restructure to a uniform envelope (breaking)
+
+Constrains g-cwd2
+
+**Chosen:** Restructure command output to one uniform envelope rather than additively bolting a top-level `.id` onto today's shapes.
+
+**Why:** Cleanest end state; existing output consumers (and the skill references' documented extraction paths) must be updated in lockstep.
+
+### d-xpbe: F5 changes CLI output only — not the stored event schema
+
+Constrains g-cwd2
+
+**Chosen:** F5 restructures only CLI *output* marshalling. Stored event payload field names and `schema_version` are untouched.
+
+**Why:** Stored payload field names (`observation_id`, `rule_id`, …) are part of the append-only on-disk contract; `events.SchemaVersion` is 1 and must fold identically forever.
+
+### d-z90w: F5 final shape: top-level id on mutations, per-element id on reads
+
+Constrains g-cwd2
+
+**Chosen:** Mutations gain a top-level `id` (and `ids` when many); collection commands stay top-level arrays but every element carries a uniform top-level `id` alongside its descriptive id field.
+
+**Why:** Predictable id threading everywhere; minimal breakage; reads keep returning all items as a plain array.
+
+## Rails
+
+(none)
+
+## Open questions
+
+(none)

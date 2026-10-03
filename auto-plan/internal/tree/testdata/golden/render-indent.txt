@@ -1,0 +1,7 @@
++ runBrief        new entry point
+~   render.Brief  builds the brief for ac-3fxm
+      ◆ d-9t2w    the decision
+      covers ✓ ac-3fxm and ◎ g-k7q2
+      ac-zzzz     unknown IDs stay plain
+  # a note
+- oldBrief        replaced

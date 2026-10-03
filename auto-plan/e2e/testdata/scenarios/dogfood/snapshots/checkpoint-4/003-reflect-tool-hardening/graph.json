@@ -1,0 +1,1844 @@
+{
+  "version": "1.0.0",
+  "id": "003-gevp",
+  "nodes": [
+    {
+      "id": "ac-01p5",
+      "type": "ac",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "gwt": "**Given** the envelope migration of `retrieve`, `select`, `rule list`, `observation list`, `events list`, `gap list`, **When** I parse their JSON, **Then** each element's id is reachable at a uniform path (`.[].id` or `.results[].id`), every field present before the change is still present, and the reflect-playbook skill refs + `quickstart` are updated to the new paths.",
+        "title": "Collection commands expose .[].id without data loss (F5)",
+        "verify": {
+          "cmd": "cd auto-reflect && go test ./internal/cli/ -run Observation",
+          "tests": [
+            "auto-reflect/internal/cli/observation_integration_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-0bcq",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** a repo, **When** I run `auto reflect init` (or `init --project`), **Then** `.auto/reflect/.gitignore` exists and ignores `playbook.json` (not `events/`); running init again does not overwrite or duplicate it.",
+        "title": "init writes an idempotent .gitignore (F9)",
+        "verify": {
+          "cmd": "cd auto-reflect && go test ./internal/cli/ -run Init",
+          "tests": [
+            "auto-reflect/internal/cli/init_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-1eyq",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** the uniform output envelope, **When** I run an id-minting / entity mutation (`observation add`, `rule create/edit/promote/retire/graduate`, `consolidate`), **Then** the relevant id(s) — newly minted, or the affected entity's — are reachable at a predictable top-level path (`.id` for single, `.ids` for many), never `null` and never only nested. (`feedback` echoes the feedback ids it acted on …",
+        "title": "Mutating commands expose a top-level id (F5)",
+        "verify": {
+          "cmd": "cd auto-reflect && go test ./internal/cli/ -run 'Observation|Consolidate'",
+          "tests": [
+            "auto-reflect/internal/cli/observation_integration_test.go",
+            "auto-reflect/internal/cli/consolidate_integration_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-57nj",
+      "type": "ac",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "gwt": "**Given** all changes, **When** I run `go build ./...` and the full `auto-reflect` test suite, **Then** everything builds and passes (existing assertions updated to the new envelope), and the end-to-end reflect loop completes as in `quickstart`.",
+        "title": "No regressions (cross-cutting)",
+        "verify": {
+          "cmd": "cd auto-reflect && go build ./... && go test ./...",
+          "tests": [
+            "auto-reflect/cmd/autoreflect/e2e_loop_test.go",
+            "auto-reflect/cmd/autoreflect/e2e_lifecycle_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-63s8",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** the docs, **When** a reader consults `quickstart` and the reflect-playbook references, **Then** the feedback `outcome` enum (`success|partial|fail|abandoned`, distinct from miner ack status) and `correction_density` (definition + scale) are documented; a malformed `outcome` error already names the valid set.",
+        "title": "outcome enum + correction_density documented (F8/F3)",
+        "verify": {
+          "kind": "manual"
+        }
+      }
+    },
+    {
+      "id": "ac-6gjf",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** one consolidation delta document, **When** I run `consolidate --dry-run` and then `consolidate` (separate invocations), **Then** the rule id is identical across both; **and** re-running the same `consolidate` a second time is a no-op (no duplicate rule) because the content-derived id already exists.",
+        "title": "Content-derived ids make consolidate deterministic + idempotent (F7)",
+        "verify": {
+          "cmd": "cd auto-reflect && go test ./internal/idhash/ && go test ./internal/cli/ -run Consolidate",
+          "tests": [
+            "auto-reflect/internal/cli/consolidate_integration_test.go",
+            "auto-reflect/internal/idhash/idhash_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-9bka",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** any repo + ETL state, **When** I run `auto reflect miner status` and `auto reflect stats`, **Then** `pending` == `pending_to_mine` (both computed by one shared function), and the counted universe is documented. A unit test pins them equal on a fixture where they previously diverged.",
+        "title": "One pending count, two callers agree (F2)",
+        "verify": {
+          "cmd": "cd auto-reflect && go test ./internal/cli/ -run 'Miner|Stats|Pending'",
+          "tests": [
+            "auto-reflect/internal/cli/miner_integration_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-f1ys",
+      "type": "ac",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "gwt": "**Given** the repo's own `.auto/reflect/`, **When** I check git status after init, **Then** `.auto/reflect/events/*.jsonl` is tracked/committable and `playbook.json` is untracked (removed from the index with `git rm --cached` if previously tracked).",
+        "title": "Canonical events tracked, cache ignored (F9/D-2)",
+        "verify": {
+          "cmd": "cd auto-reflect && go test ./internal/cli/ -run Init",
+          "tests": [
+            "auto-reflect/internal/cli/init_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-fzh2",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** a partial reflect state (e.g. state dir present but `events/` missing, or `playbook.json` stale vs the folded event log), **When** I run `auto reflect doctor`, **Then** it returns structured JSON `[{check,status,message,hint}]`, each failure carries a concrete remediation hint, and the process exits non-zero on any fail.",
+        "title": "doctor detects stale/partial state (F1)",
+        "verify": {
+          "cmd": "cd auto-reflect && go test ./internal/cli/ -run Doctor",
+          "tests": [
+            "auto-reflect/internal/cli/doctor_integration_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-p2kk",
+      "type": "ac",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "gwt": "**Given** content-derived minting, **When** rule/observation ids are generated, **Then** they still match `^r-[0-9a-f]{8}$` / `^ob-[0-9a-f]{8}$`; existing validators are unchanged; events already on disk keep their original ids.",
+        "title": "Ids keep their format (F7/D-6)",
+        "verify": {
+          "cmd": "cd auto-reflect && go test ./internal/idhash/",
+          "tests": [
+            "auto-reflect/internal/idhash/idhash_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-q6hs",
+      "type": "ac",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "gwt": "**Given** gaps spanning multiple sessions/domains/times, **When** I run `gap list` with no filters, **Then** all gaps are returned; **and** `--since`/`--after`/`--before` and `--domain` filter correctly (one filter mode at a time), input normalized, JSON by default with `--format text` available.",
+        "title": "gap list obeys list conventions (F4)",
+        "verify": {
+          "cmd": "cd auto-reflect && go test ./internal/cli/ -run Gap",
+          "tests": [
+            "auto-reflect/internal/cli/gap_integration_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-spbj",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** the superseded process artifacts, **When** the task lands, **Then** `docs/reflection/observations.yaml` is deleted and the reflect-playbook \"supersedes\" note reflects the removal. The only remaining referencers are the already-superseded `playbook-observe`/`-refine`/`-search` skills (no Go code …",
+        "title": "Legacy yaml removed (F11)",
+        "verify": {
+          "cmd": "test ! -e docs/reflection/observations.yaml"
+        }
+      }
+    },
+    {
+      "id": "ac-tr9x",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** feedback events that carry a `gap` (`report` + `moment`), **When** I run `auto reflect gap list`, **Then** stdout is JSON listing each gap with its `report`, `moment`, and source provenance (the feedback event id `ev-…`, `session_id`, `ts`) — no raw-JSONL grep required. Feedback events without a gap are omitted.",
+        "title": "gap list surfaces reported gaps (F4)",
+        "verify": {
+          "cmd": "cd auto-reflect && go test ./internal/cli/ -run Gap",
+          "tests": [
+            "auto-reflect/internal/cli/gap_integration_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "ac-ymt5",
+      "type": "ac",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "gwt": "**Given** a folded rule with `created_at`/`updated_at` set by `Fold`, **When** I run `auto reflect rule list` and `rule get`, **Then** both expose non-empty `created_at`/`updated_at` (list no longer drops them in its projection map).",
+        "title": "Rule listings carry timestamps (F6)",
+        "verify": {
+          "cmd": "cd auto-reflect && go test ./internal/rules/ -run Projection",
+          "tests": [
+            "auto-reflect/internal/rules/projection_test.go"
+          ]
+        }
+      }
+    },
+    {
+      "id": "a-6prf",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "title": "Content-derive every id, rt-/fb-/ev- too",
+        "why": "Loop and event ids are distinct-in-time records; hashing would collapse them."
+      }
+    },
+    {
+      "id": "a-6tp0",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "title": "A generic events list --full/--payload flag",
+        "why": "Less discoverable, and it does not match the gap → observation mental model."
+      }
+    },
+    {
+      "id": "a-cfv7",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "title": "Append to the repo-root .gitignore",
+        "why": "A per-state-dir .gitignore keeps the policy with the state."
+      }
+    },
+    {
+      "id": "a-f2m8",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "title": "Wrap every command in {ok,data}",
+        "why": "Over-wraps reads, breaks more consumers, and fights the list-returns-all-items convention."
+      }
+    },
+    {
+      "id": "a-gm40",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "title": "Non-breaking additive .id/.ids",
+        "why": "Leaves the inconsistent nesting in place."
+      }
+    },
+    {
+      "id": "a-pe53",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "title": "Ignore events/ too, keeping reflect state machine-local",
+        "why": "History would not travel with the repo, so a clone could not rebuild."
+      }
+    },
+    {
+      "id": "a-vvcy",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "title": "Both a gap list and a generic payload flag",
+        "why": "The generic payload dump stays out of scope."
+      }
+    },
+    {
+      "id": "a-x13r",
+      "type": "alternative",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "title": "A collision suffix on hash collision",
+        "why": "Breaks idempotency and adds a state read at mint, for a negligible 32-bit risk."
+      }
+    },
+    {
+      "id": "d-2g81",
+      "type": "decision",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "by": "charlie",
+        "chosen": "The canonical `.auto/reflect/events/*.jsonl` log is committed (shared playbook history; any clone can `rebuild`). The init-written `.auto/reflect/.gitignore` ignores only the disposable `playbook.json`.",
+        "title": "Event log is git-tracked",
+        "why": "Reflect history travels with the repo and across hosts."
+      }
+    },
+    {
+      "id": "d-2gq9",
+      "type": "decision",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "by": "charlie",
+        "chosen": "Expose gaps via a dedicated `auto reflect gap list` command.",
+        "title": "F4 surface = dedicated `gap list`",
+        "why": "Matches the \"gap → observation\" mental model and is discoverable; the generic payload-dump flag is left out of scope."
+      }
+    },
+    {
+      "id": "d-4kf4",
+      "type": "decision",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "by": "charlie",
+        "chosen": "Restructure command output to one uniform envelope rather than additively bolting a top-level `.id` onto today's shapes.",
+        "title": "F5 = restructure to a uniform envelope (breaking)",
+        "why": "Cleanest end state; existing output consumers (and the skill references' documented extraction paths) must be updated in lockstep."
+      }
+    },
+    {
+      "id": "d-hr0p",
+      "type": "decision",
+      "status": "active",
+      "rank": "a8",
+      "fields": {
+        "by": "charlie",
+        "chosen": "No collision suffix. Observation hashes include evidence so distinct-evidence findings stay distinct.",
+        "title": "Pure content hash, no collision suffix",
+        "why": "Clean idempotency; an astronomically rare distinct-content collision would drop the second entry (accepted, noted in Verification risks)."
+      }
+    },
+    {
+      "id": "d-kjh2",
+      "type": "decision",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "by": "charlie",
+        "chosen": "Only persistent identities (`r-`, `ob-`) are content-derived.",
+        "title": "Content-derived ids: rules + observations only",
+        "why": "Fixes dry-run==apply and gives idempotent re-runs; loop/event records stay distinct-in-time with random ids."
+      }
+    },
+    {
+      "id": "d-m7rq",
+      "type": "decision",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "by": "charlie",
+        "chosen": "Implement content-derived ids (F7) in this task, not a follow-up.",
+        "title": "Content-derived ids ship in this plan",
+        "why": "Adds collision-handling design; fits the output-contract theme since deterministic ids make `--dry-run` output actionable."
+      }
+    },
+    {
+      "id": "d-xpbe",
+      "type": "decision",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "by": "agent",
+        "chosen": "F5 restructures only CLI *output* marshalling. Stored event payload field names and `schema_version` are untouched.",
+        "title": "F5 changes CLI output only — not the stored event schema",
+        "why": "Stored payload field names (`observation_id`, `rule_id`, …) are part of the append-only on-disk contract; `events.SchemaVersion` is 1 and must fold identically forever."
+      }
+    },
+    {
+      "id": "d-yxva",
+      "type": "decision",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "by": "agent",
+        "chosen": "Keep the formats; change only how the 8 hex chars are produced — from random to a prefix of a content hash — with a deterministic collision-suffix policy so two distinct entities never collide.",
+        "title": "Content-derived ids preserve existing id formats",
+        "why": "Ids are validated against fixed regexes (`^ev-[0-9a-f]{8}$`, `^ob-[0-9a-f]{8}$`, rule `r-…`)."
+      }
+    },
+    {
+      "id": "d-z90w",
+      "type": "decision",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "by": "charlie",
+        "chosen": "Mutations gain a top-level `id` (and `ids` when many); collection commands stay top-level arrays but every element carries a uniform top-level `id` alongside its descriptive id field.",
+        "title": "F5 final shape: top-level id on mutations, per-element id on reads",
+        "why": "Predictable id threading everywhere; minimal breakage; reads keep returning all items as a plain array."
+      }
+    },
+    {
+      "id": "df-21j1",
+      "type": "defect",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "description": "promote cannot be pre-staged from a --dry-run.",
+        "title": "Dry-run ids differ from apply ids"
+      }
+    },
+    {
+      "id": "df-7fdr",
+      "type": "defect",
+      "status": "active",
+      "rank": "aa",
+      "fields": {
+        "title": "Legacy docs/reflection yaml from the superseded process remains"
+      }
+    },
+    {
+      "id": "df-9wde",
+      "type": "defect",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "description": "success|partial|fail|abandoned, distinct from miner ack status.",
+        "title": "The feedback outcome enum is undocumented"
+      }
+    },
+    {
+      "id": "df-bvmq",
+      "type": "defect",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "description": "The rule list projection drops the timestamps Fold already sets.",
+        "title": "Rule created_at and updated_at come back empty"
+      }
+    },
+    {
+      "id": "df-gc8t",
+      "type": "defect",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "description": "Two computations of one count.",
+        "title": "miner status pending (390) disagrees with stats pending_to_mine (396)"
+      }
+    },
+    {
+      "id": "df-j58t",
+      "type": "defect",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "description": "Neither its definition nor its scale is written down.",
+        "title": "correction_density is undocumented"
+      }
+    },
+    {
+      "id": "df-kqxw",
+      "type": "defect",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "description": "Reported gaps reach the event log but no command reads them back, so the gap → observation loop is open in practice.",
+        "title": "Feedback gaps are write-only"
+      }
+    },
+    {
+      "id": "df-mfg7",
+      "type": "defect",
+      "status": "active",
+      "rank": "a8",
+      "fields": {
+        "description": "The disposable playbook.json is tracked while the canonical events/ log is not.",
+        "title": "The .auto/reflect/ git policy contradicts itself"
+      }
+    },
+    {
+      "id": "df-pn3v",
+      "type": "defect",
+      "status": "active",
+      "rank": "a9",
+      "fields": {
+        "description": "Nice-to-have; out of scope for this plan and deferred.",
+        "title": "No nudge when an observed session is never acked"
+      }
+    },
+    {
+      "id": "df-rbcw",
+      "type": "defect",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "description": "The state dir exists with no events/, or a legacy 0-byte feedback.jsonl remains.",
+        "title": "Stale or partial reflect state goes undetected"
+      }
+    },
+    {
+      "id": "df-w1fg",
+      "type": "defect",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "description": "rule promote's top-level .id is null, so id threading is error-prone.",
+        "title": "Each command nests its minted id differently"
+      }
+    },
+    {
+      "id": "f-0ytx",
+      "type": "file",
+      "status": "active",
+      "rank": "ax",
+      "fields": {
+        "change": "edit",
+        "path": ".claude/skills/reflect-playbook/references/observe.md",
+        "why": "Clarify observation `--kind gap` vs feedback gap (F4)."
+      }
+    },
+    {
+      "id": "f-124m",
+      "type": "file",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "change": "add",
+        "path": "auto-reflect/internal/cli/gap.go",
+        "why": "`gap list` command (F4)."
+      }
+    },
+    {
+      "id": "f-271g",
+      "type": "file",
+      "status": "active",
+      "rank": "ae",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/cli/rule.go",
+        "why": "Top-level `id` on mutations; `created_at`/`updated_at` in list map (F5/F6)."
+      }
+    },
+    {
+      "id": "f-2cx2",
+      "type": "file",
+      "status": "active",
+      "rank": "az1",
+      "fields": {
+        "change": "delete",
+        "path": "docs/reflection/observations.yaml",
+        "why": "Legacy superseded-process artifact (F11)."
+      }
+    },
+    {
+      "id": "f-2nmm",
+      "type": "file",
+      "status": "active",
+      "rank": "ag",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/cli/select.go",
+        "why": "Per-element top-level `id` (F5)."
+      }
+    },
+    {
+      "id": "f-32y3",
+      "type": "file",
+      "status": "active",
+      "rank": "aw",
+      "fields": {
+        "change": "edit",
+        "path": ".claude/skills/reflect-playbook/references/retrieve.md",
+        "why": "jq id paths, gap list, outcome enum (F5/F4/F8)."
+      }
+    },
+    {
+      "id": "f-383z",
+      "type": "file",
+      "status": "active",
+      "rank": "av",
+      "fields": {
+        "change": "edit",
+        "path": ".claude/skills/reflect-playbook/SKILL.md",
+        "why": "Id-threading invariant, gap list, health check (F4/F5)."
+      }
+    },
+    {
+      "id": "f-3e02",
+      "type": "file",
+      "status": "active",
+      "rank": "ab",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/loop/service_test.go",
+        "why": "Update zero-arg `NewRuleID` call for the variadic signature (F7)."
+      }
+    },
+    {
+      "id": "f-3n0t",
+      "type": "file",
+      "status": "active",
+      "rank": "az",
+      "fields": {
+        "change": "edit",
+        "path": ".claude/skills/reflect-playbook/references/consolidate.md",
+        "why": "Id-threading examples to new envelope (F5)."
+      }
+    },
+    {
+      "id": "f-48t5",
+      "type": "file",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "change": "add",
+        "path": "auto-reflect/internal/idhash/idhash_test.go",
+        "why": "Determinism + format tests (F7)."
+      }
+    },
+    {
+      "id": "f-5qnz",
+      "type": "file",
+      "status": "active",
+      "rank": "ar",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/cli/observation_integration_test.go",
+        "why": "Assert new envelope + content ids (F5/F7)."
+      }
+    },
+    {
+      "id": "f-6z14",
+      "type": "file",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "change": "add",
+        "path": "auto-reflect/internal/cli/output.go",
+        "why": "Uniform mutation-result envelope helpers (F5)."
+      }
+    },
+    {
+      "id": "f-9x8m",
+      "type": "file",
+      "status": "active",
+      "rank": "aq",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/cli/consolidate_integration_test.go",
+        "why": "Assert deterministic ids + new envelope (F5/F7)."
+      }
+    },
+    {
+      "id": "f-aw9y",
+      "type": "file",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/cli/root.go",
+        "why": "Register `gap` + `doctor` commands."
+      }
+    },
+    {
+      "id": "f-bcs8",
+      "type": "file",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "change": "add",
+        "path": "auto-reflect/internal/idhash/idhash.go",
+        "why": "Content-hash id helper (F7)."
+      }
+    },
+    {
+      "id": "f-bndy",
+      "type": "file",
+      "status": "active",
+      "rank": "ao",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/miner/score.go",
+        "why": "Docstring for `correction_density` (F3)."
+      }
+    },
+    {
+      "id": "f-bt89",
+      "type": "file",
+      "status": "active",
+      "rank": "aa",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/observations/model_test.go",
+        "why": "Update zero-arg id test for the variadic signature (F7)."
+      }
+    },
+    {
+      "id": "f-djp7",
+      "type": "file",
+      "status": "active",
+      "rank": "ac",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/cli/consolidate.go",
+        "why": "Feed content to id mint; top-level `ids`; deterministic dry-run id (F5/F7)."
+      }
+    },
+    {
+      "id": "f-dsj8",
+      "type": "file",
+      "status": "active",
+      "rank": "a9",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/observations/model.go",
+        "why": "`NewObservationID(parts…)` content-derived incl. evidence (F7)."
+      }
+    },
+    {
+      "id": "f-ed9v",
+      "type": "file",
+      "status": "active",
+      "rank": "ay",
+      "fields": {
+        "change": "edit",
+        "path": ".claude/skills/reflect-playbook/references/mine.md",
+        "why": "Document correction_density (F3)."
+      }
+    },
+    {
+      "id": "f-edst",
+      "type": "file",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "change": "add",
+        "path": "auto-reflect/internal/cli/doctor_integration_test.go",
+        "why": "doctor integration tests (F1)."
+      }
+    },
+    {
+      "id": "f-fhpw",
+      "type": "file",
+      "status": "active",
+      "rank": "an",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/loop/feedback.go",
+        "why": "Docstring for the `outcome` enum (F8)."
+      }
+    },
+    {
+      "id": "f-fpa3",
+      "type": "file",
+      "status": "active",
+      "rank": "aj",
+      "fields": {
+        "change": "add",
+        "path": "auto-reflect/internal/cli/miner_integration_test.go",
+        "why": "Pin `miner status` pending == `stats` pending_to_mine (F2)."
+      }
+    },
+    {
+      "id": "f-gn2d",
+      "type": "file",
+      "status": "active",
+      "rank": "am",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/cli/quickstart.go",
+        "why": "Docs: gap list, doctor, outcome enum, correction_density, id paths (F4/F1/F8/F3/F5)."
+      }
+    },
+    {
+      "id": "f-h7wk",
+      "type": "file",
+      "status": "active",
+      "rank": "ah",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/cli/feedback.go",
+        "why": "Top-level `id`/`ids` on the recorded feedback (F5)."
+      }
+    },
+    {
+      "id": "f-jqm7",
+      "type": "file",
+      "status": "active",
+      "rank": "ak",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/cli/init.go",
+        "why": "Write idempotent `.auto/reflect/.gitignore` (F9)."
+      }
+    },
+    {
+      "id": "f-m24f",
+      "type": "file",
+      "status": "active",
+      "rank": "ai",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/cli/miner.go",
+        "why": "Replace hand-rolled pending loop with `miner.PendingCount` (F2)."
+      }
+    },
+    {
+      "id": "f-m9bb",
+      "type": "file",
+      "status": "active",
+      "rank": "as",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/cmd/autoreflect/e2e_loop_test.go",
+        "why": "Extend the loop through `gap list`; new envelope paths (F4/F5)."
+      }
+    },
+    {
+      "id": "f-nrws",
+      "type": "file",
+      "status": "active",
+      "rank": "al",
+      "fields": {
+        "change": "add",
+        "path": "auto-reflect/internal/cli/init_test.go",
+        "why": "init writes/keeps `.gitignore`; idempotent (F9)."
+      }
+    },
+    {
+      "id": "f-pesp",
+      "type": "file",
+      "status": "active",
+      "rank": "af",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/cli/retrieve.go",
+        "why": "Per-element top-level `id` (F5)."
+      }
+    },
+    {
+      "id": "f-rrht",
+      "type": "file",
+      "status": "active",
+      "rank": "a8",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/rules/model.go",
+        "why": "`NewRuleID(parts…)` content-derived via idhash (F7)."
+      }
+    },
+    {
+      "id": "f-rsyh",
+      "type": "file",
+      "status": "active",
+      "rank": "at",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/cmd/autoreflect/e2e_lifecycle_test.go",
+        "why": "Update output-shape assertions (F5)."
+      }
+    },
+    {
+      "id": "f-t2we",
+      "type": "file",
+      "status": "active",
+      "rank": "au",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/CLAUDE.md",
+        "why": "Autodoc index: new `gap`/`doctor` commands."
+      }
+    },
+    {
+      "id": "f-txje",
+      "type": "file",
+      "status": "active",
+      "rank": "ad",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/cli/observation.go",
+        "why": "Top-level `id` on add; per-element `id` on list (F5)."
+      }
+    },
+    {
+      "id": "f-vrqj",
+      "type": "file",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "change": "add",
+        "path": "auto-reflect/internal/cli/doctor.go",
+        "why": "`doctor` command (F1)."
+      }
+    },
+    {
+      "id": "f-wt5d",
+      "type": "file",
+      "status": "active",
+      "rank": "ap",
+      "fields": {
+        "change": "edit",
+        "path": "auto-reflect/internal/rules/projection_test.go",
+        "why": "Assert folded timestamps surface (F6)."
+      }
+    },
+    {
+      "id": "f-y361",
+      "type": "file",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "change": "add",
+        "path": "auto-reflect/internal/cli/gap_integration_test.go",
+        "why": "gap list integration tests (F4)."
+      }
+    },
+    {
+      "id": "g-0f9w",
+      "type": "goal",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "title": "One pending count: miner status and stats agree"
+      }
+    },
+    {
+      "id": "g-0x4k",
+      "type": "goal",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "title": "Reported feedback gaps are readable with auto reflect gap list"
+      }
+    },
+    {
+      "id": "g-42vx",
+      "type": "goal",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "title": "init writes a coherent git policy for .auto/reflect/"
+      }
+    },
+    {
+      "id": "g-apsc",
+      "type": "goal",
+      "status": "active",
+      "rank": "a7",
+      "fields": {
+        "title": "The outcome enum and correction_density are documented"
+      }
+    },
+    {
+      "id": "g-cwd2",
+      "type": "goal",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "title": "A uniform output envelope with a predictable top-level id"
+      }
+    },
+    {
+      "id": "g-fjxr",
+      "type": "goal",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "title": "Rule listings carry their timestamps"
+      }
+    },
+    {
+      "id": "g-jcvm",
+      "type": "goal",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "title": "doctor detects stale or partial reflect state"
+      }
+    },
+    {
+      "id": "g-vgcz",
+      "type": "goal",
+      "status": "active",
+      "rank": "a8",
+      "fields": {
+        "title": "The legacy reflection yaml is removed"
+      }
+    },
+    {
+      "id": "g-xbrt",
+      "type": "goal",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "title": "Content-derived ids make --dry-run mint the same ids as apply"
+      }
+    },
+    {
+      "id": "plan",
+      "type": "plan",
+      "status": "active",
+      "fields": {
+        "created": "2026-01-01",
+        "kind": "task",
+        "lifecycle": "plan",
+        "name": "reflect-tool-hardening"
+      }
+    },
+    {
+      "id": "s-3bxs",
+      "type": "stage",
+      "status": "active",
+      "rank": "a5",
+      "fields": {
+        "commit": "feat(003): auto reflect doctor — state health checks (F1)",
+        "status": "done",
+        "steps": [
+          "Add `cli/doctor.go` mirroring `auto-graph/internal/cli/doctor.go`: `[]{check,status(pass|warn|fail),message,hint}` JSON, exit non-zero on any `fail`.",
+          "Register `doctor` in `root.go` (after P5's gap registration — serialized to avoid a root.go conflict).",
+          "**Verify (F1):** `doctor_integration_test.go` — healthy state all `pass` exit 0; missing `events/` ⇒ `fail` + hint + exit 1; stale snapshot ⇒ `warn`.",
+          "**Phase verify:** `go build ./...`; `go test ./internal/cli/... -run 'Doctor'`; `golangci-lint run`."
+        ],
+        "title": "doctor command"
+      }
+    },
+    {
+      "id": "s-kyqb",
+      "type": "stage",
+      "status": "active",
+      "rank": "a1",
+      "fields": {
+        "commit": "feat(003): deterministic content-derived rule ids (F7)",
+        "status": "done",
+        "steps": [
+          "`rules/model.go`: `NewRuleID` takes canonical parts (`domain,use_when,content,rule_type`) → `idhash.Derive(\"r\",…)`.",
+          "Feed content to **every** `NewRuleID` caller — the signature is variadic, so a missed zero-arg call still compiles but mints a constant id: `consolidate.go` `createDraft`/`split`, **and `rule.go` …",
+          "**Phase verify:** `go build ./...`; `go test ./internal/rules/... ./internal/loop/... ./internal/cli/... -run 'Rule|Consolidate|Service'`; `golangci-lint run`."
+        ],
+        "title": "Rule content ids + consolidate determinism"
+      }
+    },
+    {
+      "id": "s-m7ab",
+      "type": "stage",
+      "status": "active",
+      "rank": "a6",
+      "fields": {
+        "commit": "docs(003): gap/doctor/enum docs, init gitignore, drop legacy yaml (F8,F3,F9,F11)",
+        "status": "done",
+        "steps": [
+          "`init.go`: after `MkdirAll(eventsDir)`, write `.auto/reflect/.gitignore` (`playbook.json\\n`) only if absent (auto-doc stat-then-skip pattern).",
+          "Repo hygiene: `git rm --cached .auto/reflect/playbook.json`; commit the new `.auto/reflect/.gitignore` and the existing `events/` log (D-2).",
+          "Docstrings: `loop/feedback.go` (outcome enum), `miner/score.go` (correction_density).",
+          "Delete `docs/reflection/observations.yaml`.",
+          "Docs: `quickstart.go` + skill refs (`SKILL.md`, `retrieve.md`, `observe.md`, `mine.md`, `consolidate.md`) — new `jq` id paths, `gap list`, `doctor`, outcome enum, correction_density …",
+          "Extend `e2e_loop_test.go` through `gap list`; update `e2e_lifecycle_test.go` output-shape assertions to the new envelope.",
+          "**Phase verify:** `go build ./...`; **full** `go test ./...`; `golangci-lint run`; `auto reflect quickstart` happy path by hand."
+        ],
+        "title": "Docs, init gitignore, cleanup, e2e"
+      }
+    },
+    {
+      "id": "s-nkx5",
+      "type": "stage",
+      "status": "active",
+      "rank": "a2",
+      "fields": {
+        "commit": "feat(003): uniform id access on commands + rule timestamps (F5,F6)",
+        "status": "done",
+        "steps": [
+          "`rule.go`: `create/edit/promote/retire/graduate` return top-level `.id` (fixes the `null`); `rule list` projection map gains `created_at`/`updated_at` (F6 — values already on the folded `Rule`).",
+          "`retrieve.go`, `select.go`: each array element gains a top-level `id` (aliasing `retrieval_id`/`feedback_id`, which stay).",
+          "`feedback.go`: recorded result echoes `ids` (the feedback ids acted on).",
+          "`projection_test.go`: assert `Fold` surfaces `created_at`/`updated_at` and `rule list` carries them.",
+          "**Phase verify:** `go build ./...`; `go test ./internal/... -run 'Rule|Retrieve|Select|Feedback|Projection'`; `golangci-lint run`."
+        ],
+        "title": "Envelope rollout + rule timestamps"
+      }
+    },
+    {
+      "id": "s-s5mp",
+      "type": "stage",
+      "status": "active",
+      "rank": "a3",
+      "fields": {
+        "commit": "fix(003): one pending-count source for miner status + stats (F2)",
+        "status": "done",
+        "steps": [
+          "**First reproduce** the divergence: a test that drives `miner status` and `stats` on a fixture and asserts they currently differ (pin the bug before fixing — Verification risk note).",
+          "`miner.go`: delete the hand-rolled pending loop (~L280); call `miner.PendingCount(repoRoot, etlRoot)` — the same function `stats` uses.",
+          "**Verify (F2):** `miner_integration_test.go` — `miner status` `pending` == `stats` `pending_to_mine` on the same fixture.",
+          "**Phase verify:** `go build ./...`; `go test ./internal/cli/... ./internal/miner/... -run 'Miner|Stats|Pending'`; `golangci-lint run`."
+        ],
+        "title": "Single-source pending count"
+      }
+    },
+    {
+      "id": "s-wj0b",
+      "type": "stage",
+      "status": "active",
+      "rank": "a0",
+      "fields": {
+        "commit": "feat(003): content-hash ids + output envelope (skeleton on observation)",
+        "status": "done",
+        "steps": [
+          "Add `internal/idhash/idhash.go`: `Derive(prefix string, parts ...string) string` = `prefix + first 8 hex of sha256(strings.Join(parts,\"\\n\"))`.",
+          "Add `cli/output.go`: `mutationResult(id, fields)` and `mutationResultIDs(ids, fields)` injecting top-level `id`/`ids`.",
+          "`observations/model.go`: `NewObservationID` takes canonical parts (`kind,subject,evidence…,domain,severity`) and calls `idhash.Derive(\"ob\",…)`.",
+          "`observation.go`: `observation add` returns top-level `.id` (via `mutationResult`); `observation list` elements carry top-level `id`.",
+          "**Phase verify:** `go build ./...`; `go test ./internal/observations/... ./internal/cli/... -run 'Observation|Idhash'`; `golangci-lint run`."
+        ],
+        "title": "Foundations + walking skeleton"
+      }
+    },
+    {
+      "id": "s-y35d",
+      "type": "stage",
+      "status": "active",
+      "rank": "a4",
+      "fields": {
+        "commit": "feat(003): auto reflect gap list — readable feedback gaps (F4)",
+        "status": "done",
+        "steps": [
+          "Add `cli/gap.go` `newGapCmd` → `gap list`: read `feedback` events (`events.ReadAll`), decode `FeedbackPayload`, skip when `Gap == nil`, project `{id (feedback event id, ev-…), session_id, ts, report …",
+          "Register `gap` in `root.go`.",
+          "**Verify (F4):** `gap_integration_test.go` — events with gaps surface (report+moment+source); gapless feedback omitted; `--since` filters; empty state returns `[]`; text mode works.",
+          "**Phase verify:** `go build ./...`; `go test ./internal/cli/... -run 'Gap'`; `golangci-lint run`."
+        ],
+        "title": "gap list command"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-xj0y",
+      "from": "a-x13r",
+      "type": "wouldBreak",
+      "to": "ac-6gjf"
+    },
+    {
+      "id": "e-ew9s",
+      "from": "ac-01p5",
+      "type": "proves",
+      "to": "g-cwd2"
+    },
+    {
+      "id": "e-apah",
+      "from": "ac-0bcq",
+      "type": "proves",
+      "to": "g-42vx"
+    },
+    {
+      "id": "e-g50e",
+      "from": "ac-1eyq",
+      "type": "proves",
+      "to": "g-cwd2"
+    },
+    {
+      "id": "e-7q3s",
+      "from": "ac-57nj",
+      "type": "proves",
+      "to": "g-cwd2"
+    },
+    {
+      "id": "e-w5ny",
+      "from": "ac-63s8",
+      "type": "proves",
+      "to": "g-apsc"
+    },
+    {
+      "id": "e-a9b7",
+      "from": "ac-6gjf",
+      "type": "proves",
+      "to": "g-xbrt"
+    },
+    {
+      "id": "e-s877",
+      "from": "ac-9bka",
+      "type": "proves",
+      "to": "g-0f9w"
+    },
+    {
+      "id": "e-w80w",
+      "from": "ac-f1ys",
+      "type": "proves",
+      "to": "g-42vx"
+    },
+    {
+      "id": "e-h3h6",
+      "from": "ac-fzh2",
+      "type": "proves",
+      "to": "g-jcvm"
+    },
+    {
+      "id": "e-66bs",
+      "from": "ac-p2kk",
+      "type": "proves",
+      "to": "g-xbrt"
+    },
+    {
+      "id": "e-2ke3",
+      "from": "ac-q6hs",
+      "type": "proves",
+      "to": "g-0x4k"
+    },
+    {
+      "id": "e-5e0m",
+      "from": "ac-spbj",
+      "type": "proves",
+      "to": "g-vgcz"
+    },
+    {
+      "id": "e-zqp7",
+      "from": "ac-tr9x",
+      "type": "proves",
+      "to": "g-0x4k"
+    },
+    {
+      "id": "e-x0h9",
+      "from": "ac-ymt5",
+      "type": "proves",
+      "to": "g-fjxr"
+    },
+    {
+      "id": "e-myp2",
+      "from": "d-2g81",
+      "type": "constrains",
+      "to": "g-42vx"
+    },
+    {
+      "id": "e-k1xs",
+      "from": "d-2g81",
+      "type": "rejects",
+      "to": "a-cfv7"
+    },
+    {
+      "id": "e-2x25",
+      "from": "d-2g81",
+      "type": "rejects",
+      "to": "a-pe53"
+    },
+    {
+      "id": "e-n7fq",
+      "from": "d-2gq9",
+      "type": "constrains",
+      "to": "g-0x4k"
+    },
+    {
+      "id": "e-x2mw",
+      "from": "d-2gq9",
+      "type": "rejects",
+      "to": "a-6tp0"
+    },
+    {
+      "id": "e-3y2n",
+      "from": "d-2gq9",
+      "type": "rejects",
+      "to": "a-vvcy"
+    },
+    {
+      "id": "e-fszb",
+      "from": "d-4kf4",
+      "type": "constrains",
+      "to": "g-cwd2"
+    },
+    {
+      "id": "e-cd52",
+      "from": "d-4kf4",
+      "type": "rejects",
+      "to": "a-gm40"
+    },
+    {
+      "id": "e-y97r",
+      "from": "d-hr0p",
+      "type": "constrains",
+      "to": "ac-6gjf"
+    },
+    {
+      "id": "e-mrt7",
+      "from": "d-hr0p",
+      "type": "rejects",
+      "to": "a-x13r"
+    },
+    {
+      "id": "e-kzhk",
+      "from": "d-kjh2",
+      "type": "constrains",
+      "to": "g-xbrt"
+    },
+    {
+      "id": "e-5rb3",
+      "from": "d-kjh2",
+      "type": "rejects",
+      "to": "a-6prf"
+    },
+    {
+      "id": "e-pk9z",
+      "from": "d-m7rq",
+      "type": "constrains",
+      "to": "g-xbrt"
+    },
+    {
+      "id": "e-fc32",
+      "from": "d-xpbe",
+      "type": "constrains",
+      "to": "g-cwd2"
+    },
+    {
+      "id": "e-rrzk",
+      "from": "d-yxva",
+      "type": "constrains",
+      "to": "ac-p2kk"
+    },
+    {
+      "id": "e-shgw",
+      "from": "d-z90w",
+      "type": "constrains",
+      "to": "g-cwd2"
+    },
+    {
+      "id": "e-jzta",
+      "from": "d-z90w",
+      "type": "rejects",
+      "to": "a-f2m8"
+    },
+    {
+      "id": "e-j5t0",
+      "from": "g-0f9w",
+      "type": "addresses",
+      "to": "df-gc8t"
+    },
+    {
+      "id": "e-7vp6",
+      "from": "g-0x4k",
+      "type": "addresses",
+      "to": "df-kqxw"
+    },
+    {
+      "id": "e-8ghx",
+      "from": "g-42vx",
+      "type": "addresses",
+      "to": "df-mfg7"
+    },
+    {
+      "id": "e-y7jp",
+      "from": "g-apsc",
+      "type": "addresses",
+      "to": "df-9wde"
+    },
+    {
+      "id": "e-077b",
+      "from": "g-apsc",
+      "type": "addresses",
+      "to": "df-j58t"
+    },
+    {
+      "id": "e-bdaw",
+      "from": "g-cwd2",
+      "type": "addresses",
+      "to": "df-w1fg"
+    },
+    {
+      "id": "e-8qx3",
+      "from": "g-fjxr",
+      "type": "addresses",
+      "to": "df-bvmq"
+    },
+    {
+      "id": "e-rcay",
+      "from": "g-jcvm",
+      "type": "addresses",
+      "to": "df-rbcw"
+    },
+    {
+      "id": "e-n2gm",
+      "from": "g-vgcz",
+      "type": "addresses",
+      "to": "df-7fdr"
+    },
+    {
+      "id": "e-tbnk",
+      "from": "g-xbrt",
+      "type": "addresses",
+      "to": "df-21j1"
+    },
+    {
+      "id": "e-6wp4",
+      "from": "s-3bxs",
+      "type": "covers",
+      "to": "ac-57nj"
+    },
+    {
+      "id": "e-s1mm",
+      "from": "s-3bxs",
+      "type": "covers",
+      "to": "ac-fzh2"
+    },
+    {
+      "id": "e-tfrv",
+      "from": "s-3bxs",
+      "type": "dependsOn",
+      "to": "s-y35d"
+    },
+    {
+      "id": "e-ymdp",
+      "from": "s-3bxs",
+      "type": "touches",
+      "to": "f-aw9y"
+    },
+    {
+      "id": "e-hm3t",
+      "from": "s-3bxs",
+      "type": "touches",
+      "to": "f-edst"
+    },
+    {
+      "id": "e-yqa5",
+      "from": "s-3bxs",
+      "type": "touches",
+      "to": "f-vrqj"
+    },
+    {
+      "id": "e-m1ah",
+      "from": "s-kyqb",
+      "type": "covers",
+      "to": "ac-1eyq"
+    },
+    {
+      "id": "e-ftpc",
+      "from": "s-kyqb",
+      "type": "covers",
+      "to": "ac-57nj"
+    },
+    {
+      "id": "e-qwrg",
+      "from": "s-kyqb",
+      "type": "covers",
+      "to": "ac-6gjf"
+    },
+    {
+      "id": "e-w99j",
+      "from": "s-kyqb",
+      "type": "covers",
+      "to": "ac-p2kk"
+    },
+    {
+      "id": "e-xwc8",
+      "from": "s-kyqb",
+      "type": "dependsOn",
+      "to": "s-wj0b"
+    },
+    {
+      "id": "e-r5m9",
+      "from": "s-kyqb",
+      "type": "touches",
+      "to": "f-271g"
+    },
+    {
+      "id": "e-q6gr",
+      "from": "s-kyqb",
+      "type": "touches",
+      "to": "f-3e02"
+    },
+    {
+      "id": "e-1kvn",
+      "from": "s-kyqb",
+      "type": "touches",
+      "to": "f-9x8m"
+    },
+    {
+      "id": "e-hcbg",
+      "from": "s-kyqb",
+      "type": "touches",
+      "to": "f-djp7"
+    },
+    {
+      "id": "e-yk55",
+      "from": "s-kyqb",
+      "type": "touches",
+      "to": "f-rrht"
+    },
+    {
+      "id": "e-c0mw",
+      "from": "s-m7ab",
+      "type": "covers",
+      "to": "ac-0bcq"
+    },
+    {
+      "id": "e-qzw8",
+      "from": "s-m7ab",
+      "type": "covers",
+      "to": "ac-57nj"
+    },
+    {
+      "id": "e-nn8q",
+      "from": "s-m7ab",
+      "type": "covers",
+      "to": "ac-63s8"
+    },
+    {
+      "id": "e-1exj",
+      "from": "s-m7ab",
+      "type": "covers",
+      "to": "ac-f1ys"
+    },
+    {
+      "id": "e-mca8",
+      "from": "s-m7ab",
+      "type": "covers",
+      "to": "ac-spbj"
+    },
+    {
+      "id": "e-eedw",
+      "from": "s-m7ab",
+      "type": "dependsOn",
+      "to": "s-3bxs"
+    },
+    {
+      "id": "e-xg2q",
+      "from": "s-m7ab",
+      "type": "dependsOn",
+      "to": "s-kyqb"
+    },
+    {
+      "id": "e-bggd",
+      "from": "s-m7ab",
+      "type": "dependsOn",
+      "to": "s-nkx5"
+    },
+    {
+      "id": "e-h08f",
+      "from": "s-m7ab",
+      "type": "dependsOn",
+      "to": "s-s5mp"
+    },
+    {
+      "id": "e-5tgq",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-0ytx"
+    },
+    {
+      "id": "e-4kp4",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-2cx2"
+    },
+    {
+      "id": "e-0yq4",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-32y3"
+    },
+    {
+      "id": "e-tf0h",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-383z"
+    },
+    {
+      "id": "e-hah0",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-3n0t"
+    },
+    {
+      "id": "e-88dk",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-bndy"
+    },
+    {
+      "id": "e-5rzd",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-ed9v"
+    },
+    {
+      "id": "e-kcyf",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-fhpw"
+    },
+    {
+      "id": "e-xzag",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-gn2d"
+    },
+    {
+      "id": "e-8akh",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-jqm7"
+    },
+    {
+      "id": "e-xc89",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-m9bb"
+    },
+    {
+      "id": "e-brb1",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-nrws"
+    },
+    {
+      "id": "e-wzf9",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-rsyh"
+    },
+    {
+      "id": "e-jd94",
+      "from": "s-m7ab",
+      "type": "touches",
+      "to": "f-t2we"
+    },
+    {
+      "id": "e-8q2r",
+      "from": "s-nkx5",
+      "type": "covers",
+      "to": "ac-01p5"
+    },
+    {
+      "id": "e-yg7s",
+      "from": "s-nkx5",
+      "type": "covers",
+      "to": "ac-1eyq"
+    },
+    {
+      "id": "e-bsqm",
+      "from": "s-nkx5",
+      "type": "covers",
+      "to": "ac-57nj"
+    },
+    {
+      "id": "e-8zdj",
+      "from": "s-nkx5",
+      "type": "covers",
+      "to": "ac-ymt5"
+    },
+    {
+      "id": "e-e4en",
+      "from": "s-nkx5",
+      "type": "dependsOn",
+      "to": "s-kyqb"
+    },
+    {
+      "id": "e-bhr6",
+      "from": "s-nkx5",
+      "type": "dependsOn",
+      "to": "s-wj0b"
+    },
+    {
+      "id": "e-17xh",
+      "from": "s-nkx5",
+      "type": "touches",
+      "to": "f-271g"
+    },
+    {
+      "id": "e-td7x",
+      "from": "s-nkx5",
+      "type": "touches",
+      "to": "f-2nmm"
+    },
+    {
+      "id": "e-yzcw",
+      "from": "s-nkx5",
+      "type": "touches",
+      "to": "f-h7wk"
+    },
+    {
+      "id": "e-9mrw",
+      "from": "s-nkx5",
+      "type": "touches",
+      "to": "f-pesp"
+    },
+    {
+      "id": "e-z9t1",
+      "from": "s-nkx5",
+      "type": "touches",
+      "to": "f-wt5d"
+    },
+    {
+      "id": "e-rq0z",
+      "from": "s-s5mp",
+      "type": "covers",
+      "to": "ac-57nj"
+    },
+    {
+      "id": "e-jxem",
+      "from": "s-s5mp",
+      "type": "covers",
+      "to": "ac-9bka"
+    },
+    {
+      "id": "e-nv8s",
+      "from": "s-s5mp",
+      "type": "dependsOn",
+      "to": "s-wj0b"
+    },
+    {
+      "id": "e-1sjt",
+      "from": "s-s5mp",
+      "type": "touches",
+      "to": "f-fpa3"
+    },
+    {
+      "id": "e-7bn6",
+      "from": "s-s5mp",
+      "type": "touches",
+      "to": "f-m24f"
+    },
+    {
+      "id": "e-nznk",
+      "from": "s-wj0b",
+      "type": "covers",
+      "to": "ac-01p5"
+    },
+    {
+      "id": "e-awdd",
+      "from": "s-wj0b",
+      "type": "covers",
+      "to": "ac-1eyq"
+    },
+    {
+      "id": "e-rp52",
+      "from": "s-wj0b",
+      "type": "covers",
+      "to": "ac-57nj"
+    },
+    {
+      "id": "e-fj9e",
+      "from": "s-wj0b",
+      "type": "covers",
+      "to": "ac-6gjf"
+    },
+    {
+      "id": "e-wxw2",
+      "from": "s-wj0b",
+      "type": "covers",
+      "to": "ac-p2kk"
+    },
+    {
+      "id": "e-mhh7",
+      "from": "s-wj0b",
+      "type": "touches",
+      "to": "f-48t5"
+    },
+    {
+      "id": "e-m78a",
+      "from": "s-wj0b",
+      "type": "touches",
+      "to": "f-5qnz"
+    },
+    {
+      "id": "e-kz8z",
+      "from": "s-wj0b",
+      "type": "touches",
+      "to": "f-6z14"
+    },
+    {
+      "id": "e-4ck6",
+      "from": "s-wj0b",
+      "type": "touches",
+      "to": "f-bcs8"
+    },
+    {
+      "id": "e-34pq",
+      "from": "s-wj0b",
+      "type": "touches",
+      "to": "f-bt89"
+    },
+    {
+      "id": "e-g417",
+      "from": "s-wj0b",
+      "type": "touches",
+      "to": "f-dsj8"
+    },
+    {
+      "id": "e-zsad",
+      "from": "s-wj0b",
+      "type": "touches",
+      "to": "f-txje"
+    },
+    {
+      "id": "e-9ytf",
+      "from": "s-y35d",
+      "type": "covers",
+      "to": "ac-57nj"
+    },
+    {
+      "id": "e-19ar",
+      "from": "s-y35d",
+      "type": "covers",
+      "to": "ac-q6hs"
+    },
+    {
+      "id": "e-8chp",
+      "from": "s-y35d",
+      "type": "covers",
+      "to": "ac-tr9x"
+    },
+    {
+      "id": "e-2ks1",
+      "from": "s-y35d",
+      "type": "dependsOn",
+      "to": "s-wj0b"
+    },
+    {
+      "id": "e-bhps",
+      "from": "s-y35d",
+      "type": "touches",
+      "to": "f-124m"
+    },
+    {
+      "id": "e-x04j",
+      "from": "s-y35d",
+      "type": "touches",
+      "to": "f-aw9y"
+    },
+    {
+      "id": "e-khhk",
+      "from": "s-y35d",
+      "type": "touches",
+      "to": "f-y361"
+    }
+  ]
+}

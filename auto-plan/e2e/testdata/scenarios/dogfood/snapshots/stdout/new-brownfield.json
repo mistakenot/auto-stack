@@ -1,0 +1,7 @@
+{
+  "id": "003-gevp",
+  "number": "003",
+  "name": "reflect-tool-hardening",
+  "kind": "task",
+  "path": ".auto/plan/plans/003-reflect-tool-hardening"
+}

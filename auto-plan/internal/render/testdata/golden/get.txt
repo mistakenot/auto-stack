@@ -1,0 +1,15 @@
+✓ ac-jttt  Acceptance Criterion · active · rank a0
+  title         brief is self-contained
+  gwt           Given a stage, when brief runs, then its output needs nothing else
+  verify.cmd    go test ./e2e -run Brief
+  verify.tests  - TestBrief
+
+out
+  e-0004  proves     → ◎ g-xyf8           An agent gets one stage's context in one call
+  e-0002  discharges → ⇢ 005-m3x9:r-8hw3  (in plan 005-m3x9)
+  e-0003  discharges → ‖ r-jbjh           Never copy rail text into a child
+
+in
+  e-0007  constrains ← ◆ d-ytbz  brief is Markdown + JSON
+  e-000b  covers     ← ▶ s-3v6v  Render layer
+  e-000k  about      ← ≡ t-nfba  brief call path

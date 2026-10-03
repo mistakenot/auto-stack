@@ -66,6 +66,7 @@ All tools ship as subcommands of a single `auto` binary.
 | `auto-etl/`    | `auto etl`     | Active      | ETL for coding agent session histories (SSH, LXC, local)           |
 | `auto-graph/`  | `auto graph`   | Active      | Code context graphs — file-level import graph with ast-grep scanning |
 | `auto-mail/`   | `auto mail`    | Early       | Agent-to-agent mailbox — durable addressed messages with ack        |
+| `auto-plan/`   | `auto plan`    | Early       | Structured plan graphs — goals, ACs, decisions, stages and epics as one validated graph.json per plan; lint, trace and Stage Briefs |
 | `auto-cli/`    | `auto lock`    | Early       | Serial-update file locks — hook-enforced Group locks for files that must be edited one Worker at a time (lib in `auto-shared/lock`) |
 | `auto-reflect/`| `auto reflect` | Early       | Analyze past sessions, extract rules for future ones               |
 | `auto-search/` | `auto search`  | Early       | Rich search over normalized session history from auto-etl          |

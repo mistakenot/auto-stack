@@ -1,0 +1,78 @@
+001-acs4  auto-mail-mvp  epic · solution
+
+◎ G1     g-rbcw  Agents on one host address each other by name and get a reply
+    ◆ D1     d-xpbe  No message resource noun on the CLI
+    -   A1.1   a-4kf4  auto mail letter …                                                                 Coins a term, and the metaphor fights the channel/subscript…
+    -   A1.2   a-m7rq  Qualify Message by context, as Event does                                          The in-binary collision remains.
+    ◆ D2     d-3e02  Addresses are free-form; structure is convention, filtering is v2
+    -   A2.1   a-dsj8  An enforced project/name shape                                                     Breaks addresses that are not about a project, like a swarm…
+    -   A2.2   a-bt89  A strictly opaque token with separators rejected                                   The one variant that would foreclose prefix filtering.
+    ◆ D3     d-h7wk  #parent covers in-process subagents only, resolved from hook-supplied parentage
+    -   A3.1   a-pesp  Env promotion (AUTO_MAIL_SELF → AUTO_MAIL_PARENT)                                  Bootstrap hole: a supervisor that subscribes mid-session ca…
+    -   A3.2   a-2nmm  Launch-time stamping by herdr/ntm/delegate in the MVP                              Makes panes work too, but adds a cross-tool dependency this…
+◎ G2     g-gc8t  Mail is durable and at-least-once: it survives until explicitly acked
+    ◆ D4     d-gm40  The MVP CLI writes the store directly; the daemon is never required
+    -   A4.1   a-2g81  RPC-first: route send/list/ack through the daemon                                  Mail is down whenever the daemon is, and a failing agent mu…
+    ◆ D5     d-edst  Broadcast delivery, with ack as a compare-and-set
+    -   A5.1   a-y361  A separate lock table                                                              A second thing to keep consistent, and redundant: D-1's tra…
+    -   A5.2   a-vrqj  Ack as an unconditional write                                                      Cannot tell a winner from a loser, which is the whole point.
+    ◆ D6     d-271g  Subscriptions backfill unacked history from a cursor
+    -   A6.1   a-djp7  Eager delivery rows at send time                                                   Silently breaks J2: the failure only appears when a subscri…
+    -   A6.2   a-txje  Backfill from subscription time only                                               Breaks J2 for the same reason, just less visibly.
+◎ G3     g-j58t  A working agent learns it has mail in-band, at no cost when there is none
+◎ G4     g-kqxw  An idle agent is woken without corrupting a working one
+    ◆ D7     d-6prf  Mail's effector seam is separate from autowatch's execution Backend
+    -   A7.1   a-yxva  Extend autowatch's Backend                                                         Wrong lifecycle: it abstracts sessions autowatch creates an…
+    -   A7.2   a-f2m8  Hard-code herdr                                                                    Breaks ntm panes, which hook capture already sees.
+    -   A7.3   a-z90w  A general session-manager refactor across autowatch                                Large, speculative, and unused by this epic.
+    ◆ D8     d-hr0p  The sender notifies inline; no cron sweep in the MVP
+    -   A8.1   a-kjh2  Cron as the primary delivery path                                                  A latency floor, and the wrong shape even later.
+    -   A8.2   a-x13r  No notification at all                                                             Mail sits unread, the failure mode this epic exists to fix.
+    ◆ D9     d-124m  Inline notify for latency, plus a minimal reconcile tick for correctness
+    -   A9.1   a-bcs8  Keep D-5 and accept best-effort escalation                                         Silently breaks J2 and sits badly against G4's at-least-onc…
+    -   A9.2   a-48t5  An in-memory timer only                                                            Lost on the daemon restarts this host is known for.
+    ◆ D10    d-rrht  Escalating intrusiveness: nudge first, keystrokes last
+    -   A10.1  a-6z14  Keys immediately on idle                                                           Spends the most dangerous mechanism on the most ordinary ca…
+    -   A10.2  a-aw9y  Opt-in per subscription only                                                       The cross-project journey silently does nothing for anyone …
+◎ G5     g-w1fg  Nothing in the MVP forecloses fan-out, leases or multi-host
+    ◆ D11    d-spbj  Event-source the delivery lifecycle, not everything
+    -   A11.1  a-ymt5  Mutable tables                                                                     Two hosts' divergent mutable state is a conflict-resolution…
+    -   A11.2  a-63s8  Full CQRS with a projection process                                                Rebuild tooling and eventual consistency for a few hundred …
+    ◆ D12    d-vvcy  Alpha marker in the type string and the store filename
+    -   A12.1  a-57nj  A v1 prefix                                                                        Implies v2 arrives alongside and obliges upcasters, a promi…
+    -   A12.2  a-6tp0  A docs-only alpha note                                                             Does not stop a skill matching on a bare type name.
+    ◆ D13    d-cfv7  Reuse auto-shared rpc + transport rather than a new wire
+    -   A13.1  a-2gq9  A bespoke socket protocol                                                          Rebuilds a solved problem.
+    -   A13.2  a-pe53  Route mail over bus events only                                                    At-most-once broadcast cannot carry an ack.
+
+journeys
+    ↝ J1     j-bvmq  Sub-agent reports home
+        ↳ L1.1   l-21j1  supervisor: spawns an in-process sub-agent
+        ↳ L1.2   l-9wde  sub-agent: hits a wall and mails #parent
+        ↳ L1.3   l-mfg7  supervisor: is nudged on its next tool call
+    ↝ J2     j-pn3v  Cross-project bug report
+        ↳ L2.1   l-7fdr  agent in project A: finds a bug that belongs to project B
+        ↳ L2.2   l-0x4k  mail: persists it — nobody in B is running                                       delivered by 002-j8nx
+        ↳ L2.3   l-0f9w  agent in project B: is idle in a pane
+        ↳ L2.4   l-cwd2  agent in project B: reads, fixes, acks                                           delivered by 002-j8nx
+
+child plans
+    ▷ C1     c-gn2d  002-j8nx auto-mail-walking-skeleton — Walking skeleton: subscribe, send, list, ack   plan
+
+rails
+    ‖ R1     r-xbrt  Messages and events are immutable                                                    honoured by 002-j8nx
+    ‖ R2     r-42vx  Consumer state lives in a deliveries join, never on the message                      honoured by 002-j8nx
+    ‖ R3     r-jcvm  Ack is a separate explicit call, from the first consumer                             honoured by 002-j8nx
+    ‖ R4     r-fjxr  Injected keystrokes are a fixed constant, into a verified agent                      deferred: 002-j8nx
+    ‖ R5     r-apsc  Ack transitions exactly once and reports whether it won                              honoured by 002-j8nx
+    ‖ R6     r-vgcz  At-least-once and unordered, as documented                                           honoured by 002-j8nx
+    ‖ R7     r-tr9x  Addresses are virtual — no physical identity in them                                 honoured by 002-j8nx
+    ‖ R8     r-q6hs  Sending to an address with no subscription persists, and a later subscriber sees it  honoured by 002-j8nx
+    ‖ R9     r-9bka  Hook environment capture stays an allowlist                                          deferred: 002-j8nx
+    ‖ R10    r-1eyq  The nudge is free when there is no mail                                              honoured by 002-j8nx
+    ‖ R11    r-01p5  Delivery never corrupts a working agent                                              deferred: 002-j8nx
+    ‖ R12    r-6gjf  Alpha: the store may be wiped, nothing may depend on it                              honoured by 002-j8nx
+    ‖ R13    r-p2kk  No session manager is hard-coded into stored data                                    deferred: 002-j8nx
+    ‖ R14    r-0bcq  A capability is done when it passes end to end in the harness                        honoured by 002-j8nx
+    ‖ R15    r-f1ys  The ontology lands before the code that uses it                                      honoured by 002-j8nx
+    ‖ R16    r-fzh2  Nothing outside the mail package reads the store                                     honoured by 002-j8nx

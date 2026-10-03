@@ -1,0 +1,14 @@
+{
+  "edges": [
+    {
+      "id": "e-tg1m",
+      "from": "ac-j58t",
+      "type": "proves",
+      "to": "g-gc8t"
+    }
+  ],
+  "id": "ac-j58t",
+  "plan": "001-acs4",
+  "rank": "a0",
+  "type": "ac"
+}

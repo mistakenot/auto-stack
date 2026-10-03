@@ -15,8 +15,8 @@
   </script>
 </head>
 <body>
-  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
-  <pd-doc title="065: auto-plan-graph" status="executing" pr="pending" generated="2026-09-29" next-prompt="/new-solution 065">
+  <!-- AI: When a PR is created for this work, update pr="https://github.com/mistakenot/auto-stack/pull/157" below with the PR URL -->
+  <pd-doc title="065: auto-plan-graph" status="complete" pr="https://github.com/mistakenot/auto-stack/pull/157" generated="2026-09-29" next-prompt="/new-solution 065">
 
     <pd-tab name="Requirements">
 
@@ -932,6 +932,93 @@ Commands that can span plans take `all` in the plan position (`list all`, `searc
         </script></md>
       </pd-decision>
 
+      <pd-decision id="D-14" title="Each plan has its own ID: NNN-xxxx" status="accepted" by="charlie"
+        summary="Folder number + 4 random base32 characters, stored as graph.json's top-level id; references store the full ID. Decided after execution, during PR #157.">
+        <md><script type="text/plain">
+**Decision:** `new` generates a plan ID: the folder number, a hyphen, and 4 random Crockford-base32
+characters (`004-k7q2`). It is stored as the top-level `id` in graph.json. Qualified references
+store the full ID (`004-k7q2:r-8hw3`), including `epic`, `child.plan` and `deferred`. The CLI
+accepts the `004` shorthand when only one plan has that number and expands it before saving.
+**Alternatives:** Keep `NNN` as the only plan identity (D-9). Store only the short `NNN:id` form.
+**Consequences:** References stay unambiguous even while two branches have both allocated `004`.
+`lint all` reports `duplicate-plan-number`, and `auto plan renumber` fixes the collision at merge
+time (D-15).
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-15" title="Number collisions are fixed at merge time by renumber" status="accepted" by="charlie"
+        summary="renumber renames the folder, rewrites the plan ID and every reference to it in writable plans; refuses if a frozen plan refers to it.">
+        <md><script type="text/plain">
+**Decision:** `auto plan renumber <plan> [--to NNN]` renames the folder, rewrites the plan ID
+(keeping its suffix), and rewrites every qualified reference to it in the other writable plans.
+It refuses (`frozen-ref`) if a frozen plan refers to it.
+**Alternatives:** Treat the plan ID as permanent and let the folder number drift from it.
+**Consequences:** The ID always matches its folder. Rewriting is acceptable because plans stay
+mutable until they merge (D-17).
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-16" title="Edges get random IDs" status="accepted" by="charlie"
+        summary="Edges become {id, from, type, to} with e-xxxx IDs, so later features (review threads) can anchor to them; a duplicate triple is still an error.">
+        <md><script type="text/plain">
+**Decision:** Every edge carries a generated `e-xxxx` ID, unique across the plan's nodes and edges.
+`unlink` accepts the edge ID or the triple.
+**Alternatives:** Identify edges only by their (from, type, to) triple.
+**Consequences:** Edges can be anchored by review threads and evidence. Duplicate triples are still
+rejected, so the ID doesn't change what a graph can say.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-17" title="Semver schema versions; plans freeze instead of migrating" status="accepted" by="charlie"
+        summary="version is a semver string (1.0.0). Writes are refused on a major mismatch or once lifecycle is done; old plans are never migrated.">
+        <md><script type="text/plain">
+**Decision:** `version` is a semver string, starting at `1.0.0`. A plan is frozen, and every
+write to it is refused (`frozen`), when its major version differs from the tool's or its
+lifecycle is `done`. Reads still work.
+**Alternatives:** Migrate old plans forward whenever the schema changes.
+**Consequences:** A new schema version only affects plans created after it. Merged and completed
+plans are a permanent record that `auto plan` does not change.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-18" title="The lifecycle sequence lives in the registry" status="accepted" by="charlie"
+        summary="The step list is owned by the schema version, so future versions can experiment with lifecycles without touching old plans.">
+        <md><script type="text/plain">
+**Decision:** The ordered lifecycle steps (requirements → solution → plan → executing → done) are
+declared in `schema.Registry`, next to the node and edge types. Rules and types refer to steps
+by name, and a test checks that every name exists in the sequence.
+**Alternatives:** Keep a hard-coded package-level list.
+**Consequences:** A new schema version can add, rename or reorder steps. Plans on older versions
+are frozen (D-17), so they are unaffected.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-19" title="Keep two levels (epic → task) for now" status="accepted" by="charlie"
+        summary="No nesting above epic yet; a future schema version can allow it, since old plans are frozen rather than migrated.">
+        <md><script type="text/plain">
+**Decision:** The hierarchy stays epic → task.
+**Alternatives:** Allow epics inside epics now.
+**Consequences:** No use case for deeper nesting has come up. Versioning (D-17) lets a later
+version add it without migrating existing plans.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-20" title="Plans live in .auto/plan/plans/, not docs/plans/ (amends D-1)" status="accepted" by="charlie"
+        summary="Plans are tool-owned data, so they follow the .auto/&lt;tool&gt;/ convention; numbering and kinds are unchanged from D-1.">
+        <md><script type="text/plain">
+**Decision:** The canonical plans root is `.auto/plan/plans/NNN-name/graph.json`. Everything else
+in D-1 still holds: one numbering sequence for both kinds, `kind` stored in the graph, and
+`docs/tasks` and `docs/epics` untouched. `init` and `new` still scaffold an `AGENTS.md`, with a
+`CLAUDE.md` symlink to it, inside the plans folder.
+**Alternatives:** Keep `docs/plans/` (D-1). That folder is easier to find with default `rg`
+searches, which skip hidden directories. But it needed an auto-doc ignore, because auto-doc
+treated the scaffolded agent files as docs that needed frontmatter and an index.
+**Consequences:** `docs/` stays prose for people, and `.auto/` holds tool data, like
+`.auto/reflect/events/`. Agents read plans through `auto plan list`, `show`, `get` and `search`
+rather than by grepping. Plain `rg` needs `--hidden` to search the plans folder.
+        </script></md>
+      </pd-decision>
+
       <pd-decisions></pd-decisions>
 
     </pd-tab>
@@ -968,7 +1055,7 @@ Every stage ends with:
       <pd-section id="phases" title="Stages">
         <pd-stepper>
 
-          <pd-phase n="1" title="Walking skeleton: glossary → registry → graph.json → new/add/link/lint/show → e2e" status="todo"
+          <pd-phase n="1" title="Walking skeleton: glossary → registry → graph.json → new/add/link/lint/show → e2e" status="done"
             files="docs/concepts/UBIQUITOUS_LANGUAGE.md,auto-plan/go.mod,auto-plan/go.sum,auto-plan/CLAUDE.md,auto-plan/cmd/autoplan/main.go,auto-plan/rootcmd/rootcmd.go,auto-plan/internal/app/app.go,auto-plan/internal/schema/registry.go,auto-plan/internal/schema/registry_test.go,auto-plan/internal/graph/model.go,auto-plan/internal/graph/io.go,auto-plan/internal/graph/ids.go,auto-plan/internal/graph/mutate.go,auto-plan/internal/graph/validate.go,auto-plan/internal/graph/graph_test.go,auto-plan/internal/workspace/workspace.go,auto-plan/internal/workspace/workspace_test.go,auto-plan/internal/lint/lint.go,auto-plan/internal/lint/rules.go,auto-plan/internal/lint/lint_test.go,auto-plan/internal/render/show.go,auto-plan/internal/render/render_test.go,auto-plan/internal/cli/root.go,auto-plan/internal/cli/init.go,auto-plan/internal/cli/new.go,auto-plan/internal/cli/write.go,auto-plan/internal/cli/lint.go,auto-plan/internal/cli/view.go,auto-plan/internal/cli/cli_integration_test.go,auto-plan/e2e/e2e_test.go,auto-plan/e2e/testdata/scenarios/lifecycle/commands.txt,auto-plan/e2e/testdata/scenarios/lifecycle/snapshots/,.gitignore,auto-cli/cmd/auto/main.go,auto-cli/cmd/auto/main_test.go,auto-cli/go.mod,auto-cli/go.sum,go.work,Makefile,CLAUDE.md">
             <md><script type="text/plain">
 The thinnest path through every layer, with the real binary judging it from the first commit.
@@ -1091,7 +1178,7 @@ The thinnest path through every layer, with the real binary judging it from the 
             </script></md>
           </pd-phase>
 
-          <pd-phase n="2" title="Full write surface and every node type" status="todo" depends-on="1"
+          <pd-phase n="2" title="Full write surface and every node type" status="done" depends-on="1"
             files="auto-plan/internal/schema/registry.go,auto-plan/internal/schema/registry_test.go,auto-plan/internal/graph/io.go,auto-plan/internal/graph/ids.go,auto-plan/internal/graph/mutate.go,auto-plan/internal/graph/validate.go,auto-plan/internal/graph/graph_test.go,auto-plan/internal/cli/write.go,auto-plan/internal/cli/lint.go,auto-plan/internal/cli/cli_integration_test.go,auto-plan/e2e/testdata/scenarios/lifecycle/commands.txt,auto-plan/e2e/testdata/scenarios/lifecycle/snapshots/">
             <md><script type="text/plain">
 1. **Registry, complete (AC-4).**
@@ -1138,7 +1225,7 @@ The thinnest path through every layer, with the real binary judging it from the 
             </script></md>
           </pd-phase>
 
-          <pd-phase n="3" title="Lint, complete: lifecycle gating, prose refs, trees, pd-lint parity" status="todo" depends-on="2"
+          <pd-phase n="3" title="Lint, complete: lifecycle gating, prose refs, trees, pd-lint parity" status="done" depends-on="2"
             files="auto-plan/internal/lint/lint.go,auto-plan/internal/lint/rules.go,auto-plan/internal/lint/cycles.go,auto-plan/internal/lint/lint_test.go,auto-plan/internal/tree/parse.go,auto-plan/internal/tree/tree_test.go,auto-plan/internal/cli/lint.go,auto-plan/internal/cli/cli_integration_test.go">
             <md><script type="text/plain">
 1. **Lifecycle gating (AC-9).** The runner filters rules by `plan.fields.lifecycle`
@@ -1174,7 +1261,7 @@ The thinnest path through every layer, with the real binary judging it from the 
             </script></md>
           </pd-phase>
 
-          <pd-phase n="4" title="Read and display lenses: list/describe/get/search, show, trace, tree, brief" status="todo" depends-on="3"
+          <pd-phase n="4" title="Read and display lenses: list/describe/get/search, show, trace, tree, brief" status="done" depends-on="3"
             files="auto-plan/internal/render/show.go,auto-plan/internal/render/card.go,auto-plan/internal/render/trace.go,auto-plan/internal/render/brief.go,auto-plan/internal/render/render_test.go,auto-plan/internal/tree/render.go,auto-plan/internal/tree/tree_test.go,auto-plan/internal/cli/read.go,auto-plan/internal/cli/view.go,auto-plan/internal/cli/cli_integration_test.go">
             <md><script type="text/plain">
 1. **Resource verbs (AC-12).** In `read.go`:
@@ -1220,7 +1307,7 @@ The thinnest path through every layer, with the real binary judging it from the 
             </script></md>
           </pd-phase>
 
-          <pd-phase n="5" title="Epics across plans: qualified refs, inheritance lint, epic views" status="todo" depends-on="4"
+          <pd-phase n="5" title="Epics across plans: qualified refs, inheritance lint, epic views" status="done" depends-on="4"
             files="auto-plan/internal/workspace/workspace.go,auto-plan/internal/workspace/workspace_test.go,auto-plan/internal/graph/ids.go,auto-plan/internal/lint/epic.go,auto-plan/internal/lint/lint_test.go,auto-plan/internal/render/show.go,auto-plan/internal/render/trace.go,auto-plan/internal/render/render_test.go,auto-plan/internal/cli/cli_integration_test.go">
             <md><script type="text/plain">
 1. **`PlanSet` + qualified refs.**
@@ -1253,7 +1340,7 @@ The thinnest path through every layer, with the real binary judging it from the 
             </script></md>
           </pd-phase>
 
-          <pd-phase n="6" title="Dogfood and docs: rebuild epic 005 + 062 and 052 via the CLI, quickstart/docs" status="todo" depends-on="5"
+          <pd-phase n="6" title="Dogfood and docs: rebuild epic 005 + 062 and 052 via the CLI, quickstart/docs" status="done" depends-on="5"
             files="auto-plan/internal/cli/help.go,auto-plan/internal/cli/root.go,auto-plan/CLAUDE.md,auto-plan/e2e/e2e_test.go,auto-plan/e2e/testdata/scenarios/dogfood/commands.txt,auto-plan/e2e/testdata/scenarios/dogfood/snapshots/,CLAUDE.md">
             <md><script type="text/plain">
 1. **`quickstart` and `docs` (AC-17).** `help.go` holds the happy path (init → new → add → link →

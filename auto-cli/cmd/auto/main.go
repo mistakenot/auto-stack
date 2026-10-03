@@ -17,6 +17,7 @@ import (
 	etlcmd "github.com/mistakenot/auto-etl/rootcmd"
 	graphcmd "github.com/mistakenot/auto-graph/rootcmd"
 	mailcmd "github.com/mistakenot/auto-mail/rootcmd"
+	plancmd "github.com/mistakenot/auto-plan/rootcmd"
 	reflectcmd "github.com/mistakenot/auto-reflect/rootcmd"
 	searchcmd "github.com/mistakenot/auto-search/rootcmd"
 	"github.com/mistakenot/auto-shared/update"
@@ -46,6 +47,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		etlcmd.New(stdout, stderr),
 		graphcmd.New(stdout, stderr),
 		mailcmd.New(stdout, stderr),
+		plancmd.New(stdout, stderr),
 		reflectcmd.New(stdout, stderr),
 		searchcmd.New(stdout, stderr),
 		skillcmd.New(stdout, stderr),

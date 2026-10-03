@@ -1,0 +1,10 @@
+~ auto-plan/internal/
+~ ├── cli/
+- │   ├── old.go    f-0004  replaced by read.go …
++ │   └── read.go   f-0003  list, describe, get, search
+~ └── render/
++     ├── brief.go  f-0001  Stage Brief view
+~     └── show.go   f-0002  labels, alternatives and blocks
++ docs/guide/
++ └── README.md     f-0006  a very long reason a very long reason a very long reason a …
+~ go.work           f-0005  use ./auto-plan

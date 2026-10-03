@@ -1,0 +1,48 @@
+# Stage s-p6v5: CLI verbs
+
+Plan 001 (stage-briefs) · status todo
+
+## Depends on
+
+- s-3v6v: Render layer (done)
+
+## Steps
+
+1. Write read.go
+2. Wire root.go
+
+## Commit
+
+`feat: cli verbs`
+
+## Files
+
+```
+~ auto-plan/internal/cli/
+- ├── old.go   f-gqzz  replaced by read.go
++ └── read.go  f-44v0  list, describe, get, search
+~ go.work      f-r5et  use ./auto-plan
+```
+
+## Acceptance criteria
+
+### ac-cgyg: brief names no other stage's steps
+
+Proves g-xyf8: An agent gets one stage's context in one call
+
+Given two stages, when brief runs for one, then the other's steps are absent
+
+- Verify: manual
+
+## Decisions
+
+(none)
+
+## Rails
+
+(none)
+
+## Open questions
+
+- q-jcx5: Should brief include rejected alternatives?
+  Recommended: No: keep it small
