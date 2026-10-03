@@ -6,6 +6,8 @@ import (
 	"math/rand/v2"
 	"regexp"
 	"strings"
+
+	"github.com/mistakenot/auto-plan/internal/schema"
 )
 
 // crockford is the lowercase Crockford base32 alphabet (no i, l, o, u).
@@ -13,6 +15,33 @@ const crockford = "0123456789abcdefghjkmnpqrstvwxyz"
 
 // IDPattern is the shape of every generated node ID (D-11).
 var IDPattern = regexp.MustCompile(`^[a-z]{1,4}-[0-9a-hjkmnp-tv-z]{4}$`)
+
+// EdgePrefix starts every edge ID (`e-7k2q`). Edge and node IDs share one
+// space per plan, so no node type uses it.
+const EdgePrefix = "e"
+
+// EdgeIDPattern is the shape of an edge ID.
+var EdgeIDPattern = regexp.MustCompile(`^e-[0-9a-hjkmnp-tv-z]{4}$`)
+
+// PlanIDPattern is the shape of a plan ID: the folder number, a hyphen and
+// 4 Crockford base32 characters (`004-k7q2`).
+var PlanIDPattern = regexp.MustCompile(schema.PlanIDPattern)
+
+// PlanNumberPattern is the shape of a bare plan number (`004`).
+var PlanNumberPattern = regexp.MustCompile(schema.PlanNumberPattern)
+
+// NewPlanID returns number + "-" + 4 random Crockford base32 characters.
+func NewPlanID(number string, r *rand.Rand) string {
+	return number + "-" + randomSuffix(r)
+}
+
+func randomSuffix(r *rand.Rand) string {
+	var b strings.Builder
+	for range 4 {
+		b.WriteByte(crockford[r.IntN(len(crockford))])
+	}
+	return b.String()
+}
 
 // maxIDAttempts bounds collision retries. 32^4 IDs per prefix makes hitting
 // it practically impossible; it exists so a broken source cannot spin forever.
@@ -25,13 +54,7 @@ var ErrIDSpaceExhausted = errors.New("could not generate a free node ID")
 // regenerated while taken reports a collision (retired IDs included).
 func NewID(prefix string, r *rand.Rand, taken func(string) bool) (string, error) {
 	for range maxIDAttempts {
-		var b strings.Builder
-		b.WriteString(prefix)
-		b.WriteByte('-')
-		for range 4 {
-			b.WriteByte(crockford[r.IntN(len(crockford))])
-		}
-		if id := b.String(); !taken(id) {
+		if id := prefix + "-" + randomSuffix(r); !taken(id) {
 			return id, nil
 		}
 	}
@@ -134,15 +157,23 @@ func suffix(s string, n int) string {
 	return s[n:]
 }
 
-// QualifiedRefPattern is the shape of a cross-plan reference `NNN:ID`: a
-// plan number, then a node ID in that plan (the plan node's ID is `plan`).
-var QualifiedRefPattern = regexp.MustCompile(`^[0-9]{3}:(?:plan|[a-z]{1,4}-[0-9a-hjkmnp-tv-z]{4})$`)
+// QualifiedRefPattern is the shape of a stored cross-plan reference
+// `NNN-xxxx:ID`: a plan ID, then a node ID in that plan (the plan node's ID
+// is `plan`).
+var QualifiedRefPattern = regexp.MustCompile(`^[0-9]{3}-[0-9a-hjkmnp-tv-z]{4}:(?:plan|[a-z]{1,4}-[0-9a-hjkmnp-tv-z]{4})$`)
+
+// ShortRefPattern is the shorthand `NNN:ID`: a bare plan number in place of
+// the plan ID. The CLI accepts it on input and expands it before saving;
+// prose may keep it, and lint resolves it when exactly one plan has the
+// number.
+var ShortRefPattern = regexp.MustCompile(`^[0-9]{3}:(?:plan|[a-z]{1,4}-[0-9a-hjkmnp-tv-z]{4})$`)
 
 // Qualify returns the qualified reference `plan:id`.
 func Qualify(plan, id string) string { return plan + ":" + id }
 
-// ParseRef splits a possibly qualified reference. `005:r-8hw3` yields
-// ("005", "r-8hw3", true); a plan-local `r-8hw3` yields ("", "r-8hw3", false).
+// ParseRef splits a possibly qualified reference. `005-k7q2:r-8hw3` yields
+// ("005-k7q2", "r-8hw3", true) and the shorthand `005:r-8hw3` yields ("005",
+// "r-8hw3", true); a plan-local `r-8hw3` yields ("", "r-8hw3", false).
 func ParseRef(ref string) (plan, id string, qualified bool) {
 	if p, rest, ok := strings.Cut(ref, ":"); ok {
 		return p, rest, true

@@ -3,7 +3,6 @@ package lint
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -44,10 +43,12 @@ const (
 // file coverage at plan) wait for that step; checks of what is already there
 // (an open question, a cycle, a bad prose reference) apply at every step.
 var Rules = []Rule{
+	{Code: "plan-id-mismatch", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: planIDMismatch},
 	{Code: "open-question", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: openQuestion},
 	{Code: "ac-no-goal", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: acNoGoal},
 	{Code: "ac-multi-goal", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: acMultiGoal},
 	{Code: "dangling-prose-ref", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: danglingProseRef},
+	{Code: "ambiguous-ref", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: ambiguousRef},
 	{Code: "tree-syntax", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: treeSyntax},
 	{Code: "dependency-cycle", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: dependencyCycle},
 	{Code: "goal-no-ac", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: goalNoAC},
@@ -226,10 +227,51 @@ func decisionNoAlternative(c *Context) []Issue {
 }
 
 // proseRef matches a `[[…]]` reference in Markdown prose.
-var proseRef = regexp.MustCompile(`\[\[([^\[\]\n]*)\]\]`)
+var proseRef = graph.ProseRefRE()
 
-// qualifiedRef is the shape of a cross-plan prose reference, `[[005:r-8hw3]]`.
-var qualifiedRef = graph.QualifiedRefPattern
+// qualifiedRef reports the shape of a cross-plan prose reference: the full
+// `[[005-k7q2:r-8hw3]]`, or the hand-written shorthand `[[005:r-8hw3]]`,
+// which resolves when exactly one plan has the number.
+func qualifiedRef(ref string) bool {
+	return graph.QualifiedRefPattern.MatchString(ref) || graph.ShortRefPattern.MatchString(ref)
+}
+
+// planIDMismatch reports a plan ID whose number is not its folder's: the
+// folder or the ID was renamed by hand. renumber puts both on one number.
+func planIDMismatch(c *Context) []Issue {
+	n := c.Graph.Number()
+	if c.Number == "" || n == "" || n == c.Number {
+		return nil
+	}
+	return []Issue{{
+		Path: "$.id", Field: "id",
+		Message: fmt.Sprintf("Plan ID %s starts with %s, but its folder %s is number %s.", c.Graph.ID, n, c.Folder, c.Number),
+		Hint:    "auto plan renumber " + c.Folder + " --to " + c.Number + " (rewrites the ID and every reference to it), or rename the folder back",
+	}}
+}
+
+// ambiguousRef reports a shorthand prose reference `[[NNN:id]]` whose number
+// names more than one plan, so it cannot be resolved.
+func ambiguousRef(c *Context) []Issue {
+	if c.Set == nil {
+		return nil
+	}
+	var out []Issue
+	proseRefs(c, func(n graph.Node, path, field, ref string) {
+		if !graph.ShortRefPattern.MatchString(ref) {
+			return
+		}
+		var amb *workspace.AmbiguousError
+		if _, err := c.Set.Lookup(ref); errors.As(err, &amb) {
+			_, id, _ := graph.ParseRef(ref)
+			out = append(out, Issue{Path: path, Field: field,
+				Message: fmt.Sprintf("%s's %s refers to [[%s]], but plan number %s names %d plans: %s", n.ID, field, ref, amb.Arg, len(amb.Candidates), planList(amb.Candidates)),
+				Hint:    "write the plan ID, e.g. [[" + graph.Qualify(amb.Candidates[0].Ref(), id) + "]], with auto plan update " + c.Plan + " " + n.ID + " --" + flagFor(path) + " …",
+			})
+		}
+	})
+	return out
+}
 
 // proseRefs calls fn for each distinct `[[…]]` reference in every text field
 // (registry kind text, nested objects included) of every active node.
@@ -273,7 +315,7 @@ func walkText(path string, specs []schema.FieldSpec, values map[string]any, fn f
 
 // danglingProseRef reports `[[id]]` references that name no node in the
 // plan, and references that are not node IDs at all. A qualified
-// `[[NNN:id]]` must resolve against docs/plans/NNN-*/graph.json when the plan
+// `[[NNN-xxxx:id]]` (or `[[NNN:id]]`) must resolve against that plan when the plan
 // is linted within its PlanSet; linted alone, it is checked for shape only. A
 // reference to a retired node is a retired-ref warning instead.
 func danglingProseRef(c *Context) []Issue {
@@ -282,11 +324,11 @@ func danglingProseRef(c *Context) []Issue {
 		hint := "fix the reference with auto plan update " + c.Plan + " " + n.ID + " --" + flagFor(path) +
 			" …; see the plan's node IDs with auto plan show " + c.Plan
 		switch {
-		case qualifiedRef.MatchString(ref):
+		case qualifiedRef(ref):
 			if c.Set == nil {
 				return
 			}
-			if _, err := c.Set.Lookup(ref); err != nil {
+			if _, err := c.Set.Lookup(ref); err != nil && !errors.Is(err, workspace.ErrAmbiguous) {
 				planID, id, _ := graph.ParseRef(ref)
 				why := "plan " + planID + " has no node " + id
 				switch {
@@ -306,7 +348,7 @@ func danglingProseRef(c *Context) []Issue {
 				Message: fmt.Sprintf("%s's %s refers to [[%s]], which is not a node in this plan", n.ID, field, ref)})
 		default:
 			out = append(out, Issue{Path: path, Field: field, Hint: hint,
-				Message: fmt.Sprintf("%s's %s holds [[%s]], which is not a node ID (write [[ac-3fxm]], or [[005:r-8hw3]] for another plan)", n.ID, field, ref)})
+				Message: fmt.Sprintf("%s's %s holds [[%s]], which is not a node ID (write [[ac-3fxm]], or [[005-k7q2:r-8hw3]] for another plan)", n.ID, field, ref)})
 		}
 	})
 	return out

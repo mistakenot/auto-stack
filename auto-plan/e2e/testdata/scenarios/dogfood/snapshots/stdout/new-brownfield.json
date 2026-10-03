@@ -1,5 +1,6 @@
 {
-  "id": "003",
+  "id": "003-gevp",
+  "number": "003",
   "name": "reflect-tool-hardening",
   "kind": "task",
   "path": "docs/plans/003-reflect-tool-hardening"

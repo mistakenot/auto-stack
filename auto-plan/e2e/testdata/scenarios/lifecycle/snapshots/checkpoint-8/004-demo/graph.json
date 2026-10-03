@@ -1,11 +1,11 @@
 {
   "version": "1.0.0",
-  "id": "001-acs4",
+  "id": "004-acs4",
   "nodes": [
     {
       "id": "ac-bvmq",
       "type": "ac",
-      "status": "active",
+      "status": "retired",
       "rank": "a1",
       "fields": {
         "gwt": "Given two stages, when brief runs for one, then the other's steps are absent",
@@ -55,7 +55,7 @@
       "id": "g-gc8t",
       "type": "goal",
       "status": "active",
-      "rank": "a1",
+      "rank": "5",
       "fields": {
         "title": "An agent gets one stage's context in one call"
       }
@@ -77,7 +77,7 @@
       "fields": {
         "created": "2026-01-01",
         "kind": "task",
-        "lifecycle": "requirements",
+        "lifecycle": "solution",
         "name": "demo"
       }
     }

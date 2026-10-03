@@ -72,21 +72,17 @@ func childMissing(c *Context) []Issue {
 	var out []Issue
 	for _, n := range childNodes(c) {
 		p := n.StringField("plan")
-		if !qualifiedPlan(p) || c.Set.Has(p) {
-			continue // a malformed number is a validation error already
+		if !graph.PlanIDPattern.MatchString(p) || c.Set.Has(p) {
+			continue // a malformed plan ID is a validation error already
 		}
 		out = append(out, Issue{
 			Path: graph.NodePath(n.ID) + ".fields.plan", Field: "plan",
-			Message: fmt.Sprintf("Child %s names plan %s, which has no folder under docs/plans.", n.ID, p),
+			Message: fmt.Sprintf("Child %s names plan %s, which no plan under docs/plans has as its ID.", n.ID, p),
 			Hint: "create it with auto plan new <name> --kind task --epic " + c.Plan +
-				" and point the child at it (auto plan update " + c.Plan + " " + n.ID + " --plan <NNN>), or auto plan retire " + c.Plan + " " + n.ID,
+				" and point the child at it (auto plan update " + c.Plan + " " + n.ID + " --plan <child-plan>), or auto plan retire " + c.Plan + " " + n.ID,
 		})
 	}
 	return out
-}
-
-func qualifiedPlan(p string) bool {
-	return len(p) == 3 && strings.Trim(p, "0123456789") == ""
 }
 
 // childEpicMismatch reports both halves of a broken epic ↔ child link.
@@ -101,15 +97,15 @@ func qualifiedPlan(p string) bool {
 func childEpicMismatch(c *Context) []Issue {
 	var out []Issue
 	plan, _ := c.Graph.Plan()
-	if epic := plan.StringField("epic"); epic != "" && qualifiedPlan(epic) {
+	if epic := plan.StringField("epic"); epic != "" && graph.PlanIDPattern.MatchString(epic) {
 		path := graph.NodePath(schema.PlanNodeID) + ".fields.epic"
-		fix := "auto plan update " + c.Plan + " plan --epic <NNN> (or --epic \"\" to leave the epic)"
+		fix := "auto plan update " + c.Plan + " plan --epic <epic-plan> (or --epic \"\" to leave the epic)"
 		issue := func(msg, hint string) {
 			out = append(out, Issue{Path: path, Field: "epic", Message: msg, Hint: hint})
 		}
 		switch g, err := c.Set.Load(epic); {
 		case !c.Set.Has(epic):
-			issue(fmt.Sprintf("Plan %s names epic %s, which has no folder under docs/plans.", c.Plan, epic), fix)
+			issue(fmt.Sprintf("Plan %s names epic %s, which no plan under docs/plans has as its ID.", c.Plan, epic), fix)
 		case err != nil:
 			// The epic's own lint reports its parse error.
 		default:
@@ -275,7 +271,7 @@ func railUnhonored(c *Context) []Issue {
 			Path:    graph.NodePath(r.ID),
 			Message: msg,
 			Hint: "auto plan link " + child + " plan honors " + ref + ", or excuse the child for now with auto plan update " +
-				c.Plan + " " + r.ID + " --deferred <NNN>",
+				c.Plan + " " + r.ID + " --deferred <child-plan>",
 		})
 	}
 	return out

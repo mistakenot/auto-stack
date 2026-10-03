@@ -1,4 +1,4 @@
-002-auto-mail-walking-skeleton  task · plan · epic 001
+002-j8nx  auto-mail-walking-skeleton  task · plan · epic 001-acs4
 
 ◎ G1     g-rbcw   Ontology first: the glossary defines Mail, Address, Subscription, Delivery and Binding before any code uses them
     ✓ AC1.1  ac-9wde  G16 — the ontology lands before the code that uses it                                     python3 .claude/skills/domain-modelling/scripts/glossary.py check docs/concepts/UBIQUITOUS_LANGUAGE.md

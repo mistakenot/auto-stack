@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ func seeded(g *Graph) *Graph {
 }
 
 func newPlan() *Graph {
-	return seeded(New(map[string]any{
+	return seeded(New("001-k7q2", map[string]any{
 		"name": "demo", "kind": "task", "lifecycle": "requirements", "created": "2026-01-01",
 	}))
 }
@@ -45,7 +46,7 @@ func acFields(title string) map[string]any {
 
 func mustAdd(t *testing.T, g *Graph, typ string, fields map[string]any, edges ...Edge) Node {
 	t.Helper()
-	n, errs := g.Add(typ, fields, edges)
+	n, _, errs := g.Add(typ, fields, edges)
 	if len(errs) > 0 {
 		t.Fatalf("Add(%s): %+v", typ, errs)
 	}
@@ -172,7 +173,8 @@ func TestParseErrorHasPosition(t *testing.T) {
 // brokenFixture is a hand-broken graph: a duplicate ID, a dangling edge, an
 // unregistered node type, an unknown field, a bad ID and a wrong endpoint.
 const brokenFixture = `{
-  "version": 1,
+  "version": "1.0.0",
+  "id": "001-k7q2",
   "nodes": [
     {"id": "plan", "type": "plan", "status": "active", "fields": {"name": "demo", "kind": "task", "lifecycle": "requirements", "created": "2026-01-01"}},
     {"id": "g-k7q2", "type": "goal", "status": "active", "rank": "a0", "fields": {"title": "one"}},
@@ -182,8 +184,8 @@ const brokenFixture = `{
     {"id": "d-9t2w", "type": "decision", "status": "active", "rank": "a0", "fields": {"title": "d"}}
   ],
   "edges": [
-    {"from": "ac-zzzz", "type": "proves", "to": "g-k7q2"},
-    {"from": "d-9t2w", "type": "proves", "to": "g-k7q2"}
+    {"id": "e-0001", "from": "ac-zzzz", "type": "proves", "to": "g-k7q2"},
+    {"id": "e-0002", "from": "d-9t2w", "type": "proves", "to": "g-k7q2"}
   ]
 }
 `
@@ -205,7 +207,7 @@ func TestBrokenFixtureDecodesAndValidateReportsEachProblem(t *testing.T) {
 	// Writes against it are refused, and nothing changes.
 	before, _ := Encode(g)
 	seeded(g)
-	if _, errs := g.Add("goal", map[string]any{"title": "new"}, nil); len(errs) == 0 {
+	if _, _, errs := g.Add("goal", map[string]any{"title": "new"}, nil); len(errs) == 0 {
 		t.Fatal("Add on an invalid graph must be refused")
 	}
 	if _, errs := g.Link("d-9t2w", "constrains", "g-k7q2"); len(errs) == 0 {
@@ -258,7 +260,7 @@ func TestValidateFieldRules(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			g := newPlan()
 			before, _ := Encode(g)
-			_, errs := g.Add(tc.typ, tc.fields, nil)
+			_, _, errs := g.Add(tc.typ, tc.fields, nil)
 			if !slices.Contains(codes(errs), tc.want) {
 				t.Fatalf("codes %v, want %q", codes(errs), tc.want)
 			}
@@ -271,7 +273,7 @@ func TestValidateFieldRules(t *testing.T) {
 }
 
 func TestPlanFieldPatterns(t *testing.T) {
-	g := New(map[string]any{"name": "Bad Name", "kind": "story", "lifecycle": "requirements", "created": "yesterday"})
+	g := New("001-k7q2", map[string]any{"name": "Bad Name", "kind": "story", "lifecycle": "requirements", "created": "yesterday"})
 	got := codes(Validate(g))
 	if n := strings.Count(strings.Join(got, ","), CodeInvalidField); n != 3 {
 		t.Fatalf("want 3 invalid-field (name, kind, created), got %v", got)
@@ -311,7 +313,7 @@ func TestIDsMatchPatternAndRetryCollisions(t *testing.T) {
 	g2 := newPlan()
 	g2.Nodes = append(g2.Nodes, Node{ID: first, Type: "goal", Status: StatusRetired, Rank: "a0", Fields: map[string]any{"title": "old"}})
 	g2.SetRand(rand.New(rand.NewPCG(7, 7)))
-	n, errs := g2.Add("goal", map[string]any{"title": "new"}, nil)
+	n, _, errs := g2.Add("goal", map[string]any{"title": "new"}, nil)
 	if len(errs) > 0 {
 		t.Fatal(errs)
 	}
@@ -351,7 +353,7 @@ func TestRankAfterSiblings(t *testing.T) {
 func TestRejectedAddLeavesGraphDeepEqual(t *testing.T) {
 	g := populated(t)
 	snapshot := g.clone()
-	_, errs := g.Add("ac", acFields("t"), []Edge{{Type: "proves", To: "g-zzzz"}})
+	_, _, errs := g.Add("ac", acFields("t"), []Edge{{Type: "proves", To: "g-zzzz"}})
 	if !slices.Contains(codes(errs), CodeDanglingRef) {
 		t.Fatalf("want dangling-ref, got %v", codes(errs))
 	}
@@ -363,7 +365,7 @@ func TestRejectedAddLeavesGraphDeepEqual(t *testing.T) {
 		{"d-zzzz", "constrains", "g-zzzz", CodeDanglingRef},
 		{g.Nodes[0].ID, "constrains", g.Nodes[0].ID, CodeWrongEndpoint}, // ac constrains ac
 		{g.Nodes[0].ID, "nope", g.Nodes[0].ID, CodeUnregisteredType},
-		{g.Nodes[0].ID, "proves", "005:g-k7q2", CodeWrongEndpoint}, // proves is not cross-plan
+		{g.Nodes[0].ID, "proves", "005-m3x9:g-k7q2", CodeWrongEndpoint}, // proves is not cross-plan
 	} {
 		_, errs := g.Link(tc.from, tc.typ, tc.to)
 		if !slices.Contains(codes(errs), tc.want) {
@@ -383,16 +385,16 @@ func TestRejectedAddLeavesGraphDeepEqual(t *testing.T) {
 
 func TestAddRefusesPlanAndUnregistered(t *testing.T) {
 	g := newPlan()
-	if _, errs := g.Add("plan", nil, nil); !slices.Contains(codes(errs), CodeNotAddable) {
+	if _, _, errs := g.Add("plan", nil, nil); !slices.Contains(codes(errs), CodeNotAddable) {
 		t.Fatalf("plan: %v", codes(errs))
 	}
-	if _, errs := g.Add("widget", nil, nil); !slices.Contains(codes(errs), CodeUnregisteredType) {
+	if _, _, errs := g.Add("widget", nil, nil); !slices.Contains(codes(errs), CodeUnregisteredType) {
 		t.Fatalf("widget: %v", codes(errs))
 	}
 }
 
 func TestMissingPlanNodeAndBadVersion(t *testing.T) {
-	g := mustParse(t, []byte(`{"version": 2, "nodes": [], "edges": [], "extra": true}`))
+	g := mustParse(t, []byte(`{"version": "one", "nodes": [], "edges": [], "extra": true}`))
 	got := codes(Validate(g))
 	for _, want := range []string{CodeBadVersion, CodeMissingPlanNode, CodeUnknownField} {
 		if !slices.Contains(got, want) {
@@ -427,7 +429,7 @@ func everyType(t *testing.T) (*Graph, map[string]string) {
 	add("ac", acFields("a"), Edge{Type: "proves", To: ids["goal"]})
 	add("decision", decisionFields("d"))
 	add("alternative", map[string]any{"title": "alt", "why": "slower"})
-	add("rail", map[string]any{"title": "r", "deferred": []any{"002"}})
+	add("rail", map[string]any{"title": "r", "deferred": []any{"002-a1b2"}})
 	add("defect", map[string]any{"title": "df"})
 	add("file", map[string]any{"path": "auto-plan/internal/x.go", "change": "add", "why": "w"})
 	add("stage", map[string]any{"title": "s", "steps": []any{"one", "two"}, "commit": "feat: s"},
@@ -436,16 +438,16 @@ func everyType(t *testing.T) (*Graph, map[string]string) {
 	add("tree", map[string]any{"title": "t", "kind": "call", "body": "main\n  run"}, Edge{Type: "about", To: ids["stage"]})
 	add("journey", map[string]any{"title": "j"})
 	add("leg", map[string]any{"actor": "agent", "action": "plans"}, Edge{Type: "in", To: ids["journey"]})
-	add("child", map[string]any{"plan": "002"})
+	add("child", map[string]any{"plan": "002-a1b2"})
 	for _, l := range []struct{ from, typ, to string }{
 		{ids["decision"], "constrains", ids["ac"]},
 		{ids["decision"], "rejects", ids["alternative"]},
 		{ids["alternative"], "wouldBreak", ids["rail"]},
 		{ids["ac"], "discharges", ids["rail"]},
 		{ids["goal"], "addresses", ids["defect"]},
-		{"plan", "honors", "005:r-8hw3"},
-		{"plan", "delivers", "005:l-2qdn"},
-		{"plan", "builds-on", "005:d-6yb4"},
+		{"plan", "honors", "005-m3x9:r-8hw3"},
+		{"plan", "delivers", "005-m3x9:l-2qdn"},
+		{"plan", "builds-on", "005-m3x9:d-6yb4"},
 	} {
 		if _, errs := g.Link(l.from, l.typ, l.to); len(errs) > 0 {
 			t.Fatalf("Link(%s %s %s): %+v", l.from, l.typ, l.to, errs)
@@ -473,7 +475,7 @@ func TestEveryNodeTypeRoundTrips(t *testing.T) {
 func TestSameTypeAndAnyEndpoints(t *testing.T) {
 	g, ids := everyType(t)
 	s2 := mustAdd(t, g, "stage", map[string]any{"title": "s2", "steps": []any{"x"}, "commit": "c"})
-	c2 := mustAdd(t, g, "child", map[string]any{"plan": "003"})
+	c2 := mustAdd(t, g, "child", map[string]any{"plan": "003-c3d4"})
 	if _, errs := g.Link(s2.ID, "dependsOn", ids["stage"]); len(errs) > 0 {
 		t.Fatalf("stage dependsOn stage: %+v", errs)
 	}
@@ -738,5 +740,200 @@ func TestRankBetween(t *testing.T) {
 	}
 	if !slices.IsSorted(keys) || len(slices.Compact(slices.Clone(keys))) != len(keys) {
 		t.Fatal("inserted keys are not strictly ordered")
+	}
+}
+
+func TestParseRefFullAndShorthand(t *testing.T) {
+	if p, id, q := ParseRef("005-k7q2:r-8hw3"); p != "005-k7q2" || id != "r-8hw3" || !q {
+		t.Fatalf("full: %s %s %v", p, id, q)
+	}
+	if !QualifiedRefPattern.MatchString("005-k7q2:plan") || QualifiedRefPattern.MatchString("005:plan") {
+		t.Error("QualifiedRefPattern must take the plan ID, not the bare number")
+	}
+	if !ShortRefPattern.MatchString("005:r-8hw3") || ShortRefPattern.MatchString("005-k7q2:r-8hw3") {
+		t.Error("ShortRefPattern must take the bare number only")
+	}
+}
+
+// TestEnvelopeKeyOrder: version, then id, then nodes and edges; each edge
+// is id, from, type, to.
+func TestEnvelopeKeyOrder(t *testing.T) {
+	g := newPlan()
+	goal := mustAdd(t, g, "goal", map[string]any{"title": "g"})
+	mustAdd(t, g, "ac", acFields("a"), Edge{Type: "proves", To: goal.ID})
+	data, err := Encode(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	if !strings.HasPrefix(s, "{\n  \"version\": \"1.0.0\",\n  \"id\": \"001-k7q2\",\n  \"nodes\": [") {
+		t.Fatalf("envelope head:\n%s", s[:min(len(s), 120)])
+	}
+	if !regexp.MustCompile(`\{\n      "id": "e-[0-9a-z]{4}",\n      "from": "ac-`).MatchString(s) {
+		t.Fatalf("edge key order:\n%s", s)
+	}
+}
+
+// TestEdgesGetIDsDrawnAfterTheNode: Add draws the node ID first, so the same
+// seed gives the same node ID whether or not edges come with it; edge IDs are
+// unique across nodes and edges.
+func TestEdgesGetIDsDrawnAfterTheNode(t *testing.T) {
+	base := newPlan()
+	goal := mustAdd(t, base, "goal", map[string]any{"title": "g"})
+	enc, _ := Encode(base)
+
+	withEdge := mustParse(t, enc)
+	withEdge.SetRand(rand.New(rand.NewPCG(9, 9)))
+	n1, edges, errs := withEdge.Add("ac", acFields("a"), []Edge{{Type: "proves", To: goal.ID}})
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	without := mustParse(t, enc)
+	without.SetRand(rand.New(rand.NewPCG(9, 9)))
+	n2, _, errs := without.Add("ac", acFields("a"), nil)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if n1.ID != n2.ID {
+		t.Fatalf("node ID depends on its edges: %s vs %s", n1.ID, n2.ID)
+	}
+	if len(edges) != 1 || !EdgeIDPattern.MatchString(edges[0].ID) || edges[0].From != n1.ID {
+		t.Fatalf("edges: %+v", edges)
+	}
+	if e, ok := withEdge.EdgeByID(edges[0].ID); !ok || e.To != goal.ID {
+		t.Fatalf("EdgeByID: %+v %v", e, ok)
+	}
+}
+
+func TestLinkCollisionRetryCoversEdges(t *testing.T) {
+	g := newPlan()
+	goal := mustAdd(t, g, "goal", map[string]any{"title": "g"})
+	d1 := mustAdd(t, g, "decision", decisionFields("d1"))
+	d2 := mustAdd(t, g, "decision", decisionFields("d2"))
+	enc, _ := Encode(g)
+	// Two links drawn from the same seed: the second must retry past the first.
+	g = mustParse(t, enc)
+	g.SetRand(rand.New(rand.NewPCG(5, 5)))
+	e1, errs := g.Link(d1.ID, "constrains", goal.ID)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	g.SetRand(rand.New(rand.NewPCG(5, 5)))
+	e2, errs := g.Link(d2.ID, "constrains", goal.ID)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if e1.ID == e2.ID || !EdgeIDPattern.MatchString(e2.ID) {
+		t.Fatalf("edge IDs %s %s", e1.ID, e2.ID)
+	}
+	// A duplicate (from, type, to) is still refused despite its fresh ID.
+	if _, errs := g.Link(d1.ID, "constrains", goal.ID); !slices.Contains(codes(errs), CodeDuplicateEdge) {
+		t.Fatalf("duplicate triple: %v", codes(errs))
+	}
+	// Unlink by ID.
+	got, errs := g.UnlinkID(e1.ID)
+	if len(errs) > 0 || got.From != d1.ID {
+		t.Fatalf("UnlinkID: %+v %v", got, errs)
+	}
+	if _, ok := g.EdgeByID(e1.ID); ok {
+		t.Fatal("edge still present")
+	}
+	if _, errs := g.UnlinkID("e-zzzz"); !slices.Contains(codes(errs), CodeEdgeNotFound) {
+		t.Fatalf("unknown edge ID: %v", codes(errs))
+	}
+}
+
+func TestEdgeAndPlanIDValidation(t *testing.T) {
+	doc := func(id, edges string) string {
+		return `{"version": "1.0.0", ` + id + `"nodes": [
+  {"id": "plan", "type": "plan", "status": "active", "fields": {"name": "demo", "kind": "task", "lifecycle": "requirements", "created": "2026-01-01"}},
+  {"id": "g-k7q2", "type": "goal", "status": "active", "rank": "a0", "fields": {"title": "g"}},
+  {"id": "d-9t2w", "type": "decision", "status": "active", "rank": "a0", "fields": {"title": "d", "chosen": "c", "why": "w", "by": "b"}},
+  {"id": "d-9t2x", "type": "decision", "status": "active", "rank": "a1", "fields": {"title": "d", "chosen": "c", "why": "w", "by": "b"}}
+], "edges": [` + edges + `]}`
+	}
+	cases := []struct {
+		name, id, edges, want string
+	}{
+		{"missing plan ID", ``, ``, CodeMissingField},
+		{"bad plan ID", `"id": "001-K7Q2", `, ``, CodeBadID},
+		{"missing edge ID", `"id": "001-k7q2", `, `{"from": "d-9t2w", "type": "constrains", "to": "g-k7q2"}`, CodeMissingField},
+		{"bad edge ID", `"id": "001-k7q2", `, `{"id": "x-0000", "from": "d-9t2w", "type": "constrains", "to": "g-k7q2"}`, CodeBadID},
+		{"edge ID reused", `"id": "001-k7q2", `, `{"id": "e-0000", "from": "d-9t2w", "type": "constrains", "to": "g-k7q2"}, {"id": "e-0000", "from": "d-9t2x", "type": "constrains", "to": "g-k7q2"}`, CodeDuplicateID},
+		{"shorthand target stored", `"id": "001-k7q2", `, `{"id": "e-0000", "from": "d-9t2w", "type": "builds-on", "to": "005:d-0000"}`, CodeDanglingRef},
+	}
+	for _, tc := range cases {
+		got := codes(Validate(mustParse(t, []byte(doc(tc.id, tc.edges)))))
+		if !slices.Contains(got, tc.want) {
+			t.Errorf("%s: codes %v, want %s", tc.name, got, tc.want)
+		}
+	}
+	if got := Validate(mustParse(t, []byte(doc(`"id": "001-k7q2", `, `{"id": "e-0000", "from": "d-9t2w", "type": "constrains", "to": "g-k7q2"}`)))); len(got) > 0 {
+		t.Fatalf("valid doc: %+v", got)
+	}
+}
+
+// TestVersionsAndFreezing: reads tolerate any 1.x.y; another major decodes
+// and is not checked against this registry; writes are refused for another
+// major, a newer version, or a done plan.
+func TestVersionsAndFreezing(t *testing.T) {
+	doc := func(version, lifecycle string) *Graph {
+		return mustParse(t, []byte(`{"version": "`+version+`", "id": "001-k7q2", "nodes": [
+  {"id": "plan", "type": "plan", "status": "active", "fields": {"name": "demo", "kind": "task", "lifecycle": "`+lifecycle+`", "created": "2026-01-01"}},
+  {"id": "w-0000", "type": "widget", "status": "active", "rank": "a0", "fields": {}}
+], "edges": []}`))
+	}
+	if g := doc("1.0.0", "requirements"); g.Frozen() != "" || g.OtherVersion() {
+		t.Errorf("1.0.0 requirements: frozen %q", g.Frozen())
+	}
+	if g := doc("1.0.0", "done"); !strings.Contains(g.Frozen(), "done") {
+		t.Errorf("done plan not frozen: %q", g.Frozen())
+	}
+	newer := doc("1.4.0", "requirements")
+	if !newer.OtherVersion() || newer.OtherMajor() || newer.Frozen() == "" {
+		t.Errorf("1.4.0: other %v major %v frozen %q", newer.OtherVersion(), newer.OtherMajor(), newer.Frozen())
+	}
+	if got := codes(Validate(newer)); !slices.Contains(got, CodeUnregisteredType) {
+		t.Errorf("a 1.x plan is still validated: %v", got)
+	}
+	other := doc("2.0.0", "requirements")
+	if !other.OtherMajor() || other.Frozen() == "" {
+		t.Errorf("2.0.0: major %v frozen %q", other.OtherMajor(), other.Frozen())
+	}
+	if got := Validate(other); len(got) != 0 {
+		t.Errorf("another major is not checked against this registry: %v", codes(got))
+	}
+	if got := codes(Validate(mustParse(t, []byte(`{"version": 1, "id": "001-k7q2", "nodes": [], "edges": []}`)))); !slices.Contains(got, CodeInvalidField) || slices.Contains(got, CodeBadVersion) {
+		t.Errorf("integer version: %v (want one invalid-field, no duplicate bad-version)", got)
+	}
+}
+
+func TestRewritePlanRefs(t *testing.T) {
+	g := mustParse(t, []byte(`{"version": "1.0.0", "id": "001-k7q2", "nodes": [
+  {"id": "plan", "type": "plan", "status": "active", "fields": {"name": "e", "kind": "epic", "lifecycle": "requirements", "created": "2026-01-01"}},
+  {"id": "c-0000", "type": "child", "status": "active", "rank": "a0", "fields": {"plan": "002-m3x9"}},
+  {"id": "r-0000", "type": "rail", "status": "active", "rank": "a0", "fields": {"title": "r", "deferred": ["002-m3x9", "003-aaaa"], "description": "see [[002-m3x9:g-0000]], [[002:g-0001]] and [[003-aaaa:g-0000]]"}}
+], "edges": [{"id": "e-0000", "from": "c-0000", "type": "dependsOn", "to": "c-0000"}]}`))
+	orig, _ := Encode(g)
+	c := mustParse(t, orig)
+	if !c.RewritePlanRefs("002-m3x9", "004-m3x9", "002", "004") {
+		t.Fatal("nothing rewritten")
+	}
+	child, _ := c.NodeByID("c-0000")
+	rail, _ := c.NodeByID("r-0000")
+	if child.StringField("plan") != "004-m3x9" {
+		t.Errorf("child.plan = %v", child.Fields["plan"])
+	}
+	if got := rail.Fields["deferred"].([]any); got[0] != "004-m3x9" || got[1] != "003-aaaa" {
+		t.Errorf("deferred = %v", got)
+	}
+	if got := rail.StringField("description"); got != "see [[004-m3x9:g-0000]], [[004:g-0001]] and [[003-aaaa:g-0000]]" {
+		t.Errorf("prose = %q", got)
+	}
+	if again, _ := Encode(g); !bytes.Equal(again, orig) {
+		t.Error("the source graph changed")
+	}
+	if c.RewritePlanRefs("009-aaaa", "010-aaaa", "", "") {
+		t.Error("no reference to 009-aaaa, yet something changed")
 	}
 }

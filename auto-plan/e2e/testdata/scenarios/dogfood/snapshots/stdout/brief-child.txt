@@ -1,6 +1,6 @@
 # Stage s-zf2b: One message travels between two agents and is acked
 
-Plan 002-auto-mail-walking-skeleton · status done
+Plan 002-j8nx (auto-mail-walking-skeleton) · status done
 
 ## Depends on
 
@@ -153,12 +153,12 @@ Constrains ac-0f9w
 
 ## Rails
 
-- 001:r-tr9x: Addresses are virtual — no physical identity in them (discharged by ac-xbrt)
-- 001:r-xbrt: Messages and events are immutable (discharged by ac-pn3v)
-- 001:r-42vx: Consumer state lives in a deliveries join, never on the message (discharged by ac-7fdr)
-- 001:r-jcvm: Ack is a separate explicit call, from the first consumer (discharged by ac-0x4k)
-- 001:r-apsc: Ack transitions exactly once and reports whether it won (discharged by ac-0f9w)
-- 001:r-0bcq: A capability is done when it passes end to end in the harness (discharged by ac-vgcz)
+- 001-acs4:r-tr9x: Addresses are virtual — no physical identity in them (discharged by ac-xbrt)
+- 001-acs4:r-xbrt: Messages and events are immutable (discharged by ac-pn3v)
+- 001-acs4:r-42vx: Consumer state lives in a deliveries join, never on the message (discharged by ac-7fdr)
+- 001-acs4:r-jcvm: Ack is a separate explicit call, from the first consumer (discharged by ac-0x4k)
+- 001-acs4:r-apsc: Ack transitions exactly once and reports whether it won (discharged by ac-0f9w)
+- 001-acs4:r-0bcq: A capability is done when it passes end to end in the harness (discharged by ac-vgcz)
 
 ## Open questions
 

@@ -5,12 +5,61 @@
 package schema
 
 import (
+	"cmp"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
+// Version is the graph.json format version this tool reads and writes, as
+// semver. A plan records the version it was written with; it is never
+// migrated. This tool writes only plans of its own major version that are
+// not newer than it (see Writable); it reads every 1.x.y, and a plan of
+// another major best-effort (D-2).
+const Version = "1.0.0"
+
+// SemVer is a parsed MAJOR.MINOR.PATCH version.
+type SemVer struct{ Major, Minor, Patch int }
+
+// VersionPattern is the shape of a graph.json version.
+const VersionPattern = `^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`
+
+var versionRE = regexp.MustCompile(VersionPattern)
+
+// ParseVersion parses a MAJOR.MINOR.PATCH string.
+func ParseVersion(s string) (SemVer, bool) {
+	m := versionRE.FindStringSubmatch(s)
+	if m == nil {
+		return SemVer{}, false
+	}
+	var v SemVer
+	for i, dst := range []*int{&v.Major, &v.Minor, &v.Patch} {
+		n, err := strconv.Atoi(m[i+1])
+		if err != nil {
+			return SemVer{}, false
+		}
+		*dst = n
+	}
+	return v, true
+}
+
+// Compare orders two versions (-1, 0, +1).
+func (v SemVer) Compare(o SemVer) int {
+	return cmp.Or(cmp.Compare(v.Major, o.Major), cmp.Compare(v.Minor, o.Minor), cmp.Compare(v.Patch, o.Patch))
+}
+
+// Current is Version parsed.
+func Current() SemVer {
+	v, _ := ParseVersion(Version)
+	return v
+}
+
 // Lifecycle is the step a plan has reached. Lint rules and node types declare
 // the earliest step at which they apply, so partial plans stay valid (D-10).
+// The ordered sequence of steps is owned by the registry (Schema.Lifecycle),
+// so a future format version can change it without touching old plans; these
+// constants only name the steps of this version.
 type Lifecycle string
 
 const (
@@ -21,8 +70,11 @@ const (
 	LifecycleDone         Lifecycle = "done"
 )
 
-// Lifecycles lists every lifecycle step in order.
-var Lifecycles = []Lifecycle{
+// lifecycleSteps is this version's lifecycle sequence. It is declared apart
+// from Registry only so the plan node's lifecycle enum can be built from it
+// without an initialization cycle; Registry.Lifecycle is the one place
+// everything reads it from.
+var lifecycleSteps = []Lifecycle{
 	LifecycleRequirements,
 	LifecycleSolution,
 	LifecyclePlan,
@@ -30,8 +82,9 @@ var Lifecycles = []Lifecycle{
 	LifecycleDone,
 }
 
-// Index returns the position of l in Lifecycles, or -1 when l is unknown.
-func (l Lifecycle) Index() int { return slices.Index(Lifecycles, l) }
+// Index returns the position of l in the registry's lifecycle sequence, or
+// -1 when l is not a step of it.
+func (l Lifecycle) Index() int { return slices.Index(Registry.Lifecycle, l) }
 
 // AtLeast reports whether l has reached min. An unknown l reaches nothing.
 func (l Lifecycle) AtLeast(minimum Lifecycle) bool {
@@ -39,10 +92,12 @@ func (l Lifecycle) AtLeast(minimum Lifecycle) bool {
 	return i >= 0 && i >= minimum.Index()
 }
 
-// LifecycleNames returns the lifecycle steps as strings, for enums and help.
-func LifecycleNames() []string {
-	out := make([]string, len(Lifecycles))
-	for i, l := range Lifecycles {
+// LifecycleNames returns the registry's lifecycle steps as strings, in order.
+func LifecycleNames() []string { return stepNames(Registry.Lifecycle) }
+
+func stepNames(steps []Lifecycle) []string {
+	out := make([]string, len(steps))
+	for i, l := range steps {
 		out[i] = string(l)
 	}
 	return out
@@ -79,6 +134,10 @@ type FieldSpec struct {
 	// Fields holds the members of a KindObject field. Their flags are named
 	// `--<field>-<member>`.
 	Fields []FieldSpec
+	// PlanRef marks a field (or list) whose values are plan IDs (`004-k7q2`).
+	// The CLI expands a bare plan number (`004`) to the plan's ID before
+	// saving, and `renumber` rewrites the values when a plan is renumbered.
+	PlanRef bool
 }
 
 // NodeType declares one node type.
@@ -127,7 +186,7 @@ type EdgeType struct {
 	// To lists the node types the edge may end at; AnyType accepts every type.
 	To []string
 	// CrossPlan marks edge types whose `to` may be a qualified reference
-	// into another plan (`005:r-8hw3`).
+	// into another plan (`005-k7q2:r-8hw3`).
 	CrossPlan bool
 	// SameType requires both endpoints to have the same type: `dependsOn`
 	// joins stage → stage and child → child, never stage → child.
@@ -151,10 +210,15 @@ func (e EdgeType) ToLabel() string {
 	return strings.Join(e.To, "|")
 }
 
-// Schema is the full set of registered node and edge types.
+// Schema is the full set of registered node and edge types, and the
+// lifecycle sequence plans of this version move through.
 type Schema struct {
-	Nodes []NodeType
-	Edges []EdgeType
+	// Lifecycle lists the lifecycle steps in order. Node types and lint
+	// rules name the step they switch on at; `update … plan --lifecycle`
+	// accepts exactly these.
+	Lifecycle []Lifecycle
+	Nodes     []NodeType
+	Edges     []EdgeType
 }
 
 // Node returns the named node type.
@@ -195,8 +259,11 @@ const (
 	NamePattern = `^[a-z0-9]+(?:-[a-z0-9]+)*$`
 	// DatePattern is an ISO 8601 calendar date.
 	DatePattern = `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`
-	// PlanNumberPattern is a plan's 3-digit number.
+	// PlanNumberPattern is a plan's 3-digit number (its folder's prefix).
 	PlanNumberPattern = `^[0-9]{3}$`
+	// PlanIDPattern is a plan's ID: its number, a hyphen and 4 Crockford
+	// base32 characters (`004-k7q2`).
+	PlanIDPattern = `^[0-9]{3}-[0-9a-hjkmnp-tv-z]{4}$`
 	// RepoPathPattern is a canonical repo-relative path: "/"-separated
 	// segments with no spaces, backslashes or colons, and no empty, "." or ".."
 	// segment, so it can never leave the repo (no leading slash, no drive
@@ -220,6 +287,7 @@ func descriptionField() FieldSpec {
 
 // Registry is the one table every part of auto-plan reads.
 var Registry = Schema{
+	Lifecycle: lifecycleSteps,
 	Nodes: []NodeType{
 		{
 			Name: "plan", Term: "Plan", MinLifecycle: LifecycleRequirements,
@@ -227,9 +295,9 @@ var Registry = Schema{
 			Fields: []FieldSpec{
 				{Name: "name", Kind: KindString, Required: true, Pattern: NamePattern, Fixed: true, Help: "Kebab-case plan name (matches the folder)"},
 				{Name: "kind", Kind: KindEnum, Required: true, Enum: []string{"task", "epic"}, Help: "task or epic"},
-				{Name: "lifecycle", Kind: KindEnum, Required: true, Enum: LifecycleNames(), Help: "Lifecycle step; selects which lint rules apply"},
+				{Name: "lifecycle", Kind: KindEnum, Required: true, Enum: stepNames(lifecycleSteps), Help: "Lifecycle step; selects which lint rules apply"},
 				{Name: "created", Kind: KindString, Required: true, Pattern: DatePattern, Fixed: true, Help: "Creation date (YYYY-MM-DD)"},
-				{Name: "epic", Kind: KindString, Pattern: PlanNumberPattern, Help: "Number of the epic plan this plan belongs to"},
+				{Name: "epic", Kind: KindString, Pattern: PlanIDPattern, PlanRef: true, Help: "ID of the epic plan this plan belongs to (NNN expands)"},
 			},
 		},
 		{
@@ -282,7 +350,7 @@ var Registry = Schema{
 			Fields: []FieldSpec{
 				titleField("One-line statement of the constraint"),
 				descriptionField(),
-				{Name: "deferred", Kind: KindList, Pattern: PlanNumberPattern, Help: "Child plan numbers excused from honouring the rail for now"},
+				{Name: "deferred", Kind: KindList, Pattern: PlanIDPattern, PlanRef: true, Help: "Child plan IDs excused from honouring the rail for now (NNN expands)"},
 			},
 		},
 		{
@@ -352,7 +420,7 @@ var Registry = Schema{
 			Name: "child", Prefix: "c", Term: "Child Plan", MinLifecycle: LifecycleRequirements,
 			Help: "An epic's reference to one of the plans that delivers part of it.",
 			Fields: []FieldSpec{
-				{Name: "plan", Kind: KindString, Required: true, Pattern: PlanNumberPattern, Help: "The child plan's number (NNN)"},
+				{Name: "plan", Kind: KindString, Required: true, Pattern: PlanIDPattern, PlanRef: true, Help: "The child plan's ID (NNN expands)"},
 				{Name: "title", Kind: KindString, Help: "What the child delivers, in one line"},
 			},
 		},

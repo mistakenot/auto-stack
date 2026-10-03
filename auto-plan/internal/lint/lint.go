@@ -56,9 +56,15 @@ type Rule struct {
 
 // Context is what a rule sees.
 type Context struct {
-	// Plan is the plan's number, used in hints.
-	Plan  string
-	Graph *graph.Graph
+	// Plan names the plan in messages and hints: its plan ID (see
+	// workspace.Plan.Ref).
+	Plan string
+	// Number is the plan folder's number, or "" when the graph is linted
+	// without its folder (plan-id-mismatch then does not run).
+	Number string
+	// Folder is the plan folder's name ("" without a folder).
+	Folder string
+	Graph  *graph.Graph
 	// Lifecycle is the plan's lifecycle step (see Lifecycle).
 	Lifecycle schema.Lifecycle
 	// Set is every plan of the workspace, for resolving qualified
@@ -71,8 +77,8 @@ type Context struct {
 }
 
 // Resolve returns the node a reference names: a plan-local ID, or (with a
-// Set) a qualified `NNN:ID` in another plan. ok is false when it does not
-// resolve.
+// Set) a qualified `NNN-xxxx:ID` (or unambiguous `NNN:ID`) in another plan.
+// ok is false when it does not resolve.
 func (c *Context) Resolve(ref string) (graph.Node, bool) {
 	if _, _, qualified := graph.ParseRef(ref); !qualified {
 		return c.Node(ref)
@@ -110,14 +116,15 @@ func File(planID, path string) Report {
 	return Graph(planID, g)
 }
 
-// Plan lints plan planID of set: validation, the lifecycle rules, qualified
-// references resolved against the set, and the cross-plan EpicRules.
-func Plan(set *workspace.PlanSet, planID string) Report {
-	g, err := set.Load(planID)
+// Plan lints plan p of set: validation, the lifecycle rules, qualified
+// references resolved against the set, and the cross-plan SetRules and
+// EpicRules.
+func Plan(set *workspace.PlanSet, p workspace.Plan) Report {
+	g, err := set.LoadPlan(p)
 	if err != nil {
-		return loadFailure(planID, set.Path(planID), err)
+		return loadFailure(p.Ref(), p.Dir+"/"+workspace.GraphFile, err)
 	}
-	return InSet(set, planID, g)
+	return InSet(set, p, g)
 }
 
 func loadFailure(planID, path string, err error) Report {
@@ -135,17 +142,46 @@ func loadFailure(planID, path string, err error) Report {
 	return finish(planID, []Issue{issue})
 }
 
-// Graph lints a decoded graph on its own: every validation error, then every
-// rule that applies at the plan's lifecycle. Qualified references are
-// shape-checked only.
-func Graph(planID string, g *graph.Graph) Report { return InSet(nil, planID, g) }
+// Graph lints a decoded graph on its own, named planRef in messages: every
+// validation error, then every rule that applies at the plan's lifecycle.
+// Qualified references are shape-checked only.
+func Graph(planRef string, g *graph.Graph) Report {
+	return run(&Context{Plan: planRef, Graph: g, Lifecycle: Lifecycle(g)})
+}
 
-// InSet lints a decoded graph that belongs to set (nil: lint it alone). With
-// a set, each qualified edge target must resolve to a node of an allowed type
-// (dangling-ref, wrong-endpoint), and EpicRules run after Rules.
-func InSet(set *workspace.PlanSet, planID string, g *graph.Graph) Report {
+// InSet lints plan p's decoded graph g, which belongs to set (nil: lint it
+// alone, still knowing its folder). With a set, each qualified edge target
+// must resolve to a node of an allowed type (dangling-ref, wrong-endpoint),
+// and SetRules and EpicRules run after Rules.
+func InSet(set *workspace.PlanSet, p workspace.Plan, g *graph.Graph) Report {
+	return run(&Context{Plan: p.Ref(), Number: p.Number, Folder: p.Folder(), Graph: g, Lifecycle: Lifecycle(g), Set: set})
+}
+
+// CodeOtherVersion warns that a plan was written by another major version,
+// or a newer version, of the format: it is read best effort and frozen.
+const CodeOtherVersion = "other-version"
+
+func run(c *Context) Report {
 	issues := []Issue{}
-	c := &Context{Plan: planID, Graph: g, Lifecycle: Lifecycle(g), Set: set}
+	planID, g, set := c.Plan, c.Graph, c.Set
+	if g.OtherVersion() {
+		msg := fmt.Sprintf("Plan %s is format version %s; this tool reads and writes %s.", planID, g.Version, schema.Version)
+		if g.OtherMajor() {
+			msg += " It was written against another registry, so it is read best effort and not checked."
+		}
+		issues = append(issues, Issue{
+			Code: CodeOtherVersion, Severity: SeverityWarning, Path: "$.version", Field: "version",
+			Message: msg + " It is frozen: writes are refused.",
+			Hint:    "plans are never migrated: read it with this tool, or write it with an auto plan release of version " + g.Version,
+		})
+		if g.OtherMajor() {
+			for _, ve := range graph.Validate(g) {
+				issues = append(issues, Issue{Code: ve.Code, Severity: SeverityError, Path: ve.Path, Field: ve.Field,
+					Message: ve.Message, Hint: "fix graph.json by hand"})
+			}
+			return finish(planID, issues)
+		}
+	}
 	structural := graph.Validate(g)
 	if set != nil {
 		for _, e := range g.Edges {
@@ -160,7 +196,7 @@ func InSet(set *workspace.PlanSet, planID string, g *graph.Graph) Report {
 	}
 	rules := Rules
 	if set != nil {
-		rules = append(slices.Clone(Rules), EpicRules...)
+		rules = slices.Concat(Rules, SetRules, EpicRules)
 	}
 	for _, r := range rules {
 		if !c.Lifecycle.AtLeast(r.MinLifecycle) {
@@ -204,6 +240,12 @@ func validationHint(c *Context, ve graph.ValidationError) string {
 	lint := "`auto plan lint " + plan + "`"
 	switch ve.Code {
 	case graph.CodeDanglingRef, graph.CodeWrongEndpoint:
+		if graph.ShortRefPattern.MatchString(fmt.Sprint(ve.Value)) {
+			if from, typ, to, ok := edgeFromPath(ve.Path); ok {
+				return fmt.Sprintf("re-link it with the plan ID: `auto plan unlink %s %s %s %s`, then `auto plan link %s %s %s %s` (the CLI expands NNN)",
+					plan, from, typ, to, plan, from, typ, to)
+			}
+		}
 		if from, typ, to, ok := edgeFromPath(ve.Path); ok {
 			fix := "point it at an existing node of an allowed type"
 			if ve.Code == graph.CodeWrongEndpoint {
@@ -212,13 +254,26 @@ func validationHint(c *Context, ve graph.ValidationError) string {
 			return fmt.Sprintf("remove the edge with `auto plan unlink %s %s %s %s`, or %s", plan, from, typ, to, fix)
 		}
 		return "fix the edge in graph.json, then run " + lint
-	case graph.CodeBadID:
-		return "IDs are generated: restore the generated ID, or re-add the node with `auto plan add " + plan + " <type>`"
+	case graph.CodeBadVersion:
+		return "set \"version\" to \"" + schema.Version + "\" in graph.json, then run " + lint
+	case graph.CodeBadID, graph.CodeMissingField:
+		switch {
+		case ve.Path == "$.id":
+			return "restore the plan's ID (NNN-xxxx, its folder number + 4 characters) in graph.json, then run " + lint
+		case strings.HasPrefix(ve.Path, "$.edges["):
+			return "edge IDs are generated: re-create the edge with `auto plan link " + plan + " <from> <edge> <to>`, then remove the hand-written one"
+		case ve.Code == graph.CodeBadID:
+			return "IDs are generated: restore the generated ID, or re-add the node with `auto plan add " + plan + " <type>`"
+		}
+		if cmd := updateCommand(c, ve.Path); cmd != "" {
+			return "set it with `" + cmd + "`"
+		}
+		return "set the field to a valid value in graph.json, then run " + lint
 	case graph.CodeDuplicateID:
 		return "give each node its own ID (re-add the duplicate with `auto plan add " + plan + " <type>`), then run " + lint
 	case graph.CodeUnregisteredType, graph.CodeUnknownField:
 		return "remove it from graph.json or use a registered type/field (see `auto plan add --help`), then run " + lint
-	case graph.CodeMissingField, graph.CodeInvalidField:
+	case graph.CodeInvalidField:
 		if cmd := updateCommand(c, ve.Path); cmd != "" {
 			return "set it with `" + cmd + "`"
 		}

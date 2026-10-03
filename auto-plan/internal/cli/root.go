@@ -86,8 +86,9 @@ func NewRootCmd(application *app.App) *cobra.Command {
 typed nodes (plan, goal, ac, decision, …) and typed edges (proves, constrains, …),
 validated on every write against one type registry.
 
-Every command reads: auto plan <verb> <plan> [args…], where <plan> is NNN, NNN-name,
-a path, or "all" where it makes sense. Output is JSON by default; --text is for humans.`,
+Every command reads: auto plan <verb> <plan> [args…], where <plan> is NNN, the plan ID
+NNN-xxxx, the folder NNN-name, a path, or "all" where it makes sense. Output is JSON by
+default; --text is for humans.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
@@ -105,6 +106,7 @@ a path, or "all" where it makes sense. Output is JSON by default; --text is for 
 		newUnlinkCmd(application),
 		newRetireCmd(application),
 		newMoveCmd(application),
+		newRenumberCmd(application),
 		newLintCmd(application),
 		newFmtCmd(application),
 		newListCmd(application),
@@ -191,14 +193,43 @@ func openWorkspace(cmd *cobra.Command, application *app.App, text bool) (*worksp
 	return ws, nil
 }
 
+// CodeAmbiguousPlan reports a bare plan number that names several plans.
+const CodeAmbiguousPlan = "ambiguous-plan"
+
 // resolveOne resolves a single-plan argument, reporting failure on stderr.
 func resolveOne(cmd *cobra.Command, ws *workspace.Workspace, text bool, arg string) (workspace.Plan, error) {
 	p, err := ws.ResolveOne(arg)
 	if err != nil {
-		return workspace.Plan{}, failOne(cmd, text, "plan-not-found", "args.plan", "plan", err.Error(), arg,
-			"name a plan as NNN, NNN-name or a path; list folders under "+workspace.PlansDir+" or create one with `auto plan new <name> --kind task`")
+		return workspace.Plan{}, planArgFailure(cmd, text, "args.plan", "plan", arg, err,
+			"name a plan as NNN, NNN-xxxx, NNN-name or a path; list plans with `auto plan list` or create one with `auto plan new <name> --kind task`")
 	}
 	return p, nil
+}
+
+// resolveMany resolves a plan argument that may be `all`.
+func resolveMany(cmd *cobra.Command, ws *workspace.Workspace, text bool, arg string) ([]workspace.Plan, error) {
+	plans, err := ws.Resolve(arg)
+	if err != nil {
+		return nil, planArgFailure(cmd, text, "args.plan", "plan", arg, err,
+			"name a plan as NNN, NNN-xxxx, NNN-name, a path, or all")
+	}
+	return plans, nil
+}
+
+// planArgFailure reports a plan reference that did not resolve: an
+// ambiguous number lists its candidates (ambiguous-plan); anything else is
+// plan-not-found with hint.
+func planArgFailure(cmd *cobra.Command, text bool, path, field, arg string, err error, hint string) error {
+	var amb *workspace.AmbiguousError
+	if errors.As(err, &amb) {
+		ids := make([]string, len(amb.Candidates))
+		for i, c := range amb.Candidates {
+			ids[i] = c.Ref()
+		}
+		return failOne(cmd, text, CodeAmbiguousPlan, path, field, err.Error(), ids,
+			"name the plan by its ID ("+strings.Join(ids, " or ")+"), and give each plan its own number with `auto plan renumber "+ids[len(ids)-1]+"`")
+	}
+	return failOne(cmd, text, "plan-not-found", path, field, err.Error(), arg, hint)
 }
 
 // loaded is a plan opened for a write.
@@ -207,10 +238,34 @@ type loaded struct {
 	plan  workspace.Plan
 	path  string
 	graph *graph.Graph
+	set   *workspace.PlanSet
 }
 
-// loadForWrite opens a plan for mutation. It refuses a graph that is already
-// invalid (writes never save a graph with errors), and seeds ID generation from
+// ref is how results and hints name the plan: its plan ID.
+func (l *loaded) ref() string { return l.plan.Ref() }
+
+// planSet returns the workspace's PlanSet, built on first use.
+func (l *loaded) planSet(cmd *cobra.Command, text bool) (*workspace.PlanSet, error) {
+	if l.set != nil {
+		return l.set, nil
+	}
+	set, err := l.ws.PlanSet()
+	if err != nil {
+		return nil, failOne(cmd, text, "read-failed", "$", "", err.Error(), nil, "check that "+workspace.PlansDir+" is readable")
+	}
+	l.set = set
+	return set, nil
+}
+
+// frozenFailure refuses a write to a frozen plan (see graph.Frozen).
+func frozenFailure(cmd *cobra.Command, text bool, ref, reason string) error {
+	return failOne(cmd, text, graph.CodeFrozen, "$", "", "plan "+ref+" is frozen: "+reason+"; writes are refused", ref,
+		"a plan is immutable once done or when another format version wrote it; read it with list/show/get, and start new work in a new plan (`auto plan new <name> --kind task`)")
+}
+
+// loadForWrite opens a plan for mutation. It refuses a frozen plan (done, or
+// of another format version) and a graph that is already invalid (writes
+// never save a graph with errors), and seeds ID generation from
 // AUTO_PLAN_SEED when set.
 func loadForWrite(cmd *cobra.Command, application *app.App, text bool, arg string) (*loaded, error) {
 	ws, err := openWorkspace(cmd, application, text)
@@ -225,23 +280,39 @@ func loadForWrite(cmd *cobra.Command, application *app.App, text bool, arg strin
 	g, err := graph.Decode(path)
 	if err != nil {
 		return nil, failOne(cmd, text, "parse-error", "$", "", err.Error(), nil,
-			"fix graph.json by hand, then run `auto plan lint "+p.ID+"`")
+			"fix graph.json by hand, then run `auto plan lint "+p.Ref()+"`")
+	}
+	if reason := g.Frozen(); reason != "" {
+		return nil, frozenFailure(cmd, text, p.Ref(), reason)
 	}
 	if errs := graph.Validate(g); len(errs) > 0 {
 		return nil, fail(cmd, text, errs,
-			"graph.json is already invalid, so writes are refused; run `auto plan lint "+p.ID+"` and fix the file first")
+			"graph.json is already invalid, so writes are refused; run `auto plan lint "+p.Ref()+"` and fix the file first")
 	}
-	if seed, ok := os.LookupEnv(EnvSeed); ok {
-		n, err := strconv.ParseUint(seed, 10, 64)
-		if err != nil {
-			return nil, failOne(cmd, text, "invalid-env", "env."+EnvSeed, EnvSeed, EnvSeed+" must be an unsigned integer", seed,
-				"unset "+EnvSeed+" or set it to a number")
-		}
-		// Mixing in the node count gives each invocation a fresh but
-		// reproducible sequence.
-		g.SetRand(rand.New(rand.NewPCG(n, uint64(len(g.Nodes))))) //nolint:gosec // G404: node IDs are opaque labels, not secrets
+	r, err := seededRand(cmd, text, uint64(len(g.Nodes)))
+	if err != nil {
+		return nil, err
+	}
+	if r != nil {
+		g.SetRand(r)
 	}
 	return &loaded{ws: ws, plan: p, path: path, graph: g}, nil
+}
+
+// seededRand returns the AUTO_PLAN_SEED random source mixed with stream, or
+// nil when the variable is unset. Mixing in the plan's node count gives each
+// invocation a fresh but reproducible sequence.
+func seededRand(cmd *cobra.Command, text bool, stream uint64) (*rand.Rand, error) {
+	seed, ok := os.LookupEnv(EnvSeed)
+	if !ok {
+		return nil, nil
+	}
+	n, err := strconv.ParseUint(seed, 10, 64)
+	if err != nil {
+		return nil, failOne(cmd, text, "invalid-env", "env."+EnvSeed, EnvSeed, EnvSeed+" must be an unsigned integer", seed,
+			"unset "+EnvSeed+" or set it to a number")
+	}
+	return rand.New(rand.NewPCG(n, stream)), nil //nolint:gosec // G404: IDs are opaque labels, not secrets
 }
 
 // save writes the graph and reports an I/O failure on stderr.

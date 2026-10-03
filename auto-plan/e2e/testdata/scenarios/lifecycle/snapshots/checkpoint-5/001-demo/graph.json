@@ -1,5 +1,6 @@
 {
-  "version": 1,
+  "version": "1.0.0",
+  "id": "001-acs4",
   "nodes": [
     {
       "id": "ac-bvmq",
@@ -83,21 +84,25 @@
   ],
   "edges": [
     {
+      "id": "e-0t8w",
       "from": "ac-bvmq",
       "type": "proves",
       "to": "g-gc8t"
     },
     {
+      "id": "e-tg1m",
       "from": "ac-j58t",
       "type": "proves",
       "to": "g-gc8t"
     },
     {
+      "id": "e-21j1",
       "from": "d-kqxw",
       "type": "constrains",
       "to": "ac-j58t"
     },
     {
+      "id": "e-bvmq",
       "from": "d-kqxw",
       "type": "rejects",
       "to": "a-w1fg"

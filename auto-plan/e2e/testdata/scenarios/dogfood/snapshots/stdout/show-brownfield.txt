@@ -1,4 +1,4 @@
-003-reflect-tool-hardening  task · plan
+003-gevp  reflect-tool-hardening  task · plan
 
 ◎ G1     g-0x4k   Reported feedback gaps are readable with auto reflect gap list
     ✓ AC1.1  ac-tr9x  gap list surfaces reported gaps (F4)                                   cd auto-reflect && go test ./internal/cli/ -run Gap

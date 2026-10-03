@@ -22,10 +22,14 @@ and run the lint rules that apply at the plan's lifecycle step.
 
 Which rules run depends on the plan's lifecycle (auto plan update <plan> plan --lifecycle …):
 
-  every step   open-question, ac-no-goal, ac-multi-goal, dangling-prose-ref, tree-syntax,
-               dependency-cycle; warnings decision-no-alternative, retired-ref
+  every step   plan-id-mismatch, open-question, ac-no-goal, ac-multi-goal, dangling-prose-ref,
+               ambiguous-ref, tree-syntax, dependency-cycle; warnings decision-no-alternative,
+               retired-ref
   solution     + goal-no-ac (not for epics), ac-no-verify; warning goal-count (outside 5–8 goals)
   plan         + unplanned-file, untracked-file, missing-dep
+
+Plan-set rules, at every step: duplicate-plan-number (two folders share NNN; fix with
+auto plan renumber <plan-id>) and duplicate-plan-id (a copied folder).
 
 Cross-plan (epic) rules, by the linted plan's own lifecycle:
 
@@ -34,9 +38,11 @@ Cross-plan (epic) rules, by the linted plan's own lifecycle:
   plan         + rail-unhonored (per child, unless deferred for it), leg-undelivered (epics)
 
 Structural codes (dangling-ref, bad-id, duplicate-id, wrong-endpoint, missing-field, …) are
-reported at every step. Qualified references (an NNN:ID edge target or [[NNN:id]] in prose)
-must resolve against docs/plans/NNN-*/graph.json, and an edge's target must be of a type the
-edge allows. Each issue is reported on the plan whose graph holds the node it is about.
+reported at every step. Qualified references (an NNN-xxxx:ID edge target, or [[NNN-xxxx:id]] or
+the shorthand [[NNN:id]] in prose) must resolve against the plan with that ID (or number), and
+an edge's target must be of a type the edge allows. Each issue is reported on the plan whose
+graph holds the node it is about. A plan written by another format version gets an
+other-version warning; one of another major version is read best effort and not checked.
 
 One plan prints {plan, ok, issues:[{code,severity,path,field,message,hint}]}; "all" prints
 {ok, plans:[…]}. Exit 1 on any error; warnings alone exit 0. --text prints each plan's
@@ -59,10 +65,9 @@ func runLint(cmd *cobra.Command, application *app.App, arg string) error {
 	if err != nil {
 		return err
 	}
-	plans, err := ws.Resolve(arg)
+	plans, err := resolveMany(cmd, ws, text, arg)
 	if err != nil {
-		return failOne(cmd, text, "plan-not-found", "args.plan", "plan", err.Error(), arg,
-			"name a plan as NNN, NNN-name, a path, or all")
+		return err
 	}
 
 	set, err := ws.PlanSet()
@@ -71,7 +76,7 @@ func runLint(cmd *cobra.Command, application *app.App, arg string) error {
 	}
 	all := lintAllResult{OK: true, Plans: []lint.Report{}}
 	for _, p := range plans {
-		r := lint.Plan(set, p.ID)
+		r := lint.Plan(set, p)
 		all.OK = all.OK && r.OK
 		all.Plans = append(all.Plans, r)
 	}
@@ -147,7 +152,9 @@ func newFmtCmd(application *app.App) *cobra.Command {
 		Short: "Rewrite graph.json in canonical form (or --check that it already is)",
 		Long: `Rewrite a plan's graph.json (or every plan's) in canonical form: nodes sorted by (type, id),
 edges by (from, type, to), a fixed key order, a 2-space indent, no HTML escaping and a trailing
-newline. Unknown keys are kept. fmt does not validate; run lint for that.
+newline. Unknown keys are kept. fmt does not validate; run lint for that. fmt never rewrites a
+frozen plan (lifecycle done, or another format version): one that is not canonical is reported
+with the code frozen; --check still reports it.
 
 One plan prints {plan, path, canonical, changed}; "all" prints {ok, plans:[…]}. canonical says
 whether the file was already canonical; changed says whether fmt rewrote it. With --check
@@ -185,16 +192,15 @@ func runFmt(cmd *cobra.Command, application *app.App, arg string, check bool) er
 	if err != nil {
 		return err
 	}
-	plans, err := ws.Resolve(arg)
+	plans, err := resolveMany(cmd, ws, text, arg)
 	if err != nil {
-		return failOne(cmd, text, "plan-not-found", "args.plan", "plan", err.Error(), arg,
-			"name a plan as NNN, NNN-name, a path, or all")
+		return err
 	}
 
 	all := fmtAllResult{OK: true, Plans: []fmtResult{}}
 	for _, p := range plans {
 		r := fmtPlan(ws.GraphPath(p), check)
-		r.Plan, r.Path = p.ID, p.Dir+"/"+workspace.GraphFile
+		r.Plan, r.Path = p.Ref(), p.Dir+"/"+workspace.GraphFile
 		all.OK = all.OK && len(r.Errors) == 0 && (r.Canonical || !check)
 		all.Plans = append(all.Plans, r)
 	}
@@ -236,6 +242,10 @@ func fmtPlan(path string, check bool) fmtResult {
 	}
 	r.Canonical = bytes.Equal(data, canonical)
 	if r.Canonical || check {
+		return r
+	}
+	if reason := g.Frozen(); reason != "" {
+		r.Errors = []graph.ValidationError{{Code: graph.CodeFrozen, Path: "$", Message: "the plan is frozen (" + reason + "), so fmt does not rewrite it"}}
 		return r
 	}
 	if err := graph.Save(path, g); err != nil {

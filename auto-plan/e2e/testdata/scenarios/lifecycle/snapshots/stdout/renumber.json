@@ -1,0 +1,10 @@
+{
+  "from": "001-acs4",
+  "id": "plan",
+  "path": "docs/plans/004-demo",
+  "plan": "004-acs4",
+  "rewritten": [
+    "docs/plans/004-demo/graph.json"
+  ],
+  "to": "004-acs4"
+}

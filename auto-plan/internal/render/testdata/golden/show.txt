@@ -1,4 +1,4 @@
-004-stage-briefs  task · solution
+004  stage-briefs  task · solution
 
 ◎ G1     g-m4t8   Plans can be reordered without breaking references
     ◆ D1     d-2hcv   ranks are strings
@@ -14,7 +14,7 @@ unlinked
     -   A?.1   a-3mmm   orphan option                    nobody rejected it
 
 rails
-    ‖ R1     r-8hw3   Never copy rail text into a child  deferred: 002, 003
+    ‖ R1     r-8hw3   Never copy rail text into a child  deferred: 002-bbbb, 003-cccc
 
 defects
     ✗ DF1    df-1ycb  Stage context is scattered         addressed by g-k7q2

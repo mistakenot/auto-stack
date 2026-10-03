@@ -215,7 +215,7 @@ func stageStatus(n graph.Node) string { return cmp.Or(n.StringField("status"), "
 // Text renders the brief as Markdown.
 func (v BriefView) Text() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Stage %s: %s\n\nPlan %s-%s · status %s\n", v.Stage.ID, v.Stage.Title, v.Plan, v.Name, v.Stage.Status)
+	fmt.Fprintf(&b, "# Stage %s: %s\n\nPlan %s (%s) · status %s\n", v.Stage.ID, v.Stage.Title, v.Plan, v.Name, v.Stage.Status)
 
 	section := func(title string, empty bool) bool {
 		b.WriteString("\n## " + title + "\n\n")

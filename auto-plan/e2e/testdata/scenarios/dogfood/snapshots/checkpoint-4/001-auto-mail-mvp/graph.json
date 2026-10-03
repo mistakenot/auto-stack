@@ -1,5 +1,6 @@
 {
-  "version": 1,
+  "version": "1.0.0",
+  "id": "001-acs4",
   "nodes": [
     {
       "id": "a-2g81",
@@ -267,7 +268,7 @@
       "status": "active",
       "rank": "a0",
       "fields": {
-        "plan": "002",
+        "plan": "002-j8nx",
         "title": "Walking skeleton: subscribe, send, list, ack"
       }
     },
@@ -631,7 +632,7 @@
       "rank": "aa",
       "fields": {
         "deferred": [
-          "002"
+          "002-j8nx"
         ],
         "description": "(functional) Intrusiveness escalates, never leads. Every message first waits for an in-band hook nudge; keystrokes are the last resort, firing only when the agent is idle by hook silence and the message has aged past a threshold.",
         "title": "Delivery never corrupts a working agent"
@@ -684,7 +685,7 @@
       "rank": "a8",
       "fields": {
         "deferred": [
-          "002"
+          "002-j8nx"
         ],
         "description": "(security) Capture widens to reach herdr panes. It must stay a prefix allowlist and never become \"everything except known secrets\" — agent environments carry live credentials (this host's sessions expose a messaging token in plain env).",
         "title": "Hook environment capture stays an allowlist"
@@ -717,7 +718,7 @@
       "rank": "a3",
       "fields": {
         "deferred": [
-          "002"
+          "002-j8nx"
         ],
         "description": "(security) Two rules, both absolute. Content: the injected sequence is a fixed constant — an instruction to go and read mail — never interpolated from an envelope or body, or a sender would be typing into a stranger's pane.",
         "title": "Injected keystrokes are a fixed constant, into a verified agent"
@@ -750,7 +751,7 @@
       "rank": "ac",
       "fields": {
         "deferred": [
-          "002"
+          "002-j8nx"
         ],
         "description": "(compat) A binding records its physical target as an opaque (manager, target) pair — never a typed tmux_pane_id / herdr_pane_id column. Delivery goes through an effector interface with one implementation per manager.",
         "title": "No session manager is hard-coded into stored data"
@@ -799,271 +800,325 @@
   ],
   "edges": [
     {
+      "id": "e-dx4b",
       "from": "a-6z14",
       "type": "wouldBreak",
       "to": "r-01p5"
     },
     {
+      "id": "e-kvvn",
       "from": "a-bcs8",
       "type": "wouldBreak",
       "to": "r-vgcz"
     },
     {
+      "id": "e-9vka",
       "from": "a-djp7",
       "type": "wouldBreak",
       "to": "r-q6hs"
     },
     {
+      "id": "e-qexb",
       "from": "a-f2m8",
       "type": "wouldBreak",
       "to": "r-p2kk"
     },
     {
+      "id": "e-r9z1",
       "from": "a-pe53",
       "type": "wouldBreak",
       "to": "r-jcvm"
     },
     {
+      "id": "e-ebap",
       "from": "a-txje",
       "type": "wouldBreak",
       "to": "r-q6hs"
     },
     {
+      "id": "e-ct1r",
       "from": "a-vrqj",
       "type": "wouldBreak",
       "to": "r-apsc"
     },
     {
+      "id": "e-1748",
       "from": "d-124m",
       "type": "constrains",
       "to": "g-kqxw"
     },
     {
+      "id": "e-yemt",
       "from": "d-124m",
       "type": "rejects",
       "to": "a-48t5"
     },
     {
+      "id": "e-dvn3",
       "from": "d-124m",
       "type": "rejects",
       "to": "a-bcs8"
     },
     {
+      "id": "e-e2b3",
       "from": "d-124m",
       "type": "supersedes",
       "to": "d-hr0p"
     },
     {
+      "id": "e-2s9d",
       "from": "d-271g",
       "type": "constrains",
       "to": "g-gc8t"
     },
     {
+      "id": "e-gsbe",
       "from": "d-271g",
       "type": "rejects",
       "to": "a-djp7"
     },
     {
+      "id": "e-7dwp",
       "from": "d-271g",
       "type": "rejects",
       "to": "a-txje"
     },
     {
+      "id": "e-s267",
       "from": "d-3e02",
       "type": "constrains",
       "to": "g-rbcw"
     },
     {
+      "id": "e-9aq7",
       "from": "d-3e02",
       "type": "rejects",
       "to": "a-bt89"
     },
     {
+      "id": "e-swp9",
       "from": "d-3e02",
       "type": "rejects",
       "to": "a-dsj8"
     },
     {
+      "id": "e-hq93",
       "from": "d-6prf",
       "type": "constrains",
       "to": "g-kqxw"
     },
     {
+      "id": "e-yp2b",
       "from": "d-6prf",
       "type": "rejects",
       "to": "a-f2m8"
     },
     {
+      "id": "e-rbac",
       "from": "d-6prf",
       "type": "rejects",
       "to": "a-yxva"
     },
     {
+      "id": "e-crqt",
       "from": "d-6prf",
       "type": "rejects",
       "to": "a-z90w"
     },
     {
+      "id": "e-vvbf",
       "from": "d-cfv7",
       "type": "constrains",
       "to": "g-w1fg"
     },
     {
+      "id": "e-b8fa",
       "from": "d-cfv7",
       "type": "rejects",
       "to": "a-2gq9"
     },
     {
+      "id": "e-nspz",
       "from": "d-cfv7",
       "type": "rejects",
       "to": "a-pe53"
     },
     {
+      "id": "e-914r",
       "from": "d-edst",
       "type": "constrains",
       "to": "g-gc8t"
     },
     {
+      "id": "e-316c",
       "from": "d-edst",
       "type": "rejects",
       "to": "a-vrqj"
     },
     {
+      "id": "e-5tyn",
       "from": "d-edst",
       "type": "rejects",
       "to": "a-y361"
     },
     {
+      "id": "e-q8dy",
       "from": "d-gm40",
       "type": "constrains",
       "to": "g-gc8t"
     },
     {
+      "id": "e-rf9a",
       "from": "d-gm40",
       "type": "rejects",
       "to": "a-2g81"
     },
     {
+      "id": "e-85ap",
       "from": "d-h7wk",
       "type": "constrains",
       "to": "g-rbcw"
     },
     {
+      "id": "e-v07a",
       "from": "d-h7wk",
       "type": "rejects",
       "to": "a-2nmm"
     },
     {
+      "id": "e-73w6",
       "from": "d-h7wk",
       "type": "rejects",
       "to": "a-pesp"
     },
     {
+      "id": "e-y97r",
       "from": "d-hr0p",
       "type": "constrains",
       "to": "g-kqxw"
     },
     {
+      "id": "e-mrt7",
       "from": "d-hr0p",
       "type": "rejects",
       "to": "a-kjh2"
     },
     {
+      "id": "e-1c6b",
       "from": "d-hr0p",
       "type": "rejects",
       "to": "a-x13r"
     },
     {
+      "id": "e-jgv0",
       "from": "d-rrht",
       "type": "constrains",
       "to": "g-kqxw"
     },
     {
+      "id": "e-bnwk",
       "from": "d-rrht",
       "type": "rejects",
       "to": "a-6z14"
     },
     {
+      "id": "e-5thj",
       "from": "d-rrht",
       "type": "rejects",
       "to": "a-aw9y"
     },
     {
+      "id": "e-5e0m",
       "from": "d-spbj",
       "type": "constrains",
       "to": "g-w1fg"
     },
     {
+      "id": "e-573x",
       "from": "d-spbj",
       "type": "rejects",
       "to": "a-63s8"
     },
     {
+      "id": "e-mqrc",
       "from": "d-spbj",
       "type": "rejects",
       "to": "a-ymt5"
     },
     {
+      "id": "e-0n2p",
       "from": "d-vvcy",
       "type": "constrains",
       "to": "g-w1fg"
     },
     {
+      "id": "e-yn3r",
       "from": "d-vvcy",
       "type": "rejects",
       "to": "a-57nj"
     },
     {
+      "id": "e-x1av",
       "from": "d-vvcy",
       "type": "rejects",
       "to": "a-6tp0"
     },
     {
+      "id": "e-fc32",
       "from": "d-xpbe",
       "type": "constrains",
       "to": "g-rbcw"
     },
     {
+      "id": "e-wpa0",
       "from": "d-xpbe",
       "type": "rejects",
       "to": "a-4kf4"
     },
     {
+      "id": "e-7gga",
       "from": "d-xpbe",
       "type": "rejects",
       "to": "a-m7rq"
     },
     {
+      "id": "e-j5t0",
       "from": "l-0f9w",
       "type": "in",
       "to": "j-pn3v"
     },
     {
+      "id": "e-7vp6",
       "from": "l-0x4k",
       "type": "in",
       "to": "j-pn3v"
     },
     {
+      "id": "e-m60h",
       "from": "l-21j1",
       "type": "in",
       "to": "j-bvmq"
     },
     {
+      "id": "e-tk0w",
       "from": "l-7fdr",
       "type": "in",
       "to": "j-pn3v"
     },
     {
+      "id": "e-2kdw",
       "from": "l-9wde",
       "type": "in",
       "to": "j-bvmq"
     },
     {
+      "id": "e-bdaw",
       "from": "l-cwd2",
       "type": "in",
       "to": "j-pn3v"
     },
     {
+      "id": "e-00ae",
       "from": "l-mfg7",
       "type": "in",
       "to": "j-bvmq"

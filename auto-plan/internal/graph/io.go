@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+
+	"github.com/mistakenot/auto-plan/internal/schema"
 )
 
 // ParseError reports malformed JSON — the only thing that fails Decode.
@@ -56,7 +58,7 @@ func Parse(data []byte) (*Graph, error) {
 	g := &Graph{}
 	obj, ok := top.(map[string]any)
 	if !ok {
-		g.issue("invalid-graph", "$", "", "graph.json must hold a JSON object {version, nodes, edges}", nil)
+		g.issue("invalid-graph", "$", "", "graph.json must hold a JSON object {version, id, nodes, edges}", nil)
 		return g, nil
 	}
 	for _, key := range slices.Sorted(maps.Keys(obj)) {
@@ -64,6 +66,8 @@ func Parse(data []byte) (*Graph, error) {
 		switch key {
 		case "version":
 			g.Version = g.decodeVersion(val)
+		case "id":
+			g.ID = g.str("$", key, val)
 		case "nodes":
 			g.Nodes = g.decodeNodes(val)
 		case "edges":
@@ -105,15 +109,12 @@ func (g *Graph) issue(code, path, field, msg string, value any) {
 	g.decodeIssues = append(g.decodeIssues, ValidationError{Code: code, Path: path, Field: field, Message: msg, Value: value})
 }
 
-func (g *Graph) decodeVersion(val any) int {
-	n, ok := val.(json.Number)
-	if ok {
-		if v, err := strconv.Atoi(n.String()); err == nil {
-			return v
-		}
+func (g *Graph) decodeVersion(val any) string {
+	if s, ok := val.(string); ok {
+		return s
 	}
-	g.issue("invalid-field", "$.version", "version", "version must be an integer", val)
-	return -1
+	g.issue("invalid-field", "$.version", "version", "version must be a semver string such as \""+schema.Version+"\"", val)
+	return ""
 }
 
 func (g *Graph) decodeNodes(val any) []Node {
@@ -179,6 +180,8 @@ func (g *Graph) decodeEdges(val any) []Edge {
 		for _, key := range slices.Sorted(maps.Keys(obj)) {
 			v := obj[key]
 			switch key {
+			case "id":
+				e.ID = g.str(path, key, v)
 			case "from":
 				e.From = g.str(path, key, v)
 			case "type":
@@ -235,6 +238,9 @@ func Encode(g *Graph) ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteByte('{')
 	if err := writeMember(&buf, "version", c.Version, true); err != nil {
+		return nil, err
+	}
+	if err := writeMember(&buf, "id", c.ID, false); err != nil {
 		return nil, err
 	}
 	buf.WriteString(`,"nodes":[`)
@@ -301,7 +307,10 @@ func encodeNode(buf *bytes.Buffer, n Node) error {
 
 func encodeEdge(buf *bytes.Buffer, e Edge) error {
 	buf.WriteByte('{')
-	if err := writeMember(buf, "from", e.From, true); err != nil {
+	if err := writeMember(buf, "id", e.ID, true); err != nil {
+		return err
+	}
+	if err := writeMember(buf, "from", e.From, false); err != nil {
 		return err
 	}
 	if err := writeMember(buf, "type", e.Type, false); err != nil {

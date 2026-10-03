@@ -1,6 +1,6 @@
 # Stage s-3v6v: Render layer
 
-Plan 001-stage-briefs · status done
+Plan 001 (stage-briefs) · status done
 
 ## Depends on
 
@@ -46,7 +46,7 @@ Constrains ac-jttt
 
 ## Rails
 
-- 005:r-8hw3: a rail in plan 005 (discharged by ac-jttt)
+- 005-m3x9:r-8hw3: a rail in plan 005-m3x9 (discharged by ac-jttt)
 - r-jbjh: Never copy rail text into a child (discharged by ac-jttt)
 
 ## Open questions

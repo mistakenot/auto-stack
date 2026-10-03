@@ -5,6 +5,6 @@ out
   (none)
 
 in
-  discharges ← ✓ 002:ac-t001  a sent mail is read back
-  honors     ← ▤ 002:plan     walking-skeleton
-  honors     ← ▤ 003:plan     fan-out
+  e-0006  discharges ← ✓ 002-bbbb:ac-t001  a sent mail is read back
+  e-0001  honors     ← ▤ 002-bbbb:plan     walking-skeleton
+  e-0001  honors     ← ▤ 003-cccc:plan     fan-out

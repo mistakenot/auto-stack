@@ -1,4 +1,4 @@
-001-stage-briefs  task · plan
+001  stage-briefs  task · plan
 
 ◎ G1     g-xyf8   An agent gets one stage's context in one call
     ✓ AC1.1  ac-jttt  brief is self-contained                      go test ./e2e -run Brief
@@ -11,7 +11,7 @@
     ◆ D2     d-tj08   ranks are strings
 
 rails
-    ‖ R1     r-jbjh   Never copy rail text into a child            deferred: 002
+    ‖ R1     r-jbjh   Never copy rail text into a child            deferred: 002-bbbb
 
 defects
     ✗ DF1    df-1ycb  Stage context is scattered across plan.html  addressed by g-xyf8

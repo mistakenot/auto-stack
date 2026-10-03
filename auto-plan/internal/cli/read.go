@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mistakenot/auto-plan/internal/app"
 	"github.com/mistakenot/auto-plan/internal/graph"
@@ -40,23 +41,49 @@ type listAllResult struct {
 
 func newListCmd(application *app.App) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "list <plan|all> [--type <type>]",
-		Short: "List a plan's nodes (or every plan's): IDs, metadata and titles only",
-		Long: `List nodes with their ID, type, status, rank and title, in registry type order and then
-reading order. Retired nodes are included (status says so). With no filter every node is
-listed; --type keeps one node type (trimmed, case-insensitive, checked against the registry).
+		Use:   "list [<plan|all>] [--type <type>] [--kind task|epic]",
+		Short: "List the plans (no argument), or a plan's nodes (or every plan's): IDs, metadata and titles only",
+		Long: `Three forms, all on the cheap rung (IDs and metadata; describe and get go deeper):
 
-One plan prints {plan, name, kind, lifecycle, nodes:[…]}; "all" prints {plans:[…]}. A plan whose
-graph.json is malformed is reported on stderr, the other plans are still listed, and the exit
-code is 1. Use describe for a summary and get for the full node.`,
-		Example: "  auto plan list 004 --type ac\n  auto plan list all --text",
-		Args:    cobra.ExactArgs(1),
+  auto plan list               the plans themselves: one row per folder under docs/plans
+  auto plan list <plan>        that plan's nodes
+  auto plan list all           every plan's nodes
+
+With no argument, each row is {id, number, name, path, kind, lifecycle, version, frozen,
+frozen_reason, epic}: id is the plan ID, frozen says whether writes are refused and
+frozen_reason why ("done": its lifecycle is done; "version": another format version wrote it),
+and epic is the epic's plan ID (omitted when none). Rows are sorted by folder. --kind keeps one
+plan kind (trimmed, case-insensitive). Prints {plans:[…]}.
+
+With a plan, nodes are listed with their ID, type, status, rank and title, in registry type order
+and then reading order. Retired nodes are included (status says so). --type keeps one node type
+(trimmed, case-insensitive, checked against the registry). One plan prints {plan, name, kind,
+lifecycle, nodes:[…]}; "all" prints {plans:[…]}.
+
+Every readable plan is always listed. A plan whose graph.json is malformed or invalid, and two
+folders sharing a plan number (duplicate-plan-number), are reported on stderr afterwards and the
+exit code is 1.`,
+		Example: "  auto plan list --text\n  auto plan list --kind epic\n  auto plan list 004 --type ac\n  auto plan list all --text",
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			typ, _ := cmd.Flags().GetString("type")
+			kind, _ := cmd.Flags().GetString("kind")
+			if len(args) == 0 {
+				if cmd.Flags().Changed("type") {
+					return failOne(cmd, textMode(cmd), "usage", "flags.type", "type", "--type filters a plan's nodes; name a plan (or all)", typ,
+						"auto plan list <plan|all> --type "+typ+", or auto plan list --kind task|epic for the plans")
+				}
+				return runListPlans(cmd, application, kind)
+			}
+			if cmd.Flags().Changed("kind") {
+				return failOne(cmd, textMode(cmd), "usage", "flags.kind", "kind", "--kind filters the plan listing; drop the plan argument", kind,
+					"auto plan list --kind "+kind)
+			}
 			return runList(cmd, application, args[0], typ)
 		},
 	}
-	cmd.Flags().String("type", "", "only nodes of this type ("+strings.Join(nodeTypeNames(), "|")+")")
+	cmd.Flags().String("type", "", "with a plan: only nodes of this type ("+strings.Join(nodeTypeNames(), "|")+")")
+	cmd.Flags().String("kind", "", "with no plan: only plans of this kind ("+strings.Join(planKinds, "|")+")")
 	return cmd
 }
 
@@ -93,6 +120,100 @@ func runList(cmd *cobra.Command, application *app.App, arg, typ string) error {
 	return reportLoadErrors(cmd, text, loadErrs)
 }
 
+// planRow is one plan on the plan listing (`auto plan list`).
+type planRow struct {
+	ID        string `json:"id"`
+	Number    string `json:"number"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Kind      string `json:"kind"`
+	Lifecycle string `json:"lifecycle"`
+	Version   string `json:"version"`
+	Frozen    bool   `json:"frozen"`
+	// FrozenReason is "done" or "version" when Frozen.
+	FrozenReason string `json:"frozen_reason,omitempty"`
+	Epic         string `json:"epic,omitempty"`
+}
+
+type planRows struct {
+	Plans []planRow `json:"plans"`
+}
+
+// Frozen reasons on the plan listing.
+const (
+	frozenDone    = "done"
+	frozenVersion = "version"
+)
+
+func runListPlans(cmd *cobra.Command, application *app.App, kind string) error {
+	text := textMode(cmd)
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind != "" && !slices.Contains(planKinds, kind) {
+		return failOne(cmd, text, "invalid-kind", "flags.kind", "kind", "--kind must be one of "+strings.Join(planKinds, "|"), kind,
+			"pass --kind task or --kind epic, or leave it out for every plan")
+	}
+	plans, loadErrs, err := loadMany(cmd, application, text, workspace.All)
+	if err != nil {
+		return err
+	}
+	result := planRows{Plans: []planRow{}}
+	numbers := map[string][]string{}
+	for _, lp := range plans {
+		g := lp.graph
+		row := planRow{ID: g.ID, Number: lp.plan.Number, Name: lp.plan.Name, Path: lp.plan.Dir, Version: g.Version}
+		if n, ok := g.Plan(); ok {
+			row.Kind, row.Lifecycle, row.Epic = n.StringField("kind"), n.StringField("lifecycle"), n.StringField("epic")
+		}
+		switch {
+		case g.OtherVersion():
+			row.Frozen, row.FrozenReason = true, frozenVersion
+		case row.Lifecycle == string(schema.LifecycleDone):
+			row.Frozen, row.FrozenReason = true, frozenDone
+		}
+		numbers[lp.plan.Number] = append(numbers[lp.plan.Number], lp.plan.Ref())
+		if kind == "" || row.Kind == kind {
+			result.Plans = append(result.Plans, row)
+		}
+	}
+	for _, n := range slices.Sorted(maps.Keys(numbers)) {
+		if ids := numbers[n]; len(ids) > 1 {
+			loadErrs = append(loadErrs, graph.ValidationError{Code: "duplicate-plan-number", Path: workspace.PlansDir, Field: "plan", Value: ids,
+				Message: "plan number " + n + " is used by " + strings.Join(ids, " and ") + "; renumber one with `auto plan renumber " + ids[len(ids)-1] + "`"})
+		}
+	}
+	if err := emit(cmd, text, result, func() string { return planRowsText(result.Plans) }); err != nil {
+		return err
+	}
+	return reportLoadErrors(cmd, text, loadErrs)
+}
+
+// planRowsText prints one aligned line per plan.
+func planRowsText(rows []planRow) string {
+	if len(rows) == 0 {
+		return "no plans under " + workspace.PlansDir + "\n"
+	}
+	idW, nameW, kindW := 0, 0, 0
+	kinds := make([]string, len(rows))
+	for i := range rows {
+		r := &rows[i]
+		kinds[i] = r.Kind + " · " + r.Lifecycle
+		idW, nameW, kindW = max(idW, len(r.ID)), max(nameW, len(r.Name)), max(kindW, utf8.RuneCountInString(kinds[i]))
+	}
+	var b strings.Builder
+	for i := range rows {
+		r := &rows[i]
+		line := fmt.Sprintf("%-*s  %-*s  %s", idW, r.ID, nameW, r.Name, kinds[i]+strings.Repeat(" ", kindW-utf8.RuneCountInString(kinds[i])))
+		if r.Frozen {
+			line += "  [frozen: " + r.FrozenReason + "]"
+		}
+		if r.Epic != "" {
+			line += "  epic " + r.Epic
+		}
+		b.WriteString(strings.TrimRight(line, " ") + "\n")
+	}
+	return b.String()
+}
+
 func listText(plans []planList) string {
 	var b strings.Builder
 	if len(plans) == 0 {
@@ -102,7 +223,7 @@ func listText(plans []planList) string {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "%s-%s  %s · %s\n", p.Plan, p.Name, p.Kind, p.Lifecycle)
+		fmt.Fprintf(&b, "%s  %s  %s · %s\n", p.Plan, p.Name, p.Kind, p.Lifecycle)
 		if len(p.Nodes) == 0 {
 			b.WriteString("  (no nodes)\n")
 			continue
@@ -145,7 +266,7 @@ direction. "get" is the exact command that prints the full node.`, render.Descri
 			if err != nil {
 				return err
 			}
-			v, ok := render.Describe(p.ID, g, args[1], set)
+			v, ok := render.Describe(p.Ref(), g, args[1], set)
 			if !ok {
 				return nodeNotFound(cmd, text, p, args[1])
 			}
@@ -171,7 +292,7 @@ is printed raw.`,
 			if err != nil {
 				return err
 			}
-			v, ok := render.Card(p.ID, g, args[1], set)
+			v, ok := render.Card(p.Ref(), g, args[1], set)
 			if !ok {
 				return nodeNotFound(cmd, text, p, args[1])
 			}
@@ -304,21 +425,20 @@ func loadMany(cmd *cobra.Command, application *app.App, text bool, arg string) (
 	if err != nil {
 		return nil, nil, err
 	}
-	plans, err := ws.Resolve(arg)
+	plans, err := resolveMany(cmd, ws, text, arg)
 	if err != nil {
-		return nil, nil, failOne(cmd, text, "plan-not-found", "args.plan", "plan", err.Error(), arg,
-			"name a plan as NNN, NNN-name, a path, or all")
+		return nil, nil, err
 	}
 	var out []loadedPlan
 	var errs []graph.ValidationError
 	for _, p := range plans {
 		g, err := graph.Decode(ws.GraphPath(p))
 		if err != nil {
-			errs = append(errs, graph.ValidationError{Code: "parse-error", Path: p.Dir + "/" + workspace.GraphFile, Field: "plan", Message: err.Error(), Value: p.ID})
+			errs = append(errs, graph.ValidationError{Code: "parse-error", Path: p.Dir + "/" + workspace.GraphFile, Field: "plan", Message: err.Error(), Value: p.Ref()})
 			continue
 		}
 		for _, ve := range graph.Validate(g) {
-			ve.Message = "plan " + p.ID + ": " + ve.Message
+			ve.Message = "plan " + p.Ref() + ": " + ve.Message
 			errs = append(errs, ve)
 		}
 		out = append(out, loadedPlan{plan: p, graph: g})

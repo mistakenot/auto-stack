@@ -33,7 +33,7 @@ The JSON form (default) carries the same facts as --text.`,
 			if err != nil {
 				return err
 			}
-			return emitView(cmd, text, render.Show(p.ID, g, set))
+			return emitView(cmd, text, render.Show(p.Ref(), g, set))
 		},
 	}
 }
@@ -89,7 +89,7 @@ func runTrace(cmd *cobra.Command, application *app.App, planArg, id string, up, 
 	if err != nil {
 		return err
 	}
-	v, ok := render.Trace(p.ID, g, id, dir, set)
+	v, ok := render.Trace(p.Ref(), g, id, dir, set)
 	if !ok {
 		return nodeNotFound(cmd, text, p, id)
 	}
@@ -141,19 +141,19 @@ func runTree(cmd *cobra.Command, application *app.App, args []string, files bool
 				return err
 			}
 		}
-		return emitView(cmd, text, render.Files(p.ID, g, stage))
+		return emitView(cmd, text, render.Files(p.Ref(), g, stage))
 	}
 	if err := requireType(cmd, text, p, g, args[1], "tree"); err != nil {
 		return err
 	}
 	n, _ := g.NodeByID(args[1])
-	v := render.TreeNode(p.ID, g, n)
+	v := render.TreeNode(p.Ref(), g, n)
 	if err := emitView(cmd, text, v); err != nil {
 		return err
 	}
 	if len(v.Errors) > 0 {
 		return fail(cmd, text, treeErrors(n, v.Errors),
-			"fix the body with auto plan update "+p.ID+" "+n.ID+" --body @file; `auto plan lint "+p.ID+"` reports the same tree-syntax errors")
+			"fix the body with auto plan update "+p.Ref()+" "+n.ID+" --body @file; `auto plan lint "+p.Ref()+"` reports the same tree-syntax errors")
 	}
 	return nil
 }
@@ -190,7 +190,7 @@ JSON by default; --text prints Markdown.`,
 			if err := requireType(cmd, text, p, g, args[1], "stage"); err != nil {
 				return err
 			}
-			v, _ := render.Brief(p.ID, g, args[1], set)
+			v, _ := render.Brief(p.Ref(), g, args[1], set)
 			return emitView(cmd, text, v)
 		},
 	}
@@ -215,7 +215,7 @@ func loadForRead(cmd *cobra.Command, application *app.App, text bool, arg string
 	g, err := graph.Decode(ws.GraphPath(p))
 	if err != nil {
 		return workspace.Plan{}, nil, failOne(cmd, text, "parse-error", "$", "", err.Error(), nil,
-			"fix graph.json by hand, then run `auto plan lint "+p.ID+"`")
+			"fix graph.json by hand, then run `auto plan lint "+p.Ref()+"`")
 	}
 	return p, g, nil
 }
@@ -237,18 +237,18 @@ func loadInSet(cmd *cobra.Command, application *app.App, text bool, arg string) 
 		return workspace.Plan{}, nil, nil, failOne(cmd, text, "read-failed", "$", "", err.Error(), nil,
 			"check that "+workspace.PlansDir+" is readable")
 	}
-	g, err := set.Load(p.ID)
+	g, err := set.LoadPlan(p)
 	if err != nil {
 		return workspace.Plan{}, nil, nil, failOne(cmd, text, "parse-error", "$", "", err.Error(), nil,
-			"fix graph.json by hand, then run `auto plan lint "+p.ID+"`")
+			"fix graph.json by hand, then run `auto plan lint "+p.Ref()+"`")
 	}
 	return p, g, set, nil
 }
 
 // nodeNotFound reports an ID the plan does not hold.
 func nodeNotFound(cmd *cobra.Command, text bool, p workspace.Plan, id string) error {
-	return failOne(cmd, text, graph.CodeNodeNotFound, "args.id", "id", "plan "+p.ID+" has no node "+id, id,
-		"IDs are plan-local; list them with `auto plan list "+p.ID+"` or find one with `auto plan search "+p.ID+" <text>`")
+	return failOne(cmd, text, graph.CodeNodeNotFound, "args.id", "id", "plan "+p.Ref()+" has no node "+id, id,
+		"IDs are plan-local; list them with `auto plan list "+p.Ref()+"` or find one with `auto plan search "+p.Ref()+" <text>`")
 }
 
 // requireType checks that id names a node of type typ.
@@ -259,7 +259,7 @@ func requireType(cmd *cobra.Command, text bool, p workspace.Plan, g *graph.Graph
 	}
 	if n.Type != typ {
 		return failOne(cmd, text, "wrong-type", "args.id", "id", id+" is a "+n.Type+", not a "+typ, id,
-			"list the plan's "+typ+" nodes with `auto plan list "+p.ID+" --type "+typ+"`")
+			"list the plan's "+typ+" nodes with `auto plan list "+p.Ref()+" --type "+typ+"`")
 	}
 	return nil
 }

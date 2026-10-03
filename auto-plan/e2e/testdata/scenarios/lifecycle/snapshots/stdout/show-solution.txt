@@ -1,4 +1,4 @@
-001-demo  task · solution
+001-acs4  demo  task · solution
 
 ◎ G1     g-gc8t   An agent gets one stage's context in one call
     ✓ AC1.1  ac-j58t  brief is self-contained  go test ./e2e -run Brief

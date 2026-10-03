@@ -1,5 +1,6 @@
 {
-  "version": 1,
+  "version": "1.0.0",
+  "id": "001-acs4",
   "nodes": [
     {
       "id": "ac-j58t",
@@ -58,11 +59,13 @@
   ],
   "edges": [
     {
+      "id": "e-tg1m",
       "from": "ac-j58t",
       "type": "proves",
       "to": "g-gc8t"
     },
     {
+      "id": "e-w1fg",
       "from": "d-kqxw",
       "type": "constrains",
       "to": "g-gc8t"

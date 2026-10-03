@@ -1,4 +1,4 @@
-001-demo  task · requirements
+001-acs4  demo  task · requirements
 
 ◎ G1     g-rbcw   Plans can be reordered without breaking references
 ◎ G2     g-gc8t   An agent gets one stage's context in one call

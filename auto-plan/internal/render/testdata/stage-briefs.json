@@ -1,5 +1,6 @@
 {
-  "version": 1,
+  "version": "1.0.0",
+  "id": "001-k7q2",
   "nodes": [
     {
       "id": "ac-cgyg",
@@ -209,7 +210,7 @@
       "rank": "a0",
       "fields": {
         "deferred": [
-          "002"
+          "002-bbbb"
         ],
         "title": "Never copy rail text into a child"
       }
@@ -257,96 +258,115 @@
   ],
   "edges": [
     {
+      "id": "e-0001",
       "from": "ac-cgyg",
       "type": "proves",
       "to": "g-xyf8"
     },
     {
+      "id": "e-0002",
       "from": "ac-jttt",
       "type": "discharges",
-      "to": "005:r-8hw3"
+      "to": "005-m3x9:r-8hw3"
     },
     {
+      "id": "e-0003",
       "from": "ac-jttt",
       "type": "discharges",
       "to": "r-jbjh"
     },
     {
+      "id": "e-0004",
       "from": "ac-jttt",
       "type": "proves",
       "to": "g-xyf8"
     },
     {
+      "id": "e-0005",
       "from": "ac-y16y",
       "type": "proves",
       "to": "g-473w"
     },
     {
+      "id": "e-0006",
       "from": "d-tj08",
       "type": "constrains",
       "to": "g-473w"
     },
     {
+      "id": "e-0007",
       "from": "d-ytbz",
       "type": "constrains",
       "to": "ac-jttt"
     },
     {
+      "id": "e-0008",
       "from": "d-ytbz",
       "type": "rejects",
       "to": "a-9xcp"
     },
     {
+      "id": "e-0009",
       "from": "d-ytbz",
       "type": "rejects",
       "to": "a-c70k"
     },
     {
+      "id": "e-000a",
       "from": "g-xyf8",
       "type": "addresses",
       "to": "df-1ycb"
     },
     {
+      "id": "e-000b",
       "from": "s-3v6v",
       "type": "covers",
       "to": "ac-jttt"
     },
     {
+      "id": "e-000c",
       "from": "s-3v6v",
       "type": "touches",
       "to": "f-pa6c"
     },
     {
+      "id": "e-000d",
       "from": "s-3v6v",
       "type": "touches",
       "to": "f-rn42"
     },
     {
+      "id": "e-000e",
       "from": "s-p6v5",
       "type": "covers",
       "to": "ac-cgyg"
     },
     {
+      "id": "e-000f",
       "from": "s-p6v5",
       "type": "dependsOn",
       "to": "s-3v6v"
     },
     {
+      "id": "e-000g",
       "from": "s-p6v5",
       "type": "touches",
       "to": "f-44v0"
     },
     {
+      "id": "e-000h",
       "from": "s-p6v5",
       "type": "touches",
       "to": "f-gqzz"
     },
     {
+      "id": "e-000j",
       "from": "s-p6v5",
       "type": "touches",
       "to": "f-r5et"
     },
     {
+      "id": "e-000k",
       "from": "t-nfba",
       "type": "about",
       "to": "ac-jttt"

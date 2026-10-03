@@ -1,6 +1,6 @@
 # Stage s-m7ab: Docs, init gitignore, cleanup, e2e
 
-Plan 003-reflect-tool-hardening · status done
+Plan 003-gevp (reflect-tool-hardening) · status done
 
 ## Depends on
 

@@ -293,3 +293,86 @@ func TestRepoPathPatternStaysInRepo(t *testing.T) {
 		}
 	}
 }
+
+// TestLifecycleLivesInRegistry: the lifecycle sequence is owned by the
+// registry. Every node type's MinLifecycle names one of its steps, the plan
+// node's lifecycle enum is exactly the sequence, and the step constants are
+// all in it. (lint's TestRuleLifecyclesAreRegistrySteps covers the rules.)
+func TestLifecycleLivesInRegistry(t *testing.T) {
+	if len(Registry.Lifecycle) == 0 {
+		t.Fatal("Registry.Lifecycle is empty")
+	}
+	seen := map[Lifecycle]bool{}
+	for _, l := range Registry.Lifecycle {
+		if seen[l] {
+			t.Errorf("lifecycle step %q is listed twice", l)
+		}
+		seen[l] = true
+	}
+	for _, n := range Registry.Nodes {
+		if !slices.Contains(Registry.Lifecycle, n.MinLifecycle) {
+			t.Errorf("node type %q: MinLifecycle %q is not a step of Registry.Lifecycle", n.Name, n.MinLifecycle)
+		}
+	}
+	plan, _ := Registry.Node(PlanNodeID)
+	f, _ := plan.Field("lifecycle")
+	if !slices.Equal(f.Enum, LifecycleNames()) {
+		t.Errorf("plan.lifecycle enum %v differs from Registry.Lifecycle %v", f.Enum, LifecycleNames())
+	}
+	for _, l := range []Lifecycle{LifecycleRequirements, LifecycleSolution, LifecyclePlan, LifecycleExecuting, LifecycleDone} {
+		if l.Index() < 0 {
+			t.Errorf("step constant %q is not in Registry.Lifecycle", l)
+		}
+	}
+}
+
+// TestPlanRefFieldsUsePlanIDPattern: every field holding plan IDs is a
+// string or list checked against PlanIDPattern, so shorthand expansion and
+// renumber can treat them uniformly.
+func TestPlanRefFieldsUsePlanIDPattern(t *testing.T) {
+	n := 0
+	for _, nt := range Registry.Nodes {
+		for _, f := range nt.Fields {
+			if !f.PlanRef {
+				continue
+			}
+			n++
+			if f.Pattern != PlanIDPattern || (f.Kind != KindString && f.Kind != KindList) {
+				t.Errorf("%s.%s: a PlanRef field must be a string or list with Pattern PlanIDPattern", nt.Name, f.Name)
+			}
+		}
+	}
+	if n != 3 {
+		t.Errorf("want 3 PlanRef fields (plan.epic, child.plan, rail.deferred), got %d", n)
+	}
+}
+
+// TestEdgePrefixIsReserved: edge IDs are `e-xxxx` and share one ID space
+// with nodes, so no node type may use the prefix "e".
+func TestEdgePrefixIsReserved(t *testing.T) {
+	for _, nt := range Registry.Nodes {
+		if nt.Prefix == "e" {
+			t.Errorf("node type %q uses the reserved edge prefix e", nt.Name)
+		}
+	}
+}
+
+func TestParseVersion(t *testing.T) {
+	for s, want := range map[string]SemVer{"1.0.0": {1, 0, 0}, "1.12.3": {1, 12, 3}, "2.0.10": {2, 0, 10}} {
+		got, ok := ParseVersion(s)
+		if !ok || got != want {
+			t.Errorf("ParseVersion(%q) = %v, %v; want %v", s, got, ok, want)
+		}
+	}
+	for _, s := range []string{"", "1", "1.0", "v1.0.0", "01.0.0", "1.0.0-rc1", "1.0.x"} {
+		if _, ok := ParseVersion(s); ok {
+			t.Errorf("ParseVersion(%q) accepted", s)
+		}
+	}
+	if (SemVer{1, 2, 0}).Compare(SemVer{1, 10, 0}) >= 0 {
+		t.Error("1.2.0 must sort before 1.10.0")
+	}
+	if _, ok := ParseVersion(Version); !ok {
+		t.Errorf("schema.Version %q is not semver", Version)
+	}
+}

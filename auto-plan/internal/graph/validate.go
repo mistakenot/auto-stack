@@ -35,9 +35,14 @@ func NodePath(id string) string { return "$.nodes[" + id + "]" }
 func EdgePath(e Edge) string { return "$.edges[" + e.From + " " + e.Type + " " + e.To + "]" }
 
 // Validate returns every structural problem in g as data, checked against the
-// registry: unknown fields and types, bad or duplicate IDs, field values
-// against their FieldSpec, and edges against their EdgeType endpoints. It never
+// registry: the version and plan ID, unknown fields and types, bad or
+// duplicate IDs (node and edge IDs share one space), field values against
+// their FieldSpec, and edges against their EdgeType endpoints. It never
 // returns nil.
+//
+// A graph of another major format version was written against another
+// registry, so only its decode problems are reported: it is read best effort
+// (lint adds an other-version warning) and never written (Frozen).
 func Validate(g *Graph) []ValidationError {
 	v := validator{reg: &schema.Registry}
 	v.errs = append(v.errs, g.decodeIssues...)
@@ -58,8 +63,18 @@ func (v *validator) graph(g *Graph) {
 	if v.errs == nil {
 		v.errs = []ValidationError{}
 	}
-	if g.Version != Version {
-		v.add(CodeBadVersion, "$.version", "version", fmt.Sprintf("version must be %d", Version), g.Version)
+	if _, ok := schema.ParseVersion(g.Version); !ok && !v.decodeIssueAt("$.version") {
+		v.add(CodeBadVersion, "$.version", "version",
+			"version must be a semver string MAJOR.MINOR.PATCH (this tool writes "+strconv.Quote(schema.Version)+")", g.Version)
+	}
+	if g.OtherMajor() {
+		return
+	}
+	switch {
+	case g.ID == "" && !v.decodeIssueAt("$.id"):
+		v.add(CodeMissingField, "$.id", "id", "the plan ID is required (NNN-xxxx, e.g. 004-k7q2)", nil)
+	case g.ID != "" && !PlanIDPattern.MatchString(g.ID):
+		v.add(CodeBadID, "$.id", "id", "the plan ID must be the plan number, a hyphen and 4 Crockford base32 characters (e.g. 004-k7q2)", g.ID)
 	}
 	for _, k := range slices.Sorted(maps.Keys(g.Extra)) {
 		v.add(CodeUnknownField, "$."+k, k, "unknown top-level key "+strconv.Quote(k), nil)
@@ -87,8 +102,18 @@ func (v *validator) graph(g *Graph) {
 	}
 
 	seen := map[string]bool{}
+	edgeIDs := map[string]bool{}
 	for _, e := range g.Edges {
 		path := EdgePath(e)
+		switch _, nodeID := byID[e.ID]; {
+		case e.ID == "":
+			v.add(CodeMissingField, path+".id", "id", "an edge ID is required (e- + 4 Crockford base32 characters, e.g. e-7k2q)", nil)
+		case !EdgeIDPattern.MatchString(e.ID):
+			v.add(CodeBadID, path+".id", "id", "an edge ID must be \"e-\" + 4 Crockford base32 characters (e.g. e-7k2q)", e.ID)
+		case nodeID || edgeIDs[e.ID]:
+			v.add(CodeDuplicateID, path+".id", "id", "ID "+strconv.Quote(e.ID)+" is used more than once (node and edge IDs share one space)", e.ID)
+		}
+		edgeIDs[e.ID] = true
 		key := e.From + "\x00" + e.Type + "\x00" + e.To
 		if seen[key] {
 			v.add(CodeDuplicateEdge, path, "", "edge is listed more than once", nil)
@@ -97,6 +122,16 @@ func (v *validator) graph(g *Graph) {
 		seen[key] = true
 		v.edge(path, e, byID)
 	}
+}
+
+// decodeIssueAt reports whether decoding already flagged path.
+func (v *validator) decodeIssueAt(path string) bool {
+	for _, e := range v.errs {
+		if e.Path == path {
+			return true
+		}
+	}
+	return false
 }
 
 func (v *validator) node(path string, n Node) {
@@ -237,9 +272,12 @@ func (v *validator) edge(path string, e Edge, byID map[string]Node) {
 		switch {
 		case ok && !et.CrossPlan:
 			v.add(CodeWrongEndpoint, path+".to", "to", et.Name+" edges cannot target another plan", e.To)
+		case ShortRefPattern.MatchString(e.To):
+			v.add(CodeDanglingRef, path+".to", "to",
+				"edge targets "+strconv.Quote(e.To)+", a bare plan number: a stored reference names the plan ID (NNN-xxxx:ID, e.g. 005-k7q2:r-8hw3)", e.To)
 		case !QualifiedRefPattern.MatchString(e.To):
 			v.add(CodeDanglingRef, path+".to", "to",
-				"edge targets "+strconv.Quote(e.To)+", which is not a reference NNN:ID (e.g. 005:r-8hw3)", e.To)
+				"edge targets "+strconv.Quote(e.To)+", which is not a reference NNN-xxxx:ID (e.g. 005-k7q2:r-8hw3)", e.To)
 		}
 		// Well-formed qualified targets are resolved across plans
 		// (workspace.PlanSet.CheckEdge), not here.

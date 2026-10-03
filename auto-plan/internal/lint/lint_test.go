@@ -2,6 +2,7 @@ package lint
 
 import (
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mistakenot/auto-plan/internal/graph"
+	"github.com/mistakenot/auto-plan/internal/schema"
 	"github.com/mistakenot/auto-plan/internal/workspace"
 )
 
@@ -17,7 +19,7 @@ import (
 func fixture(lifecycle string, nodes, edges []string) string {
 	plan := `{"id": "plan", "type": "plan", "status": "active", "fields": {"name": "demo", "kind": "task", "lifecycle": "` +
 		lifecycle + `", "created": "2026-01-01"}}`
-	return `{"version": 1, "nodes": [` + strings.Join(append([]string{plan}, nodes...), ",") +
+	return `{"version": "1.0.0", "id": "001-k7q2", "nodes": [` + strings.Join(append([]string{plan}, nodes...), ",") +
 		`], "edges": [` + strings.Join(edges, ",") + `]}`
 }
 
@@ -26,8 +28,8 @@ const (
 	acA   = `{"id": "ac-3fxm", "type": "ac", "status": "active", "rank": "a0", "fields": {"title": "an ac", "gwt": "Given a, when b, then c", "verify": {"cmd": "go test ./..."}}}`
 	decA  = `{"id": "d-9t2w", "type": "decision", "status": "active", "rank": "a0", "fields": {"title": "a decision", "chosen": "c", "why": "w", "by": "charlie"}}`
 	altA  = `{"id": "a-5hcv", "type": "alternative", "status": "active", "rank": "a0", "fields": {"title": "an option", "why": "worse"}}`
-	proof = `{"from": "ac-3fxm", "type": "proves", "to": "g-k7q2"}`
-	rej   = `{"from": "d-9t2w", "type": "rejects", "to": "a-5hcv"}`
+	proof = `{"id": "e-0001", "from": "ac-3fxm", "type": "proves", "to": "g-k7q2"}`
+	rej   = `{"id": "e-0002", "from": "d-9t2w", "type": "rejects", "to": "a-5hcv"}`
 
 	questionOpen     = `{"id": "q-7mzk", "type": "question", "status": "active", "rank": "a0", "fields": {"title": "Which store?", "status": "open"}}`
 	questionAnswered = `{"id": "q-7mzk", "type": "question", "status": "active", "rank": "a0", "fields": {"title": "Which store?", "status": "answered", "answer": "JSON"}}`
@@ -39,9 +41,30 @@ func node(id, typ, fields string) string {
 	return `{"id": "` + id + `", "type": "` + typ + `", "status": "active", "rank": "a0", "fields": {` + fields + `}}`
 }
 
+// edge returns an edge with an ID derived from its endpoints, so fixtures
+// stay readable and IDs stay unique per plan.
 func edge(from, typ, to string) string {
-	return `{"from": "` + from + `", "type": "` + typ + `", "to": "` + to + `"}`
+	return `{"id": "` + edgeID(from, typ, to) + `", "from": "` + from + `", "type": "` + typ + `", "to": "` + to + `"}`
 }
+
+func edgeID(from, typ, to string) string {
+	const crockford = "0123456789abcdefghjkmnpqrstvwxyz"
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(from + " " + typ + " " + to))
+	n := h.Sum32()
+	id := []byte("e-")
+	for range 4 {
+		id = append(id, crockford[n%32])
+		n /= 32
+	}
+	return string(id)
+}
+
+// planIDs are the fixture plans' IDs, by folder number.
+var planIDs = map[string]string{"001": "001-aaaa", "002": "002-bbbb", "003": "003-cccc", "009": "009-zzzz"}
+
+// pid is the plan ID of fixture plan number n.
+func pid(n string) string { return planIDs[n] }
 
 func stage(id string) string {
 	return node(id, "stage", `"title": "stage `+id+`", "steps": ["do it"], "commit": "feat: `+id+`"`)
@@ -93,7 +116,7 @@ func TestRules(t *testing.T) {
 
 		// Structural codes come from graph.Validate.
 		{"dangling-ref", fixture("requirements", []string{goalA, decA, altA}, []string{
-			rej, `{"from": "d-9t2w", "type": "constrains", "to": "g-zzzz"}`,
+			rej, `{"id": "e-0009", "from": "d-9t2w", "type": "constrains", "to": "g-zzzz"}`,
 		}), []string{"dangling-ref"}},
 		{"bad-id", fixture("requirements", []string{
 			`{"id": "G1", "type": "goal", "status": "active", "rank": "a0", "fields": {"title": "numbered"}}`,
@@ -146,7 +169,7 @@ func TestRules(t *testing.T) {
 		{"dependency-cycle applies at requirements", fixture("requirements", []string{stage("s-aaa1"), stage("s-aaa2")},
 			[]string{edge("s-aaa1", "dependsOn", "s-aaa2"), edge("s-aaa2", "dependsOn", "s-aaa1")}), []string{"dependency-cycle"}},
 		{"dependency-cycle: child plans", fixture("requirements", []string{
-			node("c-aaa1", "child", `"plan": "002"`), node("c-aaa2", "child", `"plan": "003"`),
+			node("c-aaa1", "child", `"plan": "002-bbbb"`), node("c-aaa2", "child", `"plan": "003-cccc"`),
 		}, []string{edge("c-aaa1", "dependsOn", "c-aaa2"), edge("c-aaa2", "dependsOn", "c-aaa1")}), []string{"dependency-cycle"}},
 
 		// Prose references (AC-8).
@@ -220,6 +243,7 @@ func TestRules(t *testing.T) {
 // TestSeverities pins every rule's code and severity (AC-7).
 func TestSeverities(t *testing.T) {
 	want := map[string]Severity{
+		"plan-id-mismatch": SeverityError, "ambiguous-ref": SeverityError,
 		"open-question": SeverityError, "ac-no-goal": SeverityError, "ac-multi-goal": SeverityError,
 		"dangling-prose-ref": SeverityError, "tree-syntax": SeverityError, "dependency-cycle": SeverityError,
 		"goal-no-ac": SeverityError, "ac-no-verify": SeverityError, "unplanned-file": SeverityError,
@@ -427,16 +451,17 @@ func TestFileParseError(t *testing.T) {
 func planDoc(name, kind, lifecycle, epic string, nodes, edges []string) string {
 	epicField := ""
 	if epic != "" {
-		epicField = `, "epic": "` + epic + `"`
+		epicField = `, "epic": "` + pid(epic) + `"`
 	}
 	plan := `{"id": "plan", "type": "plan", "status": "active", "fields": {"name": "` + name + `", "kind": "` + kind +
 		`", "lifecycle": "` + lifecycle + `", "created": "2026-01-01"` + epicField + `}}`
-	return `{"version": 1, "nodes": [` + strings.Join(append([]string{plan}, nodes...), ",") +
+	return `{"version": "1.0.0", "id": "@PLAN@", "nodes": [` + strings.Join(append([]string{plan}, nodes...), ",") +
 		`], "edges": [` + strings.Join(edges, ",") + `]}`
 }
 
 // writeSet writes each folder's graph.json under a temp docs/plans and
-// returns the workspace's PlanSet.
+// returns the workspace's PlanSet. A doc's "@PLAN@" ID becomes the plan ID of
+// its folder's number.
 func writeSet(t *testing.T, folders map[string]string) *workspace.PlanSet {
 	t.Helper()
 	root := t.TempDir()
@@ -445,6 +470,7 @@ func writeSet(t *testing.T, folders map[string]string) *workspace.PlanSet {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
+		doc = strings.Replace(doc, `"@PLAN@"`, `"`+pid(folder[:3])+`"`, 1)
 		if err := os.WriteFile(filepath.Join(dir, "graph.json"), []byte(doc), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -467,7 +493,7 @@ var (
 	epicRail  = node("r-e001", "rail", `"title": "no network calls"`)
 	epicJour  = node("j-e001", "journey", `"title": "send and ack"`)
 	epicLeg   = node("l-e001", "leg", `"actor": "agent", "action": "sends mail"`)
-	epicChild = node("c-e001", "child", `"plan": "002", "title": "walking skeleton"`)
+	epicChild = node("c-e001", "child", `"plan": "002-bbbb", "title": "walking skeleton"`)
 
 	childGoal = node("g-t001", "goal", `"title": "round trip"`)
 	childAC   = node("ac-t001", "ac", `"title": "read back", "gwt": "Given, when, then", "verify": {"cmd": "go test ./..."}`)
@@ -492,11 +518,11 @@ func withProse(doc, description string) string {
 // childEdges are the clean child's edges; drop removes the ones it names.
 func childEdges(drop ...string) []string {
 	all := map[string]string{
-		"honors":     edge("plan", "honors", "001:r-e001"),
-		"delivers":   edge("plan", "delivers", "001:l-e001"),
-		"builds-on":  edge("plan", "builds-on", "001:d-e001"),
+		"honors":     edge("plan", "honors", "001-aaaa:r-e001"),
+		"delivers":   edge("plan", "delivers", "001-aaaa:l-e001"),
+		"builds-on":  edge("plan", "builds-on", "001-aaaa:d-e001"),
 		"proves":     edge("ac-t001", "proves", "g-t001"),
-		"discharges": edge("ac-t001", "discharges", "001:r-e001"),
+		"discharges": edge("ac-t001", "discharges", "001-aaaa:r-e001"),
 	}
 	var out []string
 	for _, k := range []string{"honors", "delivers", "builds-on", "proves", "discharges"} {
@@ -525,13 +551,22 @@ func family(epic, child string) map[string]string {
 // twoChildren is a clean epic family at lifecycle plan with a second child,
 // 003, whose edges are given; deferred, when set, is the rail's deferred list.
 func twoChildren(deferred []string, edges003 []string) map[string]string {
-	epic := epicDoc("plan", []string{node("c-e002", "child", `"plan": "003", "title": "fan-out"`)}, nil)
+	epic := epicDoc("plan", []string{node("c-e002", "child", `"plan": "003-cccc", "title": "fan-out"`)}, nil)
 	if deferred != nil {
-		epic = strings.Replace(epic, `"no network calls"`, `"no network calls", "deferred": ["`+strings.Join(deferred, `", "`)+`"]`, 1)
+		ids := make([]string, len(deferred))
+		for i, d := range deferred {
+			ids[i] = pid(d)
+		}
+		epic = strings.Replace(epic, `"no network calls"`, `"no network calls", "deferred": ["`+strings.Join(ids, `", "`)+`"]`, 1)
 	}
 	folders := family(epic, "")
 	folders["003-fan-out"] = planDoc("fan-out", "task", "plan", "001", []string{childGoal, childAC}, edges003)
 	return folders
+}
+
+// lintNumber lints the (first) plan with folder number n within set.
+func lintNumber(set *workspace.PlanSet, n string) Report {
+	return Plan(set, set.ByNumber(n)[0])
 }
 
 // errorCodes lints planID within set and returns its error codes (and the
@@ -540,7 +575,7 @@ func twoChildren(deferred []string, edges003 []string) map[string]string {
 func errorCodes(t *testing.T, set *workspace.PlanSet, planID string, keep ...string) []string {
 	t.Helper()
 	var out []string
-	for _, is := range Plan(set, planID).Issues {
+	for _, is := range lintNumber(set, planID).Issues {
 		if is.Hint == "" || is.Message == "" || is.Path == "" {
 			t.Errorf("issue lacks message/path/hint: %+v", is)
 		}
@@ -576,7 +611,7 @@ func TestEpicRules(t *testing.T) {
 		{"rail-unhonored", family("", childDoc("plan", "001", nil, childEdges("honors"))), "001", nil, []string{"rail-unhonored"}},
 		{"rail-unhonored gated below plan", family(epicDoc("solution", nil, nil), childDoc("plan", "001", nil, childEdges("honors"))), "001", nil, nil},
 		{"rail-unhonored: deferred", family(
-			strings.Replace(epicDoc("plan", nil, nil), `"no network calls"`, `"no network calls", "deferred": ["002"]`, 1),
+			strings.Replace(epicDoc("plan", nil, nil), `"no network calls"`, `"no network calls", "deferred": ["002-bbbb"]`, 1),
 			childDoc("plan", "001", nil, childEdges("honors"))), "001", nil, nil},
 
 		{"rail-unhonored: one honouring child does not cover another", twoChildren(nil, childEdges("honors")), "001", nil,
@@ -589,12 +624,12 @@ func TestEpicRules(t *testing.T) {
 		{"rail-undischarged", family("", childDoc("solution", "001", nil, childEdges("discharges"))), "002", nil, []string{"rail-undischarged"}},
 		{"rail-undischarged: a retired AC does not count", family("", childDoc("solution", "001",
 			[]string{retired(strings.Replace(childAC, "ac-t001", "ac-t002", 1))},
-			append(childEdges("discharges"), edge("ac-t002", "discharges", "001:r-e001")))), "002", nil, []string{"rail-undischarged"}},
+			append(childEdges("discharges"), edge("ac-t002", "discharges", "001-aaaa:r-e001")))), "002", nil, []string{"rail-undischarged"}},
 		{"rail-undischarged gated at requirements", family("", childDoc("requirements", "001", nil, childEdges("discharges"))), "002", nil, nil},
 
 		{"leg-undelivered", family("", childDoc("plan", "001", nil, childEdges("delivers"))), "001", nil, []string{"leg-undelivered"}},
 
-		{"child-missing", family(epicDoc("requirements", []string{node("c-e002", "child", `"plan": "009"`)}, nil), ""), "001", nil,
+		{"child-missing", family(epicDoc("requirements", []string{node("c-e002", "child", `"plan": "009-zzzz"`)}, nil), ""), "001", nil,
 			[]string{"child-missing"}},
 
 		{"child-epic-mismatch: the epic does not list the child", family(epicUnlisted("requirements"), ""), "002", nil,
@@ -617,7 +652,7 @@ func TestEpicRules(t *testing.T) {
 			[]string{retired(supersede[0])}, supersedeEdges), ""), "002", nil, nil},
 
 		{"child dependency-cycle", map[string]string{
-			"001-mail-mvp": planDoc("mail-mvp", "epic", "requirements", "", []string{epicChild, node("c-e002", "child", `"plan": "003"`)},
+			"001-mail-mvp": planDoc("mail-mvp", "epic", "requirements", "", []string{epicChild, node("c-e002", "child", `"plan": "003-cccc"`)},
 				[]string{edge("c-e001", "dependsOn", "c-e002"), edge("c-e002", "dependsOn", "c-e001")}),
 			"002-walking-skeleton": childDoc("requirements", "001", nil, childEdges("honors", "delivers", "builds-on", "discharges")),
 			"003-fan-out":          planDoc("fan-out", "task", "requirements", "001", nil, nil),
@@ -625,13 +660,13 @@ func TestEpicRules(t *testing.T) {
 
 		// Qualified references resolve against the set.
 		{"qualified dangling-ref: no such node", family("", childDoc("plan", "001", nil,
-			append(childEdges(), edge("plan", "honors", "001:r-zzzz")))), "002", nil, []string{"dangling-ref"}},
+			append(childEdges(), edge("plan", "honors", "001-aaaa:r-zzzz")))), "002", nil, []string{"dangling-ref"}},
 		{"qualified dangling-ref: no such plan", family("", childDoc("plan", "001", nil,
-			append(childEdges(), edge("plan", "honors", "009:r-e001")))), "002", nil, []string{"dangling-ref"}},
+			append(childEdges(), edge("plan", "honors", "009-zzzz:r-e001")))), "002", nil, []string{"dangling-ref"}},
 		{"qualified dangling-ref: malformed", family("", childDoc("plan", "001", nil,
 			append(childEdges(), edge("plan", "honors", "1:r-e001")))), "002", nil, []string{"dangling-ref"}},
 		{"qualified wrong-endpoint", family("", childDoc("plan", "001", nil,
-			append(childEdges(), edge("plan", "honors", "001:g-e001")))), "002", nil, []string{"wrong-endpoint"}},
+			append(childEdges(), edge("plan", "honors", "001-aaaa:g-e001")))), "002", nil, []string{"wrong-endpoint"}},
 		{"qualified dangling-prose-ref", family("",
 			withProse(childDoc("plan", "001", nil, childEdges()), "per [[001:d-zzzz]], [[009:plan]] and [[001:d-e001]]")),
 			"002", nil, []string{"dangling-prose-ref", "dangling-prose-ref"}},
@@ -642,7 +677,7 @@ func TestEpicRules(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			set := writeSet(t, tc.folders)
 			if got := errorCodes(t, set, tc.lint, tc.keep...); !slices.Equal(got, tc.want) {
-				t.Fatalf("codes = %v, want %v\n%+v", got, tc.want, Plan(set, tc.lint).Issues)
+				t.Fatalf("codes = %v, want %v\n%+v", got, tc.want, lintNumber(set, tc.lint).Issues)
 			}
 		})
 	}
@@ -651,7 +686,8 @@ func TestEpicRules(t *testing.T) {
 // TestEpicRulesNeedTheSet: linted alone, a plan's qualified references are
 // shape-checked only and no epic rule runs.
 func TestEpicRulesNeedTheSet(t *testing.T) {
-	doc := childDoc("solution", "009", nil, append(childEdges("discharges"), edge("plan", "honors", "001:r-zzzz")))
+	doc := strings.Replace(childDoc("solution", "009", nil, append(childEdges("discharges"), edge("plan", "honors", "001-aaaa:r-zzzz"))),
+		`"@PLAN@"`, `"002-bbbb"`, 1)
 	for _, is := range issuesOf(t, "002", doc) {
 		if is.Severity == SeverityError {
 			t.Fatalf("lint alone must not resolve qualified refs or run epic rules: %+v", is)
@@ -671,36 +707,149 @@ func TestEpicRulesNeedTheSet(t *testing.T) {
 func TestEpicMessages(t *testing.T) {
 	set := writeSet(t, family("", childDoc("solution", "001", nil, childEdges("honors", "delivers", "discharges"))))
 	got := map[string]Issue{}
-	for _, is := range Plan(set, "001").Issues {
+	for _, is := range lintNumber(set, "001").Issues {
 		got[is.Code] = is
 	}
 	if is := got["rail-unhonored"]; is.Path != "$.nodes[r-e001]" ||
-		is.Message != `Rail r-e001 "no network calls" is not honoured by child plan 002, which is not deferred.` ||
-		is.Hint != "auto plan link 002 plan honors 001:r-e001, or excuse the child for now with auto plan update 001 r-e001 --deferred <NNN>" {
+		is.Message != `Rail r-e001 "no network calls" is not honoured by child plan 002-bbbb, which is not deferred.` ||
+		is.Hint != "auto plan link 002-bbbb plan honors 001-aaaa:r-e001, or excuse the child for now with auto plan update 001-aaaa r-e001 --deferred <child-plan>" {
 		t.Errorf("rail-unhonored = %+v", is)
 	}
-	if is := got["leg-undelivered"]; is.Message != `Leg l-e001 "agent: sends mail" is delivered by no child plan (children: 002).` ||
-		is.Hint != "auto plan link <child> plan delivers 001:l-e001, or auto plan retire 001 l-e001" {
+	if is := got["leg-undelivered"]; is.Message != `Leg l-e001 "agent: sends mail" is delivered by no child plan (children: 002-bbbb).` ||
+		is.Hint != "auto plan link <child> plan delivers 001-aaaa:l-e001, or auto plan retire 001-aaaa l-e001" {
 		t.Errorf("leg-undelivered = %+v", is)
 	}
 
 	set = writeSet(t, family(epicUnlisted("requirements"),
-		childDoc("solution", "001", nil, append(childEdges("discharges"), edge("plan", "honors", "001:r-zzzz")))))
+		childDoc("solution", "001", nil, append(childEdges("discharges"), edge("plan", "honors", "001-aaaa:r-zzzz")))))
 	got = map[string]Issue{}
-	for _, is := range Plan(set, "002").Issues {
+	for _, is := range lintNumber(set, "002").Issues {
 		got[is.Code] = is
 	}
 	if is := got["child-epic-mismatch"]; is.Path != "$.nodes[plan].fields.epic" || is.Field != "epic" ||
-		is.Message != "Plan 002 names epic 001, but epic 001 lists no child node for plan 002." ||
-		!strings.HasPrefix(is.Hint, `auto plan add 001 child --plan 002 --title "…"`) {
+		is.Message != "Plan 002-bbbb names epic 001-aaaa, but epic 001-aaaa lists no child node for plan 002-bbbb." ||
+		!strings.HasPrefix(is.Hint, `auto plan add 001-aaaa child --plan 002-bbbb --title "…"`) {
 		t.Errorf("child-epic-mismatch = %+v", is)
 	}
-	if is := got["dangling-ref"]; is.Message != `edge targets "001:r-zzzz", but plan 001 has no node r-zzzz` ||
-		is.Hint != "remove the edge with `auto plan unlink 002 plan honors 001:r-zzzz`, or point it at an existing node of an allowed type" {
+	if is := got["dangling-ref"]; is.Message != `edge targets "001-aaaa:r-zzzz", but plan 001-aaaa has no node r-zzzz` ||
+		is.Hint != "remove the edge with `auto plan unlink 002-bbbb plan honors 001-aaaa:r-zzzz`, or point it at an existing node of an allowed type" {
 		t.Errorf("dangling-ref = %+v", is)
 	}
-	if is := got["rail-undischarged"]; is.Message != "Plan 002 honours rail 001:r-e001, but no AC discharges it." ||
-		is.Hint != "auto plan link 002 <ac-id> discharges 001:r-e001 (or add an AC for it with --discharges 001:r-e001)" {
+	if is := got["rail-undischarged"]; is.Message != "Plan 002-bbbb honours rail 001-aaaa:r-e001, but no AC discharges it." ||
+		is.Hint != "auto plan link 002-bbbb <ac-id> discharges 001-aaaa:r-e001 (or add an AC for it with --discharges 001-aaaa:r-e001)" {
 		t.Errorf("rail-undischarged = %+v", is)
+	}
+}
+
+// TestRuleLifecyclesAreRegistrySteps: every rule switches on at a step of
+// the registry's lifecycle sequence (the sequence lives in the registry).
+func TestRuleLifecyclesAreRegistrySteps(t *testing.T) {
+	for _, rules := range [][]Rule{Rules, SetRules, EpicRules} {
+		for _, r := range rules {
+			if !slices.Contains(schema.Registry.Lifecycle, r.MinLifecycle) {
+				t.Errorf("rule %s: MinLifecycle %q is not a step of schema.Registry.Lifecycle", r.Code, r.MinLifecycle)
+			}
+		}
+	}
+}
+
+// collision is two task plans that both took number 002 on separate
+// branches, an epic 001 whose prose cites [[002:plan]], and a plan whose ID
+// disagrees with its folder.
+func collision() map[string]string {
+	task := func(name string) string { return planDoc(name, "task", "requirements", "", nil, nil) }
+	return map[string]string{
+		"001-mail-mvp": planDoc("mail-mvp", "epic", "requirements", "", []string{
+			node("g-e001", "goal", `"title": "g", "description": "after [[002:plan]] and [[003:plan]]"`),
+		}, nil),
+		"002-beta":  strings.Replace(task("beta"), `"@PLAN@"`, `"002-b0b0"`, 1),
+		"002-gamma": strings.Replace(task("gamma"), `"@PLAN@"`, `"002-g0g0"`, 1),
+		"003-delta": strings.Replace(task("delta"), `"@PLAN@"`, `"007-d0d0"`, 1),
+	}
+}
+
+func TestPlanSetRules(t *testing.T) {
+	set := writeSet(t, collision())
+	byFolder := func(folder string) Report {
+		for _, p := range set.Plans() {
+			if p.Folder() == folder {
+				return Plan(set, p)
+			}
+		}
+		t.Fatalf("no %s", folder)
+		return Report{}
+	}
+	find := func(r Report, code string) Issue {
+		for _, is := range r.Issues {
+			if is.Code == code {
+				return is
+			}
+		}
+		t.Fatalf("%s: no %s in %+v", r.Plan, code, r.Issues)
+		return Issue{}
+	}
+
+	beta, gamma := byFolder("002-beta"), byFolder("002-gamma")
+	for _, r := range []Report{beta, gamma} {
+		is := find(r, "duplicate-plan-number")
+		if r.OK || is.Severity != SeverityError ||
+			!strings.Contains(is.Message, "002-b0b0 (docs/plans/002-beta)") || !strings.Contains(is.Message, "002-g0g0 (docs/plans/002-gamma)") ||
+			is.Hint != "auto plan renumber "+r.Plan+" (moves it to the next free number and rewrites every reference to it)" {
+			t.Errorf("%s duplicate-plan-number = %+v", r.Plan, is)
+		}
+	}
+
+	delta := byFolder("003-delta")
+	if is := find(delta, "plan-id-mismatch"); is.Message != "Plan ID 007-d0d0 starts with 007, but its folder 003-delta is number 003." ||
+		is.Hint != "auto plan renumber 003-delta --to 003 (rewrites the ID and every reference to it), or rename the folder back" {
+		t.Errorf("plan-id-mismatch = %+v", is)
+	}
+
+	epic := byFolder("001-mail-mvp")
+	amb := find(epic, "ambiguous-ref")
+	if !strings.Contains(amb.Message, "[[002:plan]], but plan number 002 names 2 plans") || !strings.Contains(amb.Hint, "[[002-b0b0:plan]]") {
+		t.Errorf("ambiguous-ref = %+v", amb)
+	}
+	// [[003:plan]] resolves (one folder has 003), whatever its ID says.
+	for _, is := range epic.Issues {
+		if is.Code == "dangling-prose-ref" {
+			t.Errorf("unexpected %+v", is)
+		}
+	}
+
+	// A copied folder keeps its ID: duplicate-plan-id.
+	folders := collision()
+	folders["004-copy"] = folders["002-beta"]
+	set = writeSet(t, folders)
+	for _, p := range set.Plans() {
+		if p.Folder() == "004-copy" {
+			if got := errorCodes(t, set, "004"); !slices.Contains(got, "duplicate-plan-id") || !slices.Contains(got, "plan-id-mismatch") {
+				t.Errorf("copy: %v", got)
+			}
+		}
+	}
+}
+
+// TestOtherVersions: a newer 1.x plan is checked and warned about; another
+// major is warned about and not checked against this registry.
+func TestOtherVersions(t *testing.T) {
+	doc := func(version string) string {
+		return strings.Replace(fixture("requirements", []string{node("w-0000", "widget", "")}, nil), `"version": "1.0.0"`, `"version": "`+version+`"`, 1)
+	}
+	codesOf := func(version string) []string {
+		var out []string
+		for _, is := range issuesOf(t, "001", doc(version)) {
+			out = append(out, is.Code+"/"+string(is.Severity))
+		}
+		return out
+	}
+	if got := codesOf("1.0.0"); slices.Contains(got, "other-version/warning") {
+		t.Errorf("1.0.0: %v", got)
+	}
+	if got := codesOf("1.3.0"); !slices.Equal(got, []string{"other-version/warning", "unregistered-type/error"}) {
+		t.Errorf("1.3.0: %v", got)
+	}
+	if got := codesOf("2.0.0"); !slices.Equal(got, []string{"other-version/warning"}) {
+		t.Errorf("2.0.0: %v", got)
 	}
 }

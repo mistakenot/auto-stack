@@ -19,15 +19,16 @@ type View interface {
 }
 
 // Plans is the set of plans a view can reach through qualified references
-// (`005:r-8hw3`) and epic ↔ child links. workspace.PlanSet implements it. A
-// nil Plans reaches nothing: qualified neighbours stay raw references.
+// (`005-k7q2:r-8hw3`) and epic ↔ child links. workspace.PlanSet implements
+// it. A nil Plans reaches nothing: qualified neighbours stay raw references.
 type Plans interface {
-	// Graph returns plan planID's graph; ok is false when it is missing or
+	// Graph returns the graph of the plan a plan ID (or a bare number one
+	// plan has) names; ok is false when it is missing, ambiguous or
 	// unreadable.
 	Graph(planID string) (*graph.Graph, bool)
-	// IDs lists every plan number, sorted.
+	// IDs lists every plan ID, sorted.
 	IDs() []string
-	// Family lists an epic's child plan numbers, sorted.
+	// Family lists an epic's child plan IDs, sorted.
 	Family(epic string) []string
 }
 
@@ -517,7 +518,7 @@ func (v ShowView) Text() string {
 		c := &v.Children[i]
 		title := c.Plan
 		if c.Name != "" {
-			title += "-" + c.Name
+			title += " " + c.Name
 		}
 		if c.Title != "" {
 			title += " — " + c.Title
@@ -572,7 +573,7 @@ func (v ShowView) Text() string {
 	blocks = append(blocks, block{"rails", rails}, block{"defects", defects}, block{"open questions", questions})
 
 	var b strings.Builder
-	b.WriteString(v.Plan + "-" + v.Name + "  " + v.Kind + " · " + v.Lifecycle)
+	b.WriteString(v.Plan + "  " + v.Name + "  " + v.Kind + " · " + v.Lifecycle)
 	if v.Epic != "" {
 		b.WriteString(" · epic " + v.Epic)
 	}

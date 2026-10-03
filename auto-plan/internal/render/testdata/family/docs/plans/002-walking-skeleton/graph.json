@@ -1,20 +1,21 @@
 {
-  "version": 1,
+  "version": "1.0.0",
+  "id": "002-bbbb",
   "nodes": [
-    {"id": "plan", "type": "plan", "status": "active", "fields": {"name": "walking-skeleton", "kind": "task", "lifecycle": "plan", "created": "2026-01-01", "epic": "001"}},
+    {"id": "plan", "type": "plan", "status": "active", "fields": {"name": "walking-skeleton", "kind": "task", "lifecycle": "plan", "created": "2026-01-01", "epic": "001-aaaa"}},
     {"id": "g-t001", "type": "goal", "status": "active", "rank": "a0", "fields": {"title": "send and read round-trip"}},
     {"id": "ac-t001", "type": "ac", "status": "active", "rank": "a0", "fields": {"title": "a sent mail is read back", "gwt": "Given a, when b, then c", "verify": {"cmd": "go test ./... -run RoundTrip"}}},
     {"id": "s-t001", "type": "stage", "status": "active", "rank": "a0", "fields": {"title": "store + send", "steps": ["write the store"], "commit": "feat: store"}},
     {"id": "f-t001", "type": "file", "status": "active", "rank": "a0", "fields": {"path": "auto-mail/store.go", "change": "add", "why": "the store"}}
   ],
   "edges": [
-    {"from": "plan", "type": "honors", "to": "001:r-e001"},
-    {"from": "plan", "type": "delivers", "to": "001:l-e001"},
-    {"from": "plan", "type": "delivers", "to": "001:l-e003"},
-    {"from": "plan", "type": "builds-on", "to": "001:d-e001"},
-    {"from": "ac-t001", "type": "proves", "to": "g-t001"},
-    {"from": "ac-t001", "type": "discharges", "to": "001:r-e001"},
-    {"from": "s-t001", "type": "covers", "to": "ac-t001"},
-    {"from": "s-t001", "type": "touches", "to": "f-t001"}
+    {"id": "e-0001", "from": "plan", "type": "honors", "to": "001-aaaa:r-e001"},
+    {"id": "e-0002", "from": "plan", "type": "delivers", "to": "001-aaaa:l-e001"},
+    {"id": "e-0003", "from": "plan", "type": "delivers", "to": "001-aaaa:l-e003"},
+    {"id": "e-0004", "from": "plan", "type": "builds-on", "to": "001-aaaa:d-e001"},
+    {"id": "e-0005", "from": "ac-t001", "type": "proves", "to": "g-t001"},
+    {"id": "e-0006", "from": "ac-t001", "type": "discharges", "to": "001-aaaa:r-e001"},
+    {"id": "e-0007", "from": "s-t001", "type": "covers", "to": "ac-t001"},
+    {"id": "e-0008", "from": "s-t001", "type": "touches", "to": "f-t001"}
   ]
 }

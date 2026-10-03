@@ -1,32 +1,32 @@
 ‖ r-apsc  Ack transitions exactly once and reports whether it won
 
 down
-  discharges ← ✓ 002:ac-0f9w  G13 / D-7 — ack transitions exactly once and reports whether it won
-    covers     ← ▶ 002:s-zf2b   One message travels between two agents and is acked
-      touches    → □ 002:f-y361   auto-mail/internal/cli/subscribe.go
-      touches    → □ 002:f-vrqj   auto-mail/internal/cli/send.go
-      touches    → □ 002:f-edst   auto-mail/internal/cli/list.go
-      touches    → □ 002:f-6z14   auto-mail/internal/cli/ack.go
-      touches    → □ 002:f-rrht   auto-mail/internal/cli/cli_test.go
-      touches    → □ 002:f-bt89   auto-mail/mail/client.go
-      touches    → □ 002:f-3e02   auto-mail/mail/direct.go
-      touches    → □ 002:f-djp7   auto-mail/mail/address.go
-      touches    → □ 002:f-txje   auto-mail/mail/binding.go
-      touches    → □ 002:f-pesp   auto-mail/mail/mail_test.go
-      touches    → □ 002:f-h7wk   auto-mail/internal/store/schema.go
-      touches    → □ 002:f-m24f   auto-mail/internal/store/events.go
-      touches    → □ 002:f-fpa3   auto-mail/internal/store/project.go
-      touches    → □ 002:f-jqm7   auto-mail/internal/store/store_test.go
-      touches    → □ 002:f-nrws   auto-mail/internal/ulid/ulid.go
-      touches    → □ 002:f-nkx5   harness/src/harness/scenarios/mail_flow.py
-      touches    → □ 002:f-m7ab   harness/tests/mail_flow/test_mail_loop.py
-    covers     ← ▶ 002:s-r3hv   Rails made executable: immutability, the ack race, reset, the seam guard, docs
-      touches    → □ 002:f-6prf   auto-mail/CLAUDE.md
-      touches    → □ 002:f-124m   auto-mail/internal/cli/docs.go
-      touches    → □ 002:f-aw9y   auto-mail/internal/cli/reset.go
-      touches    → □ 002:f-rrht   auto-mail/internal/cli/cli_test.go  (see above)
-      touches    → □ 002:f-jqm7   auto-mail/internal/store/store_test.go  (see above)
-      touches    → □ 002:f-bndy   auto-mail/conformance/seam_test.go
-      touches    → □ 002:f-0ytx   Makefile
-      touches    → □ 002:f-anp7   harness/CLAUDE.md
-  honors     ← ▤ 002:plan     auto-mail-walking-skeleton
+  discharges ← ✓ 002-j8nx:ac-0f9w  G13 / D-7 — ack transitions exactly once and reports whether it won
+    covers     ← ▶ 002-j8nx:s-zf2b   One message travels between two agents and is acked
+      touches    → □ 002-j8nx:f-y361   auto-mail/internal/cli/subscribe.go
+      touches    → □ 002-j8nx:f-vrqj   auto-mail/internal/cli/send.go
+      touches    → □ 002-j8nx:f-edst   auto-mail/internal/cli/list.go
+      touches    → □ 002-j8nx:f-6z14   auto-mail/internal/cli/ack.go
+      touches    → □ 002-j8nx:f-rrht   auto-mail/internal/cli/cli_test.go
+      touches    → □ 002-j8nx:f-bt89   auto-mail/mail/client.go
+      touches    → □ 002-j8nx:f-3e02   auto-mail/mail/direct.go
+      touches    → □ 002-j8nx:f-djp7   auto-mail/mail/address.go
+      touches    → □ 002-j8nx:f-txje   auto-mail/mail/binding.go
+      touches    → □ 002-j8nx:f-pesp   auto-mail/mail/mail_test.go
+      touches    → □ 002-j8nx:f-h7wk   auto-mail/internal/store/schema.go
+      touches    → □ 002-j8nx:f-m24f   auto-mail/internal/store/events.go
+      touches    → □ 002-j8nx:f-fpa3   auto-mail/internal/store/project.go
+      touches    → □ 002-j8nx:f-jqm7   auto-mail/internal/store/store_test.go
+      touches    → □ 002-j8nx:f-nrws   auto-mail/internal/ulid/ulid.go
+      touches    → □ 002-j8nx:f-nkx5   harness/src/harness/scenarios/mail_flow.py
+      touches    → □ 002-j8nx:f-m7ab   harness/tests/mail_flow/test_mail_loop.py
+    covers     ← ▶ 002-j8nx:s-r3hv   Rails made executable: immutability, the ack race, reset, the seam guard, docs
+      touches    → □ 002-j8nx:f-6prf   auto-mail/CLAUDE.md
+      touches    → □ 002-j8nx:f-124m   auto-mail/internal/cli/docs.go
+      touches    → □ 002-j8nx:f-aw9y   auto-mail/internal/cli/reset.go
+      touches    → □ 002-j8nx:f-rrht   auto-mail/internal/cli/cli_test.go  (see above)
+      touches    → □ 002-j8nx:f-jqm7   auto-mail/internal/store/store_test.go  (see above)
+      touches    → □ 002-j8nx:f-bndy   auto-mail/conformance/seam_test.go
+      touches    → □ 002-j8nx:f-0ytx   Makefile
+      touches    → □ 002-j8nx:f-anp7   harness/CLAUDE.md
+  honors     ← ▤ 002-j8nx:plan     auto-mail-walking-skeleton

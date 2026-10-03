@@ -24,7 +24,8 @@ var update = flag.Bool("update", false, "rewrite golden files")
 // reason), an unlinked alternative, a rail, a defect, and an open and an
 // answered question.
 const ladderFixture = `{
-  "version": 1,
+  "version": "1.0.0",
+  "id": "004-k7q2",
   "nodes": [
     {"id": "plan", "type": "plan", "status": "active", "fields": {"name": "stage-briefs", "kind": "task", "lifecycle": "solution", "created": "2026-01-01"}},
     {"id": "g-m4t8", "type": "goal", "status": "active", "rank": "a0", "fields": {"title": "Plans can be reordered without breaking references"}},
@@ -39,20 +40,20 @@ const ladderFixture = `{
     {"id": "a-7kq1", "type": "alternative", "status": "active", "rank": "a1", "fields": {"title": "HTML only", "why": "agents cannot read it cheaply, and it would need a renderer that does not exist yet\nsecond line"}},
     {"id": "a-0zzz", "type": "alternative", "status": "retired", "rank": "a2", "fields": {"title": "retired option", "why": "w"}},
     {"id": "a-3mmm", "type": "alternative", "status": "active", "rank": "a3", "fields": {"title": "orphan option", "why": "nobody rejected it"}},
-    {"id": "r-8hw3", "type": "rail", "status": "active", "rank": "a0", "fields": {"title": "Never copy rail text into a child", "deferred": ["002", "003"]}},
+    {"id": "r-8hw3", "type": "rail", "status": "active", "rank": "a0", "fields": {"title": "Never copy rail text into a child", "deferred": ["002-bbbb", "003-cccc"]}},
     {"id": "df-1ycb", "type": "defect", "status": "active", "rank": "a0", "fields": {"title": "Stage context is scattered"}},
     {"id": "q-jcx5", "type": "question", "status": "active", "rank": "a0", "fields": {"title": "Include alternatives in briefs?", "status": "open"}},
     {"id": "q-tjhs", "type": "question", "status": "active", "rank": "a1", "fields": {"title": "Answered already", "status": "answered", "answer": "yes"}}
   ],
   "edges": [
-    {"from": "ac-3fxm", "type": "proves", "to": "g-k7q2"},
-    {"from": "ac-7w1e", "type": "proves", "to": "g-k7q2"},
-    {"from": "d-9t2w", "type": "constrains", "to": "ac-3fxm"},
-    {"from": "d-2hcv", "type": "constrains", "to": "g-m4t8"},
-    {"from": "d-9t2w", "type": "rejects", "to": "a-5hcv"},
-    {"from": "d-9t2w", "type": "rejects", "to": "a-7kq1"},
-    {"from": "d-9t2w", "type": "rejects", "to": "a-0zzz"},
-    {"from": "g-k7q2", "type": "addresses", "to": "df-1ycb"}
+    {"id": "e-0001", "from": "ac-3fxm", "type": "proves", "to": "g-k7q2"},
+    {"id": "e-0002", "from": "ac-7w1e", "type": "proves", "to": "g-k7q2"},
+    {"id": "e-0003", "from": "d-9t2w", "type": "constrains", "to": "ac-3fxm"},
+    {"id": "e-0004", "from": "d-2hcv", "type": "constrains", "to": "g-m4t8"},
+    {"id": "e-0005", "from": "d-9t2w", "type": "rejects", "to": "a-5hcv"},
+    {"id": "e-0006", "from": "d-9t2w", "type": "rejects", "to": "a-7kq1"},
+    {"id": "e-0007", "from": "d-9t2w", "type": "rejects", "to": "a-0zzz"},
+    {"id": "e-0008", "from": "g-k7q2", "type": "addresses", "to": "df-1ycb"}
   ]
 }`
 
@@ -132,7 +133,7 @@ func TestShowStructure(t *testing.T) {
 func TestShowJSONTextParity(t *testing.T) {
 	assertParity(t, fixtureView(t))
 	set, epic := family(t)
-	assertParity(t, Show("001", epic, set))
+	assertParity(t, Show("001-aaaa", epic, set))
 }
 
 // assertParity checks that every string in the view's JSON appears in its
@@ -179,9 +180,9 @@ func assertParity(t *testing.T, v ShowView) {
 }
 
 func TestShowEmptyPlan(t *testing.T) {
-	g := graph.New(map[string]any{"name": "demo", "kind": "task", "lifecycle": "requirements", "created": "2026-01-01"})
+	g := graph.New("001-k7q2", map[string]any{"name": "demo", "kind": "task", "lifecycle": "requirements", "created": "2026-01-01"})
 	text := Show("001", g, nil).Text()
-	if !strings.Contains(text, "001-demo  task · requirements") || !strings.Contains(text, "auto plan add 001 goal") {
+	if !strings.Contains(text, "001  demo  task · requirements") || !strings.Contains(text, "auto plan add 001 goal") {
 		t.Fatalf("empty plan text:\n%s", text)
 	}
 }
@@ -223,7 +224,7 @@ func TestDescribe(t *testing.T) {
 	// A long field is cut to DescribeWidth runes and named in truncated.
 	n, _ := g.NodeByID("a-9xcp")
 	n.Fields = map[string]any{"title": "HTML only", "why": strings.Repeat("é", DescribeWidth+50)}
-	g2 := &graph.Graph{Version: 1, Nodes: []graph.Node{n}, Edges: []graph.Edge{}}
+	g2 := &graph.Graph{Version: schema.Version, ID: "001-k7q2", Nodes: []graph.Node{n}, Edges: []graph.Edge{}}
 	v, _ = Describe("001", g2, "a-9xcp", nil)
 	why, _ = v.Fields["why"].(string)
 	if !slices.Equal(v.Truncated, []string{"why"}) || utf8.RuneCountInString(why) != DescribeWidth+1 {
@@ -258,10 +259,10 @@ func TestCard(t *testing.T) {
 	for _, r := range v.Out {
 		out[r.Edge+" "+r.ID] = r
 	}
-	if r := out["proves g-xyf8"]; r.Type != "goal" || r.Title != "An agent gets one stage's context in one call" {
+	if r := out["proves g-xyf8"]; r.Type != "goal" || r.EdgeID != "e-0004" || r.Title != "An agent gets one stage's context in one call" {
 		t.Fatalf("proves neighbour = %+v", r)
 	}
-	if r := out["discharges 005:r-8hw3"]; !r.Qualified || r.Type != "" {
+	if r := out["discharges 005-m3x9:r-8hw3"]; !r.Qualified || r.Type != "" {
 		t.Fatalf("a qualified neighbour stays a raw reference: %+v", r)
 	}
 	if len(v.In) != 3 {
@@ -318,16 +319,16 @@ func TestTraceWalks(t *testing.T) {
 	}
 
 	// A node met twice is expanded once, then marked seen.
-	shared, err := graph.Parse([]byte(`{"version":1,"nodes":[
+	shared, err := graph.Parse([]byte(`{"version":"1.0.0","id":"001-k7q2","nodes":[
 	  {"id":"plan","type":"plan","status":"active","fields":{"name":"x","kind":"task","lifecycle":"plan","created":"2026-01-01"}},
 	  {"id":"g-aaaa","type":"goal","status":"active","rank":"a0","fields":{"title":"goal"}},
 	  {"id":"ac-aaaa","type":"ac","status":"active","rank":"a0","fields":{"title":"one","gwt":"g"}},
 	  {"id":"ac-bbbb","type":"ac","status":"active","rank":"a1","fields":{"title":"two","gwt":"g"}},
 	  {"id":"ac-cccc","type":"ac","status":"retired","rank":"a2","fields":{"title":"gone","gwt":"g"}},
 	  {"id":"s-aaaa","type":"stage","status":"active","rank":"a0","fields":{"title":"both","steps":["x"],"commit":"c"}}],
-	 "edges":[{"from":"ac-aaaa","type":"proves","to":"g-aaaa"},{"from":"ac-bbbb","type":"proves","to":"g-aaaa"},
-	  {"from":"ac-cccc","type":"proves","to":"g-aaaa"},
-	  {"from":"s-aaaa","type":"covers","to":"ac-aaaa"},{"from":"s-aaaa","type":"covers","to":"ac-bbbb"}]}`))
+	 "edges":[{"id":"e-0009","from":"ac-aaaa","type":"proves","to":"g-aaaa"},{"id":"e-0010","from":"ac-bbbb","type":"proves","to":"g-aaaa"},
+	  {"id":"e-0011","from":"ac-cccc","type":"proves","to":"g-aaaa"},
+	  {"id":"e-0012","from":"s-aaaa","type":"covers","to":"ac-aaaa"},{"id":"e-0013","from":"s-aaaa","type":"covers","to":"ac-bbbb"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +415,7 @@ func family(t *testing.T) (*workspace.PlanSet, *graph.Graph) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"001", "002", "003"} {
+	for _, id := range []string{"001-aaaa", "002-bbbb", "003-cccc"} {
 		g, err := set.Load(id)
 		if err != nil {
 			t.Fatal(err)
@@ -428,7 +429,7 @@ func family(t *testing.T) (*workspace.PlanSet, *graph.Graph) {
 			}
 		}
 	}
-	epic, _ := set.Load("001")
+	epic, _ := set.Load("001-aaaa")
 	return set, epic
 }
 
@@ -446,32 +447,32 @@ func planGraph(t *testing.T, set *workspace.PlanSet, id string) *graph.Graph {
 // tagged with the children that honour them (AC-13, epic form).
 func TestShowEpic(t *testing.T) {
 	set, epic := family(t)
-	v := Show("001", epic, set)
+	v := Show("001-aaaa", epic, set)
 	if v.Kind != "epic" || len(v.Goals) != 2 || len(v.Journeys) != 1 || len(v.Journeys[0].Legs) != 3 || len(v.Children) != 2 {
 		t.Fatalf("epic show = %+v", v)
 	}
 	legs := v.Journeys[0].Legs
-	if !slices.Equal(legs[0].DeliveredBy, []string{"002"}) || !slices.Equal(legs[1].DeliveredBy, []string{"003"}) ||
+	if !slices.Equal(legs[0].DeliveredBy, []string{"002-bbbb"}) || !slices.Equal(legs[1].DeliveredBy, []string{"003-cccc"}) ||
 		legs[1].Label != "L1.2" || legs[0].Title != "agent: sends mail to an address" {
 		t.Fatalf("legs = %+v", legs)
 	}
 	c := v.Children[1]
-	if c.Plan != "003" || c.Name != "fan-out" || c.Lifecycle != "requirements" || !c.Found || !slices.Equal(c.DependsOn, []string{"c-e001"}) {
+	if c.Plan != "003-cccc" || c.Name != "fan-out" || c.Lifecycle != "requirements" || !c.Found || !slices.Equal(c.DependsOn, []string{"c-e001"}) {
 		t.Fatalf("child = %+v", c)
 	}
-	if !slices.Equal(v.Rails[0].HonoredBy, []string{"002", "003"}) || !slices.Equal(v.Rails[1].Deferred, []string{"003"}) {
+	if !slices.Equal(v.Rails[0].HonoredBy, []string{"002-bbbb", "003-cccc"}) || !slices.Equal(v.Rails[1].Deferred, []string{"003-cccc"}) {
 		t.Fatalf("rails = %+v", v.Rails)
 	}
 	golden(t, "show-epic.txt", v.Text())
 
 	// Without the plan set, the epic's own facts still show; a child plan's
 	// name and lifecycle are unknown, and nothing is tagged.
-	bare := Show("001", epic, nil)
-	if bare.Children[0].Found || len(bare.Journeys[0].Legs[0].DeliveredBy) != 0 || !strings.Contains(bare.Text(), "(no plan 002)") {
+	bare := Show("001-aaaa", epic, nil)
+	if bare.Children[0].Found || len(bare.Journeys[0].Legs[0].DeliveredBy) != 0 || !strings.Contains(bare.Text(), "(no plan 002-bbbb)") {
 		t.Fatalf("bare epic show = %+v", bare)
 	}
 	// A child plan names its epic in the header.
-	if text := Show("002", planGraph(t, set, "002"), set).Text(); !strings.HasPrefix(text, "002-walking-skeleton  task · plan · epic 001\n") {
+	if text := Show("002-bbbb", planGraph(t, set, "002-bbbb"), set).Text(); !strings.HasPrefix(text, "002-bbbb  walking-skeleton  task · plan · epic 001-aaaa\n") {
 		t.Fatalf("child header:\n%s", text)
 	}
 }
@@ -481,44 +482,44 @@ func TestShowEpic(t *testing.T) {
 // walks down into its child plans (AC-14, epic form).
 func TestTraceAcrossPlans(t *testing.T) {
 	set, epic := family(t)
-	child := planGraph(t, set, "002")
+	child := planGraph(t, set, "002-bbbb")
 
-	up, _ := Trace("002", child, "ac-t001", Up, set)
+	up, _ := Trace("002-bbbb", child, "ac-t001", Up, set)
 	if len(up.Up) != 2 || up.Up[0].ID != "g-t001" || len(up.Up[0].Children) != 2 {
 		t.Fatalf("up = %+v", up.Up)
 	}
 	via := up.Up[0].Children[0]
-	if via.Edge != EdgeChildOf || via.ID != "001:g-e001" || !via.Qualified || via.Type != "goal" || via.Via != "001:c-e001" {
+	if via.Edge != EdgeChildOf || via.ID != "001-aaaa:g-e001" || !via.Qualified || via.Type != "goal" || via.Via != "001-aaaa:c-e001" {
 		t.Fatalf("child-of hop = %+v", via)
 	}
-	if r := up.Up[1]; r.Edge != "discharges" || r.ID != "001:r-e001" || r.Type != "rail" || r.Title != "No network calls" {
+	if r := up.Up[1]; r.Edge != "discharges" || r.ID != "001-aaaa:r-e001" || r.Type != "rail" || r.Title != "No network calls" {
 		t.Fatalf("discharges hop = %+v", r)
 	}
 	golden(t, "trace-cross-up.txt", up.Text())
 
-	down, _ := Trace("001", epic, "g-e001", Down, set)
-	if len(down.Down) != 2 || down.Down[0].ID != "002:g-t001" || down.Down[0].Dir != "in" || down.Down[0].Via != "c-e001" ||
-		down.Down[1].ID != "003:g-w001" {
+	down, _ := Trace("001-aaaa", epic, "g-e001", Down, set)
+	if len(down.Down) != 2 || down.Down[0].ID != "002-bbbb:g-t001" || down.Down[0].Dir != "in" || down.Down[0].Via != "c-e001" ||
+		down.Down[1].ID != "003-cccc:g-w001" {
 		t.Fatalf("epic goal down = %+v", down.Down)
 	}
 	golden(t, "trace-epic-down.txt", down.Text())
 
-	rail, _ := Trace("001", epic, "r-e001", Down, set)
+	rail, _ := Trace("001-aaaa", epic, "r-e001", Down, set)
 	golden(t, "trace-rail-down.txt", rail.Text())
 
-	plan, _ := Trace("002", child, "plan", Up, set)
+	plan, _ := Trace("002-bbbb", child, "plan", Up, set)
 	golden(t, "trace-plan-up.txt", plan.Text())
 
 	// Without the set, qualified hops stay raw leaves and child-of is not taken.
-	bare, _ := Trace("002", child, "ac-t001", Up, nil)
+	bare, _ := Trace("002-bbbb", child, "ac-t001", Up, nil)
 	if len(bare.Up[0].Children) != 0 || !bare.Up[1].Qualified || bare.Up[1].Type != "" {
 		t.Fatalf("bare trace = %+v", bare.Up)
 	}
 	// A broken child link (the epic does not list the plan) is not followed.
 	unlisted := *epic
 	unlisted.Nodes = slices.DeleteFunc(slices.Clone(epic.Nodes), func(n graph.Node) bool { return n.ID == "c-e001" })
-	if hops := (&tracer{root: "002", plans: set, ix: map[string]*index{"001": newIndex(&unlisted), "002": newIndex(child)}}).
-		childOf("002", "g-t001", Up); len(hops) != 0 {
+	if hops := (&tracer{root: "002-bbbb", plans: set, ix: map[string]*index{"001-aaaa": newIndex(&unlisted), "002-bbbb": newIndex(child)}}).
+		childOf("002-bbbb", "g-t001", Up); len(hops) != 0 {
 		t.Fatalf("child-of must need the epic's child node: %+v", hops)
 	}
 }
@@ -527,29 +528,29 @@ func TestTraceAcrossPlans(t *testing.T) {
 // and edges other plans hold into a node are listed as incoming.
 func TestCardAcrossPlans(t *testing.T) {
 	set, epic := family(t)
-	v, _ := Card("002", planGraph(t, set, "002"), "plan", set)
+	v, _ := Card("002-bbbb", planGraph(t, set, "002-bbbb"), "plan", set)
 	out := map[string]EdgeRow{}
 	for _, r := range v.Out {
 		out[r.Edge+" "+r.ID] = r
 	}
-	if r := out["builds-on 001:d-e001"]; !r.Qualified || r.Type != "decision" || r.Title != "SQLite is the mail store" || r.Status != "active" {
+	if r := out["builds-on 001-aaaa:d-e001"]; !r.Qualified || r.Type != "decision" || r.Title != "SQLite is the mail store" || r.Status != "active" {
 		t.Fatalf("builds-on neighbour = %+v", r)
 	}
-	rail, _ := Card("001", epic, "r-e001", set)
+	rail, _ := Card("001-aaaa", epic, "r-e001", set)
 	want := []EdgeRow{
-		{Edge: "discharges", ID: "002:ac-t001", Type: "ac", Title: "a sent mail is read back", Status: "active", Qualified: true},
-		{Edge: "honors", ID: "002:plan", Type: "plan", Title: "walking-skeleton", Status: "active", Qualified: true},
-		{Edge: "honors", ID: "003:plan", Type: "plan", Title: "fan-out", Status: "active", Qualified: true},
+		{EdgeID: "e-0006", Edge: "discharges", ID: "002-bbbb:ac-t001", Type: "ac", Title: "a sent mail is read back", Status: "active", Qualified: true},
+		{EdgeID: "e-0001", Edge: "honors", ID: "002-bbbb:plan", Type: "plan", Title: "walking-skeleton", Status: "active", Qualified: true},
+		{EdgeID: "e-0001", Edge: "honors", ID: "003-cccc:plan", Type: "plan", Title: "fan-out", Status: "active", Qualified: true},
 	}
 	if !slices.Equal(rail.In, want) {
 		t.Fatalf("rail in = %+v", rail.In)
 	}
 	golden(t, "get-epic-rail.txt", rail.Text())
-	d, _ := Describe("001", epic, "r-e001", set)
+	d, _ := Describe("001-aaaa", epic, "r-e001", set)
 	if d.Edges.In["honors"] != 2 || d.Edges.In["discharges"] != 1 {
 		t.Fatalf("describe counts incoming cross-plan edges: %+v", d.Edges)
 	}
-	b, _ := Brief("002", planGraph(t, set, "002"), "s-t001", set)
+	b, _ := Brief("002-bbbb", planGraph(t, set, "002-bbbb"), "s-t001", set)
 	if len(b.Rails) != 1 || b.Rails[0].Title != "No network calls" || !b.Rails[0].Qualified {
 		t.Fatalf("brief rails = %+v", b.Rails)
 	}

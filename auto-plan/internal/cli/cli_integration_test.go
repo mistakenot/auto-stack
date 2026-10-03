@@ -18,6 +18,13 @@ import (
 	"github.com/mistakenot/auto-plan/internal/schema"
 )
 
+// The plan IDs `new` generates under AUTO_PLAN_SEED=1, by plan number.
+const (
+	p1 = "001-acs4"
+	p2 = "002-j8nx"
+	p3 = "003-gevp"
+)
+
 // runCLI drives the command tree in-process from cwd, returning stdout,
 // stderr and the exit code (after auto-mail's cli_test.go).
 func runCLI(t *testing.T, cwd string, args ...string) (stdout, stderr string, code int) {
@@ -144,20 +151,21 @@ func TestNewNumbersAfterHighestFromSubdirectory(t *testing.T) {
 		}
 	}
 	stdout := mustRun(t, filepath.Join(root, "src", "deep"), "new", "stage-briefs", "--kind", "task")
-	want := "{\n  \"id\": \"004\",\n  \"name\": \"stage-briefs\",\n  \"kind\": \"task\",\n  \"path\": \"docs/plans/004-stage-briefs\"\n}\n"
+	want := "{\n  \"id\": \"004-vejj\",\n  \"number\": \"004\",\n  \"name\": \"stage-briefs\",\n  \"kind\": \"task\",\n  \"path\": \"docs/plans/004-stage-briefs\"\n}\n"
 	if stdout != want {
 		t.Fatalf("new stdout:\n%s\nwant:\n%s", stdout, want)
 	}
 
 	var g struct {
-		Version int              `json:"version"`
+		Version string           `json:"version"`
+		ID      string           `json:"id"`
 		Nodes   []map[string]any `json:"nodes"`
 		Edges   []any            `json:"edges"`
 	}
 	if err := json.Unmarshal(readGraph(t, root, "004-stage-briefs"), &g); err != nil {
 		t.Fatal(err)
 	}
-	if g.Version != 1 || len(g.Nodes) != 1 || g.Edges == nil || len(g.Edges) != 0 {
+	if g.Version != "1.0.0" || g.ID != "004-vejj" || len(g.Nodes) != 1 || g.Edges == nil || len(g.Edges) != 0 {
 		t.Fatalf("graph = %+v", g)
 	}
 	plan := g.Nodes[0]
@@ -171,7 +179,7 @@ func TestNewNumbersAfterHighestFromSubdirectory(t *testing.T) {
 func TestNewWithoutPlansFolderStartsAt001(t *testing.T) {
 	root := repo(t)
 	out := decode[map[string]any](t, mustRun(t, root, "new", "demo", "--kind", "epic"))
-	if out["id"] != "001" || out["kind"] != "epic" {
+	if out["id"] != p1 || out["number"] != "001" || out["kind"] != "epic" {
 		t.Fatalf("new = %v", out)
 	}
 }
@@ -205,7 +213,7 @@ func walk(t *testing.T, root string) (g1, g2, ac, d string) {
 		Edges                []struct{ From, Type, To string }
 	}
 	a := decode[added](t, mustRun(t, root, "add", "001", "goal", "--title", "First goal"))
-	if a.Plan != "001" || a.Type != "goal" || a.Rank != "a0" || !strings.HasPrefix(a.ID, "g-") || a.Edges != nil {
+	if a.Plan != p1 || a.Type != "goal" || a.Rank != "a0" || !strings.HasPrefix(a.ID, "g-") || a.Edges != nil {
 		t.Fatalf("add goal = %+v", a)
 	}
 	b := decode[added](t, mustRun(t, root, "add", "001", "goal", "--title", "Second goal"))
@@ -220,7 +228,7 @@ func walk(t *testing.T, root string) (g1, g2, ac, d string) {
 	dd := decode[added](t, mustRun(t, root, "add", "docs/plans/001-demo", "decision", "--title", "use JSON",
 		"--chosen", "JSON", "--why", "diffable", "--by", "charlie"))
 	l := decode[added](t, mustRun(t, root, "link", "001", dd.ID, "constrains", a.ID))
-	if l.ID != dd.ID || l.Plan != "001" || len(l.Edges) != 1 || l.Edges[0].To != a.ID {
+	if l.ID != dd.ID || l.Plan != p1 || len(l.Edges) != 1 || l.Edges[0].To != a.ID {
 		t.Fatalf("link = %+v", l)
 	}
 	return a.ID, b.ID, c.ID, dd.ID
@@ -282,7 +290,7 @@ func TestWritesRefuseAlreadyInvalidGraph(t *testing.T) {
 	mustRun(t, root, "new", "demo", "--kind", "task")
 	path := filepath.Join(root, "docs", "plans", "001-demo", "graph.json")
 	broken := strings.Replace(string(readGraph(t, root, "001-demo")), `"edges": []`,
-		`"edges": [{"from": "d-zzzz", "type": "constrains", "to": "g-zzzz"}]`, 1)
+		`"edges": [{"id": "e-zzzz", "from": "d-zzzz", "type": "constrains", "to": "g-zzzz"}]`, 1)
 	if err := os.WriteFile(path, []byte(broken), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -308,14 +316,14 @@ func TestLintCleanAndBroken(t *testing.T) {
 	walk(t, root)
 	// At requirements the only issue is a warning, and warnings alone exit 0.
 	r := decode[report](t, mustRun(t, root, "lint", "001"))
-	if r.Plan != "001" || !r.OK || len(r.Issues) != 1 || r.Issues[0].Code != "decision-no-alternative" || r.Issues[0].Severity != "warning" {
+	if r.Plan != p1 || !r.OK || len(r.Issues) != 1 || r.Issues[0].Code != "decision-no-alternative" || r.Issues[0].Severity != "warning" {
 		t.Fatalf("clean lint = %+v", r)
 	}
 
 	mustRun(t, root, "new", "broken", "--kind", "task")
 	path := filepath.Join(root, "docs", "plans", "002-broken", "graph.json")
 	data := strings.Replace(string(readGraph(t, root, "002-broken")), `"edges": []`,
-		`"edges": [{"from": "d-zzzz", "type": "constrains", "to": "plan"}]`, 1)
+		`"edges": [{"id": "e-zzzz", "from": "d-zzzz", "type": "constrains", "to": "plan"}]`, 1)
 	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -338,9 +346,9 @@ func TestLintCleanAndBroken(t *testing.T) {
 	}
 
 	text, _, _ := runCLI(t, root, "lint", "all", "--text")
-	if !strings.HasPrefix(text, "001  ok  (0 errors, 1 warning)\n002  FAIL  (2 errors, 0 warnings)\n") ||
-		!strings.Contains(text, "\nremediation:\n  001 decision-no-alternative: auto plan add 001 alternative") ||
-		strings.Index(text, "remediation:") < strings.Index(text, "002 error dangling-ref") {
+	if !strings.HasPrefix(text, p1+"  ok  (0 errors, 1 warning)\n"+p2+"  FAIL  (2 errors, 0 warnings)\n") ||
+		!strings.Contains(text, "\nremediation:\n  "+p1+" decision-no-alternative: auto plan add "+p1+" alternative") ||
+		strings.Index(text, "remediation:") < strings.Index(text, p2+" error dangling-ref") {
 		t.Fatalf("lint --text:\n%s", text)
 	}
 }
@@ -403,14 +411,14 @@ func TestShowJSONAndText(t *testing.T) {
 			Decisions []struct{ ID string } `json:"decisions"`
 		} `json:"goals"`
 	}](t, mustRun(t, root, "show", "001"))
-	if v.Plan != "001" || len(v.Goals) != 2 || v.Goals[0].ID != g1 || v.Goals[1].ID != g2 ||
+	if v.Plan != p1 || len(v.Goals) != 2 || v.Goals[0].ID != g1 || v.Goals[1].ID != g2 ||
 		len(v.Goals[0].ACs) != 1 || v.Goals[0].ACs[0].ID != ac || v.Goals[0].ACs[0].Verify != "go test ./..." ||
 		len(v.Goals[0].Decisions) != 1 || v.Goals[0].Decisions[0].ID != d {
 		t.Fatalf("show = %+v", v)
 	}
 
 	text := mustRun(t, root, "show", "001", "--text")
-	for _, want := range []string{"001-demo  task · requirements", "◎ G1     " + g1, "    ✓ AC1.1  " + ac, "go test ./...", "    ◆ D1     " + d} {
+	for _, want := range []string{p1 + "  demo  task · requirements", "◎ G1     " + g1, "    ✓ AC1.1  " + ac, "go test ./...", "    ◆ D1     " + d} {
 		if !strings.Contains(text, want) {
 			t.Errorf("show --text missing %q:\n%s", want, text)
 		}
@@ -541,7 +549,7 @@ func TestUpdateUnlinkRetireMove(t *testing.T) {
 	g1, g2, ac, d := walk(t, root)
 
 	u := decode[mutation](t, mustRun(t, root, "update", "001", ac, "--title", "it really works", "--verify-kind", "manual", "--verify-cmd", ""))
-	if u.Plan != "001" || u.ID != ac || u.Type != "ac" || u.Fields["title"] != "it really works" {
+	if u.Plan != p1 || u.ID != ac || u.Type != "ac" || u.Fields["title"] != "it really works" {
 		t.Fatalf("update = %+v", u)
 	}
 	if v, _ := u.Fields["verify"].(map[string]any); v["kind"] != "manual" || v["cmd"] != nil || v["tests"] == nil {
@@ -706,7 +714,7 @@ func TestFmtAllAndLossyFiles(t *testing.T) {
 		t.Fatal("fmt rewrote a file it could not represent")
 	}
 	text, _, _ := runCLI(t, root, "fmt", "all", "--text")
-	if !strings.HasPrefix(text, "001  canonical") || !strings.Contains(text, "002  ERROR") || !strings.Contains(text, "hint: ") {
+	if !strings.HasPrefix(text, p1+"  canonical") || !strings.Contains(text, p2+"  ERROR") || !strings.Contains(text, "hint: ") {
 		t.Fatalf("fmt all --text:\n%s", text)
 	}
 
@@ -753,7 +761,7 @@ func lens(t *testing.T, root string) map[string]string {
 	mustRun(t, root, "link", "001", ac, "discharges", ids["r"])
 	// A qualified target in a plan that does not exist: link refuses it, so
 	// it is a hand edit, and the read lenses print it as a raw reference.
-	handLink(t, root, "001-demo", graph.Edge{From: ac, Type: "discharges", To: "005:r-8hw3"})
+	handLink(t, root, "001-demo", graph.Edge{ID: "e-zzzz", From: ac, Type: "discharges", To: "005-m3x9:r-8hw3"})
 	add("q", "question", "--title", "Ship it behind a flag?", "--status", "open", "--recommended", "no")
 	add("s1", "stage", "--title", "First stage", "--steps", "SECRET-STEP-ONE", "--commit", "feat: one", "--status", "done")
 	add("s2", "stage", "--title", "Second stage", "--steps", "step two", "--commit", "feat: two", "--dependsOn", ids["s1"])
@@ -785,7 +793,7 @@ func TestListFiltersAndAll(t *testing.T) {
 	mustRun(t, root, "retire", "001", ids["ac2"])
 
 	one := decode[listOut](t, mustRun(t, root, "list", "001"))
-	if one.Plan != "001" || one.Name != "demo" || one.Kind != "task" || one.Lifecycle != "requirements" || len(one.Nodes) != 15 {
+	if one.Plan != p1 || one.Name != "demo" || one.Kind != "task" || one.Lifecycle != "requirements" || len(one.Nodes) != 15 {
 		t.Fatalf("list 001 = %+v", one)
 	}
 	if n := one.Nodes[0]; n.ID != "plan" || n.Title != "demo" {
@@ -805,7 +813,7 @@ func TestListFiltersAndAll(t *testing.T) {
 	expectFailure(t, root, "invalid-type", "list", "001", "--type", "story")
 
 	text := mustRun(t, root, "list", "001", "--type", "ac", "--text")
-	if !strings.HasPrefix(text, "001-demo  task · requirements\n") || !strings.Contains(text, "second criterion  (retired)") {
+	if !strings.HasPrefix(text, p1+"  demo  task · requirements\n") || !strings.Contains(text, "second criterion  (retired)") {
 		t.Fatalf("list --text:\n%s", text)
 	}
 
@@ -817,7 +825,7 @@ func TestListFiltersAndAll(t *testing.T) {
 	}
 	stdout, stderr, code := runCLI(t, root, "list", "all")
 	all := decode[struct{ Plans []listOut }](t, stdout)
-	if code != 1 || len(all.Plans) != 2 || all.Plans[1].Plan != "002" || all.Plans[1].Kind != "epic" {
+	if code != 1 || len(all.Plans) != 2 || all.Plans[1].Plan != p2 || all.Plans[1].Kind != "epic" {
 		t.Fatalf("list all: exit %d %+v", code, all)
 	}
 	if f := decode[failure](t, stderr); len(f.Errors) != 1 || f.Errors[0].Code != "parse-error" || f.Hint == "" {
@@ -868,11 +876,11 @@ func TestDescribeTruncatesWithRecoveryCommand(t *testing.T) {
 	why, _ := v.Fields["why"].(string)
 	if v.Type != "alternative" || v.Term != "Alternative" || v.Title != "YAML" || v.Rank != "a0" ||
 		len([]rune(why)) != 201 || !strings.HasSuffix(why, "…") || !slices.Equal(v.Truncated, []string{"why"}) ||
-		v.Get != "auto plan get 001 "+ids["a"] || v.Edges.In["rejects"] != 1 {
+		v.Get != "auto plan get "+p1+" "+ids["a"] || v.Edges.In["rejects"] != 1 {
 		t.Fatalf("describe = %+v", v)
 	}
 	text := mustRun(t, root, "describe", "001", ids["a"], "--text")
-	if !strings.Contains(text, "truncated: why; full node: auto plan get 001 "+ids["a"]) {
+	if !strings.Contains(text, "truncated: why; full node: auto plan get "+p1+" "+ids["a"]) {
 		t.Fatalf("describe --text must print the recovery command:\n%s", text)
 	}
 	expectFailure(t, root, "node-not-found", "describe", "001", "a-zzzz")
@@ -900,14 +908,14 @@ func TestGetIsFullFidelityWithNeighbours(t *testing.T) {
 	ac := decode[struct{ Out, In []row }](t, mustRun(t, root, "get", "001", ids["ac"]))
 	want := []row{
 		{Edge: "proves", ID: ids["g1"], Type: "goal", Title: "First goal", Status: "active"},
-		{Edge: "discharges", ID: "005:r-8hw3", Qualified: true},
+		{Edge: "discharges", ID: "005-m3x9:r-8hw3", Qualified: true},
 		{Edge: "discharges", ID: ids["r"], Type: "rail", Title: "No network calls", Status: "active"},
 	}
 	if !slices.Equal(ac.Out, want) || len(ac.In) != 2 {
 		t.Fatalf("get ac out = %+v in = %+v", ac.Out, ac.In)
 	}
 	text := mustRun(t, root, "get", "001", ids["ac"], "--text")
-	for _, s := range []string{"gwt ", "verify.cmd ", "go test ./...", "proves     → ◎ " + ids["g1"], "⇢ 005:r-8hw3", "covers ← ▶ " + ids["s1"], "verify.tests  - TestA\n                - TestB\n"} {
+	for _, s := range []string{"gwt ", "verify.cmd ", "go test ./...", "proves     → ◎ " + ids["g1"], "⇢ 005-m3x9:r-8hw3", "covers ← ▶ " + ids["s1"], "verify.tests  - TestA\n                - TestB\n"} {
 		if !strings.Contains(text, s) {
 			t.Errorf("get --text missing %q:\n%s", s, text)
 		}
@@ -929,7 +937,7 @@ func TestSearchIsCaseInsensitiveAcrossPlans(t *testing.T) {
 		Matches []match
 	}](t, mustRun(t, root, "search", "all", "  Merge "))
 	if r.Query != "merge" || len(r.Matches) != 2 || r.Matches[0].ID != ids["a"] || !slices.Equal(r.Matches[0].Fields, []string{"why"}) ||
-		r.Matches[1].Plan != "002" || r.Matches[1].Type != "goal" {
+		r.Matches[1].Plan != p2 || r.Matches[1].Type != "goal" {
 		t.Fatalf("search all = %+v", r)
 	}
 	one := decode[struct{ Matches []match }](t, mustRun(t, root, "search", "001", "merge"))
@@ -1100,7 +1108,7 @@ func TestBriefCommand(t *testing.T) {
 	}
 	first := mustRun(t, root, "brief", "001", ids["s1"], "--text")
 	for _, s := range []string{"# Stage " + ids["s1"] + ": First stage\n", "1. SECRET-STEP-ONE", "`feat: one`", "+ └── a.go", "### " + ids["ac"] + ": it works",
-		"- Verify: `go test ./...`", "### " + ids["d"] + ": use JSON", "- 005:r-8hw3: a rail in plan 005", "- " + ids["r"] + ": No network calls", "- " + ids["q"] + ": Ship it behind a flag?"} {
+		"- Verify: `go test ./...`", "### " + ids["d"] + ": use JSON", "- 005-m3x9:r-8hw3: a rail in plan 005-m3x9", "- " + ids["r"] + ": No network calls", "- " + ids["q"] + ": Ship it behind a flag?"} {
 		if !strings.Contains(first, s) {
 			t.Errorf("brief --text missing %q:\n%s", s, first)
 		}
@@ -1130,10 +1138,10 @@ func TestEpicFamilyAcrossPlans(t *testing.T) {
 	leg := id("add", "001", "leg", "--actor", "agent", "--action", "sends mail", "--in", j)
 
 	created := decode[map[string]string](t, mustRun(t, root, "new", "walking-skeleton", "--kind", "task", "--epic", "001"))
-	if created["id"] != "002" || created["epic"] != "001" {
+	if created["id"] != p2 || created["number"] != "002" || created["epic"] != p1 {
 		t.Fatalf("new --epic = %+v", created)
 	}
-	if !strings.Contains(string(readGraph(t, root, "002-walking-skeleton")), `"epic": "001"`) {
+	if !strings.Contains(string(readGraph(t, root, "002-walking-skeleton")), `"epic": "`+p1+`"`) {
 		t.Fatal("new --epic records plan.fields.epic")
 	}
 	expectFailure(t, root, "epic-not-found", "new", "x", "--kind", "task", "--epic", "009")
@@ -1195,14 +1203,14 @@ func TestEpicFamilyAcrossPlans(t *testing.T) {
 		}
 		Children []struct{ Plan, Lifecycle string }
 	}](t, mustRun(t, root, "show", "001"))
-	if !slices.Equal(show.Journeys[0].Legs[0].DeliveredBy, []string{"002"}) || show.Children[0].Lifecycle != "solution" {
+	if !slices.Equal(show.Journeys[0].Legs[0].DeliveredBy, []string{p2}) || show.Children[0].Lifecycle != "solution" {
 		t.Fatalf("epic show = %+v", show)
 	}
-	if text := mustRun(t, root, "show", "001", "--text"); !strings.Contains(text, "\nchild plans\n") || !strings.Contains(text, "delivered by 002") {
+	if text := mustRun(t, root, "show", "001", "--text"); !strings.Contains(text, "\nchild plans\n") || !strings.Contains(text, "delivered by "+p2) {
 		t.Fatalf("epic show --text:\n%s", text)
 	}
 	trace := mustRun(t, root, "trace", "002", ac, "--up", "--text")
-	for _, s := range []string{"child-of   → ◎ 001:" + eg + "  Agents exchange durable mail  (via 001:" + child + ")", "discharges → ‖ 001:" + rail + "  No network calls"} {
+	for _, s := range []string{"child-of   → ◎ " + p1 + ":" + eg + "  Agents exchange durable mail  (via " + p1 + ":" + child + ")", "discharges → ‖ " + p1 + ":" + rail + "  No network calls"} {
 		if !strings.Contains(trace, s) {
 			t.Errorf("trace --up missing %q:\n%s", s, trace)
 		}
@@ -1212,7 +1220,7 @@ func TestEpicFamilyAcrossPlans(t *testing.T) {
 		Qualified             bool
 	}
 	card := decode[struct{ In []row }](t, mustRun(t, root, "get", "001", rail))
-	if len(card.In) != 2 || card.In[1] != (row{Edge: "honors", ID: "002:plan", Type: "plan", Title: "walking-skeleton", Qualified: true}) {
+	if len(card.In) != 2 || card.In[1] != (row{Edge: "honors", ID: p2 + ":plan", Type: "plan", Title: "walking-skeleton", Qualified: true}) {
 		t.Fatalf("get rail in = %+v", card.In)
 	}
 
@@ -1266,7 +1274,7 @@ func TestDocsCoversEveryRegisteredType(t *testing.T) {
 			t.Errorf("docs row for %s lacks its endpoints or cross-plan flag: %s", e.Name, line)
 		}
 	}
-	for _, verb := range []string{"init", "new", "add", "update", "link", "unlink", "retire", "move", "lint", "fmt",
+	for _, verb := range []string{"init", "new", "add", "update", "link", "unlink", "retire", "move", "renumber", "lint", "fmt",
 		"list", "describe", "get", "search", "show", "trace", "tree", "brief", "quickstart", "docs"} {
 		if !strings.Contains(out, "- `auto plan "+verb) {
 			t.Errorf("docs lacks command %s", verb)
@@ -1279,9 +1287,399 @@ func TestQuickstartNamesTheHappyPath(t *testing.T) {
 	if strings.TrimSpace(out) == "" {
 		t.Fatal("quickstart is empty")
 	}
-	for _, verb := range []string{"init", "new", "add", "link", "lint", "show", "brief"} {
+	for _, verb := range []string{"list", "init", "new", "add", "link", "unlink", "lint", "show", "brief", "renumber"} {
 		if !strings.Contains(out, "auto plan "+verb+" ") {
 			t.Errorf("quickstart does not show auto plan %s", verb)
 		}
+	}
+}
+
+// planID reads the top-level plan ID of a plan folder's graph.json.
+func planID(t *testing.T, root, folder string) string {
+	t.Helper()
+	return decode[struct{ ID string }](t, string(readGraph(t, root, folder))).ID
+}
+
+// collide simulates a merge in which two branches each created plan NNN:
+// it moves folder from to number to, and rewrites its plan ID to match, as
+// the other branch's `new` would have written it.
+func collide(t *testing.T, root, from, to string) string {
+	t.Helper()
+	plans := filepath.Join(root, "docs", "plans")
+	dest := to + from[3:]
+	if err := os.Rename(filepath.Join(plans, from), filepath.Join(plans, dest)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(plans, dest, "graph.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = bytes.Replace(data, []byte(`"id": "`+from[:3]+"-"), []byte(`"id": "`+to+"-"), 1)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dest
+}
+
+// TestPlanIDsAndArguments: new generates NNN-xxxx; every plan argument form
+// resolves; a bare number shared by two folders is ambiguous.
+func TestPlanIDsAndArguments(t *testing.T) {
+	root := repo(t)
+	created := decode[map[string]string](t, mustRun(t, root, "new", "demo", "--kind", "task"))
+	if created["id"] != p1 || created["number"] != "001" || planID(t, root, "001-demo") != p1 {
+		t.Fatalf("new = %v", created)
+	}
+	text := mustRun(t, root, "new", "other", "--kind", "task", "--text")
+	if text != "created plan "+p2+" in docs/plans/002-other (task, requirements)\n" {
+		t.Fatalf("new --text = %q", text)
+	}
+	for _, arg := range []string{"001", p1, "001-demo", "docs/plans/001-demo", "docs/plans/001-demo/graph.json"} {
+		if got := decode[report](t, mustRun(t, root, "lint", arg)); got.Plan != p1 {
+			t.Errorf("lint %s names %s", arg, got.Plan)
+		}
+	}
+
+	mustRun(t, root, "new", "gamma", "--kind", "task")
+	gamma := collide(t, root, "003-gamma", "002")
+	_, stderr, code := runCLI(t, root, "show", "002")
+	f := decode[failure](t, stderr)
+	if code != 1 || f.Errors[0].Code != "ambiguous-plan" || !strings.Contains(f.Errors[0].Message, "002-gamma") ||
+		!strings.Contains(f.Errors[0].Message, "002-other") || !strings.Contains(f.Hint, "auto plan renumber") {
+		t.Fatalf("show 002: exit %d %s", code, stderr)
+	}
+	// The plan ID and the folder still name each plan.
+	stdout, _, _ := runCLI(t, root, "lint", gamma)
+	if got := decode[report](t, stdout); got.Plan != planID(t, root, gamma) || got.OK {
+		t.Errorf("lint by folder = %+v", got)
+	}
+}
+
+// TestShorthandExpansion: NNN and NNN:ID are accepted on input and stored as
+// the plan ID; a number two plans share is refused with ambiguous-plan.
+func TestShorthandExpansion(t *testing.T) {
+	root := repo(t)
+	id := func(args ...string) string {
+		t.Helper()
+		return decode[struct{ ID string }](t, mustRun(t, root, args...)).ID
+	}
+	id("new", "epic", "--kind", "epic")
+	rail := id("add", "001", "rail", "--title", "No network calls")
+	mustRun(t, root, "new", "child", "--kind", "task", "--epic", "001")
+	id("add", "001", "child", "--plan", "002", "--title", "the child")
+	mustRun(t, root, "update", "001", rail, "--deferred", "002")
+	l := decode[struct {
+		Edges []struct{ ID, To string }
+	}](t, mustRun(t, root, "link", "002", "plan", "honors", "001:"+rail))
+	if len(l.Edges) != 1 || l.Edges[0].To != p1+":"+rail || !graph.EdgeIDPattern.MatchString(l.Edges[0].ID) {
+		t.Fatalf("link = %+v", l)
+	}
+	epic, child := string(readGraph(t, root, "001-epic")), string(readGraph(t, root, "002-child"))
+	if !strings.Contains(epic, `"plan": "`+p2+`"`) || strings.Count(epic, `"`+p2+`"`) != 2 { // child.plan, rail.deferred
+		t.Errorf("epic does not name %s twice:\n%s", p2, epic)
+	}
+	for _, want := range []string{`"epic": "` + p1 + `"`, `"to": "` + p1 + ":" + rail + `"`} {
+		if !strings.Contains(child, want) {
+			t.Errorf("child lacks %q:\n%s", want, child)
+		}
+	}
+	if strings.Contains(child, `"001:`) || strings.Contains(epic, `"002"`) {
+		t.Error("a bare number was stored")
+	}
+	// unlink accepts the shorthand too.
+	mustRun(t, root, "unlink", "002", "plan", "honors", "001:"+rail)
+
+	mustRun(t, root, "new", "other", "--kind", "task")
+	collide(t, root, "003-other", "002")
+	before := readGraph(t, root, "001-epic")
+	expectFailure(t, root, "ambiguous-plan", "add", "001", "child", "--plan", "002")
+	expectFailure(t, root, "ambiguous-plan", "update", "001", rail, "--deferred", "002")
+	expectFailure(t, root, "ambiguous-plan", "link", p2, "plan", "honors", "002:plan")
+	expectFailure(t, root, "plan-not-found", "add", "001", "child", "--plan", "009")
+	expectFailure(t, root, "dangling-ref", "link", p2, "plan", "honors", "009:r-zzzz")
+	if !bytes.Equal(before, readGraph(t, root, "001-epic")) {
+		t.Fatal("refused writes changed the epic")
+	}
+}
+
+// TestRenumber: lint all reports the collision; renumber moves one plan to
+// the next free number and rewrites every reference to it across the epic
+// (child node, deferred list, prose) and the plan itself; lint all is clean
+// again. A frozen referrer refuses the whole operation.
+func TestRenumber(t *testing.T) {
+	root := repo(t)
+	id := func(args ...string) string {
+		t.Helper()
+		return decode[struct{ ID string }](t, mustRun(t, root, args...)).ID
+	}
+	id("new", "epic", "--kind", "epic")
+	rail := id("add", "001", "rail", "--title", "No network calls")
+	mustRun(t, root, "new", "base", "--kind", "task", "--epic", "001")
+	mustRun(t, root, "new", "late", "--kind", "task", "--epic", "001")
+	id("add", "001", "child", "--plan", "002", "--title", "base")
+	id("add", "001", "child", "--plan", "003", "--title", "late")
+	mustRun(t, root, "link", "002", "plan", "honors", "001:"+rail)
+	mustRun(t, root, "update", "001", rail, "--deferred", "003", "--description", "late is [["+p3+":plan]]")
+
+	late := collide(t, root, "003-late", "002")
+	lateID := planID(t, root, late)
+	// The epic still names the moved plan by its old ID: rewrite it to match,
+	// as the other branch's epic would have.
+	epicPath := filepath.Join(root, "docs", "plans", "001-epic", "graph.json")
+	data := bytes.ReplaceAll(readGraph(t, root, "001-epic"), []byte(p3), []byte(lateID))
+	if err := os.WriteFile(epicPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, code := runCLI(t, root, "lint", "all")
+	all := decode[struct {
+		OK    bool
+		Plans []report
+	}](t, stdout)
+	dups := 0
+	for _, r := range all.Plans {
+		for _, is := range r.Issues {
+			if is.Code == "duplicate-plan-number" {
+				dups++
+				if !strings.Contains(is.Message, p2) || !strings.Contains(is.Message, lateID) || is.Hint != "auto plan renumber "+r.Plan+" (moves it to the next free number and rewrites every reference to it)" {
+					t.Errorf("duplicate-plan-number = %+v", is)
+				}
+			}
+		}
+	}
+	if code != 1 || all.OK || dups != 2 {
+		t.Fatalf("lint all: exit %d %+v", code, all)
+	}
+
+	// A frozen referrer refuses the whole operation and changes nothing.
+	mustRun(t, root, "update", "001", "plan", "--lifecycle", "done")
+	snapshot := map[string][]byte{"001-epic": readGraph(t, root, "001-epic"), late: readGraph(t, root, late)}
+	expectFailure(t, root, "frozen-ref", "renumber", lateID)
+	for folder, want := range snapshot {
+		if !bytes.Equal(want, readGraph(t, root, folder)) {
+			t.Fatalf("refused renumber changed %s", folder)
+		}
+	}
+	// Unfreeze by hand (as a test fixture only) and renumber for real.
+	if err := os.WriteFile(epicPath, bytes.Replace(snapshot["001-epic"], []byte(`"lifecycle": "done"`), []byte(`"lifecycle": "requirements"`), 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out := decode[struct {
+		Plan, ID, From, To, Path string
+		Rewritten                []string
+	}](t, mustRun(t, root, "renumber", lateID))
+	newID := "003" + lateID[3:]
+	if out.Plan != newID || out.ID != "plan" || out.From != lateID || out.To != newID || out.Path != "docs/plans/003-late" ||
+		!slices.Equal(out.Rewritten, []string{"docs/plans/001-epic/graph.json", "docs/plans/003-late/graph.json"}) {
+		t.Fatalf("renumber = %+v", out)
+	}
+	if planID(t, root, "003-late") != newID {
+		t.Fatal("plan ID not rewritten")
+	}
+	if _, err := os.Stat(filepath.Join(root, "docs", "plans", late)); !os.IsNotExist(err) {
+		t.Fatal("old folder still exists")
+	}
+	epic := string(readGraph(t, root, "001-epic"))
+	if strings.Contains(epic, lateID) || strings.Count(epic, newID) != 3 { // child.plan, deferred, prose
+		t.Fatalf("epic refs not rewritten:\n%s", epic)
+	}
+	if r := decode[struct{ OK bool }](t, mustRun(t, root, "lint", "all")); !r.OK {
+		t.Fatalf("lint all after renumber = %+v", r)
+	}
+
+	expectFailure(t, root, "plan-number-taken", "renumber", newID, "--to", "002")
+	expectFailure(t, root, "usage", "renumber", newID, "--to", "003")
+	expectFailure(t, root, "usage", "renumber", newID, "--to", "3")
+	text := mustRun(t, root, "renumber", newID, "--to", "007", "--text")
+	if !strings.HasPrefix(text, "renumbered "+newID+" → 007"+newID[3:]+" (docs/plans/003-late → docs/plans/007-late)\n") {
+		t.Fatalf("renumber --text:\n%s", text)
+	}
+}
+
+// TestRenumberFixesIDMismatch: --to the folder's own number rewrites only
+// the ID (the fix plan-id-mismatch suggests).
+func TestRenumberFixesIDMismatch(t *testing.T) {
+	root := repo(t)
+	mustRun(t, root, "new", "demo", "--kind", "task")
+	path := filepath.Join(root, "docs", "plans", "001-demo", "graph.json")
+	if err := os.WriteFile(path, bytes.Replace(readGraph(t, root, "001-demo"), []byte(`"`+p1+`"`), []byte(`"009`+p1[3:]+`"`), 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := decode[report](t, func() string { s, _, _ := runCLI(t, root, "lint", "001"); return s }())
+	if r.OK || r.Issues[0].Code != "plan-id-mismatch" || !strings.Contains(r.Issues[0].Hint, "auto plan renumber 001-demo --to 001") {
+		t.Fatalf("lint = %+v", r)
+	}
+	mustRun(t, root, "renumber", "001-demo", "--to", "001")
+	if planID(t, root, "001-demo") != p1 {
+		t.Fatal("ID not fixed")
+	}
+}
+
+// TestEdgeIDs: add and link return edge IDs, get shows them, and unlink
+// takes one.
+func TestEdgeIDs(t *testing.T) {
+	root := repo(t)
+	g1, _, ac, d := walk(t, root)
+	type edges struct {
+		Edges []struct{ ID, From, Type, To string }
+	}
+	add := decode[edges](t, mustRun(t, root, "add", "001", "ac", "--proves", g1, "--title", "t", "--gwt", "x"))
+	if len(add.Edges) != 1 || !graph.EdgeIDPattern.MatchString(add.Edges[0].ID) {
+		t.Fatalf("add edges = %+v", add)
+	}
+	card := decode[struct {
+		Out []struct {
+			EdgeID string `json:"edge_id"`
+			Edge   string
+		}
+	}](t, mustRun(t, root, "get", "001", ac))
+	if len(card.Out) != 1 || !graph.EdgeIDPattern.MatchString(card.Out[0].EdgeID) {
+		t.Fatalf("get out = %+v", card.Out)
+	}
+	if text := mustRun(t, root, "get", "001", ac, "--text"); !strings.Contains(text, card.Out[0].EdgeID+"  proves") {
+		t.Fatalf("get --text lacks the edge ID:\n%s", text)
+	}
+	constrains := decode[struct {
+		In []struct {
+			EdgeID string `json:"edge_id"`
+			Edge   string
+		}
+	}](t, mustRun(t, root, "get", "001", g1))
+	eid := ""
+	for _, r := range constrains.In {
+		if r.Edge == "constrains" {
+			eid = r.EdgeID
+		}
+	}
+	removed := decode[struct {
+		ID      string
+		Removed []struct{ ID, From, Type, To string }
+	}](t, mustRun(t, root, "unlink", "001", eid))
+	if removed.ID != d || len(removed.Removed) != 1 || removed.Removed[0].ID != eid || removed.Removed[0].To != g1 {
+		t.Fatalf("unlink by ID = %+v", removed)
+	}
+	expectFailure(t, root, "edge-not-found", "unlink", "001", eid)
+	if _, stderr, code := runCLI(t, root, "unlink", "001", "a", "b"); code != 1 || !strings.Contains(stderr, "<edge-id>") {
+		t.Fatalf("three arguments: exit %d %s", code, stderr)
+	}
+}
+
+// TestVersionsAndFreezing: reads accept any version (another major best
+// effort, with a warning); writes are refused for another major, a newer
+// version, and a done plan. Setting done is allowed; fmt --check still works.
+func TestVersionsAndFreezing(t *testing.T) {
+	root := repo(t)
+	walk(t, root)
+	path := filepath.Join(root, "docs", "plans", "001-demo", "graph.json")
+	orig := readGraph(t, root, "001-demo")
+	setVersion := func(v string) {
+		t.Helper()
+		if err := os.WriteFile(path, bytes.Replace(orig, []byte(`"version": "1.0.0"`), []byte(`"version": "`+v+`"`), 1), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, v := range []string{"2.0.0", "1.1.0"} {
+		setVersion(v)
+		r := decode[report](t, mustRun(t, root, "lint", "001"))
+		if r.Issues[0].Code != "other-version" || r.Issues[0].Severity != "warning" || !r.OK {
+			t.Errorf("lint %s = %+v", v, r)
+		}
+		mustRun(t, root, "show", "001")
+		mustRun(t, root, "fmt", "001", "--check")
+		expectFailure(t, root, "frozen", "add", "001", "goal", "--title", "t")
+		expectFailure(t, root, "frozen", "update", "001", "plan", "--lifecycle", "solution")
+		rows := decode[struct {
+			Plans []struct {
+				Frozen       bool
+				FrozenReason string `json:"frozen_reason"`
+				Version      string
+			}
+		}](t, mustRun(t, root, "list"))
+		if !rows.Plans[0].Frozen || rows.Plans[0].FrozenReason != "version" || rows.Plans[0].Version != v {
+			t.Errorf("list %s = %+v", v, rows)
+		}
+	}
+	setVersion("1.0.0")
+	mustRun(t, root, "update", "001", "plan", "--lifecycle", "done")
+	for _, args := range [][]string{
+		{"add", "001", "goal", "--title", "t"}, {"update", "001", "plan", "--lifecycle", "plan"},
+		{"link", "001", "a", "b", "c"}, {"unlink", "001", "e-0000"}, {"retire", "001", "g-0000"},
+		{"move", "001", "g-0000", "--before", "g-0001"}, {"renumber", "001"},
+	} {
+		expectFailure(t, root, "frozen", args...)
+	}
+	mustRun(t, root, "fmt", "001", "--check")
+	mustRun(t, root, "fmt", "001") // canonical: nothing to rewrite
+	done := readGraph(t, root, "001-demo")
+	if err := os.WriteFile(path, append(bytes.TrimRight(done, "\n"), "\n\n"...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, code := runCLI(t, root, "fmt", "001")
+	if r := decode[fmtOut](t, stdout); code != 1 || len(r.Errors) != 1 || r.Errors[0].Code != "frozen" {
+		t.Fatalf("fmt of a non-canonical frozen plan: exit %d %+v", code, r)
+	}
+}
+
+type planRow struct {
+	ID, Number, Name, Path, Kind, Lifecycle, Version string
+	Frozen                                           bool
+	FrozenReason                                     string `json:"frozen_reason"`
+	Epic                                             string
+}
+
+// TestListPlans: list with no argument lists the plans themselves.
+func TestListPlans(t *testing.T) {
+	root := repo(t)
+	if out := decode[struct{ Plans []planRow }](t, mustRun(t, root, "list")); out.Plans == nil || len(out.Plans) != 0 {
+		t.Fatalf("no plans = %+v", out)
+	}
+	mustRun(t, root, "new", "epic", "--kind", "epic")
+	mustRun(t, root, "new", "child", "--kind", "task", "--epic", "001")
+	mustRun(t, root, "new", "finished", "--kind", "task")
+	mustRun(t, root, "update", "003", "plan", "--lifecycle", "done")
+
+	rows := decode[struct{ Plans []planRow }](t, mustRun(t, root, "list")).Plans
+	want := []planRow{
+		{ID: p1, Number: "001", Name: "epic", Path: "docs/plans/001-epic", Kind: "epic", Lifecycle: "requirements", Version: "1.0.0"},
+		{ID: p2, Number: "002", Name: "child", Path: "docs/plans/002-child", Kind: "task", Lifecycle: "requirements", Version: "1.0.0", Epic: p1},
+		{ID: p3, Number: "003", Name: "finished", Path: "docs/plans/003-finished", Kind: "task", Lifecycle: "done", Version: "1.0.0", Frozen: true, FrozenReason: "done"},
+	}
+	if !slices.Equal(rows, want) {
+		t.Fatalf("list =\n%+v\nwant\n%+v", rows, want)
+	}
+	if rows := decode[struct{ Plans []planRow }](t, mustRun(t, root, "list", "--kind", "  EPIC ")).Plans; len(rows) != 1 || rows[0].ID != p1 {
+		t.Fatalf("--kind epic = %+v", rows)
+	}
+	expectFailure(t, root, "invalid-kind", "list", "--kind", "story")
+	expectFailure(t, root, "usage", "list", "--type", "ac")
+	expectFailure(t, root, "usage", "list", "001", "--kind", "task")
+
+	text := mustRun(t, root, "list", "--text")
+	wantText := p1 + "  epic      epic · requirements\n" +
+		p2 + "  child     task · requirements  epic " + p1 + "\n" +
+		p3 + "  finished  task · done          [frozen: done]\n"
+	if text != wantText {
+		t.Fatalf("list --text:\n%s\nwant:\n%s", text, wantText)
+	}
+
+	// A malformed plan and a number collision: every readable plan is still
+	// listed, the problems go to stderr, exit 1.
+	mustRun(t, root, "new", "broken", "--kind", "task")
+	if err := os.WriteFile(filepath.Join(root, "docs", "plans", "004-broken", "graph.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, root, "new", "dup", "--kind", "task")
+	collide(t, root, "005-dup", "002")
+	stdout, stderr, code := runCLI(t, root, "list")
+	rows = decode[struct{ Plans []planRow }](t, stdout).Plans
+	f := decode[failure](t, stderr)
+	var errCodes []string
+	for _, e := range f.Errors {
+		errCodes = append(errCodes, e.Code)
+	}
+	if code != 1 || len(rows) != 4 || rows[1].Number != "002" || rows[2].Number != "002" ||
+		!slices.Contains(errCodes, "parse-error") || !slices.Contains(errCodes, "duplicate-plan-number") {
+		t.Fatalf("list with problems: exit %d rows %+v stderr %s", code, rows, stderr)
 	}
 }

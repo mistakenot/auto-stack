@@ -173,11 +173,13 @@ type CardView struct {
 	order []string
 }
 
-// EdgeRow is one edge seen from a node: the edge type and the neighbour at
-// the other end. A qualified neighbour (`005:r-8hw3`) lives in another plan:
-// its type, title and status are resolved through the plan set, and stay
-// empty when it does not resolve.
+// EdgeRow is one edge seen from a node: the edge's ID and type and the
+// neighbour at the other end. A qualified neighbour (`005-k7q2:r-8hw3`)
+// lives in another plan: its type, title and status are resolved through the
+// plan set, and stay empty when it does not resolve. An edge another plan
+// holds into the node carries that plan's edge ID.
 type EdgeRow struct {
+	EdgeID    string `json:"edge_id"`
 	Edge      string `json:"edge"`
 	ID        string `json:"id"`
 	Type      string `json:"type"`
@@ -202,14 +204,14 @@ func Card(planID string, g *graph.Graph, id string, plans Plans) (CardView, bool
 	maps.Copy(v.Fields, n.Fields)
 	for _, e := range g.Edges {
 		if e.From == n.ID {
-			v.Out = append(v.Out, neighbour(g, plans, e.Type, e.To))
+			v.Out = append(v.Out, neighbour(g, plans, e.ID, e.Type, e.To))
 		}
 		if e.To == n.ID {
-			v.In = append(v.In, neighbour(g, plans, e.Type, e.From))
+			v.In = append(v.In, neighbour(g, plans, e.ID, e.Type, e.From))
 		}
 	}
 	for _, x := range incoming(plans, planID, n.ID) {
-		v.In = append(v.In, neighbour(g, plans, x.edge.Type, graph.Qualify(x.plan, x.edge.From)))
+		v.In = append(v.In, neighbour(g, plans, x.edge.ID, x.edge.Type, graph.Qualify(x.plan, x.edge.From)))
 	}
 	sortEdgeRows(v.Out)
 	sortEdgeRows(v.In)
@@ -217,8 +219,8 @@ func Card(planID string, g *graph.Graph, id string, plans Plans) (CardView, bool
 }
 
 // neighbour describes the node at the other end of an edge.
-func neighbour(g *graph.Graph, plans Plans, edge, ref string) EdgeRow {
-	row := EdgeRow{Edge: edge, ID: ref}
+func neighbour(g *graph.Graph, plans Plans, edgeID, edge, ref string) EdgeRow {
+	row := EdgeRow{EdgeID: edgeID, Edge: edge, ID: ref}
 	if _, _, qualified := graph.ParseRef(ref); qualified {
 		row.Qualified = true
 		if n, ok := lookup(plans, ref); ok {
@@ -264,8 +266,9 @@ func writeEdgeRows(b *strings.Builder, title, arrow string, rows []EdgeRow) {
 		b.WriteString("  (none)\n")
 		return
 	}
-	edgeW, idW := 0, 0
+	eidW, edgeW, idW := 0, 0, 0
 	for _, r := range rows {
+		eidW = max(eidW, len(r.EdgeID))
 		edgeW = max(edgeW, len(r.Edge))
 		idW = max(idW, len(r.ID))
 	}
@@ -279,7 +282,7 @@ func writeEdgeRows(b *strings.Builder, title, arrow string, rows []EdgeRow) {
 		case r.Status == graph.StatusRetired:
 			rest += "  (retired)"
 		}
-		fmt.Fprintf(b, "  %s %s %s %s  %s\n", pad(r.Edge, edgeW), arrow, glyph, pad(r.ID, idW), rest)
+		fmt.Fprintf(b, "  %s  %s %s %s %s  %s\n", pad(r.EdgeID, eidW), pad(r.Edge, edgeW), arrow, glyph, pad(r.ID, idW), rest)
 	}
 }
 

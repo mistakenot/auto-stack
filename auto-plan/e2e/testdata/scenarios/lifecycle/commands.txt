@@ -59,3 +59,19 @@ auto plan fmt 001 --check
 auto plan lint 001
 # expect exit=0 stdout=show-solution.txt
 auto plan show 001 --text
+
+# renumber moves the plan to another number: folder 001-demo becomes 004-demo and the plan ID
+# keeps its suffix (001-acs4 → 004-acs4). The bare number 001 then names nothing.
+# expect exit=0 stdout=renumber.json
+auto plan renumber 001 --to 004
+# expect exit=1
+auto plan lint 001
+# checkpoint 8
+
+# Setting lifecycle done is the plan's last write; afterwards it is frozen and writes are refused.
+auto plan update 004 plan --lifecycle done
+# expect exit=1 stdout=frozen.txt
+auto plan add 004 goal --title "too late"
+# expect exit=0
+auto plan fmt 004 --check
+# checkpoint 9

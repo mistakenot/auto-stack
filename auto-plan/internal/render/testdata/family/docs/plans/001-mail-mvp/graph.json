@@ -1,5 +1,6 @@
 {
-  "version": 1,
+  "version": "1.0.0",
+  "id": "001-aaaa",
   "nodes": [
     {"id": "plan", "type": "plan", "status": "active", "fields": {"name": "mail-mvp", "kind": "epic", "lifecycle": "plan", "created": "2026-01-01"}},
     {"id": "g-e001", "type": "goal", "status": "active", "rank": "a0", "fields": {"title": "Agents exchange durable mail on one host"}},
@@ -11,16 +12,16 @@
     {"id": "l-e002", "type": "leg", "status": "active", "rank": "a1", "fields": {"actor": "agent", "action": "fans mail out to subscribers"}},
     {"id": "l-e003", "type": "leg", "status": "active", "rank": "a2", "fields": {"actor": "agent", "action": "acks a delivery"}},
     {"id": "r-e001", "type": "rail", "status": "active", "rank": "a0", "fields": {"title": "No network calls"}},
-    {"id": "r-e002", "type": "rail", "status": "active", "rank": "a1", "fields": {"title": "auto-shared stays stdlib-only", "deferred": ["003"]}},
-    {"id": "c-e001", "type": "child", "status": "active", "rank": "a0", "fields": {"plan": "002", "title": "the walking skeleton"}},
-    {"id": "c-e002", "type": "child", "status": "active", "rank": "a1", "fields": {"plan": "003", "title": "fan-out"}}
+    {"id": "r-e002", "type": "rail", "status": "active", "rank": "a1", "fields": {"title": "auto-shared stays stdlib-only", "deferred": ["003-cccc"]}},
+    {"id": "c-e001", "type": "child", "status": "active", "rank": "a0", "fields": {"plan": "002-bbbb", "title": "the walking skeleton"}},
+    {"id": "c-e002", "type": "child", "status": "active", "rank": "a1", "fields": {"plan": "003-cccc", "title": "fan-out"}}
   ],
   "edges": [
-    {"from": "d-e001", "type": "constrains", "to": "g-e002"},
-    {"from": "d-e001", "type": "rejects", "to": "a-e001"},
-    {"from": "l-e001", "type": "in", "to": "j-e001"},
-    {"from": "l-e002", "type": "in", "to": "j-e001"},
-    {"from": "l-e003", "type": "in", "to": "j-e001"},
-    {"from": "c-e002", "type": "dependsOn", "to": "c-e001"}
+    {"id": "e-0001", "from": "d-e001", "type": "constrains", "to": "g-e002"},
+    {"id": "e-0002", "from": "d-e001", "type": "rejects", "to": "a-e001"},
+    {"id": "e-0003", "from": "l-e001", "type": "in", "to": "j-e001"},
+    {"id": "e-0004", "from": "l-e002", "type": "in", "to": "j-e001"},
+    {"id": "e-0005", "from": "l-e003", "type": "in", "to": "j-e001"},
+    {"id": "e-0006", "from": "c-e002", "type": "dependsOn", "to": "c-e001"}
   ]
 }

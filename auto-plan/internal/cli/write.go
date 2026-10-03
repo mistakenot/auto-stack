@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -16,12 +17,13 @@ import (
 
 // edgeOut is an edge in command output.
 type edgeOut struct {
+	ID   string `json:"id"`
 	From string `json:"from"`
 	Type string `json:"type"`
 	To   string `json:"to"`
 }
 
-func toEdgeOut(e graph.Edge) edgeOut { return edgeOut{From: e.From, Type: e.Type, To: e.To} }
+func toEdgeOut(e graph.Edge) edgeOut { return edgeOut{ID: e.ID, From: e.From, Type: e.Type, To: e.To} }
 
 // fieldFlag binds one generated flag to a node field (or an object member).
 type fieldFlag struct {
@@ -181,14 +183,17 @@ func runAdd(cmd *cobra.Command, application *app.App, args []string) error {
 	if err != nil {
 		return err
 	}
-	node, errs := l.graph.Add(typ, fields, edges)
+	if err := l.expandPlanRefs(cmd, text, nt, fields); err != nil {
+		return err
+	}
+	if err := l.expandEdgeTargets(cmd, text, edges); err != nil {
+		return err
+	}
+	node, own, errs := l.graph.Add(typ, fields, edges)
 	if len(errs) > 0 {
-		return fail(cmd, text, errs, "graph.json was not changed; fix the flagged values (see `auto plan add "+l.plan.ID+" "+typ+" --help`)")
+		return fail(cmd, text, errs, "graph.json was not changed; fix the flagged values (see `auto plan add "+l.ref()+" "+typ+" --help`)")
 	}
-	for i := range edges {
-		edges[i].From = node.ID
-	}
-	if err := l.checkCrossPlan(cmd, text, edges, fields); err != nil {
+	if err := l.checkCrossPlan(cmd, text, own, fields); err != nil {
 		return err
 	}
 	if err := l.save(cmd, text); err != nil {
@@ -197,20 +202,111 @@ func runAdd(cmd *cobra.Command, application *app.App, args []string) error {
 
 	out := map[string]any{"type": node.Type, "rank": node.Rank}
 	var added []edgeOut
-	for _, e := range edges {
-		added = append(added, edgeOut{From: node.ID, Type: e.Type, To: e.To})
+	for _, e := range own {
+		added = append(added, toEdgeOut(e))
 	}
 	if len(added) > 0 {
 		out["edges"] = added
 	}
-	return emit(cmd, text, mutationResult(l.plan.ID, node.ID, out), func() string {
+	return emit(cmd, text, mutationResult(l.ref(), node.ID, out), func() string {
 		var b strings.Builder
 		fmt.Fprintf(&b, "added %s %s (rank %s) to %s\n", node.Type, node.ID, node.Rank, l.plan.Folder())
 		for _, e := range added {
-			fmt.Fprintf(&b, "  %s %s %s\n", e.From, e.Type, e.To)
+			fmt.Fprintf(&b, "  %s  %s %s %s\n", e.ID, e.From, e.Type, e.To)
 		}
 		return b.String()
 	})
+}
+
+// expandPlanRefs expands each bare plan number in the registry's PlanRef
+// fields (`--epic 004`, `--plan 004`, `--deferred 004`) to the plan ID of the
+// one plan that has it, before anything is validated or saved. A number that
+// names no plan or several fails the write.
+func (l *loaded) expandPlanRefs(cmd *cobra.Command, text bool, nt schema.NodeType, fields map[string]any) error {
+	for i := range nt.Fields {
+		f := &nt.Fields[i]
+		val, ok := fields[f.Name]
+		if !f.PlanRef || !ok {
+			continue
+		}
+		expand := func(v any) (any, error) {
+			s, ok := v.(string)
+			if !ok || !planNumberRE.MatchString(strings.TrimSpace(s)) {
+				return v, nil
+			}
+			set, err := l.planSet(cmd, text)
+			if err != nil {
+				return nil, err
+			}
+			full, err := set.ExpandPlan(strings.TrimSpace(s))
+			if err != nil {
+				code := "plan-not-found"
+				if f.Name == "epic" {
+					code = "epic-not-found"
+				}
+				if errors.Is(err, workspace.ErrAmbiguous) {
+					return nil, planArgFailure(cmd, text, "flags."+f.Name, f.Name, s, err, "")
+				}
+				return nil, failOne(cmd, text, code, "flags."+f.Name, f.Name, "--"+f.Name+" "+s+": "+err.Error(), s,
+					"graph.json was not changed; name an existing plan by number or ID (list them with `auto plan list`)")
+			}
+			return full, nil
+		}
+		switch v := val.(type) {
+		case []any:
+			out := make([]any, len(v))
+			for j, item := range v {
+				x, err := expand(item)
+				if err != nil {
+					return err
+				}
+				out[j] = x
+			}
+			fields[f.Name] = out
+		default:
+			x, err := expand(v)
+			if err != nil {
+				return err
+			}
+			fields[f.Name] = x
+		}
+	}
+	return nil
+}
+
+// expandEdgeTargets expands shorthand qualified targets (`004:r-8hw3`) to
+// `004-k7q2:r-8hw3` before anything is validated or saved.
+func (l *loaded) expandEdgeTargets(cmd *cobra.Command, text bool, edges []graph.Edge) error {
+	for i := range edges {
+		to, err := l.expandRef(cmd, text, edges[i], "--"+edges[i].Type)
+		if err != nil {
+			return err
+		}
+		edges[i].To = to
+	}
+	return nil
+}
+
+// expandRef expands one edge's shorthand target; flag names where it came from.
+func (l *loaded) expandRef(cmd *cobra.Command, text bool, e graph.Edge, flag string) (string, error) {
+	if !graph.ShortRefPattern.MatchString(e.To) {
+		return e.To, nil
+	}
+	set, err := l.planSet(cmd, text)
+	if err != nil {
+		return "", err
+	}
+	full, err := set.ExpandRef(e.To)
+	if err == nil {
+		return full, nil
+	}
+	planID, _, _ := graph.ParseRef(e.To)
+	if errors.Is(err, workspace.ErrAmbiguous) {
+		return "", planArgFailure(cmd, text, graph.EdgePath(e)+".to", "to", e.To, err, "")
+	}
+	return "", failOne(cmd, text, graph.CodeDanglingRef, graph.EdgePath(e)+".to", "to",
+		fmt.Sprintf("%s %s: there is no plan %s under %s", flag, e.To, planID, workspace.PlansDir), e.To,
+		"graph.json was not changed; a cross-plan target is NNN:ID or NNN-xxxx:ID in an existing plan (list plans with `auto plan list`)")
 }
 
 // collectFields turns the flags that were set into node fields. Text values
@@ -270,7 +366,7 @@ func linkLong() string {
 	for _, e := range schema.Registry.Edges {
 		note := ""
 		if e.CrossPlan {
-			note = " (target may be another plan's node: NNN:ID)"
+			note = " (target may be another plan's node: NNN-xxxx:ID, or NNN:ID)"
 		}
 		fmt.Fprintf(&b, "  %-12s %s → %s  %s%s\n", e.Name, strings.Join(e.From, "|"), e.ToLabel(), e.Help, note)
 	}
@@ -296,6 +392,10 @@ func runLink(cmd *cobra.Command, application *app.App, planArg, from, typ, to st
 	if err != nil {
 		return err
 	}
+	to, err = l.expandRef(cmd, text, graph.Edge{From: from, Type: typ, To: to}, "link")
+	if err != nil {
+		return err
+	}
 	e, errs := l.graph.Link(from, typ, to)
 	if len(errs) > 0 {
 		return fail(cmd, text, errs, "graph.json was not changed; check both IDs exist and the edge type fits them (`auto plan link --help`)")
@@ -307,8 +407,8 @@ func runLink(cmd *cobra.Command, application *app.App, planArg, from, typ, to st
 		return err
 	}
 	out := toEdgeOut(e)
-	return emit(cmd, text, mutationResult(l.plan.ID, from, map[string]any{"edges": []edgeOut{out}}), func() string {
-		return fmt.Sprintf("linked %s %s %s in %s\n", out.From, out.Type, out.To, l.plan.Folder())
+	return emit(cmd, text, mutationResult(l.ref(), from, map[string]any{"edges": []edgeOut{out}}), func() string {
+		return fmt.Sprintf("linked %s %s %s %s in %s\n", out.ID, out.From, out.Type, out.To, l.plan.Folder())
 	})
 }
 
@@ -358,14 +458,14 @@ func runUpdate(cmd *cobra.Command, application *app.App, args []string) error {
 	}
 	node, ok := l.graph.NodeByID(id)
 	if !ok {
-		return failOne(cmd, text, graph.CodeNodeNotFound, "args.id", "id", fmt.Sprintf("no node %q in plan %s", id, l.plan.ID), id,
-			"list the plan's nodes with `auto plan show "+l.plan.ID+"`")
+		return failOne(cmd, text, graph.CodeNodeNotFound, "args.id", "id", fmt.Sprintf("no node %q in plan %s", id, l.ref()), id,
+			"list the plan's nodes with `auto plan show "+l.ref()+"`")
 	}
 	nt, _ := schema.Registry.Node(node.Type) // registered: loadForWrite validated the graph
 
 	fs, bound, _ := typeFlags(nt, forUpdate)
 	fs.SetOutput(cmd.ErrOrStderr())
-	hint := "see `auto plan update " + l.plan.ID + " " + id + " --help`"
+	hint := "see `auto plan update " + l.ref() + " " + id + " --help`"
 	if err := fs.Parse(args[2:]); err != nil {
 		return failOne(cmd, text, "usage", "flags", "", err.Error(), nil, hint)
 	}
@@ -384,6 +484,9 @@ func runUpdate(cmd *cobra.Command, application *app.App, args []string) error {
 	if len(fields) == 0 {
 		return failOne(cmd, text, "usage", "flags", "", "update needs at least one field flag", nil, hint)
 	}
+	if err := l.expandPlanRefs(cmd, text, nt, fields); err != nil {
+		return err
+	}
 
 	changed, errs := l.graph.Update(id, fields)
 	if len(errs) > 0 {
@@ -397,7 +500,7 @@ func runUpdate(cmd *cobra.Command, application *app.App, args []string) error {
 	if err := l.save(cmd, text); err != nil {
 		return err
 	}
-	return emit(cmd, text, mutationResult(l.plan.ID, id, map[string]any{"type": nt.Name, "fields": changed}), func() string {
+	return emit(cmd, text, mutationResult(l.ref(), id, map[string]any{"type": nt.Name, "fields": changed}), func() string {
 		names := slices.Sorted(maps.Keys(changed))
 		if len(names) == 0 {
 			return fmt.Sprintf("%s %s in %s: nothing changed\n", nt.Name, id, l.plan.Folder())
@@ -408,33 +511,49 @@ func runUpdate(cmd *cobra.Command, application *app.App, args []string) error {
 
 func newUnlinkCmd(application *app.App) *cobra.Command {
 	return &cobra.Command{
-		Use:     "unlink <plan> <from> <edge> <to>",
-		Short:   "Remove one typed edge",
-		Long:    "Remove one edge. Both nodes are kept, and the whole graph is validated before anything is written.",
-		Example: "  auto plan unlink 004 d-9t2w constrains g-k7q2",
-		Args:    cobra.ExactArgs(4),
+		Use:   "unlink <plan> <edge-id> | unlink <plan> <from> <edge> <to>",
+		Short: "Remove one typed edge, named by its ID or by its endpoints",
+		Long: `Remove one edge, named by its edge ID (e-xxxx; get and card print it) or by <from> <edge> <to>.
+Both nodes are kept, and the whole graph is validated before anything is written.`,
+		Example: "  auto plan unlink 004 e-7k2q\n  auto plan unlink 004 d-9t2w constrains g-k7q2",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 2 && len(args) != 4 {
+				return fmt.Errorf("unlink takes <plan> <edge-id> or <plan> <from> <edge> <to>, got %d argument(s)", len(args))
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runUnlink(cmd, application, args[0], args[1], args[2], args[3])
+			return runUnlink(cmd, application, args[0], args[1:])
 		},
 	}
 }
 
-func runUnlink(cmd *cobra.Command, application *app.App, planArg, from, typ, to string) error {
+func runUnlink(cmd *cobra.Command, application *app.App, planArg string, edge []string) error {
 	text := textMode(cmd)
 	l, err := loadForWrite(cmd, application, text, planArg)
 	if err != nil {
 		return err
 	}
-	e, errs := l.graph.Unlink(from, typ, to)
+	var e graph.Edge
+	var errs []graph.ValidationError
+	if len(edge) == 1 {
+		e, errs = l.graph.UnlinkID(edge[0])
+	} else {
+		to, err := l.expandRef(cmd, text, graph.Edge{From: edge[0], Type: edge[1], To: edge[2]}, "unlink")
+		if err != nil {
+			return err
+		}
+		e, errs = l.graph.Unlink(edge[0], edge[1], to)
+	}
 	if len(errs) > 0 {
-		return fail(cmd, text, errs, "graph.json was not changed; name an existing edge as <from> <edge> <to> (see `auto plan show "+l.plan.ID+"`)")
+		return fail(cmd, text, errs, "graph.json was not changed; name an existing edge by its ID or as <from> <edge> <to> (see `auto plan get "+l.ref()+" <node-id>`)")
 	}
 	if err := l.save(cmd, text); err != nil {
 		return err
 	}
 	out := toEdgeOut(e)
-	return emit(cmd, text, mutationResult(l.plan.ID, from, map[string]any{"removed": []edgeOut{out}}), func() string {
-		return fmt.Sprintf("unlinked %s %s %s in %s\n", out.From, out.Type, out.To, l.plan.Folder())
+	return emit(cmd, text, mutationResult(l.ref(), e.From, map[string]any{"removed": []edgeOut{out}}), func() string {
+		return fmt.Sprintf("unlinked %s %s %s %s in %s\n", out.ID, out.From, out.Type, out.To, l.plan.Folder())
 	})
 }
 
@@ -460,12 +579,12 @@ func runRetire(cmd *cobra.Command, application *app.App, planArg, id string) err
 	}
 	n, errs := l.graph.Retire(id)
 	if len(errs) > 0 {
-		return fail(cmd, text, errs, "graph.json was not changed; name an existing node other than plan (see `auto plan show "+l.plan.ID+"`)")
+		return fail(cmd, text, errs, "graph.json was not changed; name an existing node other than plan (see `auto plan show "+l.ref()+"`)")
 	}
 	if err := l.save(cmd, text); err != nil {
 		return err
 	}
-	return emit(cmd, text, mutationResult(l.plan.ID, n.ID, map[string]any{"type": n.Type, "status": n.Status}), func() string {
+	return emit(cmd, text, mutationResult(l.ref(), n.ID, map[string]any{"type": n.Type, "status": n.Status}), func() string {
 		return fmt.Sprintf("retired %s %s in %s\n", n.Type, n.ID, l.plan.Folder())
 	})
 }
@@ -502,12 +621,12 @@ func runMove(cmd *cobra.Command, application *app.App, planArg, id, before, afte
 	}
 	n, errs := l.graph.Move(id, anchor, after != "")
 	if len(errs) > 0 {
-		return fail(cmd, text, errs, "graph.json was not changed; move a node relative to a sibling of the same type (see `auto plan show "+l.plan.ID+"`)")
+		return fail(cmd, text, errs, "graph.json was not changed; move a node relative to a sibling of the same type (see `auto plan show "+l.ref()+"`)")
 	}
 	if err := l.save(cmd, text); err != nil {
 		return err
 	}
-	return emit(cmd, text, mutationResult(l.plan.ID, n.ID, map[string]any{"type": n.Type, "rank": n.Rank}), func() string {
+	return emit(cmd, text, mutationResult(l.ref(), n.ID, map[string]any{"type": n.Type, "rank": n.Rank}), func() string {
 		return fmt.Sprintf("moved %s %s to rank %s in %s\n", n.Type, n.ID, n.Rank, l.plan.Folder())
 	})
 }
@@ -525,17 +644,17 @@ func (l *loaded) checkCrossPlan(cmd *cobra.Command, text bool, edges []graph.Edg
 	if !qualified && epic == "" {
 		return nil
 	}
-	set, err := l.ws.PlanSet()
+	set, err := l.planSet(cmd, text)
 	if err != nil {
-		return failOne(cmd, text, "read-failed", "$", "", err.Error(), nil, "check that "+workspace.PlansDir+" is readable")
+		return err
 	}
 	var errs []graph.ValidationError
 	for _, e := range edges {
 		errs = append(errs, set.CheckEdge(e)...)
 	}
 	if len(errs) > 0 {
-		return fail(cmd, text, errs, "graph.json was not changed; a cross-plan target is NNN:ID in an existing plan "+
-			"(find it with `auto plan list <NNN>` or `auto plan search all <text>`) and of a type the edge allows (`auto plan link --help`)")
+		return fail(cmd, text, errs, "graph.json was not changed; a cross-plan target is NNN:ID (or NNN-xxxx:ID) in an existing plan "+
+			"(find it with `auto plan list <plan>` or `auto plan search all <text>`) and of a type the edge allows (`auto plan link --help`)")
 	}
 	if epic != "" {
 		if err := set.CheckEpic(epic); err != nil {

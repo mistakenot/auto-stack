@@ -1,4 +1,4 @@
-001-auto-mail-mvp  epic · solution
+001-acs4  auto-mail-mvp  epic · solution
 
 ◎ G1     g-rbcw  Agents on one host address each other by name and get a reply
     ◆ D1     d-xpbe  No message resource noun on the CLI
@@ -52,27 +52,27 @@ journeys
         ↳ L1.3   l-mfg7  supervisor: is nudged on its next tool call
     ↝ J2     j-pn3v  Cross-project bug report
         ↳ L2.1   l-7fdr  agent in project A: finds a bug that belongs to project B
-        ↳ L2.2   l-0x4k  mail: persists it — nobody in B is running                                       delivered by 002
+        ↳ L2.2   l-0x4k  mail: persists it — nobody in B is running                                       delivered by 002-j8nx
         ↳ L2.3   l-0f9w  agent in project B: is idle in a pane
-        ↳ L2.4   l-cwd2  agent in project B: reads, fixes, acks                                           delivered by 002
+        ↳ L2.4   l-cwd2  agent in project B: reads, fixes, acks                                           delivered by 002-j8nx
 
 child plans
-    ▷ C1     c-gn2d  002-auto-mail-walking-skeleton — Walking skeleton: subscribe, send, list, ack        plan
+    ▷ C1     c-gn2d  002-j8nx auto-mail-walking-skeleton — Walking skeleton: subscribe, send, list, ack   plan
 
 rails
-    ‖ R1     r-xbrt  Messages and events are immutable                                                    honoured by 002
-    ‖ R2     r-42vx  Consumer state lives in a deliveries join, never on the message                      honoured by 002
-    ‖ R3     r-jcvm  Ack is a separate explicit call, from the first consumer                             honoured by 002
-    ‖ R4     r-fjxr  Injected keystrokes are a fixed constant, into a verified agent                      deferred: 002
-    ‖ R5     r-apsc  Ack transitions exactly once and reports whether it won                              honoured by 002
-    ‖ R6     r-vgcz  At-least-once and unordered, as documented                                           honoured by 002
-    ‖ R7     r-tr9x  Addresses are virtual — no physical identity in them                                 honoured by 002
-    ‖ R8     r-q6hs  Sending to an address with no subscription persists, and a later subscriber sees it  honoured by 002
-    ‖ R9     r-9bka  Hook environment capture stays an allowlist                                          deferred: 002
-    ‖ R10    r-1eyq  The nudge is free when there is no mail                                              honoured by 002
-    ‖ R11    r-01p5  Delivery never corrupts a working agent                                              deferred: 002
-    ‖ R12    r-6gjf  Alpha: the store may be wiped, nothing may depend on it                              honoured by 002
-    ‖ R13    r-p2kk  No session manager is hard-coded into stored data                                    deferred: 002
-    ‖ R14    r-0bcq  A capability is done when it passes end to end in the harness                        honoured by 002
-    ‖ R15    r-f1ys  The ontology lands before the code that uses it                                      honoured by 002
-    ‖ R16    r-fzh2  Nothing outside the mail package reads the store                                     honoured by 002
+    ‖ R1     r-xbrt  Messages and events are immutable                                                    honoured by 002-j8nx
+    ‖ R2     r-42vx  Consumer state lives in a deliveries join, never on the message                      honoured by 002-j8nx
+    ‖ R3     r-jcvm  Ack is a separate explicit call, from the first consumer                             honoured by 002-j8nx
+    ‖ R4     r-fjxr  Injected keystrokes are a fixed constant, into a verified agent                      deferred: 002-j8nx
+    ‖ R5     r-apsc  Ack transitions exactly once and reports whether it won                              honoured by 002-j8nx
+    ‖ R6     r-vgcz  At-least-once and unordered, as documented                                           honoured by 002-j8nx
+    ‖ R7     r-tr9x  Addresses are virtual — no physical identity in them                                 honoured by 002-j8nx
+    ‖ R8     r-q6hs  Sending to an address with no subscription persists, and a later subscriber sees it  honoured by 002-j8nx
+    ‖ R9     r-9bka  Hook environment capture stays an allowlist                                          deferred: 002-j8nx
+    ‖ R10    r-1eyq  The nudge is free when there is no mail                                              honoured by 002-j8nx
+    ‖ R11    r-01p5  Delivery never corrupts a working agent                                              deferred: 002-j8nx
+    ‖ R12    r-6gjf  Alpha: the store may be wiped, nothing may depend on it                              honoured by 002-j8nx
+    ‖ R13    r-p2kk  No session manager is hard-coded into stored data                                    deferred: 002-j8nx
+    ‖ R14    r-0bcq  A capability is done when it passes end to end in the harness                        honoured by 002-j8nx
+    ‖ R15    r-f1ys  The ontology lands before the code that uses it                                      honoured by 002-j8nx
+    ‖ R16    r-fzh2  Nothing outside the mail package reads the store                                     honoured by 002-j8nx

@@ -1,10 +1,11 @@
 // Package workspace locates plans on disk: the repo root, the docs/plans/
 // folder, the next plan number, and resolution of a plan argument
-// (`NNN`, `NNN-name`, a path, or `all`), and the PlanSet that resolves
-// qualified cross-plan references (`005:r-8hw3`).
+// (`NNN`, `NNN-xxxx`, `NNN-name`, a path, or `all`), and the PlanSet that
+// resolves qualified cross-plan references (`005-k7q2:r-8hw3`).
 package workspace
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -37,6 +38,27 @@ var (
 // ErrNotFound is returned when a plan argument matches no plan.
 var ErrNotFound = errors.New("plan not found")
 
+// ErrAmbiguous is returned (wrapped in an *AmbiguousError) when a plan
+// number names more than one plan folder — two branches each created plan
+// NNN. `auto plan renumber` resolves it.
+var ErrAmbiguous = errors.New("ambiguous plan")
+
+// AmbiguousError names the plans an ambiguous argument matched.
+type AmbiguousError struct {
+	Arg        string
+	Candidates []Plan
+}
+
+func (e *AmbiguousError) Error() string {
+	names := make([]string, len(e.Candidates))
+	for i, p := range e.Candidates {
+		names[i] = p.Ref() + " (" + p.Dir + ")"
+	}
+	return fmt.Sprintf("plan %s is ambiguous: it names %s; use the plan ID", e.Arg, strings.Join(names, ", "))
+}
+
+func (e *AmbiguousError) Unwrap() error { return ErrAmbiguous }
+
 // Workspace is a repo's plan root.
 type Workspace struct {
 	// Root is the absolute repo root.
@@ -47,7 +69,10 @@ type Workspace struct {
 
 // Plan is one plan folder.
 type Plan struct {
-	// ID is the plan's 3-digit number (`004`).
+	// Number is the folder's 3-digit number (`004`).
+	Number string `json:"number"`
+	// ID is the plan ID recorded in graph.json (`004-k7q2`), or "" when the
+	// file cannot be read or holds no valid ID.
 	ID string `json:"id"`
 	// Name is the kebab-case name from the folder (`stage-briefs`).
 	Name string `json:"name"`
@@ -56,7 +81,16 @@ type Plan struct {
 }
 
 // Folder returns the plan's folder name (`004-stage-briefs`).
-func (p Plan) Folder() string { return p.ID + "-" + p.Name }
+func (p Plan) Folder() string { return p.Number + "-" + p.Name }
+
+// Ref is how the plan is named in output, hints and qualified references:
+// its plan ID, or its folder name when graph.json holds no valid ID.
+func (p Plan) Ref() string {
+	if graph.PlanIDPattern.MatchString(p.ID) {
+		return p.ID
+	}
+	return p.Folder()
+}
 
 // Open locates the repo containing cwd.
 func Open(cwd string) (*Workspace, error) {
@@ -76,8 +110,9 @@ func (w *Workspace) Abs(rel string) string { return filepath.Join(w.Root, filepa
 // GraphPath returns the absolute path of a plan's graph.json.
 func (w *Workspace) GraphPath(p Plan) string { return filepath.Join(w.Abs(p.Dir), GraphFile) }
 
-// Plans lists every plan folder, sorted by number. A missing docs/plans/ is
-// an empty list. Entries that are not NNN-name folders are ignored.
+// Plans lists every plan folder, sorted by folder name, with the plan ID
+// each graph.json records. A missing docs/plans/ is an empty list. Entries
+// that are not NNN-name folders are ignored.
 func (w *Workspace) Plans() ([]Plan, error) {
 	entries, err := os.ReadDir(w.PlansPath())
 	if errors.Is(err, os.ErrNotExist) {
@@ -95,22 +130,47 @@ func (w *Workspace) Plans() ([]Plan, error) {
 		if m == nil {
 			continue
 		}
-		plans = append(plans, Plan{ID: m[1], Name: m[2], Dir: PlansDir + "/" + e.Name()})
+		p := Plan{Number: m[1], Name: m[2], Dir: PlansDir + "/" + e.Name()}
+		p.ID = readPlanID(w.GraphPath(p))
+		plans = append(plans, p)
 	}
 	slices.SortFunc(plans, func(a, b Plan) int { return strings.Compare(a.Folder(), b.Folder()) })
 	return plans, nil
 }
 
-// NextID returns the next plan number: the highest existing number + 1, or
-// 001 when there are none. Gaps are never filled.
-func (w *Workspace) NextID() (string, error) {
+// readPlanID reads the top-level "id" of a graph.json, or "" when the file
+// cannot be read, is not JSON, or holds no valid plan ID.
+func readPlanID(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var top struct {
+		ID any `json:"id"`
+	}
+	if json.Unmarshal(data, &top) != nil {
+		return ""
+	}
+	if id, ok := top.ID.(string); ok && graph.PlanIDPattern.MatchString(id) {
+		return id
+	}
+	return ""
+}
+
+// NextNumber returns the next plan number: the highest existing number + 1,
+// or 001 when there are none. Gaps are never filled.
+func (w *Workspace) NextNumber() (string, error) {
 	plans, err := w.Plans()
 	if err != nil {
 		return "", err
 	}
+	return nextNumber(plans)
+}
+
+func nextNumber(plans []Plan) (string, error) {
 	highest := 0
 	for _, p := range plans {
-		n, _ := strconv.Atoi(p.ID)
+		n, _ := strconv.Atoi(p.Number)
 		highest = max(highest, n)
 	}
 	if highest >= 999 {
@@ -127,8 +187,11 @@ func ValidateName(name string) error {
 	return nil
 }
 
-// Resolve turns a plan argument into plans: `all` (every plan), `NNN`,
-// `NNN-name`, or a path (relative to CWD) to a plan folder or its graph.json.
+// Resolve turns a plan argument into plans: `all` (every plan), `NNN` (the
+// plan with that number; an *AmbiguousError when two folders share it),
+// `NNN-xxxx` (the plan ID graph.json records), `NNN-name` (the folder), or a
+// path (relative to CWD) to a plan folder or its graph.json. A plan ID wins
+// over a folder name of the same shape.
 func (w *Workspace) Resolve(arg string) ([]Plan, error) {
 	plans, err := w.Plans()
 	if err != nil {
@@ -137,21 +200,38 @@ func (w *Workspace) Resolve(arg string) ([]Plan, error) {
 	if arg == All {
 		return plans, nil
 	}
-	if numberRE.MatchString(arg) {
+	match := func(keep func(Plan) bool) []Plan {
+		var out []Plan
 		for _, p := range plans {
-			if p.ID == arg {
-				return []Plan{p}, nil
+			if keep(p) {
+				out = append(out, p)
 			}
 		}
-		return nil, fmt.Errorf("%w: no %s/%s-* folder", ErrNotFound, PlansDir, arg)
+		return out
+	}
+	one := func(found []Plan) ([]Plan, error) {
+		if len(found) > 1 {
+			return nil, &AmbiguousError{Arg: arg, Candidates: found}
+		}
+		return found, nil
+	}
+	if numberRE.MatchString(arg) {
+		found := match(func(p Plan) bool { return p.Number == arg })
+		if len(found) == 0 {
+			return nil, fmt.Errorf("%w: no %s/%s-* folder", ErrNotFound, PlansDir, arg)
+		}
+		return one(found)
+	}
+	if graph.PlanIDPattern.MatchString(arg) {
+		if found := match(func(p Plan) bool { return p.ID == arg }); len(found) > 0 {
+			return one(found)
+		}
 	}
 	if folderRE.MatchString(arg) {
-		for _, p := range plans {
-			if p.Folder() == arg {
-				return []Plan{p}, nil
-			}
+		if found := match(func(p Plan) bool { return p.Folder() == arg }); len(found) > 0 {
+			return found, nil
 		}
-		return nil, fmt.Errorf("%w: no %s/%s folder", ErrNotFound, PlansDir, arg)
+		return nil, fmt.Errorf("%w: no plan with ID %s and no %s/%s folder", ErrNotFound, arg, PlansDir, arg)
 	}
 
 	path := arg
@@ -167,13 +247,13 @@ func (w *Workspace) Resolve(arg string) ([]Plan, error) {
 			return []Plan{p}, nil
 		}
 	}
-	return nil, fmt.Errorf("%w: %q is not NNN, NNN-name, all, or a plan folder under %s", ErrNotFound, arg, PlansDir)
+	return nil, fmt.Errorf("%w: %q is not NNN, NNN-xxxx, NNN-name, all, or a plan folder under %s", ErrNotFound, arg, PlansDir)
 }
 
 // ResolveOne resolves an argument that must name exactly one plan.
 func (w *Workspace) ResolveOne(arg string) (Plan, error) {
 	if arg == All {
-		return Plan{}, errors.New(`"all" is not accepted here; name one plan (NNN, NNN-name or a path)`)
+		return Plan{}, errors.New(`"all" is not accepted here; name one plan (NNN, NNN-xxxx, NNN-name or a path)`)
 	}
 	plans, err := w.Resolve(arg)
 	if err != nil {
@@ -182,19 +262,18 @@ func (w *Workspace) ResolveOne(arg string) (Plan, error) {
 	return plans[0], nil
 }
 
-// ErrNodeNotFound is returned when a qualified reference names a plan that
-// exists but holds no node with that ID.
-var ErrNodeNotFound = errors.New("node not found")
-
 // PlanSet is every plan of a workspace, loaded on demand: a plan's graph is
 // decoded the first time something asks for it and cached, so resolving a
 // plan's qualified references (and theirs, transitively) loads exactly the
-// plans they reach. Qualified references (`005:r-8hw3`) resolve against
-// docs/plans/005-*/graph.json (D-9).
+// plans they reach. Plans are indexed by the plan ID their graph.json
+// records (D-9): a qualified reference `005-k7q2:r-8hw3` resolves against
+// the plan whose ID is 005-k7q2, wherever its folder is. A bare number
+// (`005`, `005:r-8hw3`) resolves when exactly one folder has it.
 type PlanSet struct {
 	ws    *Workspace
-	plans map[string]Plan
-	ids   []string
+	all   []Plan
+	byRef map[string]Plan
+	refs  []string
 	cache map[string]loadResult
 }
 
@@ -203,75 +282,168 @@ type loadResult struct {
 	err error
 }
 
-// PlanSet indexes the workspace's plan folders. No graph is read yet.
+// PlanSet indexes the workspace's plan folders by plan ID (a folder whose
+// graph.json holds no valid ID is indexed by its folder name). When two
+// folders record one ID, the first (sorted) wins.
 func (w *Workspace) PlanSet() (*PlanSet, error) {
 	plans, err := w.Plans()
 	if err != nil {
 		return nil, err
 	}
-	s := &PlanSet{ws: w, plans: map[string]Plan{}, cache: map[string]loadResult{}}
+	s := &PlanSet{ws: w, all: plans, byRef: map[string]Plan{}, cache: map[string]loadResult{}}
 	for _, p := range plans {
-		if _, dup := s.plans[p.ID]; dup {
-			continue // two folders with one number: the first (sorted) wins
+		if _, dup := s.byRef[p.Ref()]; dup {
+			continue
 		}
-		s.plans[p.ID] = p
-		s.ids = append(s.ids, p.ID)
+		s.byRef[p.Ref()] = p
+		s.refs = append(s.refs, p.Ref())
 	}
+	slices.Sort(s.refs)
 	return s, nil
 }
 
-// IDs lists every plan number, sorted.
-func (s *PlanSet) IDs() []string { return slices.Clone(s.ids) }
+// Plans lists every plan folder, sorted by folder name.
+func (s *PlanSet) Plans() []Plan { return slices.Clone(s.all) }
 
-// Plan returns the plan folder with number id.
-func (s *PlanSet) Plan(id string) (Plan, bool) {
-	p, ok := s.plans[id]
-	return p, ok
+// IDs lists every plan's Ref (its plan ID), sorted.
+func (s *PlanSet) IDs() []string { return slices.Clone(s.refs) }
+
+// ByNumber returns the plan folders with number n, sorted.
+func (s *PlanSet) ByNumber(n string) []Plan {
+	var out []Plan
+	for _, p := range s.all {
+		if p.Number == n {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
-// Has reports whether a plan folder with number id exists.
-func (s *PlanSet) Has(id string) bool {
-	_, ok := s.plans[id]
-	return ok
+// WithID returns the plan folders whose graph.json records plan ID id.
+func (s *PlanSet) WithID(id string) []Plan {
+	var out []Plan
+	for _, p := range s.all {
+		if p.ID == id {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
-// Path returns the absolute graph.json path of plan id ("" when absent).
-func (s *PlanSet) Path(id string) string {
-	p, ok := s.plans[id]
-	if !ok {
+// Find resolves a plan reference: a plan ID (or the folder name of a plan
+// without one), or a bare number that exactly one folder has. It fails with
+// ErrNotFound, or an *AmbiguousError when the number names several plans.
+func (s *PlanSet) Find(ref string) (Plan, error) {
+	if p, ok := s.byRef[ref]; ok {
+		return p, nil
+	}
+	if graph.PlanNumberPattern.MatchString(ref) {
+		switch found := s.ByNumber(ref); len(found) {
+		case 0:
+		case 1:
+			return found[0], nil
+		default:
+			return Plan{}, &AmbiguousError{Arg: ref, Candidates: found}
+		}
+		return Plan{}, fmt.Errorf("%w: no %s/%s-* folder", ErrNotFound, PlansDir, ref)
+	}
+	return Plan{}, fmt.Errorf("%w: no plan %s under %s", ErrNotFound, ref, PlansDir)
+}
+
+// Plan returns the plan a reference names (see Find).
+func (s *PlanSet) Plan(ref string) (Plan, bool) {
+	p, err := s.Find(ref)
+	return p, err == nil
+}
+
+// Has reports whether ref names exactly one plan.
+func (s *PlanSet) Has(ref string) bool {
+	_, err := s.Find(ref)
+	return err == nil
+}
+
+// Path returns the absolute graph.json path of the plan ref names ("" when
+// it names none).
+func (s *PlanSet) Path(ref string) string {
+	p, err := s.Find(ref)
+	if err != nil {
 		return ""
 	}
 	return s.ws.GraphPath(p)
 }
 
-// Load decodes plan id's graph (once; later calls return the cached result).
-// A missing folder is ErrNotFound; malformed JSON is the decode error.
-func (s *PlanSet) Load(id string) (*graph.Graph, error) {
-	if r, ok := s.cache[id]; ok {
+// Load decodes the graph of the plan ref names (once; later calls return the
+// cached result). An unknown or ambiguous ref is the Find error; malformed
+// JSON is the decode error.
+func (s *PlanSet) Load(ref string) (*graph.Graph, error) {
+	p, err := s.Find(ref)
+	if err != nil {
+		return nil, err
+	}
+	return s.LoadPlan(p)
+}
+
+// LoadPlan decodes plan p's graph (cached by folder).
+func (s *PlanSet) LoadPlan(p Plan) (*graph.Graph, error) {
+	if r, ok := s.cache[p.Dir]; ok {
 		return r.g, r.err
 	}
-	p, ok := s.plans[id]
-	if !ok {
-		return nil, fmt.Errorf("%w: no %s/%s-* folder", ErrNotFound, PlansDir, id)
-	}
 	g, err := graph.Decode(s.ws.GraphPath(p))
-	s.cache[id] = loadResult{g: g, err: err}
+	s.cache[p.Dir] = loadResult{g: g, err: err}
 	return g, err
 }
 
 // Graph is Load for callers that only need to know whether the plan loaded.
-func (s *PlanSet) Graph(id string) (*graph.Graph, bool) {
-	g, err := s.Load(id)
+func (s *PlanSet) Graph(ref string) (*graph.Graph, bool) {
+	g, err := s.Load(ref)
 	return g, err == nil
 }
 
-// Lookup resolves a qualified reference `NNN:ID` to its node, whatever its
-// status. It fails with ErrNotFound (no such plan), ErrNodeNotFound (the plan
-// has no such node) or the plan's decode error.
+// ExpandPlan turns a plan argument of a write into the plan ID to store: a
+// bare number becomes the ID of the one plan that has it (ErrNotFound when
+// none does, an *AmbiguousError when several do). Anything else is returned
+// unchanged, for validation to judge.
+func (s *PlanSet) ExpandPlan(v string) (string, error) {
+	if !graph.PlanNumberPattern.MatchString(v) {
+		return v, nil
+	}
+	p, err := s.Find(v)
+	if err != nil {
+		return v, err
+	}
+	if p.ID == "" {
+		return v, fmt.Errorf("%w: %s records no plan ID (run `auto plan lint %s`)", ErrNotFound, p.Dir, p.Ref())
+	}
+	return p.ID, nil
+}
+
+// ExpandRef expands a shorthand qualified reference `NNN:ID` to
+// `NNN-xxxx:ID` (see ExpandPlan). Other references are returned unchanged.
+func (s *PlanSet) ExpandRef(ref string) (string, error) {
+	if !graph.ShortRefPattern.MatchString(ref) {
+		return ref, nil
+	}
+	plan, id, _ := graph.ParseRef(ref)
+	full, err := s.ExpandPlan(plan)
+	if err != nil {
+		return ref, err
+	}
+	return graph.Qualify(full, id), nil
+}
+
+// ErrNodeNotFound is returned when a qualified reference names a plan that
+// exists but holds no node with that ID.
+var ErrNodeNotFound = errors.New("node not found")
+
+// Lookup resolves a qualified reference — `NNN-xxxx:ID`, or the shorthand
+// `NNN:ID` when one plan has the number — to its node, whatever its status.
+// It fails with ErrNotFound (no such plan), an *AmbiguousError (the number
+// names several plans), ErrNodeNotFound (the plan has no such node) or the
+// plan's decode error.
 func (s *PlanSet) Lookup(ref string) (graph.Node, error) {
 	planID, id, qualified := graph.ParseRef(ref)
-	if !qualified || !graph.QualifiedRefPattern.MatchString(ref) {
-		return graph.Node{}, fmt.Errorf("%q is not a reference NNN:ID", ref)
+	if !qualified || (!graph.QualifiedRefPattern.MatchString(ref) && !graph.ShortRefPattern.MatchString(ref)) {
+		return graph.Node{}, fmt.Errorf("%q is not a reference NNN-xxxx:ID", ref)
 	}
 	g, err := s.Load(planID)
 	if err != nil {
@@ -315,7 +487,7 @@ func (s *PlanSet) CheckEdge(e graph.Edge) []graph.ValidationError {
 	return nil
 }
 
-// CheckEpic checks that plan number epic names an existing, readable epic
+// CheckEpic checks that epic (a plan ID, or a number one plan has) names an existing, readable epic
 // plan: what `new --epic` and `update … plan --epic` require.
 func (s *PlanSet) CheckEpic(epic string) error {
 	g, err := s.Load(epic)
@@ -329,7 +501,7 @@ func (s *PlanSet) CheckEpic(epic string) error {
 	return nil
 }
 
-// Family returns the child plan numbers of epic plan epic, sorted: the plans
+// Family returns the child plan IDs of epic plan epic, sorted: the plans
 // its active child nodes name (when they exist) and every plan whose plan
 // node declares `epic: <epic>`. Plans that fail to load are skipped.
 func (s *PlanSet) Family(epic string) []string {
@@ -341,7 +513,7 @@ func (s *PlanSet) Family(epic string) []string {
 			}
 		}
 	}
-	for _, id := range s.ids {
+	for _, id := range s.refs {
 		if id == epic {
 			continue
 		}

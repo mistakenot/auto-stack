@@ -1,5 +1,5 @@
 {
-  "plan": "001",
+  "plan": "001-acs4",
   "ok": false,
   "issues": [
     {
@@ -8,7 +8,7 @@
       "path": "$.nodes[g-rbcw]",
       "field": "",
       "message": "g-rbcw has no active AC",
-      "hint": "auto plan add 001 ac --proves g-rbcw --title \"…\""
+      "hint": "auto plan add 001-acs4 ac --proves g-rbcw --title \"…\""
     },
     {
       "code": "goal-count",
@@ -16,7 +16,7 @@
       "path": "$.nodes",
       "field": "",
       "message": "the plan has 2 active goals; aim for 5–8",
-      "hint": "split a broad goal or add the missing outcomes: auto plan add 001 goal --title \"…\""
+      "hint": "split a broad goal or add the missing outcomes: auto plan add 001-acs4 goal --title \"…\""
     }
   ]
 }

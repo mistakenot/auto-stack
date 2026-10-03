@@ -2,9 +2,11 @@ package cli
 
 import (
 	"errors"
+	"math/rand/v2"
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/mistakenot/auto-plan/internal/app"
@@ -19,17 +21,27 @@ var (
 	planNumberRE = regexp.MustCompile(schema.PlanNumberPattern)
 )
 
+// planIDStream separates the seeded stream that draws plan IDs from the
+// node-ID streams (which are keyed by a plan's node count).
+const planIDStream = 1 << 40
+
 func newNewCmd(application *app.App) *cobra.Command {
 	var kind, epic string
 	cmd := &cobra.Command{
-		Use:   "new <name> --kind task|epic [--epic NNN]",
+		Use:   "new <name> --kind task|epic [--epic <plan>]",
 		Short: "Create docs/plans/NNN-<name>/graph.json holding only the plan node",
 		Long: `Create the next numbered plan folder (highest existing number + 1, or 001) with a
-graph.json holding exactly the plan node at lifecycle "requirements".
+graph.json holding exactly the plan node at lifecycle "requirements", format version
+` + schema.Version + `, and a new plan ID: the number, a hyphen and 4 random characters (004-k7q2).
+Qualified references to the plan name that ID, so two branches that both create plan 004 still
+get distinct plans; ` + "`auto plan renumber`" + ` moves one of them after the merge.
 
-The name must be kebab-case (` + schema.NamePattern + `). --epic NNN (task plans only) records the
-epic this plan belongs to in plan.fields.epic; the epic must exist and be kind epic. The epic
-lists its children itself: add a child node there with auto plan add NNN child --plan <new NNN>.`,
+Prints {id, number, name, kind, epic, path}: id is the plan ID, number its folder number.
+
+The name must be kebab-case (` + schema.NamePattern + `). --epic (task plans only) records the
+epic this plan belongs to in plan.fields.epic, as the epic's plan ID (a bare NNN is expanded);
+the epic must exist and be kind epic. The epic lists its children itself: add a child node there
+with auto plan add <epic> child --plan <new plan>.`,
 		Example: "  auto plan new auto-mail-mvp --kind epic\n  auto plan new walking-skeleton --kind task --epic 001",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -37,16 +49,19 @@ lists its children itself: add a child node there with auto plan add NNN child -
 		},
 	}
 	cmd.Flags().StringVar(&kind, "kind", "", "plan kind: task or epic (required)")
-	cmd.Flags().StringVar(&epic, "epic", "", "number (NNN) of the epic plan this task plan belongs to")
+	cmd.Flags().StringVar(&epic, "epic", "", "the epic plan this task plan belongs to (NNN or its plan ID)")
 	return cmd
 }
 
 type newResult struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Kind string `json:"kind"`
-	Epic string `json:"epic,omitempty"`
-	Path string `json:"path"`
+	// ID is the new plan's ID (`004-k7q2`).
+	ID string `json:"id"`
+	// Number is its folder number (`004`).
+	Number string `json:"number"`
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	Epic   string `json:"epic,omitempty"`
+	Path   string `json:"path"`
 }
 
 func runNew(cmd *cobra.Command, application *app.App, name, kind, epic string) error {
@@ -64,9 +79,9 @@ func runNew(cmd *cobra.Command, application *app.App, name, kind, epic string) e
 		return failOne(cmd, text, "usage", "flags.epic", "epic", "--epic applies to --kind task only", epic,
 			"drop --epic, or create a task plan: `auto plan new "+name+" --kind task --epic "+epic+"`")
 	}
-	if epic != "" && !planNumberRE.MatchString(epic) {
-		return failOne(cmd, text, "invalid-field", "flags.epic", "epic", "--epic must be a plan number (NNN)", epic,
-			"pass the epic's 3-digit number, e.g. --epic 001")
+	if epic != "" && !planNumberRE.MatchString(epic) && !graph.PlanIDPattern.MatchString(epic) {
+		return failOne(cmd, text, "invalid-field", "flags.epic", "epic", "--epic must be a plan number (NNN) or plan ID (NNN-xxxx)", epic,
+			"pass the epic's number or ID, e.g. --epic 001")
 	}
 	date, err := today()
 	if err != nil {
@@ -76,21 +91,37 @@ func runNew(cmd *cobra.Command, application *app.App, name, kind, epic string) e
 	if err != nil {
 		return err
 	}
-	id, err := ws.NextID()
+	number, err := ws.NextNumber()
 	if err != nil {
 		return failOne(cmd, text, "plan-number", "$", "", err.Error(), nil, "check "+workspace.PlansDir)
 	}
 	if epic != "" {
 		set, err := ws.PlanSet()
 		if err == nil {
+			epic, err = set.ExpandPlan(epic)
+		}
+		if errors.Is(err, workspace.ErrAmbiguous) {
+			return planArgFailure(cmd, text, "flags.epic", "epic", epic, err, "")
+		}
+		if err == nil {
 			err = set.CheckEpic(epic)
 		}
 		if err != nil {
 			return failOne(cmd, text, "epic-not-found", "flags.epic", "epic", err.Error(), epic,
-				"name an existing epic plan (list plans with `auto plan list all`; create one with `auto plan new <name> --kind epic`)")
+				"name an existing epic plan (list plans with `auto plan list`; create one with `auto plan new <name> --kind epic`)")
 		}
 	}
-	p := workspace.Plan{ID: id, Name: name, Dir: workspace.PlansDir + "/" + id + "-" + name}
+	n, _ := strconv.Atoi(number)
+	// Under a seed, each plan number draws from its own reproducible stream.
+	r, err := seededRand(cmd, text, planIDStream+uint64(n)) //nolint:gosec // G115: n is 1..999
+	if err != nil {
+		return err
+	}
+	if r == nil {
+		r = rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64())) //nolint:gosec // G404: plan IDs are opaque labels, not secrets
+	}
+	id := graph.NewPlanID(number, r)
+	p := workspace.Plan{Number: number, ID: id, Name: name, Dir: workspace.PlansDir + "/" + number + "-" + name}
 
 	fields := map[string]any{
 		"name":      name,
@@ -101,7 +132,7 @@ func runNew(cmd *cobra.Command, application *app.App, name, kind, epic string) e
 	if epic != "" {
 		fields["epic"] = epic
 	}
-	g := graph.New(fields)
+	g := graph.New(id, fields)
 	if errs := graph.Validate(g); len(errs) > 0 {
 		return fail(cmd, text, errs, "report this: a new plan must always be valid")
 	}
@@ -121,12 +152,12 @@ func runNew(cmd *cobra.Command, application *app.App, name, kind, epic string) e
 		return failOne(cmd, text, "write-failed", "$", "", err.Error(), p.Dir, "check that the repository is writable")
 	}
 
-	res := newResult{ID: id, Name: name, Kind: kind, Epic: epic, Path: p.Dir}
+	res := newResult{ID: id, Number: number, Name: name, Kind: kind, Epic: epic, Path: p.Dir}
 	return emit(cmd, text, res, func() string {
 		if epic != "" {
-			return "created " + p.Dir + " (" + kind + " in epic " + epic + ", requirements)\n" +
+			return "created plan " + id + " in " + p.Dir + " (" + kind + " in epic " + epic + ", requirements)\n" +
 				"list it in the epic: auto plan add " + epic + " child --plan " + id + " --title \"…\"\n"
 		}
-		return "created " + p.Dir + " (" + kind + ", requirements)\n"
+		return "created plan " + id + " in " + p.Dir + " (" + kind + ", requirements)\n"
 	})
 }

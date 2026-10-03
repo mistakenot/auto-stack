@@ -1,6 +1,6 @@
 # Stage s-p6v5: CLI verbs
 
-Plan 001-stage-briefs · status todo
+Plan 001 (stage-briefs) · status todo
 
 ## Depends on
 

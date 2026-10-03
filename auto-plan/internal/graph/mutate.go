@@ -25,37 +25,44 @@ const (
 
 // Add creates a node of type typ with a generated, collision-free ID and a
 // rank after its last sibling, together with its outgoing edges (an edge whose
-// From is empty starts at the new node). The resulting graph is validated as a
-// whole; on any error g is left unchanged and the errors are returned.
-func (g *Graph) Add(typ string, fields map[string]any, edges []Edge) (Node, []ValidationError) {
+// From is empty starts at the new node), each given a generated edge ID. The
+// node's ID is drawn before any edge ID, so a seeded sequence of commands
+// yields the same node IDs whatever edges they carry. The resulting graph is
+// validated as a whole; on any error g is left unchanged and the errors are
+// returned. The returned edges carry their IDs.
+func (g *Graph) Add(typ string, fields map[string]any, edges []Edge) (Node, []Edge, []ValidationError) {
 	nt, ok := schema.Registry.Node(typ)
 	if !ok {
-		return Node{}, []ValidationError{{
+		return Node{}, nil, []ValidationError{{
 			Code: CodeUnregisteredType, Path: "$.nodes", Field: "type",
 			Message: "node type " + strconv.Quote(typ) + " is not registered", Value: typ,
 		}}
 	}
 	if nt.Singleton() {
-		return Node{}, []ValidationError{{
+		return Node{}, nil, []ValidationError{{
 			Code: CodeNotAddable, Path: "$.nodes", Field: "type",
 			Message: "the " + typ + " node is created with the plan and cannot be added", Value: typ,
 		}}
 	}
 
-	taken := func(id string) bool {
-		_, exists := g.NodeByID(id)
-		return exists
-	}
-	id, err := NewID(nt.Prefix, g.random(), taken)
+	taken := g.takenIDs()
+	id, err := NewID(nt.Prefix, g.random(), taken.has)
 	if err != nil {
-		return Node{}, []ValidationError{{Code: CodeIDSpace, Path: "$.nodes", Field: "id", Message: err.Error()}}
+		return Node{}, nil, []ValidationError{{Code: CodeIDSpace, Path: "$.nodes", Field: "id", Message: err.Error()}}
 	}
+	taken[id] = true
 
 	own := make([]Edge, len(edges))
 	for i, e := range edges {
 		if e.From == "" {
 			e.From = id
 		}
+		eid, err := NewID(EdgePrefix, g.random(), taken.has)
+		if err != nil {
+			return Node{}, nil, []ValidationError{{Code: CodeIDSpace, Path: "$.edges", Field: "id", Message: err.Error()}}
+		}
+		taken[eid] = true
+		e.ID = eid
 		own[i] = e
 	}
 	if fields == nil {
@@ -73,9 +80,26 @@ func (g *Graph) Add(typ string, fields map[string]any, edges []Edge) (Node, []Va
 	c.Nodes = append(c.Nodes, node)
 	c.Edges = append(c.Edges, own...)
 	if errs := g.commit(c); len(errs) > 0 {
-		return Node{}, errs
+		return Node{}, nil, errs
 	}
-	return node, nil
+	return node, own, nil
+}
+
+// idSet is the IDs already used in a plan: nodes (retired included) and
+// edges share one space.
+type idSet map[string]bool
+
+func (s idSet) has(id string) bool { return s[id] }
+
+func (g *Graph) takenIDs() idSet {
+	s := idSet{}
+	for _, n := range g.Nodes {
+		s[n.ID] = true
+	}
+	for _, e := range g.Edges {
+		s[e.ID] = true
+	}
+	return s
 }
 
 // lastSiblingRank returns the highest rank among the new node's siblings.
@@ -233,8 +257,8 @@ func (g *Graph) Update(id string, fields map[string]any) (map[string]any, []Vali
 	return changed, nil
 }
 
-// Unlink removes one edge. The resulting graph is validated as a whole; on
-// any error g is left unchanged.
+// Unlink removes the edge from → to of type typ. The resulting graph is
+// validated as a whole; on any error g is left unchanged.
 func (g *Graph) Unlink(from, typ, to string) (Edge, []ValidationError) {
 	e := Edge{From: from, Type: typ, To: to}
 	j := slices.IndexFunc(g.Edges, func(x Edge) bool { return x.From == from && x.Type == typ && x.To == to })
@@ -244,6 +268,23 @@ func (g *Graph) Unlink(from, typ, to string) (Edge, []ValidationError) {
 			Message: "no edge " + from + " " + typ + " " + to + " in this plan",
 		}}
 	}
+	return g.unlinkAt(j)
+}
+
+// UnlinkID removes the edge with ID id; see Unlink.
+func (g *Graph) UnlinkID(id string) (Edge, []ValidationError) {
+	j := slices.IndexFunc(g.Edges, func(x Edge) bool { return x.ID == id })
+	if j < 0 {
+		return Edge{}, []ValidationError{{
+			Code: CodeEdgeNotFound, Path: "$.edges", Field: "id", Value: id,
+			Message: "no edge " + strconv.Quote(id) + " in this plan",
+		}}
+	}
+	return g.unlinkAt(j)
+}
+
+func (g *Graph) unlinkAt(j int) (Edge, []ValidationError) {
+	e := g.Edges[j]
 	c := g.clone()
 	c.Edges = slices.Delete(c.Edges, j, j+1)
 	if errs := g.commit(c); len(errs) > 0 {
@@ -338,10 +379,14 @@ func scopeNote(nt schema.NodeType) string {
 	return " and the same " + nt.RankScope + " target"
 }
 
-// Link adds one typed edge. The resulting graph is validated as a whole; on
-// any error g is left unchanged.
+// Link adds one typed edge with a generated edge ID. The resulting graph is
+// validated as a whole; on any error g is left unchanged.
 func (g *Graph) Link(from, typ, to string) (Edge, []ValidationError) {
-	e := Edge{From: from, Type: typ, To: to}
+	id, err := NewID(EdgePrefix, g.random(), g.takenIDs().has)
+	if err != nil {
+		return Edge{}, []ValidationError{{Code: CodeIDSpace, Path: "$.edges", Field: "id", Message: err.Error()}}
+	}
+	e := Edge{ID: id, From: from, Type: typ, To: to}
 	c := g.clone()
 	c.Edges = append(c.Edges, e)
 	if errs := g.commit(c); len(errs) > 0 {

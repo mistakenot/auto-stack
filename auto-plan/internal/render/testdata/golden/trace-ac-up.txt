@@ -1,7 +1,7 @@
 ✓ ac-jttt  brief is self-contained
 
 up
-  proves     → ◎ g-xyf8      An agent gets one stage's context in one call
-  constrains ← ◆ d-ytbz      brief is Markdown + JSON
-  discharges → ⇢ 005:r-8hw3  (in plan 005)
-  discharges → ‖ r-jbjh      Never copy rail text into a child
+  proves     → ◎ g-xyf8           An agent gets one stage's context in one call
+  constrains ← ◆ d-ytbz           brief is Markdown + JSON
+  discharges → ⇢ 005-m3x9:r-8hw3  (in plan 005-m3x9)
+  discharges → ‖ r-jbjh           Never copy rail text into a child
