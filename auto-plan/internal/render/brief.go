@@ -51,11 +51,12 @@ type Ref struct {
 	Title string `json:"title"`
 }
 
-// BriefAC is a covered acceptance criterion with its goal and verification.
+// BriefAC is a covered acceptance criterion with the goals it proves (in
+// goal reading order) and its verification.
 type BriefAC struct {
 	ID     string      `json:"id"`
 	Title  string      `json:"title"`
-	Goal   *Ref        `json:"goal"`
+	Goals  []Ref       `json:"goals"`
 	GWT    string      `json:"gwt"`
 	Verify BriefVerify `json:"verify"`
 }
@@ -130,23 +131,22 @@ func Brief(planID string, g *graph.Graph, stageID string, plans Plans) (BriefVie
 	files := StageFiles(g, s.ID)
 	v.Files, v.FileTree = fileRows(files), tree.FileTree(files)
 
+	goalsOf := ix.goalsOf()
 	goalOf := map[string]graph.Node{}
-	for _, e := range ix.activeEdges("proves") {
-		if _, seen := goalOf[e.From]; !seen {
-			goalOf[e.From] = ix.active[e.To]
-		}
+	for ac, goals := range goalsOf {
+		goalOf[ac] = ix.active[goals[0]]
 	}
 	acs := ix.ordered(covered)
-	// ACs read in goal order, then their own rank.
+	// ACs read in the order of the first goal they prove, then their own rank.
 	slices.SortStableFunc(acs, func(a, b graph.Node) int {
 		return cmp.Or(cmp.Compare(goalOf[a.ID].Rank, goalOf[b.ID].Rank), cmp.Compare(goalOf[a.ID].ID, goalOf[b.ID].ID))
 	})
 	under := map[string]bool{}
 	for _, ac := range acs {
-		row := BriefAC{ID: ac.ID, Title: ac.StringField("title"), GWT: ac.StringField("gwt"), Verify: BriefVerify{Tests: []string{}}}
-		if goal, ok := goalOf[ac.ID]; ok {
-			row.Goal = &Ref{ID: goal.ID, Title: goal.StringField("title")}
-			under[goal.ID] = true
+		row := BriefAC{ID: ac.ID, Title: ac.StringField("title"), Goals: []Ref{}, GWT: ac.StringField("gwt"), Verify: BriefVerify{Tests: []string{}}}
+		for _, id := range goalsOf[ac.ID] {
+			row.Goals = append(row.Goals, Ref{ID: id, Title: ix.active[id].StringField("title")})
+			under[id] = true
 		}
 		if verify := ac.ObjectField("verify"); verify != nil {
 			row.Verify.Cmd, _ = verify["cmd"].(string)
@@ -242,13 +242,17 @@ func (v BriefView) Text() string {
 		b.WriteString("```\n" + tree.Render(v.FileTree, nil) + "```\n")
 	}
 	if section("Acceptance criteria", len(v.ACs) == 0) {
-		for i, ac := range v.ACs {
+		for i := range v.ACs {
+			ac := &v.ACs[i]
 			if i > 0 {
 				b.WriteString("\n")
 			}
 			fmt.Fprintf(&b, "### %s: %s\n\n", ac.ID, ac.Title)
-			if ac.Goal != nil {
-				fmt.Fprintf(&b, "Proves %s: %s\n\n", ac.Goal.ID, ac.Goal.Title)
+			for _, goal := range ac.Goals {
+				fmt.Fprintf(&b, "Proves %s: %s\n", goal.ID, goal.Title)
+			}
+			if len(ac.Goals) > 0 {
+				b.WriteString("\n")
 			}
 			if ac.GWT != "" {
 				b.WriteString(ac.GWT + "\n\n")

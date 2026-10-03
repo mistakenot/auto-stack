@@ -119,13 +119,43 @@ func TestShowStructure(t *testing.T) {
 	if len(v.Questions) != 1 || v.Questions[0].ID != "q-jcx5" {
 		t.Fatalf("only open questions are shown: %+v", v.Questions)
 	}
-	// Positional labels follow reading order and are never IDs.
+	// Positional labels follow reading order and are never IDs. Decisions
+	// follow their own rank, not where they first appear under a goal:
+	// d-9t2w (rank a0) is D1 though it sits under the second goal.
 	labels := []string{v.Goals[0].Label, v.Goals[1].Label, second.ACs[0].Label, v.Goals[0].Decisions[0].Label,
 		second.Decisions[0].Label, alts[1].Label, v.Unlinked.ACs[0].Label, v.Rails[0].Label, v.Defects[0].Label, v.Questions[0].Label}
-	want := []string{"G1", "G2", "AC2.1", "D1", "D2", "A2.2", "AC?.1", "R1", "DF1", "Q1"}
+	want := []string{"G1", "G2", "AC2.1", "D2", "D1", "A1.2", "AC?.1", "R1", "DF1", "Q1"}
 	if !slices.Equal(labels, want) {
 		t.Fatalf("labels = %v, want %v", labels, want)
 	}
+}
+
+// TestShowSharedAC: an AC proving two goals is listed under both, labelled
+// under the first goal in reading order and marked shared under the other;
+// a decision constraining it shows under both goals; brief lists both goals.
+func TestShowSharedAC(t *testing.T) {
+	src := strings.Replace(ladderFixture, `{"id": "e-0002", "from": "ac-7w1e", "type": "proves", "to": "g-k7q2"},`,
+		`{"id": "e-0002", "from": "ac-7w1e", "type": "proves", "to": "g-k7q2"},
+    {"id": "e-0009", "from": "ac-3fxm", "type": "proves", "to": "g-m4t8"},`, 1)
+	g, err := graph.Parse([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := Show("004-k7q2", g, nil)
+	first, second := v.Goals[0], v.Goals[1]
+	if len(first.ACs) != 1 || first.ACs[0].ID != "ac-3fxm" || first.ACs[0].Label != "AC1.1" || first.ACs[0].Shared != "" {
+		t.Fatalf("first goal ACs = %+v", first.ACs)
+	}
+	if len(second.ACs) != 1 || second.ACs[0].Label != "AC1.1" || second.ACs[0].Shared != "G1" {
+		t.Fatalf("second goal ACs = %+v", second.ACs)
+	}
+	if !slices.ContainsFunc(first.Decisions, func(d DecisionRow) bool { return d.ID == "d-9t2w" }) {
+		t.Fatalf("a decision on a shared AC belongs under both goals: %+v", first.Decisions)
+	}
+	if text := v.Text(); !strings.Contains(text, "(shared: listed under G1)") {
+		t.Fatalf("text lacks the shared marker:\n%s", text)
+	}
+	assertParity(t, v)
 }
 
 // TestShowJSONTextParity checks that every fact in the JSON form appears in

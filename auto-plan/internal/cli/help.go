@@ -106,7 +106,9 @@ from the type registry (internal/schema/registry.go), so they always match what 
 update and lint accept.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := io.WriteString(cmd.OutOrStdout(), docsText(cmd.Root()))
+			// The parent, not cmd.Root(): mounted in the merged binary, the root
+			// is `auto`, whose commands are not plan verbs.
+			_, err := io.WriteString(cmd.OutOrStdout(), docsText(cmd.Parent()))
 			return err
 		},
 	}
@@ -153,7 +155,9 @@ func docsText(root *cobra.Command) string {
 	b.WriteString("  (and `--epic NNN`, `--plan NNN`, `--deferred NNN`) and stores the plan ID when exactly one plan\n")
 	b.WriteString("  has that number.\n")
 	b.WriteString("- Prose fields may cite nodes as `[[ID]]`, `[[NNN-xxxx:ID]]` or `[[NNN:ID]]`; lint checks they\n")
-	b.WriteString("  resolve (`ambiguous-ref` when the number names two plans).\n")
+	b.WriteString("  resolve (`ambiguous-ref` when the number names two plans). A reference inside inline code or a\n")
+	b.WriteString("  fenced code block is an example, not a reference: lint and renumber skip it, so prose can show\n")
+	b.WriteString("  the syntax as `` `[[ac-3fxm]]` ``.\n")
 
 	b.WriteString("\n## Versions and freezing\n\n")
 	fmt.Fprintf(&b, "- graph.json records the semver format `version` it was written with; this tool writes `%s`.\n", schema.Version)

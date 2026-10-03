@@ -136,8 +136,9 @@ func Glyph(typ string) string {
 // child nodes shows them too.
 //
 // Every row carries a positional label (G1, AC1.2, D3, A3.1, R1, DF1, Q1)
-// for reading only: labels follow the current rank order, change when the
-// plan is reordered, and are never accepted as a reference.
+// for reading only: labels follow the current rank order (each type its
+// own; an AC's within the first goal it proves), change when the plan is
+// reordered, and are never accepted as a reference.
 type ShowView struct {
 	Plan      string `json:"plan"`
 	Name      string `json:"name"`
@@ -163,12 +164,16 @@ type GoalRow struct {
 	Decisions []DecisionRow `json:"decisions"`
 }
 
-// ACRow is one acceptance criterion with its verify command.
+// ACRow is one acceptance criterion with its verify command. An AC that
+// proves several goals is listed under each: in full under the first goal in
+// reading order, where it takes its label, and again under every other goal
+// with Shared set to that first goal's label.
 type ACRow struct {
 	Label  string `json:"label"`
 	ID     string `json:"id"`
 	Title  string `json:"title"`
 	Verify string `json:"verify,omitempty"`
+	Shared string `json:"shared,omitempty"`
 }
 
 // DecisionRow is one decision, the goal/AC IDs it constrains, and the
@@ -279,12 +284,7 @@ func Show(planID string, g *graph.Graph, plans Plans) ShowView {
 	}
 
 	ix := newIndex(g)
-	goalOfAC := map[string]string{}
-	for _, e := range ix.activeEdges("proves") {
-		if _, seen := goalOfAC[e.From]; !seen {
-			goalOfAC[e.From] = e.To
-		}
-	}
+	goalsOfAC := ix.goalsOf()
 	constrains := map[string][]string{}
 	for _, e := range ix.activeEdges("constrains") {
 		constrains[e.From] = append(constrains[e.From], e.To)
@@ -300,16 +300,20 @@ func Show(planID string, g *graph.Graph, plans Plans) ShowView {
 		addressedBy[e.To] = append(addressedBy[e.To], e.From)
 	}
 
-	acs, decisions := ix.byType("ac"), ix.byType("decision")
-	// Decisions are numbered by first appearance in reading order, so a
-	// decision under two goals keeps one label.
+	acs, decisions, goals := ix.byType("ac"), ix.byType("decision"), ix.byType("goal")
+	// Decisions are numbered by their own reading order, as goals are, so a
+	// label does not move when a constrains edge changes, and a decision
+	// under two goals keeps one label.
 	decisionLabel := map[string]string{}
+	for i, d := range decisions {
+		decisionLabel[d.ID] = "D" + strconv.Itoa(i+1)
+	}
+	goalLabel := map[string]string{}
+	for i, goal := range goals {
+		goalLabel[goal.ID] = "G" + strconv.Itoa(i+1)
+	}
 	decisionRowFor := func(d graph.Node) DecisionRow {
-		label, ok := decisionLabel[d.ID]
-		if !ok {
-			label = "D" + strconv.Itoa(len(decisionLabel)+1)
-			decisionLabel[d.ID] = label
-		}
+		label := decisionLabel[d.ID]
 		row := DecisionRow{Label: label, ID: d.ID, Title: d.StringField("title"), Constrains: sorted(constrains[d.ID]), Alternatives: []AltRow{}}
 		for i, a := range ix.ordered(rejects[d.ID]) {
 			row.Alternatives = append(row.Alternatives, altRow(a, "A"+strings.TrimPrefix(label, "D")+"."+strconv.Itoa(i+1)))
@@ -317,15 +321,29 @@ func Show(planID string, g *graph.Graph, plans Plans) ShowView {
 		return row
 	}
 
-	for gi, goal := range ix.byType("goal") {
-		gl := strconv.Itoa(gi + 1)
-		row := GoalRow{Label: "G" + gl, ID: goal.ID, Title: goal.StringField("title"), ACs: []ACRow{}, Decisions: []DecisionRow{}}
+	// An AC takes its label under the first goal it proves.
+	acLabel := map[string]string{}
+	perGoal := map[string]int{}
+	for _, ac := range acs {
+		if gs := goalsOfAC[ac.ID]; len(gs) > 0 {
+			perGoal[gs[0]]++
+			acLabel[ac.ID] = "AC" + strings.TrimPrefix(goalLabel[gs[0]], "G") + "." + strconv.Itoa(perGoal[gs[0]])
+		}
+	}
+	for _, goal := range goals {
+		row := GoalRow{Label: goalLabel[goal.ID], ID: goal.ID, Title: goal.StringField("title"), ACs: []ACRow{}, Decisions: []DecisionRow{}}
 		under := map[string]bool{goal.ID: true}
 		for _, ac := range acs {
-			if goalOfAC[ac.ID] == goal.ID {
-				row.ACs = append(row.ACs, acRow(ac, "AC"+gl+"."+strconv.Itoa(len(row.ACs)+1)))
-				under[ac.ID] = true
+			gs := goalsOfAC[ac.ID]
+			if !slices.Contains(gs, goal.ID) {
+				continue
 			}
+			r := acRow(ac, acLabel[ac.ID])
+			if gs[0] != goal.ID {
+				r.Shared = goalLabel[gs[0]]
+			}
+			row.ACs = append(row.ACs, r)
+			under[ac.ID] = true
 		}
 		for _, d := range decisions {
 			if slices.ContainsFunc(constrains[d.ID], func(id string) bool { return under[id] }) {
@@ -335,7 +353,7 @@ func Show(planID string, g *graph.Graph, plans Plans) ShowView {
 		v.Goals = append(v.Goals, row)
 	}
 	for _, ac := range acs {
-		if _, ok := goalOfAC[ac.ID]; !ok {
+		if len(goalsOfAC[ac.ID]) == 0 {
 			v.Unlinked.ACs = append(v.Unlinked.ACs, acRow(ac, "AC?."+strconv.Itoa(len(v.Unlinked.ACs)+1)))
 		}
 	}
@@ -499,7 +517,11 @@ func (v ShowView) Text() string {
 	for _, g := range v.Goals {
 		ladder = append(ladder, line{glyph: GlyphGoal, label: g.Label, id: g.ID, title: g.Title})
 		for _, ac := range g.ACs {
-			ladder = append(ladder, line{indent: 1, glyph: GlyphAC, label: ac.Label, id: ac.ID, title: ac.Title, comment: ac.Verify})
+			comment := ac.Verify
+			if ac.Shared != "" {
+				comment = "(shared: listed under " + ac.Shared + ")"
+			}
+			ladder = append(ladder, line{indent: 1, glyph: GlyphAC, label: ac.Label, id: ac.ID, title: ac.Title, comment: comment})
 		}
 		for _, d := range g.Decisions {
 			ladder = append(ladder, decisionLines(1, d)...)
@@ -716,6 +738,21 @@ func (ix *index) ordered(ids []string) []graph.Node {
 	}
 	sortReading(out)
 	return slices.CompactFunc(out, func(a, b graph.Node) bool { return a.ID == b.ID })
+}
+
+// goalsOf maps each AC to the active goals it proves, in goal reading order.
+func (ix *index) goalsOf() map[string][]string {
+	targets := map[string][]string{}
+	for _, e := range ix.activeEdges("proves") {
+		targets[e.From] = append(targets[e.From], e.To)
+	}
+	out := make(map[string][]string, len(targets))
+	for ac, ids := range targets {
+		for _, goal := range ix.ordered(ids) {
+			out[ac] = append(out[ac], goal.ID)
+		}
+	}
+	return out
 }
 
 // sortReading sorts nodes by rank, then ID (D-12).

@@ -2,16 +2,9 @@ package graph
 
 import (
 	"maps"
-	"regexp"
 
 	"github.com/mistakenot/auto-plan/internal/schema"
 )
-
-// proseRefRE matches a `[[…]]` reference in Markdown prose.
-var proseRefRE = regexp.MustCompile(`\[\[([^\[\]\n]*)\]\]`)
-
-// ProseRefRE is the `[[…]]` reference pattern lint and RewritePlanRefs share.
-func ProseRefRE() *regexp.Regexp { return proseRefRE }
 
 // ShortRefFunc decides what a shorthand prose reference `[[NNN:id]]` becomes
 // when its plan is renumbered. It returns the replacement reference (or ""
@@ -123,25 +116,24 @@ func rewriteFields(specs []schema.FieldSpec, values map[string]any, oldID, newID
 
 func rewriteProse(s, oldID, newID string, short ShortRefFunc) (string, []string) {
 	var ambiguous []string
-	out := proseRefRE.ReplaceAllStringFunc(s, func(m string) string {
-		ref := m[2 : len(m)-2]
+	out := ReplaceProseRefs(s, func(ref string) string {
 		p, id, q := ParseRef(ref)
 		switch {
 		case !q:
-			return m
+			return ""
 		case p == oldID:
 			return "[[" + Qualify(newID, id) + "]]"
 		case short != nil && len(p) == 3:
 			repl, amb := short(p, id)
 			if amb {
 				ambiguous = append(ambiguous, ref)
-				return m
+				return ""
 			}
 			if repl != "" {
 				return "[[" + repl + "]]"
 			}
 		}
-		return m
+		return ""
 	})
 	return out, ambiguous
 }

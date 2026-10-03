@@ -46,7 +46,6 @@ var Rules = []Rule{
 	{Code: "plan-id-mismatch", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: planIDMismatch},
 	{Code: "open-question", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: openQuestion},
 	{Code: "ac-no-goal", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: acNoGoal},
-	{Code: "ac-multi-goal", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: acMultiGoal},
 	{Code: "dangling-prose-ref", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: danglingProseRef},
 	{Code: "ambiguous-ref", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: ambiguousRef},
 	{Code: "tree-syntax", Severity: SeverityError, MinLifecycle: schema.LifecycleRequirements, Check: treeSyntax},
@@ -118,25 +117,8 @@ func acNoGoal(c *Context) []Issue {
 		}
 		out = append(out, Issue{
 			Path:    graph.NodePath(n.ID),
-			Message: n.ID + " proves no active goal; every AC proves exactly one",
+			Message: n.ID + " proves no active goal; every AC proves at least one",
 			Hint:    "auto plan link " + c.Plan + " " + n.ID + " proves <goal-id>",
-		})
-	}
-	return out
-}
-
-// acMultiGoal reports every active AC that proves more than one active goal.
-func acMultiGoal(c *Context) []Issue {
-	var out []Issue
-	for _, n := range active(c, "ac") {
-		goals := activeTargets(c, n.ID, edgeProves, "goal")
-		if len(goals) < 2 {
-			continue
-		}
-		out = append(out, Issue{
-			Path:    graph.NodePath(n.ID),
-			Message: fmt.Sprintf("%s proves %d goals (%s); every AC proves exactly one", n.ID, len(goals), strings.Join(goals, ", ")),
-			Hint:    "keep one goal: auto plan unlink " + c.Plan + " " + n.ID + " proves " + goals[len(goals)-1],
 		})
 	}
 	return out
@@ -226,9 +208,6 @@ func decisionNoAlternative(c *Context) []Issue {
 	return out
 }
 
-// proseRef matches a `[[…]]` reference in Markdown prose.
-var proseRef = graph.ProseRefRE()
-
 // qualifiedRef reports the shape of a cross-plan prose reference: the full
 // `[[005-k7q2:r-8hw3]]`, or the hand-written shorthand `[[005:r-8hw3]]`,
 // which resolves when exactly one plan has the number.
@@ -274,7 +253,9 @@ func ambiguousRef(c *Context) []Issue {
 }
 
 // proseRefs calls fn for each distinct `[[…]]` reference in every text field
-// (registry kind text, nested objects included) of every active node.
+// (registry kind text, nested objects included) of every active node. A
+// reference quoted in inline code or a fenced block is an example and is
+// skipped (graph.FindProseRefs).
 func proseRefs(c *Context, fn func(n graph.Node, path, field, ref string)) {
 	for _, n := range c.Graph.Nodes {
 		if !n.Active() {
@@ -286,10 +267,10 @@ func proseRefs(c *Context, fn func(n graph.Node, path, field, ref string)) {
 		}
 		walkText(graph.NodePath(n.ID)+".fields", nt.Fields, n.Fields, func(path, field, text string) {
 			var seen []string
-			for _, m := range proseRef.FindAllStringSubmatch(text, -1) {
-				if !slices.Contains(seen, m[1]) {
-					seen = append(seen, m[1])
-					fn(n, path, field, m[1])
+			for _, r := range graph.FindProseRefs(text) {
+				if !slices.Contains(seen, r.Ref) {
+					seen = append(seen, r.Ref)
+					fn(n, path, field, r.Ref)
 				}
 			}
 		})

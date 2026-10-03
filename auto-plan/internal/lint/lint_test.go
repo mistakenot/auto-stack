@@ -132,8 +132,8 @@ func TestRules(t *testing.T) {
 		{"ac-no-goal", fixture("requirements", []string{acA}, nil), []string{"ac-no-goal"}},
 		{"ac-no-goal: its goal is retired", fixture("requirements", []string{retired(goalA), acA}, []string{proof}),
 			[]string{"ac-no-goal", "retired-ref"}},
-		{"ac-multi-goal", fixture("requirements", []string{goalA, strings.Replace(goalA, "g-k7q2", "g-k7q3", 1), acA},
-			[]string{proof, edge("ac-3fxm", "proves", "g-k7q3")}), []string{"ac-multi-goal"}},
+		{"an AC may prove several goals", fixture("requirements", []string{goalA, strings.Replace(goalA, "g-k7q2", "g-k7q3", 1), acA},
+			[]string{proof, edge("ac-3fxm", "proves", "g-k7q3")}), nil},
 		{"goal-no-ac", cleanPlan("solution", []string{goalA}, nil), []string{"goal-no-ac"}},
 		{"goal-no-ac ignores retired ACs", cleanPlan("solution", []string{goalA, retired(acA)}, []string{proof}),
 			[]string{"goal-no-ac"}},
@@ -185,6 +185,9 @@ func TestRules(t *testing.T) {
 		{"dangling-prose-ref: bad qualified shape", fixture("requirements", []string{
 			node("g-k7q2", "goal", `"title": "g", "description": "honours [[5:r-8hw3]]"`),
 		}, nil), []string{"dangling-prose-ref"}},
+		{"dangling-prose-ref: quoted examples are not references", fixture("requirements", []string{
+			node("g-k7q2", "goal", `"title": "g", "description": "a field containing `+"`[[ac-zz9q]]`"+` fails:\n\n`+"```"+`\n[[ac-zz9q]]\n`+"```"+`"`),
+		}, nil), nil},
 		{"retired-ref: prose", fixture("requirements", []string{retired(goalA),
 			strings.Replace(decA, `"why": "w"`, `"why": "because [[g-k7q2]]"`, 1), altA}, []string{rej}),
 			[]string{"retired-ref"}},
@@ -244,7 +247,7 @@ func TestRules(t *testing.T) {
 func TestSeverities(t *testing.T) {
 	want := map[string]Severity{
 		"plan-id-mismatch": SeverityError, "ambiguous-ref": SeverityError,
-		"open-question": SeverityError, "ac-no-goal": SeverityError, "ac-multi-goal": SeverityError,
+		"open-question": SeverityError, "ac-no-goal": SeverityError,
 		"dangling-prose-ref": SeverityError, "tree-syntax": SeverityError, "dependency-cycle": SeverityError,
 		"goal-no-ac": SeverityError, "ac-no-verify": SeverityError, "unplanned-file": SeverityError,
 		"untracked-file": SeverityError, "missing-dep": SeverityError,

@@ -1,5 +1,5 @@
 ---
-hash: "5fcadb07"
+hash: "670f8130"
 id: "1467e318"
 read_when: "naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept"
 summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Outline, Segment, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Binding, Handle, Lock, Group, Worker, Plan, Child Plan, Goal, Acceptance Criterion, Decision, Alternative, Rail, Defect, Stage, File Change, Journey, Leg, Question, Tree, Stage Brief) with the terms to avoid for each."
@@ -83,7 +83,7 @@ flowchart LR
     Plan -->|many| Child_Plan
     Child_Plan -->|one| Plan
     Goal -->|many| Defect
-    Acceptance_Criterion -->|one| Goal
+    Acceptance_Criterion -->|many| Goal
     Acceptance_Criterion -->|many| Rail
     Decision -->|many| Alternative
     Decision -->|many| Goal
@@ -246,9 +246,9 @@ _Avoid_: Objective, aim, outcome, requirement
 _Has_: many Defects
 
 **Acceptance Criterion**:
-A given/when/then statement that proves exactly one Goal, carrying the reproducible command (or manual check) that verifies it.
+A given/when/then statement that proves one or more Goals, carrying the reproducible command (or manual check) that verifies it.
 _Avoid_: Test case, success criterion, done condition
-_Has_: one Goal, many Rails
+_Has_: many Goals, many Rails
 
 **Decision**:
 A settled choice that constrains Goals or Acceptance Criteria, recorded with why it was made and the Alternatives it rejected.

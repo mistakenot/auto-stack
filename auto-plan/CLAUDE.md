@@ -139,6 +139,16 @@ lifecycle without touching old plans.
   (from, type, to) triple is still unique. The plan node's ID is literally
   `plan` (the plan's own ID is the top-level `id`). Reading order is the
   separate `rank` field.
+- **Prose references skip code.** `graph.FindProseRefs` finds `[[…]]` in text
+  fields but skips inline code spans and fenced code blocks, so prose can show
+  the syntax as an example (`` `[[ac-3fxm]]` ``). Lint and `renumber`'s rewrite
+  both read references through it, so what lint checks is what renumber
+  rewrites.
+- **An AC proves one or more goals.** `show` lists it under each, labelled
+  under the first goal in reading order and marked `shared` under the others;
+  `brief` lists every goal it proves. `move` treats it as a sibling of the ACs
+  under any of its goals. Decision labels (D1…) follow decision rank, not
+  where a decision first appears on the ladder.
 - **Semver, never migrated.** `version` is a semver string; the tool's is
   `schema.Version` (`1.0.0`). Reads accept any `1.x.y`; a plan of another
   major is read best effort and not validated against this registry (lint:

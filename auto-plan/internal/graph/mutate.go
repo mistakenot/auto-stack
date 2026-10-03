@@ -111,22 +111,40 @@ func (g *Graph) lastSiblingRank(nt schema.NodeType, edges []Edge) string {
 	return last
 }
 
-// scopeTarget returns the target of the first RankScope edge among edges
-// (sorted), or "" when the type has no RankScope or no such edge.
+// scopeTarget returns the smallest target of the RankScope edges among
+// edges, or "" when the type has no RankScope or no such edge.
 func scopeTarget(nt schema.NodeType, edges []Edge) string {
-	if nt.RankScope == "" {
+	targets := scopeTargets(nt, edges)
+	if len(targets) == 0 {
 		return ""
 	}
-	targets := []string{}
+	return slices.Min(targets)
+}
+
+// scopeTargets returns the targets of the RankScope edges among edges.
+func scopeTargets(nt schema.NodeType, edges []Edge) []string {
+	if nt.RankScope == "" {
+		return nil
+	}
+	var targets []string
 	for _, e := range edges {
 		if e.Type == nt.RankScope {
 			targets = append(targets, e.To)
 		}
 	}
-	if len(targets) == 0 {
-		return ""
+	return targets
+}
+
+// moveScope returns the scope a move of id next to anchor ranks within: the
+// smallest RankScope target the two share (an AC proving several goals is a
+// sibling of the ACs under each), else id's own scope.
+func moveScope(nt schema.NodeType, idEdges, anchorEdges []Edge) string {
+	anchorTargets := scopeTargets(nt, anchorEdges)
+	shared := slices.DeleteFunc(scopeTargets(nt, idEdges), func(t string) bool { return !slices.Contains(anchorTargets, t) })
+	if len(shared) > 0 {
+		return slices.Min(shared)
 	}
-	return slices.Min(targets)
+	return scopeTarget(nt, idEdges)
 }
 
 // siblings returns the nodes of type nt that share reading order: every node
@@ -319,7 +337,7 @@ func (g *Graph) Retire(id string) (Node, []ValidationError) {
 // Move gives node id one new rank so it sorts directly before (or, with
 // after set, directly after) its sibling anchor. No other node changes. The
 // anchor must be a sibling: the same type and, for a type with a RankScope,
-// the same scope target.
+// a scope target in common.
 func (g *Graph) Move(id, anchor string, after bool) (Node, []ValidationError) {
 	i := g.nodeIndex(id)
 	if i < 0 {
@@ -336,7 +354,7 @@ func (g *Graph) Move(id, anchor string, after bool) (Node, []ValidationError) {
 	if _, exists := g.NodeByID(anchor); !exists {
 		return Node{}, notFound(anchor)
 	}
-	sibs := g.siblings(nt, scopeTarget(nt, g.outgoing(id)))
+	sibs := g.siblings(nt, moveScope(nt, g.outgoing(id), g.outgoing(anchor)))
 	sibs = slices.DeleteFunc(sibs, func(s Node) bool { return s.ID == id })
 	slices.SortFunc(sibs, func(a, b Node) int { return cmp.Or(cmp.Compare(a.Rank, b.Rank), cmp.Compare(a.ID, b.ID)) })
 	k := slices.IndexFunc(sibs, func(s Node) bool { return s.ID == anchor })
@@ -376,7 +394,7 @@ func scopeNote(nt schema.NodeType) string {
 	if nt.RankScope == "" {
 		return ""
 	}
-	return " and the same " + nt.RankScope + " target"
+	return " and a " + nt.RankScope + " target"
 }
 
 // Link adds one typed edge with a generated edge ID. The resulting graph is

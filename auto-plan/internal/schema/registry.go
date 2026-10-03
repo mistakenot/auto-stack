@@ -311,7 +311,7 @@ var Registry = Schema{
 		{
 			Name: "ac", Prefix: "ac", Term: "Acceptance Criterion", MinLifecycle: LifecycleSolution,
 			RankScope: "proves",
-			Help:      "A given/when/then criterion that proves one goal.",
+			Help:      "A given/when/then criterion that proves one or more goals.",
 			Fields: []FieldSpec{
 				titleField("One-line summary of the criterion"),
 				{Name: "gwt", Kind: KindText, Required: true, Help: "Given/when/then Markdown"},

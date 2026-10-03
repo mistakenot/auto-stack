@@ -690,6 +690,15 @@ func TestMoveStaysWithinRankScope(t *testing.T) {
 	if _, errs := g.Move(a2.ID, b1.ID, false); !slices.Contains(codes(errs), CodeNotSibling) {
 		t.Fatalf("ACs under different goals are not siblings: %v", codes(errs))
 	}
+
+	// An AC proving both goals is a sibling of the ACs under each.
+	both := mustAdd(t, g, "ac", acFields("both"), Edge{Type: "proves", To: g1.ID}, Edge{Type: "proves", To: g2.ID})
+	if moved, errs := g.Move(both.ID, b1.ID, false); len(errs) > 0 || moved.Rank >= b1.Rank {
+		t.Fatalf("move a shared AC before an AC under its second goal: %+v %v", moved, errs)
+	}
+	if moved, errs := g.Move(both.ID, a1.ID, true); len(errs) > 0 || moved.Rank <= a1.Rank {
+		t.Fatalf("move a shared AC after an AC under its first goal: %+v %v", moved, errs)
+	}
 }
 
 func mustNodeType(t *testing.T, name string) schema.NodeType {
@@ -952,5 +961,40 @@ func TestRewritePlanRefs(t *testing.T) {
 	}
 	if r, _ := amb.NodeByID("r-0000"); !strings.Contains(r.StringField("description"), "[[002:g-0001]]") {
 		t.Errorf("ambiguous shorthand was rewritten: %q", r.StringField("description"))
+	}
+}
+
+func TestFindProseRefs(t *testing.T) {
+	cases := []struct {
+		name, text string
+		want       []string
+	}{
+		{"bare", "see [[g-k7q2]] and [[ac-3fxm]]", []string{"g-k7q2", "ac-3fxm"}},
+		{"inline code is an example", "write `[[ac-zz9q]]` to link; see [[g-k7q2]]", []string{"g-k7q2"}},
+		{"double-backtick span", "``a ` [[ac-zz9q]]`` then [[g-k7q2]]", []string{"g-k7q2"}},
+		{"unmatched backtick is literal", "a ` then [[g-k7q2]]", []string{"g-k7q2"}},
+		{"fenced block", "before [[g-k7q2]]\n```md\n[[ac-zz9q]]\n```\nafter [[d-9t2w]]", []string{"g-k7q2", "d-9t2w"}},
+		{"tilde fence", "~~~\n[[ac-zz9q]]\n~~~\n[[g-k7q2]]", []string{"g-k7q2"}},
+		{"shorter closing fence does not close", "````\n```\n[[ac-zz9q]]\n````\n[[g-k7q2]]", []string{"g-k7q2"}},
+		{"unclosed fence runs to the end", "[[g-k7q2]]\n```\n[[ac-zz9q]]", []string{"g-k7q2"}},
+		{"backticks inside a fence do not open a span", "```\n` x\n```\n[[g-k7q2]] `[[ac-zz9q]]`", []string{"g-k7q2"}},
+	}
+	for _, tc := range cases {
+		var got []string
+		for _, r := range FindProseRefs(tc.text) {
+			got = append(got, r.Ref)
+			if tc.text[r.Start:r.End] != "[["+r.Ref+"]]" {
+				t.Errorf("%s: span %d:%d is %q", tc.name, r.Start, r.End, tc.text[r.Start:r.End])
+			}
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
+	// renumber rewrites references, never quoted examples.
+	in := "honours [[002-m3x9:r-8hw3]]; write `[[002-m3x9:r-8hw3]]` to link"
+	if got, _ := rewriteProse(in, "002-m3x9", "004-m3x9", nil); got != "honours [[004-m3x9:r-8hw3]]; write `[[002-m3x9:r-8hw3]]` to link" {
+		t.Errorf("rewriteProse = %q", got)
 	}
 }

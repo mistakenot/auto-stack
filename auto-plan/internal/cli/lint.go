@@ -22,9 +22,8 @@ and run the lint rules that apply at the plan's lifecycle step.
 
 Which rules run depends on the plan's lifecycle (auto plan update <plan> plan --lifecycle …):
 
-  every step   plan-id-mismatch, open-question, ac-no-goal, ac-multi-goal, dangling-prose-ref,
-               ambiguous-ref, tree-syntax, dependency-cycle; warnings decision-no-alternative,
-               retired-ref
+  every step   plan-id-mismatch, open-question, ac-no-goal, dangling-prose-ref, ambiguous-ref,
+               tree-syntax, dependency-cycle; warnings decision-no-alternative, retired-ref
   solution     + goal-no-ac (not for epics), ac-no-verify; warning goal-count (outside 5–8 goals)
   plan         + unplanned-file, untracked-file, missing-dep
 

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/mistakenot/auto-plan/internal/cli"
 	"github.com/mistakenot/auto-plan/internal/graph"
 	"github.com/mistakenot/auto-plan/internal/schema"
+	"github.com/spf13/cobra"
 )
 
 // The plan IDs `new` generates under AUTO_PLAN_SEED=1, by plan number.
@@ -1240,6 +1242,24 @@ func TestEpicFamilyAcrossPlans(t *testing.T) {
 // TestDocsCoversEveryRegisteredType asserts the reference is generated from
 // the registry: every node type (with its fields) and every edge type (with
 // its endpoints and cross-plan flag) appears, as does every command.
+// TestDocsListsPlanVerbsWhenMounted mounts plan under a parent, as the
+// merged auto binary does: docs must list the plan verbs, not the parent's.
+func TestDocsListsPlanVerbsWhenMounted(t *testing.T) {
+	dir := repo(t)
+	var out bytes.Buffer
+	parent := &cobra.Command{Use: "auto"}
+	parent.AddCommand(&cobra.Command{Use: "mail", Short: "not a plan verb", Run: func(*cobra.Command, []string) {}})
+	parent.AddCommand(cli.NewRootCmd(app.New(&out, io.Discard, dir)))
+	parent.SetArgs([]string{"plan", "docs"})
+	parent.SetOut(&out)
+	if err := parent.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "- `auto plan lint") || strings.Contains(out.String(), "auto plan mail") {
+		t.Errorf("docs under a parent command lists the wrong commands:\n%s", out.String())
+	}
+}
+
 func TestDocsCoversEveryRegisteredType(t *testing.T) {
 	dir := repo(t)
 	out := mustRun(t, dir, "docs")

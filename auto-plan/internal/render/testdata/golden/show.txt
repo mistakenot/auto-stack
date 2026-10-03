@@ -1,12 +1,12 @@
 004  stage-briefs  task · solution
 
 ◎ G1     g-m4t8   Plans can be reordered without breaking references
-    ◆ D1     d-2hcv   ranks are strings
+    ◆ D2     d-2hcv   ranks are strings
 ◎ G2     g-k7q2   An agent gets one stage's context in one call
     ✓ AC2.1  ac-3fxm  brief is self-contained            go test ./e2e -run Brief
-    ◆ D2     d-9t2w   brief is Markdown + JSON
-    -   A2.1   a-5hcv   reuse Context Pack               collides with auto-graph's term
-    -   A2.2   a-7kq1   HTML only                        agents cannot read it cheaply, and it would need a renderer…
+    ◆ D1     d-9t2w   brief is Markdown + JSON
+    -   A1.1   a-5hcv   reuse Context Pack               collides with auto-graph's term
+    -   A1.2   a-7kq1   HTML only                        agents cannot read it cheaply, and it would need a renderer…
 
 unlinked
     ✓ AC?.1  ac-8pqr  a manual check                     (manual)
