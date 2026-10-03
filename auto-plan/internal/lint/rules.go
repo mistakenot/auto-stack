@@ -59,6 +59,7 @@ var Rules = []Rule{
 	{Code: "annex-missing", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: annexMissing},
 	{Code: "unlinked-file", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: unlinkedFile},
 	{Code: "annex-ref", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: annexRef},
+	{Code: "annex-changed", Severity: SeverityError, MinLifecycle: schema.LifecycleDone, Check: annexChanged},
 	{Code: "goal-count", Severity: SeverityWarning, MinLifecycle: schema.LifecycleSolution, Check: goalCount},
 	{Code: "decision-no-alternative", Severity: SeverityWarning, MinLifecycle: schema.LifecycleRequirements, Check: decisionNoAlternative},
 	{Code: "retired-ref", Severity: SeverityWarning, MinLifecycle: schema.LifecycleRequirements, Check: retiredRef},
@@ -630,6 +631,41 @@ func annexRef(c *Context) []Issue {
 				out = append(out, Issue{Path: graph.NodePath(n.ID), Message: msg, Hint: hint})
 			}
 		}
+	}
+	return out
+}
+
+// annexChanged reports every active annex whose file no longer matches the
+// SHA-256 hash recorded when the plan was frozen (the freeze step writes
+// annex.hash at the transition into lifecycle done). It runs only from done
+// on, over the file read through the Context FS, and does nothing when the
+// graph is linted without its folder (c.FS nil). An annex with no stored hash
+// (nothing was frozen) or whose file is absent (an annex-missing error) is
+// skipped.
+func annexChanged(c *Context) []Issue {
+	if c.FS == nil {
+		return nil
+	}
+	var out []Issue
+	for _, n := range active(c, typeAnnex) {
+		stored := n.StringField("hash")
+		path := n.StringField("path")
+		if stored == "" || path == "" {
+			continue
+		}
+		data, err := fs.ReadFile(c.FS, path)
+		if err != nil {
+			continue // the absent file is an annex-missing error
+		}
+		if graph.HashBytes(data) == stored {
+			continue
+		}
+		out = append(out, Issue{
+			Path: graph.NodePath(n.ID) + ".fields.hash", Field: "hash",
+			Message: fmt.Sprintf("Annex %s (%s) has changed since the plan was frozen: its bytes no longer match the recorded hash.", n.ID, path),
+			Hint: "a frozen plan is history; restore " + path + " to its frozen contents, " +
+				"or start new work in a new plan: auto plan new <name> --kind task",
+		})
 	}
 	return out
 }

@@ -253,7 +253,8 @@ func TestSeverities(t *testing.T) {
 		"goal-no-ac": SeverityError, "ac-no-verify": SeverityError, "unplanned-file": SeverityError,
 		"untracked-file": SeverityError, "missing-dep": SeverityError,
 		"annex-missing": SeverityError, "unlinked-file": SeverityError, "annex-ref": SeverityError,
-		"goal-count": SeverityWarning, "decision-no-alternative": SeverityWarning, "retired-ref": SeverityWarning,
+		"annex-changed": SeverityError,
+		"goal-count":    SeverityWarning, "decision-no-alternative": SeverityWarning, "retired-ref": SeverityWarning,
 	}
 	if len(Rules) != len(want) {
 		t.Fatalf("%d rules, want %d", len(Rules), len(want))
@@ -751,6 +752,11 @@ func annex(id, kind, path, title string) string {
 	return node(id, "annex", `"kind": "`+kind+`", "path": "`+path+`", "title": "`+title+`"`)
 }
 
+// annexHashed builds an annex node carrying a frozen content hash.
+func annexHashed(id, kind, path, title, hash string) string {
+	return node(id, "annex", `"kind": "`+kind+`", "path": "`+path+`", "title": "`+title+`", "hash": "`+hash+`"`)
+}
+
 // mdFile is one Markdown file for an fstest.MapFS.
 func mdFile(content string) *fstest.MapFile { return &fstest.MapFile{Data: []byte(content)} }
 
@@ -806,6 +812,48 @@ func TestAnnexRules(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			g, err := graph.Parse([]byte(tc.doc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := run(&Context{Plan: "001", Graph: g, Lifecycle: Lifecycle(g), FS: tc.files})
+			var got []string
+			for _, is := range r.Issues {
+				got = append(got, is.Code)
+				if is.Message == "" || is.Path == "" || is.Hint == "" {
+					t.Errorf("issue lacks message/path/hint: %+v", is)
+				}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("codes = %v, want %v\n%+v", got, tc.want, r.Issues)
+			}
+		})
+	}
+}
+
+// TestAnnexChanged: from lifecycle done, an annex whose file still matches the
+// hash the freeze recorded lints clean; one whose bytes differ reports
+// annex-changed. The rule reads the file through the Context FS.
+func TestAnnexChanged(t *testing.T) {
+	const body = "# Usage\n\nRun it.\n"
+	clean := graph.HashBytes([]byte(body))
+	doc := func(hash string) string {
+		n, e := goals(5)
+		return fixture("done", append(n, annexHashed("ax-0001", "usage", "usage.md", "How to use it", hash)), e)
+	}
+	cases := []struct {
+		name  string
+		hash  string
+		files fstest.MapFS
+		want  []string
+	}{
+		{"unchanged annex lints clean",
+			clean, fstest.MapFS{"usage.md": mdFile(body)}, nil},
+		{"changed annex reports annex-changed",
+			clean, fstest.MapFS{"usage.md": mdFile(body + "and edit it.\n")}, []string{"annex-changed"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g, err := graph.Parse([]byte(doc(tc.hash)))
 			if err != nil {
 				t.Fatal(err)
 			}

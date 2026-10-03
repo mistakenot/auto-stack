@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -516,6 +518,15 @@ func runUpdate(cmd *cobra.Command, application *app.App, args []string) error {
 		if err := l.checkCrossPlan(cmd, text, nil, fields); err != nil {
 			return err
 		}
+		// Freezing the plan (the transition into done, its last allowed write)
+		// records each annex's content hash before anything is saved. A plan
+		// loaded for write is never already done (loadForWrite refuses a frozen
+		// plan), so lifecycle "done" here is always the transition into it.
+		if s, _ := fields["lifecycle"].(string); s == string(schema.LifecycleDone) {
+			if err := l.hashAnnexes(cmd, text); err != nil {
+				return err
+			}
+		}
 	}
 	if err := l.save(cmd, text); err != nil {
 		return err
@@ -680,6 +691,37 @@ func (l *loaded) checkCrossPlan(cmd *cobra.Command, text bool, edges []graph.Edg
 		if err := set.CheckEpic(epic); err != nil {
 			return failOne(cmd, text, "epic-not-found", graph.NodePath(schema.PlanNodeID)+".fields.epic", "epic", err.Error(), epic,
 				"graph.json was not changed; name an existing epic plan (create one with `auto plan new <name> --kind epic`)")
+		}
+	}
+	return nil
+}
+
+// hashAnnexes records each active annex's SHA-256 content hash in its
+// Computed `hash` field, the one place that field is written (D-6). It runs
+// only at the freeze (the transition into lifecycle done), over the graph
+// already mutated in memory, before it is saved. A missing annex file refuses
+// the freeze: a frozen plan must carry a hash for every annex, so nothing is
+// saved and the lifecycle does not advance. The folder rename in renumber
+// keeps a flat annex path valid, so the file is read off the plan folder.
+func (l *loaded) hashAnnexes(cmd *cobra.Command, text bool) error {
+	folder := l.ws.FolderPath(l.plan)
+	for _, n := range l.graph.Nodes {
+		if n.Type != "annex" || !n.Active() {
+			continue
+		}
+		path := n.StringField("path")
+		if path == "" {
+			continue // a required path missing is a validation error already
+		}
+		data, err := os.ReadFile(filepath.Join(folder, filepath.FromSlash(path)))
+		if err != nil {
+			return failOne(cmd, text, "annex-missing", graph.NodePath(n.ID)+".fields.path", "path",
+				fmt.Sprintf("annex %s names %s, but its file cannot be read to hash it at freeze: %v", n.ID, path, err), path,
+				"graph.json was not changed and the plan was not frozen; every annex needs a readable Markdown file before `--lifecycle done` — "+
+					"create it beside graph.json (auto plan add writes a stub) or point --path at the right file, then retry")
+		}
+		if _, errs := l.graph.Update(n.ID, map[string]any{"hash": graph.HashBytes(data)}); len(errs) > 0 {
+			return fail(cmd, text, errs, "graph.json was not changed; the annex hash could not be recorded at freeze")
 		}
 	}
 	return nil
