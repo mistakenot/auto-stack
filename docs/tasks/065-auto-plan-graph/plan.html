@@ -932,6 +932,77 @@ Commands that can span plans take `all` in the plan position (`list all`, `searc
         </script></md>
       </pd-decision>
 
+      <pd-decision id="D-14" title="Each plan has its own ID: NNN-xxxx" status="accepted" by="charlie"
+        summary="Folder number + 4 random base32 characters, stored as graph.json's top-level id; references store the full ID. Decided after execution, during PR #157.">
+        <md><script type="text/plain">
+**Decision:** `new` generates a plan ID: the folder number, a hyphen, and 4 random Crockford-base32
+characters (`004-k7q2`). It is stored as the top-level `id` in graph.json. Qualified references
+store the full ID (`004-k7q2:r-8hw3`), including `epic`, `child.plan` and `deferred`. The CLI
+accepts the `004` shorthand when only one plan has that number and expands it before saving.
+**Alternatives:** Keep `NNN` as the only plan identity (D-9). Store only the short `NNN:id` form.
+**Consequences:** References stay unambiguous even while two branches have both allocated `004`.
+`lint all` reports `duplicate-plan-number`, and `auto plan renumber` fixes the collision at merge
+time (D-15).
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-15" title="Number collisions are fixed at merge time by renumber" status="accepted" by="charlie"
+        summary="renumber renames the folder, rewrites the plan ID and every reference to it in writable plans; refuses if a frozen plan refers to it.">
+        <md><script type="text/plain">
+**Decision:** `auto plan renumber <plan> [--to NNN]` renames the folder, rewrites the plan ID
+(keeping its suffix), and rewrites every qualified reference to it in the other writable plans.
+It refuses (`frozen-ref`) if a frozen plan refers to it.
+**Alternatives:** Treat the plan ID as permanent and let the folder number drift from it.
+**Consequences:** The ID always matches its folder. Rewriting is acceptable because plans stay
+mutable until they merge (D-17).
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-16" title="Edges get random IDs" status="accepted" by="charlie"
+        summary="Edges become {id, from, type, to} with e-xxxx IDs, so later features (review threads) can anchor to them; a duplicate triple is still an error.">
+        <md><script type="text/plain">
+**Decision:** Every edge carries a generated `e-xxxx` ID, unique across the plan's nodes and edges.
+`unlink` accepts the edge ID or the triple.
+**Alternatives:** Identify edges only by their (from, type, to) triple.
+**Consequences:** Edges can be anchored by review threads and evidence. Duplicate triples are still
+rejected, so the ID doesn't change what a graph can say.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-17" title="Semver schema versions; plans freeze instead of migrating" status="accepted" by="charlie"
+        summary="version is a semver string (1.0.0). Writes are refused on a major mismatch or once lifecycle is done; old plans are never migrated.">
+        <md><script type="text/plain">
+**Decision:** `version` is a semver string, starting at `1.0.0`. A plan is frozen, and every
+write to it is refused (`frozen`), when its major version differs from the tool's or its
+lifecycle is `done`. Reads still work.
+**Alternatives:** Migrate old plans forward whenever the schema changes.
+**Consequences:** A new schema version only affects plans created after it. Merged and completed
+plans are a permanent record that `auto plan` does not change.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-18" title="The lifecycle sequence lives in the registry" status="accepted" by="charlie"
+        summary="The step list is owned by the schema version, so future versions can experiment with lifecycles without touching old plans.">
+        <md><script type="text/plain">
+**Decision:** The ordered lifecycle steps (requirements → solution → plan → executing → done) are
+declared in `schema.Registry`, next to the node and edge types. Rules and types refer to steps
+by name, and a test checks that every name exists in the sequence.
+**Alternatives:** Keep a hard-coded package-level list.
+**Consequences:** A new schema version can add, rename or reorder steps. Plans on older versions
+are frozen (D-17), so they are unaffected.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-19" title="Keep two levels (epic → task) for now" status="accepted" by="charlie"
+        summary="No nesting above epic yet; a future schema version can allow it, since old plans are frozen rather than migrated.">
+        <md><script type="text/plain">
+**Decision:** The hierarchy stays epic → task.
+**Alternatives:** Allow epics inside epics now.
+**Consequences:** No use case for deeper nesting has come up. Versioning (D-17) lets a later
+version add it without migrating existing plans.
+        </script></md>
+      </pd-decision>
+
       <pd-decisions></pd-decisions>
 
     </pd-tab>
