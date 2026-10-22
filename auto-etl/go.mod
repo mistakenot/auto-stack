@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/google/go-github/v72 v72.0.0
 	github.com/mistakenot/auto-shared v0.0.0
-	github.com/parquet-go/parquet-go v0.30.1
+	github.com/parquet-go/parquet-go v0.32.0
 	github.com/spf13/cobra v1.10.2
 )
 
