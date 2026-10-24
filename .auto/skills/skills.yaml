@@ -59,8 +59,6 @@ skills:
         version: latest
     open-prose:
         version: latest
-    planning-doc:
-        version: latest
     playbook-observe:
         version: latest
     playbook-refine:

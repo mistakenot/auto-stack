@@ -36,7 +36,7 @@ It contains the page boilerplate, the release tag to pin, every component with
 attributes and examples, the authoring rules, and the comment-merge protocol.
 Follow it exactly — in particular, import the bundle pinned to the release tag
 it names (`pd-v0.9.0`), never `@main`. To move to a newer component
-release, update this skill (`npx skills install …`) — the new tag rides along.
+release, update this skill (`auto skill update`) — the new tag rides along.
 
 If the fetch fails (offline/sandboxed): inside the skills repo itself, read
 `pd-components/dist/llms.txt`; elsewhere, fall back to the component index

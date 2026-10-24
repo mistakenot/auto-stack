@@ -21,6 +21,14 @@ Read plan.html and context.md, enrich context with git history, write the Plan t
    - Check `docs/tasks/` for related completed tasks
    - Note relevant decisions or patterns from past work
 
+   **Spawn it unnamed.** CB3 is a label for the prompt and the one-line description.
+   If your subagent tool takes a `name` (or other identity) parameter, omit it: a named
+   agent is an addressable teammate whose report is only delivered once your turn ends,
+   which is after the Plan tab has been written. Cap the report at ~10k characters of
+   `file:line` bullets. Wait for its completion notification -- do not poll an
+   agent-listing tool, and never ask it to resend; an idle agent with no result has not
+   failed, and a resend just makes it do the work twice.
+
    Merge findings into `context.md` -- append a **Related Tasks** section if one doesn't exist, or update it. Verify that file paths from the Solution tab and existing context.md still hold (flag any that have drifted).
 
 3. **Impact analysis** -- run an impact analysis on the proposed file changes (each file + one-sentence change summary); fold flagged files into the changes list and any data, permission, or integration concerns into the Verification tab as acceptance criteria.

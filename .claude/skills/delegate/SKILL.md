@@ -1,114 +1,144 @@
 ---
 name: delegate
-description: "Sends a freeform prompt to an idle agent pane in a tmux session, without requiring task planning docs. Use when 'delegate this', 'send this to an executor', 'run this in background', or when the user wants to hand off ad-hoc work. Not for planned tasks with docs (use delegate-task instead)."
+description: "Hands a freeform prompt to a fresh background coding agent (herdr) — a worker in its own worktree, or a planner on main. Use when 'delegate this', 'send to an executor', 'run this in background', 'spin up a planner'. Not for planned tasks with docs (use delegate-task)."
 ---
 
 # Delegate
 
-Send a freeform prompt to an idle coding-agent pane in a tmux session using `ntm`, without requiring task planning documents.
+Hand a freeform prompt to a background coding agent running under **herdr**,
+without requiring task planning documents.
+
+> The launch is a bundled script, not a procedure: `scripts/herdr-worker.sh`
+> (next to this file). It creates the pane, starts the agent with the right
+> permission flags, verifies the process table, sends the prompt and confirms
+> kickoff, and prints one JSON object. **Do not hand-roll `herdr agent start`**
+> — every past inconsistency (wrong flags, wrong checkout, unverified kickoff)
+> came from re-deriving those steps by hand.
 
 > For delegating **planned tasks** with requirements/solution/plan docs, use
 > [/delegate-task](../delegate-task/SKILL.md) instead.
 >
-> For agent discovery, type identification, and send conventions, see
-> [references/delegating-to-agents.md](references/delegating-to-agents.md).
->
-> Dispatches into the **workers** pool (`<project>--workers`). For the
-> planner/worker pool model and label rules, see
-> [references/ntm-agent-pools.md](references/ntm-agent-pools.md).
+> Roles follow the pool model in
+> [references/worker-pools.md](references/worker-pools.md); per-agent CLI
+> behaviour is in [references/agent-conventions.md](references/agent-conventions.md).
+
+## Prerequisites
+
+herdr **0.8.2+** with the integration installed for the agent you target
+(`herdr integration status`). The script checks both and refuses with
+`herdr_too_old` / `integration_missing` rather than falling back.
 
 ## Input
 
-A prompt describing the work to delegate, and optionally:
-- A tmux session name (defaults to `$PROJECT--execute`)
-- A target agent type preference (Claude Code, Codex, OpenCode)
+- The **prompt** — sent as-is, no slash-command wrapper, no preamble.
+- A **role**: `worker` or `planner` (choose below).
+- A **slug** for the agent's name: lowercase, digits, `-`/`_`, ≤ 27 chars.
+  Name it after the work (`fix-readme-links`), not the agent (`worker3`).
+- Optionally `--agent claude` (default) or `--agent codex`, and `--repo` if the
+  work is not on the current repo.
 
 If no prompt is given, ask the user what they'd like to delegate.
 
-## Delegation Workflow
+## Choosing the role
 
-### Step 1: Find an eligible pane
+| Role | Runs in | Named | Use for |
+| ---- | ------- | ----- | ------- |
+| **worker** | a fresh git worktree on its own branch (`task/<slug>` unless `--branch`); its own Space **nested under the repo's Space** in the sidebar | `work-<slug>` | anything that edits files: it stays isolated and reviewable, and opens a PR |
+| **planner** | the primary checkout, which must be on `main`/`master`; a **new tab in the repo's Space** | `plan-<slug>` | analysis, research, writing planning docs that commit straight to main |
 
-```bash
-ntm status $SESSION --json
-```
+When in doubt, `worker`. A planner that starts editing code is working in the
+primary checkout, which the pool model forbids.
 
-Parse the JSON output to get the list of panes. Then inspect each candidate:
+Placement is fixed by the script, never chosen per launch: `--repo` may be any
+path in the repo (even a linked worktree) and is resolved to the primary
+checkout first. Never create the pane yourself with `workspace create`,
+`tab create` or `pane split` — each gives a different sidebar layout.
 
-```bash
-ntm copy $SESSION:$PANE --last 20 --quiet --output /dev/stdout
-```
+## Dispatch workflow
 
-A pane is eligible when **all** of the following are true:
-
-1. **Not busy** — the pane output shows a prompt waiting for input, not an active task in progress.
-2. **On `main`** — the pane's status line or prompt shows `(main)`, not a feature/worktree branch. A pane on a feature branch almost always means a prior task is in flight (open PR, awaiting review/merge). **Never target a pane that is not on `main`**, even if it appears idle — an open/unmerged PR or feature branch disqualifies it.
-3. **No open PR** — there is no evidence of an unmerged PR from a prior task.
-
-If a candidate is idle but on a feature branch, skip it and report why (e.g. "pane 2 skipped: on branch `task-505` with open PR").
-
-If **no panes are eligible** — all busy, on feature branches, or only a `user`
-shell — **add a fresh worker** instead of stopping. Do not interrupt active work.
-First check the **ceiling**: if the session already has **6** Claude panes (the
-cap) and none are eligible, every worker is genuinely busy — report and stop (or
-wait and re-check); do not add a seventh. Otherwise add one:
+### Step 1: Survey
 
 ```bash
-ntm add $SESSION --cc=1 --json
+bash <skill-dir>/scripts/herdr-worker.sh list --repo <repo>
 ```
 
-Then re-query `ntm status $SESSION --json` to find the new pane's index (the
-`add` output's `new_panes[].index` is unreliable — pick the highest-index
-`claude` pane), and wait until it is ready for input:
+Report anything already running on this repo before launching — if an agent is
+mid-task on the same area, say so and let the user decide. For the fields and
+the herdr hierarchy behind them see `references/herdr/list-workers.md`.
+
+### Step 2: Shape the prompt
+
+Send the user's prompt verbatim. Two additions are worth making:
+
+- **Unattended questions.** A worker that asks a question mid-run goes
+  `blocked`, and only keystrokes or a human clear it. If the user is happy for
+  the agent to decide, append a line telling it to proceed on its recommended
+  answer and record the question and choice in its output. Leave it out when
+  the user wants to be consulted — then `references/herdr/unblock-worker.md` is
+  how you answer.
+- **Paths.** Leave repo-relative paths relative: they resolve inside the
+  worker's worktree, which is what you want. Only absolutise paths outside
+  the repo.
+
+### Step 3: Launch
+
+Always a fresh agent — never reuse one (`references/herdr/reset-worker.md`
+explains why there is no in-place reset).
 
 ```bash
-ntm --robot-wait=$SESSION --wait-until=idle --timeout=60s
+bash <skill-dir>/scripts/herdr-worker.sh worker  --slug <slug> --repo <repo> --prompt "<prompt>" [--agent codex]
+bash <skill-dir>/scripts/herdr-worker.sh planner --slug <slug> --repo <repo> --prompt "<prompt>" [--agent codex]
 ```
 
-It returns when the agent reports `state: WAITING`. Set `$PANE` to the new pane.
-Add **one** worker per dispatch; if `ntm add` fails, report and stop. See
-[references/delegating-to-agents.md](references/delegating-to-agents.md#4-spin-up-a-new-worker-when-none-are-available)
-for the full flow.
+The call returns in a few seconds, **after** kickoff is confirmed; it never
+blocks for the work itself. Success looks like:
 
-### Step 2: Clear and send
+```json
+{"ok":true,"role":"worker","name":"work-<slug>","pane_id":"w12:p1","workspace_id":"w12",
+ "cwd":"/…/.herdr/worktrees/<repo>/task-<slug>","branch":"task/<slug>",
+ "cmdline":"claude --dangerously-skip-permissions",
+ "verified":{"flags":true,"cwd":true,"role":true},
+ "kickoff":{"ok":true,"agent_status":"working"},"follow":{"read":"…","status":"…","reap":"…"}}
+```
 
-If you found an existing idle pane, use `ntm send` with `--smart` to auto-route
-to the best idle agent; if you just added a worker, target it explicitly with
-`--pane=$PANE` (not `--smart`):
+### Step 4: Act on a failure
+
+`ok:false` carries an `error` code and, where useful, a pane `snapshot`.
+
+| `error` | Meaning | Do |
+| ------- | ------- | -- |
+| `worktree_exists`, `name_in_use` | something is already on that branch/name | do **not** launch a second one; report what is there |
+| `not_on_main` | planner invariant violated | tell the user; do not launch a planner elsewhere |
+| `agent_not_ready` | startup interstitial (trust prompt, update prompt) | read the snapshot, answer it deliberately per `references/herdr/unblock-worker.md` and `references/agent-conventions.md`, then `verify` and `prompt` |
+| `kickoff_failed` with `agent_blocked` | the agent is at a dialog | same as above, then `prompt` again (`references/herdr/send-prompt.md`) |
+| `kickoff_failed` with `kickoff_not_observed` | the prompt may not have landed | read the pane before retrying `prompt` — never send it twice blind |
+| `verify_failed`, `start_timeout` | wrong flags / cwd / no agent | `reap` and launch again; permission mode cannot be repaired in place (`references/herdr/verify-worker.md`) |
+| `herdr_*`, `integration_missing`, `missing_dependency` | environment | stop and tell the user what to install |
+
+If the launch command itself is **denied by the auto-mode classifier** in this
+session, do not switch the agent to a weaker permission mode: the fix is a
+settings entry, described in `references/herdr/spawn-worker.md`.
+
+### Step 5: Report
+
+State the agent's **name**, role, pane/workspace, branch or cwd, agent kind,
+that flags and checkout verified, and what it is doing now (the `kickoff`
+status). Give the user the `follow.read` command for progress
+(`references/herdr/read-output.md`; `references/herdr/scan-output.md` for the
+fleet), and note [/status-report](../status-report/SKILL.md).
+
+## Afterwards
 
 ```bash
-ntm send $SESSION --smart --cc --json '/clear'       # existing idle pane
-ntm send $SESSION --pane=$PANE --json '/clear'       # freshly added worker
+bash <skill-dir>/scripts/herdr-worker.sh prompt --name work-<slug> --prompt "<follow-up>"
+bash <skill-dir>/scripts/herdr-worker.sh verify --name work-<slug>
+bash <skill-dir>/scripts/herdr-worker.sh reap   --name work-<slug> [--force]
 ```
 
-Note which pane index was selected from the JSON response. Wait 5 seconds, then send the prompt:
-
-```bash
-ntm send $SESSION --pane=$PANE --json '$PROMPT'
-```
-
-**Prompt construction:** Send the user's prompt as-is. Do not wrap it in a slash command or add preamble. If the prompt references files or paths, ensure they are absolute paths (the executor pane may have a different working directory).
-
-### Step 3: Verify kickoff
-
-Capture the pane output to confirm the prompt was received:
-
-```bash
-ntm copy $SESSION:$PANE --last 30 --quiet --output /dev/stdout
-```
-
-Check that the output shows the agent received the prompt and work has begun.
-
-### Step 4: Report
-
-Output which pane was selected, confirmation that the prompt was sent, and what the pane is currently doing.
-
-Tell the user how to check on progress later:
-
-```
-To check on the delegated work:
-  ntm copy $SESSION:$PANE --last 50
-  ntm copy $SESSION:$PANE --code        # extract just code blocks
-  ntm grep 'error\|warning' $SESSION    # search across all panes
-  ntm watch $SESSION --pane=$PANE       # stream output live
-```
+`reap` removes a worker's worktree **before** closing its workspace and refuses
+if there is dirty or unpushed work unless `--force`; the branch is left for you
+to delete once merged (`references/herdr/reap-worker.md`). A planner reap
+closes just its tab, leaving the repo's Space open. Status semantics (`done` is the normal resting
+state; `idle` never appears for a CLI-driven agent) are in
+`references/herdr/wait-for-ready.md`; display labels in
+`references/herdr/label-worker.md`.

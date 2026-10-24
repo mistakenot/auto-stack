@@ -1,0 +1,44 @@
+## Process
+
+### Phase 1: Enrich Context
+
+1. **Find task folder** -- identify the active task from recent context, user input, or by scanning `docs/tasks/` for the latest folder. Read `plan.html` (all tabs) and `context.md`.
+2. **Enrich context** -- spawn a subagent to add historical context:
+
+   **CB3 (History):**
+   - Search git commits for related changes
+   - Check `docs/tasks/` for related completed tasks
+   - Note relevant decisions or patterns from past work
+
+   **Spawn it unnamed.** CB3 is a label for the prompt and the one-line description.
+   If your subagent tool takes a `name` (or other identity) parameter, omit it: a named
+   agent is an addressable teammate whose report is only delivered once your turn ends,
+   which is after the Plan tab has been written. Cap the report at ~10k characters of
+   `file:line` bullets. Wait for its completion notification -- do not poll an
+   agent-listing tool, and never ask it to resend; an idle agent with no result has not
+   failed, and a resend just makes it do the work twice.
+
+   Merge findings into `context.md` -- append a **Related Tasks** section if one doesn't exist, or update it. Verify that file paths from the Solution tab and existing context.md still hold (flag any that have drifted).
+
+3. **Impact analysis** -- run an impact analysis on the proposed file changes (each file + one-sentence change summary); fold flagged files into the changes list and any data, permission, or integration concerns into the Verification tab as acceptance criteria.
+
+### Phase 2: Write Plan Tab
+
+4. **Design execution phases** -- using the Requirements, Verification, and Solution tabs plus context.md:
+   - Break the solution into atomic phases (each phase = one subagent during execution)
+   - **Slice vertically, walking-skeleton first.** Make Phase 1 a thin end-to-end path through every layer the task touches, with one end-to-end check passing — even if it only covers a single case. Later phases add behavior on top of a system that already runs. Do NOT slice by layer (all of layer A, then all of layer B, integrate last); that defers integration risk and gives no verification signal until the end.
+   - Define the execution DAG -- which phases depend on which
+   - List concrete steps within each phase
+   - Every step must have an explicit verify check
+   - End each phase with a commit step and verification (typecheck, tests, lint)
+
+5. **Write Plan tab** -- insert `<pd-tab name="Plan">` into plan.html after the Solution tab.
+
+   See [references/tab-plan.md](references/tab-plan.md) for the tab structure and rules.
+
+### Phase 3: Backfill Traceability
+
+6. **Backfill pd-ac cards** -- go back to the Verification tab and update each `<pd-ac>` card:
+   - Set `phases` to the comma-separated phase numbers that cover this acceptance criterion (e.g. `phases="1,2"`)
+   - Set `tests` to the comma-separated test file paths from the solution (e.g. `tests="src/feature.test.ts"`)
+   - This links acceptance criteria to the phases that implement them and the tests that verify them

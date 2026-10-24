@@ -15,9 +15,11 @@ plan.
 ## Current Conventions
 
 - Authored source files are `*.prose.md`.
-- `kind: responsibility` files declare stable `id:` frontmatter. The id is
-  generated once by tooling as UUIDv7-compatible bytes, rendered as uppercase
-  Crockford base32, and preserved across display-name and filepath renames.
+- `id:` frontmatter is optional on responsibilities and gateways: 26 characters
+  of uppercase Crockford base32 minted by `scripts/mint-contract-id.mjs`, for
+  identity that survives renames. The slug is the default identity.
+- `version:` frontmatter is optional, author-owned provenance in semver form.
+  The compiler ignores it; it is not the skill version.
 - `### Tools` applies to `function` and `responsibility`. Tool declarations
   support both `cli:<name>` and `mcp:<name>` and fail closed when the host
   cannot resolve a declared capability. Resolved responsibility tools are
@@ -26,17 +28,64 @@ plan.
 - Native repositories use the repository root as the OpenProse root.
 - Attached repositories use `repo/.agents/prose`.
 - User-global OpenProse uses `~/.agents/prose`.
-- The root contains `src/`, `dist/`, `runs/`, `state/`, `deps/`,
-  `prose.lock`, and `.env`.
+- The root contains `src/`, `architecture/`, `dist/`, `runs/`, `state/`,
+  `deps/`, `prose.lock`, and `.env`. Canonical authored truth remains in
+  `src/`; `architecture/` contains supporting Compose decisions and projections.
 - Durable cross-run agents live in `state/agents/`.
 - Each responsibility's persisted world-model and its signed, append-only
   receipt ledger are the durable cross-run truth; there is no separate status or
   pressure store (the judge loop is retired).
 - Multi-file systems conventionally use `index.prose.md`.
+- `prose init` and `prose compose` run the `std/ops/compose` directory package.
+  Compose progressively materializes a canonical directory package, develops
+  semantic tests outside-in, and routes framework feedback to public issues
+  rather than implementing it during composition.
 - Generated run internals include the compiled activation manifest,
   `root.prose.md`, and `vm.log.md`.
 
+## Unreleased
+
 ## History
+
+- `v0.18.1`: **Contract execution and assessment terminology.** Contract authoring expresses intent by composing requirements. The executor performs work; the evaluator assesses whether requirements are satisfied. A result includes its supporting evidence, and an assessment records the evaluation and findings. Successful execution does not by itself establish contract fulfillment or adequacy. No source rewrite is required: preserve authored syntax, function return declarations, responsibility interfaces, saved records and `runtime_contract: 2`. Review explanatory prose when upgrading; do not rename protocol fields or historical evidence.
+
+- `v0.18.0`: **Example corpus made compiler-clean.** `id:` frontmatter is now
+  optional on responsibilities and gateways: the slug is the identity by
+  default, and a declared id is the source identity that survives filename and
+  `name:` renames. A missing `id:` is no longer a compile error. Where an id is
+  present it must be 26 characters of uppercase Crockford base32, minted by
+  `scripts/mint-contract-id.mjs` (which also repairs a malformed id in place)
+  and never hand-typed; the hand-typed slug ids in the examples were dropped,
+  not replaced, since they named nothing the slug does not. `version:`
+  frontmatter is documented as optional author-owned provenance in semver form,
+  ignored by the compiler. `contract-markdown.md` gains *Facet families and
+  per-entity mounts*: a `#### name:<placeholder>` heading under `### Maintains`
+  declares a family, a placeholder facet-need in `### Requires` subscribes to
+  one member, `# Title [instance]` marks a contract mounted once per entity, and
+  the harness binds members at mount time while the compiler emits the family.
+  Every `###` heading in the examples is now a canonical section
+  (`### Continuity: external-driven` became `### Continuity` with an
+  `- external-driven` bullet; `### Postconditions` and `### Facets` folded into
+  `### Maintains`; `### Watches` moved into `### Receives`), and every
+  `### Requires` names a producer in its own example (competitor-activity gains
+  a `signal-feeds` gateway, research-inbox-triage a `research-registry`
+  gateway). Example READMEs whose node and edge counts exceed what mounting
+  `src/` alone produces now attribute the count to the reference harness's
+  per-entity expansion. `compiler/ir-v0.md` specifies node identity (`node` is
+  mount identity, defaulting to the slug for a single mount) and `artifact`
+  locators (paths relative to the OpenProse root); `concepts/reconciler.md`
+  gives the receipt `cost` field its sub-shape
+  (`{ provider, model, tokens: { fresh, reused }, surprise_cause }`).
+  Implementation-status claims in `spec/01-Language.md` and
+  `spec/03-AuthoringPattern.md` name the reference harness version they
+  describe. `runtime_contract` is unchanged (2): no source rewrite is needed.
+  `prose upgrade` may drop an `id:` that merely repeats the slug; it must never
+  add one.
+
+- `v0.17.0`: introduced `prose init` / `prose compose` and the
+  obligation-centered `std/ops/compose` directory package, including bounded
+  architectural fronts, progressive Contract source, derived visual views,
+  outside-in semantic test ordering, and issue-routed OpenProse feedback.
 
 - `v0.4.x`: early skill discovery, `prose help`, filesystem state, examples in
   the skill directory, migration guide.
@@ -88,6 +137,18 @@ plan.
   migrated; only **source text** upgrades. `prose upgrade` gains the source
   rewrites below — mechanical where safe, surfaced as manual-review diagnostics
   where judgment is needed (`system`/`### Wiring` flatten-or-split).
+- `v0.16.0`: **Reactor harness extracted.** `prose react` and the `reactor.md`
+  operator guide are removed from the skill; `prose compile` / `prose serve` /
+  `prose run` are the whole command surface, embodied in-session. The Reactor
+  harness (`@openprose/reactor*`, the `reactor` binary) now lives at
+  github.com/openprose/reactor and is experimental (alpha) — early software
+  with no stability guarantees; installs keep working under the same names.
+  `runtime_contract` is unchanged (2): no source rewrite is needed. Renamed,
+  same content, harness-agnostic names: `concepts/reactor.md` →
+  `concepts/reconciler.md`; `spec/02-ReactorHarness.md` → `spec/02-Harness.md`
+  (the contract any conforming harness must satisfy); `spec/03-ReactorPattern.md`
+  → `spec/03-AuthoringPattern.md`. A workflow that invoked `prose react` should
+  compile and serve the same contracts with a conforming harness instead.
 
 ## Upgrade Command
 

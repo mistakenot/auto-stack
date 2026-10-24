@@ -1,7 +1,7 @@
 # Review Comment Format (HTML planning docs)
 
 HTML planning docs (`plan.html`, `epic.html`) are authored with the `pd-*` web
-component library used by the `planning-doc` skill. Review
+component library used by the `rich-doc` skill. Review
 comments are just `<pd-thread>` elements added to that same markup, so the doc
 keeps rendering and resolved threads still surface in `<pd-decisions>`. This file
 is the review-side summary; the authoritative element contract (attributes,

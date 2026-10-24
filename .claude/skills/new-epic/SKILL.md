@@ -12,6 +12,7 @@ Create `docs/epics/epic-$ID-$NAME.html` — a high-level plan that sets the dire
 ## Guiding Principles
 
 An epic works at a different altitude than a task. Hold the line on it:
+- **Include it only if getting it wrong would break cross-task work.** For every candidate guard rail, seam, decision, or detail, ask: *what's the cost of getting this wrong?* If a wrong call would force rework in more than one task or reshuffle the breakdown, it belongs in the epic. If the cost is contained within one task, leave it out — silently, not as a "TBD". Task planners run the same question in their own nested planning loop at task altitude, so anything that doesn't cross task boundaries falls through to them.
 - **Direction and constraints, not construction.** State the user-facing outcome, the seams, and the guard rails. Leave *how* to the task planners — never list files, code, or intra-task steps.
 - **Break the work into vertical slices, walking-skeleton first.** Task 1 runs a thin path through every layer end to end for an early verification signal; later tasks thicken it. Never decompose layer-by-layer with integration deferred to the end.
 - State your assumptions explicitly. An epic has more latent direction than any single task — surface it and ask rather than guess.
@@ -25,7 +26,7 @@ An epic works at a different altitude than a task. Hold the line on it:
 3. **Determine epic ID** -- scan `docs/epics/` for existing `epic-*.html` files. Assign the next 3-digit sequential ID (the highest existing number + 1; e.g. if `epic-004-*.html` exists, next is `005`). If `docs/epics/` doesn't exist or has no epic files, start at `001`.
 4. **Derive epic name** -- create a short kebab-case name from the initiative (e.g. `partner-api-program`).
 5. **Create epics folder** -- `mkdir -p docs/epics` (the epics directory itself; epics are single files, not per-epic folders).
-6. **Create the epic file** -- load the `/planning-doc` skill and follow its process to create `docs/epics/epic-$ID-$NAME.html`. It will fetch `llms.txt` for the current component reference and version pin. Set the document title to `$ID: $NAME`, status to `draft`, and include `pd-meta` with id, name, `kind: "epic"`, status `planning`, and created date.
+6. **Create the epic file** -- load the `/rich-doc` skill and follow its process to create `docs/epics/epic-$ID-$NAME.html`. It will fetch `llms.txt` for the current component reference and version pin. Set the document title to `$ID: $NAME`, status to `draft`, and include `pd-meta` with id, name, `kind: "epic"`, status `planning`, and created date.
 7. **Populate the tabs** -- author the epic's tabs. Lead with the user-facing final shape; keep every tab at epic altitude.
 
    See [references/epic-tabs.md](references/epic-tabs.md) for what each tab focuses on and which component to reach for per element.

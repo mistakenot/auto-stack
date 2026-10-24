@@ -10,7 +10,7 @@ summary: |
   understand how the graph of responsibilities is resolved.
 see-also:
   - contract-markdown.md: Contract file format (kinds, `### Requires`, `### Maintains`, `### Continuity`)
-  - concepts/reactor.md: The compile (intelligent) / run (dumb) split and the reconciler
+  - concepts/reconciler.md: The compile (intelligent) / run (dumb) split and the reconciler
   - concepts/responsibility.md: The responsibility as a mounted DAG node
   - compiler/ir-v0.md: The compile-phase IR Forme's topology rides inside
   - responsibility-runtime.md: How the reconciler executes the resolved DAG
@@ -172,6 +172,13 @@ For each matched need, draw a `TopologyEdge`:
 `subscriber.Requires.<facet-contract>` → `producer.Maintains.<facet>` (the
 matched facet, or `@atomic` when the producer declares none).
 
+A facet-need written with a placeholder (`session:<id>`, `eligible:<login>`)
+matches any member of the family it names — a producer's `#### session:<id>`
+part, or one of a literal set that shares the placeholder's shape; the harness
+binds the member at mount time. Forme draws the edge to the family and never
+enumerates entities it cannot know at compile time. A need for *every* member
+of a family is deliberate fan-in, handled in Step 3.
+
 ### Step 3: Honor deliberate fan-in (the diamond rule)
 
 When a contract deliberately asks for *many* producers of the same kind of truth
@@ -225,8 +232,8 @@ until the cycle is broken.
 node waking itself on its clock to re-examine its own prior world-model. A node
 never subscribes to its own facet; such a relationship is time, not an edge.
 **Loops live in time, not in edges** — and the acyclicity check must not mistake
-one for the other. (The reactor's deterministic cycle detector is reused
-unchanged as this postcondition; see `concepts/reactor.md`.)
+one for the other. (The reconciler's deterministic cycle detector is reused
+unchanged as this postcondition; see `concepts/reconciler.md`.)
 
 ### Step 7: Rewire on a better or dead source (self-healing)
 

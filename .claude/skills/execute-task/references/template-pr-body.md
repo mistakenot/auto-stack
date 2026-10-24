@@ -4,7 +4,7 @@
 git push -u origin HEAD
 gh pr create --title "feat($ID): $NAME" --body "$(cat <<'EOF'
 ## Summary
-- [1-3 bullets from plan.md summary]
+- [1-3 bullets from the Plan tab Summary section of plan.html]
 
 ## Phases completed
 - [x] Phase 1: name
@@ -20,7 +20,7 @@ gh pr create --title "feat($ID): $NAME" --body "$(cat <<'EOF'
 
 ## Links
 - Task docs: docs/tasks/$ID-$NAME/
-- Plan: docs/tasks/$ID-$NAME/plan.md
+- Plan: docs/tasks/$ID-$NAME/plan.html
 
 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
