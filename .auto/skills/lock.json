@@ -276,6 +276,17 @@
       "local": false,
       "state": "unresolved"
     },
+    "new-task-quick": {
+      "source": "https://github.com/mistakenot/skills",
+      "url": "https://github.com/mistakenot/skills",
+      "version_spec": "latest",
+      "ref": "f0bf7cce89298350ea6a21f35a74b54b8db7f8e3",
+      "commit": "f0bf7cce89298350ea6a21f35a74b54b8db7f8e3",
+      "subpath": "skills/new-task-quick",
+      "private": false,
+      "local": false,
+      "state": "resolved"
+    },
     "open-prose": {
       "source": "openprose/prose",
       "url": "https://github.com/openprose/prose",

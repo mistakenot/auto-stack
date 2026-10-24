@@ -177,6 +177,13 @@
       "skill_version": "0e1e39d65be8c93d6d09b24213b4b6527ba0cf865e5d92a2e0bce3d0f0141cde",
       "render_version": "1"
     },
+    "new-task-quick": {
+      "template_hash": "23da6b8a8d536ffa71a1aab018b4e6836c2db68f391a722e2540c3142a0b6071",
+      "replacements": {},
+      "file_refs": [],
+      "skill_version": "1bb0705ca226dbde31e6932659bffd8c94e9d8aa4b0123ae4b4c5660c94b59a9",
+      "render_version": "1"
+    },
     "open-prose": {
       "template_hash": "a2f1ccddbe7096e8ba5fced4e2f02d98d5e9ea7183acc55bf0ef9ed91ed43409",
       "replacements": {},
@@ -353,6 +360,7 @@
         "new-plan": "a969e2cede284cf9d7d83732693f8a8b272d3f891210dc1f24e5841693ad0cc6",
         "new-solution": "ef68b5a70f4ee19f8ba64abc03b64f7b60ce39b49de8aec1a840c3b07e7be9cf",
         "new-task": "0e1e39d65be8c93d6d09b24213b4b6527ba0cf865e5d92a2e0bce3d0f0141cde",
+        "new-task-quick": "1bb0705ca226dbde31e6932659bffd8c94e9d8aa4b0123ae4b4c5660c94b59a9",
         "open-prose": "836e4851d512f7f44dd531cfc439cf5b0b0b9121cab1af3f41476847f15e310e",
         "planning-doc": "b72f0be4d1819078a5afe4c3ee65e41583c078db607e313deab9388c10c1aa05",
         "playbook-observe": "8fb0772012871ac78065a82c8f9861fb7d4c5d51b731c88421b1daf715e2590f",
@@ -403,6 +411,7 @@
         "new-plan": "a969e2cede284cf9d7d83732693f8a8b272d3f891210dc1f24e5841693ad0cc6",
         "new-solution": "ef68b5a70f4ee19f8ba64abc03b64f7b60ce39b49de8aec1a840c3b07e7be9cf",
         "new-task": "0e1e39d65be8c93d6d09b24213b4b6527ba0cf865e5d92a2e0bce3d0f0141cde",
+        "new-task-quick": "1bb0705ca226dbde31e6932659bffd8c94e9d8aa4b0123ae4b4c5660c94b59a9",
         "open-prose": "836e4851d512f7f44dd531cfc439cf5b0b0b9121cab1af3f41476847f15e310e",
         "planning-doc": "b72f0be4d1819078a5afe4c3ee65e41583c078db607e313deab9388c10c1aa05",
         "playbook-observe": "8fb0772012871ac78065a82c8f9861fb7d4c5d51b731c88421b1daf715e2590f",

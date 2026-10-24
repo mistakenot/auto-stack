@@ -55,6 +55,8 @@ skills:
         version: latest
     new-task:
         version: latest
+    new-task-quick:
+        version: latest
     open-prose:
         version: latest
     planning-doc:
