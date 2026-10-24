@@ -13,7 +13,7 @@ This is a pinned ProseScript compiler program. It is not a mounted node and is
 not Forme-wired: the compiler itself owns its execution order and uses short,
 isolated sessions to keep each lowering step on a narrow context budget. It is
 the **intelligent compile phase**; the run phase that reads its output is dumb
-(`architecture.md` §2).
+(the two phases in `concepts/reconciler.md`).
 
 ### Parameters
 
@@ -94,13 +94,14 @@ agent responsibility_compiler:
   prompt: """
   Lower kind: responsibility source into topology node records, the node's
   intrinsic wake_source, its contract fingerprint inputs, and diagnostics.
-  Load concepts/responsibility.md, concepts/reactor.md, and compiler/ir-v0.md.
+  Load concepts/responsibility.md, concepts/reconciler.md, and compiler/ir-v0.md.
   Preserve Goal, Requires, Maintains, and Continuity as the node's contract.
   Derive wake_source from Continuity: input-driven by default, self when a
   cadence is declared, external for a gateway.
-  Use frontmatter `id:` as the responsibility identity backing the node. Never
-  derive identity from `name:`, filepath, title, or a slug; those are display
-  and source-location fields only.
+  The node key in the topology is mount identity, assigned at mount; a single
+  mount of a contract defaults it to the slug. Frontmatter `id:`, when declared,
+  is the source identity behind that node and survives renames. Never treat
+  filepath or title as identity.
   Do not emit a judge activation, a verdict, pressure, or a fulfillment
   activation; commit-gating is compiled postconditions plus render
   self-attestation.
@@ -117,7 +118,7 @@ agent gateway_compiler:
   prompt: """
   Lower kind: gateway source into external-driven topology nodes and entry
   points.
-  Load concepts/reactor.md and compiler/ir-v0.md.
+  Load concepts/reconciler.md and compiler/ir-v0.md.
   A gateway is sugar for an external-driven responsibility: it has wake_source
   external and appears in topology.entry_points.
   Compile Schedule, Receives, and Emits sections into the node's external
@@ -258,7 +259,7 @@ agent postcondition_compiler:
   prompt: """
   Compile each node's `### Maintains` postconditions (the folded-in `### Criteria`)
   into a postcondition validator reference.
-  Load compiler/ir-v0.md and architecture-aligned concepts/reactor.md.
+  Load compiler/ir-v0.md and architecture-aligned concepts/reconciler.md.
   Produce one postcondition record per topology node with node, artifact, and
   mode. mode is deterministic when the postcondition is expressible as a
   deterministic predicate the harness verifies on commit, render-attested when
@@ -379,9 +380,10 @@ return write_result
 ```
 
 Before forwarding to the compiler harness, the deterministic CLI preflights
-the compile target source files for responsibility `id:` and required
-`### Tools` sections, then resolves declared tools only within that target
-(except `prose compile .`, which preserves whole-root preflight). After this
+the compile target source files for well-formed `id:` frontmatter where present
+and required `### Tools` sections, then resolves declared tools only within
+that target (except `prose compile .`, which preserves whole-root preflight).
+After this
 program returns, the CLI validates the written manifest. That host validation
 is the final guardrail; the compiler program should still treat `ir-v0.md` as
 binding before it writes.

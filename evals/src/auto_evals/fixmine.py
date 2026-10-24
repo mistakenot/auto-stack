@@ -52,11 +52,16 @@ def _checkout(dest: Path, repo: str, rev: str) -> None:
     _git(["checkout", "-q", "FETCH_HEAD"], dest)
 
 
-def _go(mount: Path, script: str, *, network: bool) -> subprocess.CompletedProcess:
+def goflags(workspace: bool) -> str:
+    """GOFLAGS for a fixture. Workspace mode (a root go.work) rejects `-mod=mod`."""
+    return "" if workspace else "-mod=mod"
+
+
+def _go(mount: Path, script: str, *, network: bool, workspace: bool = False) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["docker", "run", "--rm", *([] if network else ["--network", "none"]),
          "-v", f"{mount}:/w", "-v", f"{MODCACHE_VOLUME}:/go/pkg/mod",
-         "-e", "GOFLAGS=-mod=mod", "-e", "GOTOOLCHAIN=auto", "-e", "CGO_ENABLED=0",
+         "-e", f"GOFLAGS={goflags(workspace)}", "-e", "GOTOOLCHAIN=auto", "-e", "CGO_ENABLED=0",
          GO_IMAGE, "bash", "-c", script],
         capture_output=True, text=True,
     )
@@ -80,7 +85,8 @@ def _results(stream: str) -> tuple[dict[str, str], set[str]]:
     return outcome, build_failed
 
 
-def validate(layout: Layout, fixture: str, repo: str, history: Path, sha: str) -> Validation:
+def validate(layout: Layout, fixture: str, repo: str, history: Path, sha: str, *,
+             workspace: bool = False) -> Validation:
     parent = _git(["rev-parse", f"{sha}^"], history, capture=True).strip()
     files = _git(["diff", "--name-only", parent, sha], history, capture=True).split()
     go = [f for f in files if f.endswith(".go")]
@@ -104,13 +110,13 @@ def validate(layout: Layout, fixture: str, repo: str, history: Path, sha: str) -
 
     for tree in ("broken", "fixed"):  # deps and toolchain online, tests offline
         warm = _go(work, f"cd /w/{tree} && go mod download && go test -count=1 -run '^$' {pkg_args} >/dev/null 2>&1; true",
-                   network=True)
+                   network=True, workspace=workspace)
         if warm.returncode != 0:
             v.reason = f"dependency download failed in {tree}: {warm.stderr[-300:]}"
             return v
     runs = {}
     for tree in ("broken", "fixed"):
-        proc = _go(work, f"cd /w/{tree} && go test -json -count=1 {pkg_args}", network=False)
+        proc = _go(work, f"cd /w/{tree} && go test -json -count=1 {pkg_args}", network=False, workspace=workspace)
         runs[tree] = _results(proc.stdout)
     (b_out, b_fail), (f_out, f_fail) = runs["broken"], runs["fixed"]
     if f_fail:

@@ -34,12 +34,13 @@ File-based state persists all execution artifacts to disk. This enables:
 
 **Key principle:** Files are inspectable artifacts. The directory structure IS the execution state.
 
-**The load-bearing distinction** (`world-model.md` §1): a node's **published**
+**The load-bearing distinction** (the invariant `state/README.md` states for every
+backend): a node's **published**
 world-model is the canonical, deterministically-serialized, fingerprinted
 artifact — the truth downstreams subscribe to. The render's **workspace** is
 private scratch — intermediate reasoning, working notes — and is **never
 fingerprinted and never subscribed to**. This is *not* mere output-visibility
-(the pre-reactor `workspace/`→`bindings/` distinction): it is
+(the earlier `workspace/`→`bindings/` distinction): it is
 fingerprint-materiality. A node updates its published world-model only when
 something semantically material actually changed; immaterial churn stays in the
 workspace. SQL/vector indices are **derived projections** of the canonical
@@ -53,7 +54,7 @@ artifact, never the truth.
 # <openprose-root>
 ├── src/                                    # Authored OpenProse source
 │   ├── research-system/
-│   │   ├── index.prose.md                  # Conventional multi-file system root
+│   │   ├── index.prose.md                  # Conventional multi-file program root
 │   │   ├── researcher.prose.md
 │   │   └── synthesizer.prose.md
 │   ├── patterns/
@@ -61,8 +62,8 @@ artifact, never the truth.
 │   └── tests/
 │       └── research-system.test.prose.md
 ├── dist/                                   # Compiled intent (topology WM + canonicalizers + validators)
-│   ├── intent.next.json                    # Newly compiled, pending activation
-│   └── intent.active.json                  # Currently active compiled intent
+│   ├── manifest.next.json                  # Newly compiled, pending activation
+│   └── manifest.active.json                # Currently active compiled intent
 ├── runs/
 │   └── {YYYYMMDD}-{HHMMSS}-{random}/
 │       ├── compiled-intent.json            # Topology world-model + canonicalizers + validators (snapshot)
@@ -214,15 +215,16 @@ world-model/
 
 Note: `report.md` here is the *structured* truth that backs the fingerprint.
 Free-form rendered prose is a **derived projection excluded from the
-fingerprint** (`world-model.md` §3, the structured-backing rule) — otherwise an
-LLM re-rendering the same paragraph hashes differently every time and falsely
-re-triggers downstreams. Fingerprint the structured truth; render prose *from* it.
+fingerprint** (the structured-backing rule in `contract-markdown.md`) —
+otherwise an LLM re-rendering the same paragraph hashes differently every time
+and falsely re-triggers downstreams. Fingerprint the structured truth; render
+prose *from* it.
 
 #### Faceted layout — one subtree per facet
 
 When a node's `### Maintains` declares facets by **naming the parts** (a `####`
-sub-heading inside `### Maintains` *is* a facet — the named-parts rule,
-`delta.md` Part G; `world-model.md` §3, "Declaring facets"), the published
+sub-heading inside `### Maintains` *is* a facet — the named-parts rule in
+`contract-markdown.md`), the published
 artifact lays each facet out as its own subtree under the node directory:
 `published/<facet>/…`. The directory structure *is* the subscription surface —
 the same name is the facet's fingerprint unit, its
@@ -245,8 +247,8 @@ world-model/
     └── .version                # ContentAddress of this committed version
 ```
 
-**The fingerprinting rule with facets** (`world-model.md` §3; the
-canonical-serialization pass below). The single authority for facet tokens is the
+**The fingerprinting rule with facets** (see the canonical-serialization pass
+below). The single authority for facet tokens is the
 **compiled canonicalizer** that travels with the contract: it reduces the
 node's *structured* material truth (the `### Maintains` canonicalization spec,
 frozen at compile, addressing material fields by their dotted structured paths)
@@ -264,7 +266,7 @@ canonicalizer computes over the facet's material structured content.
   that `### Requires` `funding` and resolves to `#### funding` subscribes to that
   facet's token: a move in the `hiring` facet advances the `hiring` token and the
   `@atomic` token but **not** the `funding` token, so the funding-only subscriber
-  does not wake (the selector boundary, `world-model.md` §3).
+  does not wake (the selector boundary).
 - Shared un-facetted fields (here `competitors.md`'s `name` /
   `last_corroborated`) belong to no facet's material content, so they move only
   the `@atomic` token.
@@ -288,7 +290,7 @@ canonicalize (drop immaterial) → fingerprint → sign receipt*:
    ordering (sorted by normalized path), path/encoding normalization, and
    sorted-key JSON for any structured records (reuses the receipt's canonical-JSON
    machinery). The same byte sequence must result regardless of write order or
-   filesystem enumeration order (`architecture.md` §5.2, §10).
+   filesystem enumeration order.
 3. **Apply the compiled canonicalizer** for this node (`### Maintains`
    canonicalization spec, frozen at compile time): drop immaterial fields
    (`fetched_at`, request ids, cosmetic ordering), normalize sets/numbers/text to
@@ -308,7 +310,7 @@ canonicalize (drop immaterial) → fingerprint → sign receipt*:
 
 The reconciler's wake decision is this fingerprint comparison — deterministic,
 total, no LLM. **Only a `rendered` receipt with a moved fingerprint propagates to
-downstreams** (`world-model.md` §8).
+downstreams** (the reconcile loop in `concepts/reconciler.md`).
 
 ---
 
@@ -345,7 +347,7 @@ source: caller
 What are the latest developments in quantum computing?
 ```
 
-**Written by:** The VM at system start (from CLI args, config, or user prompt)
+**Written by:** The VM at run start (from CLI args, config, or user prompt)
 
 #### Run-Typed Inputs
 
@@ -401,7 +403,7 @@ traversing the filesystem.
 - `~/{id}`: resolves to `~/.agents/prose/runs/{id}` (user scope)
 - Absolute path: used as-is
 
-**Written by:** The VM at binding time (before service execution begins)
+**Written by:** The VM at binding time (before any render begins)
 
 ### World-Model Artifact Files
 
@@ -459,22 +461,22 @@ The `__` prefix signals to the VM that this is an error, not a committed artifac
 ```markdown
 # run:20260317-143052-a7b3c9 deep-research
 upstream: [20260306-112233-f4a5b6]     # optional — present when run has run-typed inputs
-root: research/deep-research          # always present — the invoked service or system file
+root: research/deep-research          # always present — the invoked contract file
 
 1→ [input] question ✓
-2→ researcher ✓
+2→ researcher ✓ rendered
 3→ ∥start critic,fact-checker
 3a→ critic ✓
 3b→ fact-checker ✓
 3→ ∥done
-4→ synthesizer ✓
+4→ synthesizer ✓ rendered
 ---end 2026-03-17T14:35:22Z
 ```
 
 The header is the block between the `#` heading and the first event marker:
 
-- `upstream:` is written once at binding time, before service execution begins. Omitted when the run has no `run`-typed inputs.
-- `root:` is always present — the invoked service or system file.
+- `upstream:` is written once at binding time, before any render begins. Omitted when the run has no `run`-typed inputs.
+- `root:` is always present — the invoked contract file.
 - On resumption, the VM reads these as context but does not re-process them.
 
 ### Event Markers
@@ -484,32 +486,34 @@ The header is the block between the `#` heading and the first event marker:
 | `N→ [input] name ✓` | Caller input bound | `1→ [input] question ✓` |
 | `N→ node ✓ rendered` | Render committed a moved world-model | `2→ researcher ✓ rendered` |
 | `N→ node ∅ skipped` | Reconciler skipped: no fingerprint moved | `2→ researcher ∅ skipped` |
-| `N→ ∥start a,b` | Parallel services started | `3→ ∥start critic,fact-checker` |
-| `Na→ a ✓` | Parallel service completed | `3a→ critic ✓` |
-| `N→ ∥done` | All parallel services complete | `3→ ∥done` |
-| `N→ service ✗ error-name` | Service signaled an error | `3→ researcher ✗ no-results` |
-| `N→ service ⇒ delegate (delegate: {id})` | Service yielded to a runtime delegate | `4→ server ⇒ synthesizer (delegate: req-001)` |
+| `N→ ∥start a,b` | Parallel renders started | `3→ ∥start critic,fact-checker` |
+| `Na→ a ✓` | Parallel render completed | `3a→ critic ✓` |
+| `N→ ∥done` | All parallel renders complete | `3→ ∥done` |
+| `N→ node ✗ error-name` | Render signaled an error | `3→ researcher ✗ no-results` |
+| `N→ node ⇒ delegate (delegate: {id})` | Render yielded to a runtime delegate | `4→ server ⇒ synthesizer (delegate: req-001)` |
 | `N→   delegate ✓` | Runtime delegate completed | `4→   synthesizer ✓` |
-| `N→ service ⟳ (resumed)` | Service resumed after delegation | `4→ server ⟳ (resumed)` |
+| `N→ node ⟳ (resumed)` | Render resumed after delegation | `4→ server ⟳ (resumed)` |
 | `N→ [eval] assertion ✓` | Test assertion passed | `5→ [eval] assertion ✓` |
 | `N→ [eval] assertion ✗` | Test assertion failed | `5→ [eval] assertion ✗` |
 | `---test PASS` | Test passed (all assertions satisfied) | `---test PASS` |
 | `---test FAIL (N/M assertions)` | Test failed | `---test FAIL (2/3 assertions)` |
-| `---end TIMESTAMP` | System completed | `---end 2026-03-17T14:35:22Z` |
-| `---error TIMESTAMP msg` | System failed | `---error 2026-03-17T... no-results` |
+| `---end TIMESTAMP` | Run completed | `---end 2026-03-17T14:35:22Z` |
+| `---error TIMESTAMP msg` | Run failed | `---error 2026-03-17T... no-results` |
 
 ### When the VM Writes
 
 | Event | Action |
 |-------|--------|
 | Caller input bound | Append input marker |
-| Service completes | Append completion marker |
+| Render completes | Append completion marker |
 | Parallel starts/joins | Append parallel markers |
 | Error occurs | Append error marker |
 | Delegation spawned | Append `⇒` marker |
 | Delegate completes | Append delegate `✓` marker |
-| Service resumed | Append `⟳` marker |
-| System ends | Append end marker |
+| Render resumed | Append `⟳` marker |
+| Test assertion evaluated | Append `[eval]` marker |
+| Test suite result | Append `---test` marker |
+| Run ends | Append end marker |
 
 The VM does NOT rewrite the entire file. Each write is a single line append.
 
@@ -520,7 +524,7 @@ To resume an interrupted run:
 1. Read the `receipts/` ledger — the append-only chain is the source of truth; find the last committed receipt per node
 2. Read the compiled intent — get the topology and propagation edges
 3. Scan `world-model/` — confirm published canonical artifacts (and their `.version`)
-4. Re-derive reconciler dirty/coalesce state from unconsumed upstream receipts and continue (`architecture.md` §8)
+4. Re-derive reconciler dirty/coalesce state from unconsumed upstream receipts and continue
 
 ---
 
@@ -574,7 +578,8 @@ If the render wrote `__error.md` instead:
 
 1. **VM reads** `workspace/{node}/__error.md`
 2. **VM emits a `failed` receipt** — a failed render commits nothing; the prior
-   world-model stands and no fingerprint moves (`architecture.md` §8: failure = no-commit)
+   world-model stands and no fingerprint moves (failure = no-commit; see
+   `concepts/reconciler.md`)
 3. **VM appends** error marker to `vm.log.md`
 
 ---
@@ -644,10 +649,10 @@ OPENPROSE_MAX_PARALLEL=5
 
 ---
 
-## Nested System Imports
+## Nested Imports
 
-When a system imports and invokes another system (via installed dependency or
-local file), the imported system runs in its own subdirectory:
+When a run imports and invokes another OpenProse program (via installed
+dependency or local file), the imported program runs in its own subdirectory:
 
 ```
 <openprose-root>/runs/{id}/imports/{handle}--{slug}/
@@ -682,5 +687,5 @@ fingerprints — deterministic, total, no LLM. The render writes to workspace. T
 VM commits the canonical world-model through the
 canonical-serialization-before-fingerprint pass and signs a receipt — never a
 dumb copy. SQL/vector indices, when present, are **derived projections** of the
-canonical truth (`world-model.md` §1). Everything is on disk, everything is
+canonical truth. Everything is on disk, everything is
 inspectable, everything is auditable through the signed receipt chain.

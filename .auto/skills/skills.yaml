@@ -55,9 +55,9 @@ skills:
         version: latest
     new-task:
         version: latest
-    open-prose:
+    new-task-quick:
         version: latest
-    planning-doc:
+    open-prose:
         version: latest
     playbook-observe:
         version: latest

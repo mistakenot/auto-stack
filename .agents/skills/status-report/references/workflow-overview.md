@@ -16,11 +16,18 @@ Plan (on main)                          Execute                    Review & Comp
 /commit-task
 ```
 
+`/new-task-quick` runs all three planning stages in one unattended pass
+instead, pauses only if it has open questions for the human, then runs
+`/request-codex-review` on the answered doc. Same artifacts, one human review.
+
 ### Conventions
 - Task folder: `docs/tasks/$ID-$NAME/` (3-digit ID, kebab-case name)
 - Branch: `task/$ID-$NAME`
 - Planning happens on `main`. Execution happens in isolated worktrees.
-- Each stage hard-stops for user review before proceeding to the next.
+- Each stage hard-stops for user review before proceeding to the next — except under
+  `new-task-quick`, which runs them unattended, recording decisions it could
+  not make as gating `<pd-question>`s, stops for those answers only if there are any, then
+  has Codex review the answered doc.
 - Artifacts: `plan.html` + `context.md` (two files total)
 
 ### pd-meta status lifecycle

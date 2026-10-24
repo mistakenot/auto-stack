@@ -1,0 +1,13 @@
+[
+  "github.com/mistakenot/auto-etl/internal/mbt::TestConformanceHoldsForTheCurrentWeek",
+  "github.com/mistakenot/auto-etl/internal/writer::TestMergeComments_ReplacesAllForRetried",
+  "github.com/mistakenot/auto-etl/internal/writer::TestMergePRs_Dedup",
+  "github.com/mistakenot/auto-etl/internal/writer::TestMergePRs_EmptyExisting",
+  "github.com/mistakenot/auto-etl/internal/writer::TestWriteGitHub_Empty",
+  "github.com/mistakenot/auto-etl/internal/writer::TestWriteGitHub_Idempotent",
+  "github.com/mistakenot/auto-etl/internal/writer::TestWriteGitHub_Roundtrip",
+  "github.com/mistakenot/auto-etl/internal/writer::TestWriteHooksDedup",
+  "github.com/mistakenot/auto-etl/internal/writer::TestWriteHooksRoundTrip",
+  "github.com/mistakenot/auto-etl/internal/writer::TestWriteIsIdempotent",
+  "github.com/mistakenot/auto-etl/internal/writer::TestWritePublishesAtomically"
+]

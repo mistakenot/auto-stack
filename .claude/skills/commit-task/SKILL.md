@@ -13,19 +13,32 @@ Verify completeness of all planning docs and commit them to `main`. This is the 
 
 ### Step 1: Identify Task
 
-Find the active task from user input or recent context. Locate the task folder under `docs/tasks/$ID-$NAME/`.
+Find the active task from user input or recent context. Locate the task folder under `docs/tasks/$ID-$NAME/`, then identify its layout — a folder uses one or the other, never both:
+
+- **HTML** (current) — `plan.html` + `context.md`. One self-contained file with a `<pd-tab>` per stage: Requirements, Verification, Solution, Plan.
+- **Markdown** (legacy) — `requirements.md`, `solution.md`, `context.md`, `plan.md`.
 
 ### Step 2: Verification Checklist
 
-All checks must pass before committing:
+All checks must pass before committing. Each concern lives in a different place depending on layout:
 
-- [ ] **All 4 files exist**: `requirements.md`, `solution.md`, `context.md`, `plan.md`
-- [ ] **No unanswered Open Questions**: check Open Questions sections in requirements.md and plan.md -- all must be resolved or empty. For HTML docs, every `<pd-question>` must be answered (`status="answered"`); the pd-lint CLI reports any open one (`open-question`, non-zero exit), so a clean lint is the gate.
-- [ ] **All ACs addressed**: every acceptance criterion in requirements.md has corresponding test coverage in solution.md and plan steps in plan.md
-- [ ] **Plan consistent with solution**: the approach in solution.md matches the phases and steps in plan.md
-- [ ] **Context covers plan references**: files and patterns referenced in plan.md are documented in context.md
-- [ ] **No unresolved P1 comments**: if review comments exist, no `UNRESOLVED(P1)` threads remain
-- [ ] **Epic frontmatter consistent**: if any doc has `epic:` frontmatter, all four docs have the same value
+| Check | HTML (`plan.html`) | Markdown (legacy) |
+| --- | --- | --- |
+| **Artifacts exist** | `plan.html` + `context.md` | all 4 `.md` files |
+| **No unanswered Open Questions** | every `<pd-question>` is `status="answered"` | Open Questions sections in requirements.md and plan.md resolved or empty |
+| **All ACs addressed** | every `<pd-ac>` carries non-empty `phases` and `tests` | every AC in requirements.md has coverage in solution.md and steps in plan.md |
+| **Plan consistent with solution** | every `<pd-phase files>` path appears in the Solution tab's `<pd-files>` tree, and vice versa | the approach in solution.md matches the phases in plan.md |
+| **Context covers plan references** | files and patterns referenced by phases are documented in `context.md` | same, from plan.md |
+| **No unresolved P1 comments** | no `<pd-thread priority="p1">` left `status="unresolved"` | no `UNRESOLVED(P1)` threads remain |
+| **Epic linkage consistent** | if `pd-meta` carries `epic:`, it names an epic that exists under `docs/epics/` | if any doc has `epic:` frontmatter, all four share the same value |
+
+For an HTML task, run the bundled linter — it decides four of these rows mechanically:
+
+```bash
+node "$CLAUDE_SKILL_DIR/scripts/pd-lint.mjs" docs/tasks/$ID-$NAME/plan.html
+```
+
+It exits non-zero with JSON on any issue. `open-question` is the Open Questions gate; `unplanned-file` / `untracked-file` are the plan-vs-solution check; `missing-dep` / `dependency-cycle` mean the phase DAG is broken. A clean exit clears those rows. The AC, context, comment-thread and epic rows are yours to check by reading the doc — the linter does not cover them.
 
 If any check fails, report the failures and stop. Do not commit incomplete docs.
 
@@ -34,7 +47,8 @@ If any check fails, report the failures and stop. Do not commit incomplete docs.
 The planning docs are complete and about to be committed — advance the task to
 the `pending` stage (awaiting execution). See
 [references/task-status.md](references/task-status.md): set `status="pending"` on
-`<pd-doc>` in `plan.html`. Stage this change with the docs.
+`<pd-doc>` in `plan.html`. Stage this change with the docs. (Legacy markdown
+folders have no `<pd-doc>` — skip this step.)
 
 ### Step 4: Commit and Push
 

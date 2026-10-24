@@ -1,6 +1,6 @@
 ---
 name: new-task
-description: "Creates a plan.html with Requirements tab for a new task. Use when 'create a task', 'new task', 'start a task', 'write requirements', or when a user describes a feature/fix to plan. Not applicable when executing an existing task or reviewing existing docs."
+description: "Creates a plan.html with Requirements tab for a new task. Use when 'create a task', 'new task', 'start a task', 'write requirements', or when a user describes a feature/fix to plan. Not applicable when executing an existing task, reviewing existing docs, or planning every stage unattended (use new-task-quick)."
 ---
 
 # New Task
@@ -24,7 +24,7 @@ Before writing anything, apply these checks:
 3. **Determine task ID** -- scan `docs/tasks/` for existing folders. Assign the next 3-digit sequential ID (e.g. if `042-*` exists, next is `043`). If `docs/tasks/` doesn't exist, start at `001`.
 4. **Derive task name** -- create a short kebab-case name from the user's description (e.g. `add-team-settings`).
 5. **Create task folder** -- `mkdir -p docs/tasks/$ID-$NAME`
-6. **Create plan.html** -- load the `/planning-doc` skill and follow its process to create `plan.html` in the task folder. It will fetch `llms.txt` for the current component reference and version pin. Set the document title to `$ID: $NAME`, status to `draft`, and include `pd-meta` with id, name, status `planning`, and created date.
+6. **Create plan.html** -- load the `/rich-doc` skill and follow its process to create `plan.html` in the task folder. It will fetch `llms.txt` for the current component reference and version pin. Set the document title to `$ID: $NAME`, status to `draft`, and include `pd-meta` with id, name, status `planning`, and created date.
 7. **Populate Requirements tab** -- add a Requirements tab with the sections defined in the content guidelines. Fill in Problem and Goals from user input. Add Out of Scope based on reasonable boundaries. List any unresolved questions in Open Questions.
 
    See [references/tab-requirements.md](references/tab-requirements.md) for what content to include.

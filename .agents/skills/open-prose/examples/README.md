@@ -1,5 +1,11 @@
 # OpenProse Examples
 
+These examples show how to express requirements through reusable contracts.
+Start with [contract authoring](../guidance/authoring.md#requirements-and-composition)
+to distinguish the required result, permitted approach, and evidence of
+satisfaction. The examples below exercise the public skill's standing-work
+format and its declared harness behavior.
+
 These examples are small OpenProse Native Repositories. Each one models a real
 standing goal as a mounted `responsibility` (the headline kind) that maintains
 a world-model, with cross-node helper `function`s it `call`s and a `gateway`
@@ -12,32 +18,18 @@ the `### Requires` ↔ `### Maintains` edges at compile time; the dumb reconcile
 skips a render when neither the contract nor any subscribed input fingerprint
 moved, so cost scales with surprise, not the clock.
 
-## Reactor verbs
-
-Each example ships its `.prose.md` contracts under `src/`. Drive any of them with
-the same verbs (`reactor` / `reactor-cli`):
-
-```bash
-cd skills/open-prose/examples/<example>
-reactor doctor            # honest health report (sandbox, IR presence)
-reactor compile           # the ONE intelligent phase: Forme wires the DAG + lowers canonicalizers
-reactor topology          # inspect the compiled responsibility graph
-reactor run               # the dumb reconciler replays the frozen output
-reactor serve             # stand the graph up and watch it react to events
-reactor receipts          # read the per-node ledger (render/skip/failed + cost)
-```
-
-A `reactor run` (or `reactor serve`) writes a frozen, deterministic state-dir you
-can replay at **zero model spend**: open it in `reactor-devtools` to scrub the
-render/skip trail.
+Each example ships harness-neutral `.prose.md` contracts under `src/`. Together,
+those contracts and the README define authored intent and the observable behavior
+a conforming harness should preserve.
 
 ---
 
 ## Intelligent-React substrate examples (grouped by property)
 
-These examples are authored to the full validity contract and exercised by the
-project's offline test suite, which drives the REAL `@openprose/reactor`
-reconciler offline, asserting the property each one teaches.
+These examples are authored to the full validity contract, each teaching one
+property of the reconciler. Harness implementations prove conformance to that
+intent independently; the corpus does not select an implementation or prescribe
+its commands and fixtures.
 
 ### Memoization & cost-scales-with-surprise
 
@@ -114,8 +106,7 @@ reconciler offline, asserting the property each one teaches.
 Three examples wire a [primitive.dev](https://primitive.dev) email inbox in as an
 external-driven gateway — the outside world reaches the graph by sending mail —
 and keep a downstream world-model current from what arrives. Each is a distinct
-reactor shape, and each ships a key-gated tier-3 LLM-as-judge live test (a cheap
-render model, a smart judge model) alongside its deterministic tier-2 gate.
+graph shape with its own observable conformance expectations.
 
 - [support-inbox-router](./support-inbox-router/): a cheap-model **spam/content
   filter** + a **faceted router whose facets are channels**: a `triage` per email
@@ -134,13 +125,6 @@ render model, a smart judge model) alongside its deterministic tier-2 gate.
   projection**: a high-stakes inquiry commits the register update but stops the
   outward action at `needs_human` (`auto_reply:false`), and a `public` projection
   facet keeps sender PII out of the public view by construction.
-
-### Eval harness
-
-- [`tools/eval-harness/`](../../../tools/eval-harness/): the Reactor eval harness:
-  a Trajectory Normalizer over the devtools replay view, a no-LLM Deterministic
-  Checker (7 spec checks), 5 canonical scenarios, and a key-gated LLM judge panel
-  that is OFF in CI. Run offline: `pnpm test:eval:offline`.
 
 ---
 
@@ -190,17 +174,17 @@ source code or should keep their own release cadence.
   technical teams. The `grant-finder` repo remains the source of truth for that
   example.
 
-## Quick Start
+## Conformance
 
-Open one example directory, then compile and serve it. `reactor compile` is the
-only intelligent phase: it runs Forme to wire the responsibility DAG and lowers
-each `### Maintains` into a deterministic canonicalizer; `reactor serve` runs the
-dumb reconciler over that frozen output.
-
-```bash
-cd skills/open-prose/examples/surprise-cost
-reactor compile
-reactor serve
-```
-
-Each example README explains the standing goal, source layout, and what to try.
+The examples own authored intent and expected observable behavior. Harness
+implementations prove their own conformance independently, without implementation
+links or blanket run commands in this corpus.
+Eleven examples carry a native run block (a `## Quick Start` or `## Run it` with
+`prose compile`): competitor-activity, compliance-evidence-tracker,
+content-performance-loop, customer-risk-radar, declared-skills, declared-tools,
+incident-briefing-room, release-readiness, research-inbox-triage,
+stargazer-outreach, and vendor-renewal-watch. The remaining examples are
+described topologies: mounting `src/` alone yields only the contracts an example
+authors, and where a README states a node or edge count that `src/` cannot mount
+by itself, that count is what the reference harness's expansion produces (see
+the Harnesses section of the repository README).

@@ -14,12 +14,79 @@ Use this file when writing or reviewing OpenProse author-facing artifacts:
 `kind: responsibility`, `kind: function`, `kind: gateway`, `kind: test`, and
 `kind: pattern`.
 
+## Requirements and composition
+
+**Contract authoring is expressing intent by
+composing requirements.** A contract states requirements and the context needed
+to interpret and apply them. Reusable contracts provide the building blocks;
+composition determines how their requirements apply together.
+
+Requirements can concern a one-time result, state maintained over time, a
+required action, a limit on permissible actions, or evidence needed at
+completion. An approach is a way to satisfy requirements; required steps remain
+requirements when other choices are open. Completing a render, producing a
+receipt, and satisfying the contract are distinct results.
+
+In this format, reuse a `function` by supplying its `### Parameters` and calling
+it; combine responsibilities through declared `### Requires` / `### Maintains`
+subscriptions; specialize a `pattern` through its slots and configuration.
+For example, a report can call reusable research and review functions while
+requiring source citations and review before publication. Use the documented
+sections and interfaces to express those requirements together.
+
+Check that the combined requirements and interfaces are compatible. Surface
+contradictions for resolution; do not silently discard a requirement or invent
+precedence between contracts.
+
+Keep requirements distinguishable from supplied inputs, host capabilities, and
+execution evidence. Declaring a tool or permission does not provide it. A link
+alone does not create a subscription or change a contract's requirements.
+Revise changed requirements explicitly in the source selected for the run;
+past evidence does not establish satisfaction of a revised contract.
+
+This vocabulary does not add syntax, a generic type system, or new precedence
+rules. The following guidance describes the public skill's existing format.
+Its [implementation status](../../../spec/01-Language.md#part-iii--what-is-next)
+distinguishes specified requirements from implemented harness enforcement.
+
 Every authored file is **one render** — a contract plus the bounded session that
 runs it. The `kind` field is sugar over that single render atom: each kind is the
-same render with different or missing sections (`plan.md` §1). There is **no
+same render with different or missing sections (the authored kinds in
+`contract-markdown.md`). There is **no
 `kind: system`** and **no `kind: service`**: composition is imperative `call`
 *inside* a render or a cross-node *subscription* across responsibilities, never a
-third internally-autowired graph kind (`plan.md` §3).
+third internally-autowired graph kind.
+
+## Execution and evaluation
+
+The executor performs the work required by the contract and returns a result.
+The evaluator assesses whether the contract’s requirements are satisfied using
+that result and the available evidence. Execution and evaluation repeat as
+needed. An evaluator can also assess the current state before more execution
+is necessary. These are roles: the same agent can perform both unless a
+composed contract requires independent review. A decision model can perform
+evaluation.
+
+The result includes evidence, partial work and relevant uncertainty. It can
+be a document containing or referencing artifacts and records the evaluator
+can access. Evidence is part of the result, not another return value. Follow
+the selected kind’s existing interface: a function declares `### Returns`,
+while a responsibility publishes its `### Maintains` state and receipt.
+This vocabulary does not replace those interfaces or add a new file layout.
+
+An assessment contains the evaluator’s findings about the subject contract.
+Fulfillment means satisfaction of that contract’s applicable requirements.
+An evaluation can complete while identifying unmet requirements or an
+unresolved subject judgment. Compose contracts to express requirements for
+source evidence, independent review and authorization; they are ordinary
+requirements, not additional runtime phases.
+
+Out names the normal result channel; error reports execution failure. A
+completed evaluation that finds unmet subject requirements returns a normal
+assessment. Preserve partial work and effects when execution fails. Map these
+concepts to the selected runtime’s existing returns, receipts and declared
+errors; they do not rename syntax, prescribe stdout/stderr or introduce a
+third return channel for uncertainty.
 
 ## Core Principles
 
@@ -34,7 +101,7 @@ third internally-autowired graph kind (`plan.md` §3).
   obvious to a caller and to Forme.
 - Use `### Execution` only when order, loops, retries, gates, or branches are
   part of the requirement. It is the intra-node render body, and none of it is a
-  node (`plan.md` §7).
+  node (the execution-section rules in `contract-markdown.md`).
 - Treat the render's private `workspace/` as scratch that is never fingerprinted,
   and the canonical published world-model as the subscribable truth. Downstream
   work reads the published world-model, never upstream scratch.
@@ -47,14 +114,14 @@ A `kind: responsibility` file defines a mounted DAG node: a standing truth kept
 current over time. It declares **both halves of its interface** — `### Requires`
 (its subscription contracts) and `### Maintains` (the shape of the truth it
 keeps) — plus its wake-source in `### Continuity`. It is a node because it is
-mounted as a subscribable producer, **not** because it holds state (`plan.md`
-§2).
+mounted as a subscribable producer, **not** because it holds state.
 
 - Put facet-level needs in `### Requires`. Each entry names a facet contract that
   Forme matches semantically to some producer's `### Maintains` facet
   (`Requires.<facet> ↔ Maintains.<facet>`). `### Requires` is the *need*; the
   resolved producer is Forme's choice.
-- Make `### Maintains` do its four jobs (`world-model.md` §2): a **type** (the
+- Make `### Maintains` do its four jobs (spelled out under `## Maintains` in
+  `contract-markdown.md`): a **type** (the
   fields, including freshness fields like `valid_until` / `last_corroborated`); a
   **canonicalization spec** (what equality means — which fields are material and
   which are volatile-but-immaterial, such as `fetched_at` timestamps and request
@@ -69,11 +136,11 @@ mounted as a subscribable producer, **not** because it holds state (`plan.md`
 - Honor the structured-backing rule: anything subscribed must have a structured,
   canonicalizable backing. Fingerprint the structured truth and render prose
   *from* it; free-form rendered prose is a derived projection excluded from the
-  fingerprint (`world-model.md` §3).
+  fingerprint (the structured-backing rule).
 - Declare freshness *state* (`valid_until`, `last_corroborated`, `confidence`) in
   `### Maintains` and freshness *policy* (the recheck cadence) in
   `### Continuity`. A lapsing `valid_until` flips a fact's status, moves that
-  facet's fingerprint, and propagates as ordinary surprise (`world-model.md` §6).
+  facet's fingerprint, and propagates as ordinary surprise.
 - State postconditions as conditions on the output (the folded-in `### Criteria`),
   not a separate judge beat. Deterministically-expressible postconditions are
   verified by the harness on commit; irreducibly-semantic ones are self-attested
@@ -98,7 +165,7 @@ world-model, no `### Maintains`, and no `### Continuity`.
 - Use `### Errors` for named failures that should propagate. Do not use a
   catch-all error for ordinary alternate outcomes.
 - Use `### Invariants` for properties that remain true on success and failure.
-- Use `### Strategies` for judgment guidance, not hidden fallback obligations.
+- Use `### Strategies` for judgment guidance, not hidden fallback requirements.
 - Give functions explicit `### Shape` when boundaries matter: `self`,
   `delegates`, and `prohibited`. `delegates` names the helper functions this
   render `call`s (intra-node, ephemeral) — it is not a DAG edge.
@@ -134,7 +201,7 @@ Guidance for both:
 
 ## Cost and Context Discipline
 
-Applies when authoring a **multi-node Reactor pipeline**: standing
+Applies when authoring a **multi-node responsibility pipeline**: standing
 responsibilities that run continuously, fan out, or wake on a high volume of
 events (a session, PR, or webhook stream). It does **not** apply to a one-shot
 function or a single competent responsibility — do not tier or pre-bound those
@@ -149,7 +216,7 @@ volume.
   per-domain *signals*, and give each downstream truth its own facet so it wakes
   only when its signal moves. Expensive synthesis then runs only on real change;
   unrelated domains memo-skip at zero cost. This is the `guard` pattern made
-  structural (`03-ReactorPattern.md`, Rule 5). Shape: an event stream → a cheap
+  structural (`spec/03-AuthoringPattern.md`, Rule 5). Shape: an event stream → a cheap
   classifier emitting `#decision-signal` / `#bug-signal` / … → one accumulator
   per signal → a coalesced rollup.
 - **Bound each narrow render to its inline input.** A transform render (classify,
@@ -164,14 +231,14 @@ volume.
   the inputs; exploration stays available to the renders that genuinely need it.
 - **Validate the cost-shape; do not assume it.** Prove selective wake before
   trusting a pipeline: a deterministic check that the right nodes render and the
-  rest skip (a `kind: test` over dispositions, or the reactor eval-harness
-  deterministic tier), plus an llm-as-judge pass over the produced truths against
+  rest skip (a `kind: test` over dispositions, or your harness's deterministic
+  replay tier), plus an llm-as-judge pass over the produced truths against
   their `### Maintains` postconditions for quality. Capture a committed replay so
   the check is repeatable and keyless — cheaper and more honest than re-running
   the live pipeline to eyeball it.
 - **Keep renders small enough for a cheap model.** Model selection is an operator
-  concern (`reactor.yml`, today one global model; per-node `### Runtime` model is
-  declarable but not yet honored by the CLI — see `reactor.md`). Author each
+  concern of the harness (typically one global model; a per-node `### Runtime`
+  model is declarable but not every harness honors it yet). Author each
   high-volume render narrow enough that a cheap model suffices; reserve a stronger
   model for rare, strict work such as the compile phase.
 
@@ -267,7 +334,7 @@ subject: summarizer
 - `### Expects` and `### Expects Not` are semantic assertions over the subject's
   world-model (responsibility) or returned value (function). Test observable
   behavior, not exact phrasing.
-- Prefer assertions tied to contract obligations: required output existence,
+- Prefer assertions tied to contract requirements: required output existence,
   coverage, evidence, degradation behavior, error signaling, and absence of
   forbidden behavior.
 - Assertion reports should name each assertion, pass/fail status, and concise
@@ -276,10 +343,10 @@ subject: summarizer
 ## World-Model and Freshness Authoring
 
 A responsibility's persisted world-model **is** its memory: one canonical truth
-per node subsumes the old `### Memory` reads/writes ledger (`world-model.md`
-§9.4). There is no separate `### Memory` section. A `function` is stateless and
-has no world-model; a former helper that was genuinely stateful is really a
-responsibility, and its persisted state is its world-model.
+per node subsumes the old `### Memory` reads/writes ledger. There is no separate
+`### Memory` section. A `function` is stateless and has no world-model; a former
+helper that was genuinely stateful is really a responsibility, and its persisted
+state is its world-model.
 
 - Declare the durable shape — decision history, watermarks, cursors, and
   per-entity truth — in `### Maintains`, with facets so a downstream wakes only
@@ -289,11 +356,11 @@ responsibility, and its persisted state is its world-model.
   the run. For recurring workflows, keep cursors, high-water marks, and run ids
   as material fields of the maintained truth.
 - Treat the published world-model as the single canonical truth. SQL, vector, and
-  dashboard views over it are derived projections, never the truth
-  (`world-model.md` §1).
+  dashboard views over it are derived projections, never the truth (the
+  canonical-truth invariant in `state/README.md`).
 - The render writes the world-model and signs a receipt with its fingerprints by
   applying the compiled canonicalizer locally; this works standalone, with no
-  harness present (`architecture.md` §3.2).
+  harness present (the render harness contract in `primitives/session.md`).
 
 ## Repository Authoring
 
@@ -333,9 +400,9 @@ responsibility, and its persisted state is its world-model.
 
 - When the task is one competent session, write one function or one
   responsibility; do not manufacture orchestration.
-- When the outcome matters more than choreography, use Contract Markdown only.
+- When requirements leave the method open, use Contract Markdown without an execution block.
 - When exact order, bounded loops, retries, gates, or branch logic matter, use `### Execution`.
-- Make every `### Returns` / `### Maintains` item an obligation: named output, evaluable quality bar, and any degradation case.
+- Make every `### Returns` / `### Maintains` item a requirement: named output, evaluable quality bar, and any degradation case.
 - Put caller-supplied values in `### Parameters` / `### Requires`; put runtime-provided secrets/config in `### Environment`.
 - Use conditional returns for graceful degradation: "if X unavailable: produce Y with caveats."
 - Use `### Errors` for named failures that should propagate, not for ordinary alternate outcomes.

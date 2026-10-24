@@ -1,8 +1,8 @@
 # Epic Tabs Guidelines
 
-The tabs of `epic.html`, in order. One skill (`new-epic`) authors them all. Each tab stays at epic altitude (see [epic-overview.md](epic-overview.md)): direction and constraints, never files, code, or intra-task phases.
+The tabs of `epic.html`, in order. One skill (`new-epic`) authors them all. Each tab stays at epic altitude (see [epic-overview.md](epic-overview.md)): direction and constraints, never files, code, or intra-task phases. And each tab applies the inclusion test — *what's the cost of getting it wrong?* — in its own terms, stated per tab below. Anything whose cost is contained within one task is left to that task's planner.
 
-For each element below, the **component to prefer** is named. Use the exact tag and attributes from the `llms.txt` that `planning-doc` fetched; if that version doesn't carry it, improvise within the altitude (a diagram, a grouped list, a card) and note nothing is lost — the experience still reads. Never substitute a task-level component (file tree, phase stepper, code outline, code snippet).
+For each element below, the **component to prefer** is named. Use the exact tag and attributes from the `llms.txt` that `rich-doc` fetched; if that version doesn't carry it, improvise within the altitude (a diagram, a grouped list, a card) and note nothing is lost — the experience still reads. Never substitute a task-level component (file tree, phase stepper, code outline, code snippet).
 
 **The epic components share one id-keyed graph.** Give each journey/transcript an `id`; give each guard rail an `id`; then a task names what it `delivers` (journey/cli ids) and `honors` (guard-rail ids). That wiring is what makes the derived views work — `pd-outcome` flags any guard rail no task honors or journey no task delivers, and selecting a guard rail lights up every task bound by it. Author the ids deliberately.
 
@@ -22,6 +22,8 @@ Do **not** open with architecture or a component diagram. The experience comes f
 
 The requirements every task must honor, split into **functional** (must-do behaviors, compatibility, data integrity, correctness invariants) and **non-functional** (performance, security, cost, accessibility, operability, observability). State measurable targets where they exist (e.g. a latency budget, a compatibility promise).
 
+**Inclusion test**: a guard rail belongs if violating it would mean rework in more than one task. A constraint that only one task could break is that task's requirement — leave it for its planner.
+
 Use **`pd-guardrail`** — one per rail, with a stable `id`, a `kind` (functional, or a non-functional kind like performance/security/cost/reliability/operability), an optional `metric` for the measurable target, and a short `title`. `pd-outcome` groups them functional vs non-functional automatically. Keep each rail to a sentence; it's a constraint, not a design.
 
 ## 3. Architecture & seams — at the boundary level
@@ -30,6 +32,8 @@ The shape of the system and the seams that let tasks proceed independently — d
 
 - **Structure**: a diagram of the major containers/components and how they relate — reach for the **diagram component** (`pd-mermaid`), flowchart for components/containers. Use an ER diagram when the epic is data-shaped.
 - **Seams**: name the load-bearing contracts explicitly — the interfaces a task must not break. These are the edges in the diagram; call out the important ones in prose or a short list.
+
+**Inclusion test**: a seam belongs if changing it would break more than one task. Contracts internal to a single task are not seams — omit them. When a later task depends on a choice an earlier task will make, that dependency *is* a seam: name it here so the ordering stays visible.
 
 If you find yourself naming files or functions, you've dropped altitude — pull back up to containers and contracts.
 
@@ -54,8 +58,11 @@ Use **`pd-task`** — one per task, with `id`, `title`, `status`, `depends-on` (
 
 The calls that shape the whole initiative — recorded as **authored decision records** (`pd-decision`), aggregated into the **decision log** (`pd-decisions`). For anything still open, use a **review thread** (`pd-thread`) so the discussion has a home and an audit trail.
 
+**Inclusion test**: a decision belongs if reversing it would change which tasks exist or their order. A decision that only reshapes the inside of one task belongs in that task's Solution tab, where its planner will weigh it with the same question.
+
 ## Rules
 
+- **Inclusion**: include it only if getting it wrong would break cross-task work. Single-task cost falls through to the task planner's own loop. Defer silently — no "TBD".
 - **Altitude**: no files, no code, no intra-task phases anywhere in the doc.
 - Every breakdown task must be independently deployable and ordered.
 - **Vertical slices, walking skeleton first.** Task 1 stands up an end-to-end path through all layers; later tasks add capability on top. Never decompose layer-by-layer with integration deferred to the end.

@@ -27,7 +27,7 @@ from pathlib import Path
 from statistics import fmean
 
 from .layout import Layout, load_experiment
-from .results import Trial, completed_jobs, latest_cohort, load_job, trajectory_matches
+from .results import Trial, completed_jobs, latest_cohort, load_job, trajectory_matches, trajectory_metric
 
 BOOTSTRAP_SAMPLES = 4000
 SEED = 20260923
@@ -87,6 +87,22 @@ def _holm(pvalues: dict[str, float]) -> dict[str, bool]:
     return result
 
 
+def _add_trajectory_metrics(exp: dict, trials: dict[str, list[Trial]]) -> None:
+    """Score each `[trajectory_metrics]` entry per trial, so process measures pair like rewards.
+
+    Every arm is scored, control included: how often control does the thing
+    unprompted is the baseline a treatment's uptake is compared against.
+    """
+    specs = {name: (re.compile(s["pattern"]), bool(s.get("before_edit", False)))
+             for name, s in exp.get("trajectory_metrics", {}).items()}
+    for ts in trials.values():
+        for t in ts:
+            for name, (pattern, before_edit) in specs.items():
+                value = trajectory_metric(t.trajectory, pattern, before_edit=before_edit)
+                if value is not None:
+                    t.metrics[name] = value
+
+
 def compare(layout: Layout, experiment: str, job_overrides: dict[str, Path] | None = None) -> dict:
     exp = load_experiment(layout, experiment)
     control = layout.control_arm
@@ -115,6 +131,7 @@ def compare(layout: Layout, experiment: str, job_overrides: dict[str, Path] | No
                 warnings.append(f"{arm}: newer job(s) {newer} ignored because not every arm ran at that stamp")
 
     trials = {arm: load_job(path) for arm, path in jobs.items()}
+    _add_trajectory_metrics(exp, trials)
     # Tasks removed from the suite after review (e.g. a flawed hidden test) no
     # longer count, even though their trials remain in old jobs.
     current = {f"{layout.org}/{d.name}" for d in layout.task_dirs()}

@@ -210,3 +210,56 @@ def test_diff_paths_treats_missing_section_as_empty() -> None:
 def test_real_suite_passes_static_lint() -> None:
     errors = validate(Layout(EVALS_ROOT), resolve_arms=False)
     assert errors == [], [e.to_dict() for e in errors]
+
+
+def _calls(trial_dir: Path, *calls: tuple[str, dict]) -> None:
+    traj = {"steps": [{"tool_calls": [{"function_name": fn, "arguments": a} for fn, a in calls]}]}
+    (trial_dir / "agent" / "trajectory.json").write_text(json.dumps(traj))
+
+
+def test_trajectory_metric_before_edit_counts_only_lookups_ahead_of_the_first_edit(tmp_path: Path) -> None:
+    from auto_evals.results import trajectory_metric
+    import re
+
+    path = tmp_path / "t.json"
+    retrieve = ("Bash", {"command": "auto reflect retrieve 'fix the writer'"})
+    edit = ("Edit", {"file_path": "/app/x.go"})
+    pattern = re.compile(r"\bauto\s+reflect\s+retrieve\b")
+    cases = {"lookup first": [retrieve, edit], "edit first": [edit, retrieve], "never edits": [retrieve],
+             "never looks": [edit]}
+    got = {}
+    for name, calls in cases.items():
+        path.write_text(json.dumps({"steps": [{"tool_calls": [{"function_name": f, "arguments": a}
+                                                              for f, a in calls]}]}))
+        got[name] = (trajectory_metric(path, pattern), trajectory_metric(path, pattern, before_edit=True))
+    assert got == {"lookup first": (1.0, 1.0), "edit first": (1.0, 0.0), "never edits": (1.0, 1.0),
+                   "never looks": (0.0, 0.0)}
+    assert trajectory_metric(tmp_path / "missing.json", pattern) is None
+
+
+def test_trajectory_metrics_pair_like_rewards_and_score_control_too(layout: Layout) -> None:
+    exp = layout.root / "experiments" / "demo" / "experiment.toml"
+    exp.write_text(exp.read_text().replace(
+        'secondary_metrics = ["agent_sec"]\n',
+        'secondary_metrics = ["agent_sec", "looked_first"]\n'
+        '[trajectory_metrics.looked]\npattern = "\\\\bauto\\\\s+graph\\\\b"\n'
+        '[trajectory_metrics.looked_first]\npattern = "\\\\bauto\\\\s+graph\\\\b"\nbefore_edit = true\n'
+    ).replace('primary_metric = "reward"', 'primary_metric = "looked"'))
+    ctrl = _job(layout.root, "demo__control__20260923T000000Z")
+    treat = _job(layout.root, "demo__tool__20260923T000000Z")
+    look, edit = ("Bash", {"command": "auto graph code graph ."}), ("Edit", {"file_path": "a.go"})
+    for i in range(2):
+        _trial(ctrl, f"c{i}", "t1", 1.0)
+        _calls(ctrl / f"c{i}", edit, look) if i == 0 else None  # control looks once, after editing
+        _trial(treat, f"x{i}", "t1", 1.0)
+        _calls(treat / f"x{i}", look, edit)
+    eff = compare(layout, "demo")["treatments"]["tool"]["effects"]
+    assert (eff["looked"]["control"], eff["looked"]["treatment"]) == (0.5, 1.0)
+    assert (eff["looked_first"]["control"], eff["looked_first"]["treatment"]) == (0.0, 1.0)
+
+
+def test_trajectory_metric_spec_is_linted(layout: Layout) -> None:
+    exp = layout.root / "experiments" / "demo" / "experiment.toml"
+    exp.write_text(exp.read_text() + '[trajectory_metrics.Bad-Name]\npattern = "("\nbefore_edit = "yes"\nextra = 1\n')
+    codes = sorted({e.code for e in validate(layout, resolve_arms=False) if "trajectory_metrics" in e.field})
+    assert codes == ["name_format", "trajectory_metric_invalid"]

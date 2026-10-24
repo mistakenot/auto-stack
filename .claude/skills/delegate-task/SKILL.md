@@ -1,148 +1,124 @@
 ---
 name: delegate-task
-description: "Dispatches task execution to an idle Claude Code pane in a tmux session, freeing the current session for other work. Use when 'delegate task', 'send to executor', or when the user wants to hand off a task to a background pane."
+description: "Dispatches /execute-task for a planned task to a fresh background worker (herdr), freeing this session. Use when 'delegate task', 'send to executor', 'hand off this task'."
 ---
 
 # Delegate Task
 
-Dispatch execution to an idle Claude Code pane in a tmux session using `ntm`.
+Dispatch `/execute-task` for a planned task to a fresh background worker.
 
-> Part of the task planning workflow. See [references/workflow-overview.md](references/workflow-overview.md) for the full pipeline.
+> The launch is a bundled script, not a procedure: `scripts/herdr-worker.sh`
+> (next to this file). It creates the worktree, starts the agent with the right
+> permission flags, verifies the process table, sends `/execute-task` and
+> confirms kickoff, and prints one JSON object. **Do not hand-roll
+> `herdr agent start`**, and never launch a task worker in the primary
+> checkout or with a weaker permission mode — both end in a worker that cannot
+> merge its PR.
 
-> **Ad-hoc work without task docs?** Use [/delegate](../delegate/SKILL.md) instead —
-> it sends a freeform prompt to an idle pane without requiring planning documents.
-
-> **Targeting non-Claude agents.** This skill dispatches `/execute-task` to a
-> Claude Code pane. To discover agents and send to **Codex** or **OpenCode**
-> panes (whose send/clear conventions differ), see
-> [references/delegating-to-agents.md](references/delegating-to-agents.md).
+> Part of the task planning workflow. See
+> [references/workflow-overview.md](references/workflow-overview.md) for the
+> full pipeline.
 >
-> **Pool model.** This skill dispatches into the **workers** pool
-> (`<project>--workers`) — worker panes run in worktrees and open PRs, separated
-> by `ntm` label from the `planners` pool that commits to `main`. See
-> [references/ntm-agent-pools.md](references/ntm-agent-pools.md).
+> **Ad-hoc work without task docs?** Use
+> [/delegate](../delegate/SKILL.md) instead.
+>
+> **Pool model.** Task workers always run in a **worktree** on `task/$ID`,
+> distinct from planners which commit to `main`. See
+> [references/worker-pools.md](references/worker-pools.md). For per-agent CLI
+> behaviour, see
+> [references/agent-conventions.md](references/agent-conventions.md).
+
+## Prerequisites
+
+herdr **0.8.2+** with the integration installed for the target agent
+(`herdr integration status`). The script checks both and refuses with
+`herdr_too_old` / `integration_missing` rather than falling back.
 
 ## Input
 
-Task ID (numeric) and optionally a tmux session name (defaults to
-`$PROJECT--workers`, formerly `$PROJECT--execute`).
+Task ID (numeric), and optionally the agent to target — **Claude Code**
+(default) or **Codex**.
 
-## Dispatch Workflow
+## Dispatch workflow
 
 ### Step 1: Advance status to executing
 
-Before finding a worker, mark the task as executing so the worker's fresh
-worktree (created from `origin/main`) sees the right stage. See
-[references/task-status.md](references/task-status.md): set `status="executing"`
-on `<pd-doc>` in `plan.html`, then commit and push:
+Mark the task executing **before** creating the worker, so the worker's fresh
+worktree (branched from `origin/main`) sees the right stage. Per
+[references/task-status.md](references/task-status.md), set `status="executing"`
+on `<pd-doc>` in `plan.html`, then:
 
 ```bash
 git commit -am "docs($ID): status executing" && git push origin main
 ```
 
-This also satisfies the "task docs pushed" requirement below.
+### Step 2: Confirm the task docs are on `origin/main`
 
-### Step 2: Find an eligible pane
-
-```bash
-ntm status $SESSION --json
-```
-
-Parse the JSON output to get the list of panes. Then inspect each candidate pane:
-
-```bash
-ntm copy $SESSION:$PANE --last 20 --quiet --output /dev/stdout
-```
-
-A pane is eligible when **all** of the following are true:
-
-1. **Not busy** — the pane output shows a prompt waiting for input, not an active task in progress.
-2. **On `main`** — the pane's status line or prompt shows `(main)`, not a feature/worktree branch. A pane on a feature branch almost always means a prior task is in flight (open PR, awaiting review/merge). **Never target a pane that is not on `main`**, even if it appears idle — an open/unmerged PR or feature branch disqualifies it.
-3. **No open PR** — there is no evidence of an unmerged PR from a prior task.
-
-If a candidate is idle but on a feature branch, skip it and report why (e.g. "pane 2 skipped: on branch `task-505` with open PR").
-
-If **no panes are eligible** — all busy, on feature branches, or only a `user`
-shell — **add a fresh worker** instead of stopping. Do not interrupt active work.
-First check the **ceiling**: if the session already has **6** Claude panes (the
-cap) and none are eligible, every worker is genuinely busy — report and stop (or
-wait and re-check); do not add a seventh. Otherwise add one:
-
-```bash
-ntm add $SESSION --cc=1 --json
-```
-
-Then re-query `ntm status $SESSION --json` to find the new pane's index (the
-`add` output's `new_panes[].index` is unreliable — pick the highest-index
-`claude` pane), and wait until it is ready for input:
-
-```bash
-ntm --robot-wait=$SESSION --wait-until=idle --timeout=60s
-```
-
-It returns when the agent reports `state: WAITING`. Set `$PANE` to the new pane.
-A freshly added pane starts on `main`, so it is always eligible. Add **one**
-worker per dispatch; if `ntm add` fails, report and stop. See
-[references/delegating-to-agents.md](references/delegating-to-agents.md#4-spin-up-a-new-worker-when-none-are-available)
-for the full flow.
-
-> **Warning:** A pane sitting in another task's worktree has a stale checkout. If dispatched there, the executor may read outdated task docs before creating its own worktree. Always ensure the target pane is on `main`.
-
-### Step 3: Ensure task docs are pushed
-
-Before dispatching, verify that the task's planning docs have been pushed to `origin/main`. The executor will create a fresh worktree from `origin/main` and needs access to the docs.
+The worker branches from `origin/main` and reads the docs from there.
 
 ```bash
 git log origin/main --oneline -5 -- tasks/$ID/
 ```
 
-If the task docs are not on `origin/main`, push them first or warn the user.
+If the docs are not on `origin/main`, push them first or stop and tell the user.
+Step 1's push normally satisfies this.
 
-### Step 4: Send command
-
-If you found an existing idle pane, use `ntm send` with `--smart` to auto-route
-to the best idle agent (least-loaded strategy); if you just added a worker in
-Step 2, target it explicitly with `--pane=$PANE` (not `--smart`):
+### Step 3: Launch the worker
 
 ```bash
-ntm send $SESSION --smart --cc --json '/clear'       # existing idle pane
-ntm send $SESSION --pane=$PANE --json '/clear'       # freshly added worker
+bash <skill-dir>/scripts/herdr-worker.sh worker \
+  --slug $ID --branch task/$ID --repo <repo> \
+  --prompt "/execute-task $ID" [--agent codex]
 ```
 
-Wait 5 seconds, then send the execution command and rename:
+This names the agent and its tab `work-$ID`, creates the worktree off
+`origin/main` in a Space nested under the repo's Space (from the primary
+checkout, whatever `--repo` path you pass), launches with the mandatory flags, verifies argv and cwd, sends
+the prompt, and returns in a few seconds once `working` is observed. It
+**refuses** (`worktree_exists`) if a worktree already exists on `task/$ID` —
+two workers on one task means two PRs and a merge conflict — so there is no
+separate "check for an existing worker" step; if you want the survey anyway,
+`bash <skill-dir>/scripts/herdr-worker.sh list --repo <repo>`
+(`references/herdr/list-workers.md`).
 
-```bash
-ntm send $SESSION --pane=$PANE --json '/execute-task $ID'
+Success looks like:
+
+```json
+{"ok":true,"role":"worker","name":"work-042","pane_id":"w12:p1","workspace_id":"w12",
+ "worktree_path":"/…/.herdr/worktrees/<repo>/task-042","branch":"task/042","base":"origin/main",
+ "cmdline":"claude --dangerously-skip-permissions",
+ "verified":{"flags":true,"cwd":true,"role":true},
+ "kickoff":{"ok":true,"agent_status":"working"},"follow":{"read":"…","status":"…","reap":"…"}}
 ```
 
-Wait 1 second:
+### Step 4: Act on a failure
 
-```bash
-ntm send $SESSION --pane=$PANE --json '/rename'
-```
+`ok:false` carries an `error` code and, where useful, a pane `snapshot`.
 
-If the first `/clear` used `--smart`, note which pane index was selected from the JSON response and use `--pane=$PANE` for subsequent sends.
+| `error` | Meaning | Do |
+| ------- | ------- | -- |
+| `worktree_exists`, `name_in_use` | a worker is (or was) already on this task | do **not** dispatch a second one; report what is there and stop |
+| `agent_not_ready` | startup interstitial | read the snapshot, answer it deliberately per `references/herdr/unblock-worker.md` (one key per call, re-read after each; never a bare `enter` — `references/agent-conventions.md`), then `verify` and `prompt --prompt "/execute-task $ID"` |
+| `kickoff_failed` with `agent_blocked` | the agent is at a dialog | as above, then `prompt` again (`references/herdr/send-prompt.md`) |
+| `kickoff_failed` with `kickoff_not_observed` | `/execute-task` may not have landed | read the pane before retrying — never send it twice blind |
+| `verify_failed`, `start_timeout` | wrong flags / cwd / no agent | `reap --name work-$ID` and launch again; a worker cannot be repaired in place (`references/herdr/verify-worker.md`, `references/herdr/reset-worker.md`) |
+| `herdr_*`, `integration_missing`, `missing_dependency` | environment | stop and tell the user what to install |
 
-### Step 5: Verify kickoff
+If the launch command itself is **denied by the auto-mode classifier** in this
+session, do not switch the worker to a weaker permission mode: the fix is a
+settings entry, described in `references/herdr/spawn-worker.md`.
 
-Capture the pane output to confirm execution started:
+### Step 5: Report
 
-```bash
-ntm copy $SESSION:$PANE --last 30 --quiet --output /dev/stdout
-```
+State the worker's name (`work-$ID`), workspace/pane, branch, worktree path,
+agent kind, that flags and worktree verified, and that `/execute-task $ID` was
+accepted (the `kickoff` status).
 
-Check that the output shows the execute-task command was received and work has begun.
-
-### Step 6: Report
-
-Output which pane was selected, confirmation that the command was sent, and what the pane is currently doing.
-
-Tell the user how to check on progress later:
-
-```
-To read recent output from this session:
-  ntm copy $SESSION:$PANE --last 50
-  ntm copy $SESSION:$PANE --code        # extract just code blocks
-  ntm grep 'error\|warning' $SESSION    # search across all panes
-  ntm watch $SESSION --pane=$PANE       # stream output live
-```
+Tell the user how to follow progress — the `follow.read` command
+(`references/herdr/read-output.md`; `references/herdr/scan-output.md` for the
+fleet; status semantics in `references/herdr/wait-for-ready.md`) — and that
+[/status-report](../status-report/SKILL.md) covers the whole fleet.
+If the worker later goes `blocked` (it stopped to ask a question),
+`references/herdr/unblock-worker.md` is how to answer it — a prompt will be
+refused, and the answer has to go in as keypresses. Display labels, should you
+need to rename anything, are in `references/herdr/label-worker.md`.

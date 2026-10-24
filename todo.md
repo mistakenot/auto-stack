@@ -13,6 +13,7 @@ What are the current bottlenecks?
 - Multi-stage work gets chocked up, too much gating, waiting, etc.
 - Agents probably spend a lot of time down, waiting for things to do
 - Do we have enough tmux worker instances? how to create/kill them automatically?
+- [ ] **Explicit privileged-command escalation for permissionless agents.** Agents should normally run with no permissions, but need a safe, auditable way to ask a human to approve a specific command outside the normal permission system. Design the request/approval flow, scoped command or prefix grants, expiry/revocation, and logging so elevated execution is always explicit and least-privileged.
 
 ## Host health — 2026-09-11 slow-machine incident
 

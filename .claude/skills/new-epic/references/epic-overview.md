@@ -19,9 +19,22 @@ An epic describes **direction and constraints**, not construction. The decomposi
 - Talk in **user outcomes, constraints, contracts, and container-level architecture**.
 - A statistic like "20 files changed" is the wrong unit. Count user journeys, guard rails, and tasks — never files.
 
+## Inclusion — what's the cost of getting it wrong?
+
+Altitude says what *kind* of thing belongs in an epic. This rule says *which* of those earn a place. For any candidate guard rail, seam, decision, or detail, ask: **what's the cost of getting this wrong?**
+
+- **Include it if a wrong call would break cross-task work** — rework in more than one task, or a change to which tasks exist and in what order.
+- **Leave it out if the cost is contained within one task.** That task's planner will ask the same question in their own nested planning loop, at task altitude, and catch it there. Omitting it is what hands them latitude.
+- **Leave it out if a task planner would obviously get it right unaided** from the codebase and project docs, even when the cost of getting it wrong is high. Stating the obvious is noise.
+- **Defer silently.** Don't write "TBD" or "to be decided later" — that is detail in disguise. The one exception: when a later task depends on a choice an earlier task will make, name that dependency as a seam so the ordering stays visible.
+
+The two rules work together. Cost-of-wrong decides *whether* something is in; altitude decides *how* it appears. Some expensive-to-change things are low-level by nature — a wire format, a public API name, a storage schema. They belong, but as a one-sentence seam or guard rail (the contract), never as a design.
+
+The walking-skeleton rule is this principle applied to sequencing: integration is the most expensive thing to get wrong, so it goes first.
+
 ## Components: prefer the specific one, improvise within the altitude
 
-`planning-doc` and its `llms.txt` define the available components. The epic family — `pd-outcome`, `pd-cli`, `pd-journey`, `pd-guardrail`, `pd-task` + `pd-breakdown` — is built for this altitude; [epic-tabs.md](epic-tabs.md) maps each tab to its component. Reach for the most specific one the fetched `llms.txt` offers. Where no component fits the epic-level need, **improvise with the best available primitive** — a diagram, a list, a card — while holding the altitude.
+`rich-doc` and its `llms.txt` define the available components. The epic family — `pd-outcome`, `pd-cli`, `pd-journey`, `pd-guardrail`, `pd-task` + `pd-breakdown` — is built for this altitude; [epic-tabs.md](epic-tabs.md) maps each tab to its component. Reach for the most specific one the fetched `llms.txt` offers. Where no component fits the epic-level need, **improvise with the best available primitive** — a diagram, a list, a card — while holding the altitude.
 
 Two hard "don'ts":
 - **Never force a task-level component into an epic.** The file tree, the phase stepper, code outlines, and code snippets all pull the reader down to construction detail. They don't belong here.
