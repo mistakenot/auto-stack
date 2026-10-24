@@ -74,7 +74,7 @@ func newTriggerCreateCmd(application *app.App) *cobra.Command {
 				return err
 			}
 			cfg.Triggers[triggerID] = def
-			if err := saveValidatedProjectConfig(repoRoot, cfg); err != nil {
+			if err := saveValidatedProjectConfig(repoRoot, cfg, application.Backends.Names()); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Saved trigger %s\n", triggerID)
@@ -112,7 +112,7 @@ func newTriggerAddTaskCmd(application *app.App) *cobra.Command {
 			trigger.Tasks = append(trigger.Tasks, taskID)
 			trigger.Tasks = normalizeTaskSet(trigger.Tasks)
 			cfg.Triggers[triggerID] = trigger
-			if err := saveValidatedProjectConfig(repoRoot, cfg); err != nil {
+			if err := saveValidatedProjectConfig(repoRoot, cfg, application.Backends.Names()); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Linked task %s to trigger %s\n", taskID, triggerID)
@@ -149,7 +149,7 @@ func newTriggerRemoveTaskCmd(application *app.App) *cobra.Command {
 			}
 			trigger.Tasks = filtered
 			cfg.Triggers[triggerID] = trigger
-			if err := saveValidatedProjectConfig(repoRoot, cfg); err != nil {
+			if err := saveValidatedProjectConfig(repoRoot, cfg, application.Backends.Names()); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Unlinked task %s from trigger %s\n", taskID, triggerID)
@@ -183,7 +183,7 @@ func newTriggerListCmd(application *app.App) *cobra.Command {
 			errs := []model.ValidationError{}
 			taskSet := map[string]struct{}{}
 			for id, task := range cfg.Tasks {
-				if len(config.ValidateTaskEntry(id, task)) == 0 {
+				if len(config.ValidateTaskEntry(id, task, application.Backends.Names())) == 0 {
 					taskSet[id] = struct{}{}
 				}
 			}

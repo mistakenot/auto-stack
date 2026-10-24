@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/mistakenot/auto-shared/backend"
 	"github.com/mistakenot/auto-shared/bus"
 	"github.com/mistakenot/auto-watch/internal/config"
 	"github.com/mistakenot/auto-watch/internal/gitx"
@@ -30,11 +31,16 @@ var ErrDaemonAlreadyRunning = errors.New("daemon lock is already held")
 // terminal runs (Decision D-1). The CLI overrides it via SetRetentionDays.
 const defaultRetentionDays = 7
 
+// defaultRunTimeout is the deadline window for a run whose TaskDef sets no
+// timeout (Open Question: 2h, decided with the user). The deadline is fixed to
+// started_at + timeout when the run starts.
+const defaultRunTimeout = 2 * time.Hour
+
 type Service struct {
-	Store   *store.Store
-	Backend runner.Backend
-	Output  io.Writer
-	Now     func() time.Time
+	Store    *store.Store
+	Backends *backend.Registry
+	Output   io.Writer
+	Now      func() time.Time
 
 	dispatchMu    sync.Mutex
 	hub           *bus.Hub
@@ -79,13 +85,13 @@ type Lock struct {
 	file *os.File
 }
 
-func New(db *store.Store, backend runner.Backend, output io.Writer, now func() time.Time, hub *bus.Hub) *Service {
+func New(db *store.Store, backends *backend.Registry, output io.Writer, now func() time.Time, hub *bus.Hub) *Service {
 	if now == nil {
 		now = time.Now
 	}
 	return &Service{
 		Store:              db,
-		Backend:            backend,
+		Backends:           backends,
 		Output:             output,
 		Now:                now,
 		hub:                hub,
@@ -165,12 +171,10 @@ func (s *Service) Cancel(ctx context.Context, runID int64) (model.RunState, erro
 		return run.State, nil
 
 	case model.RunRunning:
-		if run.SessionName != "" {
-			_ = s.Backend.Kill(ctx, runner.Handle{
-				SessionName: run.SessionName,
-				ExitPath:    run.ExitPath,
-				OutputPath:  run.OutputPath,
-			})
+		if run.BackendTarget != "" {
+			if b, ok := s.Backends.Get(run.Backend); ok {
+				_ = b.Stop(ctx, backend.Binding{Manager: run.Backend, Target: run.BackendTarget})
+			}
 		}
 
 	case model.RunPending:
@@ -328,57 +332,67 @@ func (s *Service) Reap(ctx context.Context) error {
 	}
 	for i := range running {
 		run := &running[i]
-		if strings.TrimSpace(run.ExitPath) == "" {
+		// A run with no runtime dir never recorded a Backend target, so there is
+		// nothing for Status to inspect — leave it for the pending/abandoned paths.
+		if strings.TrimSpace(run.RuntimeDir) == "" {
 			continue
 		}
-		data, err := os.ReadFile(run.ExitPath)
+		b, ok := s.Backends.Get(run.Backend)
+		if !ok {
+			// No adapter registered for this run's backend. Leave the run running
+			// rather than inventing an outcome; a production registry always has
+			// the run's backend, so this only guards a mis-set row.
+			continue
+		}
+		binding := backend.Binding{Manager: run.Backend, Target: run.BackendTarget}
+		// Status owns the completion contract: it reads the exit-code file first
+		// and only then asks the manager about liveness. An interrupted/empty
+		// exit-code file reads back as StatusExited with a nil code (never an
+		// error), so it can never pin a run to running or wedge the daemon in a
+		// restart loop (the 33k-restart incident).
+		st, err := b.Status(ctx, binding, run.RuntimeDir)
 		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return fmt.Errorf("read exit code for run %d: %w", run.ID, err)
+			return err
 		}
-		// An exit-code file that exists but holds no parseable integer means the
-		// launch wrapper was interrupted between creating the file (the `>`
-		// redirect truncates on open) and writing the code into it. That states
-		// the same fact as a missing file — no exit code was ever recorded — so
-		// it must not be fatal. Reap runs on every Tick, and the run stays
-		// RunRunning until Reap gets past it, so returning an error here is a
-		// loop the daemon can never escape: it dies, restarts, reads the same
-		// byte, and dies again.
-		code, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
-		interrupted := parseErr != nil
-		if run.SessionName != "" {
-			exists, err := s.Backend.SessionExists(ctx, run.SessionName)
-			if err != nil {
-				return err
-			}
-			if exists {
-				if err := s.Backend.Kill(ctx, runner.Handle{SessionName: run.SessionName, ExitPath: run.ExitPath, OutputPath: run.OutputPath}); err != nil {
-					return err
-				}
-			}
+		switch st.State {
+		case backend.StatusRunning:
+			continue
+		case backend.StatusLost:
+			// Phase 1 keeps today's behaviour: a run with no recorded exit and no
+			// live session stays running. Lost-reaping (failure_reason=session_lost)
+			// is a later phase.
+			continue
+		case backend.StatusExited:
+			// Terminal — handled below.
 		}
-		codePtr := &code
+		// The run has exited; clean up its (remain-on-exit) session, as today's
+		// Reap did after reading the exit-code file. Stopping an absent session is
+		// not an error.
+		_ = b.Stop(ctx, binding)
+
+		codePtr := st.ExitCode
+		interrupted := codePtr == nil
 		state := model.RunCompleted
 		message := ""
-		outcome := fmt.Sprintf("finished with exit code %d", code)
+		outcome := ""
 		switch {
 		case interrupted:
 			// No code was recorded, so report none rather than inventing one.
-			codePtr = nil
 			state = model.RunFailed
 			outcome = "was interrupted before recording an exit code"
 			message = tailOutput(run.OutputPath, 200)
 			if message == "" {
 				message = "run interrupted before recording an exit code"
 			}
-		case code != 0:
+		case *codePtr != 0:
 			state = model.RunFailed
+			outcome = fmt.Sprintf("finished with exit code %d", *codePtr)
 			message = tailOutput(run.OutputPath, 200)
 			if message == "" {
-				message = fmt.Sprintf("run exited with code %d", code)
+				message = fmt.Sprintf("run exited with code %d", *codePtr)
 			}
+		default:
+			outcome = fmt.Sprintf("finished with exit code %d", *codePtr)
 		}
 		eventType := "task_completed"
 		level := "info"
@@ -475,9 +489,11 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 		}
 		for i := range activeRuns {
 			run := &activeRuns[i]
-			if run.SessionName != "" {
-				if err := s.Backend.Kill(ctx, runner.Handle{SessionName: run.SessionName, ExitPath: run.ExitPath, OutputPath: run.OutputPath}); err != nil {
-					return err
+			if run.BackendTarget != "" {
+				if b, ok := s.Backends.Get(run.Backend); ok {
+					if err := b.Stop(ctx, backend.Binding{Manager: run.Backend, Target: run.BackendTarget}); err != nil {
+						return err
+					}
 				}
 			}
 			message := "killed by auto watch clean --force"
@@ -576,7 +592,7 @@ func (s *Service) tickProject(ctx context.Context, now time.Time, project *model
 	sort.Strings(taskIDs)
 	for _, taskID := range taskIDs {
 		task := projectCfg.Tasks[taskID]
-		if errs := config.ValidateTaskEntry(taskID, task); len(errs) > 0 {
+		if errs := config.ValidateTaskEntry(taskID, task, s.Backends.Names()); len(errs) > 0 {
 			if err := s.logValidationErrors(ctx, now, projectID, "", "", "config_warning", errs); err != nil {
 				return err
 			}
@@ -584,7 +600,7 @@ func (s *Service) tickProject(ctx context.Context, now time.Time, project *model
 		}
 		validTasks[taskID] = task
 	}
-	if errs := config.ValidateProjectConfig(model.ProjectConfig{ID: projectID, Tasks: validTasks, Triggers: map[string]model.TriggerDef{}}); len(errs) > 0 {
+	if errs := config.ValidateProjectConfig(model.ProjectConfig{ID: projectID, Tasks: validTasks, Triggers: map[string]model.TriggerDef{}}, s.Backends.Names()); len(errs) > 0 {
 		return fmt.Errorf("project id is invalid: %s", errs[0].Message)
 	}
 
@@ -921,40 +937,81 @@ func (s *Service) startWorker(ctx context.Context, runID int64, task model.TaskD
 		return s.failRun(ctx, &run, worktreePath, fmt.Errorf("unsupported task type %q", task.Type))
 	}
 
-	scriptPath, err := runner.WriteLaunchScript(&runner.LaunchSpec{
-		RunDir:      runDir,
-		WorkDir:     workDir,
-		TaskType:    task.Type,
-		CommandFile: commandFile,
-		PromptFile:  promptFile,
-		OutputPath:  outputPath,
-		ExitPath:    exitPath,
+	// Compose the inner bash/claude command; the shared launch wrapper owns the
+	// completion contract (tee into output.log, atomic exit-code file), so exit
+	// semantics are identical across every Backend.
+	innerCmd, err := runner.InnerCommand(task.Type)
+	if err != nil {
+		return s.failRun(ctx, &run, worktreePath, err)
+	}
+	launchScript, err := backend.WriteLaunchScript(&backend.LaunchSpec{
+		RunDir:     runDir,
+		WorkDir:    workDir,
+		Command:    innerCmd,
+		OutputPath: outputPath,
+		ExitPath:   exitPath,
 	})
 	if err != nil {
 		return s.failRun(ctx, &run, worktreePath, err)
 	}
 
 	sessionName := runner.ScheduledRunName(run.ID, run.TaskID)
-	handle, err := s.Backend.Start(ctx, &runner.StartSpec{
-		SessionName: sessionName,
-		WorkDir:     workDir,
-		ScriptPath:  scriptPath,
-		ExitPath:    exitPath,
-		OutputPath:  outputPath,
+	b, ok := s.Backends.Get(task.Backend)
+	if !ok {
+		return s.failRun(ctx, &run, worktreePath, fmt.Errorf("unknown backend %q", task.Backend))
+	}
+	binding, startErr := b.Start(ctx, &backend.StartSpec{
+		Name:         sessionName,
+		WorkDir:      workDir,
+		LaunchScript: launchScript,
+		RunDir:       runDir,
+		Owner:        run.ProjectID,
 	})
-	if err != nil {
+	// ErrStartUncertain: the adapter created a run but could not confirm whether
+	// the launched command is alive. Record the Binding and keep the run running
+	// so Status and the deadline own it — never re-dispatch over a possibly live
+	// command. Any other error is a confirmed failure.
+	uncertain := errors.Is(startErr, backend.ErrStartUncertain)
+	if startErr != nil && !uncertain {
+		return s.failRun(ctx, &run, worktreePath, startErr)
+	}
+
+	// Fix the deadline when the run starts (per-TaskDef timeout, else the 2h
+	// default) so later config edits never move a live run's deadline.
+	timeout := defaultRunTimeout
+	if d, perr := time.ParseDuration(strings.TrimSpace(task.Timeout)); perr == nil && d > 0 {
+		timeout = d
+	}
+	deadline := run.StartedAt.Add(timeout)
+	if err := s.Store.UpdateRunStarted(ctx, run.ID, &store.RunStartUpdate{
+		SessionName:   binding.Target,
+		RuntimeDir:    runDir,
+		OutputPath:    outputPath,
+		ExitPath:      exitPath,
+		WorktreePath:  worktreePath,
+		Branch:        branch,
+		Backend:       binding.Manager,
+		BackendTarget: binding.Target,
+		DeadlineAt:    deadline,
+	}); err != nil {
+		_ = b.Stop(ctx, binding)
 		return s.failRun(ctx, &run, worktreePath, err)
 	}
-	if err := s.Store.UpdateRunStarted(ctx, run.ID, &store.RunStartUpdate{
-		SessionName:  handle.SessionName,
-		RuntimeDir:   runDir,
-		OutputPath:   outputPath,
-		ExitPath:     exitPath,
-		WorktreePath: worktreePath,
-		Branch:       branch,
-	}); err != nil {
-		_ = s.Backend.Kill(ctx, handle)
-		return s.failRun(ctx, &run, worktreePath, err)
+	if uncertain {
+		_ = s.logEvent(ctx, &store.EventInput{
+			Timestamp: s.Now(),
+			Level:     "warn",
+			EventType: "system_warning",
+			ProjectID: run.ProjectID,
+			TriggerID: run.TriggerID,
+			TaskID:    run.TaskID,
+			RunID:     &run.ID,
+			Message:   "backend start outcome uncertain; keeping run running",
+			Metadata: map[string]any{
+				"error":        startErr.Error(),
+				"resource_key": run.ResourceKey,
+			},
+		})
 	}
 	if err := s.logEvent(ctx, &store.EventInput{
 		Timestamp: s.Now(),
@@ -966,7 +1023,7 @@ func (s *Service) startWorker(ctx context.Context, runID int64, task model.TaskD
 		RunID:     &run.ID,
 		Message:   "task started",
 		Metadata: map[string]any{
-			"session_name":  handle.SessionName,
+			"session_name":  binding.Target,
 			"worktree_path": worktreePath,
 			"resource_key":  run.ResourceKey,
 			"branch":        branch,
@@ -974,7 +1031,7 @@ func (s *Service) startWorker(ctx context.Context, runID int64, task model.TaskD
 	}); err != nil {
 		return err
 	}
-	run.SessionName = handle.SessionName
+	run.SessionName = binding.Target
 	run.WorktreePath = worktreePath
 	run.Branch = branch
 	s.emitWatchTask(ctx, bus.TypeWatchTaskStarted, &run, nil, "task started")

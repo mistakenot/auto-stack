@@ -7,30 +7,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mistakenot/auto-shared/backend"
+	"github.com/mistakenot/auto-shared/backend/backendtest"
 	"github.com/mistakenot/auto-watch/internal/config"
 	"github.com/mistakenot/auto-watch/internal/daemon"
 	"github.com/mistakenot/auto-watch/internal/gitx"
 	"github.com/mistakenot/auto-watch/internal/model"
-	"github.com/mistakenot/auto-watch/internal/runner"
 	"github.com/mistakenot/auto-watch/internal/store"
 	"github.com/mistakenot/auto-watch/internal/testutil"
 )
 
-type fakeBackend struct{}
-
-func (fakeBackend) Start(_ context.Context, spec *runner.StartSpec) (runner.Handle, error) {
-	if err := os.WriteFile(spec.OutputPath, []byte("ok\n"), 0o644); err != nil {
-		return runner.Handle{}, err
-	}
-	if err := os.WriteFile(spec.ExitPath, []byte("0\n"), 0o644); err != nil {
-		return runner.Handle{}, err
-	}
-	return runner.Handle{SessionName: spec.SessionName, ExitPath: spec.ExitPath, OutputPath: spec.OutputPath}, nil
-}
-
-func (fakeBackend) Kill(context.Context, runner.Handle) error { return nil }
-func (fakeBackend) SessionExists(context.Context, string) (bool, error) {
-	return false, nil
+// completingRegistry returns a Backend registry whose (default, "tmux") Backend
+// completes every run it starts with exit code 0 — the structural replacement
+// for the old ad-hoc fakeBackend.
+func completingRegistry() *backend.Registry {
+	return backend.NewRegistry(backendtest.New(0))
 }
 
 func TestDaemonHonorsOnlyIfBranchHasChanged(t *testing.T) {
@@ -59,7 +50,7 @@ func TestDaemonHonorsOnlyIfBranchHasChanged(t *testing.T) {
 	}
 
 	current := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
 
 	if err := service.Tick(context.Background()); err != nil {
 		t.Fatalf("first tick failed: %v", err)
@@ -124,7 +115,7 @@ func TestReapMarksAbandonedPendingRunsFailed(t *testing.T) {
 		t.Fatalf("reserve run: %v", err)
 	}
 
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time {
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time {
 		return time.Date(2026, 3, 20, 9, 10, 0, 0, time.UTC)
 	}, nil)
 	if err := service.Reap(context.Background()); err != nil {
@@ -165,7 +156,7 @@ func TestTickReapsCompletedRunsBeforeDedupReservation(t *testing.T) {
 	}
 
 	current := time.Date(2026, 3, 21, 20, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
 
 	if err := service.Tick(context.Background()); err != nil {
 		t.Fatalf("first tick failed: %v", err)
@@ -248,7 +239,7 @@ func TestFileCreatedTriggerSeedsOnFirstTickWithoutFiring(t *testing.T) {
 	env.WriteFile(repoRoot, "docs/existing.md", "# existing\n")
 
 	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
 
 	if err := service.Tick(ctx); err != nil {
 		t.Fatalf("first tick failed: %v", err)
@@ -281,7 +272,7 @@ func TestFileCreatedTriggerFiresOnNewFile(t *testing.T) {
 	// Seed tick with one existing file.
 	env.WriteFile(repoRoot, "docs/existing.md", "# existing\n")
 	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
 
 	if err := service.Tick(ctx); err != nil {
 		t.Fatalf("seed tick failed: %v", err)
@@ -327,7 +318,7 @@ func TestFileCreatedTriggerNoFireWhenUnchanged(t *testing.T) {
 
 	env.WriteFile(repoRoot, "docs/existing.md", "# existing\n")
 	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
 
 	// Seed tick.
 	if err := service.Tick(ctx); err != nil {
@@ -358,7 +349,7 @@ func TestFileCreatedTriggerDeleteAndRecreateFiresAgain(t *testing.T) {
 	// Seed with file.
 	env.WriteFile(repoRoot, "docs/ephemeral.md", "# temp\n")
 	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
 
 	if err := service.Tick(ctx); err != nil {
 		t.Fatalf("seed tick: %v", err)
@@ -404,7 +395,7 @@ func TestFileCreatedTriggerNonMatchingFilesIgnored(t *testing.T) {
 
 	// Seed empty.
 	current := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
 	if err := service.Tick(ctx); err != nil {
 		t.Fatalf("seed tick: %v", err)
 	}
@@ -467,7 +458,7 @@ func TestCleanRemovesExpiredTerminalWorktrees(t *testing.T) {
 		t.Fatalf("MarkRunTerminal failed: %v", err)
 	}
 
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time {
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time {
 		return time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
 	}, nil)
 	if err := service.Clean(context.Background(), false); err != nil {

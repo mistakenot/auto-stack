@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mistakenot/auto-shared/backend"
+	"github.com/mistakenot/auto-shared/backend/backendtest"
 	"github.com/mistakenot/auto-shared/bus"
 	"github.com/mistakenot/auto-shared/config"
 	"github.com/mistakenot/auto-shared/rpc"
@@ -19,41 +21,8 @@ import (
 	watchconfig "github.com/mistakenot/auto-watch/internal/config"
 	"github.com/mistakenot/auto-watch/internal/daemon"
 	"github.com/mistakenot/auto-watch/internal/model"
-	"github.com/mistakenot/auto-watch/internal/runner"
 	"github.com/mistakenot/auto-watch/internal/store"
 )
-
-// fakeBackend records Start/Kill calls and never writes an exit-code file, so
-// dispatched runs stay "running" until a test drives them to a terminal state.
-type fakeBackend struct {
-	mu     sync.Mutex
-	starts int
-	kills  int
-}
-
-func (b *fakeBackend) Start(_ context.Context, spec *runner.StartSpec) (runner.Handle, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.starts++
-	return runner.Handle{SessionName: spec.SessionName, ExitPath: spec.ExitPath, OutputPath: spec.OutputPath}, nil
-}
-
-func (b *fakeBackend) Kill(_ context.Context, _ runner.Handle) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.kills++
-	return nil
-}
-
-func (b *fakeBackend) SessionExists(context.Context, string) (bool, error) {
-	return false, nil
-}
-
-func (b *fakeBackend) killCount() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.kills
-}
 
 // setupWithService creates a full RPC test environment backed by a real
 // daemon.Service with a temp store, fake backend, and a project on disk with a
@@ -96,7 +65,7 @@ func setupWithService(t *testing.T) (*conformance.PeerClient, *daemon.Service, c
 	}
 
 	hub := bus.NewHub()
-	svc := daemon.New(db, &fakeBackend{}, nil, time.Now, hub)
+	svc := daemon.New(db, backend.NewRegistry(&backendtest.Fake{}), nil, time.Now, hub)
 	h := New(svc, "test-host", "1.2.3", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), hub, false, func() config.ProjectsConfig { return reg })
 
 	sConn, cConn := net.Pipe()
@@ -416,13 +385,14 @@ func TestTaskCancel_IdempotentOnTerminal(t *testing.T) {
 	client, svc, _, cleanup := setupWithService(t)
 	defer cleanup()
 
-	be := svc.Backend.(*fakeBackend)
+	b, _ := svc.Backends.Get("tmux")
+	be := b.(*backendtest.Fake)
 	runID := dispatchTask(t, client, "echo")
 
 	if _, err := callTask(t, client, "task.cancel", CancelParams{RunID: runID}); err != nil {
 		t.Fatalf("first cancel: %v", err)
 	}
-	killsAfterFirst := be.killCount()
+	stopsAfterFirst := be.StopCount()
 
 	raw, err := callTask(t, client, "task.cancel", CancelParams{RunID: runID})
 	if err != nil {
@@ -433,8 +403,8 @@ func TestTaskCancel_IdempotentOnTerminal(t *testing.T) {
 	if res.State != string(model.RunFailed) {
 		t.Errorf("state = %q, want failed", res.State)
 	}
-	if be.killCount() != killsAfterFirst {
-		t.Errorf("second cancel on terminal run should not kill: before=%d after=%d", killsAfterFirst, be.killCount())
+	if be.StopCount() != stopsAfterFirst {
+		t.Errorf("second cancel on terminal run should not stop: before=%d after=%d", stopsAfterFirst, be.StopCount())
 	}
 }
 

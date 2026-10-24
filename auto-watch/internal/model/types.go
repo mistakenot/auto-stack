@@ -25,6 +25,12 @@ type TaskDef struct {
 	Type    string `json:"type"`
 	Command string `json:"command,omitempty"`
 	Prompt  string `json:"prompt,omitempty"`
+	// Backend names the execution Backend this task runs on (e.g. "tmux"). Empty
+	// means the default Backend ("tmux"), so existing configs are unchanged.
+	Backend string `json:"backend,omitempty"`
+	// Timeout is a Go duration string (e.g. "30m") bounding a run; empty means
+	// the 2h default. Validated with time.ParseDuration and must be > 0.
+	Timeout string `json:"timeout,omitempty"`
 }
 
 type TriggerDef struct {
@@ -43,6 +49,10 @@ type FileSnapshotRecord struct {
 	FirstSeenAt time.Time `json:"first_seen_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
+
+// DefaultBackend is the Backend a run uses when none is recorded. It mirrors
+// backend.DefaultBackendName; legacy runs read back with this Backend.
+const DefaultBackend = "tmux"
 
 type RunState string
 
@@ -73,6 +83,17 @@ type RunRecord struct {
 	CompletedAt  time.Time `json:"completed_at,omitzero"`
 	ExitCode     *int      `json:"exit_code,omitempty"`
 	ErrorMessage string    `json:"error_message,omitempty"`
+	// Backend is the execution Backend the run was started on. Legacy rows read
+	// back as "tmux".
+	Backend string `json:"backend,omitempty"`
+	// BackendTarget is the Backend-specific target (a Binding's Target, e.g. the
+	// tmux session name). Legacy rows read back as the session name.
+	BackendTarget string `json:"backend_target,omitempty"`
+	// DeadlineAt is started_at + the run's timeout, fixed when the run starts.
+	// Null on legacy rows.
+	DeadlineAt *time.Time `json:"deadline_at,omitempty"`
+	// FailureReason classifies a failed run (set in a later phase).
+	FailureReason string `json:"failure_reason,omitempty"`
 }
 
 type TriggerStateRecord struct {

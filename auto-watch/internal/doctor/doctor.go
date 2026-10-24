@@ -17,7 +17,7 @@ import (
 	"github.com/mistakenot/auto-watch/internal/model"
 )
 
-func Run(ctx context.Context, cwd string) (string, []model.DoctorCheck) {
+func Run(ctx context.Context, cwd string, backends []string) (string, []model.DoctorCheck) {
 	checks := []model.DoctorCheck{
 		checkTmux(ctx),
 		checkClaude(),
@@ -27,7 +27,7 @@ func Run(ctx context.Context, cwd string) (string, []model.DoctorCheck) {
 		checkHostConfig(),
 	}
 	if repoRoot, err := gitx.FindRepoRoot(cwd); err == nil {
-		checks = append(checks, checkProjectConfig(repoRoot))
+		checks = append(checks, checkProjectConfig(repoRoot, backends))
 	}
 	status := "ok"
 	for _, check := range checks {
@@ -277,7 +277,7 @@ func checkHostConfig() model.DoctorCheck {
 	return model.DoctorCheck{Name: name, Status: "ok", Message: path}
 }
 
-func checkProjectConfig(repoRoot string) model.DoctorCheck {
+func checkProjectConfig(repoRoot string, backends []string) model.DoctorCheck {
 	path := config.ProjectConfigPath(repoRoot)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return model.DoctorCheck{Name: "project_config", Status: "ok", Message: "project config not present in current repo"}
@@ -292,7 +292,7 @@ func checkProjectConfig(repoRoot string) model.DoctorCheck {
 			Details:     err.Error(),
 		}
 	}
-	if errs := config.ValidateProjectConfig(cfg); len(errs) > 0 {
+	if errs := config.ValidateProjectConfig(cfg, backends); len(errs) > 0 {
 		return model.DoctorCheck{
 			Name:        "project_config",
 			Status:      "fail",

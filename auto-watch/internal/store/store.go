@@ -34,12 +34,15 @@ type ReserveRunInput struct {
 }
 
 type RunStartUpdate struct {
-	SessionName  string
-	RuntimeDir   string
-	OutputPath   string
-	ExitPath     string
-	WorktreePath string
-	Branch       string
+	SessionName   string
+	RuntimeDir    string
+	OutputPath    string
+	ExitPath      string
+	WorktreePath  string
+	Branch        string
+	Backend       string
+	BackendTarget string
+	DeadlineAt    time.Time
 }
 
 type EventInput struct {
@@ -173,7 +176,72 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf("run migration statement: %w", err)
 		}
 	}
+	// v3: Backend selection + deadline + failure reason on runs. There is no
+	// ALTER precedent, so gate each column on PRAGMA table_info(runs) and add it
+	// only when absent, keeping Migrate idempotent (a second run is a no-op).
+	if err := s.migrateRunsV3(ctx); err != nil {
+		return err
+	}
 	return nil
+}
+
+// migrateRunsV3 adds the backend, backend_target, deadline_at and
+// failure_reason columns to the runs table if they are not already present,
+// then records schema version 3. Legacy rows keep NULL in the new columns and
+// are read back as the default Backend ("tmux") with backend_target set to the
+// session name (see scanRun).
+func (s *Store) migrateRunsV3(ctx context.Context) error {
+	existing, err := s.runsColumns(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, col := range []struct{ name, ddl string }{
+		{"backend", "ALTER TABLE runs ADD COLUMN backend TEXT"},
+		{"backend_target", "ALTER TABLE runs ADD COLUMN backend_target TEXT"},
+		{"deadline_at", "ALTER TABLE runs ADD COLUMN deadline_at DATETIME"},
+		{"failure_reason", "ALTER TABLE runs ADD COLUMN failure_reason TEXT"},
+	} {
+		if _, ok := existing[col.name]; ok {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, col.ddl); err != nil {
+			return fmt.Errorf("add runs column %s: %w", col.name, err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version) VALUES (3)`); err != nil {
+		return fmt.Errorf("record schema version 3: %w", err)
+	}
+	return nil
+}
+
+// runsColumns returns the set of column names on the runs table via
+// PRAGMA table_info, so migrateRunsV3 can add only the columns that are absent.
+func (s *Store) runsColumns(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(runs)`)
+	if err != nil {
+		return nil, fmt.Errorf("inspect runs columns: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	existing := map[string]struct{}{}
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			dfltValue  sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &primaryKey); err != nil {
+			return nil, fmt.Errorf("scan runs column: %w", err)
+		}
+		existing[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate runs columns: %w", err)
+	}
+	return existing, nil
 }
 
 func (s *Store) ReserveRun(ctx context.Context, input *ReserveRunInput) (int64, error) {
@@ -209,14 +277,16 @@ func (s *Store) GetRun(ctx context.Context, id int64) (model.RunRecord, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, project_id, project_path, trigger_id, trigger_type, task_id, task_type,
 		resource_key, branch, state, session_name, runtime_dir, output_path, exit_path,
-		worktree_path, started_at, completed_at, exit_code, error_message
+		worktree_path, started_at, completed_at, exit_code, error_message,
+		backend, backend_target, deadline_at, failure_reason
 	FROM runs WHERE id = ?`, id)
 	return scanRun(row)
 }
 
 func (s *Store) UpdateRunStarted(ctx context.Context, id int64, update *RunStartUpdate) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE runs
-	SET state = ?, session_name = ?, runtime_dir = ?, output_path = ?, exit_path = ?, worktree_path = ?, branch = ?
+	SET state = ?, session_name = ?, runtime_dir = ?, output_path = ?, exit_path = ?, worktree_path = ?, branch = ?,
+		backend = ?, backend_target = ?, deadline_at = ?
 	WHERE id = ?`,
 		string(model.RunRunning),
 		nullIfEmpty(update.SessionName),
@@ -225,6 +295,9 @@ func (s *Store) UpdateRunStarted(ctx context.Context, id int64, update *RunStart
 		nullIfEmpty(update.ExitPath),
 		nullIfEmpty(update.WorktreePath),
 		nullIfEmpty(update.Branch),
+		nullIfEmpty(update.Backend),
+		nullIfEmpty(update.BackendTarget),
+		nullableTime(update.DeadlineAt),
 		id,
 	)
 	if err != nil {
@@ -454,7 +527,8 @@ func (s *Store) ListRunsByStates(ctx context.Context, states ...model.RunState) 
 	query := fmt.Sprintf(`SELECT
 		id, project_id, project_path, trigger_id, trigger_type, task_id, task_type,
 		resource_key, branch, state, session_name, runtime_dir, output_path, exit_path,
-		worktree_path, started_at, completed_at, exit_code, error_message
+		worktree_path, started_at, completed_at, exit_code, error_message,
+		backend, backend_target, deadline_at, failure_reason
 	FROM runs
 	WHERE state IN (%s)
 	ORDER BY started_at ASC`, strings.Join(placeholders, ","))
@@ -490,7 +564,8 @@ func (s *Store) listRunsWhere(ctx context.Context, where string, args ...any) ([
 	query := fmt.Sprintf(`SELECT
 		id, project_id, project_path, trigger_id, trigger_type, task_id, task_type,
 		resource_key, branch, state, session_name, runtime_dir, output_path, exit_path,
-		worktree_path, started_at, completed_at, exit_code, error_message
+		worktree_path, started_at, completed_at, exit_code, error_message,
+		backend, backend_target, deadline_at, failure_reason
 	FROM runs
 	WHERE %s
 	ORDER BY started_at ASC`, where)
@@ -680,6 +755,10 @@ func scanRun(scanner interface{ Scan(dest ...any) error }) (model.RunRecord, err
 	var completedAt sql.NullString
 	var exitCode sql.NullInt64
 	var errorMessage sql.NullString
+	var backendName sql.NullString
+	var backendTarget sql.NullString
+	var deadlineAt sql.NullString
+	var failureReason sql.NullString
 	var startedAt string
 	var state string
 	if err := scanner.Scan(
@@ -702,6 +781,10 @@ func scanRun(scanner interface{ Scan(dest ...any) error }) (model.RunRecord, err
 		&completedAt,
 		&exitCode,
 		&errorMessage,
+		&backendName,
+		&backendTarget,
+		&deadlineAt,
+		&failureReason,
 	); err != nil {
 		return model.RunRecord{}, fmt.Errorf("scan run: %w", err)
 	}
@@ -734,6 +817,25 @@ func scanRun(scanner interface{ Scan(dest ...any) error }) (model.RunRecord, err
 	}
 	if errorMessage.Valid {
 		record.ErrorMessage = errorMessage.String
+	}
+	// Legacy rows (pre-v3) have NULL/empty backend columns. The row contract is
+	// that they read back as the default Backend ("tmux") with the session name
+	// as the Backend target, so the tmux adapter can still reap a run that was
+	// started before the upgrade.
+	record.Backend = model.DefaultBackend
+	if backendName.Valid && backendName.String != "" {
+		record.Backend = backendName.String
+	}
+	record.BackendTarget = record.SessionName
+	if backendTarget.Valid && backendTarget.String != "" {
+		record.BackendTarget = backendTarget.String
+	}
+	if deadlineAt.Valid && deadlineAt.String != "" {
+		deadline := mustParseTime(deadlineAt.String)
+		record.DeadlineAt = &deadline
+	}
+	if failureReason.Valid {
+		record.FailureReason = failureReason.String
 	}
 	return record, nil
 }

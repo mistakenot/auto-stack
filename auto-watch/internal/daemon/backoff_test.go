@@ -10,63 +10,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mistakenot/auto-shared/backend"
+	"github.com/mistakenot/auto-shared/backend/backendtest"
 	"github.com/mistakenot/auto-watch/internal/daemon"
 	"github.com/mistakenot/auto-watch/internal/model"
-	"github.com/mistakenot/auto-watch/internal/runner"
 	"github.com/mistakenot/auto-watch/internal/store"
 )
 
-// startupFailBackend models a task that fails to start (e.g. backend launch
-// error). startWorker returns the error and Dispatch marks the run terminal
-// immediately, so the run is never seen by Reap.
-type startupFailBackend struct{}
-
-func (startupFailBackend) Start(context.Context, *runner.StartSpec) (runner.Handle, error) {
-	return runner.Handle{}, errors.New("backend start failed")
-}
-func (startupFailBackend) Kill(context.Context, runner.Handle) error { return nil }
-func (startupFailBackend) SessionExists(context.Context, string) (bool, error) {
-	return false, nil
-}
-
-// failingBackend models a task that always exits non-zero, the same way
-// fakeBackend models a passing task (exit 0). Reap reads the exit-code file and
-// transitions the run to FAILED.
-type failingBackend struct{}
-
-func (failingBackend) Start(_ context.Context, spec *runner.StartSpec) (runner.Handle, error) {
-	if err := os.WriteFile(spec.OutputPath, []byte("boom\n"), 0o644); err != nil {
-		return runner.Handle{}, err
-	}
-	if err := os.WriteFile(spec.ExitPath, []byte("1\n"), 0o644); err != nil {
-		return runner.Handle{}, err
-	}
-	return runner.Handle{SessionName: spec.SessionName, ExitPath: spec.ExitPath, OutputPath: spec.OutputPath}, nil
-}
-
-func (failingBackend) Kill(context.Context, runner.Handle) error { return nil }
-func (failingBackend) SessionExists(context.Context, string) (bool, error) {
-	return false, nil
-}
-
-// exitCodeBackend writes whatever exit code is currently set. The daemon runs
-// the tick path synchronously (no worker goroutine), so the test may flip code
-// between ticks without a data race.
-type exitCodeBackend struct{ code int }
-
-func (b *exitCodeBackend) Start(_ context.Context, spec *runner.StartSpec) (runner.Handle, error) {
-	if err := os.WriteFile(spec.OutputPath, []byte("out\n"), 0o644); err != nil {
-		return runner.Handle{}, err
-	}
-	if err := os.WriteFile(spec.ExitPath, fmt.Appendf(nil, "%d\n", b.code), 0o644); err != nil {
-		return runner.Handle{}, err
-	}
-	return runner.Handle{SessionName: spec.SessionName, ExitPath: spec.ExitPath, OutputPath: spec.OutputPath}, nil
-}
-
-func (b *exitCodeBackend) Kill(context.Context, runner.Handle) error { return nil }
-func (b *exitCodeBackend) SessionExists(context.Context, string) (bool, error) {
-	return false, nil
+// startupFailRegistry models a task that fails to start (a confirmed Backend
+// Start error, not ErrStartUncertain): startWorker returns the error and
+// Dispatch marks the run terminal immediately, so the run is never seen by Reap.
+func startupFailRegistry() *backend.Registry {
+	f := &backendtest.Fake{}
+	f.SetStartErr(errors.New("backend start failed"))
+	return backend.NewRegistry(f)
 }
 
 // setupBackoffProject registers a single project with one bash task fired by an
@@ -131,7 +88,7 @@ func TestFailureBackoffExponential(t *testing.T) {
 
 	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	var clock time.Time
-	service := daemon.New(db, failingBackend{}, nil, func() time.Time { return clock }, nil)
+	service := daemon.New(db, backend.NewRegistry(backendtest.New(1)), nil, func() time.Time { return clock }, nil)
 
 	var dispatched []int
 	prev := 0
@@ -166,7 +123,7 @@ func TestStartupFailureBacksOff(t *testing.T) {
 
 	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	var clock time.Time
-	service := daemon.New(db, startupFailBackend{}, nil, func() time.Time { return clock }, nil)
+	service := daemon.New(db, startupFailRegistry(), nil, func() time.Time { return clock }, nil)
 
 	var dispatched []int
 	prev := 0
@@ -200,9 +157,9 @@ func TestBackoffResetsOnSuccess(t *testing.T) {
 	ctx := context.Background()
 
 	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	backend := &exitCodeBackend{code: 1}
+	fake := backendtest.New(1)
 	var clock time.Time
-	service := daemon.New(db, backend, nil, func() time.Time { return clock }, nil)
+	service := daemon.New(db, backend.NewRegistry(fake), nil, func() time.Time { return clock }, nil)
 
 	step := func(m int) {
 		clock = base.Add(time.Duration(m) * time.Minute)
@@ -224,7 +181,7 @@ func TestBackoffResetsOnSuccess(t *testing.T) {
 
 	// Switch to success and wait out the window; the run at minute 7 succeeds and
 	// resets the streak.
-	backend.code = 0
+	fake.SetExit(0)
 	step(4)
 	step(5)
 	step(6)
@@ -232,7 +189,7 @@ func TestBackoffResetsOnSuccess(t *testing.T) {
 
 	// Back to failing. With the reset, minute 8 dispatches (no backoff), fails as
 	// fail#1 (next eligible minute 9), so minute 9 dispatches again immediately.
-	backend.code = 1
+	fake.SetExit(1)
 	step(8)
 	runsAfter8 := countRuns(t, db)
 	step(9)

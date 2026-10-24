@@ -36,7 +36,7 @@ func TestReapSurvivesUnrecordedExitCode(t *testing.T) {
 			db := newTestStore(t)
 			projectPath := t.TempDir()
 			now := time.Date(2026, 9, 7, 0, 1, 21, 0, time.UTC)
-			svc := daemon.New(db, &recordingBackend{}, nil, func() time.Time { return now }, nil)
+			svc := daemon.New(db, runningRegistry(), nil, func() time.Time { return now }, nil)
 			ctx := context.Background()
 
 			runID, err := svc.Dispatch(ctx, bashReserveInput(projectPath, now), model.TaskDef{Type: "bash", Command: "auto etl run"})
@@ -78,7 +78,7 @@ func TestReapRepeatsCleanlyAfterUnrecordedExitCode(t *testing.T) {
 	db := newTestStore(t)
 	projectPath := t.TempDir()
 	now := time.Date(2026, 9, 7, 0, 1, 21, 0, time.UTC)
-	svc := daemon.New(db, &recordingBackend{}, nil, func() time.Time { return now }, nil)
+	svc := daemon.New(db, runningRegistry(), nil, func() time.Time { return now }, nil)
 	ctx := context.Background()
 
 	runID, err := svc.Dispatch(ctx, bashReserveInput(projectPath, now), model.TaskDef{Type: "bash", Command: "auto etl run"})
@@ -124,7 +124,7 @@ func TestReapStillReportsRecordedExitCodes(t *testing.T) {
 			db := newTestStore(t)
 			projectPath := t.TempDir()
 			now := time.Date(2026, 9, 7, 0, 1, 21, 0, time.UTC)
-			svc := daemon.New(db, &recordingBackend{}, nil, func() time.Time { return now }, nil)
+			svc := daemon.New(db, runningRegistry(), nil, func() time.Time { return now }, nil)
 			ctx := context.Background()
 
 			runID, err := svc.Dispatch(ctx, bashReserveInput(projectPath, now), model.TaskDef{Type: "bash", Command: "echo hi"})

@@ -81,7 +81,7 @@ func TestCleanWorktreeIdempotent(t *testing.T) {
 	}
 
 	current := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
 
 	for i := range 5 {
 		if err := service.Tick(ctx); err != nil {
@@ -147,7 +147,7 @@ func TestRunRetentionPruneEmptyRuntimeDir(t *testing.T) {
 		t.Fatalf("MarkRunTerminal: %v", err)
 	}
 
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
 	if err := service.Tick(ctx); err != nil {
 		t.Fatalf("tick failed: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestWALCheckpointOnTick(t *testing.T) {
 	}
 
 	current := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
 	if err := service.Tick(ctx); err != nil {
 		t.Fatalf("tick failed: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestEventRetentionPrune(t *testing.T) {
 		}
 	}
 
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
 	if err := service.Tick(ctx); err != nil {
 		t.Fatalf("tick failed: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestRunRetentionPrune(t *testing.T) {
 		t.Fatalf("update active started: %v", err)
 	}
 
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return current }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
 	if err := service.Tick(ctx); err != nil {
 		t.Fatalf("tick failed: %v", err)
 	}

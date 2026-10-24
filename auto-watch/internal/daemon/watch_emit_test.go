@@ -58,7 +58,7 @@ func TestDispatchEmitsWatchTaskStarted(t *testing.T) {
 
 	// No --ctl-events knob exists on the daemon Service: watch.task.* is a
 	// data-plane stream that is always emitted when a hub is present.
-	svc := daemon.New(db, &recordingBackend{}, nil, func() time.Time { return now }, hub)
+	svc := daemon.New(db, runningRegistry(), nil, func() time.Time { return now }, hub)
 
 	runID, err := svc.Dispatch(context.Background(), bashReserveInput(projectPath, now), model.TaskDef{Type: "bash", Command: "echo hi"})
 	if err != nil {
@@ -97,7 +97,7 @@ func TestReapEmitsWatchTaskCompleted(t *testing.T) {
 	sink := &collectSink{}
 	cancel := hub.Subscribe(sink)
 	defer cancel()
-	svc := daemon.New(db, &recordingBackend{}, nil, func() time.Time { return now }, hub)
+	svc := daemon.New(db, runningRegistry(), nil, func() time.Time { return now }, hub)
 
 	runID, err := svc.Dispatch(context.Background(), bashReserveInput(projectPath, now), model.TaskDef{Type: "bash", Command: "echo hi"})
 	if err != nil {
@@ -138,7 +138,7 @@ func TestReapEmitsWatchTaskFailed(t *testing.T) {
 	sink := &collectSink{}
 	cancel := hub.Subscribe(sink)
 	defer cancel()
-	svc := daemon.New(db, &recordingBackend{}, nil, func() time.Time { return now }, hub)
+	svc := daemon.New(db, runningRegistry(), nil, func() time.Time { return now }, hub)
 
 	runID, err := svc.Dispatch(context.Background(), bashReserveInput(projectPath, now), model.TaskDef{Type: "bash", Command: "boom"})
 	if err != nil {
@@ -175,7 +175,7 @@ func TestNilHubDispatchDoesNotPanic(t *testing.T) {
 	db := newTestStore(t)
 	projectPath := t.TempDir()
 	now := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
-	svc := daemon.New(db, &recordingBackend{}, nil, func() time.Time { return now }, nil)
+	svc := daemon.New(db, runningRegistry(), nil, func() time.Time { return now }, nil)
 
 	if _, err := svc.Dispatch(context.Background(), bashReserveInput(projectPath, now), model.TaskDef{Type: "bash", Command: "echo hi"}); err != nil {
 		t.Fatalf("Dispatch with nil hub: %v", err)

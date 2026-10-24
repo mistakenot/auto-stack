@@ -64,7 +64,7 @@ func newStartCmd(application *app.App) *cobra.Command {
 			}
 			defer func() { _ = db.Close() }()
 
-			status, checks := doctor.Run(cmd.Context(), application.CWD)
+			status, checks := doctor.Run(cmd.Context(), application.CWD, application.Backends.Names())
 			if status != "ok" || doctor.HasFailures(checks) {
 				for _, check := range checks {
 					fmt.Fprintf(cmd.ErrOrStderr(), "%s: %s - %s\n", check.Name, check.Status, check.Message)
@@ -76,7 +76,7 @@ func newStartCmd(application *app.App) *cobra.Command {
 			}
 
 			hub := bus.NewHub()
-			service := daemon.New(db, application.Backend, cmd.OutOrStdout(), application.Now, hub)
+			service := daemon.New(db, application.Backends, cmd.OutOrStdout(), application.Now, hub)
 			service.SetRetentionDays(retentionDays)
 			if once {
 				if err := writePIDMetadata(); err != nil {
@@ -231,7 +231,7 @@ func newDoctorCmd(application *app.App) *cobra.Command {
 		Use:   "doctor",
 		Short: "Check daemon prerequisites and config health",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			status, checks := doctor.Run(cmd.Context(), application.CWD)
+			status, checks := doctor.Run(cmd.Context(), application.CWD, application.Backends.Names())
 			if jsonOutput {
 				if err := textout.WriteJSON(cmd.OutOrStdout(), map[string]any{"status": status, "checks": checks}); err != nil {
 					return &ExitError{Code: 1, Err: err}
@@ -438,7 +438,7 @@ func newCleanCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 			defer func() { _ = db.Close() }()
-			service := daemon.New(db, application.Backend, nil, application.Now, nil)
+			service := daemon.New(db, application.Backends, nil, application.Now, nil)
 			if err := service.Clean(cmd.Context(), force); err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}

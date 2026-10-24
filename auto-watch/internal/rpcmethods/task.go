@@ -47,6 +47,7 @@ type RunView struct {
 	ProjectID    string `json:"project_id"`
 	TaskID       string `json:"task_id"`
 	State        string `json:"state"`
+	Backend      string `json:"backend,omitempty"`
 	SessionName  string `json:"session_name,omitempty"`
 	WorktreePath string `json:"worktree_path,omitempty"`
 	Branch       string `json:"branch,omitempty"`
@@ -245,6 +246,7 @@ func runToView(r *model.RunRecord) RunView {
 		ProjectID:    r.ProjectID,
 		TaskID:       r.TaskID,
 		State:        string(r.State),
+		Backend:      r.Backend,
 		SessionName:  r.SessionName,
 		WorktreePath: r.WorktreePath,
 		Branch:       r.Branch,
