@@ -322,6 +322,41 @@ func (s *Store) MarkRunTerminal(ctx context.Context, id int64, state model.RunSt
 	return nil
 }
 
+// MarkRunFailedWithReason marks a run failed and records its failure_reason in a
+// single UPDATE, alongside the exit code, completion time and error message.
+// Phase 3 will fold a conditional state guard (AND state IN ('pending','running'))
+// and a rows-affected result into MarkRunTerminal; until then the daemon guards
+// the once-only transition by re-reading the run under dispatchMu and only acting
+// while it is still RunRunning (see daemon.finishRun).
+func (s *Store) MarkRunFailedWithReason(ctx context.Context, id int64, exitCode *int, completedAt time.Time, errorMessage, failureReason string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE runs
+	SET state = ?, exit_code = ?, completed_at = ?, error_message = ?, failure_reason = ?
+	WHERE id = ?`,
+		string(model.RunFailed),
+		exitCode,
+		formatTime(completedAt),
+		nullIfEmpty(errorMessage),
+		nullIfEmpty(failureReason),
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf("mark run failed with reason: %w", err)
+	}
+	return nil
+}
+
+// CountRunEventsByType returns how many events of the given type are recorded
+// for a single run. Reap uses it to record a per-run warning (task_stop_failed)
+// exactly once even though the run is re-listed on every tick while its backend
+// Stop stays unconfirmed.
+func (s *Store) CountRunEventsByType(ctx context.Context, runID int64, eventType string) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE run_id = ? AND event_type = ?`, runID, eventType).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count run events by type: %w", err)
+	}
+	return count, nil
+}
+
 // ClearRunWorktreePath blanks a run's worktree_path after its worktree has been
 // removed, so subsequent Clean ticks early-return instead of re-processing the
 // already-removed worktree and re-logging worktree_removed events.

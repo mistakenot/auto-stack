@@ -33,8 +33,27 @@ const defaultRetentionDays = 7
 
 // defaultRunTimeout is the deadline window for a run whose TaskDef sets no
 // timeout (Open Question: 2h, decided with the user). The deadline is fixed to
-// started_at + timeout when the run starts.
+// started_at + timeout when the run starts. Legacy rows with a null deadline_at
+// fall back to started_at + defaultRunTimeout.
 const defaultRunTimeout = 2 * time.Hour
+
+// lostGrace is how long a run with no recorded exit and no live session is given
+// before it is reaped as session_lost, so a run that just started (or a briefly
+// slow backend manager) is not reaped by mistake.
+const lostGrace = 2 * time.Minute
+
+// Failure reasons stamped on a failed run's failure_reason column and carried on
+// the task_failed Event and the watch.task.failed bus payload. reasonStartFailed
+// is wired in phase 3 (failRun), the others in this phase (Reap).
+const (
+	reasonExitNonzero    = "exit_nonzero"
+	reasonExitUnrecorded = "exit_unrecorded"
+	reasonSessionLost    = "session_lost"
+	reasonTimedOut       = "timed_out"
+	reasonStartFailed    = "start_failed" // TODO(phase 3): stamp in failRun
+)
+
+var _ = reasonStartFailed // referenced by phase 3; kept here so the set lives in one place
 
 type Service struct {
 	Store    *store.Store
@@ -197,7 +216,7 @@ func (s *Service) Cancel(ctx context.Context, runID int64) (model.RunState, erro
 		Message:   msg,
 		Metadata:  map[string]any{"resource_key": run.ResourceKey},
 	})
-	s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, &run, nil, msg)
+	s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, &run, nil, msg, "")
 
 	if run.WorktreePath != "" {
 		_ = s.removeWorktree(ctx, &run, "cancel_cleanup")
@@ -208,7 +227,7 @@ func (s *Service) Cancel(ctx context.Context, runID int64) (model.RunState, erro
 
 // emitWatchTask broadcasts a watch.task.* data-plane event for the given run.
 // These events are always-on (not gated by --ctl-events); a nil hub is a no-op.
-func (s *Service) emitWatchTask(_ context.Context, typ string, run *model.RunRecord, exitCode *int, message string) {
+func (s *Service) emitWatchTask(_ context.Context, typ string, run *model.RunRecord, exitCode *int, message, reason string) {
 	if s.hub == nil {
 		return
 	}
@@ -224,6 +243,7 @@ func (s *Service) emitWatchTask(_ context.Context, typ string, run *model.RunRec
 		ResourceKey: run.ResourceKey,
 		Message:     message,
 		ExitCode:    exitCode,
+		Reason:      reason,
 	})
 	if err != nil {
 		return
@@ -350,92 +370,70 @@ func (s *Service) Reap(ctx context.Context) error {
 		// exit-code file reads back as StatusExited with a nil code (never an
 		// error), so it can never pin a run to running or wedge the daemon in a
 		// restart loop (the 33k-restart incident).
-		st, err := b.Status(ctx, binding, run.RuntimeDir)
-		if err != nil {
-			return err
+		st, statusErr := b.Status(ctx, binding, run.RuntimeDir)
+
+		// The deadline is checked BEFORE, and independently of, Status: a wedged
+		// backend that errors on Status must still be stopped at its deadline, so
+		// a hung run never overlaps a fresh one for 7 days. Legacy rows with a
+		// null deadline fall back to started_at + the 2h default.
+		deadline := run.StartedAt.Add(defaultRunTimeout)
+		if run.DeadlineAt != nil {
+			deadline = *run.DeadlineAt
 		}
+		if now.After(deadline) {
+			if err := s.reapPastDeadline(ctx, run, b, binding, st, statusErr, now); err != nil {
+				return err
+			}
+			continue
+		}
+
+		// Under the deadline a Status error leaves the run unchanged: a hung
+		// backend manager is not proof a run died. (Phase 3 broadens this
+		// containment to every per-run step.)
+		if statusErr != nil {
+			if err := s.logEvent(ctx, &store.EventInput{
+				Timestamp: now,
+				Level:     "warn",
+				EventType: "system_warning",
+				ProjectID: run.ProjectID,
+				TriggerID: run.TriggerID,
+				TaskID:    run.TaskID,
+				RunID:     &run.ID,
+				Message:   fmt.Sprintf("run %d status check failed", run.ID),
+				Metadata:  map[string]any{"error": statusErr.Error(), "resource_key": run.ResourceKey},
+			}); err != nil {
+				return err
+			}
+			continue
+		}
+
 		switch st.State {
 		case backend.StatusRunning:
 			continue
 		case backend.StatusLost:
-			// Phase 1 keeps today's behaviour: a run with no recorded exit and no
-			// live session stays running. Lost-reaping (failure_reason=session_lost)
-			// is a later phase.
-			continue
+			// A missing run is given a short grace before being declared lost, so a
+			// run that just started (or a briefly slow manager) is not reaped by
+			// mistake.
+			if now.Sub(run.StartedAt) < lostGrace {
+				continue
+			}
+			if err := s.finishRun(ctx, run, now, terminalUpdate{
+				state:        model.RunFailed,
+				reason:       reasonSessionLost,
+				journalMsg:   fmt.Sprintf("run %d lost its session before recording an exit code", run.ID),
+				errorMessage: "run session was lost before recording an exit code",
+				meta:         map[string]any{"session_name": run.SessionName},
+			}); err != nil {
+				return err
+			}
 		case backend.StatusExited:
-			// Terminal — handled below.
-		}
-		// The run has exited; clean up its (remain-on-exit) session, as today's
-		// Reap did after reading the exit-code file. Stopping an absent session is
-		// not an error.
-		_ = b.Stop(ctx, binding)
-
-		codePtr := st.ExitCode
-		interrupted := codePtr == nil
-		state := model.RunCompleted
-		message := ""
-		outcome := ""
-		switch {
-		case interrupted:
-			// No code was recorded, so report none rather than inventing one.
-			state = model.RunFailed
-			outcome = "was interrupted before recording an exit code"
-			message = tailOutput(run.OutputPath, 200)
-			if message == "" {
-				message = "run interrupted before recording an exit code"
+			// The run has exited; clean up its (remain-on-exit) session, as today's
+			// Reap did after reading the exit-code file. Stopping an absent session
+			// is not an error.
+			_ = b.Stop(ctx, binding)
+			if err := s.finishRun(ctx, run, now, exitedUpdate(run, st.ExitCode)); err != nil {
+				return err
 			}
-		case *codePtr != 0:
-			state = model.RunFailed
-			outcome = fmt.Sprintf("finished with exit code %d", *codePtr)
-			message = tailOutput(run.OutputPath, 200)
-			if message == "" {
-				message = fmt.Sprintf("run exited with code %d", *codePtr)
-			}
-		default:
-			outcome = fmt.Sprintf("finished with exit code %d", *codePtr)
-		}
-		eventType := "task_completed"
-		level := "info"
-		watchType := bus.TypeWatchTaskCompleted
-		if state == model.RunFailed {
-			eventType = "task_failed"
-			level = "error"
-			watchType = bus.TypeWatchTaskFailed
-		}
-
-		s.dispatchMu.Lock()
-		fresh, reErr := s.Store.GetRun(ctx, run.ID)
-		if reErr != nil || fresh.State != model.RunRunning {
-			s.dispatchMu.Unlock()
-			continue
-		}
-		if err := s.Store.MarkRunTerminal(ctx, run.ID, state, codePtr, now, message); err != nil {
-			s.dispatchMu.Unlock()
-			return err
-		}
-		// Maintain failure backoff (dispatchMu already held): a failed run extends
-		// the projectID:taskID streak; a successful run clears it.
-		s.recordRunOutcome(run.ProjectID, run.TaskID, state, now)
-		logErr := s.logEvent(ctx, &store.EventInput{
-			Timestamp: now,
-			Level:     level,
-			EventType: eventType,
-			ProjectID: run.ProjectID,
-			TriggerID: run.TriggerID,
-			TaskID:    run.TaskID,
-			RunID:     &run.ID,
-			Message:   fmt.Sprintf("run %d %s", run.ID, outcome),
-			Metadata: map[string]any{
-				"exit_code":    codePtr,
-				"session_name": run.SessionName,
-				"resource_key": run.ResourceKey,
-				"interrupted":  interrupted,
-			},
-		})
-		s.emitWatchTask(ctx, watchType, &fresh, codePtr, fmt.Sprintf("run %d %s", run.ID, outcome))
-		s.dispatchMu.Unlock()
-		if logErr != nil {
-			return logErr
 		}
 	}
 
@@ -471,11 +469,161 @@ func (s *Service) Reap(ctx context.Context) error {
 			Message:   message,
 			Metadata:  map[string]any{"resource_key": run.ResourceKey},
 		})
-		s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, &fresh, nil, message)
+		s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, &fresh, nil, message, "")
 		s.dispatchMu.Unlock()
 		if logErr != nil {
 			return logErr
 		}
+	}
+	return nil
+}
+
+// terminalUpdate carries everything finishRun needs to move a running run to a
+// terminal state: the target state, the (optional) exit code and failure reason,
+// the Event message and the stored error_message, plus any extra Event metadata.
+type terminalUpdate struct {
+	state        model.RunState
+	exitCode     *int
+	reason       string
+	journalMsg   string
+	errorMessage string
+	meta         map[string]any
+}
+
+// exitedUpdate builds the terminalUpdate for a run the backend reports exited,
+// preserving today's completed/failed/interrupted semantics and stamping the
+// exit_nonzero / exit_unrecorded reasons.
+func exitedUpdate(run *model.RunRecord, codePtr *int) terminalUpdate {
+	u := terminalUpdate{
+		state:    model.RunCompleted,
+		exitCode: codePtr,
+		meta: map[string]any{
+			"exit_code":    codePtr,
+			"session_name": run.SessionName,
+			"interrupted":  codePtr == nil,
+		},
+	}
+	switch {
+	case codePtr == nil:
+		// No code was recorded, so report none rather than inventing one.
+		u.state = model.RunFailed
+		u.reason = reasonExitUnrecorded
+		u.journalMsg = fmt.Sprintf("run %d was interrupted before recording an exit code", run.ID)
+		u.errorMessage = tailOutput(run.OutputPath, 200)
+		if u.errorMessage == "" {
+			u.errorMessage = "run interrupted before recording an exit code"
+		}
+	case *codePtr != 0:
+		u.state = model.RunFailed
+		u.reason = reasonExitNonzero
+		u.journalMsg = fmt.Sprintf("run %d finished with exit code %d", run.ID, *codePtr)
+		u.errorMessage = tailOutput(run.OutputPath, 200)
+		if u.errorMessage == "" {
+			u.errorMessage = fmt.Sprintf("run exited with code %d", *codePtr)
+		}
+	default:
+		u.journalMsg = fmt.Sprintf("run %d finished with exit code %d", run.ID, *codePtr)
+	}
+	return u
+}
+
+// finishRun transitions a running run to its terminal state under dispatchMu,
+// re-reading the run first so a run another writer already finished is left
+// alone (the once-only guard; phase 3 folds this into a conditional
+// MarkRunTerminal). It stamps failure_reason for failures, maintains failure
+// backoff, logs the task_completed/task_failed Event and emits the matching
+// watch.task.* bus event carrying the reason.
+func (s *Service) finishRun(ctx context.Context, run *model.RunRecord, now time.Time, u terminalUpdate) error {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+
+	fresh, reErr := s.Store.GetRun(ctx, run.ID)
+	if reErr != nil || fresh.State != model.RunRunning {
+		// Already finished by another writer (or this reap on a previous tick):
+		// mark nothing, emit nothing.
+		return nil
+	}
+
+	if u.state == model.RunFailed && u.reason != "" {
+		if err := s.Store.MarkRunFailedWithReason(ctx, run.ID, u.exitCode, now, u.errorMessage, u.reason); err != nil {
+			return err
+		}
+	} else if err := s.Store.MarkRunTerminal(ctx, run.ID, u.state, u.exitCode, now, u.errorMessage); err != nil {
+		return err
+	}
+
+	// Maintain failure backoff (dispatchMu already held): a failed run extends
+	// the projectID:taskID streak; a successful run clears it.
+	s.recordRunOutcome(run.ProjectID, run.TaskID, u.state, now)
+
+	eventType := "task_completed"
+	level := "info"
+	watchType := bus.TypeWatchTaskCompleted
+	if u.state == model.RunFailed {
+		eventType = "task_failed"
+		level = "error"
+		watchType = bus.TypeWatchTaskFailed
+	}
+	meta := u.meta
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta["resource_key"] = run.ResourceKey
+	if u.reason != "" {
+		meta["reason"] = u.reason
+	}
+	logErr := s.logEvent(ctx, &store.EventInput{
+		Timestamp: now,
+		Level:     level,
+		EventType: eventType,
+		ProjectID: run.ProjectID,
+		TriggerID: run.TriggerID,
+		TaskID:    run.TaskID,
+		RunID:     &run.ID,
+		Message:   u.journalMsg,
+		Metadata:  meta,
+	})
+	s.emitWatchTask(ctx, watchType, &fresh, u.exitCode, u.journalMsg, u.reason)
+	return logErr
+}
+
+// reapPastDeadline enforces a run's deadline independently of Status. It always
+// attempts Stop. If Stop is confirmed, or Status already reports the run
+// lost/exited, the run is failed timed_out exactly once. Otherwise the run is
+// kept running (so dedup stays in force and no overlapping run can start), a
+// task_stop_failed warning is recorded once per run, and Stop is retried on the
+// next tick.
+func (s *Service) reapPastDeadline(ctx context.Context, run *model.RunRecord, b backend.Backend, binding backend.Binding, st backend.Status, statusErr error, now time.Time) error {
+	stopErr := b.Stop(ctx, binding)
+	statusTerminal := statusErr == nil && (st.State == backend.StatusLost || st.State == backend.StatusExited)
+	if stopErr == nil || statusTerminal {
+		return s.finishRun(ctx, run, now, terminalUpdate{
+			state:        model.RunFailed,
+			reason:       reasonTimedOut,
+			journalMsg:   fmt.Sprintf("run %d timed out", run.ID),
+			errorMessage: "run exceeded its deadline and was stopped",
+			meta:         map[string]any{"session_name": run.SessionName},
+		})
+	}
+
+	// Stop could not be confirmed and the run is not known terminal: keep it
+	// running and surface the wedge once per run.
+	seen, err := s.Store.CountRunEventsByType(ctx, run.ID, "task_stop_failed")
+	if err != nil {
+		return err
+	}
+	if seen == 0 {
+		return s.logEvent(ctx, &store.EventInput{
+			Timestamp: now,
+			Level:     "warn",
+			EventType: "task_stop_failed",
+			ProjectID: run.ProjectID,
+			TriggerID: run.TriggerID,
+			TaskID:    run.TaskID,
+			RunID:     &run.ID,
+			Message:   fmt.Sprintf("run %d past deadline but backend stop is unconfirmed", run.ID),
+			Metadata:  map[string]any{"error": stopErr.Error(), "resource_key": run.ResourceKey},
+		})
 	}
 	return nil
 }
@@ -1034,7 +1182,7 @@ func (s *Service) startWorker(ctx context.Context, runID int64, task model.TaskD
 	run.SessionName = binding.Target
 	run.WorktreePath = worktreePath
 	run.Branch = branch
-	s.emitWatchTask(ctx, bus.TypeWatchTaskStarted, &run, nil, "task started")
+	s.emitWatchTask(ctx, bus.TypeWatchTaskStarted, &run, nil, "task started", "")
 	return nil
 }
 
@@ -1051,7 +1199,9 @@ func (s *Service) failRun(ctx context.Context, run *model.RunRecord, worktreePat
 	if worktreePath != "" {
 		run.WorktreePath = worktreePath
 	}
-	s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, run, nil, runErr.Error())
+	// TODO(phase 3): failRun will stamp failure_reason=start_failed and propagate
+	// the wrapped error; until then the failed Event carries no reason.
+	s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, run, nil, runErr.Error(), "")
 	if worktreePath != "" {
 		if err := s.removeWorktree(ctx, &model.RunRecord{
 			ID:           run.ID,

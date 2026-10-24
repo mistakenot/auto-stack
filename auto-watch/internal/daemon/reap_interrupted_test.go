@@ -67,6 +67,9 @@ func TestReapSurvivesUnrecordedExitCode(t *testing.T) {
 			if got.ExitCode != nil {
 				t.Errorf("exit code = %d, want nil — no code was recorded, so none should be reported", *got.ExitCode)
 			}
+			if got.FailureReason != "exit_unrecorded" {
+				t.Errorf("failure_reason = %q, want exit_unrecorded — an interrupted exit write is a failure with no code", got.FailureReason)
+			}
 		})
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mistakenot/auto-shared/backend"
+	"github.com/mistakenot/auto-shared/backend/backendtest"
 	"github.com/mistakenot/auto-shared/bus"
 	"github.com/mistakenot/auto-watch/internal/daemon"
 	"github.com/mistakenot/auto-watch/internal/model"
@@ -168,6 +170,114 @@ func TestReapEmitsWatchTaskFailed(t *testing.T) {
 	}
 	if eventTypeCount(t, db, "task_failed") != 1 {
 		t.Fatalf("expected SQLite task_failed row to persist")
+	}
+}
+
+// TestWatchTaskFailedCarriesReason (AC-17): each failure reason this phase
+// produces reaches the watch.task.failed bus payload as WatchTaskData.Reason,
+// and the SQLite task_failed Event metadata carries the same reason.
+//
+// start_failed is stamped by failRun in phase 3; it is intentionally not asserted
+// here. The other reason, exit_nonzero, is covered by TestReapEmitsWatchTaskFailed
+// above (an exit code of 1).
+func TestWatchTaskFailedCarriesReason(t *testing.T) {
+	type scenario struct {
+		name   string
+		reason string
+		drive  func(t *testing.T, db *store.Store, svc *daemon.Service, clk *testClock, fake *backendtest.Fake, projectPath string) int64
+	}
+	scenarios := []scenario{
+		{
+			name:   "exit_nonzero",
+			reason: "exit_nonzero",
+			drive: func(t *testing.T, db *store.Store, svc *daemon.Service, clk *testClock, _ *backendtest.Fake, projectPath string) int64 {
+				runID := dispatchBash(t, svc, projectPath, clk, model.TaskDef{Type: "bash", Command: "boom"})
+				run := getRun(t, db, runID)
+				if err := os.WriteFile(run.ExitPath, []byte("3\n"), 0o644); err != nil {
+					t.Fatalf("write exit file: %v", err)
+				}
+				return runID
+			},
+		},
+		{
+			name:   "exit_unrecorded",
+			reason: "exit_unrecorded",
+			drive: func(t *testing.T, db *store.Store, svc *daemon.Service, clk *testClock, _ *backendtest.Fake, projectPath string) int64 {
+				runID := dispatchBash(t, svc, projectPath, clk, model.TaskDef{Type: "bash", Command: "sleep 1"})
+				run := getRun(t, db, runID)
+				if err := os.WriteFile(run.ExitPath, []byte(""), 0o644); err != nil {
+					t.Fatalf("write exit file: %v", err)
+				}
+				return runID
+			},
+		},
+		{
+			name:   "session_lost",
+			reason: "session_lost",
+			drive: func(t *testing.T, _ *store.Store, svc *daemon.Service, clk *testClock, fake *backendtest.Fake, projectPath string) int64 {
+				runID := dispatchBash(t, svc, projectPath, clk, model.TaskDef{Type: "bash", Command: "sleep 1"})
+				fake.SetLost()
+				clk.advance(3 * time.Minute)
+				return runID
+			},
+		},
+		{
+			name:   "timed_out",
+			reason: "timed_out",
+			drive: func(t *testing.T, _ *store.Store, svc *daemon.Service, clk *testClock, _ *backendtest.Fake, projectPath string) int64 {
+				runID := dispatchBash(t, svc, projectPath, clk, model.TaskDef{Type: "bash", Command: "sleep 10000", Timeout: "30m"})
+				clk.advance(31 * time.Minute)
+				return runID
+			},
+		},
+	}
+
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			db := newTestStore(t)
+			projectPath := t.TempDir()
+			clk := newClock()
+			hub := bus.NewHub()
+			sink := &collectSink{}
+			cancel := hub.Subscribe(sink)
+			defer cancel()
+			fake := &backendtest.Fake{}
+			svc := daemon.New(db, backend.NewRegistry(fake), nil, clk.now, hub)
+
+			runID := sc.drive(t, db, svc, clk, fake, projectPath)
+			if err := svc.Reap(context.Background()); err != nil {
+				t.Fatalf("Reap: %v", err)
+			}
+
+			failed := sink.byType(bus.TypeWatchTaskFailed)
+			if len(failed) != 1 {
+				t.Fatalf("expected 1 watch.task.failed, got %d", len(failed))
+			}
+			var data bus.WatchTaskData
+			if err := json.Unmarshal(failed[0].Data, &data); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if data.Reason != sc.reason {
+				t.Fatalf("bus reason = %q, want %q", data.Reason, sc.reason)
+			}
+
+			// The SQLite Event metadata carries the same reason.
+			events, err := db.ListEvents(context.Background(), &store.EventFilter{Limit: 50, EventType: "task_failed"})
+			if err != nil {
+				t.Fatalf("ListEvents: %v", err)
+			}
+			found := false
+			for i := range events {
+				if events[i].RunID != nil && *events[i].RunID == runID {
+					if got, _ := events[i].Metadata["reason"].(string); got == sc.reason {
+						found = true
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("no task_failed Event for run %d with metadata reason=%q", runID, sc.reason)
+			}
+		})
 	}
 }
 

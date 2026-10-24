@@ -17,6 +17,11 @@ type WatchTaskData struct {
 	ResourceKey string `json:"resource_key"`
 	Message     string `json:"message,omitempty"`
 	ExitCode    *int   `json:"exit_code,omitempty"`
+	// Reason classifies a failed run on watch.task.failed
+	// (exit_nonzero | session_lost | timed_out | start_failed | exit_unrecorded).
+	// It is omitempty, so watch.task.started / watch.task.completed payloads are
+	// unchanged.
+	Reason string `json:"reason,omitempty"`
 }
 
 // RunProvenance carries envelope provenance from a run record, keeping bus
