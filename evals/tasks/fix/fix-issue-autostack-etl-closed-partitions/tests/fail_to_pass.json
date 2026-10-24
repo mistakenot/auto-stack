@@ -1,0 +1,8 @@
+[
+  "github.com/mistakenot/auto-etl/internal/mbt::TestConformanceHoldsForAClosedWeek",
+  "github.com/mistakenot/auto-etl/internal/mbt::TestPipelineConformance",
+  "github.com/mistakenot/auto-etl/internal/writer::TestConcurrentWritesDoNotLoseRows",
+  "github.com/mistakenot/auto-etl/internal/writer::TestWriteMergesIntoAClosedPartition",
+  "github.com/mistakenot/auto-etl/internal/writer::TestWriteMergesIntoAClosedSessionPartition",
+  "github.com/mistakenot/auto-etl/internal/writer::TestWriteRefusesToOverwriteAnUnreadablePartition"
+]

@@ -65,19 +65,42 @@ def load_job(job_dir: Path) -> list[Trial]:
     return trials
 
 
-def trajectory_matches(path: Path | None, pattern: re.Pattern[str]) -> bool:
-    """True when any tool call's arguments in an ATIF trajectory match `pattern`."""
+# Claude Code's file-editing tools. Edits made through Bash (`sed -i`, heredocs)
+# are not detected, so "before the first edit" can only be judged against these.
+EDIT_TOOLS = frozenset({"Edit", "MultiEdit", "Write", "NotebookEdit"})
+
+
+def _tool_calls(path: Path | None) -> list[dict] | None:
+    """Tool calls of an ATIF trajectory in order, or None when it cannot be read."""
     if path is None:
-        return False
+        return None
     try:
         doc = json.loads(path.read_text())
     except (OSError, ValueError):
-        return False
-    for step in doc.get("steps", []):
-        for call in step.get("tool_calls") or []:
-            if pattern.search(json.dumps(call.get("arguments"))):
-                return True
-    return False
+        return None
+    return [call for step in doc.get("steps", []) for call in step.get("tool_calls") or []]
+
+
+def trajectory_matches(path: Path | None, pattern: re.Pattern[str]) -> bool:
+    """True when any tool call's arguments in an ATIF trajectory match `pattern`."""
+    return trajectory_metric(path, pattern) == 1.0
+
+
+def trajectory_metric(path: Path | None, pattern: re.Pattern[str], *, before_edit: bool = False) -> float | None:
+    """1.0 when a tool call's arguments match `pattern`, else 0.0; None without a readable trajectory.
+
+    With `before_edit`, the match only counts when it comes before the first
+    call to a file-editing tool. A trial that never edits counts any match.
+    """
+    calls = _tool_calls(path)
+    if calls is None:
+        return None
+    for call in calls:
+        if pattern.search(json.dumps(call.get("arguments"))):
+            return 1.0
+        if before_edit and call.get("function_name") in EDIT_TOOLS:
+            return 0.0
+    return 0.0
 
 
 def completed_jobs(jobs_dir: Path, experiment: str, arm: str) -> dict[str, Path]:

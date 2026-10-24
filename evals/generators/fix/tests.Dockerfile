@@ -4,7 +4,7 @@
 # hidden tests compiled, so grading runs fully offline.
 FROM $go_image
 
-ENV GOFLAGS=-mod=mod GOTOOLCHAIN=auto CGO_ENABLED=0
+ENV GOFLAGS=$goflags GOTOOLCHAIN=auto CGO_ENABLED=0
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3-venv \

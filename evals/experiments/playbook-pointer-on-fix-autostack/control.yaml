@@ -1,0 +1,16 @@
+# Arm `control`: Claude Code on Opus 5.5 with the auto binary the fixture assumes.
+agents:
+  - name: claude-code
+    model_name: claude-opus-5-5
+    kwargs:
+      max_turns: 100
+
+# 3 attempts per task, so every (task, arm) cell has enough trials for intervals.
+n_attempts: 3
+
+environment:
+  mounts:
+    - type: bind
+      source: ${EVALS_ROOT}/.build/auto-linux-amd64
+      target: /usr/local/bin/auto
+      read_only: true

@@ -1,0 +1,8 @@
+[
+  "github.com/mistakenot/auto-watch/internal/daemon::TestReapRepeatsCleanlyAfterUnrecordedExitCode",
+  "github.com/mistakenot/auto-watch/internal/daemon::TestReapSurvivesUnrecordedExitCode",
+  "github.com/mistakenot/auto-watch/internal/daemon::TestReapSurvivesUnrecordedExitCode/empty",
+  "github.com/mistakenot/auto-watch/internal/daemon::TestReapSurvivesUnrecordedExitCode/not_a_number",
+  "github.com/mistakenot/auto-watch/internal/daemon::TestReapSurvivesUnrecordedExitCode/partial_write",
+  "github.com/mistakenot/auto-watch/internal/daemon::TestReapSurvivesUnrecordedExitCode/whitespace_only"
+]

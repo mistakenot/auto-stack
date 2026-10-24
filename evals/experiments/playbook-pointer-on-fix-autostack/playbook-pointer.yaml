@@ -1,0 +1,24 @@
+# Arm `playbook-pointer`: control plus a parent-directory CLAUDE.md telling the agent to consult the Playbook.
+# Everything except the second mount must stay identical to control.yaml.
+agents:
+  - name: claude-code
+    model_name: claude-opus-5-5
+    kwargs:
+      max_turns: 100
+
+# 3 attempts per task, so every (task, arm) cell has enough trials for intervals.
+n_attempts: 3
+
+environment:
+  mounts:
+    - type: bind
+      source: ${EVALS_ROOT}/.build/auto-linux-amd64
+      target: /usr/local/bin/auto
+      read_only: true
+    # --- treatment ---------------------------------------------------------
+    # Claude Code loads CLAUDE.md from every parent of its working directory
+    # (/app/<repo>), so this sits beside the repo's own file, outside its git diff.
+    - type: bind
+      source: ${EVALS_ROOT}/experiments/playbook-pointer-on-fix-autostack/team-CLAUDE.md
+      target: /app/CLAUDE.md
+      read_only: true

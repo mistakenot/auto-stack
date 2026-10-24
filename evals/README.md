@@ -110,6 +110,12 @@ These come from Harbor's documented practice. Lint enforces the checkable ones.
 - **One factor per treatment**, enforced by lint.
 - **Declare `uptake`** for treatments that offer a tool. `evals compare` reports
   how many trials actually used it, because an unused treatment measures nothing.
+- **Score process with `[trajectory_metrics]`** when the question is about what the
+  agent did rather than what it produced. Each entry is a regex over tool-call
+  arguments that becomes a 0/1 metric per trial, in every arm, so it can be the
+  primary metric and gets the same paired statistics as a reward. Add
+  `before_edit = true` to count a match only before the first `Edit`/`Write`
+  call. Edits made through Bash are not detected.
 - **Errored trials are not failures.** Harbor still grades a rate-limited trial
   as 0. `evals compare` excludes any trial with an exception and reports errors
   by type.

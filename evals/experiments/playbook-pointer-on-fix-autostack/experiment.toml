@@ -1,0 +1,45 @@
+# Experiment: when told to, do agents actually consult the Playbook before changing code?
+# Step 1 of evaluating the reflect loop. It measures uptake only: whether Rules
+# are looked up, read, and given feedback. Whether they improve the fix is a later
+# experiment, and `reward` is reported here as context, not as the verdict.
+#
+# Both arms get the auto binary, because the fixture's CLAUDE.md and skills assume
+# it. Control already mentions the Playbook in CLAUDE.md and ships the
+# playbook-search and reflect-playbook skills, so control measures unprompted use.
+
+question = "Does a one-line team instruction to check the Playbook make Claude Code look up Rules before it edits code?"
+hypothesis = "The playbook-pointer arm retrieves Rules before its first edit in more trials than control, which rarely does so unprompted."
+dataset = "fix-autostack"
+primary_metric = "rules_retrieved_before_edit"
+secondary_metrics = ["rules_retrieved", "rules_selected", "rules_feedback", "reward",
+                     "agent_sec", "input_tokens", "output_tokens", "cost_usd"]
+
+prepare = [
+  "make -C .. dist GOOS=linux GOARCH=amd64 DIST_DIR=evals/.build",
+]
+
+# Process measures scored from each trial's trajectory, in every arm.
+# Edits made through Bash are invisible to `before_edit`; see results.EDIT_TOOLS.
+[trajectory_metrics.rules_retrieved]
+pattern = "\\bauto\\s+reflect\\s+retrieve\\b"
+
+[trajectory_metrics.rules_retrieved_before_edit]
+pattern = "\\bauto\\s+reflect\\s+retrieve\\b"
+before_edit = true
+
+[trajectory_metrics.rules_selected]
+pattern = "\\bauto\\s+reflect\\s+select\\b"
+
+[trajectory_metrics.rules_feedback]
+pattern = "\\bauto\\s+reflect\\s+feedback\\b"
+
+[arms.control]
+description = "Claude Code on Opus 5.5 with the auto binary on PATH and the fixture's own CLAUDE.md and skills."
+
+[arms.playbook-pointer]
+description = "Control plus /app/CLAUDE.md, a parent-directory memory file with one team instruction to consult the Playbook."
+# The instruction is a file mount, not extra_instructions: it reaches the agent
+# the way a real team rule would, loaded beside the repo's long CLAUDE.md rather
+# than prepended to the task prompt.
+changes = ["environment.mounts"]
+uptake = "\\bauto\\s+reflect\\s+retrieve\\b"

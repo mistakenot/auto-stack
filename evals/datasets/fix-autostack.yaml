@@ -1,0 +1,6 @@
+# Dataset `fix-autostack`: real auto-stack fixes, in the full monorepo with its own
+# CLAUDE.md, skills, and committed Playbook (.auto/reflect). The setting where
+# Playbook Rules are meant to be used, so it measures whether agents consult them.
+datasets:
+  - path: tasks/fix
+    task_names: ["fix-issue-autostack-*"]

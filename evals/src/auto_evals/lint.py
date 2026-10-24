@@ -206,6 +206,25 @@ def _check_experiment(layout: Layout, exp_dir: Path, *, resolve_arms: bool) -> l
                 re.compile(pattern)
             except re.error as e:
                 err("uptake_regex", f"arms.{arm}.uptake", f"invalid regex: {e}", pattern)
+    tm = exp.get("trajectory_metrics", {})
+    if not isinstance(tm, dict):
+        err("trajectory_metric_invalid", "trajectory_metrics", "must be a table of named metrics")
+        tm = {}
+    for metric, spec in tm.items():
+        where = f"trajectory_metrics.{metric}"
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", metric):
+            err("name_format", where, "metric name must be snake_case, like reward keys", metric)
+        if not isinstance(spec, dict) or not isinstance(spec.get("pattern"), str):
+            err("trajectory_metric_invalid", where, "needs `pattern`, a regex over tool-call arguments")
+            continue
+        try:
+            re.compile(spec["pattern"])
+        except re.error as e:
+            err("trajectory_metric_invalid", f"{where}.pattern", f"invalid regex: {e}", spec["pattern"])
+        if unknown := sorted(set(spec) - {"pattern", "before_edit"}):
+            err("trajectory_metric_invalid", where, "only `pattern` and `before_edit` are allowed", unknown)
+        if "before_edit" in spec and not isinstance(spec["before_edit"], bool):
+            err("trajectory_metric_invalid", f"{where}.before_edit", "must be true or false", spec["before_edit"])
     for yml in exp_dir.glob("*.yaml"):
         if yml.stem not in arms:
             err("arm_undeclared", yml.name, "arm file has no [arms.<name>] entry in experiment.toml", yml.stem)

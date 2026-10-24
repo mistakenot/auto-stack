@@ -12,6 +12,9 @@
 #   observed and expected behaviour and no hint of the fix.
 # Bump a task's `version` whenever a change alters what it measures.
 #
+# A fixture with a root go.work sets `workspace = true`: Go's workspace mode
+# rejects GOFLAGS=-mod=mod, and `go build ./...` matches nothing at its root.
+#
 # Rejected after review:
 # - cli/cli 8fcd6a64 (issue #14404, merge --delete-branch owner case): the hidden
 #   test stubs `isCrossRepository`, so it passes only with upstream's choice of
@@ -30,6 +33,13 @@ repo_dir = "cobra"
 [fixtures.caddy]
 repo = "https://github.com/caddyserver/caddy"
 repo_dir = "caddy"
+
+# auto-stack itself: a go.work monorepo with a long CLAUDE.md, ~47 skills and a
+# committed Playbook (.auto/reflect), from 2026-06-29 on.
+[fixtures.autostack]
+repo = "https://github.com/mistakenot/auto-stack"
+repo_dir = "auto-stack"
+workspace = true
 
 # --- GitHub CLI: large repo, real issues
 
@@ -90,3 +100,32 @@ fixture = "caddy"
 sha = "7bf1b9057b29903efef451440e4664efd8775ec5"
 subject = "strip-suffix-encoding"
 statement_source = "curated from caddyserver/caddy PR #7877"
+
+# --- auto-stack: the monorepo itself, for experiments on its own Playbook.
+# Statements are curated from the fix commit's message, symptoms only.
+
+[[tasks]]
+fixture = "autostack"
+sha = "80909e5a61c640fe61e0105fea55f6add8dadd5c"
+subject = "etl-closed-partitions"
+statement_source = "curated from mistakenot/auto-stack commit 80909e5"
+
+# The hidden test asserts stderr contains "cannot be rendered", wording the fix
+# introduced, so the statement states that required output (behaviour, not fix).
+[[tasks]]
+fixture = "autostack"
+sha = "3be3fbd41b55aebcb09969be2718f716bfdf9a5a"
+subject = "skill-add-render-atomic"
+statement_source = "curated from mistakenot/auto-stack commit 3be3fbd"
+
+[[tasks]]
+fixture = "autostack"
+sha = "b69764df131e9b70c6271388aa26529e95f71871"
+subject = "watch-reap-exit-code"
+statement_source = "curated from mistakenot/auto-stack commit b69764d"
+
+[[tasks]]
+fixture = "autostack"
+sha = "6107c81ad2357b1fcfbefef7d57ef44794e5a146"
+subject = "init-skills-dir"
+statement_source = "curated from mistakenot/auto-stack commit 6107c81"

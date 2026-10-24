@@ -14,7 +14,7 @@ import tomllib
 from pathlib import Path
 from string import Template
 
-from .fixmine import Validation, validate
+from .fixmine import Validation, goflags, validate
 from .generate import Rendered
 from .golist import GO_IMAGE
 from .layout import Layout
@@ -33,11 +33,12 @@ def _history(layout: Layout, fixture: str, repo: str) -> Path:
     return path
 
 
-def _validated(layout: Layout, fixture: str, repo: str, history: Path, sha: str) -> Validation:
+def _validated(layout: Layout, fixture: str, repo: str, history: Path, sha: str, *,
+               workspace: bool = False) -> Validation:
     cache = layout.root / ".cache" / "fixval" / f"{fixture}@{sha}.json"
     if cache.is_file():
         return Validation(**json.loads(cache.read_text()))
-    v = validate(layout, fixture, repo, history, sha)
+    v = validate(layout, fixture, repo, history, sha, workspace=workspace)
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(v.__dict__, indent=2))
     return v
@@ -64,19 +65,28 @@ def render_all(layout: Layout, only: list[str] | None = None) -> list[Rendered]:
         if only and name not in only:
             continue
         history = _history(layout, t["fixture"], fx["repo"])
-        v = _validated(layout, t["fixture"], fx["repo"], history, t["sha"])
+        workspace = bool(fx.get("workspace", False))
+        v = _validated(layout, t["fixture"], fx["repo"], history, t["sha"], workspace=workspace)
         if not v.ok:
             raise SystemExit(f"error: {name}: commit {t['sha'][:12]} does not qualify: {v.reason}")
 
         patch = _git(history, "diff", "--binary", v.parent, v.sha, "--", *v.src_files)
         fix_lines = sum(1 for line in patch.splitlines()
                         if line[:1] in "+-" and not line.startswith(("+++", "---")))
+        # Hidden tests can add a package the parent lacks; it only exists once they are laid over.
+        present = [pkg for pkg in v.packages
+                   if subprocess.run(["git", "cat-file", "-e", f"{v.parent}:{pkg.removeprefix('./').removeprefix('.')}"],
+                                     cwd=history, capture_output=True).returncode == 0]
         fixed_tree = layout.root / ".cache" / "fixwork" / f"{t['fixture']}@{v.sha[:12]}" / "fixed"
         values = {
             "canary": layout.conventions["canary_guid"], "org": layout.org, "name": name,
             "version": t.get("version", "1.0.0"), "fixture": t["fixture"], "subject": t["subject"],
             "repo": fx["repo"], "repo_dir": fx["repo_dir"], "repo_name": fx["repo"].removeprefix("https://github.com/"),
             "parent": v.parent, "sha": v.sha, "go_image": GO_IMAGE, "packages": " ".join(v.packages),
+            "goflags": goflags(workspace),
+            "warm_test": f" && go test -count=1 -run '^$' {' '.join(present)}" if present else "",
+            # `./...` matches nothing at a workspace root; build every workspace module instead.
+            "build_all": "go build $(go list -m -f '{{.Dir}}/...')" if workspace else "go build ./...",
             "statement": _statement(layout, t), "statement_source": t["statement_source"],
             "n_f2p": len(v.fail_to_pass), "n_p2p": len(v.pass_to_pass), "n_src": len(v.src_files),
             "fix_lines": fix_lines,
