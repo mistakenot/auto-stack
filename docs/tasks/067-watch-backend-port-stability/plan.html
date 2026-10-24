@@ -1,0 +1,1127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>067: watch-backend-port-stability</title>
+  <script src="https://cdn.jsdelivr.net/gh/mistakenot/skills@pd-v0.9.0/pd-components/dist/pd.min.js" defer></script>
+  <script type="application/json" id="pd-meta">
+  {
+    "id": "067",
+    "name": "watch-backend-port-stability",
+    "status": "planning",
+    "created": "2026-10-24"
+  }
+  </script>
+</head>
+<body>
+  <!-- AI: When a PR is created for this work, update pr="pending" below with the PR URL -->
+  <pd-doc title="067: watch-backend-port-stability" status="draft" pr="pending" generated="2026-10-24">
+
+    <pd-tab name="Requirements">
+      <pd-scope></pd-scope>
+
+      <pd-section id="problem" title="Problem">
+        <md><script type="text/plain">
+`auto watch` works today (one cron Trigger running `auto etl run` every 10 minutes), but
+probing (2026-10-24: a code audit, an observability audit and a sandbox run of a fresh
+binary) shows it is not a safe base to build on:
+
+- **It dies too easily.** Almost any error inside a tick returns from `Tick`, and
+  `cli/ops.go:211` exits the process, so systemd restarts it into a crash loop. This
+  happened for real on 2026-10-23: a full disk produced 39+ restarts, and afterwards
+  `status`/`health` still reported `ok`.
+- **It loses or blocks work.** A run whose tmux session dies without writing an exit-code
+  file stays `running` forever, and dedup on its `resource_key` blocks that Trigger
+  permanently. There is no run timeout. `file_created` snapshots and the
+  `only_if_branch_changed` SHA advance even when the dispatch is skipped, so those fires
+  are silently lost. All three were reproduced in the sandbox.
+- **It is hard to debug.** The `runs` table holds everything an operator needs, but no
+  command exposes it. Journal lines print exit codes as pointer addresses and leave out
+  the run id and message. One stored error tail can be 370 KB.
+- **Execution is welded to tmux.** `runner.Backend` is an interface, but its shape is
+  tmux-specific (`SessionExists(sessionName)`), and run liveness is decided *outside* the
+  backend: `Reap` reads an exit-code file itself. Running tasks in ntm or herdr panes is
+  not possible without daemon surgery.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="goals" title="Goals">
+        <md><script type="text/plain">
+Smallest structural change that delivers these properties; iterate later.
+
+1. **Pluggable execution Backend (ports and adapters).** A stdlib-only Backend port in
+   `auto-shared`: `Start` a run, ask its `Status` (running / exited with code / lost),
+   `Stop` it, plus an optional `Send` capability for interactive panes. A run is
+   addressed by the same opaque `(manager, target)` pair `auto mail` uses for a Binding.
+   Ship **only the tmux adapter**, plus a fake Backend for tests. An ntm or herdr adapter
+   must be addable as one new file, with no daemon changes.
+2. **Selectable per TaskDef.** An optional `backend` field (default `tmux`). An unknown
+   name fails validation with a hint listing the registered Backends.
+3. **The daemon never dies from one bad run or Project.** Per-run and per-Project errors
+   become Events and the tick carries on. The startup preflight is fatal only when the
+   store can't be opened; Project config, tmux and claude checks become warnings.
+4. **Runs never hang silently.**
+   - A run whose Backend reports it lost (after a short grace) is failed as "session
+     lost".
+   - A run past its deadline is stopped and failed as "timed out". If the stop can't be
+     confirmed, the run is kept, retried every tick and flagged by `health`, so it never
+     overlaps a new run.
+   - Deadline: an optional per-TaskDef `timeout`, default **2h**.
+5. **Event-like fires are never lost.** When a `file_created` or `only_if_branch_changed`
+   fire can't dispatch one of its TaskDefs (dedup, backoff or start failure), a durable
+   per-TaskDef **owed fire** is recorded. It dispatches once that TaskDef is free. Plain
+   cron keeps today's skip semantics (missed-fire policy is deferred).
+6. **Errors are not swallowed.** `failRun` returns the error. `gitx` returns real git
+   errors. Terminal state changes are conditional, so one writer can't overwrite another.
+   SQLite pragmas apply to every pooled connection.
+7. **Leftovers are cleaned up.** `Clean` removes run directories with no row. No path
+   (TTL, `clean --force`, failed start) ever removes a dirty worktree. tmux sessions are tagged with their owner, so orphan
+   sessions can be reconciled later (see Q-3).
+8. **It is observable.**
+   - `auto watch run list` and `auto watch run get <id>` (JSON by default).
+   - Journal lines carry `run=` and `msg=`, with real exit codes.
+   - The stored output tail is byte-capped.
+   - A heartbeat file lets `health` report a stale daemon and low disk.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="out-of-scope" title="Out of Scope">
+        <md><script type="text/plain">
+Deliberately deferred; none of these is blocked by this design:
+
+- The ntm and herdr adapters themselves (this task only proves they need one file each).
+- Moving `auto mail`'s effectors onto the shared Backend port.
+- Durable (persisted) failure backoff.
+- Concurrency and missed-fire policies (Allow/Forbid/Replace, catch-up).
+- `systemd-run` transient units as a worker Backend.
+- Named branches and unpushed-commit protection for `claude` worktrees (only the
+  dirty-worktree guard is in scope).
+- Size caps or rotation for `output.log` itself (only the stored tail is capped).
+- Switching existing commands (`status`, `logs`, `task list`…) to JSON by default.
+- Splitting the tick into supervised goroutines.
+- New Trigger types (e.g. GitHub events), and RPC methods for runs.
+        </script></md>
+      </pd-section>
+
+      <pd-section id="open-questions" title="Open Questions">
+        <md><script type="text/plain">
+Assumptions this plan proceeds on (not gating):
+
+- [x] Port location: `auto-shared` (decided with the user). It must stay stdlib-only,
+  because the `auto-shared/go.mod` layering gate forbids any `require`.
+- [x] Default timeout 2h, per-TaskDef override (decided with the user).
+- [ ] Grace before a missing run is declared lost: 2 minutes (two ticks), so a run that
+  just started, or a slow tmux server, isn't reaped by mistake.
+- [ ] Health heartbeat: stale after 3 minutes without a successful tick. Low disk means
+  under 1 GiB free on the filesystem holding `~/.auto/watch`.
+- [ ] Stored output tail: last 8 KiB, with `\r` progress redraws collapsed.
+- [ ] `run` resource ships `list` + `get`. `describe` is skipped, because `list` already
+  returns the metadata rung.
+        </script></md>
+
+        <pd-question id="Q-1" status="answered" priority="p2" for="charlie"
+                     title="What do we call the (manager, target) pair that says where a run executes?"
+                     recommendedAnswer="Binding — reuse the canonical term and the opaque (Manager, Target) shape; define the type in the new auto-shared package; auto-mail keeps its own Binding for now and aliases it in a later task. Add Backend and Run to the glossary.">
+          <md><script type="text/plain">
+The glossary already uses **Handle** for mail's `#parent` alias, so the obvious Go
+name `Handle` would collide with a canonical term. **Binding** is defined as "the current
+physical target of a Subscription, recorded as an opaque (manager, target) pair". A run's
+location is the same kind of thing, with the same managers (tmux / ntm / herdr).
+Reusing it keeps one word per concept, but it widens Binding beyond Subscriptions. The
+alternative is a new term (e.g. *Placement*). This choice decides type names, the glossary
+and the `run get` JSON, so it is cheap to get right now and churny later.
+          </script></md>
+          <pd-answer by="review">sure</pd-answer>
+        </pd-question>
+
+        <pd-question id="Q-2" status="answered" priority="p2" for="charlie"
+                     title="Lost / timed-out runs: new terminal states, or failed + a reason column?"
+                     recommendedAnswer="Keep the state set (pending/running/completed/failed) and add a failure_reason column: exit_nonzero | session_lost | timed_out | start_failed. Filterable in run list without touching every state switch.">
+          <md><script type="text/plain">
+New terminal states (`lost`, `timed_out`) are the most explicit option. But every
+`switch` on state, plus health's queries and the RPC payloads, would have to learn them.
+A `failure_reason` column on a `failed` run carries the same information in one additive
+migration, and `run list --reason session_lost` can filter on it.
+          </script></md>
+          <pd-answer by="review">sure, failed reason column</pd-answer>
+        </pd-question>
+
+        <pd-question id="Q-3" status="answered" priority="p2" for="charlie"
+                     title="Orphan autowatch-run-* tmux sessions: kill them in this task?"
+                     recommendedAnswer="No. In this task the tmux adapter only tags each session it creates with its owner (the daemon's runs root, as tmux option @auto_owner). Reconciling tagged orphans (list + kill) is a follow-up; it would also add a List operation to the port.">
+          <md><script type="text/plain">
+Session names (`autowatch-run-<id>--<task>`) do not say which daemon owns them. A second
+daemon on another HOME (the sandbox probe, a harness run, a test) shares the default tmux
+server. If `Clean` killed every `autowatch-run-*` session with no row in *its own* store,
+it would kill that other daemon's live runs. Run ids also restart when a store is
+recreated. Killing safely needs an ownership tag, which old sessions don't have. Even
+*reporting* orphans needs a `List` operation on the port, which is more surface than this
+task wants. So: tag now, and reconcile later. Orphan **run directories** are still
+removed in this task, because they are local to one store.
+          </script></md>
+          <pd-answer by="review">yes</pd-answer>
+          <pd-answer by="charlie">Clarified in chat: "yes" = accept the recommendation (tag sessions with @auto_owner only; no killing in this task).</pd-answer>
+        </pd-question>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Verification">
+      <pd-section id="test-strategy" title="Test Strategy"
+                  summary="Fake-Backend unit tests for every failure path, each with a negative twin; one gated real-tmux e2e; a sandbox daemon run as the live check.">
+        <md><script type="text/plain">
+- **Unit tests against the fake Backend** (`auto-shared/backend/backendtest`). The fake
+  lets a test set a run's Status directly (running / exited N / lost) and inject errors
+  from Start, Status or Stop. This replaces the five ad-hoc fakes in the daemon and RPC
+  tests, and makes the lost, timeout and containment paths testable without tmux. All
+  daemon tests use the existing injectable `now`, so grace and deadline are time travel,
+  not sleeps.
+- **A negative twin for every reap or timeout test.** A healthy run that is still running
+  survives past the grace period, and a run under its deadline is not stopped. A passing
+  "reaped" test can otherwise be asserting a false-reap bug (memory: liveness tests can
+  encode the bug).
+- **The tmux adapter's own tests** run against a private tmux server: a `TMUX_TMPDIR` in
+  `t.TempDir()`, skipped when tmux is absent. They cover start, exit-code capture, Status
+  after the session is killed, Status when no server is running, Stop when the session is
+  already gone, and the call timeout.
+- **Store migration test**: a v2-schema database fixture (built in the test, rows
+  included) migrates to v3 without losing data, and migrating twice is a no-op.
+- **CLI tests** through `testutil.RunCLI` for `run list` / `run get`, `health`,
+  validation errors.
+- **Real-binary e2e**: extend the gated `e2e/start_tmux_test.go` (`AUTOWATCH_E2E=1`)
+  with a failing task (exit 3) and a lost session (kill the private tmux server).
+- **Live check** (manual, final phase): build the binary, run the daemon in the
+  foreground with a sandbox HOME and `TMUX_TMPDIR` (the probe recipe from 2026-10-24),
+  and confirm a hanging task times out and a killed session is reaped. Never touch the
+  real `autowatch.service` during execution.
+- Gates for every phase: `go build ./...`, `go test -race ./...` in `auto-shared` and
+  `auto-watch`, `go vet`, `golangci-lint` with the 1.26 toolchain (memory note), and the
+  glossary check once the glossary has changed.
+        </script></md>
+      </pd-section>
+
+      <pd-mermaid caption="Test layers">
+flowchart LR
+  U[Unit: fake Backend + injectable now] --> A[Adapter: private tmux server]
+  A --> M[Store migration v2 to v3]
+  M --> C[CLI via testutil.RunCLI]
+  C --> E[e2e: real binary + tmux, AUTOWATCH_E2E=1]
+  E --> L[Live: sandbox daemon, manual]
+      </pd-mermaid>
+
+      <pd-section id="acceptance-criteria" title="Acceptance Criteria">
+        <pd-trace caption="Acceptance coverage"></pd-trace>
+
+        <pd-ac id="AC-1" title="A new Backend plugs in without daemon changes" phases="1" tests="auto-watch/internal/daemon/backend_select_test.go,auto-shared/backend/backend_test.go">
+          <md><script type="text/plain">
+- Given a registry with the tmux Backend and a test-registered fake Backend named `fake`
+- When a TaskDef sets `"backend": "fake"` and its Trigger fires
+- Then the run is started through the fake, the row stores `backend=fake` and its
+  `backend_target`, and the run completes with the fake's exit code
+- And no file under `auto-watch/internal/daemon/` (excluding tests) mentions tmux:
+  `grep -n -i tmux auto-watch/internal/daemon/*.go | grep -v _test.go` prints nothing
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-2" title="Unknown backend fails validation with a hint" phases="1" tests="auto-watch/internal/config/validate_test.go">
+          <md><script type="text/plain">
+- Given a TaskDef with `"backend": "herdr"` and only `tmux` registered
+- When the project config is validated (CLI `task create`, doctor, or the daemon tick)
+- Then a ValidationError `{code: unknown_backend, path: $.tasks.<id>.backend, field: backend, value: herdr}`
+  is returned, its message names the registered Backends (`tmux`), only that TaskDef is
+  skipped, and other TaskDefs still run
+- And a TaskDef with no `backend` field uses `tmux`, so existing configs are unchanged
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-3" title="A lost run is failed after the grace period; a live one survives" phases="2" tests="auto-watch/internal/daemon/reap_liveness_test.go,auto-watch/internal/daemon/reap_interrupted_test.go,auto-shared/backend/backend_test.go,auto-shared/backend/tmux_test.go,auto-watch/e2e/start_tmux_test.go">
+          <md><script type="text/plain">
+- Given a running run whose Backend Status is `lost` (no exit-code file and no session)
+- When Reap runs 2 minutes or more after the run started
+- Then the run is `failed` with `failure_reason=session_lost`, a `task_failed` Event
+  carries `reason=session_lost`, and the next fire of that Trigger dispatches again
+  (no dedup skip)
+- Negative twin: a run whose Status is `running`, or `lost` but younger than the grace
+  period, stays `running` across several Reaps
+- Given an exit-code file that is empty or not a number (an interrupted exit write, as
+  covered today by `reap_interrupted_test.go`)
+- Then Status is `exited` with an unknown code, and the run is `failed` with
+  `exit_code=null` and `failure_reason=exit_unrecorded` on that tick. It does not stay
+  running, and it is not treated as a Status error
+- The launch wrapper writes the exit code atomically (temp file, then rename), so a
+  healthy run never exposes a partial file. Twin: a healthy run with no exit file yet
+  stays `running`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-4" title="A run past its deadline is stopped and failed; one under it is untouched" phases="2,5" tests="auto-watch/internal/daemon/reap_liveness_test.go,auto-watch/internal/config/validate_test.go,auto-watch/internal/cli/ops_test.go">
+          <md><script type="text/plain">
+- Given a TaskDef with `"timeout": "30m"` (or none, meaning the 2h default) and a run
+  still running
+- When Reap runs after `started_at + timeout`
+- Then Backend `Stop` is called once, the run is `failed` with
+  `failure_reason=timed_out`, and its Trigger is unblocked
+- Negative twin: at `deadline - 1m` the run stays `running` and Stop is not called
+- The deadline is checked **before**, and independently of, Status. When Status returns
+  an error on every tick past the deadline, Stop is still attempted on each of those ticks
+- When Stop fails, the run stays `running` (so no overlapping run can start), a
+  `task_stop_failed` warning Event is recorded (once per run), and `health` reports
+  `stop_unconfirmed` for it. On the first tick where Stop succeeds, or Status reports
+  `lost` or `exited`, the run is failed `timed_out` exactly once. Fake-Backend tests
+  assert both the stored state and that the fake saw no second Start while Stop was
+  unconfirmed
+- An invalid timeout (`"abc"`, `"0s"`, a negative value) is a ValidationError on
+  `$.tasks.<id>.timeout`
+          </script></md>
+        </pd-ac>
+      <pd-thread anchor="AC-4" status="resolved" priority="p1" title="Define deadline handling when Status or Stop fails">
+        <pd-comment by="review">The Solution and Stage 2 check deadlines only for Status=running; a Status error explicitly leaves the Run unchanged. A persistently wedged tmux server therefore bypasses the deadline forever, reproducing the seven-day blocked Run described in context.md despite Goal 4. Stop errors are also unspecified: Stage 3 says to warn and continue, which can leave the deadline Run active indefinitely, whereas marking it terminal without confirming Stop can permit overlapping execution. Specify the deadline/Status ordering and the retry and dedup policy when Stop cannot be confirmed. Add fake-Backend tests for repeated Status errors beyond the deadline and for Stop failure followed by recovery, with assertions about both stored state and actual execution.</pd-comment>
+        <pd-comment by="author">Fixed. The deadline is now checked first and independently of Status, so a wedged tmux server can't bypass it. Stop failure is fail-closed for overlap: the run stays `running` (so dedup prevents a second run), `task_stop_failed` is logged once, Stop is retried every tick, and health reports `stop_unconfirmed`. It becomes `timed_out` exactly once, on the first confirmed Stop or `lost`/`exited` Status. AC-4, Solution §3 and phase 2 add fake-Backend tests for repeated Status errors past the deadline and for Stop failing twice then succeeding, asserting both the stored state and that there was no second Start. The trade-off is recorded in Known Gaps.</pd-comment>
+      </pd-thread>
+
+        <pd-ac id="AC-5" title="One failing run or Project never stops the daemon" phases="3" tests="auto-watch/internal/daemon/tick_containment_test.go,auto-watch/internal/cli/ops_test.go,auto-watch/internal/doctor/doctor_test.go">
+          <md><script type="text/plain">
+- Given two Projects, where in Project A the Backend's Status returns an error for one
+  run and worktree removal fails for another
+- When Tick runs
+- Then each failure is recorded as a `system_warning` Event naming the run, Project B's
+  Triggers are still evaluated, and Tick returns nil
+- Given the store itself fails (closed database / write error)
+- When the `start` loop ticks
+- Then the process does **not** exit: it logs the error to stderr, records it in the
+  heartbeat file as `last_error`, and retries on the next tick
+- Given `auto watch start` is launched from a Project whose config is invalid (e.g. an
+  unknown Backend), and with tmux or claude missing from PATH, while another registered
+  Project has a valid bash TaskDef
+- Then the startup preflight prints those checks as warnings, the daemon starts, and the
+  valid Project's TaskDef runs. Only a failure to open or migrate the store exits at
+  startup
+          </script></md>
+        </pd-ac>
+      <pd-thread anchor="AC-5" status="resolved" priority="p1" title="Startup preflight still rejects the daemon for one invalid Project">
+        <pd-comment by="review">auto-watch/internal/cli/ops.go:65-75 calls doctor.Run and exits before the initial Tick when any check fails. doctor.Run calls checkProjectConfig for the current Project, and that check rejects the entire config through ValidateProjectConfig. With one unknown Backend in that Project, the daemon never reaches the per-TaskDef containment promised in AC-2/AC-5. The same preflight unconditionally requires tmux and claude, even for bash-only work on another Backend. Stage 3 only changes Tick error handling and leaves this gate intact. Define which startup checks remain fatal, move Project/TaskDef failures into the contained path, and test startup from an invalid Project while another registered Project has valid work.</pd-comment>
+        <pd-comment by="author">Confirmed (ops.go:65-75 exits on any doctor failure) and fixed. The preflight is split: store open/migrate (plus settings dir and host config) stays fatal; Project config, tmux and claude become printed warnings. Project/TaskDef problems then go through the tick's per-entry containment. `auto watch doctor` keeps its full report. AC-5 now covers starting from an invalid Project with tmux and claude missing while another Project runs a valid TaskDef. Added phase 3 step 3b and doctor.go/doctor_test.go to the file changes.</pd-comment>
+      </pd-thread>
+
+        <pd-ac id="AC-6" title="Trigger fires are not lost when a dispatch is skipped" phases="4" tests="auto-watch/internal/daemon/cursor_test.go,auto-watch/internal/daemon/daemon_integration_test.go,auto-watch/internal/store/store_test.go">
+          <md><script type="text/plain">
+- Given a `file_created` Trigger with TaskDefs A and B, where B's previous run is still
+  active
+- When a new matching file appears
+- Then A dispatches, B's skip records an **owed fire** `(project, trigger, B)`, the
+  shared snapshot advances as today, and on the first tick after B's run ends B
+  dispatches exactly once and its owed fire is deleted. A does not rerun
+- The same holds when B is backed off or B's Start fails, and for an
+  `only_if_branch_changed` cron Trigger whose new SHA reached A but not B
+- Repeated skips coalesce into one owed fire per TaskDef. An owed fire respects backoff.
+  A plain cron Trigger (no branch filter) records no owed fire, because its skip
+  semantics are unchanged
+- First-evaluation seeding is unchanged: the baseline (including an empty one) is
+  committed without dispatching. `TestStartOnceFileCreatedTriggerSeedsAndFires` still
+  passes, and an empty baseline followed by a first file fires once
+          </script></md>
+        </pd-ac>
+      <pd-thread anchor="AC-6" status="resolved" priority="p2" title="Preserve first-evaluation seeding when moving snapshot writes">
+        <pd-comment by="review">evaluateFileCreatedTrigger currently writes its baseline snapshot and trigger_state before returning when seeding=true (daemon.go:752-810), intentionally without dispatching. Stage 4 says snapshot and trigger_state are written only after a dispatch starts. Applied to this path, that rule prevents the initial baseline from ever being committed, so each tick can silently reseed and never fire. Define initial seeding as an explicit exception, including the first evaluation with no matching files. Preserve the existing TestStartOnceFileCreatedTriggerSeedsAndFires test and add the empty-baseline then first-file case.</pd-comment>
+        <pd-comment by="author">Resolved by changing the approach (see the shared-cursor thread). Cursor writes no longer move: the snapshot, trigger_state and branch-SHA keep their current timing, including the seeding path at daemon.go:752-810. Lost fires are handled by per-TaskDef owed fires instead. AC-6 and phase 4 keep `TestStartOnceFileCreatedTriggerSeedsAndFires` and add an empty baseline followed by a first file.</pd-comment>
+      </pd-thread>
+      <pd-thread anchor="AC-6" status="resolved" priority="p1" title="A shared Trigger cursor still drops partially dispatched work">
+        <pd-comment by="review">Both trigger_state and file_snapshots are keyed by Project + Trigger, while model.TriggerDef.Tasks supports multiple TaskDefs and active-run dedup is per TaskDef. Stage 4 explicitly advances last_branch_sha when at least one TaskDef dispatches. If A starts while B is deduped, backed off, or fails Start, advancing that shared SHA/snapshot consumes the fire for B permanently. Waiting for every TaskDef without tracking partial success can instead rerun A repeatedly. Define durable per-TaskDef acknowledgement or another explicit partial-dispatch policy that fulfills the no-lost-fires Goal for both Trigger types. Extend AC-6 and cursor tests with two TaskDefs, one successful and one skipped/failed, and recovery on a later tick.</pd-comment>
+        <pd-comment by="author">Fixed with a durable per-TaskDef acknowledgement: a new `owed_fires(project, trigger, task)` table (in the v3 migration). When a file_created or branch-SHA fire can't dispatch TaskDef X (dedup, backoff, Start failure), it upserts one coalesced row for X. Each tick drains owed fires for TaskDefs that are free, and deletes each row on dispatch. The shared cursor advances as today, so A never reruns and B is never dropped. Plain cron is excluded (missed-fire policy is deferred). AC-6 and the cursor tests now cover two TaskDefs with B deduped, backed off, or failing Start, recovering on a later tick.</pd-comment>
+      </pd-thread>
+
+        <pd-ac id="AC-7" title="Startup failures surface as errors, not as running runs" phases="1,3" tests="auto-watch/internal/daemon/dispatch_test.go,auto-watch/internal/rpcmethods/task_test.go,auto-shared/backend/tmux_test.go">
+          <md><script type="text/plain">
+- Given a Backend whose Start fails
+- When `task.run` is called over RPC (or Dispatch runs in a tick)
+- Then the run is `failed` with `failure_reason=start_failed`, the RPC returns an error
+  (not `State: running`), and `Dispatch` returns the wrapped error
+- Given the tmux adapter creates the session but its configuration fails or times out
+  (a fake `tmux` on PATH fails `set-option`)
+- Then the adapter kills the session it created and returns a confirmed failure. If that
+  kill cannot be confirmed either, it returns the Binding with `ErrStartUncertain`. The
+  daemon then records the Binding and keeps the run `running`, so Reap's Status and
+  deadline logic owns it, and it never re-dispatches over a possibly live command
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-8" title="Terminal state changes are conditional" phases="3" tests="auto-watch/internal/store/store_test.go">
+          <md><script type="text/plain">
+- Given a run that is already `completed`
+- When `MarkRunTerminal` is called on it with `failed`
+- Then the row is unchanged and the call reports that no row was updated, so callers
+  emit no duplicate terminal Event
+- And every pooled connection has `busy_timeout=5000` and `foreign_keys=1`: a test
+  opens several connections and checks the PRAGMA values on each
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-9" title="Git failures are errors, not empty strings" phases="3" tests="auto-watch/internal/gitx/git_test.go,auto-watch/internal/daemon/tick_containment_test.go">
+          <md><script type="text/plain">
+- Given an `only_if_branch_changed` Trigger on a branch that no longer exists
+- When the Trigger is due
+- Then a `system_warning` Event names the branch and the git error, the Trigger does
+  **not** fire, and the Project's other Triggers still run
+- And `FindRepoRoot` outside a repo returns an error, so `auto watch task list` run from
+  `/tmp` prints its "not inside a git repo" remediation
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-10" title="Clean removes orphan run dirs and keeps dirty worktrees" phases="4" tests="auto-watch/internal/daemon/clean_test.go">
+          <md><script type="text/plain">
+- Given `runs/13531/` with no matching row and an mtime older than 24h, and `runs/<new>/`
+  with no row but a fresh mtime
+- When Clean runs
+- Then only the old orphan directory is removed, and the removal is reported as an Event
+- Given a `claude` run's worktree with uncommitted changes
+- When it would be removed by **any** path: the 24h TTL, `clean --force`, cancel, or
+  `failRun` after a start failure
+- Then it is not removed, and a `worktree_kept_dirty` warning Event is logged once for
+  that run. If `IsDirty` itself errors, the worktree is kept (fail closed)
+- A run whose dirty worktree was kept is excluded from row retention while the worktree
+  still exists, so its row (and the `worktree_path` link) outlives the retention window
+- A clean worktree is still removed on every path, as today
+          </script></md>
+        </pd-ac>
+      <pd-thread anchor="AC-10" status="resolved" priority="p1" title="Apply dirty-worktree protection to every removal path">
+        <pd-comment by="review">The Goal says a dirty worktree is never force-removed, but AC-10 and Stage 4 only guard TTL removal. Clean(force=true) also calls removeWorktree, and failRun calls the same helper after a start failure; gitx.RemoveWorktree always passes --force. Those paths can still delete uncommitted work. In addition, retention deletes terminal Run rows after removing RuntimeDir regardless of whether the worktree was kept dirty, losing the durable association and the warning-dedup record. Put the protection in the shared removal path, specify fail-closed behavior for IsDirty errors and retention of preserved worktrees, and cover forced cleanup, failed-start cleanup, and retention-age dirty worktrees in verification.</pd-comment>
+        <pd-comment by="author">Fixed. The guard moves inside the shared `removeWorktree`, so TTL, `clean --force`, cancel and failRun are all covered. An `IsDirty` error keeps the worktree (fail closed). Retention skips runs whose worktree still exists, so the row and its worktree link survive, and the warning dedupes via an Event lookup. AC-10 and phase 4 cover every path plus a retention-age dirty worktree. The Goal wording now says 'no path'.</pd-comment>
+      </pd-thread>
+
+        <pd-ac id="AC-11" title="Journal lines are readable" phases="5" tests="auto-watch/internal/textout/format_test.go">
+          <md><script type="text/plain">
+- Given a `task_failed` Event for run 42 with exit code 3 and a message
+- When it is formatted for the journal
+- Then the line contains `run=42`, `exit_code=3` (never a `0x…` address) and
+  `msg="run 42 finished with exit code 3"`
+- And a nil exit code prints as `exit_code=null`
+- And backoff skips are recorded as `task_backoff` Events, not raw stderr lines
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-12" title="Stored output tail is bounded" phases="5" tests="auto-watch/internal/daemon/tail_test.go">
+          <md><script type="text/plain">
+- Given an `output.log` of 400 KB with no newlines and `\r` progress redraws
+- When a failed run's `error_message` is recorded
+- Then it is at most 8 KiB, keeps the final text after each line's last `\r`, and ends
+  with a breadcrumb naming the full output path
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-13" title="Runs are inspectable from the CLI" phases="5" tests="auto-watch/internal/cli/run_test.go">
+          <md><script type="text/plain">
+- Given runs in several states
+- When `auto watch run list` is run with no flags
+- Then stdout is a JSON array of every run's metadata (id, project, trigger, task, state,
+  failure_reason, exit_code, started/completed, backend), newest first, and
+  diagnostics go to stderr
+- And `--state`, `--task`, `--trigger`, `--project`, `--reason`, `--since` filter it.
+  Each takes one value, normalised (trimmed, lowercased); an invalid state or reason
+  exits non-zero with the valid values listed
+- When `auto watch run get 42` is run
+- Then the JSON is a CLI-owned projection of the **whole** `RunRecord`, not the RPC
+  `RunView`. It has: id, project_id, project_path, trigger_id, trigger_type, task_id,
+  task_type, resource_key, branch, state, failure_reason, exit_code, started_at,
+  completed_at, deadline_at, binding `{manager, target}`, runtime_dir, output_path,
+  exit_path, worktree_path, error_message, and an 8 KiB `output_tail` ending in the
+  path breadcrumb when it is truncated
+- Null semantics are asserted: `exit_code`, `completed_at` and `failure_reason` are null
+  while running; `deadline_at` is null on legacy rows; `worktree_path` is null for bash
+  runs
+- An unknown id exits 1 with `run 42 not found — list runs with: auto watch run list`
+- `--text` prints a human-readable table or record
+          </script></md>
+        </pd-ac>
+      <pd-thread anchor="AC-13" status="resolved" priority="p2" title="RunView reuse does not supply the promised full Run record">
+        <pd-comment by="review">The proposed Stage 5 reuses rpcmethods.RunView and adds backend, binding, failure_reason and output_tail. The current RunView (rpcmethods/task.go:46-59) omits trigger_id/type, project_path, task_type, resource_key, runtime_dir, output_path and exit_path, as well as the proposed deadline_at; runToView is also unexported. Merely adding the listed fields cannot satisfy this AC or even return the run/output paths in the CLI example. Specify a complete CLI response projection (or all required additions and an exported converter) and assert its JSON fields and null semantics in run_test.go.</pd-comment>
+        <pd-comment by="author">Fixed. `run get` now uses a CLI-owned `runJSON` projection of the whole RunRecord (the field list is spelled out in AC-13), with explicit null semantics asserted in run_test.go. RunView stays narrow and only gains backend and failure_reason. rpcmethods/task.go is no longer touched in phase 5.</pd-comment>
+      </pd-thread>
+
+        <pd-ac id="AC-14" title="Health reports a stale daemon and low disk" phases="5" tests="auto-watch/internal/cli/ops_test.go,auto-watch/internal/daemon/heartbeat_test.go">
+          <md><script type="text/plain">
+- Given `~/.auto/watch/heartbeat.json` whose `last_ok_tick_at` is more than 3 minutes
+  old (or missing)
+- When `auto watch health` runs
+- Then it reports the `stale_heartbeat` issue with the last error and the age, and exits 1
+- Given under 1 GiB free on the filesystem holding `~/.auto/watch`
+- Then it reports `low_disk` with the free bytes
+- With a fresh heartbeat and enough disk it reports `ok`, as today
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-15" title="Existing data survives the schema migration" phases="1,2" tests="auto-watch/internal/store/migrate_test.go">
+          <md><script type="text/plain">
+- Given a v2 database with completed, failed and running runs
+- When the v3 migration runs (on daemon start)
+- Then every row is preserved. Old rows read `backend=tmux` with
+  `backend_target=<session_name>`, and their `failure_reason` and `deadline_at` are
+  null. A run that was running before the upgrade is still reaped correctly by the tmux
+  adapter
+- Running the migration a second time is a no-op
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-17" title="The failure reason reaches the live bus" phases="2,3" tests="auto-shared/bus/watch_test.go,auto-watch/internal/daemon/watch_emit_test.go">
+          <md><script type="text/plain">
+- Given runs that fail with each reason: `exit_nonzero`, `session_lost`, `timed_out`,
+  `start_failed`, `exit_unrecorded`
+- When the daemon emits `watch.task.failed` on the bus
+- Then the typed `bus.WatchTaskData` payload carries `reason` with that value
+  (`omitempty`, so `started`/`completed` payloads are unchanged), and the SQLite Event
+  metadata carries the same `reason`
+          </script></md>
+        </pd-ac>
+
+        <pd-ac id="AC-16" title="Live sandbox daemon behaves end to end" phases="6" tests="manual">
+          <md><script type="text/plain">
+- Given the binary built from the task branch, run as `auto watch start` with a sandbox
+  HOME, a sandbox `TMUX_TMPDIR` and a non-default `--hook-addr`
+- When bash TaskDefs `ok` (exit 0), `fail3` (exit 3) and `hang` (sleep, `timeout: 2m`)
+  fire, and the sandbox tmux server is later killed while a run is active
+- Then `auto watch run list` shows `ok` completed, `fail3` failed with exit_code 3,
+  `hang` failed with `timed_out`, and the killed run failed with `session_lost`
+- And the journal lines show real exit codes and run ids, `health` stays ok, and the
+  real `autowatch.service` was never touched
+          </script></md>
+        </pd-ac>
+      </pd-section>
+
+      <pd-section id="verification-gaps" title="Known Gaps &amp; Risks">
+        <md><script type="text/plain">
+- **No ntm or herdr adapter is exercised.** "One file, no daemon changes" is proved with
+  the fake Backend (AC-1), not with a real second manager. Their interactive needs
+  (`SendText`, exit status from a pane) may still push on the port's shape.
+- **Disk-full is simulated, not reproduced.** AC-5 uses a closed or failing store. A real
+  `ENOSPC` also stops the heartbeat file from being written, so health then reports
+  `stale_heartbeat` (the intended signal) rather than the precise cause.
+- **Upgrading the real daemon is not verified by the executor.** `make install` restarts
+  `autowatch.service`, so the user does it after merge. The plan's final phase gives the
+  exact commands and post-checks.
+- **The timeout clock is coarse.** Reap runs once a minute, so a deadline is enforced
+  within roughly one tick, not to the second.
+- **Grace and lost detection rely on tmux reporting correctly.** A wedged tmux server now
+  gives a Status *error* (timeout) rather than `lost`, so the run stays running and a
+  warning is logged. That is deliberate: a hung tmux server is not proof a run died.
+- **A run whose Stop can never be confirmed stays `running`** (and its Trigger
+  blocked) until Stop succeeds or tmux reports it gone. That is deliberate: it trades a
+  visible, health-flagged block (`stop_unconfirmed`) for never double-running a command.
+- **Owed fires cover only event-like Triggers.** Plain cron still drops a skipped minute;
+  a missed-fire policy is deferred.
+- `task run` in the foreground (`RunForeground`) still bypasses the Backend. It is
+  unchanged and out of scope.
+        </script></md>
+      </pd-section>
+    </pd-tab>
+
+    <pd-tab name="Solution">
+      <pd-section id="approach" title="Approach">
+        <pd-mermaid caption="Ports and adapters: the daemon only sees the Backend port">
+flowchart LR
+  subgraph shared[auto-shared/backend]
+    P[Backend port: Start / Status / Stop] --- R[Registry by name]
+    P --- L[launch wrapper: output.log + exit-code]
+    T[tmux adapter] -->|implements| P
+    F[backendtest.Fake] -->|implements| P
+    N[ntm adapter, later] -.->|implements| P
+    H[herdr adapter, later] -.->|implements| P
+  end
+  subgraph watch[auto-watch]
+    D[daemon: Tick / Reap / Clean] -->|Status, Stop| R
+    S[startWorker] -->|Start| R
+    C[config: TaskDef.backend, timeout] --> S
+    DB[(runs: backend, backend_target, deadline_at, failure_reason)]
+    D --> DB
+  end
+        </pd-mermaid>
+        <md><script type="text/plain">
+**1. Backend port in `auto-shared/backend` (stdlib only).**
+- The port is three calls: `Start(spec) → Binding`, `Status(binding, runDir) → {running | exited(code) | lost}`
+  and `Stop(binding)`, plus `Name()`.
+- An optional `TextSender` capability (`SendText`) is found by type assertion. Only
+  interactive pane managers will implement it.
+- A run's location is a **Binding**: the opaque `(Manager, Target)` pair, the same
+  vocabulary as `auto mail`. That is Q-1's lean.
+- The **completion contract** belongs to the port, not to each adapter. A shared
+  `WriteLaunchScript` wraps the inner command so it tees into `<runDir>/output.log` and
+  writes `<runDir>/exit-code`. Every adapter's `Status` checks that file first, and only
+  asks its manager about liveness when the file is absent. This keeps exit semantics
+  identical across tmux, ntm and herdr. It also answers the old P0 note in
+  `auto-watch/docs/solution.md`: Status gets the run dir, so it works after a daemon
+  restart.
+- The exit code is written **atomically** (temp file, then rename). An empty or
+  non-numeric file (legacy or interrupted) reads as `exited` with an unknown code, never
+  as a Status error, so it cannot pin a run to `running`.
+- The **tmux adapter** moves out of `auto-watch/internal/runner` into the shared package.
+  Every tmux call gets a 10s context timeout, because a wedged server previously stalled a
+  run for 7 days. Each session is tagged with its owner (`@auto_owner`, see Q-3).
+- **Start never leaves an unknown live command behind.** The tmux adapter creates and
+  configures the session in **one** tmux invocation (`new-session … \; set-option
+  remain-on-exit on \; set-option @auto_owner …`). If configuring still fails, it kills
+  the session it created and returns a confirmed error. If that kill can't be confirmed
+  (e.g. a timeout), it returns the Binding together with `ErrStartUncertain`. The daemon
+  then keeps the run `running` with that Binding, and Reap's Status and deadline logic
+  owns it from there.
+- `backendtest.Fake` replaces the five ad-hoc test fakes.
+
+**2. Selection and persistence.**
+- `TaskDef` gains `backend` (default `tmux`) and `timeout` (a Go duration string,
+  default `2h`). Both are validated against the registry and the duration format.
+- The `runs` table gains `backend`, `backend_target`, `deadline_at` and
+  `failure_reason` in a v3 migration gated on `PRAGMA table_info`. Old rows are read as
+  `tmux` / `session_name`.
+- The deadline is fixed when the run starts, so later edits to a TaskDef don't move a
+  live run's deadline.
+
+**3. Reap decides by deadline first, then Status.**
+- **Past `deadline_at`**, whatever Status says (including an error): call `Stop`.
+  - If Stop is confirmed, or Status reports `lost` or `exited`, mark failed `timed_out`
+    exactly once.
+  - If Stop fails, keep the run `running`. That keeps dedup in force, so no overlapping
+    run can start. Record `task_stop_failed` once, retry Stop every tick, and have
+    `health` report `stop_unconfirmed`. A wedged tmux server is therefore visible at the
+    deadline instead of after 7 days, and is never double-run.
+- **Under the deadline:**
+  - `exited` with a code: terminal (existing path; reason `exit_nonzero` when the code
+    isn't 0).
+  - `exited` with an unknown code: failed `exit_unrecorded`.
+  - `lost` and older than the 2-minute grace: failed `session_lost`.
+  - A Status error: a warning Event, and the run is left alone.
+
+**4. Containment.**
+- Every per-run and per-Project step in `Tick`, `Reap` and `Clean` records its error as
+  an Event and continues.
+- `Tick` returns an error only when the store fails.
+- The `start` loop **never exits on a tick error**: it logs to stderr, writes the
+  heartbeat's `last_error`, and retries next tick.
+- The **startup preflight** (`doctor.Run`, `ops.go:65-75`) is split. Store open and
+  migrate stay fatal. Project config, tmux and claude become printed warnings, and each
+  Project's TaskDefs are then validated per entry by the tick, the same contained path as
+  AC-2. So one bad Project, or a missing tool that only some Backend or TaskDef type
+  needs, can't keep the daemon from starting.
+- Together these remove the crash-loop class, rather than fixing one instance at a time
+  as `b69764d` and `da57108` did.
+
+**5. Correctness fixes.**
+- `failRun` returns the start error, so Dispatch and RPC see it.
+- `gitx.runGit` returns real errors (`OriginRemote` keeps its deliberate swallow, and
+  `DefaultBranch` propagates).
+- `MarkRunTerminal` only updates pending or running rows and reports whether it did.
+- SQLite pragmas move into the DSN (`_pragma=`), so every pooled connection has them.
+- **Owed fires.** The shared Trigger cursors (the file snapshot and the branch SHA, keyed
+  by Project + Trigger) keep their current write timing, including first-evaluation
+  seeding. What changes:
+  - When a `file_created` or `only_if_branch_changed` fire can't dispatch TaskDef X
+    (dedup, backoff, start failure), upsert one row into a new
+    `owed_fires(project_id, trigger_id, task_id, reason, first_owed_at)` table. The
+    primary key is the first three columns.
+  - Each tick, before evaluating Triggers, try owed fires: dispatch X if it's free and
+    not backed off, and delete the row on success.
+  - This gives per-TaskDef acknowledgement without forking the cursor per TaskDef.
+  - Plain cron records no owed fires, because missed-fire policy is deferred.
+- `Clean` removes `runs/*` directories with no row and an mtime older than 24h.
+- **The dirty-worktree guard lives in the shared `removeWorktree`**, so every caller
+  gets it: TTL, `clean --force`, cancel and `failRun`. If `IsDirty` errors, the worktree
+  is kept (fail closed). A kept worktree logs `worktree_kept_dirty` once (deduped via an
+  Event lookup for that run), and its run row is excluded from retention while the
+  worktree exists.
+
+**6. Observability.**
+- `FormatEventLine` prints `run=`, `msg=` and dereferenced pointer values. Backoff skips
+  become Events.
+- `tailOutput` is capped at 8 KiB, collapses `\r`, and ends in a breadcrumb.
+- A new `auto watch run` resource: `list` and `get`, JSON by default, `--text` optional.
+  `get` returns a CLI-owned projection of the whole `RunRecord` (see AC-13), not the
+  narrower RPC `RunView`.
+- `bus.WatchTaskData` gains `reason` (`omitempty`), set by `emitWatchTask` on
+  `watch.task.failed`, so subscribers see why a run failed.
+- The daemon writes `~/.auto/watch/heartbeat.json` every tick. `health` adds
+  `stale_heartbeat` (over 3 minutes) and `low_disk` (under 1 GiB).
+        </script></md>
+      </pd-section>
+      <pd-thread anchor="approach" status="resolved" priority="p2" title="Define rollback after a partially successful Backend Start">
+        <pd-comment by="review">The existing TmuxBackend.Start creates the session and then separately sets remain-on-exit; the new adapter adds another fallible call to set @auto_owner. If either configuration call fails or times out after new-session succeeds, returning only an error leaves a live command behind while failRun marks its row terminal and permits another dispatch. This is separate from the deliberately deferred orphan-session reconciliation. Define Start rollback semantics for resources created by that call, including uncertain timeout outcomes, and add an adapter test where configuration fails after session creation. The caller must be able to distinguish a confirmed failed start from execution that may still be active.</pd-comment>
+        <pd-comment by="author">Fixed. The tmux adapter creates and configures the session in one tmux invocation (`new-session … \; set-option remain-on-exit \; set-option @auto_owner`). On failure it checks has-session and kills what it created, returning a confirmed error. If the teardown can't be confirmed, it returns the Binding with `ErrStartUncertain`, and the daemon keeps the run `running` with that Binding so Reap's Status and deadline logic owns it and nothing is re-dispatched over it. Added to Solution §1, the API outline, AC-7 and the phase 1 adapter tests (a fake tmux that fails set-option, and one that also fails the kill).</pd-comment>
+      </pd-thread>
+
+      <pd-api kind="package" name="auto-shared/backend" lang="go" path="auto-shared/backend/backend.go" caption="The port — stdlib only">
+        <pd-member kind="interface" sig="type Backend interface { Name() string; Start(ctx context.Context, spec Spec) (Binding, error); Status(ctx context.Context, b Binding, runDir string) (Status, error); Stop(ctx context.Context, b Binding) error }">The only surface the daemon calls. Adapters: tmux now; ntm and herdr later, one file each.</pd-member>
+        <pd-member kind="interface" sig="type TextSender interface { SendText(ctx context.Context, b Binding, text string) error }">Optional capability for interactive pane managers, found by type assertion. Not named Sender, because mail.Sender already means caller identity.</pd-member>
+        <pd-member kind="struct" sig="type Binding struct { Manager string; Target string }">The opaque (manager, target) pair that says where a run executes (tmux: session name). Same vocabulary as the auto-mail Binding.</pd-member>
+        <pd-member kind="struct" sig="type Spec struct { Name, WorkDir, RunDir, Script, Owner string }">Name is a unique session/pane name; Script is the inner executable the launch wrapper runs; Owner tags the session for later reconciliation.</pd-member>
+        <pd-member kind="struct" sig="type Status struct { State State; ExitCode *int }">State is StateRunning | StateExited | StateLost. ExitCode is set when exited with a readable code; nil when exited with an empty or malformed file (exit_unrecorded).</pd-member>
+        <pd-member kind="func" sig="WriteLaunchScript(spec Spec) (path string, err error)">The shared completion contract: runs Script in WorkDir, tees to RunDir/output.log, writes RunDir/exit-code atomically (tmp + mv), and exits when cd fails.</pd-member>
+        <pd-member kind="var" sig="var ErrStartUncertain = errors.New(&quot;backend: start outcome unknown&quot;)">Returned with a non-empty Binding when Start created something it could not confirm torn down. The caller must treat the run as possibly live.</pd-member>
+        <pd-member kind="func" sig="ReadExit(runDir string) (code *int, present bool, err error)">Reads the exit-code file. Adapters call it first in Status. present with a nil code means the file is malformed; err is reserved for I/O failures other than not-exist.</pd-member>
+        <pd-member kind="struct" sig="type Registry struct{ … }; NewRegistry(bs ...Backend) *Registry; (r *Registry) Get(name string) (Backend, bool); (r *Registry) Names() []string">Selects a Backend by name. Names() feeds the unknown_backend validation hint.</pd-member>
+        <pd-member kind="struct" sig="type Tmux struct { Timeout time.Duration }">The tmux adapter (tmux.go). Each call runs under Timeout (default 10s). "no server running" / "can't find session" mean lost, never an error.</pd-member>
+      </pd-api>
+
+      <pd-cli title="auto watch run — the new resource" caption="End state for an operator debugging a failed run">
+        <pd-cmd note="every run, JSON by default">auto watch run list --reason session_lost</pd-cmd>
+        <pd-out><script type="text/plain">[{"id":9327,"project":"auto-stack","trigger":"every-10-minutes","task":"run-etl","state":"failed","failure_reason":"session_lost","exit_code":null,"backend":"tmux","started_at":"2026-10-24T16:20:46Z","completed_at":"2026-10-24T16:23:46Z"}]</script></pd-out>
+        <pd-cmd note="full record + bounded output tail">auto watch run get 9327</pd-cmd>
+        <pd-out><script type="text/plain">{"id":9327, …, "binding":{"manager":"tmux","target":"autowatch-run-9327--run-etl"},
+ "run_dir":"~/.auto/watch/runs/9327","output_path":"~/.auto/watch/runs/9327/output.log",
+ "output_tail":"…[truncated — full output: ~/.auto/watch/runs/9327/output.log]"}</script></pd-out>
+        <pd-cmd note="stale heartbeat / low disk now visible">auto watch health</pd-cmd>
+        <pd-out>status: warn — stale_heartbeat: last ok tick 7m ago (last_error: database or disk is full)</pd-out>
+      </pd-cli>
+
+      <pd-section id="file-changes" title="File Changes">
+        <pd-files>
+          <pd-file path="auto-shared/backend/backend.go" change="add">Port: Backend, TextSender, Binding, Spec, Status/State, Registry</pd-file>
+          <pd-file path="auto-shared/backend/launch.go" change="add">WriteLaunchScript + ReadExit: the shared output/exit-code completion contract</pd-file>
+          <pd-file path="auto-shared/backend/tmux.go" change="add">tmux adapter (moved from auto-watch runner), per-call timeout, @auto_owner tag</pd-file>
+          <pd-file path="auto-shared/backend/backendtest/fake.go" change="add">Scriptable fake Backend for tests in any module</pd-file>
+          <pd-file path="auto-shared/backend/backend_test.go" change="add">Registry, launch wrapper and ReadExit tests</pd-file>
+          <pd-file path="auto-shared/backend/tmux_test.go" change="add">Adapter tests on a private tmux server (moves session_absent cases)</pd-file>
+          <pd-file path="auto-watch/internal/runner/tmux.go" change="delete">Superseded by auto-shared/backend/tmux.go</pd-file>
+          <pd-file path="auto-watch/internal/runner/session_absent_test.go" change="delete">Cases move to auto-shared/backend/tmux_test.go</pd-file>
+          <pd-file path="auto-watch/internal/runner/backend.go" change="edit">Drop Backend/StartSpec/Handle/LaunchSpec/WriteLaunchScript; keep BuildPrompt, RunForeground; add inner-task script writer</pd-file>
+          <pd-file path="auto-watch/internal/runner/backend_test.go" change="edit">Test the inner-task script instead of the old launch script</pd-file>
+          <pd-file path="auto-watch/internal/app/app.go" change="edit">Build a backend.Registry (tmux) instead of a single TmuxBackend</pd-file>
+          <pd-file path="auto-watch/internal/model/types.go" change="edit">TaskDef.Backend, TaskDef.Timeout; RunRecord.Backend, BackendTarget, DeadlineAt, FailureReason</pd-file>
+          <pd-file path="auto-watch/internal/config/validate.go" change="edit">unknown_backend and invalid_timeout validation; takes the registered names</pd-file>
+          <pd-file path="auto-watch/internal/config/validate_test.go" change="edit">Backend and timeout validation cases</pd-file>
+          <pd-file path="auto-watch/internal/store/store.go" change="edit">v3 migration (run columns + owed_fires table), new columns in all SELECTs and scanRun, conditional MarkRunTerminal, retention skips kept dirty worktrees, pragmas in the DSN</pd-file>
+          <pd-file path="auto-watch/internal/store/store_test.go" change="edit">Conditional terminal, per-connection pragma and owed_fires upsert/coalesce tests</pd-file>
+          <pd-file path="auto-watch/internal/store/migrate_test.go" change="add">v2 to v3 migration preserves rows and is idempotent</pd-file>
+          <pd-file path="auto-watch/internal/daemon/daemon.go" change="edit">Registry-based Start/Status/Stop; Reap lost/timeout; containment; failRun returns error; cursors after dispatch; Clean orphans and dirty worktrees; tail cap; backoff Events</pd-file>
+          <pd-file path="auto-watch/internal/daemon/heartbeat.go" change="add">Atomic heartbeat.json write (last_tick_at, last_ok_tick_at, last_error, pid)</pd-file>
+          <pd-file path="auto-watch/internal/daemon/heartbeat_test.go" change="add">Heartbeat write/read tests</pd-file>
+          <pd-file path="auto-watch/internal/daemon/backend_select_test.go" change="add">TaskDef backend selection through the registry (AC-1)</pd-file>
+          <pd-file path="auto-watch/internal/daemon/reap_liveness_test.go" change="add">Lost and timeout reaping, each with its negative twin</pd-file>
+          <pd-file path="auto-watch/internal/daemon/tick_containment_test.go" change="add">Per-run and per-Project errors don't stop the tick; git errors are warnings</pd-file>
+          <pd-file path="auto-watch/internal/daemon/cursor_test.go" change="add">Owed fires for two-TaskDef file_created and branch-SHA Triggers; seeding unchanged</pd-file>
+          <pd-file path="auto-watch/internal/daemon/tail_test.go" change="add">8 KiB byte cap, carriage-return collapse, breadcrumb</pd-file>
+          <pd-file path="auto-watch/internal/daemon/clean_test.go" change="edit">Orphan run-dir sweep and dirty-worktree guard cases</pd-file>
+          <pd-file path="auto-watch/internal/daemon/daemon_integration_test.go" change="edit">Use backendtest.Fake; keep the seeding test; add empty-baseline then first-file case</pd-file>
+          <pd-file path="auto-watch/internal/daemon/dispatch_test.go" change="edit">Use backendtest.Fake; Dispatch returns start errors</pd-file>
+          <pd-file path="auto-watch/internal/daemon/backoff_test.go" change="edit">Use backendtest.Fake</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/task.go" change="edit">RunView gains backend, binding and failure_reason; task.run returns start errors</pd-file>
+          <pd-file path="auto-watch/internal/rpcmethods/task_test.go" change="edit">Use backendtest.Fake; start-failure case</pd-file>
+          <pd-file path="auto-watch/internal/gitx/git.go" change="edit">runGit returns real errors; DefaultBranch propagates; IsDirty helper</pd-file>
+          <pd-file path="auto-watch/internal/gitx/git_test.go" change="add">Error propagation and IsDirty tests</pd-file>
+          <pd-file path="auto-watch/internal/cli/ops.go" change="edit">start loop never exits on a tick error; health stale_heartbeat and low_disk</pd-file>
+          <pd-file path="auto-watch/internal/cli/ops_test.go" change="edit">Health and start-loop resilience tests</pd-file>
+          <pd-file path="auto-watch/internal/cli/run.go" change="add">auto watch run list / get (JSON default, --text)</pd-file>
+          <pd-file path="auto-watch/internal/cli/run_test.go" change="add">run list filters/validation, run get, not-found remediation</pd-file>
+          <pd-file path="auto-watch/internal/cli/root.go" change="edit">Register the run command group</pd-file>
+          <pd-file path="auto-watch/internal/textout/format.go" change="edit">run= and msg= on event lines; dereference pointer metadata</pd-file>
+          <pd-file path="auto-watch/internal/textout/format_test.go" change="add">Event line formatting tests</pd-file>
+          <pd-file path="auto-watch/e2e/start_tmux_test.go" change="edit">Gated real-tmux cases: exit 3 and lost session</pd-file>
+          <pd-file path="auto-shared/bus/watch.go" change="edit">WatchTaskData gains reason (omitempty)</pd-file>
+          <pd-file path="auto-shared/bus/watch_test.go" change="edit">reason serialisation and omitempty cases</pd-file>
+          <pd-file path="auto-watch/internal/daemon/watch_emit_test.go" change="edit">watch.task.failed carries each failure reason</pd-file>
+          <pd-file path="auto-watch/internal/daemon/reap_interrupted_test.go" change="edit">Malformed exit-file cases kept through the Status migration; exit_unrecorded</pd-file>
+          <pd-file path="auto-watch/internal/doctor/doctor.go" change="edit">Split fatal (store) from warning checks for the start preflight</pd-file>
+          <pd-file path="auto-watch/internal/doctor/doctor_test.go" change="edit">Preflight severity cases</pd-file>
+          <pd-file path="auto-watch/CLAUDE.md" change="edit">Backend port, run resource, heartbeat and debugging recipe</pd-file>
+          <pd-file path="docs/concepts/UBIQUITOUS_LANGUAGE.md" change="edit">Add Run and Backend; widen Binding to cover a run's location (per Q-1)</pd-file>
+          <pd-file path="docs/auto-bus-spec.md" change="edit">Document the failure reason in watch.task.failed data</pd-file>
+        </pd-files>
+      </pd-section>
+      <pd-thread anchor="file-changes" status="resolved" priority="p2" title="Include the typed bus payload change and verification">
+        <pd-comment by="review">Stage 6 promises reason in watch.task.failed data, but auto-shared/bus/watch.go defines a typed WatchTaskData with no reason field, and daemon.emitWatchTask constructs that type explicitly (daemon.go:213-227). Updating docs/auto-bus-spec.md or SQLite Event metadata alone will not put the reason on the live bus. Add the payload implementation and its tests to File Changes and Stage traceability, and verify emitted bus data for exit_nonzero, session_lost, timed_out and start_failed.</pd-comment>
+        <pd-comment by="author">Confirmed (WatchTaskData has no reason field) and fixed. Added auto-shared/bus/watch.go (`Reason`, omitempty), bus/watch_test.go and daemon/watch_emit_test.go to the file changes and phase 2. A new AC-17 checks every reason (exit_nonzero, session_lost, timed_out, start_failed, exit_unrecorded) on the emitted bus payload and in the Event metadata.</pd-comment>
+      </pd-thread>
+
+      <pd-decision id="D-1" title="The completion contract lives in the port, not in each adapter" status="accepted" by="agent"
+                   summary="Shared launch wrapper writes output.log + exit-code; adapters only answer liveness.">
+        <md><script type="text/plain">
+**Context:** Today `Reap` reads the exit-code file itself, and the tmux backend only knows
+session existence. A port where each adapter invents its own exit semantics would make
+ntm and herdr behave differently from tmux.
+
+**Decision:** `auto-shared/backend` owns `WriteLaunchScript`/`ReadExit`. Every adapter's
+`Status` checks the exit file first, and asks its manager only for liveness.
+
+**Alternatives:** (a) Each adapter reports exit status natively, via tmux
+`#{pane_dead_status}` or the herdr API. That is richer, but it gives three code paths
+for one fact, and still loses the status after a pane is closed. (b) Keep the exit-file
+logic in the daemon, which leaves the daemon tmux-aware and fails AC-1.
+
+**Consequences:** A backend must be able to run a shell script in a workdir. ntm and
+herdr panes can do that. A backend that can't (a remote API) would need its own
+`Status` that ignores the file.
+        </script></md>
+      </pd-decision>
+      <pd-thread anchor="D-1" status="resolved" priority="p2" title="Preserve terminal handling for malformed exit-code files">
+        <pd-comment by="review">The shared ReadExit/Status contract does not define empty, partial or nonnumeric exit files. Current Reap deliberately fails these Runs with a null exit code; daemon/reap_interrupted_test.go covers this production crash-loop regression. Returning a parsing error under the new Status-error policy instead leaves the Run running on every tick; treating the file as absent can also leave a dead remain-on-exit pane appearing live. Specify a nonblocking terminal representation and failure_reason for an interrupted exit write, retain those regression cases through the adapter migration, and include a healthy-run negative twin. Consider an atomic exit-file write to avoid exposing partial contents to Status.</pd-comment>
+        <pd-comment by="author">Fixed. `ReadExit` returns present with a nil code for an empty or malformed file; Status maps that to `exited` with a nil ExitCode, never to an error. The daemon fails the run with `exit_code=null` and a new `failure_reason=exit_unrecorded` (an additive fifth value under Q-2's answered reason-column design). The launch wrapper writes the exit file atomically (tmp + mv). The reap_interrupted_test.go cases are migrated to the fake in phase 1, and AC-3 adds a healthy no-exit-file negative twin.</pd-comment>
+      </pd-thread>
+
+      <pd-decision id="D-2" title="The start loop never exits on a tick error" status="accepted" by="agent"
+                   summary="Log + heartbeat last_error + retry; only startup store-open failure exits.">
+        <md><script type="text/plain">
+**Context:** Every past crash loop (33,357 restarts on 2026-09-10, 7,345 from registry
+pollution, 39+ from a full disk on 2026-10-23) came from `Restart=always` meeting an
+error that recurs every tick.
+
+**Decision:** Contain errors per run and per Project, and even for store-level failures,
+keep the process alive and retry next tick. The heartbeat file makes the degraded
+state visible to `health`.
+
+**Alternatives:** Exit on store failure and let systemd restart. That is the current
+behaviour and it produces restart loops. Supervised goroutines per concern are deferred
+as more structure than needed now.
+
+**Consequences:** A permanently broken store shows up as a stale heartbeat rather than a
+dead unit. `systemctl is-active` stays green, so `health` is the source of truth.
+        </script></md>
+      </pd-decision>
+
+      <pd-decision id="D-3" title="Deadline is stamped on the run at start" status="accepted" by="agent"
+                   summary="deadline_at column, computed from TaskDef.timeout (default 2h) at start.">
+        <md><script type="text/plain">
+**Decision:** Compute `deadline_at = started_at + timeout` when the run starts, and store
+it. Reap compares against the stored value.
+
+**Alternatives:** Re-read the TaskDef's timeout every tick. That is simpler, but editing
+the config would silently move a live run's deadline, and a deleted TaskDef would leave
+no deadline at all.
+
+**Consequences:** One extra column. Old rows have a null deadline and fall back to the
+2h default, counted from `started_at`.
+        </script></md>
+      </pd-decision>
+
+      <pd-section id="rejected-alternatives" title="Rejected Alternatives">
+        <md><script type="text/plain">
+- **Keep the port in `auto-watch/internal/runner`.** Cheaper, but the user chose
+  `auto-shared` so that `auto mail`'s future effectors can share adapters.
+- **Leases with a heartbeat column.** This is the textbook design, but tmux already
+  answers "is it alive?", so Status-based liveness gives the same guarantee without a
+  writer inside every run.
+- **New terminal states `lost` / `timed_out`.** More explicit, but every state switch,
+  health query and RPC payload would have to change. A `failure_reason` column carries
+  the same information (Q-2).
+- **Kill orphan tmux sessions in Clean.** Unsafe without an ownership tag, because a
+  second daemon shares the tmux server. This task tags sessions and defers the
+  reconcile (Q-3).
+- **A goroutine per concern (scheduler, dispatcher, reaper, reconciler).** Deferred.
+  Error containment inside the single loop gets the stability benefit with far less
+  change.
+- **`systemd-run` transient units as the worker.** Attractive, giving timeouts and
+  cgroups for free, but it is a new Backend. The port makes it addable later as one
+  adapter.
+- **Naming the optional capability `Sender`.** It collides with `mail.Sender`
+  (caller identity) once mail imports the package, so it is `TextSender`.
+        </script></md>
+      </pd-section>
+
+      <pd-decisions></pd-decisions>
+    </pd-tab>
+
+    <pd-tab name="Plan">
+      <pd-section id="summary" title="Summary">
+        <md><script type="text/plain">
+Stand up the shared Backend port with the tmux adapter end to end first (config → daemon
+→ store → adapter, behaviour unchanged). Then layer lost/timeout reaping, error
+containment, cursor and clean fixes, and observability on top, and finish with a live
+sandbox run.
+        </script></md>
+      </pd-section>
+
+      <pd-dag caption="Execution order"></pd-dag>
+
+      <pd-stepper>
+        <pd-phase n="1" title="Walking skeleton: Backend port + tmux adapter wired through the daemon" status="todo"
+                  files="auto-shared/backend/backend.go,auto-shared/backend/launch.go,auto-shared/backend/tmux.go,auto-shared/backend/backendtest/fake.go,auto-shared/backend/backend_test.go,auto-shared/backend/tmux_test.go,auto-watch/internal/runner/tmux.go,auto-watch/internal/runner/session_absent_test.go,auto-watch/internal/runner/backend.go,auto-watch/internal/runner/backend_test.go,auto-watch/internal/app/app.go,auto-watch/internal/model/types.go,auto-watch/internal/config/validate.go,auto-watch/internal/config/validate_test.go,auto-watch/internal/store/store.go,auto-watch/internal/store/migrate_test.go,auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/backend_select_test.go,auto-watch/internal/daemon/daemon_integration_test.go,auto-watch/internal/daemon/dispatch_test.go,auto-watch/internal/daemon/backoff_test.go,auto-watch/internal/daemon/reap_interrupted_test.go,auto-watch/internal/rpcmethods/task.go,auto-watch/internal/rpcmethods/task_test.go,docs/concepts/UBIQUITOUS_LANGUAGE.md">
+          <md><script type="text/plain">
+Goal: the daemon runs every task through `backend.Registry`, with behaviour identical to
+today. Exit is detected by the shared `ReadExit` inside `Status`.
+
+1. **Glossary first.** Add **Run** and **Backend**, and widen **Binding** to "physical
+   target of a Subscription or a Run" (per Q-1; if Q-1 is overridden, use the chosen
+   term everywhere below). Verify:
+   `python3 .claude/skills/domain-modelling/scripts/glossary.py check docs/concepts/UBIQUITOUS_LANGUAGE.md`.
+2. **Create `auto-shared/backend`.**
+   - Add `backend.go` (port types, `Registry`, `ErrStartUncertain`) and `launch.go`.
+     `WriteLaunchScript` uses `set -u`, `cd … || exit 97`, tees to `output.log`, and
+     writes `exit-code` atomically (`printf … > exit-code.tmp && mv exit-code.tmp exit-code`).
+     `ReadExit` returns `(nil, true, nil)` for an empty or malformed file.
+   - Add `tmux.go`, ported from `auto-watch/internal/runner/tmux.go`, including the
+     `sessionAbsent` classifier. Add a per-call `context.WithTimeout` (default 10s).
+   - `Start` runs a single invocation:
+     `new-session -d -s <n> -c <dir> <launch> \; set-option -t <n> remain-on-exit on \; set-option -t <n> @auto_owner <owner>`.
+     On error it checks `has-session`. If the session exists, it kills it (with a fresh
+     timeout context) and returns a confirmed error. If the kill or check can't be
+     confirmed, it returns the Binding with `ErrStartUncertain`.
+   - Add `backendtest/fake.go`, which can script Status, ExitCode and errors per
+     Binding, and records Start and Stop calls.
+   - Verify: `cd auto-shared && go build ./... && go test -race ./backend/... ./rpc/...`.
+     The layering gate stays green: no `require` in go.mod.
+3. **Adapter tests on a private tmux server.** Run them with `TMUX_TMPDIR=t.TempDir()`
+   and skip when tmux is missing. Cover: start, then exit 0 and exit 3 via the exit file;
+   kill the session, then `lost`; no server, then `lost`; Stop on an absent session is
+   nil; and a timeout produces an error. Also: a fake `tmux` on PATH that fails
+   `set-option` leaves no session behind and returns a confirmed error, and one that
+   also fails the kill returns `ErrStartUncertain` with the Binding. Move the cases from
+   `runner/session_absent_test.go`. Verify: `go test -race ./backend/...`.
+4. **auto-watch model and config.**
+   - Add `TaskDef.Backend` and `Timeout` (strings, both `omitempty`). Add
+     `RunRecord.Backend`, `BackendTarget`, `DeadlineAt *time.Time` and
+     `FailureReason string`.
+   - `ValidateTaskEntry` takes the registered names. Add the `unknown_backend` error,
+     with a hint listing the names, and `invalid_timeout` (it must parse with
+     `time.ParseDuration` and be greater than 0).
+   - Update every caller (daemon tickProject, CLI task create, doctor).
+   - Verify: `go build ./...` and the validate tests (AC-2).
+5. **Store v3 migration.**
+   - Check `PRAGMA table_info(runs)`, then `ALTER TABLE runs ADD COLUMN` for backend,
+     backend_target, deadline_at and failure_reason. Insert `schema_migrations(3)`.
+   - Add the columns to all three SELECT lists and to `scanRun`. Read an empty backend
+     as `tmux` with target `session_name`.
+   - `migrate_test.go` builds a v2 database with rows and checks the rows are preserved
+     and that a second run is a no-op (AC-15). Verify: `go test -race ./internal/store/...`.
+6. **Daemon wiring.**
+   - Replace `Service.Backend` with `Backends *backend.Registry`.
+   - `startWorker` writes the inner task script (`runner` keeps the bash/claude command
+     composition), calls `backend.WriteLaunchScript`, then `reg.Get(task.Backend).Start`.
+     It records backend, backend_target and deadline_at.
+   - `Reap` calls `Status` instead of reading the exit file itself. The exited path
+     stays as today.
+   - An exited run with an unknown code is failed with `exit_code=null`, as today, so
+     the `reap_interrupted_test.go` regression cases keep passing after migrating to the
+     fake. The reason column is stamped in phase 2.
+   - `ErrStartUncertain` from Start: record the Binding, keep the run `running`, and log
+     a warning.
+   - RPC `RunView` gains only `backend` (and `failure_reason` in phase 2).
+   - Cancel and `Clean --force` call `Stop`.
+   - `app.New` builds a registry containing `&backend.Tmux{}`.
+   - Delete `runner/tmux.go` and `session_absent_test.go`, and trim `runner/backend.go`.
+7. **Swap the five test fakes for `backendtest.Fake`.** Add `backend_select_test.go`:
+   a registry with `fake`, a TaskDef with `backend: fake`, and the run going through
+   the fake with its row fields set (AC-1).
+8. **Phase gates.**
+   - `cd auto-watch && go build ./... && go vet ./... && go test -race ./...`.
+   - `AUTOWATCH_E2E=1 go test ./e2e/...`, which exercises real tmux through the new
+     adapter.
+   - `grep -n -i tmux auto-watch/internal/daemon/*.go | grep -v _test.go` must print
+     nothing.
+   - Lint with the 1.26 toolchain.
+9. Commit (`/contextual-commit`): `feat(067): shared Backend port with tmux adapter`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="2" title="Lost and timed-out runs" status="todo" depends-on="1"
+                  files="auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/reap_liveness_test.go,auto-watch/internal/daemon/reap_interrupted_test.go,auto-watch/internal/store/store.go,auto-watch/internal/store/migrate_test.go,auto-watch/internal/config/validate_test.go,auto-shared/bus/watch.go,auto-shared/bus/watch_test.go,auto-watch/internal/daemon/watch_emit_test.go,auto-watch/internal/rpcmethods/task.go,auto-watch/e2e/start_tmux_test.go">
+          <md><script type="text/plain">
+1. **Reap: deadline first, then Status.**
+   - `now` past `deadline_at` (or `started_at + 2h` when null), **whatever Status
+     returns**: call Stop.
+     - Stop confirmed, or Status `lost`/`exited`: mark failed `timed_out` (once, via the
+       conditional MarkRunTerminal).
+     - Stop error: keep `running`, record `task_stop_failed` once per run (Event
+       lookup), and retry on the next tick.
+   - Under the deadline:
+     - `exited` with a code: terminal; `exit_nonzero` when the code isn't 0.
+     - `exited` with a nil code: failed `exit_unrecorded`.
+     - `lost` and `now - started_at` at least 2 minutes: failed `session_lost`.
+     - A Status error: a `system_warning` Event, and the run is unchanged.
+   - Every failure emits `task_failed` with `reason` in the Event metadata **and** in
+     `bus.WatchTaskData.Reason` (add the field, with `omitempty`, in
+     `auto-shared/bus/watch.go`; set it in `emitWatchTask`).
+   - `RunView` gains `failure_reason`.
+2. **`reap_liveness_test.go`** uses `backendtest.Fake` and the injectable `now`:
+   - Lost past grace → failed, and the next fire is not deduped.
+   - Twin: lost within grace stays running.
+   - Twin: running past grace stays running.
+   - Past deadline → Stop called once, then failed.
+   - Twin: one minute before the deadline → untouched.
+   - Old rows with a null deadline fall back to the 2h default (AC-3, AC-4, AC-15).
+   - Status errors on every tick past the deadline: Stop is attempted on each tick.
+   - Stop fails twice, then succeeds: the run stays `running` with no second Start on
+     the fake, then fails `timed_out` exactly once.
+   - Malformed exit file → `exit_unrecorded`. Twin: a healthy run with no exit file
+     stays running.
+2b. **Bus.** `watch_test.go` checks `reason` serialises and is omitted when empty.
+   `watch_emit_test.go` checks each reason reaches `watch.task.failed` (AC-17).
+3. **e2e (gated).** Kill the private tmux server while a `sleep` task runs, step the
+   daemon with `start --once` past the grace period, and check `logs --json` shows
+   `session_lost`.
+4. Gates: build, vet, `go test -race ./...`, lint.
+5. Commit: `feat(067): reap lost and timed-out runs`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="3" title="Error containment and swallowed errors" status="todo" depends-on="2"
+                  files="auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/heartbeat.go,auto-watch/internal/daemon/heartbeat_test.go,auto-watch/internal/daemon/tick_containment_test.go,auto-watch/internal/daemon/dispatch_test.go,auto-watch/internal/cli/ops.go,auto-watch/internal/cli/ops_test.go,auto-watch/internal/doctor/doctor.go,auto-watch/internal/doctor/doctor_test.go,auto-watch/internal/store/store.go,auto-watch/internal/store/store_test.go,auto-watch/internal/gitx/git.go,auto-watch/internal/gitx/git_test.go,auto-watch/internal/rpcmethods/task.go,auto-watch/internal/rpcmethods/task_test.go">
+          <md><script type="text/plain">
+1. **Containment in the daemon.**
+   - Each per-run step of Reap and Clean (Status, Stop, read errors, worktree removal)
+     becomes a `system_warning` Event plus `continue`.
+   - In Tick, a `tickProject` error is logged with its true category: `config_warning`
+     only for validation, `system_warning` otherwise. Other Projects still run.
+   - Tick returns an error only when a store call fails.
+   - Verify with `tick_containment_test.go` (AC-5).
+2. **`heartbeat.go`.** Write `{pid, last_tick_at, last_ok_tick_at, last_error}`
+   atomically (temp file plus rename) to `~/.auto/watch/heartbeat.json` at the end of
+   every tick. A write failure is logged to stderr and is never fatal. Verify with
+   `heartbeat_test.go`.
+3. **`cli/ops.go` start loop.** Errors from the initial Tick and from the loop ticks are
+   logged to stderr and the loop continues. Only a failure in `openStore`/`Migrate` at
+   startup returns an `ExitError`. Verify with an ops test where Tick fails twice and
+   the loop is still running (AC-5).
+3b. **Startup preflight.**
+   - Give `doctor` checks a severity, or add a `doctor.Preflight` that returns only fatal
+     checks.
+   - `start` prints every non-fatal check as a warning, and exits only on fatal ones.
+     Fatal means store, settings dir or host config; Project config, tmux and claude are
+     warnings.
+   - `auto watch doctor` itself keeps reporting all checks with today's exit semantics.
+   - Test: start from a cwd whose Project has an unknown Backend, with tmux and claude
+     missing from PATH, while a second registered Project has a valid bash TaskDef on a
+     fake Backend. The daemon starts and runs it (AC-5).
+4. **`failRun`** returns `fmt.Errorf("start run %d: %w", id, runErr)` joined with any
+   error from recording it, and stamps `failure_reason=start_failed`. `Dispatch` and the
+   RPC `task.run` propagate it. Verify with the dispatch and RPC tests (AC-7).
+5. **`MarkRunTerminal`** adds `AND state IN ('pending','running')` and returns
+   `(updated bool, err error)`. Callers skip the terminal Event when nothing was updated.
+   Apply the same guard to `UpdateRunStarted` (`state='pending'`). Move the pragmas into
+   the DSN: `file:<path>?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)`.
+   Verify with the store tests (AC-8).
+6. **`gitx`.**
+   - `runGit` returns the real error (stderr included). `DefaultBranch` propagates
+     `CurrentBranch` errors.
+   - Audit callers: `FindRepoRoot` users' error branches become live, so check that
+     `doctor`, `init` and `requireRepoRoot` print their remediation messages.
+   - A `BranchHeadSHA` error is a `system_warning` for that Trigger, which does not
+     fire.
+   - Add `IsDirty(worktree)` (`git status --porcelain`) for phase 4.
+   - Verify with `git_test.go` and the containment test (AC-9).
+7. Gates: build, vet, `go test -race ./...`, lint.
+8. Commit: `fix(067): contain tick errors, stop swallowing git and start errors`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="4" title="Trigger cursors and Clean reconcile" status="todo" depends-on="3"
+                  files="auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/cursor_test.go,auto-watch/internal/daemon/clean_test.go,auto-watch/internal/daemon/daemon_integration_test.go,auto-watch/internal/store/store.go,auto-watch/internal/store/store_test.go,auto-watch/internal/store/migrate_test.go,auto-watch/internal/gitx/git.go">
+          <md><script type="text/plain">
+1. **`owed_fires` table** (part of the v3 migration, extend `migrate_test.go`):
+   `(project_id, trigger_id, task_id, reason, first_owed_at)`, with primary key
+   `(project_id, trigger_id, task_id)`. Store methods: `UpsertOwedFire` (coalesces),
+   `ListOwedFires(project)` and `DeleteOwedFire`.
+2. **Recording.** In `evaluateFileCreatedTrigger` and in `evaluateTrigger` when
+   `only_if_branch_changed` is set, a TaskDef whose dispatch is deduped, backed off or
+   fails Start gets `UpsertOwedFire`.
+   - The shared snapshot, `trigger_state` and `last_branch_sha` writes keep their
+     current timing, including the seeding path (daemon.go:752-810).
+   - Plain cron records nothing.
+3. **Draining.** At the start of each Project's evaluation, try every owed fire: if the
+   TaskDef still exists in that Trigger and isn't backed off, Dispatch it with the same
+   resource_key scheme and delete the row on success. A row for a removed TaskDef or
+   Trigger is deleted with an Event.
+4. **`cursor_test.go`:**
+   - A two-TaskDef `file_created` Trigger where A dispatches and B is deduped: B fires
+     once after its run ends, and A doesn't rerun.
+   - The same with B backed off, and with B's Start failing.
+   - A two-TaskDef branch-SHA Trigger.
+   - Repeated skips coalesce into one row.
+   - Plain cron records no owed fire.
+   - Keep `TestStartOnceFileCreatedTriggerSeedsAndFires`, and add an empty baseline
+     followed by a first file firing once (AC-6).
+5. **Clean.**
+   - Sweep `RunsDir`: numeric directories with no row and an mtime older than 24h are
+     removed, each recorded as a `run_dir_orphan_removed` Event.
+   - Put the guard **inside `removeWorktree`**, so TTL, `clean --force`, cancel and
+     `failRun` all get it. Call `gitx.IsDirty` first: dirty or an error means keep the
+     worktree and log `worktree_kept_dirty` once per run (Event lookup).
+   - Retention (`ListTerminalRunsOlderThan`, then `DeleteRuns`) skips runs whose
+     `worktree_path` still exists on disk.
+   - Verify with the clean tests for every path, plus a retention-age dirty worktree
+     (AC-10).
+6. Gates: build, vet, `go test -race ./...`, lint.
+7. Commit: `fix(067): never lose trigger fires; reconcile orphan run dirs`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="5" title="Observability: journal lines, tail cap, run resource, health" status="todo" depends-on="4"
+                  files="auto-watch/internal/textout/format.go,auto-watch/internal/textout/format_test.go,auto-watch/internal/daemon/daemon.go,auto-watch/internal/daemon/tail_test.go,auto-watch/internal/cli/run.go,auto-watch/internal/cli/run_test.go,auto-watch/internal/cli/root.go,auto-watch/internal/cli/ops.go,auto-watch/internal/cli/ops_test.go">
+          <md><script type="text/plain">
+1. **`FormatEventLine`.**
+   - Print `run=<id>` when RunID is set, and `msg=%q` for the Message.
+   - Dereference pointer metadata; a nil pointer prints `null`.
+   - Also store `exit_code` as a plain int (or null) in the Reap metadata.
+   - Turn the backoff skips at `daemon.go:669` and `:821` into `task_backoff` Events.
+   - Verify with `format_test.go` (AC-11).
+2. **`tailOutput(path, maxBytes=8192)`.**
+   - Seek to the last 8 KiB plus a margin, keep the text after the last `\r` on each
+     line, and trim to 8 KiB.
+   - When the output is truncated, prefix `…[truncated — full output: <path>]`.
+   - Verify with `tail_test.go` (AC-12).
+3. **`cli/run.go`.**
+   - `run list` and `run get <id>`, JSON by default (2-space indent, stdout data only),
+     with `--text` optional.
+   - Filters: `--state`, `--task`, `--trigger`, `--project`, `--reason`, `--since`
+     (the shared timeparse), one value each, normalised and validated.
+   - `get` returns a CLI-owned `runJSON` projection built from `model.RunRecord`. It has
+     every field in AC-13, with explicit nulls, plus `output_tail`. It doesn't reuse
+     `rpcmethods.RunView`, which is narrower and stays as it is.
+   - `run_test.go` asserts the exact JSON key set and the null semantics.
+   - Not-found remediation: `run N not found — list runs with: auto watch run list`.
+   - Register the group in `root.go`. Verify with `run_test.go` (AC-13).
+4. **`health`.**
+   - Read `heartbeat.json`: report `stale_heartbeat` when `last_ok_tick_at` is missing
+     or more than 3 minutes old, including the age and `last_error`.
+   - Run `syscall.Statfs` on the watch dir: report `low_disk` under 1 GiB.
+   - Add `stop_unconfirmed`: runs with a `task_stop_failed` Event that are still
+     running (AC-4).
+   - All of these feed the existing warn/exit-1 path. Verify with the ops tests
+     (AC-14).
+5. Gates: build, vet, `go test -race ./...`, lint.
+6. Commit: `feat(067): run list/get, readable journal lines, heartbeat health`.
+          </script></md>
+        </pd-phase>
+
+        <pd-phase n="6" title="Docs and live sandbox verification" status="todo" depends-on="5"
+                  files="auto-watch/CLAUDE.md,docs/auto-bus-spec.md,auto-watch/e2e/start_tmux_test.go">
+          <md><script type="text/plain">
+1. **`auto-watch/CLAUDE.md`.**
+   - The Backend port, and how to add an adapter (one file in `auto-shared/backend`,
+     plus registering it in `app.New`).
+   - The `run` resource, `heartbeat.json`, and the debugging recipe:
+     `run list --state failed`, then `run get`, then `output_path`.
+   - Also update the `quickstart` text if it describes run inspection.
+2. **`docs/auto-bus-spec.md` §6.4/§6.5.** `watch.task.failed` data carries `reason`:
+   `exit_nonzero | session_lost | timed_out | start_failed | exit_unrecorded`.
+3. **Live sandbox check (AC-16).**
+   - `make build`, then run `<build>/auto watch start` in the background with
+     `HOME=<scratch>/home`, `TMUX_TMPDIR=<short scratch dir>`, `--hook-addr 127.0.0.1:17787`
+     and a short HOME path (watch the unix-socket length limit).
+   - Init a sandbox repo with bash TaskDefs `ok`, `fail3`, and `hang` (`timeout: 2m`),
+     each on cron `* * * * *`. Wait about 4 minutes.
+   - Kill the sandbox tmux server by its verified PID while a run is active.
+   - Check `run list` and the daemon's stdout lines, then kill only the sandbox daemon
+     PID.
+   - **Never** run `make install`, `auto watch daemon …` or `systemctl` during execution.
+4. **Hand-off for the user after merge** (put this in the PR body):
+   - `make install`, which restarts `autowatch.service`.
+   - Then `auto watch health`, `auto watch run list --since 30m` and
+     `journalctl --user -u autowatch -n 20`, checking that exit codes print as integers.
+5. Gates: full `go test -race ./...` in auto-shared and auto-watch, the glossary check,
+   and pd-lint on this doc.
+6. Commit: `docs(067): backend port, run resource and debugging recipe`.
+          </script></md>
+        </pd-phase>
+      </pd-stepper>
+
+      <pd-section id="success-criteria" title="Success Criteria">
+        <md><script type="text/plain">
+- AC-1, AC-2 and AC-15 pass after phase 1. The daemon is tmux-free and existing configs
+  behave identically.
+- AC-3 and AC-4 pass after phase 2, each with its negative twin.
+- AC-5, AC-7, AC-8 and AC-9 pass after phase 3.
+- AC-6 and AC-10 pass after phase 4.
+- AC-11 through AC-14 pass after phase 5.
+- AC-16 is confirmed live in phase 6. All `go test -race ./...` runs are green in
+  `auto-shared` and `auto-watch`, the layering gate holds, and the glossary check
+  passes.
+        </script></md>
+      </pd-section>
+    </pd-tab>
+
+  </pd-doc>
+</body>
+</html>
