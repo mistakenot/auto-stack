@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -109,6 +110,36 @@ func (w *Workspace) Abs(rel string) string { return filepath.Join(w.Root, filepa
 
 // GraphPath returns the absolute path of a plan's graph.json.
 func (w *Workspace) GraphPath(p Plan) string { return filepath.Join(w.Abs(p.Dir), GraphFile) }
+
+// FolderPath returns the absolute path of a plan's folder — where its
+// graph.json and its annex Markdown files live.
+func (w *Workspace) FolderPath(p Plan) string { return w.Abs(p.Dir) }
+
+// FolderFS opens a plan's folder as a read-only file system rooted at the
+// folder, so an annex's flat `<kebab>.md` path resolves directly against it
+// (fs.Stat, fs.ReadFile). Lint reads annex files through this, never off the
+// raw filesystem, so a test can hand it an fstest.MapFS instead.
+func (w *Workspace) FolderFS(p Plan) fs.FS { return os.DirFS(w.FolderPath(p)) }
+
+// MarkdownFiles lists the `*.md` file names directly in fsys — a plan folder
+// opened with FolderFS — sorted. It never descends into subdirectories.
+// graph.json is not Markdown so it never appears, and AGENTS.md/CLAUDE.md live
+// in the parent plans/ dir, not a plan folder: a plan folder's only `.md`
+// files are its annexes.
+func MarkdownFiles(fsys fs.FS) ([]string, error) {
+	entries, err := fs.ReadDir(fsys, ".")
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			out = append(out, e.Name())
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
 
 // Plans lists every plan folder, sorted by folder name, with the plan ID
 // each graph.json records. A missing .auto/plan/plans/ is an empty list. Entries
@@ -304,6 +335,9 @@ func (w *Workspace) PlanSet() (*PlanSet, error) {
 
 // Plans lists every plan folder, sorted by folder name.
 func (s *PlanSet) Plans() []Plan { return slices.Clone(s.all) }
+
+// FolderFS opens plan p's folder as a file system (see Workspace.FolderFS).
+func (s *PlanSet) FolderFS(p Plan) fs.FS { return s.ws.FolderFS(p) }
 
 // IDs lists every plan's Ref (its plan ID), sorted.
 func (s *PlanSet) IDs() []string { return slices.Clone(s.refs) }

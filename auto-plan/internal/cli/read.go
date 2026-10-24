@@ -499,8 +499,8 @@ func readingOrder(nodes []graph.Node) []graph.Node {
 // nodeTypeNames lists every registered node type.
 func nodeTypeNames() []string {
 	out := make([]string, len(schema.Registry.Nodes))
-	for i, nt := range schema.Registry.Nodes {
-		out[i] = nt.Name
+	for i := range schema.Registry.Nodes {
+		out[i] = schema.Registry.Nodes[i].Name
 	}
 	return out
 }

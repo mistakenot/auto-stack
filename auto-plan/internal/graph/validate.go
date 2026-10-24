@@ -100,6 +100,7 @@ func (v *validator) graph(g *Graph) {
 	if planNodes == 0 {
 		v.add(CodeMissingPlanNode, "$.nodes", "", "the graph has no plan node (ID "+strconv.Quote(schema.PlanNodeID)+")", nil)
 	}
+	v.uniqueBy(g)
 
 	seen := map[string]bool{}
 	edgeIDs := map[string]bool{}
@@ -121,6 +122,40 @@ func (v *validator) graph(g *Graph) {
 		}
 		seen[key] = true
 		v.edge(path, e, byID)
+	}
+}
+
+// uniqueBy enforces each node type's NodeType.UniqueBy generically: for every
+// named field, at most one active node of the type may carry a given value of
+// it, each field enforced independently. It is modeled on the plan-singleton
+// count above — a registry knob, not a bespoke per-type check (D-4). The code
+// is `duplicate-<type>-<field>` (`duplicate-annex-kind`, `duplicate-annex-path`),
+// and the message names every node that shares the value.
+func (v *validator) uniqueBy(g *Graph) {
+	for i := range v.reg.Nodes {
+		nt := &v.reg.Nodes[i]
+		for _, field := range nt.UniqueBy {
+			byValue := map[string][]string{}
+			for _, n := range g.Nodes {
+				if n.Type != nt.Name || !n.Active() {
+					continue
+				}
+				val := n.StringField(field)
+				byValue[val] = append(byValue[val], n.ID)
+			}
+			code := "duplicate-" + nt.Name + "-" + field
+			for _, val := range slices.Sorted(maps.Keys(byValue)) {
+				ids := byValue[val]
+				if len(ids) < 2 {
+					continue
+				}
+				slices.Sort(ids)
+				v.add(code, NodePath(ids[0])+".fields."+field, field,
+					fmt.Sprintf("%d %s nodes share %s %s (%s); a plan may have at most one %s per %s",
+						len(ids), nt.Name, field, strconv.Quote(val), strings.Join(ids, ", "), nt.Name, field),
+					val)
+			}
+		}
 	}
 }
 

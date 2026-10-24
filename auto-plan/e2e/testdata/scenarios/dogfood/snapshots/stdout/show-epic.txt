@@ -57,7 +57,7 @@ journeys
         ↳ L2.4   l-cwd2  agent in project B: reads, fixes, acks                                           delivered by 002-j8nx
 
 child plans
-    ▷ C1     c-gn2d  002-j8nx auto-mail-walking-skeleton — Walking skeleton: subscribe, send, list, ack   plan
+    ▷ C1     c-gn2d  002-j8nx auto-mail-walking-skeleton — Walking skeleton: subscribe, send, list, ack   done
 
 rails
     ‖ R1     r-xbrt  Messages and events are immutable                                                    honoured by 002-j8nx

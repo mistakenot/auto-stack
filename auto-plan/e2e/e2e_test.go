@@ -3,17 +3,22 @@
 // byte for byte at each checkpoint.
 //
 // A scenario is testdata/scenarios/<name>/commands.txt: one `auto …`
-// invocation per line, with two kinds of annotation:
+// invocation per line, with three kinds of annotation:
 //
-//	# checkpoint <n>                      compare .auto/plan/plans/*/graph.json with snapshots/checkpoint-<n>/
+//	# checkpoint <n>                      compare .auto/plan/plans/*/{graph.json,*.md} with snapshots/checkpoint-<n>/
 //	# expect exit=<n> stdout=<file>       applies to the next invocation (either part optional)
+//	# preview <folder> <file>             derive the AC-14 preview-data contract from a plan, compare with snapshots/<file>
 //
-// Invocations without an expect annotation must exit 0. Run with -update to
-// regenerate the snapshots and expected stdout files, then review the diff.
+// A checkpoint diffs every plan folder's graph.json AND every annex `*.md`
+// sidecar beside it, byte for byte; a scenario with no annex files is
+// unaffected. Invocations without an expect annotation must exit 0. Run with
+// -update to regenerate the snapshots and expected stdout files, then review
+// the diff.
 package e2e
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,6 +28,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +58,7 @@ type step struct {
 	exit       int
 	stdoutFile string
 	checkpoint string // non-empty: a checkpoint marker, not an invocation
+	preview    string // non-empty: "<folder> <file>", a preview-data marker, not an invocation
 }
 
 func runScenario(t *testing.T, name string) {
@@ -71,6 +78,10 @@ func runScenario(t *testing.T, name string) {
 		if s.checkpoint != "" {
 			checkpoints++
 			compareCheckpoint(t, ws, filepath.Join(dir, "snapshots", "checkpoint-"+s.checkpoint))
+			continue
+		}
+		if s.preview != "" {
+			comparePreview(t, ws, dir, s.preview)
 			continue
 		}
 		cmd := exec.Command(bin, s.args...)
@@ -115,6 +126,8 @@ func parseCommands(path string) ([]step, error) {
 		case line == "":
 		case strings.HasPrefix(line, "# checkpoint "):
 			steps = append(steps, step{line: n, checkpoint: strings.TrimSpace(strings.TrimPrefix(line, "# checkpoint "))})
+		case strings.HasPrefix(line, "# preview "):
+			steps = append(steps, step{line: n, preview: strings.TrimSpace(strings.TrimPrefix(line, "# preview "))})
 		case strings.HasPrefix(line, "# expect "):
 			pending = &step{}
 			for kv := range strings.FieldsSeq(strings.TrimPrefix(line, "# expect ")) {
@@ -202,10 +215,10 @@ func splitWords(line string) ([]string, error) {
 	return words, nil
 }
 
-// compareCheckpoint asserts the workspace's plan graphs equal the snapshot
-// directory: the same plan folders, each graph.json byte-identical. It also
-// asserts the scaffold init/new create: .auto/plan/plans/AGENTS.md and a CLAUDE.md
-// symlinked to it.
+// compareCheckpoint asserts the workspace's plan folders equal the snapshot
+// directory: the same plan folders, and inside each the graph.json and every
+// annex `*.md` sidecar byte-identical. It also asserts the scaffold init/new
+// create: .auto/plan/plans/AGENTS.md and a CLAUDE.md symlinked to it.
 func compareCheckpoint(t *testing.T, ws, snapDir string) {
 	t.Helper()
 	plansDir := filepath.Join(ws, filepath.FromSlash(planws.PlansDir))
@@ -215,36 +228,41 @@ func compareCheckpoint(t *testing.T, ws, snapDir string) {
 	if target, err := os.Readlink(filepath.Join(plansDir, "CLAUDE.md")); err != nil || target != "AGENTS.md" {
 		t.Fatalf("%s: %s/CLAUDE.md should link to AGENTS.md: %q, %v", filepath.Base(snapDir), planws.PlansDir, target, err)
 	}
-	got := planGraphs(t, plansDir)
+	got := planFiles(t, plansDir)
 	if *update {
 		if err := os.RemoveAll(snapDir); err != nil {
 			t.Fatal(err)
 		}
-		for folder, data := range got {
-			writeFile(t, filepath.Join(snapDir, folder, "graph.json"), data)
+		for rel, data := range got {
+			writeFile(t, filepath.Join(snapDir, filepath.FromSlash(rel)), data)
 		}
 		return
 	}
-	want := planGraphs(t, snapDir)
-	for folder, data := range want {
-		g, ok := got[folder]
+	want := planFiles(t, snapDir)
+	for rel, data := range want {
+		g, ok := got[rel]
 		if !ok {
-			t.Fatalf("%s: plan %s missing from workspace", filepath.Base(snapDir), folder)
+			t.Fatalf("%s: %s missing from workspace", filepath.Base(snapDir), rel)
 		}
 		if !bytes.Equal(g, data) {
-			t.Fatalf("%s: %s/graph.json differs from snapshot (run with -update and review):\n--- got\n%s\n--- want\n%s",
-				filepath.Base(snapDir), folder, g, data)
+			t.Fatalf("%s: %s differs from snapshot (run with -update and review):\n--- got\n%s\n--- want\n%s",
+				filepath.Base(snapDir), rel, g, data)
 		}
 	}
-	for folder := range got {
-		if _, ok := want[folder]; !ok {
-			t.Fatalf("%s: unexpected plan %s in workspace", filepath.Base(snapDir), folder)
+	for rel := range got {
+		if _, ok := want[rel]; !ok {
+			t.Fatalf("%s: unexpected file %s in workspace", filepath.Base(snapDir), rel)
 		}
 	}
 }
 
-// planGraphs maps each plan folder under dir to its graph.json bytes.
-func planGraphs(t *testing.T, dir string) map[string][]byte {
+// planFiles maps each plan folder's graph.json and annex `*.md` sidecars to
+// their bytes, keyed by the slash path "<folder>/<file>". It reads only the
+// top level of each folder (annex paths are flat <kebab>.md), so a snapshot
+// directory and a live workspace are walked identically. AGENTS.md and the
+// CLAUDE.md symlink live in the plans root (not inside an NNN-name folder) and
+// are checked separately, so they never appear here.
+func planFiles(t *testing.T, dir string) map[string][]byte {
 	t.Helper()
 	out := map[string][]byte{}
 	entries, err := os.ReadDir(dir)
@@ -258,14 +276,142 @@ func planGraphs(t *testing.T, dir string) map[string][]byte {
 		if !e.IsDir() {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name(), "graph.json"))
+		folder := e.Name()
+		files, err := os.ReadDir(filepath.Join(dir, folder))
 		if err != nil {
 			t.Fatal(err)
 		}
-		out[e.Name()] = data
+		for _, f := range files {
+			name := f.Name()
+			if f.IsDir() || (name != planws.GraphFile && !strings.HasSuffix(name, ".md")) {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(dir, folder, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			out[folder+"/"+name] = data
+		}
 	}
 	return out
 }
+
+// comparePreview derives the AC-14 preview-data contract from one plan's final
+// graph.json and its annex files and byte-compares it with snapshots/<file>.
+// spec is "<folder> <file>". It is the preview-rebuild oracle: the in-scope
+// subset AC-14 pins — per-layer AC counts, the annex inventory, and the raw
+// usage/structures Markdown bodies — assembled from committed facts alone, and
+// deliberately none of the richer fields the preview spike faked
+// (contract/example definitions, test-layer summaries/harness/expects).
+func comparePreview(t *testing.T, ws, dir, spec string) {
+	t.Helper()
+	folder, file, ok := strings.Cut(spec, " ")
+	if !ok || folder == "" || strings.TrimSpace(file) == "" {
+		t.Fatalf("bad # preview directive %q (want '<folder> <file>')", spec)
+	}
+	planDir := filepath.Join(ws, filepath.FromSlash(planws.PlansDir), folder)
+	got := derivePreview(t, planDir)
+	compareFile(t, filepath.Join(dir, "snapshots", strings.TrimSpace(file)), got, "preview "+folder)
+}
+
+// previewData is the AC-14 preview-data contract (its in-scope subset only).
+type previewData struct {
+	LayerACCounts  map[string]int `json:"layer_ac_counts"`
+	Annexes        []previewAnnex `json:"annexes"`
+	UsageBody      string         `json:"usage_body"`
+	StructuresBody string         `json:"structures_body"`
+}
+
+// previewAnnex is one annex inventory record: its kind, title, path, and the
+// ids its `about` edges point at (sorted).
+type previewAnnex struct {
+	Kind  string   `json:"kind"`
+	Title string   `json:"title"`
+	Path  string   `json:"path"`
+	About []string `json:"about"`
+}
+
+// previewGraph is the minimal view of a graph.json the derivation reads. It is
+// decoded independently of internal/graph so the oracle stays a plain reader of
+// committed bytes, not a second use of the code under test.
+type previewGraph struct {
+	Nodes []struct {
+		ID     string `json:"id"`
+		Type   string `json:"type"`
+		Status string `json:"status"`
+		Fields struct {
+			Kind  string `json:"kind"`
+			Title string `json:"title"`
+			Path  string `json:"path"`
+			Layer string `json:"layer"`
+		} `json:"fields"`
+	} `json:"nodes"`
+	Edges []struct {
+		From string `json:"from"`
+		Type string `json:"type"`
+		To   string `json:"to"`
+	} `json:"edges"`
+}
+
+// derivePreview builds the preview-data contract from planDir, deterministically
+// (sorted keys, annexes sorted by kind, sorted `about` targets).
+func derivePreview(t *testing.T, planDir string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(planDir, planws.GraphFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g previewGraph
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatalf("decode %s: %v", planDir, err)
+	}
+	pd := previewData{LayerACCounts: map[string]int{}, Annexes: []previewAnnex{}}
+	for i := range g.Nodes {
+		n := g.Nodes[i]
+		if n.Type == "ac" && previewActive(n.Status) && n.Fields.Layer != "" {
+			pd.LayerACCounts[n.Fields.Layer]++
+		}
+	}
+	for i := range g.Nodes {
+		n := g.Nodes[i]
+		if n.Type != "annex" || !previewActive(n.Status) {
+			continue
+		}
+		about := []string{}
+		for j := range g.Edges {
+			e := g.Edges[j]
+			if e.From == n.ID && e.Type == "about" {
+				about = append(about, e.To)
+			}
+		}
+		sort.Strings(about)
+		pd.Annexes = append(pd.Annexes, previewAnnex{
+			Kind: n.Fields.Kind, Title: n.Fields.Title, Path: n.Fields.Path, About: about,
+		})
+		if n.Fields.Path == "" {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(planDir, filepath.FromSlash(n.Fields.Path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch n.Fields.Kind {
+		case "usage":
+			pd.UsageBody = string(body)
+		case "structures":
+			pd.StructuresBody = string(body)
+		}
+	}
+	sort.Slice(pd.Annexes, func(i, j int) bool { return pd.Annexes[i].Kind < pd.Annexes[j].Kind })
+	out, err := json.MarshalIndent(pd, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(out, '\n')
+}
+
+// previewActive treats a missing status as active, matching graph semantics.
+func previewActive(status string) bool { return status == "" || status == "active" }
 
 func compareFile(t *testing.T, path string, got []byte, what string) {
 	t.Helper()

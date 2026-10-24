@@ -1,0 +1,37 @@
+{
+  "layer_ac_counts": {
+    "e2e": 2,
+    "integration": 3,
+    "manual": 1,
+    "unit": 2
+  },
+  "annexes": [
+    {
+      "kind": "structures",
+      "title": "Mail store shapes",
+      "path": "structures.md",
+      "about": [
+        "g-kqxw",
+        "g-w1fg"
+      ]
+    },
+    {
+      "kind": "testing",
+      "title": "Mail test layers",
+      "path": "testing.md",
+      "about": [
+        "g-21j1"
+      ]
+    },
+    {
+      "kind": "usage",
+      "title": "Using auto mail",
+      "path": "usage.md",
+      "about": [
+        "g-gc8t"
+      ]
+    }
+  ],
+  "usage_body": "# Using auto mail\n\n## Synopsis\n\n_One line on what this does and when to reach for it._\n\n## Example\n\n```console\n$ auto ...\n```\n",
+  "structures_body": "# Mail store shapes\n\n## Overview\n\n_The shapes this plan introduces or changes, and how they fit together._\n"
+}

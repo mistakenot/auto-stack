@@ -6,6 +6,7 @@ package lint
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"regexp"
 	"slices"
@@ -72,6 +73,11 @@ type Context struct {
 	// linted alone: qualified references are then shape-checked only and
 	// EpicRules do not run.
 	Set *workspace.PlanSet
+	// FS is the plan folder opened as a file system (workspace.FolderFS), so
+	// the annex rules can check annex files for existence, stray files and
+	// dangling references. It is nil when a graph is linted without its folder
+	// (from a path or in isolation): the annex rules then do not run.
+	FS fs.FS
 
 	byID map[string]graph.Node
 }
@@ -154,7 +160,11 @@ func Graph(planRef string, g *graph.Graph) Report {
 // must resolve to a node of an allowed type (dangling-ref, wrong-endpoint),
 // and SetRules and EpicRules run after Rules.
 func InSet(set *workspace.PlanSet, p workspace.Plan, g *graph.Graph) Report {
-	return run(&Context{Plan: p.Ref(), Number: p.Number, Folder: p.Folder(), Graph: g, Lifecycle: Lifecycle(g), Set: set})
+	c := &Context{Plan: p.Ref(), Number: p.Number, Folder: p.Folder(), Graph: g, Lifecycle: Lifecycle(g), Set: set}
+	if set != nil {
+		c.FS = set.FolderFS(p)
+	}
+	return run(c)
 }
 
 // CodeOtherVersion warns that a plan was written by another major version,

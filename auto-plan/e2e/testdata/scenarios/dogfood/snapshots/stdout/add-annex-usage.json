@@ -1,0 +1,15 @@
+{
+  "edges": [
+    {
+      "id": "e-g4cd",
+      "from": "ax-y2bm",
+      "type": "about",
+      "to": "g-gc8t"
+    }
+  ],
+  "file": ".auto/plan/plans/002-auto-mail-walking-skeleton/usage.md",
+  "id": "ax-y2bm",
+  "plan": "002-j8nx",
+  "rank": "a0",
+  "type": "annex"
+}

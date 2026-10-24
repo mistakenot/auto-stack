@@ -68,6 +68,16 @@ auto plan renumber 001 --to 004
 auto plan lint 001
 # checkpoint 8
 
+# An annex: `add` writes a create-only stub `.md` beside graph.json and names it
+# in the result (the `file` key / a `wrote …` line). The sidecar is diffed at the
+# next checkpoint. The freeze below hashes every annex file into graph.json
+# (annex.hash) — which is why the file must exist before `--lifecycle done`.
+# (annex-changed, which fires once a frozen annex's bytes drift from that hash,
+# needs a mid-scenario file edit the commands.txt harness has no primitive for;
+# it is covered in internal/lint's unit tests, not here.)
+# expect exit=0 stdout=add-annex.json
+auto plan add 004 annex --kind usage --path demo-usage.md --title "Using demo"
+
 # Setting lifecycle done is the plan's last write; afterwards it is frozen and writes are refused.
 auto plan update 004 plan --lifecycle done
 # expect exit=1 stdout=frozen.txt

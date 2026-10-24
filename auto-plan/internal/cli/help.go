@@ -178,7 +178,8 @@ func docsText(root *cobra.Command) string {
 	b.WriteString("\n## Node types\n\n")
 	b.WriteString("`auto plan add <plan> <type>` takes one flag per field, plus one repeatable flag per edge the\n")
 	b.WriteString("type can start. `auto plan update <plan> <id>` takes the same field flags.\n")
-	for _, n := range schema.Registry.Nodes {
+	for i := range schema.Registry.Nodes {
+		n := &schema.Registry.Nodes[i]
 		id := "`" + n.Prefix + "-xxxx`"
 		if n.Singleton() {
 			id = "`" + n.Name + "`"
