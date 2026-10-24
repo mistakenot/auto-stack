@@ -685,6 +685,91 @@ func (s *Store) RecentRunCounts(ctx context.Context, since time.Time) (map[strin
 	return counts, rows.Err()
 }
 
+// RunListFilter narrows ListRunsFiltered. Every field is optional; a zero value
+// means "no filter on this field". The string fields are matched exactly, so
+// callers normalise (trim+lowercase) before setting them.
+type RunListFilter struct {
+	State     string
+	TaskID    string
+	TriggerID string
+	ProjectID string
+	Reason    string
+	Since     *time.Time
+}
+
+// ListRunsFiltered returns runs matching the filter, newest first (by
+// started_at, then id). It backs `auto watch run list`. A nil or empty filter
+// returns every run.
+func (s *Store) ListRunsFiltered(ctx context.Context, filter *RunListFilter) ([]model.RunRecord, error) {
+	conds := []string{}
+	args := []any{}
+	if filter != nil {
+		if filter.State != "" {
+			conds = append(conds, "state = ?")
+			args = append(args, filter.State)
+		}
+		if filter.TaskID != "" {
+			conds = append(conds, "task_id = ?")
+			args = append(args, filter.TaskID)
+		}
+		if filter.TriggerID != "" {
+			conds = append(conds, "trigger_id = ?")
+			args = append(args, filter.TriggerID)
+		}
+		if filter.ProjectID != "" {
+			conds = append(conds, "project_id = ?")
+			args = append(args, filter.ProjectID)
+		}
+		if filter.Reason != "" {
+			conds = append(conds, "failure_reason = ?")
+			args = append(args, filter.Reason)
+		}
+		if filter.Since != nil {
+			conds = append(conds, "started_at >= ?")
+			args = append(args, formatTime(*filter.Since))
+		}
+	}
+	where := "1=1"
+	if len(conds) > 0 {
+		where = strings.Join(conds, " AND ")
+	}
+	//nolint:gosec // SQL WHERE clause is built from constant "?" placeholders only
+	query := fmt.Sprintf(`SELECT
+		id, project_id, project_path, trigger_id, trigger_type, task_id, task_type,
+		resource_key, branch, state, session_name, runtime_dir, output_path, exit_path,
+		worktree_path, started_at, completed_at, exit_code, error_message,
+		backend, backend_target, deadline_at, failure_reason
+	FROM runs
+	WHERE %s
+	ORDER BY started_at DESC, id DESC`, where)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query filtered runs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	runs := []model.RunRecord{}
+	for rows.Next() {
+		record, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate filtered runs: %w", err)
+	}
+	return runs, nil
+}
+
+// StopUnconfirmedRuns returns runs still `running` that carry a task_stop_failed
+// Event: a past-deadline run whose backend Stop could not be confirmed, kept
+// running so no overlapping run starts. health surfaces these as stop_unconfirmed.
+func (s *Store) StopUnconfirmedRuns(ctx context.Context) ([]model.RunRecord, error) {
+	return s.listRunsWhere(ctx,
+		"state = ? AND EXISTS (SELECT 1 FROM events e WHERE e.run_id = runs.id AND e.event_type = ?)",
+		string(model.RunRunning), "task_stop_failed")
+}
+
 func (s *Store) OldRunningRuns(ctx context.Context, cutoff time.Time) ([]model.RunRecord, error) {
 	return s.listRunsWhere(ctx, "state = ? AND started_at < ?", string(model.RunRunning), formatTime(cutoff))
 }

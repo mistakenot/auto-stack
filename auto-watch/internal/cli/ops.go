@@ -533,11 +533,101 @@ func collectHealth(ctx context.Context, db *store.Store, now func() time.Time) (
 		return "", nil, err
 	}
 	issues = append(issues, dedupGroups...)
+
+	// stop_unconfirmed: a past-deadline run whose backend Stop could not be
+	// confirmed is kept running (so no overlapping run starts) and flagged here
+	// (AC-4) until Stop succeeds or the backend reports it gone.
+	stopUnconfirmed, err := db.StopUnconfirmedRuns(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	for i := range stopUnconfirmed {
+		issues = append(issues, model.HealthIssue{
+			Type:      "stop_unconfirmed",
+			Severity:  "warn",
+			Message:   "past deadline; backend Stop not confirmed, run kept running",
+			ProjectID: stopUnconfirmed[i].ProjectID,
+			TaskID:    stopUnconfirmed[i].TaskID,
+			RunID:     stopUnconfirmed[i].ID,
+		})
+	}
+
+	// stale_heartbeat: the daemon writes heartbeat.json at the end of every tick.
+	// A missing file, or a last_ok_tick_at that is missing or over 3 minutes old,
+	// means no tick has succeeded recently — a wedged or dead daemon that
+	// systemctl may still report active, so health is the source of truth.
+	issues = append(issues, heartbeatIssues(current)...)
+
+	// low_disk: a full disk is a past crash-loop cause (2026-10-23). Report the
+	// free bytes on the filesystem holding ~/.auto/watch when under 1 GiB.
+	if watchDir, wdErr := config.WatchDir(); wdErr == nil {
+		if free, dfErr := diskFreeBytes(watchDir); dfErr == nil && free < oneGiB {
+			issues = append(issues, model.HealthIssue{
+				Type:     "low_disk",
+				Severity: "warn",
+				Message:  fmt.Sprintf("only %d bytes free on the filesystem holding %s (under 1 GiB)", free, watchDir),
+			})
+		}
+	}
+
 	status := "ok"
 	if len(issues) > 0 {
 		status = "warn"
 	}
 	return status, issues, nil
+}
+
+const (
+	heartbeatStaleAfter = 3 * time.Minute
+	oneGiB              = int64(1) << 30
+)
+
+// diskFreeBytes reports the bytes available to an unprivileged process on the
+// filesystem holding path. It is a package var so tests can inject a low value
+// without needing a real near-full filesystem.
+var diskFreeBytes = statfsFreeBytes
+
+func statfsFreeBytes(path string) (int64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, err
+	}
+	//nolint:gosec // block count and size are non-negative filesystem counters
+	return int64(st.Bavail) * st.Bsize, nil
+}
+
+// heartbeatIssues reports a stale_heartbeat issue (with age and last_error) when
+// the daemon heartbeat is missing, unreadable, has never recorded a successful
+// tick, or recorded one over heartbeatStaleAfter ago.
+func heartbeatIssues(now time.Time) []model.HealthIssue {
+	hbPath, err := config.HeartbeatPath()
+	if err != nil {
+		return nil
+	}
+	hb, readErr := daemon.ReadHeartbeat(hbPath)
+	if readErr != nil {
+		return []model.HealthIssue{{
+			Type:     "stale_heartbeat",
+			Severity: "warn",
+			Message:  fmt.Sprintf("heartbeat missing or unreadable: %v", readErr),
+		}}
+	}
+	if hb.LastOKTickAt == nil {
+		msg := "daemon has not recorded a successful tick"
+		if hb.LastError != "" {
+			msg += "; last_error: " + hb.LastError
+		}
+		return []model.HealthIssue{{Type: "stale_heartbeat", Severity: "warn", Message: msg}}
+	}
+	age := now.Sub(hb.LastOKTickAt.UTC())
+	if age > heartbeatStaleAfter {
+		msg := fmt.Sprintf("last successful tick %s ago", age.Round(time.Second))
+		if hb.LastError != "" {
+			msg += "; last_error: " + hb.LastError
+		}
+		return []model.HealthIssue{{Type: "stale_heartbeat", Severity: "warn", Message: msg}}
+	}
+	return nil
 }
 
 func writePIDMetadata() error {

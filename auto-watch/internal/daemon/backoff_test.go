@@ -211,3 +211,35 @@ func TestBackoffResetsOnSuccess(t *testing.T) {
 		t.Fatalf("expected 5 failed runs (minutes 0,1,3,8,9), got %+v", counts)
 	}
 }
+
+// TestBackoffRecordedAsEvent (AC-11): a dispatch skipped because the TaskDef is
+// inside its failure-backoff window is recorded as a task_backoff Event, not a
+// raw stderr line. With an every-minute cron and a failure at minute 0 (1-minute
+// window, so the next dispatch is at minute 1), minute 2 is a backoff skip.
+func TestBackoffRecordedAsEvent(t *testing.T) {
+	db := setupBackoffProject(t)
+	ctx := context.Background()
+
+	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	var clock time.Time
+	service := daemon.New(db, backend.NewRegistry(backendtest.New(1)), nil, func() time.Time { return clock }, nil)
+
+	for m := range 3 { // minutes 0,1,2: 0 and 1 dispatch+fail, 2 is a backoff skip
+		clock = base.Add(time.Duration(m) * time.Minute)
+		if err := service.Tick(ctx); err != nil {
+			t.Fatalf("tick at minute %d failed: %v", m, err)
+		}
+		service.WaitWorkers()
+		if err := service.Reap(ctx); err != nil {
+			t.Fatalf("reap at minute %d failed: %v", m, err)
+		}
+	}
+
+	count, err := db.CountEventsByType(ctx, "task_backoff")
+	if err != nil {
+		t.Fatalf("CountEventsByType failed: %v", err)
+	}
+	if count == 0 {
+		t.Fatal("expected at least one task_backoff Event for the minute-2 skip, got 0")
+	}
+}

@@ -531,11 +531,18 @@ type terminalUpdate struct {
 // preserving today's completed/failed/interrupted semantics and stamping the
 // exit_nonzero / exit_unrecorded reasons.
 func exitedUpdate(run *model.RunRecord, codePtr *int) terminalUpdate {
+	// Store exit_code in the Event metadata as a plain int (or nil), never the
+	// *int itself, so a journal line reads `exit_code=3` or `exit_code=null`
+	// rather than a 0x… pointer address.
+	var exitMeta any
+	if codePtr != nil {
+		exitMeta = *codePtr
+	}
 	u := terminalUpdate{
 		state:    model.RunCompleted,
 		exitCode: codePtr,
 		meta: map[string]any{
-			"exit_code":    codePtr,
+			"exit_code":    exitMeta,
 			"session_name": run.SessionName,
 			"interrupted":  codePtr == nil,
 		},
@@ -546,7 +553,7 @@ func exitedUpdate(run *model.RunRecord, codePtr *int) terminalUpdate {
 		u.state = model.RunFailed
 		u.reason = reasonExitUnrecorded
 		u.journalMsg = fmt.Sprintf("run %d was interrupted before recording an exit code", run.ID)
-		u.errorMessage = tailOutput(run.OutputPath, 200)
+		u.errorMessage = tailOutput(run.OutputPath, OutputTailMaxBytes)
 		if u.errorMessage == "" {
 			u.errorMessage = "run interrupted before recording an exit code"
 		}
@@ -554,7 +561,7 @@ func exitedUpdate(run *model.RunRecord, codePtr *int) terminalUpdate {
 		u.state = model.RunFailed
 		u.reason = reasonExitNonzero
 		u.journalMsg = fmt.Sprintf("run %d finished with exit code %d", run.ID, *codePtr)
-		u.errorMessage = tailOutput(run.OutputPath, 200)
+		u.errorMessage = tailOutput(run.OutputPath, OutputTailMaxBytes)
 		if u.errorMessage == "" {
 			u.errorMessage = fmt.Sprintf("run exited with code %d", *codePtr)
 		}
@@ -994,7 +1001,9 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 	sort.Strings(taskIDs)
 	for _, taskID := range taskIDs {
 		if skip, nextEligible := s.shouldBackoff(projectID, taskID, now); skip {
-			fmt.Fprintf(os.Stderr, "task_backoff project=%s task=%s next_eligible=%s\n", projectID, taskID, nextEligible.Format(time.RFC3339))
+			if logErr := s.logBackoff(ctx, projectID, triggerID, taskID, nextEligible, now); logErr != nil {
+				return logErr
+			}
 			if branchFilter {
 				if err := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "backoff", now); err != nil {
 					return err
@@ -1051,7 +1060,7 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 	}
 
 	// Trigger processing produces no event (Phase 3 noise reduction); dispatch,
-	// dedup-skip, and backoff outcomes are observable via task_* events / stderr.
+	// dedup-skip, and backoff outcomes are observable via task_* events.
 	return s.Store.UpsertTriggerState(ctx, &model.TriggerStateRecord{
 		ProjectID:     projectID,
 		TriggerID:     triggerID,
@@ -1169,7 +1178,9 @@ func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time,
 	sort.Strings(taskIDs)
 	for _, taskID := range taskIDs {
 		if skip, nextEligible := s.shouldBackoff(projectID, taskID, now); skip {
-			fmt.Fprintf(os.Stderr, "task_backoff project=%s task=%s next_eligible=%s\n", projectID, taskID, nextEligible.Format(time.RFC3339))
+			if logErr := s.logBackoff(ctx, projectID, triggerID, taskID, nextEligible, now); logErr != nil {
+				return logErr
+			}
 			if err := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "backoff", now); err != nil {
 				return err
 			}
@@ -1219,7 +1230,7 @@ func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time,
 	}
 
 	// file_created firing produces no event (Phase 3 noise reduction); dispatch,
-	// dedup-skip, and backoff outcomes are observable via task_* events / stderr.
+	// dedup-skip, and backoff outcomes are observable via task_* events.
 	return nil
 }
 
@@ -1698,6 +1709,23 @@ func (s *Service) warningSeen(key string) bool {
 	return false
 }
 
+// logBackoff records a task_backoff Event when a TaskDef's dispatch is skipped
+// because it is inside its failure-backoff window. It replaces the raw stderr
+// line the daemon used to print, so the skip is queryable through the journal
+// (auto watch logs) and formatted consistently with other Events.
+func (s *Service) logBackoff(ctx context.Context, projectID, triggerID, taskID string, nextEligible, now time.Time) error {
+	return s.logEvent(ctx, &store.EventInput{
+		Timestamp: now,
+		Level:     "info",
+		EventType: "task_backoff",
+		ProjectID: projectID,
+		TriggerID: triggerID,
+		TaskID:    taskID,
+		Message:   fmt.Sprintf("task %s backed off until %s", taskID, nextEligible.UTC().Format(time.RFC3339)),
+		Metadata:  map[string]any{"next_eligible": nextEligible.UTC().Format(time.RFC3339)},
+	})
+}
+
 func (s *Service) logEvent(ctx context.Context, input *store.EventInput) error {
 	if input.Timestamp.IsZero() {
 		input.Timestamp = s.Now()
@@ -1725,17 +1753,76 @@ func (s *Service) logEvent(ctx context.Context, input *store.EventInput) error {
 	return err
 }
 
-func tailOutput(path string, maxLines int) string {
+// OutputTailMaxBytes caps the stored tail of a run's output.log: a 400 KB
+// progress-redraw log must not become a 400 KB error_message.
+const OutputTailMaxBytes = 8192
+
+// TailOutput returns the tail of a run's output.log, capped at maxBytes, for the
+// stored error_message and the `run get` output_tail. It reads only the last
+// maxBytes (plus a small margin) of the file, collapses carriage-return progress
+// redraws by keeping only the text after the LAST `\r` on each line, and trims
+// the result to maxBytes. When anything was dropped (the file was larger than
+// the window, or the collapsed text still overflowed) it appends a breadcrumb
+// naming the full output path, so the capped tail always ends in a pointer to
+// the complete log.
+func TailOutput(path string, maxBytes int) string {
 	if strings.TrimSpace(path) == "" {
 		return ""
 	}
-	data, err := os.ReadFile(path)
+	if maxBytes <= 0 {
+		maxBytes = OutputTailMaxBytes
+	}
+	f, err := os.Open(path) //nolint:gosec // path is a daemon-owned run output file
 	if err != nil {
 		return ""
 	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) > maxLines {
-		lines = lines[len(lines)-maxLines:]
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return ""
 	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
+	size := info.Size()
+
+	const margin = 1024
+	truncated := false
+	if size > int64(maxBytes)+margin {
+		if _, err := f.Seek(size-int64(maxBytes)-margin, io.SeekStart); err != nil {
+			return ""
+		}
+		truncated = true
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+
+	// Collapse carriage-return progress redraws: within each newline-delimited
+	// line, keep only the text after its last `\r`.
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		if idx := strings.LastIndex(line, "\r"); idx >= 0 {
+			lines[i] = line[idx+1:]
+		}
+	}
+	out := strings.TrimSpace(strings.Join(lines, "\n"))
+
+	if !truncated && len(out) <= maxBytes {
+		return out
+	}
+
+	breadcrumb := fmt.Sprintf("…[truncated — full output: %s]", path)
+	budget := max(maxBytes-len(breadcrumb)-1, 0)
+	if len(out) > budget {
+		out = out[len(out)-budget:]
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return breadcrumb
+	}
+	return out + "\n" + breadcrumb
+}
+
+// tailOutput is the internal alias used by the reap path.
+func tailOutput(path string, maxBytes int) string {
+	return TailOutput(path, maxBytes)
 }
