@@ -1,8 +1,8 @@
 ---
-hash: "670f8130"
+hash: "a2ed9ca3"
 id: "1467e318"
 read_when: "naming a domain concept in code, docs, or commits, or unsure which canonical term to use for a concept"
-summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Outline, Segment, Rule, Playbook, Event, TaskDef, Trigger, Skill, Context Pack, Mail, Address, Subscription, Delivery, Binding, Handle, Lock, Group, Worker, Plan, Child Plan, Goal, Acceptance Criterion, Decision, Alternative, Rail, Defect, Stage, File Change, Journey, Leg, Question, Tree, Stage Brief) with the terms to avoid for each."
+summary: "The canonical domain vocabulary for auto-stack — one word per concept (Session, Message, Host, Project, Outline, Segment, Rule, Playbook, Event, TaskDef, Trigger, Run, Backend, Skill, Context Pack, Mail, Address, Subscription, Delivery, Binding, Handle, Lock, Group, Worker, Plan, Child Plan, Goal, Acceptance Criterion, Decision, Alternative, Rail, Defect, Stage, File Change, Journey, Leg, Question, Tree, Stage Brief) with the terms to avoid for each."
 title: "Ubiquitous Language"
 ---
 
@@ -17,6 +17,7 @@ flowchart LR
     Acceptance_Criterion["Acceptance Criterion"]
     Address["Address"]
     Alternative["Alternative"]
+    Backend["Backend"]
     Binding["Binding"]
     Child_Plan["Child Plan"]
     Decision["Decision"]
@@ -39,6 +40,7 @@ flowchart LR
     Question["Question"]
     Rail["Rail"]
     Rule["Rule"]
+    Run["Run"]
     Segment["Segment"]
     Session["Session"]
     Stage["Stage"]
@@ -59,6 +61,8 @@ flowchart LR
     Outline -->|many| Message
     Playbook -->|many| Rule
     Trigger -->|many| TaskDef
+    Run -->|one| Backend
+    Run -->|one| Binding
     Mail -->|many| Delivery
     Address -->|many| Subscription
     Subscription -->|many| Delivery
@@ -169,6 +173,15 @@ A named condition that fires and launches one or more TaskDefs — a cron schedu
 _Avoid_: Watcher, listener, hook, scheduler
 _Has_: many TaskDefs
 
+**Run**:
+One execution of a TaskDef launched by the `auto watch` daemon through a Backend — reserved, started, then driven to a terminal state (completed or failed), with its own runtime directory, output log and recorded exit code.
+_Avoid_: Execution, invocation, attempt, task run
+_Has_: one Backend, one Binding
+
+**Backend**:
+A pluggable execution adapter the `auto watch` daemon drives through one stdlib-only port — it Starts a Run, reports its Status (running, exited or lost) and Stops it. Only the tmux adapter ships; an ntm or herdr adapter is addable as one file.
+_Avoid_: Executor, runner, driver, launcher
+
 ## Skills
 
 **Skill**:
@@ -208,7 +221,7 @@ _Avoid_: Alias, shortcut, relative address, magic address
 _Has_: one Address
 
 **Binding**:
-The current physical target of a Subscription, recorded as an opaque `(manager, target)` pair.
+The current physical target of a Subscription or a Run, recorded as an opaque `(manager, target)` pair.
 _Avoid_: Pane, session link, attachment, route
 
 ## Locks
