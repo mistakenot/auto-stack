@@ -16,6 +16,13 @@ INSTALL_DIR ?= $(HOME)/.local/bin
 # code repo-wide. Bump this deliberately, not silently.
 GOLANGCI_VERSION ?= v2.12.2
 
+# Pin gofmt to the repo's Go version (the `go` line in go.mod, which CI's go-version
+# tracks). gofmt's comment alignment changes between Go releases, so a newer host Go
+# (e.g. a 1.27 snap) flags files CI considers clean and fmt-staged rewrites them.
+# GOTOOLCHAIN fetches and caches the pinned toolchain on first use.
+GO_TOOLCHAIN ?= go$(shell sed -n 's/^go //p' auto-shared/go.mod)
+GOFMT ?= $(shell GOTOOLCHAIN=$(GO_TOOLCHAIN) go env GOROOT)/bin/gofmt
+
 # All modules participate in the quality/test loops (fmt/vet/lint/vulncheck/test).
 # The single `auto` binary is built from the auto-cli umbrella module.
 PROJECTS := auto-shared auto-doc auto-env auto-etl auto-watch auto-search auto-reflect auto-skill auto-graph auto-ui auto-config auto-artifact auto-mail auto-plan auto-cli
@@ -67,17 +74,17 @@ dist:
 
 fmt:
 	@for d in $(PROJECTS); do \
+		files=$$(cd "$$d" && find . -name '*.go' -not -path './vendor/*'); \
 		if command -v goimports >/dev/null 2>&1; then \
-			(cd "$$d" && goimports -w $$(find . -name '*.go' -not -path './vendor/*')); \
-		else \
-			(cd "$$d" && gofmt -w $$(find . -name '*.go' -not -path './vendor/*')); \
+			(cd "$$d" && goimports -w $$files); \
 		fi; \
+		(cd "$$d" && $(GOFMT) -w $$files); \
 	done
 	@echo "All Go files formatted"
 
 fmt-check:
 	@fail=0; for d in $(PROJECTS); do \
-		unformatted=$$(cd "$$d" && gofmt -l .); \
+		unformatted=$$(cd "$$d" && $(GOFMT) -l .); \
 		if [ -n "$$unformatted" ]; then \
 			echo "=== unformatted in $$d ==="; echo "$$unformatted"; fail=1; \
 		fi; \
@@ -262,9 +269,9 @@ gen-stats:
 # (CI runs those); pre-commit covers formatting, lint, vet, vulncheck (gated on
 # go.sum changes), fixture privacy guard, and repo housekeeping.
 
-# Auto-format staged .go files in place and re-stage them. Falls back to gofmt
-# if goimports isn't installed. Re-staging keeps formatting changes inside the
-# commit being made.
+# Auto-format staged .go files in place and re-stage them: goimports (if installed)
+# fixes imports, then the pinned $(GOFMT) has the final say on layout.
+# Re-staging keeps formatting changes inside the commit being made.
 fmt-staged:
 	@staged=$$(git diff --cached --name-only --diff-filter=ACM -- '*.go' || true); \
 	if [ -n "$$staged" ]; then \
@@ -272,9 +279,8 @@ fmt-staged:
 			[ -f "$$f" ] || continue; \
 			if command -v goimports >/dev/null 2>&1; then \
 				goimports -w "$$f"; \
-			else \
-				gofmt -w "$$f"; \
 			fi; \
+			$(GOFMT) -w "$$f"; \
 		done; \
 		echo "$$staged" | xargs git add; \
 		echo "pre-commit: goimports/gofmt applied"; \
