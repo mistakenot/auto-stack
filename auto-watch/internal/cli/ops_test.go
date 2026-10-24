@@ -5,17 +5,24 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mistakenot/auto-shared/backend"
+	"github.com/mistakenot/auto-shared/backend/backendtest"
 	"github.com/mistakenot/auto-shared/rpc/conformance"
 	"github.com/mistakenot/auto-shared/transport"
 	"github.com/mistakenot/auto-watch/internal/app"
 	"github.com/mistakenot/auto-watch/internal/cli"
+	watchconfig "github.com/mistakenot/auto-watch/internal/config"
+	"github.com/mistakenot/auto-watch/internal/model"
 	"github.com/mistakenot/auto-watch/internal/rpcmethods"
+	"github.com/mistakenot/auto-watch/internal/store"
 	"github.com/mistakenot/auto-watch/internal/testutil"
 )
 
@@ -154,6 +161,128 @@ func TestStartReadyFileAndPIDMetadata(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("start didn't exit after cancel")
+	}
+}
+
+// TestStartPreflightRunsDespiteBadProjectAndMissingTools (AC-5): `start` from a
+// cwd whose Project has an unknown Backend, with tmux and claude missing from
+// PATH, while a second registered Project has a valid bash TaskDef on a `fake`
+// Backend — the daemon starts (preflight prints warnings, exits only on fatal
+// checks) and runs the valid Project's TaskDef to completion.
+func TestStartPreflightRunsDespiteBadProjectAndMissingTools(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not available")
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".auto"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Valid host config so the fatal host_config preflight check passes.
+	if _, _, _, err := watchconfig.EnsureHostFile(); err != nil {
+		t.Fatalf("ensure host file: %v", err)
+	}
+
+	// Project A (the cwd): a git repo whose config declares an unknown backend —
+	// an invalid-config warning, never fatal.
+	repoA := filepath.Join(t.TempDir(), "proja")
+	initGitRepoAt(t, gitPath, repoA)
+	writeTestFile(t, filepath.Join(repoA, ".auto", "watch", "project.json"),
+		`{"id":"proja","tasks":{"bad":{"type":"bash","command":"echo","backend":"herdr"}},"triggers":{}}`)
+
+	// Project B: a valid bash TaskDef on the fake backend, fired every minute.
+	dirB := filepath.Join(t.TempDir(), "projb")
+	writeTestFile(t, filepath.Join(dirB, ".auto", "watch", "project.json"),
+		`{"id":"projectb","tasks":{"run-b":{"type":"bash","command":"echo ok","backend":"fake"}},`+
+			`"triggers":{"m":{"type":"cron","when":"* * * * *","tasks":["run-b"]}}}`)
+
+	regPath, err := watchconfig.ProjectsPath()
+	if err != nil {
+		t.Fatalf("projects path: %v", err)
+	}
+	writeTestFile(t, regPath, fmt.Sprintf(`{"projects":[{"id":"proja","path":%q},{"id":"projectb","path":%q}]}`, repoA, dirB))
+
+	// Make tmux and claude missing: restrict PATH to a dir with only git.
+	binDir := t.TempDir()
+	if err := os.Symlink(gitPath, filepath.Join(binDir, "git")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	// Registry: the real tmux backend (never used here) plus a fake named "fake".
+	fakeB := backendtest.New(0)
+	fakeB.NameVal = "fake"
+
+	var out, errOut bytes.Buffer
+	application := app.New(&out, &errOut)
+	application.CWD = repoA
+	application.Backends = backend.NewRegistry(&backend.Tmux{}, fakeB)
+
+	rootCmd := cli.NewRootCmd(application)
+	rootCmd.SetArgs([]string{"start", "--once"})
+	if err := rootCmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("start --once must not fail on a bad Project + missing tmux/claude: %v\nstderr: %s", err, errOut.String())
+	}
+
+	// The preflight warnings were printed (tmux missing), not fatal.
+	if !strings.Contains(errOut.String(), "tmux") {
+		t.Fatalf("expected a tmux warning on stderr, got: %s", errOut.String())
+	}
+
+	// The valid Project B's TaskDef ran to completion through the fake backend.
+	db, err := store.Open(filepath.Join(home, ".auto", "watch", "logs.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	completed, err := db.ListRunsByStates(context.Background(), model.RunCompleted)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	foundB := false
+	for i := range completed {
+		if completed[i].ProjectID == "projectb" && completed[i].TaskID == "run-b" {
+			foundB = true
+		}
+	}
+	if !foundB {
+		all, _ := db.ListRunsByStates(context.Background(), model.RunPending, model.RunRunning, model.RunCompleted, model.RunFailed)
+		t.Fatalf("expected Project B's run-b to complete; runs=%+v\nstderr=%s", all, errOut.String())
+	}
+}
+
+func initGitRepoAt(t *testing.T, gitPath, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(gitPath, args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.email", "t@example.com")
+	run("config", "user.name", "T")
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "init")
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

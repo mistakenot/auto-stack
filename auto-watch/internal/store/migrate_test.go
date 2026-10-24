@@ -163,18 +163,33 @@ func TestMigrateV3IsIdempotent(t *testing.T) {
 		t.Fatalf("expected 3 runs after double migrate, got %d", len(all))
 	}
 
-	// New columns persist a round-trip: start the running row, then read it back.
+	// New columns persist a round-trip. UpdateRunStarted now guards on
+	// state='pending' (it is the reserve->start transition), so start a freshly
+	// reserved pending run and read the new columns back.
 	deadline := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
-	if err := db.UpdateRunStarted(ctx, 3, &store.RunStartUpdate{
-		SessionName:   "autowatch-run-3--etl",
-		RuntimeDir:    "/tmp/demo/runs/3",
+	newID, err := db.ReserveRun(ctx, &store.ReserveRunInput{
+		ProjectID:   "demo",
+		ProjectPath: "/tmp/demo",
+		TriggerID:   "daily",
+		TriggerType: "cron",
+		TaskID:      "etl",
+		TaskType:    "bash",
+		ResourceKey: "cron:daily:v3",
+		StartedAt:   time.Date(2026, 3, 20, 11, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("reserve run: %v", err)
+	}
+	if err := db.UpdateRunStarted(ctx, newID, &store.RunStartUpdate{
+		SessionName:   "autowatch-run-4--etl",
+		RuntimeDir:    "/tmp/demo/runs/4",
 		Backend:       "tmux",
-		BackendTarget: "autowatch-run-3--etl",
+		BackendTarget: "autowatch-run-4--etl",
 		DeadlineAt:    deadline,
 	}); err != nil {
 		t.Fatalf("update run started: %v", err)
 	}
-	run, err := db.GetRun(ctx, 3)
+	run, err := db.GetRun(ctx, newID)
 	if err != nil {
 		t.Fatalf("get run: %v", err)
 	}

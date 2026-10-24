@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -64,15 +65,25 @@ func newStartCmd(application *app.App) *cobra.Command {
 			}
 			defer func() { _ = db.Close() }()
 
-			status, checks := doctor.Run(cmd.Context(), application.CWD, application.Backends.Names())
-			if status != "ok" || doctor.HasFailures(checks) {
-				for _, check := range checks {
-					fmt.Fprintf(cmd.ErrOrStderr(), "%s: %s - %s\n", check.Name, check.Status, check.Message)
-					if check.Remediation != "" {
-						fmt.Fprintf(cmd.ErrOrStderr(), "  remediation: %s\n", check.Remediation)
-					}
+			// Startup preflight: the store is already open (openStore above), so
+			// the only remaining fatal checks are the settings dir and host
+			// config. Everything else (tmux, claude, git, an invalid Project
+			// config) is printed as a warning and does NOT stop the daemon — the
+			// tick validates each TaskDef per entry and skips the bad ones. This is
+			// what keeps a missing tmux or one bad Project from crash-looping the
+			// daemon under Restart=always.
+			checks, fatalFailed := doctor.Preflight(cmd.Context(), application.CWD, application.Backends.Names())
+			for _, check := range checks {
+				if check.Status == "ok" {
+					continue
 				}
-				return &ExitError{Code: 1, Err: errors.New("doctor checks failed")}
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %s - %s\n", check.Name, check.Status, check.Message)
+				if check.Remediation != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "  remediation: %s\n", check.Remediation)
+				}
+			}
+			if fatalFailed {
+				return &ExitError{Code: 1, Err: errors.New("fatal preflight check failed; cannot start daemon")}
 			}
 
 			hub := bus.NewHub()
@@ -167,10 +178,22 @@ func newStartCmd(application *app.App) *cobra.Command {
 
 			errCh := make(chan error, 3)
 
-			// Run initial tick.
-			if err := service.Tick(ctx); err != nil {
-				return &ExitError{Code: 1, Err: err}
+			// Heartbeat writer: every tick (initial and loop) records liveness so
+			// `auto watch health` can report a stale daemon. A write failure is
+			// logged, never fatal.
+			var hbWriter *daemon.HeartbeatWriter
+			if hbPath, hbErr := config.HeartbeatPath(); hbErr == nil {
+				hbWriter = daemon.NewHeartbeatWriter(hbPath)
+			} else {
+				fmt.Fprintf(cmd.ErrOrStderr(), "autowatch heartbeat disabled: %v\n", hbErr)
 			}
+
+			// Run initial tick, then every loop tick, through the crash-safe
+			// wrapper: a tick error (even a store failure) is logged to stderr and
+			// recorded in the heartbeat's last_error, and the loop CONTINUES, so a
+			// transient fault never exits the process into a Restart=always crash
+			// loop. Only openStore/Migrate (above) and listener binding are fatal.
+			runTick(ctx, service, hbWriter, cmd.ErrOrStderr(), application.Now)
 
 			// RPC server goroutine.
 			rpcSrv := rpcserver.New(rpcLn, handlers, hub, ctlEvents)
@@ -208,9 +231,7 @@ func newStartCmd(application *app.App) *cobra.Command {
 						return &ExitError{Code: 1, Err: lErr}
 					}
 				case <-ticker.C:
-					if tErr := service.Tick(ctx); tErr != nil {
-						return &ExitError{Code: 1, Err: tErr}
-					}
+					runTick(ctx, service, hbWriter, cmd.ErrOrStderr(), application.Now)
 				}
 			}
 		},
@@ -452,6 +473,23 @@ func newCleanCmd(application *app.App) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "kill active sessions and remove their worktrees too")
 	return cmd
+}
+
+// runTick runs one daemon tick and contains its failure: any error (a git or
+// dispatch fault that Tick surfaces, or a store failure) is logged to stderr and
+// recorded in the heartbeat's last_error, and the function returns normally so
+// the start loop keeps running instead of exiting into a Restart=always crash
+// loop. A heartbeat write failure is itself logged and never fatal.
+func runTick(ctx context.Context, service *daemon.Service, hb *daemon.HeartbeatWriter, stderr io.Writer, now func() time.Time) {
+	err := service.Tick(ctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "autowatch tick error: %v\n", err)
+	}
+	if hb != nil {
+		if hbErr := hb.Record(nowUTC(now), err); hbErr != nil {
+			fmt.Fprintf(stderr, "autowatch heartbeat write failed: %v\n", hbErr)
+		}
+	}
 }
 
 func collectHealth(ctx context.Context, db *store.Store, now func() time.Time) (string, []model.HealthIssue, error) {

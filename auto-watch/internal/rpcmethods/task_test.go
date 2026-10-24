@@ -141,6 +141,34 @@ func TestTaskDispatch_CreatesRun(t *testing.T) {
 	}
 }
 
+// TestTaskDispatch_StartFailureReturnsError (AC-7): when the Backend's Start
+// fails, the RPC returns an error (not a State: running result) and the run is
+// left failed with failure_reason=start_failed.
+func TestTaskDispatch_StartFailureReturnsError(t *testing.T) {
+	client, svc, _, cleanup := setupWithService(t)
+	defer cleanup()
+
+	b, _ := svc.Backends.Get("tmux")
+	be := b.(*backendtest.Fake)
+	be.SetStartErr(errors.New("backend start failed"))
+
+	_, err := callTask(t, client, "task.dispatch", DispatchParams{ProjectID: "test-project", TaskID: "echo"})
+	if err == nil {
+		t.Fatal("expected task.dispatch to return an error when Start fails, not State: running")
+	}
+
+	runs, lErr := svc.Store.ListRunsByStates(context.Background(), model.RunFailed)
+	if lErr != nil {
+		t.Fatalf("list failed runs: %v", lErr)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected exactly 1 failed run, got %d", len(runs))
+	}
+	if runs[0].FailureReason != "start_failed" {
+		t.Fatalf("failure_reason = %q, want start_failed", runs[0].FailureReason)
+	}
+}
+
 func TestTaskDispatch_UnknownProject(t *testing.T) {
 	client, _, _, cleanup := setupWithService(t)
 	defer cleanup()

@@ -3,6 +3,7 @@ package daemon_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"sync"
 	"testing"
@@ -278,6 +279,57 @@ func TestWatchTaskFailedCarriesReason(t *testing.T) {
 				t.Fatalf("no task_failed Event for run %d with metadata reason=%q", runID, sc.reason)
 			}
 		})
+	}
+}
+
+// TestWatchTaskFailedCarriesStartFailedReason (AC-17 + AC-7): a start failure
+// emits watch.task.failed with reason=start_failed on the bus, and the SQLite
+// task_failed Event metadata carries the same reason. (The other reasons are
+// covered by TestWatchTaskFailedCarriesReason, which drives them through Reap;
+// start_failed happens inside Dispatch, so it is asserted separately here.)
+func TestWatchTaskFailedCarriesStartFailedReason(t *testing.T) {
+	db := newTestStore(t)
+	projectPath := t.TempDir()
+	now := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
+	hub := bus.NewHub()
+	sink := &collectSink{}
+	cancel := hub.Subscribe(sink)
+	defer cancel()
+	fake := &backendtest.Fake{}
+	fake.SetStartErr(errors.New("backend start failed"))
+	svc := daemon.New(db, backend.NewRegistry(fake), nil, func() time.Time { return now }, hub)
+
+	runID, err := svc.Dispatch(context.Background(), bashReserveInput(projectPath, now), model.TaskDef{Type: "bash", Command: "echo hi"})
+	if err == nil {
+		t.Fatal("expected Dispatch to fail when Start fails")
+	}
+
+	failed := sink.byType(bus.TypeWatchTaskFailed)
+	if len(failed) != 1 {
+		t.Fatalf("expected 1 watch.task.failed, got %d", len(failed))
+	}
+	var data bus.WatchTaskData
+	if err := json.Unmarshal(failed[0].Data, &data); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if data.Reason != "start_failed" {
+		t.Fatalf("bus reason = %q, want start_failed", data.Reason)
+	}
+
+	events, err := db.ListEvents(context.Background(), &store.EventFilter{Limit: 50, EventType: "task_failed"})
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	found := false
+	for i := range events {
+		if events[i].RunID != nil && *events[i].RunID == runID {
+			if r, _ := events[i].Metadata["reason"].(string); r == "start_failed" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no task_failed Event for run %d with metadata reason=start_failed", runID)
 	}
 }
 

@@ -44,16 +44,14 @@ const lostGrace = 2 * time.Minute
 
 // Failure reasons stamped on a failed run's failure_reason column and carried on
 // the task_failed Event and the watch.task.failed bus payload. reasonStartFailed
-// is wired in phase 3 (failRun), the others in this phase (Reap).
+// is stamped by failRun (start/dispatch failures); the others by Reap.
 const (
 	reasonExitNonzero    = "exit_nonzero"
 	reasonExitUnrecorded = "exit_unrecorded"
 	reasonSessionLost    = "session_lost"
 	reasonTimedOut       = "timed_out"
-	reasonStartFailed    = "start_failed" // TODO(phase 3): stamp in failRun
+	reasonStartFailed    = "start_failed"
 )
-
-var _ = reasonStartFailed // referenced by phase 3; kept here so the set lives in one place
 
 type Service struct {
 	Store    *store.Store
@@ -84,6 +82,16 @@ type backoffState struct {
 func backoffKey(projectID, taskID string) string {
 	return projectID + ":" + taskID
 }
+
+// configError marks a tickProject failure as a configuration fault (unloadable
+// config or an invalid project id) rather than a system fault (git, store,
+// dispatch). Tick logs the former as config_warning and the latter as
+// system_warning, so an operator can tell a bad config apart from a transient
+// fault instead of every failure being blamed on "invalid config".
+type configError struct{ err error }
+
+func (e *configError) Error() string { return e.err.Error() }
+func (e *configError) Unwrap() error { return e.err }
 
 // backoffWindow returns the suppression window for the given consecutive-failure
 // count: min(1min * 2^(failures-1), 64min), i.e. 1, 2, 4, 8, 16, 32, 64 minutes.
@@ -202,8 +210,18 @@ func (s *Service) Cancel(ctx context.Context, runID int64) (model.RunState, erro
 
 	now := s.Now()
 	msg := "cancelled via task.cancel"
-	if err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, msg); err != nil {
+	updated, err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, msg)
+	if err != nil {
 		return "", err
+	}
+	if !updated {
+		// Another writer finished this run between our read and the conditional
+		// update; report its current state without emitting a duplicate event.
+		fresh, gErr := s.Store.GetRun(ctx, run.ID)
+		if gErr != nil {
+			return "", gErr
+		}
+		return fresh.State, nil
 	}
 	_ = s.logEvent(ctx, &store.EventInput{
 		Timestamp: now,
@@ -317,17 +335,29 @@ func (s *Service) Tick(ctx context.Context) error {
 
 	for _, project := range projects {
 		if err := s.tickProject(ctx, now, &project); err != nil {
-			// Dedup so the same invalid-config warning is logged once, not every
-			// tick (Phase 3 noise reduction). The error text distinguishes warnings.
-			if s.warningSeen("config_warning:" + project.ID + ":" + err.Error()) {
+			// One bad Project must not take the tick down: log it and move on so
+			// every other Project still evaluates. Classify by its TRUE category
+			// — config_warning only for a validation/config fault, system_warning
+			// for a git/dispatch/other fault — instead of blaming every failure on
+			// invalid config.
+			eventType := "system_warning"
+			message := "project tick failed"
+			var cfgErr *configError
+			if errors.As(err, &cfgErr) {
+				eventType = "config_warning"
+				message = "project skipped due to invalid config"
+			}
+			// Dedup so the same warning is logged once, not every tick (Phase 3
+			// noise reduction). The event type + error text distinguish warnings.
+			if s.warningSeen(eventType + ":" + project.ID + ":" + err.Error()) {
 				continue
 			}
 			if logErr := s.logEvent(ctx, &store.EventInput{
 				Timestamp: now,
 				Level:     "warn",
-				EventType: "config_warning",
+				EventType: eventType,
 				ProjectID: project.ID,
-				Message:   "project skipped due to invalid config",
+				Message:   message,
 				Metadata:  map[string]any{"error": err.Error()},
 			}); logErr != nil {
 				return logErr
@@ -451,9 +481,15 @@ func (s *Service) Reap(ctx context.Context) error {
 			s.dispatchMu.Unlock()
 			continue
 		}
-		if err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, message); err != nil {
+		updated, err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, message)
+		if err != nil {
 			s.dispatchMu.Unlock()
 			return err
+		}
+		if !updated {
+			// Another writer finished it between our re-read and the update.
+			s.dispatchMu.Unlock()
+			continue
 		}
 		// Abandoned pending runs are failures too — extend the backoff streak
 		// (dispatchMu already held).
@@ -538,18 +574,26 @@ func (s *Service) finishRun(ctx context.Context, run *model.RunRecord, now time.
 	defer s.dispatchMu.Unlock()
 
 	fresh, reErr := s.Store.GetRun(ctx, run.ID)
-	if reErr != nil || fresh.State != model.RunRunning {
-		// Already finished by another writer (or this reap on a previous tick):
-		// mark nothing, emit nothing.
-		return nil
+	if reErr != nil {
+		return reErr
 	}
 
+	// The conditional UPDATE (state IN ('pending','running')) is the single
+	// once-only dedup mechanism: a run another writer already finished reports
+	// updated=false, so we mark nothing and emit nothing. fresh is re-read only
+	// for the bus event's provenance.
+	var updated bool
+	var err error
 	if u.state == model.RunFailed && u.reason != "" {
-		if err := s.Store.MarkRunFailedWithReason(ctx, run.ID, u.exitCode, now, u.errorMessage, u.reason); err != nil {
-			return err
-		}
-	} else if err := s.Store.MarkRunTerminal(ctx, run.ID, u.state, u.exitCode, now, u.errorMessage); err != nil {
+		updated, err = s.Store.MarkRunFailedWithReason(ctx, run.ID, u.exitCode, now, u.errorMessage, u.reason)
+	} else {
+		updated, err = s.Store.MarkRunTerminal(ctx, run.ID, u.state, u.exitCode, now, u.errorMessage)
+	}
+	if err != nil {
 		return err
+	}
+	if !updated {
+		return nil
 	}
 
 	// Maintain failure backoff (dispatchMu already held): a failed run extends
@@ -640,13 +684,22 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 			if run.BackendTarget != "" {
 				if b, ok := s.Backends.Get(run.Backend); ok {
 					if err := b.Stop(ctx, backend.Binding{Manager: run.Backend, Target: run.BackendTarget}); err != nil {
-						return err
+						// Contain a Stop failure: one wedged run must not abort the
+						// whole clean. Warn, leave it active (retried next clean), move on.
+						if logErr := s.systemWarning(ctx, run, fmt.Sprintf("run %d backend stop failed during clean --force", run.ID), err); logErr != nil {
+							return logErr
+						}
+						continue
 					}
 				}
 			}
 			message := "killed by auto watch clean --force"
-			if err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, message); err != nil {
+			updated, err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, message)
+			if err != nil {
 				return err
+			}
+			if !updated {
+				continue
 			}
 			if err := s.logEvent(ctx, &store.EventInput{
 				Timestamp: now,
@@ -662,7 +715,10 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 				return err
 			}
 			if err := s.removeWorktree(ctx, run, "manual_clean_force"); err != nil {
-				return err
+				if logErr := s.systemWarning(ctx, run, fmt.Sprintf("run %d worktree removal failed during clean --force", run.ID), err); logErr != nil {
+					return logErr
+				}
+				continue
 			}
 		}
 	}
@@ -674,7 +730,12 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 	for i := range terminalRuns {
 		run := &terminalRuns[i]
 		if err := s.removeWorktree(ctx, run, "ttl_cleanup"); err != nil {
-			return err
+			// Contain a worktree-removal failure: warn naming the run and move on
+			// so one un-removable worktree can't take the tick down.
+			if logErr := s.systemWarning(ctx, run, fmt.Sprintf("run %d worktree removal failed during ttl cleanup", run.ID), err); logErr != nil {
+				return logErr
+			}
+			continue
 		}
 	}
 
@@ -726,7 +787,7 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 func (s *Service) tickProject(ctx context.Context, now time.Time, project *model.ProjectRef) error {
 	projectCfg, err := config.LoadProjectConfig(project.Path)
 	if err != nil {
-		return err
+		return &configError{err}
 	}
 	projectID := projectCfg.ID
 	if projectID == "" {
@@ -749,7 +810,7 @@ func (s *Service) tickProject(ctx context.Context, now time.Time, project *model
 		validTasks[taskID] = task
 	}
 	if errs := config.ValidateProjectConfig(model.ProjectConfig{ID: projectID, Tasks: validTasks, Triggers: map[string]model.TriggerDef{}}, s.Backends.Names()); len(errs) > 0 {
-		return fmt.Errorf("project id is invalid: %s", errs[0].Message)
+		return &configError{fmt.Errorf("project id is invalid: %s", errs[0].Message)}
 	}
 
 	triggerIDs := make([]string, 0, len(projectCfg.Triggers))
@@ -809,7 +870,20 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 	if trigger.OnlyIfBranchChanged != "" {
 		currentSHA, err = gitx.BranchHeadSHA(projectPath, trigger.OnlyIfBranchChanged)
 		if err != nil {
-			return err
+			// A git failure resolving the branch (e.g. the branch no longer
+			// exists) must neither fire the Trigger nor abort the Project's other
+			// Triggers: record a system_warning naming the branch and the git
+			// error, and skip this Trigger this tick. Only a store failure from
+			// logging it propagates.
+			return s.logEvent(ctx, &store.EventInput{
+				Timestamp: now,
+				Level:     "warn",
+				EventType: "system_warning",
+				ProjectID: projectID,
+				TriggerID: triggerID,
+				Message:   fmt.Sprintf("trigger %s: resolving branch %q failed; not firing", triggerID, trigger.OnlyIfBranchChanged),
+				Metadata:  map[string]any{"error": err.Error(), "branch": trigger.OnlyIfBranchChanged},
+			})
 		}
 		if state.LastBranchSHA != "" && state.LastBranchSHA == currentSHA {
 			if err := s.Store.UpsertTriggerState(ctx, &model.TriggerStateRecord{
@@ -1186,48 +1260,61 @@ func (s *Service) startWorker(ctx context.Context, runID int64, task model.TaskD
 	return nil
 }
 
+// failRun is the single chokepoint for a start/dispatch-time failure. It stamps
+// the run failed with failure_reason=start_failed, records failure backoff,
+// emits watch.task.failed with the reason, cleans up any worktree and logs the
+// task_failed Event. It ALWAYS returns a non-nil error — fmt.Errorf("start run
+// %d: %w", id, runErr) joined (errors.Join) with any error from recording the
+// failure — so Dispatch and the RPC task.run propagate it instead of reporting
+// success (the swallowed-start-error bug). Callers (Dispatch, startWorker) hold
+// dispatchMu, as recordRunOutcome requires.
 func (s *Service) failRun(ctx context.Context, run *model.RunRecord, worktreePath string, runErr error) error {
 	now := s.Now()
-	if err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, runErr.Error()); err != nil {
-		return err
-	}
-	// A startup/dispatch-time failure is marked terminal here and never reaches
-	// Reap, so record it for failure backoff at this single chokepoint. All
-	// callers (Dispatch, startWorker) hold dispatchMu, as recordRunOutcome
-	// requires.
-	s.recordRunOutcome(run.ProjectID, run.TaskID, model.RunFailed, now)
-	if worktreePath != "" {
-		run.WorktreePath = worktreePath
-	}
-	// TODO(phase 3): failRun will stamp failure_reason=start_failed and propagate
-	// the wrapped error; until then the failed Event carries no reason.
-	s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, run, nil, runErr.Error(), "")
-	if worktreePath != "" {
-		if err := s.removeWorktree(ctx, &model.RunRecord{
-			ID:           run.ID,
-			ProjectID:    run.ProjectID,
-			TriggerID:    run.TriggerID,
-			TaskID:       run.TaskID,
-			ProjectPath:  run.ProjectPath,
-			WorktreePath: worktreePath,
-		}, "worker_failure_cleanup"); err != nil {
-			return err
+	wrapErr := fmt.Errorf("start run %d: %w", run.ID, runErr)
+	var recErr error
+
+	updated, err := s.Store.MarkRunFailedWithReason(ctx, run.ID, nil, now, runErr.Error(), reasonStartFailed)
+	if err != nil {
+		recErr = errors.Join(recErr, err)
+	} else if updated {
+		// A startup/dispatch-time failure is marked terminal here and never reaches
+		// Reap, so record it for failure backoff at this single chokepoint.
+		s.recordRunOutcome(run.ProjectID, run.TaskID, model.RunFailed, now)
+		if worktreePath != "" {
+			run.WorktreePath = worktreePath
+		}
+		s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, run, nil, runErr.Error(), reasonStartFailed)
+		if worktreePath != "" {
+			if rmErr := s.removeWorktree(ctx, &model.RunRecord{
+				ID:           run.ID,
+				ProjectID:    run.ProjectID,
+				TriggerID:    run.TriggerID,
+				TaskID:       run.TaskID,
+				ProjectPath:  run.ProjectPath,
+				WorktreePath: worktreePath,
+			}, "worker_failure_cleanup"); rmErr != nil {
+				recErr = errors.Join(recErr, rmErr)
+			}
+		}
+		if logErr := s.logEvent(ctx, &store.EventInput{
+			Timestamp: now,
+			Level:     "error",
+			EventType: "task_failed",
+			ProjectID: run.ProjectID,
+			TriggerID: run.TriggerID,
+			TaskID:    run.TaskID,
+			RunID:     &run.ID,
+			Message:   runErr.Error(),
+			Metadata: map[string]any{
+				"resource_key": run.ResourceKey,
+				"error":        runErr.Error(),
+				"reason":       reasonStartFailed,
+			},
+		}); logErr != nil {
+			recErr = errors.Join(recErr, logErr)
 		}
 	}
-	return s.logEvent(ctx, &store.EventInput{
-		Timestamp: now,
-		Level:     "error",
-		EventType: "task_failed",
-		ProjectID: run.ProjectID,
-		TriggerID: run.TriggerID,
-		TaskID:    run.TaskID,
-		RunID:     &run.ID,
-		Message:   runErr.Error(),
-		Metadata: map[string]any{
-			"resource_key": run.ResourceKey,
-			"error":        runErr.Error(),
-		},
-	})
+	return errors.Join(wrapErr, recErr)
 }
 
 func (s *Service) removeWorktree(ctx context.Context, run *model.RunRecord, reason string) error {
@@ -1260,6 +1347,25 @@ func (s *Service) removeWorktree(ctx context.Context, run *model.RunRecord, reas
 	}
 	run.WorktreePath = ""
 	return nil
+}
+
+// systemWarning records a per-run system_warning Event naming the run and the
+// underlying error. Reap and Clean use it to surface a failure in one per-run
+// step (Status, Stop, worktree removal) and then continue, so one bad run can't
+// take the whole tick down. It returns only the logEvent error (a store
+// failure), which the caller DOES propagate.
+func (s *Service) systemWarning(ctx context.Context, run *model.RunRecord, message string, cause error) error {
+	return s.logEvent(ctx, &store.EventInput{
+		Timestamp: s.Now(),
+		Level:     "warn",
+		EventType: "system_warning",
+		ProjectID: run.ProjectID,
+		TriggerID: run.TriggerID,
+		TaskID:    run.TaskID,
+		RunID:     &run.ID,
+		Message:   message,
+		Metadata:  map[string]any{"error": cause.Error(), "resource_key": run.ResourceKey},
+	})
 }
 
 func (s *Service) logValidationErrors(ctx context.Context, now time.Time, projectID, triggerID, taskID, eventType string, errs []model.ValidationError) error {

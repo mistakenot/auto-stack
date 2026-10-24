@@ -83,6 +83,39 @@ func TestDispatchReservesAndStartsRun(t *testing.T) {
 	}
 }
 
+// TestDispatchStartFailurePropagatesAndStampsStartFailed (AC-7): when the
+// Backend's Start fails, failRun stamps failure_reason=start_failed and returns
+// the wrapped error, and Dispatch propagates it instead of reporting success
+// (the swallowed-start-error bug).
+func TestDispatchStartFailurePropagatesAndStampsStartFailed(t *testing.T) {
+	db := newTestStore(t)
+	projectPath := t.TempDir()
+	now := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
+	startErr := errors.New("backend start failed")
+	fake := &backendtest.Fake{}
+	fake.SetStartErr(startErr)
+	svc := daemon.New(db, backend.NewRegistry(fake), nil, func() time.Time { return now }, nil)
+
+	runID, err := svc.Dispatch(context.Background(), bashReserveInput(projectPath, now), model.TaskDef{Type: "bash", Command: "echo hi"})
+	if err == nil {
+		t.Fatal("expected Dispatch to return the wrapped start error, got nil")
+	}
+	if !errors.Is(err, startErr) {
+		t.Fatalf("Dispatch error must wrap the start error, got %v", err)
+	}
+
+	run, gErr := db.GetRun(context.Background(), runID)
+	if gErr != nil {
+		t.Fatalf("GetRun: %v", gErr)
+	}
+	if run.State != model.RunFailed {
+		t.Fatalf("state = %q, want failed", run.State)
+	}
+	if run.FailureReason != "start_failed" {
+		t.Fatalf("failure_reason = %q, want start_failed", run.FailureReason)
+	}
+}
+
 func TestDispatchDuplicateActiveRunReturnsErrActiveRunExists(t *testing.T) {
 	db := newTestStore(t)
 	projectPath := t.TempDir()

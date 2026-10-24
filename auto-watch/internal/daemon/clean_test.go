@@ -76,7 +76,7 @@ func TestCleanWorktreeIdempotent(t *testing.T) {
 	exitCode := 0
 	// Completed well over 24h before the (fixed) daemon clock so it is an
 	// expired terminal run on every tick.
-	if err := db.MarkRunTerminal(ctx, runID, model.RunCompleted, &exitCode, time.Date(2026, 3, 18, 11, 0, 0, 0, time.UTC), ""); err != nil {
+	if _, err := db.MarkRunTerminal(ctx, runID, model.RunCompleted, &exitCode, time.Date(2026, 3, 18, 11, 0, 0, 0, time.UTC), ""); err != nil {
 		t.Fatalf("MarkRunTerminal: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func TestRunRetentionPruneEmptyRuntimeDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "output.log"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("write marker: %v", err)
 	}
-	if err := db.MarkRunTerminal(ctx, runID, model.RunFailed, nil, time.Date(2026, 3, 1, 11, 0, 0, 0, time.UTC), "startup failed"); err != nil {
+	if _, err := db.MarkRunTerminal(ctx, runID, model.RunFailed, nil, time.Date(2026, 3, 1, 11, 0, 0, 0, time.UTC), "startup failed"); err != nil {
 		t.Fatalf("MarkRunTerminal: %v", err)
 	}
 
@@ -293,7 +293,7 @@ func TestRunRetentionPrune(t *testing.T) {
 			t.Fatalf("update started: %v", err)
 		}
 		exit := 0
-		if err := db.MarkRunTerminal(ctx, runID, model.RunCompleted, &exit, time.Date(2026, 3, 1, 11, 0, 0, 0, time.UTC), ""); err != nil {
+		if _, err := db.MarkRunTerminal(ctx, runID, model.RunCompleted, &exit, time.Date(2026, 3, 1, 11, 0, 0, 0, time.UTC), ""); err != nil {
 			t.Fatalf("mark terminal: %v", err)
 		}
 		terminalDirs[runID] = dir

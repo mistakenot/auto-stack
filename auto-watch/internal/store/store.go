@@ -66,23 +66,22 @@ type EventFilter struct {
 	Since     *time.Time
 }
 
+// DSN builds the sqlite data-source name for the given database file, carrying
+// the pragmas as connection parameters. modernc.org/sqlite applies each
+// _pragma on every pooled connection it opens, so busy_timeout and foreign_keys
+// hold for every connection — not just the one a bare `db.Exec("PRAGMA …")`
+// would happen to reach (the disk-full/concurrency hazard this closes).
+func DSN(path string) string {
+	return "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+}
+
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", DSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite db: %w", err)
-	}
-	for _, stmt := range []string{
-		"PRAGMA journal_mode = WAL;",
-		"PRAGMA busy_timeout = 5000;",
-		"PRAGMA foreign_keys = ON;",
-	} {
-		if _, err := db.Exec(stmt); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("apply sqlite pragma %q: %w", stmt, err)
-		}
 	}
 	return &Store{db: db}, nil
 }
@@ -283,11 +282,15 @@ func (s *Store) GetRun(ctx context.Context, id int64) (model.RunRecord, error) {
 	return scanRun(row)
 }
 
+// UpdateRunStarted moves a reserved (pending) run to running and records its
+// Binding, paths and deadline. The `AND state = 'pending'` guard makes it a
+// no-op on a run another writer already finished (e.g. a concurrent cancel), so
+// a late start can never resurrect a terminal run.
 func (s *Store) UpdateRunStarted(ctx context.Context, id int64, update *RunStartUpdate) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE runs
 	SET state = ?, session_name = ?, runtime_dir = ?, output_path = ?, exit_path = ?, worktree_path = ?, branch = ?,
 		backend = ?, backend_target = ?, deadline_at = ?
-	WHERE id = ?`,
+	WHERE id = ? AND state = 'pending'`,
 		string(model.RunRunning),
 		nullIfEmpty(update.SessionName),
 		nullIfEmpty(update.RuntimeDir),
@@ -306,10 +309,16 @@ func (s *Store) UpdateRunStarted(ctx context.Context, id int64, update *RunStart
 	return nil
 }
 
-func (s *Store) MarkRunTerminal(ctx context.Context, id int64, state model.RunState, exitCode *int, completedAt time.Time, errorMessage string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE runs
+// MarkRunTerminal moves a pending/running run to a terminal state and reports
+// whether a row was actually updated. The `AND state IN ('pending','running')`
+// guard makes the transition conditional: a run another writer already finished
+// is left unchanged and updated is false, so the caller emits no duplicate
+// terminal Event. This conditional UPDATE is the single dedup mechanism for the
+// once-only terminal transition.
+func (s *Store) MarkRunTerminal(ctx context.Context, id int64, state model.RunState, exitCode *int, completedAt time.Time, errorMessage string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE runs
 	SET state = ?, exit_code = ?, completed_at = ?, error_message = ?
-	WHERE id = ?`,
+	WHERE id = ? AND state IN ('pending','running')`,
 		string(state),
 		exitCode,
 		formatTime(completedAt),
@@ -317,21 +326,24 @@ func (s *Store) MarkRunTerminal(ctx context.Context, id int64, state model.RunSt
 		id,
 	)
 	if err != nil {
-		return fmt.Errorf("mark run terminal: %w", err)
+		return false, fmt.Errorf("mark run terminal: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read mark run terminal rows: %w", err)
+	}
+	return n > 0, nil
 }
 
-// MarkRunFailedWithReason marks a run failed and records its failure_reason in a
-// single UPDATE, alongside the exit code, completion time and error message.
-// Phase 3 will fold a conditional state guard (AND state IN ('pending','running'))
-// and a rows-affected result into MarkRunTerminal; until then the daemon guards
-// the once-only transition by re-reading the run under dispatchMu and only acting
-// while it is still RunRunning (see daemon.finishRun).
-func (s *Store) MarkRunFailedWithReason(ctx context.Context, id int64, exitCode *int, completedAt time.Time, errorMessage, failureReason string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE runs
+// MarkRunFailedWithReason marks a pending/running run failed and records its
+// failure_reason in a single UPDATE, alongside the exit code, completion time
+// and error message. It shares MarkRunTerminal's conditional state guard and
+// rows-affected result, so a run another writer already finished is left
+// unchanged and updated is false (no duplicate terminal Event).
+func (s *Store) MarkRunFailedWithReason(ctx context.Context, id int64, exitCode *int, completedAt time.Time, errorMessage, failureReason string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE runs
 	SET state = ?, exit_code = ?, completed_at = ?, error_message = ?, failure_reason = ?
-	WHERE id = ?`,
+	WHERE id = ? AND state IN ('pending','running')`,
 		string(model.RunFailed),
 		exitCode,
 		formatTime(completedAt),
@@ -340,9 +352,13 @@ func (s *Store) MarkRunFailedWithReason(ctx context.Context, id int64, exitCode 
 		id,
 	)
 	if err != nil {
-		return fmt.Errorf("mark run failed with reason: %w", err)
+		return false, fmt.Errorf("mark run failed with reason: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read mark run failed rows: %w", err)
+	}
+	return n > 0, nil
 }
 
 // CountRunEventsByType returns how many events of the given type are recorded

@@ -36,7 +36,7 @@ func DefaultBranch(repoRoot string) (string, error) {
 	}
 	current, err := CurrentBranch(repoRoot)
 	if err != nil {
-		return "", nil //nolint:nilerr // intentionally swallow "no origin" error
+		return "", err
 	}
 	if current == "" {
 		return "", errors.New("could not determine default branch")
@@ -50,6 +50,18 @@ func CurrentBranch(repoRoot string) (string, error) {
 
 func BranchHeadSHA(repoRoot, branch string) (string, error) {
 	return runGit(repoRoot, "rev-parse", branch)
+}
+
+// IsDirty reports whether the working tree at worktree has uncommitted changes
+// (staged, unstaged or untracked), via `git status --porcelain`. A git error is
+// returned to the caller, which fails closed (keeps the worktree) on error. Used
+// by the Clean dirty-worktree guard (phase 4).
+func IsDirty(worktree string) (bool, error) {
+	out, err := runGit(worktree, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
 }
 
 func AddWorktree(repoRoot, worktreePath, branch string) error {
@@ -71,7 +83,10 @@ func RemoveWorktree(repoRoot, worktreePath string) error {
 func runGit(repoRoot string, args ...string) (string, error) {
 	out, err := runGitWithOutput(repoRoot, args...)
 	if err != nil {
-		return "", nil //nolint:nilerr // intentionally swallow "no origin" error
+		// Return the real git error (stderr included) rather than swallowing it:
+		// callers (FindRepoRoot, CurrentBranch, BranchHeadSHA, IsDirty) depend on
+		// a failure being visible so they can surface a remediation or contain it.
+		return "", err
 	}
 	return strings.TrimSpace(out), nil
 }

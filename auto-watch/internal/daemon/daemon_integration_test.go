@@ -454,7 +454,7 @@ func TestCleanRemovesExpiredTerminalWorktrees(t *testing.T) {
 		t.Fatalf("UpdateRunStarted failed: %v", err)
 	}
 	exitCode := 0
-	if err := db.MarkRunTerminal(context.Background(), runID, model.RunCompleted, &exitCode, time.Date(2026, 3, 18, 11, 0, 0, 0, time.UTC), ""); err != nil {
+	if _, err := db.MarkRunTerminal(context.Background(), runID, model.RunCompleted, &exitCode, time.Date(2026, 3, 18, 11, 0, 0, 0, time.UTC), ""); err != nil {
 		t.Fatalf("MarkRunTerminal failed: %v", err)
 	}
 
