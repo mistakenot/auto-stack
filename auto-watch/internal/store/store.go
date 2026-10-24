@@ -169,6 +169,19 @@ func (s *Store) Migrate(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_file_snapshots_trigger ON file_snapshots (project_id, trigger_id);`,
 		`INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);`,
+		// owed_fires: a cursor-advancing Trigger (file_created, or a branch-changed
+		// cron) records a fire it could not dispatch this tick so it is never lost.
+		// Coalesced per (project, trigger, task): the first reason/time is kept.
+		// Created unconditionally here (IF NOT EXISTS); the v3 run columns are added
+		// separately in migrateRunsV3.
+		`CREATE TABLE IF NOT EXISTS owed_fires (
+			project_id TEXT NOT NULL,
+			trigger_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			first_owed_at DATETIME NOT NULL,
+			PRIMARY KEY (project_id, trigger_id, task_id)
+		);`,
 	}
 	for _, stmt := range statements {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -371,6 +384,21 @@ func (s *Store) CountRunEventsByType(ctx context.Context, runID int64, eventType
 		return 0, fmt.Errorf("count run events by type: %w", err)
 	}
 	return count, nil
+}
+
+// RunExists reports whether a run row with the given id is present. Clean's
+// orphan-dir sweep uses it to tell a leftover runs/<id> directory (no row) from
+// one a live or retained run still owns.
+func (s *Store) RunExists(ctx context.Context, id int64) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM runs WHERE id = ? LIMIT 1`, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check run exists: %w", err)
+	}
+	return true, nil
 }
 
 // ClearRunWorktreePath blanks a run's worktree_path after its worktree has been
@@ -791,6 +819,63 @@ func (s *Store) DeleteFileSnapshots(ctx context.Context, projectID, triggerID st
 		strings.Join(placeholders, ",")), args...)
 	if err != nil {
 		return fmt.Errorf("delete file snapshots: %w", err)
+	}
+	return nil
+}
+
+// UpsertOwedFire records an owed fire for a (project, trigger, task) that could
+// not be dispatched this tick. It coalesces: ON CONFLICT DO NOTHING keeps the
+// FIRST reason and first_owed_at, so repeated skips never create a new row or
+// move the recorded time forward.
+func (s *Store) UpsertOwedFire(ctx context.Context, projectID, triggerID, taskID, reason string, firstOwedAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO owed_fires (
+		project_id, trigger_id, task_id, reason, first_owed_at
+	) VALUES (?, ?, ?, ?, ?)
+	ON CONFLICT(project_id, trigger_id, task_id) DO NOTHING`,
+		projectID,
+		triggerID,
+		taskID,
+		reason,
+		formatTime(firstOwedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert owed fire: %w", err)
+	}
+	return nil
+}
+
+// ListOwedFires returns every owed fire recorded for the given Project, ordered
+// by trigger then task so draining is deterministic.
+func (s *Store) ListOwedFires(ctx context.Context, projectID string) ([]model.OwedFireRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT project_id, trigger_id, task_id, reason, first_owed_at
+	FROM owed_fires WHERE project_id = ?
+	ORDER BY trigger_id, task_id`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("query owed fires: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var records []model.OwedFireRecord
+	for rows.Next() {
+		var r model.OwedFireRecord
+		var firstOwed string
+		if err := rows.Scan(&r.ProjectID, &r.TriggerID, &r.TaskID, &r.Reason, &firstOwed); err != nil {
+			return nil, fmt.Errorf("scan owed fire: %w", err)
+		}
+		r.FirstOwedAt = mustParseTime(firstOwed)
+		records = append(records, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate owed fires: %w", err)
+	}
+	return records, nil
+}
+
+// DeleteOwedFire removes a single owed fire. It is called when the fire is
+// successfully dispatched, or discarded because its Trigger or TaskDef is gone.
+func (s *Store) DeleteOwedFire(ctx context.Context, projectID, triggerID, taskID string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM owed_fires
+	WHERE project_id = ? AND trigger_id = ? AND task_id = ?`, projectID, triggerID, taskID); err != nil {
+		return fmt.Errorf("delete owed fire: %w", err)
 	}
 	return nil
 }

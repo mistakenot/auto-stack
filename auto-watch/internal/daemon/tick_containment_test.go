@@ -17,9 +17,11 @@ import (
 )
 
 // TestTickContainsPerRunFailures (AC-5): in Project A one running run's Status
-// errors and another (terminal) run's worktree removal fails. Each becomes a
-// system_warning Event naming the run, Project B's cron Trigger still dispatches
-// its task, and Tick returns nil — one bad run never takes the tick down.
+// errors (a system_warning) and another (terminal) run's worktree cannot be
+// inspected, so the dirty-worktree guard keeps it (a worktree_kept_dirty Event).
+// Both per-run outcomes are contained naming the run, Project B's cron Trigger
+// still dispatches its task, and Tick returns nil — one bad run never takes the
+// tick down.
 func TestTickContainsPerRunFailures(t *testing.T) {
 	env := testutil.NewEnv(t)
 	ctx := context.Background()
@@ -61,8 +63,9 @@ func TestTickContainsPerRunFailures(t *testing.T) {
 	runningID := reserveRunning(t, db, "proja", "task-status", repoB, now, "")
 
 	// Project A, run 2: a terminal run older than 24h whose worktree path exists
-	// but is NOT a registered git worktree, so `git worktree remove` fails on the
-	// Clean TTL path (contained as a system_warning).
+	// but is NOT a git worktree, so the dirty-worktree guard's IsDirty check errors
+	// on the Clean TTL path and the worktree is kept (contained as a
+	// worktree_kept_dirty Event, never force-removed).
 	badWorktree := filepath.Join(t.TempDir(), "not-a-worktree")
 	if err := os.MkdirAll(badWorktree, 0o755); err != nil {
 		t.Fatal(err)
@@ -87,8 +90,15 @@ func TestTickContainsPerRunFailures(t *testing.T) {
 	if !hasWarningForRun(warnings, runningID) {
 		t.Fatalf("expected a system_warning naming the Status-error run %d; got %+v", runningID, warnings)
 	}
-	if !hasWarningForRun(warnings, terminalID) {
-		t.Fatalf("expected a system_warning naming the worktree-removal run %d; got %+v", terminalID, warnings)
+
+	// The uninspectable worktree is contained as a worktree_kept_dirty Event
+	// naming its run — it is kept, not force-removed.
+	kept, err := db.ListEvents(ctx, &store.EventFilter{Limit: 100, EventType: "worktree_kept_dirty"})
+	if err != nil {
+		t.Fatalf("list worktree_kept_dirty events: %v", err)
+	}
+	if !hasWarningForRun(kept, terminalID) {
+		t.Fatalf("expected a worktree_kept_dirty event naming the uninspectable-worktree run %d; got %+v", terminalID, kept)
 	}
 
 	// Project B's Trigger still ran: a run exists for it.

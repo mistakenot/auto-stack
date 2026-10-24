@@ -161,6 +161,311 @@ func TestRunRetentionPruneEmptyRuntimeDir(t *testing.T) {
 	}
 }
 
+// dirtyWorktree adds a real git worktree at repoRoot and leaves an uncommitted
+// file in it, so gitx.IsDirty reports it dirty. Used by the dirty-worktree guard
+// tests below.
+func dirtyWorktree(t *testing.T, repoRoot, name string) string {
+	t.Helper()
+	wt := filepath.Join(config.WorktreesDir(repoRoot), name)
+	if err := gitx.AddWorktree(repoRoot, wt, "main"); err != nil {
+		t.Fatalf("AddWorktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, "dirty.txt"), []byte("uncommitted\n"), 0o644); err != nil {
+		t.Fatalf("dirty worktree: %v", err)
+	}
+	if dirty, err := gitx.IsDirty(wt); err != nil || !dirty {
+		t.Fatalf("expected a dirty worktree, IsDirty=%v err=%v", dirty, err)
+	}
+	return wt
+}
+
+// terminalRunWithWorktree reserves a run, points it at worktreePath, and marks it
+// completed at completedAt. Returns the run id.
+func terminalRunWithWorktree(t *testing.T, db *store.Store, repoRoot, taskID, worktreePath string, started, completed time.Time) int64 {
+	t.Helper()
+	ctx := context.Background()
+	id, err := db.ReserveRun(ctx, &store.ReserveRunInput{
+		ProjectID:   "demo",
+		ProjectPath: repoRoot,
+		TriggerID:   "daily",
+		TriggerType: "cron",
+		TaskID:      taskID,
+		TaskType:    "claude",
+		ResourceKey: "cron:" + taskID,
+		StartedAt:   started,
+	})
+	if err != nil {
+		t.Fatalf("ReserveRun: %v", err)
+	}
+	if err := db.UpdateRunStarted(ctx, id, &store.RunStartUpdate{
+		SessionName:  "sess-" + taskID,
+		WorktreePath: worktreePath,
+		Branch:       "main",
+	}); err != nil {
+		t.Fatalf("UpdateRunStarted: %v", err)
+	}
+	exit := 0
+	if _, err := db.MarkRunTerminal(ctx, id, model.RunCompleted, &exit, completed, ""); err != nil {
+		t.Fatalf("MarkRunTerminal: %v", err)
+	}
+	return id
+}
+
+// TestCleanSweepsOldOrphanRunDirKeepsFresh covers AC-10: a numeric run dir with
+// no matching row and an mtime older than 24h is removed with a
+// run_dir_orphan_removed Event, while a fresh orphan dir is left in place.
+func TestCleanSweepsOldOrphanRunDirKeepsFresh(t *testing.T) {
+	env, _, db := cleanTestEnv(t)
+	ctx := context.Background()
+	current := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	runsDir := filepath.Join(env.Home, ".auto", "watch", "runs")
+	if err := os.MkdirAll(runsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldOrphan := filepath.Join(runsDir, "9001")
+	freshOrphan := filepath.Join(runsDir, "9002")
+	nonNumeric := filepath.Join(runsDir, "scratch")
+	for _, d := range []string{oldOrphan, freshOrphan, nonNumeric} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Old orphan: mtime well over 24h before the daemon clock.
+	oldTime := current.Add(-48 * time.Hour)
+	if err := os.Chtimes(oldOrphan, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	// Fresh orphan: mtime 30 minutes before the clock (inside the 24h window).
+	freshTime := current.Add(-30 * time.Minute)
+	if err := os.Chtimes(freshOrphan, freshTime, freshTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(nonNumeric, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	service.WaitWorkers()
+
+	if _, err := os.Stat(oldOrphan); !os.IsNotExist(err) {
+		t.Fatalf("expected old orphan dir removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(freshOrphan); err != nil {
+		t.Fatalf("expected fresh orphan dir kept: %v", err)
+	}
+	if _, err := os.Stat(nonNumeric); err != nil {
+		t.Fatalf("expected non-numeric dir kept: %v", err)
+	}
+	if n, err := db.CountEventsByType(ctx, "run_dir_orphan_removed"); err != nil {
+		t.Fatalf("count orphan events: %v", err)
+	} else if n != 1 {
+		t.Fatalf("run_dir_orphan_removed events = %d, want exactly 1", n)
+	}
+}
+
+// TestRemoveWorktreeKeepsDirtyOnTTL covers AC-10: a terminal run past the 24h TTL
+// whose worktree has uncommitted changes is kept, not force-removed, and
+// worktree_kept_dirty is logged exactly once across repeated ticks.
+func TestRemoveWorktreeKeepsDirtyOnTTL(t *testing.T) {
+	_, repoRoot, db := cleanTestEnv(t)
+	ctx := context.Background()
+	current := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	wt := dirtyWorktree(t, repoRoot, "dirty-ttl")
+	// Completed 26h before the clock: past the 24h TTL, within 7d retention.
+	terminalRunWithWorktree(t, db, repoRoot, "review", wt,
+		current.Add(-27*time.Hour), current.Add(-26*time.Hour))
+
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
+	for i := range 5 {
+		if err := service.Tick(ctx); err != nil {
+			t.Fatalf("tick %d: %v", i, err)
+		}
+		service.WaitWorkers()
+	}
+
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatalf("expected dirty worktree kept: %v", err)
+	}
+	if n, err := db.CountEventsByType(ctx, "worktree_kept_dirty"); err != nil {
+		t.Fatalf("count worktree_kept_dirty: %v", err)
+	} else if n != 1 {
+		t.Fatalf("worktree_kept_dirty events = %d across 5 ticks, want exactly 1", n)
+	}
+	if n, err := db.CountEventsByType(ctx, "worktree_removed"); err != nil {
+		t.Fatalf("count worktree_removed: %v", err)
+	} else if n != 0 {
+		t.Fatalf("a dirty worktree must not be removed, worktree_removed = %d", n)
+	}
+}
+
+// TestRemoveWorktreeKeepsDirtyOnForce covers AC-10 for the clean --force path.
+func TestRemoveWorktreeKeepsDirtyOnForce(t *testing.T) {
+	_, repoRoot, db := cleanTestEnv(t)
+	ctx := context.Background()
+	current := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	wt := dirtyWorktree(t, repoRoot, "dirty-force")
+	id, err := db.ReserveRun(ctx, &store.ReserveRunInput{
+		ProjectID: "demo", ProjectPath: repoRoot, TriggerID: "daily", TriggerType: "cron",
+		TaskID: "review", TaskType: "claude", ResourceKey: "cron:review", StartedAt: current,
+	})
+	if err != nil {
+		t.Fatalf("ReserveRun: %v", err)
+	}
+	// No BackendTarget, so Clean --force skips Stop and goes straight to removal.
+	if err := db.UpdateRunStarted(ctx, id, &store.RunStartUpdate{SessionName: "s", WorktreePath: wt, Branch: "main"}); err != nil {
+		t.Fatalf("UpdateRunStarted: %v", err)
+	}
+
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
+	if err := service.Clean(ctx, true); err != nil {
+		t.Fatalf("clean --force: %v", err)
+	}
+
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatalf("expected dirty worktree kept on clean --force: %v", err)
+	}
+	if n, err := db.CountEventsByType(ctx, "worktree_kept_dirty"); err != nil {
+		t.Fatalf("count worktree_kept_dirty: %v", err)
+	} else if n != 1 {
+		t.Fatalf("worktree_kept_dirty events = %d, want 1", n)
+	}
+}
+
+// TestRemoveWorktreeKeepsDirtyOnCancel covers AC-10 for the cancel path.
+func TestRemoveWorktreeKeepsDirtyOnCancel(t *testing.T) {
+	_, repoRoot, db := cleanTestEnv(t)
+	ctx := context.Background()
+	current := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	wt := dirtyWorktree(t, repoRoot, "dirty-cancel")
+	id, err := db.ReserveRun(ctx, &store.ReserveRunInput{
+		ProjectID: "demo", ProjectPath: repoRoot, TriggerID: "daily", TriggerType: "cron",
+		TaskID: "review", TaskType: "claude", ResourceKey: "cron:review", StartedAt: current,
+	})
+	if err != nil {
+		t.Fatalf("ReserveRun: %v", err)
+	}
+	if err := db.UpdateRunStarted(ctx, id, &store.RunStartUpdate{SessionName: "s", WorktreePath: wt, Branch: "main"}); err != nil {
+		t.Fatalf("UpdateRunStarted: %v", err)
+	}
+
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
+	if _, err := service.Cancel(ctx, id); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatalf("expected dirty worktree kept on cancel: %v", err)
+	}
+	if n, err := db.CountEventsByType(ctx, "worktree_kept_dirty"); err != nil {
+		t.Fatalf("count worktree_kept_dirty: %v", err)
+	} else if n != 1 {
+		t.Fatalf("worktree_kept_dirty events = %d, want 1", n)
+	}
+}
+
+// TestRemoveWorktreeKeepsUninspectable covers AC-10: when IsDirty errors (the
+// worktree path is not a git worktree) the worktree is kept (fail-closed).
+func TestRemoveWorktreeKeepsUninspectable(t *testing.T) {
+	env, repoRoot, db := cleanTestEnv(t)
+	ctx := context.Background()
+	current := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	// A real directory that is NOT a git worktree, so `git status` errors.
+	badWt := filepath.Join(env.Home, "not-a-worktree")
+	if err := os.MkdirAll(badWt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	terminalRunWithWorktree(t, db, repoRoot, "review", badWt,
+		current.Add(-27*time.Hour), current.Add(-26*time.Hour))
+
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	service.WaitWorkers()
+
+	if _, err := os.Stat(badWt); err != nil {
+		t.Fatalf("expected uninspectable worktree kept: %v", err)
+	}
+	if n, err := db.CountEventsByType(ctx, "worktree_kept_dirty"); err != nil {
+		t.Fatalf("count worktree_kept_dirty: %v", err)
+	} else if n != 1 {
+		t.Fatalf("worktree_kept_dirty events = %d, want 1 (IsDirty error -> kept)", n)
+	}
+}
+
+// TestRemoveWorktreeRemovesCleanWorktree covers AC-10: a clean worktree is still
+// removed on the TTL path (worktree_removed, no worktree_kept_dirty).
+func TestRemoveWorktreeRemovesCleanWorktree(t *testing.T) {
+	_, repoRoot, db := cleanTestEnv(t)
+	ctx := context.Background()
+	current := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	// A clean worktree (added, nothing written).
+	cleanWt := filepath.Join(config.WorktreesDir(repoRoot), "clean-ttl")
+	if err := gitx.AddWorktree(repoRoot, cleanWt, "main"); err != nil {
+		t.Fatalf("AddWorktree: %v", err)
+	}
+	terminalRunWithWorktree(t, db, repoRoot, "review", cleanWt,
+		current.Add(-27*time.Hour), current.Add(-26*time.Hour))
+
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	service.WaitWorkers()
+
+	if _, err := os.Stat(cleanWt); !os.IsNotExist(err) {
+		t.Fatalf("expected clean worktree removed, stat err=%v", err)
+	}
+	if n, err := db.CountEventsByType(ctx, "worktree_removed"); err != nil {
+		t.Fatalf("count worktree_removed: %v", err)
+	} else if n != 1 {
+		t.Fatalf("worktree_removed events = %d, want 1", n)
+	}
+	if n, err := db.CountEventsByType(ctx, "worktree_kept_dirty"); err != nil {
+		t.Fatalf("count worktree_kept_dirty: %v", err)
+	} else if n != 0 {
+		t.Fatalf("a clean worktree must not be kept dirty, got %d", n)
+	}
+}
+
+// TestRetentionSkipsRunWithDirtyWorktreeOnDisk covers AC-10: a terminal run past
+// the 7-day retention window whose dirty worktree is still on disk is NOT
+// deleted — its row (and worktree_path link) outlives retention so the kept
+// worktree is never orphaned from its run.
+func TestRetentionSkipsRunWithDirtyWorktreeOnDisk(t *testing.T) {
+	_, repoRoot, db := cleanTestEnv(t)
+	ctx := context.Background()
+	current := time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)
+
+	wt := dirtyWorktree(t, repoRoot, "dirty-retention")
+	// Completed 8 days before the clock: past the 7-day retention window.
+	id := terminalRunWithWorktree(t, db, repoRoot, "review", wt,
+		current.Add(-8*24*time.Hour-time.Hour), current.Add(-8*24*time.Hour))
+
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return current }, nil)
+	if err := service.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	service.WaitWorkers()
+
+	if _, err := db.GetRun(ctx, id); err != nil {
+		t.Fatalf("expected retention to spare the run with a kept dirty worktree: %v", err)
+	}
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatalf("expected dirty worktree still on disk: %v", err)
+	}
+}
+
 // TestWALCheckpointOnTick covers AC-4: a tick checkpoints the WAL, truncating
 // accumulated WAL data without error.
 func TestWALCheckpointOnTick(t *testing.T) {

@@ -96,6 +96,20 @@ type RunRecord struct {
 	FailureReason string `json:"failure_reason,omitempty"`
 }
 
+// OwedFireRecord is a Trigger fire that was recorded but could not be dispatched
+// this tick — because the TaskDef was deduped, backed off, or its Start failed —
+// on a cursor-advancing Trigger (file_created, or a branch-changed cron) whose
+// snapshot/cursor moved on regardless. It is coalesced per (Project, Trigger,
+// TaskDef): the first reason and time are kept so repeated skips never pile up.
+// The daemon drains owed fires at the start of each Project's evaluation.
+type OwedFireRecord struct {
+	ProjectID   string    `json:"project_id"`
+	TriggerID   string    `json:"trigger_id"`
+	TaskID      string    `json:"task_id"`
+	Reason      string    `json:"reason"`
+	FirstOwedAt time.Time `json:"first_owed_at"`
+}
+
 type TriggerStateRecord struct {
 	ProjectID     string    `json:"project_id"`
 	TriggerID     string    `json:"trigger_id"`

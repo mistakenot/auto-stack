@@ -135,6 +135,113 @@ func TestMigrateV3PreservesLegacyRuns(t *testing.T) {
 	}
 }
 
+// TestMigrateOwedFiresTable (AC-6): Migrate creates the owed_fires table with
+// its columns and (project_id, trigger_id, task_id) primary key, and a second
+// Migrate is a no-op that preserves an existing row. The coalescing UpsertOwedFire
+// keeps the FIRST reason/time on a repeated skip.
+func TestMigrateOwedFiresTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logs.sqlite")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	ctx := context.Background()
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	// The owed_fires table has exactly the documented columns.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer func() { _ = raw.Close() }()
+	rows, err := raw.QueryContext(ctx, `PRAGMA table_info(owed_fires)`)
+	if err != nil {
+		t.Fatalf("pragma table_info(owed_fires): %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	cols := map[string]bool{}
+	pkCols := map[string]int{}
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			dflt       sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &primaryKey); err != nil {
+			t.Fatalf("scan column: %v", err)
+		}
+		cols[name] = true
+		if primaryKey > 0 {
+			pkCols[name] = primaryKey
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate owed_fires columns: %v", err)
+	}
+	for _, want := range []string{"project_id", "trigger_id", "task_id", "reason", "first_owed_at"} {
+		if !cols[want] {
+			t.Errorf("owed_fires missing column %q", want)
+		}
+	}
+	for _, want := range []string{"project_id", "trigger_id", "task_id"} {
+		if _, ok := pkCols[want]; !ok {
+			t.Errorf("owed_fires primary key missing column %q", want)
+		}
+	}
+	if len(pkCols) != 3 {
+		t.Errorf("owed_fires primary key = %v, want the 3 identity columns", pkCols)
+	}
+
+	// Coalescing: the first reason/time wins, a repeated skip does not add a row.
+	first := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
+	if err := db.UpsertOwedFire(ctx, "demo", "watch-docs", "process", "dedup", first); err != nil {
+		t.Fatalf("first upsert owed fire: %v", err)
+	}
+	if err := db.UpsertOwedFire(ctx, "demo", "watch-docs", "process", "backoff", first.Add(time.Hour)); err != nil {
+		t.Fatalf("second upsert owed fire: %v", err)
+	}
+	owed, err := db.ListOwedFires(ctx, "demo")
+	if err != nil {
+		t.Fatalf("list owed fires: %v", err)
+	}
+	if len(owed) != 1 {
+		t.Fatalf("expected 1 coalesced owed fire, got %d (%+v)", len(owed), owed)
+	}
+	if owed[0].Reason != "dedup" || !owed[0].FirstOwedAt.Equal(first) {
+		t.Fatalf("coalesce kept %q/%v, want dedup/%v", owed[0].Reason, owed[0].FirstOwedAt, first)
+	}
+
+	// A second Migrate is a no-op and the row survives.
+	if err := db.Migrate(ctx); err != nil {
+		t.Fatalf("second migrate (must be a no-op): %v", err)
+	}
+	owed, err = db.ListOwedFires(ctx, "demo")
+	if err != nil {
+		t.Fatalf("list owed fires after second migrate: %v", err)
+	}
+	if len(owed) != 1 {
+		t.Fatalf("expected owed fire preserved across migrate, got %d", len(owed))
+	}
+
+	// Delete removes exactly the one row.
+	if err := db.DeleteOwedFire(ctx, "demo", "watch-docs", "process"); err != nil {
+		t.Fatalf("delete owed fire: %v", err)
+	}
+	owed, err = db.ListOwedFires(ctx, "demo")
+	if err != nil {
+		t.Fatalf("list owed fires after delete: %v", err)
+	}
+	if len(owed) != 0 {
+		t.Fatalf("expected 0 owed fires after delete, got %d", len(owed))
+	}
+}
+
 // TestMigrateV3IsIdempotent (AC-15): running Migrate a second time is a no-op —
 // the v3 ALTERs are gated on PRAGMA table_info and are not re-applied.
 func TestMigrateV3IsIdempotent(t *testing.T) {

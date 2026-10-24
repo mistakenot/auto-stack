@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -755,6 +756,15 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 	cleanedIDs := make([]int64, 0, len(expired))
 	for i := range expired {
 		run := &expired[i]
+		// A kept dirty worktree outlives retention: while its worktree is still on
+		// disk, keep the row so the worktree_path link survives and the worktree is
+		// never orphaned from its run (the dirty-worktree guard in removeWorktree
+		// left both in place).
+		if wt := strings.TrimSpace(run.WorktreePath); wt != "" {
+			if _, statErr := os.Stat(wt); statErr == nil {
+				continue
+			}
+		}
 		// A run that failed before UpdateRunStarted persisted RuntimeDir has an
 		// empty path even though startWorker may have created the deterministic
 		// runs/<id> directory. Fall back to that path so os.RemoveAll("") doesn't
@@ -776,10 +786,75 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 		return err
 	}
 
+	// Reconcile orphan run dirs: a numeric runs/<id> directory with no matching
+	// row and an mtime older than 24h is leftover from a run whose row is gone
+	// (e.g. a crash, or a pre-fix restart loop). A fresh orphan is left alone so a
+	// run still being set up is never swept out from under itself.
+	if err := s.sweepOrphanRunDirs(ctx, now, runsDir); err != nil {
+		return err
+	}
+
 	// Checkpoint the WAL after pruning so the checkpoint also covers the deletes,
 	// bounding WAL growth.
 	if err := s.Store.WALCheckpoint(ctx); err != nil {
 		return err
+	}
+	return nil
+}
+
+// sweepOrphanRunDirs removes numeric run directories under runsDir that have no
+// matching run row and whose mtime is older than 24h, recording a
+// run_dir_orphan_removed Event for each. A directory younger than 24h, or one
+// that still has a row, is left in place. A per-directory removal or log failure
+// is contained (skip and continue); only a store failure aborts.
+func (s *Service) sweepOrphanRunDirs(ctx context.Context, now time.Time, runsDir string) error {
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	cutoff := now.Add(-24 * time.Hour)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		id, perr := strconv.ParseInt(entry.Name(), 10, 64)
+		if perr != nil {
+			continue // not a numeric run dir
+		}
+		exists, err := s.Store.RunExists(ctx, id)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue // a known run owns this dir
+		}
+		info, ierr := entry.Info()
+		if ierr != nil {
+			continue
+		}
+		if !info.ModTime().Before(cutoff) {
+			continue // fresh orphan: a run may still be setting it up
+		}
+		dir := filepath.Join(runsDir, entry.Name())
+		if err := os.RemoveAll(dir); err != nil {
+			continue // retry next tick
+		}
+		if err := s.logEvent(ctx, &store.EventInput{
+			Timestamp: now,
+			Level:     "info",
+			EventType: "run_dir_orphan_removed",
+			RunID:     &id,
+			Message:   fmt.Sprintf("removed orphan run dir %s (no matching run row)", entry.Name()),
+			Metadata: map[string]any{
+				"run_dir": dir,
+				"run_id":  id,
+			},
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -822,6 +897,14 @@ func (s *Service) tickProject(ctx context.Context, now time.Time, project *model
 	for id := range validTasks {
 		taskSet[id] = struct{}{}
 	}
+
+	// Drain owed fires before evaluating this Project's Triggers, so a fire that
+	// could not be dispatched on an earlier tick is redelivered exactly once as
+	// soon as it is unblocked.
+	if err := s.drainOwedFires(ctx, now, projectID, project.Path, projectCfg.Triggers, validTasks); err != nil {
+		return err
+	}
+
 	for _, triggerID := range triggerIDs {
 		trigger := projectCfg.Triggers[triggerID]
 		if errs := config.ValidateTriggerEntry(triggerID, &trigger, taskSet); len(errs) > 0 {
@@ -900,11 +983,23 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 		}
 	}
 
+	// A branch-changed cron advances its last_branch_sha cursor below whether or
+	// not every TaskDef dispatched, so a skipped TaskDef's fire would be lost: for
+	// that Trigger we record an owed fire for any TaskDef that is deduped, backed
+	// off, or whose Start fails. A plain cron advances no such cursor, so its skip
+	// semantics are unchanged (no owed fire; a Start failure still returns).
+	branchFilter := trigger.OnlyIfBranchChanged != ""
+
 	taskIDs := append([]string(nil), trigger.Tasks...)
 	sort.Strings(taskIDs)
 	for _, taskID := range taskIDs {
 		if skip, nextEligible := s.shouldBackoff(projectID, taskID, now); skip {
 			fmt.Fprintf(os.Stderr, "task_backoff project=%s task=%s next_eligible=%s\n", projectID, taskID, nextEligible.Format(time.RFC3339))
+			if branchFilter {
+				if err := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "backoff", now); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		task := tasks[taskID]
@@ -934,6 +1029,20 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 					},
 				}); logErr != nil {
 					return logErr
+				}
+				if branchFilter {
+					if err := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "dedup", now); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			if branchFilter {
+				// A confirmed Start failure already marked the run failed and backed
+				// the task off (failRun); record an owed fire and continue so the
+				// cursor upsert below still advances and the other TaskDefs still run.
+				if oErr := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "start_failed", now); oErr != nil {
+					return oErr
 				}
 				continue
 			}
@@ -1051,12 +1160,19 @@ func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time,
 		return nil
 	}
 
-	// Fire: launch linked tasks.
+	// Fire: launch linked tasks. The snapshot and trigger_state above already
+	// advanced (the new file is now "known"), so a TaskDef that is deduped, backed
+	// off, or fails to Start would lose this fire forever: record an owed fire for
+	// it, and continue rather than abort, so every other TaskDef still runs and a
+	// drain on a later tick redelivers the fire exactly once.
 	taskIDs := append([]string(nil), trigger.Tasks...)
 	sort.Strings(taskIDs)
 	for _, taskID := range taskIDs {
 		if skip, nextEligible := s.shouldBackoff(projectID, taskID, now); skip {
 			fmt.Fprintf(os.Stderr, "task_backoff project=%s task=%s next_eligible=%s\n", projectID, taskID, nextEligible.Format(time.RFC3339))
+			if err := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "backoff", now); err != nil {
+				return err
+			}
 			continue
 		}
 		task := tasks[taskID]
@@ -1087,15 +1203,113 @@ func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time,
 				}); logErr != nil {
 					return logErr
 				}
+				if err := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "dedup", now); err != nil {
+					return err
+				}
 				continue
 			}
-			return err
+			// A confirmed Start failure already marked the run failed and backed the
+			// task off (failRun); record an owed fire and continue (never abort a
+			// trigger whose snapshot already advanced).
+			if oErr := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "start_failed", now); oErr != nil {
+				return oErr
+			}
+			continue
 		}
 	}
 
 	// file_created firing produces no event (Phase 3 noise reduction); dispatch,
 	// dedup-skip, and backoff outcomes are observable via task_* events / stderr.
 	return nil
+}
+
+// resourceKeyFor returns the dedup resource key the normal dispatch path uses
+// for the given Trigger, so a drained owed fire reserves the same key and dedups
+// against a live run identically.
+func resourceKeyFor(triggerID, triggerType string) string {
+	if triggerType == "file_created" {
+		return "file_created:" + triggerID
+	}
+	return "cron:" + triggerID
+}
+
+// drainOwedFires retries every owed fire recorded for the Project before its
+// Triggers are evaluated this tick. An owed fire whose Trigger no longer exists,
+// or whose TaskDef is gone or no longer linked to the Trigger, is discarded with
+// an Event. One whose TaskDef is still backed off is left for a later tick.
+// Otherwise it is Dispatched with the same resource_key scheme as the normal
+// path: on a successful dispatch the row is deleted; a still-blocked (deduped) or
+// freshly failed dispatch keeps the row so it retries once unblocked. Only a
+// store failure aborts the tick.
+func (s *Service) drainOwedFires(ctx context.Context, now time.Time, projectID, projectPath string, triggers map[string]model.TriggerDef, validTasks map[string]model.TaskDef) error {
+	owed, err := s.Store.ListOwedFires(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	for i := range owed {
+		fire := owed[i]
+		trigger, triggerOK := triggers[fire.TriggerID]
+		if !triggerOK {
+			if err := s.discardOwedFire(ctx, now, &fire, "trigger no longer exists"); err != nil {
+				return err
+			}
+			continue
+		}
+		task, taskOK := validTasks[fire.TaskID]
+		linked := slices.Contains(trigger.Tasks, fire.TaskID)
+		if !taskOK || !linked {
+			if err := s.discardOwedFire(ctx, now, &fire, "task no longer linked to trigger"); err != nil {
+				return err
+			}
+			continue
+		}
+		if skip, _ := s.shouldBackoff(projectID, fire.TaskID, now); skip {
+			// Still backed off — leave it for a later tick once the window clears.
+			continue
+		}
+		_, derr := s.Dispatch(ctx, &store.ReserveRunInput{
+			ProjectID:   projectID,
+			ProjectPath: projectPath,
+			TriggerID:   fire.TriggerID,
+			TriggerType: trigger.Type,
+			TaskID:      fire.TaskID,
+			TaskType:    task.Type,
+			ResourceKey: resourceKeyFor(fire.TriggerID, trigger.Type),
+			StartedAt:   now,
+		}, task)
+		if derr != nil {
+			// A dedup (an active run still holds the key) or a fresh Start failure
+			// (already marked failed and backed off by failRun) leaves the owed fire
+			// in place so it retries once unblocked. One bad TaskDef must not abort
+			// the drain or the tick.
+			continue
+		}
+		if err := s.Store.DeleteOwedFire(ctx, projectID, fire.TriggerID, fire.TaskID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// discardOwedFire deletes an owed fire whose Trigger or TaskDef no longer exists
+// and records why, so an operator can see a fire was dropped rather than fired.
+func (s *Service) discardOwedFire(ctx context.Context, now time.Time, fire *model.OwedFireRecord, why string) error {
+	if err := s.Store.DeleteOwedFire(ctx, fire.ProjectID, fire.TriggerID, fire.TaskID); err != nil {
+		return err
+	}
+	return s.logEvent(ctx, &store.EventInput{
+		Timestamp: now,
+		Level:     "info",
+		EventType: "owed_fire_discarded",
+		ProjectID: fire.ProjectID,
+		TriggerID: fire.TriggerID,
+		TaskID:    fire.TaskID,
+		Message:   fmt.Sprintf("discarded owed fire for trigger %s task %s: %s", fire.TriggerID, fire.TaskID, why),
+		Metadata: map[string]any{
+			"owed_reason":    fire.Reason,
+			"discard_reason": why,
+		},
+	})
 }
 
 func (s *Service) startWorker(ctx context.Context, runID int64, task model.TaskDef) error {
@@ -1319,6 +1533,43 @@ func (s *Service) failRun(ctx context.Context, run *model.RunRecord, worktreePat
 
 func (s *Service) removeWorktree(ctx context.Context, run *model.RunRecord, reason string) error {
 	if strings.TrimSpace(run.WorktreePath) == "" {
+		return nil
+	}
+	// Dirty-worktree guard, inside the single chokepoint so EVERY caller (the 24h
+	// TTL sweep, clean --force, cancel and failRun) honours it: a worktree with
+	// uncommitted work — or one we cannot even inspect — is kept rather than
+	// force-removed, so an in-progress agent's changes are never discarded. The
+	// keep is logged once per run (Event lookup) and the worktree_path is left in
+	// place so retention also spares the row. A clean worktree is still removed on
+	// every path.
+	dirty, dirtyErr := gitx.IsDirty(run.WorktreePath)
+	if dirtyErr != nil || dirty {
+		seen, err := s.Store.CountRunEventsByType(ctx, run.ID, "worktree_kept_dirty")
+		if err != nil {
+			return err
+		}
+		if seen == 0 {
+			meta := map[string]any{
+				"reason":        reason,
+				"worktree_path": run.WorktreePath,
+			}
+			if dirtyErr != nil {
+				meta["error"] = dirtyErr.Error()
+			}
+			if logErr := s.logEvent(ctx, &store.EventInput{
+				Timestamp: s.Now(),
+				Level:     "warn",
+				EventType: "worktree_kept_dirty",
+				ProjectID: run.ProjectID,
+				TriggerID: run.TriggerID,
+				TaskID:    run.TaskID,
+				RunID:     &run.ID,
+				Message:   fmt.Sprintf("kept worktree with uncommitted changes for run %d", run.ID),
+				Metadata:  meta,
+			}); logErr != nil {
+				return logErr
+			}
+		}
 		return nil
 	}
 	if err := gitx.RemoveWorktree(run.ProjectPath, run.WorktreePath); err != nil {
