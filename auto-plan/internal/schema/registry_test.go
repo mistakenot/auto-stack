@@ -302,8 +302,8 @@ func TestAnnexHashIsComputed(t *testing.T) {
 	if !ok {
 		t.Fatal("annex node type is not registered")
 	}
-	if annex.Prefix != "ax" || annex.Term != "Annex" || annex.UniqueBy != "kind" {
-		t.Errorf("annex = prefix %q, term %q, uniqueBy %q", annex.Prefix, annex.Term, annex.UniqueBy)
+	if annex.Prefix != "ax" || annex.Term != "Annex" || !slices.Equal(annex.UniqueBy, []string{"kind", "path"}) {
+		t.Errorf("annex = prefix %q, term %q, uniqueBy %v", annex.Prefix, annex.Term, annex.UniqueBy)
 	}
 	hash, ok := annex.Field("hash")
 	if !ok {

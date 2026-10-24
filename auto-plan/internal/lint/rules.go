@@ -60,6 +60,7 @@ var Rules = []Rule{
 	{Code: "unlinked-file", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: unlinkedFile},
 	{Code: "annex-ref", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: annexRef},
 	{Code: "annex-testing-layers", Severity: SeverityError, MinLifecycle: schema.LifecycleSolution, Check: annexTestingLayers},
+	{Code: "annex-hash", Severity: SeverityError, MinLifecycle: schema.LifecycleDone, Check: annexHash},
 	{Code: "annex-changed", Severity: SeverityError, MinLifecycle: schema.LifecycleDone, Check: annexChanged},
 	{Code: "goal-count", Severity: SeverityWarning, MinLifecycle: schema.LifecycleSolution, Check: goalCount},
 	{Code: "decision-no-alternative", Severity: SeverityWarning, MinLifecycle: schema.LifecycleRequirements, Check: decisionNoAlternative},
@@ -604,12 +605,26 @@ func annexRef(c *Context) []Issue {
 			}
 			seen = append(seen, ref)
 			msg := ""
+			refHint := hint
 			switch {
 			case qualifiedRef(ref):
 				if c.Set == nil {
 					continue
 				}
-				if _, err := c.Set.Lookup(ref); err != nil && !errors.Is(err, workspace.ErrAmbiguous) {
+				_, err := c.Set.Lookup(ref)
+				var amb *workspace.AmbiguousError
+				switch {
+				case err == nil:
+				case errors.As(err, &amb):
+					// A shorthand [[NNN:id]] whose number names two plans: the
+					// annex must use a full plan ID. The ambiguousRef rule only
+					// walks graph-node text, so without this the reference goes
+					// unreported.
+					_, id, _ := graph.ParseRef(ref)
+					msg = fmt.Sprintf("Annex %s (%s) refers to [[%s]], but plan number %s names %d plans: %s",
+						n.ID, path, ref, amb.Arg, len(amb.Candidates), planList(amb.Candidates))
+					refHint = "write the plan ID in " + path + ", e.g. [[" + graph.Qualify(amb.Candidates[0].Ref(), id) + "]]"
+				default:
 					planID, id, _ := graph.ParseRef(ref)
 					why := "plan " + planID + " has no node " + id
 					switch {
@@ -629,9 +644,39 @@ func annexRef(c *Context) []Issue {
 				msg = fmt.Sprintf("Annex %s (%s) holds [[%s]], which is not a node ID (write [[ac-3fxm]], or [[005-k7q2:r-8hw3]] for another plan)", n.ID, path, ref)
 			}
 			if msg != "" {
-				out = append(out, Issue{Path: graph.NodePath(n.ID), Message: msg, Hint: hint})
+				out = append(out, Issue{Path: graph.NodePath(n.ID), Message: msg, Hint: refHint})
 			}
 		}
+	}
+	return out
+}
+
+// annexHash reports every active annex that, from lifecycle done on, lacks a
+// well-formed stored hash. The hash is optional before freeze and mandatory
+// after: the freeze step writes annex.hash at the transition into done, so a
+// done plan whose annex has no hash — or one mangled to the wrong shape by a
+// merge resolution, hand edit or external graph producer — has lost its
+// integrity anchor, and annexChanged would silently skip it. This rule closes
+// that gap by requiring the 64-character SHA-256 format. It needs no folder
+// (it inspects the graph only), so it also fires when linted without c.FS.
+func annexHash(c *Context) []Issue {
+	var out []Issue
+	for _, n := range active(c, typeAnnex) {
+		stored := n.StringField("hash")
+		if graph.HashPattern.MatchString(stored) {
+			continue
+		}
+		path := n.StringField("path")
+		msg := fmt.Sprintf("Annex %s (%s) has no frozen hash, but the plan is done; a frozen plan records each annex's SHA-256.", n.ID, path)
+		if stored != "" {
+			msg = fmt.Sprintf("Annex %s (%s) has hash %q, which is not a 64-character SHA-256 hex string.", n.ID, path, stored)
+		}
+		out = append(out, Issue{
+			Path: graph.NodePath(n.ID) + ".fields.hash", Field: "hash",
+			Message: msg,
+			Hint: "re-freeze the plan to record the hash (auto plan update " + c.Plan + " --lifecycle done), " +
+				"or restore the hash from history",
+		})
 	}
 	return out
 }
@@ -640,9 +685,9 @@ func annexRef(c *Context) []Issue {
 // SHA-256 hash recorded when the plan was frozen (the freeze step writes
 // annex.hash at the transition into lifecycle done). It runs only from done
 // on, over the file read through the Context FS, and does nothing when the
-// graph is linted without its folder (c.FS nil). An annex with no stored hash
-// (nothing was frozen) or whose file is absent (an annex-missing error) is
-// skipped.
+// graph is linted without its folder (c.FS nil). An annex whose stored hash is
+// absent or malformed (reported by annex-hash) or whose file is absent (an
+// annex-missing error) is skipped.
 func annexChanged(c *Context) []Issue {
 	if c.FS == nil {
 		return nil
@@ -651,8 +696,8 @@ func annexChanged(c *Context) []Issue {
 	for _, n := range active(c, typeAnnex) {
 		stored := n.StringField("hash")
 		path := n.StringField("path")
-		if stored == "" || path == "" {
-			continue
+		if !graph.HashPattern.MatchString(stored) || path == "" {
+			continue // a missing or malformed hash is an annex-hash error
 		}
 		data, err := fs.ReadFile(c.FS, path)
 		if err != nil {
@@ -714,7 +759,7 @@ func annexTestingLayers(c *Context) []Issue {
 }
 
 // testingAnnex returns the plan's active testing annex. At most one exists
-// (annex.UniqueBy is kind), so the first match is it.
+// (annex.UniqueBy includes kind), so the first match is it.
 func testingAnnex(c *Context) (graph.Node, bool) {
 	for _, n := range active(c, typeAnnex) {
 		if n.StringField("kind") == "testing" {

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mistakenot/auto-plan/internal/app"
@@ -197,7 +198,7 @@ func runRenumber(cmd *cobra.Command, application *app.App, arg, to string) error
 		// plan's annex temp files are staged at their pre-rename paths (beside its
 		// graph.json temp), so the final folder rename carries them too; other
 		// plans' annexes are rewritten in place.
-		annexRewrites, annexAmb := planAnnexRewrites(ws, q, oldID, newID, short)
+		annexRewrites, annexAmb := planAnnexRewrites(ws, q, gq, oldID, newID, short)
 		ambiguous = append(ambiguous, annexAmb...)
 		if q.Dir == p.Dir {
 			gq.ID, changed = newID, true
@@ -341,21 +342,41 @@ func hasNode(g *graph.Graph, id string) bool {
 	return ok
 }
 
-// planAnnexRewrites computes the rewrites for plan q's annex Markdown files
-// whose prose references the renumbered plan. Each file is read through the
-// plan folder (the `*.md` files MarkdownFiles enumerates) and its cross-plan
-// references folded with the same old→new mapping graph.json prose uses; a
-// file is rewritten only when it actually changes. The rewrite's path is the
-// file's current (pre-rename) location, so commitRewrites stages it beside the
-// plan's graph.json temp and the final folder rename carries a renamed plan's
-// files along with it — folder-relative annex paths are never rewritten. It
-// also returns the locations of any ambiguous shorthand references found.
-func planAnnexRewrites(ws *workspace.Workspace, q workspace.Plan, oldID, newID string, short graph.ShortRefFunc) ([]*rewrite, []string) {
-	fsys := ws.FolderFS(q)
-	names, err := workspace.MarkdownFiles(fsys)
-	if err != nil {
-		return nil, nil // an unreadable folder has no annex refs to rewrite
+// annexPaths returns the distinct, sorted file paths of g's active annex
+// nodes — the only Markdown files renumber rewrites. An unregistered `*.md`
+// draft in the folder is deliberately excluded (it is an unlinked-file lint
+// concern, not an annex).
+func annexPaths(g *graph.Graph) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range g.Nodes {
+		if n.Type != "annex" || !n.Active() {
+			continue
+		}
+		if p := n.StringField("path"); p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
 	}
+	slices.Sort(out)
+	return out
+}
+
+// planAnnexRewrites computes the rewrites for plan q's annex Markdown files
+// whose prose references the renumbered plan. Only files that an active annex
+// node registers are considered — derived from q's graph gq, not every `*.md`
+// in the folder — so an unregistered draft is never silently rewritten and
+// never omitted from the command's reported result. Each registered file is
+// read through the plan folder and its cross-plan references folded with the
+// same old→new mapping graph.json prose uses; a file is rewritten only when it
+// actually changes. The rewrite's path is the file's current (pre-rename)
+// location, so commitRewrites stages it beside the plan's graph.json temp and
+// the final folder rename carries a renamed plan's files along with it —
+// folder-relative annex paths are never rewritten. It also returns the
+// locations of any ambiguous shorthand references found.
+func planAnnexRewrites(ws *workspace.Workspace, q workspace.Plan, gq *graph.Graph, oldID, newID string, short graph.ShortRefFunc) ([]*rewrite, []string) {
+	fsys := ws.FolderFS(q)
+	names := annexPaths(gq)
 	folder := ws.FolderPath(q)
 	var out []*rewrite
 	var ambiguous []string
@@ -363,7 +384,7 @@ func planAnnexRewrites(ws *workspace.Workspace, q workspace.Plan, oldID, newID s
 		name := names[i]
 		data, err := fs.ReadFile(fsys, name)
 		if err != nil {
-			continue // an unreadable file is an annex-missing/lint concern
+			continue // an unreadable/absent annex file is an annex-missing lint concern
 		}
 		rewritten, amb := rewriteAnnexProse(string(data), oldID, newID, short)
 		for _, a := range amb {

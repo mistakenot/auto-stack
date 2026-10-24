@@ -272,6 +272,45 @@ func TestValidateFieldRules(t *testing.T) {
 	}
 }
 
+// TestAnnexPathUnique: two active annexes of different kinds may not share a
+// path (duplicate-annex-path), so the one-node-per-sidecar model holds and two
+// annexes can never share content or a freeze hash. kind stays independently
+// unique (duplicate-annex-kind). Distinct paths and kinds validate clean.
+func TestAnnexPathUnique(t *testing.T) {
+	const plan = `{"id": "plan", "type": "plan", "status": "active", "fields": {"name": "demo", "kind": "task", "lifecycle": "solution", "created": "2026-01-01"}}`
+	ax := func(id, kind, path string) string {
+		return `{"id": "` + id + `", "type": "annex", "status": "active", "rank": "a0", "fields": {"kind": "` + kind + `", "path": "` + path + `", "title": "t"}}`
+	}
+	doc := func(nodes ...string) []byte {
+		return []byte(`{"version": "1.0.0", "id": "001-k7q2", "nodes": [` + strings.Join(append([]string{plan}, nodes...), ",") + `], "edges": []}`)
+	}
+	cases := []struct {
+		name  string
+		nodes []string
+		want  string // "" means no duplicate-annex-* code
+	}{
+		{"same path, different kinds", []string{ax("ax-0001", "usage", "shared.md"), ax("ax-0002", "structures", "shared.md")}, "duplicate-annex-path"},
+		{"same kind, different paths", []string{ax("ax-0001", "usage", "a.md"), ax("ax-0002", "usage", "b.md")}, "duplicate-annex-kind"},
+		{"distinct paths and kinds", []string{ax("ax-0001", "usage", "a.md"), ax("ax-0002", "structures", "b.md")}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := codes(Validate(mustParse(t, doc(tc.nodes...))))
+			if tc.want == "" {
+				for _, c := range got {
+					if strings.HasPrefix(c, "duplicate-annex-") {
+						t.Fatalf("unexpected %q in %v", c, got)
+					}
+				}
+				return
+			}
+			if !slices.Contains(got, tc.want) {
+				t.Fatalf("want %q, got %v", tc.want, got)
+			}
+		})
+	}
+}
+
 func TestPlanFieldPatterns(t *testing.T) {
 	g := New("001-k7q2", map[string]any{"name": "Bad Name", "kind": "story", "lifecycle": "requirements", "created": "yesterday"})
 	got := codes(Validate(g))

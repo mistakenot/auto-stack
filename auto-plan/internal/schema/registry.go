@@ -163,11 +163,12 @@ type NodeType struct {
 	// reading order (an AC's siblings are the ACs proving the same goal). Empty
 	// means every node of the type is a sibling.
 	RankScope string
-	// UniqueBy names a field of this type that at most one active node may
-	// share a value of: an annex has at most one node per `kind`. Validate
-	// enforces it (code `duplicate-<type>-<field>`), so a cap on a type is a
-	// registry entry, not a bespoke check. Empty means no such cap.
-	UniqueBy string
+	// UniqueBy names fields of this type that at most one active node may
+	// share a value of, each enforced independently: an annex has at most one
+	// node per `kind` and at most one per `path`. Validate enforces each (code
+	// `duplicate-<type>-<field>`), so a cap on a type is a registry entry, not
+	// a bespoke check. Empty means no such cap.
+	UniqueBy []string
 	Help     string
 }
 
@@ -441,7 +442,7 @@ var Registry = Schema{
 		},
 		{
 			Name: "annex", Prefix: "ax", Term: "Annex", MinLifecycle: LifecycleSolution,
-			UniqueBy: "kind",
+			UniqueBy: []string{"kind", "path"},
 			Help:     "A Markdown file beside graph.json, registered as a node, holding plan-time exposition (at most one per kind).",
 			Fields: []FieldSpec{
 				{Name: "kind", Kind: KindEnum, Required: true, Enum: []string{"usage", "structures", "testing"}, Help: "Which exposition this annex holds"},

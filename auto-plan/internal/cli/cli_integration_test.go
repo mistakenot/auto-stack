@@ -1680,6 +1680,41 @@ func TestRenumberRewritesAnnexCrossPlanRefs(t *testing.T) {
 	}
 }
 
+// TestRenumberIgnoresUnregisteredMarkdown: renumber rewrites only the files an
+// active annex node registers, never a stray `*.md` draft in the plan folder.
+// A draft dropped in before its annex is registered keeps its [[NNN:id]] text
+// verbatim, so renumber never silently edits a non-annex file (nor omits it
+// from the reported result).
+func TestRenumberIgnoresUnregisteredMarkdown(t *testing.T) {
+	root := repo(t)
+	mustRun(t, root, "new", "keep", "--kind", "task") // 001-keep
+	mustRun(t, root, "new", "move", "--kind", "task") // 002-move
+	plans := filepath.Join(root, ".auto", "plan", "plans")
+
+	// A registered annex in keep references move; it must be rewritten.
+	keepAnnex := "# Keep\n\nSee the plan being moved: [[002:plan]].\n"
+	if err := os.WriteFile(filepath.Join(plans, "001-keep", "usage.md"), []byte(keepAnnex), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// An unregistered draft in keep, also mentioning move. No annex names it.
+	draft := "# Draft\n\nStill mentions [[002:plan]] but is not an annex.\n"
+	if err := os.WriteFile(filepath.Join(plans, "001-keep", "draft.md"), []byte(draft), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, root, "add", "001", "annex", "--kind", "usage", "--path", "usage.md", "--title", "Keep")
+	mustRun(t, root, "update", "001", "plan", "--lifecycle", "solution")
+
+	mustRun(t, root, "renumber", "002-move", "--to", "005")
+
+	// The registered annex was rewritten; the unregistered draft is untouched.
+	if got := readFile(t, root, "001-keep", "usage.md"); got != "# Keep\n\nSee the plan being moved: [[005:plan]].\n" {
+		t.Fatalf("registered annex not rewritten:\n%q", got)
+	}
+	if got := readFile(t, root, "001-keep", "draft.md"); got != draft {
+		t.Fatalf("unregistered draft was silently rewritten:\n%q", got)
+	}
+}
+
 // TestEdgeIDs: add and link return edge IDs, get shows them, and unlink
 // takes one.
 func TestEdgeIDs(t *testing.T) {

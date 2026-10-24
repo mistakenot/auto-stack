@@ -115,9 +115,11 @@ depends on that.
 **Annexes.** An `annex` (prefix `ax`) is a Markdown file beside `graph.json`,
 registered as a node, holding plan-time exposition whose *facts* belong in the
 graph (D-5). Its `kind` is `usage`, `structures` or `testing`, and at most one
-annex per kind may be active (registry `UniqueBy: kind`, code
+annex per kind may be active (registry `UniqueBy: [kind, path]`, code
 `duplicate-annex-kind`). `path` is a flat `<kebab>.md` filename relative to the
-plan folder, so a folder rename on `renumber` keeps it valid. `add annex` writes
+plan folder, so a folder rename on `renumber` keeps it valid; it too is unique
+across active annexes (code `duplicate-annex-path`), so no two annexes share one
+sidecar. `add annex` writes
 a **create-only** stub `.md` when the file is absent (never overwriting user
 content), reports it in the result (`file`, and a `wrote …` line in `--text`),
 and wires any `--about <id>` edge inline — `about` now runs from a tree **or an

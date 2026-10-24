@@ -253,7 +253,7 @@ func TestSeverities(t *testing.T) {
 		"goal-no-ac": SeverityError, "ac-no-verify": SeverityError, "unplanned-file": SeverityError,
 		"untracked-file": SeverityError, "missing-dep": SeverityError,
 		"annex-missing": SeverityError, "unlinked-file": SeverityError, "annex-ref": SeverityError,
-		"annex-testing-layers": SeverityError, "annex-changed": SeverityError,
+		"annex-testing-layers": SeverityError, "annex-hash": SeverityError, "annex-changed": SeverityError,
 		"goal-count": SeverityWarning, "decision-no-alternative": SeverityWarning, "retired-ref": SeverityWarning,
 	}
 	if len(Rules) != len(want) {
@@ -872,6 +872,48 @@ func TestAnnexChanged(t *testing.T) {
 	}
 }
 
+// TestAnnexHash: from lifecycle done, every active annex must carry a
+// well-formed stored hash. A missing hash (lost to a merge or hand edit) or a
+// malformed one reports annex-hash; a 64-char SHA-256 hex matching the file is
+// clean. The file is always present, so annex-missing never masks the case.
+func TestAnnexHash(t *testing.T) {
+	const body = "# Usage\n\nRun it.\n"
+	clean := graph.HashBytes([]byte(body))
+	cases := []struct {
+		name string
+		node string
+		want []string
+	}{
+		{"missing hash at done reports annex-hash",
+			annex("ax-0001", "usage", "usage.md", "How to use it"), []string{"annex-hash"}},
+		{"malformed hash reports annex-hash",
+			annexHashed("ax-0001", "usage", "usage.md", "How to use it", "not-a-real-hash"), []string{"annex-hash"}},
+		{"well-formed hash matching the file is clean",
+			annexHashed("ax-0001", "usage", "usage.md", "How to use it", clean), nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			n, e := goals(5)
+			doc := fixture("done", append(n, tc.node), e)
+			g, err := graph.Parse([]byte(doc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := run(&Context{Plan: "001", Graph: g, Lifecycle: Lifecycle(g), FS: fstest.MapFS{"usage.md": mdFile(body)}})
+			var got []string
+			for _, is := range r.Issues {
+				got = append(got, is.Code)
+				if is.Message == "" || is.Path == "" || is.Hint == "" {
+					t.Errorf("issue lacks message/path/hint: %+v", is)
+				}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("codes = %v, want %v\n%+v", got, tc.want, r.Issues)
+			}
+		})
+	}
+}
+
 // TestAnnexTestingLayers: the one-directional testing-layer rule (AC-9). A
 // layer some AC uses but the testing annex has no `## <layer>` section for is
 // flagged; an extra section for a layer no AC uses is allowed, so the
@@ -1035,6 +1077,65 @@ func TestPlanSetRules(t *testing.T) {
 				t.Errorf("copy: %v", got)
 			}
 		}
+	}
+}
+
+// TestAnnexRefAmbiguous: when an annex file holds a shorthand [[NNN:id]] whose
+// number names two plans, annex-ref reports it (the ambiguousRef rule only
+// walks graph-node text, so it never sees the annex). The hint tells the
+// author to write the full plan ID in the annex file.
+func TestAnnexRefAmbiguous(t *testing.T) {
+	root := t.TempDir()
+	plans := filepath.Join(root, ".auto", "plan", "plans")
+	write := func(folder, doc string, files map[string]string) {
+		dir := filepath.Join(plans, folder)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "graph.json"), []byte(doc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for name, body := range files {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	// 001-main at solution: five proven goals plus a usage annex whose file
+	// references the colliding number 002 by shorthand.
+	n, e := goals(5)
+	mainDoc := strings.Replace(
+		planDoc("main", "task", "solution", "", append(n, annex("ax-0001", "usage", "usage.md", "U")), e),
+		`"@PLAN@"`, `"001-aaaa"`, 1)
+	write("001-main", mainDoc, map[string]string{"usage.md": "See [[002:plan]].\n"})
+	// Two plans share number 002, so [[002:plan]] cannot resolve.
+	write("002-beta", strings.Replace(planDoc("beta", "task", "requirements", "", nil, nil), `"@PLAN@"`, `"002-b0b0"`, 1), nil)
+	write("002-gamma", strings.Replace(planDoc("gamma", "task", "requirements", "", nil, nil), `"@PLAN@"`, `"002-g0g0"`, 1), nil)
+
+	set, err := (&workspace.Workspace{Root: root, CWD: root}).PlanSet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var main workspace.Plan
+	for _, p := range set.Plans() {
+		if p.Folder() == "001-main" {
+			main = p
+		}
+	}
+	var ref Issue
+	for _, is := range Plan(set, main).Issues {
+		if is.Code == "annex-ref" {
+			ref = is
+		}
+	}
+	if ref.Code == "" {
+		t.Fatal("no annex-ref reported for the ambiguous reference")
+	}
+	if !strings.Contains(ref.Message, "[[002:plan]], but plan number 002 names 2 plans") {
+		t.Errorf("message = %q", ref.Message)
+	}
+	if !strings.Contains(ref.Hint, "usage.md") || !strings.Contains(ref.Hint, ":plan]]") {
+		t.Errorf("hint = %q", ref.Hint)
 	}
 }
 
