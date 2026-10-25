@@ -44,7 +44,7 @@ func TestTickSkipsStaleRegistryEntriesInsteadOfFailing(t *testing.T) {
 	}
 
 	now := time.Date(2026, 6, 27, 10, 0, 0, 0, time.UTC)
-	svc := daemon.New(db, &recordingBackend{}, nil, func() time.Time { return now }, nil)
+	svc := daemon.New(db, runningRegistry(), nil, func() time.Time { return now }, nil)
 
 	if err := svc.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick should skip stale registry entries, not fail: %v", err)

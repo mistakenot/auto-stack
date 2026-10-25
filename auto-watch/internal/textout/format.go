@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mistakenot/auto-watch/internal/model"
@@ -63,13 +65,36 @@ func FormatEventLine(event *model.EventRecord) string {
 	if event.TaskID != "" {
 		parts = append(parts, "task="+event.TaskID)
 	}
+	if event.RunID != nil {
+		parts = append(parts, "run="+strconv.FormatInt(*event.RunID, 10))
+	}
 	keys := make([]string, 0, len(event.Metadata))
 	for key := range event.Metadata {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%v", key, event.Metadata[key]))
+		parts = append(parts, key+"="+formatMetaValue(event.Metadata[key]))
+	}
+	if event.Message != "" {
+		parts = append(parts, fmt.Sprintf("msg=%q", event.Message))
 	}
 	return strings.Join(parts, " ")
+}
+
+// formatMetaValue renders one Event metadata value for a journal line. A nil
+// value, or a nil pointer, prints as `null` (never a 0x… address); a non-nil
+// pointer is dereferenced to its pointee so an *int reads as its number.
+func formatMetaValue(value any) string {
+	if value == nil {
+		return "null"
+	}
+	rv := reflect.ValueOf(value)
+	if rv.Kind() == reflect.Pointer {
+		if rv.IsNil() {
+			return "null"
+		}
+		return fmt.Sprintf("%v", rv.Elem().Interface())
+	}
+	return fmt.Sprintf("%v", value)
 }

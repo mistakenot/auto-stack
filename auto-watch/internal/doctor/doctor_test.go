@@ -1,10 +1,45 @@
 package doctor
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+// TestPreflightFatalOnMissingSettingsAndHost (AC-5): with neither settings nor
+// host config present, Preflight reports fatalFailed so `start` exits.
+func TestPreflightFatalOnMissingSettingsAndHost(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	_, fatal := Preflight(context.Background(), t.TempDir(), []string{"tmux"})
+	if !fatal {
+		t.Fatal("expected fatalFailed when settings/host config are missing")
+	}
+}
+
+// TestPreflightNonFatalWhenFatalChecksPass (AC-5): with valid settings and host
+// config, Preflight is non-fatal even though tmux/claude/project_config may fail
+// — those are warnings, so the daemon still starts.
+func TestPreflightNonFatalWhenFatalChecksPass(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	autoDir := filepath.Join(home, ".auto")
+	if err := os.MkdirAll(autoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(autoDir, "host.json"), []byte(`{"hostId":"dev-box.charlie"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(autoDir, "projects.json"), []byte(`{"projects":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// cwd that is not a git repo, so the project_config check is skipped and only
+	// tmux/claude/git/daemon_unit can vary — none of which are fatal.
+	checks, fatal := Preflight(context.Background(), t.TempDir(), []string{"tmux"})
+	if fatal {
+		t.Fatalf("expected non-fatal when settings+host are OK, got fatal; checks=%+v", checks)
+	}
+}
 
 func writeUnit(t *testing.T, dir, execStart string) string {
 	t.Helper()

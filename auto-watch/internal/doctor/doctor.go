@@ -17,7 +17,7 @@ import (
 	"github.com/mistakenot/auto-watch/internal/model"
 )
 
-func Run(ctx context.Context, cwd string) (string, []model.DoctorCheck) {
+func Run(ctx context.Context, cwd string, backends []string) (string, []model.DoctorCheck) {
 	checks := []model.DoctorCheck{
 		checkTmux(ctx),
 		checkClaude(),
@@ -27,7 +27,7 @@ func Run(ctx context.Context, cwd string) (string, []model.DoctorCheck) {
 		checkHostConfig(),
 	}
 	if repoRoot, err := gitx.FindRepoRoot(cwd); err == nil {
-		checks = append(checks, checkProjectConfig(repoRoot))
+		checks = append(checks, checkProjectConfig(repoRoot, backends))
 	}
 	status := "ok"
 	for _, check := range checks {
@@ -46,6 +46,32 @@ func HasFailures(checks []model.DoctorCheck) bool {
 		}
 	}
 	return false
+}
+
+// fatalCheckNames are the checks whose failure must stop `auto watch start`.
+// Everything else (tmux, claude, git, daemon_unit, project_config) is a
+// non-fatal warning: a bad project config only skips that Project (the tick
+// validates each TaskDef per entry), and tmux/claude only matter for the task
+// types that use them. The store open/migrate is the other fatal condition and
+// is checked separately by the caller (openStore), not here.
+var fatalCheckNames = map[string]bool{
+	"settings":    true,
+	"host_config": true,
+}
+
+// Preflight runs the daemon's startup checks and reports whether any FATAL check
+// failed (settings dir or host config). The caller prints every non-ok check as
+// a warning and exits only when fatalFailed is true, so a missing tmux/claude or
+// an invalid Project config no longer crash-loops the daemon. `auto watch
+// doctor` keeps its own all-checks exit semantics via Run/HasFailures.
+func Preflight(ctx context.Context, cwd string, backends []string) (checks []model.DoctorCheck, fatalFailed bool) {
+	_, checks = Run(ctx, cwd, backends)
+	for _, check := range checks {
+		if check.Status == "fail" && fatalCheckNames[check.Name] {
+			fatalFailed = true
+		}
+	}
+	return checks, fatalFailed
 }
 
 func checkTmux(ctx context.Context) model.DoctorCheck {
@@ -277,7 +303,7 @@ func checkHostConfig() model.DoctorCheck {
 	return model.DoctorCheck{Name: name, Status: "ok", Message: path}
 }
 
-func checkProjectConfig(repoRoot string) model.DoctorCheck {
+func checkProjectConfig(repoRoot string, backends []string) model.DoctorCheck {
 	path := config.ProjectConfigPath(repoRoot)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return model.DoctorCheck{Name: "project_config", Status: "ok", Message: "project config not present in current repo"}
@@ -292,7 +318,7 @@ func checkProjectConfig(repoRoot string) model.DoctorCheck {
 			Details:     err.Error(),
 		}
 	}
-	if errs := config.ValidateProjectConfig(cfg); len(errs) > 0 {
+	if errs := config.ValidateProjectConfig(cfg, backends); len(errs) > 0 {
 		return model.DoctorCheck{
 			Name:        "project_config",
 			Status:      "fail",

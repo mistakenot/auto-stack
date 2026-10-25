@@ -9,11 +9,12 @@ import (
 )
 
 const (
-	watchDirName    = "watch"
-	projectFileName = "project.json"
-	lockFileName    = "daemon.lock"
-	pidFileName     = "daemon.pid.json"
-	dbFileName      = "logs.sqlite"
+	watchDirName      = "watch"
+	projectFileName   = "project.json"
+	lockFileName      = "daemon.lock"
+	pidFileName       = "daemon.pid.json"
+	heartbeatFileName = "heartbeat.json"
+	dbFileName        = "logs.sqlite"
 )
 
 // AutoDir returns ~/.auto, delegating to the shared config package.
@@ -63,6 +64,16 @@ func PIDPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, pidFileName), nil
+}
+
+// HeartbeatPath returns ~/.auto/watch/heartbeat.json, where the daemon records
+// its liveness at the end of every tick for `auto watch health` to read.
+func HeartbeatPath() (string, error) {
+	dir, err := WatchDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, heartbeatFileName), nil
 }
 
 func ProjectDir(repoRoot string) string {

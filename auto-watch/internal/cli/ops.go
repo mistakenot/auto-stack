@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -64,19 +65,29 @@ func newStartCmd(application *app.App) *cobra.Command {
 			}
 			defer func() { _ = db.Close() }()
 
-			status, checks := doctor.Run(cmd.Context(), application.CWD)
-			if status != "ok" || doctor.HasFailures(checks) {
-				for _, check := range checks {
-					fmt.Fprintf(cmd.ErrOrStderr(), "%s: %s - %s\n", check.Name, check.Status, check.Message)
-					if check.Remediation != "" {
-						fmt.Fprintf(cmd.ErrOrStderr(), "  remediation: %s\n", check.Remediation)
-					}
+			// Startup preflight: the store is already open (openStore above), so
+			// the only remaining fatal checks are the settings dir and host
+			// config. Everything else (tmux, claude, git, an invalid Project
+			// config) is printed as a warning and does NOT stop the daemon — the
+			// tick validates each TaskDef per entry and skips the bad ones. This is
+			// what keeps a missing tmux or one bad Project from crash-looping the
+			// daemon under Restart=always.
+			checks, fatalFailed := doctor.Preflight(cmd.Context(), application.CWD, application.Backends.Names())
+			for _, check := range checks {
+				if check.Status == "ok" {
+					continue
 				}
-				return &ExitError{Code: 1, Err: errors.New("doctor checks failed")}
+				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %s - %s\n", check.Name, check.Status, check.Message)
+				if check.Remediation != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "  remediation: %s\n", check.Remediation)
+				}
+			}
+			if fatalFailed {
+				return &ExitError{Code: 1, Err: errors.New("fatal preflight check failed; cannot start daemon")}
 			}
 
 			hub := bus.NewHub()
-			service := daemon.New(db, application.Backend, cmd.OutOrStdout(), application.Now, hub)
+			service := daemon.New(db, application.Backends, cmd.OutOrStdout(), application.Now, hub)
 			service.SetRetentionDays(retentionDays)
 			if once {
 				if err := writePIDMetadata(); err != nil {
@@ -167,10 +178,22 @@ func newStartCmd(application *app.App) *cobra.Command {
 
 			errCh := make(chan error, 3)
 
-			// Run initial tick.
-			if err := service.Tick(ctx); err != nil {
-				return &ExitError{Code: 1, Err: err}
+			// Heartbeat writer: every tick (initial and loop) records liveness so
+			// `auto watch health` can report a stale daemon. A write failure is
+			// logged, never fatal.
+			var hbWriter *daemon.HeartbeatWriter
+			if hbPath, hbErr := config.HeartbeatPath(); hbErr == nil {
+				hbWriter = daemon.NewHeartbeatWriter(hbPath)
+			} else {
+				fmt.Fprintf(cmd.ErrOrStderr(), "autowatch heartbeat disabled: %v\n", hbErr)
 			}
+
+			// Run initial tick, then every loop tick, through the crash-safe
+			// wrapper: a tick error (even a store failure) is logged to stderr and
+			// recorded in the heartbeat's last_error, and the loop CONTINUES, so a
+			// transient fault never exits the process into a Restart=always crash
+			// loop. Only openStore/Migrate (above) and listener binding are fatal.
+			runTick(ctx, service, hbWriter, cmd.ErrOrStderr(), application.Now)
 
 			// RPC server goroutine.
 			rpcSrv := rpcserver.New(rpcLn, handlers, hub, ctlEvents)
@@ -208,9 +231,7 @@ func newStartCmd(application *app.App) *cobra.Command {
 						return &ExitError{Code: 1, Err: lErr}
 					}
 				case <-ticker.C:
-					if tErr := service.Tick(ctx); tErr != nil {
-						return &ExitError{Code: 1, Err: tErr}
-					}
+					runTick(ctx, service, hbWriter, cmd.ErrOrStderr(), application.Now)
 				}
 			}
 		},
@@ -231,7 +252,7 @@ func newDoctorCmd(application *app.App) *cobra.Command {
 		Use:   "doctor",
 		Short: "Check daemon prerequisites and config health",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			status, checks := doctor.Run(cmd.Context(), application.CWD)
+			status, checks := doctor.Run(cmd.Context(), application.CWD, application.Backends.Names())
 			if jsonOutput {
 				if err := textout.WriteJSON(cmd.OutOrStdout(), map[string]any{"status": status, "checks": checks}); err != nil {
 					return &ExitError{Code: 1, Err: err}
@@ -438,7 +459,7 @@ func newCleanCmd(application *app.App) *cobra.Command {
 				return &ExitError{Code: 1, Err: err}
 			}
 			defer func() { _ = db.Close() }()
-			service := daemon.New(db, application.Backend, nil, application.Now, nil)
+			service := daemon.New(db, application.Backends, nil, application.Now, nil)
 			if err := service.Clean(cmd.Context(), force); err != nil {
 				return &ExitError{Code: 1, Err: err}
 			}
@@ -452,6 +473,23 @@ func newCleanCmd(application *app.App) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "kill active sessions and remove their worktrees too")
 	return cmd
+}
+
+// runTick runs one daemon tick and contains its failure: any error (a git or
+// dispatch fault that Tick surfaces, or a store failure) is logged to stderr and
+// recorded in the heartbeat's last_error, and the function returns normally so
+// the start loop keeps running instead of exiting into a Restart=always crash
+// loop. A heartbeat write failure is itself logged and never fatal.
+func runTick(ctx context.Context, service *daemon.Service, hb *daemon.HeartbeatWriter, stderr io.Writer, now func() time.Time) {
+	err := service.Tick(ctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "autowatch tick error: %v\n", err)
+	}
+	if hb != nil {
+		if hbErr := hb.Record(nowUTC(now), err); hbErr != nil {
+			fmt.Fprintf(stderr, "autowatch heartbeat write failed: %v\n", hbErr)
+		}
+	}
 }
 
 func collectHealth(ctx context.Context, db *store.Store, now func() time.Time) (string, []model.HealthIssue, error) {
@@ -495,11 +533,101 @@ func collectHealth(ctx context.Context, db *store.Store, now func() time.Time) (
 		return "", nil, err
 	}
 	issues = append(issues, dedupGroups...)
+
+	// stop_unconfirmed: a past-deadline run whose backend Stop could not be
+	// confirmed is kept running (so no overlapping run starts) and flagged here
+	// (AC-4) until Stop succeeds or the backend reports it gone.
+	stopUnconfirmed, err := db.StopUnconfirmedRuns(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	for i := range stopUnconfirmed {
+		issues = append(issues, model.HealthIssue{
+			Type:      "stop_unconfirmed",
+			Severity:  "warn",
+			Message:   "past deadline; backend Stop not confirmed, run kept running",
+			ProjectID: stopUnconfirmed[i].ProjectID,
+			TaskID:    stopUnconfirmed[i].TaskID,
+			RunID:     stopUnconfirmed[i].ID,
+		})
+	}
+
+	// stale_heartbeat: the daemon writes heartbeat.json at the end of every tick.
+	// A missing file, or a last_ok_tick_at that is missing or over 3 minutes old,
+	// means no tick has succeeded recently — a wedged or dead daemon that
+	// systemctl may still report active, so health is the source of truth.
+	issues = append(issues, heartbeatIssues(current)...)
+
+	// low_disk: a full disk is a past crash-loop cause (2026-10-23). Report the
+	// free bytes on the filesystem holding ~/.auto/watch when under 1 GiB.
+	if watchDir, wdErr := config.WatchDir(); wdErr == nil {
+		if free, dfErr := diskFreeBytes(watchDir); dfErr == nil && free < oneGiB {
+			issues = append(issues, model.HealthIssue{
+				Type:     "low_disk",
+				Severity: "warn",
+				Message:  fmt.Sprintf("only %d bytes free on the filesystem holding %s (under 1 GiB)", free, watchDir),
+			})
+		}
+	}
+
 	status := "ok"
 	if len(issues) > 0 {
 		status = "warn"
 	}
 	return status, issues, nil
+}
+
+const (
+	heartbeatStaleAfter = 3 * time.Minute
+	oneGiB              = int64(1) << 30
+)
+
+// diskFreeBytes reports the bytes available to an unprivileged process on the
+// filesystem holding path. It is a package var so tests can inject a low value
+// without needing a real near-full filesystem.
+var diskFreeBytes = statfsFreeBytes
+
+func statfsFreeBytes(path string) (int64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, err
+	}
+	//nolint:gosec // block count and size are non-negative filesystem counters
+	return int64(st.Bavail) * st.Bsize, nil
+}
+
+// heartbeatIssues reports a stale_heartbeat issue (with age and last_error) when
+// the daemon heartbeat is missing, unreadable, has never recorded a successful
+// tick, or recorded one over heartbeatStaleAfter ago.
+func heartbeatIssues(now time.Time) []model.HealthIssue {
+	hbPath, err := config.HeartbeatPath()
+	if err != nil {
+		return nil
+	}
+	hb, readErr := daemon.ReadHeartbeat(hbPath)
+	if readErr != nil {
+		return []model.HealthIssue{{
+			Type:     "stale_heartbeat",
+			Severity: "warn",
+			Message:  fmt.Sprintf("heartbeat missing or unreadable: %v", readErr),
+		}}
+	}
+	if hb.LastOKTickAt == nil {
+		msg := "daemon has not recorded a successful tick"
+		if hb.LastError != "" {
+			msg += "; last_error: " + hb.LastError
+		}
+		return []model.HealthIssue{{Type: "stale_heartbeat", Severity: "warn", Message: msg}}
+	}
+	age := now.Sub(hb.LastOKTickAt.UTC())
+	if age > heartbeatStaleAfter {
+		msg := fmt.Sprintf("last successful tick %s ago", age.Round(time.Second))
+		if hb.LastError != "" {
+			msg += "; last_error: " + hb.LastError
+		}
+		return []model.HealthIssue{{Type: "stale_heartbeat", Severity: "warn", Message: msg}}
+	}
+	return nil
 }
 
 func writePIDMetadata() error {

@@ -1,8 +1,6 @@
 package runner_test
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -25,28 +23,24 @@ func TestBuildPrompt(t *testing.T) {
 	}
 }
 
-func TestWriteLaunchScript(t *testing.T) {
-	runDir := t.TempDir()
-	path, err := runner.WriteLaunchScript(&runner.LaunchSpec{
-		RunDir:      runDir,
-		WorkDir:     "/tmp/work",
-		TaskType:    "bash",
-		CommandFile: filepath.Join(runDir, "command.txt"),
-		OutputPath:  filepath.Join(runDir, "output.log"),
-		ExitPath:    filepath.Join(runDir, "exit-code"),
-	})
+func TestInnerCommand(t *testing.T) {
+	bash, err := runner.InnerCommand("bash")
 	if err != nil {
-		t.Fatalf("WriteLaunchScript returned error: %v", err)
+		t.Fatalf("InnerCommand(bash) error: %v", err)
 	}
-	data, err := os.ReadFile(path)
+	if !strings.Contains(bash, `bash -lc "$(cat "$RUN_DIR/command.txt")"`) {
+		t.Fatalf("unexpected bash inner command: %q", bash)
+	}
+
+	claude, err := runner.InnerCommand("claude")
 	if err != nil {
-		t.Fatalf("read launch script: %v", err)
+		t.Fatalf("InnerCommand(claude) error: %v", err)
 	}
-	content := string(data)
-	if !strings.Contains(content, `bash -lc "$(cat "$RUN_DIR/command.txt")"`) {
-		t.Fatalf("expected bash launch command in script, got %q", content)
+	if !strings.Contains(claude, `claude --dangerously-skip-permissions -p "$(cat "$RUN_DIR/prompt.txt")"`) {
+		t.Fatalf("unexpected claude inner command: %q", claude)
 	}
-	if !strings.Contains(content, `printf '%s\n' "$code" > "$EXIT_FILE"`) {
-		t.Fatalf("expected exit-code write in script, got %q", content)
+
+	if _, err := runner.InnerCommand("nope"); err == nil {
+		t.Fatal("expected error for unsupported task type")
 	}
 }

@@ -34,12 +34,15 @@ type ReserveRunInput struct {
 }
 
 type RunStartUpdate struct {
-	SessionName  string
-	RuntimeDir   string
-	OutputPath   string
-	ExitPath     string
-	WorktreePath string
-	Branch       string
+	SessionName   string
+	RuntimeDir    string
+	OutputPath    string
+	ExitPath      string
+	WorktreePath  string
+	Branch        string
+	Backend       string
+	BackendTarget string
+	DeadlineAt    time.Time
 }
 
 type EventInput struct {
@@ -63,23 +66,22 @@ type EventFilter struct {
 	Since     *time.Time
 }
 
+// DSN builds the sqlite data-source name for the given database file, carrying
+// the pragmas as connection parameters. modernc.org/sqlite applies each
+// _pragma on every pooled connection it opens, so busy_timeout and foreign_keys
+// hold for every connection — not just the one a bare `db.Exec("PRAGMA …")`
+// would happen to reach (the disk-full/concurrency hazard this closes).
+func DSN(path string) string {
+	return "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+}
+
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", DSN(path))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite db: %w", err)
-	}
-	for _, stmt := range []string{
-		"PRAGMA journal_mode = WAL;",
-		"PRAGMA busy_timeout = 5000;",
-		"PRAGMA foreign_keys = ON;",
-	} {
-		if _, err := db.Exec(stmt); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("apply sqlite pragma %q: %w", stmt, err)
-		}
 	}
 	return &Store{db: db}, nil
 }
@@ -167,13 +169,91 @@ func (s *Store) Migrate(ctx context.Context) error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_file_snapshots_trigger ON file_snapshots (project_id, trigger_id);`,
 		`INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);`,
+		// owed_fires: a cursor-advancing Trigger (file_created, or a branch-changed
+		// cron) records a fire it could not dispatch this tick so it is never lost.
+		// Coalesced per (project, trigger, task): the first reason/time is kept.
+		// Created unconditionally here (IF NOT EXISTS); the v3 run columns are added
+		// separately in migrateRunsV3.
+		`CREATE TABLE IF NOT EXISTS owed_fires (
+			project_id TEXT NOT NULL,
+			trigger_id TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			first_owed_at DATETIME NOT NULL,
+			PRIMARY KEY (project_id, trigger_id, task_id)
+		);`,
 	}
 	for _, stmt := range statements {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("run migration statement: %w", err)
 		}
 	}
+	// v3: Backend selection + deadline + failure reason on runs. There is no
+	// ALTER precedent, so gate each column on PRAGMA table_info(runs) and add it
+	// only when absent, keeping Migrate idempotent (a second run is a no-op).
+	if err := s.migrateRunsV3(ctx); err != nil {
+		return err
+	}
 	return nil
+}
+
+// migrateRunsV3 adds the backend, backend_target, deadline_at and
+// failure_reason columns to the runs table if they are not already present,
+// then records schema version 3. Legacy rows keep NULL in the new columns and
+// are read back as the default Backend ("tmux") with backend_target set to the
+// session name (see scanRun).
+func (s *Store) migrateRunsV3(ctx context.Context) error {
+	existing, err := s.runsColumns(ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, col := range []struct{ name, ddl string }{
+		{"backend", "ALTER TABLE runs ADD COLUMN backend TEXT"},
+		{"backend_target", "ALTER TABLE runs ADD COLUMN backend_target TEXT"},
+		{"deadline_at", "ALTER TABLE runs ADD COLUMN deadline_at DATETIME"},
+		{"failure_reason", "ALTER TABLE runs ADD COLUMN failure_reason TEXT"},
+	} {
+		if _, ok := existing[col.name]; ok {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, col.ddl); err != nil {
+			return fmt.Errorf("add runs column %s: %w", col.name, err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version) VALUES (3)`); err != nil {
+		return fmt.Errorf("record schema version 3: %w", err)
+	}
+	return nil
+}
+
+// runsColumns returns the set of column names on the runs table via
+// PRAGMA table_info, so migrateRunsV3 can add only the columns that are absent.
+func (s *Store) runsColumns(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(runs)`)
+	if err != nil {
+		return nil, fmt.Errorf("inspect runs columns: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	existing := map[string]struct{}{}
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			dfltValue  sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &primaryKey); err != nil {
+			return nil, fmt.Errorf("scan runs column: %w", err)
+		}
+		existing[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate runs columns: %w", err)
+	}
+	return existing, nil
 }
 
 func (s *Store) ReserveRun(ctx context.Context, input *ReserveRunInput) (int64, error) {
@@ -209,15 +289,21 @@ func (s *Store) GetRun(ctx context.Context, id int64) (model.RunRecord, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT
 		id, project_id, project_path, trigger_id, trigger_type, task_id, task_type,
 		resource_key, branch, state, session_name, runtime_dir, output_path, exit_path,
-		worktree_path, started_at, completed_at, exit_code, error_message
+		worktree_path, started_at, completed_at, exit_code, error_message,
+		backend, backend_target, deadline_at, failure_reason
 	FROM runs WHERE id = ?`, id)
 	return scanRun(row)
 }
 
+// UpdateRunStarted moves a reserved (pending) run to running and records its
+// Binding, paths and deadline. The `AND state = 'pending'` guard makes it a
+// no-op on a run another writer already finished (e.g. a concurrent cancel), so
+// a late start can never resurrect a terminal run.
 func (s *Store) UpdateRunStarted(ctx context.Context, id int64, update *RunStartUpdate) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE runs
-	SET state = ?, session_name = ?, runtime_dir = ?, output_path = ?, exit_path = ?, worktree_path = ?, branch = ?
-	WHERE id = ?`,
+	SET state = ?, session_name = ?, runtime_dir = ?, output_path = ?, exit_path = ?, worktree_path = ?, branch = ?,
+		backend = ?, backend_target = ?, deadline_at = ?
+	WHERE id = ? AND state = 'pending'`,
 		string(model.RunRunning),
 		nullIfEmpty(update.SessionName),
 		nullIfEmpty(update.RuntimeDir),
@@ -225,6 +311,9 @@ func (s *Store) UpdateRunStarted(ctx context.Context, id int64, update *RunStart
 		nullIfEmpty(update.ExitPath),
 		nullIfEmpty(update.WorktreePath),
 		nullIfEmpty(update.Branch),
+		nullIfEmpty(update.Backend),
+		nullIfEmpty(update.BackendTarget),
+		nullableTime(update.DeadlineAt),
 		id,
 	)
 	if err != nil {
@@ -233,10 +322,16 @@ func (s *Store) UpdateRunStarted(ctx context.Context, id int64, update *RunStart
 	return nil
 }
 
-func (s *Store) MarkRunTerminal(ctx context.Context, id int64, state model.RunState, exitCode *int, completedAt time.Time, errorMessage string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE runs
+// MarkRunTerminal moves a pending/running run to a terminal state and reports
+// whether a row was actually updated. The `AND state IN ('pending','running')`
+// guard makes the transition conditional: a run another writer already finished
+// is left unchanged and updated is false, so the caller emits no duplicate
+// terminal Event. This conditional UPDATE is the single dedup mechanism for the
+// once-only terminal transition.
+func (s *Store) MarkRunTerminal(ctx context.Context, id int64, state model.RunState, exitCode *int, completedAt time.Time, errorMessage string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE runs
 	SET state = ?, exit_code = ?, completed_at = ?, error_message = ?
-	WHERE id = ?`,
+	WHERE id = ? AND state IN ('pending','running')`,
 		string(state),
 		exitCode,
 		formatTime(completedAt),
@@ -244,9 +339,66 @@ func (s *Store) MarkRunTerminal(ctx context.Context, id int64, state model.RunSt
 		id,
 	)
 	if err != nil {
-		return fmt.Errorf("mark run terminal: %w", err)
+		return false, fmt.Errorf("mark run terminal: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read mark run terminal rows: %w", err)
+	}
+	return n > 0, nil
+}
+
+// MarkRunFailedWithReason marks a pending/running run failed and records its
+// failure_reason in a single UPDATE, alongside the exit code, completion time
+// and error message. It shares MarkRunTerminal's conditional state guard and
+// rows-affected result, so a run another writer already finished is left
+// unchanged and updated is false (no duplicate terminal Event).
+func (s *Store) MarkRunFailedWithReason(ctx context.Context, id int64, exitCode *int, completedAt time.Time, errorMessage, failureReason string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE runs
+	SET state = ?, exit_code = ?, completed_at = ?, error_message = ?, failure_reason = ?
+	WHERE id = ? AND state IN ('pending','running')`,
+		string(model.RunFailed),
+		exitCode,
+		formatTime(completedAt),
+		nullIfEmpty(errorMessage),
+		nullIfEmpty(failureReason),
+		id,
+	)
+	if err != nil {
+		return false, fmt.Errorf("mark run failed with reason: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read mark run failed rows: %w", err)
+	}
+	return n > 0, nil
+}
+
+// CountRunEventsByType returns how many events of the given type are recorded
+// for a single run. Reap uses it to record a per-run warning (task_stop_failed)
+// exactly once even though the run is re-listed on every tick while its backend
+// Stop stays unconfirmed.
+func (s *Store) CountRunEventsByType(ctx context.Context, runID int64, eventType string) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE run_id = ? AND event_type = ?`, runID, eventType).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count run events by type: %w", err)
+	}
+	return count, nil
+}
+
+// RunExists reports whether a run row with the given id is present. Clean's
+// orphan-dir sweep uses it to tell a leftover runs/<id> directory (no row) from
+// one a live or retained run still owns.
+func (s *Store) RunExists(ctx context.Context, id int64) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM runs WHERE id = ? LIMIT 1`, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check run exists: %w", err)
+	}
+	return true, nil
 }
 
 // ClearRunWorktreePath blanks a run's worktree_path after its worktree has been
@@ -454,7 +606,8 @@ func (s *Store) ListRunsByStates(ctx context.Context, states ...model.RunState) 
 	query := fmt.Sprintf(`SELECT
 		id, project_id, project_path, trigger_id, trigger_type, task_id, task_type,
 		resource_key, branch, state, session_name, runtime_dir, output_path, exit_path,
-		worktree_path, started_at, completed_at, exit_code, error_message
+		worktree_path, started_at, completed_at, exit_code, error_message,
+		backend, backend_target, deadline_at, failure_reason
 	FROM runs
 	WHERE state IN (%s)
 	ORDER BY started_at ASC`, strings.Join(placeholders, ","))
@@ -490,7 +643,8 @@ func (s *Store) listRunsWhere(ctx context.Context, where string, args ...any) ([
 	query := fmt.Sprintf(`SELECT
 		id, project_id, project_path, trigger_id, trigger_type, task_id, task_type,
 		resource_key, branch, state, session_name, runtime_dir, output_path, exit_path,
-		worktree_path, started_at, completed_at, exit_code, error_message
+		worktree_path, started_at, completed_at, exit_code, error_message,
+		backend, backend_target, deadline_at, failure_reason
 	FROM runs
 	WHERE %s
 	ORDER BY started_at ASC`, where)
@@ -529,6 +683,91 @@ func (s *Store) RecentRunCounts(ctx context.Context, since time.Time) (map[strin
 		counts[state] = count
 	}
 	return counts, rows.Err()
+}
+
+// RunListFilter narrows ListRunsFiltered. Every field is optional; a zero value
+// means "no filter on this field". The string fields are matched exactly, so
+// callers normalise (trim+lowercase) before setting them.
+type RunListFilter struct {
+	State     string
+	TaskID    string
+	TriggerID string
+	ProjectID string
+	Reason    string
+	Since     *time.Time
+}
+
+// ListRunsFiltered returns runs matching the filter, newest first (by
+// started_at, then id). It backs `auto watch run list`. A nil or empty filter
+// returns every run.
+func (s *Store) ListRunsFiltered(ctx context.Context, filter *RunListFilter) ([]model.RunRecord, error) {
+	conds := []string{}
+	args := []any{}
+	if filter != nil {
+		if filter.State != "" {
+			conds = append(conds, "state = ?")
+			args = append(args, filter.State)
+		}
+		if filter.TaskID != "" {
+			conds = append(conds, "task_id = ?")
+			args = append(args, filter.TaskID)
+		}
+		if filter.TriggerID != "" {
+			conds = append(conds, "trigger_id = ?")
+			args = append(args, filter.TriggerID)
+		}
+		if filter.ProjectID != "" {
+			conds = append(conds, "project_id = ?")
+			args = append(args, filter.ProjectID)
+		}
+		if filter.Reason != "" {
+			conds = append(conds, "failure_reason = ?")
+			args = append(args, filter.Reason)
+		}
+		if filter.Since != nil {
+			conds = append(conds, "started_at >= ?")
+			args = append(args, formatTime(*filter.Since))
+		}
+	}
+	where := "1=1"
+	if len(conds) > 0 {
+		where = strings.Join(conds, " AND ")
+	}
+	//nolint:gosec // SQL WHERE clause is built from constant "?" placeholders only
+	query := fmt.Sprintf(`SELECT
+		id, project_id, project_path, trigger_id, trigger_type, task_id, task_type,
+		resource_key, branch, state, session_name, runtime_dir, output_path, exit_path,
+		worktree_path, started_at, completed_at, exit_code, error_message,
+		backend, backend_target, deadline_at, failure_reason
+	FROM runs
+	WHERE %s
+	ORDER BY started_at DESC, id DESC`, where)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query filtered runs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	runs := []model.RunRecord{}
+	for rows.Next() {
+		record, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate filtered runs: %w", err)
+	}
+	return runs, nil
+}
+
+// StopUnconfirmedRuns returns runs still `running` that carry a task_stop_failed
+// Event: a past-deadline run whose backend Stop could not be confirmed, kept
+// running so no overlapping run starts. health surfaces these as stop_unconfirmed.
+func (s *Store) StopUnconfirmedRuns(ctx context.Context) ([]model.RunRecord, error) {
+	return s.listRunsWhere(ctx,
+		"state = ? AND EXISTS (SELECT 1 FROM events e WHERE e.run_id = runs.id AND e.event_type = ?)",
+		string(model.RunRunning), "task_stop_failed")
 }
 
 func (s *Store) OldRunningRuns(ctx context.Context, cutoff time.Time) ([]model.RunRecord, error) {
@@ -669,6 +908,63 @@ func (s *Store) DeleteFileSnapshots(ctx context.Context, projectID, triggerID st
 	return nil
 }
 
+// UpsertOwedFire records an owed fire for a (project, trigger, task) that could
+// not be dispatched this tick. It coalesces: ON CONFLICT DO NOTHING keeps the
+// FIRST reason and first_owed_at, so repeated skips never create a new row or
+// move the recorded time forward.
+func (s *Store) UpsertOwedFire(ctx context.Context, projectID, triggerID, taskID, reason string, firstOwedAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO owed_fires (
+		project_id, trigger_id, task_id, reason, first_owed_at
+	) VALUES (?, ?, ?, ?, ?)
+	ON CONFLICT(project_id, trigger_id, task_id) DO NOTHING`,
+		projectID,
+		triggerID,
+		taskID,
+		reason,
+		formatTime(firstOwedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert owed fire: %w", err)
+	}
+	return nil
+}
+
+// ListOwedFires returns every owed fire recorded for the given Project, ordered
+// by trigger then task so draining is deterministic.
+func (s *Store) ListOwedFires(ctx context.Context, projectID string) ([]model.OwedFireRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT project_id, trigger_id, task_id, reason, first_owed_at
+	FROM owed_fires WHERE project_id = ?
+	ORDER BY trigger_id, task_id`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("query owed fires: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var records []model.OwedFireRecord
+	for rows.Next() {
+		var r model.OwedFireRecord
+		var firstOwed string
+		if err := rows.Scan(&r.ProjectID, &r.TriggerID, &r.TaskID, &r.Reason, &firstOwed); err != nil {
+			return nil, fmt.Errorf("scan owed fire: %w", err)
+		}
+		r.FirstOwedAt = mustParseTime(firstOwed)
+		records = append(records, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate owed fires: %w", err)
+	}
+	return records, nil
+}
+
+// DeleteOwedFire removes a single owed fire. It is called when the fire is
+// successfully dispatched, or discarded because its Trigger or TaskDef is gone.
+func (s *Store) DeleteOwedFire(ctx context.Context, projectID, triggerID, taskID string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM owed_fires
+	WHERE project_id = ? AND trigger_id = ? AND task_id = ?`, projectID, triggerID, taskID); err != nil {
+		return fmt.Errorf("delete owed fire: %w", err)
+	}
+	return nil
+}
+
 func scanRun(scanner interface{ Scan(dest ...any) error }) (model.RunRecord, error) {
 	var record model.RunRecord
 	var branch sql.NullString
@@ -680,6 +976,10 @@ func scanRun(scanner interface{ Scan(dest ...any) error }) (model.RunRecord, err
 	var completedAt sql.NullString
 	var exitCode sql.NullInt64
 	var errorMessage sql.NullString
+	var backendName sql.NullString
+	var backendTarget sql.NullString
+	var deadlineAt sql.NullString
+	var failureReason sql.NullString
 	var startedAt string
 	var state string
 	if err := scanner.Scan(
@@ -702,6 +1002,10 @@ func scanRun(scanner interface{ Scan(dest ...any) error }) (model.RunRecord, err
 		&completedAt,
 		&exitCode,
 		&errorMessage,
+		&backendName,
+		&backendTarget,
+		&deadlineAt,
+		&failureReason,
 	); err != nil {
 		return model.RunRecord{}, fmt.Errorf("scan run: %w", err)
 	}
@@ -734,6 +1038,25 @@ func scanRun(scanner interface{ Scan(dest ...any) error }) (model.RunRecord, err
 	}
 	if errorMessage.Valid {
 		record.ErrorMessage = errorMessage.String
+	}
+	// Legacy rows (pre-v3) have NULL/empty backend columns. The row contract is
+	// that they read back as the default Backend ("tmux") with the session name
+	// as the Backend target, so the tmux adapter can still reap a run that was
+	// started before the upgrade.
+	record.Backend = model.DefaultBackend
+	if backendName.Valid && backendName.String != "" {
+		record.Backend = backendName.String
+	}
+	record.BackendTarget = record.SessionName
+	if backendTarget.Valid && backendTarget.String != "" {
+		record.BackendTarget = backendTarget.String
+	}
+	if deadlineAt.Valid && deadlineAt.String != "" {
+		deadline := mustParseTime(deadlineAt.String)
+		record.DeadlineAt = &deadline
+	}
+	if failureReason.Valid {
+		record.FailureReason = failureReason.String
 	}
 	return record, nil
 }

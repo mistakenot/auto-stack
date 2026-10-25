@@ -34,7 +34,7 @@ func TestConcurrentDispatchAndReap(t *testing.T) {
 	sink := &collectSink{}
 	cancelSub := hub.Subscribe(sink)
 	defer cancelSub()
-	svc := daemon.New(db, &recordingBackend{}, nil, func() time.Time { return now }, hub)
+	svc := daemon.New(db, runningRegistry(), nil, func() time.Time { return now }, hub)
 
 	task := model.TaskDef{Type: "bash", Command: "echo hi"}
 

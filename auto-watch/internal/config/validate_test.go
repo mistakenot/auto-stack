@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/mistakenot/auto-watch/internal/config"
@@ -29,10 +30,88 @@ func TestValidateProjectConfig(t *testing.T) {
 		},
 	}
 
-	errs := config.ValidateProjectConfig(cfg)
+	errs := config.ValidateProjectConfig(cfg, []string{"tmux"})
 	if len(errs) != 3 {
 		t.Fatalf("expected 3 validation errors, got %d: %#v", len(errs), errs)
 	}
+}
+
+func TestValidateTaskEntryBackendAndTimeout(t *testing.T) {
+	backends := []string{"tmux"}
+
+	t.Run("unknown backend", func(t *testing.T) {
+		errs := config.ValidateTaskEntry("run-etl", model.TaskDef{
+			Type: "bash", Command: "echo ok", Backend: "herdr",
+		}, backends)
+		var found *model.ValidationError
+		for i := range errs {
+			if errs[i].Code == "unknown_backend" {
+				found = &errs[i]
+			}
+		}
+		if found == nil {
+			t.Fatalf("expected unknown_backend error, got %#v", errs)
+		}
+		if found.Path != "$.tasks.run-etl.backend" || found.Field != "backend" || found.Value != "herdr" {
+			t.Fatalf("unexpected unknown_backend error: %#v", *found)
+		}
+		if !strings.Contains(found.Message, "tmux") {
+			t.Fatalf("expected message to list registered backends, got %q", found.Message)
+		}
+	})
+
+	t.Run("empty backend is valid (default)", func(t *testing.T) {
+		errs := config.ValidateTaskEntry("run-etl", model.TaskDef{
+			Type: "bash", Command: "echo ok",
+		}, backends)
+		for i := range errs {
+			if errs[i].Code == "unknown_backend" {
+				t.Fatalf("empty backend must not error: %#v", errs[i])
+			}
+		}
+	})
+
+	t.Run("registered backend is valid", func(t *testing.T) {
+		errs := config.ValidateTaskEntry("run-etl", model.TaskDef{
+			Type: "bash", Command: "echo ok", Backend: "tmux",
+		}, backends)
+		for i := range errs {
+			if errs[i].Code == "unknown_backend" {
+				t.Fatalf("tmux must be valid: %#v", errs[i])
+			}
+		}
+	})
+
+	for _, bad := range []string{"abc", "0s", "-5m"} {
+		t.Run("invalid timeout "+bad, func(t *testing.T) {
+			errs := config.ValidateTaskEntry("run-etl", model.TaskDef{
+				Type: "bash", Command: "echo ok", Timeout: bad,
+			}, backends)
+			found := false
+			for i := range errs {
+				if errs[i].Code == "invalid_timeout" {
+					found = true
+					if errs[i].Path != "$.tasks.run-etl.timeout" || errs[i].Field != "timeout" {
+						t.Fatalf("unexpected invalid_timeout error: %#v", errs[i])
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("expected invalid_timeout error for %q, got %#v", bad, errs)
+			}
+		})
+	}
+
+	t.Run("valid timeout", func(t *testing.T) {
+		errs := config.ValidateTaskEntry("run-etl", model.TaskDef{
+			Type: "bash", Command: "echo ok", Timeout: "30m",
+		}, backends)
+		for i := range errs {
+			if errs[i].Code == "invalid_timeout" {
+				t.Fatalf("30m must be valid: %#v", errs[i])
+			}
+		}
+	})
 }
 
 func TestValidateFileCreatedTrigger(t *testing.T) {

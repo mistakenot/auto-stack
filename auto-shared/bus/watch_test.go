@@ -1,6 +1,40 @@
 package bus
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+// TestWatchTaskDataReasonOmitEmpty: reason serialises on a failed payload and is
+// omitted when empty, so watch.task.started / watch.task.completed payloads are
+// unchanged.
+func TestWatchTaskDataReasonOmitEmpty(t *testing.T) {
+	withReason, err := json.Marshal(WatchTaskData{TaskID: "039", RunID: 1, Reason: "session_lost"})
+	if err != nil {
+		t.Fatalf("marshal with reason: %v", err)
+	}
+	if !strings.Contains(string(withReason), `"reason":"session_lost"`) {
+		t.Fatalf("reason should serialise, got %s", withReason)
+	}
+
+	empty, err := json.Marshal(WatchTaskData{TaskID: "039", RunID: 1})
+	if err != nil {
+		t.Fatalf("marshal without reason: %v", err)
+	}
+	if strings.Contains(string(empty), "reason") {
+		t.Fatalf("empty reason must be omitted, got %s", empty)
+	}
+
+	// Round-trip preserves the reason.
+	var got WatchTaskData
+	if err := json.Unmarshal(withReason, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Reason != "session_lost" {
+		t.Fatalf("round-tripped reason = %q, want session_lost", got.Reason)
+	}
+}
 
 func TestWatchTaskTypeConstantsMatchDottedType(t *testing.T) {
 	types := []string{

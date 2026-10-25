@@ -5,8 +5,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mistakenot/auto-watch/internal/model"
 	"github.com/robfig/cron/v3"
@@ -20,7 +22,10 @@ var (
 // ValidateGlobalConfig validates the project registry. It lives in global.go,
 // delegating to the shared registry validator.
 
-func ValidateProjectConfig(cfg model.ProjectConfig) []model.ValidationError {
+// ValidateProjectConfig validates a project config. backends is the set of
+// registered Backend names (from the Backend registry), threaded through so a
+// TaskDef's backend can be checked against what is actually registered.
+func ValidateProjectConfig(cfg model.ProjectConfig, backends []string) []model.ValidationError {
 	errs := []model.ValidationError{}
 	if !idPattern.MatchString(cfg.ID) {
 		errs = append(errs, model.ValidationError{
@@ -39,7 +44,7 @@ func ValidateProjectConfig(cfg model.ProjectConfig) []model.ValidationError {
 	sort.Strings(taskNames)
 	for _, id := range taskNames {
 		taskIDs[id] = struct{}{}
-		errs = append(errs, ValidateTaskEntry(id, cfg.Tasks[id])...)
+		errs = append(errs, ValidateTaskEntry(id, cfg.Tasks[id], backends)...)
 	}
 	triggerNames := make([]string, 0, len(cfg.Triggers))
 	for id := range cfg.Triggers {
@@ -53,7 +58,10 @@ func ValidateProjectConfig(cfg model.ProjectConfig) []model.ValidationError {
 	return errs
 }
 
-func ValidateTaskEntry(id string, def model.TaskDef) []model.ValidationError {
+// ValidateTaskEntry validates one TaskDef. backends is the set of registered
+// Backend names; a non-empty def.Backend not among them is an unknown_backend
+// error. An empty def.Backend is always valid (it means the default Backend).
+func ValidateTaskEntry(id string, def model.TaskDef, backends []string) []model.ValidationError {
 	errs := []model.ValidationError{}
 	path := "$.tasks." + id
 	if !idPattern.MatchString(id) {
@@ -64,6 +72,31 @@ func ValidateTaskEntry(id string, def model.TaskDef) []model.ValidationError {
 			Message: "task id must match ^[a-z0-9]+(?:-[a-z0-9]+)*$",
 			Value:   id,
 		})
+	}
+	if backendName := strings.TrimSpace(def.Backend); backendName != "" {
+		if !slices.Contains(backends, backendName) {
+			registered := append([]string(nil), backends...)
+			sort.Strings(registered)
+			errs = append(errs, model.ValidationError{
+				Code:    "unknown_backend",
+				Path:    path + ".backend",
+				Field:   "backend",
+				Message: "unknown backend; registered backends: " + strings.Join(registered, ", "),
+				Value:   def.Backend,
+			})
+		}
+	}
+	if timeout := strings.TrimSpace(def.Timeout); timeout != "" {
+		d, err := time.ParseDuration(timeout)
+		if err != nil || d <= 0 {
+			errs = append(errs, model.ValidationError{
+				Code:    "invalid_timeout",
+				Path:    path + ".timeout",
+				Field:   "timeout",
+				Message: "timeout must be a positive Go duration (e.g. 30m, 2h)",
+				Value:   def.Timeout,
+			})
+		}
 	}
 	switch def.Type {
 	case "bash":

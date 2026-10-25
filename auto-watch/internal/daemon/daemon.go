@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/mistakenot/auto-shared/backend"
 	"github.com/mistakenot/auto-shared/bus"
 	"github.com/mistakenot/auto-watch/internal/config"
 	"github.com/mistakenot/auto-watch/internal/gitx"
@@ -30,11 +32,33 @@ var ErrDaemonAlreadyRunning = errors.New("daemon lock is already held")
 // terminal runs (Decision D-1). The CLI overrides it via SetRetentionDays.
 const defaultRetentionDays = 7
 
+// defaultRunTimeout is the deadline window for a run whose TaskDef sets no
+// timeout (Open Question: 2h, decided with the user). The deadline is fixed to
+// started_at + timeout when the run starts. Legacy rows with a null deadline_at
+// fall back to started_at + defaultRunTimeout.
+const defaultRunTimeout = 2 * time.Hour
+
+// lostGrace is how long a run with no recorded exit and no live session is given
+// before it is reaped as session_lost, so a run that just started (or a briefly
+// slow backend manager) is not reaped by mistake.
+const lostGrace = 2 * time.Minute
+
+// Failure reasons stamped on a failed run's failure_reason column and carried on
+// the task_failed Event and the watch.task.failed bus payload. reasonStartFailed
+// is stamped by failRun (start/dispatch failures); the others by Reap.
+const (
+	reasonExitNonzero    = "exit_nonzero"
+	reasonExitUnrecorded = "exit_unrecorded"
+	reasonSessionLost    = "session_lost"
+	reasonTimedOut       = "timed_out"
+	reasonStartFailed    = "start_failed"
+)
+
 type Service struct {
-	Store   *store.Store
-	Backend runner.Backend
-	Output  io.Writer
-	Now     func() time.Time
+	Store    *store.Store
+	Backends *backend.Registry
+	Output   io.Writer
+	Now      func() time.Time
 
 	dispatchMu    sync.Mutex
 	hub           *bus.Hub
@@ -60,6 +84,16 @@ func backoffKey(projectID, taskID string) string {
 	return projectID + ":" + taskID
 }
 
+// configError marks a tickProject failure as a configuration fault (unloadable
+// config or an invalid project id) rather than a system fault (git, store,
+// dispatch). Tick logs the former as config_warning and the latter as
+// system_warning, so an operator can tell a bad config apart from a transient
+// fault instead of every failure being blamed on "invalid config".
+type configError struct{ err error }
+
+func (e *configError) Error() string { return e.err.Error() }
+func (e *configError) Unwrap() error { return e.err }
+
 // backoffWindow returns the suppression window for the given consecutive-failure
 // count: min(1min * 2^(failures-1), 64min), i.e. 1, 2, 4, 8, 16, 32, 64 minutes.
 // A non-positive failure count yields a zero window (dispatch allowed).
@@ -79,13 +113,13 @@ type Lock struct {
 	file *os.File
 }
 
-func New(db *store.Store, backend runner.Backend, output io.Writer, now func() time.Time, hub *bus.Hub) *Service {
+func New(db *store.Store, backends *backend.Registry, output io.Writer, now func() time.Time, hub *bus.Hub) *Service {
 	if now == nil {
 		now = time.Now
 	}
 	return &Service{
 		Store:              db,
-		Backend:            backend,
+		Backends:           backends,
 		Output:             output,
 		Now:                now,
 		hub:                hub,
@@ -165,12 +199,10 @@ func (s *Service) Cancel(ctx context.Context, runID int64) (model.RunState, erro
 		return run.State, nil
 
 	case model.RunRunning:
-		if run.SessionName != "" {
-			_ = s.Backend.Kill(ctx, runner.Handle{
-				SessionName: run.SessionName,
-				ExitPath:    run.ExitPath,
-				OutputPath:  run.OutputPath,
-			})
+		if run.BackendTarget != "" {
+			if b, ok := s.Backends.Get(run.Backend); ok {
+				_ = b.Stop(ctx, backend.Binding{Manager: run.Backend, Target: run.BackendTarget})
+			}
 		}
 
 	case model.RunPending:
@@ -179,8 +211,18 @@ func (s *Service) Cancel(ctx context.Context, runID int64) (model.RunState, erro
 
 	now := s.Now()
 	msg := "cancelled via task.cancel"
-	if err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, msg); err != nil {
+	updated, err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, msg)
+	if err != nil {
 		return "", err
+	}
+	if !updated {
+		// Another writer finished this run between our read and the conditional
+		// update; report its current state without emitting a duplicate event.
+		fresh, gErr := s.Store.GetRun(ctx, run.ID)
+		if gErr != nil {
+			return "", gErr
+		}
+		return fresh.State, nil
 	}
 	_ = s.logEvent(ctx, &store.EventInput{
 		Timestamp: now,
@@ -193,7 +235,7 @@ func (s *Service) Cancel(ctx context.Context, runID int64) (model.RunState, erro
 		Message:   msg,
 		Metadata:  map[string]any{"resource_key": run.ResourceKey},
 	})
-	s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, &run, nil, msg)
+	s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, &run, nil, msg, "")
 
 	if run.WorktreePath != "" {
 		_ = s.removeWorktree(ctx, &run, "cancel_cleanup")
@@ -204,7 +246,7 @@ func (s *Service) Cancel(ctx context.Context, runID int64) (model.RunState, erro
 
 // emitWatchTask broadcasts a watch.task.* data-plane event for the given run.
 // These events are always-on (not gated by --ctl-events); a nil hub is a no-op.
-func (s *Service) emitWatchTask(_ context.Context, typ string, run *model.RunRecord, exitCode *int, message string) {
+func (s *Service) emitWatchTask(_ context.Context, typ string, run *model.RunRecord, exitCode *int, message, reason string) {
 	if s.hub == nil {
 		return
 	}
@@ -220,6 +262,7 @@ func (s *Service) emitWatchTask(_ context.Context, typ string, run *model.RunRec
 		ResourceKey: run.ResourceKey,
 		Message:     message,
 		ExitCode:    exitCode,
+		Reason:      reason,
 	})
 	if err != nil {
 		return
@@ -293,17 +336,29 @@ func (s *Service) Tick(ctx context.Context) error {
 
 	for _, project := range projects {
 		if err := s.tickProject(ctx, now, &project); err != nil {
-			// Dedup so the same invalid-config warning is logged once, not every
-			// tick (Phase 3 noise reduction). The error text distinguishes warnings.
-			if s.warningSeen("config_warning:" + project.ID + ":" + err.Error()) {
+			// One bad Project must not take the tick down: log it and move on so
+			// every other Project still evaluates. Classify by its TRUE category
+			// — config_warning only for a validation/config fault, system_warning
+			// for a git/dispatch/other fault — instead of blaming every failure on
+			// invalid config.
+			eventType := "system_warning"
+			message := "project tick failed"
+			var cfgErr *configError
+			if errors.As(err, &cfgErr) {
+				eventType = "config_warning"
+				message = "project skipped due to invalid config"
+			}
+			// Dedup so the same warning is logged once, not every tick (Phase 3
+			// noise reduction). The event type + error text distinguish warnings.
+			if s.warningSeen(eventType + ":" + project.ID + ":" + err.Error()) {
 				continue
 			}
 			if logErr := s.logEvent(ctx, &store.EventInput{
 				Timestamp: now,
 				Level:     "warn",
-				EventType: "config_warning",
+				EventType: eventType,
 				ProjectID: project.ID,
-				Message:   "project skipped due to invalid config",
+				Message:   message,
 				Metadata:  map[string]any{"error": err.Error()},
 			}); logErr != nil {
 				return logErr
@@ -328,100 +383,88 @@ func (s *Service) Reap(ctx context.Context) error {
 	}
 	for i := range running {
 		run := &running[i]
-		if strings.TrimSpace(run.ExitPath) == "" {
+		// A run with no runtime dir never recorded a Backend target, so there is
+		// nothing for Status to inspect — leave it for the pending/abandoned paths.
+		if strings.TrimSpace(run.RuntimeDir) == "" {
 			continue
 		}
-		data, err := os.ReadFile(run.ExitPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return fmt.Errorf("read exit code for run %d: %w", run.ID, err)
+		b, ok := s.Backends.Get(run.Backend)
+		if !ok {
+			// No adapter registered for this run's backend. Leave the run running
+			// rather than inventing an outcome; a production registry always has
+			// the run's backend, so this only guards a mis-set row.
+			continue
 		}
-		// An exit-code file that exists but holds no parseable integer means the
-		// launch wrapper was interrupted between creating the file (the `>`
-		// redirect truncates on open) and writing the code into it. That states
-		// the same fact as a missing file — no exit code was ever recorded — so
-		// it must not be fatal. Reap runs on every Tick, and the run stays
-		// RunRunning until Reap gets past it, so returning an error here is a
-		// loop the daemon can never escape: it dies, restarts, reads the same
-		// byte, and dies again.
-		code, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
-		interrupted := parseErr != nil
-		if run.SessionName != "" {
-			exists, err := s.Backend.SessionExists(ctx, run.SessionName)
-			if err != nil {
+		binding := backend.Binding{Manager: run.Backend, Target: run.BackendTarget}
+		// Status owns the completion contract: it reads the exit-code file first
+		// and only then asks the manager about liveness. An interrupted/empty
+		// exit-code file reads back as StatusExited with a nil code (never an
+		// error), so it can never pin a run to running or wedge the daemon in a
+		// restart loop (the 33k-restart incident).
+		st, statusErr := b.Status(ctx, binding, run.RuntimeDir)
+
+		// The deadline is checked BEFORE, and independently of, Status: a wedged
+		// backend that errors on Status must still be stopped at its deadline, so
+		// a hung run never overlaps a fresh one for 7 days. Legacy rows with a
+		// null deadline fall back to started_at + the 2h default.
+		deadline := run.StartedAt.Add(defaultRunTimeout)
+		if run.DeadlineAt != nil {
+			deadline = *run.DeadlineAt
+		}
+		if now.After(deadline) {
+			if err := s.reapPastDeadline(ctx, run, b, binding, st, statusErr, now); err != nil {
 				return err
 			}
-			if exists {
-				if err := s.Backend.Kill(ctx, runner.Handle{SessionName: run.SessionName, ExitPath: run.ExitPath, OutputPath: run.OutputPath}); err != nil {
-					return err
-				}
-			}
-		}
-		codePtr := &code
-		state := model.RunCompleted
-		message := ""
-		outcome := fmt.Sprintf("finished with exit code %d", code)
-		switch {
-		case interrupted:
-			// No code was recorded, so report none rather than inventing one.
-			codePtr = nil
-			state = model.RunFailed
-			outcome = "was interrupted before recording an exit code"
-			message = tailOutput(run.OutputPath, 200)
-			if message == "" {
-				message = "run interrupted before recording an exit code"
-			}
-		case code != 0:
-			state = model.RunFailed
-			message = tailOutput(run.OutputPath, 200)
-			if message == "" {
-				message = fmt.Sprintf("run exited with code %d", code)
-			}
-		}
-		eventType := "task_completed"
-		level := "info"
-		watchType := bus.TypeWatchTaskCompleted
-		if state == model.RunFailed {
-			eventType = "task_failed"
-			level = "error"
-			watchType = bus.TypeWatchTaskFailed
-		}
-
-		s.dispatchMu.Lock()
-		fresh, reErr := s.Store.GetRun(ctx, run.ID)
-		if reErr != nil || fresh.State != model.RunRunning {
-			s.dispatchMu.Unlock()
 			continue
 		}
-		if err := s.Store.MarkRunTerminal(ctx, run.ID, state, codePtr, now, message); err != nil {
-			s.dispatchMu.Unlock()
-			return err
+
+		// Under the deadline a Status error leaves the run unchanged: a hung
+		// backend manager is not proof a run died. (Phase 3 broadens this
+		// containment to every per-run step.)
+		if statusErr != nil {
+			if err := s.logEvent(ctx, &store.EventInput{
+				Timestamp: now,
+				Level:     "warn",
+				EventType: "system_warning",
+				ProjectID: run.ProjectID,
+				TriggerID: run.TriggerID,
+				TaskID:    run.TaskID,
+				RunID:     &run.ID,
+				Message:   fmt.Sprintf("run %d status check failed", run.ID),
+				Metadata:  map[string]any{"error": statusErr.Error(), "resource_key": run.ResourceKey},
+			}); err != nil {
+				return err
+			}
+			continue
 		}
-		// Maintain failure backoff (dispatchMu already held): a failed run extends
-		// the projectID:taskID streak; a successful run clears it.
-		s.recordRunOutcome(run.ProjectID, run.TaskID, state, now)
-		logErr := s.logEvent(ctx, &store.EventInput{
-			Timestamp: now,
-			Level:     level,
-			EventType: eventType,
-			ProjectID: run.ProjectID,
-			TriggerID: run.TriggerID,
-			TaskID:    run.TaskID,
-			RunID:     &run.ID,
-			Message:   fmt.Sprintf("run %d %s", run.ID, outcome),
-			Metadata: map[string]any{
-				"exit_code":    codePtr,
-				"session_name": run.SessionName,
-				"resource_key": run.ResourceKey,
-				"interrupted":  interrupted,
-			},
-		})
-		s.emitWatchTask(ctx, watchType, &fresh, codePtr, fmt.Sprintf("run %d %s", run.ID, outcome))
-		s.dispatchMu.Unlock()
-		if logErr != nil {
-			return logErr
+
+		switch st.State {
+		case backend.StatusRunning:
+			continue
+		case backend.StatusLost:
+			// A missing run is given a short grace before being declared lost, so a
+			// run that just started (or a briefly slow manager) is not reaped by
+			// mistake.
+			if now.Sub(run.StartedAt) < lostGrace {
+				continue
+			}
+			if err := s.finishRun(ctx, run, now, terminalUpdate{
+				state:        model.RunFailed,
+				reason:       reasonSessionLost,
+				journalMsg:   fmt.Sprintf("run %d lost its session before recording an exit code", run.ID),
+				errorMessage: "run session was lost before recording an exit code",
+				meta:         map[string]any{"session_name": run.SessionName},
+			}); err != nil {
+				return err
+			}
+		case backend.StatusExited:
+			// The run has exited; clean up its (remain-on-exit) session, as today's
+			// Reap did after reading the exit-code file. Stopping an absent session
+			// is not an error.
+			_ = b.Stop(ctx, binding)
+			if err := s.finishRun(ctx, run, now, exitedUpdate(run, st.ExitCode)); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -439,9 +482,15 @@ func (s *Service) Reap(ctx context.Context) error {
 			s.dispatchMu.Unlock()
 			continue
 		}
-		if err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, message); err != nil {
+		updated, err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, message)
+		if err != nil {
 			s.dispatchMu.Unlock()
 			return err
+		}
+		if !updated {
+			// Another writer finished it between our re-read and the update.
+			s.dispatchMu.Unlock()
+			continue
 		}
 		// Abandoned pending runs are failures too — extend the backoff streak
 		// (dispatchMu already held).
@@ -457,11 +506,176 @@ func (s *Service) Reap(ctx context.Context) error {
 			Message:   message,
 			Metadata:  map[string]any{"resource_key": run.ResourceKey},
 		})
-		s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, &fresh, nil, message)
+		s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, &fresh, nil, message, "")
 		s.dispatchMu.Unlock()
 		if logErr != nil {
 			return logErr
 		}
+	}
+	return nil
+}
+
+// terminalUpdate carries everything finishRun needs to move a running run to a
+// terminal state: the target state, the (optional) exit code and failure reason,
+// the Event message and the stored error_message, plus any extra Event metadata.
+type terminalUpdate struct {
+	state        model.RunState
+	exitCode     *int
+	reason       string
+	journalMsg   string
+	errorMessage string
+	meta         map[string]any
+}
+
+// exitedUpdate builds the terminalUpdate for a run the backend reports exited,
+// preserving today's completed/failed/interrupted semantics and stamping the
+// exit_nonzero / exit_unrecorded reasons.
+func exitedUpdate(run *model.RunRecord, codePtr *int) terminalUpdate {
+	// Store exit_code in the Event metadata as a plain int (or nil), never the
+	// *int itself, so a journal line reads `exit_code=3` or `exit_code=null`
+	// rather than a 0x… pointer address.
+	var exitMeta any
+	if codePtr != nil {
+		exitMeta = *codePtr
+	}
+	u := terminalUpdate{
+		state:    model.RunCompleted,
+		exitCode: codePtr,
+		meta: map[string]any{
+			"exit_code":    exitMeta,
+			"session_name": run.SessionName,
+			"interrupted":  codePtr == nil,
+		},
+	}
+	switch {
+	case codePtr == nil:
+		// No code was recorded, so report none rather than inventing one.
+		u.state = model.RunFailed
+		u.reason = reasonExitUnrecorded
+		u.journalMsg = fmt.Sprintf("run %d was interrupted before recording an exit code", run.ID)
+		u.errorMessage = tailOutput(run.OutputPath, OutputTailMaxBytes)
+		if u.errorMessage == "" {
+			u.errorMessage = "run interrupted before recording an exit code"
+		}
+	case *codePtr != 0:
+		u.state = model.RunFailed
+		u.reason = reasonExitNonzero
+		u.journalMsg = fmt.Sprintf("run %d finished with exit code %d", run.ID, *codePtr)
+		u.errorMessage = tailOutput(run.OutputPath, OutputTailMaxBytes)
+		if u.errorMessage == "" {
+			u.errorMessage = fmt.Sprintf("run exited with code %d", *codePtr)
+		}
+	default:
+		u.journalMsg = fmt.Sprintf("run %d finished with exit code %d", run.ID, *codePtr)
+	}
+	return u
+}
+
+// finishRun transitions a running run to its terminal state under dispatchMu,
+// re-reading the run first so a run another writer already finished is left
+// alone (the once-only guard; phase 3 folds this into a conditional
+// MarkRunTerminal). It stamps failure_reason for failures, maintains failure
+// backoff, logs the task_completed/task_failed Event and emits the matching
+// watch.task.* bus event carrying the reason.
+func (s *Service) finishRun(ctx context.Context, run *model.RunRecord, now time.Time, u terminalUpdate) error {
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+
+	fresh, reErr := s.Store.GetRun(ctx, run.ID)
+	if reErr != nil {
+		return reErr
+	}
+
+	// The conditional UPDATE (state IN ('pending','running')) is the single
+	// once-only dedup mechanism: a run another writer already finished reports
+	// updated=false, so we mark nothing and emit nothing. fresh is re-read only
+	// for the bus event's provenance.
+	var updated bool
+	var err error
+	if u.state == model.RunFailed && u.reason != "" {
+		updated, err = s.Store.MarkRunFailedWithReason(ctx, run.ID, u.exitCode, now, u.errorMessage, u.reason)
+	} else {
+		updated, err = s.Store.MarkRunTerminal(ctx, run.ID, u.state, u.exitCode, now, u.errorMessage)
+	}
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return nil
+	}
+
+	// Maintain failure backoff (dispatchMu already held): a failed run extends
+	// the projectID:taskID streak; a successful run clears it.
+	s.recordRunOutcome(run.ProjectID, run.TaskID, u.state, now)
+
+	eventType := "task_completed"
+	level := "info"
+	watchType := bus.TypeWatchTaskCompleted
+	if u.state == model.RunFailed {
+		eventType = "task_failed"
+		level = "error"
+		watchType = bus.TypeWatchTaskFailed
+	}
+	meta := u.meta
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta["resource_key"] = run.ResourceKey
+	if u.reason != "" {
+		meta["reason"] = u.reason
+	}
+	logErr := s.logEvent(ctx, &store.EventInput{
+		Timestamp: now,
+		Level:     level,
+		EventType: eventType,
+		ProjectID: run.ProjectID,
+		TriggerID: run.TriggerID,
+		TaskID:    run.TaskID,
+		RunID:     &run.ID,
+		Message:   u.journalMsg,
+		Metadata:  meta,
+	})
+	s.emitWatchTask(ctx, watchType, &fresh, u.exitCode, u.journalMsg, u.reason)
+	return logErr
+}
+
+// reapPastDeadline enforces a run's deadline independently of Status. It always
+// attempts Stop. If Stop is confirmed, or Status already reports the run
+// lost/exited, the run is failed timed_out exactly once. Otherwise the run is
+// kept running (so dedup stays in force and no overlapping run can start), a
+// task_stop_failed warning is recorded once per run, and Stop is retried on the
+// next tick.
+func (s *Service) reapPastDeadline(ctx context.Context, run *model.RunRecord, b backend.Backend, binding backend.Binding, st backend.Status, statusErr error, now time.Time) error {
+	stopErr := b.Stop(ctx, binding)
+	statusTerminal := statusErr == nil && (st.State == backend.StatusLost || st.State == backend.StatusExited)
+	if stopErr == nil || statusTerminal {
+		return s.finishRun(ctx, run, now, terminalUpdate{
+			state:        model.RunFailed,
+			reason:       reasonTimedOut,
+			journalMsg:   fmt.Sprintf("run %d timed out", run.ID),
+			errorMessage: "run exceeded its deadline and was stopped",
+			meta:         map[string]any{"session_name": run.SessionName},
+		})
+	}
+
+	// Stop could not be confirmed and the run is not known terminal: keep it
+	// running and surface the wedge once per run.
+	seen, err := s.Store.CountRunEventsByType(ctx, run.ID, "task_stop_failed")
+	if err != nil {
+		return err
+	}
+	if seen == 0 {
+		return s.logEvent(ctx, &store.EventInput{
+			Timestamp: now,
+			Level:     "warn",
+			EventType: "task_stop_failed",
+			ProjectID: run.ProjectID,
+			TriggerID: run.TriggerID,
+			TaskID:    run.TaskID,
+			RunID:     &run.ID,
+			Message:   fmt.Sprintf("run %d past deadline but backend stop is unconfirmed", run.ID),
+			Metadata:  map[string]any{"error": stopErr.Error(), "resource_key": run.ResourceKey},
+		})
 	}
 	return nil
 }
@@ -475,14 +689,25 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 		}
 		for i := range activeRuns {
 			run := &activeRuns[i]
-			if run.SessionName != "" {
-				if err := s.Backend.Kill(ctx, runner.Handle{SessionName: run.SessionName, ExitPath: run.ExitPath, OutputPath: run.OutputPath}); err != nil {
-					return err
+			if run.BackendTarget != "" {
+				if b, ok := s.Backends.Get(run.Backend); ok {
+					if err := b.Stop(ctx, backend.Binding{Manager: run.Backend, Target: run.BackendTarget}); err != nil {
+						// Contain a Stop failure: one wedged run must not abort the
+						// whole clean. Warn, leave it active (retried next clean), move on.
+						if logErr := s.systemWarning(ctx, run, fmt.Sprintf("run %d backend stop failed during clean --force", run.ID), err); logErr != nil {
+							return logErr
+						}
+						continue
+					}
 				}
 			}
 			message := "killed by auto watch clean --force"
-			if err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, message); err != nil {
+			updated, err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, message)
+			if err != nil {
 				return err
+			}
+			if !updated {
+				continue
 			}
 			if err := s.logEvent(ctx, &store.EventInput{
 				Timestamp: now,
@@ -498,7 +723,10 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 				return err
 			}
 			if err := s.removeWorktree(ctx, run, "manual_clean_force"); err != nil {
-				return err
+				if logErr := s.systemWarning(ctx, run, fmt.Sprintf("run %d worktree removal failed during clean --force", run.ID), err); logErr != nil {
+					return logErr
+				}
+				continue
 			}
 		}
 	}
@@ -510,7 +738,12 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 	for i := range terminalRuns {
 		run := &terminalRuns[i]
 		if err := s.removeWorktree(ctx, run, "ttl_cleanup"); err != nil {
-			return err
+			// Contain a worktree-removal failure: warn naming the run and move on
+			// so one un-removable worktree can't take the tick down.
+			if logErr := s.systemWarning(ctx, run, fmt.Sprintf("run %d worktree removal failed during ttl cleanup", run.ID), err); logErr != nil {
+				return logErr
+			}
+			continue
 		}
 	}
 
@@ -530,6 +763,15 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 	cleanedIDs := make([]int64, 0, len(expired))
 	for i := range expired {
 		run := &expired[i]
+		// A kept dirty worktree outlives retention: while its worktree is still on
+		// disk, keep the row so the worktree_path link survives and the worktree is
+		// never orphaned from its run (the dirty-worktree guard in removeWorktree
+		// left both in place).
+		if wt := strings.TrimSpace(run.WorktreePath); wt != "" {
+			if _, statErr := os.Stat(wt); statErr == nil {
+				continue
+			}
+		}
 		// A run that failed before UpdateRunStarted persisted RuntimeDir has an
 		// empty path even though startWorker may have created the deterministic
 		// runs/<id> directory. Fall back to that path so os.RemoveAll("") doesn't
@@ -551,6 +793,14 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 		return err
 	}
 
+	// Reconcile orphan run dirs: a numeric runs/<id> directory with no matching
+	// row and an mtime older than 24h is leftover from a run whose row is gone
+	// (e.g. a crash, or a pre-fix restart loop). A fresh orphan is left alone so a
+	// run still being set up is never swept out from under itself.
+	if err := s.sweepOrphanRunDirs(ctx, now, runsDir); err != nil {
+		return err
+	}
+
 	// Checkpoint the WAL after pruning so the checkpoint also covers the deletes,
 	// bounding WAL growth.
 	if err := s.Store.WALCheckpoint(ctx); err != nil {
@@ -559,10 +809,67 @@ func (s *Service) Clean(ctx context.Context, force bool) error {
 	return nil
 }
 
+// sweepOrphanRunDirs removes numeric run directories under runsDir that have no
+// matching run row and whose mtime is older than 24h, recording a
+// run_dir_orphan_removed Event for each. A directory younger than 24h, or one
+// that still has a row, is left in place. A per-directory removal or log failure
+// is contained (skip and continue); only a store failure aborts.
+func (s *Service) sweepOrphanRunDirs(ctx context.Context, now time.Time, runsDir string) error {
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	cutoff := now.Add(-24 * time.Hour)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		id, perr := strconv.ParseInt(entry.Name(), 10, 64)
+		if perr != nil {
+			continue // not a numeric run dir
+		}
+		exists, err := s.Store.RunExists(ctx, id)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue // a known run owns this dir
+		}
+		info, ierr := entry.Info()
+		if ierr != nil {
+			continue
+		}
+		if !info.ModTime().Before(cutoff) {
+			continue // fresh orphan: a run may still be setting it up
+		}
+		dir := filepath.Join(runsDir, entry.Name())
+		if err := os.RemoveAll(dir); err != nil {
+			continue // retry next tick
+		}
+		if err := s.logEvent(ctx, &store.EventInput{
+			Timestamp: now,
+			Level:     "info",
+			EventType: "run_dir_orphan_removed",
+			RunID:     &id,
+			Message:   fmt.Sprintf("removed orphan run dir %s (no matching run row)", entry.Name()),
+			Metadata: map[string]any{
+				"run_dir": dir,
+				"run_id":  id,
+			},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) tickProject(ctx context.Context, now time.Time, project *model.ProjectRef) error {
 	projectCfg, err := config.LoadProjectConfig(project.Path)
 	if err != nil {
-		return err
+		return &configError{err}
 	}
 	projectID := projectCfg.ID
 	if projectID == "" {
@@ -576,7 +883,7 @@ func (s *Service) tickProject(ctx context.Context, now time.Time, project *model
 	sort.Strings(taskIDs)
 	for _, taskID := range taskIDs {
 		task := projectCfg.Tasks[taskID]
-		if errs := config.ValidateTaskEntry(taskID, task); len(errs) > 0 {
+		if errs := config.ValidateTaskEntry(taskID, task, s.Backends.Names()); len(errs) > 0 {
 			if err := s.logValidationErrors(ctx, now, projectID, "", "", "config_warning", errs); err != nil {
 				return err
 			}
@@ -584,8 +891,8 @@ func (s *Service) tickProject(ctx context.Context, now time.Time, project *model
 		}
 		validTasks[taskID] = task
 	}
-	if errs := config.ValidateProjectConfig(model.ProjectConfig{ID: projectID, Tasks: validTasks, Triggers: map[string]model.TriggerDef{}}); len(errs) > 0 {
-		return fmt.Errorf("project id is invalid: %s", errs[0].Message)
+	if errs := config.ValidateProjectConfig(model.ProjectConfig{ID: projectID, Tasks: validTasks, Triggers: map[string]model.TriggerDef{}}, s.Backends.Names()); len(errs) > 0 {
+		return &configError{fmt.Errorf("project id is invalid: %s", errs[0].Message)}
 	}
 
 	triggerIDs := make([]string, 0, len(projectCfg.Triggers))
@@ -597,6 +904,14 @@ func (s *Service) tickProject(ctx context.Context, now time.Time, project *model
 	for id := range validTasks {
 		taskSet[id] = struct{}{}
 	}
+
+	// Drain owed fires before evaluating this Project's Triggers, so a fire that
+	// could not be dispatched on an earlier tick is redelivered exactly once as
+	// soon as it is unblocked.
+	if err := s.drainOwedFires(ctx, now, projectID, project.Path, projectCfg.Triggers, validTasks); err != nil {
+		return err
+	}
+
 	for _, triggerID := range triggerIDs {
 		trigger := projectCfg.Triggers[triggerID]
 		if errs := config.ValidateTriggerEntry(triggerID, &trigger, taskSet); len(errs) > 0 {
@@ -645,7 +960,20 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 	if trigger.OnlyIfBranchChanged != "" {
 		currentSHA, err = gitx.BranchHeadSHA(projectPath, trigger.OnlyIfBranchChanged)
 		if err != nil {
-			return err
+			// A git failure resolving the branch (e.g. the branch no longer
+			// exists) must neither fire the Trigger nor abort the Project's other
+			// Triggers: record a system_warning naming the branch and the git
+			// error, and skip this Trigger this tick. Only a store failure from
+			// logging it propagates.
+			return s.logEvent(ctx, &store.EventInput{
+				Timestamp: now,
+				Level:     "warn",
+				EventType: "system_warning",
+				ProjectID: projectID,
+				TriggerID: triggerID,
+				Message:   fmt.Sprintf("trigger %s: resolving branch %q failed; not firing", triggerID, trigger.OnlyIfBranchChanged),
+				Metadata:  map[string]any{"error": err.Error(), "branch": trigger.OnlyIfBranchChanged},
+			})
 		}
 		if state.LastBranchSHA != "" && state.LastBranchSHA == currentSHA {
 			if err := s.Store.UpsertTriggerState(ctx, &model.TriggerStateRecord{
@@ -662,11 +990,25 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 		}
 	}
 
+	// A branch-changed cron advances its last_branch_sha cursor below whether or
+	// not every TaskDef dispatched, so a skipped TaskDef's fire would be lost: for
+	// that Trigger we record an owed fire for any TaskDef that is deduped, backed
+	// off, or whose Start fails. A plain cron advances no such cursor, so its skip
+	// semantics are unchanged (no owed fire; a Start failure still returns).
+	branchFilter := trigger.OnlyIfBranchChanged != ""
+
 	taskIDs := append([]string(nil), trigger.Tasks...)
 	sort.Strings(taskIDs)
 	for _, taskID := range taskIDs {
 		if skip, nextEligible := s.shouldBackoff(projectID, taskID, now); skip {
-			fmt.Fprintf(os.Stderr, "task_backoff project=%s task=%s next_eligible=%s\n", projectID, taskID, nextEligible.Format(time.RFC3339))
+			if logErr := s.logBackoff(ctx, projectID, triggerID, taskID, nextEligible, now); logErr != nil {
+				return logErr
+			}
+			if branchFilter {
+				if err := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "backoff", now); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		task := tasks[taskID]
@@ -697,6 +1039,20 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 				}); logErr != nil {
 					return logErr
 				}
+				if branchFilter {
+					if err := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "dedup", now); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			if branchFilter {
+				// A confirmed Start failure already marked the run failed and backed
+				// the task off (failRun); record an owed fire and continue so the
+				// cursor upsert below still advances and the other TaskDefs still run.
+				if oErr := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "start_failed", now); oErr != nil {
+					return oErr
+				}
 				continue
 			}
 			return err
@@ -704,7 +1060,7 @@ func (s *Service) evaluateTrigger(ctx context.Context, now time.Time, projectID,
 	}
 
 	// Trigger processing produces no event (Phase 3 noise reduction); dispatch,
-	// dedup-skip, and backoff outcomes are observable via task_* events / stderr.
+	// dedup-skip, and backoff outcomes are observable via task_* events.
 	return s.Store.UpsertTriggerState(ctx, &model.TriggerStateRecord{
 		ProjectID:     projectID,
 		TriggerID:     triggerID,
@@ -813,12 +1169,21 @@ func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time,
 		return nil
 	}
 
-	// Fire: launch linked tasks.
+	// Fire: launch linked tasks. The snapshot and trigger_state above already
+	// advanced (the new file is now "known"), so a TaskDef that is deduped, backed
+	// off, or fails to Start would lose this fire forever: record an owed fire for
+	// it, and continue rather than abort, so every other TaskDef still runs and a
+	// drain on a later tick redelivers the fire exactly once.
 	taskIDs := append([]string(nil), trigger.Tasks...)
 	sort.Strings(taskIDs)
 	for _, taskID := range taskIDs {
 		if skip, nextEligible := s.shouldBackoff(projectID, taskID, now); skip {
-			fmt.Fprintf(os.Stderr, "task_backoff project=%s task=%s next_eligible=%s\n", projectID, taskID, nextEligible.Format(time.RFC3339))
+			if logErr := s.logBackoff(ctx, projectID, triggerID, taskID, nextEligible, now); logErr != nil {
+				return logErr
+			}
+			if err := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "backoff", now); err != nil {
+				return err
+			}
 			continue
 		}
 		task := tasks[taskID]
@@ -849,15 +1214,113 @@ func (s *Service) evaluateFileCreatedTrigger(ctx context.Context, now time.Time,
 				}); logErr != nil {
 					return logErr
 				}
+				if err := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "dedup", now); err != nil {
+					return err
+				}
 				continue
 			}
-			return err
+			// A confirmed Start failure already marked the run failed and backed the
+			// task off (failRun); record an owed fire and continue (never abort a
+			// trigger whose snapshot already advanced).
+			if oErr := s.Store.UpsertOwedFire(ctx, projectID, triggerID, taskID, "start_failed", now); oErr != nil {
+				return oErr
+			}
+			continue
 		}
 	}
 
 	// file_created firing produces no event (Phase 3 noise reduction); dispatch,
-	// dedup-skip, and backoff outcomes are observable via task_* events / stderr.
+	// dedup-skip, and backoff outcomes are observable via task_* events.
 	return nil
+}
+
+// resourceKeyFor returns the dedup resource key the normal dispatch path uses
+// for the given Trigger, so a drained owed fire reserves the same key and dedups
+// against a live run identically.
+func resourceKeyFor(triggerID, triggerType string) string {
+	if triggerType == "file_created" {
+		return "file_created:" + triggerID
+	}
+	return "cron:" + triggerID
+}
+
+// drainOwedFires retries every owed fire recorded for the Project before its
+// Triggers are evaluated this tick. An owed fire whose Trigger no longer exists,
+// or whose TaskDef is gone or no longer linked to the Trigger, is discarded with
+// an Event. One whose TaskDef is still backed off is left for a later tick.
+// Otherwise it is Dispatched with the same resource_key scheme as the normal
+// path: on a successful dispatch the row is deleted; a still-blocked (deduped) or
+// freshly failed dispatch keeps the row so it retries once unblocked. Only a
+// store failure aborts the tick.
+func (s *Service) drainOwedFires(ctx context.Context, now time.Time, projectID, projectPath string, triggers map[string]model.TriggerDef, validTasks map[string]model.TaskDef) error {
+	owed, err := s.Store.ListOwedFires(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	for i := range owed {
+		fire := owed[i]
+		trigger, triggerOK := triggers[fire.TriggerID]
+		if !triggerOK {
+			if err := s.discardOwedFire(ctx, now, &fire, "trigger no longer exists"); err != nil {
+				return err
+			}
+			continue
+		}
+		task, taskOK := validTasks[fire.TaskID]
+		linked := slices.Contains(trigger.Tasks, fire.TaskID)
+		if !taskOK || !linked {
+			if err := s.discardOwedFire(ctx, now, &fire, "task no longer linked to trigger"); err != nil {
+				return err
+			}
+			continue
+		}
+		if skip, _ := s.shouldBackoff(projectID, fire.TaskID, now); skip {
+			// Still backed off — leave it for a later tick once the window clears.
+			continue
+		}
+		_, derr := s.Dispatch(ctx, &store.ReserveRunInput{
+			ProjectID:   projectID,
+			ProjectPath: projectPath,
+			TriggerID:   fire.TriggerID,
+			TriggerType: trigger.Type,
+			TaskID:      fire.TaskID,
+			TaskType:    task.Type,
+			ResourceKey: resourceKeyFor(fire.TriggerID, trigger.Type),
+			StartedAt:   now,
+		}, task)
+		if derr != nil {
+			// A dedup (an active run still holds the key) or a fresh Start failure
+			// (already marked failed and backed off by failRun) leaves the owed fire
+			// in place so it retries once unblocked. One bad TaskDef must not abort
+			// the drain or the tick.
+			continue
+		}
+		if err := s.Store.DeleteOwedFire(ctx, projectID, fire.TriggerID, fire.TaskID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// discardOwedFire deletes an owed fire whose Trigger or TaskDef no longer exists
+// and records why, so an operator can see a fire was dropped rather than fired.
+func (s *Service) discardOwedFire(ctx context.Context, now time.Time, fire *model.OwedFireRecord, why string) error {
+	if err := s.Store.DeleteOwedFire(ctx, fire.ProjectID, fire.TriggerID, fire.TaskID); err != nil {
+		return err
+	}
+	return s.logEvent(ctx, &store.EventInput{
+		Timestamp: now,
+		Level:     "info",
+		EventType: "owed_fire_discarded",
+		ProjectID: fire.ProjectID,
+		TriggerID: fire.TriggerID,
+		TaskID:    fire.TaskID,
+		Message:   fmt.Sprintf("discarded owed fire for trigger %s task %s: %s", fire.TriggerID, fire.TaskID, why),
+		Metadata: map[string]any{
+			"owed_reason":    fire.Reason,
+			"discard_reason": why,
+		},
+	})
 }
 
 func (s *Service) startWorker(ctx context.Context, runID int64, task model.TaskDef) error {
@@ -921,40 +1384,81 @@ func (s *Service) startWorker(ctx context.Context, runID int64, task model.TaskD
 		return s.failRun(ctx, &run, worktreePath, fmt.Errorf("unsupported task type %q", task.Type))
 	}
 
-	scriptPath, err := runner.WriteLaunchScript(&runner.LaunchSpec{
-		RunDir:      runDir,
-		WorkDir:     workDir,
-		TaskType:    task.Type,
-		CommandFile: commandFile,
-		PromptFile:  promptFile,
-		OutputPath:  outputPath,
-		ExitPath:    exitPath,
+	// Compose the inner bash/claude command; the shared launch wrapper owns the
+	// completion contract (tee into output.log, atomic exit-code file), so exit
+	// semantics are identical across every Backend.
+	innerCmd, err := runner.InnerCommand(task.Type)
+	if err != nil {
+		return s.failRun(ctx, &run, worktreePath, err)
+	}
+	launchScript, err := backend.WriteLaunchScript(&backend.LaunchSpec{
+		RunDir:     runDir,
+		WorkDir:    workDir,
+		Command:    innerCmd,
+		OutputPath: outputPath,
+		ExitPath:   exitPath,
 	})
 	if err != nil {
 		return s.failRun(ctx, &run, worktreePath, err)
 	}
 
 	sessionName := runner.ScheduledRunName(run.ID, run.TaskID)
-	handle, err := s.Backend.Start(ctx, &runner.StartSpec{
-		SessionName: sessionName,
-		WorkDir:     workDir,
-		ScriptPath:  scriptPath,
-		ExitPath:    exitPath,
-		OutputPath:  outputPath,
+	b, ok := s.Backends.Get(task.Backend)
+	if !ok {
+		return s.failRun(ctx, &run, worktreePath, fmt.Errorf("unknown backend %q", task.Backend))
+	}
+	binding, startErr := b.Start(ctx, &backend.StartSpec{
+		Name:         sessionName,
+		WorkDir:      workDir,
+		LaunchScript: launchScript,
+		RunDir:       runDir,
+		Owner:        run.ProjectID,
 	})
-	if err != nil {
+	// ErrStartUncertain: the adapter created a run but could not confirm whether
+	// the launched command is alive. Record the Binding and keep the run running
+	// so Status and the deadline own it — never re-dispatch over a possibly live
+	// command. Any other error is a confirmed failure.
+	uncertain := errors.Is(startErr, backend.ErrStartUncertain)
+	if startErr != nil && !uncertain {
+		return s.failRun(ctx, &run, worktreePath, startErr)
+	}
+
+	// Fix the deadline when the run starts (per-TaskDef timeout, else the 2h
+	// default) so later config edits never move a live run's deadline.
+	timeout := defaultRunTimeout
+	if d, perr := time.ParseDuration(strings.TrimSpace(task.Timeout)); perr == nil && d > 0 {
+		timeout = d
+	}
+	deadline := run.StartedAt.Add(timeout)
+	if err := s.Store.UpdateRunStarted(ctx, run.ID, &store.RunStartUpdate{
+		SessionName:   binding.Target,
+		RuntimeDir:    runDir,
+		OutputPath:    outputPath,
+		ExitPath:      exitPath,
+		WorktreePath:  worktreePath,
+		Branch:        branch,
+		Backend:       binding.Manager,
+		BackendTarget: binding.Target,
+		DeadlineAt:    deadline,
+	}); err != nil {
+		_ = b.Stop(ctx, binding)
 		return s.failRun(ctx, &run, worktreePath, err)
 	}
-	if err := s.Store.UpdateRunStarted(ctx, run.ID, &store.RunStartUpdate{
-		SessionName:  handle.SessionName,
-		RuntimeDir:   runDir,
-		OutputPath:   outputPath,
-		ExitPath:     exitPath,
-		WorktreePath: worktreePath,
-		Branch:       branch,
-	}); err != nil {
-		_ = s.Backend.Kill(ctx, handle)
-		return s.failRun(ctx, &run, worktreePath, err)
+	if uncertain {
+		_ = s.logEvent(ctx, &store.EventInput{
+			Timestamp: s.Now(),
+			Level:     "warn",
+			EventType: "system_warning",
+			ProjectID: run.ProjectID,
+			TriggerID: run.TriggerID,
+			TaskID:    run.TaskID,
+			RunID:     &run.ID,
+			Message:   "backend start outcome uncertain; keeping run running",
+			Metadata: map[string]any{
+				"error":        startErr.Error(),
+				"resource_key": run.ResourceKey,
+			},
+		})
 	}
 	if err := s.logEvent(ctx, &store.EventInput{
 		Timestamp: s.Now(),
@@ -966,7 +1470,7 @@ func (s *Service) startWorker(ctx context.Context, runID int64, task model.TaskD
 		RunID:     &run.ID,
 		Message:   "task started",
 		Metadata: map[string]any{
-			"session_name":  handle.SessionName,
+			"session_name":  binding.Target,
 			"worktree_path": worktreePath,
 			"resource_key":  run.ResourceKey,
 			"branch":        branch,
@@ -974,57 +1478,109 @@ func (s *Service) startWorker(ctx context.Context, runID int64, task model.TaskD
 	}); err != nil {
 		return err
 	}
-	run.SessionName = handle.SessionName
+	run.SessionName = binding.Target
 	run.WorktreePath = worktreePath
 	run.Branch = branch
-	s.emitWatchTask(ctx, bus.TypeWatchTaskStarted, &run, nil, "task started")
+	s.emitWatchTask(ctx, bus.TypeWatchTaskStarted, &run, nil, "task started", "")
 	return nil
 }
 
+// failRun is the single chokepoint for a start/dispatch-time failure. It stamps
+// the run failed with failure_reason=start_failed, records failure backoff,
+// emits watch.task.failed with the reason, cleans up any worktree and logs the
+// task_failed Event. It ALWAYS returns a non-nil error — fmt.Errorf("start run
+// %d: %w", id, runErr) joined (errors.Join) with any error from recording the
+// failure — so Dispatch and the RPC task.run propagate it instead of reporting
+// success (the swallowed-start-error bug). Callers (Dispatch, startWorker) hold
+// dispatchMu, as recordRunOutcome requires.
 func (s *Service) failRun(ctx context.Context, run *model.RunRecord, worktreePath string, runErr error) error {
 	now := s.Now()
-	if err := s.Store.MarkRunTerminal(ctx, run.ID, model.RunFailed, nil, now, runErr.Error()); err != nil {
-		return err
-	}
-	// A startup/dispatch-time failure is marked terminal here and never reaches
-	// Reap, so record it for failure backoff at this single chokepoint. All
-	// callers (Dispatch, startWorker) hold dispatchMu, as recordRunOutcome
-	// requires.
-	s.recordRunOutcome(run.ProjectID, run.TaskID, model.RunFailed, now)
-	if worktreePath != "" {
-		run.WorktreePath = worktreePath
-	}
-	s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, run, nil, runErr.Error())
-	if worktreePath != "" {
-		if err := s.removeWorktree(ctx, &model.RunRecord{
-			ID:           run.ID,
-			ProjectID:    run.ProjectID,
-			TriggerID:    run.TriggerID,
-			TaskID:       run.TaskID,
-			ProjectPath:  run.ProjectPath,
-			WorktreePath: worktreePath,
-		}, "worker_failure_cleanup"); err != nil {
-			return err
+	wrapErr := fmt.Errorf("start run %d: %w", run.ID, runErr)
+	var recErr error
+
+	updated, err := s.Store.MarkRunFailedWithReason(ctx, run.ID, nil, now, runErr.Error(), reasonStartFailed)
+	if err != nil {
+		recErr = errors.Join(recErr, err)
+	} else if updated {
+		// A startup/dispatch-time failure is marked terminal here and never reaches
+		// Reap, so record it for failure backoff at this single chokepoint.
+		s.recordRunOutcome(run.ProjectID, run.TaskID, model.RunFailed, now)
+		if worktreePath != "" {
+			run.WorktreePath = worktreePath
+		}
+		s.emitWatchTask(ctx, bus.TypeWatchTaskFailed, run, nil, runErr.Error(), reasonStartFailed)
+		if worktreePath != "" {
+			if rmErr := s.removeWorktree(ctx, &model.RunRecord{
+				ID:           run.ID,
+				ProjectID:    run.ProjectID,
+				TriggerID:    run.TriggerID,
+				TaskID:       run.TaskID,
+				ProjectPath:  run.ProjectPath,
+				WorktreePath: worktreePath,
+			}, "worker_failure_cleanup"); rmErr != nil {
+				recErr = errors.Join(recErr, rmErr)
+			}
+		}
+		if logErr := s.logEvent(ctx, &store.EventInput{
+			Timestamp: now,
+			Level:     "error",
+			EventType: "task_failed",
+			ProjectID: run.ProjectID,
+			TriggerID: run.TriggerID,
+			TaskID:    run.TaskID,
+			RunID:     &run.ID,
+			Message:   runErr.Error(),
+			Metadata: map[string]any{
+				"resource_key": run.ResourceKey,
+				"error":        runErr.Error(),
+				"reason":       reasonStartFailed,
+			},
+		}); logErr != nil {
+			recErr = errors.Join(recErr, logErr)
 		}
 	}
-	return s.logEvent(ctx, &store.EventInput{
-		Timestamp: now,
-		Level:     "error",
-		EventType: "task_failed",
-		ProjectID: run.ProjectID,
-		TriggerID: run.TriggerID,
-		TaskID:    run.TaskID,
-		RunID:     &run.ID,
-		Message:   runErr.Error(),
-		Metadata: map[string]any{
-			"resource_key": run.ResourceKey,
-			"error":        runErr.Error(),
-		},
-	})
+	return errors.Join(wrapErr, recErr)
 }
 
 func (s *Service) removeWorktree(ctx context.Context, run *model.RunRecord, reason string) error {
 	if strings.TrimSpace(run.WorktreePath) == "" {
+		return nil
+	}
+	// Dirty-worktree guard, inside the single chokepoint so EVERY caller (the 24h
+	// TTL sweep, clean --force, cancel and failRun) honours it: a worktree with
+	// uncommitted work — or one we cannot even inspect — is kept rather than
+	// force-removed, so an in-progress agent's changes are never discarded. The
+	// keep is logged once per run (Event lookup) and the worktree_path is left in
+	// place so retention also spares the row. A clean worktree is still removed on
+	// every path.
+	dirty, dirtyErr := gitx.IsDirty(run.WorktreePath)
+	if dirtyErr != nil || dirty {
+		seen, err := s.Store.CountRunEventsByType(ctx, run.ID, "worktree_kept_dirty")
+		if err != nil {
+			return err
+		}
+		if seen == 0 {
+			meta := map[string]any{
+				"reason":        reason,
+				"worktree_path": run.WorktreePath,
+			}
+			if dirtyErr != nil {
+				meta["error"] = dirtyErr.Error()
+			}
+			if logErr := s.logEvent(ctx, &store.EventInput{
+				Timestamp: s.Now(),
+				Level:     "warn",
+				EventType: "worktree_kept_dirty",
+				ProjectID: run.ProjectID,
+				TriggerID: run.TriggerID,
+				TaskID:    run.TaskID,
+				RunID:     &run.ID,
+				Message:   fmt.Sprintf("kept worktree with uncommitted changes for run %d", run.ID),
+				Metadata:  meta,
+			}); logErr != nil {
+				return logErr
+			}
+		}
 		return nil
 	}
 	if err := gitx.RemoveWorktree(run.ProjectPath, run.WorktreePath); err != nil {
@@ -1053,6 +1609,25 @@ func (s *Service) removeWorktree(ctx context.Context, run *model.RunRecord, reas
 	}
 	run.WorktreePath = ""
 	return nil
+}
+
+// systemWarning records a per-run system_warning Event naming the run and the
+// underlying error. Reap and Clean use it to surface a failure in one per-run
+// step (Status, Stop, worktree removal) and then continue, so one bad run can't
+// take the whole tick down. It returns only the logEvent error (a store
+// failure), which the caller DOES propagate.
+func (s *Service) systemWarning(ctx context.Context, run *model.RunRecord, message string, cause error) error {
+	return s.logEvent(ctx, &store.EventInput{
+		Timestamp: s.Now(),
+		Level:     "warn",
+		EventType: "system_warning",
+		ProjectID: run.ProjectID,
+		TriggerID: run.TriggerID,
+		TaskID:    run.TaskID,
+		RunID:     &run.ID,
+		Message:   message,
+		Metadata:  map[string]any{"error": cause.Error(), "resource_key": run.ResourceKey},
+	})
 }
 
 func (s *Service) logValidationErrors(ctx context.Context, now time.Time, projectID, triggerID, taskID, eventType string, errs []model.ValidationError) error {
@@ -1134,6 +1709,23 @@ func (s *Service) warningSeen(key string) bool {
 	return false
 }
 
+// logBackoff records a task_backoff Event when a TaskDef's dispatch is skipped
+// because it is inside its failure-backoff window. It replaces the raw stderr
+// line the daemon used to print, so the skip is queryable through the journal
+// (auto watch logs) and formatted consistently with other Events.
+func (s *Service) logBackoff(ctx context.Context, projectID, triggerID, taskID string, nextEligible, now time.Time) error {
+	return s.logEvent(ctx, &store.EventInput{
+		Timestamp: now,
+		Level:     "info",
+		EventType: "task_backoff",
+		ProjectID: projectID,
+		TriggerID: triggerID,
+		TaskID:    taskID,
+		Message:   fmt.Sprintf("task %s backed off until %s", taskID, nextEligible.UTC().Format(time.RFC3339)),
+		Metadata:  map[string]any{"next_eligible": nextEligible.UTC().Format(time.RFC3339)},
+	})
+}
+
 func (s *Service) logEvent(ctx context.Context, input *store.EventInput) error {
 	if input.Timestamp.IsZero() {
 		input.Timestamp = s.Now()
@@ -1161,17 +1753,76 @@ func (s *Service) logEvent(ctx context.Context, input *store.EventInput) error {
 	return err
 }
 
-func tailOutput(path string, maxLines int) string {
+// OutputTailMaxBytes caps the stored tail of a run's output.log: a 400 KB
+// progress-redraw log must not become a 400 KB error_message.
+const OutputTailMaxBytes = 8192
+
+// TailOutput returns the tail of a run's output.log, capped at maxBytes, for the
+// stored error_message and the `run get` output_tail. It reads only the last
+// maxBytes (plus a small margin) of the file, collapses carriage-return progress
+// redraws by keeping only the text after the LAST `\r` on each line, and trims
+// the result to maxBytes. When anything was dropped (the file was larger than
+// the window, or the collapsed text still overflowed) it appends a breadcrumb
+// naming the full output path, so the capped tail always ends in a pointer to
+// the complete log.
+func TailOutput(path string, maxBytes int) string {
 	if strings.TrimSpace(path) == "" {
 		return ""
 	}
-	data, err := os.ReadFile(path)
+	if maxBytes <= 0 {
+		maxBytes = OutputTailMaxBytes
+	}
+	f, err := os.Open(path) //nolint:gosec // path is a daemon-owned run output file
 	if err != nil {
 		return ""
 	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) > maxLines {
-		lines = lines[len(lines)-maxLines:]
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return ""
 	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
+	size := info.Size()
+
+	const margin = 1024
+	truncated := false
+	if size > int64(maxBytes)+margin {
+		if _, err := f.Seek(size-int64(maxBytes)-margin, io.SeekStart); err != nil {
+			return ""
+		}
+		truncated = true
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return ""
+	}
+
+	// Collapse carriage-return progress redraws: within each newline-delimited
+	// line, keep only the text after its last `\r`.
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		if idx := strings.LastIndex(line, "\r"); idx >= 0 {
+			lines[i] = line[idx+1:]
+		}
+	}
+	out := strings.TrimSpace(strings.Join(lines, "\n"))
+
+	if !truncated && len(out) <= maxBytes {
+		return out
+	}
+
+	breadcrumb := fmt.Sprintf("…[truncated — full output: %s]", path)
+	budget := max(maxBytes-len(breadcrumb)-1, 0)
+	if len(out) > budget {
+		out = out[len(out)-budget:]
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return breadcrumb
+	}
+	return out + "\n" + breadcrumb
+}
+
+// tailOutput is the internal alias used by the reap path.
+func tailOutput(path string, maxBytes int) string {
+	return TailOutput(path, maxBytes)
 }

@@ -79,6 +79,98 @@ func TestStartOnceLaunchesTmuxTaskAndLogsCompletion(t *testing.T) {
 	}
 }
 
+// TestStartOnceReapsLostSession (phase 2 e2e, AC covering session_lost): a real
+// bash task runs in a PRIVATE tmux server; the server is killed while the run is
+// active; the daemon is then stepped past the 2-minute grace with an injected
+// clock, and `logs --json` shows the run failed with reason session_lost.
+//
+// TMUX SAFETY: a prior subagent crashed the live ntm fleet by running
+// `tmux kill-server` against the ambient server. This test pins tmux to a
+// private server by clearing $TMUX (so we are not seen as inside a pane) and
+// setting $TMUX_TMPDIR to a fresh temp dir BEFORE anything starts tmux. The
+// kill-server below can therefore only ever reach that private server.
+func TestStartOnceReapsLostSession(t *testing.T) {
+	if os.Getenv("AUTOWATCH_E2E") != "1" {
+		t.Skip("set AUTOWATCH_E2E=1 to run real tmux e2e tests")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+
+	// Private-server isolation: must be set before any tmux invocation.
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+
+	env := testutil.NewEnv(t)
+	env.WriteExecutable("claude", "#!/usr/bin/env bash\nexit 0\n")
+	repoRoot := env.NewRepo("demo")
+	if _, _, code := env.RunCLI(repoRoot, "init"); code != 0 {
+		t.Fatal("init failed")
+	}
+	// A long-running task so the session is still alive when we kill the server.
+	if _, stderr, code := env.RunCLI(repoRoot, "task", "create", "--id", "hang", "--bash", "sleep 300"); code != 0 {
+		t.Fatalf("task create failed: %s", stderr)
+	}
+	fixedNow := time.Date(2026, 7, 1, 10, 0, 0, 0, time.Local)
+	cronExpr := fmt.Sprintf("%d %d * * *", fixedNow.Minute(), fixedNow.Hour())
+	if _, stderr, code := env.RunCLI(repoRoot, "trigger", "create", "--id", "due-now", "--cron", cronExpr); code != 0 {
+		t.Fatalf("trigger create failed: %s", stderr)
+	}
+	if _, stderr, code := env.RunCLI(repoRoot, "trigger", "add-task", "--trigger", "due-now", "--task", "hang"); code != 0 {
+		t.Fatalf("trigger add-task failed: %s", stderr)
+	}
+
+	stepDaemon := func(now time.Time) {
+		var stdout, stderr bytes.Buffer
+		application := app.New(&stdout, &stderr)
+		application.CWD = repoRoot
+		application.Now = func() time.Time { return now }
+		rootCmd := cli.NewRootCmd(application)
+		rootCmd.SetArgs([]string{"start", "--once"})
+		if err := rootCmd.ExecuteContext(context.Background()); err != nil {
+			t.Fatalf("start --once at %s failed: %v\nstderr:\n%s", now, err, stderr.String())
+		}
+	}
+
+	// Tick 1: dispatch + start the tmux session running `sleep 300`.
+	stepDaemon(fixedNow)
+
+	// Kill ONLY the private tmux server (TMUX_TMPDIR is the fresh temp dir above).
+	killCmd := exec.Command("tmux", "kill-server")
+	// Inherit the process env, which carries our private TMUX_TMPDIR / empty TMUX.
+	if out, err := killCmd.CombinedOutput(); err != nil {
+		t.Fatalf("killing the private tmux server failed: %v\noutput: %s", err, out)
+	}
+
+	// Tick 2: 3 minutes later — past the 2-minute grace, under the 2h deadline.
+	stepDaemon(fixedNow.Add(3 * time.Minute))
+
+	stdoutStr, stderrStr, code := env.RunCLI(repoRoot, "logs", "--json", "-n", "50")
+	if code != 0 {
+		t.Fatalf("logs failed: %s", stderrStr)
+	}
+	var payload struct {
+		Events []struct {
+			EventType string         `json:"event_type"`
+			Metadata  map[string]any `json:"metadata"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal([]byte(stdoutStr), &payload); err != nil {
+		t.Fatalf("unmarshal logs payload: %v", err)
+	}
+	foundLost := false
+	for _, event := range payload.Events {
+		if event.EventType == "task_failed" {
+			if reason, _ := event.Metadata["reason"].(string); reason == "session_lost" {
+				foundLost = true
+			}
+		}
+	}
+	if !foundLost {
+		t.Fatalf("expected a task_failed event with reason=session_lost, got %+v", payload.Events)
+	}
+}
+
 func TestStartOnceFileCreatedTriggerSeedsAndFires(t *testing.T) {
 	if os.Getenv("AUTOWATCH_E2E") != "1" {
 		t.Skip("set AUTOWATCH_E2E=1 to run real tmux e2e tests")

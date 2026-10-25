@@ -62,6 +62,7 @@ func NewRootCmd(application *app.App) *cobra.Command {
 		newQuickstartCmd(),
 		newTaskCmd(application),
 		newTriggerCmd(application),
+		newRunCmd(application),
 		newDaemonCmd(application),
 		newStartCmd(application),
 		newDoctorCmd(application),
@@ -120,8 +121,8 @@ func requireProjectConfig(cwd string) (string, model.ProjectConfig, error) {
 	return repoRoot, cfg, nil
 }
 
-func saveValidatedProjectConfig(repoRoot string, cfg model.ProjectConfig) error {
-	if errs := config.ValidateProjectConfig(cfg); len(errs) > 0 {
+func saveValidatedProjectConfig(repoRoot string, cfg model.ProjectConfig, backends []string) error {
+	if errs := config.ValidateProjectConfig(cfg, backends); len(errs) > 0 {
 		return &ExitError{
 			Code: 1,
 			Err:  fmt.Errorf("project config is invalid:\n%s", textout.FormatValidationErrors(errs)),

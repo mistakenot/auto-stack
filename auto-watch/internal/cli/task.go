@@ -62,7 +62,7 @@ func newTaskCreateCmd(application *app.App) *cobra.Command {
 				task.Prompt = strings.TrimSpace(claudePrompt)
 			}
 			cfg.Tasks[taskID] = task
-			if err := saveValidatedProjectConfig(repoRoot, cfg); err != nil {
+			if err := saveValidatedProjectConfig(repoRoot, cfg, application.Backends.Names()); err != nil {
 				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Saved task %s\n", taskID)
@@ -101,7 +101,7 @@ func newTaskListCmd(application *app.App) *cobra.Command {
 			sort.Strings(ids)
 			for _, id := range ids {
 				task := cfg.Tasks[id]
-				if validationErrs := config.ValidateTaskEntry(id, task); len(validationErrs) > 0 {
+				if validationErrs := config.ValidateTaskEntry(id, task, application.Backends.Names()); len(validationErrs) > 0 {
 					errs = append(errs, validationErrs...)
 					continue
 				}

@@ -43,17 +43,19 @@ type ListParams struct {
 }
 
 type RunView struct {
-	ID           int64  `json:"id"`
-	ProjectID    string `json:"project_id"`
-	TaskID       string `json:"task_id"`
-	State        string `json:"state"`
-	SessionName  string `json:"session_name,omitempty"`
-	WorktreePath string `json:"worktree_path,omitempty"`
-	Branch       string `json:"branch,omitempty"`
-	ExitCode     *int   `json:"exit_code,omitempty"`
-	ErrorMessage string `json:"error_message,omitempty"`
-	StartedAt    string `json:"started_at"`
-	CompletedAt  string `json:"completed_at,omitempty"`
+	ID            int64  `json:"id"`
+	ProjectID     string `json:"project_id"`
+	TaskID        string `json:"task_id"`
+	State         string `json:"state"`
+	FailureReason string `json:"failure_reason,omitempty"`
+	Backend       string `json:"backend,omitempty"`
+	SessionName   string `json:"session_name,omitempty"`
+	WorktreePath  string `json:"worktree_path,omitempty"`
+	Branch        string `json:"branch,omitempty"`
+	ExitCode      *int   `json:"exit_code,omitempty"`
+	ErrorMessage  string `json:"error_message,omitempty"`
+	StartedAt     string `json:"started_at"`
+	CompletedAt   string `json:"completed_at,omitempty"`
 }
 
 type OutputParams struct {
@@ -241,16 +243,18 @@ func (h *Handlers) handleTaskOutput(ctx context.Context, params json.RawMessage)
 
 func runToView(r *model.RunRecord) RunView {
 	v := RunView{
-		ID:           r.ID,
-		ProjectID:    r.ProjectID,
-		TaskID:       r.TaskID,
-		State:        string(r.State),
-		SessionName:  r.SessionName,
-		WorktreePath: r.WorktreePath,
-		Branch:       r.Branch,
-		ExitCode:     r.ExitCode,
-		ErrorMessage: r.ErrorMessage,
-		StartedAt:    r.StartedAt.UTC().Format(time.RFC3339),
+		ID:            r.ID,
+		ProjectID:     r.ProjectID,
+		TaskID:        r.TaskID,
+		State:         string(r.State),
+		FailureReason: r.FailureReason,
+		Backend:       r.Backend,
+		SessionName:   r.SessionName,
+		WorktreePath:  r.WorktreePath,
+		Branch:        r.Branch,
+		ExitCode:      r.ExitCode,
+		ErrorMessage:  r.ErrorMessage,
+		StartedAt:     r.StartedAt.UTC().Format(time.RFC3339),
 	}
 	if !r.CompletedAt.IsZero() {
 		v.CompletedAt = r.CompletedAt.UTC().Format(time.RFC3339)

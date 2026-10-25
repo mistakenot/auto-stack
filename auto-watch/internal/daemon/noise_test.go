@@ -58,7 +58,7 @@ func TestNoTriggerEvaluatedEvents(t *testing.T) {
 
 	base := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
 	var clock time.Time
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return clock }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return clock }, nil)
 
 	for m := range 10 {
 		clock = base.Add(time.Duration(m) * time.Minute)
@@ -120,7 +120,7 @@ func TestConfigWarningDedup(t *testing.T) {
 
 	base := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
 	var clock time.Time
-	service := daemon.New(db, fakeBackend{}, nil, func() time.Time { return clock }, nil)
+	service := daemon.New(db, completingRegistry(), nil, func() time.Time { return clock }, nil)
 
 	for m := range 10 {
 		clock = base.Add(time.Duration(m) * time.Minute)

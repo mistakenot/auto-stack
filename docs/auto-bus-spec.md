@@ -1,5 +1,5 @@
 ---
-hash: "f4b9db9d"
+hash: "42df1cd1"
 id: "7b8cda70"
 read_when: "implementing or consuming bus events, adding a new event type, understanding the wire format or delivery guarantees"
 summary: "The auto-bus standard: CloudEvents-shaped envelope, JSON-RPC 2.0 framing, HTTP and WebSocket transport bindings, at-most-once delivery contract, dotted event-type registry, and watch.task.* paper mapping."
@@ -477,6 +477,7 @@ This mapping documents the live `watch.task.*` envelope produced by the daemon, 
       "run_id": 42,
       "trigger_id": "on-branch-push",
       "exit_code": 1,
+      "reason": "exit_nonzero",
       "resource_key": "feat/new-feature",
       "message": "run 42 finished with exit code 1"
     }
@@ -487,6 +488,7 @@ This mapping documents the live `watch.task.*` envelope produced by the daemon, 
 **Mapping notes:**
 - Same provenance attributes at the top level.
 - `data.exit_code`: from `RunRecord.ExitCode`, the process exit code.
+- `data.reason`: classifies *why* the run failed, one of `exit_nonzero | session_lost | timed_out | start_failed | exit_unrecorded`. It is a `reason` field on `WatchTaskData`, `omitempty`, and present **only** on `watch.task.failed` — `watch.task.started` / `watch.task.completed` payloads are unchanged. It mirrors the run's `failure_reason` column; consumers filtering by cause read this rather than parsing `message`.
 - `data.message`: matches current `EventInput.Message` format.
 - The current `EventInput.Level` (`"error"` for failures) is not carried in the bus envelope -- the event type (`watch.task.failed`) is sufficient to convey severity. Consumers can map type to severity locally.
 

@@ -4,49 +4,23 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/mistakenot/auto-shared/backend"
+	"github.com/mistakenot/auto-shared/backend/backendtest"
 	"github.com/mistakenot/auto-watch/internal/daemon"
 	"github.com/mistakenot/auto-watch/internal/model"
 	"github.com/mistakenot/auto-watch/internal/runner"
 	"github.com/mistakenot/auto-watch/internal/store"
 )
 
-// recordingBackend records Start/Kill calls and, unlike fakeBackend, never
-// writes an exit-code file, so runs stay "running" until a test writes one.
-type recordingBackend struct {
-	mu        sync.Mutex
-	starts    []runner.StartSpec
-	kills     []runner.Handle
-	sessionEx bool
-}
-
-func (b *recordingBackend) Start(_ context.Context, spec *runner.StartSpec) (runner.Handle, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.starts = append(b.starts, *spec)
-	return runner.Handle{SessionName: spec.SessionName, ExitPath: spec.ExitPath, OutputPath: spec.OutputPath}, nil
-}
-
-func (b *recordingBackend) Kill(_ context.Context, handle runner.Handle) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.kills = append(b.kills, handle)
-	return nil
-}
-
-func (b *recordingBackend) SessionExists(context.Context, string) (bool, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.sessionEx, nil
-}
-
-func (b *recordingBackend) killCount() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return len(b.kills)
+// runningRegistry returns a Backend registry whose (default, "tmux") Backend
+// leaves every run running — it writes no exit-code file, so a run stays
+// RunRunning until a test writes one and Status reads it. It replaces the old
+// ad-hoc recordingBackend.
+func runningRegistry() *backend.Registry {
+	return backend.NewRegistry(&backendtest.Fake{})
 }
 
 func newTestStore(t *testing.T) *store.Store {
@@ -80,7 +54,7 @@ func TestDispatchReservesAndStartsRun(t *testing.T) {
 	db := newTestStore(t)
 	projectPath := t.TempDir()
 	now := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
-	svc := daemon.New(db, &recordingBackend{}, nil, func() time.Time { return now }, nil)
+	svc := daemon.New(db, runningRegistry(), nil, func() time.Time { return now }, nil)
 
 	runID, err := svc.Dispatch(context.Background(), bashReserveInput(projectPath, now), model.TaskDef{Type: "bash", Command: "echo hi"})
 	if err != nil {
@@ -109,11 +83,44 @@ func TestDispatchReservesAndStartsRun(t *testing.T) {
 	}
 }
 
+// TestDispatchStartFailurePropagatesAndStampsStartFailed (AC-7): when the
+// Backend's Start fails, failRun stamps failure_reason=start_failed and returns
+// the wrapped error, and Dispatch propagates it instead of reporting success
+// (the swallowed-start-error bug).
+func TestDispatchStartFailurePropagatesAndStampsStartFailed(t *testing.T) {
+	db := newTestStore(t)
+	projectPath := t.TempDir()
+	now := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
+	startErr := errors.New("backend start failed")
+	fake := &backendtest.Fake{}
+	fake.SetStartErr(startErr)
+	svc := daemon.New(db, backend.NewRegistry(fake), nil, func() time.Time { return now }, nil)
+
+	runID, err := svc.Dispatch(context.Background(), bashReserveInput(projectPath, now), model.TaskDef{Type: "bash", Command: "echo hi"})
+	if err == nil {
+		t.Fatal("expected Dispatch to return the wrapped start error, got nil")
+	}
+	if !errors.Is(err, startErr) {
+		t.Fatalf("Dispatch error must wrap the start error, got %v", err)
+	}
+
+	run, gErr := db.GetRun(context.Background(), runID)
+	if gErr != nil {
+		t.Fatalf("GetRun: %v", gErr)
+	}
+	if run.State != model.RunFailed {
+		t.Fatalf("state = %q, want failed", run.State)
+	}
+	if run.FailureReason != "start_failed" {
+		t.Fatalf("failure_reason = %q, want start_failed", run.FailureReason)
+	}
+}
+
 func TestDispatchDuplicateActiveRunReturnsErrActiveRunExists(t *testing.T) {
 	db := newTestStore(t)
 	projectPath := t.TempDir()
 	now := time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)
-	svc := daemon.New(db, &recordingBackend{}, nil, func() time.Time { return now }, nil)
+	svc := daemon.New(db, runningRegistry(), nil, func() time.Time { return now }, nil)
 
 	if _, err := svc.Dispatch(context.Background(), bashReserveInput(projectPath, now), model.TaskDef{Type: "bash", Command: "echo hi"}); err != nil {
 		t.Fatalf("first Dispatch failed: %v", err)

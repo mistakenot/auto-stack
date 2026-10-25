@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -345,7 +346,7 @@ func reserveTerminalRun(t *testing.T, db *store.Store, taskID string, started, c
 		t.Fatalf("update run started %s: %v", taskID, err)
 	}
 	exit := 0
-	if err := db.MarkRunTerminal(ctx, runID, state, &exit, completed, ""); err != nil {
+	if _, err := db.MarkRunTerminal(ctx, runID, state, &exit, completed, ""); err != nil {
 		t.Fatalf("mark run terminal %s: %v", taskID, err)
 	}
 	return runID
@@ -392,6 +393,130 @@ func TestPruneEventsOlderThan(t *testing.T) {
 	}
 	if got, _ := db.CountEventsByType(ctx, "recent"); got != recentCount {
 		t.Fatalf("expected %d recent events remaining, got %d", recentCount, got)
+	}
+}
+
+// TestMarkRunTerminalConditionalGuard (AC-8): the conditional terminal UPDATE is
+// a no-op on an already-terminal run and reports updated=false, so callers emit
+// no duplicate terminal Event. The same holds for MarkRunFailedWithReason.
+func TestMarkRunTerminalConditionalGuard(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+
+	id, err := db.ReserveRun(ctx, &store.ReserveRunInput{
+		ProjectID:   "demo",
+		ProjectPath: "/tmp/demo",
+		TriggerID:   "daily",
+		TriggerType: "cron",
+		TaskID:      "etl",
+		TaskType:    "bash",
+		ResourceKey: "cron:daily",
+		StartedAt:   now,
+	})
+	if err != nil {
+		t.Fatalf("reserve run: %v", err)
+	}
+	if err := db.UpdateRunStarted(ctx, id, &store.RunStartUpdate{SessionName: "s"}); err != nil {
+		t.Fatalf("update run started: %v", err)
+	}
+
+	// First terminal transition updates the row.
+	exit := 0
+	updated, err := db.MarkRunTerminal(ctx, id, model.RunCompleted, &exit, now, "")
+	if err != nil {
+		t.Fatalf("mark completed: %v", err)
+	}
+	if !updated {
+		t.Fatal("first terminal transition should report updated=true")
+	}
+
+	// A second transition on the now-completed run is a no-op: updated=false and
+	// the row is unchanged (still completed, exit 0, no error message).
+	updated, err = db.MarkRunTerminal(ctx, id, model.RunFailed, nil, now.Add(time.Minute), "late failure")
+	if err != nil {
+		t.Fatalf("mark failed on completed run: %v", err)
+	}
+	if updated {
+		t.Fatal("marking an already-completed run must report updated=false")
+	}
+	run, err := db.GetRun(ctx, id)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if run.State != model.RunCompleted {
+		t.Fatalf("state = %q, want completed (unchanged)", run.State)
+	}
+	if run.ExitCode == nil || *run.ExitCode != 0 {
+		t.Fatalf("exit_code = %v, want 0 (unchanged)", run.ExitCode)
+	}
+	if run.ErrorMessage != "" {
+		t.Fatalf("error_message = %q, want empty (unchanged)", run.ErrorMessage)
+	}
+
+	// MarkRunFailedWithReason shares the guard: also a no-op on the terminal run.
+	updated, err = db.MarkRunFailedWithReason(ctx, id, nil, now.Add(2*time.Minute), "late", "timed_out")
+	if err != nil {
+		t.Fatalf("mark failed with reason on completed run: %v", err)
+	}
+	if updated {
+		t.Fatal("MarkRunFailedWithReason on a completed run must report updated=false")
+	}
+	run, err = db.GetRun(ctx, id)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if run.State != model.RunCompleted || run.FailureReason != "" {
+		t.Fatalf("run changed by no-op: state=%q reason=%q", run.State, run.FailureReason)
+	}
+}
+
+// TestPragmasApplyToEveryConnection (AC-8): the pragmas ride in the DSN, so every
+// pooled connection has busy_timeout=5000 and foreign_keys=1 — not just the one
+// a bare db.Exec("PRAGMA …") would reach.
+func TestPragmasApplyToEveryConnection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logs.sqlite")
+	// Open the store so the db file and directory exist, then open a second pool
+	// over the same DSN and force several concurrent connections.
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	raw, err := sql.Open("sqlite", store.DSN(path))
+	if err != nil {
+		t.Fatalf("open raw pool: %v", err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+
+	ctx := context.Background()
+	const n = 4
+	raw.SetMaxOpenConns(n)
+	conns := make([]*sql.Conn, 0, n)
+	for i := range n {
+		c, err := raw.Conn(ctx)
+		if err != nil {
+			t.Fatalf("open conn %d: %v", i, err)
+		}
+		conns = append(conns, c)
+	}
+	for i, c := range conns {
+		var busyTimeout int
+		if err := c.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+			t.Fatalf("conn %d busy_timeout: %v", i, err)
+		}
+		if busyTimeout != 5000 {
+			t.Fatalf("conn %d busy_timeout = %d, want 5000", i, busyTimeout)
+		}
+		var foreignKeys int
+		if err := c.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+			t.Fatalf("conn %d foreign_keys: %v", i, err)
+		}
+		if foreignKeys != 1 {
+			t.Fatalf("conn %d foreign_keys = %d, want 1", i, foreignKeys)
+		}
+		_ = c.Close()
 	}
 }
 
